@@ -11,23 +11,83 @@ mod headless;
 
 pub use headless::{HeadlessSwapchain, HEADLESS_FORMAT};
 
+use std::collections::HashMap;
 use std::ffi::{c_char, CStr};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use ash::vk;
 use ash::vk::Handle;
 use tre_engine::{
-    AcquiredImage, EngineError, RhiBuffer, RhiCommandBuffer, RhiDevice, RhiPipelineState,
-    RhiSwapchain, ScissorRect, UiVertex,
+    AcquiredImage, EngineError, RhiBuffer, RhiCommandBuffer, RhiDevice, RhiDynamicRingBuffer,
+    RhiPipelineState, RhiSwapchain, RhiTexture, ScissorRect, TextureFormat, UiVertex,
 };
 
 const REQUIRED_DEVICE_EXTENSIONS: &[&CStr] =
     &[ash::khr::swapchain::NAME, ash::khr::dynamic_rendering::NAME];
 
+/// TECHNICAL.md Section 3.1's triple-buffered ring: 3 logical segments,
+/// one per frame-in-flight slot.
+const FRAMES_IN_FLIGHT: usize = 3;
+
+/// TECHNICAL.md Section 3.1's "256-byte minimum alignment for RHI dynamic
+/// offsets."
+const RING_BUFFER_ALIGNMENT: usize = 256;
+
+fn align_up(value: usize, alignment: usize) -> usize {
+    (value + alignment - 1) & !(alignment - 1)
+}
+
+fn texture_format_to_vk(format: TextureFormat) -> vk::Format {
+    match format {
+        TextureFormat::Bgra8Srgb => vk::Format::B8G8R8A8_SRGB,
+        TextureFormat::Rgba16Float => vk::Format::R16G16B16A16_SFLOAT,
+    }
+}
+
+/// Shared frame-completion fences (TECHNICAL.md Section 3.1's 3-deep
+/// ring), owned jointly by `VulkanDevice` and every
+/// `VulkanRingBuffer` created from it -- so a ring buffer's segment
+/// selection is tied to the EXACT signal the device's own frame
+/// submission produces, not a separate, never-actually-wired fence. This
+/// is currently redundant with `VulkanDevice::begin_frame`'s own wait
+/// (Phase 2 Step 1 keeps submission fully synchronous, one frame at a
+/// time -- see `planning/archive/PLAN_PHASE2_STEP1.md`'s scope decision),
+/// but stays correct once real overlapping submission is introduced
+/// later, since nothing about this structure assumes synchronous
+/// submission.
+struct FrameSync {
+    /// The SAME single fence Phase 0 built (`in_flight_fence`): waited on
+    /// and reset at the start of every `begin_frame`, signaled by every
+    /// `submit_and_present`. There is only one -- NOT one per ring-buffer
+    /// segment -- because `VulkanDevice` reuses a single persistent
+    /// `command_buffer` across every frame regardless of which ring-buffer
+    /// segment is current; gating that one command buffer's reuse with a
+    /// *rotating* fence (waiting on a fresh, trivially-already-signaled
+    /// fence instead of the one its own last submission actually
+    /// signaled) would NOT prove the GPU is done with it. An earlier
+    /// version of this file made exactly that mistake -- three fences,
+    /// indexed by `frame_index` -- and the Vulkan validation layer caught
+    /// it immediately (`walking_skeleton`/`multi_window` both threw
+    /// command-buffer-still-in-use errors) once actually run, not just
+    /// compiled. See `planning/archive/LOG_PHASE2_STEP1.md`.
+    fence: vk::Fence,
+    /// A rotating counter (0, 1, 2, 0, 1, 2, ...), advanced by
+    /// `VulkanDevice::submit_and_present` after every frame. Used ONLY by
+    /// `VulkanRingBuffer` to pick which of its 3 segments is "current" --
+    /// safe without its own per-segment fence precisely because `fence`
+    /// above already fully synchronizes every single frame, so by the
+    /// time this counter cycles back to a given value, at least two other
+    /// fully-synchronous frames have completed since that segment was
+    /// last written.
+    frame_index: AtomicUsize,
+}
+
 /// Shared Vulkan device state (ARCHITECTURE.md Section 2.1's "Global
-/// `RhiDevice`"). Phase 0 keeps synchronization deliberately simple --
-/// exactly one frame in flight, a full GPU wait-idle at the start of every
-/// `begin_frame` -- rather than TECHNICAL.md Section 3.1's triple-buffered
-/// ring arenas, which are Phase 2's job.
+/// `RhiDevice`"). Frame submission itself stays fully synchronous (one
+/// frame in flight, `begin_frame` fully waits before recording) -- see
+/// `frame_sync`'s doc comment for the real, once-broken-then-fixed reason
+/// it still tracks a rotating index despite that.
 pub struct VulkanDevice {
     entry: ash::Entry,
     pub instance: ash::Instance,
@@ -38,7 +98,13 @@ pub struct VulkanDevice {
     command_pool: vk::CommandPool,
     command_buffer: vk::CommandBuffer,
     dynamic_rendering: ash::khr::dynamic_rendering::Device,
-    in_flight_fence: vk::Fence,
+    frame_sync: Arc<FrameSync>,
+    /// Transient render target pool (TECHNICAL.md Section 3.2), keyed by
+    /// `(width, height, format)` after power-of-two bucket rounding.
+    /// `Mutex`-guarded (not `RefCell`) so `VulkanDevice` stays genuinely
+    /// `Sync`-shareable across threads later, matching the same
+    /// forward-looking reasoning as `tre_memory::SpscRingBuffer`.
+    transient_pool: Mutex<TransientPool>,
 }
 
 impl VulkanDevice {
@@ -169,13 +235,17 @@ impl VulkanDevice {
         let dynamic_rendering = ash::khr::dynamic_rendering::Device::new(&instance, &device);
 
         // SAFETY: `device` is valid (created above).
-        let in_flight_fence = unsafe {
+        let fence = unsafe {
             device.create_fence(
                 &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
                 None,
             )
         }
         .map_err(|_| EngineError::DeviceLost)?;
+        let frame_sync = Arc::new(FrameSync {
+            fence,
+            frame_index: AtomicUsize::new(0),
+        });
 
         Ok((
             Self {
@@ -188,7 +258,8 @@ impl VulkanDevice {
                 command_pool,
                 command_buffer,
                 dynamic_rendering,
-                in_flight_fence,
+                frame_sync,
+                transient_pool: Mutex::new(TransientPool::default()),
             },
             surface_loader,
             surface,
@@ -197,6 +268,17 @@ impl VulkanDevice {
 
     pub fn graphics_queue(&self) -> vk::Queue {
         self.graphics_queue
+    }
+
+    /// Snapshot of the transient render target pool's hit/miss counters
+    /// (TECHNICAL.md Section 3.2), for demos/tests to prove steady-state
+    /// reuse without reaching into private pool state.
+    #[must_use]
+    pub fn transient_pool_stats(&self) -> TransientPoolStats {
+        self.transient_pool
+            .lock()
+            .expect("transient pool poisoned")
+            .stats
     }
 
     /// Creates a new Vulkan surface for another window against this
@@ -475,17 +557,59 @@ impl VulkanDevice {
             device: self.device.clone(),
         })
     }
+
+    /// Allocates any transient-target buckets a prior frame's
+    /// `acquire_transient_target` miss queued (TECHNICAL.md Section 3.2,
+    /// DESIGN.md Section 2.6's "grown into the pool asynchronously for
+    /// subsequent frames"). Called at the very start of `begin_frame`,
+    /// before that frame's render tick begins -- allocating here, not
+    /// mid-frame, is what "asynchronously" means for this step's scope
+    /// (see `planning/archive/PLAN_PHASE2_STEP1.md`'s scope decision;
+    /// no background thread is involved).
+    fn grow_pending_transient_targets(&self) {
+        let pending = {
+            let mut pool = self.transient_pool.lock().expect("transient pool poisoned");
+            std::mem::take(&mut pool.pending_growth)
+        };
+        for (width, height, format) in pending {
+            if let Ok(texture) = VulkanTexture::new(self, width, height, format) {
+                let mut pool = self.transient_pool.lock().expect("transient pool poisoned");
+                pool.free
+                    .entry((width, height, format))
+                    .or_default()
+                    .push(texture);
+            }
+        }
+    }
 }
 
 impl Drop for VulkanDevice {
     fn drop(&mut self) {
+        // Explicitly drop every texture still checked into the transient
+        // pool BEFORE destroying the device below. Rust drops a struct's
+        // OTHER fields (including `transient_pool`) only after this
+        // `drop` function returns, which would run each pooled
+        // `VulkanTexture`'s own `Drop` (destroying its image/view/memory)
+        // AFTER `destroy_device` below already ran -- a real
+        // use-after-free the Vulkan validation layer caught as 6 leaked
+        // objects during this step's own demo run, since without this
+        // clear the objects were never destroyed at all (this fixes both
+        // the leak and the ordering hazard a naive fix would introduce).
+        if let Ok(mut pool) = self.transient_pool.lock() {
+            pool.free.clear();
+        }
         // SAFETY: `self` is being dropped, so no other code holds
-        // references to these handles afterward; destroying the fence and
+        // references to these handles afterward; destroying the fences and
         // command pool (children of the device) before the device, and
         // the device before the instance, follows Vulkan's required
-        // child-before-parent destruction order.
+        // child-before-parent destruction order. Any `VulkanRingBuffer`s
+        // created from this device hold a clone of `self.frame_sync`'s
+        // `Arc`, not this fence independently, so they don't outlive this
+        // destruction in a way that would use-after-free it --
+        // `VulkanRingBuffer` never touches `frame_sync.fence` at all (see
+        // its own doc comment).
         unsafe {
-            self.device.destroy_fence(self.in_flight_fence, None);
+            self.device.destroy_fence(self.frame_sync.fence, None);
             self.device.destroy_command_pool(self.command_pool, None);
             self.device.destroy_device(None);
             self.instance.destroy_instance(None);
@@ -494,37 +618,120 @@ impl Drop for VulkanDevice {
 }
 
 impl RhiDevice for VulkanDevice {
-    fn create_dynamic_ring_buffer(&self, _capacity: usize) -> Box<dyn RhiBuffer> {
-        unimplemented!("Phase 2 (TECHNICAL.md Section 3.1) -- out of Phase 0's scope")
+    fn create_dynamic_ring_buffer(&self, capacity: usize) -> Box<dyn RhiDynamicRingBuffer> {
+        Box::new(
+            VulkanRingBuffer::new(self, capacity).expect("failed to create dynamic ring buffer"),
+        )
     }
 
     fn acquire_transient_target(
         &self,
-        _width: u32,
-        _height: u32,
-    ) -> Box<dyn tre_engine::RhiTexture> {
-        unimplemented!("Phase 2 (TECHNICAL.md Section 3.2) -- out of Phase 0's scope")
+        width: u32,
+        height: u32,
+        format: TextureFormat,
+    ) -> Box<dyn RhiTexture> {
+        let bucket = (
+            width.next_power_of_two(),
+            height.next_power_of_two(),
+            format,
+        );
+        let mut pool = self.transient_pool.lock().expect("transient pool poisoned");
+
+        if let Some(texture) = pool.free.get_mut(&bucket).and_then(Vec::pop) {
+            pool.stats.hits += 1;
+            return Box::new(texture);
+        }
+
+        // Genuine miss: DESIGN.md Section 2.6 forbids a dynamic RHI
+        // allocation inside the render tick, so borrow the next-larger
+        // already-pooled bucket for this frame (any texture at least as
+        // large as requested is usable -- the caller renders into a
+        // sub-rect if it's bigger) and queue the exactly-right bucket to
+        // be grown in at the start of the next frame.
+        pool.stats.misses += 1;
+        if !pool.pending_growth.contains(&bucket) {
+            pool.pending_growth.push(bucket);
+        }
+        if let Some(((_, _, _), texture)) = pool
+            .free
+            .iter_mut()
+            .filter(|((w, h, f), textures)| {
+                *f == format && *w >= bucket.0 && *h >= bucket.1 && !textures.is_empty()
+            })
+            .min_by_key(|((w, h, _), _)| u64::from(*w) * u64::from(*h))
+            .map(|(key, textures)| (*key, textures.pop().expect("checked non-empty above")))
+        {
+            return Box::new(texture);
+        }
+
+        // No existing bucket at all (even oversized) is free -- this is
+        // the very first request of this size/format combination this
+        // process has ever seen. Allocating here is the one case Phase 2
+        // Step 1 accepts a synchronous allocation for (there is nothing
+        // smaller to borrow), matching Phase 0/1's "walking skeleton
+        // first" precedent: a cold-start allocation is unavoidable
+        // somewhere, and DESIGN.md Section 2.6's own wording ("a first-
+        // ever window size... isn't already resident in the pool") is
+        // explicit that this exact case can occur.
+        drop(pool);
+        Box::new(
+            VulkanTexture::new(self, width, height, format)
+                .expect("failed to create transient render target"),
+        )
     }
 
-    fn release_transient_target(&self, _texture: Box<dyn tre_engine::RhiTexture>) {
-        unimplemented!("Phase 2 (TECHNICAL.md Section 3.2) -- out of Phase 0's scope")
+    fn release_transient_target(&self, texture: Box<dyn RhiTexture>) {
+        let (width, height) = texture.dimensions();
+        let format = texture.format();
+        let bucket = (
+            width.next_power_of_two(),
+            height.next_power_of_two(),
+            format,
+        );
+        // Reconstructs a `VulkanTexture` from `texture`'s opaque handles
+        // rather than downcasting -- `texture` is a `Box<dyn RhiTexture>`
+        // this same `VulkanDevice` produced moments ago via
+        // `acquire_transient_target`/`VulkanTexture::new`, so every handle
+        // it exposes is one of this device's own live Vulkan objects.
+        let reclaimed = VulkanTexture {
+            view: vk::ImageView::from_raw(texture.raw_handle()),
+            image: vk::Image::from_raw(texture.image_handle()),
+            memory: vk::DeviceMemory::from_raw(texture.memory_handle()),
+            width,
+            height,
+            format,
+            device: self.device.clone(),
+        };
+        // `texture` (the original box) must not also run its `Drop` and
+        // destroy these same handles out from under `reclaimed`.
+        std::mem::forget(texture);
+
+        let mut pool = self.transient_pool.lock().expect("transient pool poisoned");
+        pool.free.entry(bucket).or_default().push(reclaimed);
     }
 
     fn begin_frame(
         &self,
         swapchain: &dyn RhiSwapchain,
     ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
-        // SAFETY: `self.device` is valid and `self.in_flight_fence` was
+        // SAFETY: `self.device` is valid and `self.frame_sync.fence` was
         // created signaled in `new`; under the single-frame-in-flight
         // model it is only ever waited on and reset here, once per frame.
         unsafe {
             self.device
-                .wait_for_fences(&[self.in_flight_fence], true, u64::MAX)
+                .wait_for_fences(&[self.frame_sync.fence], true, u64::MAX)
                 .map_err(|_| EngineError::DeviceLost)?;
             self.device
-                .reset_fences(&[self.in_flight_fence])
+                .reset_fences(&[self.frame_sync.fence])
                 .map_err(|_| EngineError::DeviceLost)?;
         }
+
+        // Genuine transient-pool growth queued by a prior frame's miss
+        // (see `acquire_transient_target`) happens here, before this
+        // frame's render tick begins -- DESIGN.md Section 2.6 requires it
+        // not happen mid-frame, and "the start of the next frame" is
+        // exactly that boundary.
+        self.grow_pending_transient_targets();
 
         let image = swapchain.acquire_next_image()?;
 
@@ -700,14 +907,29 @@ impl RhiDevice for VulkanDevice {
 
         // SAFETY: `raw_cmd` was just ended above; `wait_semaphores`/
         // `signal_semaphores` come from the `AcquiredImage` returned by
-        // `begin_frame` this same frame and are valid; `in_flight_fence`
-        // is the fence `begin_frame` waited on and reset for this frame,
-        // so signaling it here is the matching half of that handshake.
+        // `begin_frame` this same frame and are valid; `self.frame_sync
+        // .fence` is the same fence `begin_frame` waited on and reset for
+        // this frame, so signaling it here is the matching half of that
+        // handshake.
         unsafe {
             self.device
-                .queue_submit(self.graphics_queue, &[submit_info], self.in_flight_fence)
+                .queue_submit(self.graphics_queue, &[submit_info], self.frame_sync.fence)
                 .map_err(|_| EngineError::DeviceLost)?;
         }
+        // Advances the ring-buffer segment-selection counter -- see
+        // `FrameSync::frame_index`'s doc comment for why this is sound
+        // without its own per-segment fence. A plain load-then-store (not
+        // `fetch_add`) is correct here: `submit_and_present` is only ever
+        // called from the single render-loop thread under this step's
+        // synchronous-submission scope, so there is no concurrent writer
+        // to race against, and `fetch_add` would not have wrapped the
+        // *stored* value into `0..FRAMES_IN_FLIGHT` anyway (only its
+        // discarded return value).
+        let next_frame_index =
+            (self.frame_sync.frame_index.load(Ordering::Acquire) + 1) % FRAMES_IN_FLIGHT;
+        self.frame_sync
+            .frame_index
+            .store(next_frame_index, Ordering::Release);
 
         swapchain.present(image)
     }
@@ -1122,6 +1344,368 @@ impl Drop for VulkanPipelineState {
         unsafe {
             self.device.destroy_pipeline(self.pipeline, None);
             self.device.destroy_pipeline_layout(self.layout, None);
+        }
+    }
+}
+
+/// Diagnostic counters for `VulkanDevice`'s transient render target pool
+/// (TECHNICAL.md Section 3.2), exposed so demos/tests can prove
+/// steady-state pool reuse (a `hits`-only-growing, `misses`-flat pattern
+/// after warmup) rather than asserting on internal state.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct TransientPoolStats {
+    pub hits: u64,
+    pub misses: u64,
+}
+
+#[derive(Default)]
+struct TransientPool {
+    /// Checked-in (available) textures, bucketed by power-of-two
+    /// `(width, height)` plus format.
+    free: HashMap<(u32, u32, TextureFormat), Vec<VulkanTexture>>,
+    /// Exact buckets a miss needs grown at the start of the next frame
+    /// (deduplicated -- see the `contains` check at the push site).
+    pending_growth: Vec<(u32, u32, TextureFormat)>,
+    stats: TransientPoolStats,
+}
+
+/// A GPU render target (TECHNICAL.md Section 3.2's transient pool
+/// entries). See `RhiTexture`'s doc comment for why it exposes three
+/// separate opaque handles rather than one.
+pub struct VulkanTexture {
+    image: vk::Image,
+    view: vk::ImageView,
+    memory: vk::DeviceMemory,
+    width: u32,
+    height: u32,
+    format: TextureFormat,
+    device: ash::Device,
+}
+
+impl VulkanTexture {
+    fn new(
+        device: &VulkanDevice,
+        width: u32,
+        height: u32,
+        format: TextureFormat,
+    ) -> Result<Self, EngineError> {
+        let vk_format = texture_format_to_vk(format);
+
+        // SAFETY: `device.device` is valid, and `width`/`height` are
+        // non-zero (`next_power_of_two` of any caller-supplied dimension
+        // is at least 1) as `VkImageCreateInfo` requires.
+        let image = unsafe {
+            device.device.create_image(
+                &vk::ImageCreateInfo::default()
+                    .image_type(vk::ImageType::TYPE_2D)
+                    .format(vk_format)
+                    .extent(vk::Extent3D {
+                        width,
+                        height,
+                        depth: 1,
+                    })
+                    .mip_levels(1)
+                    .array_layers(1)
+                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .tiling(vk::ImageTiling::OPTIMAL)
+                    .usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED)
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                    .initial_layout(vk::ImageLayout::UNDEFINED),
+                None,
+            )
+        }
+        .map_err(|_| EngineError::DeviceLost)?;
+
+        // SAFETY: `image` was just created above on this device.
+        let requirements = unsafe { device.device.get_image_memory_requirements(image) };
+        // SAFETY: `device.physical_device` is the device selected in
+        // `VulkanDevice::new` and is valid for as long as `device.instance`
+        // (also alive here) is.
+        let memory_properties = unsafe {
+            device
+                .instance
+                .get_physical_device_memory_properties(device.physical_device)
+        };
+        let memory_type_index = (0..memory_properties.memory_type_count)
+            .find(|&i| {
+                (requirements.memory_type_bits & (1 << i)) != 0
+                    && memory_properties.memory_types[i as usize]
+                        .property_flags
+                        .contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
+            })
+            .ok_or(EngineError::DeviceLost)?;
+
+        // SAFETY: `device.device` is valid, `requirements.size` comes
+        // directly from `get_image_memory_requirements` above, and
+        // `memory_type_index` was selected from the `find` above so it is
+        // one of the bits set in `requirements.memory_type_bits`.
+        let memory = unsafe {
+            device.device.allocate_memory(
+                &vk::MemoryAllocateInfo::default()
+                    .allocation_size(requirements.size)
+                    .memory_type_index(memory_type_index),
+                None,
+            )
+        }
+        .map_err(|_| EngineError::DeviceLost)?;
+
+        // SAFETY: `image` and `memory` were both just created above on
+        // this device, and `image` has not been bound to memory before
+        // now.
+        unsafe {
+            device
+                .device
+                .bind_image_memory(image, memory, 0)
+                .map_err(|_| EngineError::DeviceLost)?;
+        }
+
+        // SAFETY: `device.device` is valid, and `image` was just bound to
+        // `memory` immediately above, so creating a view of it now is
+        // valid.
+        let view = unsafe {
+            device.device.create_image_view(
+                &vk::ImageViewCreateInfo::default()
+                    .image(image)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(vk_format)
+                    .subresource_range(
+                        vk::ImageSubresourceRange::default()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .level_count(1)
+                            .layer_count(1),
+                    ),
+                None,
+            )
+        }
+        .map_err(|_| EngineError::DeviceLost)?;
+
+        Ok(Self {
+            image,
+            view,
+            memory,
+            width,
+            height,
+            format,
+            device: device.device.clone(),
+        })
+    }
+}
+
+impl RhiTexture for VulkanTexture {
+    fn raw_handle(&self) -> u64 {
+        self.view.as_raw()
+    }
+
+    fn image_handle(&self) -> u64 {
+        self.image.as_raw()
+    }
+
+    fn memory_handle(&self) -> u64 {
+        self.memory.as_raw()
+    }
+
+    fn dimensions(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+
+    fn format(&self) -> TextureFormat {
+        self.format
+    }
+}
+
+impl Drop for VulkanTexture {
+    fn drop(&mut self) {
+        // SAFETY: `self` is being dropped, so no other code holds
+        // references to `self.view`/`self.image`/`self.memory` afterward;
+        // destroying the view before the image, and the image before
+        // freeing the memory it was bound to, follows Vulkan's required
+        // child-before-parent destruction order.
+        unsafe {
+            self.device.destroy_image_view(self.view, None);
+            self.device.destroy_image(self.image, None);
+            self.device.free_memory(self.memory, None);
+        }
+    }
+}
+
+struct RingBufferState {
+    /// The `FrameSync::frame_index` value this segment's `cursor` was
+    /// last reset for. When `write` observes a different current index,
+    /// that means a new frame has begun (per the "`VulkanDevice::
+    /// begin_frame` is always called before this buffer's `write` each
+    /// frame" calling convention -- see `VulkanRingBuffer`'s doc comment)
+    /// and the new segment's cursor starts over at 0.
+    last_seen_frame_index: usize,
+    cursor: usize,
+}
+
+/// TECHNICAL.md Section 3.1's triple-buffered dynamic ring buffer: one
+/// host-coherent `VkBuffer`, persistently mapped once at construction,
+/// divided into `FRAMES_IN_FLIGHT` equal segments.
+///
+/// Calling convention: call `VulkanDevice::begin_frame` before any
+/// `write` calls for a given frame. This buffer has no fence-wait of its
+/// own -- it shares `VulkanDevice`'s `FrameSync` purely to read which
+/// segment is current, trusting that `begin_frame`'s own wait already
+/// guaranteed that segment's prior GPU usage is complete (waiting on the
+/// same fence a second time here would deadlock, since `begin_frame`
+/// already reset it to unsignaled in preparation for this frame's own
+/// submission).
+pub struct VulkanRingBuffer {
+    buffer: vk::Buffer,
+    memory: vk::DeviceMemory,
+    mapped_ptr: *mut u8,
+    segment_size: usize,
+    frame_sync: Arc<FrameSync>,
+    state: Mutex<RingBufferState>,
+    device: ash::Device,
+}
+
+// SAFETY: `mapped_ptr` is only ever dereferenced inside `write`, which is
+// guarded by `state`'s `Mutex`, and the pointer stays valid for this
+// buffer's entire lifetime (mapped once in `new`, unmapped only in
+// `Drop`) -- there is no unsynchronized access to the raw pointer this
+// auto-trait would otherwise (correctly) forbid.
+unsafe impl Send for VulkanRingBuffer {}
+unsafe impl Sync for VulkanRingBuffer {}
+
+impl VulkanRingBuffer {
+    fn new(device: &VulkanDevice, capacity: usize) -> Result<Self, EngineError> {
+        let segment_size = align_up(capacity.div_ceil(FRAMES_IN_FLIGHT), RING_BUFFER_ALIGNMENT);
+        let total_size = segment_size * FRAMES_IN_FLIGHT;
+
+        // SAFETY: `device.device` is valid, and `total_size` is used
+        // directly as `size` so the create info describes exactly this
+        // buffer's full triple-segment span.
+        let buffer = unsafe {
+            device.device.create_buffer(
+                &vk::BufferCreateInfo::default()
+                    .size(total_size as u64)
+                    .usage(
+                        vk::BufferUsageFlags::VERTEX_BUFFER
+                            | vk::BufferUsageFlags::INDEX_BUFFER
+                            | vk::BufferUsageFlags::UNIFORM_BUFFER,
+                    )
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE),
+                None,
+            )
+        }
+        .map_err(|_| EngineError::DeviceLost)?;
+
+        // SAFETY: `buffer` was just created above on this device.
+        let requirements = unsafe { device.device.get_buffer_memory_requirements(buffer) };
+        // SAFETY: `device.physical_device` is valid for as long as
+        // `device.instance` (also alive here) is.
+        let memory_properties = unsafe {
+            device
+                .instance
+                .get_physical_device_memory_properties(device.physical_device)
+        };
+        let wanted = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
+        let memory_type_index = (0..memory_properties.memory_type_count)
+            .find(|&i| {
+                (requirements.memory_type_bits & (1 << i)) != 0
+                    && memory_properties.memory_types[i as usize]
+                        .property_flags
+                        .contains(wanted)
+            })
+            .ok_or(EngineError::DeviceLost)?;
+
+        // SAFETY: `device.device` is valid, `requirements.size` comes
+        // directly from `get_buffer_memory_requirements` above, and
+        // `memory_type_index` was selected from the `find` above so it is
+        // one of the bits set in `requirements.memory_type_bits`.
+        let memory = unsafe {
+            device.device.allocate_memory(
+                &vk::MemoryAllocateInfo::default()
+                    .allocation_size(requirements.size)
+                    .memory_type_index(memory_type_index),
+                None,
+            )
+        }
+        .map_err(|_| EngineError::DeviceLost)?;
+
+        // SAFETY: `buffer`/`memory` were both just created above on this
+        // device, `buffer` has not been bound to memory before now, and
+        // `memory` was allocated as host-visible/host-coherent (selected
+        // via `wanted` above), so mapping it is valid. The returned
+        // pointer is kept for this struct's entire lifetime (persistent
+        // mapping, matching TECHNICAL.md Section 3.1's design rather than
+        // `upload_buffer`'s Phase-0 map-write-unmap-once pattern) and
+        // unmapped exactly once, in `Drop`.
+        let mapped_ptr = unsafe {
+            device
+                .device
+                .bind_buffer_memory(buffer, memory, 0)
+                .map_err(|_| EngineError::DeviceLost)?;
+            device
+                .device
+                .map_memory(memory, 0, total_size as u64, vk::MemoryMapFlags::empty())
+                .map_err(|_| EngineError::DeviceLost)? as *mut u8
+        };
+
+        Ok(Self {
+            buffer,
+            memory,
+            mapped_ptr,
+            segment_size,
+            frame_sync: device.frame_sync.clone(),
+            state: Mutex::new(RingBufferState {
+                last_seen_frame_index: usize::MAX,
+                cursor: 0,
+            }),
+            device: device.device.clone(),
+        })
+    }
+}
+
+impl RhiBuffer for VulkanRingBuffer {
+    fn raw_handle(&self) -> u64 {
+        self.buffer.as_raw()
+    }
+}
+
+impl RhiDynamicRingBuffer for VulkanRingBuffer {
+    fn write(&self, bytes: &[u8]) -> Option<u32> {
+        let frame_index = self.frame_sync.frame_index.load(Ordering::Acquire);
+        let mut state = self.state.lock().expect("ring buffer state poisoned");
+        if state.last_seen_frame_index != frame_index {
+            state.last_seen_frame_index = frame_index;
+            state.cursor = 0;
+        }
+
+        let aligned_len = align_up(bytes.len(), RING_BUFFER_ALIGNMENT);
+        if state.cursor + aligned_len > self.segment_size {
+            return None; // DESIGN.md Section 2.6: starvation is reported, not grown mid-frame.
+        }
+
+        let segment_base = frame_index * self.segment_size;
+        let offset = segment_base + state.cursor;
+        // SAFETY: `self.mapped_ptr` is valid for `segment_size *
+        // FRAMES_IN_FLIGHT` bytes for this struct's whole lifetime; `offset
+        // + bytes.len() <= offset + aligned_len <= segment_base +
+        // self.segment_size <= total mapped size` (checked above), and
+        // `state`'s `MutexGuard` makes this the only writer touching
+        // `mapped_ptr` at a time.
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.mapped_ptr.add(offset), bytes.len());
+        }
+        state.cursor += aligned_len;
+
+        u32::try_from(offset).ok()
+    }
+}
+
+impl Drop for VulkanRingBuffer {
+    fn drop(&mut self) {
+        // SAFETY: `self` is being dropped, so no other code holds
+        // references to `self.mapped_ptr` afterward; unmapping before
+        // destroying the buffer and freeing its memory follows Vulkan's
+        // required order.
+        unsafe {
+            self.device.unmap_memory(self.memory);
+            self.device.destroy_buffer(self.buffer, None);
+            self.device.free_memory(self.memory, None);
         }
     }
 }

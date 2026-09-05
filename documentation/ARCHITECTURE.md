@@ -180,6 +180,8 @@ The RHI maps the batched IR commands directly to Vulkan, DirectX 12, or Metal co
 
 *Filled in during the Phase 0 walking skeleton implementation (2026-09-04, IMPLEMENTATION.md Phase 0 status note):* this section originally left `RhiBuffer`, `RhiTexture`, `RhiPipelineState`, and `RhiSwapchain` referenced (as `&dyn Rhi*` parameters) but undefined, and gave `begin_frame`/`submit_and_present` no way to report failure. Both gaps surfaced immediately on trying to actually implement a Vulkan backend against this sketch -- exactly the kind of interface mismatch Phase 0 exists to catch. The definitions below are the real, working, validated design (`crates/tre-engine/src/lib.rs`), not a plan.
 
+*Updated for Phase 2 Step 1 (2026-09-05):* `create_dynamic_ring_buffer`/`acquire_transient_target`/`release_transient_target` were `unimplemented!()` stubs through Phase 0 and 1; they are real as of this step (`crates/tre-rhi-vulkan`'s `VulkanRingBuffer`/`VulkanTexture`, TECHNICAL.md Sections 3.1/3.2). Frame submission itself stays fully synchronous (one frame in flight at a time) -- the ring buffer's 3-segment structure and the transient pool's deferred-growth queue are real and correct, but genuine overlapping multi-frame-in-flight GPU/CPU submission is deferred to a future step, per `planning/archive/PLAN_PHASE2_STEP1.md`'s scope decision.
+
 ```rust
 /// An acquired swapchain image, threaded from `RhiSwapchain::acquire_next_image`
 /// through `RhiDevice::begin_frame` to the caller and back to
@@ -209,8 +211,18 @@ trait RhiBuffer {
     fn raw_handle(&self) -> u64;
 }
 
+/// `image_handle`/`memory_handle` added in Phase 2 Step 1: a backend
+/// needs all three opaque handles (view, image, backing memory) to
+/// reconstruct its own concrete texture type from a `Box<dyn RhiTexture>`
+/// -- e.g. `RhiDevice::release_transient_target` receives one back from a
+/// caller and must recover enough to store/eventually destroy it. Same
+/// opaque-handle pattern as `AcquiredImage`, not a downcast.
 trait RhiTexture {
     fn raw_handle(&self) -> u64;
+    fn image_handle(&self) -> u64;
+    fn memory_handle(&self) -> u64;
+    fn dimensions(&self) -> (u32, u32);
+    fn format(&self) -> TextureFormat;
 }
 
 trait RhiPipelineState {
@@ -219,6 +231,20 @@ trait RhiPipelineState {
     /// `RhiCommandBuffer::set_pipeline` implementations that push
     /// constants/descriptors keyed by layout (e.g. `vkCmdPushConstants`).
     fn layout_handle(&self) -> u64;
+}
+
+/// TECHNICAL.md Section 3.1's triple-buffered dynamic ring buffer. A
+/// distinct trait from `RhiBuffer` (Phase 2 Step 1), not extra methods
+/// added to it, since callers use a fundamentally different pattern:
+/// bump-allocate into the current frame's segment every frame, rather
+/// than upload-once-and-keep-forever.
+trait RhiDynamicRingBuffer: RhiBuffer {
+    /// Bump-allocates from the current frame's segment, returning the
+    /// byte offset written at (usable directly as a
+    /// `bind_vertex_buffer`/`bind_index_buffer` offset), or `None` if the
+    /// segment has no room left this frame (DESIGN.md Section 2.6:
+    /// starvation is reported, never grown dynamically mid-frame).
+    fn write(&self, bytes: &[u8]) -> Option<u32>;
 }
 
 trait RhiSwapchain {
@@ -231,9 +257,19 @@ trait RhiSwapchain {
 }
 
 trait RhiDevice {
-    // Resource Management
-    fn create_dynamic_ring_buffer(&self, capacity: usize) -> Box<dyn RhiBuffer>;
-    fn acquire_transient_target(&self, width: u32, height: u32) -> Box<dyn RhiTexture>;
+    // Resource Management -- real as of Phase 2 Step 1 (TECHNICAL.md
+    // Sections 3.1/3.2): `create_dynamic_ring_buffer` returns a distinct
+    // `RhiDynamicRingBuffer` trait (bump-allocate-per-frame is a
+    // different usage pattern than a plain upload-once `RhiBuffer`), and
+    // `acquire_transient_target` takes a `TextureFormat` so the pool can
+    // key on `(Width, Height, Format)` as Section 3.2 requires.
+    fn create_dynamic_ring_buffer(&self, capacity: usize) -> Box<dyn RhiDynamicRingBuffer>;
+    fn acquire_transient_target(
+        &self,
+        width: u32,
+        height: u32,
+        format: TextureFormat,
+    ) -> Box<dyn RhiTexture>;
     fn release_transient_target(&self, texture: Box<dyn RhiTexture>);
 
     // Command Submission -- both return `Result` (added during Phase 0;

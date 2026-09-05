@@ -3,7 +3,7 @@
 Reviewer: Claude (Cowork), acting as Principal Engineer / Lead Tech Architect, per project standing instructions.
 Scope: `DESIGN.md`, `TECHNICAL.md`, `ARCHITECTURE.md`, `IMPLEMENTATION.md`, reviewed in that order. All findings below have been implemented directly in those four files; this document is the record of what was found and what changed.
 
-Status: **All findings implemented.** See "Follow-up: Rust/Python Language Migration," "Review of Rust-Specific Additions," "Full Documentation Review," "Engineering Decisions: Suggested Improvements Actioned," "Phase 0 Implementation" (2026-09-04), "Phase 1 Step 1 Implementation," "Pre-Phase-1-Step-2 Doc Check," "Phase 1 Step 2 Implementation," and "Phase 1 Review" (2026-09-05) below for subsequent, out-of-band work not part of this original review. "Phase 1 Review"'s finding #51 has since been fixed; #52-53 are deliberately deferred to Phase 2 — see that section for disposition.
+Status: **All findings implemented.** See "Follow-up: Rust/Python Language Migration," "Review of Rust-Specific Additions," "Full Documentation Review," "Engineering Decisions: Suggested Improvements Actioned," "Phase 0 Implementation" (2026-09-04), "Phase 1 Step 1 Implementation," "Pre-Phase-1-Step-2 Doc Check," "Phase 1 Step 2 Implementation," "Phase 1 Review," and "Phase 2 Step 1 Implementation" (2026-09-05) below for subsequent, out-of-band work not part of this original review. "Phase 1 Review"'s finding #51 has since been fixed; #52-53 remain deliberately deferred to Phase 2 (not yet revisited) — see that section for disposition.
 
 ---
 
@@ -470,3 +470,34 @@ This phase added several FFI-heavy, security-relevant dependencies (`wayland-cli
 | 54 | Driver-empty-format-list panic; input-queue overflow can drop `CloseRequested` | tre-rhi-vulkan, tre-engine (code) | Nice-to-have | Recorded, not fixed — both low-likelihood |
 | 55 | No `cargo audit`/`cargo deny` in CI despite new FFI-heavy deps this phase | CI | Nice-to-have | Recommended follow-up, not yet added |
 | 56 | `Drop for VulkanSwapchain` skips `device_wait_idle`, unlike `HeadlessSwapchain` | tre-rhi-vulkan (code) | Nice-to-have | Recorded, not fixed — likely benign under Phase 0/1's sync model, revisit in Phase 2 |
+
+---
+
+## Phase 2 Step 1 Implementation (2026-09-05)
+
+Reviewer: Claude (Cowork), acting as Principal Engineer / Lead Tech Architect, per project standing instructions.
+Scope: implementing IMPLEMENTATION.md Step 2.2's ring buffer/transient pool -- `tre_engine::RhiDynamicRingBuffer`/`InputEventQueue`-style pool, `tre-rhi-vulkan`'s `VulkanRingBuffer`/`VulkanTexture`, and `RenderingCanvas::push_layer`/`pop_layer`. Full detail in `planning/archive/PLAN_PHASE2_STEP1.md` and `LOG_PHASE2_STEP1.md`; this is the summary for the documentation's own record.
+
+Status: **Complete**, with two scope deviations recorded in IMPLEMENTATION.md's Step 2.2 status section (64-byte thread-boundary padding and `push_layer`'s direct pool-hook, both deliberately deferred). `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the workspace. A new `demo/phase2_step1/` example verified against real hardware with `VK_LAYER_KHRONOS_validation` enabled: zero errors, after fixing two real bugs the validation layer caught along the way (both below).
+
+### 57. [Critical] An initial fence-rotation design broke the existing single-command-buffer examples
+Building the ring buffer's "which segment is current" tracking, the first implementation gave `VulkanDevice` 3 separate fences (one per frame-in-flight slot) and rotated which one gated the persistent command buffer's reuse. This is unsound: `VulkanDevice` reuses ONE physical command buffer every frame regardless of which ring-buffer segment is logically current, so waiting on a *different* (trivially already-signaled) fence than the one that command buffer's own last submission actually signaled does not prove the GPU is done with it. Caught immediately on actually running `walking_skeleton`/`multi_window` under `VK_LAYER_KHRONOS_validation`: `VUID-vkResetCommandBuffer-commandBuffer-00045`, `VUID-vkBeginCommandBuffer-commandBuffer-00049`, `VUID-vkQueueSubmit-pCommandBuffers-00071`, and `VUID-vkAcquireNextImageKHR-semaphore-01779` all fired -- not from static analysis, from execution.
+
+**Change:** reverted to a single real fence for command-buffer gating (identical semantics to Phase 0's `in_flight_fence`), and added a SEPARATE, purely informational `AtomicUsize` counter (`FrameSync::frame_index`) that only `VulkanRingBuffer` reads, to pick its current segment. This is sound without its own per-segment fence precisely because the single real fence already fully synchronizes every frame -- by the time the counter cycles back to a given value, at least two other fully-synchronous frames have completed since that segment was last written. Re-verified: all five Vulkan examples (`walking_skeleton`, `multi_window`, `headless`, `input_demo`, the new `memory_pools_demo`) pass with zero validation errors.
+
+### 58. [Should-fix] Textures still checked into the transient pool at teardown were never destroyed
+`VulkanDevice` had no logic to destroy pooled (checked-in) `VulkanTexture`s before destroying the device itself. Caught by the validation layer on the new demo's very first run: `VUID-vkDestroyDevice-device-05137`, 6 leaked objects (2 textures' image/view/memory each). A naive fix (just adding the pool as a normal struct field) would have been WORSE, not better: Rust drops a struct's other fields only after an explicit `Drop::drop` body returns, so the pool's own automatic drop would have run its `VulkanTexture`s' destructors AFTER `destroy_device` already executed -- a genuine use-after-free.
+
+**Change:** `Drop for VulkanDevice` now explicitly clears the pool (dropping every pooled `VulkanTexture`, which runs their own correct image/view/memory destruction) BEFORE the existing fence/command-pool/device/instance teardown, fixing both the leak and the ordering hazard a less careful fix would have introduced.
+
+### 59. [Nice-to-have] Two scope deviations from IMPLEMENTATION.md Step 2.2's literal task wording, both deliberate
+* Task 3's "64 bytes for CPU thread boundaries" (false-sharing protection) is not implemented -- no multi-threaded canvas writer exists yet to need it (Phase 5's `SubCanvas`). Deferred until a real concurrent writer exists to verify against.
+* Task 4's "hook this into `Canvas::push_layer` for immediate zero-allocation acquisition" was not done as literally worded -- `push_layer`/`pop_layer` record IR markers and the balance counter only, never calling `RhiDevice::acquire_transient_target` directly, preserving DESIGN.md Section 2.2's architectural separation (`Canvas` stays backend-agnostic, no RHI device reference). Nothing downstream of `Canvas` consumes a transient target yet (Phase 6's sort/batch/execute pipeline is what would); wiring `push_layer` to the real pool is deferred to whichever phase builds that consumer.
+
+## Summary table (Phase 2 Step 1)
+
+| # | Finding | Doc(s)/Code | Severity | Resolution |
+|---|---|---|---|---|
+| 57 | Rotating fence-per-segment design broke existing single-command-buffer examples | tre-rhi-vulkan (code) | Critical | Fixed — single real fence restored; segment selection uses a separate non-fence counter |
+| 58 | Pooled transient textures never destroyed at device teardown (leak + would-be use-after-free) | tre-rhi-vulkan (code) | Should-fix | Fixed — pool explicitly cleared before device/instance destruction |
+| 59 | Two scope deviations from Step 2.2's literal task wording (thread-boundary padding, push_layer pool hook) | IMPLEMENTATION | Nice-to-have | Both deliberate and documented, not defects |

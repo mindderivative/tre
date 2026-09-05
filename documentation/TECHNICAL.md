@@ -92,9 +92,9 @@ To achieve the $0\text{ byte}$ dynamic allocation rule during the active frame t
 
 Added in the September 2026 documentation review. The $0\text{ bytes/frame}$ budget (Section 1) is a hard constraint, not an aspiration, and must be mechanically enforced rather than assumed:
 
-* **Debug/Profile Build Guard:** In debug and profiling build configurations, `operator new`/`operator delete` (and `malloc`/`free`) are overridden to check a thread-local "render tick active" flag set by a scope guard at the start of `RenderingCanvas` recording and cleared after RHI submission. Any allocation observed while the flag is set triggers an immediate assert with a captured call stack.
+* **Debug/Profile Build Guard:** In debug and profiling build configurations, a custom `#[global_allocator]` wrapper around the system allocator checks a thread-local "render tick active" flag set by a scope guard at the start of `RenderingCanvas` recording and cleared after RHI submission. Any allocation observed while the flag is set triggers an immediate assert with a captured call stack. (Corrected in the Phase 2 Step 1 documentation pass: earlier revisions of this section described this as overriding `operator new`/`operator delete`/`malloc`/`free`, leftover C++ phrasing from before the Rust migration -- Rust has no equivalent operator to override, and the actual mechanism is the standard library's `GlobalAlloc` trait.)
 * **CI Gate:** The headless CI performance regression suite (Section 9.2) runs every commit's render loop under this guard and fails the build on any violation -- the same gate that checks the $\le 0.50\text{ ms}$ CPU budget must also check for zero allocation events, since a passing timing budget with an undetected allocation is a false pass.
-* **Release Build Behavior:** The guard and its thread-local check compile out entirely in release builds (`NDEBUG`) to avoid any steady-state overhead from the enforcement mechanism itself.
+* **Release Build Behavior:** The guard and its thread-local check compile out entirely in release builds (`cfg(not(debug_assertions))`, Rust's equivalent of C's `NDEBUG`-gated code) to avoid any steady-state overhead from the enforcement mechanism itself.
 
 ## 4. Draw Sorting & 64-Bit Batching Key
 

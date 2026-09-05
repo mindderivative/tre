@@ -232,6 +232,35 @@ impl InputEventQueue {
     }
 }
 
+/// An engine-level, backend-agnostic pixel format for transient render
+/// targets (TECHNICAL.md Section 3.2's `(Width, Height, Format)` pool
+/// key) and swapchains. Matches TECHNICAL.md Section 6.1's two swapchain
+/// formats -- SDR and HDR -- since transient offscreen targets need to
+/// match whichever pipeline (SDR or HDR) is compositing them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TextureFormat {
+    /// Standard dynamic range: `VK_FORMAT_B8G8R8A8_SRGB` /
+    /// `DXGI_FORMAT_B8G8R8A8_UNORM_SRGB`.
+    Bgra8Srgb,
+    /// High dynamic range / wide gamut: `VK_FORMAT_R16G16B16A16_SFLOAT` /
+    /// `DXGI_FORMAT_R16G16B16A16_FLOAT`.
+    Rgba16Float,
+}
+
+/// Describes an offscreen compositing layer requested via
+/// `RenderingCanvas::push_layer` (DESIGN.md Section 6.2). Minimal for
+/// now -- opacity/blend-mode/blur-radius fields belong here once a later
+/// phase implements those visual filters (DESIGN.md Section 6.2's
+/// "Visual Filter Pipeline"); this step only needs enough to acquire a
+/// correctly-sized, correctly-formatted transient render target from the
+/// pool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayerDesc {
+    pub width: u32,
+    pub height: u32,
+    pub format: TextureFormat,
+}
+
 /// A frame's fully-recorded, sorted-and-flattened batch: one contiguous
 /// vertex/index stream plus the (currently trivial, Phase 0) list of
 /// draw commands describing how to slice it into RHI draw calls.
@@ -243,19 +272,83 @@ pub struct FlattenedFrame {
 
 /// Phase 0 stub: records `Canvas::draw_rounded_rect` calls into a plain
 /// `Vec` (IMPLEMENTATION.md Phase 0, task 2 -- "no ring buffer, no arena,
-/// no multi-threading yet"). `tre-memory`'s zero-allocation ring arena
-/// replaces this `Vec` in Phase 2.
+/// no multi-threading yet"). Phase 2 Step 1 builds the real RHI-side ring
+/// buffer/transient pool (`RhiDevice::create_dynamic_ring_buffer`/
+/// `acquire_transient_target`) as standalone, independently-provable
+/// primitives, but does not yet rewire `RenderingCanvas`'s own IR
+/// accumulation to write through them -- nothing downstream of `Canvas`
+/// consumes a ring-buffer offset yet (the sort/batch/execute pipeline,
+/// IMPLEMENTATION.md Phase 6, is what would), so wiring it in now would
+/// be plumbing with no real consumer to verify it against. Deferred.
 #[derive(Default)]
 pub struct RenderingCanvas {
     vertices: Vec<UiVertex>,
     indices: Vec<u32>,
     commands: Vec<UiDrawCommand>,
+    /// Debug-only balance counter for `push_layer`/`pop_layer`
+    /// (IMPLEMENTATION.md Step 2.2 task 5): incremented/decremented on
+    /// each call, asserted zero at `flatten()`. Compiles to a plain
+    /// unused `u32` in release builds rather than being cfg'd out
+    /// entirely, so `push_layer`/`pop_layer`'s own bodies don't need
+    /// separate debug/release code paths.
+    layer_depth: u32,
 }
 
 impl RenderingCanvas {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Records a `PushLayer` IR marker (DESIGN.md Section 6.2) and
+    /// increments the debug balance counter. Does not itself acquire a
+    /// transient render target -- see this struct's doc comment for why
+    /// that wiring is deferred; `desc` is recorded for a future RHI
+    /// execution stage to act on.
+    pub fn push_layer(&mut self, desc: &LayerDesc) {
+        self.layer_depth += 1;
+        self.commands.push(UiDrawCommand {
+            kind: CommandType::PushLayer,
+            sort_key: 0,
+            pipeline_state_id: 0,
+            texture_handle: 0,
+            element_count: 0,
+            vertex_offset: 0,
+            clip_bounds: ScissorRect {
+                x: 0,
+                y: 0,
+                width: desc.width,
+                height: desc.height,
+            },
+        });
+    }
+
+    /// Records a `PopLayer` IR marker and decrements the debug balance
+    /// counter.
+    ///
+    /// # Panics
+    /// Panics if called without a matching prior `push_layer` -- an
+    /// unbalanced push/pop is a programmer error (DESIGN.md Section 2.6),
+    /// not a recoverable runtime condition.
+    pub fn pop_layer(&mut self) {
+        self.layer_depth = self
+            .layer_depth
+            .checked_sub(1)
+            .expect("pop_layer called without a matching push_layer");
+        self.commands.push(UiDrawCommand {
+            kind: CommandType::PopLayer,
+            sort_key: 0,
+            pipeline_state_id: 0,
+            texture_handle: 0,
+            element_count: 0,
+            vertex_offset: 0,
+            clip_bounds: ScissorRect {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            },
+        });
     }
 
     /// Phase 0 stub: emits exactly one `UiDrawCommand` per call, backed by
@@ -328,8 +421,18 @@ impl RenderingCanvas {
     /// radix sort (IMPLEMENTATION.md Phase 6) has nothing to do yet when
     /// there is only ever one element -- "one element sorts itself"
     /// (IMPLEMENTATION.md Phase 0, task 3).
+    /// # Panics
+    /// In debug builds, panics if `push_layer`/`pop_layer` calls are
+    /// unbalanced at frame boundary (IMPLEMENTATION.md Step 2.2 task 5) --
+    /// an unreleased transient target otherwise starves the pool silently
+    /// over many frames instead of failing loudly at the actual bug.
+    /// Compiled out in release builds along with the counter's checks.
     #[must_use]
     pub fn flatten(self) -> FlattenedFrame {
+        debug_assert_eq!(
+            self.layer_depth, 0,
+            "push_layer/pop_layer calls are unbalanced at frame boundary"
+        );
         FlattenedFrame {
             vertices: self.vertices,
             indices: self.indices,
@@ -382,8 +485,49 @@ pub trait RhiBuffer {
 
 /// A GPU texture (atlas page or offscreen render target). Referenced but
 /// undefined by ARCHITECTURE.md Section 6; defined here.
+///
+/// Exposes every raw handle a backend needs to reconstruct its own
+/// concrete texture type from a `Box<dyn RhiTexture>` -- e.g.
+/// `RhiDevice::release_transient_target` receives one back from a caller
+/// and must recover enough to store/eventually destroy it. This is the
+/// same opaque-handle-reinterpretation pattern `AcquiredImage` already
+/// uses (multiple named `u64` fields, not one), not a downcast:
+/// TECHNICAL.md Section 9.1 bans dynamic type inspection in the per-frame
+/// path, but a backend re-interpreting a handle it produced itself
+/// moments earlier is not that.
 pub trait RhiTexture {
+    /// The image view -- what a shader binds/samples.
     fn raw_handle(&self) -> u64;
+    /// The underlying image (distinct from its view), needed for layout
+    /// barriers and for destroying the image itself.
+    fn image_handle(&self) -> u64;
+    /// The backing device memory, needed to free it on destruction.
+    fn memory_handle(&self) -> u64;
+    /// The texture's actual dimensions -- may be *larger* than what a
+    /// caller requested from `RhiDevice::acquire_transient_target` on a
+    /// transient-pool cache miss (TECHNICAL.md Section 3.2's next-larger
+    /// fallback, DESIGN.md Section 2.6), so callers must consult this
+    /// rather than assume it matches their request.
+    fn dimensions(&self) -> (u32, u32);
+    fn format(&self) -> TextureFormat;
+}
+
+/// A triple-buffered, host-mapped dynamic buffer (TECHNICAL.md Section
+/// 3.1) for per-frame vertex/index/uniform data written directly by the
+/// CPU, without a staging upload. A distinct trait from the plain
+/// `RhiBuffer` rather than additional methods bolted onto it, since
+/// callers use a fundamentally different pattern: bump-allocate into the
+/// current frame's segment every frame, rather than upload-once-and-keep.
+pub trait RhiDynamicRingBuffer: RhiBuffer {
+    /// Bump-allocates `bytes.len()` (rounded up to the RHI's minimum
+    /// dynamic-offset alignment) from the current frame's segment and
+    /// copies `bytes` into it, returning the byte offset `bytes` was
+    /// written at -- usable directly as a
+    /// `RhiCommandBuffer::bind_vertex_buffer`/`bind_index_buffer` offset.
+    /// Returns `None` if the segment has no room left this frame
+    /// (DESIGN.md Section 2.6: ring-buffer starvation is reported, never
+    /// grown dynamically mid-frame).
+    fn write(&self, bytes: &[u8]) -> Option<u32>;
 }
 
 /// A compiled graphics pipeline state object. Referenced but undefined by
@@ -433,8 +577,16 @@ pub trait RhiSwapchain {
 /// while it's still cheap to change (IMPLEMENTATION.md Phase 0 rationale).
 pub trait RhiDevice {
     // Resource Management
-    fn create_dynamic_ring_buffer(&self, capacity: usize) -> Box<dyn RhiBuffer>;
-    fn acquire_transient_target(&self, width: u32, height: u32) -> Box<dyn RhiTexture>;
+    /// `capacity` is the ring buffer's TOTAL size in bytes (TECHNICAL.md
+    /// Section 3.1's $16\text{-}32\text{MB}$), divided evenly across the
+    /// 3 frame-in-flight segments -- not the per-segment size.
+    fn create_dynamic_ring_buffer(&self, capacity: usize) -> Box<dyn RhiDynamicRingBuffer>;
+    fn acquire_transient_target(
+        &self,
+        width: u32,
+        height: u32,
+        format: TextureFormat,
+    ) -> Box<dyn RhiTexture>;
     fn release_transient_target(&self, texture: Box<dyn RhiTexture>);
 
     // Command Submission
@@ -603,5 +755,44 @@ mod tests {
         assert_eq!(frame.vertices.len(), 4);
         assert_eq!(frame.indices.len(), 6);
         assert_eq!(frame.commands[0].element_count, 6);
+    }
+
+    #[test]
+    fn balanced_push_pop_layer_does_not_panic_at_flatten() {
+        let mut canvas = RenderingCanvas::new();
+        let desc = LayerDesc {
+            width: 256,
+            height: 256,
+            format: TextureFormat::Bgra8Srgb,
+        };
+        canvas.push_layer(&desc);
+        canvas.pop_layer();
+        let frame = canvas.flatten();
+        assert_eq!(frame.commands.len(), 2);
+        assert_eq!(frame.commands[0].kind, CommandType::PushLayer);
+        assert_eq!(frame.commands[1].kind, CommandType::PopLayer);
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(debug_assertions),
+        ignore = "the balance assertion is a debug_assert, compiled out in release"
+    )]
+    #[should_panic(expected = "unbalanced")]
+    fn unbalanced_push_layer_panics_at_flatten() {
+        let mut canvas = RenderingCanvas::new();
+        canvas.push_layer(&LayerDesc {
+            width: 64,
+            height: 64,
+            format: TextureFormat::Bgra8Srgb,
+        });
+        let _ = canvas.flatten();
+    }
+
+    #[test]
+    #[should_panic(expected = "without a matching push_layer")]
+    fn pop_layer_without_push_panics_immediately() {
+        let mut canvas = RenderingCanvas::new();
+        canvas.pop_layer();
     }
 }
