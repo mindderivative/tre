@@ -3,7 +3,7 @@
 Reviewer: Claude (Cowork), acting as Principal Engineer / Lead Tech Architect, per project standing instructions.
 Scope: `DESIGN.md`, `TECHNICAL.md`, `ARCHITECTURE.md`, `IMPLEMENTATION.md`, reviewed in that order. All findings below have been implemented directly in those four files; this document is the record of what was found and what changed.
 
-Status: **All findings implemented.** See "Follow-up: Rust/Python Language Migration," "Review of Rust-Specific Additions," "Full Documentation Review," "Engineering Decisions: Suggested Improvements Actioned," "Phase 0 Implementation" (2026-09-04), "Phase 1 Step 1 Implementation," "Pre-Phase-1-Step-2 Doc Check," and "Phase 1 Step 2 Implementation" (2026-09-05) below for subsequent, out-of-band work not part of this original review.
+Status: **All findings implemented.** See "Follow-up: Rust/Python Language Migration," "Review of Rust-Specific Additions," "Full Documentation Review," "Engineering Decisions: Suggested Improvements Actioned," "Phase 0 Implementation" (2026-09-04), "Phase 1 Step 1 Implementation," "Pre-Phase-1-Step-2 Doc Check," "Phase 1 Step 2 Implementation," and "Phase 1 Review" (2026-09-05) below for subsequent, out-of-band work not part of this original review. "Phase 1 Review"'s findings #51-53 are deliberately **not yet fixed** — see that section for disposition.
 
 ---
 
@@ -424,3 +424,43 @@ Step 1.1 (finding #46) already recorded that Wayland's `xdg-shell` gives clients
 | 50 | Unhinted window placement stacks windows on X11 too, not just Wayland | tre-platform (verification) | Nice-to-have | Confirmed non-bug — harness now raises/focuses target window explicitly |
 
 Note on #11: this one is deliberately documented rather than "solved," per the finding's own conclusion — folding `clipBounds` into the sort key isn't possible without shrinking Layer, Pipeline, or the now-widened Depth field, and the risk is a performance regression (more batches than optimal), not a correctness bug. A clip-bucketing secondary pass is named as the future fix if profiling ever shows it matters.
+
+---
+
+## Phase 1 Review (2026-09-05)
+
+Reviewer: two sub-agents (Rust correctness, security), per the project's standing "review each completed phase before the next begins" process. Scope: everything Phase 1 touched -- `tre-platform` (native windowing + input), `tre-memory` (the new `SpscRingBuffer`), `tre-engine`'s new `InputEvent`/`InputEventQueue` types, and `tre-rhi-vulkan`'s existing surface/window integration.
+
+Status: **No Critical or High severity findings.** Both reviewers independently confirmed the SPSC ring buffer's atomic ordering and the `InputEventQueue` coalescing design are sound. Findings below are Medium/Low process and robustness gaps, plus one pre-existing (not introduced this phase) documentation-policy violation.
+
+### 51. [Should-fix, pre-existing] `tre-rhi-vulkan` has zero `SAFETY:` comments across roughly 65 `unsafe` blocks
+TECHNICAL.md Section 9.1 requires "every `unsafe` block requires an adjacent `// SAFETY:` comment stating the invariant being upheld," and `tre-memory`/`tre-platform` both comply. `tre-rhi-vulkan/src/lib.rs` and `src/headless.rs` do not -- every `unsafe` block in both files (introduced across Phase 0 and Step 1.1, not by Step 2) lacks one. Not a correctness bug by itself, but a real, systemic policy violation that gets more expensive to fix the longer it's left, since Phase 2 adds substantially more Vulkan code on top of this base.
+
+**Disposition:** not fixed in this pass -- flagged for the project owner to decide whether to do a dedicated cleanup pass before Phase 2, or fold it into Phase 2's first step.
+
+### 52. [Should-fix] `SpscRingBuffer`'s API doesn't statically enforce the single-producer/single-consumer contract its soundness depends on
+`push`/`pop` both take `&self`, and the type is `unsafe impl Sync`. Today only one thread ever calls either (this step defers real thread separation), so it's sound in practice, but nothing stops two threads from both calling `.push()` on a shared `Arc<SpscRingBuffer<T>>` -- which would be genuine, unsynchronized UB (not just a logic bug), and Phase 2 is explicitly where a second real thread is expected to appear.
+
+**Disposition:** not fixed now -- recommended fix (split `Producer<T>`/`Consumer<T>` handles from a `split()` constructor, matching `crossbeam`/`ringbuf`'s pattern) is Phase 2 work, since that's when a real second thread and the actual producer/consumer split would exist to design the handle types around.
+
+### 53. [Should-fix] Both platform backends silently swallow connection-level errors in their polling loop
+`WaylandConnection::poll_events` discards `connection.flush()`/`dispatch_pending()` errors (`let _ = ...`); `X11Connection::poll_events`'s `while let Ok(Some(event)) = poll_for_event()` silently exits on any `Err`. A live compositor/X-server crash becomes indistinguishable from "no events this frame" -- `poll_events() -> Vec<InputEvent>` has no channel to signal connection death, contradicting the project's own "recoverable failures surface as `Result`" philosophy used everywhere else (e.g. `EngineError`).
+
+**Disposition:** not fixed now -- would require changing `poll_events`'s signature to `Result<Vec<InputEvent>, PlatformError>` (or adding a `connection_lost()` query), rippling through every example. Recorded as a known gap; low practical likelihood in normal dev use, but worth fixing before a real application is built on this layer.
+
+### 54. [Nice-to-have] Two small robustness gaps, low likelihood, not fixed
+* `tre-rhi-vulkan/src/lib.rs`'s surface-format selection falls back to `formats[0]`, which panics if a driver ever returns an empty format list, instead of surfacing `EngineError::DeviceLost` the way the rest of the codebase handles device/surface failures.
+* `InputEventQueue::push`/`flush_pending_move` silently drop an event when the 256-capacity ring buffer is full -- intentional for `PointerMoved` (documented), but applies uniformly, so a large-enough input burst could in principle drop a `CloseRequested`. Effectively unreachable under normal human/OS input at one drain per frame.
+
+### 55. [Nice-to-have] No dependency vulnerability scanning in CI
+This phase added several FFI-heavy, security-relevant dependencies (`wayland-client` with the `system` backend, `x11rb` with `allow-unsafe-code`, `ash`/`ash-window`). CI currently runs `fmt`/`clippy`/`build`/`test` but no `cargo audit`/`cargo deny`. Recommended as a follow-up CI job now that this dependency set exists, so future CVEs are caught automatically rather than only during manual phase reviews.
+
+## Summary table (Phase 1 Review)
+
+| # | Finding | Doc(s)/Code | Severity | Resolution |
+|---|---|---|---|---|
+| 51 | `tre-rhi-vulkan` has ~65 `unsafe` blocks with zero `SAFETY:` comments (pre-existing) | tre-rhi-vulkan (code) | Should-fix | Flagged for project owner decision — not fixed this pass |
+| 52 | `SpscRingBuffer` doesn't statically enforce SPSC (both ends take `&self`) | tre-memory (code) | Should-fix | Deferred to Phase 2 — fix requires the real producer/consumer split to design around |
+| 53 | Both platform backends silently swallow connection-level errors in `poll_events` | tre-platform (code) | Should-fix | Deferred — needs a `poll_events` signature change rippling through all examples |
+| 54 | Driver-empty-format-list panic; input-queue overflow can drop `CloseRequested` | tre-rhi-vulkan, tre-engine (code) | Nice-to-have | Recorded, not fixed — both low-likelihood |
+| 55 | No `cargo audit`/`cargo deny` in CI despite new FFI-heavy deps this phase | CI | Nice-to-have | Recommended follow-up, not yet added |
