@@ -4,7 +4,7 @@
 
 The engine architecture is highly decoupled, operating strictly as a bridge between a high-level UI Layout Framework and the underlying hardware drivers. It is divided into four primary domains: the **Platform & Event Layer**, the **Core Processing Engine**, the **Dynamic Batching Engine**, and the **Render Hardware Interface (RHI)**.
 
-*Implemented in the `tre-platform` crate as of Phase 1 Step 1 (2026-09-05) -- Linux only (Wayland/X11) for now; Windows/macOS bridges are later steps. This crate owns native window creation today and the input event pump in a later step (IMPLEMENTATION.md Step 1.2).*
+*Implemented in the `tre-platform` crate -- Linux only (Wayland/X11) for now; Windows/macOS bridges are later steps. As of Phase 1 Step 1 (2026-09-05), `PlatformConnection` owns native multi-window creation (one shared connection per backend, TECHNICAL.md Section 9.2). As of Phase 1 Step 2 (2026-09-05), it also owns the real OS input/event pump: pointer and keyboard events are translated into `tre_engine::InputEvent`s and pushed through `tre_engine::InputEventQueue` (TECHNICAL.md Section 8), which coalesces high-frequency pointer motion before a caller drains it.*
 
 ```text
 +-----------------------------------------------------------------------------------+

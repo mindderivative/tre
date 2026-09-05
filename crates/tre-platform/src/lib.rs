@@ -1,8 +1,13 @@
-//! Native OS window creation (ARCHITECTURE.md Section 1's "Platform &
-//! Event Layer"). Phase 1 Step 1 scope: Linux only (Wayland primary,
-//! X11/XCB fallback). Produces `raw-window-handle` values that plug
-//! directly into the existing `ash_window`-based Vulkan surface creation
-//! from Phase 0, unchanged.
+//! Native OS window creation and input (ARCHITECTURE.md Section 1's
+//! "Platform & Event Layer"). Linux only (Wayland primary, X11/XCB
+//! fallback), per IMPLEMENTATION.md Step 1.1's scope decision.
+//!
+//! [`PlatformConnection`] owns ONE connection per backend (a single
+//! `wayland_client::Connection` or `x11rb::xcb_ffi::XCBConnection`) shared
+//! by every window it creates, rather than one connection per window
+//! (IMPLEMENTATION.md Step 1.2) -- matching how a real desktop client
+//! actually talks to the display server, and letting `poll_events` drain
+//! one shared event source instead of one per window.
 //!
 //! One of the crates permitted to contain `unsafe` (TECHNICAL.md Section
 //! 9.1): implementing `raw-window-handle`'s traits requires it, and the
@@ -14,19 +19,8 @@
 mod wayland;
 mod x11;
 
-use raw_window_handle::{
-    DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, WindowHandle,
-};
-
-/// Minimal window lifecycle events -- enough to make windowing itself
-/// work (close, resize). The full input event queue (`InputEvent`,
-/// pointer/keyboard translation, the SPSC ring buffer) is
-/// IMPLEMENTATION.md Step 1.2, a separate step.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WindowEvent {
-    CloseRequested,
-    Resized(u32, u32),
-}
+use raw_window_handle::{DisplayHandle, HandleError, HasDisplayHandle, WindowHandle};
+pub use tre_engine::{ElementState, InputEvent, MouseButton, WindowId};
 
 #[derive(Debug)]
 pub enum PlatformError {
@@ -47,72 +41,94 @@ impl std::fmt::Display for PlatformError {
 
 impl std::error::Error for PlatformError {}
 
-pub enum PlatformWindow {
-    Wayland(wayland::WaylandWindow),
-    X11(x11::X11Window),
+/// One shared display-server connection, owning every window created
+/// through it. Pick a backend once per process (Wayland if available,
+/// else X11) and create all of an application's windows from the same
+/// `PlatformConnection` -- creating a second `PlatformConnection` opens a
+/// second, independent connection to the display server, defeating the
+/// point of this consolidation.
+pub enum PlatformConnection {
+    Wayland(wayland::WaylandConnection),
+    X11(x11::X11Connection),
 }
 
-impl PlatformWindow {
+impl PlatformConnection {
     /// Picks Wayland if `WAYLAND_DISPLAY` is set, else falls back to X11.
     ///
     /// # Errors
     /// Returns [`PlatformError`] if the chosen backend fails to connect to
     /// the display server or is missing a required protocol/extension.
-    pub fn new(title: &str, width: u32, height: u32) -> Result<Self, PlatformError> {
+    pub fn new() -> Result<Self, PlatformError> {
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-            Self::new_wayland(title, width, height)
+            Self::new_wayland()
         } else {
-            Self::new_x11(title, width, height)
+            Self::new_x11()
         }
     }
 
     /// # Errors
-    /// See [`PlatformWindow::new`].
-    pub fn new_wayland(title: &str, width: u32, height: u32) -> Result<Self, PlatformError> {
-        Ok(Self::Wayland(wayland::WaylandWindow::new(
-            title, width, height,
-        )?))
+    /// See [`PlatformConnection::new`].
+    pub fn new_wayland() -> Result<Self, PlatformError> {
+        Ok(Self::Wayland(wayland::WaylandConnection::new()?))
     }
 
     /// # Errors
-    /// See [`PlatformWindow::new`].
-    pub fn new_x11(title: &str, width: u32, height: u32) -> Result<Self, PlatformError> {
-        Ok(Self::X11(x11::X11Window::new(title, width, height)?))
+    /// See [`PlatformConnection::new`].
+    pub fn new_x11() -> Result<Self, PlatformError> {
+        Ok(Self::X11(x11::X11Connection::new()?))
     }
 
-    /// Drains pending window events (close/resize). Call once per frame;
-    /// never blocks.
-    #[must_use]
-    pub fn poll_events(&mut self) -> Vec<WindowEvent> {
+    /// Creates a new top-level window on this connection.
+    ///
+    /// # Errors
+    /// Returns [`PlatformError`] if the compositor/window manager rejects
+    /// window creation or a required protocol object is unavailable.
+    pub fn create_window(
+        &mut self,
+        title: &str,
+        width: u32,
+        height: u32,
+    ) -> Result<WindowId, PlatformError> {
         match self {
-            Self::Wayland(w) => w.poll_events(),
-            Self::X11(w) => w.poll_events(),
+            Self::Wayland(c) => c.create_window(title, width, height),
+            Self::X11(c) => c.create_window(title, width, height),
+        }
+    }
+
+    /// Drains pending events (window lifecycle + input) for every window
+    /// on this connection. Call once per frame; never blocks.
+    #[must_use]
+    pub fn poll_events(&mut self) -> Vec<InputEvent> {
+        match self {
+            Self::Wayland(c) => c.poll_events(),
+            Self::X11(c) => c.poll_events(),
         }
     }
 
     #[must_use]
-    pub fn scale_factor(&self) -> i32 {
+    pub fn scale_factor(&self, window: WindowId) -> i32 {
         match self {
-            Self::Wayland(w) => w.scale_factor(),
-            Self::X11(w) => w.scale_factor(),
+            Self::Wayland(c) => c.scale_factor(window),
+            Self::X11(c) => c.scale_factor(window),
+        }
+    }
+
+    /// # Errors
+    /// Returns [`HandleError::Unavailable`] if `window` was not created by
+    /// this connection.
+    pub fn window_handle(&self, window: WindowId) -> Result<WindowHandle<'_>, HandleError> {
+        match self {
+            Self::Wayland(c) => c.window_handle(window),
+            Self::X11(c) => c.window_handle(window),
         }
     }
 }
 
-impl HasDisplayHandle for PlatformWindow {
+impl HasDisplayHandle for PlatformConnection {
     fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
         match self {
-            Self::Wayland(w) => w.display_handle(),
-            Self::X11(w) => w.display_handle(),
-        }
-    }
-}
-
-impl HasWindowHandle for PlatformWindow {
-    fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
-        match self {
-            Self::Wayland(w) => w.window_handle(),
-            Self::X11(w) => w.window_handle(),
+            Self::Wayland(c) => c.display_handle(),
+            Self::X11(c) => c.display_handle(),
         }
     }
 }

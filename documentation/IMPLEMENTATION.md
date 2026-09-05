@@ -71,7 +71,7 @@ Real bugs and gaps found during implementation (full detail in documentation/REV
 
 * **Implementation Tasks:**
 
-  1. Implement a Single-Producer Multi-Consumer (SPMC) lock-free ring buffer for capturing OS window events.
+  1. Implement the canonical Single-Producer Single-Consumer (SPSC) lock-free ring buffer for capturing OS window events, per TECHNICAL.md Section 8 -- do not restate "SPMC" here; that was corrected to SPSC in the September 2026 documentation review (the engine has exactly one consumer, the UI framework's logic tick) and this line was simply never updated to match since nothing had implemented this step yet to notice the drift.
 
   2. Translate platform-specific input (e.g., `WM_POINTERDOWN`, `NSEventTypeLeftMouseDown`) to agnostic engine structures (e.g., `InputEvent::PointerDown`).
 
@@ -80,6 +80,20 @@ Real bugs and gaps found during implementation (full detail in documentation/REV
   4. Ensure the event pump executes entirely outside the graphics pipeline timeline, exposing a polling/drain interface to the UI framework.
 
 * **Technical Rationale:** Graphics execution must never block on hit-testing or OS input hooks. Decoupling guarantees the $0.50\text{ ms}$ CPU frame submission budget is isolated from layout and logic stalls.
+
+### Status: Linux complete (2026-09-05); Windows/macOS deferred
+
+Scope decision (confirmed with the project owner): `tre-platform` is consolidated from Step 1.1's one-connection-per-window design to one shared `PlatformConnection` per backend (`wayland_client::Connection` or `x11rb::xcb_ffi::XCBConnection`), multiplexing multiple windows -- each addressed by an opaque `WindowId` -- over that single connection, matching the "one OS-event-pump producer across all windows" design TECHNICAL.md Section 8 already described. Touch input and genuine cross-thread producer/consumer separation remain out of scope (no touchscreen on this machine; the ring buffer is built genuinely atomic-based so it needs no redesign whenever a real second thread is introduced, but this step still drains it from the same call stack that renders).
+
+Implemented: task 1's SPSC ring buffer as `tre_memory::SpscRingBuffer<T>`; tasks 2-3 as `tre_engine::{InputEvent, WindowId, InputEventQueue}`; task 4 (pointer/keyboard binding) on both backends -- Wayland via `wl_seat` -> `wl_pointer`/`wl_keyboard`, X11 via the existing window's extended event mask; task 5 (coalescing) inside `InputEventQueue`, tested independent of any windowing. All three Step 1.1 examples plus `smoke_test` were updated to the new `PlatformConnection` API, and a new `input_demo` (two windows, `demo/phase1_step2/`) proves input works and routes to the correct window.
+
+Verified end to end: `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the workspace, including new `tre-memory` unit tests for the ring buffer (capacity limits, and a genuinely concurrent 100k-item producer/consumer stress test on real OS threads) and new `tre-engine` unit tests for `InputEventQueue`'s coalescing behavior. All three Vulkan examples plus the new input demo ran against real hardware with `VK_LAYER_KHRONOS_validation` enabled, zero errors. Real pointer motion, button clicks, and key presses were synthesized via the X11 XTEST extension (the same mechanism tools like `xdotool` use) against the real X11 backend and shown to translate correctly, including into the right `WindowId` when two windows were open simultaneously (events routed to window A while A had focus/stacking priority, then to window B after switching, with zero cross-window leakage in either direction).
+
+Real bugs and gaps found during implementation (full detail in documentation/REVIEW.md's Phase 1 Step 2 entry):
+
+* **A genuine data-race hazard was found and avoided at design time, before it was ever built:** the initial design considered implementing pointer-move coalescing by having the producer find-and-overwrite the *most recently published* ring-buffer slot in place. This is unsound whenever the queue holds exactly one unconsumed item, since the consumer could be mid-read of that exact slot concurrently. `InputEventQueue` instead stages the pending move in an ordinary (non-atomic) struct field, only ever calling the underlying `SpscRingBuffer::push` once a value is ready to publish -- so the shared ring buffer itself is never mutated by the coalescing logic, keeping it sound if a real second consumer thread is introduced later.
+* **Live compositor-level input synthesis was verified for X11 but not Wayland.** This session's compositor (KWin) does not advertise `org_kde_kwin_fake_input`, and wlroots-specific virtual-pointer/virtual-keyboard protocols do not apply to KWin, so no virtual-input mechanism was available to drive the Wayland backend the way XTEST drove X11. Wayland's pointer/keyboard translation code was verified by careful code review and structural parity with the XTEST-verified X11 implementation (identical event model, identical coalescing path through the shared `InputEventQueue`), not by live synthesized input -- an honest gap, not a silent claim of full parity.
+* **Unhinted window placement causes same-position stacking on X11 too, not just Wayland.** Step 1.1 already noted Wayland gives clients no control over toplevel position; the same default-placement behavior was observed on X11 via KWin's XWayland window management when verifying multi-window input routing -- two unpositioned windows can land exactly on top of each other, so whichever is topmost receives pointer input regardless of which window's "own" screen coordinates were targeted. Not a `tre-platform` defect; the verification harness was updated to explicitly raise/focus its target window before synthesizing input, which is a testing concern, not a product one.
 
 ## Phase 2: Core Hardware Abstraction (RHI) & Memory Management
 

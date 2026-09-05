@@ -14,6 +14,7 @@ workspace = true
 [dependencies]
 as-raw-xcb-connection = "1.0.1"
 raw-window-handle = "0.6.2"
+tre-engine = { path = "../tre-engine" }
 wayland-client = { version = "0.31.15", features = ["system"] }
 wayland-protocols = { version = "0.32.12", features = ["client", "wayland-client"] }
 x11rb = { version = "0.14.0", features = ["allow-unsafe-code"] }

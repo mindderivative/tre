@@ -7,19 +7,19 @@
 //! example originally used.
 
 use ash::vk;
-use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-use tre_engine::{rgba8, RenderingCanvas, RhiDevice};
-use tre_platform::{PlatformWindow, WindowEvent};
+use raw_window_handle::HasDisplayHandle;
+use tre_engine::{rgba8, InputEvent, RenderingCanvas, RhiDevice, WindowId};
+use tre_platform::PlatformConnection;
 use tre_rhi_vulkan::{VulkanBuffer, VulkanDevice, VulkanPipelineState, VulkanSwapchain};
 
 // Field order matters: Rust drops a struct's fields in DECLARATION order
 // (not reverse), so everything that holds a handle into the Vulkan device
 // must be declared -- and therefore dropped -- BEFORE `device` itself, and
-// `device`/`swapchain` before `window` (the swapchain is tied to the
-// window's surface). Getting this backwards is exactly what produced the
-// Vulkan validation layer's "N leaked objects" errors and a SIGSEGV during
-// this example's original development -- see documentation/REVIEW.md
-// findings #43.
+// `device`/`swapchain` before `connection` (the swapchain is tied to the
+// window's surface, which `connection` owns). Getting this backwards is
+// exactly what produced the Vulkan validation layer's "N leaked objects"
+// errors and a SIGSEGV during this example's original development -- see
+// documentation/REVIEW.md findings #43.
 struct Renderer {
     pipeline: VulkanPipelineState,
     vertex_buffer: VulkanBuffer,
@@ -27,7 +27,8 @@ struct Renderer {
     index_count: u32,
     swapchain: VulkanSwapchain,
     device: VulkanDevice,
-    window: PlatformWindow,
+    connection: PlatformConnection,
+    window: WindowId,
 }
 
 impl Drop for Renderer {
@@ -39,11 +40,13 @@ impl Drop for Renderer {
 }
 
 fn main() {
-    let window = PlatformWindow::new("tre walking skeleton (Phase 0)", 640, 480)
+    let mut connection = PlatformConnection::new().expect("failed to connect to display server");
+    let window = connection
+        .create_window("tre walking skeleton (Phase 0)", 640, 480)
         .expect("failed to open window");
 
-    let display_handle = window.display_handle().unwrap().as_raw();
-    let window_handle = window.window_handle().unwrap().as_raw();
+    let display_handle = connection.display_handle().unwrap().as_raw();
+    let window_handle = connection.window_handle(window).unwrap().as_raw();
     let (device, surface_loader, surface) =
         VulkanDevice::new(display_handle, window_handle).expect("failed to create VulkanDevice");
     let swapchain = VulkanSwapchain::new(&device, surface_loader, surface, 640, 480)
@@ -81,6 +84,7 @@ fn main() {
         index_count,
         swapchain,
         device,
+        connection,
         window,
     };
 
@@ -91,8 +95,8 @@ fn main() {
 
     let mut frame_count: u64 = 0;
     'render_loop: while frame_count < frame_limit {
-        for event in renderer.window.poll_events() {
-            if event == WindowEvent::CloseRequested {
+        for event in renderer.connection.poll_events() {
+            if matches!(event, InputEvent::CloseRequested { window } if window == renderer.window) {
                 break 'render_loop;
             }
         }

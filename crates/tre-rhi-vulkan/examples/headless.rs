@@ -22,11 +22,17 @@ fn main() {
     // building that constructor now, since the point being proven here is
     // `HeadlessSwapchain`, not device construction. See
     // documentation/REVIEW.md's Phase 1 Step 1 entry.
-    let probe_window = tre_platform::PlatformWindow::new("tre headless probe (never shown)", 1, 1)
+    let mut probe_connection =
+        tre_platform::PlatformConnection::new().expect("failed to connect to display server");
+    let probe_window = probe_connection
+        .create_window("tre headless probe (never shown)", 1, 1)
         .expect("failed to open probe window");
-    use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
-    let display_handle = probe_window.display_handle().unwrap().as_raw();
-    let window_handle = probe_window.window_handle().unwrap().as_raw();
+    use raw_window_handle::HasDisplayHandle;
+    let display_handle = probe_connection.display_handle().unwrap().as_raw();
+    let window_handle = probe_connection
+        .window_handle(probe_window)
+        .unwrap()
+        .as_raw();
     let (device, surface_loader, surface) =
         VulkanDevice::new(display_handle, window_handle).expect("failed to create VulkanDevice");
     // The probe surface is only needed transiently, to let `VulkanDevice::new`

@@ -469,6 +469,7 @@ version = "0.1.0"
 dependencies = [
  "as-raw-xcb-connection",
  "raw-window-handle",
+ "tre-engine",
  "wayland-client",
  "wayland-protocols",
  "x11rb",

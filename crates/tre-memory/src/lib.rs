@@ -7,3 +7,7 @@
 //! One of the three crates permitted to contain `unsafe`
 //! (TECHNICAL.md Section 9.1) -- every `unsafe` block requires an adjacent
 //! `// SAFETY:` comment stating the invariant being upheld.
+
+mod spsc;
+
+pub use spsc::SpscRingBuffer;

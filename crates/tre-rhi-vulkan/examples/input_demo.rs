@@ -1,18 +1,11 @@
-//! Phase 1 Step 1 proof, now updated for Step 2's connection
-//! consolidation: two native windows, opened on ONE shared
-//! `PlatformConnection` (not two independent display-server connections),
-//! sharing ONE `VulkanDevice` (ARCHITECTURE.md Section 2.1's "Global
-//! `RhiDevice`, per-window `RhiSwapchain`" model). Each window draws its
-//! own independently-colored rect through its own swapchain and command
-//! buffer, proving the sharing is real: closing one window leaves the
-//! other rendering normally.
-//!
-//! Both windows use the same auto-detected backend (Wayland or X11,
-//! whichever `PlatformConnection::new` picks), matching how a real desktop
-//! app actually runs -- one windowing backend, one connection, per
-//! process (the two backends need different Vulkan instance extensions
-//! enabled; see documentation/REVIEW.md's Phase 1 Step 1 entry for why
-//! this example doesn't mix them).
+//! Phase 1 Step 2 proof: real pointer/keyboard input, routed to the
+//! correct window. Opens TWO native windows (like `multi_window.rs`, on
+//! one shared `PlatformConnection`) so the demo also proves per-window
+//! routing -- moving/clicking/typing in window A must never print as an
+//! event for window B and vice versa -- and prints every translated
+//! `InputEvent` to the terminal, tagged with which window it came from,
+//! while the scene keeps rendering. Step 1.1's demos couldn't exercise
+//! input at all; this is the demo that shows it now works.
 
 use ash::vk;
 use raw_window_handle::HasDisplayHandle;
@@ -21,6 +14,7 @@ use tre_platform::PlatformConnection;
 use tre_rhi_vulkan::{VulkanBuffer, VulkanDevice, VulkanPipelineState, VulkanSwapchain};
 
 struct WindowSlot {
+    label: &'static str,
     pipeline: VulkanPipelineState,
     vertex_buffer: VulkanBuffer,
     index_buffer: VulkanBuffer,
@@ -34,6 +28,7 @@ fn make_window_slot(
     connection: &mut PlatformConnection,
     device: &VulkanDevice,
     title: &str,
+    label: &'static str,
     color: u32,
     vertex_spv: &[u8],
     fragment_spv: &[u8],
@@ -70,6 +65,7 @@ fn make_window_slot(
     let index_count = frame.indices.len() as u32;
 
     WindowSlot {
+        label,
         pipeline,
         vertex_buffer,
         index_buffer,
@@ -93,19 +89,26 @@ fn render_one(device: &VulkanDevice, slot: &mut WindowSlot) {
         .expect("submit_and_present failed");
 }
 
+/// Resolves an `InputEvent`'s `WindowId` to whichever slot's label it
+/// belongs to, so printed output reads "A"/"B" instead of an opaque
+/// `WindowId(n)` -- the actual routing correctness check is that this
+/// lookup is doing real work (matching the right slot), not that it
+/// prints something.
+fn label_for(window: WindowId, slot_a: &WindowSlot, slot_b: &WindowSlot) -> &'static str {
+    if window == slot_a.window {
+        slot_a.label
+    } else if window == slot_b.window {
+        slot_b.label
+    } else {
+        "?"
+    }
+}
+
 fn main() {
-    // ONE connection for the whole process (IMPLEMENTATION.md Step 1.2) --
-    // both windows below are created on it, unlike Step 1.1's version of
-    // this demo which opened two independent connections to the same
-    // compositor.
     let mut connection = PlatformConnection::new().expect("failed to connect to display server");
 
-    // Bootstrap the device from the FIRST window (needed to pick a
-    // physical device/queue family at all); every subsequent window reuses
-    // it via `VulkanDevice::create_surface` instead of re-running device
-    // selection -- the actual thing this demo is proving.
     let window_a = connection
-        .create_window("tre multi-window demo -- A", 480, 360)
+        .create_window("tre input demo -- A", 480, 360)
         .expect("failed to open window");
     let display_handle = connection.display_handle().unwrap().as_raw();
     let window_handle = connection.window_handle(window_a).unwrap().as_raw();
@@ -139,6 +142,7 @@ fn main() {
         )
         .expect("failed to upload index buffer");
     let mut slot_a = WindowSlot {
+        label: "A",
         pipeline: pipeline_a,
         vertex_buffer: vertex_buffer_a,
         index_buffer: index_buffer_a,
@@ -151,25 +155,63 @@ fn main() {
     let mut slot_b = make_window_slot(
         &mut connection,
         &device,
-        "tre multi-window demo -- B",
-        rgba8(0x40, 0xA0, 0xE0, 0xFF), // blue -- deliberately distinct from A's amber
+        "tre input demo -- B",
+        "B",
+        rgba8(0x40, 0xA0, 0xE0, 0xFF), // blue
         &vertex_spv,
         &fragment_spv,
     );
 
-    let frame_limit: u64 = std::env::var("TRE_MULTI_WINDOW_FRAMES")
+    eprintln!("two windows open -- A (amber) and B (blue).");
+    eprintln!("move the mouse, click, and press keys in each window; every");
+    eprintln!("event prints below tagged with the window it came from.");
+    eprintln!("close both windows (or wait for the frame budget) to exit.");
+
+    let frame_limit: u64 = std::env::var("TRE_INPUT_DEMO_FRAMES")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(120);
+        .unwrap_or(600);
 
     let mut frame_count: u64 = 0;
     while frame_count < frame_limit && (slot_a.open || slot_b.open) {
         for event in connection.poll_events() {
-            if let InputEvent::CloseRequested { window } = event {
-                if window == slot_a.window {
-                    slot_a.open = false;
-                } else if window == slot_b.window {
-                    slot_b.open = false;
+            match event {
+                InputEvent::CloseRequested { window } => {
+                    let label = label_for(window, &slot_a, &slot_b);
+                    eprintln!("[{label}] close requested");
+                    if window == slot_a.window {
+                        slot_a.open = false;
+                    } else if window == slot_b.window {
+                        slot_b.open = false;
+                    }
+                }
+                InputEvent::PointerMoved { window, x, y } => {
+                    let label = label_for(window, &slot_a, &slot_b);
+                    eprintln!("[{label}] pointer moved to ({x:.1}, {y:.1})");
+                }
+                InputEvent::PointerButton {
+                    window,
+                    button,
+                    state,
+                } => {
+                    let label = label_for(window, &slot_a, &slot_b);
+                    eprintln!("[{label}] pointer button {button:?} {state:?}");
+                }
+                InputEvent::KeyboardKey {
+                    window,
+                    key_code,
+                    state,
+                } => {
+                    let label = label_for(window, &slot_a, &slot_b);
+                    eprintln!("[{label}] key {key_code} {state:?}");
+                }
+                InputEvent::Resized {
+                    window,
+                    width,
+                    height,
+                } => {
+                    let label = label_for(window, &slot_a, &slot_b);
+                    eprintln!("[{label}] resized to {width}x{height}");
                 }
             }
         }
@@ -180,19 +222,11 @@ fn main() {
         if slot_b.open {
             render_one(&device, &mut slot_b);
         }
-
         frame_count += 1;
-        if frame_count % 60 == 0 {
-            eprintln!(
-                "frame {frame_count}: window A {}, window B {}",
-                if slot_a.open { "open" } else { "closed" },
-                if slot_b.open { "open" } else { "closed" }
-            );
-        }
     }
 
     unsafe {
         let _ = device.device.device_wait_idle();
     }
-    eprintln!("multi-window demo exited cleanly");
+    eprintln!("input demo exited cleanly");
 }
