@@ -182,6 +182,8 @@ The RHI maps the batched IR commands directly to Vulkan, DirectX 12, or Metal co
 
 *Updated for Phase 2 Step 1 (2026-09-05):* `create_dynamic_ring_buffer`/`acquire_transient_target`/`release_transient_target` were `unimplemented!()` stubs through Phase 0 and 1; they are real as of this step (`crates/tre-rhi-vulkan`'s `VulkanRingBuffer`/`VulkanTexture`, TECHNICAL.md Sections 3.1/3.2). Frame submission itself stays fully synchronous (one frame in flight at a time) -- the ring buffer's 3-segment structure and the transient pool's deferred-growth queue are real and correct, but genuine overlapping multi-frame-in-flight GPU/CPU submission is deferred to a future step, per `planning/archive/PLAN_PHASE2_STEP1.md`'s scope decision.
 
+*Updated for Phase 2 Step 2.1 (2026-09-05):* `RhiCommandBuffer::bind_texture` was a Phase 0 `unimplemented!()` stub ("Phase 4 (bindless atlas textures) -- out of Phase 0's scope"); it is real as of this step, backed by `tre-rhi-vulkan`'s persistent bindless descriptor array (`VK_EXT_descriptor_indexing`, TECHNICAL.md Section 2.1/9.2). `RhiTexture` gained `bindless_index`, and `RhiDevice` gained `create_texture` (uploading real CPU pixel data as a sampled, bindless-registered texture -- distinct from `acquire_transient_target`'s empty render targets). The bindless index selects a texture per *draw call* (a push constant), not per vertex -- the per-vertex indexing DESIGN.md Section 8.1.2 describes for cross-atlas batching needs the `Canvas`-to-RHI renderer Phase 3/4 builds, which doesn't exist yet. See `planning/archive/PLAN_PHASE2_STEP2_1.md`.
+
 ```rust
 /// An acquired swapchain image, threaded from `RhiSwapchain::acquire_next_image`
 /// through `RhiDevice::begin_frame` to the caller and back to
@@ -223,6 +225,11 @@ trait RhiTexture {
     fn memory_handle(&self) -> u64;
     fn dimensions(&self) -> (u32, u32);
     fn format(&self) -> TextureFormat;
+    /// Added Phase 2 Step 2.1: this texture's slot in the RHI's persistent
+    /// bindless texture array, or `None` for a transient render target
+    /// (which is written to, not sampled from, and isn't registered into
+    /// the array).
+    fn bindless_index(&self) -> Option<u32>;
 }
 
 trait RhiPipelineState {
@@ -271,6 +278,18 @@ trait RhiDevice {
         format: TextureFormat,
     ) -> Box<dyn RhiTexture>;
     fn release_transient_target(&self, texture: Box<dyn RhiTexture>);
+    /// Added Phase 2 Step 2.1: uploads real CPU pixel data as a new
+    /// GPU-resident sampled texture and registers it into the persistent
+    /// bindless array, so `bindless_index()` can be passed straight to
+    /// `RhiCommandBuffer::bind_texture`. A genuine one-time upload, unlike
+    /// `acquire_transient_target`'s pool checkout.
+    fn create_texture(
+        &self,
+        width: u32,
+        height: u32,
+        format: TextureFormat,
+        pixels: &[u8],
+    ) -> Box<dyn RhiTexture>;
 
     // Command Submission -- both return `Result` (added during Phase 0;
     // the original sketch didn't), since DESIGN.md Section 2.6 requires

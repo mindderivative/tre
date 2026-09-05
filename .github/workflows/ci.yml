@@ -91,3 +91,4 @@ jobs:
         env:
           TRE_INPUT_DEMO_FRAMES: 10
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example memory_pools_demo
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example bindless_textures_demo

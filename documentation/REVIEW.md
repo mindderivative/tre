@@ -3,7 +3,7 @@
 Reviewer: Claude (Cowork), acting as Principal Engineer / Lead Tech Architect, per project standing instructions.
 Scope: `DESIGN.md`, `TECHNICAL.md`, `ARCHITECTURE.md`, `IMPLEMENTATION.md`, reviewed in that order. All findings below have been implemented directly in those four files; this document is the record of what was found and what changed.
 
-Status: **All findings implemented.** See "Follow-up: Rust/Python Language Migration," "Review of Rust-Specific Additions," "Full Documentation Review," "Engineering Decisions: Suggested Improvements Actioned," "Phase 0 Implementation" (2026-09-04), "Phase 1 Step 1 Implementation," "Pre-Phase-1-Step-2 Doc Check," "Phase 1 Step 2 Implementation," "Phase 1 Review," "Phase 2 Step 1 Implementation," and "Phase 2 Step 2 Implementation" (2026-09-05) below for subsequent, out-of-band work not part of this original review. "Phase 1 Review"'s finding #51 has since been fixed; #52-53 remain deliberately deferred to Phase 2 (not yet revisited) — see that section for disposition.
+Status: **All findings implemented.** See "Follow-up: Rust/Python Language Migration," "Review of Rust-Specific Additions," "Full Documentation Review," "Engineering Decisions: Suggested Improvements Actioned," "Phase 0 Implementation" (2026-09-04), "Phase 1 Step 1 Implementation," "Pre-Phase-1-Step-2 Doc Check," "Phase 1 Step 2 Implementation," "Phase 1 Review," "Phase 2 Step 1 Implementation," "Phase 2 Step 2 Implementation," and "Phase 2 Step 2.1 Implementation" (2026-09-05) below for subsequent, out-of-band work not part of this original review. "Phase 1 Review"'s finding #51 has since been fixed; #52-53 remain deliberately deferred to Phase 2 (not yet revisited) — see that section for disposition.
 
 ---
 
@@ -535,3 +535,35 @@ A CI gate that has never been seen to fire is unproven -- code review and "it co
 | 60 | Debug messenger's `std::process::exit()` hung instead of terminating on an error | tre-rhi-vulkan (code) | Critical | Fixed — switched to `std::process::abort()`, verified via deliberate trigger locally and in CI |
 | 61 | CI has been failing since Phase 1 Step 1 (3 commits), undetected — missing system deps | CI | Critical (process) | Fixed — libwayland-dev/libxcb1-dev/glslc installed; process gap noted for future steps |
 | 62 | New CI validation gate proven to actually catch a real failure, not just assumed to work | CI | Nice-to-have (process) | Verified via a deliberate, reverted bug on a scratch branch |
+
+---
+
+## Phase 2 Step 2.1 Implementation (2026-09-05)
+
+Reviewer: Claude (Cowork), acting as Principal Engineer / Lead Tech Architect, per project standing instructions.
+Scope: implementing IMPLEMENTATION.md Step 2.1's Vulkan bindless texture array (`VK_EXT_descriptor_indexing`) -- `tre_engine::RhiTexture::bindless_index`/`RhiDevice::create_texture`, `tre-rhi-vulkan`'s persistent bindless descriptor set and `VulkanTexture::from_pixels`, and a real `RhiCommandBuffer::bind_texture`. Full detail in `planning/archive/PLAN_PHASE2_STEP2_1.md`/`LOG_PHASE2_STEP2_1.md`; this is the summary for the documentation's own record.
+
+Status: **Complete for Vulkan; DX12/Metal deferred** (neither backend exists, per Phase 2's standing precedent). Two real bugs in the new descriptor-set setup and one design lesson in the new demo, all caught by the validation layer or by pixel-content assertions actually running the code, not by review.
+
+### 63. [Critical] Missing `descriptorBindingSampledImageUpdateAfterBind` feature request
+The first implementation requested `VK_EXT_descriptor_indexing`'s general binding flags (`descriptorBindingPartiallyBound`, `descriptorBindingVariableDescriptorCount`, `descriptorBindingUpdateUnusedWhilePending`, `runtimeDescriptorArray`, `shaderSampledImageArrayNonUniformIndexing`) but not the per-descriptor-type feature that actually gates `UPDATE_AFTER_BIND` on a `SAMPLED_IMAGE` binding. Caught on the very first run of the new demo: `vkCreateDescriptorSetLayout` failed with `descriptorBindingSampledImageUpdateAfterBind was not enabled`.
+
+**Change:** added `descriptor_binding_sampled_image_update_after_bind(true)` to the requested feature set.
+
+### 64. [Critical] `VARIABLE_DESCRIPTOR_COUNT` placed on the wrong binding
+The initial layout put the unbounded texture array at binding 0 and the fixed immutable sampler at binding 1, matching IMPLEMENTATION.md's prose order ("an unbounded array of textures ... [and] a separate ... shared sampler"). Vulkan requires `VARIABLE_DESCRIPTOR_COUNT` to be on the *highest-numbered* binding in the set, unconditionally -- caught on the second run: `vkCreateDescriptorSetLayout` failed with exactly that message, naming binding 0.
+
+**Change:** swapped binding numbers (sampler at 0, texture array at 1) on both the Rust side (layout, pool sizes, the `vkUpdateDescriptorSets` write's `dst_binding`) and the GLSL side (`bindless_textured.frag`'s `layout(set = 0, binding = ...)` declarations) together. Note the two sides aren't checked against each other by the compiler or the validation layer -- a mismatch here would have been a silent wrong-texture-sampled bug, not a caught error, which is exactly why the new demo asserts actual output pixel colors rather than just checking for a clean exit.
+
+### 65. [Nice-to-have] A design lesson from the demo's own first draft, not an RHI defect
+The demo originally proved its "no texture bound" fallback by simply never calling `bind_texture` for the fourth draw, assuming that meant "sentinel." `bind_texture`'s bound index is ordinary command-buffer state that persists across draws until explicitly changed -- exactly like the pipeline, vertex buffer, or scissor rect already do -- so skipping the call after already binding `blue` for the previous draw left `blue` still bound. The resulting quad silently rendered the wrong (but plausible-looking) color; caught immediately by the pixel-color assertion, not by any crash.
+
+**Change:** no RHI code changed (the behavior is correct and intentional). The demo now explicitly rebinds the sentinel (`bind_texture(0, u32::MAX)`) before its fourth draw.
+
+## Summary table (Phase 2 Step 2.1)
+
+| # | Finding | Doc(s)/Code | Severity | Resolution |
+|---|---|---|---|---|
+| 63 | Missing `descriptorBindingSampledImageUpdateAfterBind` feature request | tre-rhi-vulkan (code) | Critical | Fixed — feature added, verified via validation layer |
+| 64 | `VARIABLE_DESCRIPTOR_COUNT` placed on a non-highest-numbered binding | tre-rhi-vulkan (code + shader) | Critical | Fixed — bindings swapped (sampler 0, array 1) on both Rust and GLSL sides |
+| 65 | Demo assumed skipping `bind_texture` resets to "no texture"; it doesn't (persistent state) | tre-rhi-vulkan (example) | Nice-to-have | Fixed in the demo; not an RHI defect — caught by pixel-content assertion |

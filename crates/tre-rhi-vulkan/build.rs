@@ -15,6 +15,13 @@ fn compile_shader(src: &str, out_name: &str, out_dir: &str) {
     println!("cargo:rerun-if-changed={src}");
     let out_path = Path::new(out_dir).join(out_name);
     let status = Command::new("glslc")
+        // IMPLEMENTATION.md Step 2.1's bindless shaders use
+        // `GL_EXT_nonuniform_qualifier` and an unbounded (runtime-sized)
+        // descriptor array, which need SPIR-V's descriptor-indexing
+        // capabilities -- not available under glslc's default `vulkan1.0`
+        // target environment. Harmless for the older flat-color shaders,
+        // which don't use anything version-gated.
+        .arg("--target-env=vulkan1.2")
         .arg(src)
         .arg("-o")
         .arg(&out_path)
@@ -33,6 +40,16 @@ fn main() {
     compile_shader(
         "shaders/walking_skeleton.frag",
         "walking_skeleton.frag.spv",
+        &out_dir,
+    );
+    compile_shader(
+        "shaders/bindless_textured.vert",
+        "bindless_textured.vert.spv",
+        &out_dir,
+    );
+    compile_shader(
+        "shaders/bindless_textured.frag",
+        "bindless_textured.frag.spv",
         &out_dir,
     );
 }

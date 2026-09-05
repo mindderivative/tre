@@ -109,6 +109,18 @@ Real bugs and gaps found during implementation (full detail in documentation/REV
 
 * **Technical Rationale:** Leveraging dynamic rendering and bindless arrays eliminates pipeline permutation explosion and state-switch overhead, which is critical for UI rendering where widgets constantly alternate between textures, vectors, and text.
 
+### Status: Vulkan complete (task 1); DirectX 12/Metal deferred (2026-09-05)
+
+Scope decision (confirmed with the project owner, re-confirming Phase 2's original precedent): tasks 2 (DirectX 12) and 3 (Metal) are deferred entirely -- neither backend exists, and neither can be built or verified without a Windows/macOS machine.
+
+Task 1's `VK_KHR_dynamic_rendering` half was already done as of Phase 0 (there has never been a `VkRenderPass`/`VkFramebuffer` in this codebase). This step (Phase 2 Step 2.1) built the remaining half: a real `VK_EXT_descriptor_indexing`-backed bindless texture array. `RhiTexture` gained `bindless_index()`; `RhiDevice` gained `create_texture` (a genuine one-time GPU upload from CPU pixel data, distinct from `acquire_transient_target`'s empty render targets); `RhiCommandBuffer::bind_texture` -- a Phase 0 `unimplemented!()` stub -- is now real. `VulkanDevice::new` builds one persistent descriptor set (a fixed shared sampler + an unbounded `SAMPLED_IMAGE` array, capacity clamped at runtime to the real device's `maxDescriptorSetUpdateAfterBindSampledImages`, target 4,096 matching ARCHITECTURE.md Section 4.1's sort-key field width), bound exactly once per pipeline bind and never rebound between draws that sample different textures -- selecting a texture is purely a per-draw-call push constant.
+
+Verified end to end: `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the workspace. All five pre-existing Vulkan examples were re-run manually after this step's changes (extended pipeline layout, larger push-constant range) and still produce correct output with zero validation-layer errors, confirming the change is additive. A new `bindless_textures_demo` example uploads three distinct real textures and draws each via the same bound pipeline/descriptor set, varying only the push-constant index -- verified both by zero validation errors and by asserting the actual output pixel colors from a headless PNG readback match each texture's known content exactly (not merely that the draw calls didn't crash). Added to the CI `vulkan-validation` job.
+
+Two real bugs were found and fixed during implementation, both caught by the validation layer on the very first and second runs (full detail in `documentation/REVIEW.md`'s Phase 2 Step 2.1 entry and `planning/archive/LOG_PHASE2_STEP2_1.md`): a missing `descriptorBindingSampledImageUpdateAfterBind` feature request, and a `VARIABLE_DESCRIPTOR_COUNT` flag placed on the wrong (non-highest-numbered) binding. A third issue was found in the new demo itself, not the RHI: assuming "skip `bind_texture`" resets to "no texture" -- it doesn't, since the bound index is ordinary persistent command-buffer state, exactly like the pipeline or vertex buffer.
+
+Per-vertex texture indexing (DESIGN.md Section 8.1.2's cross-atlas single-draw-call batching) is explicitly out of scope: it needs the atlas-packing `Canvas`-to-RHI renderer, which is Phase 3/4 work that doesn't exist yet.
+
 ### Step 2.2: Zero-Allocation Ring Buffers & Transient Pools
 
 * **Implementation Tasks:**

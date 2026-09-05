@@ -23,8 +23,27 @@ use tre_engine::{
     RhiPipelineState, RhiSwapchain, RhiTexture, ScissorRect, TextureFormat, UiVertex,
 };
 
-const REQUIRED_DEVICE_EXTENSIONS: &[&CStr] =
-    &[ash::khr::swapchain::NAME, ash::khr::dynamic_rendering::NAME];
+const REQUIRED_DEVICE_EXTENSIONS: &[&CStr] = &[
+    ash::khr::swapchain::NAME,
+    ash::khr::dynamic_rendering::NAME,
+    ash::ext::descriptor_indexing::NAME,
+];
+
+/// ARCHITECTURE.md Section 4.1's sort key commits to a 12-bit (4,096-slot)
+/// texture ID field -- this is the array size requested for the bindless
+/// descriptor array, clamped down at runtime (see `VulkanDevice::new`)
+/// against whatever the real device's
+/// `maxDescriptorSetUpdateAfterBindSampledImages` limit actually is, since
+/// `VK_EXT_descriptor_indexing`'s `VARIABLE_DESCRIPTOR_COUNT` machinery
+/// still requires declaring a maximum at layout-creation time.
+const BINDLESS_TEXTURE_CAPACITY_TARGET: u32 = 4096;
+
+/// The push-constant/shader convention for "no texture bound, use the
+/// vertex's own color" (IMPLEMENTATION.md Step 2.1's per-draw-call texture
+/// index has to mean something when `RhiCommandBuffer::bind_texture` was
+/// never called for a given draw -- Phase 0's flat-color path must keep
+/// working unchanged by default).
+const BINDLESS_TEXTURE_SENTINEL: u32 = u32::MAX;
 
 /// TECHNICAL.md Section 3.1's triple-buffered ring: 3 logical segments,
 /// one per frame-in-flight slot.
@@ -105,6 +124,26 @@ pub struct VulkanDevice {
     /// `Sync`-shareable across threads later, matching the same
     /// forward-looking reasoning as `tre_memory::SpscRingBuffer`.
     transient_pool: Mutex<TransientPool>,
+    /// A single shared sampler used by every bindless-array texture
+    /// (IMPLEMENTATION.md Step 2.1) -- baked into
+    /// `bindless_descriptor_set_layout` as an immutable sampler, so it is
+    /// never itself written via `vkUpdateDescriptorSets`.
+    bindless_sampler: vk::Sampler,
+    bindless_descriptor_pool: vk::DescriptorPool,
+    bindless_descriptor_set_layout: vk::DescriptorSetLayout,
+    /// The one persistent descriptor set every pipeline binds (see
+    /// `create_pipeline`/`VulkanCommandBuffer::set_pipeline`) -- bindless
+    /// means this is bound exactly once and never rebound between draws
+    /// that reference different textures, unlike traditional per-texture
+    /// descriptor sets.
+    bindless_descriptor_set: vk::DescriptorSet,
+    /// Which of `bindless_descriptor_set`'s array slots (binding 0) are
+    /// currently assigned to a live texture. `Mutex`-guarded for the same
+    /// forward-looking reason as `transient_pool`; `Arc`-wrapped (like
+    /// `frame_sync`) so every `VulkanTexture` created via `create_texture`
+    /// can hold a clone and release its own slot on `Drop` without needing
+    /// to reach back through a whole `VulkanDevice`.
+    bindless_registry: Arc<Mutex<BindlessRegistry>>,
     /// `VK_EXT_debug_utils` messenger (TECHNICAL.md Section 9.2,
     /// IMPLEMENTATION.md Step 2.4), `None` if the validation
     /// layer/extension weren't both available at instance-creation time.
@@ -306,10 +345,41 @@ impl VulkanDevice {
         let mut dynamic_rendering_feature =
             vk::PhysicalDeviceDynamicRenderingFeatures::default().dynamic_rendering(true);
 
+        // TECHNICAL.md Section 2.1 requires `VK_EXT_descriptor_indexing` as
+        // a hard requirement (unlike the gracefully-degraded validation
+        // layer), but `VARIABLE_DESCRIPTOR_COUNT`'s array size still has to
+        // be clamped to what this real device actually supports --
+        // ARCHITECTURE.md Section 4.1's 4,096-slot target is a ceiling, not
+        // a guarantee, and a software rasterizer in particular has no
+        // reason to advertise a generous limit.
+        //
+        // SAFETY: `physical_device` was chosen above from this instance's
+        // own enumeration and is still valid; `descriptor_indexing_properties`
+        // is a local that outlives this call, referenced only via
+        // `properties2`'s `push_next` chain.
+        let mut descriptor_indexing_properties =
+            vk::PhysicalDeviceDescriptorIndexingProperties::default();
+        let mut properties2 =
+            vk::PhysicalDeviceProperties2::default().push_next(&mut descriptor_indexing_properties);
+        unsafe { instance.get_physical_device_properties2(physical_device, &mut properties2) };
+        let bindless_capacity = BINDLESS_TEXTURE_CAPACITY_TARGET
+            .min(descriptor_indexing_properties.max_descriptor_set_update_after_bind_sampled_images)
+            .max(1);
+
+        let mut descriptor_indexing_feature =
+            vk::PhysicalDeviceDescriptorIndexingFeatures::default()
+                .shader_sampled_image_array_non_uniform_indexing(true)
+                .descriptor_binding_sampled_image_update_after_bind(true)
+                .descriptor_binding_partially_bound(true)
+                .descriptor_binding_variable_descriptor_count(true)
+                .descriptor_binding_update_unused_while_pending(true)
+                .runtime_descriptor_array(true);
+
         let device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_create_infos)
             .enabled_extension_names(&device_extension_names)
-            .push_next(&mut dynamic_rendering_feature);
+            .push_next(&mut dynamic_rendering_feature)
+            .push_next(&mut descriptor_indexing_feature);
 
         // SAFETY: `physical_device` was chosen above from this instance's
         // own enumeration, and `device_create_info`'s borrowed
@@ -364,6 +434,122 @@ impl VulkanDevice {
             frame_index: AtomicUsize::new(0),
         });
 
+        // IMPLEMENTATION.md Step 2.1: one persistent bindless descriptor
+        // set, created once here and bound once per pipeline
+        // (`VulkanCommandBuffer::set_pipeline`) rather than rebuilt or
+        // rebound per texture.
+        //
+        // SAFETY: `device` is valid (created above).
+        let bindless_sampler = unsafe {
+            device.create_sampler(
+                &vk::SamplerCreateInfo::default()
+                    .mag_filter(vk::Filter::LINEAR)
+                    .min_filter(vk::Filter::LINEAR)
+                    .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+                    .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                    .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                    .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE),
+                None,
+            )
+        }
+        .map_err(|_| EngineError::DeviceLost)?;
+
+        // Binding 1 (the HIGHEST-numbered binding -- required, per spec,
+        // since `VARIABLE_DESCRIPTOR_COUNT` may only be set on the binding
+        // with the highest binding number in the layout): the unbounded
+        // `texture2D textures[]` array IMPLEMENTATION.md Step 2.1 describes
+        // -- `SAMPLED_IMAGE`, not `COMBINED_IMAGE_SAMPLER`, per that same
+        // wording (a separate, single shared sampler at binding 0 instead).
+        // Binding 0's `immutable_samplers` bakes `bindless_sampler` into
+        // the layout itself, so that binding is never written via
+        // `vkUpdateDescriptorSets`.
+        let bindless_layout_bindings = [
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(0)
+                .descriptor_type(vk::DescriptorType::SAMPLER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+                .immutable_samplers(std::slice::from_ref(&bindless_sampler)),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(1)
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .descriptor_count(bindless_capacity)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+        ];
+        // Binding 1 (the texture array) needs all four flags:
+        // `UPDATE_AFTER_BIND` (textures are registered after the set is
+        // bound elsewhere in a frame's lifetime), `PARTIALLY_BOUND` (most
+        // of a 4,096-slot array is unused at any given moment),
+        // `VARIABLE_DESCRIPTOR_COUNT` (the array's real size is
+        // `bindless_capacity`, decided at runtime, not
+        // `BINDLESS_TEXTURE_CAPACITY_TARGET` unconditionally), and
+        // `UPDATE_UNUSED_WHILE_PENDING` (registering a new texture must not
+        // require waiting for in-flight draws that don't reference it).
+        // Binding 0's immutable sampler needs none of them.
+        let bindless_binding_flags = [
+            vk::DescriptorBindingFlags::empty(),
+            vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
+                | vk::DescriptorBindingFlags::PARTIALLY_BOUND
+                | vk::DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT
+                | vk::DescriptorBindingFlags::UPDATE_UNUSED_WHILE_PENDING,
+        ];
+        let mut bindless_binding_flags_info =
+            vk::DescriptorSetLayoutBindingFlagsCreateInfo::default()
+                .binding_flags(&bindless_binding_flags);
+        // SAFETY: `device` is valid; `bindless_layout_bindings` (including
+        // the `bindless_sampler` handle it borrows) and
+        // `bindless_binding_flags_info` are locals that outlive this call.
+        let bindless_descriptor_set_layout = unsafe {
+            device.create_descriptor_set_layout(
+                &vk::DescriptorSetLayoutCreateInfo::default()
+                    .bindings(&bindless_layout_bindings)
+                    .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
+                    .push_next(&mut bindless_binding_flags_info),
+                None,
+            )
+        }
+        .map_err(|_| EngineError::DeviceLost)?;
+
+        let bindless_pool_sizes = [
+            vk::DescriptorPoolSize::default()
+                .ty(vk::DescriptorType::SAMPLED_IMAGE)
+                .descriptor_count(bindless_capacity),
+            vk::DescriptorPoolSize::default()
+                .ty(vk::DescriptorType::SAMPLER)
+                .descriptor_count(1),
+        ];
+        // SAFETY: `device` is valid, and `bindless_pool_sizes` is a local
+        // that outlives this call.
+        let bindless_descriptor_pool = unsafe {
+            device.create_descriptor_pool(
+                &vk::DescriptorPoolCreateInfo::default()
+                    .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
+                    .max_sets(1)
+                    .pool_sizes(&bindless_pool_sizes),
+                None,
+            )
+        }
+        .map_err(|_| EngineError::DeviceLost)?;
+
+        let bindless_set_layouts = [bindless_descriptor_set_layout];
+        let bindless_variable_counts = [bindless_capacity];
+        let mut bindless_variable_count_info =
+            vk::DescriptorSetVariableDescriptorCountAllocateInfo::default()
+                .descriptor_counts(&bindless_variable_counts);
+        // SAFETY: `device` is valid; `bindless_descriptor_pool` and
+        // `bindless_descriptor_set_layout` were both just created above on
+        // this same device; `bindless_set_layouts`/
+        // `bindless_variable_count_info` are locals that outlive this call.
+        let bindless_descriptor_set = unsafe {
+            device.allocate_descriptor_sets(
+                &vk::DescriptorSetAllocateInfo::default()
+                    .descriptor_pool(bindless_descriptor_pool)
+                    .set_layouts(&bindless_set_layouts)
+                    .push_next(&mut bindless_variable_count_info),
+            )
+        }
+        .map_err(|_| EngineError::DeviceLost)?[0];
+
         Ok((
             Self {
                 entry,
@@ -377,6 +563,11 @@ impl VulkanDevice {
                 dynamic_rendering,
                 frame_sync,
                 transient_pool: Mutex::new(TransientPool::default()),
+                bindless_sampler,
+                bindless_descriptor_pool,
+                bindless_descriptor_set_layout,
+                bindless_descriptor_set,
+                bindless_registry: Arc::new(Mutex::new(BindlessRegistry::new(bindless_capacity))),
                 #[cfg(debug_assertions)]
                 debug_utils,
             },
@@ -518,17 +709,32 @@ impl VulkanDevice {
         let dynamic_state =
             vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
 
+        // IMPLEMENTATION.md Step 2.1: this is the ONE universal pipeline
+        // layout every pipeline gets, always including the bindless
+        // descriptor set and the 4-byte `texture_index` push constant --
+        // regardless of whether a given shader actually declares/consumes
+        // them. A pipeline layout may expose resources a shader doesn't
+        // use, so `walking_skeleton.vert`/`.frag` (and every other
+        // pre-existing shader) keep compiling and running completely
+        // unmodified against this extended layout.
+        let bindless_set_layouts = [self.bindless_descriptor_set_layout];
         // SAFETY: `self.device` is the valid logical device owned by this
-        // `VulkanDevice`, and the `push_constant_ranges` slice is a local
-        // temporary that outlives this call.
+        // `VulkanDevice`; `bindless_set_layouts` (referencing this device's
+        // own `bindless_descriptor_set_layout`, created in `new`) and
+        // `push_constant_ranges`'s slice are local temporaries that outlive
+        // this call.
         let layout = unsafe {
             self.device.create_pipeline_layout(
-                &vk::PipelineLayoutCreateInfo::default().push_constant_ranges(&[
-                    vk::PushConstantRange::default()
-                        .stage_flags(vk::ShaderStageFlags::VERTEX)
-                        .offset(0)
-                        .size(8), // vec2 screen_size
-                ]),
+                &vk::PipelineLayoutCreateInfo::default()
+                    .set_layouts(&bindless_set_layouts)
+                    .push_constant_ranges(&[
+                        vk::PushConstantRange::default()
+                            .stage_flags(
+                                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                            )
+                            .offset(0)
+                            .size(12), // vec2 screen_size, uint texture_index
+                    ]),
                 None,
             )
         }
@@ -728,6 +934,11 @@ impl Drop for VulkanDevice {
         // `VulkanRingBuffer` never touches `frame_sync.fence` at all (see
         // its own doc comment).
         unsafe {
+            self.device
+                .destroy_descriptor_pool(self.bindless_descriptor_pool, None);
+            self.device
+                .destroy_descriptor_set_layout(self.bindless_descriptor_set_layout, None);
+            self.device.destroy_sampler(self.bindless_sampler, None);
             self.device.destroy_fence(self.frame_sync.fence, None);
             self.device.destroy_command_pool(self.command_pool, None);
             self.device.destroy_device(None);
@@ -838,6 +1049,13 @@ impl RhiDevice for VulkanDevice {
             height,
             format,
             device: self.device.clone(),
+            // Transient render targets never enter the bindless array
+            // (IMPLEMENTATION.md Step 2.1's scope decision) -- `texture`
+            // (produced only by `acquire_transient_target`/
+            // `VulkanTexture::new`) never had a `bindless_index` to begin
+            // with, so there is nothing to reconstruct here.
+            bindless_index: None,
+            bindless_registry: None,
         };
         // `texture` (the original box) must not also run its `Drop` and
         // destroy these same handles out from under `reclaimed`.
@@ -845,6 +1063,19 @@ impl RhiDevice for VulkanDevice {
 
         let mut pool = self.transient_pool.lock().expect("transient pool poisoned");
         pool.free.entry(bucket).or_default().push(reclaimed);
+    }
+
+    fn create_texture(
+        &self,
+        width: u32,
+        height: u32,
+        format: TextureFormat,
+        pixels: &[u8],
+    ) -> Box<dyn RhiTexture> {
+        Box::new(
+            VulkanTexture::from_pixels(self, width, height, format, pixels)
+                .expect("failed to create bindless texture"),
+        )
     }
 
     fn begin_frame(
@@ -981,6 +1212,8 @@ impl RhiDevice for VulkanDevice {
                 width,
                 height,
                 pipeline_layout: None,
+                bindless_descriptor_set: self.bindless_descriptor_set,
+                texture_index: BINDLESS_TEXTURE_SENTINEL,
             }),
             image,
         ))
@@ -1321,27 +1554,63 @@ impl Drop for VulkanSwapchain {
     }
 }
 
+/// The push-constant layout `create_pipeline`'s universal pipeline layout
+/// declares (IMPLEMENTATION.md Step 2.1): 12 bytes total, no padding
+/// (`[f32; 2]` then `u32`, both 4-byte aligned).
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct PushConstants {
+    screen_size: [f32; 2],
+    texture_index: u32,
+}
+
 pub struct VulkanCommandBuffer {
     device: ash::Device,
     command_buffer: vk::CommandBuffer,
     width: u32,
     height: u32,
     pipeline_layout: Option<vk::PipelineLayout>,
+    /// The one persistent bindless descriptor set (`VulkanDevice::
+    /// bindless_descriptor_set`), bound once per `set_pipeline` call.
+    bindless_descriptor_set: vk::DescriptorSet,
+    /// The bindless array index `draw_indexed` will push next, set by
+    /// `bind_texture`. Starts at `BINDLESS_TEXTURE_SENTINEL` ("no texture,
+    /// use vertex color") so a draw that never calls `bind_texture` keeps
+    /// behaving exactly like Phase 0's flat-color path.
+    texture_index: u32,
 }
 
 impl RhiCommandBuffer for VulkanCommandBuffer {
     fn set_pipeline(&mut self, pipeline: &dyn RhiPipelineState) {
         let raw = vk::Pipeline::from_raw(pipeline.raw_handle());
-        self.pipeline_layout = Some(vk::PipelineLayout::from_raw(pipeline.layout_handle()));
+        let layout = vk::PipelineLayout::from_raw(pipeline.layout_handle());
+        self.pipeline_layout = Some(layout);
         // SAFETY: `self.command_buffer` is recording (allocated once and
-        // reset/begun per frame by `VulkanDevice::begin_frame`), and `raw`
-        // is a pipeline handle the `RhiPipelineState` trait contract
-        // guarantees was created by this same device and is still alive.
+        // reset/begun per frame by `VulkanDevice::begin_frame`); `raw` is a
+        // pipeline handle the `RhiPipelineState` trait contract guarantees
+        // was created by this same device and is still alive; `layout` is
+        // that same pipeline's own layout, which `create_pipeline` always
+        // builds against `self.bindless_descriptor_set`'s layout at set 0,
+        // so binding `self.bindless_descriptor_set` here is always
+        // compatible with whatever pipeline was just bound.
         unsafe {
             self.device.cmd_bind_pipeline(
                 self.command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
                 raw,
+            );
+            // IMPLEMENTATION.md Step 2.1: bound exactly once per pipeline
+            // bind, never rebound between draws that sample different
+            // textures -- selecting a texture is purely the push-constant
+            // write in `draw_indexed` below (via `bind_texture`), which is
+            // the entire performance point of a bindless array.
+            self.device.cmd_bind_descriptor_sets(
+                self.command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                layout,
+                0,
+                &[self.bindless_descriptor_set],
+                &[],
             );
         }
     }
@@ -1394,26 +1663,37 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
         }
     }
 
-    fn bind_texture(&mut self, _slot: u32, _bindless_index: u32) {
-        unimplemented!("Phase 4 (bindless atlas textures) -- out of Phase 0's scope")
+    fn bind_texture(&mut self, slot: u32, bindless_index: u32) {
+        // Only one bindless array/slot exists this step (IMPLEMENTATION.md
+        // Step 2.1's explicit scope -- a second slot, e.g. a separate
+        // mask-atlas array, is future work, not built speculatively here).
+        debug_assert_eq!(
+            slot, 0,
+            "slot 0 is the only bindless array this step supports"
+        );
+        self.texture_index = bindless_index;
     }
 
     fn draw_indexed(&mut self, index_count: u32, start_index: u32, base_vertex: i32) {
         // Phase 0 has no transform stack yet (IMPLEMENTATION.md Phase 3);
         // push the screen size the vertex shader needs to map pixel-space
-        // positions to NDC.
-        let push = [self.width as f32, self.height as f32];
+        // positions to NDC, plus (IMPLEMENTATION.md Step 2.1) which
+        // bindless array slot, if any, this draw samples from.
+        let push = PushConstants {
+            screen_size: [self.width as f32, self.height as f32],
+            texture_index: self.texture_index,
+        };
         // SAFETY: `self.command_buffer` is recording; `self.pipeline_layout`
         // was set by `set_pipeline` (asserted via `.expect` above) and
         // matches the layout `create_pipeline` declared its push constant
-        // range against, and `push`'s 8-byte size matches the 8-byte
+        // range against, and `push`'s 12-byte size matches the 12-byte
         // range reserved there.
         unsafe {
             self.device.cmd_push_constants(
                 self.command_buffer,
                 self.pipeline_layout
                     .expect("set_pipeline must be called before draw_indexed"),
-                vk::ShaderStageFlags::VERTEX,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                 0,
                 bytemuck::bytes_of(&push),
             );
@@ -1495,6 +1775,54 @@ pub struct TransientPoolStats {
     pub misses: u64,
 }
 
+/// Free-list + bump allocator for `VulkanDevice::bindless_descriptor_set`'s
+/// array slots (IMPLEMENTATION.md Step 2.1). Same shape as `TransientPool`'s
+/// checked-in/checked-out bookkeeping, for the same reason: a small,
+/// `Mutex`-guarded piece of device state that many textures' lifetimes touch
+/// independently.
+struct BindlessRegistry {
+    /// Indices below this bound have been assigned at least once.
+    next: u32,
+    /// The real ceiling -- `VulkanDevice::new`'s runtime-clamped
+    /// `bindless_capacity`, not `BINDLESS_TEXTURE_CAPACITY_TARGET`
+    /// unconditionally, since a real device (a software rasterizer, most
+    /// plausibly) may support fewer update-after-bind sampled images than
+    /// the sort key's 4,096-slot target.
+    capacity: u32,
+    /// Indices released by a dropped `VulkanTexture`, available for reuse
+    /// before bumping `next`.
+    free: Vec<u32>,
+}
+
+impl BindlessRegistry {
+    fn new(capacity: u32) -> Self {
+        Self {
+            next: 0,
+            capacity,
+            free: Vec::new(),
+        }
+    }
+
+    /// Returns `None` if every slot up to `capacity` is currently live --
+    /// exhausting the bindless array is a real, reportable condition, not
+    /// something to paper over with an unbounded `Vec`.
+    fn allocate(&mut self) -> Option<u32> {
+        if let Some(index) = self.free.pop() {
+            return Some(index);
+        }
+        if self.next < self.capacity {
+            let index = self.next;
+            self.next += 1;
+            return Some(index);
+        }
+        None
+    }
+
+    fn release(&mut self, index: u32) {
+        self.free.push(index);
+    }
+}
+
 #[derive(Default)]
 struct TransientPool {
     /// Checked-in (available) textures, bucketed by power-of-two
@@ -1517,6 +1845,16 @@ pub struct VulkanTexture {
     height: u32,
     format: TextureFormat,
     device: ash::Device,
+    /// This texture's slot in the bindless array (IMPLEMENTATION.md
+    /// Step 2.1), if it has one. `None` for a transient render target
+    /// (`VulkanTexture::new`) -- only `VulkanTexture::from_pixels`
+    /// (`RhiDevice::create_texture`'s backing) registers one.
+    bindless_index: Option<u32>,
+    /// A clone of the owning `VulkanDevice`'s registry `Arc`, so `Drop` can
+    /// release `bindless_index` back to the free list without holding a
+    /// reference to the whole device. `None` exactly when `bindless_index`
+    /// is `None`.
+    bindless_registry: Option<Arc<Mutex<BindlessRegistry>>>,
 }
 
 impl VulkanTexture {
@@ -1624,6 +1962,283 @@ impl VulkanTexture {
             height,
             format,
             device: device.device.clone(),
+            bindless_index: None,
+            bindless_registry: None,
+        })
+    }
+
+    /// Uploads `pixels` as a new `SAMPLED | TRANSFER_DST` image and
+    /// registers it into `device`'s bindless array (`RhiDevice::
+    /// create_texture`'s backing, IMPLEMENTATION.md Step 2.1). Blocking:
+    /// submits a one-time command buffer and waits on a fence before
+    /// returning, matching this step's synchronous-upload scope decision
+    /// (see `planning/archive/PLAN_PHASE2_STEP2.1.md`).
+    fn from_pixels(
+        device: &VulkanDevice,
+        width: u32,
+        height: u32,
+        format: TextureFormat,
+        pixels: &[u8],
+    ) -> Result<Self, EngineError> {
+        let vk_format = texture_format_to_vk(format);
+
+        // SAFETY: `device.device` is valid, and `width`/`height` are the
+        // caller-supplied, non-zero dimensions `pixels` was rendered at.
+        let image = unsafe {
+            device.device.create_image(
+                &vk::ImageCreateInfo::default()
+                    .image_type(vk::ImageType::TYPE_2D)
+                    .format(vk_format)
+                    .extent(vk::Extent3D {
+                        width,
+                        height,
+                        depth: 1,
+                    })
+                    .mip_levels(1)
+                    .array_layers(1)
+                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .tiling(vk::ImageTiling::OPTIMAL)
+                    .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST)
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                    .initial_layout(vk::ImageLayout::UNDEFINED),
+                None,
+            )
+        }
+        .map_err(|_| EngineError::DeviceLost)?;
+
+        // SAFETY: `image` was just created above on this device.
+        let requirements = unsafe { device.device.get_image_memory_requirements(image) };
+        // SAFETY: `device.physical_device` is the device selected in
+        // `VulkanDevice::new` and is valid for as long as `device.instance`
+        // (also alive here) is.
+        let memory_properties = unsafe {
+            device
+                .instance
+                .get_physical_device_memory_properties(device.physical_device)
+        };
+        let memory_type_index = (0..memory_properties.memory_type_count)
+            .find(|&i| {
+                (requirements.memory_type_bits & (1 << i)) != 0
+                    && memory_properties.memory_types[i as usize]
+                        .property_flags
+                        .contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
+            })
+            .ok_or(EngineError::DeviceLost)?;
+
+        // SAFETY: `device.device` is valid, `requirements.size` comes
+        // directly from `get_image_memory_requirements` above, and
+        // `memory_type_index` was selected from the `find` above.
+        let memory = unsafe {
+            device.device.allocate_memory(
+                &vk::MemoryAllocateInfo::default()
+                    .allocation_size(requirements.size)
+                    .memory_type_index(memory_type_index),
+                None,
+            )
+        }
+        .map_err(|_| EngineError::DeviceLost)?;
+
+        // SAFETY: `image` and `memory` were both just created above on
+        // this device, and `image` has not been bound to memory before now.
+        unsafe {
+            device
+                .device
+                .bind_image_memory(image, memory, 0)
+                .map_err(|_| EngineError::DeviceLost)?;
+        }
+
+        // SAFETY: `device.device` is valid, and `image` was just bound to
+        // `memory` immediately above.
+        let view = unsafe {
+            device.device.create_image_view(
+                &vk::ImageViewCreateInfo::default()
+                    .image(image)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(vk_format)
+                    .subresource_range(
+                        vk::ImageSubresourceRange::default()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .level_count(1)
+                            .layer_count(1),
+                    ),
+                None,
+            )
+        }
+        .map_err(|_| EngineError::DeviceLost)?;
+
+        // Stage `pixels` and copy them into `image` via a one-time command
+        // buffer, blocking on a fence before returning -- this crate's
+        // established synchronous-only scope (Phase 2 Step 1's frame
+        // submission, this same file's `upload_buffer`).
+        let staging = device.upload_buffer(pixels, vk::BufferUsageFlags::TRANSFER_SRC)?;
+
+        // SAFETY: `device.command_pool` is the valid, still-alive command
+        // pool created in `VulkanDevice::new`.
+        let upload_cmd = unsafe {
+            device.device.allocate_command_buffers(
+                &vk::CommandBufferAllocateInfo::default()
+                    .command_pool(device.command_pool)
+                    .level(vk::CommandBufferLevel::PRIMARY)
+                    .command_buffer_count(1),
+            )
+        }
+        .map_err(|_| EngineError::DeviceLost)?[0];
+
+        // SAFETY: `upload_cmd` was just allocated above and is in the
+        // initial state; `image` and `staging.buffer` were both just
+        // created on this same device and are still valid for the
+        // duration of this recording.
+        unsafe {
+            device
+                .device
+                .begin_command_buffer(
+                    upload_cmd,
+                    &vk::CommandBufferBeginInfo::default()
+                        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+                )
+                .map_err(|_| EngineError::DeviceLost)?;
+
+            let to_transfer_dst = vk::ImageMemoryBarrier::default()
+                .old_layout(vk::ImageLayout::UNDEFINED)
+                .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                .src_access_mask(vk::AccessFlags::empty())
+                .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                .image(image)
+                .subresource_range(
+                    vk::ImageSubresourceRange::default()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .level_count(1)
+                        .layer_count(1),
+                );
+            device.device.cmd_pipeline_barrier(
+                upload_cmd,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[to_transfer_dst],
+            );
+
+            let region = vk::BufferImageCopy::default()
+                .image_subresource(
+                    vk::ImageSubresourceLayers::default()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .layer_count(1),
+                )
+                .image_extent(vk::Extent3D {
+                    width,
+                    height,
+                    depth: 1,
+                });
+            device.device.cmd_copy_buffer_to_image(
+                upload_cmd,
+                staging.buffer,
+                image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[region],
+            );
+
+            let to_shader_read = vk::ImageMemoryBarrier::default()
+                .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                .dst_access_mask(vk::AccessFlags::SHADER_READ)
+                .image(image)
+                .subresource_range(
+                    vk::ImageSubresourceRange::default()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .level_count(1)
+                        .layer_count(1),
+                );
+            device.device.cmd_pipeline_barrier(
+                upload_cmd,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[to_shader_read],
+            );
+
+            device
+                .device
+                .end_command_buffer(upload_cmd)
+                .map_err(|_| EngineError::DeviceLost)?;
+        }
+
+        // SAFETY: `device.device` is valid; a plain (unsignaled) fence is
+        // correct since it is only ever waited on once, immediately below.
+        let upload_fence = unsafe {
+            device
+                .device
+                .create_fence(&vk::FenceCreateInfo::default(), None)
+        }
+        .map_err(|_| EngineError::DeviceLost)?;
+        let cmd_buffers = [upload_cmd];
+        let submit_info = vk::SubmitInfo::default().command_buffers(&cmd_buffers);
+        // SAFETY: `device.graphics_queue` is valid; `upload_cmd` just
+        // finished recording above; `upload_fence` was just created above
+        // and is waited on and destroyed only once, right here, before the
+        // temporary command buffer is freed -- nothing else references
+        // either afterward.
+        unsafe {
+            device
+                .device
+                .queue_submit(device.graphics_queue, &[submit_info], upload_fence)
+                .map_err(|_| EngineError::DeviceLost)?;
+            device
+                .device
+                .wait_for_fences(&[upload_fence], true, u64::MAX)
+                .map_err(|_| EngineError::DeviceLost)?;
+            device.device.destroy_fence(upload_fence, None);
+            device
+                .device
+                .free_command_buffers(device.command_pool, &cmd_buffers);
+        }
+
+        // Register into the bindless array: a free slot, assigned once,
+        // written via a single `vkUpdateDescriptorSets` call. Exhausting
+        // `bindless_capacity` is a real, reportable condition (PLAN.md),
+        // not silently papered over.
+        let bindless_index = device
+            .bindless_registry
+            .lock()
+            .expect("bindless registry poisoned")
+            .allocate()
+            .ok_or(EngineError::DeviceLost)?;
+
+        let image_info = vk::DescriptorImageInfo::default()
+            .image_view(view)
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        let write = vk::WriteDescriptorSet::default()
+            .dst_set(device.bindless_descriptor_set)
+            .dst_binding(1)
+            .dst_array_element(bindless_index)
+            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+            .image_info(std::slice::from_ref(&image_info));
+        // SAFETY: `device.device` is valid; `device.bindless_descriptor_set`
+        // was allocated in `VulkanDevice::new` from a layout whose binding 0
+        // has `UPDATE_AFTER_BIND`, so writing to it here (potentially while
+        // other draws using this same set are in flight, though this
+        // step's scope keeps submission fully synchronous anyway) is
+        // explicitly permitted; `bindless_index` was just allocated above
+        // so it is `< bindless_capacity`, and `view` was just created on
+        // this same device.
+        unsafe {
+            device.device.update_descriptor_sets(&[write], &[]);
+        }
+
+        Ok(Self {
+            image,
+            view,
+            memory,
+            width,
+            height,
+            format,
+            device: device.device.clone(),
+            bindless_index: Some(bindless_index),
+            bindless_registry: Some(Arc::clone(&device.bindless_registry)),
         })
     }
 }
@@ -1648,6 +2263,10 @@ impl RhiTexture for VulkanTexture {
     fn format(&self) -> TextureFormat {
         self.format
     }
+
+    fn bindless_index(&self) -> Option<u32> {
+        self.bindless_index
+    }
 }
 
 impl Drop for VulkanTexture {
@@ -1661,6 +2280,15 @@ impl Drop for VulkanTexture {
             self.device.destroy_image_view(self.view, None);
             self.device.destroy_image(self.image, None);
             self.device.free_memory(self.memory, None);
+        }
+        // Release the bindless slot back to the free list, if this texture
+        // ever had one -- transient render targets (`bindless_index: None`)
+        // skip this entirely.
+        if let (Some(index), Some(registry)) = (self.bindless_index, &self.bindless_registry) {
+            registry
+                .lock()
+                .expect("bindless registry poisoned")
+                .release(index);
         }
     }
 }

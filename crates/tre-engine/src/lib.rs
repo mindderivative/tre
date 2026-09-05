@@ -510,6 +510,14 @@ pub trait RhiTexture {
     /// rather than assume it matches their request.
     fn dimensions(&self) -> (u32, u32);
     fn format(&self) -> TextureFormat;
+    /// This texture's slot in the RHI's persistent bindless texture array
+    /// (IMPLEMENTATION.md Step 2.1), usable directly as
+    /// `RhiCommandBuffer::bind_texture`'s `bindless_index` argument. `None`
+    /// for a transient render target (`RhiDevice::acquire_transient_target`)
+    /// -- those are written to, not sampled from, and are not registered
+    /// into the bindless array this step (see the Step 2.1 plan's "out of
+    /// scope" section).
+    fn bindless_index(&self) -> Option<u32>;
 }
 
 /// A triple-buffered, host-mapped dynamic buffer (TECHNICAL.md Section
@@ -588,6 +596,22 @@ pub trait RhiDevice {
         format: TextureFormat,
     ) -> Box<dyn RhiTexture>;
     fn release_transient_target(&self, texture: Box<dyn RhiTexture>);
+    /// Uploads `pixels` (tightly packed, row-major, matching `format`'s
+    /// byte layout) as a new GPU-resident sampled texture and registers it
+    /// into the RHI's persistent bindless texture array (IMPLEMENTATION.md
+    /// Step 2.1), so `texture.bindless_index()` can immediately be passed to
+    /// `RhiCommandBuffer::bind_texture`. Unlike `acquire_transient_target`,
+    /// this is a genuine one-time GPU upload, not a pool checkout -- callers
+    /// own the returned texture for as long as they need it and simply drop
+    /// it when done (`Drop` tears down the GPU resources and frees the
+    /// bindless slot).
+    fn create_texture(
+        &self,
+        width: u32,
+        height: u32,
+        format: TextureFormat,
+        pixels: &[u8],
+    ) -> Box<dyn RhiTexture>;
 
     // Command Submission
     /// # Errors

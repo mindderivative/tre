@@ -23,6 +23,8 @@ To satisfy ultra-responsive user interfaces across high-refresh displays ($60\te
 
   * Hardware Requirements: Push constants ($128\text{ bytes}$ minimum), scalar block layout support.
 
+  * **Implementation status (Phase 2 Step 2.1, 2026-09-05):** `VK_EXT_descriptor_indexing` is a real, enforced hard requirement in `tre-rhi-vulkan` (`REQUIRED_DEVICE_EXTENSIONS`), not gracefully degraded like the debug-only validation layer (TECHNICAL.md Section 9.2). `VulkanDevice::new` requests `shaderSampledImageArrayNonUniformIndexing`, `descriptorBindingSampledImageUpdateAfterBind`, `descriptorBindingPartiallyBound`, `descriptorBindingVariableDescriptorCount`, `descriptorBindingUpdateUnusedWhilePending`, and `runtimeDescriptorArray`, and creates one persistent descriptor set: a fixed shared sampler at binding 0, an unbounded `SAMPLED_IMAGE` array at binding 1 (`VARIABLE_DESCRIPTOR_COUNT` must be on the highest-numbered binding, per spec -- a real bug caught by the validation layer during this step's own development, see `planning/archive/LOG_PHASE2_STEP2_1.md`). The array's real size is `min(4096, maxDescriptorSetUpdateAfterBindSampledImages)`, clamped at runtime, not assumed. The set is bound once per pipeline bind; selecting a texture is a per-draw-call push constant (`RhiCommandBuffer::bind_texture`), not a per-vertex index -- see `planning/archive/PLAN_PHASE2_STEP2_1.md` for why per-vertex indexing is explicitly deferred to Phase 3/4.
+
 * **DirectX 12:** Feature Level 12_0 minimum.
 
   * Required Features: Resource Binding Tier 3 (for unbounded descriptor tables/bindless).
