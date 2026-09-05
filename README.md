@@ -1,5 +1,7 @@
 # Tesserae Render Engine (TRE)
 
+[![CI](https://github.com/mindderivative/tre/actions/workflows/ci.yml/badge.svg)](https://github.com/mindderivative/tre/actions/workflows/ci.yml)
+
 A low-overhead, hardware-accelerated 2D rendering engine designed as a bridge between high-level UI frameworks and low-level graphics APIs (Vulkan, DirectX 12, Metal, WebGPU).
 
 ## Status
