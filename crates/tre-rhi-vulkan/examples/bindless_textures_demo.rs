@@ -98,24 +98,30 @@ fn main() {
     // format applies round-trips exactly (0 and 255 are the two fixed
     // points of the sRGB transfer curve), keeping the pixel assertions
     // below exact rather than approximate.
-    let red = device.create_texture(
-        4,
-        4,
-        TextureFormat::Bgra8Srgb,
-        &solid_bgra8(4, 4, 255, 0, 0, 255),
-    );
-    let green = device.create_texture(
-        4,
-        4,
-        TextureFormat::Bgra8Srgb,
-        &solid_bgra8(4, 4, 0, 255, 0, 255),
-    );
-    let blue = device.create_texture(
-        4,
-        4,
-        TextureFormat::Bgra8Srgb,
-        &solid_bgra8(4, 4, 0, 0, 255, 255),
-    );
+    let red = device
+        .create_texture(
+            4,
+            4,
+            TextureFormat::Bgra8Srgb,
+            &solid_bgra8(4, 4, 255, 0, 0, 255),
+        )
+        .expect("failed to create red texture");
+    let green = device
+        .create_texture(
+            4,
+            4,
+            TextureFormat::Bgra8Srgb,
+            &solid_bgra8(4, 4, 0, 255, 0, 255),
+        )
+        .expect("failed to create green texture");
+    let blue = device
+        .create_texture(
+            4,
+            4,
+            TextureFormat::Bgra8Srgb,
+            &solid_bgra8(4, 4, 0, 0, 255, 255),
+        )
+        .expect("failed to create blue texture");
 
     let white = rgba8(255, 255, 255, 255);
     let yellow = rgba8(255, 255, 0, 255);

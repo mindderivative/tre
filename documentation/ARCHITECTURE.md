@@ -282,14 +282,17 @@ trait RhiDevice {
     /// GPU-resident sampled texture and registers it into the persistent
     /// bindless array, so `bindless_index()` can be passed straight to
     /// `RhiCommandBuffer::bind_texture`. A genuine one-time upload, unlike
-    /// `acquire_transient_target`'s pool checkout.
+    /// `acquire_transient_target`'s pool checkout. Returns `Result` (Phase
+    /// 2 Code Review findings #66/#67): a mismatched `pixels` length/zero
+    /// dimensions and bindless-array exhaustion are both real, recoverable
+    /// failure conditions, not programmer-error panics.
     fn create_texture(
         &self,
         width: u32,
         height: u32,
         format: TextureFormat,
         pixels: &[u8],
-    ) -> Box<dyn RhiTexture>;
+    ) -> Result<Box<dyn RhiTexture>, EngineError>;
 
     // Command Submission -- both return `Result` (added during Phase 0;
     // the original sketch didn't), since DESIGN.md Section 2.6 requires

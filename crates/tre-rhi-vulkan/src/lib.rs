@@ -64,6 +64,17 @@ fn texture_format_to_vk(format: TextureFormat) -> vk::Format {
     }
 }
 
+/// Bytes per texel for `format`, tightly packed -- the same layout
+/// `VulkanTexture::from_pixels` requires of its `pixels` argument. Used to
+/// validate an uploaded buffer's length before it ever reaches a GPU call
+/// (Phase 2 Code Review finding #66).
+fn bytes_per_pixel(format: TextureFormat) -> u64 {
+    match format {
+        TextureFormat::Bgra8Srgb => 4,
+        TextureFormat::Rgba16Float => 8,
+    }
+}
+
 /// Shared frame-completion fences (TECHNICAL.md Section 3.1's 3-deep
 /// ring), owned jointly by `VulkanDevice` and every
 /// `VulkanRingBuffer` created from it -- so a ring buffer's segment
@@ -144,6 +155,21 @@ pub struct VulkanDevice {
     /// can hold a clone and release its own slot on `Drop` without needing
     /// to reach back through a whole `VulkanDevice`.
     bindless_registry: Arc<Mutex<BindlessRegistry>>,
+    /// The real, runtime-clamped size of the bindless array (`min(4096,
+    /// maxDescriptorSetUpdateAfterBindSampledImages)`), cached here for
+    /// `VulkanCommandBuffer::bind_texture` to bounds-check against without
+    /// locking `bindless_registry` (Phase 2 Code Review finding #69).
+    bindless_capacity: u32,
+    /// A command pool dedicated to `VulkanTexture::from_pixels`'s one-time
+    /// upload command buffers -- deliberately SEPARATE from `command_pool`
+    /// above (the per-frame render loop's pool). Vulkan requires external
+    /// synchronization on a command pool for `vkAllocateCommandBuffers`/
+    /// `vkFreeCommandBuffers`; sharing one pool between the frame loop and
+    /// texture uploads would need its own synchronization, which nothing
+    /// provided (Phase 2 Code Review finding #72). `Mutex`-guarded so
+    /// concurrent `create_texture` calls from multiple threads serialize
+    /// safely instead of racing each other.
+    upload_command_pool: Mutex<vk::CommandPool>,
     /// `VK_EXT_debug_utils` messenger (TECHNICAL.md Section 9.2,
     /// IMPLEMENTATION.md Step 2.4), `None` if the validation
     /// layer/extension weren't both available at instance-creation time.
@@ -419,6 +445,25 @@ impl VulkanDevice {
         }
         .map_err(|_| EngineError::DeviceLost)?[0];
 
+        // A separate pool from `command_pool` above, dedicated to
+        // `VulkanTexture::from_pixels`'s one-time upload command buffers
+        // (Phase 2 Code Review finding #72) -- `TRANSIENT` since every
+        // buffer allocated from it is recorded once, submitted once, and
+        // freed immediately.
+        //
+        // SAFETY: `device` is the just-created, still-valid logical
+        // device, and `queue_family_index` is the same family it was
+        // created with.
+        let upload_command_pool = unsafe {
+            device.create_command_pool(
+                &vk::CommandPoolCreateInfo::default()
+                    .queue_family_index(queue_family_index)
+                    .flags(vk::CommandPoolCreateFlags::TRANSIENT),
+                None,
+            )
+        }
+        .map_err(|_| EngineError::DeviceLost)?;
+
         let dynamic_rendering = ash::khr::dynamic_rendering::Device::new(&instance, &device);
 
         // SAFETY: `device` is valid (created above).
@@ -560,6 +605,7 @@ impl VulkanDevice {
                 graphics_queue,
                 command_pool,
                 command_buffer,
+                upload_command_pool: Mutex::new(upload_command_pool),
                 dynamic_rendering,
                 frame_sync,
                 transient_pool: Mutex::new(TransientPool::default()),
@@ -568,6 +614,7 @@ impl VulkanDevice {
                 bindless_descriptor_set_layout,
                 bindless_descriptor_set,
                 bindless_registry: Arc::new(Mutex::new(BindlessRegistry::new(bindless_capacity))),
+                bindless_capacity,
                 #[cfg(debug_assertions)]
                 debug_utils,
             },
@@ -910,6 +957,19 @@ impl VulkanDevice {
 
 impl Drop for VulkanDevice {
     fn drop(&mut self) {
+        // Phase 2 Code Review finding #71: wait for the GPU to finish all
+        // outstanding work before destroying anything below. Every
+        // windowed example happened to call `device_wait_idle()` itself at
+        // the end of `main()` first, but nothing enforced that -- this
+        // phase's growing teardown list (the whole bindless descriptor
+        // apparatus, on top of the transient pool) raised the stakes of
+        // relying on caller convention. Ignoring the result: if the device
+        // is already lost, there is nothing further to usefully wait for,
+        // and panicking inside `Drop` is itself undesirable.
+        //
+        // SAFETY: `self.device` is still a valid handle at this point.
+        let _ = unsafe { self.device.device_wait_idle() };
+
         // Explicitly drop every texture still checked into the transient
         // pool BEFORE destroying the device below. Rust drops a struct's
         // OTHER fields (including `transient_pool`) only after this
@@ -920,12 +980,19 @@ impl Drop for VulkanDevice {
         // objects during this step's own demo run, since without this
         // clear the objects were never destroyed at all (this fixes both
         // the leak and the ordering hazard a naive fix would introduce).
+        //
+        // Deliberately silent on a poisoned lock (finding #74), unlike
+        // every other lock site in this file: a prior panic while holding
+        // this mutex means we're already unwinding, and calling
+        // `.expect()` here (panicking again, inside `Drop`, during an
+        // unwind already in progress) would abort the process instead of
+        // completing that unwind -- worse than skipping this cleanup step.
         if let Ok(mut pool) = self.transient_pool.lock() {
             pool.free.clear();
         }
         // SAFETY: `self` is being dropped, so no other code holds
         // references to these handles afterward; destroying the fences and
-        // command pool (children of the device) before the device, and
+        // command pools (children of the device) before the device, and
         // the device before the instance, follows Vulkan's required
         // child-before-parent destruction order. Any `VulkanRingBuffer`s
         // created from this device hold a clone of `self.frame_sync`'s
@@ -941,6 +1008,9 @@ impl Drop for VulkanDevice {
             self.device.destroy_sampler(self.bindless_sampler, None);
             self.device.destroy_fence(self.frame_sync.fence, None);
             self.device.destroy_command_pool(self.command_pool, None);
+            if let Ok(pool) = self.upload_command_pool.lock() {
+                self.device.destroy_command_pool(*pool, None);
+            }
             self.device.destroy_device(None);
         }
         // Destroyed after the device but before the instance: the
@@ -978,9 +1048,12 @@ impl RhiDevice for VulkanDevice {
         height: u32,
         format: TextureFormat,
     ) -> Box<dyn RhiTexture> {
+        // Phase 2 Code Review finding #73: clamped before rounding up, so
+        // this is unconditionally safe regardless of `width`/`height`
+        // (see `release_transient_target`'s matching clamp for why).
         let bucket = (
-            width.next_power_of_two(),
-            height.next_power_of_two(),
+            width.min(1 << 30).next_power_of_two(),
+            height.min(1 << 30).next_power_of_two(),
             format,
         );
         let mut pool = self.transient_pool.lock().expect("transient pool poisoned");
@@ -1029,11 +1102,38 @@ impl RhiDevice for VulkanDevice {
     }
 
     fn release_transient_target(&self, texture: Box<dyn RhiTexture>) {
+        // Phase 2 Code Review finding #70: this function's raw-handle
+        // reconstruction below assumes `texture` came from
+        // `acquire_transient_target`, which never assigns a bindless
+        // index. Nothing in the `RhiTexture`/`RhiDevice` trait boundary
+        // actually prevents a caller from passing a `create_texture`-
+        // sourced (bindless) texture here instead -- if that happened, the
+        // naive reconstruction would silently strand its bindless slot
+        // (never returned to `BindlessRegistry`'s free list) and pool a
+        // `SAMPLED | TRANSFER_DST` image as if it were a `COLOR_ATTACHMENT`
+        // render target. Detect that misuse and let `texture` drop
+        // normally instead -- its own `Drop` (`impl Drop for
+        // VulkanTexture`) correctly destroys its GPU resources AND
+        // releases its bindless slot, which is exactly the right behavior
+        // for a texture that was never meant to be pooled.
+        if texture.bindless_index().is_some() {
+            debug_assert!(
+                false,
+                "release_transient_target called with a bindless (create_texture) texture; \
+                 dropping it instead of pooling it"
+            );
+            return;
+        }
+
         let (width, height) = texture.dimensions();
         let format = texture.format();
         let bucket = (
-            width.next_power_of_two(),
-            height.next_power_of_two(),
+            // Phase 2 Code Review finding #73: `next_power_of_two` panics
+            // (debug) or silently wraps to 0 (release) for inputs above
+            // `2^31 - 1`. Clamping first is a no-op for every realistic
+            // texture request and makes the call unconditionally safe.
+            width.min(1 << 30).next_power_of_two(),
+            height.min(1 << 30).next_power_of_two(),
             format,
         );
         // Reconstructs a `VulkanTexture` from `texture`'s opaque handles
@@ -1050,10 +1150,9 @@ impl RhiDevice for VulkanDevice {
             format,
             device: self.device.clone(),
             // Transient render targets never enter the bindless array
-            // (IMPLEMENTATION.md Step 2.1's scope decision) -- `texture`
-            // (produced only by `acquire_transient_target`/
-            // `VulkanTexture::new`) never had a `bindless_index` to begin
-            // with, so there is nothing to reconstruct here.
+            // (IMPLEMENTATION.md Step 2.1's scope decision) -- confirmed
+            // above (the misuse guard already returned otherwise), so
+            // there is nothing to reconstruct here.
             bindless_index: None,
             bindless_registry: None,
         };
@@ -1071,11 +1170,10 @@ impl RhiDevice for VulkanDevice {
         height: u32,
         format: TextureFormat,
         pixels: &[u8],
-    ) -> Box<dyn RhiTexture> {
-        Box::new(
-            VulkanTexture::from_pixels(self, width, height, format, pixels)
-                .expect("failed to create bindless texture"),
-        )
+    ) -> Result<Box<dyn RhiTexture>, EngineError> {
+        Ok(Box::new(VulkanTexture::from_pixels(
+            self, width, height, format, pixels,
+        )?))
     }
 
     fn begin_frame(
@@ -1213,6 +1311,7 @@ impl RhiDevice for VulkanDevice {
                 height,
                 pipeline_layout: None,
                 bindless_descriptor_set: self.bindless_descriptor_set,
+                bindless_capacity: self.bindless_capacity,
                 texture_index: BINDLESS_TEXTURE_SENTINEL,
             }),
             image,
@@ -1573,6 +1672,11 @@ pub struct VulkanCommandBuffer {
     /// The one persistent bindless descriptor set (`VulkanDevice::
     /// bindless_descriptor_set`), bound once per `set_pipeline` call.
     bindless_descriptor_set: vk::DescriptorSet,
+    /// The real, runtime-clamped bindless array size (`VulkanDevice::
+    /// bindless_capacity`), used by `bind_texture` to bounds-check its
+    /// `bindless_index` argument (Phase 2 Code Review finding #69) before
+    /// it can ever reach the GPU as an out-of-range descriptor index.
+    bindless_capacity: u32,
     /// The bindless array index `draw_indexed` will push next, set by
     /// `bind_texture`. Starts at `BINDLESS_TEXTURE_SENTINEL` ("no texture,
     /// use vertex color") so a draw that never calls `bind_texture` keeps
@@ -1667,11 +1771,38 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
         // Only one bindless array/slot exists this step (IMPLEMENTATION.md
         // Step 2.1's explicit scope -- a second slot, e.g. a separate
         // mask-atlas array, is future work, not built speculatively here).
+        // Phase 2 Code Review finding #75: loud in debug builds, but a
+        // safe no-op (not silent misbinding into slot 0) in release --
+        // `bind_texture` has no `Result` to report this through.
         debug_assert_eq!(
             slot, 0,
             "slot 0 is the only bindless array this step supports"
         );
-        self.texture_index = bindless_index;
+        if slot != 0 {
+            return;
+        }
+
+        // Phase 2 Code Review finding #69: `bindless_index` is an
+        // arbitrary caller-supplied `u32` with nothing upstream validating
+        // it against the real (runtime-clamped) array size. An in-range
+        // check here, not just a debug assertion, keeps an out-of-range
+        // value from ever reaching the GPU as a descriptor-array index
+        // (driver-defined behavior the validation layer's static checks
+        // cannot catch, since the index is a fully dynamic per-draw
+        // value) -- falling back to the safe "no texture" sentinel instead
+        // of passing it through.
+        let in_range =
+            bindless_index == BINDLESS_TEXTURE_SENTINEL || bindless_index < self.bindless_capacity;
+        debug_assert!(
+            in_range,
+            "bindless_index {bindless_index} is out of range (capacity {})",
+            self.bindless_capacity
+        );
+        self.texture_index = if in_range {
+            bindless_index
+        } else {
+            BINDLESS_TEXTURE_SENTINEL
+        };
     }
 
     fn draw_indexed(&mut self, index_count: u32, start_index: u32, base_vertex: i32) {
@@ -1857,6 +1988,83 @@ pub struct VulkanTexture {
     bindless_registry: Option<Arc<Mutex<BindlessRegistry>>>,
 }
 
+/// Guards an in-progress sampled image's `image`/`memory`/`view` between
+/// creation and `VulkanTexture::from_pixels`'s success -- destroying
+/// whichever of them exist if dropped early (any of that function's
+/// several fallible steps returning via `?`) instead of leaking GPU memory
+/// (Phase 2 Code Review finding #68).
+struct PendingImage {
+    device: ash::Device,
+    image: vk::Image,
+    memory: Option<vk::DeviceMemory>,
+    view: Option<vk::ImageView>,
+}
+
+impl PendingImage {
+    /// Claims the three handles without running `Drop` -- call only once
+    /// nothing further in `from_pixels` can fail.
+    fn into_parts(self) -> (vk::Image, vk::ImageView, vk::DeviceMemory) {
+        let parts = (
+            self.image,
+            self.view
+                .expect("view assigned before into_parts is called"),
+            self.memory
+                .expect("memory assigned before into_parts is called"),
+        );
+        std::mem::forget(self);
+        parts
+    }
+}
+
+impl Drop for PendingImage {
+    fn drop(&mut self) {
+        // SAFETY: only reached when `from_pixels` abandons this image
+        // before `into_parts` claims it, so nothing else references these
+        // handles; `self.view`/`self.memory` are `None` only if abandoned
+        // before that step ran, hence the guards below.
+        unsafe {
+            if let Some(view) = self.view {
+                self.device.destroy_image_view(view, None);
+            }
+            self.device.destroy_image(self.image, None);
+            if let Some(memory) = self.memory {
+                self.device.free_memory(memory, None);
+            }
+        }
+    }
+}
+
+/// Guards a one-time upload command buffer between allocation and
+/// `VulkanTexture::from_pixels`'s successful submission -- freeing it if
+/// dropped early instead of leaking it from the (limited-capacity) command
+/// pool it was allocated from (Phase 2 Code Review finding #68).
+struct PendingCommandBuffer {
+    device: ash::Device,
+    pool: vk::CommandPool,
+    buffer: vk::CommandBuffer,
+}
+
+impl PendingCommandBuffer {
+    /// Claims the command buffer without running `Drop` -- call only once
+    /// it has been successfully submitted and waited on.
+    fn into_inner(self) -> vk::CommandBuffer {
+        let buffer = self.buffer;
+        std::mem::forget(self);
+        buffer
+    }
+}
+
+impl Drop for PendingCommandBuffer {
+    fn drop(&mut self) {
+        // SAFETY: only reached when `from_pixels` abandons this command
+        // buffer before `into_inner` claims it; `self.pool` is the same
+        // pool it was allocated from and is still valid.
+        unsafe {
+            self.device.free_command_buffers(self.pool, &[self.buffer]);
+        }
+    }
+}
+
 impl VulkanTexture {
     fn new(
         device: &VulkanDevice,
@@ -1980,10 +2188,26 @@ impl VulkanTexture {
         format: TextureFormat,
         pixels: &[u8],
     ) -> Result<Self, EngineError> {
+        // Phase 2 Code Review finding #66: validated BEFORE any GPU call.
+        // The `vkCmdCopyBufferToImage` region built further down is sized
+        // purely from `width`/`height`/`format`, independent of the
+        // staging buffer's actual size (`upload_buffer` sizes it from
+        // `pixels.len()`) -- nothing else in this function protects
+        // against a `pixels` slice shorter than that implies (including
+        // empty), which would otherwise instruct the GPU to read past the
+        // end of an undersized staging buffer.
+        if width == 0 || height == 0 {
+            return Err(EngineError::InvalidTextureData);
+        }
+        let expected_len = u64::from(width) * u64::from(height) * bytes_per_pixel(format);
+        if pixels.len() as u64 != expected_len {
+            return Err(EngineError::InvalidTextureData);
+        }
+
         let vk_format = texture_format_to_vk(format);
 
-        // SAFETY: `device.device` is valid, and `width`/`height` are the
-        // caller-supplied, non-zero dimensions `pixels` was rendered at.
+        // SAFETY: `device.device` is valid, and `width`/`height` are
+        // non-zero, validated above.
         let image = unsafe {
             device.device.create_image(
                 &vk::ImageCreateInfo::default()
@@ -2005,6 +2229,20 @@ impl VulkanTexture {
             )
         }
         .map_err(|_| EngineError::DeviceLost)?;
+
+        // Phase 2 Code Review finding #68: from here on, `pending_image`
+        // destroys `image` (and `memory`/`view` once assigned below) if
+        // any later fallible step in this function returns early via `?`,
+        // instead of leaking them. `image`/`view`/`memory` are cheap
+        // `Copy` handles, so using them directly below (rather than
+        // through `pending_image`) and relying on this guard purely for
+        // its `Drop`/`into_parts` behavior is equivalent and simpler.
+        let mut pending_image = PendingImage {
+            device: device.device.clone(),
+            image,
+            memory: None,
+            view: None,
+        };
 
         // SAFETY: `image` was just created above on this device.
         let requirements = unsafe { device.device.get_image_memory_requirements(image) };
@@ -2037,6 +2275,7 @@ impl VulkanTexture {
             )
         }
         .map_err(|_| EngineError::DeviceLost)?;
+        pending_image.memory = Some(memory);
 
         // SAFETY: `image` and `memory` were both just created above on
         // this device, and `image` has not been bound to memory before now.
@@ -2065,6 +2304,7 @@ impl VulkanTexture {
             )
         }
         .map_err(|_| EngineError::DeviceLost)?;
+        pending_image.view = Some(view);
 
         // Stage `pixels` and copy them into `image` via a one-time command
         // buffer, blocking on a fence before returning -- this crate's
@@ -2072,17 +2312,36 @@ impl VulkanTexture {
         // submission, this same file's `upload_buffer`).
         let staging = device.upload_buffer(pixels, vk::BufferUsageFlags::TRANSFER_SRC)?;
 
-        // SAFETY: `device.command_pool` is the valid, still-alive command
-        // pool created in `VulkanDevice::new`.
+        // Phase 2 Code Review finding #72: allocated from
+        // `upload_command_pool`, NOT the frame loop's `command_pool` --
+        // see that field's doc comment on `VulkanDevice` for why sharing
+        // one pool between the two would be an unsynchronized Vulkan spec
+        // violation.
+        //
+        // SAFETY: `upload_pool` is the valid, still-alive pool created in
+        // `VulkanDevice::new`.
+        let upload_pool = *device
+            .upload_command_pool
+            .lock()
+            .expect("upload command pool poisoned");
         let upload_cmd = unsafe {
             device.device.allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::default()
-                    .command_pool(device.command_pool)
+                    .command_pool(upload_pool)
                     .level(vk::CommandBufferLevel::PRIMARY)
                     .command_buffer_count(1),
             )
         }
         .map_err(|_| EngineError::DeviceLost)?[0];
+
+        // Phase 2 Code Review finding #68: frees `upload_cmd` if any step
+        // between here and its successful submission (below) returns
+        // early via `?`.
+        let pending_cmd = PendingCommandBuffer {
+            device: device.device.clone(),
+            pool: upload_pool,
+            buffer: upload_cmd,
+        };
 
         // SAFETY: `upload_cmd` was just allocated above and is in the
         // initial state; `image` and `staging.buffer` were both just
@@ -2169,6 +2428,11 @@ impl VulkanTexture {
 
         // SAFETY: `device.device` is valid; a plain (unsignaled) fence is
         // correct since it is only ever waited on once, immediately below.
+        // Not guarded by a `Pending*`-style drop guard: a `queue_submit`/
+        // `wait_for_fences` failure here is effectively an unrecoverable
+        // device-lost condition either way, at which point a leaked fence
+        // handle is moot (Phase 2 Code Review finding #68's accepted
+        // scope boundary).
         let upload_fence = unsafe {
             device
                 .device
@@ -2179,9 +2443,8 @@ impl VulkanTexture {
         let submit_info = vk::SubmitInfo::default().command_buffers(&cmd_buffers);
         // SAFETY: `device.graphics_queue` is valid; `upload_cmd` just
         // finished recording above; `upload_fence` was just created above
-        // and is waited on and destroyed only once, right here, before the
-        // temporary command buffer is freed -- nothing else references
-        // either afterward.
+        // and is waited on and destroyed only once, right here -- nothing
+        // else references it afterward.
         unsafe {
             device
                 .device
@@ -2192,21 +2455,32 @@ impl VulkanTexture {
                 .wait_for_fences(&[upload_fence], true, u64::MAX)
                 .map_err(|_| EngineError::DeviceLost)?;
             device.device.destroy_fence(upload_fence, None);
+        }
+        // The GPU has confirmed it's done with `upload_cmd` (the fence
+        // wait above), so free it for real now -- claiming it from the
+        // guard first so `pending_cmd`'s own `Drop` doesn't also try.
+        let upload_cmd = pending_cmd.into_inner();
+        // SAFETY: `upload_pool` is the same pool `upload_cmd` was
+        // allocated from above, and the fence wait just confirmed the GPU
+        // is done with it.
+        unsafe {
             device
                 .device
-                .free_command_buffers(device.command_pool, &cmd_buffers);
+                .free_command_buffers(upload_pool, &[upload_cmd]);
         }
 
         // Register into the bindless array: a free slot, assigned once,
         // written via a single `vkUpdateDescriptorSets` call. Exhausting
-        // `bindless_capacity` is a real, reportable condition (PLAN.md),
-        // not silently papered over.
+        // `bindless_capacity` is a real, reportable condition (Phase 2
+        // Code Review finding #67 -- `RhiDevice::create_texture` now
+        // actually propagates this `Result` instead of `.expect()`-ing it
+        // away).
         let bindless_index = device
             .bindless_registry
             .lock()
             .expect("bindless registry poisoned")
             .allocate()
-            .ok_or(EngineError::DeviceLost)?;
+            .ok_or(EngineError::BindlessArrayExhausted)?;
 
         let image_info = vk::DescriptorImageInfo::default()
             .image_view(view)
@@ -2228,6 +2502,10 @@ impl VulkanTexture {
         unsafe {
             device.device.update_descriptor_sets(&[write], &[]);
         }
+
+        // Every fallible step is behind us -- claim the handles out of the
+        // guard without running its `Drop`.
+        let (image, view, memory) = pending_image.into_parts();
 
         Ok(Self {
             image,

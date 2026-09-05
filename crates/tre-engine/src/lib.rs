@@ -21,6 +21,17 @@ pub enum EngineError {
     /// A graphics pipeline failed to create (DESIGN.md Section 2.6,
     /// "Shader compilation / pipeline creation failure").
     PipelineCreationFailed,
+    /// `RhiDevice::create_texture`'s `pixels` slice length doesn't match
+    /// what `width`/`height`/`format` implies, or `width`/`height` is zero
+    /// (Phase 2 Code Review finding #66) -- caught before any GPU call, so
+    /// no out-of-bounds read into `pixels` or its staging buffer can occur.
+    InvalidTextureData,
+    /// The RHI's persistent bindless texture array (IMPLEMENTATION.md
+    /// Step 2.1) has no free slots left (Phase 2 Code Review finding #67;
+    /// DESIGN.md Section 2.6's "atlas exhaustion beyond LRU capacity"
+    /// failure class). Recoverable in principle -- a caller can release
+    /// textures and retry -- even though no eviction policy exists yet.
+    BindlessArrayExhausted,
 }
 
 /// A clip rectangle in the coordinate space `Canvas::push_clip`/scissor
@@ -605,13 +616,20 @@ pub trait RhiDevice {
     /// own the returned texture for as long as they need it and simply drop
     /// it when done (`Drop` tears down the GPU resources and frees the
     /// bindless slot).
+    ///
+    /// # Errors
+    /// Returns [`EngineError::InvalidTextureData`] if `pixels.len()` doesn't
+    /// match `width * height * bytes_per_pixel(format)`, or `width`/`height`
+    /// is zero. Returns [`EngineError::BindlessArrayExhausted`] if the
+    /// bindless texture array has no free slots left. Added in Phase 2 Code
+    /// Review findings #66/#67 -- both were previously unconditional panics.
     fn create_texture(
         &self,
         width: u32,
         height: u32,
         format: TextureFormat,
         pixels: &[u8],
-    ) -> Box<dyn RhiTexture>;
+    ) -> Result<Box<dyn RhiTexture>, EngineError>;
 
     // Command Submission
     /// # Errors
