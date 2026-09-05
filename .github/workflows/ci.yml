@@ -59,3 +59,35 @@ jobs:
       - run: rustup show
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libwayland-dev libxcb1-dev glslc
       - run: cargo test --workspace
+
+  vulkan-validation:
+    name: vulkan-validation
+    runs-on: ubuntu-latest
+    # IMPLEMENTATION.md Step 2.4: debug builds request
+    # VK_LAYER_KHRONOS_validation automatically (tre-rhi-vulkan's
+    # VulkanDevice::new) and abort() on any error-severity message. This
+    # job just needs a software Vulkan driver (no GPU on hosted runners),
+    # the validation layer itself, and a virtual display (tre-platform's
+    # X11 fallback, since there's no Wayland here either) actually
+    # installed, so every example genuinely exercises that gate instead of
+    # only ever being checked manually by a human running it locally.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: rustup show
+      - name: Install a software Vulkan ICD, validation layers, a virtual display, and libwayland-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libvulkan1 mesa-vulkan-drivers vulkan-validationlayers xvfb libwayland-dev libxcb1-dev glslc
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example walking_skeleton
+        env:
+          TRE_WALKING_SKELETON_FRAMES: 10
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example multi_window
+        env:
+          TRE_MULTI_WINDOW_FRAMES: 10
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example headless
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example input_demo
+        env:
+          TRE_INPUT_DEMO_FRAMES: 10
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example memory_pools_demo

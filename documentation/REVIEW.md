@@ -3,7 +3,7 @@
 Reviewer: Claude (Cowork), acting as Principal Engineer / Lead Tech Architect, per project standing instructions.
 Scope: `DESIGN.md`, `TECHNICAL.md`, `ARCHITECTURE.md`, `IMPLEMENTATION.md`, reviewed in that order. All findings below have been implemented directly in those four files; this document is the record of what was found and what changed.
 
-Status: **All findings implemented.** See "Follow-up: Rust/Python Language Migration," "Review of Rust-Specific Additions," "Full Documentation Review," "Engineering Decisions: Suggested Improvements Actioned," "Phase 0 Implementation" (2026-09-04), "Phase 1 Step 1 Implementation," "Pre-Phase-1-Step-2 Doc Check," "Phase 1 Step 2 Implementation," "Phase 1 Review," and "Phase 2 Step 1 Implementation" (2026-09-05) below for subsequent, out-of-band work not part of this original review. "Phase 1 Review"'s finding #51 has since been fixed; #52-53 remain deliberately deferred to Phase 2 (not yet revisited) — see that section for disposition.
+Status: **All findings implemented.** See "Follow-up: Rust/Python Language Migration," "Review of Rust-Specific Additions," "Full Documentation Review," "Engineering Decisions: Suggested Improvements Actioned," "Phase 0 Implementation" (2026-09-04), "Phase 1 Step 1 Implementation," "Pre-Phase-1-Step-2 Doc Check," "Phase 1 Step 2 Implementation," "Phase 1 Review," "Phase 2 Step 1 Implementation," and "Phase 2 Step 2 Implementation" (2026-09-05) below for subsequent, out-of-band work not part of this original review. "Phase 1 Review"'s finding #51 has since been fixed; #52-53 remain deliberately deferred to Phase 2 (not yet revisited) — see that section for disposition.
 
 ---
 
@@ -501,3 +501,37 @@ Building the ring buffer's "which segment is current" tracking, the first implem
 | 57 | Rotating fence-per-segment design broke existing single-command-buffer examples | tre-rhi-vulkan (code) | Critical | Fixed — single real fence restored; segment selection uses a separate non-fence counter |
 | 58 | Pooled transient textures never destroyed at device teardown (leak + would-be use-after-free) | tre-rhi-vulkan (code) | Should-fix | Fixed — pool explicitly cleared before device/instance destruction |
 | 59 | Two scope deviations from Step 2.2's literal task wording (thread-boundary padding, push_layer pool hook) | IMPLEMENTATION | Nice-to-have | Both deliberate and documented, not defects |
+
+---
+
+## Phase 2 Step 2 Implementation (2026-09-05)
+
+Reviewer: Claude (Cowork), acting as Principal Engineer / Lead Tech Architect, per project standing instructions.
+Scope: implementing IMPLEMENTATION.md Step 2.4 (Vulkan validation, automatic in debug builds, plus a new CI job that actually exercises it). Full detail in `planning/archive/PLAN_PHASE2_STEP2.md`/`LOG_PHASE2_STEP2.md`; this is the summary for the documentation's own record.
+
+Status: **Complete for Vulkan; DX12/Metal deferred** (neither backend exists). Two real bugs found via actual testing, one in the new feature itself and one a pre-existing, unrelated regression this step's verification work happened to surface.
+
+### 60. [Critical] The debug messenger's error handler hung instead of terminating
+The first implementation called `std::process::exit(1)` on an `ERROR`-severity validation message. Verified by deliberately triggering a real validation error (a zero-byte `VkBuffer`, guaranteed `VUID-VkBufferCreateInfo-size-00912`) rather than assumed from reading the docs: the process hung indefinitely instead of exiting, confirmed with a hard `timeout` wrapper (exit code 124 -- killed by timeout, not a clean nonzero exit). Root cause: `exit()` runs registered `atexit` handlers before terminating; the GPU driver's own handler appears to deadlock trying to reacquire a lock the still-on-the-stack Vulkan call that triggered the very callback calling `exit()` is holding.
+
+**Change:** switched to `std::process::abort()`, which raises `SIGABRT` directly and skips `atexit` entirely. Re-verified with the same deliberate trigger: exit code 134 (SIGABRT, core dumped), both via the raw binary and via `cargo run` -- confirmed twice, locally and again in the real CI environment (lavapipe + xvfb) before the fix was accepted.
+
+### 61. [Critical, pre-existing] CI has been failing since Phase 1 Step 1, undetected for three commits
+Discovered while verifying this step's new CI job for the first time: `cargo build`/`clippy`/`test` had all been failing on every push since "Phase 1, Step 1: Linux Native Windowing..." (`gh run list` shows `failure` for that commit, the SAFETY-comments fix, and Phase 2 Step 1 -- three consecutive pushes). Root cause: three system dependencies the workspace needs to even compile -- `libwayland-dev` (`wayland-client`'s "system" feature, added Phase 1 Step 1), `libxcb1-dev` (`x11rb`'s XCB FFI, same step), and `glslc` (`tre-rhi-vulkan`'s shader build script, Phase 0) -- were never installed on GitHub's `ubuntu-latest` runners. Every prior step's local verification (build/test/clippy/fmt, all real, all passing) never surfaced this, because it's purely an environment gap specific to the hosted CI runner, not the local dev machine.
+
+**Why this went unnoticed:** after the initial CI-setup work early in the project, no later step's workflow included going back to check `gh run list`/`gh run view` after pushing -- local verification was thorough throughout, but CI's *own* status was never re-checked once it was believed to be working. This step's new job needing `cargo build` to succeed at all is what finally forced a look.
+
+**Change:** `libwayland-dev`, `libxcb1-dev`, and `glslc` added to the `clippy`, `build`, `test`, and new `vulkan-validation` jobs' `apt-get install` steps, as a fix committed separately from this step's actual feature work (a pre-existing, unrelated regression, not something Step 2.4 introduced). Verified via `gh run view` on a scratch branch: all five jobs (`rustfmt`, `clippy`, `build`, `test`, `vulkan-validation`) pass clean.
+
+**Process gap to close going forward:** check `gh run list --branch main --limit 1` after every push that's expected to affect CI, not just when a job is suspected of being broken.
+
+### 62. [Nice-to-have] The new CI gate was proven to actually catch a failure, not just exist
+A CI gate that has never been seen to fire is unproven -- code review and "it compiles" don't establish that a validation error genuinely fails the job end-to-end (right package versions, right runtime behavior under a software renderer, right propagation of a Rust process's exit code through `xvfb-run`/`cargo run`/the Actions runner). Verified directly: a deliberate zero-byte buffer was pushed to a scratch branch (`verify/step2-2-ci-gate`), confirmed via `gh run view --log-failed` to produce the exact expected message (`[Vulkan ERROR VALIDATION] ... VUID-VkBufferCreateInfo-size-00912 ...`) and fail the job with exit code 134, then reverted and confirmed the same job passes clean. The scratch branch was deleted after use.
+
+## Summary table (Phase 2 Step 2)
+
+| # | Finding | Doc(s)/Code | Severity | Resolution |
+|---|---|---|---|---|
+| 60 | Debug messenger's `std::process::exit()` hung instead of terminating on an error | tre-rhi-vulkan (code) | Critical | Fixed — switched to `std::process::abort()`, verified via deliberate trigger locally and in CI |
+| 61 | CI has been failing since Phase 1 Step 1 (3 commits), undetected — missing system deps | CI | Critical (process) | Fixed — libwayland-dev/libxcb1-dev/glslc installed; process gap noted for future steps |
+| 62 | New CI validation gate proven to actually catch a real failure, not just assumed to work | CI | Nice-to-have (process) | Verified via a deliberate, reverted bug on a scratch branch |

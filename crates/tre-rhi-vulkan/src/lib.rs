@@ -105,6 +105,81 @@ pub struct VulkanDevice {
     /// `Sync`-shareable across threads later, matching the same
     /// forward-looking reasoning as `tre_memory::SpscRingBuffer`.
     transient_pool: Mutex<TransientPool>,
+    /// `VK_EXT_debug_utils` messenger (TECHNICAL.md Section 9.2,
+    /// IMPLEMENTATION.md Step 2.4), `None` if the validation
+    /// layer/extension weren't both available at instance-creation time.
+    /// The field itself doesn't exist in release builds -- compiled out
+    /// entirely, matching TECHNICAL.md Section 3.4's zero-allocation
+    /// guard's own release-build behavior, so there is no cost (not even
+    /// an unused `Option`) in a shipped binary.
+    #[cfg(debug_assertions)]
+    debug_utils: Option<(ash::ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
+}
+
+/// `VK_EXT_debug_utils` messenger callback (IMPLEMENTATION.md Step 2.4).
+/// Called BY the Vulkan loader/driver (non-Rust code) -- an
+/// `extern "system" fn`, not a Rust closure, so it must never let a panic
+/// unwind past it (unwinding across a non-Rust ABI boundary is undefined
+/// behavior).
+///
+/// `std::process::abort()`, not `std::process::exit()`, on an
+/// error-severity message: this was verified by actually triggering it
+/// (a deliberately invalid Vulkan call during this step's own CI-gate
+/// verification, `documentation/REVIEW.md`'s Phase 2 Step 2 entry), not
+/// assumed from reading the docs. `std::process::exit()` runs registered
+/// `atexit` handlers before terminating -- if the driver has registered
+/// one that tries to reacquire a lock the still-on-the-stack Vulkan call
+/// that triggered this very callback is holding, `exit()` deadlocks
+/// instead of terminating (confirmed: it hung indefinitely under real
+/// hardware/drivers). `abort()` raises `SIGABRT` directly, skipping
+/// `atexit` entirely, and reliably terminates the process with a nonzero
+/// exit status (enough to fail a CI job) instead.
+#[cfg(debug_assertions)]
+unsafe extern "system" fn vulkan_debug_callback(
+    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+    message_type: vk::DebugUtilsMessageTypeFlagsEXT,
+    callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
+    _user_data: *mut std::ffi::c_void,
+) -> vk::Bool32 {
+    // SAFETY: `callback_data` is supplied by the Vulkan loader for the
+    // duration of this call only, per `VK_EXT_debug_utils`'s contract,
+    // and its `p_message` is always a valid, NUL-terminated C string when
+    // this callback fires.
+    let message = unsafe { CStr::from_ptr((*callback_data).p_message) }.to_string_lossy();
+    eprintln!("[Vulkan {message_severity:?} {message_type:?}] {message}");
+    if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR) {
+        std::process::abort();
+    }
+    vk::FALSE
+}
+
+/// Checks whether both `VK_LAYER_KHRONOS_validation` and
+/// `VK_EXT_debug_utils` are actually installed, rather than unconditionally
+/// requesting them -- requesting an unavailable layer/extension would fail
+/// `vkCreateInstance` outright, breaking `cargo run` for any contributor
+/// who hasn't installed the Vulkan validation layers package locally.
+/// Debug-build-only: validation is meant to be free in release builds.
+#[cfg(debug_assertions)]
+fn debug_validation_available(entry: &ash::Entry) -> bool {
+    // SAFETY: `entry` was just loaded by the caller and is valid; this is
+    // a query with no preconditions beyond that.
+    let layers = unsafe { entry.enumerate_instance_layer_properties() }.unwrap_or_default();
+    let layer_available = layers.iter().any(|layer| {
+        // SAFETY: `layer.layer_name` is a fixed-size buffer the Vulkan
+        // implementation NUL-terminates.
+        (unsafe { CStr::from_ptr(layer.layer_name.as_ptr()) }) == c"VK_LAYER_KHRONOS_validation"
+    });
+
+    // SAFETY: `entry` is valid; `None` queries the base Vulkan
+    // implementation's extensions rather than a specific layer's.
+    let extensions =
+        unsafe { entry.enumerate_instance_extension_properties(None) }.unwrap_or_default();
+    let debug_utils_available = extensions.iter().any(|ext| {
+        // SAFETY: same as `layer.layer_name` above.
+        (unsafe { CStr::from_ptr(ext.extension_name.as_ptr()) }) == ash::ext::debug_utils::NAME
+    });
+
+    layer_available && debug_utils_available
 }
 
 impl VulkanDevice {
@@ -132,16 +207,58 @@ impl VulkanDevice {
             .to_vec();
         required_extensions.push(ash::khr::get_physical_device_properties2::NAME.as_ptr());
 
+        let mut enabled_layers: Vec<*const c_char> = Vec::new();
+        #[cfg(debug_assertions)]
+        let validation_requested = if debug_validation_available(&entry) {
+            enabled_layers.push(c"VK_LAYER_KHRONOS_validation".as_ptr());
+            required_extensions.push(ash::ext::debug_utils::NAME.as_ptr());
+            true
+        } else {
+            eprintln!(
+                "tre-rhi-vulkan: VK_LAYER_KHRONOS_validation/VK_EXT_debug_utils not both \
+                 available (install the Vulkan validation layers package for debug-build GPU \
+                 validation) -- continuing without them"
+            );
+            false
+        };
+
         let instance_create_info = vk::InstanceCreateInfo::default()
             .application_info(&app_info)
+            .enabled_layer_names(&enabled_layers)
             .enabled_extension_names(&required_extensions);
 
-        // SAFETY: `entry` was just loaded above and is valid; `app_info`
-        // and `required_extensions` are locals borrowed only for the
-        // duration of this call. The returned `VkInstance` is destroyed
-        // exactly once in `Drop for VulkanDevice` below.
+        // SAFETY: `entry` was just loaded above and is valid; `app_info`,
+        // `enabled_layers`, and `required_extensions` are locals borrowed
+        // only for the duration of this call. The returned `VkInstance` is
+        // destroyed exactly once in `Drop for VulkanDevice` below.
         let instance = unsafe { entry.create_instance(&instance_create_info, None) }
             .map_err(|_| EngineError::DeviceLost)?;
+
+        #[cfg(debug_assertions)]
+        let debug_utils = validation_requested
+            .then(|| {
+                let debug_utils_loader = ash::ext::debug_utils::Instance::new(&entry, &instance);
+                let messenger_info = vk::DebugUtilsMessengerCreateInfoEXT::default()
+                    .message_severity(
+                        vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
+                            | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR,
+                    )
+                    .message_type(
+                        vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
+                            | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
+                            | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
+                    )
+                    .pfn_user_callback(Some(vulkan_debug_callback));
+                // SAFETY: `debug_utils_loader` was just created from this
+                // valid `instance`/`entry`; `messenger_info` (and the
+                // `'static` callback function it references) is a local
+                // borrowed only for the duration of this call, which is all
+                // `create_debug_utils_messenger` requires.
+                unsafe { debug_utils_loader.create_debug_utils_messenger(&messenger_info, None) }
+                    .ok()
+                    .map(|messenger| (debug_utils_loader, messenger))
+            })
+            .flatten();
 
         let surface_loader = ash::khr::surface::Instance::new(&entry, &instance);
         let surface = Self::create_surface_raw(&entry, &instance, display_handle, window_handle)?;
@@ -260,6 +377,8 @@ impl VulkanDevice {
                 dynamic_rendering,
                 frame_sync,
                 transient_pool: Mutex::new(TransientPool::default()),
+                #[cfg(debug_assertions)]
+                debug_utils,
             },
             surface_loader,
             surface,
@@ -612,6 +731,24 @@ impl Drop for VulkanDevice {
             self.device.destroy_fence(self.frame_sync.fence, None);
             self.device.destroy_command_pool(self.command_pool, None);
             self.device.destroy_device(None);
+        }
+        // Destroyed after the device but before the instance: the
+        // messenger is a child of the INSTANCE (created via an
+        // `ash::ext::debug_utils::Instance` loader), not the device, so it
+        // must not outlive `destroy_instance` below.
+        #[cfg(debug_assertions)]
+        if let Some((debug_utils_loader, messenger)) = self.debug_utils.take() {
+            // SAFETY: `messenger` was created from `debug_utils_loader` on
+            // this same `self.instance`, both still valid at this point;
+            // `self` is being dropped, so nothing else can reference
+            // `messenger` afterward.
+            unsafe {
+                debug_utils_loader.destroy_debug_utils_messenger(messenger, None);
+            }
+        }
+        // SAFETY: `self.instance` is valid and every child object
+        // (device, messenger) has been destroyed above.
+        unsafe {
             self.instance.destroy_instance(None);
         }
     }
