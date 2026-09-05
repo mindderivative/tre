@@ -1,5 +1,12 @@
 # TECHNICAL.md Section 9.1: stable channel, pinned per-workspace. Verified
 # against the toolchain actually installed when this scaffold was created
 # (2026-09-04); bump deliberately, not silently, when the team decides to.
+#
+# `components` is explicit, not left to the ambient rustup profile: GitHub's
+# hosted runners default rustup to the "minimal" profile (rustc/cargo/std
+# only), so auto-installing a toolchain pin without this list silently
+# skips rustfmt/clippy there, while a fresh local rustup install (whose
+# default profile usually includes them) hides the gap entirely.
 [toolchain]
 channel = "1.98.0"
+components = ["rustfmt", "clippy"]
