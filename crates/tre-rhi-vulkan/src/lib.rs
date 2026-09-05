@@ -51,6 +51,10 @@ impl VulkanDevice {
         display_handle: raw_window_handle::RawDisplayHandle,
         window_handle: raw_window_handle::RawWindowHandle,
     ) -> Result<(Self, ash::khr::surface::Instance, vk::SurfaceKHR), EngineError> {
+        // SAFETY: dynamically loads the system Vulkan loader; this is the
+        // first Vulkan call the crate makes, and the resulting `Entry` is
+        // kept alive on `Self` for as long as any function pointers loaded
+        // through it (instance/device calls below) are used.
         let entry = unsafe { ash::Entry::load() }.map_err(|_| EngineError::DeviceLost)?;
 
         let app_info = vk::ApplicationInfo::default()
@@ -66,23 +70,36 @@ impl VulkanDevice {
             .application_info(&app_info)
             .enabled_extension_names(&required_extensions);
 
+        // SAFETY: `entry` was just loaded above and is valid; `app_info`
+        // and `required_extensions` are locals borrowed only for the
+        // duration of this call. The returned `VkInstance` is destroyed
+        // exactly once in `Drop for VulkanDevice` below.
         let instance = unsafe { entry.create_instance(&instance_create_info, None) }
             .map_err(|_| EngineError::DeviceLost)?;
 
         let surface_loader = ash::khr::surface::Instance::new(&entry, &instance);
         let surface = Self::create_surface_raw(&entry, &instance, display_handle, window_handle)?;
 
+        // SAFETY: `instance` was just successfully created above and is
+        // still valid.
         let physical_devices = unsafe { instance.enumerate_physical_devices() }
             .map_err(|_| EngineError::DeviceLost)?;
 
         let (physical_device, queue_family_index) = physical_devices
             .into_iter()
             .find_map(|pd| {
+                // SAFETY: `pd` comes from `enumerate_physical_devices` on
+                // this same still-valid `instance`, so it is a valid
+                // physical device handle.
                 let queue_families =
                     unsafe { instance.get_physical_device_queue_family_properties(pd) };
                 queue_families.iter().enumerate().find_map(|(i, family)| {
                     let i = i as u32;
                     let graphics_capable = family.queue_flags.contains(vk::QueueFlags::GRAPHICS);
+                    // SAFETY: `pd` and `i` are valid (queried from this
+                    // instance immediately above), and `surface` was just
+                    // created by `create_surface_raw` and is still alive
+                    // for the duration of this call.
                     let present_capable = unsafe {
                         surface_loader.get_physical_device_surface_support(pd, i, surface)
                     }
@@ -111,11 +128,22 @@ impl VulkanDevice {
             .enabled_extension_names(&device_extension_names)
             .push_next(&mut dynamic_rendering_feature);
 
+        // SAFETY: `physical_device` was chosen above from this instance's
+        // own enumeration, and `device_create_info`'s borrowed
+        // `queue_create_infos`/`device_extension_names`/
+        // `dynamic_rendering_feature` are all locals that outlive this
+        // call.
         let device = unsafe { instance.create_device(physical_device, &device_create_info, None) }
             .map_err(|_| EngineError::DeviceLost)?;
 
+        // SAFETY: `device` was just successfully created above, and
+        // `queue_family_index`/index `0` are exactly the family and single
+        // queue priority `device_create_info` requested.
         let graphics_queue = unsafe { device.get_device_queue(queue_family_index, 0) };
 
+        // SAFETY: `device` is the just-created, still-valid logical
+        // device, and `queue_family_index` is the same family it was
+        // created with.
         let command_pool = unsafe {
             device.create_command_pool(
                 &vk::CommandPoolCreateInfo::default()
@@ -126,6 +154,8 @@ impl VulkanDevice {
         }
         .map_err(|_| EngineError::DeviceLost)?;
 
+        // SAFETY: `command_pool` was just created above on this same
+        // `device` and is still valid.
         let command_buffer = unsafe {
             device.allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::default()
@@ -138,6 +168,7 @@ impl VulkanDevice {
 
         let dynamic_rendering = ash::khr::dynamic_rendering::Device::new(&instance, &device);
 
+        // SAFETY: `device` is valid (created above).
         let in_flight_fence = unsafe {
             device.create_fence(
                 &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
@@ -195,6 +226,10 @@ impl VulkanDevice {
         display_handle: raw_window_handle::RawDisplayHandle,
         window_handle: raw_window_handle::RawWindowHandle,
     ) -> Result<vk::SurfaceKHR, EngineError> {
+        // SAFETY: `entry`/`instance` are valid for the duration of this
+        // call, and `display_handle`/`window_handle` are valid raw handles
+        // for a live window for the duration of this call, which is all
+        // `ash_window::create_surface` requires (it does not retain them).
         unsafe { ash_window::create_surface(entry, instance, display_handle, window_handle, None) }
             .map_err(|_| EngineError::DeviceLost)
     }
@@ -282,6 +317,9 @@ impl VulkanDevice {
         let dynamic_state =
             vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
 
+        // SAFETY: `self.device` is the valid logical device owned by this
+        // `VulkanDevice`, and the `push_constant_ranges` slice is a local
+        // temporary that outlives this call.
         let layout = unsafe {
             self.device.create_pipeline_layout(
                 &vk::PipelineLayoutCreateInfo::default().push_constant_ranges(&[
@@ -312,6 +350,13 @@ impl VulkanDevice {
             .layout(layout)
             .push_next(&mut rendering_info);
 
+        // SAFETY: `self.device` is valid; `pipeline_create_info` and
+        // everything it borrows (`stages`, `vertex_input`, `attachments`
+        // via `color_blend`, `dynamic_states`, and `rendering_info` via
+        // `push_next`) are locals that outlive this call; `layout` was
+        // just created above on this same device, and
+        // `vk::PipelineCache::null()` is a valid null handle meaning "no
+        // cache".
         let pipeline = unsafe {
             self.device.create_graphics_pipelines(
                 vk::PipelineCache::null(),
@@ -321,6 +366,9 @@ impl VulkanDevice {
         }
         .map_err(|_| EngineError::PipelineCreationFailed)?[0];
 
+        // SAFETY: `vertex_module`/`fragment_module` were created by this
+        // same device above and are no longer needed once
+        // `create_graphics_pipelines` has consumed them into `pipeline`.
         unsafe {
             self.device.destroy_shader_module(vertex_module, None);
             self.device.destroy_shader_module(fragment_module, None);
@@ -336,6 +384,9 @@ impl VulkanDevice {
     fn create_shader_module(&self, spv: &[u8]) -> Result<vk::ShaderModule, EngineError> {
         let words = ash::util::read_spv(&mut std::io::Cursor::new(spv))
             .map_err(|_| EngineError::PipelineCreationFailed)?;
+        // SAFETY: `self.device` is valid, and `words` is a local `Vec` of
+        // complete, word-aligned SPIR-V (parsed by `ash::util::read_spv`
+        // above) that outlives this call.
         unsafe {
             self.device
                 .create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&words), None)
@@ -351,6 +402,9 @@ impl VulkanDevice {
         bytes: &[u8],
         usage: vk::BufferUsageFlags,
     ) -> Result<VulkanBuffer, EngineError> {
+        // SAFETY: `self.device` is valid, and `bytes.len()` is used
+        // directly as `size` so the create info describes exactly this
+        // buffer's contents.
         let buffer = unsafe {
             self.device.create_buffer(
                 &vk::BufferCreateInfo::default()
@@ -362,7 +416,11 @@ impl VulkanDevice {
         }
         .map_err(|_| EngineError::DeviceLost)?;
 
+        // SAFETY: `buffer` was just created above on this device.
         let requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
+        // SAFETY: `self.physical_device` is the device selected in
+        // `VulkanDevice::new` and is valid for as long as `self.instance`
+        // (also alive here) is.
         let memory_properties = unsafe {
             self.instance
                 .get_physical_device_memory_properties(self.physical_device)
@@ -377,6 +435,10 @@ impl VulkanDevice {
             })
             .ok_or(EngineError::DeviceLost)?;
 
+        // SAFETY: `self.device` is valid, `requirements.size` comes
+        // directly from `get_buffer_memory_requirements` above, and
+        // `memory_type_index` was selected from the `find` above so it is
+        // one of the bits set in `requirements.memory_type_bits`.
         let memory = unsafe {
             self.device.allocate_memory(
                 &vk::MemoryAllocateInfo::default()
@@ -387,6 +449,14 @@ impl VulkanDevice {
         }
         .map_err(|_| EngineError::DeviceLost)?;
 
+        // SAFETY: `buffer` and `memory` were both just created above on
+        // this device, `buffer` has not been bound to memory before now,
+        // and `memory` was allocated as host-visible/host-coherent
+        // (selected via `wanted` above), so mapping it is valid. `dst` is
+        // therefore writable for at least `bytes.len()` bytes (the same
+        // length passed to `map_memory`), matching `copy_nonoverlapping`'s
+        // write, and `unmap_memory` is called exactly once right after to
+        // end the mapping.
         unsafe {
             self.device
                 .bind_buffer_memory(buffer, memory, 0)
@@ -409,6 +479,11 @@ impl VulkanDevice {
 
 impl Drop for VulkanDevice {
     fn drop(&mut self) {
+        // SAFETY: `self` is being dropped, so no other code holds
+        // references to these handles afterward; destroying the fence and
+        // command pool (children of the device) before the device, and
+        // the device before the instance, follows Vulkan's required
+        // child-before-parent destruction order.
         unsafe {
             self.device.destroy_fence(self.in_flight_fence, None);
             self.device.destroy_command_pool(self.command_pool, None);
@@ -439,6 +514,9 @@ impl RhiDevice for VulkanDevice {
         &self,
         swapchain: &dyn RhiSwapchain,
     ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
+        // SAFETY: `self.device` is valid and `self.in_flight_fence` was
+        // created signaled in `new`; under the single-frame-in-flight
+        // model it is only ever waited on and reset here, once per frame.
         unsafe {
             self.device
                 .wait_for_fences(&[self.in_flight_fence], true, u64::MAX)
@@ -455,6 +533,11 @@ impl RhiDevice for VulkanDevice {
         // wait above already guarantees the GPU is done with whatever it
         // last recorded, so resetting it here is safe.
         let command_buffer = self.command_buffer;
+        // SAFETY: `command_buffer` is the persistent buffer allocated once
+        // in `new`; the fence wait immediately above already guarantees
+        // the GPU is done with whatever it last recorded, so resetting
+        // and beginning a fresh recording on it now does not race the
+        // GPU.
         unsafe {
             self.device
                 .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
@@ -482,6 +565,10 @@ impl RhiDevice for VulkanDevice {
                     .level_count(1)
                     .layer_count(1),
             );
+        // SAFETY: `command_buffer` is in the recording state (just begun
+        // above), and `target_image` is the swapchain image acquired this
+        // frame, whose layout is being transitioned before any rendering
+        // uses it.
         unsafe {
             self.device.cmd_pipeline_barrier(
                 command_buffer,
@@ -513,6 +600,11 @@ impl RhiDevice for VulkanDevice {
             .layer_count(1)
             .color_attachments(&color_attachments);
 
+        // SAFETY: `command_buffer` is still recording, and `target_view`
+        // (via `color_attachment`/`rendering_info`) is the same acquired
+        // image the barrier above just transitioned to
+        // `COLOR_ATTACHMENT_OPTIMAL`; `width`/`height` match the
+        // swapchain's own reported extent.
         unsafe {
             self.dynamic_rendering
                 .cmd_begin_rendering(command_buffer, &rendering_info);
@@ -572,6 +664,12 @@ impl RhiDevice for VulkanDevice {
                     .layer_count(1),
             );
 
+        // SAFETY: `raw_cmd` is the command buffer `begin_frame` began
+        // rendering into this same frame (a `cmd_begin_rendering` without
+        // a matching `cmd_end_rendering` yet), and `target_image` is the
+        // same acquired image that rendering targeted, so ending
+        // rendering, transitioning the image, and ending the buffer here
+        // are all well-ordered and happen exactly once per frame.
         unsafe {
             self.dynamic_rendering.cmd_end_rendering(raw_cmd);
             self.device.cmd_pipeline_barrier(
@@ -600,6 +698,11 @@ impl RhiDevice for VulkanDevice {
             .command_buffers(&command_buffers)
             .signal_semaphores(&signal_semaphores);
 
+        // SAFETY: `raw_cmd` was just ended above; `wait_semaphores`/
+        // `signal_semaphores` come from the `AcquiredImage` returned by
+        // `begin_frame` this same frame and are valid; `in_flight_fence`
+        // is the fence `begin_frame` waited on and reset for this frame,
+        // so signaling it here is the matching half of that handshake.
         unsafe {
             self.device
                 .queue_submit(self.graphics_queue, &[submit_info], self.in_flight_fence)
@@ -642,10 +745,15 @@ impl VulkanSwapchain {
         width: u32,
         height: u32,
     ) -> Result<Self, EngineError> {
+        // SAFETY: `device.physical_device` and `surface` were both
+        // selected/created during `VulkanDevice::new` (or, for additional
+        // windows, `create_surface`) and are both still valid.
         let capabilities = unsafe {
             surface_loader.get_physical_device_surface_capabilities(device.physical_device, surface)
         }
         .map_err(|_| EngineError::DeviceLost)?;
+        // SAFETY: same as above -- `device.physical_device`/`surface` are
+        // a valid, still-alive pair.
         let formats = unsafe {
             surface_loader.get_physical_device_surface_formats(device.physical_device, surface)
         }
@@ -666,6 +774,12 @@ impl VulkanSwapchain {
         let extent = vk::Extent2D { width, height };
 
         let swapchain_loader = ash::khr::swapchain::Device::new(&device.instance, &device.device);
+        // SAFETY: `device.instance`/`device.device` (backing
+        // `swapchain_loader`) are valid, `surface` is the same live
+        // surface queried above, and `capabilities`/`surface_format` were
+        // just queried against this exact physical device/surface pair,
+        // so `image_count`/`image_format`/`pre_transform` etc. are all
+        // values that pair validly with `surface`.
         let swapchain = unsafe {
             swapchain_loader.create_swapchain(
                 &vk::SwapchainCreateInfoKHR::default()
@@ -686,12 +800,16 @@ impl VulkanSwapchain {
         }
         .map_err(|_| EngineError::DeviceLost)?;
 
+        // SAFETY: `swapchain` was just created above on this same loader.
         let images = unsafe { swapchain_loader.get_swapchain_images(swapchain) }
             .map_err(|_| EngineError::DeviceLost)?;
 
         let image_views = images
             .iter()
             .map(|&image| {
+                // SAFETY: `device.device` is valid, and `image` comes from
+                // `get_swapchain_images` above, so it is a live image
+                // owned by this swapchain.
                 unsafe {
                     device.device.create_image_view(
                         &vk::ImageViewCreateInfo::default()
@@ -711,6 +829,7 @@ impl VulkanSwapchain {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        // SAFETY: `device.device` is valid.
         let image_available_semaphore = unsafe {
             device
                 .device
@@ -720,6 +839,10 @@ impl VulkanSwapchain {
         let render_finished_semaphores = images
             .iter()
             .map(|_| {
+                // SAFETY: `device.device` is valid; one semaphore is
+                // created per swapchain image so their indices line up
+                // with acquired image indices (see the field doc comment
+                // on `render_finished_semaphores`).
                 unsafe {
                     device
                         .device
@@ -757,6 +880,11 @@ impl RhiSwapchain for VulkanSwapchain {
     }
 
     fn acquire_next_image(&self) -> Result<AcquiredImage, EngineError> {
+        // SAFETY: `self.swapchain` is valid, and `self.image_available_semaphore`
+        // is not currently pending a wait -- under the single-frame-in-flight
+        // model, `VulkanDevice::begin_frame`'s fence wait ensures the prior
+        // frame's wait on this same semaphore has already completed before
+        // a new frame acquires and signals it again.
         let (index, _suboptimal) = unsafe {
             self.swapchain_loader.acquire_next_image(
                 self.swapchain,
@@ -795,6 +923,9 @@ impl RhiSwapchain for VulkanSwapchain {
 
         // Present queue == graphics queue for Phase 0 (queried as both
         // graphics- and present-capable in `VulkanDevice::new`).
+        // SAFETY: `self.present_queue` and `self.swapchain` are valid, and
+        // `wait_semaphores`/`indices` come from the `AcquiredImage` this
+        // same frame's `acquire_next_image` returned.
         match unsafe {
             self.swapchain_loader
                 .queue_present(self.present_queue, &present_info)
@@ -810,6 +941,11 @@ impl RhiSwapchain for VulkanSwapchain {
 
 impl Drop for VulkanSwapchain {
     fn drop(&mut self) {
+        // SAFETY: `self` is being dropped, so no other code holds
+        // references to these handles afterward; destroying the
+        // semaphores and image views (children of the swapchain) before
+        // the swapchain, and the swapchain before the surface, follows
+        // Vulkan's required child-before-parent destruction order.
         unsafe {
             self.device
                 .destroy_semaphore(self.image_available_semaphore, None);
@@ -838,6 +974,10 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
     fn set_pipeline(&mut self, pipeline: &dyn RhiPipelineState) {
         let raw = vk::Pipeline::from_raw(pipeline.raw_handle());
         self.pipeline_layout = Some(vk::PipelineLayout::from_raw(pipeline.layout_handle()));
+        // SAFETY: `self.command_buffer` is recording (allocated once and
+        // reset/begun per frame by `VulkanDevice::begin_frame`), and `raw`
+        // is a pipeline handle the `RhiPipelineState` trait contract
+        // guarantees was created by this same device and is still alive.
         unsafe {
             self.device.cmd_bind_pipeline(
                 self.command_buffer,
@@ -848,6 +988,8 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
     }
 
     fn set_scissor(&mut self, rect: &ScissorRect) {
+        // SAFETY: `self.command_buffer` is recording, consistent with the
+        // rest of this frame's commands.
         unsafe {
             self.device.cmd_set_scissor(
                 self.command_buffer,
@@ -868,6 +1010,9 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
 
     fn bind_vertex_buffer(&mut self, buffer: &dyn RhiBuffer, offset: u32) {
         let raw = vk::Buffer::from_raw(buffer.raw_handle());
+        // SAFETY: `self.command_buffer` is recording, and `raw` is a
+        // buffer handle the `RhiBuffer` trait contract guarantees was
+        // created by this device and is still alive.
         unsafe {
             self.device
                 .cmd_bind_vertex_buffers(self.command_buffer, 0, &[raw], &[offset as u64]);
@@ -876,6 +1021,10 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
 
     fn bind_index_buffer(&mut self, buffer: &dyn RhiBuffer, offset: u32) {
         let raw = vk::Buffer::from_raw(buffer.raw_handle());
+        // SAFETY: `self.command_buffer` is recording, and `raw` is a
+        // buffer handle the `RhiBuffer` trait contract guarantees is
+        // valid and alive; `UINT32` matches how index buffers are
+        // uploaded via `VulkanDevice::upload_buffer`.
         unsafe {
             self.device.cmd_bind_index_buffer(
                 self.command_buffer,
@@ -895,6 +1044,11 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
         // push the screen size the vertex shader needs to map pixel-space
         // positions to NDC.
         let push = [self.width as f32, self.height as f32];
+        // SAFETY: `self.command_buffer` is recording; `self.pipeline_layout`
+        // was set by `set_pipeline` (asserted via `.expect` above) and
+        // matches the layout `create_pipeline` declared its push constant
+        // range against, and `push`'s 8-byte size matches the 8-byte
+        // range reserved there.
         unsafe {
             self.device.cmd_push_constants(
                 self.command_buffer,
@@ -934,6 +1088,10 @@ impl RhiBuffer for VulkanBuffer {
 
 impl Drop for VulkanBuffer {
     fn drop(&mut self) {
+        // SAFETY: `self` is being dropped, so no other code holds
+        // references to `self.buffer`/`self.memory` afterward; destroying
+        // the buffer before freeing the memory it was bound to follows
+        // Vulkan's required order.
         unsafe {
             self.device.destroy_buffer(self.buffer, None);
             self.device.free_memory(self.memory, None);
@@ -959,6 +1117,8 @@ impl RhiPipelineState for VulkanPipelineState {
 
 impl Drop for VulkanPipelineState {
     fn drop(&mut self) {
+        // SAFETY: `self` is being dropped, so no other code holds
+        // references to `self.pipeline`/`self.layout` afterward.
         unsafe {
             self.device.destroy_pipeline(self.pipeline, None);
             self.device.destroy_pipeline_layout(self.layout, None);

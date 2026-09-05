@@ -38,6 +38,9 @@ impl HeadlessSwapchain {
     pub fn new(device: &VulkanDevice, width: u32, height: u32) -> Result<Self, EngineError> {
         let raw_device = &device.device;
 
+        // SAFETY: `raw_device` is `device.device`, valid for the life of
+        // `device`, and the `ImageCreateInfo` only references locals
+        // (`width`/`height`) that outlive this call.
         let image = unsafe {
             raw_device.create_image(
                 &vk::ImageCreateInfo::default()
@@ -64,6 +67,9 @@ impl HeadlessSwapchain {
 
         let image_memory = allocate_and_bind_image(device, raw_device, image)?;
 
+        // SAFETY: `raw_device` is valid, and `image` was just created and
+        // bound to memory above (`allocate_and_bind_image`), so it is a
+        // valid, memory-backed image.
         let image_view = unsafe {
             raw_device.create_image_view(
                 &vk::ImageViewCreateInfo::default()
@@ -85,6 +91,9 @@ impl HeadlessSwapchain {
         let (staging_buffer, staging_memory) =
             create_staging_buffer(device, raw_device, staging_size)?;
 
+        // SAFETY: `raw_device` is valid, and `device.queue_family_index`
+        // is the same graphics-capable family selected in
+        // `VulkanDevice::new`.
         let command_pool = unsafe {
             raw_device.create_command_pool(
                 &vk::CommandPoolCreateInfo::default()
@@ -94,6 +103,8 @@ impl HeadlessSwapchain {
             )
         }
         .map_err(|_| EngineError::DeviceLost)?;
+        // SAFETY: `command_pool` was just created above on this same
+        // `raw_device`.
         let command_buffer = unsafe {
             raw_device.allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::default()
@@ -104,12 +115,15 @@ impl HeadlessSwapchain {
         }
         .map_err(|_| EngineError::DeviceLost)?[0];
 
+        // SAFETY: `raw_device` is valid.
         let image_available_semaphore =
             unsafe { raw_device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
                 .map_err(|_| EngineError::DeviceLost)?;
+        // SAFETY: `raw_device` is valid.
         let render_finished_semaphore =
             unsafe { raw_device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }
                 .map_err(|_| EngineError::DeviceLost)?;
+        // SAFETY: `raw_device` is valid.
         let readback_fence =
             unsafe { raw_device.create_fence(&vk::FenceCreateInfo::default(), None) }
                 .map_err(|_| EngineError::DeviceLost)?;
@@ -140,6 +154,13 @@ impl HeadlessSwapchain {
     /// # Errors
     /// Returns [`EngineError::DeviceLost`] if the memory map fails.
     pub fn read_pixels_bgra8(&self) -> Result<Vec<u8>, EngineError> {
+        // SAFETY: `self.staging_memory` was allocated as host-visible/
+        // host-coherent and sized to `self.staging_size` bytes
+        // (`create_staging_buffer`) and is not mapped elsewhere; `ptr` is
+        // therefore valid for `self.staging_size` bytes, matching `out`'s
+        // length, so `copy_nonoverlapping`'s read/write stays in bounds,
+        // and `unmap_memory` is called exactly once right after to end the
+        // mapping.
         unsafe {
             let ptr = self
                 .device
@@ -181,6 +202,12 @@ impl RhiSwapchain for HeadlessSwapchain {
         // wait, so this must happen fresh every frame).
         let signal_semaphores = [self.image_available_semaphore];
         let submit = vk::SubmitInfo::default().signal_semaphores(&signal_semaphores);
+        // SAFETY: `self.queue` is valid, and `signal_semaphores` contains
+        // only `self.image_available_semaphore`, which is not currently
+        // pending a wait -- headless has no concurrent frame in flight
+        // (mirroring the windowed swapchain's single-frame-in-flight
+        // model), and `vk::Fence::null()` is a valid null handle meaning
+        // "no fence".
         unsafe {
             self.device
                 .queue_submit(self.queue, &[submit], vk::Fence::null())
@@ -200,6 +227,17 @@ impl RhiSwapchain for HeadlessSwapchain {
         // No presentation engine to hand off to -- instead, copy the
         // rendered image to the host-visible staging buffer so
         // `read_pixels_bgra8` can return it.
+        //
+        // SAFETY: `self.command_buffer`/`self.command_pool` were allocated
+        // once in `new` and this type is only ever driven from one thread
+        // at a time, so reset/record/submit/wait below cannot race another
+        // use of the same command buffer. `region`'s extent matches
+        // `self.width`/`self.height`, which is also what `self.staging_buffer`
+        // was sized for in `new`, so the buffer-to-image copy stays in
+        // bounds. The whole sequence -- record, submit, and wait on
+        // `self.readback_fence` -- completes before this call returns, so
+        // no command buffer or fence is left in a state a later call could
+        // race with.
         unsafe {
             self.device
                 .reset_command_buffer(self.command_buffer, vk::CommandBufferResetFlags::empty())
@@ -294,6 +332,12 @@ impl RhiSwapchain for HeadlessSwapchain {
 
 impl Drop for HeadlessSwapchain {
     fn drop(&mut self) {
+        // SAFETY: `self` is being dropped; `device_wait_idle` below
+        // ensures no GPU work still references these handles before
+        // they're destroyed, and destroying the image view/buffer before
+        // freeing their bound memory, and the command pool after all
+        // commands using it have completed, follows Vulkan's required
+        // order.
         unsafe {
             let _ = self.device.device_wait_idle();
             self.device.destroy_fence(self.readback_fence, None);
@@ -316,12 +360,19 @@ fn allocate_and_bind_image(
     raw_device: &ash::Device,
     image: vk::Image,
 ) -> Result<vk::DeviceMemory, EngineError> {
+    // SAFETY: `image` was just created by the caller
+    // (`HeadlessSwapchain::new`) and passed in still unbound, so its
+    // handle is valid on `raw_device`.
     let requirements = unsafe { raw_device.get_image_memory_requirements(image) };
     let memory_type_index = find_memory_type(
         device,
         requirements.memory_type_bits,
         vk::MemoryPropertyFlags::DEVICE_LOCAL,
     )?;
+    // SAFETY: `raw_device` is valid, `requirements.size` comes directly
+    // from `get_image_memory_requirements` above, and `memory_type_index`
+    // was selected from `requirements.memory_type_bits` by
+    // `find_memory_type`.
     let memory = unsafe {
         raw_device.allocate_memory(
             &vk::MemoryAllocateInfo::default()
@@ -331,6 +382,9 @@ fn allocate_and_bind_image(
         )
     }
     .map_err(|_| EngineError::DeviceLost)?;
+    // SAFETY: `image` and `memory` were both just created above on this
+    // same `raw_device`, and `image` has not been bound to memory before
+    // now.
     unsafe { raw_device.bind_image_memory(image, memory, 0) }
         .map_err(|_| EngineError::DeviceLost)?;
     Ok(memory)
@@ -341,6 +395,8 @@ fn create_staging_buffer(
     raw_device: &ash::Device,
     size: u64,
 ) -> Result<(vk::Buffer, vk::DeviceMemory), EngineError> {
+    // SAFETY: `raw_device` is valid, and `size` is used directly as the
+    // create info's `size`.
     let buffer = unsafe {
         raw_device.create_buffer(
             &vk::BufferCreateInfo::default()
@@ -351,9 +407,14 @@ fn create_staging_buffer(
         )
     }
     .map_err(|_| EngineError::DeviceLost)?;
+    // SAFETY: `buffer` was just created above on this `raw_device`.
     let requirements = unsafe { raw_device.get_buffer_memory_requirements(buffer) };
     let wanted = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
     let memory_type_index = find_memory_type(device, requirements.memory_type_bits, wanted)?;
+    // SAFETY: `raw_device` is valid, `requirements.size` comes directly
+    // from `get_buffer_memory_requirements` above, and `memory_type_index`
+    // was selected from `requirements.memory_type_bits` by
+    // `find_memory_type`.
     let memory = unsafe {
         raw_device.allocate_memory(
             &vk::MemoryAllocateInfo::default()
@@ -363,6 +424,9 @@ fn create_staging_buffer(
         )
     }
     .map_err(|_| EngineError::DeviceLost)?;
+    // SAFETY: `buffer` and `memory` were both just created above on this
+    // same `raw_device`, and `buffer` has not been bound to memory before
+    // now.
     unsafe { raw_device.bind_buffer_memory(buffer, memory, 0) }
         .map_err(|_| EngineError::DeviceLost)?;
     Ok((buffer, memory))
@@ -373,6 +437,9 @@ fn find_memory_type(
     type_bits: u32,
     wanted: vk::MemoryPropertyFlags,
 ) -> Result<u32, EngineError> {
+    // SAFETY: `device.physical_device` is the device selected in
+    // `VulkanDevice::new`, and `device.instance` (which owns it) is still
+    // alive here.
     let memory_properties = unsafe {
         device
             .instance

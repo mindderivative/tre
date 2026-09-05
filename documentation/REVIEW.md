@@ -3,7 +3,7 @@
 Reviewer: Claude (Cowork), acting as Principal Engineer / Lead Tech Architect, per project standing instructions.
 Scope: `DESIGN.md`, `TECHNICAL.md`, `ARCHITECTURE.md`, `IMPLEMENTATION.md`, reviewed in that order. All findings below have been implemented directly in those four files; this document is the record of what was found and what changed.
 
-Status: **All findings implemented.** See "Follow-up: Rust/Python Language Migration," "Review of Rust-Specific Additions," "Full Documentation Review," "Engineering Decisions: Suggested Improvements Actioned," "Phase 0 Implementation" (2026-09-04), "Phase 1 Step 1 Implementation," "Pre-Phase-1-Step-2 Doc Check," "Phase 1 Step 2 Implementation," and "Phase 1 Review" (2026-09-05) below for subsequent, out-of-band work not part of this original review. "Phase 1 Review"'s findings #51-53 are deliberately **not yet fixed** — see that section for disposition.
+Status: **All findings implemented.** See "Follow-up: Rust/Python Language Migration," "Review of Rust-Specific Additions," "Full Documentation Review," "Engineering Decisions: Suggested Improvements Actioned," "Phase 0 Implementation" (2026-09-04), "Phase 1 Step 1 Implementation," "Pre-Phase-1-Step-2 Doc Check," "Phase 1 Step 2 Implementation," and "Phase 1 Review" (2026-09-05) below for subsequent, out-of-band work not part of this original review. "Phase 1 Review"'s finding #51 has since been fixed; #52-53 are deliberately deferred to Phase 2 — see that section for disposition.
 
 ---
 
@@ -433,10 +433,15 @@ Reviewer: two sub-agents (Rust correctness, security), per the project's standin
 
 Status: **No Critical or High severity findings.** Both reviewers independently confirmed the SPSC ring buffer's atomic ordering and the `InputEventQueue` coalescing design are sound. Findings below are Medium/Low process and robustness gaps, plus one pre-existing (not introduced this phase) documentation-policy violation.
 
-### 51. [Should-fix, pre-existing] `tre-rhi-vulkan` has zero `SAFETY:` comments across roughly 65 `unsafe` blocks
-TECHNICAL.md Section 9.1 requires "every `unsafe` block requires an adjacent `// SAFETY:` comment stating the invariant being upheld," and `tre-memory`/`tre-platform` both comply. `tre-rhi-vulkan/src/lib.rs` and `src/headless.rs` do not -- every `unsafe` block in both files (introduced across Phase 0 and Step 1.1, not by Step 2) lacks one. Not a correctness bug by itself, but a real, systemic policy violation that gets more expensive to fix the longer it's left, since Phase 2 adds substantially more Vulkan code on top of this base.
+### 51. [Should-fix, pre-existing] `tre-rhi-vulkan` had zero `SAFETY:` comments across roughly 65 `unsafe` blocks
+TECHNICAL.md Section 9.1 requires "every `unsafe` block requires an adjacent `// SAFETY:` comment stating the invariant being upheld," and `tre-memory`/`tre-platform` both comply. `tre-rhi-vulkan/src/lib.rs` and `src/headless.rs` did not -- every `unsafe` block in both files (introduced across Phase 0 and Step 1.1, not by Step 2) lacked one. Not a correctness bug by itself, but a real, systemic policy violation that gets more expensive to fix the longer it's left, since Phase 2 adds substantially more Vulkan code on top of this base.
 
-**Disposition:** not fixed in this pass -- flagged for the project owner to decide whether to do a dedicated cleanup pass before Phase 2, or fold it into Phase 2's first step.
+**Change:** 44 comments added to `lib.rs`, 19 to `headless.rs` (matching every `unsafe` block in both files), each stating the specific invariant relied on for that call (e.g. "handle was just created above on this same device," "fence wait above guarantees the GPU is done with prior work") rather than repeated generic text. Purely additive -- confirmed via `git diff --stat` (227 insertions, 0 deletions) and a clean `cargo build`/`clippy -D warnings`/`fmt --check`/`test` pass, plus a re-run of `walking_skeleton` under `VK_LAYER_KHRONOS_validation` with zero errors, to confirm no behavior changed.
+
+### 56. [Nice-to-have] `Drop for VulkanSwapchain` doesn't call `device_wait_idle` before destroying its resources, unlike `HeadlessSwapchain`
+Found while adding SAFETY comments (finding #51): `Drop for VulkanSwapchain` destroys semaphores, image views, the swapchain, and the surface directly with no `device_wait_idle()` call first, while `Drop for HeadlessSwapchain` does call it. If `VulkanSwapchain` were ever dropped while the GPU still had in-flight work referencing these resources, this could be a use-after-free at the Vulkan level.
+
+**Disposition:** not fixed -- Phase 0/1's single-frame-in-flight model (a fence wait at the start of every `begin_frame`) likely makes this benign in the current control flow, but the inconsistency with `HeadlessSwapchain` is worth resolving explicitly as the synchronization model evolves in Phase 2, rather than relying on it being accidentally safe by construction.
 
 ### 52. [Should-fix] `SpscRingBuffer`'s API doesn't statically enforce the single-producer/single-consumer contract its soundness depends on
 `push`/`pop` both take `&self`, and the type is `unsafe impl Sync`. Today only one thread ever calls either (this step defers real thread separation), so it's sound in practice, but nothing stops two threads from both calling `.push()` on a shared `Arc<SpscRingBuffer<T>>` -- which would be genuine, unsynchronized UB (not just a logic bug), and Phase 2 is explicitly where a second real thread is expected to appear.
@@ -459,8 +464,9 @@ This phase added several FFI-heavy, security-relevant dependencies (`wayland-cli
 
 | # | Finding | Doc(s)/Code | Severity | Resolution |
 |---|---|---|---|---|
-| 51 | `tre-rhi-vulkan` has ~65 `unsafe` blocks with zero `SAFETY:` comments (pre-existing) | tre-rhi-vulkan (code) | Should-fix | Flagged for project owner decision — not fixed this pass |
+| 51 | `tre-rhi-vulkan` had ~65 `unsafe` blocks with zero `SAFETY:` comments (pre-existing) | tre-rhi-vulkan (code) | Should-fix | Fixed — 63 comments added (44 + 19), purely additive, verified with validation layers |
 | 52 | `SpscRingBuffer` doesn't statically enforce SPSC (both ends take `&self`) | tre-memory (code) | Should-fix | Deferred to Phase 2 — fix requires the real producer/consumer split to design around |
 | 53 | Both platform backends silently swallow connection-level errors in `poll_events` | tre-platform (code) | Should-fix | Deferred — needs a `poll_events` signature change rippling through all examples |
 | 54 | Driver-empty-format-list panic; input-queue overflow can drop `CloseRequested` | tre-rhi-vulkan, tre-engine (code) | Nice-to-have | Recorded, not fixed — both low-likelihood |
 | 55 | No `cargo audit`/`cargo deny` in CI despite new FFI-heavy deps this phase | CI | Nice-to-have | Recommended follow-up, not yet added |
+| 56 | `Drop for VulkanSwapchain` skips `device_wait_idle`, unlike `HeadlessSwapchain` | tre-rhi-vulkan (code) | Nice-to-have | Recorded, not fixed — likely benign under Phase 0/1's sync model, revisit in Phase 2 |
