@@ -1,0 +1,263 @@
+# Rendering Engine Technical Requirements & Specifications
+
+## 1. Performance & Latency Budgets
+
+To satisfy ultra-responsive user interfaces across high-refresh displays ($60\text{ Hz}$ to $240\text{ Hz}$), the rendering engine enforces strict runtime numerical budgets.
+
+| **Metric** | **Target Limit (Typical)** | **Hard Maximum (Worst-Case)** |
+|---|---|---|
+| **Frame Delivery Target** | $240\text{ Hz}$ ($4.16\text{ ms}$) | $60\text{ Hz}$ ($16.66\text{ ms}$) | 
+| **CPU Frame Processing Time** | $\le 0.50\text{ ms}$ | $1.00\text{ ms}$ | 
+| **GPU Execution Time** | $\le 2.00\text{ ms}$ | $4.00\text{ ms}$ | 
+| **Active Steady-State Allocations** | $0\text{ bytes/frame}$ | $0\text{ bytes/frame}$ | 
+| **Dynamic VRAM Footprint** | $\le 128\text{ MB}$ | $256\text{ MB}$ (excluding HDR targets) | 
+| **Draw Call Reduction Ratio** | $\ge 90\%$ batching efficiency | $80\%$ | 
+
+## 2. Hardware & Platform Requirements
+
+### 2.1 Backend Graphics API Standards
+
+* **Vulkan:** Version 1.2+ minimum.
+
+  * Required Extensions: `VK_KHR_dynamic_rendering`, `VK_EXT_descriptor_indexing` (for bindless textures).
+
+  * Hardware Requirements: Push constants ($128\text{ bytes}$ minimum), scalar block layout support.
+
+* **DirectX 12:** Feature Level 12_0 minimum.
+
+  * Required Features: Resource Binding Tier 3 (for unbounded descriptor tables/bindless).
+
+* **Metal:** Metal 2.4+. *(Verify the exact macOS floor against Apple's current Metal Feature Set tables before implementation -- Argument Buffers Tier 2 requires a substantially newer macOS release than the original Metal 2.0 launch on 10.14 Mojave; do not build against an unverified version pairing.)*
+
+  * Required Features: Argument Buffers Tier 2.
+
+### 2.2 Host Architecture & CPU Requirements
+
+* **CPU Architectures:** 64-bit OS required. x86_64 (AVX2 enabled) and ARM64 (NEON instruction set).
+
+* **SIMD Requirements:** Vector math, matrix multiplication, and path tessellation must utilize 128-bit/256-bit SIMD. The primary implementation path is the [`wide`](https://docs.rs/wide) crate's portable vector types (`f32x4`, `f32x8`), which select the appropriate SSE2/AVX2 backend on x86_64 or NEON backend on ARM64 at compile time, transparently emulating `f32x8` as two `f32x4` NEON operations on targets with no native 256-bit width -- this gives the engine one shared code path across architectures instead of hand-maintained duplicate intrinsic implementations per platform (see Section 5.4). Raw `core::arch::{x86_64, aarch64}` intrinsics behind runtime feature detection (`is_x86_feature_detected!` / `is_aarch64_feature_detected!`) are a fallback only for an operation `wide` doesn't expose, not the default path.
+
+* **Memory Alignment Rules:**
+
+  * All dynamic CPU ring buffers must maintain $64\text{ bytes}$ cache-line alignment to prevent false sharing across thread boundaries.
+
+  * Uniform dynamic offsets sent to the RHI must comply with standard $256\text{ bytes}$ alignment requirements ($Alignment_{\text{min}} = 256\text{ bytes}$).
+
+### 2.3 OS Windowing & Accessibility APIs
+
+* **Windows:** Win32 API (`HWND`), DXGI for swapchains, and UI Automation (UIA) COM interfaces for accessibility.
+
+* **Linux:** Wayland primary (`wl_surface`, `xdg_shell`, `zwp_text_input_v3`), X11 fallback via XCB. Accessibility bridged via AT-SPI2 over D-Bus.
+
+* **macOS:** Cocoa/AppKit (`NSWindow`, `CAMetalLayer`), NSAccessibility protocols.
+
+## 3. Memory Subsystem & Zero-Allocation Strategy
+
+To achieve the $0\text{ byte}$ dynamic allocation rule during the active frame tick, the engine utilizes strict pre-allocation strategies.
+
+### 3.1 Triple-Buffered CPU/GPU Ring Arenas
+
+```
++-------------------------------------------------------------------------+
+|                  CPU-Visible Ring Buffer (Host Coherent)                |
+|  +--------------------+--------------------+-------------------------+  |
+|  | Frame N (In Read)  | Frame N+1 (Mapped) | Frame N+2 (Reserved)    |  |
+|  +--------------------+--------------------+-------------------------+  |
++-------------------------------------------------------------------------+
+
+
+```
+
+* **Capacity:** $16\text{ MB} - 32\text{ MB}$ total capacity.
+
+* **Mapping:** CPU maps the target segment asynchronously via `Write-Combined` memory and writes sequential geometry/command data.
+
+* **Fencing:** CPU threads must wait on a hardware `Fence` before writing to a ring buffer segment to ensure the GPU has finished reading previous frames.
+
+### 3.2 Transient Render Target Pool
+
+* Requests for offscreen buffers (e.g., `Canvas::push_layer`) must *never* invoke dynamic RHI texture creation during the render loop.
+
+* **Pool Mechanism:** A hash-map-backed pool of pre-allocated GPU render targets keyed by `(Width, Height, Format)`, with widths and heights rounded up to fixed bucket boundaries so nearby requests share a pool entry rather than each unique pixel dimension demanding its own. The pool uses `FxHashMap` (the `rustc-hash` crate) or `ahash`'s `AHashMap` in place of `std::collections::HashMap`'s default SipHash -- these keys are internal, engine-generated values with no untrusted input reaching them, so SipHash's DoS resistance buys nothing here and only costs cycles on a per-`push_layer` hot-path lookup. Targets requested are checked out and returned to the pool upon `Canvas::pop_layer`; see DESIGN.md Section 2.6 for the pool-miss fallback.
+
+### 3.3 Generational Garbage Collection & Deferred Release
+
+* Resources (textures, meshes) track usage via a `u64 last_frame_used` timestamp.
+
+* **LRU Threshold:** When VRAM pool capacity hits $85\%$, resources unused for $N \ge 600$ frames are marked for eviction.
+
+* **Deferred Release Queue:** Evicted resources are pushed to a lock-free queue and physically destroyed only after $N_{\text{current}} - N_{\text{evicted}} > 3$ frames to guarantee they are no longer in-flight on the GPU.
+
+### 3.4 Zero-Allocation Enforcement
+
+Added in the September 2026 documentation review. The $0\text{ bytes/frame}$ budget (Section 1) is a hard constraint, not an aspiration, and must be mechanically enforced rather than assumed:
+
+* **Debug/Profile Build Guard:** In debug and profiling build configurations, `operator new`/`operator delete` (and `malloc`/`free`) are overridden to check a thread-local "render tick active" flag set by a scope guard at the start of `RenderingCanvas` recording and cleared after RHI submission. Any allocation observed while the flag is set triggers an immediate assert with a captured call stack.
+* **CI Gate:** The headless CI performance regression suite (Section 9.2) runs every commit's render loop under this guard and fails the build on any violation -- the same gate that checks the $\le 0.50\text{ ms}$ CPU budget must also check for zero allocation events, since a passing timing budget with an undetected allocation is a false pass.
+* **Release Build Behavior:** The guard and its thread-local check compile out entirely in release builds (`NDEBUG`) to avoid any steady-state overhead from the enforcement mechanism itself.
+
+## 4. Draw Sorting & 64-Bit Batching Key
+
+Command sorting uses a strictly defined 64-bit integer key evaluated via a 4-pass Radix Sort ($\mathcal{O}(N)$). The canonical bit-field breakdown, rationale, and batch-flattening rules are defined once in ARCHITECTURE.md Section 4.1 (added in the September 2026 documentation review to remove drift risk from four independent restatements) -- this section states only the numeric budget each field must satisfy.
+
+* **Layer ID -- 16 bits:** up to 65,536 layers; standard content uses $0$-$9999$, overlay/modal content uses $\ge 10000$.
+* **Pipeline ID -- 16 bits:** up to 65,536 distinct shader pipeline states.
+* **Texture/Bindless ID -- 12 bits:** up to 4,096 concurrently bound atlas/bindless slots -- ample headroom over the low dozens of atlases the engine actually maintains.
+* **Depth ID -- 20 bits:** up to 1,048,576 submission-order slots per frame. Widened from 16 to 20 bits in the September 2026 documentation review: 16 bits (65,536 slots) left only a 6.5x margin over the Architectural Decision Matrix's stated $>10{,}000\text{ node}$ target, with no documented overflow behavior. A debug-build assert fires if a frame's node count would overflow this field; see ARCHITECTURE.md Section 4.1 for the overflow fallback.
+
+## 5. Primitive & Vector Pipeline Specifications
+
+### 5.1 Compressed Vertex Format
+
+To maximize PCIe bandwidth, the primary UI vertex structure is tightly packed into $32\text{ bytes}$ -- that size is the hard budget this document owns; the canonical field-by-field struct definition lives in ARCHITECTURE.md Section 3.1 (added in the September 2026 documentation review to remove drift risk from three independent restatements). A compile-time `static_assert(sizeof(UiVertex) == 32)` enforces the budget across all target compilers.
+
+### 5.2 Analytical Rounded Rectangles
+
+* Rendered via Signed Distance Fields (SDF) evaluated in the fragment shader to avoid CPU tessellation.
+
+* **Formula Implementation:** $d(\mathbf{p}) = \Vert{}\max(\mathbf{q}, 0)\Vert{} + \min(\max(q_x, q_y), 0) - r$
+
+* **Vertices:** Always emits exactly $4\text{ vertices}$ ($6\text{ indices}$) per rectangle, regardless of corner radius complexity.
+
+### 5.3 Text & MSDF Engine
+
+* **Atlas Generation:** Glyphs are rasterized into a Multi-channel Signed Distance Field (MSDF) at a fixed $32 \times 32\text{ pixel}$ resolution.
+
+* **Atlas Format:** $RGB8$ for MSDF channels, $R8$ for standard fallback glyphs.
+
+* **Shader Evaluation:** Anti-aliasing calculated dynamically using screen-space derivatives (`fwidth`):
+
+  $$
+  \text{sigDist} = \text{median}(R, G, B) - 0.5
+  $$
+
+  $$
+  \text{opacity} = \text{clamp}\left(\frac{\text{sigDist}}{\Vert{}\nabla(\text{sigDist})\Vert{}} + 0.5, 0.0, 1.0\right)
+  $$
+
+  *This is the canonical MSDF opacity formula -- IMPLEMENTATION.md Section 4.2 references it rather than restating it.*
+
+### 5.4 SVG Path Tessellation & Morphing
+
+* **Tessellation Constraints:** Static paths must be triangulated (via ear-clipping or trapezoidal mapping) and cached into a read-only vertex pool to prevent per-frame re-tessellation CPU overhead.
+
+* **Dynamic Morphing:** Keyframed SMIL/CSS path morphing evaluates topological interpolation using the `wide` crate's `f32x8` vector type (Section 2.2) before pushing updated vertices to the dynamic ring buffer. On x86_64 with AVX2 this compiles to genuine 256-bit operations; on ARM64, where NEON has no native 256-bit width, `wide` transparently emulates `f32x8` as a pair of 128-bit NEON operations -- the algorithm's source code is identical on both architectures, with the performance difference (not a correctness or code-path difference) confined entirely inside the `wide` crate's backend selection.
+
+## 6. Color Management & HDR Specifications
+
+### 6.1 Swapchain Formats
+
+* **Standard Dynamic Range (SDR):** `VK_FORMAT_B8G8R8A8_SRGB` / `DXGI_FORMAT_B8G8R8A8_UNORM_SRGB`.
+
+* **High Dynamic Range (HDR) / Wide Gamut:** 16-bit float swapchains required for zero-banding gradients and extended headroom. `VK_FORMAT_R16G16B16A16_SFLOAT` / `DXGI_FORMAT_R16G16B16A16_FLOAT`.
+
+### 6.2 Linear Compositing
+
+* The UI Framework provides colors in $sRGB$. The RHI pipeline must convert these to $Linear$ space *before* blending to eliminate dark transparency fringes.
+
+* **Conversion Formula:**
+
+  $$
+  C_{\text{linear}} = \begin{cases} \frac{C_{\text{srgb}}}{12.92}, & C_{\text{srgb}} \le 0.04045 \\ \left(\frac{C_{\text{srgb}} + 0.055}{1.055}\right)^{2.4}, & C_{\text{srgb}} > 0.04045 \end{cases}
+  $$
+
+*This is the canonical sRGB <-> Linear conversion formula -- DESIGN.md Section 11.1 and IMPLEMENTATION.md Section 7.1 reference it rather than restating it.*
+
+### 6.3 HDR-to-SDR Tone Mapping
+
+This is a UI engine, not a photo, film, or video-editing application: standard (at-or-below-white) UI content -- buttons, panels, text, brand colors -- must reach the screen bit-for-bit identical to its authored sRGB value. Only the content DESIGN.md Section 11.2 explicitly calls out as intentionally exceeding standard white (audio meter peaks, HDR video preview frames, high-brightness indicators) needs compressing into the display's actual headroom.
+
+**Canonical formula** (identity at or below white; Reinhard-style compression of the excess above it), for linear light value $L$ where $L = 1.0$ is standard SDR white:
+
+$$
+f(L) = \begin{cases} L, & L \le 1.0 \\[4pt] 1.0 + \dfrac{L - 1.0}{1 + (L - 1.0)/W}, & L > 1.0 \end{cases}
+$$
+
+$W$ is the display's reported HDR headroom in SDR-white multiples (e.g., $W = 3.0$ for a display capable of 3x SDR peak brightness), read at runtime from the brightness metadata hooks DESIGN.md Section 11.2 already exposes -- never a fixed constant. The function is continuous and monotonic across the $L = 1.0$ boundary (no visible seam between standard and HDR content), and as $L \to \infty$, $f(L) \to 1.0 + W$: output asymptotically approaches but never hard-clips at the display's actual headroom, avoiding both banding and an abrupt ceiling.
+
+*Why not ACES:* ACES filmic tone mapping reshapes contrast and desaturates highlights across the *entire* input range, including everything at or below white -- correct for cinematic footage, where no pixel is supposed to reach the screen as an exact, specific value, but wrong for a UI engine, where a button's authored color must not shift. ACES (or another filmic curve) remains available as an explicit, opt-in per-`Canvas` style choice for creative-workstation/DAW integrations (DESIGN.md Section 3) that specifically want it for embedded video/image preview content, but it is never the default tone-mapping path.
+
+*This is the canonical HDR tone-mapping formula -- DESIGN.md Section 11.2 and IMPLEMENTATION.md Section 7.1 reference it rather than restating it.*
+
+## 7. Math & Timing Specifications
+
+### 7.1 Microsecond Monotonic Clock
+
+* The engine must use hardware-backed, monotonically increasing timers (e.g., `QueryPerformanceCounter` on Windows, `clock_gettime(CLOCK_MONOTONIC)` on Linux).
+
+* Time delta ($\Delta t$) passed to the animation evaluation tick must have precision to at least $1 \mu s$ ($0.000001\text{ s}$).
+
+### 7.2 SIMD Affine Matrix Hierarchy
+
+Transforms use $3 \times 3$ affine matrices. Given 2D translation $(t_x, t_y)$, rotation $(\theta)$, and scale $(s_x, s_y)$:
+
+$$
+\mathbf{M} = \begin{bmatrix} s_x \cos\theta & -s_y \sin\theta & t_x \\ s_x \sin\theta &  s_y \cos\theta & t_y \\ 0 & 0 & 1 \end{bmatrix}
+$$
+
+Matrix multiplications for parent-child world transforms must be batched and executed via the `wide` crate's portable SIMD types (Section 2.2) during the scene graph flattening phase.
+
+## 8. Threading & Concurrency Limits
+
+* **Event Queue:** Single-Producer Single-Consumer (SPSC) lock-free ring buffer for OS input events. Corrected in the September 2026 documentation review: the engine has exactly one consumer (the UI framework's logic tick draining the queue, per DESIGN.md Section 5.1). SPSC is simpler and faster than SPMC -- no consumer-side CAS races or ABA hazards -- and should only be upgraded to SPMC if a second, genuinely independent consumer thread is added, at which point that consumer and its purpose must be named here explicitly.
+
+* **Canvas Recording:** Worker threads can spawn `SubCanvas` instances. Max concurrent sub-canvases constrained to `std::thread::available_parallelism()` minus one. (`std::thread::hardware_concurrency()` is the C++ name for this query; Rust's equivalent in `std::thread` is `available_parallelism`, stabilized since Rust 1.59 and returning an `io::Result<NonZeroUsize>`.)
+
+* **Lock-Free Aggregation:** Sub-canvases are stitched into the main command arena using atomic pointer increments (`AtomicUsize::fetch_add`) to reserve output space in the global intermediate representation array, requiring zero mutex locks.
+
+* **Multi-Window Atlas Concurrency:** DESIGN.md Section 10.3 requires that no window ever blocks on another window's atlas insertion. Two lock-free primitives implement this:
+
+  * A bounded, pre-allocated **MPSC (multi-producer, single-consumer) ring buffer** carries atlas-insertion requests from any window's tessellation phase (producers) to the single atlas owner (the sole consumer). This generalizes the SPSC ring buffer already used for OS input events (above) to the multi-producer case, since here multiple window threads genuinely are independent producers, unlike the input-event queue's single OS-event-pump producer.
+  * A fixed-capacity **single-writer/multi-reader (SWMR) open-addressed table** publishes completed atlas coordinates: the atlas owner is the only writer (`Ordering::Release` store into a slot), and any window's rendering thread reads (`Ordering::Acquire` load) without ever taking a lock or performing a CAS. This is a purpose-built structure, not a general-purpose concurrent hash map (e.g. not `dashmap`) -- it only ever adds entries (never removes them in place; eviction is handled by the existing generation-counter/deferred-release mechanism, Section 3.3), which is exactly the access pattern a plain atomic-publish table is sufficient for. Swapping the *hasher* used elsewhere for hot-path lookups (`FxHashMap`/`ahash`, Section 3.2) does not solve this problem by itself -- it only makes single-threaded lookups faster, not concurrent ones safe.
+
+## 9. Toolchain & Development Environment
+
+### 9.1 Language & Compiler Targets
+
+* **Rust Edition:** 2021 minimum, MSRV (Minimum Supported Rust Version) pinned at 1.75+ via `rust-toolchain.toml`. Strictly leveraging `const` generics and compile-time `const fn` evaluation for memory alignments, and `#[repr(C)]` layouts for every type that crosses the FFI boundary (Section 9.4).
+
+* **No dynamic type inspection in hot paths:** no `std::any::Any` downcasting or reflection-style type inspection within the per-frame rendering loop -- the Rust-equivalent of the prior "no RTTI" rule. The Section 6 (ARCHITECTURE.md) `dyn Trait` exception is for RHI method dispatch only, never for runtime type identification.
+
+* **No unwinding past the FFI boundary:** A Rust panic must never propagate past an `extern "C"` function back into the calling UI framework (Section 9.4) -- doing so is undefined behavior per the Rust reference. This requires the *opposite* of the commonly-recommended `panic = "abort"` release-profile setting: the `tre-ffi` crate and its entire dependency graph build with the default `panic = "unwind"` strategy specifically so that `std::panic::catch_unwind` has stack unwinding available to catch. Every exported `extern "C"` entry point wraps its body in `catch_unwind`, converting any caught panic into an `EngineError` result code (DESIGN.md Section 2.6) before returning to the caller. `panic = "abort"` must never be set on any profile used to build the shipped `cdylib`/`staticlib` -- it would make every `catch_unwind` call a silent no-op, turning a recoverable panic back into a process-terminating crash and defeating the entire purpose of this rule.
+
+* **`unsafe` policy:** `unsafe` is permitted only inside the RHI backend crates (raw graphics API FFI), the ring-buffer/arena allocators (Section 3, including the atlas's MPSC/SWMR concurrency primitives in Section 8), and the `tre-ffi` crate (raw handle/pointer conversion and manual buffer-ownership transfer across the C-ABI boundary, Section 9.4). Every other crate in the workspace, including `tre-engine` itself, carries `#![forbid(unsafe_code)]`, so the three permitted locations above are the complete, closed set -- not merely the ones called out for emphasis. The vector-math/SIMD crate (Section 2.2) is *not* on this list: since it is built on the `wide` crate's safe public API rather than raw `core::arch` intrinsics, it requires no `unsafe` of its own. (If a future gap forces a raw intrinsic `wide` doesn't cover, add that crate back to this list explicitly at that point -- per the same reasoning that closed the list in the first place, don't leave an implicit, undocumented exception.) Every `unsafe` block requires an adjacent `// SAFETY:` comment stating the invariant being upheld, and `#![deny(unsafe_op_in_unsafe_fn)]` is set workspace-wide.
+
+* **Toolchains:**
+
+  * `rustc` / `cargo` via `rustup`, stable channel, pinned per-workspace.
+
+  * `x86_64-pc-windows-msvc` target, MSVC-linked (Windows)
+
+  * `x86_64-apple-darwin` / `aarch64-apple-darwin` targets, Xcode-provided linker (macOS)
+
+  * `x86_64-unknown-linux-gnu` / `aarch64-unknown-linux-gnu` targets (Linux)
+
+### 9.2 Build System & CI/CD
+
+* **Build System:** Cargo workspace (Cargo 1.75+): a core `tre-engine` crate, one crate per RHI backend (`tre-rhi-vulkan`, `tre-rhi-dx12`, `tre-rhi-metal`, platform-gated via `#[cfg(target_os = ...)]`), and a `tre-ffi` crate that owns the entire C-ABI surface (Section 9.4). `tre-engine` and the RHI backend crates are still statically linked (as `rlib`s) into the final `cdylib`/`staticlib` -- every crate's code ships inside that one binary -- but `tre-ffi` is the *only* crate whose items are `pub` and re-exported as `extern "C"` symbols; every other crate's items stay `pub(crate)`-or-narrower from `tre-ffi`'s perspective. This achieves the same "hide RHI backend symbols from the UI framework" goal that CMake-based linker visibility flags (`-fvisibility=hidden` / `.def` export lists) would otherwise be used for, without relying on a linker feature.
+
+* **Code Formatting & Linting:** Enforcement via `rustfmt` (workspace `rustfmt.toml`) and `clippy` with `-D warnings` in CI, including `clippy::pedantic` selectively enabled for the core rendering crates.
+
+* **Continuous Integration:** CI pipelines must include hardware-accelerated headless rendering instances to run automated performance regression tests (`cargo bench` via `criterion`), verifying the $\le 0.50\text{ ms}$ CPU frame processing budget on target hardware, and must also run under the zero-allocation debug guard (Section 3.4) as a hard gate, not merely a benchmark. `cargo clippy` and `cargo test` -- including the Python-binding integration tests (Section 9.4) -- run on every commit alongside the performance suite.
+
+* **GPU API Validation:** Debug and CI builds of each RHI backend run with the native graphics API's own validation enabled -- `VK_LAYER_KHRONOS_validation` for Vulkan, the D3D12 debug layer (`ID3D12Debug::EnableDebugLayer`) for DirectX 12, and `MTL_DEBUG_LAYER=1` for Metal -- with any validation error failing the CI job. This is the standard, vendor-provided tool for catching resource-state, barrier, and synchronization misuse at exactly the point where the `unsafe` policy above concentrates raw FFI into the graphics APIs, a class of bug the CPU-side gates (zero-allocation guard, `clippy`, batching-equivalence tests) cannot see. All validation layers compile out entirely in release builds -- see IMPLEMENTATION.md Phase 2 Step 2.4.
+
+### 9.3 Shader Authoring & Cross-Compilation
+
+Added in the September 2026 documentation review -- no prior draft specified how a single shader source reaches three backend shading languages:
+
+* **Single Source, HLSL:** All engine shaders (SDF rect, MSDF text, blur passes) are authored once in HLSL (Shader Model 6.6+).
+* **Vulkan:** Cross-compiled to SPIR-V via DXC (`-spirv` target), consumed directly by `VK_KHR_dynamic_rendering` pipelines.
+* **DirectX 12:** Compiled to DXIL via DXC natively -- no cross-compilation step required.
+* **Metal:** SPIR-V output is translated to Metal Shading Language via SPIRV-Cross (or a maintained equivalent) as part of the asset build step, not at runtime.
+* **Build Integration:** Shader compilation is a Cargo `build.rs` build-script step producing backend-specific binary blobs (embedded via `include_bytes!` or loaded from `OUT_DIR` at startup) at build time; runtime shader compilation is never performed in a shipping build, and a compilation failure at build time fails `cargo build` rather than surfacing as a runtime pipeline-creation error (see DESIGN.md Section 2.6 for what happens if a pipeline nonetheless fails to create at load time, e.g., due to a driver-specific rejection).
+
+### 9.4 Cross-Language FFI & Python Bindings
+
+Added alongside the Rust engine / Python UI framework language decision. The engine's entire public surface is a `#[repr(C)]`, `extern "C"` API defined once in the `tre-ffi` crate (Section 9.2); every language binding -- including the project's own Python UI framework -- is written against this single boundary, so no binding gets privileged access the C ABI does not expose to any other language.
+
+* **ABI shape:** Opaque handle types (`TreCanvasHandle`, `TreDeviceHandle`, etc.) as `#[repr(transparent)]` pointer wrappers. No Rust `enum` with data, `Option<T>`, `Result<T, E>`, `String`, `Vec<T>`, or trait object crosses the boundary directly -- each has a C-compatible shadow representation (tagged-union struct, raw pointer + length pair, integer result code, or out-parameter, respectively).
+* **Error propagation:** Every fallible `extern "C"` function returns an `EngineError` integer result code (DESIGN.md Section 2.6) rather than a Rust `Result`; out-parameters carry the success value.
+* **Memory ownership:** Any buffer the engine allocates and hands across the boundary (e.g., a headless frame readback buffer, DESIGN.md Section 4.3) is freed by an explicit `tre_*_free` function, never by the caller's allocator -- Rust's allocator and the host language's allocator (e.g., CPython's) are never assumed compatible.
+* **Python binding mechanism:** The Python UI framework binds via [PyO3](https://pyo3.rs/), generating a native extension module that wraps the `tre-ffi` C-ABI surface with Pythonic ergonomics (context managers for `Canvas.save()`/`restore()` scope pairs; Python exceptions raised from `EngineError` codes at the Python layer only -- the Rust/C boundary itself never uses exceptions). The GIL is released (`Python::allow_threads`) for the duration of any blocking engine call (e.g., an `RhiDevice::begin_frame` fence wait) so Python-side multi-threading is not serialized behind engine calls. The `catch_unwind` panic guard (Section 9.1) wraps the *entire* PyO3-facing call, including the `allow_threads` scope, not just the inner blocking wait -- so a panic occurring while the GIL is released is only converted to an `EngineError` after PyO3 has reacquired the GIL on scope exit, never while it is still released.
+* **Binding-parity testing:** `cargo test`'s FFI test target and the Python package's own test suite both exercise the same `tre-ffi` entry points; Section 9.2's CI gate treats a Python-binding test failure as a build failure, not an advisory warning, since the Python UI framework is a first-class consumer of this boundary, not a side project.
