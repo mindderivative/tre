@@ -7,6 +7,10 @@
 //! (TECHNICAL.md Section 9.1), for raw Vulkan FFI.
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod headless;
+
+pub use headless::{HeadlessSwapchain, HEADLESS_FORMAT};
+
 use std::ffi::{c_char, CStr};
 
 use ash::vk;
@@ -25,7 +29,7 @@ const REQUIRED_DEVICE_EXTENSIONS: &[&CStr] =
 /// `begin_frame` -- rather than TECHNICAL.md Section 3.1's triple-buffered
 /// ring arenas, which are Phase 2's job.
 pub struct VulkanDevice {
-    _entry: ash::Entry,
+    entry: ash::Entry,
     pub instance: ash::Instance,
     pub physical_device: vk::PhysicalDevice,
     pub device: ash::Device,
@@ -66,10 +70,7 @@ impl VulkanDevice {
             .map_err(|_| EngineError::DeviceLost)?;
 
         let surface_loader = ash::khr::surface::Instance::new(&entry, &instance);
-        let surface = unsafe {
-            ash_window::create_surface(&entry, &instance, display_handle, window_handle, None)
-        }
-        .map_err(|_| EngineError::DeviceLost)?;
+        let surface = Self::create_surface_raw(&entry, &instance, display_handle, window_handle)?;
 
         let physical_devices = unsafe { instance.enumerate_physical_devices() }
             .map_err(|_| EngineError::DeviceLost)?;
@@ -147,7 +148,7 @@ impl VulkanDevice {
 
         Ok((
             Self {
-                _entry: entry,
+                entry,
                 instance,
                 physical_device,
                 device,
@@ -165,6 +166,37 @@ impl VulkanDevice {
 
     pub fn graphics_queue(&self) -> vk::Queue {
         self.graphics_queue
+    }
+
+    /// Creates a new Vulkan surface for another window against this
+    /// already-selected device -- the multi-window path (Phase 1 Step 1).
+    /// `VulkanDevice::new` uses the same underlying call for its initial
+    /// probe surface; this is the version any *additional* window uses,
+    /// since re-running physical device selection per window would be
+    /// wrong (all windows share the one device chosen at startup, per
+    /// ARCHITECTURE.md Section 2.1's "Global RhiDevice").
+    ///
+    /// # Errors
+    /// Returns [`EngineError::DeviceLost`] if surface creation fails.
+    pub fn create_surface(
+        &self,
+        display_handle: raw_window_handle::RawDisplayHandle,
+        window_handle: raw_window_handle::RawWindowHandle,
+    ) -> Result<(ash::khr::surface::Instance, vk::SurfaceKHR), EngineError> {
+        let surface_loader = ash::khr::surface::Instance::new(&self.entry, &self.instance);
+        let surface =
+            Self::create_surface_raw(&self.entry, &self.instance, display_handle, window_handle)?;
+        Ok((surface_loader, surface))
+    }
+
+    fn create_surface_raw(
+        entry: &ash::Entry,
+        instance: &ash::Instance,
+        display_handle: raw_window_handle::RawDisplayHandle,
+        window_handle: raw_window_handle::RawWindowHandle,
+    ) -> Result<vk::SurfaceKHR, EngineError> {
+        unsafe { ash_window::create_surface(entry, instance, display_handle, window_handle, None) }
+            .map_err(|_| EngineError::DeviceLost)
     }
 
     pub fn create_pipeline(

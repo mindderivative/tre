@@ -53,6 +53,20 @@ This walking skeleton did exactly what Phase 0's own rationale says it should: i
 
 * **Technical Rationale:** A shared `RhiDevice` with per-window swapchains prevents VRAM fragmentation and resource duplication (like fonts and icons) across multi-window desktop applications.
 
+### Status: Linux complete (2026-09-05); Windows/macOS deferred
+
+Scope decision (confirmed with the project owner): this step was executed for **Linux only** -- both Wayland (primary, via `wayland-client`/`wayland-protocols`) and X11 (fallback, via `x11rb`'s XCB FFI connection, exercised through XWayland on the dev machine). Windows and macOS native bridges are deferred to their own later steps, since this machine can only build, run, and verify Linux -- matching the "verify for real, not just compile" discipline Phase 0 established.
+
+Implemented in a new `tre-platform` crate (task 2's native OS surface bridges, Linux half) and `crates/tre-rhi-vulkan` (tasks 1, 3, 4). Verified end to end: `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the workspace; both windowing backends confirmed with real, visible windows (screenshotted); a two-window demo proves genuine `RhiDevice` sharing (one device, two independently-rendering swapchains, zero validation errors); a headless demo proves `HeadlessSwapchain` implements the unmodified `RhiSwapchain` trait and produces a pixel-correct PNG with zero validation errors.
+
+Real bugs and gaps found during implementation (full detail in documentation/REVIEW.md's Phase 1 Step 1 entry):
+
+* **`VulkanDevice::submit_and_present`'s post-render layout transition is hardcoded for a real presentable swapchain** (`COLOR_ATTACHMENT_OPTIMAL -> PRESENT_SRC_KHR`), which is meaningless for `HeadlessSwapchain`'s plain image. Caught by the Vulkan validation layer as a layout mismatch. Worked around in `HeadlessSwapchain::present` for now (its own transition starts from the real, `PRESENT_SRC_KHR`-tagged state rather than the `COLOR_ATTACHMENT_OPTIMAL` it would need for a windowed swapchain); the real fix -- letting each concrete `RhiSwapchain` control its own post-render transition instead of one hardcoded in the shared `RhiDevice` code -- is a genuine interface refinement worth making before more swapchain variants are built on this pattern.
+* **A leaked `VkSurfaceKHR`:** `VulkanDevice::new` requires a window purely to probe present support while selecting a physical device, which is awkward for headless mode (which has no real window at all) -- the headless demo initially never destroyed this probe surface. Fixed in the demo; the underlying awkwardness (headless mode needing a throwaway window just to bootstrap a device) is a real API gap, deferred to Phase 2's device-selection work.
+* **`VulkanDevice::create_surface`** was extracted from `VulkanDevice::new` as its own public method, so additional windows can get a surface without re-running physical device selection -- required for genuine multi-window support, previously impossible since surface creation was embedded entirely inside `new`.
+* **Wayland surfaces with no buffer attached are invisible** (unlike X11, which shows a blank mapped window) -- expected protocol behavior, not a bug, but worth noting since it means a windowing-only smoke test can't be verified by screenshot the way a windowed Vulkan demo can.
+* **xdg-shell gives clients no control over top-level window position** -- when the multi-window demo's two unpositioned windows land at the same compositor-chosen spot, they visually overlap. This is inherent to the Wayland protocol (X11 clients can request a position; Wayland toplevels cannot), not an implementation defect -- the two-window demo still proves independent rendering per window (distinct colors, zero validation errors), just not always without moving one window to see both clearly.
+
 ### Step 1.2: Decoupled Event & Signal Pipeline
 
 * **Implementation Tasks:**

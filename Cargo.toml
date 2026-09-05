@@ -8,6 +8,7 @@ members = [
     "crates/tre-rhi-vulkan",
     "crates/tre-rhi-dx12",
     "crates/tre-rhi-metal",
+    "crates/tre-platform",
 ]
 
 [workspace.package]

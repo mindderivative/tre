@@ -4,6 +4,8 @@
 
 The engine architecture is highly decoupled, operating strictly as a bridge between a high-level UI Layout Framework and the underlying hardware drivers. It is divided into four primary domains: the **Platform & Event Layer**, the **Core Processing Engine**, the **Dynamic Batching Engine**, and the **Render Hardware Interface (RHI)**.
 
+*Implemented in the `tre-platform` crate as of Phase 1 Step 1 (2026-09-05) -- Linux only (Wayland/X11) for now; Windows/macOS bridges are later steps. This crate owns native window creation today and the input event pump in a later step (IMPLEMENTATION.md Step 1.2).*
+
 ```text
 +-----------------------------------------------------------------------------------+
 |                        PLATFORM & EVENT LAYER (Decoupled)                         |

@@ -1,0 +1,19 @@
+[package]
+name = "tre-platform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+# TECHNICAL.md Section 9.1: unsafe is permitted here for raw-window-handle
+# construction and XCB FFI (x11rb's allow-unsafe-code feature) -- see that
+# section for the full closed-set rationale.
+
+[dependencies]
+as-raw-xcb-connection = "1.0.1"
+raw-window-handle = "0.6.2"
+wayland-client = { version = "0.31.15", features = ["system"] }
+wayland-protocols = { version = "0.32.12", features = ["client", "wayland-client"] }
+x11rb = { version = "0.14.0", features = ["allow-unsafe-code"] }
