@@ -24,6 +24,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - run: rustup show
+      # Two dependencies neither hosted runner image provides by default:
+      # tre-platform's wayland-client dependency uses the "system" feature
+      # (a real libwayland-client.so, not the pure-Rust backend), located
+      # via pkg-config -- libwayland-dev provides the .pc file and the
+      # library. tre-rhi-vulkan's build.rs shells out to glslc to compile
+      # its placeholder shaders (TECHNICAL.md Section 9.3). Discovered
+      # 2026-09-05: both had been missing since the crates that need them
+      # were added, and every job that compiles the workspace had been
+      # silently failing on CI for three commits without anyone noticing
+      # (see documentation/REVIEW.md's Phase 2 Step 2 entry).
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libwayland-dev libxcb1-dev glslc
       # TECHNICAL.md Section 9.2: clippy with -D warnings is the hard gate;
       # clippy::pedantic on tre-engine/tre-math is enabled in their own
       # Cargo.toml [lints.clippy], so this one command covers both.
@@ -36,6 +47,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - run: rustup show
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libwayland-dev libxcb1-dev glslc
       - run: cargo build --workspace --all-targets
 
   test:
@@ -45,4 +57,5 @@ jobs:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - run: rustup show
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libwayland-dev libxcb1-dev glslc
       - run: cargo test --workspace
