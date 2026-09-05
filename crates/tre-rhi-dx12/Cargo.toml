@@ -1,0 +1,13 @@
+[package]
+name = "tre-rhi-dx12"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# windows = "..." -- added when Phase 2 Step 2.1 implementation begins;
+# the `windows` crate (published under that name; "windows-rs" is the
+# upstream project name), Win32::Graphics::Direct3D12 bindings.

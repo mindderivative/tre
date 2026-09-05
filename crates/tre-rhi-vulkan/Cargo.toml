@@ -1,0 +1,12 @@
+[package]
+name = "tre-rhi-vulkan"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# ash = "..." -- added when Phase 0 (Walking Skeleton) / Phase 2 Step 2.1
+# implementation begins; TECHNICAL.md Section 2.1, IMPLEMENTATION.md Step 2.1.

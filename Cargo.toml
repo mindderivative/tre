@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/tre-engine",
+    "crates/tre-ffi",
+    "crates/tre-memory",
+    "crates/tre-math",
+    "crates/tre-rhi-vulkan",
+    "crates/tre-rhi-dx12",
+    "crates/tre-rhi-metal",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+
+# TECHNICAL.md Section 9.1: `unsafe_op_in_unsafe_fn` is opt-in (warn-by-default
+# only from edition 2024) but the project wants it as a hard error on this
+# edition-2021 workspace.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+all = "warn"

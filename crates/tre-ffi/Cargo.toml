@@ -1,0 +1,20 @@
+[package]
+name = "tre-ffi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+# Both output targets are built from day one so the language-agnostic C-ABI
+# claim (DESIGN.md Section 2.7) is proven, not assumed: `cdylib` for
+# Python/PyO3 and any future dynamic-language binding, `staticlib` for a host
+# linking the engine directly. `rlib` lets this crate's own test suite (and
+# any future in-process integration test) depend on it normally.
+# IMPLEMENTATION.md Phase 10 Step 10.1.
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+tre-engine = { path = "../tre-engine" }

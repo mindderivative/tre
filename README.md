@@ -4,7 +4,7 @@ A low-overhead, hardware-accelerated 2D rendering engine designed as a bridge be
 
 ## Status
 
-This repository currently contains the engine's design and planning documentation only — no source code yet.
+The Cargo workspace is scaffolded (empty crates matching the architecture below, all building and lint-clean) but no engine logic is implemented yet — see [IMPLEMENTATION.md](documentation/IMPLEMENTATION.md) for the phased plan, starting with Phase 0's walking skeleton.
 
 ## Overview
 
@@ -23,6 +23,30 @@ This repository currently contains the engine's design and planning documentatio
 | [REVIEW.md](documentation/REVIEW.md) | Running record of documentation reviews, findings, and engineering decisions |
 
 Start with [DESIGN.md](documentation/DESIGN.md) for the *why*, [ARCHITECTURE.md](documentation/ARCHITECTURE.md) for the *how*, and [IMPLEMENTATION.md](documentation/IMPLEMENTATION.md) for the build plan.
+
+## Building
+
+Requires the Rust toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (installed automatically by `rustup` on first use).
+
+```bash
+cargo build --workspace
+cargo clippy --workspace --all-targets
+cargo fmt --all -- --check
+```
+
+### Crate layout
+
+| Crate | Role | `unsafe` |
+|---|---|---|
+| [`tre-engine`](crates/tre-engine) | `Canvas` API, IR, sort/batch pipeline, atlas, SVG/MSDF | forbidden |
+| [`tre-math`](crates/tre-math) | Vector/matrix math, SIMD via the `wide` crate | forbidden |
+| [`tre-memory`](crates/tre-memory) | Ring arenas, transient pool, atlas lock-free concurrency primitives | permitted |
+| [`tre-ffi`](crates/tre-ffi) | The engine's entire public C-ABI surface (`cdylib`/`staticlib`) | permitted |
+| [`tre-rhi-vulkan`](crates/tre-rhi-vulkan) | Vulkan 1.2+ backend (via `ash`) | permitted |
+| [`tre-rhi-dx12`](crates/tre-rhi-dx12) | DirectX 12 backend (via `windows`), Windows-only | permitted |
+| [`tre-rhi-metal`](crates/tre-rhi-metal) | Metal 2.4+ backend (via `objc2-metal`), macOS-only | permitted |
+
+See TECHNICAL.md Section 9.1 for the full `unsafe` policy this table reflects.
 
 ## Key characteristics
 

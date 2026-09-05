@@ -1,0 +1,12 @@
+[package]
+name = "tre-rhi-metal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# objc2-metal = "..." -- added when Phase 2 Step 2.1 implementation begins;
+# IMPLEMENTATION.md Step 2.1.
