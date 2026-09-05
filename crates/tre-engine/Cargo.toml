@@ -16,5 +16,6 @@ all = "warn"
 pedantic = "warn"
 
 [dependencies]
+bytemuck = { version = "1.25.2", features = ["derive"] }
 tre-math = { path = "../tre-math" }
 tre-memory = { path = "../tre-memory" }

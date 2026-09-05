@@ -8,5 +8,11 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+ash = "0.38.0"
+ash-window = "0.13.0"
+bytemuck = "1.25.2"
+raw-window-handle = "0.6.2"
+tre-engine = { version = "0.1.0", path = "../tre-engine" }
+winit = "0.30.13"
 # ash = "..." -- added when Phase 0 (Walking Skeleton) / Phase 2 Step 2.1
 # implementation begins; TECHNICAL.md Section 2.1, IMPLEMENTATION.md Step 2.1.

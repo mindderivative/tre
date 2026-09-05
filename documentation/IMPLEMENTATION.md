@@ -20,6 +20,17 @@ Phases 1 through 5 build platform abstraction, RHI backends, memory pools, geome
 
 * **Technical Rationale:** A thin vertical slice validates the shape of the Canvas to IR to RHI contract end-to-end while it is still cheap to change. Every subsequent phase adds depth to a pipeline already proven to connect correctly, rather than five phases of isolated subsystem work converging for the first time in Phase 6.
 
+### Status: Complete (2026-09-04)
+
+Implemented in `crates/tre-engine` (the Phase 0 `Canvas`/IR types) and `crates/tre-rhi-vulkan` (the Vulkan backend, via `ash`), with a runnable proof at `crates/tre-rhi-vulkan/examples/walking_skeleton.rs`. Windowing uses `winit` -- a Phase-0-only expedient; Phase 1's Step 1.1 replaces it with the documented native per-platform bridges. Verified end to end: `cargo fmt`/`clippy -D warnings`/`build`/`test` all clean across the workspace, 120 frames presented with zero Vulkan validation-layer errors (`VK_LAYER_KHRONOS_validation`), and a screenshot confirming the rendered rect's color and position match what `Canvas::draw_rounded_rect` was called with.
+
+This walking skeleton did exactly what Phase 0's own rationale says it should: it surfaced real interface gaps and real bugs before Phase 1-5 could build on top of them. Recorded in full in REVIEW.md's "Phase 0 Implementation" entry; summary:
+
+* **ARCHITECTURE.md Section 6 left `RhiBuffer`, `RhiTexture`, `RhiPipelineState`, and `RhiSwapchain` referenced (as `&dyn Rhi*`) but never defined.** Defined now in `tre-engine`, using an opaque-`u64`-handle pattern (mirroring how Vulkan itself represents every object) specifically so `RhiDevice`/`RhiCommandBuffer` implementations never need `std::any::Any` downcasting to recover their own concrete state from a trait object -- which TECHNICAL.md Section 9.1 bans from the per-frame path.
+* **`RhiDevice::begin_frame`/`submit_and_present` had no `Result` return type in ARCHITECTURE.md's sketch**, contradicting DESIGN.md Section 2.6's explicit requirement that device-loss/swapchain-out-of-date conditions be "surfaced as a recoverable error" at exactly those calls. Both now return `Result<_, EngineError>`.
+* **A `u32` RGBA color hex literal does not pack the way it visually reads.** `0xE0_A0_40_FFu32` stored little-endian places `0xFF` at the lowest memory address, not `0xE0` -- the reverse of what an `R8G8B8A8` vertex attribute expects. Added `tre_engine::rgba8(r, g, b, a)` so no caller has to reason about this by hand; a screenshot during implementation caught the resulting pink-instead-of-amber rectangle.
+* **Three real Vulkan lifecycle bugs**, each caught by running with `VK_LAYER_KHRONOS_validation` enabled or by a SIGSEGV backtrace, not by inspection: freeing a command buffer immediately after submitting it (still pending); reusing one `render_finished` semaphore across frames while the swapchain's present operation -- which the engine's fence never tracks -- might still reference it (fixed with one semaphore per swapchain image); and Rust's struct-field drop order (declaration order, not reverse) destroying a window's surface before the swapchain built on it, and destroying a device before the buffers/pipeline built on it.
+
 ## Phase 1: Platform, Windowing, & Input Abstraction
 
 ### Step 1.1: Multi-Window & Headless OS Layer

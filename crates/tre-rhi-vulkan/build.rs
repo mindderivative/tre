@@ -1,0 +1,38 @@
+//! Compiles the Phase 0 placeholder shaders to SPIR-V at build time
+//! (TECHNICAL.md Section 9.3's "Build Integration" bullet: shader
+//! compilation happens in a Cargo build script, never at runtime in a
+//! shipping build). This uses GLSL + `glslc`, not the documented
+//! HLSL + DXC pipeline -- that toolchain is IMPLEMENTATION.md Phase 3.2's
+//! concern (the real SDF rounded-rect shader); this placeholder flat-color
+//! shader exists only to validate the Canvas -> IR -> RHI pipeline shape
+//! Phase 0 is scoped to, so standing up the full HLSL/DXC/SPIRV-Cross
+//! cross-compilation build step here would be scope creep ahead of need.
+
+use std::path::Path;
+use std::process::Command;
+
+fn compile_shader(src: &str, out_name: &str, out_dir: &str) {
+    println!("cargo:rerun-if-changed={src}");
+    let out_path = Path::new(out_dir).join(out_name);
+    let status = Command::new("glslc")
+        .arg(src)
+        .arg("-o")
+        .arg(&out_path)
+        .status()
+        .unwrap_or_else(|e| panic!("failed to run glslc (is it installed?): {e}"));
+    assert!(status.success(), "glslc failed to compile {src}");
+}
+
+fn main() {
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set by Cargo");
+    compile_shader(
+        "shaders/walking_skeleton.vert",
+        "walking_skeleton.vert.spv",
+        &out_dir,
+    );
+    compile_shader(
+        "shaders/walking_skeleton.frag",
+        "walking_skeleton.frag.spv",
+        &out_dir,
+    );
+}

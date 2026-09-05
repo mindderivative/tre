@@ -176,16 +176,79 @@ The RHI maps the batched IR commands directly to Vulkan, DirectX 12, or Metal co
 
 *Dynamic Dispatch Note (updated for the Rust implementation, originally added in the September 2026 documentation review):* `RhiDevice` and `RhiCommandBuffer` are Rust traits, invoked through `&dyn RhiDevice` / `&mut dyn RhiCommandBuffer` trait objects rather than monomorphized generics. This is a deliberate, bounded exception to the project's "no dynamic dispatch (`dyn Trait`) in tight loops -- prefer generics or enum dispatch" coding standard -- every trait-object call here (`set_pipeline`, `bind_texture`, `draw_indexed`, etc.) happens once per *batch*, not once per primitive or per vertex, and batch counts are single-digit to low-hundreds per frame (Section 4). The vtable-indirection overhead is amortized across every vertex in that batch and is negligible against the $\le 0.50\text{ ms}$ CPU budget. Using `dyn Trait` here also keeps the three backend implementations (Vulkan/DX12/Metal) out of the core engine crate's generic parameter list, avoiding a build that must be recompiled per backend. This exception does not extend to any per-primitive or per-vertex code path -- those must remain statically dispatched (generics or `#[inline]` enum matches), per the standing rule.
 
+*Filled in during the Phase 0 walking skeleton implementation (2026-09-04, IMPLEMENTATION.md Phase 0 status note):* this section originally left `RhiBuffer`, `RhiTexture`, `RhiPipelineState`, and `RhiSwapchain` referenced (as `&dyn Rhi*` parameters) but undefined, and gave `begin_frame`/`submit_and_present` no way to report failure. Both gaps surfaced immediately on trying to actually implement a Vulkan backend against this sketch -- exactly the kind of interface mismatch Phase 0 exists to catch. The definitions below are the real, working, validated design (`crates/tre-engine/src/lib.rs`), not a plan.
+
 ```rust
+/// An acquired swapchain image, threaded from `RhiSwapchain::acquire_next_image`
+/// through `RhiDevice::begin_frame` to the caller and back to
+/// `RhiDevice::submit_and_present`. Every `_handle` field is a
+/// backend-specific opaque integer (e.g. a Vulkan handle reinterpreted via
+/// `ash::vk::Handle::as_raw`) -- deliberately, so concrete `RhiDevice`/
+/// `RhiCommandBuffer`/`RhiSwapchain` implementations never need
+/// `std::any::Any` downcasting to recover their own state from a trait
+/// object, which TECHNICAL.md Section 9.1 bans from the per-frame path.
+/// This mirrors how Vulkan itself represents every object as an opaque
+/// `u64`; no runtime type identification happens anywhere in the exchange.
+struct AcquiredImage {
+    index: u32,
+    target_view_handle: u64,
+    target_image_handle: u64,
+    image_available_semaphore_handle: u64,
+    /// Per-swapchain-image, not shared across frames: reusing one
+    /// semaphore for every frame's present is a real hazard the Vulkan
+    /// validation layer catches (`VUID-vkQueueSubmit-pSignalSemaphores-00067`)
+    /// -- the CPU-side fence `begin_frame` waits on covers the queue
+    /// submit's completion, not the separate, asynchronous present
+    /// operation's.
+    render_finished_semaphore_handle: u64,
+}
+
+trait RhiBuffer {
+    fn raw_handle(&self) -> u64;
+}
+
+trait RhiTexture {
+    fn raw_handle(&self) -> u64;
+}
+
+trait RhiPipelineState {
+    fn raw_handle(&self) -> u64;
+    /// Opaque handle of this pipeline's layout, needed by
+    /// `RhiCommandBuffer::set_pipeline` implementations that push
+    /// constants/descriptors keyed by layout (e.g. `vkCmdPushConstants`).
+    fn layout_handle(&self) -> u64;
+}
+
+trait RhiSwapchain {
+    fn extent(&self) -> (u32, u32);
+    fn acquire_next_image(&self) -> Result<AcquiredImage, EngineError>;
+    /// Waits on `image.render_finished_semaphore_handle` before showing
+    /// the image (DESIGN.md Section 2.6 -- surfaces failures rather than
+    /// stalling or panicking).
+    fn present(&self, image: AcquiredImage) -> Result<(), EngineError>;
+}
+
 trait RhiDevice {
     // Resource Management
     fn create_dynamic_ring_buffer(&self, capacity: usize) -> Box<dyn RhiBuffer>;
     fn acquire_transient_target(&self, width: u32, height: u32) -> Box<dyn RhiTexture>;
     fn release_transient_target(&self, texture: Box<dyn RhiTexture>);
 
-    // Command Submission
-    fn begin_frame(&self, swapchain: &dyn RhiSwapchain) -> Box<dyn RhiCommandBuffer>;
-    fn submit_and_present(&self, cmd_buffer: Box<dyn RhiCommandBuffer>, swapchain: &dyn RhiSwapchain);
+    // Command Submission -- both return `Result` (added during Phase 0;
+    // the original sketch didn't), since DESIGN.md Section 2.6 requires
+    // device-loss/swapchain-out-of-date conditions to be "detected at
+    // `RhiDevice::begin_frame` and surfaced as a recoverable error," which
+    // an infallible return type cannot do.
+    fn begin_frame(
+        &self,
+        swapchain: &dyn RhiSwapchain,
+    ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError>;
+    fn submit_and_present(
+        &self,
+        cmd_buffer: Box<dyn RhiCommandBuffer>,
+        swapchain: &dyn RhiSwapchain,
+        image: AcquiredImage,
+    ) -> Result<(), EngineError>;
 }
 
 trait RhiCommandBuffer {
@@ -200,6 +263,12 @@ trait RhiCommandBuffer {
 
     // Execution
     fn draw_indexed(&mut self, index_count: u32, start_index: u32, base_vertex: i32);
+
+    /// Needed so `RhiDevice::submit_and_present` can recover the concrete
+    /// backend's submittable handle from a `Box<dyn RhiCommandBuffer>` --
+    /// via the same opaque-handle pattern as `AcquiredImage`, not
+    /// downcasting.
+    fn raw_handle(&self) -> u64;
 }
 ```
 
