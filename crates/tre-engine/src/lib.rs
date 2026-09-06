@@ -529,6 +529,12 @@ pub trait RhiTexture {
     /// into the bindless array this step (see the Step 2.1 plan's "out of
     /// scope" section).
     fn bindless_index(&self) -> Option<u32>;
+    /// This texture's real GPU allocation size in bytes (its own
+    /// `VkMemoryRequirements::size`, or backend equivalent). Added
+    /// IMPLEMENTATION.md Step 2.3 so `RhiDevice::release_transient_target`
+    /// can maintain the transient pool's total-free-bytes accounting (the
+    /// generational GC's 85%-of-budget trigger) without re-querying it.
+    fn size_bytes(&self) -> u64;
 }
 
 /// A triple-buffered, host-mapped dynamic buffer (TECHNICAL.md Section

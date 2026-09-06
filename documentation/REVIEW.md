@@ -3,7 +3,7 @@
 Reviewer: Claude (Cowork), acting as Principal Engineer / Lead Tech Architect, per project standing instructions.
 Scope: `DESIGN.md`, `TECHNICAL.md`, `ARCHITECTURE.md`, `IMPLEMENTATION.md`, reviewed in that order. All findings below have been implemented directly in those four files; this document is the record of what was found and what changed.
 
-Status: **All findings implemented.** See "Follow-up: Rust/Python Language Migration," "Review of Rust-Specific Additions," "Full Documentation Review," "Engineering Decisions: Suggested Improvements Actioned," "Phase 0 Implementation" (2026-09-04), "Phase 1 Step 1 Implementation," "Pre-Phase-1-Step-2 Doc Check," "Phase 1 Step 2 Implementation," "Phase 1 Review," "Phase 2 Step 1 Implementation," "Phase 2 Step 2 Implementation," "Phase 2 Step 2.1 Implementation," and "Phase 2 Code Review" (2026-09-05) below for subsequent, out-of-band work not part of this original review. "Phase 1 Review"'s finding #51 has since been fixed; #52-53 remain deliberately deferred to Phase 2 (not yet revisited) — see that section for disposition. "Phase 2 Code Review"'s findings #66-70/#72/#73/#75 have since been fixed and re-verified (fmt/clippy/build/test clean, all six examples re-run with zero validation errors, #66 additionally proven via a deliberate-bug run); #71 fixed (VulkanSwapchain's matching #56 remains separately open); #74 documented as deliberate rather than changed; #76 left unfixed (no safe way to determine correct CI package pins from this environment) — see that section for full disposition.
+Status: **All findings implemented.** See "Follow-up: Rust/Python Language Migration," "Review of Rust-Specific Additions," "Full Documentation Review," "Engineering Decisions: Suggested Improvements Actioned," "Phase 0 Implementation" (2026-09-04), "Phase 1 Step 1 Implementation," "Pre-Phase-1-Step-2 Doc Check," "Phase 1 Step 2 Implementation," "Phase 1 Review," "Phase 2 Step 1 Implementation," "Phase 2 Step 2 Implementation," "Phase 2 Step 2.1 Implementation," "Phase 2 Code Review" (2026-09-05), and "Phase 2 Step 2.3 Implementation" (2026-09-06) below for subsequent, out-of-band work not part of this original review. "Phase 1 Review"'s finding #51 has since been fixed; #52-53 remain deliberately deferred to Phase 2 (not yet revisited) — see that section for disposition. "Phase 2 Code Review"'s findings #66-70/#72/#73/#75 have since been fixed and re-verified (fmt/clippy/build/test clean, all six examples re-run with zero validation errors, #66 additionally proven via a deliberate-bug run); #71 fixed (VulkanSwapchain's matching #56 remains separately open); #74 documented as deliberate rather than changed; #76 left unfixed (no safe way to determine correct CI package pins from this environment) — see that section for full disposition. All of Phase 2 (Steps 2.1, 2.2, 2.4, and now 2.3) is complete as of 2026-09-06.
 
 ---
 
@@ -648,3 +648,23 @@ A caller passing `slot: 1` gets no diagnostic in a release build and silently ov
 | 74 | `Drop for VulkanDevice` silently swallows a poisoned mutex, unlike the rest of the file | tre-rhi-vulkan (code) | Nice-to-have | Documented as deliberate (avoids abort-during-unwind), not changed |
 | 75 | `bind_texture`'s `slot != 0` contract is `debug_assert!`-only | tre-rhi-vulkan (code) | Nice-to-have | Fixed — release-safe no-op added alongside the existing debug assertion |
 | 76 | CI's new `apt-get install` steps are unpinned | CI | Nice-to-have | Not fixed — no safe way to determine correct pins from this (non-Ubuntu) environment |
+
+---
+
+## Phase 2 Step 2.3 Implementation (2026-09-06)
+
+Reviewer: Claude (Cowork), acting as Principal Engineer / Lead Tech Architect, per project standing instructions.
+Scope: implementing IMPLEMENTATION.md Step 2.3 (generational GC), verified against the transient render-target pool rather than the not-yet-built atlas/SVG cache the step's literal wording targets. Full detail in `planning/archive/PLAN_PHASE2_STEP2_3.md`/`LOG_PHASE2_STEP2_3.md`; this is the summary for the documentation's own record.
+
+Status: **Complete.** This step also introduces the engine's first genuine background OS thread -- both scope questions (target resource, threading model) were explicitly put to the project owner before implementation, since both were real forks from every prior step's precedent (deferring what doesn't have a real consumer yet; staying single-threaded until a real second thread is needed). The owner chose to build the real mechanism now and to build a genuine thread rather than defer either.
+
+### 77. [Nice-to-have] A real, explained interaction between the GC eviction count and Step 2.2's pool-growth queuing
+`gc_demo` checks 25 distinct transient-target sizes into the pool, but `transient_pool_stats()` reports 50 evictions once the GC thread runs, not 25. Root cause: `acquire_transient_target`'s cold-miss path (Step 2.2) both cold-allocates a texture to return immediately AND queues that same bucket into `pending_growth` for the next frame's `grow_pending_transient_targets` to *also* allocate. The demo's "acquire, immediately release, never re-request that size" access pattern is exactly the pattern that never lets the queued growth serve any purpose -- every one of the 25 sizes ends up with a duplicate, equally-idle texture in the pool. Confirmed real (not a GC bug) by inspecting `acquire_transient_target`'s existing code; the GC thread evicted exactly what was genuinely stale.
+
+**Disposition:** not fixed -- this is a Step 2.2 pool-efficiency question (should a bucket just cold-allocated for also be queued for growth?), not a Step 2.3 correctness one. Recorded for whichever future step next touches `acquire_transient_target`.
+
+## Summary table (Phase 2 Step 2.3)
+
+| # | Finding | Doc(s)/Code | Severity | Resolution |
+|---|---|---|---|---|
+| 77 | 25 checked-in sizes evict as 50 -- a real, explained interaction with Step 2.2's pool-growth queuing | tre-rhi-vulkan (code) | Nice-to-have | Not fixed — a Step 2.2 pool-efficiency question, out of this step's scope |

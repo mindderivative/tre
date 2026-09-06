@@ -12,9 +12,12 @@ mod headless;
 pub use headless::{HeadlessSwapchain, HEADLESS_FORMAT};
 
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::ffi::{c_char, CStr};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 use ash::vk;
 use ash::vk::Handle;
@@ -44,6 +47,37 @@ const BINDLESS_TEXTURE_CAPACITY_TARGET: u32 = 4096;
 /// never called for a given draw -- Phase 0's flat-color path must keep
 /// working unchanged by default).
 const BINDLESS_TEXTURE_SENTINEL: u32 = u32::MAX;
+
+/// TECHNICAL.md Section 1's "Dynamic VRAM Footprint" target -- the budget
+/// IMPLEMENTATION.md Step 2.3's GC trigger is a percentage of. Deliberately
+/// a fixed target, not a fraction of the real device's total VRAM: a
+/// modern desktop GPU has gigabytes of headroom, so a device-relative
+/// trigger would almost never fire, defeating the point of a budget the
+/// engine itself is supposed to police.
+const DYNAMIC_VRAM_BUDGET_BYTES: u64 = 128 * 1024 * 1024;
+
+/// IMPLEMENTATION.md Step 2.3 task 2: "scans resource pools when VRAM
+/// capacity hits 85%."
+const GC_TRIGGER_THRESHOLD_BYTES: u64 = DYNAMIC_VRAM_BUDGET_BYTES * 85 / 100;
+
+/// IMPLEMENTATION.md Step 2.3 task 3: "resources older than N = 600
+/// frames," compared against `FrameSync::total_frame_count`.
+const GC_EVICTION_AGE_FRAMES: u64 = 600;
+
+/// IMPLEMENTATION.md Step 2.3 task 4: "destroy hardware resources only if
+/// N_current - N_evicted > 3 frames" -- the grace period `begin_frame`'s
+/// deferred-release drain waits out before actually destroying anything
+/// the GC thread evicted, so a resource the GPU might still be reading
+/// from a just-finished frame is never destroyed out from under it.
+const DEFERRED_RELEASE_GRACE_FRAMES: u64 = 3;
+
+/// How often the background GC thread wakes to check
+/// `TransientPool::total_free_bytes` against `GC_TRIGGER_THRESHOLD_BYTES`.
+/// Not specified by TECHNICAL.md; chosen to be responsive relative to
+/// `GC_EVICTION_AGE_FRAMES` (600 frames is multiple seconds even at
+/// 240 Hz) without busy-looping a whole CPU core doing nothing between
+/// real triggers.
+const GC_SCAN_INTERVAL: Duration = Duration::from_millis(100);
 
 /// TECHNICAL.md Section 3.1's triple-buffered ring: 3 logical segments,
 /// one per frame-in-flight slot.
@@ -111,6 +145,14 @@ struct FrameSync {
     /// fully-synchronous frames have completed since that segment was
     /// last written.
     frame_index: AtomicUsize,
+    /// A genuinely monotonic, ever-increasing frame counter (IMPLEMENTATION.md
+    /// Step 2.3), advanced alongside `frame_index` by `submit_and_present`
+    /// but never wrapping -- `frame_index`'s 0..3 rotation answers "which
+    /// ring-buffer segment," this answers "how many frames old is this
+    /// resource." Read by both the main thread (grace-period checks in
+    /// `begin_frame`'s deferred-release drain) and the background GC
+    /// thread (staleness checks against `VulkanTexture::last_used_frame`).
+    total_frame_count: AtomicU64,
 }
 
 /// Shared Vulkan device state (ARCHITECTURE.md Section 2.1's "Global
@@ -134,7 +176,10 @@ pub struct VulkanDevice {
     /// `Mutex`-guarded (not `RefCell`) so `VulkanDevice` stays genuinely
     /// `Sync`-shareable across threads later, matching the same
     /// forward-looking reasoning as `tre_memory::SpscRingBuffer`.
-    transient_pool: Mutex<TransientPool>,
+    /// `Arc`-wrapped (IMPLEMENTATION.md Step 2.3) so the background GC
+    /// thread can hold its own clone -- the "later" the doc comment above
+    /// refers to has arrived.
+    transient_pool: Arc<Mutex<TransientPool>>,
     /// A single shared sampler used by every bindless-array texture
     /// (IMPLEMENTATION.md Step 2.1) -- baked into
     /// `bindless_descriptor_set_layout` as an immutable sampler, so it is
@@ -170,6 +215,22 @@ pub struct VulkanDevice {
     /// concurrent `create_texture` calls from multiple threads serialize
     /// safely instead of racing each other.
     upload_command_pool: Mutex<vk::CommandPool>,
+    /// Evicted transient textures awaiting their 3-frame grace period
+    /// (IMPLEMENTATION.md Step 2.3) before the main thread actually
+    /// destroys them in `begin_frame`. A plain `Mutex<VecDeque<_>>`, not a
+    /// lock-free structure -- see PLAN.md's "deliberate deviation from
+    /// lock-free queue" for why (peeking the front without consuming it is
+    /// needed here, and contention at this call frequency is negligible).
+    /// `Arc`-wrapped so the GC thread (sole producer) and the main thread
+    /// (sole consumer) each hold their own clone.
+    deferred_release: Arc<Mutex<VecDeque<DeferredRelease>>>,
+    /// Set to `false` by `Drop for VulkanDevice` to tell the GC thread to
+    /// exit its scan loop; joined immediately after.
+    gc_running: Arc<AtomicBool>,
+    /// The background GC thread's handle (IMPLEMENTATION.md Step 2.3) --
+    /// the engine's first genuine OS thread. `Option` only so `Drop` can
+    /// `.take()` it to call `.join()`, which consumes the handle.
+    gc_thread: Option<JoinHandle<()>>,
     /// `VK_EXT_debug_utils` messenger (TECHNICAL.md Section 9.2,
     /// IMPLEMENTATION.md Step 2.4), `None` if the validation
     /// layer/extension weren't both available at instance-creation time.
@@ -477,6 +538,7 @@ impl VulkanDevice {
         let frame_sync = Arc::new(FrameSync {
             fence,
             frame_index: AtomicUsize::new(0),
+            total_frame_count: AtomicU64::new(0),
         });
 
         // IMPLEMENTATION.md Step 2.1: one persistent bindless descriptor
@@ -595,6 +657,23 @@ impl VulkanDevice {
         }
         .map_err(|_| EngineError::DeviceLost)?[0];
 
+        // IMPLEMENTATION.md Step 2.3: the transient pool and the
+        // deferred-release queue are constructed as locals first (not
+        // directly inside the `Self { .. }` literal below) specifically so
+        // the background GC thread, spawned next, can hold its own `Arc`
+        // clone of each before they're moved into `Self`.
+        let transient_pool = Arc::new(Mutex::new(TransientPool::default()));
+        let deferred_release: Arc<Mutex<VecDeque<DeferredRelease>>> =
+            Arc::new(Mutex::new(VecDeque::new()));
+        let gc_running = Arc::new(AtomicBool::new(true));
+        let gc_thread = std::thread::spawn({
+            let transient_pool = Arc::clone(&transient_pool);
+            let frame_sync = Arc::clone(&frame_sync);
+            let deferred_release = Arc::clone(&deferred_release);
+            let gc_running = Arc::clone(&gc_running);
+            move || gc_thread_loop(transient_pool, frame_sync, deferred_release, gc_running)
+        });
+
         Ok((
             Self {
                 entry,
@@ -608,7 +687,10 @@ impl VulkanDevice {
                 upload_command_pool: Mutex::new(upload_command_pool),
                 dynamic_rendering,
                 frame_sync,
-                transient_pool: Mutex::new(TransientPool::default()),
+                transient_pool,
+                deferred_release,
+                gc_running,
+                gc_thread: Some(gc_thread),
                 bindless_sampler,
                 bindless_descriptor_pool,
                 bindless_descriptor_set_layout,
@@ -946,6 +1028,7 @@ impl VulkanDevice {
         for (width, height, format) in pending {
             if let Ok(texture) = VulkanTexture::new(self, width, height, format) {
                 let mut pool = self.transient_pool.lock().expect("transient pool poisoned");
+                pool.total_free_bytes += texture.size_bytes;
                 pool.free
                     .entry((width, height, format))
                     .or_default()
@@ -953,10 +1036,57 @@ impl VulkanDevice {
             }
         }
     }
+
+    /// Physically destroys every deferred-release entry that has served
+    /// its `DEFERRED_RELEASE_GRACE_FRAMES` (IMPLEMENTATION.md Step 2.3
+    /// task 4) -- the ONLY place in this crate that ever destroys a
+    /// GC-evicted texture, deliberately on the main thread, not the GC
+    /// thread that decided to evict it (see `gc_thread_loop`'s doc
+    /// comment). Called at the start of `begin_frame`, alongside
+    /// `grow_pending_transient_targets`.
+    fn drain_deferred_release_queue(&self) {
+        let current_frame = self.frame_sync.total_frame_count.load(Ordering::Acquire);
+        let mut queue = self
+            .deferred_release
+            .lock()
+            .expect("deferred release queue poisoned");
+        // The queue is FIFO-ordered by a monotonically non-decreasing
+        // `evicted_at_frame` (the GC thread only ever reads an
+        // ever-increasing counter), so the moment the front entry hasn't
+        // served its grace period, nothing behind it has either.
+        while let Some(front) = queue.front() {
+            if current_frame.saturating_sub(front.evicted_at_frame) <= DEFERRED_RELEASE_GRACE_FRAMES
+            {
+                break;
+            }
+            let entry = queue.pop_front().expect("front() just confirmed Some");
+            // Dropping `entry.texture` here runs `Drop for VulkanTexture`,
+            // which does the real `vkDestroy*` teardown.
+            drop(entry);
+            self.transient_pool
+                .lock()
+                .expect("transient pool poisoned")
+                .stats
+                .destroyed += 1;
+        }
+    }
 }
 
 impl Drop for VulkanDevice {
     fn drop(&mut self) {
+        // IMPLEMENTATION.md Step 2.3: stop and join the background GC
+        // thread FIRST, before anything else -- it only ever touches
+        // `transient_pool`'s `Mutex` and plain data (never a Vulkan call,
+        // see `gc_thread_loop`'s doc comment), but the pool-clear step
+        // just below this would otherwise race a scan still in progress.
+        // `gc_thread_loop` re-checks `running` immediately after waking
+        // from its sleep, so shutdown latency is bounded by
+        // `GC_SCAN_INTERVAL`, not indefinite.
+        self.gc_running.store(false, Ordering::Release);
+        if let Some(handle) = self.gc_thread.take() {
+            let _ = handle.join();
+        }
+
         // Phase 2 Code Review finding #71: wait for the GPU to finish all
         // outstanding work before destroying anything below. Every
         // windowed example happened to call `device_wait_idle()` itself at
@@ -1060,6 +1190,10 @@ impl RhiDevice for VulkanDevice {
 
         if let Some(texture) = pool.free.get_mut(&bucket).and_then(Vec::pop) {
             pool.stats.hits += 1;
+            // IMPLEMENTATION.md Step 2.3: leaving the free list means this
+            // texture is in active use again, not idle -- it no longer
+            // counts toward the GC trigger.
+            pool.total_free_bytes -= texture.size_bytes;
             return Box::new(texture);
         }
 
@@ -1082,6 +1216,9 @@ impl RhiDevice for VulkanDevice {
             .min_by_key(|((w, h, _), _)| u64::from(*w) * u64::from(*h))
             .map(|(key, textures)| (*key, textures.pop().expect("checked non-empty above")))
         {
+            // IMPLEMENTATION.md Step 2.3: same accounting as the exact-hit
+            // path above -- this texture is leaving the free list too.
+            pool.total_free_bytes -= texture.size_bytes;
             return Box::new(texture);
         }
 
@@ -1136,6 +1273,11 @@ impl RhiDevice for VulkanDevice {
             height.min(1 << 30).next_power_of_two(),
             format,
         );
+        // Captured before `texture` is forgotten below: `size_bytes()`
+        // (IMPLEMENTATION.md Step 2.3) round-trips the allocation size
+        // `VulkanTexture::new` already computed, so check-in doesn't need
+        // to re-query `vkGetImageMemoryRequirements`.
+        let size_bytes = texture.size_bytes();
         // Reconstructs a `VulkanTexture` from `texture`'s opaque handles
         // rather than downcasting -- `texture` is a `Box<dyn RhiTexture>`
         // this same `VulkanDevice` produced moments ago via
@@ -1155,12 +1297,18 @@ impl RhiDevice for VulkanDevice {
             // there is nothing to reconstruct here.
             bindless_index: None,
             bindless_registry: None,
+            // IMPLEMENTATION.md Step 2.3: "used" right now, at the moment
+            // of check-in -- what the GC thread's staleness check measures
+            // age from.
+            last_used_frame: self.frame_sync.total_frame_count.load(Ordering::Acquire),
+            size_bytes,
         };
         // `texture` (the original box) must not also run its `Drop` and
         // destroy these same handles out from under `reclaimed`.
         std::mem::forget(texture);
 
         let mut pool = self.transient_pool.lock().expect("transient pool poisoned");
+        pool.total_free_bytes += size_bytes;
         pool.free.entry(bucket).or_default().push(reclaimed);
     }
 
@@ -1198,6 +1346,10 @@ impl RhiDevice for VulkanDevice {
         // not happen mid-frame, and "the start of the next frame" is
         // exactly that boundary.
         self.grow_pending_transient_targets();
+        // IMPLEMENTATION.md Step 2.3: same frame-boundary rationale as
+        // `grow_pending_transient_targets` above -- destroying GC-evicted
+        // resources happens here, once per frame, not mid-frame.
+        self.drain_deferred_release_queue();
 
         let image = swapchain.acquire_next_image()?;
 
@@ -1399,6 +1551,16 @@ impl RhiDevice for VulkanDevice {
         self.frame_sync
             .frame_index
             .store(next_frame_index, Ordering::Release);
+        // IMPLEMENTATION.md Step 2.3: the genuinely monotonic counter the
+        // GC thread and `begin_frame`'s deferred-release drain use to
+        // judge resource age -- distinct from `frame_index` above, which
+        // only ever counts 0..FRAMES_IN_FLIGHT. `fetch_add` (not
+        // load-then-store) is fine here even though nothing currently
+        // reads the returned value, since this field is never rotated
+        // (no modulus to get wrong).
+        self.frame_sync
+            .total_frame_count
+            .fetch_add(1, Ordering::Release);
 
         swapchain.present(image)
     }
@@ -1904,6 +2066,113 @@ impl Drop for VulkanPipelineState {
 pub struct TransientPoolStats {
     pub hits: u64,
     pub misses: u64,
+    /// Entries the background GC thread has moved from the free list into
+    /// the deferred-release queue (IMPLEMENTATION.md Step 2.3) -- not yet
+    /// physically destroyed, just no longer available for reuse. Distinct
+    /// from `destroyed` so a demo/test can observe both phases of the
+    /// deferred-release design, not just an aggregate.
+    pub evictions: u64,
+    /// Entries the main thread has actually destroyed after their 3-frame
+    /// grace period elapsed (IMPLEMENTATION.md Step 2.3).
+    pub destroyed: u64,
+}
+
+/// An evicted transient texture awaiting `DEFERRED_RELEASE_GRACE_FRAMES`
+/// before the main thread physically destroys it (IMPLEMENTATION.md
+/// Step 2.3). Holds the real `VulkanTexture` -- moving it here (rather
+/// than, say, just its raw handles) means its own `Drop` does the correct
+/// image/view/memory teardown once this struct is finally dropped for
+/// real, with nothing further to reconstruct.
+struct DeferredRelease {
+    // Never read by field name -- its only purpose is to be dropped, at
+    // the right moment, running `VulkanTexture`'s own real teardown.
+    // `dead_code` can't see a field-access-free drop as a "use," so this
+    // is a deliberate `allow`, not an oversight.
+    #[allow(dead_code)]
+    texture: VulkanTexture,
+    /// `FrameSync::total_frame_count` at the moment the GC thread evicted
+    /// this entry -- what the main thread's grace-period check compares
+    /// against the current frame count.
+    evicted_at_frame: u64,
+}
+
+/// The background GC thread's entire loop body (IMPLEMENTATION.md
+/// Step 2.3) -- the engine's first genuine OS thread. Deliberately never
+/// calls a single Vulkan function: it only locks `transient_pool` (plain
+/// Rust `HashMap`/`Vec` manipulation) and moves evicted `VulkanTexture`
+/// values into `deferred_release`. The actual `vkDestroy*` calls happen
+/// later, on the main thread, in `VulkanDevice::begin_frame`'s deferred-
+/// release drain -- see PLAN_PHASE2_STEP2_3.md's "why this is safe despite
+/// being genuinely concurrent" for the full reasoning. Exits when
+/// `running` is set to `false` by `Drop for VulkanDevice`.
+fn gc_thread_loop(
+    transient_pool: Arc<Mutex<TransientPool>>,
+    frame_sync: Arc<FrameSync>,
+    deferred_release: Arc<Mutex<VecDeque<DeferredRelease>>>,
+    running: Arc<AtomicBool>,
+) {
+    while running.load(Ordering::Acquire) {
+        std::thread::sleep(GC_SCAN_INTERVAL);
+        // Re-check immediately after waking: `Drop for VulkanDevice` may
+        // have requested shutdown while this thread was asleep, and
+        // `transient_pool` may already be mid-teardown by the time a
+        // sleep started before shutdown finishes.
+        if !running.load(Ordering::Acquire) {
+            break;
+        }
+
+        let mut pool = transient_pool.lock().expect("transient pool poisoned");
+        if pool.total_free_bytes < GC_TRIGGER_THRESHOLD_BYTES {
+            continue;
+        }
+
+        // IMPLEMENTATION.md Step 2.3 task 3: evict every free-list entry
+        // older than `GC_EVICTION_AGE_FRAMES`, once triggered -- not just
+        // enough to get back under budget, matching the task's literal
+        // wording ("identify resources older than N = 600 frames").
+        let current_frame = frame_sync.total_frame_count.load(Ordering::Acquire);
+        let mut evicted = Vec::new();
+        for textures in pool.free.values_mut() {
+            let mut i = 0;
+            while i < textures.len() {
+                let age = current_frame.saturating_sub(textures[i].last_used_frame);
+                if age > GC_EVICTION_AGE_FRAMES {
+                    // `swap_remove`, not `remove`: free-list order is
+                    // irrelevant, and this avoids an O(n) shift per
+                    // eviction. Does NOT increment `i` -- the element
+                    // swapped into this position hasn't been checked yet.
+                    // (Byte accounting updated after this loop, once
+                    // `pool.free`'s borrow above has ended -- mutating
+                    // `pool.total_free_bytes` here too would borrow `pool`
+                    // mutably a second time while `values_mut()`'s
+                    // iterator is still live.)
+                    evicted.push(textures.swap_remove(i));
+                } else {
+                    i += 1;
+                }
+            }
+        }
+        pool.total_free_bytes -= evicted.iter().map(|t| t.size_bytes).sum::<u64>();
+        if evicted.is_empty() {
+            continue;
+        }
+        pool.stats.evictions += evicted.len() as u64;
+        // Released before taking `deferred_release`'s lock: nothing below
+        // needs `transient_pool` any further this iteration, and the main
+        // thread should never have to wait on the GC thread's scan just to
+        // acquire/release a transient target.
+        drop(pool);
+
+        let mut queue = deferred_release
+            .lock()
+            .expect("deferred release queue poisoned");
+        for texture in evicted {
+            queue.push_back(DeferredRelease {
+                texture,
+                evicted_at_frame: current_frame,
+            });
+        }
+    }
 }
 
 /// Free-list + bump allocator for `VulkanDevice::bindless_descriptor_set`'s
@@ -1963,6 +2232,13 @@ struct TransientPool {
     /// (deduplicated -- see the `contains` check at the push site).
     pending_growth: Vec<(u32, u32, TextureFormat)>,
     stats: TransientPoolStats,
+    /// Sum of `size_bytes` across every entry currently in `free`
+    /// (IMPLEMENTATION.md Step 2.3) -- what the GC thread compares against
+    /// `GC_TRIGGER_THRESHOLD_BYTES`. Maintained incrementally (added to on
+    /// check-in, subtracted on check-out/eviction) rather than recomputed
+    /// by summing `free` on every scan, since the GC thread's scan
+    /// interval is independent of how often the pool itself changes.
+    total_free_bytes: u64,
 }
 
 /// A GPU render target (TECHNICAL.md Section 3.2's transient pool
@@ -1986,6 +2262,17 @@ pub struct VulkanTexture {
     /// reference to the whole device. `None` exactly when `bindless_index`
     /// is `None`.
     bindless_registry: Option<Arc<Mutex<BindlessRegistry>>>,
+    /// IMPLEMENTATION.md Step 2.3: the `FrameSync::total_frame_count` value
+    /// as of this texture's creation, or (for a pooled texture) its last
+    /// `release_transient_target` check-in -- what the GC thread compares
+    /// against the current frame count to judge staleness. Meaningless for
+    /// a bindless texture (`from_pixels`'s output), which never enters
+    /// `TransientPool::free` and so is never scanned.
+    last_used_frame: u64,
+    /// This texture's own `VkMemoryRequirements::size` -- what
+    /// `TransientPool::total_free_bytes` sums to decide whether the pool
+    /// has crossed IMPLEMENTATION.md Step 2.3's 85%-of-budget GC trigger.
+    size_bytes: u64,
 }
 
 /// Guards an in-progress sampled image's `image`/`memory`/`view` between
@@ -2172,6 +2459,10 @@ impl VulkanTexture {
             device: device.device.clone(),
             bindless_index: None,
             bindless_registry: None,
+            // IMPLEMENTATION.md Step 2.3: a freshly cold-allocated texture
+            // is "used" right now, not stale from the moment it's born.
+            last_used_frame: device.frame_sync.total_frame_count.load(Ordering::Acquire),
+            size_bytes: requirements.size,
         })
     }
 
@@ -2517,6 +2808,13 @@ impl VulkanTexture {
             device: device.device.clone(),
             bindless_index: Some(bindless_index),
             bindless_registry: Some(Arc::clone(&device.bindless_registry)),
+            // IMPLEMENTATION.md Step 2.3: unread for a bindless texture
+            // (it never enters `TransientPool::free`), but every
+            // `VulkanTexture` carries the field, so it's set for
+            // struct-completeness rather than defaulted to a meaningless
+            // value.
+            last_used_frame: device.frame_sync.total_frame_count.load(Ordering::Acquire),
+            size_bytes: requirements.size,
         })
     }
 }
@@ -2544,6 +2842,10 @@ impl RhiTexture for VulkanTexture {
 
     fn bindless_index(&self) -> Option<u32> {
         self.bindless_index
+    }
+
+    fn size_bytes(&self) -> u64 {
+        self.size_bytes
     }
 }
 

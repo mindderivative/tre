@@ -47,6 +47,8 @@ The engine architecture is highly decoupled, operating strictly as a bridge betw
 
 To support complex desktop applications, the engine separates global GPU resources from window-specific surfaces.
 
+*Implementation status (Phase 2 Step 2.3, 2026-09-06):* the `SubCanvas` worker threads (Section 2.2) and the shared-atlas concurrency model (Section 2.3) below remain design, not yet built -- neither `SubCanvas` nor the dynamic texture atlas exists in the codebase yet. The engine's actual first real OS thread is `tre-rhi-vulkan`'s background GC thread (TECHNICAL.md Section 3.3), which evicts stale entries from the transient render-target pool. It deliberately never touches a Vulkan call itself -- only the main thread destroys GPU objects, after a grace period -- so it doesn't yet exercise the harder cross-thread-GPU-object-lifetime questions this section's future worker threads will eventually raise.
+
 ### 2.1 Shared Context & Swapchains
 * **Global `RhiDevice`:** A single logical GPU device instance is instantiated at startup. It owns all global resources: the MSDF font engine, the dynamic texture atlas, static pipeline states (PSOs), and the SVG path cache.
 * **Per-Window Contexts:** Each native window (Win32 `HWND`, Wayland `wl_surface`, macOS `NSWindow`) holds a dedicated `RhiSwapchain`, a local event queue, and its own multi-threaded command arena. 
@@ -230,6 +232,12 @@ trait RhiTexture {
     /// (which is written to, not sampled from, and isn't registered into
     /// the array).
     fn bindless_index(&self) -> Option<u32>;
+    /// Added Phase 2 Step 2.3: this texture's real GPU allocation size in
+    /// bytes, so `RhiDevice::release_transient_target` can maintain the
+    /// transient pool's total-free-bytes accounting (the generational
+    /// GC's 85%-of-budget trigger, TECHNICAL.md Section 3.3) without
+    /// re-querying it.
+    fn size_bytes(&self) -> u64;
 }
 
 trait RhiPipelineState {
