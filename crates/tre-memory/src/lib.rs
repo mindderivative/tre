@@ -8,6 +8,10 @@
 //! (TECHNICAL.md Section 9.1) -- every `unsafe` block requires an adjacent
 //! `// SAFETY:` comment stating the invariant being upheld.
 
+mod mpsc;
 mod spsc;
+mod swmr;
 
+pub use mpsc::MpscRingBuffer;
 pub use spsc::SpscRingBuffer;
+pub use swmr::SwmrSlotTable;

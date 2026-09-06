@@ -11,3 +11,9 @@ unsafe_op_in_unsafe_fn = "deny"
 all = "warn"
 
 [dependencies]
+# PLAN_PHASE4_STEP4_2_4.md: the real `MpscRingBuffer`/`SwmrSlotTable`
+# concurrency primitives this step's `AtlasOwner` is built on -- both
+# live in `tre-memory` (matching its own crate doc comment, and
+# TECHNICAL.md Section 9.1's `unsafe`-policy grouping), not duplicated
+# here.
+tre-memory = { path = "../tre-memory" }

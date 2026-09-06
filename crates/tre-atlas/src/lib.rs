@@ -6,7 +6,25 @@
 //! and plain-color icon/vector-decal atlas entries alike (ARCHITECTURE.md
 //! Section 2.3, DESIGN.md Section 10.2) -- not a text-specific concern,
 //! hence its own crate rather than living in `tre-text`.
+//!
+//! Also (Step 4.2.4) the real multi-window atlas concurrency model built
+//! on top of the packer: [`AtlasOwner`] is a dedicated background thread
+//! draining [`AtlasInsertRequest`]s (via `tre_memory::MpscRingBuffer`)
+//! from any number of producer threads, performing the real packing and
+//! rasterization, and publishing results into a `tre_memory::SwmrSlotTable`
+//! any reader can consult without ever blocking. No `unsafe` code lives
+//! in this crate itself -- the concurrency primitives that need it live
+//! in `tre-memory` (TECHNICAL.md Section 9.1's `unsafe` policy groups
+//! them there, alongside the pre-existing input-event ring buffer).
 #![forbid(unsafe_code)]
+
+mod key;
+mod owner;
+mod raster;
+
+pub use key::{pack_slot_value, unpack_slot_value, AtlasKey};
+pub use owner::{AtlasOwner, AtlasOwnerHandle};
+pub use raster::{AtlasInsertRequest, RasterSource};
 
 /// A placed or free rectangle within an atlas, in atlas pixel coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

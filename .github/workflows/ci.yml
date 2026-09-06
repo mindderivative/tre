@@ -126,3 +126,4 @@ jobs:
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example text_shaping_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example atlas_packing_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example msdf_rendering_demo
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example atlas_concurrency_demo
