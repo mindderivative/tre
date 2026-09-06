@@ -12,7 +12,7 @@
 
 use std::time::{Duration, Instant};
 
-use tre_engine::{RhiDevice, TextureFormat};
+use tre_engine::{EngineError, RhiDevice, TextureFormat};
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 
 fn main() {
@@ -44,25 +44,45 @@ fn main() {
     let swapchain =
         HeadlessSwapchain::new(&device, 64, 64).expect("failed to create HeadlessSwapchain");
 
-    // Check ~25 distinct bucket sizes into the transient pool -- distinct
+    // Check distinct bucket sizes into the transient pool -- distinct
     // (width, height) pairs so each becomes its own free-list entry
     // instead of colliding into one reused bucket. All five widths/
     // heights are already exact powers of two, so the bucket key matches
     // the requested size exactly (no "next-larger fallback" surprises).
-    // Total: 4 bytes/pixel * (256+512+1024+2048+4096)^2 =~ 240 MB,
-    // comfortably past the 85%-of-128MB (~108.8 MB) GC trigger threshold.
+    //
+    // Phase 2 Step 2.3 Code Review finding #80 added a real admission cap:
+    // `acquire_transient_target` now refuses to cold-allocate a genuinely
+    // novel size once the pool's idle free bytes reach the full
+    // 128 MB budget. This loop deliberately requests enough distinct
+    // sizes to comfortably clear the GC's 85% (~108.8 MB) trigger well
+    // before hitting that 100% admission cap -- and stops early,
+    // correctly, the moment the cap is reached, since the goal (enough
+    // idle bytes to trigger the GC) is already met by then.
     const SIZES: [u32; 5] = [256, 512, 1024, 2048, 4096];
     let mut total_bytes: u64 = 0;
-    for &width in &SIZES {
+    let mut checked_in: usize = 0;
+    'checkin: for &width in &SIZES {
         for &height in &SIZES {
-            let texture = device.acquire_transient_target(width, height, TextureFormat::Bgra8Srgb);
-            total_bytes += u64::from(width) * u64::from(height) * 4;
-            device.release_transient_target(texture);
+            match device.acquire_transient_target(width, height, TextureFormat::Bgra8Srgb) {
+                Ok(texture) => {
+                    total_bytes += u64::from(width) * u64::from(height) * 4;
+                    device.release_transient_target(texture);
+                    checked_in += 1;
+                }
+                Err(EngineError::TransientPoolBudgetExceeded) => {
+                    eprintln!(
+                        "admission cap reached after {checked_in} sizes (~{} MB) -- stopping \
+                         early, as expected once past the GC trigger threshold",
+                        total_bytes / (1024 * 1024)
+                    );
+                    break 'checkin;
+                }
+                Err(e) => panic!("unexpected error acquiring transient target: {e:?}"),
+            }
         }
     }
     eprintln!(
-        "checked {} distinct sizes into the transient pool (~{} MB total)",
-        SIZES.len() * SIZES.len(),
+        "checked {checked_in} distinct sizes into the transient pool (~{} MB total)",
         total_bytes / (1024 * 1024)
     );
 

@@ -279,12 +279,17 @@ trait RhiDevice {
     // `acquire_transient_target` takes a `TextureFormat` so the pool can
     // key on `(Width, Height, Format)` as Section 3.2 requires.
     fn create_dynamic_ring_buffer(&self, capacity: usize) -> Box<dyn RhiDynamicRingBuffer>;
+    /// Added Phase 2 Step 2.3 Code Review finding #80: returns `Result` --
+    /// a genuinely novel size that would need cold-allocating while the
+    /// pool's idle free bytes are already at the dynamic-VRAM budget is a
+    /// real, recoverable admission failure, not a panic. The common case
+    /// (reusing an already-pooled size) never fails this way.
     fn acquire_transient_target(
         &self,
         width: u32,
         height: u32,
         format: TextureFormat,
-    ) -> Box<dyn RhiTexture>;
+    ) -> Result<Box<dyn RhiTexture>, EngineError>;
     fn release_transient_target(&self, texture: Box<dyn RhiTexture>);
     /// Added Phase 2 Step 2.1: uploads real CPU pixel data as a new
     /// GPU-resident sampled texture and registers it into the persistent

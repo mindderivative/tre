@@ -32,6 +32,16 @@ pub enum EngineError {
     /// failure class). Recoverable in principle -- a caller can release
     /// textures and retry -- even though no eviction policy exists yet.
     BindlessArrayExhausted,
+    /// `RhiDevice::acquire_transient_target` would need to cold-allocate a
+    /// genuinely novel size while the transient pool's already-idle free
+    /// bytes alone are at or past the dynamic-VRAM budget (Phase 2
+    /// Step 2.3 Code Review finding #80; TECHNICAL.md Section 3.3's
+    /// generational GC only reclaims idle entries -- it cannot claw back
+    /// budget from a caller that keeps enough distinct sizes in rotation
+    /// to never go idle, so admission needs its own check). Recoverable:
+    /// a caller can release outstanding textures, wait for the GC thread
+    /// to catch up, and retry.
+    TransientPoolBudgetExceeded,
 }
 
 /// A clip rectangle in the coordinate space `Canvas::push_clip`/scissor
@@ -606,12 +616,18 @@ pub trait RhiDevice {
     /// Section 3.1's $16\text{-}32\text{MB}$), divided evenly across the
     /// 3 frame-in-flight segments -- not the per-segment size.
     fn create_dynamic_ring_buffer(&self, capacity: usize) -> Box<dyn RhiDynamicRingBuffer>;
+    /// # Errors
+    /// Returns [`EngineError::TransientPoolBudgetExceeded`] if a genuinely
+    /// novel size would need cold-allocating while the pool's idle free
+    /// bytes are already at or past the dynamic-VRAM budget (Phase 2
+    /// Step 2.3 Code Review finding #80) -- a reuse of an already-pooled
+    /// size (the common case) never fails this way.
     fn acquire_transient_target(
         &self,
         width: u32,
         height: u32,
         format: TextureFormat,
-    ) -> Box<dyn RhiTexture>;
+    ) -> Result<Box<dyn RhiTexture>, EngineError>;
     fn release_transient_target(&self, texture: Box<dyn RhiTexture>);
     /// Uploads `pixels` (tightly packed, row-major, matching `format`'s
     /// byte layout) as a new GPU-resident sampled texture and registers it

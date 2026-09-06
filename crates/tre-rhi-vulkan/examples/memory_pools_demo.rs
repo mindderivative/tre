@@ -75,7 +75,9 @@ fn main() {
     eprintln!();
     eprintln!("--- transient pool: 20 acquire/release cycles at the same size ---");
     for i in 0..20 {
-        let texture = device.acquire_transient_target(200, 150, TextureFormat::Bgra8Srgb);
+        let texture = device
+            .acquire_transient_target(200, 150, TextureFormat::Bgra8Srgb)
+            .expect("failed to acquire transient target");
         let dims = texture.dimensions();
         device.release_transient_target(texture);
         let stats = device.transient_pool_stats();
@@ -102,7 +104,9 @@ fn main() {
     // pool for a REAL steady-state check, but this demo's point is
     // proving the miss/allocate path itself works without a validation
     // error, not re-deriving the steady-state check already done above.
-    let bigger = device.acquire_transient_target(600, 600, TextureFormat::Bgra8Srgb);
+    let bigger = device
+        .acquire_transient_target(600, 600, TextureFormat::Bgra8Srgb)
+        .expect("failed to acquire transient target");
     eprintln!(
         "requested 600x600, got {:?} (bucket rounds up to 1024x1024)",
         bigger.dimensions()

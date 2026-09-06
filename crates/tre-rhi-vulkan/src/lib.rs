@@ -79,6 +79,21 @@ const DEFERRED_RELEASE_GRACE_FRAMES: u64 = 3;
 /// real triggers.
 const GC_SCAN_INTERVAL: Duration = Duration::from_millis(100);
 
+/// Caps how many entries a single GC scan evicts before releasing
+/// `transient_pool`'s lock (Phase 2 Step 2.3 Code Review finding #81).
+/// Without a cap, one scan pass evicts every eligible entry in a single
+/// critical section -- cheap at today's scale (an age comparison per
+/// entry), but the per-eviction work (a `Vec` push, later a queue-lock and
+/// push) is real cost that grows without bound alongside the pool's total
+/// entry count as more of the engine comes to share this pool (the
+/// atlas/SVG cache this step's literal wording targets). Capping the
+/// per-scan eviction count bounds both the render thread's worst-case
+/// contention on `transient_pool` and `Drop for VulkanDevice`'s shutdown
+/// latency to a small, constant amount of work -- any backlog beyond the
+/// cap simply finishes on the next scan, `GC_SCAN_INTERVAL` later, which
+/// is harmless since eviction was never time-critical to begin with.
+const GC_MAX_EVICTIONS_PER_SCAN: usize = 64;
+
 /// TECHNICAL.md Section 3.1's triple-buffered ring: 3 logical segments,
 /// one per frame-in-flight slot.
 const FRAMES_IN_FLIGHT: usize = 3;
@@ -1084,7 +1099,26 @@ impl Drop for VulkanDevice {
         // `GC_SCAN_INTERVAL`, not indefinite.
         self.gc_running.store(false, Ordering::Release);
         if let Some(handle) = self.gc_thread.take() {
-            let _ = handle.join();
+            // Phase 2 Step 2.3 Code Review finding #79: a silently
+            // discarded `Err` here would mean a GC-thread panic (which
+            // also poisons `transient_pool`'s shared mutex, per that
+            // finding) leaves no trace anywhere, including at final
+            // teardown -- the one place guaranteed to still be reachable
+            // even if every main-thread pool call has been panicking on
+            // the poisoned lock since. `eprintln!`, not a panic: `Drop`
+            // is already mid-teardown and must still finish.
+            if let Err(payload) = handle.join() {
+                // `Box<dyn Any + Send>` isn't `Debug`; a panic payload is
+                // almost always a `&str` (a string-literal panic message)
+                // or `String` (a formatted one) -- downcast to whichever
+                // matches rather than printing nothing useful.
+                let message = payload
+                    .downcast_ref::<&str>()
+                    .copied()
+                    .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                    .unwrap_or("<non-string panic payload>");
+                eprintln!("tre-rhi-vulkan: GC thread panicked: {message}");
+            }
         }
 
         // Phase 2 Code Review finding #71: wait for the GPU to finish all
@@ -1119,6 +1153,18 @@ impl Drop for VulkanDevice {
         // completing that unwind -- worse than skipping this cleanup step.
         if let Ok(mut pool) = self.transient_pool.lock() {
             pool.free.clear();
+        }
+        // Phase 2 Step 2.3 Code Review finding #78: the exact same hazard
+        // as the transient-pool clear immediately above, for a field that
+        // clear predates -- `deferred_release` holds real `VulkanTexture`s
+        // awaiting their 3-frame grace period, and Rust would otherwise
+        // drop them (running their own real `vkDestroy*` calls) AFTER
+        // `destroy_device` below already ran. The grace period itself is
+        // moot here: `device_wait_idle()` above already guarantees nothing
+        // is submitting or reading from these images anymore, so there is
+        // no reason to wait it out before clearing.
+        if let Ok(mut queue) = self.deferred_release.lock() {
+            queue.clear();
         }
         // SAFETY: `self` is being dropped, so no other code holds
         // references to these handles afterward; destroying the fences and
@@ -1177,7 +1223,7 @@ impl RhiDevice for VulkanDevice {
         width: u32,
         height: u32,
         format: TextureFormat,
-    ) -> Box<dyn RhiTexture> {
+    ) -> Result<Box<dyn RhiTexture>, EngineError> {
         // Phase 2 Code Review finding #73: clamped before rounding up, so
         // this is unconditionally safe regardless of `width`/`height`
         // (see `release_transient_target`'s matching clamp for why).
@@ -1192,9 +1238,15 @@ impl RhiDevice for VulkanDevice {
             pool.stats.hits += 1;
             // IMPLEMENTATION.md Step 2.3: leaving the free list means this
             // texture is in active use again, not idle -- it no longer
-            // counts toward the GC trigger.
-            pool.total_free_bytes -= texture.size_bytes;
-            return Box::new(texture);
+            // counts toward the GC trigger. `saturating_sub` (Phase 2
+            // Step 2.3 Code Review finding #79): a bare `-=` would panic
+            // on underflow in debug builds -- poisoning `transient_pool`'s
+            // mutex and cascading into every future caller on this same
+            // lock -- or silently wrap to near-`u64::MAX` in release. A
+            // future accounting bug here should degrade to a
+            // bounded-but-wrong value, not either of those.
+            pool.total_free_bytes = pool.total_free_bytes.saturating_sub(texture.size_bytes);
+            return Ok(Box::new(texture));
         }
 
         // Genuine miss: DESIGN.md Section 2.6 forbids a dynamic RHI
@@ -1218,8 +1270,9 @@ impl RhiDevice for VulkanDevice {
         {
             // IMPLEMENTATION.md Step 2.3: same accounting as the exact-hit
             // path above -- this texture is leaving the free list too.
-            pool.total_free_bytes -= texture.size_bytes;
-            return Box::new(texture);
+            // `saturating_sub`: see the exact-hit path's comment above.
+            pool.total_free_bytes = pool.total_free_bytes.saturating_sub(texture.size_bytes);
+            return Ok(Box::new(texture));
         }
 
         // No existing bucket at all (even oversized) is free -- this is
@@ -1231,11 +1284,27 @@ impl RhiDevice for VulkanDevice {
         // somewhere, and DESIGN.md Section 2.6's own wording ("a first-
         // ever window size... isn't already resident in the pool") is
         // explicit that this exact case can occur.
+        //
+        // Phase 2 Step 2.3 Code Review finding #80: unlike the two hit
+        // paths above, this one requests genuinely NEW GPU memory, not a
+        // reuse of already-idle bytes -- so it's the one place that needs
+        // an admission check against the budget the generational GC
+        // (Step 2.3) only ever reclaims *into*, never gates *out of*.
+        // Known limitation, stated plainly: this compares against
+        // `total_free_bytes` (idle bytes only), not total bytes including
+        // whatever's currently checked out, so it catches "many distinct
+        // sizes cycling through mostly-idle" but not "many sizes
+        // permanently checked out simultaneously" -- a real, if imperfect,
+        // gate using the accounting this step already maintains, not a
+        // claim of exact enforcement.
+        if pool.total_free_bytes >= DYNAMIC_VRAM_BUDGET_BYTES {
+            return Err(EngineError::TransientPoolBudgetExceeded);
+        }
         drop(pool);
-        Box::new(
+        Ok(Box::new(
             VulkanTexture::new(self, width, height, format)
                 .expect("failed to create transient render target"),
-        )
+        ))
     }
 
     fn release_transient_target(&self, texture: Box<dyn RhiTexture>) {
@@ -2126,13 +2195,19 @@ fn gc_thread_loop(
             continue;
         }
 
-        // IMPLEMENTATION.md Step 2.3 task 3: evict every free-list entry
-        // older than `GC_EVICTION_AGE_FRAMES`, once triggered -- not just
-        // enough to get back under budget, matching the task's literal
-        // wording ("identify resources older than N = 600 frames").
+        // IMPLEMENTATION.md Step 2.3 task 3: evict free-list entries older
+        // than `GC_EVICTION_AGE_FRAMES`, once triggered -- not stopping as
+        // soon as the pool is back under budget, matching the task's
+        // literal wording ("identify resources older than N = 600
+        // frames"). Capped at `GC_MAX_EVICTIONS_PER_SCAN` per wake-up
+        // (Phase 2 Step 2.3 Code Review finding #81), a THROUGHPUT limit,
+        // not a "stop once under budget" one -- a backlog beyond the cap
+        // still gets every eligible entry eventually, just spread across
+        // more `GC_SCAN_INTERVAL`-spaced scans instead of one unboundedly
+        // long critical section.
         let current_frame = frame_sync.total_frame_count.load(Ordering::Acquire);
         let mut evicted = Vec::new();
-        for textures in pool.free.values_mut() {
+        'scan: for textures in pool.free.values_mut() {
             let mut i = 0;
             while i < textures.len() {
                 let age = current_frame.saturating_sub(textures[i].last_used_frame);
@@ -2147,15 +2222,32 @@ fn gc_thread_loop(
                     // mutably a second time while `values_mut()`'s
                     // iterator is still live.)
                     evicted.push(textures.swap_remove(i));
+                    if evicted.len() >= GC_MAX_EVICTIONS_PER_SCAN {
+                        break 'scan;
+                    }
                 } else {
                     i += 1;
                 }
             }
         }
-        pool.total_free_bytes -= evicted.iter().map(|t| t.size_bytes).sum::<u64>();
+        // `saturating_sub` (Phase 2 Step 2.3 Code Review finding #79): see
+        // `acquire_transient_target`'s matching comment -- this runs on
+        // the GC thread, where an underflow panic would poison
+        // `transient_pool`'s mutex and cascade into every future
+        // main-thread caller sharing it.
+        pool.total_free_bytes = pool
+            .total_free_bytes
+            .saturating_sub(evicted.iter().map(|t| t.size_bytes).sum::<u64>());
         if evicted.is_empty() {
             continue;
         }
+        // Phase 2 Step 2.3 Code Review finding #82: a bucket emptied
+        // entirely by eviction would otherwise stay in `pool.free` forever
+        // as a live key with an empty `Vec` -- harmless at today's small,
+        // bounded key space, but unbounded in principle if this pool is
+        // later shared with a wider key space (e.g. the atlas/SVG cache
+        // this step's literal wording targets).
+        pool.free.retain(|_, textures| !textures.is_empty());
         pool.stats.evictions += evicted.len() as u64;
         // Released before taking `deferred_release`'s lock: nothing below
         // needs `transient_pool` any further this iteration, and the main
