@@ -302,12 +302,208 @@ fn main() {
     );
     eprintln!("glyph outline render, outside probe: OK ({outside_pixel:?})");
 
-    let mut rgba = bgra.clone();
+    write_png(&bgra, "TRE_TEXT_SHAPING_OUTPUT", "text_shaping_output.png");
+
+    // --- Bonus: a real shaped *word*, positioned by real shaping
+    // advances -- a single letter proves outline extraction, but not that
+    // shaping actually lays out a sequence of glyphs correctly. "TEXT" --
+    // T, E, and X independently confirmed single-contour (hole-free)
+    // glyphs in this machine's real primary cascade font via a standalone
+    // probe before writing this section, the same discipline used to
+    // pick 'L' above -- lets the whole word render through the same
+    // hole-free-only pipeline this step's scope allows.
+    let word = "TEXT";
+    let word_runs = tre_text::shape_text(&primary_face, word).expect("shape_text failed for word");
+    assert_eq!(
+        word_runs.len(),
+        1,
+        "\"TEXT\" is pure Latin, must shape as a single run"
+    );
+    let word_glyphs = &word_runs[0].glyphs;
+    assert_eq!(word_glyphs.len(), word.chars().count());
+    for glyph in word_glyphs {
+        assert_ne!(
+            glyph.glyph_id, 0,
+            "the primary font must have real (non-notdef) glyphs for \"TEXT\""
+        );
+    }
+
+    const WORD_OFFSET_X: f32 = 20.0;
+    const WORD_OFFSET_Y: f32 = 180.0;
+    // A separate, smaller scale than the single-glyph 'L' proof above --
+    // that scale (a ~200px-tall single letter) would run a whole 4-letter
+    // word well past this 300px-wide canvas. Sized from the word's own
+    // real total advance (not guessed), leaving margin on both sides.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "a 4-letter word's total advance is far below f32's exact-integer range"
+    )]
+    let total_advance_units: f32 = word_glyphs.iter().map(|g| g.x_advance as f32).sum();
+    let word_scale = (WIDTH as f32 - 2.0 * WORD_OFFSET_X) / total_advance_units;
+    let mut pen_x = WORD_OFFSET_X;
+    let mut glyph_polygons: Vec<Polygon> = Vec::new();
+    for glyph in word_glyphs {
+        let glyph_id = skrifa::GlyphId::from(glyph.glyph_id);
+        let contours = tre_text::glyph_outline(&skrifa_font, glyph_id)
+            .expect("outline extraction failed for a word glyph");
+        assert_eq!(
+            contours.len(),
+            1,
+            "every letter in \"TEXT\" must be a hole-free single contour"
+        );
+        let raw = flatten_contour(&contours[0]);
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "a 4-letter word's offsets/advances are far below f32's exact-integer range"
+        )]
+        let (x_off, y_off) = (
+            glyph.x_offset as f32 * word_scale,
+            glyph.y_offset as f32 * word_scale,
+        );
+        let glyph_origin_x = pen_x + x_off;
+        let points: Vec<[f32; 2]> = raw
+            .iter()
+            .map(|&[x, y]| {
+                [
+                    x.mul_add(word_scale, glyph_origin_x),
+                    WORD_OFFSET_Y - y.mul_add(word_scale, y_off),
+                ]
+            })
+            .collect();
+        glyph_polygons.push(Polygon { points });
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "a 4-letter word's offsets/advances are far below f32's exact-integer range"
+        )]
+        let advance = glyph.x_advance as f32 * word_scale;
+        pen_x += advance;
+    }
+
+    // Ground truth computed independently against the extracted-and-
+    // positioned polygons themselves (the same even-odd ray-casting test
+    // used above), *before* looking at any rendered pixel -- for each
+    // letter, its own bounding-box center; between each adjacent pair of
+    // letters, the horizontal midpoint of their gap (checked against
+    // *every* letter's polygon, not just its neighbors, so an advance bug
+    // that made two letters overlap would also be caught here).
+    let mut probes: Vec<([f32; 2], bool)> = Vec::new();
+    for polygon in &glyph_polygons {
+        let bbox = tre_svg::bounding_box(polygon);
+        let center = [(bbox.0[0] + bbox.1[0]) / 2.0, (bbox.0[1] + bbox.1[1]) / 2.0];
+        let expected = point_in_polygon(center, &polygon.points);
+        probes.push((center, expected));
+    }
+    for pair in glyph_polygons.windows(2) {
+        let left_bbox = tre_svg::bounding_box(&pair[0]);
+        let right_bbox = tre_svg::bounding_box(&pair[1]);
+        let gap = [
+            (left_bbox.1[0] + right_bbox.0[0]) / 2.0,
+            (left_bbox.0[1] + left_bbox.1[1]) / 2.0,
+        ];
+        let inside_any = glyph_polygons
+            .iter()
+            .any(|polygon| point_in_polygon(gap, &polygon.points));
+        assert!(
+            !inside_any,
+            "the gap between two adjacent letters in \"TEXT\" must not fall inside any letter's \
+             own outline -- a real shaping-advance bug would show up here as overlapping glyphs"
+        );
+        probes.push((gap, false));
+    }
+
+    let mut word_vertex_buffers = Vec::new();
+    let mut word_index_buffers = Vec::new();
+    for polygon in &glyph_polygons {
+        let triangles = tre_svg::triangulate(polygon)
+            .expect("every letter in \"TEXT\" must be a simple (non-self-intersecting) polygon");
+        let (vertices, indices) = tre_svg::to_ui_vertices(polygon, &triangles, white);
+        word_vertex_buffers.push(
+            device
+                .upload_buffer(
+                    bytemuck::cast_slice(&vertices),
+                    vk::BufferUsageFlags::VERTEX_BUFFER,
+                )
+                .expect("failed to upload word vertex buffer"),
+        );
+        word_index_buffers.push((
+            device
+                .upload_buffer(
+                    bytemuck::cast_slice(&indices),
+                    vk::BufferUsageFlags::INDEX_BUFFER,
+                )
+                .expect("failed to upload word index buffer"),
+            indices.len() as u32,
+        ));
+    }
+
+    let (mut word_cmd_buffer, word_image) = device
+        .begin_frame(&swapchain)
+        .expect("begin_frame failed for word render");
+    word_cmd_buffer.set_pipeline(&pipeline);
+    for (vertex_buffer, (index_buffer, index_count)) in
+        word_vertex_buffers.iter().zip(&word_index_buffers)
+    {
+        word_cmd_buffer.bind_vertex_buffer(vertex_buffer, 0);
+        word_cmd_buffer.bind_index_buffer(index_buffer, 0);
+        word_cmd_buffer.draw_indexed(*index_count, 0, 0);
+    }
+    device
+        .submit_and_present(word_cmd_buffer, &swapchain, word_image)
+        .expect("submit_and_present failed for word render");
+
+    let word_bgra = swapchain
+        .read_pixels_bgra8()
+        .expect("failed to read back word render pixels");
+    let word_pixel_at = |x: u32, y: u32| -> [u8; 4] {
+        let idx = ((y * WIDTH + x) * 4) as usize;
+        [
+            word_bgra[idx],
+            word_bgra[idx + 1],
+            word_bgra[idx + 2],
+            word_bgra[idx + 3],
+        ]
+    };
+    for (probe, expected_inside) in probes {
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "every probe is computed from this 300x300 canvas's own glyph placements"
+        )]
+        let pixel = word_pixel_at(probe[0] as u32, probe[1] as u32);
+        let expected_pixel = if expected_inside {
+            [255, 255, 255, 255]
+        } else {
+            background
+        };
+        assert_eq!(
+            pixel,
+            expected_pixel,
+            "probe {probe:?} (independently computed as {}) rendered as {pixel:?}, expected \
+             {expected_pixel:?}",
+            if expected_inside { "inside" } else { "outside" }
+        );
+    }
+    eprintln!(
+        "shaped word render (\"TEXT\", {} glyphs, real advances): OK ({} probes matched)",
+        word_glyphs.len(),
+        glyph_polygons.len() + glyph_polygons.len().saturating_sub(1)
+    );
+
+    write_png(
+        &word_bgra,
+        "TRE_TEXT_SHAPING_WORD_OUTPUT",
+        "text_shaping_word_output.png",
+    );
+
+    eprintln!("all text shaping assertions passed");
+}
+
+fn write_png(bgra: &[u8], env_var: &str, default_path: &str) {
+    let mut rgba = bgra.to_vec();
     for px in rgba.chunks_exact_mut(4) {
         px.swap(0, 2);
     }
-    let out_path = std::env::var("TRE_TEXT_SHAPING_OUTPUT")
-        .unwrap_or_else(|_| "text_shaping_output.png".to_string());
+    let out_path = std::env::var(env_var).unwrap_or_else(|_| default_path.to_string());
     let file = std::fs::File::create(&out_path).expect("failed to create output PNG file");
     let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), WIDTH, HEIGHT);
     encoder.set_color(png::ColorType::Rgba);
@@ -316,7 +512,5 @@ fn main() {
     writer
         .write_image_data(&rgba)
         .expect("failed to write PNG image data");
-
-    eprintln!("wrote {WIDTH}x{HEIGHT} text shaping render to {out_path}");
-    eprintln!("all text shaping assertions passed");
+    eprintln!("wrote {WIDTH}x{HEIGHT} render to {out_path}");
 }

@@ -376,7 +376,13 @@ it through the pre-existing, unmodified ear-clipping + flat-color Vulkan
 pipeline, and confirming the rendered pixels match an independently
 computed (in-demo, not externally pre-verified, since a real font's glyph
 shape isn't known in advance the way a hand-authored SVG is) point-in-
-polygon check.
+polygon check. Extended, at the project owner's request for stronger
+evidence of shaping correctness specifically (a single glyph proves
+outline extraction but not layout), to also shape and render the real
+word `"TEXT"` positioned entirely by `rustybuzz`'s own per-glyph advances
+-- seven independently-computed probes (every letter's own bounding-box
+center, plus every adjacent inter-letter gap checked against every
+letter's outline) all matched the GPU render.
 
 No MSDF rasterization, no atlas, no `RenderingCanvas` wiring, no
 multi-contour/hole rendering, and no Windows/macOS font discovery this

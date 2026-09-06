@@ -52,3 +52,18 @@ outline (rather than a pre-verified external script) before rendering,
 confirms its chosen "inside the stroke" and "bounding-box center" probe
 points land where expected, and only then asserts the real GPU-rendered
 pixels match.
+
+**A real shaped *word*, not just one letter.** A single glyph proves
+outline extraction works, but not that shaping actually lays out a
+sequence of glyphs correctly -- the part of "getting text right" that
+matters most in practice. The demo additionally shapes the real word
+`"TEXT"` (all four letters independently confirmed single-contour/
+hole-free in this machine's real primary font before writing this
+section) and renders it with every letter positioned purely by
+`rustybuzz`'s own real per-glyph advances -- no hand-placed offsets. Seven
+probes are checked, all computed independently (ray-casting against the
+actual extracted-and-positioned polygons, not assumed): each letter's own
+bounding-box center, plus the gap between every adjacent pair of letters
+(checked against *every* letter's outline, not just its neighbors, so an
+advance bug that made two letters overlap would be caught here too).
+Written to a second PNG so the whole word is visible at once.
