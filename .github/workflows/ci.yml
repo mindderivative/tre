@@ -80,6 +80,10 @@ jobs:
             libwayland-dev libxcb1-dev glslc libfontconfig1-dev \
             fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji
       - run: cargo test --workspace
+      # Phase 4 Step 4.2.2: no GPU/Vulkan involved at all -- MSDF
+      # generation is pure CPU, so this runs as a plain example here
+      # rather than in the vulkan-validation job below.
+      - run: cargo run -p tre-text --example msdf_generation_demo
 
   vulkan-validation:
     name: vulkan-validation

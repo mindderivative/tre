@@ -11,6 +11,19 @@ unsafe_op_in_unsafe_fn = "deny"
 all = "warn"
 
 [dependencies]
+# PLAN_PHASE4_STEP4_2_2.md: a real pure-Rust reimplementation of
+# msdfgen's own published MSDF-generation algorithm (edge coloring,
+# true/pseudo-distance handling, sign correction, following Chlumský's
+# thesis), not a from-scratch first attempt at this specific,
+# failure-prone algorithm. Pulls in `nalgebra`/`image`/`num-traits` as
+# its own internal, asset-generation-time-only dependencies -- the same
+# category as `usvg` pulling in `kurbo`, distinct from this workspace's
+# own `tre-math` hot-path primitives. Pinned to 0.8.0, confirmed
+# compatible with this workspace's `rust-version = 1.75` via `cargo add
+# --dry-run`.
+fdsm = "=0.8.0"
+image = { version = "=0.25.10", default-features = false }
+nalgebra = "=0.34.2"
 # PLAN_PHASE4_STEP4_1.md: an all-pure-Rust font stack, a deliberate
 # departure from IMPLEMENTATION.md's literal "HarfBuzz"/"FreeType"
 # wording, so this workspace's only C ABI boundary stays Vulkan.
@@ -24,10 +37,6 @@ rustybuzz = "0.20.1"
 # Pinned to 0.33.2 (0.46.2 needs rustc 1.85, confirmed via `cargo add
 # --dry-run`, the same technique used to pin `usvg`/`wide` in Phase 3).
 skrifa = "=0.33.2"
-# Reuses the now-`pub` cubic/quadratic-to-polyline flatten functions
-# (Phase 3 Step 3.3.1) for this step's outline-rendering demo, rather than
-# a second hand-rolled curve flattener.
-tre-svg = { version = "0.1.0", path = "../tre-svg" }
 # Paragraph-level bidi embedding levels (UAX #9) -- rustybuzz shapes one
 # direction-and-script-uniform run at a time; segmenting a mixed-direction
 # string into runs is the caller's job, not rustybuzz's own.
@@ -44,3 +53,8 @@ unicode-script = "0.5.8"
 # Pinned to 0.8.0 (0.11.0 needs rustc 1.77, same `cargo add --dry-run`
 # technique).
 fontconfig = "=0.8.0"
+
+[dev-dependencies]
+# This step's own msdf_generation_demo writes a human-viewable preview
+# PNG; not used by the library itself.
+png = "0.18.1"
