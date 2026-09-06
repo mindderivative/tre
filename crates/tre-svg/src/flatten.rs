@@ -42,7 +42,12 @@ fn cubic_is_flat(p0: [f32; 2], p1: [f32; 2], p2: [f32; 2], p3: [f32; 2]) -> bool
 /// caller is assumed to already have `p0` as the current point, matching
 /// how a `LineTo` segment is pushed, so the two cases compose without a
 /// duplicate point.
-pub(crate) fn flatten_cubic(
+///
+/// `pub` (not `pub(crate)`) since `PLAN_PHASE4_STEP4_1.md`: `tre-text`
+/// reuses this rather than hand-rolling a second curve flattener for
+/// glyph outline geometry (a font glyph's outline is cubic/quadratic
+/// Beziers, the same curve types an SVG path uses).
+pub fn flatten_cubic(
     p0: [f32; 2],
     p1: [f32; 2],
     p2: [f32; 2],
@@ -90,7 +95,9 @@ fn flatten_cubic_recursive(
 /// `p0 -> control -> p1` to `out`, via the standard degree-elevation to a
 /// cubic (`c1 = p0 + 2/3*(control - p0)`, `c2 = p1 + 2/3*(control - p1)`)
 /// rather than a second, separately-tuned flattening routine.
-pub(crate) fn flatten_quad(p0: [f32; 2], control: [f32; 2], p1: [f32; 2], out: &mut Vec<[f32; 2]>) {
+///
+/// `pub` for the same reason as [`flatten_cubic`] -- reused by `tre-text`.
+pub fn flatten_quad(p0: [f32; 2], control: [f32; 2], p1: [f32; 2], out: &mut Vec<[f32; 2]>) {
     const TWO_THIRDS: f32 = 2.0 / 3.0;
     let c1 = lerp(p0, control, TWO_THIRDS);
     let c2 = lerp(p1, control, TWO_THIRDS);

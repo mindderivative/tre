@@ -331,6 +331,58 @@ Verified by `crates/tre-rhi-vulkan/examples/stencil_and_cover_demo.rs` (`demo/ph
 
   3. Extract vector control points for required glyphs using [FreeType](https://freetype.org/) (`FT_Outline_Decompose`) to feed the MSDF generator -- via the `freetype` binding crate (the `freetype-rs` project's published crates.io name).
 
+### Status: Complete (2026-09-06)
+
+Built as a deliberate all-pure-Rust font stack, not the literal
+`harfbuzz_rs`/`freetype` bindings named above -- see
+`planning/archive/PLAN_PHASE4_STEP4_1.md` for the project owner's
+rationale. `rustybuzz` (a complete, faithful port of HarfBuzz's own
+shaping algorithm) replaces HarfBuzz for task 1; `skrifa` (Google Fonts'
+`fontations` project) replaces FreeType for task 3's outline extraction.
+Neither introduces a C library dependency, so this workspace's only
+remaining C ABI boundary is Vulkan itself. A new `tre-text` crate holds
+all three tasks, `#![forbid(unsafe_code)]` like every other non-RHI crate.
+
+Task 1 (shaping) is real bidi + script run segmentation
+(`unicode-bidi`/`unicode-script`, since `rustybuzz::shape` itself shapes
+one direction-and-script-uniform run at a time -- segmenting the input is
+this project's own job) feeding `rustybuzz::shape`, producing shaped
+glyphs already in correct visual (not logical) order for a mixed-direction
+string -- verified against a real mixed Latin/Hebrew string, both via unit
+tests on the run-segmentation boundaries and via `text_shaping_demo`
+shaping it through a real installed font and confirming the Hebrew run's
+glyphs come back in descending (visually reversed) cluster order.
+
+Task 2 (font fallback) is a real `fontconfig`-driven cascade
+(`FontCascade::discover`), Linux-only this step (Windows/macOS system font
+APIs deferred, matching Phase 1's platform-gating precedent), querying
+real installed families (`sans-serif`, `Noto Sans`, `emoji`) rather than a
+hardcoded font list. `resolve_run` shapes against the primary font first
+and falls through the cascade on any character the current candidate's
+charmap doesn't cover -- verified against a real codepoint (the "brain"
+emoji, U+1F9E0) confirmed via `fc-query`'s own charset dump to be absent
+from likely primary-font resolutions and present in the emoji fallback.
+
+Task 3 (outline extraction) is `skrifa`'s push-based outline API recorded
+into an owned `Contour`/`OutlineSegment` structure mirroring
+`FT_Outline_Decompose`'s own callback shape, returned as raw, unscaled
+(font design-unit) control points -- this step extracts geometry only, no
+rasterization at all; Step 4.2's MSDF generator is the consumer. Verified
+by extracting a real glyph ('L', deliberately hole-free -- a glyph with a
+counter needs multi-contour winding not built this step) from a real
+font, flattening it via `tre-svg`'s now-`pub` `flatten_cubic`/
+`flatten_quad` (Step 3.3.1, reused rather than reimplemented), rendering
+it through the pre-existing, unmodified ear-clipping + flat-color Vulkan
+pipeline, and confirming the rendered pixels match an independently
+computed (in-demo, not externally pre-verified, since a real font's glyph
+shape isn't known in advance the way a hand-authored SVG is) point-in-
+polygon check.
+
+No MSDF rasterization, no atlas, no `RenderingCanvas` wiring, no
+multi-contour/hole rendering, and no Windows/macOS font discovery this
+step -- see `planning/archive/PLAN_PHASE4_STEP4_1.md`'s "Explicitly out of
+scope" section for the full list; all deferred to Step 4.2 or later.
+
 ### Step 4.2: MSDF Rasterizer & Atlas Packing
 
 * **Implementation Tasks:**

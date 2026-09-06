@@ -3,7 +3,8 @@
 //! the `usvg` crate -- which resolves the DOM (`<use>`/`<g>`/CSS) and
 //! converts every shape to absolute-coordinate path data but performs no
 //! rasterization itself -- then hand-rolls the actual geometry work this
-//! project owns: Bezier curve flattening ([`flatten`]), ear-clipping
+//! project owns: Bezier curve flattening ([`flatten_cubic`]/[`flatten_quad`],
+//! also reused by `tre-text` for glyph outline geometry), ear-clipping
 //! triangulation ([`triangulate`]) for simple polygons, SIMD keyframe
 //! interpolation ([`morph`]), and stencil-and-cover CPU-side geometry
 //! ([`stencil`]) for polygons [`triangulate`] cannot handle (self-
@@ -21,6 +22,7 @@ mod triangulate;
 
 use tre_math::Affine2;
 
+pub use flatten::{flatten_cubic, flatten_quad};
 pub use morph::morph;
 pub use stencil::{bounding_box, fan_triangles};
 pub use triangulate::triangulate;

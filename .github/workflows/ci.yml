@@ -34,7 +34,20 @@ jobs:
       # were added, and every job that compiles the workspace had been
       # silently failing on CI for three commits without anyone noticing
       # (see documentation/REVIEW.md's Phase 2 Step 2 entry).
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libwayland-dev libxcb1-dev glslc
+      #
+      # Phase 4 Step 4.1: libfontconfig1-dev is `tre-text`'s `fontconfig`
+      # crate's own build-time requirement (links the system
+      # libfontconfig, per that crate's own documented dependency).
+      # fonts-dejavu-core/fonts-noto-core/fonts-noto-color-emoji make
+      # `tre-text`'s fallback-cascade tests' real, by-name font lookups
+      # ("DejaVu Sans", "Noto Sans", "Noto Color Emoji") resolve
+      # deterministically on this hosted runner, not just on a developer's
+      # own already-font-rich machine.
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwayland-dev libxcb1-dev glslc libfontconfig1-dev \
+            fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji
       # TECHNICAL.md Section 9.2: clippy with -D warnings is the hard gate;
       # clippy::pedantic on tre-engine/tre-math is enabled in their own
       # Cargo.toml [lints.clippy], so this one command covers both.
@@ -47,7 +60,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - run: rustup show
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libwayland-dev libxcb1-dev glslc
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwayland-dev libxcb1-dev glslc libfontconfig1-dev \
+            fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji
       - run: cargo build --workspace --all-targets
 
   test:
@@ -57,7 +74,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - run: rustup show
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libwayland-dev libxcb1-dev glslc
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwayland-dev libxcb1-dev glslc libfontconfig1-dev \
+            fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji
       - run: cargo test --workspace
 
   vulkan-validation:
@@ -75,11 +96,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - run: rustup show
-      - name: Install a software Vulkan ICD, validation layers, a virtual display, and libwayland-dev
+      - name: Install a software Vulkan ICD, validation layers, a virtual display, libwayland-dev, and real fonts
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libvulkan1 mesa-vulkan-drivers vulkan-validationlayers xvfb libwayland-dev libxcb1-dev glslc
+            libvulkan1 mesa-vulkan-drivers vulkan-validationlayers xvfb libwayland-dev libxcb1-dev glslc \
+            libfontconfig1-dev fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example walking_skeleton
         env:
           TRE_WALKING_SKELETON_FRAMES: 10
@@ -97,3 +119,4 @@ jobs:
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example svg_tessellation_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example svg_morph_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example stencil_and_cover_demo
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example text_shaping_demo

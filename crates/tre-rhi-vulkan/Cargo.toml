@@ -16,6 +16,9 @@ tre-engine = { version = "0.1.0", path = "../tre-engine" }
 
 [dev-dependencies]
 png = "0.18.1"
+rustybuzz = "0.20.1"
+skrifa = "=0.33.2"
 tre-platform = { path = "../tre-platform" }
 tre-svg = { path = "../tre-svg" }
+tre-text = { path = "../tre-text" }
 # implementation begins; TECHNICAL.md Section 2.1, IMPLEMENTATION.md Step 2.1.

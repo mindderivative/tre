@@ -143,6 +143,8 @@ To maximize PCIe bandwidth, the primary UI vertex structure is tightly packed in
 
   *This is the canonical MSDF opacity formula -- IMPLEMENTATION.md Section 4.2 references it rather than restating it.*
 
+* **Implementation status (Phase 4 Step 4.1, 2026-09-06):** the upstream half of this section -- shaping, fallback, and outline extraction, feeding whatever this section's own MSDF rasterizer eventually consumes -- is real, in a new `tre-text` crate, built as an all-pure-Rust font stack rather than the literal HarfBuzz/FreeType C libraries IMPLEMENTATION.md Step 4.1 names (`rustybuzz`, a faithful port of HarfBuzz's own shaping algorithm, and `skrifa`, Google Fonts' `fontations` project, in place of each respectively -- see `planning/archive/PLAN_PHASE4_STEP4_1.md`). Bidi + script run segmentation (`unicode-bidi`/`unicode-script`) is hand-rolled at this layer since `rustybuzz::shape` itself only shapes one already-uniform run; font fallback is a real `fontconfig`-driven cascade (Linux only this step); outline extraction returns raw, unscaled control points in the same `MoveTo`/`LineTo`/`QuadTo`/`CurveTo`/`Close` shape `FT_Outline_Decompose` would have produced. This section's own MSDF generation, atlas packing, and the opacity formula above are still not built -- Step 4.2.
+
 ### 5.4 SVG Path Tessellation & Morphing
 
 * **Tessellation Constraints:** Static paths must be triangulated (via ear-clipping or trapezoidal mapping) and cached into a read-only vertex pool to prevent per-frame re-tessellation CPU overhead.

@@ -1,0 +1,46 @@
+[package]
+name = "tre-text"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = "warn"
+
+[dependencies]
+# PLAN_PHASE4_STEP4_1.md: an all-pure-Rust font stack, a deliberate
+# departure from IMPLEMENTATION.md's literal "HarfBuzz"/"FreeType"
+# wording, so this workspace's only C ABI boundary stays Vulkan.
+# rustybuzz is a complete, faithful port of HarfBuzz's own shaping
+# algorithm (not a from-scratch reimplementation) -- the same crate
+# tre-svg's own Cargo.toml comment already anticipated as usvg's disabled
+# `text` dependency.
+rustybuzz = "0.20.1"
+# Google Fonts' `fontations` project -- pure-Rust metadata reading and
+# glyph outline extraction, replacing FreeType's `FT_Outline_Decompose`.
+# Pinned to 0.33.2 (0.46.2 needs rustc 1.85, confirmed via `cargo add
+# --dry-run`, the same technique used to pin `usvg`/`wide` in Phase 3).
+skrifa = "=0.33.2"
+# Reuses the now-`pub` cubic/quadratic-to-polyline flatten functions
+# (Phase 3 Step 3.3.1) for this step's outline-rendering demo, rather than
+# a second hand-rolled curve flattener.
+tre-svg = { version = "0.1.0", path = "../tre-svg" }
+# Paragraph-level bidi embedding levels (UAX #9) -- rustybuzz shapes one
+# direction-and-script-uniform run at a time; segmenting a mixed-direction
+# string into runs is the caller's job, not rustybuzz's own.
+unicode-bidi = "0.3.18"
+# Real UAX #24 Script-property lookups for splitting runs by script,
+# instead of a hand-rolled Unicode-block heuristic.
+unicode-script = "0.5.8"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Real system font discovery for the fallback cascade (YesLogic-
+# maintained, wraps the system libfontconfig already present on this
+# machine). Linux-only this step, matching Phase 1's platform-gating
+# precedent for Windows (DirectWrite)/macOS (Core Text) system APIs.
+# Pinned to 0.8.0 (0.11.0 needs rustc 1.77, same `cargo add --dry-run`
+# technique).
+fontconfig = "=0.8.0"
