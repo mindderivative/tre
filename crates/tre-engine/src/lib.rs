@@ -372,44 +372,61 @@ impl RenderingCanvas {
         });
     }
 
-    /// Phase 0 stub: emits exactly one `UiDrawCommand` per call, backed by
-    /// a flat-colored quad (TECHNICAL.md Section 5.2's "always exactly 4
-    /// vertices / 6 indices per rectangle" rule) rather than the real SDF
-    /// rounded-rect evaluation -- that shader is IMPLEMENTATION.md Phase
-    /// 3.2's job, out of scope for this walking skeleton.
+    /// Emits exactly one `UiDrawCommand` per call, backed by a real
+    /// analytical SDF rounded rectangle (TECHNICAL.md Section 5.2's "always
+    /// exactly 4 vertices / 6 indices per rectangle" rule, evaluated by
+    /// IMPLEMENTATION.md Step 3.2's `sdf_rounded_rect` shader). `radius` is
+    /// a single uniform corner radius, clamped to
+    /// `[0.0, min(w, h) / 2.0]` before use -- an uncapped radius produces a
+    /// self-overlapping, visually wrong shape from this exact formula, not
+    /// a crash, but a real, easy caller mistake worth guarding against at
+    /// the one place it's constructed. Each corner's `uv` is that corner's
+    /// offset from the rect's center, in the same pixel units as
+    /// `position` (ARCHITECTURE.md Section 3.1's "Texture coordinates or
+    /// SDF bounds" convention) -- linear interpolation across the quad's
+    /// two triangles reproduces the exact local `(x, y)` offset at every
+    /// fragment, the standard technique for evaluating a box SDF from a
+    /// single quad. `params` is `[radius, half_width, half_height]`,
+    /// uniform across all 4 vertices since the vertex format has no
+    /// per-quad channel.
     #[allow(
         clippy::cast_possible_truncation,
         reason = "a single frame's vertex/index count stays far below u32::MAX, \
                    the same headroom reasoning ARCHITECTURE.md Section 4.1 applies to Depth ID"
     )]
-    pub fn draw_rounded_rect(&mut self, x: f32, y: f32, w: f32, h: f32, rgba: u32) {
+    pub fn draw_rounded_rect(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, rgba: u32) {
         let base_vertex = self.vertices.len() as u32;
         let base_index = self.indices.len() as u32;
+
+        let half_width = w / 2.0;
+        let half_height = h / 2.0;
+        let radius = radius.clamp(0.0, half_width.min(half_height));
+        let params = [radius, half_width, half_height];
 
         self.vertices.extend_from_slice(&[
             UiVertex {
                 position: [x, y],
-                uv: [0.0, 0.0],
+                uv: [-half_width, -half_height],
                 color: rgba,
-                params: [0.0; 3],
+                params,
             },
             UiVertex {
                 position: [x + w, y],
-                uv: [1.0, 0.0],
+                uv: [half_width, -half_height],
                 color: rgba,
-                params: [0.0; 3],
+                params,
             },
             UiVertex {
                 position: [x + w, y + h],
-                uv: [1.0, 1.0],
+                uv: [half_width, half_height],
                 color: rgba,
-                params: [0.0; 3],
+                params,
             },
             UiVertex {
                 position: [x, y + h],
-                uv: [0.0, 1.0],
+                uv: [-half_width, half_height],
                 color: rgba,
-                params: [0.0; 3],
+                params,
             },
         ]);
         self.indices.extend_from_slice(&[
@@ -812,13 +829,78 @@ mod tests {
     #[test]
     fn draw_rounded_rect_emits_one_command_with_four_vertices_six_indices() {
         let mut canvas = RenderingCanvas::new();
-        canvas.draw_rounded_rect(0.0, 0.0, 100.0, 40.0, 0xFF00_FFFF);
+        canvas.draw_rounded_rect(0.0, 0.0, 100.0, 40.0, 0.0, 0xFF00_FFFF);
         let frame = canvas.flatten();
 
         assert_eq!(frame.commands.len(), 1);
         assert_eq!(frame.vertices.len(), 4);
         assert_eq!(frame.indices.len(), 6);
         assert_eq!(frame.commands[0].element_count, 6);
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact arithmetic on literal f32s (halving/negating whole numbers with no \
+                   rounding), not an epsilon-worthy computed value -- same reasoning as \
+                   tre-math's Step 3.1 exact-arithmetic tests"
+    )]
+    fn draw_rounded_rect_encodes_uv_as_center_relative_offset_and_params_as_radius_half_extents() {
+        let mut canvas = RenderingCanvas::new();
+        // A 100x40 rect at (10, 20): half_width=50, half_height=20.
+        canvas.draw_rounded_rect(10.0, 20.0, 100.0, 40.0, 8.0, 0xFF00_FFFF);
+        let frame = canvas.flatten();
+
+        let expected_uv = [
+            [-50.0, -20.0], // top-left
+            [50.0, -20.0],  // top-right
+            [50.0, 20.0],   // bottom-right
+            [-50.0, 20.0],  // bottom-left
+        ];
+        for (vertex, uv) in frame.vertices.iter().zip(expected_uv) {
+            assert_eq!(vertex.uv, uv);
+            assert_eq!(vertex.params, [8.0, 50.0, 20.0]);
+        }
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact arithmetic on literal f32s, not an epsilon-worthy computed value -- \
+                   same reasoning as tre-math's Step 3.1 exact-arithmetic tests"
+    )]
+    fn draw_rounded_rect_clamps_an_oversized_radius_to_half_the_smaller_extent() {
+        let mut canvas = RenderingCanvas::new();
+        // A 100x40 rect: half_width=50, half_height=20, so any radius above
+        // 20.0 must be clamped to 20.0 rather than stored as requested.
+        canvas.draw_rounded_rect(0.0, 0.0, 100.0, 40.0, 1000.0, 0xFF00_FFFF);
+        let frame = canvas.flatten();
+
+        for vertex in &frame.vertices {
+            assert_eq!(
+                vertex.params[0], 20.0,
+                "radius must be clamped to min(half_width, half_height)"
+            );
+        }
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact arithmetic on literal f32s, not an epsilon-worthy computed value -- \
+                   same reasoning as tre-math's Step 3.1 exact-arithmetic tests"
+    )]
+    fn draw_rounded_rect_clamps_a_negative_radius_to_zero() {
+        let mut canvas = RenderingCanvas::new();
+        canvas.draw_rounded_rect(0.0, 0.0, 100.0, 40.0, -5.0, 0xFF00_FFFF);
+        let frame = canvas.flatten();
+
+        for vertex in &frame.vertices {
+            assert_eq!(
+                vertex.params[0], 0.0,
+                "a negative radius must be clamped to zero"
+            );
+        }
     }
 
     #[test]

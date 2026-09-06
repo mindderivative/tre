@@ -93,3 +93,4 @@ jobs:
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example memory_pools_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example bindless_textures_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example gc_demo
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example sdf_rounded_rect_demo

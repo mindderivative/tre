@@ -61,7 +61,7 @@ fn main() {
         .expect("failed to create pipeline");
 
     let mut canvas = RenderingCanvas::new();
-    canvas.draw_rounded_rect(90.0, 80.0, 300.0, 200.0, rgba8(0x40, 0xE0, 0xA0, 0xFF)); // green
+    canvas.draw_rounded_rect(90.0, 80.0, 300.0, 200.0, 0.0, rgba8(0x40, 0xE0, 0xA0, 0xFF)); // green
     let frame = canvas.flatten();
     let vertex_buffer = device
         .upload_buffer(

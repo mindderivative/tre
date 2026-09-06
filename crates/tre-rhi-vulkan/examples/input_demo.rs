@@ -48,7 +48,7 @@ fn make_window_slot(
         .expect("failed to create pipeline");
 
     let mut canvas = RenderingCanvas::new();
-    canvas.draw_rounded_rect(90.0, 80.0, 300.0, 200.0, color);
+    canvas.draw_rounded_rect(90.0, 80.0, 300.0, 200.0, 0.0, color);
     let frame = canvas.flatten();
     let vertex_buffer = device
         .upload_buffer(
@@ -127,7 +127,7 @@ fn main() {
         .create_pipeline(&vertex_spv, &fragment_spv, swapchain_a.format())
         .expect("failed to create pipeline");
     let mut canvas_a = RenderingCanvas::new();
-    canvas_a.draw_rounded_rect(90.0, 80.0, 300.0, 200.0, rgba8(0xE0, 0xA0, 0x40, 0xFF)); // amber
+    canvas_a.draw_rounded_rect(90.0, 80.0, 300.0, 200.0, 0.0, rgba8(0xE0, 0xA0, 0x40, 0xFF)); // amber
     let frame_a = canvas_a.flatten();
     let vertex_buffer_a = device
         .upload_buffer(

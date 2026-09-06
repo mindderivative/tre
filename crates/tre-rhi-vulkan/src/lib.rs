@@ -811,6 +811,17 @@ impl VulkanDevice {
                 .binding(0)
                 .format(vk::Format::R8G8B8A8_UNORM)
                 .offset(16),
+            // IMPLEMENTATION.md Step 3.2: `UiVertex::params` has existed
+            // since Phase 0 but was never wired as a shader-readable
+            // attribute until now. Declared on every pipeline uniformly
+            // (same precedent as the bindless descriptor set and push
+            // constant range) -- pre-existing shaders simply don't declare
+            // a `location = 3` input and keep working unmodified.
+            vk::VertexInputAttributeDescription::default()
+                .location(3)
+                .binding(0)
+                .format(vk::Format::R32G32B32_SFLOAT)
+                .offset(20),
         ];
         let bindings = [binding_description];
         let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()

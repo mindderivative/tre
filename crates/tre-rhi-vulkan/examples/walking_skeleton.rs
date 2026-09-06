@@ -64,7 +64,14 @@ fn main() {
     // Phase 0: one Canvas call, one rounded rect (rendered as a flat quad
     // -- IMPLEMENTATION.md Phase 3.2 owns the real SDF shader).
     let mut canvas = RenderingCanvas::new();
-    canvas.draw_rounded_rect(170.0, 140.0, 300.0, 200.0, rgba8(0xE0, 0xA0, 0x40, 0xFF));
+    canvas.draw_rounded_rect(
+        170.0,
+        140.0,
+        300.0,
+        200.0,
+        0.0,
+        rgba8(0xE0, 0xA0, 0x40, 0xFF),
+    );
     let frame = canvas.flatten();
 
     let vertex_bytes: &[u8] = bytemuck::cast_slice(&frame.vertices);

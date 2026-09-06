@@ -52,4 +52,14 @@ fn main() {
         "bindless_textured.frag.spv",
         &out_dir,
     );
+    compile_shader(
+        "shaders/sdf_rounded_rect.vert",
+        "sdf_rounded_rect.vert.spv",
+        &out_dir,
+    );
+    compile_shader(
+        "shaders/sdf_rounded_rect.frag",
+        "sdf_rounded_rect.frag.spv",
+        &out_dir,
+    );
 }
