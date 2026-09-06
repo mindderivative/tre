@@ -16,5 +16,7 @@ all = "warn"
 pedantic = "warn"
 
 [dependencies]
-# wide = "..." -- added when Phase 3 (Geometry Pipeline & Vector Math Engine)
-# implementation begins; TECHNICAL.md Section 2.2.
+# TECHNICAL.md Section 2.2: portable SIMD (AVX2 on x86_64, NEON on ARM64)
+# via one shared source path, no raw core::arch intrinsics. Pinned below
+# 1.x, which requires a newer rustc than this workspace's `rust-version`.
+wide = "0.7.33"

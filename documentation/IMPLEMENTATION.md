@@ -217,6 +217,18 @@ Verified end to end: the new CI job was proven to genuinely catch a real failure
 
 * **Technical Rationale:** Capping the vertex struct at $32\text{ bytes}$ minimizes PCIe bus transfer times and maximizes GPU L2 cache coherency.
 
+### Status: Complete (2026-09-06)
+
+Tasks 1 and 3 were already done, as a side effect of Phase 0's walking skeleton -- `crates/tre-engine/src/lib.rs`'s `UiVertex` struct and its `const _: () = assert!(std::mem::size_of::<UiVertex>() == 32);` predate this step by several phases. This step implemented the real remaining work, task 2, in the previously-empty `tre-math` crate.
+
+Chosen as Phase 3's opening step deliberately: unlike every Phase 2 step, it has zero GPU/Vulkan dependency, verified entirely by `cargo test -p tre-math` -- no display server, no validation layer, no demo folder with a screenshot. A genuine change of pace after five consecutive GPU-heavy steps.
+
+Implemented: `Affine2` (six `f32` fields, not a dense $3\times3$ -- the bottom row is always `[0, 0, 1]` for a genuine affine transform, so storing it would be pure waste), with constructors matching TECHNICAL.md Section 7.2's formula exactly (`from_translation`, `from_rotation`, `from_scale`, and the combined `from_translation_rotation_scale`), scalar `compose`/`transform_point`, and `compose_batch` -- 8 parent-child pairs at a time via `wide::f32x8::mul_add`, with a scalar-`compose` fallback for the remainder. `compose_batch` writes into a caller-provided `&mut [Affine2]` rather than returning a `Vec`, since its eventual per-frame scene-graph-flattening caller can't allocate (DESIGN.md Section 2.1's zero-allocation steady state) -- the same discipline that shaped Phase 2's entire ring-buffer/transient-pool design, applied here even though the calling code doesn't exist yet.
+
+No scene-graph/node-tree type exists in this codebase, so `compose_batch` operates on plain slices rather than a real tree -- matching the same "build the tested primitive before its exact consumer exists" precedent as `tre_memory::SpscRingBuffer` (built in Phase 1 before any real second thread existed) and Phase 2 Step 1's dynamic ring buffer/transient pool (built before Phase 6's execution stage exists to feed them).
+
+Verified end to end: `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the workspace (`tre-math` opts into `clippy::pedantic`, per its own `Cargo.toml`, and required a few targeted `#[allow]`s for genuine false positives -- `similar_names` on `tx`/`ty`-derived local bindings that are this codebase's own field names, not an accidental collision, and `float_cmp` on tests whose inputs involve no rounding at all). 11 unit tests, including a SIMD-vs-scalar-reference comparison across slice lengths `0, 1, 7, 8, 9, 16, 17` -- every remainder case relative to the 8-wide SIMD chunk -- compared with an epsilon tolerance rather than exact equality, since `wide::f32x8::mul_add`'s hardware FMA and a scalar multiply-then-add can legitimately differ in the last bit or two of an `f32`. Verified on x86_64/AVX2 only (this dev machine and the CI runner); the NEON code path compiles from the identical source but is not independently run on real ARM hardware here.
+
 ### Step 3.2: Analytical SDF Rounded Rectangles
 
 * **Implementation Tasks:**
