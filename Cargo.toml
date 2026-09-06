@@ -5,6 +5,7 @@ members = [
     "crates/tre-ffi",
     "crates/tre-memory",
     "crates/tre-math",
+    "crates/tre-svg",
     "crates/tre-rhi-vulkan",
     "crates/tre-rhi-dx12",
     "crates/tre-rhi-metal",

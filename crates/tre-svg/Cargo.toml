@@ -1,0 +1,35 @@
+[package]
+name = "tre-svg"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+# Cannot combine `[lints] workspace = true` with additional overrides
+# (Cargo rejects it), so the workspace-level lints are restated here
+# alongside the extra `clippy::pedantic` this "core rendering crate"
+# (TECHNICAL.md Section 9.2) opts into.
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+
+[dependencies]
+# PLAN_PHASE3_STEP3_3_1.md: SVG DOM/XML parsing and `<use>`/`<g>` reference
+# resolution only -- usvg does no rasterization, TRE tessellates and
+# renders the geometry it hands back through its own pipeline. Pinned to
+# 0.45.1, the newest version this workspace's `rust-version = 1.75` can
+# resolve (0.48.1 needs rustc 1.85, confirmed via `cargo add --dry-run`,
+# same technique used to pin `wide` in Step 3.1). `default-features =
+# false` drops the `text`/`system-fonts`/`memmap-fonts` features (font
+# loading, `rustybuzz` text shaping) entirely -- text rendering is Phase
+# 4's HarfBuzz integration, a wholly separate concern this crate shouldn't
+# pull in early.
+usvg = { version = "=0.45.1", default-features = false }
+tre-engine = { path = "../tre-engine" }
+# Reuses `Affine2::transform_point` (Phase 3 Step 3.1) to apply usvg's
+# resolved per-path `abs_transform()` -- the field-for-field-equivalent
+# affine formula, see `to_affine2` in src/lib.rs -- rather than
+# reimplementing the same 2D affine math a second time.
+tre-math = { path = "../tre-math" }

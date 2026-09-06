@@ -17,4 +17,5 @@ tre-engine = { version = "0.1.0", path = "../tre-engine" }
 [dev-dependencies]
 png = "0.18.1"
 tre-platform = { path = "../tre-platform" }
+tre-svg = { path = "../tre-svg" }
 # implementation begins; TECHNICAL.md Section 2.1, IMPLEMENTATION.md Step 2.1.
