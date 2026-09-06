@@ -96,3 +96,4 @@ jobs:
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example sdf_rounded_rect_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example svg_tessellation_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example svg_morph_demo
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example stencil_and_cover_demo

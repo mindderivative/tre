@@ -61,6 +61,31 @@ fn segments_properly_intersect(a: [f32; 2], b: [f32; 2], c: [f32; 2], d: [f32; 2
         && ((d3 > AREA_EPSILON && d4 < -AREA_EPSILON) || (d3 < -AREA_EPSILON && d4 > AREA_EPSILON))
 }
 
+/// Whether the polygon described by `points` (its edges, in order, with
+/// wraparound) has any two non-adjacent edges that properly cross each
+/// other. A real, global check -- independent of ear-clipping's own
+/// per-candidate-diagonal checks, which do not by themselves guarantee
+/// detecting this (see `triangulate`'s own comment on the bug this
+/// closed).
+fn has_self_intersection(points: &[[f32; 2]]) -> bool {
+    let n = points.len();
+    (0..n).any(|i| {
+        let (a1, a2) = (points[i], points[(i + 1) % n]);
+        // `j` starts at `i + 2` (skip the edge sharing vertex `points[i+1]`
+        // with this one) and stops before the edge sharing vertex
+        // `points[i]` via wraparound (`i == 0 && j == n - 1`) -- both are
+        // adjacent edges expected to touch at their shared vertex, not a
+        // crossing.
+        (i + 2..n).any(|j| {
+            if i == 0 && j == n - 1 {
+                return false;
+            }
+            let (b1, b2) = (points[j], points[(j + 1) % n]);
+            segments_properly_intersect(a1, a2, b1, b2)
+        })
+    })
+}
+
 /// Triangulates `polygon`'s single contour via ear-clipping, returning
 /// triangles as index triples into `polygon.points`.
 ///
@@ -70,11 +95,13 @@ fn segments_properly_intersect(a: [f32; 2], b: [f32; 2], c: [f32; 2], d: [f32; 2
 /// original winding order does not affect the result.
 ///
 /// # Errors
-/// Returns [`SvgError::NotSimplePolygon`] if no valid ear can be found
-/// before every remaining vertex is exhausted -- the contour is
-/// self-intersecting or otherwise not simple, and IMPLEMENTATION.md Step
-/// 3.3.3's stencil-and-cover fallback (not yet built) is the correct tool
-/// for it, not a guess from this algorithm.
+/// Returns [`SvgError::NotSimplePolygon`] if `has_self_intersection`
+/// finds two non-adjacent edges of the original contour crossing each
+/// other, or if no valid ear can be found before every remaining vertex
+/// is exhausted -- the contour is self-intersecting or otherwise not
+/// simple, and [`crate::stencil`]'s stencil-and-cover fallback
+/// (IMPLEMENTATION.md Step 3.3.3) is the correct tool for it, not a guess
+/// from this algorithm.
 #[allow(
     clippy::similar_names,
     reason = "edge_a_idx/edge_b_idx are literally the two endpoints of one edge -- an 'a'/'b' \
@@ -118,6 +145,22 @@ pub fn triangulate(polygon: &Polygon) -> Result<Vec<[u32; 3]>, SvgError> {
 
     if points.len() < 3 {
         return Ok(Vec::new());
+    }
+
+    // A real gap found via IMPLEMENTATION.md Step 3.3.3's pentagram demo:
+    // the ear-validity checks below (vertex-inside / edge-crosses-diagonal)
+    // only ever examine a candidate diagonal against the CURRENTLY
+    // REMAINING boundary during clipping -- they do not, by themselves,
+    // guarantee catching every self-intersecting ORIGINAL polygon. A
+    // classic pentagram (five points connected in `0,2,4,1,3` order) has
+    // real, non-adjacent edges that cross each other, yet clipped cleanly
+    // with no diagonal ever conflicting with a remaining edge along the
+    // way, silently producing a plausible-looking but geometrically wrong
+    // triangulation instead of being rejected. This explicit, global
+    // check -- independent of the clipping process -- runs once up front
+    // instead.
+    if has_self_intersection(&points) {
+        return Err(SvgError::NotSimplePolygon);
     }
 
     if polygon_signed_area(&points) < 0.0 {
@@ -342,6 +385,33 @@ mod tests {
                 "a concave-notch point must not be covered by any triangle, but triangle [{a}, {b}, {c}] covers it"
             );
         }
+    }
+
+    #[test]
+    fn rejects_a_classic_self_intersecting_pentagram() {
+        // Five circle points connected in 0,2,4,1,3 order -- the classic
+        // pentagram construction, with real, non-adjacent edges that
+        // cross each other. A real bug this exact test was written to
+        // pin down: the ear-validity checks alone (vertex-inside /
+        // edge-crosses-diagonal) clip this cleanly with no diagonal ever
+        // conflicting with a remaining edge, silently producing a
+        // plausible-looking but wrong triangulation instead of being
+        // rejected -- caught only by IMPLEMENTATION.md Step 3.3.3's own
+        // demo, not by this crate's own unit tests, until this test was
+        // added alongside the fix (`has_self_intersection`).
+        let mut raw = Vec::with_capacity(5);
+        for i in 0_u8..5 {
+            let angle =
+                std::f32::consts::FRAC_PI_2 + f32::from(i) * 2.0 * std::f32::consts::PI / 5.0;
+            raw.push([100.0 * angle.cos(), -100.0 * angle.sin()]);
+        }
+        let pentagram = Polygon {
+            points: vec![raw[0], raw[2], raw[4], raw[1], raw[3]],
+        };
+        assert!(matches!(
+            triangulate(&pentagram),
+            Err(SvgError::NotSimplePolygon)
+        ));
     }
 
     #[test]

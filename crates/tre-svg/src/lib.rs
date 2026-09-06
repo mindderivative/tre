@@ -1,24 +1,28 @@
-//! SVG ingestion and ear-clipping tessellation (IMPLEMENTATION.md Step
-//! 3.3.1). Parses real SVG documents via the `usvg` crate -- which
-//! resolves the DOM (`<use>`/`<g>`/CSS) and converts every shape to
-//! absolute-coordinate path data but performs no rasterization itself --
-//! then hand-rolls the actual tessellation this project owns: Bezier
-//! curve flattening ([`flatten`]) and ear-clipping triangulation
-//! ([`triangulate`]).
-//!
-//! Only simple (non-self-intersecting) polygons are handled here.
-//! IMPLEMENTATION.md Step 3.3.3's stencil-and-cover fallback -- not yet
-//! built -- is the correct tool for a path this crate's triangulator
-//! rejects via [`SvgError::NotSimplePolygon`].
+//! SVG ingestion, tessellation, morphing, and stencil-and-cover geometry
+//! (IMPLEMENTATION.md Steps 3.3.1-3.3.3). Parses real SVG documents via
+//! the `usvg` crate -- which resolves the DOM (`<use>`/`<g>`/CSS) and
+//! converts every shape to absolute-coordinate path data but performs no
+//! rasterization itself -- then hand-rolls the actual geometry work this
+//! project owns: Bezier curve flattening ([`flatten`]), ear-clipping
+//! triangulation ([`triangulate`]) for simple polygons, SIMD keyframe
+//! interpolation ([`morph`]), and stencil-and-cover CPU-side geometry
+//! ([`stencil`]) for polygons [`triangulate`] cannot handle (self-
+//! intersecting contours) -- see [`SvgError::NotSimplePolygon`]. The
+//! actual stencil-and-cover GPU rendering (the two-pass pipeline that
+//! consumes this module's geometry) lives in `tre-rhi-vulkan`'s
+//! `create_stencil_and_cover_pipelines`, not here -- this crate stays
+//! backend-agnostic.
 #![forbid(unsafe_code)]
 
 mod flatten;
 mod morph;
+mod stencil;
 mod triangulate;
 
 use tre_math::Affine2;
 
 pub use morph::morph;
+pub use stencil::{bounding_box, fan_triangles};
 pub use triangulate::triangulate;
 
 /// A single closed polygon contour: an ordered list of points with the

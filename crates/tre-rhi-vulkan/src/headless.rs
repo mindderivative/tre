@@ -20,6 +20,13 @@ pub struct HeadlessSwapchain {
     image: vk::Image,
     image_view: vk::ImageView,
     image_memory: vk::DeviceMemory,
+    /// This swapchain's own stencil image (IMPLEMENTATION.md Step 3.3.3),
+    /// sized to `width`/`height` like `image` above -- owned per-swapchain
+    /// rather than once on `VulkanDevice`, since different swapchains
+    /// (e.g. `multi_window`'s two windows) can have different extents.
+    stencil_image: vk::Image,
+    stencil_image_view: vk::ImageView,
+    stencil_image_memory: vk::DeviceMemory,
     staging_buffer: vk::Buffer,
     staging_memory: vk::DeviceMemory,
     staging_size: u64,
@@ -87,6 +94,55 @@ impl HeadlessSwapchain {
         }
         .map_err(|_| EngineError::DeviceLost)?;
 
+        // IMPLEMENTATION.md Step 3.3.3: this swapchain's own stencil
+        // image, sized to match its own extent -- mirrors the color
+        // image's creation above exactly, just with `device.stencil_format`
+        // and `DEPTH_STENCIL_ATTACHMENT` usage instead.
+        //
+        // SAFETY: `raw_device` is valid, and `ImageCreateInfo` only
+        // references locals (`device.stencil_format`, `width`/`height`)
+        // that outlive this call.
+        let stencil_image = unsafe {
+            raw_device.create_image(
+                &vk::ImageCreateInfo::default()
+                    .image_type(vk::ImageType::TYPE_2D)
+                    .format(device.stencil_format)
+                    .extent(vk::Extent3D {
+                        width,
+                        height,
+                        depth: 1,
+                    })
+                    .mip_levels(1)
+                    .array_layers(1)
+                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .tiling(vk::ImageTiling::OPTIMAL)
+                    .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                    .initial_layout(vk::ImageLayout::UNDEFINED),
+                None,
+            )
+        }
+        .map_err(|_| EngineError::DeviceLost)?;
+        let stencil_image_memory = allocate_and_bind_image(device, raw_device, stencil_image)?;
+        // SAFETY: `raw_device` is valid, and `stencil_image` was just
+        // created and bound to memory above.
+        let stencil_image_view = unsafe {
+            raw_device.create_image_view(
+                &vk::ImageViewCreateInfo::default()
+                    .image(stencil_image)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(device.stencil_format)
+                    .subresource_range(
+                        vk::ImageSubresourceRange::default()
+                            .aspect_mask(vk::ImageAspectFlags::STENCIL)
+                            .level_count(1)
+                            .layer_count(1),
+                    ),
+                None,
+            )
+        }
+        .map_err(|_| EngineError::DeviceLost)?;
+
         let staging_size = u64::from(width) * u64::from(height) * 4;
         let (staging_buffer, staging_memory) =
             create_staging_buffer(device, raw_device, staging_size)?;
@@ -136,6 +192,9 @@ impl HeadlessSwapchain {
             image,
             image_view,
             image_memory,
+            stencil_image,
+            stencil_image_view,
+            stencil_image_memory,
             staging_buffer,
             staging_memory,
             staging_size,
@@ -192,6 +251,14 @@ impl HeadlessSwapchain {
 impl RhiSwapchain for HeadlessSwapchain {
     fn extent(&self) -> (u32, u32) {
         (self.width, self.height)
+    }
+
+    fn stencil_view_handle(&self) -> u64 {
+        self.stencil_image_view.as_raw()
+    }
+
+    fn stencil_image_handle(&self) -> u64 {
+        self.stencil_image.as_raw()
     }
 
     fn acquire_next_image(&self) -> Result<AcquiredImage, EngineError> {
@@ -351,11 +418,19 @@ impl Drop for HeadlessSwapchain {
             self.device.destroy_image_view(self.image_view, None);
             self.device.destroy_image(self.image, None);
             self.device.free_memory(self.image_memory, None);
+            self.device
+                .destroy_image_view(self.stencil_image_view, None);
+            self.device.destroy_image(self.stencil_image, None);
+            self.device.free_memory(self.stencil_image_memory, None);
         }
     }
 }
 
-fn allocate_and_bind_image(
+/// `pub(crate)` (not just private) so `VulkanSwapchain::new` (lib.rs) can
+/// reuse this exact same allocate-and-bind logic for its own stencil
+/// image (IMPLEMENTATION.md Step 3.3.3) instead of duplicating it a
+/// third time.
+pub(crate) fn allocate_and_bind_image(
     device: &VulkanDevice,
     raw_device: &ash::Device,
     image: vk::Image,

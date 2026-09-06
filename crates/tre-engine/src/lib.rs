@@ -268,6 +268,24 @@ pub enum TextureFormat {
     Rgba16Float,
 }
 
+/// Which pixels inside a (possibly self-intersecting) path's boundary
+/// count as "filled" (IMPLEMENTATION.md Step 3.3 task 3). Backend-agnostic
+/// -- a stencil-and-cover renderer encodes each rule as different GPU
+/// stencil-buffer operations, but the rule itself is a property of the
+/// path, not of any one backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FillRule {
+    /// A point is inside if the path's signed winding number around it is
+    /// nonzero. Encoded in stencil as a genuine per-triangle increment/
+    /// decrement counter (two-sided: opposite ops for front- and
+    /// back-facing fan triangles).
+    NonZero,
+    /// A point is inside if a ray from it to infinity crosses the path's
+    /// boundary an odd number of times. Encoded in stencil as a single
+    /// `INVERT` op per fan triangle, regardless of triangle winding.
+    EvenOdd,
+}
+
 /// Describes an offscreen compositing layer requested via
 /// `RenderingCanvas::push_layer` (DESIGN.md Section 6.2). Minimal for
 /// now -- opacity/blend-mode/blur-radius fields belong here once a later
@@ -600,6 +618,21 @@ pub trait RhiPipelineState {
 /// 9.1's per-frame-loop ban).
 pub trait RhiSwapchain {
     fn extent(&self) -> (u32, u32);
+
+    /// Opaque handle (e.g. a Vulkan `vk::ImageView` reinterpreted via
+    /// `ash::vk::Handle::as_raw`, same pattern as `AcquiredImage`'s own
+    /// handles -- not a downcast) of this swapchain's own stencil image
+    /// view, sized to match its `extent()`. IMPLEMENTATION.md Step 3.3.3:
+    /// every swapchain owns its own stencil image, mirroring how it
+    /// already owns its own color image(s), since different swapchains
+    /// (e.g. two windows in `multi_window`) can have different extents.
+    fn stencil_view_handle(&self) -> u64;
+
+    /// The same stencil image's underlying `vk::Image` (distinct from its
+    /// view, exactly like `AcquiredImage::target_image_handle` vs.
+    /// `target_view_handle`) -- needed for the layout-transition barrier
+    /// `RhiDevice::begin_frame` issues before rendering can use it.
+    fn stencil_image_handle(&self) -> u64;
 
     /// # Errors
     /// Returns [`EngineError::SwapchainOutOfDate`] if the surface no longer

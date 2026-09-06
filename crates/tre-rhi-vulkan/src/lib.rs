@@ -22,8 +22,9 @@ use std::time::Duration;
 use ash::vk;
 use ash::vk::Handle;
 use tre_engine::{
-    AcquiredImage, EngineError, RhiBuffer, RhiCommandBuffer, RhiDevice, RhiDynamicRingBuffer,
-    RhiPipelineState, RhiSwapchain, RhiTexture, ScissorRect, TextureFormat, UiVertex,
+    AcquiredImage, EngineError, FillRule, RhiBuffer, RhiCommandBuffer, RhiDevice,
+    RhiDynamicRingBuffer, RhiPipelineState, RhiSwapchain, RhiTexture, ScissorRect, TextureFormat,
+    UiVertex,
 };
 
 const REQUIRED_DEVICE_EXTENSIONS: &[&CStr] = &[
@@ -179,6 +180,12 @@ pub struct VulkanDevice {
     entry: ash::Entry,
     pub instance: ash::Instance,
     pub physical_device: vk::PhysicalDevice,
+    /// A combined depth/stencil format this physical device actually
+    /// supports for `DEPTH_STENCIL_ATTACHMENT_OPTIMAL` tiling (queried
+    /// once in `new`, IMPLEMENTATION.md Step 3.3.3) -- every swapchain's
+    /// stencil image, and every pipeline's declared
+    /// `stencilAttachmentFormat`, uses this same format.
+    pub stencil_format: vk::Format,
     pub device: ash::Device,
     pub queue_family_index: u32,
     graphics_queue: vk::Queue,
@@ -433,6 +440,28 @@ impl VulkanDevice {
             })
             .ok_or(EngineError::DeviceLost)?;
 
+        // IMPLEMENTATION.md Step 3.3.3: at least one of these two combined
+        // depth/stencil formats is guaranteed by the Vulkan spec to support
+        // `DEPTH_STENCIL_ATTACHMENT_OPTIMAL` tiling -- queried here once,
+        // not assumed, since a pure `VK_FORMAT_S8_UINT`-only stencil format
+        // is NOT guaranteed to be supported at all.
+        let stencil_format = [
+            vk::Format::D24_UNORM_S8_UINT,
+            vk::Format::D32_SFLOAT_S8_UINT,
+        ]
+        .into_iter()
+        .find(|&format| {
+            // SAFETY: `physical_device` was chosen above from this
+            // instance's own enumeration and is still valid; `format`
+            // is a plain enum value with no further preconditions.
+            let props =
+                unsafe { instance.get_physical_device_format_properties(physical_device, format) };
+            props
+                .optimal_tiling_features
+                .contains(vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT)
+        })
+        .ok_or(EngineError::DeviceLost)?;
+
         let queue_priorities = [1.0f32];
         let queue_create_info = vk::DeviceQueueCreateInfo::default()
             .queue_family_index(queue_family_index)
@@ -446,6 +475,18 @@ impl VulkanDevice {
 
         let mut dynamic_rendering_feature =
             vk::PhysicalDeviceDynamicRenderingFeatures::default().dynamic_rendering(true);
+
+        // IMPLEMENTATION.md Step 3.3.3: core in Vulkan 1.2 (this device
+        // already targets 1.2), needed so a stencil-only image view/aspect
+        // mask/layout (`STENCIL_ATTACHMENT_OPTIMAL`) is valid on a combined
+        // depth+stencil image -- without this feature enabled, Vulkan
+        // requires every barrier/attachment on such an image to reference
+        // BOTH aspects together, confirmed by a real validation error
+        // during this step's own development (`VUID-VkImageMemoryBarrier-
+        // image-03320`), not assumed from reading the spec.
+        let mut separate_depth_stencil_layouts_feature =
+            vk::PhysicalDeviceSeparateDepthStencilLayoutsFeatures::default()
+                .separate_depth_stencil_layouts(true);
 
         // TECHNICAL.md Section 2.1 requires `VK_EXT_descriptor_indexing` as
         // a hard requirement (unlike the gracefully-degraded validation
@@ -481,7 +522,8 @@ impl VulkanDevice {
             .queue_create_infos(&queue_create_infos)
             .enabled_extension_names(&device_extension_names)
             .push_next(&mut dynamic_rendering_feature)
-            .push_next(&mut descriptor_indexing_feature);
+            .push_next(&mut descriptor_indexing_feature)
+            .push_next(&mut separate_depth_stencil_layouts_feature);
 
         // SAFETY: `physical_device` was chosen above from this instance's
         // own enumeration, and `device_create_info`'s borrowed
@@ -694,6 +736,7 @@ impl VulkanDevice {
                 entry,
                 instance,
                 physical_device,
+                stencil_format,
                 device,
                 queue_family_index,
                 graphics_queue,
@@ -791,39 +834,8 @@ impl VulkanDevice {
                 .name(entry_point),
         ];
 
-        let binding_description = vk::VertexInputBindingDescription::default()
-            .binding(0)
-            .stride(std::mem::size_of::<UiVertex>() as u32)
-            .input_rate(vk::VertexInputRate::VERTEX);
-        let attribute_descriptions = [
-            vk::VertexInputAttributeDescription::default()
-                .location(0)
-                .binding(0)
-                .format(vk::Format::R32G32_SFLOAT)
-                .offset(0),
-            vk::VertexInputAttributeDescription::default()
-                .location(1)
-                .binding(0)
-                .format(vk::Format::R32G32_SFLOAT)
-                .offset(8),
-            vk::VertexInputAttributeDescription::default()
-                .location(2)
-                .binding(0)
-                .format(vk::Format::R8G8B8A8_UNORM)
-                .offset(16),
-            // IMPLEMENTATION.md Step 3.2: `UiVertex::params` has existed
-            // since Phase 0 but was never wired as a shader-readable
-            // attribute until now. Declared on every pipeline uniformly
-            // (same precedent as the bindless descriptor set and push
-            // constant range) -- pre-existing shaders simply don't declare
-            // a `location = 3` input and keep working unmodified.
-            vk::VertexInputAttributeDescription::default()
-                .location(3)
-                .binding(0)
-                .format(vk::Format::R32G32B32_SFLOAT)
-                .offset(20),
-        ];
-        let bindings = [binding_description];
+        let bindings = [ui_vertex_binding()];
+        let attribute_descriptions = ui_vertex_attributes();
         let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
             .vertex_binding_descriptions(&bindings)
             .vertex_attribute_descriptions(&attribute_descriptions);
@@ -864,40 +876,21 @@ impl VulkanDevice {
         let dynamic_state =
             vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
 
-        // IMPLEMENTATION.md Step 2.1: this is the ONE universal pipeline
-        // layout every pipeline gets, always including the bindless
-        // descriptor set and the 4-byte `texture_index` push constant --
-        // regardless of whether a given shader actually declares/consumes
-        // them. A pipeline layout may expose resources a shader doesn't
-        // use, so `walking_skeleton.vert`/`.frag` (and every other
-        // pre-existing shader) keep compiling and running completely
-        // unmodified against this extended layout.
-        let bindless_set_layouts = [self.bindless_descriptor_set_layout];
-        // SAFETY: `self.device` is the valid logical device owned by this
-        // `VulkanDevice`; `bindless_set_layouts` (referencing this device's
-        // own `bindless_descriptor_set_layout`, created in `new`) and
-        // `push_constant_ranges`'s slice are local temporaries that outlive
-        // this call.
-        let layout = unsafe {
-            self.device.create_pipeline_layout(
-                &vk::PipelineLayoutCreateInfo::default()
-                    .set_layouts(&bindless_set_layouts)
-                    .push_constant_ranges(&[
-                        vk::PushConstantRange::default()
-                            .stage_flags(
-                                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                            )
-                            .offset(0)
-                            .size(12), // vec2 screen_size, uint texture_index
-                    ]),
-                None,
-            )
-        }
-        .map_err(|_| EngineError::PipelineCreationFailed)?;
+        let layout = self.create_universal_pipeline_layout()?;
 
         let color_formats = [color_format];
-        let mut rendering_info =
-            vk::PipelineRenderingCreateInfo::default().color_attachment_formats(&color_formats);
+        // IMPLEMENTATION.md Step 3.3.3: `begin_frame` now always attaches
+        // a stencil buffer (every swapchain owns one), so every pipeline's
+        // declared attachment formats must stay compatible with that --
+        // matching the same "declared everywhere, unused by pipelines
+        // that don't reference it" precedent already used for the
+        // bindless descriptor set and push-constant range. This pipeline
+        // still has `stencil_test_enable(false)` (via `depth_stencil`
+        // above), so declaring the format changes nothing about its
+        // actual behavior.
+        let mut rendering_info = vk::PipelineRenderingCreateInfo::default()
+            .color_attachment_formats(&color_formats)
+            .stencil_attachment_format(self.stencil_format);
 
         let pipeline_create_info = vk::GraphicsPipelineCreateInfo::default()
             .stages(&stages)
@@ -941,6 +934,244 @@ impl VulkanDevice {
             layout,
             device: self.device.clone(),
         })
+    }
+
+    /// IMPLEMENTATION.md Step 2.1's "ONE universal pipeline layout every
+    /// pipeline gets" (the bindless descriptor set plus the 4-byte
+    /// `texture_index` push constant), factored out of `create_pipeline`
+    /// so `create_stencil_and_cover_pipelines` (IMPLEMENTATION.md Step
+    /// 3.3.3) can build its own two pipelines against the exact same
+    /// layout shape without duplicating this construction a second and
+    /// third time. Each pipeline still gets its OWN `VkPipelineLayout`
+    /// object (not a shared one), matching `create_pipeline`'s existing
+    /// one-layout-per-`VulkanPipelineState` ownership/destruction model.
+    fn create_universal_pipeline_layout(&self) -> Result<vk::PipelineLayout, EngineError> {
+        let bindless_set_layouts = [self.bindless_descriptor_set_layout];
+        // SAFETY: `self.device` is the valid logical device owned by this
+        // `VulkanDevice`; `bindless_set_layouts` (referencing this
+        // device's own `bindless_descriptor_set_layout`, created in
+        // `new`) and `push_constant_ranges`'s slice are local temporaries
+        // that outlive this call.
+        unsafe {
+            self.device.create_pipeline_layout(
+                &vk::PipelineLayoutCreateInfo::default()
+                    .set_layouts(&bindless_set_layouts)
+                    .push_constant_ranges(&[
+                        vk::PushConstantRange::default()
+                            .stage_flags(
+                                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                            )
+                            .offset(0)
+                            .size(12), // vec2 screen_size, uint texture_index
+                    ]),
+                None,
+            )
+        }
+        .map_err(|_| EngineError::PipelineCreationFailed)
+    }
+
+    /// Builds the two `VkPipeline`s IMPLEMENTATION.md Step 3.3.3's
+    /// stencil-and-cover technique needs to render an arbitrary (including
+    /// self-intersecting) polygon that `tre_svg::triangulate` cannot
+    /// handle: a stencil pass (writes a per-pixel winding/parity count
+    /// into the stencil buffer from `tre_svg::fan_triangles`' geometry,
+    /// with color writes masked off) and a cover pass (draws a flat-color
+    /// quad over `tre_svg::bounding_box`'s extent, only where the stencil
+    /// test says "inside," resetting the buffer to `0` as it goes so the
+    /// next shape starts clean). Both reuse the same `vertex_spv`/
+    /// `fragment_spv` -- the entire technique is pipeline *state*
+    /// (stencil ops, color-write mask), not new shader code.
+    ///
+    /// `fill_rule` only changes the *stencil* pass: [`FillRule::EvenOdd`]
+    /// uses a single `INVERT` op for every fan triangle regardless of its
+    /// winding; [`FillRule::NonZero`] uses two-sided ops
+    /// (`INCREMENT_AND_WRAP` for front-facing triangles,
+    /// `DECREMENT_AND_WRAP` for back-facing ones) to accumulate a genuine
+    /// winding-number counter. The cover pass (`stencil != 0`, reset to
+    /// `0` on pass) is identical for both.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::PipelineCreationFailed`] if shader module,
+    /// pipeline layout, or graphics pipeline creation fails for either
+    /// pass.
+    pub fn create_stencil_and_cover_pipelines(
+        &self,
+        vertex_spv: &[u8],
+        fragment_spv: &[u8],
+        color_format: vk::Format,
+        fill_rule: FillRule,
+    ) -> Result<(VulkanPipelineState, VulkanPipelineState), EngineError> {
+        let bindings = [ui_vertex_binding()];
+        let attribute_descriptions = ui_vertex_attributes();
+        let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
+            .vertex_binding_descriptions(&bindings)
+            .vertex_attribute_descriptions(&attribute_descriptions);
+
+        let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
+            .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+        let viewport_state = vk::PipelineViewportStateCreateInfo::default()
+            .viewport_count(1)
+            .scissor_count(1);
+        // Both fan triangles (arbitrary winding by construction -- the
+        // whole point of the technique) and the cover quad must rasterize
+        // regardless of winding, so culling stays off for both passes,
+        // matching every other pipeline in this project.
+        let rasterization = vk::PipelineRasterizationStateCreateInfo::default()
+            .polygon_mode(vk::PolygonMode::FILL)
+            .cull_mode(vk::CullModeFlags::NONE)
+            .line_width(1.0);
+        let multisample = vk::PipelineMultisampleStateCreateInfo::default()
+            .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+        let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+        let dynamic_state =
+            vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
+        let color_formats = [color_format];
+
+        let stencil_pass_front = match fill_rule {
+            FillRule::EvenOdd => vk::StencilOpState::default()
+                .fail_op(vk::StencilOp::KEEP)
+                .pass_op(vk::StencilOp::INVERT)
+                .depth_fail_op(vk::StencilOp::KEEP)
+                .compare_op(vk::CompareOp::ALWAYS)
+                .compare_mask(0xFF)
+                .write_mask(0xFF),
+            FillRule::NonZero => vk::StencilOpState::default()
+                .fail_op(vk::StencilOp::KEEP)
+                .pass_op(vk::StencilOp::INCREMENT_AND_WRAP)
+                .depth_fail_op(vk::StencilOp::KEEP)
+                .compare_op(vk::CompareOp::ALWAYS)
+                .compare_mask(0xFF)
+                .write_mask(0xFF),
+        };
+        // `EvenOdd` uses the identical op for both faces (a single
+        // `INVERT` toggles inside/outside regardless of which way a fan
+        // triangle happens to wind); `NonZero` uses the opposite op on the
+        // back face -- which physical side gets which op does not affect
+        // correctness, only which sign the accumulated count lands on,
+        // and the cover pass's `!= 0` test is symmetric under that sign.
+        let stencil_pass_back = match fill_rule {
+            FillRule::EvenOdd => stencil_pass_front,
+            FillRule::NonZero => vk::StencilOpState::default()
+                .fail_op(vk::StencilOp::KEEP)
+                .pass_op(vk::StencilOp::DECREMENT_AND_WRAP)
+                .depth_fail_op(vk::StencilOp::KEEP)
+                .compare_op(vk::CompareOp::ALWAYS)
+                .compare_mask(0xFF)
+                .write_mask(0xFF),
+        };
+        let stencil_pass_depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
+            .depth_test_enable(false)
+            .depth_write_enable(false)
+            .stencil_test_enable(true)
+            .front(stencil_pass_front)
+            .back(stencil_pass_back);
+        let stencil_pass_color_blend_attachment = vk::PipelineColorBlendAttachmentState::default()
+            .blend_enable(false)
+            .color_write_mask(vk::ColorComponentFlags::empty());
+        let stencil_pass_attachments = [stencil_pass_color_blend_attachment];
+        let stencil_pass_color_blend =
+            vk::PipelineColorBlendStateCreateInfo::default().attachments(&stencil_pass_attachments);
+
+        // Identical for both fill rules: the stencil pass already encoded
+        // "inside" as nonzero (`NonZero`'s real count, or `EvenOdd`'s
+        // toggle) -- the cover pass only ever needs "is it zero or not,"
+        // and cleans up after itself so the next shape starts from a
+        // clean buffer without a separate mid-frame clear.
+        let cover_pass_stencil_op = vk::StencilOpState::default()
+            .fail_op(vk::StencilOp::KEEP)
+            .pass_op(vk::StencilOp::ZERO)
+            .depth_fail_op(vk::StencilOp::KEEP)
+            .compare_op(vk::CompareOp::NOT_EQUAL)
+            .compare_mask(0xFF)
+            .write_mask(0xFF)
+            .reference(0);
+        let cover_pass_depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
+            .depth_test_enable(false)
+            .depth_write_enable(false)
+            .stencil_test_enable(true)
+            .front(cover_pass_stencil_op)
+            .back(cover_pass_stencil_op);
+        // Same premultiplied-alpha "over" blend every other pipeline in
+        // this project uses (ARCHITECTURE.md Section 6.1).
+        let cover_pass_color_blend_attachment = vk::PipelineColorBlendAttachmentState::default()
+            .blend_enable(true)
+            .src_color_blend_factor(vk::BlendFactor::ONE)
+            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .color_blend_op(vk::BlendOp::ADD)
+            .src_alpha_blend_factor(vk::BlendFactor::ONE)
+            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .alpha_blend_op(vk::BlendOp::ADD)
+            .color_write_mask(vk::ColorComponentFlags::RGBA);
+        let cover_pass_attachments = [cover_pass_color_blend_attachment];
+        let cover_pass_color_blend =
+            vk::PipelineColorBlendStateCreateInfo::default().attachments(&cover_pass_attachments);
+
+        let build_pass = |depth_stencil: &vk::PipelineDepthStencilStateCreateInfo,
+                          color_blend: &vk::PipelineColorBlendStateCreateInfo|
+         -> Result<VulkanPipelineState, EngineError> {
+            let vertex_module = self.create_shader_module(vertex_spv)?;
+            let fragment_module = self.create_shader_module(fragment_spv)?;
+            let entry_point = c"main";
+            let stages = [
+                vk::PipelineShaderStageCreateInfo::default()
+                    .stage(vk::ShaderStageFlags::VERTEX)
+                    .module(vertex_module)
+                    .name(entry_point),
+                vk::PipelineShaderStageCreateInfo::default()
+                    .stage(vk::ShaderStageFlags::FRAGMENT)
+                    .module(fragment_module)
+                    .name(entry_point),
+            ];
+            let layout = self.create_universal_pipeline_layout()?;
+            let mut rendering_info = vk::PipelineRenderingCreateInfo::default()
+                .color_attachment_formats(&color_formats)
+                .stencil_attachment_format(self.stencil_format);
+            let pipeline_create_info = vk::GraphicsPipelineCreateInfo::default()
+                .stages(&stages)
+                .vertex_input_state(&vertex_input)
+                .input_assembly_state(&input_assembly)
+                .viewport_state(&viewport_state)
+                .rasterization_state(&rasterization)
+                .multisample_state(&multisample)
+                .depth_stencil_state(depth_stencil)
+                .color_blend_state(color_blend)
+                .dynamic_state(&dynamic_state)
+                .layout(layout)
+                .push_next(&mut rendering_info);
+
+            // SAFETY: `self.device` is valid; `pipeline_create_info` and
+            // everything it borrows are locals that outlive this call;
+            // `layout` was just created above on this same device, and
+            // `vk::PipelineCache::null()` is a valid null handle meaning
+            // "no cache".
+            let pipeline = unsafe {
+                self.device.create_graphics_pipelines(
+                    vk::PipelineCache::null(),
+                    &[pipeline_create_info],
+                    None,
+                )
+            }
+            .map_err(|_| EngineError::PipelineCreationFailed)?[0];
+
+            // SAFETY: `vertex_module`/`fragment_module` were created by
+            // this same device above and are no longer needed once
+            // `create_graphics_pipelines` has consumed them into
+            // `pipeline`.
+            unsafe {
+                self.device.destroy_shader_module(vertex_module, None);
+                self.device.destroy_shader_module(fragment_module, None);
+            }
+
+            Ok(VulkanPipelineState {
+                pipeline,
+                layout,
+                device: self.device.clone(),
+            })
+        };
+
+        let stencil_pipeline = build_pass(&stencil_pass_depth_stencil, &stencil_pass_color_blend)?;
+        let cover_pipeline = build_pass(&cover_pass_depth_stencil, &cover_pass_color_blend)?;
+        Ok((stencil_pipeline, cover_pipeline))
     }
 
     fn create_shader_module(&self, spv: &[u8]) -> Result<vk::ShaderModule, EngineError> {
@@ -1096,6 +1327,46 @@ impl VulkanDevice {
                 .destroyed += 1;
         }
     }
+}
+
+/// `UiVertex`'s per-vertex binding, shared by `create_pipeline` and
+/// `create_stencil_and_cover_pipelines` so both build the exact same
+/// vertex input layout from one definition.
+fn ui_vertex_binding() -> vk::VertexInputBindingDescription {
+    vk::VertexInputBindingDescription::default()
+        .binding(0)
+        .stride(std::mem::size_of::<UiVertex>() as u32)
+        .input_rate(vk::VertexInputRate::VERTEX)
+}
+
+/// `UiVertex`'s four attributes (position/uv/color/params), shared by
+/// `create_pipeline` and `create_stencil_and_cover_pipelines`. See
+/// `create_pipeline`'s original inline version (IMPLEMENTATION.md Step
+/// 3.2) for why `params` (location 3) is declared on every pipeline
+/// uniformly even though most shaders don't read it.
+fn ui_vertex_attributes() -> [vk::VertexInputAttributeDescription; 4] {
+    [
+        vk::VertexInputAttributeDescription::default()
+            .location(0)
+            .binding(0)
+            .format(vk::Format::R32G32_SFLOAT)
+            .offset(0),
+        vk::VertexInputAttributeDescription::default()
+            .location(1)
+            .binding(0)
+            .format(vk::Format::R32G32_SFLOAT)
+            .offset(8),
+        vk::VertexInputAttributeDescription::default()
+            .location(2)
+            .binding(0)
+            .format(vk::Format::R8G8B8A8_UNORM)
+            .offset(16),
+        vk::VertexInputAttributeDescription::default()
+            .location(3)
+            .binding(0)
+            .format(vk::Format::R32G32B32_SFLOAT)
+            .offset(20),
+    ]
 }
 
 impl Drop for VulkanDevice {
@@ -1470,10 +1741,33 @@ impl RhiDevice for VulkanDevice {
                     .level_count(1)
                     .layer_count(1),
             );
+        // IMPLEMENTATION.md Step 3.3.3: this swapchain's own stencil image
+        // gets the exact same "always transition from UNDEFINED, every
+        // frame" treatment as the color image above -- valid because it's
+        // always paired with `LOAD_OP_CLEAR` below, which discards
+        // whatever the image's actual prior contents/layout were anyway.
+        let stencil_image = vk::Image::from_raw(swapchain.stencil_image_handle());
+        let stencil_view = vk::ImageView::from_raw(swapchain.stencil_view_handle());
+        let stencil_barrier = vk::ImageMemoryBarrier::default()
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::STENCIL_ATTACHMENT_OPTIMAL)
+            .src_access_mask(vk::AccessFlags::empty())
+            .dst_access_mask(
+                vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE
+                    | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ,
+            )
+            .image(stencil_image)
+            .subresource_range(
+                vk::ImageSubresourceRange::default()
+                    .aspect_mask(vk::ImageAspectFlags::STENCIL)
+                    .level_count(1)
+                    .layer_count(1),
+            );
         // SAFETY: `command_buffer` is in the recording state (just begun
-        // above), and `target_image` is the swapchain image acquired this
-        // frame, whose layout is being transitioned before any rendering
-        // uses it.
+        // above); `target_image` is the swapchain image acquired this
+        // frame, and `stencil_image` is this same swapchain's own stencil
+        // image (created alongside it) -- both whose layouts are being
+        // transitioned before any rendering uses them.
         unsafe {
             self.device.cmd_pipeline_barrier(
                 command_buffer,
@@ -1483,6 +1777,16 @@ impl RhiDevice for VulkanDevice {
                 &[],
                 &[],
                 &[barrier],
+            );
+            self.device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS
+                    | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[stencil_barrier],
             );
         }
 
@@ -1497,13 +1801,29 @@ impl RhiDevice for VulkanDevice {
                 },
             });
         let color_attachments = [color_attachment];
+        // Cleared to 0 every frame; individual stencil-and-cover draws
+        // never need a mid-frame clear between shapes -- the cover pass's
+        // own `pass_op = ZERO` (see `create_stencil_and_cover_pipelines`)
+        // resets the buffer to a clean 0 after each shape it covers.
+        let stencil_attachment = vk::RenderingAttachmentInfo::default()
+            .image_view(stencil_view)
+            .image_layout(vk::ImageLayout::STENCIL_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .clear_value(vk::ClearValue {
+                depth_stencil: vk::ClearDepthStencilValue {
+                    depth: 0.0,
+                    stencil: 0,
+                },
+            });
         let rendering_info = vk::RenderingInfo::default()
             .render_area(vk::Rect2D {
                 offset: vk::Offset2D::default(),
                 extent: vk::Extent2D { width, height },
             })
             .layer_count(1)
-            .color_attachments(&color_attachments);
+            .color_attachments(&color_attachments)
+            .stencil_attachment(&stencil_attachment);
 
         // SAFETY: `command_buffer` is still recording, and `target_view`
         // (via `color_attachment`/`rendering_info`) is the same acquired
@@ -1659,6 +1979,13 @@ pub struct VulkanSwapchain {
     images: Vec<vk::Image>,
     image_views: Vec<vk::ImageView>,
     format: vk::Format,
+    /// This swapchain's own stencil image (IMPLEMENTATION.md Step 3.3.3),
+    /// sized to `width`/`height` -- `VkSwapchainKHR` only provides color
+    /// images, so unlike `images` above, this one is allocated and owned
+    /// manually, the same way `HeadlessSwapchain`'s always is.
+    stencil_image: vk::Image,
+    stencil_image_view: vk::ImageView,
+    stencil_image_memory: vk::DeviceMemory,
     width: u32,
     height: u32,
     image_available_semaphore: vk::Semaphore,
@@ -1785,6 +2112,57 @@ impl VulkanSwapchain {
             })
             .collect::<Result<Vec<_>, _>>()?;
 
+        // IMPLEMENTATION.md Step 3.3.3: this swapchain's own stencil
+        // image, sized to match its own extent (`VkSwapchainKHR` only
+        // ever provides color images) -- mirrors `HeadlessSwapchain`'s
+        // identical stencil-image creation, reusing the same
+        // allocate-and-bind helper.
+        //
+        // SAFETY: `device.device` is valid, and `ImageCreateInfo` only
+        // references locals (`device.stencil_format`, `width`/`height`)
+        // that outlive this call.
+        let stencil_image = unsafe {
+            device.device.create_image(
+                &vk::ImageCreateInfo::default()
+                    .image_type(vk::ImageType::TYPE_2D)
+                    .format(device.stencil_format)
+                    .extent(vk::Extent3D {
+                        width,
+                        height,
+                        depth: 1,
+                    })
+                    .mip_levels(1)
+                    .array_layers(1)
+                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .tiling(vk::ImageTiling::OPTIMAL)
+                    .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                    .initial_layout(vk::ImageLayout::UNDEFINED),
+                None,
+            )
+        }
+        .map_err(|_| EngineError::DeviceLost)?;
+        let stencil_image_memory =
+            headless::allocate_and_bind_image(device, &device.device, stencil_image)?;
+        // SAFETY: `device.device` is valid, and `stencil_image` was just
+        // created and bound to memory above.
+        let stencil_image_view = unsafe {
+            device.device.create_image_view(
+                &vk::ImageViewCreateInfo::default()
+                    .image(stencil_image)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(device.stencil_format)
+                    .subresource_range(
+                        vk::ImageSubresourceRange::default()
+                            .aspect_mask(vk::ImageAspectFlags::STENCIL)
+                            .level_count(1)
+                            .layer_count(1),
+                    ),
+                None,
+            )
+        }
+        .map_err(|_| EngineError::DeviceLost)?;
+
         Ok(Self {
             surface_loader,
             surface,
@@ -1793,6 +2171,9 @@ impl VulkanSwapchain {
             images,
             image_views,
             format: surface_format.format,
+            stencil_image,
+            stencil_image_view,
+            stencil_image_memory,
             width,
             height,
             image_available_semaphore,
@@ -1810,6 +2191,14 @@ impl VulkanSwapchain {
 impl RhiSwapchain for VulkanSwapchain {
     fn extent(&self) -> (u32, u32) {
         (self.width, self.height)
+    }
+
+    fn stencil_view_handle(&self) -> u64 {
+        self.stencil_image_view.as_raw()
+    }
+
+    fn stencil_image_handle(&self) -> u64 {
+        self.stencil_image.as_raw()
     }
 
     fn acquire_next_image(&self) -> Result<AcquiredImage, EngineError> {
@@ -1888,6 +2277,10 @@ impl Drop for VulkanSwapchain {
             for &view in &self.image_views {
                 self.device.destroy_image_view(view, None);
             }
+            self.device
+                .destroy_image_view(self.stencil_image_view, None);
+            self.device.destroy_image(self.stencil_image, None);
+            self.device.free_memory(self.stencil_image_memory, None);
             self.swapchain_loader
                 .destroy_swapchain(self.swapchain, None);
             self.surface_loader.destroy_surface(self.surface, None);

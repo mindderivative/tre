@@ -264,6 +264,15 @@ trait RhiDynamicRingBuffer: RhiBuffer {
 
 trait RhiSwapchain {
     fn extent(&self) -> (u32, u32);
+    /// IMPLEMENTATION.md Step 3.3.3: every swapchain owns its own
+    /// stencil image (sized to its own extent, since different
+    /// swapchains -- e.g. `multi_window`'s two windows -- can differ).
+    /// `stencil_view_handle`/`stencil_image_handle` mirror
+    /// `AcquiredImage`'s view-vs-image split: the view for the
+    /// `RenderingInfo` attachment, the image for the layout-transition
+    /// barrier `RhiDevice::begin_frame` issues before rendering.
+    fn stencil_view_handle(&self) -> u64;
+    fn stencil_image_handle(&self) -> u64;
     fn acquire_next_image(&self) -> Result<AcquiredImage, EngineError>;
     /// Waits on `image.render_finished_semaphore_handle` before showing
     /// the image (DESIGN.md Section 2.6 -- surfaces failures rather than
@@ -353,5 +362,6 @@ Added in the September 2026 documentation review -- the standard 2D content pipe
 * **Depth Write:** Disabled, for the same reason.
 * **Blending:** Enabled, premultiplied-alpha "over" compositing, evaluated in linear color space (DESIGN.md Section 11.1 / TECHNICAL.md Section 6.2). Premultiplied alpha is required for correct results when `PushLayer` offscreen composites (Section 5) are later blended back into a parent target.
 * **Culling:** Disabled (or front-and-back both drawn) -- 2D quads have no meaningful winding-order culling benefit and disabling it removes a class of "invisible rect" bugs from incorrect vertex winding.
+* **Stencil Test:** Disabled by default, same reasoning as depth. IMPLEMENTATION.md Step 3.3.3's stencil-and-cover fallback (for self-intersecting paths ear-clipping cannot triangulate) is the one deliberate exception -- its two pipelines (`create_stencil_and_cover_pipelines`) enable stencil test/write to encode a per-pixel winding count or even-odd parity, while depth test/write stay disabled exactly as above. Every pipeline, including the ordinary default ones described here, declares a stencil-compatible `PipelineRenderingCreateInfo` regardless of whether it enables the test -- the same "declared everywhere, unused by pipelines that don't reference it" precedent as the bindless descriptor set and push-constant range, needed because every swapchain now always has a stencil buffer attached.
 
 *Future consideration -- opaque pre-pass (not implemented; profile before building):* Depth-test-off means the GPU gets no early-Z rejection, so overdraw-heavy scenes (e.g. a dense data grid with thousands of large, fully-opaque cell backgrounds) pay full fragment cost for content later fragments completely cover. A front-to-back, depth-tested pre-pass restricted to batches provably fully opaque (nothing SDF-antialiased or alpha-sampled can participate) could reclaim that cost via early-Z, at the price of a second pipeline state, a second command-buffer pass, and careful ordering against the existing Depth-ID-driven painter's-algorithm pass so the two agree on what's already covered. Do not build this speculatively: profile a representative overdraw-heavy scene first and confirm GPU time -- not CPU submission time -- is the actual bottleneck before spending the complexity budget here.
