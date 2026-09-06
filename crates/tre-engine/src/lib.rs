@@ -255,9 +255,14 @@ impl InputEventQueue {
 
 /// An engine-level, backend-agnostic pixel format for transient render
 /// targets (TECHNICAL.md Section 3.2's `(Width, Height, Format)` pool
-/// key) and swapchains. Matches TECHNICAL.md Section 6.1's two swapchain
-/// formats -- SDR and HDR -- since transient offscreen targets need to
-/// match whichever pipeline (SDR or HDR) is compositing them.
+/// key), swapchains, and (Phase 4 Step 4.2.3) regular uploaded textures.
+/// `Bgra8Srgb`/`Rgba16Float` match TECHNICAL.md Section 6.1's two
+/// swapchain formats -- SDR and HDR -- since transient offscreen targets
+/// need to match whichever pipeline is compositing them; `Rgba8Unorm` is
+/// for texture data that is never a color at all (an MSDF texel is a
+/// distance encoding) and must never pass through an `_SRGB` format's
+/// automatic gamma transform, which would corrupt it at every value
+/// except the two endpoints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TextureFormat {
     /// Standard dynamic range: `VK_FORMAT_B8G8R8A8_SRGB` /
@@ -266,6 +271,10 @@ pub enum TextureFormat {
     /// High dynamic range / wide gamut: `VK_FORMAT_R16G16B16A16_SFLOAT` /
     /// `DXGI_FORMAT_R16G16B16A16_FLOAT`.
     Rgba16Float,
+    /// Linear, no gamma anywhere in the read path: `VK_FORMAT_R8G8B8A8_UNORM`
+    /// / `DXGI_FORMAT_R8G8B8A8_UNORM`. For non-color texture data --
+    /// Step 4.2.3's MSDF glyph textures are the first user.
+    Rgba8Unorm,
 }
 
 /// Which pixels inside a (possibly self-intersecting) path's boundary

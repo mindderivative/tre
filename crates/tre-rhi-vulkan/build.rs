@@ -62,4 +62,10 @@ fn main() {
         "sdf_rounded_rect.frag.spv",
         &out_dir,
     );
+    // Phase 4 Step 4.2.3: the real MSDF evaluation shader. Deliberately
+    // paired at pipeline-creation time with `bindless_textured.vert`, not
+    // a new vertex shader -- its inputs/outputs are already exactly what
+    // MSDF sampling needs, and this build script already compiles every
+    // shader file independently rather than as fixed vert/frag pairs.
+    compile_shader("shaders/msdf.frag", "msdf.frag.spv", &out_dir);
 }

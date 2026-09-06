@@ -111,6 +111,7 @@ fn texture_format_to_vk(format: TextureFormat) -> vk::Format {
     match format {
         TextureFormat::Bgra8Srgb => vk::Format::B8G8R8A8_SRGB,
         TextureFormat::Rgba16Float => vk::Format::R16G16B16A16_SFLOAT,
+        TextureFormat::Rgba8Unorm => vk::Format::R8G8B8A8_UNORM,
     }
 }
 
@@ -120,7 +121,7 @@ fn texture_format_to_vk(format: TextureFormat) -> vk::Format {
 /// (Phase 2 Code Review finding #66).
 fn bytes_per_pixel(format: TextureFormat) -> u64 {
     match format {
-        TextureFormat::Bgra8Srgb => 4,
+        TextureFormat::Bgra8Srgb | TextureFormat::Rgba8Unorm => 4,
         TextureFormat::Rgba16Float => 8,
     }
 }
