@@ -13,10 +13,12 @@
 #![forbid(unsafe_code)]
 
 mod flatten;
+mod morph;
 mod triangulate;
 
 use tre_math::Affine2;
 
+pub use morph::morph;
 pub use triangulate::triangulate;
 
 /// A single closed polygon contour: an ordered list of points with the
@@ -56,6 +58,15 @@ pub enum SvgError {
     /// stencil-and-cover fallback is the right tool for such a path, not
     /// a guess from this algorithm.
     NotSimplePolygon,
+    /// [`morph`]'s two keyframe `Polygon`s have different vertex counts --
+    /// IMPLEMENTATION.md Step 3.3 task 2's "topological equivalence"
+    /// requirement, for already-flattened polygons, means equal vertex
+    /// counts. Not automatically resampled to match; see
+    /// `planning/archive/PLAN_PHASE3_STEP3_3_2.md` for why.
+    TopologyMismatch {
+        from_points: usize,
+        to_points: usize,
+    },
 }
 
 impl std::fmt::Display for SvgError {
@@ -72,6 +83,10 @@ impl std::fmt::Display for SvgError {
             Self::NotSimplePolygon => write!(
                 f,
                 "polygon is self-intersecting or otherwise not simple; ear-clipping cannot triangulate it"
+            ),
+            Self::TopologyMismatch { from_points, to_points } => write!(
+                f,
+                "cannot morph: keyframes have different vertex counts ({from_points} vs {to_points})"
             ),
         }
     }

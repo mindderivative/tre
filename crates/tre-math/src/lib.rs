@@ -138,11 +138,14 @@ impl Affine2 {
     }
 }
 
-/// Gathers one field from 8 (or fewer, zero-padded) `Affine2`s into a
+/// Gathers one field from 8 (or fewer, zero-padded) items into a
 /// `wide::f32x8` lane vector -- the structure-of-arrays layout SIMD
-/// composition needs, built from the array-of-structures `Affine2` slices
-/// callers naturally have.
-fn gather(items: &[Affine2], field: impl Fn(&Affine2) -> f32) -> f32x8 {
+/// batching needs, built from the array-of-structures slices callers
+/// naturally have. Generic over the item type so both `compose_batch`
+/// (gathering `Affine2` fields) and `lerp_points_batch` (gathering
+/// `[f32; 2]` components) share one gather implementation rather than
+/// duplicating the same 8-lane loop.
+fn gather<T>(items: &[T], field: impl Fn(&T) -> f32) -> f32x8 {
     let mut lanes = [0.0f32; SIMD_WIDTH];
     for (lane, item) in lanes.iter_mut().zip(items) {
         *lane = field(item);
@@ -230,9 +233,74 @@ pub fn compose_batch(parents: &[Affine2], children: &[Affine2], out: &mut [Affin
     }
 }
 
+/// SIMD-batched per-point linear interpolation (TECHNICAL.md Section 5.4:
+/// "keyframed SMIL/CSS path morphing evaluates topological interpolation
+/// using the `wide` crate's `f32x8` vector type"). Processes
+/// `from`/`to` 8 points at a time via `wide::f32x8::mul_add`
+/// (`lerp(a, b, t) = (b - a).mul_add(t, a)`), with a plain scalar lerp
+/// for the final `from.len() % 8` remainder -- the same structure as
+/// [`compose_batch`], generalized to `[f32; 2]` points instead of
+/// `Affine2` transforms.
+///
+/// Writes into `out` rather than returning a freshly allocated `Vec`,
+/// matching `compose_batch`'s zero-allocation rationale: an eventual
+/// per-frame animation-morphing caller cannot allocate on that path
+/// (DESIGN.md Section 2.1's zero-allocation steady state).
+///
+/// # Panics
+/// Panics if `from`, `to`, and `out` don't all have the same length -- a
+/// length mismatch is a programmer error (the caller controls all three
+/// slice lengths directly), not a recoverable runtime condition, so this
+/// deliberately isn't a `Result`. A caller morphing between two
+/// independently-parsed, genuinely untrusted keyframe shapes (e.g.
+/// `tre-svg::morph`) is expected to validate topological equivalence
+/// itself and report a mismatch via `Result` *before* ever reaching this
+/// function -- this function's own contract is "already-equal-length
+/// inputs," the same contract `compose_batch` places on its callers.
+pub fn lerp_points_batch(from: &[[f32; 2]], to: &[[f32; 2]], t: f32, out: &mut [[f32; 2]]) {
+    assert_eq!(
+        from.len(),
+        to.len(),
+        "lerp_points_batch: from/to length mismatch"
+    );
+    assert_eq!(
+        from.len(),
+        out.len(),
+        "lerp_points_batch: from/out length mismatch"
+    );
+
+    let t_vec = f32x8::splat(t);
+    let full_chunks = from.len() / SIMD_WIDTH;
+
+    for chunk in 0..full_chunks {
+        let base = chunk * SIMD_WIDTH;
+        let f = &from[base..base + SIMD_WIDTH];
+        let d = &to[base..base + SIMD_WIDTH];
+
+        let fx = gather(f, |p| p[0]);
+        let fy = gather(f, |p| p[1]);
+        let dx = gather(d, |p| p[0]);
+        let dy = gather(d, |p| p[1]);
+
+        let out_x = (dx - fx).mul_add(t_vec, fx).to_array();
+        let out_y = (dy - fy).mul_add(t_vec, fy).to_array();
+
+        for lane in 0..SIMD_WIDTH {
+            out[base + lane] = [out_x[lane], out_y[lane]];
+        }
+    }
+
+    for i in (full_chunks * SIMD_WIDTH)..from.len() {
+        out[i] = [
+            (to[i][0] - from[i][0]).mul_add(t, from[i][0]),
+            (to[i][1] - from[i][1]).mul_add(t, from[i][1]),
+        ];
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{compose_batch, Affine2};
+    use super::{compose_batch, lerp_points_batch, Affine2};
     use std::f32::consts::PI;
 
     /// `wide::f32x8::mul_add` is true hardware FMA (one rounding) wherever
@@ -394,5 +462,90 @@ mod tests {
         let children = sample_transforms(3);
         let mut out = vec![Affine2::IDENTITY; 4];
         compose_batch(&parents, &children, &mut out);
+    }
+
+    /// A fixed, varied set of points reused across every
+    /// `lerp_points_batch` remainder-length test below, matching
+    /// `sample_transforms`'s own rationale: real, distinct (not
+    /// all-identical) data at every length.
+    fn sample_points(count: usize) -> Vec<[f32; 2]> {
+        (0..count)
+            .map(|i| {
+                #[allow(clippy::cast_precision_loss)]
+                let i = i as f32;
+                [i * 1.5, -i * 0.7]
+            })
+            .collect()
+    }
+
+    fn scalar_lerp(a: [f32; 2], b: [f32; 2], t: f32) -> [f32; 2] {
+        [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+    }
+
+    #[test]
+    fn lerp_points_batch_matches_scalar_reference_across_every_simd_remainder() {
+        // 0, 1, and every remainder relative to the 8-wide SIMD chunk
+        // size, plus a couple of full-chunk-plus-remainder lengths --
+        // the same lengths `compose_batch`'s own test exercises.
+        for len in [0, 1, 7, 8, 9, 16, 17] {
+            let from = sample_points(len);
+            let to = sample_points(len).into_iter().rev().collect::<Vec<_>>();
+            let t = 0.37;
+
+            let mut simd_out = vec![[0.0f32; 2]; len];
+            lerp_points_batch(&from, &to, t, &mut simd_out);
+
+            for i in 0..len {
+                let scalar = scalar_lerp(from[i], to[i], t);
+                assert!(
+                    (simd_out[i][0] - scalar[0]).abs() <= EPSILON
+                        && (simd_out[i][1] - scalar[1]).abs() <= EPSILON,
+                    "index {i}: expected {scalar:?}, got {:?}",
+                    simd_out[i]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lerp_points_batch_at_t_zero_and_one_returns_the_endpoints_within_epsilon() {
+        // `(b - a).mul_add(t, a)` at t=1 is mathematically `b`, but is not
+        // guaranteed bit-exact to `b` -- `b - a` rounds once, and adding
+        // `a` back rounds again, so the two roundings don't always
+        // perfectly cancel (confirmed empirically: this test originally
+        // asserted exact equality and failed on real sample data, e.g.
+        // `-1.4` round-tripping to `-1.4000001`). An epsilon comparison,
+        // not exact equality, is what actually verifies the math is
+        // right rather than asserting a result that only happens to hold
+        // bit-exactly for some inputs.
+        let from = sample_points(9);
+        let to = sample_points(9).into_iter().rev().collect::<Vec<_>>();
+
+        let mut at_zero = vec![[0.0f32; 2]; 9];
+        lerp_points_batch(&from, &to, 0.0, &mut at_zero);
+        for i in 0..9 {
+            assert!(
+                (at_zero[i][0] - from[i][0]).abs() <= EPSILON
+                    && (at_zero[i][1] - from[i][1]).abs() <= EPSILON
+            );
+        }
+
+        let mut at_one = vec![[0.0f32; 2]; 9];
+        lerp_points_batch(&from, &to, 1.0, &mut at_one);
+        for i in 0..9 {
+            assert!(
+                (at_one[i][0] - to[i][0]).abs() <= EPSILON
+                    && (at_one[i][1] - to[i][1]).abs() <= EPSILON
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "length mismatch")]
+    fn lerp_points_batch_panics_on_mismatched_lengths() {
+        let from = sample_points(4);
+        let to = sample_points(3);
+        let mut out = vec![[0.0f32; 2]; 4];
+        lerp_points_batch(&from, &to, 0.5, &mut out);
     }
 }

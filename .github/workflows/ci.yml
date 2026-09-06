@@ -95,3 +95,4 @@ jobs:
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example gc_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example sdf_rounded_rect_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example svg_tessellation_demo
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example svg_morph_demo
