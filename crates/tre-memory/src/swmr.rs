@@ -79,10 +79,21 @@ impl<K: Copy + Eq + Into<u64>> SwmrSlotTable<K> {
     #[must_use]
     pub fn insert(&self, key: K, value: u64) -> bool {
         let key_u64 = key.into();
-        debug_assert_ne!(
-            key_u64, EMPTY_KEY,
-            "a real key must never equal the reserved EMPTY_KEY sentinel"
-        );
+        if key_u64 == EMPTY_KEY {
+            // A real key must never equal the reserved sentinel -- but
+            // unlike a debug-only assert, this must hold in release
+            // builds too: if it didn't, the probe below would find the
+            // sentinel already sitting in the first candidate slot (every
+            // slot starts at EMPTY_KEY) and take the "already present"
+            // branch instead of "claim this slot", silently leaving
+            // `keys[index]` unwritten while `values[index]` held real
+            // data -- corrupting whichever unrelated key's `insert` next
+            // probed through that same index and saw a spuriously "empty"
+            // slot. Reporting failure here (matching the full-table case)
+            // is always correct: no real caller should ever ask to insert
+            // this exact value.
+            return false;
+        }
         let start = usize_index(mix(key_u64), self.capacity);
         for probe in 0..self.capacity {
             let index = (start + probe) % self.capacity;
@@ -106,6 +117,12 @@ impl<K: Copy + Eq + Into<u64>> SwmrSlotTable<K> {
     #[must_use]
     pub fn get(&self, key: K) -> Option<u64> {
         let key_u64 = key.into();
+        if key_u64 == EMPTY_KEY {
+            // Symmetric with `insert`'s own rejection of this value: it
+            // could never have been legitimately inserted, so it can
+            // never be present.
+            return None;
+        }
         let start = usize_index(mix(key_u64), self.capacity);
         for probe in 0..self.capacity {
             let index = (start + probe) % self.capacity;
@@ -174,6 +191,18 @@ mod tests {
         assert!(table.insert(Key(1), 100));
         assert!(table.insert(Key(1), 200));
         assert_eq!(table.get(Key(1)), Some(200));
+    }
+
+    #[test]
+    fn a_key_equal_to_the_reserved_sentinel_is_rejected_not_miscompared() {
+        let table: SwmrSlotTable<Key> = SwmrSlotTable::with_capacity(4);
+        assert!(!table.insert(Key(u64::MAX), 1));
+        assert_eq!(table.get(Key(u64::MAX)), None);
+        // A real key hashing to the same first-probed slot still inserts
+        // and reads back correctly -- the sentinel key was never actually
+        // written into that slot.
+        assert!(table.insert(Key(1), 42));
+        assert_eq!(table.get(Key(1)), Some(42));
     }
 
     #[test]

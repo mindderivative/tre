@@ -16,6 +16,9 @@ use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 use tre_svg::Polygon;
 use tre_text::OutlineSegment;
 
+#[path = "support/pixel_helpers.rs"]
+mod pixel_helpers;
+
 const WIDTH: u32 = 300;
 const HEIGHT: u32 = 300;
 
@@ -269,10 +272,7 @@ fn main() {
     let bgra = swapchain
         .read_pixels_bgra8()
         .expect("failed to read back pixels");
-    let pixel_at = |x: u32, y: u32| -> [u8; 4] {
-        let idx = ((y * WIDTH + x) * 4) as usize;
-        [bgra[idx], bgra[idx + 1], bgra[idx + 2], bgra[idx + 3]]
-    };
+    let pixel_at = |x: u32, y: u32| -> [u8; 4] { pixel_helpers::bgra_pixel_at(&bgra, WIDTH, x, y) };
     let background = pixel_at(0, 0);
     eprintln!("background (clear color): {background:?}");
 
@@ -454,15 +454,8 @@ fn main() {
     let word_bgra = swapchain
         .read_pixels_bgra8()
         .expect("failed to read back word render pixels");
-    let word_pixel_at = |x: u32, y: u32| -> [u8; 4] {
-        let idx = ((y * WIDTH + x) * 4) as usize;
-        [
-            word_bgra[idx],
-            word_bgra[idx + 1],
-            word_bgra[idx + 2],
-            word_bgra[idx + 3],
-        ]
-    };
+    let word_pixel_at =
+        |x: u32, y: u32| -> [u8; 4] { pixel_helpers::bgra_pixel_at(&word_bgra, WIDTH, x, y) };
     for (probe, expected_inside) in probes {
         #[allow(
             clippy::cast_possible_truncation,

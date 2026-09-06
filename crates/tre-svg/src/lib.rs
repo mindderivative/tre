@@ -23,7 +23,7 @@ mod triangulate;
 use tre_math::Affine2;
 
 pub use flatten::{flatten_cubic, flatten_quad};
-pub use morph::morph;
+pub use morph::{morph, morph_into};
 pub use stencil::{bounding_box, fan_triangles};
 pub use triangulate::triangulate;
 
@@ -259,6 +259,13 @@ fn collect_polygons(
 /// if the total point count across every path -- checked incrementally
 /// while walking the tree -- exceeds `max_points`, a cap `usvg` does not
 /// itself enforce.
+///
+/// `max_points` bounds peak memory (and, transitively, [`triangulate`]'s
+/// input size) across the *whole document*, but NOT worst-case CPU time:
+/// it says nothing about how those points are distributed across
+/// individual paths, and [`triangulate`]'s own doc comment explains why a
+/// single adversarially-shaped path even within this budget can still be
+/// far more expensive than a well-behaved one of the same point count.
 pub fn parse_svg(
     source: &[u8],
     max_bytes: usize,

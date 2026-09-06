@@ -94,6 +94,29 @@ fn has_self_intersection(points: &[[f32; 2]]) -> bool {
 /// normalized to counter-clockwise winding before clipping -- the input's
 /// original winding order does not affect the result.
 ///
+/// # Performance
+///
+/// This is naive ear-clipping, not the reflex-vertex-set-optimized
+/// variant: each candidate ear's validity check (`no_vertex_inside`/
+/// `no_edge_crosses` below) is `O(m)` in the currently-remaining vertex
+/// count `m`, and up to `m` candidates may be tried per vertex removed,
+/// so one removal costs up to `O(m^2)` and the whole triangulation is
+/// worst-case `O(n^3)`, not `O(n^2)`, for a single call. Performance
+/// review finding: [`crate::parse_svg`]'s `max_points` bounds the total
+/// point count *summed across the whole document*, not any single
+/// polygon's point count -- so it bounds peak memory but NOT worst-case
+/// CPU time for one adversarially-shaped path (a dense comb/star of
+/// reflex vertices) still within that same budget. This is a real,
+/// documented-here-rather-than-fixed gap: closing it properly needs a
+/// genuine reflex-vertex-set-maintained ear-clipping rewrite, which risks
+/// the exact class of subtle correctness regression the pentagram/
+/// L-shape/star-polygon fixes above this function were hard-won against,
+/// so it's deliberately left as a documented limitation rather than
+/// attempted opportunistically alongside unrelated fixes. For realistic
+/// icon/glyph-sized polygons (tens of points) this is a complete
+/// non-issue; it matters only for large, adversarially-shaped single
+/// paths.
+///
 /// # Errors
 /// Returns [`SvgError::NotSimplePolygon`] if `has_self_intersection`
 /// finds two non-adjacent edges of the original contour crossing each

@@ -32,13 +32,31 @@ impl From<AtlasKey> for u64 {
     }
 }
 
-// 12 bits per coordinate covers the stated production atlas size
-// (DESIGN.md/IMPLEMENTATION.md: 4096x4096, and 4095 is the largest value
-// 12 bits can hold) with room to spare for this step's own much smaller
-// demo atlas, leaving the remaining 16 of the 64 bits for the generation
+// 13 bits per coordinate covers the stated production atlas size
+// (DESIGN.md/IMPLEMENTATION.md: 4096x4096) *inclusive* of a rect whose
+// width or height is the full 4096 -- e.g. a single glyph/icon placed
+// into an otherwise-empty atlas, which `AtlasPacker::insert` imposes no
+// upper bound against and so must round-trip through this encoding
+// without panicking. 12 bits (0-4095) falls one short of that; 13 bits
+// (0-8191) covers it with room to spare for this step's own much smaller
+// demo atlas, leaving the remaining 12 of the 64 bits for the generation
 // counter ARCHITECTURE.md's own `AtlasSlot` comment calls for.
-const COORD_BITS: u32 = 12;
+const COORD_BITS: u32 = 13;
 const COORD_MASK: u64 = (1 << COORD_BITS) - 1;
+const GENERATION_BITS: u32 = 64 - COORD_BITS * 4;
+const GENERATION_MASK: u64 = (1 << GENERATION_BITS) - 1;
+
+/// Reports whether `rect`'s fields all fit within [`pack_slot_value`]'s
+/// packed range, so a caller (the atlas owner) can drop an over-large
+/// request gracefully -- the same way it already drops a request that
+/// doesn't fit the packer or the slot table -- instead of letting it
+/// reach `pack_slot_value`'s own panic-on-overflow assert.
+#[must_use]
+pub fn fits_packed_range(rect: PackedRect) -> bool {
+    [rect.x, rect.y, rect.width, rect.height]
+        .into_iter()
+        .all(|value| u64::from(value) <= COORD_MASK)
+}
 
 /// Packs `rect` and `generation` into the raw `u64` payload
 /// [`tre_memory::SwmrSlotTable`] stores. `generation` is included for
@@ -63,6 +81,15 @@ pub fn pack_slot_value(rect: PackedRect, generation: u16) -> u64 {
             "atlas rect field {name} ({value}) exceeds the {COORD_BITS}-bit packed range"
         );
     }
+    // Unlike the coordinate fields, `generation`'s 16-bit type no longer
+    // exactly fills its allotted bits now that widening COORD_BITS to 13
+    // (to fit a full-atlas-sized rect) left only 12 bits for it -- so this
+    // check, absent before, is now load-bearing: without it a generation
+    // above 4095 would silently bleed into the `height` field above it.
+    assert!(
+        u64::from(generation) <= GENERATION_MASK,
+        "atlas slot generation ({generation}) exceeds the {GENERATION_BITS}-bit packed range"
+    );
     u64::from(rect.x)
         | (u64::from(rect.y) << COORD_BITS)
         | (u64::from(rect.width) << (COORD_BITS * 2))
@@ -85,9 +112,10 @@ pub fn unpack_slot_value(value: u64) -> (PackedRect, u16) {
     };
     #[allow(
         clippy::cast_possible_truncation,
-        reason = "the generation counter occupies exactly the remaining 16 bits"
+        reason = "the generation counter is masked down to GENERATION_BITS (12) bits first, \
+                   well within u16"
     )]
-    let generation = (value >> (COORD_BITS * 4)) as u16;
+    let generation = ((value >> (COORD_BITS * 4)) & GENERATION_MASK) as u16;
     (rect, generation)
 }
 
@@ -118,16 +146,46 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "exceeds the 12-bit packed range")]
+    #[should_panic(expected = "exceeds the 13-bit packed range")]
     fn pack_slot_value_rejects_a_coordinate_too_large_to_fit() {
         let _ = pack_slot_value(
             PackedRect {
-                x: 5000,
+                x: 9000,
                 y: 0,
                 width: 1,
                 height: 1,
             },
             0,
+        );
+    }
+
+    #[test]
+    fn pack_slot_value_accepts_a_rect_the_full_width_of_the_production_atlas() {
+        // Security-review finding: a single glyph/icon placed into an
+        // otherwise-empty 4096x4096 production atlas (AtlasPacker::insert
+        // imposes no upper bound) must round-trip through this encoding
+        // rather than panicking on ordinary, documented-scale content.
+        let rect = PackedRect {
+            x: 0,
+            y: 0,
+            width: 4096,
+            height: 4096,
+        };
+        let packed = pack_slot_value(rect, 0);
+        assert_eq!(unpack_slot_value(packed), (rect, 0));
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds the 12-bit packed range")]
+    fn pack_slot_value_rejects_a_generation_too_large_to_fit() {
+        let _ = pack_slot_value(
+            PackedRect {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            },
+            5000,
         );
     }
 }

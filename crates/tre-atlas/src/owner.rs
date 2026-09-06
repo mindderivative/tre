@@ -6,6 +6,7 @@
 //! and MSDF rasterization, and is the only code in the engine ever
 //! allowed to touch the free-rectangle list").
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle, Thread};
 use std::time::Duration;
@@ -35,6 +36,7 @@ pub struct AtlasOwnerHandle {
     queue: Arc<MpscRingBuffer<OwnerMessage>>,
     slots: Arc<SwmrSlotTable<AtlasKey>>,
     owner_thread: Thread,
+    closed: Arc<AtomicBool>,
 }
 
 impl AtlasOwnerHandle {
@@ -42,13 +44,22 @@ impl AtlasOwnerHandle {
     /// `raster_source` once the owner thread gets to it. Never blocks --
     /// returns `false` (without touching the queue's own contents) if the
     /// bounded request queue is currently full, matching DESIGN.md
-    /// Section 2.6's "report, don't block" contract.
+    /// Section 2.6's "report, don't block" contract. Also returns `false`
+    /// once [`AtlasOwner::join`] has been called on *any* clone of this
+    /// handle's owner: without this check, a request that raced a
+    /// concurrent shutdown could be pushed successfully yet never
+    /// processed (the owner thread has already stopped polling the
+    /// queue), silently leaving `lookup` returning `None` forever with no
+    /// way for the caller to distinguish that from "still pending".
     #[must_use]
     pub fn request_insert(
         &self,
         key: AtlasKey,
         raster_source: Box<dyn crate::RasterSource>,
     ) -> bool {
+        if self.closed.load(Ordering::Acquire) {
+            return false;
+        }
         let ok = self
             .queue
             .push(OwnerMessage::Insert(AtlasInsertRequest {
@@ -101,6 +112,7 @@ impl AtlasOwner {
     ) -> Self {
         let queue = Arc::new(MpscRingBuffer::with_capacity(request_capacity));
         let slots = Arc::new(SwmrSlotTable::with_capacity(slot_capacity));
+        let closed = Arc::new(AtomicBool::new(false));
 
         let thread_queue = queue.clone();
         let thread_slots = slots.clone();
@@ -114,6 +126,7 @@ impl AtlasOwner {
                 queue,
                 slots,
                 owner_thread,
+                closed,
             },
             join,
         }
@@ -132,6 +145,11 @@ impl AtlasOwner {
     /// Panics if the background thread itself panicked.
     #[must_use]
     pub fn join(self) -> Vec<u8> {
+        // Set before the Shutdown message is even pushed, so any
+        // `request_insert` call any handle clone makes from this point
+        // on reports failure instead of pushing a request the owner
+        // thread may never poll for again.
+        self.handle.closed.store(true, Ordering::Release);
         // Retries a few times in the (here, essentially theoretical)
         // case the queue happens to be transiently full of real
         // requests right as shutdown is requested -- a real
@@ -185,6 +203,17 @@ fn process_insert(
     let Some(rect) = packer.insert(width, height) else {
         return;
     };
+    // `pack_slot_value` covers the full documented production atlas size
+    // (4096x4096) but `AtlasPacker::insert` itself enforces no upper
+    // bound tied to that encoding -- a caller that ever spins up an
+    // atlas larger than the packed format can address must be dropped
+    // the same way a full packer/slot-table is, not allowed through to
+    // `pack_slot_value`'s own panic-on-overflow assert (security-review
+    // finding: caller-supplied geometry should never be able to panic
+    // this background thread).
+    if !crate::key::fits_packed_range(rect) {
+        return;
+    }
     let pixels = request.raster_source.rasterize();
     copy_into_atlas(buffer, atlas_width, rect, &pixels);
     let packed = pack_slot_value(rect, 0);

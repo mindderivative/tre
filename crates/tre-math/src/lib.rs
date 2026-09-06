@@ -145,6 +145,27 @@ impl Affine2 {
 /// (gathering `Affine2` fields) and `lerp_points_batch` (gathering
 /// `[f32; 2]` components) share one gather implementation rather than
 /// duplicating the same 8-lane loop.
+///
+/// # Performance (disclosed by the Phase 1-4 review, 2026-09-06)
+///
+/// This is a scalar per-lane extraction loop, not a real hardware gather
+/// instruction -- `compose_batch` calls it 12 times per 8-wide chunk (6
+/// `Affine2` fields x 2 operands) to feed just 6 vector FMA/mul
+/// instructions' worth of actual arithmetic, then does an equivalent
+/// scalar scatter to reassemble `out`; `lerp_points_batch` is the same
+/// shape with 4 gathers. Because the real arithmetic these batch
+/// functions accelerate is cheap to begin with (a dozen-ish flops per
+/// item), the O(n) gather/scatter overhead here rides along with the O(n)
+/// vector work it's supposed to speed up, and for AoS-shaped real data
+/// (`Affine2`/`[f32; 2]` slices, not genuinely separate `SoA` arrays) it is
+/// not obvious this "SIMD" path beats 8 independent scalar
+/// `Affine2::compose`/lerp calls over the same slices. No criterion
+/// benchmark exists in this workspace to settle this either way (a known,
+/// separately-tracked CI gap) -- documented here as a real open question
+/// rather than restructured opportunistically alongside an unrelated
+/// review/fix pass, since a genuine fix would mean either switching the
+/// real hot-path storage to true `SoA` layout or benchmarking against a
+/// plain scalar loop before more call sites are built on top of this.
 fn gather<T>(items: &[T], field: impl Fn(&T) -> f32) -> f32x8 {
     let mut lanes = [0.0f32; SIMD_WIDTH];
     for (lane, item) in lanes.iter_mut().zip(items) {

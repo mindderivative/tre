@@ -19,6 +19,9 @@ use ash::vk;
 use tre_engine::{rgba8, FillRule, RhiDevice, UiVertex};
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 
+#[path = "support/pixel_helpers.rs"]
+mod pixel_helpers;
+
 const WIDTH: u32 = 300;
 const HEIGHT: u32 = 300;
 
@@ -152,8 +155,7 @@ fn main() {
         .expect("failed to upload cover-pass index buffer");
 
     let pixel_at = |bgra: &[u8], x: u32, y: u32| -> [u8; 4] {
-        let idx = ((y * WIDTH + x) * 4) as usize;
-        [bgra[idx], bgra[idx + 1], bgra[idx + 2], bgra[idx + 3]]
+        pixel_helpers::bgra_pixel_at(bgra, WIDTH, x, y)
     };
 
     for (fill_rule, expect_center_filled) in [(FillRule::EvenOdd, false), (FillRule::NonZero, true)]

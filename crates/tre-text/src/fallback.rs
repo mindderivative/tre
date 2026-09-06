@@ -34,9 +34,24 @@ impl FontCascade {
     pub fn discover() -> Result<Self, TextError> {
         let fc = Fontconfig::new().ok_or(TextError::FontDiscoveryUnavailable)?;
         let mut entries = Vec::new();
+        // Typography-review finding: two `CASCADE_FAMILIES` queries can
+        // resolve to the same underlying font file via two different
+        // filesystem paths (fontconfig reports whatever `FC_FILE` the
+        // matched pattern was indexed under, which can differ across a
+        // symlinked alias vs. the real file) -- a plain `PathBuf`
+        // equality check misses that, silently wasting one of only
+        // `CASCADE_FAMILIES.len()` cascade slots on a repeat. Comparing
+        // canonicalized paths recognizes them as the same font instead.
+        // If canonicalization fails (e.g. a transient permission issue
+        // unrelated to the font itself), fall back to the raw path rather
+        // than dropping an otherwise-valid cascade entry.
+        let mut canonical_entries: Vec<PathBuf> = Vec::new();
         for family in CASCADE_FAMILIES {
             if let Some(font) = fc.find(family, None) {
-                if !entries.contains(&font.path) {
+                let canonical =
+                    std::fs::canonicalize(&font.path).unwrap_or_else(|_| font.path.clone());
+                if !canonical_entries.contains(&canonical) {
+                    canonical_entries.push(canonical);
                     entries.push(font.path);
                 }
             }

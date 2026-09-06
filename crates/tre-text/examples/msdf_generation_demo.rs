@@ -51,7 +51,8 @@ fn main() {
     );
     eprintln!("'O' extracted as {} contours", contours.len());
 
-    let bitmap = tre_text::generate_msdf(&contours, SIZE, RANGE_PX);
+    let bitmap = tre_text::generate_msdf(&contours, SIZE, RANGE_PX)
+        .expect("'O' has real ink and must produce a bitmap");
     assert_eq!(bitmap.pixels.len(), (SIZE * SIZE * 3) as usize);
 
     // Scan the vertical-center row and classify each pixel as inside

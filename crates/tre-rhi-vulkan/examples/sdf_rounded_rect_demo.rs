@@ -17,6 +17,9 @@ use ash::vk;
 use tre_engine::{rgba8, RenderingCanvas, RhiDevice};
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 
+#[path = "support/pixel_helpers.rs"]
+mod pixel_helpers;
+
 const MARGIN: u32 = 20;
 const RECT_WIDTH: u32 = 300;
 const RECT_HEIGHT: u32 = 200;
@@ -90,10 +93,7 @@ fn main() {
     let bgra = swapchain
         .read_pixels_bgra8()
         .expect("failed to read back pixels");
-    let pixel_at = |x: u32, y: u32| -> [u8; 4] {
-        let idx = ((y * width + x) * 4) as usize;
-        [bgra[idx], bgra[idx + 1], bgra[idx + 2], bgra[idx + 3]]
-    };
+    let pixel_at = |x: u32, y: u32| -> [u8; 4] { pixel_helpers::bgra_pixel_at(&bgra, width, x, y) };
 
     // Never touched by the draw call (outside the rect's own quad
     // entirely) -- reading it back gives the actual clear-color bytes

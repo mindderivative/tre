@@ -49,15 +49,23 @@ pub struct MsdfBitmap {
 /// the Y axis is flipped (font design space is Y-up, this output's pixel
 /// space is Y-down like every other raster image in this project).
 ///
-/// # Panics
-///
-/// Panics if `contours` is empty or entirely degenerate (zero-area
-/// bounding box) -- a real glyph always has real extent; an empty input
-/// here is a caller error, not a condition this function's contract
-/// needs to report via `Result`.
+/// Returns `None` if `contours` has no real ink to encode: either it's
+/// genuinely empty (the common case for e.g. U+0020 SPACE, whose outline
+/// legitimately draws zero contours -- not an error, just nothing to
+/// render), or every point in it is coincident/non-finite, which would
+/// otherwise make [`apply_fit_transform`]'s fit-scale computation divide
+/// by a near-zero extent and bake an astronomically large, meaningless
+/// scale into the shape instead of failing cleanly. Security/typography
+/// review: this used to `panic!` on both cases via an `.expect()` on the
+/// premise that "a real glyph always has real extent" -- false for space
+/// and for malformed/corrupted font data (a realistic threat per this
+/// crate's own attacker-influenceable-font-bytes threat model), neither
+/// of which is a caller-programming error. Callers should render nothing
+/// (or substitute DESIGN.md Section 2.6's placeholder-glyph fallback) for
+/// `None` rather than treating it as fatal.
 #[must_use]
-pub fn generate_msdf(contours: &[Contour], size: u32, range_px: f64) -> MsdfBitmap {
-    let bbox = bounding_box(contours).expect("generate_msdf requires at least one real contour");
+pub fn generate_msdf(contours: &[Contour], size: u32, range_px: f64) -> Option<MsdfBitmap> {
+    let bbox = bounding_box(contours)?;
     let shape = to_fdsm_shape(contours);
     let transformed = apply_fit_transform(shape, bbox, size, range_px);
 
@@ -72,12 +80,21 @@ pub fn generate_msdf(contours: &[Contour], size: u32, range_px: f64) -> MsdfBitm
     fdsm_generate_msdf(&prepared, range_px, &mut image);
     correct_sign_msdf(&mut image, &prepared, FillRule::Nonzero);
 
-    MsdfBitmap {
+    Some(MsdfBitmap {
         width: size,
         height: size,
         pixels: image.into_raw(),
-    }
+    })
 }
+
+/// Font-design-unit threshold below which a bounding box's extent is
+/// treated as "no real ink" rather than genuine (if small) glyph detail.
+/// Several orders of magnitude below any real glyph's ink -- even a
+/// period/dot glyph spans tens of font units at typical `unitsPerEm`
+/// scales -- so this only catches a contour whose points are all
+/// coincident (a malformed/degenerate glyph), never a legitimately tiny
+/// one.
+const MIN_REAL_EXTENT: f32 = 1e-3;
 
 /// Axis-aligned min/max corners, in font design units, across every
 /// point (endpoints *and* control points) in `contours`. Using raw
@@ -86,6 +103,12 @@ pub fn generate_msdf(contours: &[Contour], size: u32, range_px: f64) -> MsdfBitm
 /// stays within the convex hull of its own control points, so this can
 /// only ever over-estimate the true bounding box slightly, never
 /// under-estimate it and clip the glyph.
+///
+/// Returns `None` for an empty `contours` slice, a slice whose points are
+/// all non-finite (e.g. from corrupted font data), or one whose points
+/// are all coincident -- a zero-or-near-zero-area bounding box that would
+/// otherwise force [`apply_fit_transform`] to fit content into
+/// essentially no extent at all.
 fn bounding_box(contours: &[Contour]) -> Option<([f32; 2], [f32; 2])> {
     let mut min = [f32::INFINITY, f32::INFINITY];
     let mut max = [f32::NEG_INFINITY, f32::NEG_INFINITY];
@@ -116,7 +139,15 @@ fn bounding_box(contours: &[Contour]) -> Option<([f32; 2], [f32; 2])> {
             }
         }
     }
-    (min[0].is_finite() && min[1].is_finite()).then_some((min, max))
+    if !(min[0].is_finite() && min[1].is_finite() && max[0].is_finite() && max[1].is_finite()) {
+        return None;
+    }
+    let width = max[0] - min[0];
+    let height = max[1] - min[1];
+    if width < MIN_REAL_EXTENT && height < MIN_REAL_EXTENT {
+        return None;
+    }
+    Some((min, max))
 }
 
 fn apply_fit_transform(
@@ -164,6 +195,17 @@ fn to_fdsm_shape(contours: &[Contour]) -> Shape<FdsmContour> {
 /// "current point." A contour whose flattened points don't already end
 /// exactly back at their own start needs one final explicit closing
 /// segment here, or the shape silently has a gap rather than erroring.
+///
+/// The closing check runs unconditionally after the loop (not only
+/// inside the `Close` arm) so this stays correct even for a contour that
+/// never contains an explicit `Close` segment at all -- legal in several
+/// outline formats, which can end a subpath implicitly via the next
+/// `MoveTo` instead. Today every contour this crate's own `outline`
+/// module produces does end in `Close` (skrifa's pen sequencing
+/// guarantees it), but that invariant lives entirely in skrifa's
+/// internals, not in anything asserted here -- this is a free,
+/// zero-cost-on-the-already-correct-path strengthening against a future
+/// producer that doesn't guarantee it.
 fn to_fdsm_contour(contour: &[OutlineSegment]) -> FdsmContour {
     let mut segments = Vec::new();
     let mut current = Point2::new(0.0, 0.0);
@@ -204,6 +246,9 @@ fn to_fdsm_contour(contour: &[OutlineSegment]) -> FdsmContour {
                 current = start;
             }
         }
+    }
+    if current != start && !segments.is_empty() {
+        segments.push(Segment::line(current, start));
     }
     FdsmContour { segments }
 }
@@ -269,7 +314,8 @@ mod tests {
 
     #[test]
     fn generate_msdf_of_a_solid_square_is_positive_inside_and_negative_outside() {
-        let bitmap = generate_msdf(&[unit_square_contour()], 32, 4.0);
+        let bitmap = generate_msdf(&[unit_square_contour()], 32, 4.0)
+            .expect("a real, non-degenerate square contour must produce a bitmap");
         assert_eq!(bitmap.pixels.len(), 32 * 32 * 3);
 
         // Deep interior of a solid square, comfortably inside: expect a
@@ -290,5 +336,23 @@ mod tests {
             "exterior median {exterior} should be comfortably below the inside/outside \
              threshold (127)"
         );
+    }
+
+    #[test]
+    fn generate_msdf_of_an_empty_glyph_returns_none_instead_of_panicking() {
+        // The realistic case this covers: U+0020 SPACE and similar
+        // no-ink glyphs legitimately produce zero contours from
+        // `glyph_outline`, not an error.
+        assert!(generate_msdf(&[], 32, 4.0).is_none());
+    }
+
+    #[test]
+    fn generate_msdf_of_a_contour_collapsed_to_a_single_point_returns_none() {
+        let degenerate = vec![
+            OutlineSegment::MoveTo([5.0, 5.0]),
+            OutlineSegment::LineTo([5.0, 5.0]),
+            OutlineSegment::Close,
+        ];
+        assert!(generate_msdf(&[degenerate], 32, 4.0).is_none());
     }
 }

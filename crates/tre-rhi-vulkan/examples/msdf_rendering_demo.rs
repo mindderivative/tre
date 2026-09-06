@@ -14,6 +14,9 @@ use skrifa::MetadataProvider;
 use tre_engine::{rgba8, RhiDevice, TextureFormat, UiVertex};
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 
+#[path = "support/pixel_helpers.rs"]
+mod pixel_helpers;
+
 const WIDTH: u32 = 300;
 const HEIGHT: u32 = 300;
 const MSDF_SIZE: u32 = 32;
@@ -78,7 +81,8 @@ fn main() {
         2,
         "'O' must be exactly two contours (outer boundary + hole)"
     );
-    let bitmap = tre_text::generate_msdf(&contours, MSDF_SIZE, RANGE_PX);
+    let bitmap = tre_text::generate_msdf(&contours, MSDF_SIZE, RANGE_PX)
+        .expect("'O' has real ink and must produce a bitmap");
 
     // fdsm's own output is RGB8; pad to RGBA8 for `TextureFormat::Rgba8Unorm`
     // (Step 4.2.3 task 1) -- 4-byte-aligned formats have far more
@@ -162,10 +166,7 @@ fn main() {
     // `read_pixels_bgra8` returns real BGRA memory order (Step 4.2.1's
     // Finding #93) -- swapped here so this demo's own comparisons stay in
     // the `[R,G,B,A]` order its own code otherwise assumes throughout.
-    let pixel_at = |x: u32, y: u32| -> [u8; 4] {
-        let idx = ((y * WIDTH + x) * 4) as usize;
-        [bgra[idx + 2], bgra[idx + 1], bgra[idx], bgra[idx + 3]]
-    };
+    let pixel_at = |x: u32, y: u32| -> [u8; 4] { pixel_helpers::bgra_pixel_at(&bgra, WIDTH, x, y) };
     let background = pixel_at(0, 0);
     eprintln!("background (clear color): {background:?}");
 

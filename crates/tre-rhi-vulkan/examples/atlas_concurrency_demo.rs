@@ -19,6 +19,9 @@ use tre_atlas::{AtlasKey, AtlasOwner, RasterSource};
 use tre_engine::{rgba8, RhiDevice, TextureFormat, UiVertex};
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 
+#[path = "support/pixel_helpers.rs"]
+mod pixel_helpers;
+
 const ATLAS_SIZE: u32 = 256;
 const MSDF_SIZE: u32 = 32;
 const RANGE_PX: f64 = 4.0;
@@ -42,7 +45,8 @@ impl RasterSource for GlyphRasterSource {
     }
 
     fn rasterize(&self) -> Vec<u8> {
-        let bitmap = tre_text::generate_msdf(&self.contours, MSDF_SIZE, RANGE_PX);
+        let bitmap = tre_text::generate_msdf(&self.contours, MSDF_SIZE, RANGE_PX)
+            .expect("every letter in WORD has real ink and must produce a bitmap");
         pad_rgb_to_rgba(&bitmap.pixels)
     }
 }
@@ -167,8 +171,11 @@ fn main() {
     }
     for (i, contours) in letters.iter().map(|(_, _, contours)| contours).enumerate() {
         let (rect, _generation) = placements[i];
-        let expected =
-            pad_rgb_to_rgba(&tre_text::generate_msdf(contours, MSDF_SIZE, RANGE_PX).pixels);
+        let expected = pad_rgb_to_rgba(
+            &tre_text::generate_msdf(contours, MSDF_SIZE, RANGE_PX)
+                .expect("every letter in WORD has real ink and must produce a bitmap")
+                .pixels,
+        );
         let bytes_per_row = (rect.width as usize) * 4;
         for row in 0..rect.height {
             let dest_x = rect.x as usize;
@@ -319,10 +326,8 @@ fn main() {
     let bgra = swapchain
         .read_pixels_bgra8()
         .expect("failed to read back pixels");
-    let pixel_at = |x: u32, y: u32| -> [u8; 4] {
-        let idx = ((y * CANVAS_WIDTH + x) * 4) as usize;
-        [bgra[idx + 2], bgra[idx + 1], bgra[idx], bgra[idx + 3]]
-    };
+    let pixel_at =
+        |x: u32, y: u32| -> [u8; 4] { pixel_helpers::bgra_pixel_at(&bgra, CANVAS_WIDTH, x, y) };
     let background = pixel_at(0, 0);
 
     // Every letter's own on-screen quad must contain *some* real

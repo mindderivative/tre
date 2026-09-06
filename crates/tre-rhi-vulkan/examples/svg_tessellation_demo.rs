@@ -17,6 +17,9 @@ use std::fmt::Write as _;
 use tre_engine::{rgba8, RhiDevice};
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 
+#[path = "support/pixel_helpers.rs"]
+mod pixel_helpers;
+
 const WIDTH: u32 = 300;
 const HEIGHT: u32 = 300;
 const CENTER: (f32, f32) = (150.0, 150.0);
@@ -117,10 +120,7 @@ fn main() {
     let bgra = swapchain
         .read_pixels_bgra8()
         .expect("failed to read back pixels");
-    let pixel_at = |x: u32, y: u32| -> [u8; 4] {
-        let idx = ((y * WIDTH + x) * 4) as usize;
-        [bgra[idx], bgra[idx + 1], bgra[idx + 2], bgra[idx + 3]]
-    };
+    let pixel_at = |x: u32, y: u32| -> [u8; 4] { pixel_helpers::bgra_pixel_at(&bgra, WIDTH, x, y) };
 
     // Never inside the star's own polygon at any radius -- the actual
     // clear-color background, read dynamically rather than hardcoding

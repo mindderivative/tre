@@ -11,6 +11,9 @@ use tre_atlas::{AtlasPacker, PackedRect};
 use tre_engine::{rgba8, RhiDevice, UiVertex};
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 
+#[path = "support/pixel_helpers.rs"]
+mod pixel_helpers;
+
 const WIDTH: u32 = 256;
 const HEIGHT: u32 = 256;
 
@@ -215,10 +218,7 @@ fn main() {
     // is the first place that swap actually needs to happen explicitly:
     // `PALETTE` above is written in [R, G, B] order, matching how a
     // person reads a color, not this framebuffer's raw memory layout.
-    let pixel_at = |x: u32, y: u32| -> [u8; 4] {
-        let idx = ((y * WIDTH + x) * 4) as usize;
-        [bgra[idx + 2], bgra[idx + 1], bgra[idx], bgra[idx + 3]]
-    };
+    let pixel_at = |x: u32, y: u32| -> [u8; 4] { pixel_helpers::bgra_pixel_at(&bgra, WIDTH, x, y) };
     let (bg_x, bg_y) = find_unpacked_probe(&placed);
     let background = pixel_at(bg_x, bg_y);
     eprintln!("background (clear color, sampled at an unpacked probe): {background:?}");

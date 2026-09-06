@@ -2987,8 +2987,19 @@ impl VulkanTexture {
         if width == 0 || height == 0 {
             return Err(EngineError::InvalidTextureData);
         }
-        let expected_len = u64::from(width) * u64::from(height) * bytes_per_pixel(format);
-        if pixels.len() as u64 != expected_len {
+        // Security-review finding: plain `u64` multiplication here can
+        // wrap around (this workspace's release profile has no
+        // `overflow-checks`), which for extreme attacker/caller-supplied
+        // width/height could silently produce a small `expected_len` that
+        // a small, real `pixels` buffer then passes against -- defeating
+        // the exact OOB-read protection this check (Phase 2 finding #66)
+        // exists to provide. `u128` has ample headroom for
+        // `u32::MAX * u32::MAX * 8` and is compared back against a `u64`
+        // pixel length via `try_from`, which fails (correctly rejecting
+        // the input) rather than wrapping if it ever doesn't fit.
+        let expected_len =
+            u128::from(width) * u128::from(height) * u128::from(bytes_per_pixel(format));
+        if pixels.len() as u128 != expected_len {
             return Err(EngineError::InvalidTextureData);
         }
 
@@ -3100,18 +3111,30 @@ impl VulkanTexture {
         // submission, this same file's `upload_buffer`).
         let staging = device.upload_buffer(pixels, vk::BufferUsageFlags::TRANSFER_SRC)?;
 
-        // Phase 2 Code Review finding #72: allocated from
-        // `upload_command_pool`, NOT the frame loop's `command_pool` --
-        // see that field's doc comment on `VulkanDevice` for why sharing
-        // one pool between the two would be an unsynchronized Vulkan spec
-        // violation.
+        // Phase 2 Code Review finding #72 (reopened and actually closed by
+        // the Phase 1-4 review): allocated from `upload_command_pool`, NOT
+        // the frame loop's `command_pool` -- see that field's doc comment
+        // on `VulkanDevice` for why sharing one pool between the two would
+        // be an unsynchronized Vulkan spec violation. The review found
+        // that the previous version of this code (`let upload_pool =
+        // *device.upload_command_pool.lock().expect(...);`) bound only the
+        // dereferenced `Copy` handle value, letting the `MutexGuard`
+        // temporary drop at the end of that statement -- so the lock was
+        // released *before* `allocate_command_buffers` below and long
+        // before `free_command_buffers` further down, leaving both
+        // spec-mandated-synchronized pool operations completely
+        // unguarded. The fix is to keep the guard itself alive (bound to
+        // `upload_pool_guard`, not just `_`) across the entire
+        // allocate -> record -> submit -> free sequence, dropping it
+        // explicitly right after the final `free_command_buffers` call.
         //
         // SAFETY: `upload_pool` is the valid, still-alive pool created in
         // `VulkanDevice::new`.
-        let upload_pool = *device
+        let upload_pool_guard = device
             .upload_command_pool
             .lock()
             .expect("upload command pool poisoned");
+        let upload_pool = *upload_pool_guard;
         let upload_cmd = unsafe {
             device.device.allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::default()
@@ -3256,6 +3279,10 @@ impl VulkanTexture {
                 .device
                 .free_command_buffers(upload_pool, &[upload_cmd]);
         }
+        // Only now, after the last operation that needed the pool
+        // externally synchronized, is it safe to let another thread's
+        // concurrent `create_texture` call proceed past its own `lock()`.
+        drop(upload_pool_guard);
 
         // Register into the bindless array: a free slot, assigned once,
         // written via a single `vkUpdateDescriptorSets` call. Exhausting
