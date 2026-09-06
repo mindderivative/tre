@@ -7,6 +7,7 @@ members = [
     "crates/tre-math",
     "crates/tre-svg",
     "crates/tre-text",
+    "crates/tre-atlas",
     "crates/tre-rhi-vulkan",
     "crates/tre-rhi-dx12",
     "crates/tre-rhi-metal",

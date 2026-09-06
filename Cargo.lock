@@ -664,6 +664,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tre-atlas"
+version = "0.1.0"
+
+[[package]]
 name = "tre-engine"
 version = "0.1.0"
 dependencies = [
@@ -721,6 +725,7 @@ dependencies = [
  "raw-window-handle",
  "rustybuzz",
  "skrifa",
+ "tre-atlas",
  "tre-engine",
  "tre-platform",
  "tre-svg",

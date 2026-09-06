@@ -403,6 +403,16 @@ scope" section for the full list; all deferred to Step 4.2 or later.
 
 * **Technical Rationale:** Using MSDF preserves sharp corners that traditional single-channel SDFs ruin. The Guillotine packer ensures highly efficient use of the $4096 \times 4096$ GPU atlas space.
 
+### Step 4.2.1: Guillotine Atlas Bin-Packing -- Status: Complete (2026-09-06)
+
+Split from Step 4.2's four largely independent tasks the same way Step 3.3 was split into 3.3.1-3.3.3 (`planning/archive/PLAN_PHASE4_STEP4_2_1.md`): this sub-step covers only task 1, the bin-packer itself. Task 2 (MSDF glyph generation, via `fdsm`, a real pure-Rust reimplementation of msdfgen's own published algorithm), task 3 (the MSDF evaluation shader plus a real anti-aliased glyph rendered end-to-end), and task 4 (multi-window atlas concurrency) are Steps 4.2.2-4.2.4.
+
+A new `tre-atlas` crate (`#![forbid(unsafe_code)]`) -- not folded into `tre-text`, since ARCHITECTURE.md Section 2.3/DESIGN.md Section 10.2 describe the atlas as shared by MSDF glyphs *and* plain-color icon/vector-decal entries, not text-exclusive. `AtlasPacker::insert` maintains a free-rectangle list, selects the tightest-fitting free rectangle via Best Area Fit, and performs a real guillotine split into exactly two non-overlapping leftover rectangles -- chosen by actually building both candidate cuts and comparing their larger resulting piece's area, not approximated from raw leftover dimensions (a worked 100x100/90x10 example in `tre-atlas`'s own tests demonstrates why the shortcut approximation picks the wrong cut). Insertion only this sub-step -- no eviction/removal (not named in this step's task list; LRU reclamation is separate, DESIGN.md Section 10.2 future work) and no free-rectangle merging (a deliberate, documented simplification).
+
+Verified both by unit tests (an overlap-invariant check across a varied insertion sequence, an exactly-fills-the-atlas hand-worked case, and the split-heuristic worked example above) and by `atlas_packing_demo`, which packs 12 varied rectangle sizes into a real 256x256 atlas and renders each through the pre-existing, unmodified flat-color pipeline, reading back real pixels to confirm every placement's own center is its own color and at least one unpacked point stays background.
+
+This sub-step's own demo surfaced a real, previously-invisible engine finding, unrelated to the packer itself: `walking_skeleton.frag` never performs the sRGB-to-linear conversion `UiVertex::color`'s doc comment promises, because every demo before this one rendered only pure white/black (fixed points of any gamma curve). Confirmed via TECHNICAL.md Section 6's own canonical formula that this is Step 7.1's explicit, already-scheduled job, not a regression -- not fixed here; this step's own demo instead uses only 0/255-channel colors, which round-trip correctly both before and after Step 7.1 lands.
+
 ## Phase 5: Multi-Threaded Canvas API & Metadata
 
 ### Step 5.1: The Canvas Command Recorder

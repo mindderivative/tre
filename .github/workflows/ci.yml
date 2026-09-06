@@ -120,3 +120,4 @@ jobs:
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example svg_morph_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example stencil_and_cover_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example text_shaping_demo
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example atlas_packing_demo

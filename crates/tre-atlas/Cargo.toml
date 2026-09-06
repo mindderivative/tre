@@ -1,0 +1,13 @@
+[package]
+name = "tre-atlas"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = "warn"
+
+[dependencies]
