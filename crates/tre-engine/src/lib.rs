@@ -318,6 +318,29 @@ pub struct FlattenedFrame {
     pub commands: Vec<UiDrawCommand>,
 }
 
+/// One level of the Drawing Context's hierarchical state stack
+/// (DESIGN.md Section 6.1: "dynamic coordinate space transformations
+/// [and] global alpha multipliers... via `Canvas::save()` and
+/// `Canvas::restore()`"). Deliberately holds only transform and alpha --
+/// DESIGN.md's own Section 6 architecture diagram lists a *separate*
+/// "Dynamic Scissor / Mask Clip Stack (`PushClip`, `PopClip`)" as a distinct
+/// mechanism from this one, and blend mode stays deferred alongside
+/// `LayerDesc`'s own visual-filter fields until a later phase implements
+/// them (IMPLEMENTATION.md Step 5.1.1).
+#[derive(Debug, Clone, Copy)]
+struct CanvasState {
+    /// World transform accumulated by nested `Canvas::transform()` calls
+    /// since the last `save()` -- composed via `Affine2::compose`
+    /// (`tre-math`, Phase 3 Step 3.1), not reimplemented here.
+    transform: tre_math::Affine2,
+    /// Effective (already-multiplied-down) alpha for this stack level --
+    /// `Canvas::set_alpha()` multiplies onto whatever `save()` copied
+    /// forward, so nested group opacity compounds correctly (a child at
+    /// local alpha 0.5 inside a parent already at effective 0.5 renders
+    /// at effective 0.25).
+    alpha: f32,
+}
+
 /// Phase 0 stub: records `Canvas::draw_rounded_rect` calls into a plain
 /// `Vec` (IMPLEMENTATION.md Phase 0, task 2 -- "no ring buffer, no arena,
 /// no multi-threading yet"). Phase 2 Step 1 builds the real RHI-side ring
@@ -328,6 +351,12 @@ pub struct FlattenedFrame {
 /// consumes a ring-buffer offset yet (the sort/batch/execute pipeline,
 /// IMPLEMENTATION.md Phase 6, is what would), so wiring it in now would
 /// be plumbing with no real consumer to verify it against. Deferred.
+///
+/// IMPLEMENTATION.md Step 5.1.1 added the real Drawing Context state:
+/// `state_stack` (transform + alpha, `save`/`restore`) and `clip_stack`
+/// (scissor rects, `push_clip`/`pop_clip`) are two genuinely separate
+/// stacks, per `CanvasState`'s own doc comment -- not one bundled state
+/// object.
 #[derive(Default)]
 pub struct RenderingCanvas {
     vertices: Vec<UiVertex>,
@@ -340,12 +369,140 @@ pub struct RenderingCanvas {
     /// entirely, so `push_layer`/`pop_layer`'s own bodies don't need
     /// separate debug/release code paths.
     layer_depth: u32,
+    /// The Drawing Context's transform/alpha stack (Step 5.1.1). Always
+    /// has at least one entry -- the base level `save`/`restore` can
+    /// never pop past -- so every read of `.last()` is infallible by
+    /// construction, not just by convention.
+    state_stack: Vec<CanvasState>,
+    /// The independent scissor-clip stack (Step 5.1.1). Empty means "no
+    /// clip, full window" -- the same sentinel `draw_rounded_rect`
+    /// already used unconditionally before this step. Its own length
+    /// doubles as the balance counter `flatten()` checks; no separate
+    /// counter field is needed the way `layer_depth` needs one, since
+    /// `push_layer`/`pop_layer` record no per-call stack data of their
+    /// own to count instead.
+    clip_stack: Vec<ScissorRect>,
 }
 
 impl RenderingCanvas {
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            state_stack: vec![CanvasState {
+                transform: tre_math::Affine2::IDENTITY,
+                alpha: 1.0,
+            }],
+            ..Self::default()
+        }
+    }
+
+    /// Pushes a copy of the current transform/alpha state -- subsequent
+    /// `transform()`/`set_alpha()` calls mutate only this new top level,
+    /// leaving the saved one intact for `restore()` to return to.
+    ///
+    /// # Panics
+    /// Never in practice: `state_stack` always holds at least one entry
+    /// by construction (`new()` seeds it, and only `restore()` -- itself
+    /// guarded against popping the last one -- ever removes an entry).
+    pub fn save(&mut self) {
+        let top = *self
+            .state_stack
+            .last()
+            .expect("state_stack must always have at least one entry");
+        self.state_stack.push(top);
+    }
+
+    /// Pops back to the previously saved transform/alpha state.
+    ///
+    /// # Panics
+    /// Panics if called without a matching prior `save()` -- popping the
+    /// base level would leave no active state at all, a programmer error
+    /// (DESIGN.md Section 2.6), matching `pop_layer`'s own precedent of
+    /// failing immediately (not just at `flatten()`) on this exact class
+    /// of mistake.
+    pub fn restore(&mut self) {
+        assert!(
+            self.state_stack.len() > 1,
+            "restore() called without a matching save()"
+        );
+        self.state_stack.pop();
+    }
+
+    /// Composes `matrix` onto the current top-of-stack transform
+    /// (`world_child = world_parent * local_child`, DESIGN.md Section
+    /// 7.1's convention) -- reuses `Affine2::compose` directly rather
+    /// than reimplementing matrix multiplication here.
+    ///
+    /// # Panics
+    /// Never in practice -- see `save()`'s own `# Panics` section for why
+    /// `state_stack` is never empty.
+    pub fn transform(&mut self, matrix: &tre_math::Affine2) {
+        let top = self
+            .state_stack
+            .last_mut()
+            .expect("state_stack must always have at least one entry");
+        top.transform = top.transform.compose(matrix);
+    }
+
+    /// Multiplies the current top-of-stack's effective alpha by `factor`
+    /// -- see `CanvasState::alpha`'s own doc comment for why this
+    /// compounds rather than replaces.
+    ///
+    /// # Panics
+    /// Never in practice -- see `save()`'s own `# Panics` section for why
+    /// `state_stack` is never empty.
+    pub fn set_alpha(&mut self, factor: f32) {
+        let top = self
+            .state_stack
+            .last_mut()
+            .expect("state_stack must always have at least one entry");
+        top.alpha *= factor;
+    }
+
+    /// Intersects `rect` with the current clip (or uses it directly if
+    /// nothing is clipped yet), pushes the result, and emits a real
+    /// `PushScissor` command -- the variant has existed since Phase 0 but
+    /// this is its first real emission.
+    pub fn push_clip(&mut self, rect: &ScissorRect) {
+        let intersected = match self.clip_stack.last() {
+            Some(&current) => intersect_scissor(current, *rect),
+            None => *rect,
+        };
+        self.clip_stack.push(intersected);
+        self.commands.push(UiDrawCommand {
+            kind: CommandType::PushScissor,
+            sort_key: 0,
+            pipeline_state_id: 0,
+            texture_handle: 0,
+            element_count: 0,
+            vertex_offset: 0,
+            clip_bounds: intersected,
+        });
+    }
+
+    /// Pops the clip stack and emits a real `PopScissor` command.
+    ///
+    /// # Panics
+    /// Panics if called without a matching prior `push_clip()`, same
+    /// immediate-failure precedent as `restore()`/`pop_layer()`.
+    pub fn pop_clip(&mut self) {
+        self.clip_stack
+            .pop()
+            .expect("pop_clip() called without a matching push_clip()");
+        self.commands.push(UiDrawCommand {
+            kind: CommandType::PopScissor,
+            sort_key: 0,
+            pipeline_state_id: 0,
+            texture_handle: 0,
+            element_count: 0,
+            vertex_offset: 0,
+            clip_bounds: ScissorRect {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            },
+        });
     }
 
     /// Records a `PushLayer` IR marker (DESIGN.md Section 6.2) and
@@ -408,14 +565,31 @@ impl RenderingCanvas {
     /// self-overlapping, visually wrong shape from this exact formula, not
     /// a crash, but a real, easy caller mistake worth guarding against at
     /// the one place it's constructed. Each corner's `uv` is that corner's
-    /// offset from the rect's center, in the same pixel units as
-    /// `position` (ARCHITECTURE.md Section 3.1's "Texture coordinates or
-    /// SDF bounds" convention) -- linear interpolation across the quad's
-    /// two triangles reproduces the exact local `(x, y)` offset at every
+    /// offset from the rect's center, in *local* (untransformed) pixel
+    /// units (ARCHITECTURE.md Section 3.1's "Texture coordinates or SDF
+    /// bounds" convention) -- linear interpolation across the quad's two
+    /// triangles reproduces the exact local `(x, y)` offset at every
     /// fragment, the standard technique for evaluating a box SDF from a
     /// single quad. `params` is `[radius, half_width, half_height]`,
     /// uniform across all 4 vertices since the vertex format has no
-    /// per-quad channel.
+    /// per-quad channel. `uv`/`params` deliberately stay in local space
+    /// even though `position` does not (see below) -- the SDF shader
+    /// evaluates the rounded-rect formula against the rect's own local
+    /// half-extents, which must stay a true rectangle regardless of
+    /// whatever the active transform does to the rect's screen position
+    /// (e.g. a rotation).
+    ///
+    /// IMPLEMENTATION.md Step 5.1.1: `position` is the active
+    /// `Canvas::transform()`'s `Affine2` applied to each raw corner (world
+    /// space, not local); `rgba`'s alpha channel is scaled by the active
+    /// `Canvas::set_alpha()` effective alpha (`premultiply_alpha`, below); the
+    /// emitted command's `clip_bounds` is the current `push_clip()` top,
+    /// or the previous unconditional "full window" sentinel if nothing is
+    /// clipped.
+    ///
+    /// # Panics
+    /// Never in practice -- see `save()`'s own `# Panics` section for why
+    /// `state_stack` is never empty.
     #[allow(
         clippy::cast_possible_truncation,
         reason = "a single frame's vertex/index count stays far below u32::MAX, \
@@ -430,32 +604,29 @@ impl RenderingCanvas {
         let radius = radius.clamp(0.0, half_width.min(half_height));
         let params = [radius, half_width, half_height];
 
-        self.vertices.extend_from_slice(&[
-            UiVertex {
-                position: [x, y],
-                uv: [-half_width, -half_height],
-                color: rgba,
-                params,
-            },
-            UiVertex {
-                position: [x + w, y],
-                uv: [half_width, -half_height],
-                color: rgba,
-                params,
-            },
-            UiVertex {
-                position: [x + w, y + h],
-                uv: [half_width, half_height],
-                color: rgba,
-                params,
-            },
-            UiVertex {
-                position: [x, y + h],
-                uv: [-half_width, half_height],
-                color: rgba,
-                params,
-            },
-        ]);
+        let state = *self
+            .state_stack
+            .last()
+            .expect("state_stack must always have at least one entry");
+        let color = premultiply_alpha(rgba, state.alpha);
+        let positions = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+        let uvs = [
+            [-half_width, -half_height],
+            [half_width, -half_height],
+            [half_width, half_height],
+            [-half_width, half_height],
+        ];
+        self.vertices.extend(
+            positions
+                .into_iter()
+                .zip(uvs)
+                .map(|(position, uv)| UiVertex {
+                    position: state.transform.transform_point(position),
+                    uv,
+                    color,
+                    params,
+                }),
+        );
         self.indices.extend_from_slice(&[
             base_vertex,
             base_vertex + 1,
@@ -465,6 +636,12 @@ impl RenderingCanvas {
             base_vertex + 3,
         ]);
 
+        let clip_bounds = self.clip_stack.last().copied().unwrap_or(ScissorRect {
+            x: 0,
+            y: 0,
+            width: u32::MAX,
+            height: u32::MAX,
+        });
         self.commands.push(UiDrawCommand {
             kind: CommandType::DrawGeometry,
             sort_key: 0, // Phase 0: single command, sorts itself.
@@ -472,12 +649,7 @@ impl RenderingCanvas {
             texture_handle: 0,
             element_count: 6,
             vertex_offset: base_index,
-            clip_bounds: ScissorRect {
-                x: 0,
-                y: 0,
-                width: u32::MAX,
-                height: u32::MAX,
-            },
+            clip_bounds,
         });
     }
 
@@ -487,22 +659,91 @@ impl RenderingCanvas {
     /// there is only ever one element -- "one element sorts itself"
     /// (IMPLEMENTATION.md Phase 0, task 3).
     /// # Panics
-    /// In debug builds, panics if `push_layer`/`pop_layer` calls are
-    /// unbalanced at frame boundary (IMPLEMENTATION.md Step 2.2 task 5) --
-    /// an unreleased transient target otherwise starves the pool silently
-    /// over many frames instead of failing loudly at the actual bug.
-    /// Compiled out in release builds along with the counter's checks.
+    /// In debug builds, panics if `push_layer`/`pop_layer` calls, `save`/
+    /// `restore` calls, or `push_clip`/`pop_clip` calls are unbalanced at
+    /// frame boundary (IMPLEMENTATION.md Step 2.2 task 5, extended by Step
+    /// 5.1.1 to the two new stacks) -- an unreleased transient target,
+    /// transform/alpha level, or clip rect otherwise leaks silently into
+    /// the next frame instead of failing loudly at the actual bug.
+    /// Compiled out in release builds along with the counters' checks.
     #[must_use]
     pub fn flatten(self) -> FlattenedFrame {
         debug_assert_eq!(
             self.layer_depth, 0,
             "push_layer/pop_layer calls are unbalanced at frame boundary"
         );
+        debug_assert_eq!(
+            self.state_stack.len(),
+            1,
+            "save/restore calls are unbalanced at frame boundary"
+        );
+        debug_assert!(
+            self.clip_stack.is_empty(),
+            "push_clip/pop_clip calls are unbalanced at frame boundary"
+        );
         FlattenedFrame {
             vertices: self.vertices,
             indices: self.indices,
             commands: self.commands,
         }
+    }
+}
+
+/// Scales all four of `color`'s channels (`UiVertex::color`'s established
+/// little-endian `[r, g, b, a]` layout, see `rgba8`'s own doc comment) by
+/// `factor`, rounding each to the nearest `u8` and clamping to `[0, 255]`
+/// rather than wrapping -- `factor` is a product of possibly many nested
+/// `set_alpha()` calls and could in principle exceed `1.0` or go negative
+/// from a caller mistake; clamping keeps that a visually wrong but
+/// harmless result, not a wrapped-around color channel.
+///
+/// Scaling R/G/B too, not just A, is load-bearing, not an approximation:
+/// `sdf_rounded_rect.frag`'s own comment states "ARCHITECTURE.md Section
+/// 6.1's blend state expects premultiplied alpha," and its output is
+/// `vec4(frag_color.rgb * coverage, frag_color.a * coverage)` -- coverage
+/// (the SDF anti-aliasing term) is the only factor ever multiplied into
+/// `frag_color.rgb` there. A vertex color's *own* alpha reduction has to
+/// already be premultiplied into its own RGB before it ever reaches that
+/// shader, or the result is a genuinely over-bright premultiplied color
+/// (`rgb / a > 1.0`) that the GPU silently clamps back to fully opaque --
+/// confirmed by actually running `canvas_state_stack_demo` during this
+/// step's own implementation: scaling only the alpha byte rendered Rect
+/// B's 50%-alpha square as indistinguishable from fully opaque, not the
+/// visible blend `Canvas::set_alpha` is supposed to produce.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "explicitly clamped to [0.0, 255.0] immediately before this cast"
+)]
+fn premultiply_alpha(color: u32, factor: f32) -> u32 {
+    let [r, g, b, a] = color.to_le_bytes();
+    let scale = |channel: u8| (f32::from(channel) * factor).round().clamp(0.0, 255.0) as u8;
+    u32::from_le_bytes([scale(r), scale(g), scale(b), scale(a)])
+}
+
+/// The overlapping region of two scissor rects, in the same coordinate
+/// space -- `Canvas::push_clip`'s own narrowing operation. An empty
+/// (zero-area) result if the two rects don't overlap at all, not a
+/// negative-size rect: `(x1 - x0)`/`(y1 - y0)` are clamped to `0` before
+/// the final cast, so a caller pushing two disjoint clips gets a real,
+/// harmless "clip everything" rect rather than a `u32` underflow.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_wrap,
+    reason = "scissor rect coordinates and extents stay far below i32::MAX for any real window \
+               size, and the width/height subtraction below is clamped to 0 before the final cast"
+)]
+fn intersect_scissor(a: ScissorRect, b: ScissorRect) -> ScissorRect {
+    let x0 = a.x.max(b.x);
+    let y0 = a.y.max(b.y);
+    let x1 = (a.x + a.width as i32).min(b.x + b.width as i32);
+    let y1 = (a.y + a.height as i32).min(b.y + b.height as i32);
+    ScissorRect {
+        x: x0,
+        y: y0,
+        width: (x1 - x0).max(0) as u32,
+        height: (y1 - y0).max(0) as u32,
     }
 }
 
@@ -982,5 +1223,175 @@ mod tests {
     fn pop_layer_without_push_panics_immediately() {
         let mut canvas = RenderingCanvas::new();
         canvas.pop_layer();
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact arithmetic on literal f32s (whole-number translation, no rounding), \
+                   same reasoning as tre-math's Step 3.1 exact-arithmetic tests"
+    )]
+    fn save_transform_restore_translates_then_reverts_to_untransformed() {
+        let mut canvas = RenderingCanvas::new();
+        canvas.save();
+        canvas.transform(&tre_math::Affine2::from_translation(100.0, 200.0));
+        canvas.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFF00_FFFF);
+        canvas.restore();
+        canvas.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFF00_FFFF);
+        let frame = canvas.flatten();
+
+        // First rect: translated by (100, 200).
+        assert_eq!(frame.vertices[0].position, [100.0, 200.0]);
+        assert_eq!(frame.vertices[2].position, [110.0, 210.0]);
+        // Second rect, after restore(): back to raw, untransformed positions.
+        assert_eq!(frame.vertices[4].position, [0.0, 0.0]);
+        assert_eq!(frame.vertices[6].position, [10.0, 10.0]);
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact arithmetic on literal f32s (whole-number translations, no rounding), \
+                   same reasoning as tre-math's Step 3.1 exact-arithmetic tests"
+    )]
+    fn nested_save_transform_composes_both_translations() {
+        let mut canvas = RenderingCanvas::new();
+        canvas.save();
+        canvas.transform(&tre_math::Affine2::from_translation(100.0, 0.0));
+        canvas.save();
+        canvas.transform(&tre_math::Affine2::from_translation(0.0, 50.0));
+        canvas.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFF00_FFFF);
+        canvas.restore();
+        canvas.restore();
+        let frame = canvas.flatten();
+
+        // The combined offset (100, 50) predicts the top-left corner.
+        assert_eq!(frame.vertices[0].position, [100.0, 50.0]);
+    }
+
+    #[test]
+    fn nested_set_alpha_compounds_multiplicatively() {
+        let mut canvas = RenderingCanvas::new();
+        canvas.save();
+        canvas.set_alpha(0.5);
+        canvas.save();
+        canvas.set_alpha(0.5);
+        canvas.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, rgba8(255, 255, 255, 255));
+        canvas.restore();
+        canvas.restore();
+        let frame = canvas.flatten();
+
+        // Effective alpha 0.5 * 0.5 = 0.25 -> byte 64 (255 * 0.25, rounded).
+        let [_, _, _, a] = frame.vertices[0].color.to_le_bytes();
+        assert_eq!(a, 64);
+    }
+
+    #[test]
+    #[should_panic(expected = "without a matching save()")]
+    fn restore_without_save_panics_immediately() {
+        let mut canvas = RenderingCanvas::new();
+        canvas.restore();
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(debug_assertions),
+        ignore = "the balance assertion is a debug_assert, compiled out in release"
+    )]
+    #[should_panic(expected = "save/restore calls are unbalanced")]
+    fn unbalanced_save_panics_at_flatten() {
+        let mut canvas = RenderingCanvas::new();
+        canvas.save();
+        let _ = canvas.flatten();
+    }
+
+    #[test]
+    fn push_clip_intersects_a_narrower_rect_and_pop_clip_restores_the_wider_one() {
+        let mut canvas = RenderingCanvas::new();
+        canvas.push_clip(&ScissorRect {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 100,
+        });
+        canvas.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFF00_FFFF);
+        canvas.push_clip(&ScissorRect {
+            x: 20,
+            y: 20,
+            width: 30,
+            height: 30,
+        });
+        canvas.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFF00_FFFF);
+        canvas.pop_clip();
+        canvas.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFF00_FFFF);
+        canvas.pop_clip();
+        let frame = canvas.flatten();
+
+        // Commands: PushScissor, DrawGeometry, PushScissor, DrawGeometry,
+        // PopScissor, DrawGeometry, PopScissor.
+        assert_eq!(
+            frame.commands[0].clip_bounds,
+            ScissorRect {
+                x: 0,
+                y: 0,
+                width: 100,
+                height: 100
+            }
+        );
+        assert_eq!(
+            frame.commands[1].clip_bounds,
+            ScissorRect {
+                x: 0,
+                y: 0,
+                width: 100,
+                height: 100
+            },
+            "the first rect must be clipped to the outer 100x100 region"
+        );
+        let intersected = ScissorRect {
+            x: 20,
+            y: 20,
+            width: 30,
+            height: 30,
+        };
+        assert_eq!(frame.commands[2].clip_bounds, intersected);
+        assert_eq!(
+            frame.commands[3].clip_bounds, intersected,
+            "the nested rect must be clipped to the intersected 30x30 region"
+        );
+        assert_eq!(
+            frame.commands[5].clip_bounds,
+            ScissorRect {
+                x: 0,
+                y: 0,
+                width: 100,
+                height: 100
+            },
+            "after pop_clip(), the wider clip must be restored exactly"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "without a matching push_clip()")]
+    fn pop_clip_without_push_panics_immediately() {
+        let mut canvas = RenderingCanvas::new();
+        canvas.pop_clip();
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(debug_assertions),
+        ignore = "the balance assertion is a debug_assert, compiled out in release"
+    )]
+    #[should_panic(expected = "push_clip/pop_clip calls are unbalanced")]
+    fn unbalanced_push_clip_panics_at_flatten() {
+        let mut canvas = RenderingCanvas::new();
+        canvas.push_clip(&ScissorRect {
+            x: 0,
+            y: 0,
+            width: 10,
+            height: 10,
+        });
+        let _ = canvas.flatten();
     }
 }

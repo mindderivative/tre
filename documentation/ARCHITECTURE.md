@@ -108,6 +108,8 @@ struct UiVertex {
 const _: () = assert!(std::mem::size_of::<UiVertex>() == 32);
 ```
 
+*Confirmed by Phase 5 Step 5.1.1 (2026-09-07):* `color` must already be premultiplied by whatever effective alpha the caller wants -- not just carry a reduced alpha channel with RGB left at full brightness. Section 6.1's premultiplied-alpha blend state is only correct if its *input* is already premultiplied, and the existing `sdf_rounded_rect.frag` shader (Step 3.2) only ever multiplies `frag_color.rgb` by the SDF's own coverage term, never by `frag_color.a`; a vertex color with `a < 255` but RGB left un-scaled produces an over-bright premultiplied value once coverage is folded in, which the GPU silently clamps back to fully opaque. `RenderingCanvas::draw_rounded_rect`'s own `premultiply_alpha` helper scales all four channels together for exactly this reason -- confirmed by a real GPU render during that step's own implementation, not just reasoned through in the abstract. Any future primitive that writes `UiVertex::color` directly (`draw_text`, `draw_path`, `draw_svg` -- Step 5.1.2 onward) needs to follow the same convention.
+
 `#[repr(C, align(16))]` fixes field order and padding to match a plain C struct, so the layout is deterministic across compilers and matches the GPU-side vertex input layout exactly -- this type does not itself cross the Python FFI boundary (TECHNICAL.md Section 9.4), but the same determinism requirement applies to any type that does.
 
 ### 3.2 Intermediate Representation (IR)
