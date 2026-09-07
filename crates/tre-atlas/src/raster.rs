@@ -32,4 +32,10 @@ pub trait RasterSource: Send {
 pub struct AtlasInsertRequest {
     pub key: AtlasKey,
     pub raster_source: Box<dyn RasterSource>,
+    /// The requesting thread's own notion of "what frame is it right
+    /// now" (Step 4.3.3) -- the only way the atlas owner's background
+    /// thread, which otherwise has no concept of frames at all, learns
+    /// what frame number to weigh its own LRU eviction check against
+    /// (DESIGN.md Section 10.2) before attempting to pack this request.
+    pub current_frame: u64,
 }

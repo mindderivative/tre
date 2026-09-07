@@ -32,6 +32,18 @@ impl From<AtlasKey> for u64 {
     }
 }
 
+impl From<u64> for AtlasKey {
+    /// The reverse of `From<AtlasKey> for u64` above -- reconstructs a
+    /// key from the raw `u64` [`tre_memory::SwmrSlotTable::scan_older_than`]
+    /// yields (Step 4.3.3's eviction policy). Safe unconditionally: that
+    /// method only ever yields a raw key that was a real, successfully
+    /// inserted (non-reserved-sentinel) entry, so there is no invalid
+    /// `u64` this constructor could be handed in practice.
+    fn from(raw: u64) -> AtlasKey {
+        AtlasKey(raw)
+    }
+}
+
 // 13 bits per coordinate covers the stated production atlas size
 // (DESIGN.md/IMPLEMENTATION.md: 4096x4096) *inclusive* of a rect whose
 // width or height is the full 4096 -- e.g. a single glyph/icon placed

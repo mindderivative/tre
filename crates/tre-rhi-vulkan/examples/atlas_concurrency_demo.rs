@@ -113,6 +113,7 @@ fn main() {
                         Box::new(GlyphRasterSource {
                             contours: contours.clone(),
                         }),
+                        0,
                     ) {
                         // Waiting on the same owner thread to drain
                         // queue space -- a real `sleep`, not
@@ -141,7 +142,7 @@ fn main() {
     for &key in &keys {
         let mut resolved = None;
         for _ in 0..500 {
-            if let Some(result) = handle.lookup(key) {
+            if let Some(result) = handle.lookup(key, 0) {
                 resolved = Some(result);
                 break;
             }

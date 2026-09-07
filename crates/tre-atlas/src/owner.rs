@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use tre_memory::{MpscRingBuffer, SwmrSlotTable};
 
-use crate::key::pack_slot_value;
+use crate::key::{pack_slot_value, unpack_slot_value};
 use crate::raster::AtlasInsertRequest;
 use crate::{AtlasKey, AtlasPacker, PackedRect};
 
@@ -23,6 +23,14 @@ use crate::{AtlasKey, AtlasPacker, PackedRect};
 /// the OS between the two calls) -- a correctness backstop, not the
 /// normal wakeup path, which is the `unpark` call itself.
 const PARK_TIMEOUT: Duration = Duration::from_millis(5);
+
+/// DESIGN.md Section 10.2: "when an atlas space capacity exceeds 85%,
+/// the engine runs an asynchronous LRU garbage collection pass."
+const EVICTION_CAPACITY_THRESHOLD: f64 = 0.85;
+
+/// DESIGN.md Section 10.2: "evicting stale glyphs... that have not been
+/// rendered within the last N frames (e.g., N >= 600 frames)."
+const EVICTION_MIN_IDLE_FRAMES: u64 = 600;
 
 enum OwnerMessage {
     Insert(AtlasInsertRequest),
@@ -51,11 +59,18 @@ impl AtlasOwnerHandle {
     /// processed (the owner thread has already stopped polling the
     /// queue), silently leaving `lookup` returning `None` forever with no
     /// way for the caller to distinguish that from "still pending".
+    ///
+    /// `current_frame` (Step 4.3.3) is the caller's own notion of "what
+    /// frame is it right now" -- the only way the owner's background
+    /// thread learns what frame number to weigh its own LRU eviction
+    /// check (DESIGN.md Section 10.2) against before attempting to pack
+    /// this request.
     #[must_use]
     pub fn request_insert(
         &self,
         key: AtlasKey,
         raster_source: Box<dyn crate::RasterSource>,
+        current_frame: u64,
     ) -> bool {
         if self.closed.load(Ordering::Acquire) {
             return false;
@@ -65,6 +80,7 @@ impl AtlasOwnerHandle {
             .push(OwnerMessage::Insert(AtlasInsertRequest {
                 key,
                 raster_source,
+                current_frame,
             }))
             .is_ok();
         if ok {
@@ -77,13 +93,22 @@ impl AtlasOwnerHandle {
     }
 
     /// Looks up `key`'s current atlas placement, or `None` if it hasn't
-    /// been requested yet, or has been requested but not yet processed --
-    /// deliberately indistinguishable from a reader's perspective
-    /// (DESIGN.md Section 2.6's placeholder-glyph fallback responds to
-    /// both the same way: use a placeholder this frame, re-check later).
+    /// been requested yet, has been requested but not yet processed, or
+    /// has since been evicted (Step 4.3.3) -- deliberately
+    /// indistinguishable from a reader's perspective (DESIGN.md Section
+    /// 2.6's placeholder-glyph fallback responds to all three the same
+    /// way: use a placeholder this frame, re-check/re-request later).
+    ///
+    /// `current_frame` records this read as evidence `key` is still
+    /// genuinely in use as of this frame (`SwmrSlotTable::get_and_touch`,
+    /// Step 4.3.1) -- a resident glyph that keeps getting looked up every
+    /// frame it's actually rendered never goes stale enough to be
+    /// evicted, which is the entire point of tracking recency at all.
     #[must_use]
-    pub fn lookup(&self, key: AtlasKey) -> Option<(PackedRect, u16)> {
-        self.slots.get(key).map(crate::key::unpack_slot_value)
+    pub fn lookup(&self, key: AtlasKey, current_frame: u64) -> Option<(PackedRect, u16)> {
+        self.slots
+            .get_and_touch(key, current_frame)
+            .map(crate::key::unpack_slot_value)
     }
 }
 
@@ -195,11 +220,14 @@ fn process_insert(
     slots: &SwmrSlotTable<AtlasKey>,
     request: AtlasInsertRequest,
 ) {
+    maybe_evict_stale_entries(packer, slots, request.current_frame);
+
     let (width, height) = request.raster_source.size();
-    // A request the packer can't currently fit is silently dropped --
-    // this step builds no eviction/reclamation at all (Step 4.2.1's own
-    // deferred future work), so there is nothing more this step's owner
-    // could correctly do about it yet.
+    // A request the packer still can't fit even after the eviction pass
+    // above (e.g. the atlas is genuinely undersized for its real workload,
+    // not merely fragmented with stale entries) is silently dropped --
+    // matching DESIGN.md Section 2.6's "report, don't block" contract;
+    // there is nothing more this owner could correctly do about it.
     let Some(rect) = packer.insert(width, height) else {
         return;
     };
@@ -218,12 +246,51 @@ fn process_insert(
     copy_into_atlas(buffer, atlas_width, rect, &pixels);
     let packed = pack_slot_value(rect, 0);
     // A full slot table is reported the same way a full packer is above
-    // -- silently, since this step has nothing more correct to do about
-    // it yet (no eviction). The rect this glyph just took from the
-    // packer is not reclaimed either way; sizing `slot_capacity`
-    // generously relative to the real number of distinct keys a caller
-    // expects is that caller's own responsibility.
-    let _ = slots.insert(request.key, packed);
+    // -- silently; the caller is responsible for sizing `slot_capacity`
+    // generously relative to the real number of distinct keys expected to
+    // be resident at once (eviction reclaims *stale* slots, not capacity
+    // itself).
+    if slots.insert(request.key, packed) {
+        // Stamps this brand-new entry as used as of right now (Step
+        // 4.3.3's cold-start fix): `SwmrSlotTable::insert` resets a
+        // freshly claimed slot's recency to 0, which would otherwise make
+        // it look maximally stale the instant any *later* insert crosses
+        // `EVICTION_CAPACITY_THRESHOLD` -- evicting content before it's
+        // ever had a chance to be read. Treating insertion itself as an
+        // access is standard LRU-cache practice, not a special case.
+        let _ = slots.get_and_touch(request.key, request.current_frame);
+    }
+}
+
+/// DESIGN.md Section 10.2's LRU eviction policy: once the atlas is over
+/// `EVICTION_CAPACITY_THRESHOLD` full, every entry not read (via
+/// `AtlasOwnerHandle::lookup`) or inserted within the last
+/// `EVICTION_MIN_IDLE_FRAMES` frames is evicted in one pass -- its table
+/// slot freed via `SwmrSlotTable::remove` and its atlas space freed via
+/// `AtlasPacker::remove`, paired per entry so neither a leaked rect nor a
+/// resurrected key with no backing space can result from only doing one
+/// half. A no-op below the capacity threshold, regardless of how stale
+/// any individual entry is -- capacity, not age alone, gates eviction.
+fn maybe_evict_stale_entries(
+    packer: &mut AtlasPacker,
+    slots: &SwmrSlotTable<AtlasKey>,
+    current_frame: u64,
+) {
+    if packer.used_fraction() < EVICTION_CAPACITY_THRESHOLD {
+        return;
+    }
+    let cutoff_frame = current_frame.saturating_sub(EVICTION_MIN_IDLE_FRAMES);
+    let mut stale: Vec<(u64, u64)> = Vec::new();
+    slots.scan_older_than(cutoff_frame, |raw_key, packed_value| {
+        stale.push((raw_key, packed_value));
+    });
+    for (raw_key, packed_value) in stale {
+        let key = AtlasKey::from(raw_key);
+        if slots.remove(key) {
+            let (rect, _generation) = unpack_slot_value(packed_value);
+            packer.remove(rect);
+        }
+    }
 }
 
 /// Copies a `rect.width x rect.height` RGBA8 block from `pixels`
@@ -271,9 +338,9 @@ mod tests {
         }
     }
 
-    fn wait_for(handle: &AtlasOwnerHandle, key: AtlasKey) -> (PackedRect, u16) {
+    fn wait_for(handle: &AtlasOwnerHandle, key: AtlasKey, current_frame: u64) -> (PackedRect, u16) {
         for _ in 0..10_000 {
-            if let Some(result) = handle.lookup(key) {
+            if let Some(result) = handle.lookup(key, current_frame) {
                 return result;
             }
             thread::yield_now();
@@ -293,9 +360,10 @@ mod tests {
                 height: 8,
                 color: [255, 0, 0, 255],
             }),
+            0,
         ));
 
-        let (rect, generation) = wait_for(&handle, key);
+        let (rect, generation) = wait_for(&handle, key, 0);
         assert_eq!((rect.width, rect.height), (8, 8));
         assert_eq!(generation, 0);
 
@@ -339,6 +407,7 @@ mod tests {
                                 height,
                                 color,
                             }),
+                            0,
                         ) {
                             thread::yield_now();
                         }
@@ -359,7 +428,7 @@ mod tests {
                     reason = "PRODUCERS/PER_PRODUCER are small test constants"
                 )]
                 let key = AtlasKey::from_glyph(producer_id as u32, i as u32);
-                let (rect, _generation) = wait_for(&handle, key);
+                let (rect, _generation) = wait_for(&handle, key, 0);
                 let width = 10 + (i as u32) * 2;
                 let height = 12 + (producer_id as u32);
                 assert_eq!((rect.width, rect.height), (width, height));
@@ -377,6 +446,123 @@ mod tests {
                 assert!(!overlaps, "placements {a:?} and {b:?} overlap");
             }
         }
+
+        let _ = owner.join();
+    }
+
+    /// Requests a solid-color `width x height` insertion and waits for it
+    /// to resolve, both stamped with `current_frame` -- reduces the
+    /// eviction tests below to their actual point (capacity/recency
+    /// bookkeeping) instead of repeating this same request/wait pair.
+    fn insert_and_wait(
+        handle: &AtlasOwnerHandle,
+        key: AtlasKey,
+        width: u32,
+        height: u32,
+        current_frame: u64,
+    ) -> (PackedRect, u16) {
+        assert!(handle.request_insert(
+            key,
+            Box::new(SolidColor {
+                width,
+                height,
+                color: [10, 20, 30, 255],
+            }),
+            current_frame,
+        ));
+        wait_for(handle, key, current_frame)
+    }
+
+    #[test]
+    fn eviction_does_not_run_below_the_capacity_threshold_no_matter_how_stale() {
+        // A spacious 64x64 (4096px^2) atlas: two tiny 4x4 (16px^2 each)
+        // placements use a negligible fraction of it. Requesting a third
+        // insertion at a frame far past EVICTION_MIN_IDLE_FRAMES (600)
+        // must not evict the first two -- capacity, not age alone, gates
+        // eviction, and this atlas never comes close to 85% full.
+        let owner = AtlasOwner::spawn(64, 64, 16, 16);
+        let handle = owner.handle();
+        let a = AtlasKey::from_glyph(1, 1);
+        let b = AtlasKey::from_glyph(1, 2);
+        insert_and_wait(&handle, a, 4, 4, 0);
+        insert_and_wait(&handle, b, 4, 4, 0);
+
+        let c = AtlasKey::from_glyph(1, 3);
+        insert_and_wait(&handle, c, 4, 4, 10_000);
+
+        assert!(
+            handle.lookup(a, 10_000).is_some(),
+            "far-below-capacity atlas must not evict anything, however stale"
+        );
+        assert!(handle.lookup(b, 10_000).is_some());
+
+        let _ = owner.join();
+    }
+
+    #[test]
+    fn a_freshly_inserted_entry_is_not_evicted_by_the_very_next_insert_that_crosses_capacity() {
+        // The cold-start hazard this step's own plan called out: a
+        // 10x10 (100px^2) atlas, `a` placed at 9x10 (90px^2, 0.90 used --
+        // already over the 0.85 threshold) at frame 700, immediately
+        // followed by a request for `b` (1x1) also at frame 700. Without
+        // stamping `a`'s recency at insertion time, `a`'s last_used would
+        // still read its post-insert default of 0, which IS older than
+        // this eviction pass's cutoff (700 - 600 = 100) -- incorrectly
+        // evicting content the instant after it was created. With the
+        // fix, `a`'s recency is 700, well above the cutoff, so it must
+        // survive.
+        let owner = AtlasOwner::spawn(10, 10, 8, 8);
+        let handle = owner.handle();
+        let a = AtlasKey::from_glyph(9, 10);
+        insert_and_wait(&handle, a, 9, 10, 700);
+
+        let b = AtlasKey::from_glyph(1, 1);
+        insert_and_wait(&handle, b, 1, 1, 700);
+
+        assert!(
+            handle.lookup(a, 700).is_some(),
+            "a brand-new entry must not be evicted by the very next insert"
+        );
+
+        let _ = owner.join();
+    }
+
+    #[test]
+    fn a_real_eviction_frees_space_for_a_new_insertion_while_sparing_a_touched_entry() {
+        // A 10x10 (100px^2) atlas: `a` (5x9, 45px^2) and `b` (5x9, 45px^2)
+        // both placed at frame 0 (used=0.90, already over the 0.85
+        // threshold for whatever comes next). `a` is explicitly touched
+        // at frame 700 (kept fresh); `b` is left untouched. Requesting
+        // `c` (1x1) at frame 700 must trigger eviction (cutoff = 100):
+        // `b`'s last_used (0, from its own frame-0 insertion) is stale
+        // and it is evicted, freeing its 45px^2 back to the packer; `a`'s
+        // last_used (700, from the explicit touch) survives; `c` succeeds
+        // by reusing real, reclaimed atlas space.
+        let owner = AtlasOwner::spawn(10, 10, 8, 8);
+        let handle = owner.handle();
+        let a = AtlasKey::from_glyph(5, 9);
+        let (rect_a, _) = insert_and_wait(&handle, a, 5, 9, 0);
+        let b = AtlasKey::from_glyph(5, 91);
+        insert_and_wait(&handle, b, 5, 9, 0);
+
+        // Keep `a` fresh; leave `b` untouched.
+        assert!(handle.lookup(a, 700).is_some());
+
+        let c = AtlasKey::from_glyph(1, 1);
+        let (rect_c, _) = insert_and_wait(&handle, c, 1, 1, 700);
+
+        assert!(
+            handle.lookup(b, 700).is_none(),
+            "the stale, untouched entry must have been evicted"
+        );
+        assert!(
+            handle.lookup(a, 700).is_some(),
+            "the touched, fresh entry must have survived eviction"
+        );
+        assert!(
+            !rect_a.overlaps(&rect_c),
+            "the new insertion must not overlap the surviving entry"
+        );
 
         let _ = owner.join();
     }
