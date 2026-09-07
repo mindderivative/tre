@@ -2,20 +2,34 @@
 //! table (TECHNICAL.md Section 8): "the atlas owner is the only writer
 //! (`Ordering::Release` store into a slot), and any window's rendering
 //! thread reads (`Ordering::Acquire` load) without ever taking a lock or
-//! performing a CAS." Entries are add-only -- never removed or updated to
-//! a different key in place, matching the atlas's own real access
-//! pattern (a resident glyph's slot is only ever revisited to update its
-//! *value*, e.g. a new generation after eviction/reuse, never to change
-//! *which* key occupies it) -- which is exactly what makes the "hit an
-//! empty slot during probing means the key was never inserted" early-exit
-//! below sound; a table that removed entries in place would need
-//! tombstones instead.
+//! performing a CAS."
 //!
-//! Needs no `unsafe` at all: both the key and the value at each slot are
-//! plain `AtomicU64`s, so "is this slot occupied, and by which key" is
-//! answered by an ordinary atomic load, not a raw-pointer read into
-//! possibly-uninitialized memory the way `MpscRingBuffer`'s per-slot
-//! values are.
+//! Phase 4 Step 4.3.1: entries can now be [`SwmrSlotTable::remove`]d --
+//! this module's own doc comment used to say entries were "add-only,
+//! never removed... which is exactly what makes the 'hit an empty slot
+//! during probing means the key was never inserted' early-exit sound; a
+//! table that removed entries in place would need tombstones instead."
+//! That's exactly what changed: a second reserved sentinel,
+//! `TOMBSTONE_KEY`, marks a removed slot. Probing now stops (concludes
+//! "never inserted") only at a genuine `EMPTY_KEY`; a tombstone means
+//! "keep looking; this exact slot just isn't it anymore." Textbook
+//! linear-probing-with-tombstones, not a novel scheme -- see `insert`'s
+//! and the private `probe_get`'s own doc comments for the exact
+//! algorithm.
+//!
+//! Recency tracking ([`SwmrSlotTable::get_and_touch`]) is a second,
+//! independent addition: a parallel `last_used` array any reader thread
+//! can write to via [`AtomicU64::fetch_max`], since "mark this entry as
+//! still in use" is inherently a write every reader needs to make --
+//! a different concurrency shape than the single-writer key/value
+//! payload above, so it gets its own mechanism rather than being folded
+//! into that one.
+//!
+//! Needs no `unsafe` at all: every per-slot field (key, value, recency
+//! timestamp) is a plain `AtomicU64`, so "is this slot occupied, and by
+//! which key" is answered by an ordinary atomic load, not a raw-pointer
+//! read into possibly-uninitialized memory the way `MpscRingBuffer`'s
+//! per-slot values are.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -24,12 +38,36 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// never produce this exact value for a real key.
 const EMPTY_KEY: u64 = u64::MAX;
 
+/// Reserved key value meaning "this slot held a real entry that
+/// [`SwmrSlotTable::remove`] took back." Distinct from `EMPTY_KEY` so a
+/// lookup can tell the two apart: a tombstoned slot proves nothing about
+/// whether the key being searched for exists elsewhere along the same
+/// probe sequence (so probing must continue past it), while a genuine
+/// `EMPTY_KEY` proves the key was never inserted (so probing may safely
+/// stop there) -- see this module's own top-level doc comment.
+const TOMBSTONE_KEY: u64 = u64::MAX - 1;
+
+/// True for either reserved sentinel. A real key must never equal either
+/// value; both `insert` and `remove` reject them unconditionally (a real,
+/// non-debug-only check -- not merely a `debug_assert`, since silently
+/// miscomparing against a sentinel would corrupt an unrelated key's
+/// entry in a release build with no diagnostic at all).
+fn is_reserved(key_u64: u64) -> bool {
+    key_u64 == EMPTY_KEY || key_u64 == TOMBSTONE_KEY
+}
+
 /// A fixed-capacity table mapping `K` to a `u64` payload, safe for one
-/// writer ([`SwmrSlotTable::insert`]) and any number of concurrent
-/// readers ([`SwmrSlotTable::get`]).
+/// writer ([`SwmrSlotTable::insert`], [`SwmrSlotTable::remove`]) and any
+/// number of concurrent readers ([`SwmrSlotTable::get`],
+/// [`SwmrSlotTable::get_and_touch`]).
 pub struct SwmrSlotTable<K> {
     keys: Box<[AtomicU64]>,
     values: Box<[AtomicU64]>,
+    /// Per-slot recency stamp for [`SwmrSlotTable::get_and_touch`] --
+    /// deliberately separate from `values` above: any number of reader
+    /// threads write here (via `fetch_max`), never just the single
+    /// writer that owns `keys`/`values`.
+    last_used: Box<[AtomicU64]>,
     capacity: usize,
     _key: std::marker::PhantomData<K>,
 }
@@ -56,15 +94,17 @@ impl<K: Copy + Eq + Into<u64>> SwmrSlotTable<K> {
         Self {
             keys: (0..capacity).map(|_| AtomicU64::new(EMPTY_KEY)).collect(),
             values: (0..capacity).map(|_| AtomicU64::new(0)).collect(),
+            last_used: (0..capacity).map(|_| AtomicU64::new(0)).collect(),
             capacity,
             _key: std::marker::PhantomData,
         }
     }
 
     /// Publishes `value` under `key`. Must only ever be called from a
-    /// single writer thread -- concurrent callers of `insert` itself are
-    /// not supported (only `insert` vs. `get` is safe to run
-    /// concurrently); the atlas owner is this table's one writer.
+    /// single writer thread -- concurrent callers of `insert`/`remove`
+    /// themselves are not supported (only `insert`/`remove` vs. `get`/
+    /// `get_and_touch` is safe to run concurrently); the atlas owner is
+    /// this table's one writer.
     ///
     /// The value is stored *before* the key is published (`Ordering::Release`
     /// only on the key store for a new slot), so any reader that observes
@@ -73,28 +113,36 @@ impl<K: Copy + Eq + Into<u64>> SwmrSlotTable<K> {
     /// standard "publish the payload, then publish its availability"
     /// idiom.
     ///
+    /// Probes for an existing occurrence of `key` first (updating it in
+    /// place if found), remembering the first tombstoned-or-empty slot
+    /// seen along the way. Probing stops as soon as it reaches a genuine
+    /// `EMPTY_KEY` (proof `key` isn't present further along), but a
+    /// tombstoned slot alone does not stop it -- `key` might still be
+    /// present later in the same probe sequence, so a tombstone only
+    /// becomes the claimed slot once the whole sequence has been
+    /// exhausted (every remaining slot examined) without finding `key`
+    /// or a genuine `EMPTY_KEY`. This is what guarantees a stale
+    /// duplicate can never be left behind further along the same key's
+    /// probe chain, and what lets a tombstoned slot be reused even in a
+    /// table with no `EMPTY_KEY` slots left at all (every slot either
+    /// holds a live key or a tombstone) -- the common case once a table
+    /// has been through several remove/insert cycles.
+    ///
     /// Returns `false` (without panicking -- DESIGN.md Section 2.6:
     /// capacity overflow is reported, not grown) if the table is full and
     /// `key` was not already present.
     #[must_use]
     pub fn insert(&self, key: K, value: u64) -> bool {
         let key_u64 = key.into();
-        if key_u64 == EMPTY_KEY {
-            // A real key must never equal the reserved sentinel -- but
-            // unlike a debug-only assert, this must hold in release
-            // builds too: if it didn't, the probe below would find the
-            // sentinel already sitting in the first candidate slot (every
-            // slot starts at EMPTY_KEY) and take the "already present"
-            // branch instead of "claim this slot", silently leaving
-            // `keys[index]` unwritten while `values[index]` held real
-            // data -- corrupting whichever unrelated key's `insert` next
-            // probed through that same index and saw a spuriously "empty"
-            // slot. Reporting failure here (matching the full-table case)
-            // is always correct: no real caller should ever ask to insert
-            // this exact value.
+        if is_reserved(key_u64) {
+            // See `is_reserved`'s own doc comment: a real key colliding
+            // with a sentinel must be rejected outright, not miscompared
+            // against a slot that only looks empty/tombstoned because
+            // it's the reserved value itself.
             return false;
         }
         let start = usize_index(mix(key_u64), self.capacity);
+        let mut first_available: Option<usize> = None;
         for probe in 0..self.capacity {
             let index = (start + probe) % self.capacity;
             let existing = self.keys[index].load(Ordering::Relaxed);
@@ -103,43 +151,143 @@ impl<K: Copy + Eq + Into<u64>> SwmrSlotTable<K> {
                 return true;
             }
             if existing == EMPTY_KEY {
-                self.values[index].store(value, Ordering::Relaxed);
-                self.keys[index].store(key_u64, Ordering::Release);
+                first_available.get_or_insert(index);
+                break;
+            }
+            if existing == TOMBSTONE_KEY {
+                first_available.get_or_insert(index);
+            }
+        }
+        let Some(claim) = first_available else {
+            return false;
+        };
+        self.values[claim].store(value, Ordering::Relaxed);
+        // A reused tombstoned slot's old recency stamp belongs to
+        // whatever key used to occupy it -- reset it so a freshly
+        // (re)inserted entry doesn't look stale from the moment it's
+        // published.
+        self.last_used[claim].store(0, Ordering::Relaxed);
+        self.keys[claim].store(key_u64, Ordering::Release);
+        true
+    }
+
+    /// Removes `key`'s entry, if present, so a future `get`/`get_and_touch`
+    /// for it returns `None` and a future `insert` for it (or for any
+    /// other key) may reuse its slot. Must only ever be called from the
+    /// single writer thread, same as `insert`.
+    ///
+    /// Stores the [`TOMBSTONE_KEY`] sentinel into the found slot
+    /// (`Ordering::Release`, matching `insert`'s own publish discipline)
+    /// rather than reverting it to `EMPTY_KEY` -- reverting to `EMPTY_KEY`
+    /// would incorrectly signal "nothing was ever inserted past this
+    /// point" to a concurrent `get` for a *different* key whose probe
+    /// sequence happens to pass through this same slot, causing it to
+    /// stop early and report a false miss for an entry that's still
+    /// genuinely present further along.
+    ///
+    /// Returns `false` if `key` was not present.
+    pub fn remove(&self, key: K) -> bool {
+        let key_u64 = key.into();
+        if is_reserved(key_u64) {
+            return false;
+        }
+        let start = usize_index(mix(key_u64), self.capacity);
+        for probe in 0..self.capacity {
+            let index = (start + probe) % self.capacity;
+            let existing = self.keys[index].load(Ordering::Relaxed);
+            if existing == key_u64 {
+                self.keys[index].store(TOMBSTONE_KEY, Ordering::Release);
                 return true;
+            }
+            if existing == EMPTY_KEY {
+                return false;
             }
         }
         false
     }
 
-    /// Looks up `key`, or `None` if it was never inserted. Safe to call
-    /// concurrently from any number of reader threads, and concurrently
-    /// with the single writer's own `insert` calls.
+    /// Looks up `key`, or `None` if it was never inserted or has since
+    /// been [`SwmrSlotTable::remove`]d. Safe to call concurrently from
+    /// any number of reader threads, and concurrently with the single
+    /// writer's own `insert`/`remove` calls. Does not affect recency
+    /// tracking -- use [`SwmrSlotTable::get_and_touch`] for a lookup that
+    /// also marks the entry as still in use.
     #[must_use]
     pub fn get(&self, key: K) -> Option<u64> {
         let key_u64 = key.into();
-        if key_u64 == EMPTY_KEY {
-            // Symmetric with `insert`'s own rejection of this value: it
-            // could never have been legitimately inserted, so it can
-            // never be present.
+        if is_reserved(key_u64) {
             return None;
         }
+        let index = self.probe_get(key_u64)?;
+        Some(self.values[index].load(Ordering::Acquire))
+    }
+
+    /// Same lookup as [`SwmrSlotTable::get`], additionally recording
+    /// `frame` as this entry's most recent use (via
+    /// [`AtomicU64::fetch_max`], so a lower `frame` than what's already
+    /// recorded never regresses it -- the point of tracking a *maximum*
+    /// observed frame number across any number of racing reader threads,
+    /// not a plain timestamp). A miss touches nothing. Safe to call
+    /// concurrently from any number of reader threads.
+    #[must_use]
+    pub fn get_and_touch(&self, key: K, frame: u64) -> Option<u64> {
+        let key_u64 = key.into();
+        if is_reserved(key_u64) {
+            return None;
+        }
+        let index = self.probe_get(key_u64)?;
+        self.last_used[index].fetch_max(frame, Ordering::Relaxed);
+        Some(self.values[index].load(Ordering::Acquire))
+    }
+
+    /// The shared probe loop behind both `get` and `get_and_touch`:
+    /// returns the physical slot index currently holding `key_u64`, or
+    /// `None` if it's absent. Continues past a `TOMBSTONE_KEY` (proves
+    /// nothing about whether `key_u64` exists further along) and stops
+    /// only at a genuine `EMPTY_KEY` (proves `key_u64` was never
+    /// inserted, since `insert` always continues probing past every
+    /// occupied-or-tombstoned slot in this exact same order before ever
+    /// stopping at one).
+    fn probe_get(&self, key_u64: u64) -> Option<usize> {
         let start = usize_index(mix(key_u64), self.capacity);
         for probe in 0..self.capacity {
             let index = (start + probe) % self.capacity;
             let existing = self.keys[index].load(Ordering::Acquire);
             if existing == key_u64 {
-                return Some(self.values[index].load(Ordering::Acquire));
+                return Some(index);
             }
             if existing == EMPTY_KEY {
-                // Sound only because entries are never removed: a
-                // genuinely empty slot encountered while probing proves
-                // `key` was never inserted, since insertion would have
-                // continued probing past every occupied slot in exactly
-                // this same order.
                 return None;
             }
         }
         None
+    }
+
+    /// Visits every currently-occupied slot whose recency stamp is below
+    /// `cutoff_frame`, calling `visit(raw_key, value)` for each -- the
+    /// enumeration a future eviction policy needs ("which entries haven't
+    /// been touched in the last N frames") without polling every possible
+    /// key individually. Returns the raw `u64` key rather than `K`,
+    /// deliberately avoiding a `u64`-back-to-`K` trait bound this module
+    /// otherwise has no use for; the caller reconstructs its own key type
+    /// from it.
+    ///
+    /// Must only ever be called from the single writer thread -- like
+    /// `insert`/`remove`, this is not a `get`-style operation any number
+    /// of readers can share, since a future policy built on this is
+    /// expected to also call `remove` based on what it finds, and only
+    /// the writer may do that.
+    pub fn scan_older_than(&self, cutoff_frame: u64, mut visit: impl FnMut(u64, u64)) {
+        for index in 0..self.capacity {
+            let key_u64 = self.keys[index].load(Ordering::Relaxed);
+            if is_reserved(key_u64) {
+                continue;
+            }
+            let last_used = self.last_used[index].load(Ordering::Relaxed);
+            if last_used < cutoff_frame {
+                visit(key_u64, self.values[index].load(Ordering::Relaxed));
+            }
+        }
     }
 
     #[must_use]
@@ -206,6 +354,18 @@ mod tests {
     }
 
     #[test]
+    fn a_key_equal_to_the_tombstone_sentinel_is_also_rejected() {
+        // u64::MAX - 1, TOMBSTONE_KEY's own value -- not directly
+        // constructible from outside this module, but a caller's own key
+        // mapping could still produce it, and it must be rejected exactly
+        // like EMPTY_KEY is.
+        let table: SwmrSlotTable<Key> = SwmrSlotTable::with_capacity(4);
+        assert!(!table.insert(Key(u64::MAX - 1), 1));
+        assert!(!table.remove(Key(u64::MAX - 1)));
+        assert_eq!(table.get(Key(u64::MAX - 1)), None);
+    }
+
+    #[test]
     fn a_full_table_reports_failure_rather_than_panicking() {
         let table: SwmrSlotTable<Key> = SwmrSlotTable::with_capacity(2);
         assert!(table.insert(Key(1), 1));
@@ -225,6 +385,128 @@ mod tests {
         for i in 0..50u64 {
             assert_eq!(table.get(Key(i)), Some(i * 10));
         }
+    }
+
+    #[test]
+    fn removed_key_is_gone_but_other_keys_still_round_trip() {
+        let table: SwmrSlotTable<Key> = SwmrSlotTable::with_capacity(16);
+        for i in 0..8u64 {
+            assert!(table.insert(Key(i), i * 100));
+        }
+        assert!(table.remove(Key(3)));
+        assert_eq!(table.get(Key(3)), None);
+        for i in 0..8u64 {
+            if i != 3 {
+                assert_eq!(
+                    table.get(Key(i)),
+                    Some(i * 100),
+                    "key {i} should be unaffected"
+                );
+            }
+        }
+        // Removing an absent key (never inserted, or already removed)
+        // reports failure rather than panicking.
+        assert!(!table.remove(Key(3)));
+        assert!(!table.remove(Key(999)));
+    }
+
+    #[test]
+    fn a_slot_freed_by_remove_does_not_permanently_shrink_capacity() {
+        // A table sized for exactly 2 live keys must still accept a
+        // 3rd insert once one of the first 2 is removed -- proving the
+        // tombstoned slot is genuinely reused, not permanently wasted.
+        let table: SwmrSlotTable<Key> = SwmrSlotTable::with_capacity(2);
+        assert!(table.insert(Key(1), 1));
+        assert!(table.insert(Key(2), 2));
+        assert!(
+            !table.insert(Key(3), 3),
+            "table should be genuinely full here"
+        );
+
+        assert!(table.remove(Key(1)));
+        assert!(
+            table.insert(Key(3), 3),
+            "the slot Key(1) vacated must be reusable by a different key"
+        );
+        assert_eq!(table.get(Key(1)), None);
+        assert_eq!(table.get(Key(2)), Some(2));
+        assert_eq!(table.get(Key(3)), Some(3));
+    }
+
+    #[test]
+    fn re_inserting_a_removed_key_round_trips_its_new_value() {
+        let table: SwmrSlotTable<Key> = SwmrSlotTable::with_capacity(4);
+        assert!(table.insert(Key(5), 50));
+        assert!(table.remove(Key(5)));
+        assert_eq!(table.get(Key(5)), None);
+        assert!(table.insert(Key(5), 500));
+        assert_eq!(table.get(Key(5)), Some(500));
+    }
+
+    #[test]
+    fn a_key_whose_probe_sequence_passes_through_a_tombstone_still_resolves() {
+        // Fill a small table completely, remove one entry (leaving a
+        // tombstone mid-chain for anything that collides through it),
+        // then confirm every other key -- including ones that must probe
+        // past the tombstone to reach their own slot -- still resolves
+        // correctly, and the removed key stays genuinely absent.
+        let table: SwmrSlotTable<Key> = SwmrSlotTable::with_capacity(8);
+        for i in 0..8u64 {
+            assert!(table.insert(Key(i), i));
+        }
+        assert!(table.remove(Key(2)));
+        for i in 0..8u64 {
+            if i == 2 {
+                assert_eq!(table.get(Key(i)), None);
+            } else {
+                assert_eq!(table.get(Key(i)), Some(i));
+            }
+        }
+    }
+
+    #[test]
+    fn get_and_touch_records_a_monotonically_increasing_recency_stamp() {
+        let table: SwmrSlotTable<Key> = SwmrSlotTable::with_capacity(4);
+        assert!(table.insert(Key(1), 111));
+
+        assert_eq!(table.get_and_touch(Key(1), 10), Some(111));
+        let mut stale = Vec::new();
+        table.scan_older_than(10, |k, v| stale.push((k, v)));
+        assert!(stale.is_empty(), "last_used=10 is not older than cutoff=10");
+
+        // A lower frame number than what's already recorded must not
+        // regress the stamp -- fetch_max, not a plain store.
+        assert_eq!(table.get_and_touch(Key(1), 3), Some(111));
+        let mut stale = Vec::new();
+        table.scan_older_than(10, |k, v| stale.push((k, v)));
+        assert!(
+            stale.is_empty(),
+            "an earlier touch with a lower frame must not have regressed last_used below 10"
+        );
+
+        let mut stale = Vec::new();
+        table.scan_older_than(11, |k, v| stale.push((k, v)));
+        assert_eq!(stale, vec![(1, 111)]);
+    }
+
+    #[test]
+    fn scan_older_than_excludes_tombstoned_and_never_inserted_slots() {
+        let table: SwmrSlotTable<Key> = SwmrSlotTable::with_capacity(8);
+        assert!(table.insert(Key(1), 10));
+        assert!(table.insert(Key(2), 20));
+        assert!(table.insert(Key(3), 30));
+        assert_eq!(table.get_and_touch(Key(1), 5), Some(10));
+        assert_eq!(table.get_and_touch(Key(2), 50), Some(20));
+        // Key(3) is never touched -- last_used stays at its post-insert 0.
+        assert!(table.remove(Key(2)));
+
+        let mut found: Vec<(u64, u64)> = Vec::new();
+        table.scan_older_than(6, |k, v| found.push((k, v)));
+        found.sort_unstable();
+        // Key(2) is gone (tombstoned, excluded regardless of its former
+        // recency); Key(1)'s last_used=5 is older than cutoff=6; Key(3)'s
+        // last_used=0 is also older than cutoff=6.
+        assert_eq!(found, vec![(1, 10), (3, 30)]);
     }
 
     #[test]
@@ -261,5 +543,61 @@ mod tests {
             !saw_bad_value.load(Ordering::SeqCst),
             "a reader observed the key before its real value was fully published"
         );
+    }
+
+    #[test]
+    fn concurrent_readers_never_see_a_torn_value_while_a_remove_races_them() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        const READERS: usize = 6;
+        const ROUNDS: usize = 20_000;
+
+        let table = Arc::new(SwmrSlotTable::<Key>::with_capacity(8));
+        assert!(table.insert(Key(1), 111));
+        assert!(table.insert(Key(2), 222));
+        let ready = Arc::new(Barrier::new(READERS + 1));
+        let saw_bad_value = Arc::new(AtomicBool::new(false));
+
+        let readers: Vec<_> = (0..READERS)
+            .map(|i| {
+                let reader_table = table.clone();
+                let reader_ready = ready.clone();
+                let reader_bad = saw_bad_value.clone();
+                thread::spawn(move || {
+                    reader_ready.wait();
+                    let key = if i % 2 == 0 { Key(1) } else { Key(2) };
+                    let expected = if i % 2 == 0 { 111 } else { 222 };
+                    for frame in 0..ROUNDS as u64 {
+                        // Key(1) is the one being concurrently removed
+                        // below; either it's still present (must read
+                        // back exactly 111, never a torn/corrupted
+                        // value) or it's genuinely absent -- both are
+                        // valid outcomes of the race, unlike a value
+                        // that's neither.
+                        match reader_table.get_and_touch(key, frame) {
+                            Some(value) if value != expected => {
+                                reader_bad.store(true, Ordering::SeqCst);
+                            }
+                            _ => {}
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        ready.wait();
+        assert!(table.remove(Key(1)));
+        for reader in readers {
+            reader.join().unwrap();
+        }
+
+        assert!(
+            !saw_bad_value.load(Ordering::SeqCst),
+            "a reader observed a value that matched neither the expected payload nor a clean miss"
+        );
+        assert_eq!(table.get(Key(1)), None);
+        assert_eq!(table.get(Key(2)), Some(222));
     }
 }
