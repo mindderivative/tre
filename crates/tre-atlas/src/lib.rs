@@ -62,6 +62,10 @@ impl PackedRect {
 #[derive(Debug)]
 pub struct AtlasPacker {
     free_rects: Vec<PackedRect>,
+    /// `width * height` at construction, cached rather than recomputed --
+    /// the initial single free rectangle this value could otherwise be
+    /// read from stops existing the moment it's first split.
+    total_area: u64,
 }
 
 impl AtlasPacker {
@@ -75,6 +79,7 @@ impl AtlasPacker {
                 width,
                 height,
             }],
+            total_area: u64::from(width) * u64::from(height),
         }
     }
 
@@ -113,6 +118,58 @@ impl AtlasPacker {
         self.free_rects.extend(first);
         self.free_rects.extend(second);
         Some(placed)
+    }
+
+    /// Returns `rect`'s space to the free list, so a later `insert` can
+    /// reuse it -- Step 4.3's atlas eviction closing the space an evicted
+    /// glyph or icon used to occupy.
+    ///
+    /// Pushed onto `free_rects` as-is, with no merging against adjacent
+    /// free rectangles (a direct extension of this packer's own original
+    /// "no free-rectangle merging" simplification, `insert`'s own
+    /// implementation above) -- real coalescing is its own nontrivial
+    /// packing-algorithm problem, deferred until a concrete fragmentation
+    /// problem actually shows up in real usage, not built speculatively
+    /// here.
+    ///
+    /// `rect` must be a value this exact packer instance previously
+    /// returned from a successful `insert` call. This is not validated --
+    /// `insert` itself keeps no registry of what it's handed out, only of
+    /// what's still free, and `remove` extends that same trust boundary.
+    /// Safe specifically because of this crate's single-atlas-owner
+    /// design (ARCHITECTURE.md Section 2.3): exactly one execution
+    /// context ever touches one `AtlasPacker`, so passing back a foreign
+    /// or already-removed rectangle is a caller bug, not a condition with
+    /// any concurrent-misuse angle to defend against.
+    pub fn remove(&mut self, rect: PackedRect) {
+        self.free_rects.push(rect);
+    }
+
+    /// The fraction of this atlas's total area (`width * height` at
+    /// construction) that is currently *not* free -- DESIGN.md Section
+    /// 10.2's "atlas space capacity exceeds 85%" trigger reads this, but
+    /// deciding what to do once it crosses that threshold is a policy
+    /// concern (Step 4.3.3's `AtlasOwner`), not this method's.
+    ///
+    /// `saturating_sub` guards against `free_rects`' summed area ever
+    /// exceeding `total_area` -- which correct usage never produces, but
+    /// which a `remove` of a bogus/duplicate rect (a caller bug `remove`
+    /// itself has no way to detect, per its own doc comment) could -- so
+    /// that misuse degrades to reporting `0.0` rather than underflowing.
+    #[must_use]
+    pub fn used_fraction(&self) -> f64 {
+        if self.total_area == 0 {
+            return 0.0;
+        }
+        let free_area: u64 = self.free_rects.iter().map(|r| r.area()).sum();
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "atlas areas stay far below f64's exact-integer range (2^53) for any real \
+                       atlas size this engine targets"
+        )]
+        let used_fraction =
+            self.total_area.saturating_sub(free_area) as f64 / self.total_area as f64;
+        used_fraction
     }
 }
 
@@ -268,6 +325,90 @@ mod tests {
         assert!(!first.overlaps(&second));
         assert_eq!(first.area() + second.area(), 200);
         assert!(packer.insert(1, 1).is_none());
+    }
+
+    #[test]
+    fn remove_lets_a_full_atlas_accept_a_matching_size_again() {
+        // Fill a small atlas completely (two exact tiles, no leftover),
+        // confirm it's genuinely full, remove one placement, and confirm
+        // an identically-sized request now succeeds again -- proving the
+        // freed space is real, reusable atlas space, not just bookkeeping
+        // that happens to return `Some`.
+        let mut packer = AtlasPacker::new(20, 10);
+        let first = packer.insert(10, 10).unwrap();
+        let second = packer.insert(10, 10).unwrap();
+        assert!(
+            packer.insert(1, 1).is_none(),
+            "atlas should be genuinely full"
+        );
+
+        packer.remove(first);
+        let refilled = packer
+            .insert(10, 10)
+            .expect("the space `first` vacated must be reusable");
+        assert!(
+            !refilled.overlaps(&second),
+            "refilled placement overlaps the still-placed second"
+        );
+    }
+
+    #[test]
+    fn exact_fill_then_free_then_refill_worked_example() {
+        // Mirrors `two_rectangles_can_exactly_tile_a_small_atlas`'s own
+        // style: a 20x10 atlas exactly tiled by two 10x10 squares, one
+        // removed, a third request of that exact freed size succeeds,
+        // and a fourth of any size still fails (the atlas is genuinely
+        // full again, not accidentally left with extra free space).
+        let mut packer = AtlasPacker::new(20, 10);
+        let first = packer.insert(10, 10).unwrap();
+        let second = packer.insert(10, 10).unwrap();
+
+        packer.remove(second);
+        let third = packer
+            .insert(10, 10)
+            .expect("freed 10x10 space must be reusable");
+        assert!(!third.overlaps(&first));
+        assert!(packer.insert(1, 1).is_none(), "atlas should be full again");
+    }
+
+    #[test]
+    fn remove_does_not_silently_merge_adjacent_free_rectangles() {
+        // Two 10x10 squares placed side by side in a 20x10 atlas share an
+        // edge -- removing both must NOT let a later request larger than
+        // either individual piece (but no bigger than their combined
+        // area) succeed, proving `free_rects` genuinely holds them as two
+        // separate entries rather than silently coalescing adjacent free
+        // space. A request that fits within one piece alone must still
+        // succeed.
+        let mut packer = AtlasPacker::new(20, 10);
+        let first = packer.insert(10, 10).unwrap();
+        let second = packer.insert(10, 10).unwrap();
+        packer.remove(first);
+        packer.remove(second);
+
+        assert!(
+            packer.insert(20, 10).is_none(),
+            "the two freed 10x10 pieces must not have merged into a single 20x10 free rectangle"
+        );
+        assert!(
+            packer.insert(10, 10).is_some(),
+            "a request fitting within one freed piece alone must still succeed"
+        );
+    }
+
+    #[test]
+    fn used_fraction_matches_hand_computed_values_across_insert_and_remove() {
+        let mut packer = AtlasPacker::new(100, 100);
+        assert!((packer.used_fraction() - 0.0).abs() < f64::EPSILON);
+
+        packer.insert(20, 20).unwrap(); // 400 / 10_000 = 0.04
+        assert!((packer.used_fraction() - 0.04).abs() < 1e-9);
+
+        let b = packer.insert(10, 10).unwrap(); // +100 -> 500 / 10_000 = 0.05
+        assert!((packer.used_fraction() - 0.05).abs() < 1e-9);
+
+        packer.remove(b); // back to 400 / 10_000 = 0.04
+        assert!((packer.used_fraction() - 0.04).abs() < 1e-9);
     }
 
     #[test]
