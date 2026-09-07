@@ -84,9 +84,13 @@ fn main() {
 
     // --- Rect C: push_clip()/pop_clip() -- checked at the IR level only,
     // see this file's own doc comment for why. ---
-    // Command 2: PushScissor. Command 3: DrawGeometry (this is the one
-    // this demo inspects). Command 4: PopScissor.
-    const RECT_C_COMMAND_INDEX: usize = 3;
+    // Step 5.1.3's real batch flattening merges Rect A and Rect B (both
+    // default Layer/Pipeline/Texture, both drawn before any push_clip,
+    // so both share the full-window clip_bounds) into a single command
+    // -- so the sequence is: Command 0: DrawGeometry (Rect A + Rect B
+    // merged). Command 1: PushScissor. Command 2: DrawGeometry (Rect C,
+    // this is the one this demo inspects). Command 3: PopScissor.
+    const RECT_C_COMMAND_INDEX: usize = 2;
     let clip_rect = ScissorRect {
         x: 150,
         y: 10,

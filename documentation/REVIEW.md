@@ -1171,3 +1171,29 @@ Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the wor
 | # | Finding | Doc(s)/Code | Severity | Resolution |
 |---|---|---|---|---|
 | -- | No numbered findings this sub-step; one plan-vs-implementation refinement (atlas dimensions needed for UV math, not in the original signature sketch) | tre-engine | -- | Resolved by bundling atlas context into `GlyphAtlasContext` |
+
+## Phase 5 Step 5.1.3 Implementation (2026-09-07)
+
+Reviewer: Claude (Cowork), acting as Principal Engineer / Lead Tech Architect, per project standing instructions.
+Scope: implementing IMPLEMENTATION.md Step 5.1.3 (real sort key, `begin_overlay`/`end_overlay`, real batch flattening), the third and closing sub-step of Step 5.1 -- the capstone. Full detail in `planning/archive/LOG_PHASE5_STEP5_1_3.md`; this is the summary for the documentation's own record.
+
+Status: **Complete.** Every core design decision locked into `PLAN.md` (markers as hard sort/merge barriers, a single global monotonic `next_depth_id`, `OverlayLayerPriority` as a concrete absolute offset, index-buffer rewriting rather than command reordering alone) held up unchanged through implementation -- the sort key, overlay routing, and flattening logic itself compiled and passed every new unit test on the first real run. The two findings below are not bugs in the new logic; they are pre-existing files whose own test assumptions the new, correct merging behavior genuinely invalidated -- exactly the class of regression `PLAN.md`'s own "audit existing tests/demos" task anticipated, one instance of which it named specifically in advance.
+
+### 120. [Nice-to-have] `canvas_state_stack_demo.rs`'s `RECT_C_COMMAND_INDEX` assumed Rect A and Rect B could never merge into one command
+Rect A and Rect B (both drawn before any `push_clip`, both default Layer/Pipeline/Texture) share identical Layer+Pipeline+Texture+`clip_bounds` with nothing between their two `draw_rounded_rect` calls -- real batch flattening now merges them into one `DrawGeometry` command, shifting every later command's index down by one. `PLAN.md` itself predicted this exact case in advance (Task 8), so this was a planned fix applied during implementation, not a surprise discovered afterward.
+
+**Change:** `RECT_C_COMMAND_INDEX` updated from `3` to `2`, comment rewritten to describe the new command sequence.
+
+### 121. [Nice-to-have] `canvas_draw_text_demo.rs`'s frame-2 assertion assumed one command per glyph, the same class of gap `PLAN.md` anticipated generically but did not name specifically
+All 4 glyphs of "TEXT" share Layer 0, `PIPELINE_MSDF_TEXT`, the same atlas `texture_handle`, and the same full-window `clip_bounds` -- real batch flattening merges all 4 into a single command (`element_count == 24`). Caught by re-running every pre-existing example during this step's own verification pass, per `PLAN.md`'s "audit existing tests/demos for the new merging behavior" task.
+
+**Change:** the assertion now expects exactly 1 merged command with `element_count` equal to `glyphs.len() * 6`; the doc comment and `eprintln!` wording updated to describe merging rather than a one-per-glyph mapping.
+
+Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the workspace: 36 unit tests in `tre-engine` (up from 24), including a direct reproduction of DESIGN.md Section 8's own worked example and a white-box test of `flatten_run`'s `clip_bounds` check (unreachable via the public API today, kept as a forward-looking regression guard). The new capstone example, `canvas_batch_flattening_demo`, passed on its first real run: exactly 3 batches at the IR level, and a real GPU render (the first in this codebase to record more than one `draw_indexed` call and switch pipelines within a single frame) confirming all 4 logical shapes still render at their own correct, distinct positions. Every one of the (now 19) pre-existing examples re-run manually end to end -- only the two named above needed a real code change, zero further regressions. Added to the `vulkan-validation` CI job. This closes Step 5.1 (5.1.1-5.1.3) in full.
+
+## Summary table (Phase 5 Step 5.1.3)
+
+| # | Finding | Doc(s)/Code | Severity | Resolution |
+|---|---|---|---|---|
+| 120 | `canvas_state_stack_demo.rs`'s `RECT_C_COMMAND_INDEX` assumed no merging between Rect A and Rect B | tre-rhi-vulkan (example code) | Nice-to-have | Fixed — constant updated `3` -> `2`, comment rewritten |
+| 121 | `canvas_draw_text_demo.rs`'s frame-2 assertion assumed one command per glyph | tre-rhi-vulkan (example code) | Nice-to-have | Fixed — assertion now expects exactly 1 merged command |

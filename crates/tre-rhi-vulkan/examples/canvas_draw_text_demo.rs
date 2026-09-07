@@ -11,7 +11,9 @@
 //! - **Frame 2** (every glyph now resolved, after polling the real
 //!   background thread to completion): a fresh `Canvas::draw_text` call
 //!   against the same atlas handle now emits one real textured
-//!   `DrawGeometry` command per glyph, rendered through the existing,
+//!   `DrawGeometry` command per glyph -- merged by Step 5.1.3's real
+//!   batch flattening into a single command, since every glyph shares
+//!   Layer/Pipeline/Texture/clip -- rendered through the existing,
 //!   unmodified `bindless_textured.vert`/`msdf.frag` pipeline (Step
 //!   4.2.4) -- read back as real GPU pixels confirming the word actually
 //!   rendered.
@@ -147,14 +149,27 @@ fn main() {
         &hit_frame_atlas_context,
     );
     let frame = hit_frame_canvas.flatten();
+    // Step 5.1.3: real batch flattening merges every glyph's command
+    // into one -- all 4 share Layer 0 (standard content), the same
+    // PIPELINE_MSDF_TEXT pipeline, the same atlas texture_handle, and
+    // the same full-window clip_bounds (nothing in this demo ever
+    // touches the clip stack).
     assert_eq!(
         frame.commands.len(),
-        shaped.glyphs.len(),
-        "one command per glyph once every glyph is resolved"
+        1,
+        "every glyph sharing Layer+Pipeline+Texture+clip_bounds must merge into one command"
+    );
+    let merged_element_count =
+        u64::try_from(shaped.glyphs.len()).expect("glyph count fits in u64") * 6;
+    assert_eq!(
+        u64::from(frame.commands[0].element_count),
+        merged_element_count,
+        "the merged command must carry every glyph's own 6 indices"
     );
     eprintln!(
-        "frame 2 (cache hit): {} commands emitted, one per glyph -- OK",
-        frame.commands.len()
+        "frame 2 (cache hit): {} glyphs merged into 1 real command ({} indices) -- OK",
+        shaped.glyphs.len(),
+        frame.commands[0].element_count
     );
 
     let out_dir = env!("OUT_DIR");

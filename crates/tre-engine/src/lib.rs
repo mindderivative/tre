@@ -56,6 +56,17 @@ pub struct ScissorRect {
     pub height: u32,
 }
 
+/// "No clip, full window" -- `draw_rounded_rect`/`draw_text`/
+/// `begin_overlay`'s shared sentinel for "nothing is actively clipped,"
+/// reused instead of each call site constructing its own equivalent
+/// literal (Step 5.1.3).
+const FULL_WINDOW_CLIP: ScissorRect = ScissorRect {
+    x: 0,
+    y: 0,
+    width: u32::MAX,
+    height: u32::MAX,
+};
+
 /// The canonical 32-byte UI vertex (ARCHITECTURE.md Section 3.1).
 #[repr(C, align(16))]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -327,6 +338,24 @@ pub struct FlattenedFrame {
     pub commands: Vec<UiDrawCommand>,
 }
 
+/// DESIGN.md Section 7.2's `Canvas::begin_overlay(OverlayLayerPriority)`
+/// -- referenced but never defined there; defined here concretely (Step
+/// 5.1.3), the same "adapt the doc sketch to what's actually buildable"
+/// precedent Step 5.1.2 already established for `DynamicTextLayout`/
+/// `Paint`. An offset added to `OVERLAY_LAYER_BASE` (ARCHITECTURE.md
+/// Section 4.1's documented `10000` overlay base) to produce the real
+/// Layer ID -- a caller stacking multiple overlay planes (e.g. a
+/// tooltip that must always paint above an already-open modal) picks a
+/// higher priority for the one that should sort later/on top.
+/// Absolute: not composed with any enclosing `begin_overlay` call's own
+/// priority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OverlayLayerPriority(pub u16);
+
+/// ARCHITECTURE.md Section 4.1: "Standard content uses $0-9999$.
+/// Overlays, modal backdrops, and popups use $10000+$."
+const OVERLAY_LAYER_BASE: u16 = 10_000;
+
 /// One level of the Drawing Context's hierarchical state stack
 /// (DESIGN.md Section 6.1: "dynamic coordinate space transformations
 /// [and] global alpha multipliers... via `Canvas::save()` and
@@ -391,6 +420,26 @@ pub struct RenderingCanvas {
     /// `push_layer`/`pop_layer` record no per-call stack data of their
     /// own to count instead.
     clip_stack: Vec<ScissorRect>,
+    /// The next `Depth ID` a `DrawGeometry` command will receive (Step
+    /// 5.1.3) -- a single global, monotonically increasing counter,
+    /// never reset by `save`/`push_clip`/`push_layer`/`begin_overlay`.
+    /// No widget tree or z-index resolver exists above this imperative
+    /// `Canvas` API to derive a richer traversal-order index from
+    /// (ARCHITECTURE.md Section 4.1) -- call order is the only ordering
+    /// this layer of the stack has.
+    next_depth_id: u32,
+    /// The overlay Layer ID stack (Step 5.1.3, DESIGN.md Section 7.2).
+    /// Empty means standard content (Layer ID `0`); `begin_overlay`
+    /// pushes `OVERLAY_LAYER_BASE + priority`, `end_overlay` pops.
+    /// Unrelated to `push_layer`/`pop_layer`'s own offscreen-compositing
+    /// mechanism -- see `begin_overlay`'s own doc comment for why these
+    /// two very differently-named "layer" concepts never interact.
+    overlay_stack: Vec<u16>,
+    /// `begin_overlay`'s own saved copy of whatever `clip_stack` held
+    /// before it was reset to "no clip" -- one entry pushed per
+    /// `begin_overlay` call, popped and restored by the matching
+    /// `end_overlay`.
+    saved_clip_stacks: Vec<Vec<ScissorRect>>,
 }
 
 /// Everything `Canvas::draw_text` needs to know about the caller's
@@ -533,6 +582,99 @@ impl RenderingCanvas {
         });
     }
 
+    /// Routes subsequent draws into the overlay plane (DESIGN.md
+    /// Section 7.2, ARCHITECTURE.md Section 4.1's Layer ID $\ge$ 10000)
+    /// and resets the active clip to the full window -- "decoupled from
+    /// the parent container's scissor stack" (DESIGN.md Section 7.2).
+    /// Unrelated to `push_layer`/`pop_layer`'s own offscreen
+    /// compositing-layer mechanism (DESIGN.md Section 5): this method
+    /// only ever changes the sort key's Layer ID field and the clip
+    /// stack, never acquires or redirects into a render target.
+    ///
+    /// # Panics
+    /// Panics if `priority.0` would push the Layer ID past `u16::MAX`
+    /// (the 16-bit Layer ID field, ARCHITECTURE.md Section 4.1) -- a
+    /// caller error, not a recoverable runtime condition.
+    pub fn begin_overlay(&mut self, priority: OverlayLayerPriority) {
+        let layer_id = OVERLAY_LAYER_BASE
+            .checked_add(priority.0)
+            .expect("overlay priority overflowed the 16-bit Layer ID field");
+        self.overlay_stack.push(layer_id);
+        self.saved_clip_stacks
+            .push(std::mem::take(&mut self.clip_stack));
+        self.commands.push(UiDrawCommand {
+            kind: CommandType::PushScissor,
+            sort_key: 0,
+            pipeline_state_id: 0,
+            texture_handle: 0,
+            element_count: 0,
+            vertex_offset: 0,
+            clip_bounds: FULL_WINDOW_CLIP,
+        });
+    }
+
+    /// Restores the clip stack `begin_overlay` reset and pops the
+    /// active overlay Layer ID.
+    ///
+    /// # Panics
+    /// Panics if called without a matching prior `begin_overlay()`,
+    /// same immediate-failure precedent as `restore()`/`pop_clip()`/
+    /// `pop_layer()`.
+    pub fn end_overlay(&mut self) {
+        self.overlay_stack
+            .pop()
+            .expect("end_overlay() called without a matching begin_overlay()");
+        self.clip_stack = self
+            .saved_clip_stacks
+            .pop()
+            .expect("end_overlay() called without a matching begin_overlay()");
+        self.commands.push(UiDrawCommand {
+            kind: CommandType::PopScissor,
+            sort_key: 0,
+            pipeline_state_id: 0,
+            texture_handle: 0,
+            element_count: 0,
+            vertex_offset: 0,
+            clip_bounds: ScissorRect {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            },
+        });
+    }
+
+    /// The active overlay Layer ID, or `0` (standard content) if
+    /// nothing is currently inside a `begin_overlay`/`end_overlay`
+    /// bracket.
+    fn active_layer_id(&self) -> u16 {
+        self.overlay_stack.last().copied().unwrap_or(0)
+    }
+
+    /// Assigns the next `sort_key` for a `DrawGeometry` command about to
+    /// be emitted -- reads the active overlay Layer ID, advances
+    /// `next_depth_id` by one (never reset, guaranteeing every command
+    /// in a frame gets a distinct key), and packs the result via
+    /// `compute_sort_key` (ARCHITECTURE.md Section 4.1).
+    ///
+    /// # Panics
+    /// Never in practice: a single frame would need over a million
+    /// `DrawGeometry` calls to overflow `next_depth_id`'s 20-bit field
+    /// -- see `compute_sort_key`'s own `# Panics` section.
+    fn next_sort_key(&mut self, pipeline_state_id: u16, texture_handle: u32) -> u64 {
+        let depth_id = self.next_depth_id;
+        self.next_depth_id = self
+            .next_depth_id
+            .checked_add(1)
+            .expect("next_depth_id overflowed u32");
+        compute_sort_key(
+            self.active_layer_id(),
+            pipeline_state_id,
+            texture_handle,
+            depth_id,
+        )
+    }
+
     /// Records a `PushLayer` IR marker (DESIGN.md Section 6.2) and
     /// increments the debug balance counter. Does not itself acquire a
     /// transient render target -- see this struct's doc comment for why
@@ -664,15 +806,11 @@ impl RenderingCanvas {
             base_vertex + 3,
         ]);
 
-        let clip_bounds = self.clip_stack.last().copied().unwrap_or(ScissorRect {
-            x: 0,
-            y: 0,
-            width: u32::MAX,
-            height: u32::MAX,
-        });
+        let clip_bounds = self.clip_stack.last().copied().unwrap_or(FULL_WINDOW_CLIP);
+        let sort_key = self.next_sort_key(0, 0);
         self.commands.push(UiDrawCommand {
             kind: CommandType::DrawGeometry,
-            sort_key: 0, // Phase 0: single command, sorts itself.
+            sort_key,
             pipeline_state_id: 0,
             texture_handle: 0,
             element_count: 6,
@@ -744,12 +882,7 @@ impl RenderingCanvas {
             .last()
             .expect("state_stack must always have at least one entry");
         let color = premultiply_alpha(rgba, state.alpha);
-        let clip_bounds = self.clip_stack.last().copied().unwrap_or(ScissorRect {
-            x: 0,
-            y: 0,
-            width: u32::MAX,
-            height: u32::MAX,
-        });
+        let clip_bounds = self.clip_stack.last().copied().unwrap_or(FULL_WINDOW_CLIP);
 
         let mut pen = origin;
         for glyph in &shaped.glyphs {
@@ -864,9 +997,10 @@ impl RenderingCanvas {
             base_vertex + 3,
         ]);
 
+        let sort_key = self.next_sort_key(PIPELINE_MSDF_TEXT, atlas_context.texture_handle);
         self.commands.push(UiDrawCommand {
             kind: CommandType::DrawGeometry,
-            sort_key: 0, // Step 5.1.3: real sort key.
+            sort_key,
             pipeline_state_id: PIPELINE_MSDF_TEXT,
             texture_handle: atlas_context.texture_handle,
             element_count: 6,
@@ -875,19 +1009,31 @@ impl RenderingCanvas {
         });
     }
 
-    /// Phase 0 stub for the sort/flatten stage (ARCHITECTURE.md Section 4):
-    /// a trivial pass-through for the single-command case. The real 4-pass
-    /// radix sort (IMPLEMENTATION.md Phase 6) has nothing to do yet when
-    /// there is only ever one element -- "one element sorts itself"
-    /// (IMPLEMENTATION.md Phase 0, task 3).
+    /// Real sort/flatten stage (ARCHITECTURE.md Section 4.2, Step
+    /// 5.1.3): every non-`DrawGeometry` command (`PushScissor`/
+    /// `PopScissor`/`PushLayer`/`PopLayer`) is a hard barrier -- sorting
+    /// and merging never reorders a draw across one (the conservative
+    /// reading of Section 4.2's own "single draw call per layer plane"
+    /// *soft* target, which explicitly defers cross-clip-boundary
+    /// batching to a future, measurement-driven pass). Within each
+    /// maximal marker-free run of `DrawGeometry` commands,
+    /// [`flatten_run`] sorts by `sort_key` and merges adjacent commands
+    /// sharing Layer+Pipeline+Texture (the key's top 44 bits) and
+    /// identical `clip_bounds` into one, rewriting `indices` into a
+    /// freshly built contiguous buffer (`vertices` never moves -- every
+    /// index is an absolute reference into it, unaffected by which
+    /// command it originally belonged to).
+    ///
     /// # Panics
     /// In debug builds, panics if `push_layer`/`pop_layer` calls, `save`/
-    /// `restore` calls, or `push_clip`/`pop_clip` calls are unbalanced at
-    /// frame boundary (IMPLEMENTATION.md Step 2.2 task 5, extended by Step
-    /// 5.1.1 to the two new stacks) -- an unreleased transient target,
-    /// transform/alpha level, or clip rect otherwise leaks silently into
-    /// the next frame instead of failing loudly at the actual bug.
-    /// Compiled out in release builds along with the counters' checks.
+    /// `restore` calls, `push_clip`/`pop_clip` calls, or `begin_overlay`/
+    /// `end_overlay` calls are unbalanced at frame boundary
+    /// (IMPLEMENTATION.md Step 2.2 task 5, extended by Step 5.1.1/5.1.3
+    /// to the three new stacks) -- an unreleased transient target,
+    /// transform/alpha level, clip rect, or overlay scope otherwise
+    /// leaks silently into the next frame instead of failing loudly at
+    /// the actual bug. Compiled out in release builds along with the
+    /// counters' checks.
     #[must_use]
     pub fn flatten(self) -> FlattenedFrame {
         debug_assert_eq!(
@@ -903,10 +1049,42 @@ impl RenderingCanvas {
             self.clip_stack.is_empty(),
             "push_clip/pop_clip calls are unbalanced at frame boundary"
         );
+        debug_assert!(
+            self.overlay_stack.is_empty(),
+            "begin_overlay/end_overlay calls are unbalanced at frame boundary"
+        );
+
+        let RenderingCanvas {
+            vertices,
+            indices,
+            mut commands,
+            ..
+        } = self;
+
+        let mut out_commands = Vec::with_capacity(commands.len());
+        let mut out_indices = Vec::with_capacity(indices.len());
+        let mut run_start = 0;
+        for i in 0..=commands.len() {
+            let at_boundary = i == commands.len() || commands[i].kind != CommandType::DrawGeometry;
+            if !at_boundary {
+                continue;
+            }
+            flatten_run(
+                &mut commands[run_start..i],
+                &indices,
+                &mut out_commands,
+                &mut out_indices,
+            );
+            if i < commands.len() {
+                out_commands.push(commands[i]);
+            }
+            run_start = i + 1;
+        }
+
         FlattenedFrame {
-            vertices: self.vertices,
-            indices: self.indices,
-            commands: self.commands,
+            vertices,
+            indices: out_indices,
+            commands: out_commands,
         }
     }
 }
@@ -978,6 +1156,118 @@ fn intersect_scissor(a: ScissorRect, b: ScissorRect) -> ScissorRect {
         width: (x1 - x0).max(0) as u32,
         height: (y1 - y0).max(0) as u32,
     }
+}
+
+/// `ARCHITECTURE.md` Section 4.1's Texture/Bindless ID field width (12
+/// bits, 4,096 concurrent slots).
+const TEXTURE_ID_MASK: u32 = 0xFFF;
+/// `ARCHITECTURE.md` Section 4.1's Depth ID field width (20 bits,
+/// 1,048,576 slots -- widened from 16 in the September 2026
+/// documentation review).
+const DEPTH_ID_MASK: u32 = 0xF_FFFF;
+
+/// ARCHITECTURE.md Section 4.1's canonical 64-bit sort key:
+/// `(LayerID<<48)|(PipelineID<<32)|(TextureID<<20)|(DepthID)`.
+/// `layer_id`/`pipeline_state_id` are `u16` and always fit their 16-bit
+/// fields exactly; `texture_handle`/`depth_id` are wider (`u32`) and
+/// masked down to their documented 12-/20-bit ranges.
+///
+/// # Panics
+/// In debug builds, panics if `texture_handle` exceeds the 12-bit
+/// Texture ID field, or if `depth_id` exceeds the 20-bit Depth ID field
+/// -- the latter is the exact debug assert ARCHITECTURE.md Section 4.1
+/// itself documents as required ("the Canvas asserts in debug builds...
+/// if a single frame's node count would still overflow 20 bits") before
+/// either field would otherwise silently bleed into Layer/Pipeline's own
+/// bits. Compiled out in release builds, matching this crate's
+/// established balance-assertion precedent; the release-mode "splits
+/// the offending layer's content into two sequential sub-frame passes"
+/// behavior the same paragraph describes is not implemented here.
+fn compute_sort_key(
+    layer_id: u16,
+    pipeline_state_id: u16,
+    texture_handle: u32,
+    depth_id: u32,
+) -> u64 {
+    debug_assert!(
+        texture_handle <= TEXTURE_ID_MASK,
+        "texture_handle ({texture_handle}) exceeds the 12-bit Texture ID field \
+         (ARCHITECTURE.md Section 4.1)"
+    );
+    debug_assert!(
+        depth_id <= DEPTH_ID_MASK,
+        "depth_id ({depth_id}) exceeds the 20-bit Depth ID field (ARCHITECTURE.md Section 4.1) \
+         -- a single frame's DrawGeometry count has overflowed the documented capacity"
+    );
+    (u64::from(layer_id) << 48)
+        | (u64::from(pipeline_state_id) << 32)
+        | (u64::from(texture_handle & TEXTURE_ID_MASK) << 20)
+        | u64::from(depth_id & DEPTH_ID_MASK)
+}
+
+/// `source_indices[command.vertex_offset..][..command.element_count]` --
+/// `flatten_run`'s own accessor for one command's original index slice,
+/// named to make each call site read as "this command's indices," not a
+/// bare range expression.
+fn command_indices<'a>(source_indices: &'a [u32], command: &UiDrawCommand) -> &'a [u32] {
+    let start = command.vertex_offset as usize;
+    let end = start + command.element_count as usize;
+    &source_indices[start..end]
+}
+
+/// Sorts one marker-free run of `DrawGeometry` commands by `sort_key`
+/// (safe as `sort_unstable_by_key` -- no two commands in one frame ever
+/// share a full sort key, since `RenderingCanvas::next_depth_id` never
+/// repeats or resets, so there is nothing tied to preserve the order
+/// of), then merges adjacent commands sharing Layer+Pipeline+Texture
+/// (the key's top 44 bits, `sort_key >> 20`) and identical `clip_bounds`
+/// into one -- ARCHITECTURE.md Section 4.2's own three-step batch-
+/// flattening algorithm. Every merged command's original (possibly
+/// non-contiguous) index slice is concatenated into `out_indices`, the
+/// actual contiguous buffer the RHI will read from -- each output
+/// command's `vertex_offset` refers to a position in `out_indices`,
+/// never `source_indices`.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "a single frame's index count stays far below u32::MAX, the same headroom \
+               reasoning ARCHITECTURE.md Section 4.1 applies to Depth ID"
+)]
+fn flatten_run(
+    run: &mut [UiDrawCommand],
+    source_indices: &[u32],
+    out_commands: &mut Vec<UiDrawCommand>,
+    out_indices: &mut Vec<u32>,
+) {
+    run.sort_unstable_by_key(|command| command.sort_key);
+
+    let mut remaining = run.iter();
+    let Some(&first) = remaining.next() else {
+        return;
+    };
+    let mut current = first;
+    let mut current_offset = out_indices.len() as u32;
+    out_indices.extend_from_slice(command_indices(source_indices, &current));
+
+    for &command in remaining {
+        let same_batch = command.sort_key >> 20 == current.sort_key >> 20
+            && command.clip_bounds == current.clip_bounds;
+        if same_batch {
+            out_indices.extend_from_slice(command_indices(source_indices, &command));
+            current.element_count += command.element_count;
+        } else {
+            out_commands.push(UiDrawCommand {
+                vertex_offset: current_offset,
+                ..current
+            });
+            current = command;
+            current_offset = out_indices.len() as u32;
+            out_indices.extend_from_slice(command_indices(source_indices, &current));
+        }
+    }
+    out_commands.push(UiDrawCommand {
+        vertex_offset: current_offset,
+        ..current
+    });
 }
 
 /// An acquired swapchain image, handed from `RhiSwapchain::acquire_next_image`
@@ -1692,7 +1982,7 @@ mod tests {
         reason = "a glyph's own x_advance stays far below f32's exact-integer range for any \
                    real font/text, same reasoning as draw_text's own production-code allow"
     )]
-    fn draw_text_emits_one_command_per_resolved_glyph_with_correct_pen_advance() {
+    fn draw_text_merges_two_resolved_glyphs_sharing_pipeline_and_texture_into_one_command() {
         // Plain ASCII Latin glyphs shape with zero x_offset/y_offset (no
         // GPOS mark repositioning applies), so each quad's expected
         // top-left reduces to the running pen position minus half the
@@ -1737,13 +2027,25 @@ mod tests {
         let frame = canvas.flatten();
         drop(owner.join());
 
-        assert_eq!(frame.commands.len(), 2, "one command per resolved glyph");
-        for command in &frame.commands {
-            assert_eq!(command.kind, CommandType::DrawGeometry);
-            assert_eq!(command.pipeline_state_id, PIPELINE_MSDF_TEXT);
-            assert_eq!(command.texture_handle, 7);
-            assert_eq!(command.element_count, 6);
-        }
+        // Step 5.1.3: both glyphs share Layer 0 (standard content),
+        // Pipeline PIPELINE_MSDF_TEXT, texture 7, and the same
+        // full-window clip_bounds (nothing between the two glyphs
+        // changed the clip stack) -- real batch flattening merges them
+        // into a single command instead of the naive one-per-glyph
+        // mapping Step 5.1.2 originally shipped with.
+        assert_eq!(
+            frame.commands.len(),
+            1,
+            "two glyphs sharing Layer+Pipeline+Texture+clip_bounds must merge into one command"
+        );
+        let command = frame.commands[0];
+        assert_eq!(command.kind, CommandType::DrawGeometry);
+        assert_eq!(command.pipeline_state_id, PIPELINE_MSDF_TEXT);
+        assert_eq!(command.texture_handle, 7);
+        assert_eq!(
+            command.element_count, 12,
+            "6 indices per glyph, 2 glyphs merged"
+        );
 
         let scale = px_size / test_units_per_em(&font);
         assert!(
@@ -1930,6 +2232,284 @@ mod tests {
                 && (frame.vertices[0].position[1] - expected_y0).abs() <= EPSILON,
             "the glyph quad's top-left must reflect the active translation: {:?}",
             frame.vertices[0].position
+        );
+    }
+
+    #[test]
+    fn compute_sort_key_packs_each_field_into_its_documented_bit_range() {
+        let key = compute_sort_key(0x1234, 0x5678, 0x9AB, 0xC_DEF0);
+        assert_eq!(
+            key,
+            (0x1234_u64 << 48) | (0x5678_u64 << 32) | (0x9AB_u64 << 20) | 0xC_DEF0_u64
+        );
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(debug_assertions),
+        ignore = "the overflow assertion is a debug_assert, compiled out in release"
+    )]
+    #[should_panic(expected = "exceeds the 12-bit Texture ID field")]
+    fn compute_sort_key_panics_on_texture_handle_overflow() {
+        let _ = compute_sort_key(0, 0, 0x1000, 0);
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(debug_assertions),
+        ignore = "the overflow assertion is a debug_assert, compiled out in release"
+    )]
+    #[should_panic(expected = "exceeds the 20-bit Depth ID field")]
+    fn compute_sort_key_panics_on_depth_id_overflow() {
+        let _ = compute_sort_key(0, 0, 0, 0x10_0000);
+    }
+
+    #[test]
+    fn next_sort_key_advances_depth_id_monotonically_and_never_resets() {
+        let mut canvas = RenderingCanvas::new();
+        let first = canvas.next_sort_key(0, 0);
+        let second = canvas.next_sort_key(0, 0);
+        assert_eq!(first & 0xF_FFFF, 0);
+        assert_eq!(second & 0xF_FFFF, 1);
+
+        // begin_overlay/end_overlay must not reset the counter.
+        canvas.begin_overlay(OverlayLayerPriority(0));
+        canvas.end_overlay();
+        let third = canvas.next_sort_key(0, 0);
+        assert_eq!(third & 0xF_FFFF, 2);
+    }
+
+    #[test]
+    fn begin_overlay_sets_the_active_layer_id_and_resets_clip_to_full_window() {
+        let mut canvas = RenderingCanvas::new();
+        canvas.push_clip(&ScissorRect {
+            x: 10,
+            y: 10,
+            width: 20,
+            height: 20,
+        });
+        canvas.begin_overlay(OverlayLayerPriority(5));
+        canvas.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        canvas.end_overlay();
+        canvas.pop_clip();
+        let frame = canvas.flatten();
+
+        let overlay_draw = frame
+            .commands
+            .iter()
+            .find(|c| c.kind == CommandType::DrawGeometry)
+            .expect("the overlay rect must have been recorded");
+        assert_eq!(
+            overlay_draw.sort_key >> 48,
+            10_005,
+            "Layer ID must be OVERLAY_LAYER_BASE + priority"
+        );
+        assert_eq!(
+            overlay_draw.clip_bounds, FULL_WINDOW_CLIP,
+            "content inside begin_overlay/end_overlay must not inherit the outer clip"
+        );
+    }
+
+    #[test]
+    fn end_overlay_restores_the_exact_clip_that_was_active_before_begin_overlay() {
+        let mut canvas = RenderingCanvas::new();
+        let outer_clip = ScissorRect {
+            x: 10,
+            y: 10,
+            width: 20,
+            height: 20,
+        };
+        canvas.push_clip(&outer_clip);
+        canvas.begin_overlay(OverlayLayerPriority(0));
+        canvas.end_overlay();
+        canvas.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        canvas.pop_clip();
+        let frame = canvas.flatten();
+
+        let draw = frame
+            .commands
+            .iter()
+            .find(|c| c.kind == CommandType::DrawGeometry)
+            .expect("the rect must have been recorded");
+        assert_eq!(
+            draw.clip_bounds, outer_clip,
+            "clip must be restored exactly after end_overlay"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "without a matching begin_overlay()")]
+    fn end_overlay_without_begin_panics_immediately() {
+        let mut canvas = RenderingCanvas::new();
+        canvas.end_overlay();
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(debug_assertions),
+        ignore = "the balance assertion is a debug_assert, compiled out in release"
+    )]
+    #[should_panic(expected = "begin_overlay/end_overlay calls are unbalanced")]
+    fn unbalanced_begin_overlay_panics_at_flatten() {
+        let mut canvas = RenderingCanvas::new();
+        canvas.begin_overlay(OverlayLayerPriority(0));
+        let _ = canvas.flatten();
+    }
+
+    #[test]
+    #[should_panic(expected = "overlay priority overflowed")]
+    fn begin_overlay_panics_on_priority_overflow() {
+        let mut canvas = RenderingCanvas::new();
+        canvas.begin_overlay(OverlayLayerPriority(u16::MAX));
+    }
+
+    #[test]
+    fn flatten_reproduces_design_doc_section_8s_worked_example() {
+        // DESIGN.md Section 8: Rect1(P1,Tex0) -> Text(P2,AtlasA) ->
+        // Rect2(P1,Tex0) -> OverlayRect(P1,Tex0) collapses into exactly
+        // 3 batches: Rect1+Rect2 merged (same Layer+Pipeline+Texture+
+        // clip), Text alone (different pipeline), OverlayRect alone
+        // (different Layer ID despite sharing Rect1/Rect2's own
+        // pipeline+texture).
+        let font_bytes = discover_test_font_bytes();
+        let font = skrifa::FontRef::new(&font_bytes).expect("font invalid for skrifa");
+        let face = rustybuzz::Face::from_slice(&font_bytes, 0).expect("font invalid for rustybuzz");
+        let runs = tre_text::shape_text(&face, "a").expect("shaping failed");
+        let shaped = &runs[0];
+
+        let owner = tre_atlas::AtlasOwner::spawn(256, 256, 8, 8);
+        let handle = owner.handle();
+        seed_atlas(&handle, &font, shaped.glyphs[0].glyph_id, 0);
+        let atlas_context = GlyphAtlasContext {
+            atlas: &handle,
+            texture_handle: 9,
+            dimensions: (256, 256),
+            current_frame: 0,
+        };
+
+        let mut canvas = RenderingCanvas::new();
+        canvas.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF); // Rect1
+        canvas.draw_text(
+            shaped,
+            &font,
+            0,
+            [100.0, 32.0],
+            32.0,
+            0xFFFF_FFFF,
+            &atlas_context,
+        ); // Text
+        canvas.draw_rounded_rect(50.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF); // Rect2
+        canvas.begin_overlay(OverlayLayerPriority(0));
+        canvas.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF); // OverlayRect
+        canvas.end_overlay();
+        let frame = canvas.flatten();
+        drop(owner.join());
+
+        let draws: Vec<_> = frame
+            .commands
+            .iter()
+            .filter(|c| c.kind == CommandType::DrawGeometry)
+            .collect();
+        assert_eq!(draws.len(), 3, "expected exactly 3 batches, got {draws:?}");
+
+        let rect_batch = draws
+            .iter()
+            .find(|c| c.pipeline_state_id == 0 && c.sort_key >> 48 == 0)
+            .expect("standard-plane rect batch must exist");
+        assert_eq!(
+            rect_batch.element_count, 12,
+            "Rect1+Rect2 must merge into one 12-index batch"
+        );
+
+        let text_batch = draws
+            .iter()
+            .find(|c| c.pipeline_state_id == PIPELINE_MSDF_TEXT)
+            .expect("text batch must exist");
+        assert_eq!(text_batch.element_count, 6);
+
+        let overlay_batch = draws
+            .iter()
+            .find(|c| c.pipeline_state_id == 0 && c.sort_key >> 48 == 10_000)
+            .expect("overlay-plane rect batch must exist");
+        assert_eq!(overlay_batch.element_count, 6);
+    }
+
+    #[test]
+    fn flatten_run_does_not_merge_two_commands_sharing_key_but_differing_clip_bounds() {
+        // Unreachable via the public Canvas API today (clip_bounds only
+        // ever changes alongside a marker command, which already acts
+        // as a hard barrier on its own) -- this exercises flatten_run's
+        // own clip_bounds check directly as a regression guard, in case
+        // a future caller ever changes clip_bounds without a marker.
+        let a = UiDrawCommand {
+            kind: CommandType::DrawGeometry,
+            sort_key: compute_sort_key(0, 0, 0, 0),
+            pipeline_state_id: 0,
+            texture_handle: 0,
+            element_count: 6,
+            vertex_offset: 0,
+            clip_bounds: ScissorRect {
+                x: 0,
+                y: 0,
+                width: 50,
+                height: 50,
+            },
+        };
+        let b = UiDrawCommand {
+            sort_key: compute_sort_key(0, 0, 0, 1),
+            vertex_offset: 6,
+            clip_bounds: ScissorRect {
+                x: 60,
+                y: 0,
+                width: 50,
+                height: 50,
+            },
+            ..a
+        };
+        let source_indices: Vec<u32> = (0..12).collect();
+        let mut run = [a, b];
+        let mut out_commands = Vec::new();
+        let mut out_indices = Vec::new();
+        flatten_run(
+            &mut run,
+            &source_indices,
+            &mut out_commands,
+            &mut out_indices,
+        );
+
+        assert_eq!(
+            out_commands.len(),
+            2,
+            "differing clip_bounds must prevent merging even with identical \
+             Layer+Pipeline+Texture"
+        );
+    }
+
+    #[test]
+    fn flatten_does_not_merge_across_a_push_clip_pop_clip_pair_even_when_the_net_clip_is_unchanged()
+    {
+        let mut canvas = RenderingCanvas::new();
+        canvas.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        canvas.push_clip(&ScissorRect {
+            x: 0,
+            y: 0,
+            width: 1000,
+            height: 1000,
+        });
+        canvas.pop_clip();
+        canvas.draw_rounded_rect(50.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        let frame = canvas.flatten();
+
+        let draws: Vec<_> = frame
+            .commands
+            .iter()
+            .filter(|c| c.kind == CommandType::DrawGeometry)
+            .collect();
+        assert_eq!(
+            draws.len(),
+            2,
+            "an intervening push_clip/pop_clip pair must remain a hard barrier even when its \
+             net clip effect matches what was already active"
         );
     }
 }
