@@ -129,3 +129,4 @@ jobs:
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example atlas_concurrency_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example atlas_eviction_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_state_stack_demo
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_draw_text_demo

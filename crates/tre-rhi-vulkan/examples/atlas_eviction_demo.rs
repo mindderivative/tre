@@ -14,9 +14,10 @@
 
 use ash::vk;
 use skrifa::MetadataProvider;
-use tre_atlas::{AtlasKey, AtlasOwner, RasterSource};
+use tre_atlas::{AtlasKey, AtlasOwner};
 use tre_engine::{rgba8, RhiDevice, TextureFormat, UiVertex};
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
+use tre_text::GlyphRasterSource;
 
 #[path = "support/pixel_helpers.rs"]
 mod pixel_helpers;
@@ -32,31 +33,6 @@ const EVICTION_FRAME: u64 = 700;
 const CANVAS_WIDTH: u32 = 200;
 const CANVAS_HEIGHT: u32 = 100;
 const GLYPH_SCREEN_HEIGHT: f32 = 60.0;
-
-/// Rasterizes one glyph's MSDF on demand -- same demo-side glue
-/// `atlas_concurrency_demo` already established, keeping `tre-atlas`
-/// itself content-agnostic.
-struct GlyphRasterSource {
-    contours: Vec<tre_text::Contour>,
-}
-
-impl RasterSource for GlyphRasterSource {
-    fn size(&self) -> (u32, u32) {
-        (MSDF_SIZE, MSDF_SIZE)
-    }
-
-    fn rasterize(&self) -> Vec<u8> {
-        let bitmap = tre_text::generate_msdf(&self.contours, MSDF_SIZE, RANGE_PX)
-            .expect("every letter this demo uses has real ink and must produce a bitmap");
-        pad_rgb_to_rgba(&bitmap.pixels)
-    }
-}
-
-fn pad_rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {
-    rgb.chunks_exact(3)
-        .flat_map(|c| [c[0], c[1], c[2], 255])
-        .collect()
-}
 
 fn main() {
     // --- Real cascade font, real outlines for the five distinct letters
@@ -88,6 +64,8 @@ fn main() {
                 key,
                 Box::new(GlyphRasterSource {
                     contours: contours_for(ch),
+                    size: MSDF_SIZE,
+                    range_px: RANGE_PX,
                 }),
                 current_frame,
             ),

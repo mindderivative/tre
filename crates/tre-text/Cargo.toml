@@ -11,6 +11,12 @@ unsafe_op_in_unsafe_fn = "deny"
 all = "warn"
 
 [dependencies]
+# IMPLEMENTATION.md Step 5.1.2: `GlyphRasterSource` implements this
+# crate's `RasterSource` trait object (`tre-atlas/src/raster.rs`) --
+# the dependency points `tre-text -> tre-atlas`, the direction
+# `RasterSource` was designed to allow (`tre-atlas` itself never
+# depends back on `tre-text`, staying content-agnostic).
+tre-atlas = { path = "../tre-atlas" }
 # PLAN_PHASE4_STEP4_2_2.md: a real pure-Rust reimplementation of
 # msdfgen's own published MSDF-generation algorithm (edge coloring,
 # true/pseudo-distance handling, sign correction, following Chlumský's

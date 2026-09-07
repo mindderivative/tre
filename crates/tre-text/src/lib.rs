@@ -14,6 +14,7 @@ mod error;
 mod fallback;
 mod msdf;
 mod outline;
+mod raster;
 mod shape;
 
 pub use error::TextError;
@@ -21,4 +22,5 @@ pub use error::TextError;
 pub use fallback::{covers, resolve_font_index, resolve_run, FontCascade};
 pub use msdf::{generate_msdf, MsdfBitmap};
 pub use outline::{glyph_outline, Contour, OutlineSegment};
+pub use raster::GlyphRasterSource;
 pub use shape::{segment_runs, shape_text, ShapedGlyph, ShapedRun, TextRun};

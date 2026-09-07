@@ -17,5 +17,23 @@ pedantic = "warn"
 
 [dependencies]
 bytemuck = { version = "1.25.2", features = ["derive"] }
+# IMPLEMENTATION.md Step 5.1.2: `Canvas::draw_text` is this crate's
+# first wiring into the text/atlas stack -- `tre-text` for shaped-glyph
+# data and glyph outline extraction, `tre-atlas` for the shared dynamic
+# texture atlas's lookup/request-insert API.
+tre-atlas = { path = "../tre-atlas" }
+tre-text = { path = "../tre-text" }
 tre-math = { path = "../tre-math" }
 tre-memory = { path = "../tre-memory" }
+# Pinned to the exact same version `tre-text` uses (its own Cargo.toml
+# comment: 0.46.2 needs a newer rustc) -- `draw_text` takes a caller-
+# resolved `skrifa::FontRef` directly, so this crate needs the same
+# type, not a re-export.
+skrifa = "=0.33.2"
+
+[dev-dependencies]
+# `Canvas::draw_text`'s own tests need a real shaped run: `tre_text::
+# shape_text` takes a `rustybuzz::Face` directly, so this crate's tests
+# build one -- pinned to the same version `tre-text`'s own Cargo.toml
+# uses. Dev-only: never part of the built library.
+rustybuzz = "0.20.1"

@@ -967,8 +967,12 @@ name = "tre-engine"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "rustybuzz",
+ "skrifa",
+ "tre-atlas",
  "tre-math",
  "tre-memory",
+ "tre-text",
 ]
 
 [[package]]
@@ -1048,6 +1052,7 @@ dependencies = [
  "png",
  "rustybuzz",
  "skrifa",
+ "tre-atlas",
  "unicode-bidi",
  "unicode-script",
 ]

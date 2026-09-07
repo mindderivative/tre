@@ -108,6 +108,15 @@ pub struct UiDrawCommand {
     pub clip_bounds: ScissorRect,
 }
 
+/// `UiDrawCommand::pipeline_state_id` for `Canvas::draw_text`'s MSDF
+/// glyph quads (IMPLEMENTATION.md Step 5.1.2) -- the first real
+/// distinction between pipeline ids in the IR; `draw_rounded_rect`'s own
+/// commands keep the implicit `0` (the SDF-rect pipeline). Nothing
+/// downstream reads either value yet (Step 5.1.3's real batch flattening
+/// is what would), the same up-front honesty already established for
+/// `sort_key: 0`.
+pub const PIPELINE_MSDF_TEXT: u16 = 1;
+
 /// Opaque identifier for a platform window, assigned by
 /// `tre-platform`'s `PlatformConnection` when a window is created
 /// (IMPLEMENTATION.md Step 1.2). Stable for that window's lifetime and
@@ -384,6 +393,25 @@ pub struct RenderingCanvas {
     clip_stack: Vec<ScissorRect>,
 }
 
+/// Everything `Canvas::draw_text` needs to know about the caller's
+/// currently-uploaded shared dynamic texture atlas (IMPLEMENTATION.md
+/// Step 5.1.2) -- bundled since all four fields travel together at
+/// every call site. `atlas` is the borrowed, `Clone`-able lookup/
+/// request handle (ARCHITECTURE.md: one atlas shared by every window,
+/// never owned by a per-frame `Canvas`); `texture_handle` is that
+/// atlas's current bindless GPU texture index (obtained by the caller
+/// once per texture upload, the same way `atlas_concurrency_demo`'s own
+/// `texture.bindless_index()` call does); `dimensions` is the atlas's
+/// own pixel width/height, needed to normalize a `PackedRect` into UV
+/// coordinates; `current_frame` is the caller's own frame counter,
+/// forwarded to `AtlasOwnerHandle::lookup`/`request_insert` unchanged.
+pub struct GlyphAtlasContext<'a> {
+    pub atlas: &'a tre_atlas::AtlasOwnerHandle,
+    pub texture_handle: u32,
+    pub dimensions: (u32, u32),
+    pub current_frame: u64,
+}
+
 impl RenderingCanvas {
     #[must_use]
     pub fn new() -> Self {
@@ -653,6 +681,200 @@ impl RenderingCanvas {
         });
     }
 
+    /// Renders one already-shaped `ShapedRun` (IMPLEMENTATION.md Step
+    /// 5.1.2, `tre-engine`'s first wiring into `tre-text`/`tre-atlas`) as
+    /// a sequence of atlas-backed MSDF glyph quads. `font_id`
+    /// distinguishes fonts sharing one atlas (`AtlasKey::from_glyph`'s
+    /// own `(font_id, glyph_id)` packing); `origin` is the pen's
+    /// starting position in the active transform's local space
+    /// (transformed the same way `draw_rounded_rect`'s corners are);
+    /// `px_size` is the target em size in pixels, used both to scale
+    /// `shaped`'s font-design-unit advances/offsets (via `font`'s own
+    /// `unitsPerEm`) and as the fixed on-screen side length of every
+    /// glyph's square MSDF quad -- PLAN.md's documented simplification:
+    /// a fixed square, not each glyph's true design-space bounding box,
+    /// same as `atlas_concurrency_demo` already renders.
+    ///
+    /// A glyph whose outline has no real ink (whitespace) is skipped
+    /// entirely: no atlas interaction, no emitted quad, pen still
+    /// advances -- `tre_text::msdf`'s own doc comment already
+    /// establishes that this is the common case for e.g. U+0020 SPACE,
+    /// not an error. A glyph not yet resident in the atlas fires a real
+    /// `request_insert` (ignoring a `false`/queue-full return -- "report,
+    /// don't block," DESIGN.md Section 2.6) and renders nothing this
+    /// frame; a resident glyph emits one real textured `DrawGeometry`
+    /// command, current transform/alpha/clip state applied exactly as
+    /// `draw_rounded_rect` already does.
+    ///
+    /// # Panics
+    /// Never in practice -- see `save()`'s own `# Panics` section for why
+    /// `state_stack` is never empty.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "unitsPerEm and every glyph's own advance/offset stay far below f32's exact-\
+                   integer range for any real font/text"
+    )]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "each parameter is independently load-bearing (shaped run, resolved font, \
+                   font identity, pen origin/size, color, and the bundled borrowed atlas \
+                   context); a fifth or sixth parameter beyond the existing four already got \
+                   its own GlyphAtlasContext bundle rather than growing this list further"
+    )]
+    pub fn draw_text(
+        &mut self,
+        shaped: &tre_text::ShapedRun,
+        font: &skrifa::FontRef,
+        font_id: u32,
+        origin: [f32; 2],
+        px_size: f32,
+        rgba: u32,
+        atlas_context: &GlyphAtlasContext<'_>,
+    ) {
+        let units_per_em = skrifa::MetadataProvider::metrics(
+            font,
+            skrifa::instance::Size::unscaled(),
+            skrifa::instance::LocationRef::default(),
+        )
+        .units_per_em;
+        let scale = px_size / f32::from(units_per_em);
+
+        let state = *self
+            .state_stack
+            .last()
+            .expect("state_stack must always have at least one entry");
+        let color = premultiply_alpha(rgba, state.alpha);
+        let clip_bounds = self.clip_stack.last().copied().unwrap_or(ScissorRect {
+            x: 0,
+            y: 0,
+            width: u32::MAX,
+            height: u32::MAX,
+        });
+
+        let mut pen = origin;
+        for glyph in &shaped.glyphs {
+            let key = tre_atlas::AtlasKey::from_glyph(font_id, glyph.glyph_id);
+            let glyph_origin = [
+                pen[0] + glyph.x_offset as f32 * scale,
+                pen[1] - glyph.y_offset as f32 * scale,
+            ];
+
+            if let Some((rect, _generation)) =
+                atlas_context.atlas.lookup(key, atlas_context.current_frame)
+            {
+                self.emit_glyph_quad(
+                    glyph_origin,
+                    px_size,
+                    rect,
+                    atlas_context,
+                    color,
+                    clip_bounds,
+                    state.transform,
+                );
+            } else if let Ok(outline) =
+                tre_text::glyph_outline(font, skrifa::GlyphId::from(glyph.glyph_id))
+            {
+                if !outline.is_empty() {
+                    let _ = atlas_context.atlas.request_insert(
+                        key,
+                        Box::new(tre_text::GlyphRasterSource {
+                            contours: outline,
+                            size: GLYPH_MSDF_SIZE,
+                            range_px: GLYPH_MSDF_RANGE_PX,
+                        }),
+                        atlas_context.current_frame,
+                    );
+                }
+            }
+
+            pen[0] += glyph.x_advance as f32 * scale;
+            pen[1] += glyph.y_advance as f32 * scale;
+        }
+    }
+
+    /// `draw_text`'s cache-hit path: emits one `px_size`-square textured
+    /// quad, anchored with its bottom edge on the baseline and
+    /// horizontally centered on `origin` (the shaped pen position plus
+    /// the glyph's own scaled `x_offset`/`y_offset`) -- see `draw_text`'s
+    /// own doc comment for why a fixed square, not `rect`'s true aspect,
+    /// is this step's deliberate simplification. `uv` is normalized
+    /// against `atlas_context.dimensions`, the same
+    /// rect-over-atlas-size pattern `atlas_concurrency_demo` already
+    /// established -- unlike `draw_rounded_rect`'s local SDF-bounds
+    /// `uv`, `UiVertex::uv`'s other documented meaning
+    /// ("Texture coordinates," ARCHITECTURE.md Section 3.1).
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a single frame's vertex/index count stays far below u32::MAX, \
+                   the same headroom reasoning ARCHITECTURE.md Section 4.1 applies to Depth ID"
+    )]
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "atlas/rect coordinates stay far below f32's exact-integer range for any \
+                   real atlas size"
+    )]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "a private helper splitting draw_text's own cache-hit path -- every parameter \
+                   is a value draw_text already computed once and passes through unchanged"
+    )]
+    fn emit_glyph_quad(
+        &mut self,
+        origin: [f32; 2],
+        px_size: f32,
+        rect: tre_atlas::PackedRect,
+        atlas_context: &GlyphAtlasContext<'_>,
+        color: u32,
+        clip_bounds: ScissorRect,
+        transform: tre_math::Affine2,
+    ) {
+        let base_vertex = self.vertices.len() as u32;
+        let base_index = self.indices.len() as u32;
+
+        let (atlas_width, atlas_height) = atlas_context.dimensions;
+        let (u0, v0, u1, v1) = (
+            rect.x as f32 / atlas_width as f32,
+            rect.y as f32 / atlas_height as f32,
+            (rect.x + rect.width) as f32 / atlas_width as f32,
+            (rect.y + rect.height) as f32 / atlas_height as f32,
+        );
+
+        let half = px_size / 2.0;
+        let (x0, y0) = (origin[0] - half, origin[1] - px_size);
+        let (x1, y1) = (origin[0] + half, origin[1]);
+        let positions = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+        let uvs = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
+        self.vertices.extend(
+            positions
+                .into_iter()
+                .zip(uvs)
+                .map(|(position, uv)| UiVertex {
+                    position: transform.transform_point(position),
+                    uv,
+                    color,
+                    params: [0.0; 3],
+                }),
+        );
+        self.indices.extend_from_slice(&[
+            base_vertex,
+            base_vertex + 1,
+            base_vertex + 2,
+            base_vertex,
+            base_vertex + 2,
+            base_vertex + 3,
+        ]);
+
+        self.commands.push(UiDrawCommand {
+            kind: CommandType::DrawGeometry,
+            sort_key: 0, // Step 5.1.3: real sort key.
+            pipeline_state_id: PIPELINE_MSDF_TEXT,
+            texture_handle: atlas_context.texture_handle,
+            element_count: 6,
+            vertex_offset: base_index,
+            clip_bounds,
+        });
+    }
+
     /// Phase 0 stub for the sort/flatten stage (ARCHITECTURE.md Section 4):
     /// a trivial pass-through for the single-command case. The real 4-pass
     /// radix sort (IMPLEMENTATION.md Phase 6) has nothing to do yet when
@@ -688,6 +910,17 @@ impl RenderingCanvas {
         }
     }
 }
+
+/// `Canvas::draw_text`'s fixed MSDF atlas-entry resolution -- deliberately
+/// independent of any on-screen `px_size` (the whole point of the MSDF
+/// technique: one rasterized atlas entry serves any final display size),
+/// matching the value `atlas_concurrency_demo`/`atlas_eviction_demo`
+/// already established (Step 4.2.4/4.3.3).
+const GLYPH_MSDF_SIZE: u32 = 32;
+/// Pixels of margin around each glyph on every side within its
+/// `GLYPH_MSDF_SIZE`-square atlas entry -- `generate_msdf`'s own
+/// `range_px` parameter, same value as `GLYPH_MSDF_SIZE` above.
+const GLYPH_MSDF_RANGE_PX: f64 = 4.0;
 
 /// Scales all four of `color`'s channels (`UiVertex::color`'s established
 /// little-endian `[r, g, b, a]` layout, see `rgba8`'s own doc comment) by
@@ -1393,5 +1626,310 @@ mod tests {
             height: 10,
         });
         let _ = canvas.flatten();
+    }
+
+    /// A real, installed system font's bytes via `fontconfig` (the same
+    /// "verify against a real font, not a synthetic stub" precedent
+    /// `tre-text`'s own tests already establish, e.g.
+    /// `fallback::tests::read_family`).
+    fn discover_test_font_bytes() -> Vec<u8> {
+        let cascade =
+            tre_text::FontCascade::discover().expect("fontconfig cascade discovery failed");
+        std::fs::read(&cascade.entries[0]).expect("failed to read the primary cascade font")
+    }
+
+    fn test_units_per_em(font: &skrifa::FontRef) -> f32 {
+        f32::from(
+            skrifa::MetadataProvider::metrics(
+                font,
+                skrifa::instance::Size::unscaled(),
+                skrifa::instance::LocationRef::default(),
+            )
+            .units_per_em,
+        )
+    }
+
+    /// Requests `glyph_id`'s atlas space and blocks (real `sleep`-based
+    /// polling -- this genuinely waits on a different thread, the atlas
+    /// owner, to make progress, same reasoning as
+    /// `atlas_concurrency_demo`'s own identical polling loop) until it
+    /// resolves, so a later `draw_text` call against the same `handle`
+    /// sees a real cache hit instead of firing its own `request_insert`.
+    fn seed_atlas(
+        handle: &tre_atlas::AtlasOwnerHandle,
+        font: &skrifa::FontRef,
+        glyph_id: u32,
+        current_frame: u64,
+    ) {
+        let outline = tre_text::glyph_outline(font, skrifa::GlyphId::from(glyph_id))
+            .expect("outline extraction failed");
+        assert!(!outline.is_empty(), "test glyph must have real ink");
+        let key = tre_atlas::AtlasKey::from_glyph(0, glyph_id);
+        assert!(
+            handle.request_insert(
+                key,
+                Box::new(tre_text::GlyphRasterSource {
+                    contours: outline,
+                    size: 32,
+                    range_px: 4.0,
+                }),
+                current_frame,
+            ),
+            "request_insert failed -- queue unexpectedly full"
+        );
+        for _ in 0..500 {
+            if handle.lookup(key, current_frame).is_some() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        panic!("glyph {glyph_id} never resolved");
+    }
+
+    #[test]
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "a glyph's own x_advance stays far below f32's exact-integer range for any \
+                   real font/text, same reasoning as draw_text's own production-code allow"
+    )]
+    fn draw_text_emits_one_command_per_resolved_glyph_with_correct_pen_advance() {
+        // Plain ASCII Latin glyphs shape with zero x_offset/y_offset (no
+        // GPOS mark repositioning applies), so each quad's expected
+        // top-left reduces to the running pen position minus half the
+        // fixed square side.
+        const EPSILON: f32 = 1e-3;
+
+        let font_bytes = discover_test_font_bytes();
+        let font = skrifa::FontRef::new(&font_bytes).expect("font invalid for skrifa");
+        let face = rustybuzz::Face::from_slice(&font_bytes, 0).expect("font invalid for rustybuzz");
+        let runs = tre_text::shape_text(&face, "ab").expect("shaping failed");
+        assert_eq!(runs.len(), 1, "plain Latin text must be a single run");
+        let shaped = &runs[0];
+        assert_eq!(
+            shaped.glyphs.len(),
+            2,
+            "\"ab\" must shape to exactly 2 glyphs"
+        );
+
+        let owner = tre_atlas::AtlasOwner::spawn(256, 256, 8, 8);
+        let handle = owner.handle();
+        for glyph in &shaped.glyphs {
+            seed_atlas(&handle, &font, glyph.glyph_id, 0);
+        }
+
+        let atlas_context = GlyphAtlasContext {
+            atlas: &handle,
+            texture_handle: 7,
+            dimensions: (256, 256),
+            current_frame: 0,
+        };
+        let px_size = 32.0;
+        let mut canvas = RenderingCanvas::new();
+        canvas.draw_text(
+            shaped,
+            &font,
+            0,
+            [0.0, 0.0],
+            px_size,
+            0xFFFF_FFFF,
+            &atlas_context,
+        );
+        let frame = canvas.flatten();
+        drop(owner.join());
+
+        assert_eq!(frame.commands.len(), 2, "one command per resolved glyph");
+        for command in &frame.commands {
+            assert_eq!(command.kind, CommandType::DrawGeometry);
+            assert_eq!(command.pipeline_state_id, PIPELINE_MSDF_TEXT);
+            assert_eq!(command.texture_handle, 7);
+            assert_eq!(command.element_count, 6);
+        }
+
+        let scale = px_size / test_units_per_em(&font);
+        assert!(
+            (frame.vertices[0].position[0] - (-px_size / 2.0)).abs() <= EPSILON,
+            "first glyph's quad must start at the pen origin: {:?}",
+            frame.vertices[0].position
+        );
+        let expected_second_x0 = shaped.glyphs[0].x_advance as f32 * scale - px_size / 2.0;
+        assert!(
+            (frame.vertices[4].position[0] - expected_second_x0).abs() <= EPSILON,
+            "second glyph's quad must be offset by the first glyph's scaled x_advance: got {}, \
+             expected {expected_second_x0}",
+            frame.vertices[4].position[0]
+        );
+    }
+
+    #[test]
+    fn draw_text_cache_miss_fires_a_real_request_insert_and_renders_nothing_this_frame() {
+        let font_bytes = discover_test_font_bytes();
+        let font = skrifa::FontRef::new(&font_bytes).expect("font invalid for skrifa");
+        let face = rustybuzz::Face::from_slice(&font_bytes, 0).expect("font invalid for rustybuzz");
+        let runs = tre_text::shape_text(&face, "c").expect("shaping failed");
+        let shaped = &runs[0];
+
+        let owner = tre_atlas::AtlasOwner::spawn(256, 256, 8, 8);
+        let handle = owner.handle();
+        let atlas_context = GlyphAtlasContext {
+            atlas: &handle,
+            texture_handle: 0,
+            dimensions: (256, 256),
+            current_frame: 0,
+        };
+        let mut canvas = RenderingCanvas::new();
+        canvas.draw_text(
+            shaped,
+            &font,
+            0,
+            [0.0, 0.0],
+            32.0,
+            0xFFFF_FFFF,
+            &atlas_context,
+        );
+        let frame = canvas.flatten();
+        assert!(
+            frame.commands.is_empty(),
+            "a glyph not yet resident in the atlas must render nothing this frame"
+        );
+
+        let key = tre_atlas::AtlasKey::from_glyph(0, shaped.glyphs[0].glyph_id);
+        let mut resolved = false;
+        for _ in 0..500 {
+            if handle.lookup(key, 0).is_some() {
+                resolved = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(
+            resolved,
+            "draw_text's cache miss must have fired a real request_insert -- the glyph should \
+             eventually resolve"
+        );
+        drop(owner.join());
+    }
+
+    #[test]
+    fn draw_text_skips_a_whitespace_glyph_without_touching_the_atlas() {
+        let font_bytes = discover_test_font_bytes();
+        let font = skrifa::FontRef::new(&font_bytes).expect("font invalid for skrifa");
+        let face = rustybuzz::Face::from_slice(&font_bytes, 0).expect("font invalid for rustybuzz");
+        let runs = tre_text::shape_text(&face, " ").expect("shaping failed");
+        let shaped = &runs[0];
+        assert_eq!(
+            shaped.glyphs.len(),
+            1,
+            "a single space must shape to exactly one glyph"
+        );
+
+        let owner = tre_atlas::AtlasOwner::spawn(256, 256, 8, 8);
+        let handle = owner.handle();
+        let atlas_context = GlyphAtlasContext {
+            atlas: &handle,
+            texture_handle: 0,
+            dimensions: (256, 256),
+            current_frame: 0,
+        };
+        let mut canvas = RenderingCanvas::new();
+        canvas.draw_text(
+            shaped,
+            &font,
+            0,
+            [0.0, 0.0],
+            32.0,
+            0xFFFF_FFFF,
+            &atlas_context,
+        );
+        let frame = canvas.flatten();
+        assert!(
+            frame.commands.is_empty(),
+            "whitespace must never emit a command"
+        );
+
+        let key = tre_atlas::AtlasKey::from_glyph(0, shaped.glyphs[0].glyph_id);
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            assert!(
+                handle.lookup(key, 0).is_none(),
+                "whitespace must never be requested from the atlas at all"
+            );
+        }
+        drop(owner.join());
+    }
+
+    #[test]
+    #[allow(
+        clippy::similar_names,
+        reason = "expected_x0/expected_y0 are the clearest names for this test's own \
+                   translated top-left corner pair"
+    )]
+    fn draw_text_respects_active_transform_alpha_and_clip_state() {
+        const EPSILON: f32 = 1e-3;
+
+        let font_bytes = discover_test_font_bytes();
+        let font = skrifa::FontRef::new(&font_bytes).expect("font invalid for skrifa");
+        let face = rustybuzz::Face::from_slice(&font_bytes, 0).expect("font invalid for rustybuzz");
+        let runs = tre_text::shape_text(&face, "a").expect("shaping failed");
+        let shaped = &runs[0];
+
+        let owner = tre_atlas::AtlasOwner::spawn(256, 256, 8, 8);
+        let handle = owner.handle();
+        seed_atlas(&handle, &font, shaped.glyphs[0].glyph_id, 0);
+        let atlas_context = GlyphAtlasContext {
+            atlas: &handle,
+            texture_handle: 3,
+            dimensions: (256, 256),
+            current_frame: 0,
+        };
+
+        let px_size = 32.0;
+        let mut canvas = RenderingCanvas::new();
+        canvas.save();
+        canvas.transform(&tre_math::Affine2::from_translation(100.0, 200.0));
+        canvas.set_alpha(0.5);
+        canvas.push_clip(&ScissorRect {
+            x: 5,
+            y: 5,
+            width: 50,
+            height: 50,
+        });
+        canvas.draw_text(
+            shaped,
+            &font,
+            0,
+            [0.0, 0.0],
+            px_size,
+            rgba8(255, 255, 255, 255),
+            &atlas_context,
+        );
+        canvas.pop_clip();
+        canvas.restore();
+        let frame = canvas.flatten();
+        drop(owner.join());
+
+        // Commands: PushScissor, DrawGeometry (the glyph), PopScissor.
+        assert_eq!(frame.commands.len(), 3);
+        let glyph_command = &frame.commands[1];
+        assert_eq!(
+            glyph_command.clip_bounds,
+            ScissorRect {
+                x: 5,
+                y: 5,
+                width: 50,
+                height: 50
+            }
+        );
+
+        let expected_color = premultiply_alpha(rgba8(255, 255, 255, 255), 0.5);
+        assert_eq!(frame.vertices[0].color, expected_color);
+
+        let expected_x0 = 100.0 - px_size / 2.0;
+        let expected_y0 = 200.0 - px_size;
+        assert!(
+            (frame.vertices[0].position[0] - expected_x0).abs() <= EPSILON
+                && (frame.vertices[0].position[1] - expected_y0).abs() <= EPSILON,
+            "the glyph quad's top-left must reflect the active translation: {:?}",
+            frame.vertices[0].position
+        );
     }
 }

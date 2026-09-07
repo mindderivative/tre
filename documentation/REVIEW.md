@@ -1154,3 +1154,20 @@ Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the wor
 |---|---|---|---|---|
 | 118 | Alpha-only vertex color scaling made `set_alpha()` invisible due to `sdf_rounded_rect.frag`'s premultiplied-alpha output formula | tre-engine | Should-fix | Fixed — all four channels now scaled together (`premultiply_alpha`); convention documented on `UiVertex` |
 | 119 | Demo's own transform-check point fell inside a different rect's footprint, making the check vacuous | tre-rhi-vulkan (example code) | Nice-to-have | Fixed — check point moved to a genuinely clear location |
+
+## Phase 5 Step 5.1.2 Implementation (2026-09-07)
+
+Reviewer: Claude (Cowork), acting as Principal Engineer / Lead Tech Architect, per project standing instructions.
+Scope: implementing IMPLEMENTATION.md Step 5.1.2 (`Canvas::draw_text`), the second of Step 5.1's three sub-steps -- `tre-engine`'s first real wiring into `tre-text`/`tre-atlas`. Full detail in `planning/archive/LOG_PHASE5_STEP5_1_2.md`; this is the summary for the documentation's own record.
+
+Status: **Complete, no numbered findings.** Every design decision locked into `PLAN.md` (borrowed, never owned, atlas/font resources; whitespace filtered by outline emptiness rather than a source-text lookup; cache miss firing a real `request_insert` and rendering nothing that frame; fixed `px_size`-square glyph quads, the same simplification `atlas_concurrency_demo` already uses) held up unchanged through implementation, matching Phase 4 Step 4.3.2's own clean-run precedent -- the whole feature compiled, passed clippy pedantic, and passed every new unit test and the new GPU demo on the first real run.
+
+One refinement made during implementation, not anticipated in the plan's own sketched signature: `draw_text`'s cache-hit path needs the shared atlas's own pixel dimensions to normalize a `PackedRect` into UV coordinates, which `PLAN.md`'s flat parameter list omitted. Rather than adding a fifth loose parameter, the four atlas-related values (`atlas`, `texture_handle`, `dimensions`, `current_frame`) were bundled into one new `GlyphAtlasContext<'a>` struct -- the same kind of grouping the plan's own "exact grouping left TBD" note had flagged as a live-but-undecided question, resolved once the real signature was in front of the actual call sites.
+
+Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the workspace: 4 new unit tests in `tre-engine` (24 total, up from 20), each against a real system font and a real `AtlasOwner` background thread rather than a synthetic stub. The new capstone example, `canvas_draw_text_demo`, proves both halves of `draw_text`'s cache contract with a real word ("TEXT") end to end -- a first call is a genuine cache miss for every glyph (zero commands), a second call after real background resolution is a genuine cache hit for every glyph (one real textured command each), rendered through the existing, unmodified `bindless_textured.vert`/`msdf.frag` pipeline and read back as real, non-background GPU pixels per glyph. `atlas_concurrency_demo`/`atlas_eviction_demo` (the two demos touched by promoting `GlyphRasterSource` out of their own duplicated local copies into `tre_text::GlyphRasterSource`) re-run manually end to end, zero regressions, their own existing assertions all still passing. Added to the `vulkan-validation` CI job.
+
+## Summary table (Phase 5 Step 5.1.2)
+
+| # | Finding | Doc(s)/Code | Severity | Resolution |
+|---|---|---|---|---|
+| -- | No numbered findings this sub-step; one plan-vs-implementation refinement (atlas dimensions needed for UV math, not in the original signature sketch) | tre-engine | -- | Resolved by bundling atlas context into `GlyphAtlasContext` |
