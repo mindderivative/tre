@@ -1197,3 +1197,20 @@ Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the wor
 |---|---|---|---|---|
 | 120 | `canvas_state_stack_demo.rs`'s `RECT_C_COMMAND_INDEX` assumed no merging between Rect A and Rect B | tre-rhi-vulkan (example code) | Nice-to-have | Fixed — constant updated `3` -> `2`, comment rewritten |
 | 121 | `canvas_draw_text_demo.rs`'s frame-2 assertion assumed one command per glyph | tre-rhi-vulkan (example code) | Nice-to-have | Fixed — assertion now expects exactly 1 merged command |
+
+## Phase 5 Step 5.2.1 Implementation (2026-09-07)
+
+Reviewer: Claude (Cowork), acting as Principal Engineer / Lead Tech Architect, per project standing instructions.
+Scope: implementing IMPLEMENTATION.md Step 5.2.1 (`SubCanvas` and thread-local recording), the first of Step 5.2's three sub-steps -- opening the engine's real multi-threaded recording work. Full detail in `planning/archive/LOG_PHASE5_STEP5_2_1.md`; this is the summary for the documentation's own record.
+
+Status: **Complete, no numbered findings.** Every design decision locked into `PLAN.md` (`SubCanvas` as a thin `Deref`/`DerefMut` wrapper rather than a duplicated API; only Depth ID promoted to a shared `Arc<AtomicU32>`, Layer ID staying thread-local; the concurrency cap enforced via a compare-exchange loop plus a `Drop`-based release exact even under a caught panic; a `#[cfg(test)]`-only cap override for deterministic testing) held up unchanged through implementation -- the whole feature compiled, passed clippy pedantic, and passed every new unit test, including the real 4-thread concurrent stress test, on the first run.
+
+One small, disclosed simplification carried over from the design phase into the actual code comment: `next_sort_key`'s own `# Panics` section previously warned about `next_depth_id` overflowing a raw `u32` (4 billion calls); switching to `AtomicU32::fetch_add` drops that check entirely, since atomic addition wraps rather than panics on overflow -- correctly reasoned as harmless in `PLAN.md`, since the real, far lower 20-bit Depth ID threshold `compute_sort_key` already checks was always the meaningful bound, not the raw counter's own wrap point four orders of magnitude higher.
+
+Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the workspace: 41 unit tests in `tre-engine` (up from 36). The centerpiece is a real concurrency test, not a simulated one: 4 real `std::thread::spawn` threads, each holding its own `SubCanvas`, each recording 50 `draw_rounded_rect` calls, with every one of the 200 resulting Depth IDs collected back on the main thread and confirmed pairwise distinct -- the same "real threads under genuine stress, not a single-threaded stand-in" rigor `tre-memory`'s own `MpscRingBuffer` test and `atlas_concurrency_demo` already established. No new demo this sub-step (a `SubCanvas` has no way to be rendered without Step 5.2.2's merge primitive), matching Steps 4.3.1/4.3.2's own precedent of unit-tests-only sub-steps ahead of a capstone. All 19 pre-existing examples re-run manually end to end, zero regressions, confirming `next_sort_key`'s internal `fetch_add` change is behaviorally identical to the old plain increment for every existing single-threaded caller.
+
+## Summary table (Phase 5 Step 5.2.1)
+
+| # | Finding | Doc(s)/Code | Severity | Resolution |
+|---|---|---|---|---|
+| -- | No numbered findings this sub-step | tre-engine | -- | -- |

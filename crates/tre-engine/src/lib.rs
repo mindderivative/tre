@@ -427,19 +427,94 @@ pub struct RenderingCanvas {
     /// `Canvas` API to derive a richer traversal-order index from
     /// (ARCHITECTURE.md Section 4.1) -- call order is the only ordering
     /// this layer of the stack has.
-    next_depth_id: u32,
+    ///
+    /// Shared (Step 5.2.1: `Arc<AtomicU32>` rather than a plain `u32`)
+    /// so every `SubCanvas` `create_sub_canvas()` produces increments
+    /// the exact same counter -- `fetch_add`'s own atomicity is what
+    /// guarantees no two `DrawGeometry` commands anywhere in the frame
+    /// (root canvas or any sub-canvas, on any thread) ever collide on
+    /// Depth ID, which `flatten_run`'s sort/merge logic depends on.
+    next_depth_id: std::sync::Arc<std::sync::atomic::AtomicU32>,
     /// The overlay Layer ID stack (Step 5.1.3, DESIGN.md Section 7.2).
     /// Empty means standard content (Layer ID `0`); `begin_overlay`
     /// pushes `OVERLAY_LAYER_BASE + priority`, `end_overlay` pops.
     /// Unrelated to `push_layer`/`pop_layer`'s own offscreen-compositing
     /// mechanism -- see `begin_overlay`'s own doc comment for why these
     /// two very differently-named "layer" concepts never interact.
+    /// Deliberately *not* shared across sub-canvases the way
+    /// `next_depth_id` is -- Layer ID only distinguishes standard
+    /// content from the overlay plane, never needs to be unique per
+    /// command, so two different sub-canvases both drawing at Layer `0`
+    /// (or both calling `begin_overlay` at the same priority) is
+    /// completely correct (Step 5.2.1).
     overlay_stack: Vec<u16>,
     /// `begin_overlay`'s own saved copy of whatever `clip_stack` held
     /// before it was reset to "no clip" -- one entry pushed per
     /// `begin_overlay` call, popped and restored by the matching
     /// `end_overlay`.
     saved_clip_stacks: Vec<Vec<ScissorRect>>,
+    /// The maximum number of concurrently-live `SubCanvas` instances
+    /// (Step 5.2.1, TECHNICAL.md Section 8: "`available_parallelism()`
+    /// minus one"). Set once at construction (`RenderingCanvas::new()`,
+    /// or the `#[cfg(test)]`-only `new_with_sub_canvas_cap`), copied by
+    /// value into every `SubCanvas` -- never mutated after construction,
+    /// so it needs no atomic of its own.
+    max_sub_canvases: usize,
+    /// How many `SubCanvas` instances sharing this canvas's root are
+    /// currently alive. Shared with every `SubCanvas` (`Arc::clone`);
+    /// `create_sub_canvas` increments it via a compare-exchange loop
+    /// that checks `max_sub_canvases` *before* committing the increment,
+    /// and `SubCanvas`'s own `Drop` decrements it -- exact even if a
+    /// caller panics mid-use and that panic is later caught
+    /// (TECHNICAL.md Section 9.4's `catch_unwind` FFI boundary), unlike
+    /// a fire-and-forget increment only ever fixed up on the
+    /// non-panicking path.
+    live_sub_canvases: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+/// A worker thread's independently-recordable sub-canvas
+/// (`Canvas::create_sub_canvas()`, DESIGN.md Section 6.3/TECHNICAL.md
+/// Section 8, Step 5.2.1). Wraps a private `RenderingCanvas` with a
+/// fresh, empty `state_stack`/`clip_stack`/`overlay_stack`/`vertices`/
+/// `indices`/`commands` -- every existing drawing method (`save`,
+/// `push_clip`, `begin_overlay`, `draw_rounded_rect`, `draw_text`)
+/// works on it unchanged via `Deref`/`DerefMut`, since a `SubCanvas`
+/// records into exactly the same kind of thread-local linear arena a
+/// root canvas does. The one thing it shares with its root (and every
+/// sibling `SubCanvas`) is the Depth ID counter -- see
+/// `RenderingCanvas::next_depth_id`'s own doc comment for why that
+/// specific field, and only that one, must be genuinely shared.
+///
+/// Cannot be flattened or have its recorded data extracted yet --
+/// `RenderingCanvas::flatten` takes `self` by value, which `Deref`/
+/// `DerefMut` cannot forward, and this sub-step deliberately adds no
+/// escape hatch of its own. Merging a `SubCanvas`'s output back into a
+/// real frame is Step 5.2.2's job, not this one's -- dropping a
+/// `SubCanvas` (ordinary scope exit) is the only way to end one today.
+pub struct SubCanvas {
+    canvas: RenderingCanvas,
+    live_sub_canvases: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl std::ops::Deref for SubCanvas {
+    type Target = RenderingCanvas;
+
+    fn deref(&self) -> &RenderingCanvas {
+        &self.canvas
+    }
+}
+
+impl std::ops::DerefMut for SubCanvas {
+    fn deref_mut(&mut self) -> &mut RenderingCanvas {
+        &mut self.canvas
+    }
+}
+
+impl Drop for SubCanvas {
+    fn drop(&mut self) {
+        self.live_sub_canvases
+            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
 }
 
 /// Everything `Canvas::draw_text` needs to know about the caller's
@@ -469,7 +544,68 @@ impl RenderingCanvas {
                 transform: tre_math::Affine2::IDENTITY,
                 alpha: 1.0,
             }],
+            max_sub_canvases: default_max_sub_canvases(),
             ..Self::default()
+        }
+    }
+
+    /// Test-only: overrides `max_sub_canvases` directly, so
+    /// `create_sub_canvas()`'s cap-panic behavior is deterministically
+    /// testable regardless of the test runner's real core count (Step
+    /// 5.2.1's own scope decision -- a genuinely single-core CI runner
+    /// would otherwise make every real `create_sub_canvas()` call panic
+    /// immediately, with no way for a test to pick a known-good cap).
+    #[cfg(test)]
+    fn new_with_sub_canvas_cap(cap: usize) -> Self {
+        Self {
+            max_sub_canvases: cap,
+            ..Self::new()
+        }
+    }
+
+    /// Creates an independently-recordable `SubCanvas` sharing this
+    /// canvas's Depth ID counter and concurrency-cap bookkeeping (Step
+    /// 5.2.1, DESIGN.md Section 6.3). Intended to be moved into a real
+    /// worker thread (e.g. via `std::thread::spawn`) and recorded into
+    /// with the exact same drawing API this canvas itself has.
+    ///
+    /// # Panics
+    /// Panics if creating this `SubCanvas` would exceed
+    /// `max_sub_canvases` (TECHNICAL.md Section 8:
+    /// `available_parallelism() - 1`, or a smaller test-injected value)
+    /// -- a caller spawning more worker threads than it configured
+    /// itself for is a programmer error, not a recoverable runtime
+    /// condition (DESIGN.md Section 2.6).
+    #[must_use]
+    pub fn create_sub_canvas(&self) -> SubCanvas {
+        let mut current = self
+            .live_sub_canvases
+            .load(std::sync::atomic::Ordering::Relaxed);
+        loop {
+            assert!(
+                current < self.max_sub_canvases,
+                "create_sub_canvas() would exceed the configured limit of {} concurrent \
+                 sub-canvases (TECHNICAL.md Section 8: available_parallelism() - 1)",
+                self.max_sub_canvases
+            );
+            match self.live_sub_canvases.compare_exchange_weak(
+                current,
+                current + 1,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(observed) => current = observed,
+            }
+        }
+        SubCanvas {
+            canvas: RenderingCanvas {
+                next_depth_id: std::sync::Arc::clone(&self.next_depth_id),
+                max_sub_canvases: self.max_sub_canvases,
+                live_sub_canvases: std::sync::Arc::clone(&self.live_sub_canvases),
+                ..RenderingCanvas::new()
+            },
+            live_sub_canvases: std::sync::Arc::clone(&self.live_sub_canvases),
         }
     }
 
@@ -660,13 +796,16 @@ impl RenderingCanvas {
     /// # Panics
     /// Never in practice: a single frame would need over a million
     /// `DrawGeometry` calls to overflow `next_depth_id`'s 20-bit field
-    /// -- see `compute_sort_key`'s own `# Panics` section.
+    /// -- see `compute_sort_key`'s own `# Panics` section. (`fetch_add`
+    /// itself never panics -- it wraps on overflow, per atomic
+    /// semantics -- but reaching the real, far lower 20-bit Depth ID
+    /// threshold `compute_sort_key` checks is already astronomically
+    /// unlikely, and wrapping the raw `u32` counter itself at 4 billion
+    /// calls was never the meaningful bound.)
     fn next_sort_key(&mut self, pipeline_state_id: u16, texture_handle: u32) -> u64 {
-        let depth_id = self.next_depth_id;
-        self.next_depth_id = self
+        let depth_id = self
             .next_depth_id
-            .checked_add(1)
-            .expect("next_depth_id overflowed u32");
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         compute_sort_key(
             self.active_layer_id(),
             pipeline_state_id,
@@ -1156,6 +1295,16 @@ fn intersect_scissor(a: ScissorRect, b: ScissorRect) -> ScissorRect {
         width: (x1 - x0).max(0) as u32,
         height: (y1 - y0).max(0) as u32,
     }
+}
+
+/// TECHNICAL.md Section 8: "Max concurrent sub-canvases constrained to
+/// `available_parallelism()` minus one." Falls back to a sane default
+/// (4 cores) if the query itself errors -- rare, platform-specific, and
+/// still preferable to silently forbidding every `SubCanvas` outright.
+fn default_max_sub_canvases() -> usize {
+    std::thread::available_parallelism()
+        .map_or(4, std::num::NonZeroUsize::get)
+        .saturating_sub(1)
 }
 
 /// `ARCHITECTURE.md` Section 4.1's Texture/Bindless ID field width (12
@@ -2511,5 +2660,117 @@ mod tests {
             "an intervening push_clip/pop_clip pair must remain a hard barrier even when its \
              net clip effect matches what was already active"
         );
+    }
+
+    #[test]
+    fn sub_canvases_recording_concurrently_never_collide_on_depth_id() {
+        const THREADS: usize = 4;
+        const DRAWS_PER_THREAD: usize = 50;
+
+        let root = RenderingCanvas::new_with_sub_canvas_cap(THREADS);
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let mut sub = root.create_sub_canvas();
+                std::thread::spawn(move || {
+                    let mut depth_ids = Vec::with_capacity(DRAWS_PER_THREAD);
+                    for _ in 0..DRAWS_PER_THREAD {
+                        sub.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+                        let command = sub.commands.last().expect("just pushed a command");
+                        depth_ids.push(command.sort_key & u64::from(DEPTH_ID_MASK));
+                    }
+                    depth_ids
+                })
+            })
+            .collect();
+
+        let mut all_depth_ids: Vec<u64> = handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("worker thread panicked"))
+            .collect();
+        assert_eq!(all_depth_ids.len(), THREADS * DRAWS_PER_THREAD);
+
+        let unique_count = {
+            all_depth_ids.sort_unstable();
+            all_depth_ids.dedup();
+            all_depth_ids.len()
+        };
+        assert_eq!(
+            unique_count,
+            THREADS * DRAWS_PER_THREAD,
+            "every DrawGeometry command across every concurrently-recording sub-canvas must \
+             receive a distinct Depth ID"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "would exceed the configured limit of 2 concurrent sub-canvases")]
+    fn create_sub_canvas_panics_once_the_cap_is_exceeded() {
+        let root = RenderingCanvas::new_with_sub_canvas_cap(2);
+        let _first = root.create_sub_canvas();
+        let _second = root.create_sub_canvas();
+        let _third = root.create_sub_canvas();
+    }
+
+    #[test]
+    fn dropping_a_sub_canvas_frees_its_slot_for_reuse() {
+        let root = RenderingCanvas::new_with_sub_canvas_cap(1);
+        let first = root.create_sub_canvas();
+        drop(first);
+        // Must not panic: the cap was freed by the drop above.
+        let _second = root.create_sub_canvas();
+    }
+
+    #[test]
+    fn two_sub_canvases_sharing_layer_zero_is_not_an_error() {
+        // Depth ID must be unique per DrawGeometry command (proven
+        // above); Layer ID has no such requirement -- two independent
+        // sub-canvases both drawing standard content, or both opening
+        // the exact same overlay priority, is completely correct.
+        let root = RenderingCanvas::new_with_sub_canvas_cap(2);
+        let mut a = root.create_sub_canvas();
+        let mut b = root.create_sub_canvas();
+
+        a.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        b.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        assert_eq!(a.commands[0].sort_key >> 48, 0);
+        assert_eq!(b.commands[0].sort_key >> 48, 0);
+
+        a.begin_overlay(OverlayLayerPriority(0));
+        b.begin_overlay(OverlayLayerPriority(0));
+        a.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        b.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        let a_overlay_draw = a.commands[a.commands.len() - 1];
+        let b_overlay_draw = b.commands[b.commands.len() - 1];
+        assert_eq!(a_overlay_draw.sort_key >> 48, 10_000);
+        assert_eq!(b_overlay_draw.sort_key >> 48, 10_000);
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact arithmetic on literal f32s (whole-number translation, no rounding), \
+                   same reasoning as save_transform_restore_translates_then_reverts_to_untransformed"
+    )]
+    fn sub_canvas_drawing_methods_work_identically_to_the_root_canvas_via_delegation() {
+        let root = RenderingCanvas::new_with_sub_canvas_cap(1);
+        let mut sub = root.create_sub_canvas();
+
+        sub.save();
+        sub.transform(&tre_math::Affine2::from_translation(100.0, 200.0));
+        sub.push_clip(&ScissorRect {
+            x: 0,
+            y: 0,
+            width: 50,
+            height: 50,
+        });
+        sub.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        sub.pop_clip();
+        sub.restore();
+
+        // The draw's own vertex position confirms transform() really
+        // ran on this SubCanvas, not a no-op stand-in -- the same
+        // delegated-through-Deref call as the root canvas's own
+        // save_transform_restore test.
+        assert_eq!(sub.vertices[0].position, [100.0, 200.0]);
     }
 }
