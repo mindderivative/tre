@@ -149,6 +149,7 @@ fn main() {
         &vertex_buffer,
         &index_buffer,
         &full_window,
+        &device,
         &mut *cmd_buffer,
     );
     device

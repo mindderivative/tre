@@ -975,6 +975,95 @@ viewport fix, zero regressions -- this step touched shared
 `VulkanCommandBuffer`/`begin_frame` code every one of them depends on.
 CI's `vulkan-validation` job gained the new example.
 
+### Step 6.4.2: Wiring `push_layer`/`pop_layer` to Real Render-to-Texture -- Status: Complete (2026-09-08)
+
+Wires `Canvas::push_layer`/`pop_layer`'s IR commands to Step 6.4.1's
+capability inside `execute_frame`, driven by a real recorded scene
+instead of hand-written RHI calls. Real-code investigation before
+writing anything found the scope was bigger than "wire two empty match
+arms": `LayerDesc` had no compositing position at all (`push_layer` had
+silently hardcoded `clip_bounds.x`/`y` to `0`, never exercised by any
+real caller), `layer_depth` was a bare `u32` balance counter that
+couldn't recover a popped layer's own width/height/format, and nothing
+in `Canvas` could reach a plain textured-quad pipeline (`PipelineKind`
+deliberately excluded one at Step 6.1, since nothing could emit it
+then).
+
+`LayerDesc` gained `x: i32, y: i32` (matching `ScissorRect`'s own
+untransformed, screen-space coordinate type). `RenderingCanvas::
+layer_depth: u32` became `layer_stack: Vec<LayerDesc>` so `pop_layer`
+has the original `LayerDesc` back. `PipelineKind` gained `TexturedQuad
+= 2`. `pop_layer` now bakes real composite-quad geometry (4 vertices at
+the popped `LayerDesc`'s own `x`/`y`/`width`/`height`, UV `(0,0)`-`(1,1)`,
+fixed opaque white -- deliberately skipping both `state.transform` and
+`premultiply_alpha`, unlike `draw_rounded_rect`: `LayerDesc.x`/`y` are
+screen-space, matching how this command's own `clip_bounds` already used
+them raw before this step, and `LayerDesc` carries no opacity field yet,
+by its own original doc comment) into `self.vertices`/`self.indices`,
+and records a `PopLayer` command with `pipeline_state_id:
+PipelineKind::TexturedQuad as u16`, real `element_count`/`vertex_offset`,
+but `texture_handle: NO_TEXTURE` -- a placeholder, since the real
+bindless index doesn't exist until `execute_frame` renders into the
+layer and registers it. `push_layer` now writes `desc.format` into this
+same command's own otherwise-unused `pipeline_state_id` field via two
+new private `texture_format_to_u16`/`u16_to_texture_format` conversions
+(`TextureFormat` itself stays repr-less -- it's also part of
+`create_texture`/`acquire_transient_target`'s public signatures, so
+giving the whole type a `#[repr(u16)]` would have been a wider, unrelated
+change).
+
+`execute_frame` gained a `device: &dyn RhiDevice` parameter -- its
+previous parameter list (`registry`/`vertex_buffer`/`index_buffer`/
+`full_window`/`cmd_buffer`) had no way to reach `acquire_transient_
+target`/`release_transient_target`/`register_bindless`/
+`deregister_bindless`, all `RhiDevice` methods. Real `PushLayer`
+handling decodes the format, acquires a target sized to the command's
+own `clip_bounds` width/height, and `begin_render_to_texture`s into it;
+every `DrawGeometry` between a `PushLayer` and its matching `PopLayer`
+needs no layer-awareness of its own at all -- it draws into whatever
+target `cmd_buffer` currently has bound, which is the layer's target
+purely because of the command stream's own ordering. `PopLayer` ends
+that render, registers it bindless, `resume_swapchain_rendering`s, then
+draws its own baked composite quad using the just-registered index in
+place of the IR's `NO_TEXTURE` placeholder -- the same kind of
+sentinel substitution `PushScissor` already does for `FULL_WINDOW_CLIP`.
+Deliberately scoped to one level: a nested `PushLayer` panics, matching
+Step 6.4.1's own single-level scope for `resume_swapchain_rendering`.
+
+**A real bug found and fixed before any test ran, not after -- caught
+by code inspection, not a failed run (REVIEW.md finding #129).**
+`segment_and_flatten`'s existing doc comment stated "every
+marker passes through unchanged" -- true before this step, since no
+marker ever carried real geometry. `PopLayer`'s new baked quad broke
+that assumption: `flatten_run` only rewrites `vertex_offset`/copies
+indices for commands inside a `DrawGeometry` run, so a `PopLayer`
+command pushed through unchanged would carry a `vertex_offset` pointing
+into the canvas's own raw, pre-flatten `indices` -- not the freshly
+built `out_indices` buffer the returned `FlattenedFrame` (and the RHI
+index buffer uploaded from it) actually contains. Fixed by having
+`segment_and_flatten` rebase any boundary command whose `element_count >
+0` the same way `flatten_run` already rebases `DrawGeometry` commands,
+before this was ever exercised by a test or a real GPU run.
+
+New demo (`canvas_layer_composite_demo.rs`, `demo/phase6_step6_4_2/`):
+reproduces `render_to_texture_demo.rs`'s exact scene and pixel
+coordinates, but recorded entirely through `Canvas`/`execute_frame` --
+`push_layer`, one `draw_rounded_rect` in the layer's own local space,
+`pop_layer`, `flatten()`, one `execute_frame` call. Same two real pixel
+checks pass: the composited rect's own interior reads exactly opaque
+foreground, and a point inside the composited region but outside the
+rect's own footprint reads exactly the real background.
+
+Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across
+the workspace (`tre-engine` now at 59 tests, up from 55 -- 4 new: a full
+`FakeDevice`-driven push/pop round trip asserting the exact call order
+across both `RhiDevice` and `RhiCommandBuffer`, a nested-`PushLayer`
+panic, a `PopLayer`-with-no-active-`PushLayer` panic, and the composite
+quad's own vertex-baking at the `LayerDesc`'s real position). All 22
+Vulkan demos (the 21 from Step 6.4.1 plus the new one) re-run manually
+end to end, zero regressions. CI's `vulkan-validation` job gained the
+new example.
+
 ## Phase 7: Color Management & Compositing
 
 ### Step 7.1: Linear sRGB Conversions & HDR

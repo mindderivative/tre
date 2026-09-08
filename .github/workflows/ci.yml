@@ -159,6 +159,7 @@ jobs:
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_batch_flattening_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_sub_canvas_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example render_to_texture_demo
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_layer_composite_demo
 
   accessibility-validation:
     name: accessibility-validation

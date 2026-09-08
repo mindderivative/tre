@@ -130,22 +130,59 @@ pub struct UiDrawCommand {
 /// `if pipeline_state_id == PIPELINE_MSDF_TEXT` branches.
 pub const PIPELINE_MSDF_TEXT: u16 = 1;
 
-/// Real, type-safe names for [`UiDrawCommand::pipeline_state_id`]'s two
-/// currently `Canvas`-emittable values (IMPLEMENTATION.md Phase 6 Step
-/// 6.1) -- `PIPELINE_MSDF_TEXT` stays defined above as a plain `u16` for
-/// existing call sites and the sort-key-packing code, which only ever
-/// wants a bare 16-bit numeric field (ARCHITECTURE.md Section 4.1), not
-/// this enum. Other real pipeline kinds exist in `tre-rhi-vulkan`
-/// (plain bindless-textured quad, flat-vertex-color, stencil/cover) but
-/// are not represented here: none are reachable through any real
-/// `Canvas` drawing method today, so naming them here would have no real
-/// consumer -- see `planning/archive/PLAN_PHASE6_STEP6_1.md`'s "Scope
-/// decisions" for why this is deliberate, not an oversight.
+/// Real, type-safe names for [`UiDrawCommand::pipeline_state_id`]'s
+/// `Canvas`-emittable values (IMPLEMENTATION.md Phase 6 Step 6.1,
+/// extended Step 6.4.2) -- `PIPELINE_MSDF_TEXT` stays defined above as a
+/// plain `u16` for existing call sites and the sort-key-packing code,
+/// which only ever wants a bare 16-bit numeric field (ARCHITECTURE.md
+/// Section 4.1), not this enum. `TexturedQuad` was added at Step 6.4.2
+/// once `pop_layer` became the first real `Canvas` method to emit a
+/// bindless-textured composite draw -- until then this comment explained
+/// the plain-textured-quad pipeline was deliberately excluded because
+/// nothing in `Canvas` could reach it yet; that stopped being true.
+/// Flat-vertex-color and stencil/cover pipelines still have no real
+/// `Canvas` caller and stay unrepresented -- see
+/// `planning/archive/PLAN_PHASE6_STEP6_1.md`'s "Scope decisions" for the
+/// original reasoning, which still applies to those two.
 #[repr(u16)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PipelineKind {
     SdfRoundedRect = 0,
     MsdfText = 1,
+    TexturedQuad = 2,
+}
+
+/// Packs a [`TextureFormat`] into the `u16` [`UiDrawCommand::PushLayer`]
+/// commands carry it as (Step 6.4.2) -- `TextureFormat` itself has no
+/// `#[repr]` (it's a plain enum also used by
+/// [`RhiDevice::create_texture`]/[`RhiDevice::acquire_transient_target`]'s
+/// public signatures, so giving it one would be a wider, unrelated
+/// change); these two private conversions are the smaller fix, local to
+/// the one place in the IR that needs a numeric encoding at all.
+fn texture_format_to_u16(format: TextureFormat) -> u16 {
+    match format {
+        TextureFormat::Bgra8Srgb => 0,
+        TextureFormat::Rgba16Float => 1,
+        TextureFormat::Rgba8Unorm => 2,
+    }
+}
+
+/// Reverses [`texture_format_to_u16`].
+///
+/// # Panics
+/// Panics if `value` is not one of the three values
+/// [`texture_format_to_u16`] ever produces -- every real `PushLayer`
+/// command's `pipeline_state_id` was written by `texture_format_to_u16`
+/// itself (`push_layer`'s own body), so an unrecognized value here means
+/// the IR was corrupted or hand-constructed incorrectly, not a normal
+/// runtime condition.
+fn u16_to_texture_format(value: u16) -> TextureFormat {
+    match value {
+        0 => TextureFormat::Bgra8Srgb,
+        1 => TextureFormat::Rgba16Float,
+        2 => TextureFormat::Rgba8Unorm,
+        other => panic!("u16_to_texture_format: unrecognized encoded value {other}"),
+    }
 }
 
 /// The real "no texture bound" sentinel for
@@ -356,9 +393,14 @@ pub enum FillRule {
 /// phase implements those visual filters (DESIGN.md Section 6.2's
 /// "Visual Filter Pipeline"); this step only needs enough to acquire a
 /// correctly-sized, correctly-formatted transient render target from the
-/// pool.
+/// pool, plus (Step 6.4.2) where its composited result lands on screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LayerDesc {
+    /// Screen-space position the composited layer is drawn back at
+    /// (Step 6.4.2) -- `i32`, matching `ScissorRect::x`/`y`'s own
+    /// coordinate type, not `u32` like `width`/`height`.
+    pub x: i32,
+    pub y: i32,
     pub width: u32,
     pub height: u32,
     pub format: TextureFormat,
@@ -478,13 +520,15 @@ pub struct RenderingCanvas {
     vertices: Vec<UiVertex>,
     indices: Vec<u32>,
     commands: Vec<UiDrawCommand>,
-    /// Debug-only balance counter for `push_layer`/`pop_layer`
-    /// (IMPLEMENTATION.md Step 2.2 task 5): incremented/decremented on
-    /// each call, asserted zero at `flatten()`. Compiles to a plain
-    /// unused `u32` in release builds rather than being cfg'd out
-    /// entirely, so `push_layer`/`pop_layer`'s own bodies don't need
-    /// separate debug/release code paths.
-    layer_depth: u32,
+    /// `push_layer`/`pop_layer`'s stack of in-flight `LayerDesc`s
+    /// (IMPLEMENTATION.md Step 2.2 task 5, extended Step 6.4.2): pushed/
+    /// popped on each call, asserted empty at `flatten()`. Was a bare
+    /// balance counter (`layer_depth: u32`) until Step 6.4.2, when
+    /// `pop_layer` needed the *original* pushed `LayerDesc` back (its
+    /// position/size/format) to bake real composite-quad geometry --
+    /// `.len()` still serves the same balance-counter role a plain `u32`
+    /// did.
+    layer_stack: Vec<LayerDesc>,
     /// The Drawing Context's transform/alpha stack (Step 5.1.1). Always
     /// has at least one entry -- the base level `save`/`restore` can
     /// never pop past -- so every read of `.last()` is infallible by
@@ -493,10 +537,8 @@ pub struct RenderingCanvas {
     /// The independent scissor-clip stack (Step 5.1.1). Empty means "no
     /// clip, full window" -- the same sentinel `draw_rounded_rect`
     /// already used unconditionally before this step. Its own length
-    /// doubles as the balance counter `flatten()` checks; no separate
-    /// counter field is needed the way `layer_depth` needs one, since
-    /// `push_layer`/`pop_layer` record no per-call stack data of their
-    /// own to count instead.
+    /// doubles as the balance counter `flatten()` checks, the same role
+    /// `layer_stack`'s own length plays for `push_layer`/`pop_layer`.
     clip_stack: Vec<ScissorRect>,
     /// The next `Depth ID` a `DrawGeometry` command will receive (Step
     /// 5.1.3) -- a single global, monotonically increasing counter,
@@ -924,48 +966,109 @@ impl RenderingCanvas {
         )
     }
 
-    /// Records a `PushLayer` IR marker (DESIGN.md Section 6.2) and
-    /// increments the debug balance counter. Does not itself acquire a
-    /// transient render target -- see this struct's doc comment for why
-    /// that wiring is deferred; `desc` is recorded for a future RHI
-    /// execution stage to act on.
+    /// Records a `PushLayer` IR marker (DESIGN.md Section 6.2) and pushes
+    /// `desc` onto `layer_stack`. Does not itself acquire a transient
+    /// render target -- that's `execute_frame`'s job (Step 6.4.2), driven
+    /// by Step 6.4.1's RHI capability; `desc.format` rides this command's
+    /// otherwise-unused `pipeline_state_id` field (`texture_format_to_u16`,
+    /// below) since `TextureFormat` has no integer repr of its own to
+    /// reuse directly, and `PushLayer` itself never resolves a pipeline.
     pub fn push_layer(&mut self, desc: &LayerDesc) {
-        self.layer_depth += 1;
+        self.layer_stack.push(*desc);
         self.commands.push(UiDrawCommand {
             kind: CommandType::PushLayer,
             sort_key: 0,
-            pipeline_state_id: 0,
+            pipeline_state_id: texture_format_to_u16(desc.format),
             texture_handle: 0,
             element_count: 0,
             vertex_offset: 0,
             clip_bounds: ScissorRect {
-                x: 0,
-                y: 0,
+                x: desc.x,
+                y: desc.y,
                 width: desc.width,
                 height: desc.height,
             },
         });
     }
 
-    /// Records a `PopLayer` IR marker and decrements the debug balance
-    /// counter.
+    /// Pops `layer_stack` and records a `PopLayer` IR marker that also
+    /// bakes real composite-quad geometry (Step 6.4.2): four vertices
+    /// covering the popped `LayerDesc`'s own `x`/`y`/`width`/`height`,
+    /// sampling a bound texture across its full `(0,0)`-`(1,1)` UV extent
+    /// -- the same shape `render_to_texture_demo.rs`'s own hand-built
+    /// `textured_quad` proved (Step 6.4.1). Deliberately skips both
+    /// `state.transform` and `premultiply_alpha`, unlike `draw_rounded_
+    /// rect`: `LayerDesc.x`/`y` are screen-space, matching `ScissorRect`'s
+    /// own untransformed semantics (this command's `clip_bounds` above
+    /// already uses them raw, with no transform involved), and
+    /// `LayerDesc` carries no opacity field yet -- its own doc comment
+    /// defers that to a later phase's visual filter pipeline, so this
+    /// draw stays a fixed opaque white, letting the sampled texture's own
+    /// (already premultiplied, by `end_render_to_texture`'s own layer
+    /// content) alpha carry through unmodified.
+    ///
+    /// The emitted command's `texture_handle` is `NO_TEXTURE` -- a
+    /// placeholder. The real bindless index only exists once
+    /// `execute_frame` renders into the layer and calls `RhiDevice::
+    /// register_bindless` at execute time; `execute_frame`'s own
+    /// `PopLayer` handling substitutes it in directly rather than trusting
+    /// this field, the same way it already substitutes `full_window` for
+    /// `PushScissor`'s `FULL_WINDOW_CLIP` sentinel.
     ///
     /// # Panics
     /// Panics if called without a matching prior `push_layer` -- an
     /// unbalanced push/pop is a programmer error (DESIGN.md Section 2.6),
     /// not a recoverable runtime condition.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a single frame's vertex/index count stays far below u32::MAX, \
+                   the same headroom reasoning ARCHITECTURE.md Section 4.1 applies to Depth ID"
+    )]
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "screen-space layer position/size stays far below f32's exact-integer range \
+                   for any real window size"
+    )]
     pub fn pop_layer(&mut self) {
-        self.layer_depth = self
-            .layer_depth
-            .checked_sub(1)
+        let desc = self
+            .layer_stack
+            .pop()
             .expect("pop_layer called without a matching push_layer");
+
+        let base_vertex = self.vertices.len() as u32;
+        let base_index = self.indices.len() as u32;
+        let white = rgba8(255, 255, 255, 255);
+        let (x, y) = (desc.x as f32, desc.y as f32);
+        let (w, h) = (desc.width as f32, desc.height as f32);
+        let positions = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+        let uvs = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+        self.vertices.extend(
+            positions
+                .into_iter()
+                .zip(uvs)
+                .map(|(position, uv)| UiVertex {
+                    position,
+                    uv,
+                    color: white,
+                    params: [0.0; 3],
+                }),
+        );
+        self.indices.extend_from_slice(&[
+            base_vertex,
+            base_vertex + 1,
+            base_vertex + 2,
+            base_vertex,
+            base_vertex + 2,
+            base_vertex + 3,
+        ]);
+
         self.commands.push(UiDrawCommand {
             kind: CommandType::PopLayer,
             sort_key: 0,
-            pipeline_state_id: 0,
-            texture_handle: 0,
-            element_count: 0,
-            vertex_offset: 0,
+            pipeline_state_id: PipelineKind::TexturedQuad as u16,
+            texture_handle: NO_TEXTURE,
+            element_count: 6,
+            vertex_offset: base_index,
             clip_bounds: ScissorRect {
                 x: 0,
                 y: 0,
@@ -1347,7 +1450,8 @@ impl RenderingCanvas {
     #[must_use]
     pub fn flatten(self) -> FlattenedFrame {
         debug_assert_eq!(
-            self.layer_depth, 0,
+            self.layer_stack.len(),
+            0,
             "push_layer/pop_layer calls are unbalanced at frame boundary"
         );
         debug_assert_eq!(
@@ -1409,7 +1513,8 @@ impl RenderingCanvas {
     )]
     pub fn stitch_into(self, arena: &FrameArena) -> bool {
         debug_assert_eq!(
-            self.layer_depth, 0,
+            self.layer_stack.len(),
+            0,
             "push_layer/pop_layer calls are unbalanced at frame boundary"
         );
         debug_assert_eq!(
@@ -1661,10 +1766,25 @@ fn compute_sort_key(
 /// `self`, so it doesn't care whether they came from one canvas's own
 /// recording or from several sources a `FrameArena` already merged
 /// together. Segments `commands` into maximal runs bounded by any
-/// non-`DrawGeometry` command (every marker passes through unchanged),
-/// running `flatten_run` over each -- identical to `RenderingCanvas::
-/// flatten`'s own Step 5.1.3 logic, just extracted so it has exactly
-/// one implementation instead of two.
+/// non-`DrawGeometry` command, running `flatten_run` over each --
+/// identical to `RenderingCanvas::flatten`'s own Step 5.1.3 logic, just
+/// extracted so it has exactly one implementation instead of two. Every
+/// marker with no geometry of its own (`PushScissor`/`PopScissor`/
+/// `PushLayer`, `element_count == 0`) passes through unchanged, as
+/// before Step 6.4.2; a marker that *does* carry real geometry
+/// (`PopLayer`'s own baked composite quad, Step 6.4.2) gets the exact
+/// same indices-copy-and-rebase `flatten_run` already does for
+/// `DrawGeometry` commands -- its `vertex_offset` is a position in the
+/// caller's own raw `indices`, which this function's whole job is to
+/// translate into a position in the freshly built `out_indices` the
+/// returned `FlattenedFrame` actually carries; leaving it unrebased
+/// would have `execute_frame`'s `draw_indexed` read from the wrong
+/// buffer entirely.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "a single frame's index count stays far below u32::MAX, the same headroom \
+               reasoning ARCHITECTURE.md Section 4.1 applies to Depth ID"
+)]
 fn segment_and_flatten(
     vertices: Vec<UiVertex>,
     indices: &[u32],
@@ -1686,7 +1806,13 @@ fn segment_and_flatten(
             &mut out_indices,
         );
         if i < commands.len() {
-            out_commands.push(commands[i]);
+            let mut boundary_command = commands[i];
+            if boundary_command.element_count > 0 {
+                let rebased_offset = out_indices.len() as u32;
+                out_indices.extend_from_slice(command_indices(indices, &boundary_command));
+                boundary_command.vertex_offset = rebased_offset;
+            }
+            out_commands.push(boundary_command);
         }
         run_start = i + 1;
     }
@@ -2171,18 +2297,55 @@ pub trait RhiCommandBuffer {
 /// buffer, so a frame with no `PushScissor` at all needs no extra call
 /// here to stay correct.
 ///
-/// `PushLayer`/`PopLayer` commands are recorded but produce no RHI calls
-/// yet -- real handling is Step 6.4. `vertex_buffer`/`index_buffer` are
-/// already-uploaded whole-frame buffers the caller built (e.g. via a
-/// backend-specific upload helper); "Buffer Packing" (DESIGN.md's own
-/// frame-lifecycle item 7) is a distinct stage this function
-/// deliberately does not perform.
+/// `PushLayer`/`PopLayer` commands drive real transient-target
+/// acquisition and compositing (Step 6.4.2), built on Step 6.4.1's RHI
+/// capability: `PushLayer` decodes `desc.format` back out of
+/// `command.pipeline_state_id` (`u16_to_texture_format`, reversing
+/// `push_layer`'s own `texture_format_to_u16`), `device.
+/// acquire_transient_target`s a target sized to `command.clip_bounds`'
+/// `width`/`height`, and `cmd_buffer.begin_render_to_texture`s into it.
+/// `PopLayer` ends that render, `device.register_bindless`s the result,
+/// `cmd_buffer.resume_swapchain_rendering`s, then draws the `PopLayer`
+/// command's own baked composite-quad geometry (`element_count`/
+/// `vertex_offset`, `pop_layer`'s own doc comment) against the pipeline
+/// `command.pipeline_state_id` names (`PipelineKind::TexturedQuad`) --
+/// binding the just-registered index directly rather than trusting
+/// `command.texture_handle`'s `NO_TEXTURE` placeholder, the same
+/// substitution `PushScissor` already does for `FULL_WINDOW_CLIP`,
+/// below. `resume_swapchain_rendering` unconditionally resets the GPU
+/// scissor to the full swapchain extent (Step 6.4.1's own REVIEW.md
+/// #128 fix), so `PopLayer` re-applies `clip_stack`'s current top
+/// afterward -- otherwise a layer popped from inside an active
+/// `push_clip` would incorrectly escape that clip for its own composite
+/// draw. Finally `device.deregister_bindless`/`release_transient_target`
+/// return the target to the pool, mirroring `render_to_texture_demo.rs`'s
+/// own hand-written sequence exactly, just driven by the IR instead of
+/// hand-written calls. Scoped to one level: a nested `PushLayer` (while
+/// another is already active) panics -- see `# Panics`.
+///
+/// `vertex_buffer`/`index_buffer` are already-uploaded whole-frame
+/// buffers the caller built (e.g. via a backend-specific upload helper);
+/// "Buffer Packing" (DESIGN.md's own frame-lifecycle item 7) is a
+/// distinct stage this function deliberately does not perform.
 ///
 /// # Panics
-/// Panics if a `DrawGeometry` command's `pipeline_state_id` was never
-/// registered in `registry` -- for this function's real callers, every
-/// pipeline `Canvas` can emit is always registered before a frame is
-/// rendered, so an unresolved id is a static setup bug, not a transient,
+/// Panics if a `DrawGeometry` or `PopLayer` command's
+/// `pipeline_state_id` was never registered in `registry`; if a
+/// `PushLayer` is encountered while another is already active (true
+/// nested layers are real, separate future work -- no real scene needs
+/// them yet, matching `RhiCommandBuffer::resume_swapchain_rendering`'s
+/// own single-level scope); if a `PopLayer` is encountered with no
+/// active `PushLayer`; or if `device.acquire_transient_target`/
+/// `register_bindless` return `Err` (this function has no `Result`
+/// return type to propagate a genuinely mid-frame-recoverable failure
+/// through -- for this function's real callers, running out of
+/// transient-pool budget or bindless slots mid-frame is not yet a
+/// condition any real caller recovers from, so it panics here rather
+/// than silently corrupting the frame; see IMPLEMENTATION.md Step
+/// 6.4.2's own write-up for why this is an honest, documented limit, not
+/// an oversight). For this function's real callers, every pipeline
+/// `Canvas` can emit is always registered before a frame is rendered, so
+/// an unresolved id is a static setup bug, not a transient,
 /// recoverable-mid-frame condition (matching this crate's established
 /// `pop_layer`/`restore`/`PipelineRegistry::register`-style precedent
 /// for invalid caller state, not `EngineError`'s own device/resource
@@ -2193,9 +2356,11 @@ pub fn execute_frame(
     vertex_buffer: &dyn RhiBuffer,
     index_buffer: &dyn RhiBuffer,
     full_window: &ScissorRect,
+    device: &dyn RhiDevice,
     cmd_buffer: &mut dyn RhiCommandBuffer,
 ) {
     let mut clip_stack: Vec<ScissorRect> = Vec::new();
+    let mut active_layer: Option<Box<dyn RhiTexture>> = None;
     for command in &frame.commands {
         match command.kind {
             CommandType::DrawGeometry => {
@@ -2225,8 +2390,48 @@ pub fn execute_frame(
                 let restored = clip_stack.last().copied().unwrap_or(*full_window);
                 cmd_buffer.set_scissor(&restored);
             }
-            CommandType::PushLayer | CommandType::PopLayer => {
-                // Step 6.4: real transient-target acquisition/compositing.
+            CommandType::PushLayer => {
+                assert!(
+                    active_layer.is_none(),
+                    "execute_frame: nested PushLayer is not supported yet"
+                );
+                let format = u16_to_texture_format(command.pipeline_state_id);
+                let texture = device
+                    .acquire_transient_target(
+                        command.clip_bounds.width,
+                        command.clip_bounds.height,
+                        format,
+                    )
+                    .expect("execute_frame: acquire_transient_target failed for PushLayer");
+                cmd_buffer.begin_render_to_texture(&*texture);
+                active_layer = Some(texture);
+            }
+            CommandType::PopLayer => {
+                let texture = active_layer
+                    .take()
+                    .expect("execute_frame: PopLayer with no active PushLayer");
+                cmd_buffer.end_render_to_texture(&*texture);
+                let bindless_index = device
+                    .register_bindless(&*texture)
+                    .expect("execute_frame: register_bindless failed for PopLayer");
+                cmd_buffer.resume_swapchain_rendering();
+                let restored = clip_stack.last().copied().unwrap_or(*full_window);
+                cmd_buffer.set_scissor(&restored);
+
+                let pipeline = registry.get(command.pipeline_state_id).unwrap_or_else(|| {
+                    panic!(
+                        "execute_frame: no pipeline registered for id {}",
+                        command.pipeline_state_id
+                    )
+                });
+                cmd_buffer.set_pipeline(pipeline);
+                cmd_buffer.bind_texture(0, bindless_index);
+                cmd_buffer.bind_vertex_buffer(vertex_buffer, 0);
+                cmd_buffer.bind_index_buffer(index_buffer, 0);
+                cmd_buffer.draw_indexed(command.element_count, command.vertex_offset, 0);
+
+                device.deregister_bindless(bindless_index);
+                device.release_transient_target(texture);
             }
         }
     }
@@ -2235,6 +2440,7 @@ pub fn execute_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::{Cell, RefCell};
 
     #[test]
     fn rgba8_packs_bytes_in_memory_order_not_hex_literal_order() {
@@ -2430,6 +2636,8 @@ mod tests {
     fn balanced_push_pop_layer_does_not_panic_at_flatten() {
         let mut canvas = RenderingCanvas::new();
         let desc = LayerDesc {
+            x: 10,
+            y: 20,
             width: 256,
             height: 256,
             format: TextureFormat::Bgra8Srgb,
@@ -2451,6 +2659,8 @@ mod tests {
     fn unbalanced_push_layer_panics_at_flatten() {
         let mut canvas = RenderingCanvas::new();
         canvas.push_layer(&LayerDesc {
+            x: 0,
+            y: 0,
             width: 64,
             height: 64,
             format: TextureFormat::Bgra8Srgb,
@@ -3742,6 +3952,10 @@ mod tests {
         BeginRenderToTexture(u64),
         EndRenderToTexture(u64),
         ResumeSwapchainRendering,
+        AcquireTransientTarget(u32, u32),
+        RegisterBindless(u64),
+        DeregisterBindless(u32),
+        ReleaseTransientTarget(u64),
     }
 
     #[derive(Default)]
@@ -3798,6 +4012,131 @@ mod tests {
 
         fn raw_handle(&self) -> u64 {
             0
+        }
+    }
+
+    /// A minimal `RhiTexture` double, mirroring `FakePipeline`/
+    /// `FakeBuffer`'s own reasoning above -- `bindless_index` starts
+    /// `None`, matching `acquire_transient_target`'s own real contract
+    /// (not bindless-registered by default).
+    struct FakeTexture {
+        raw_handle: u64,
+        width: u32,
+        height: u32,
+        format: TextureFormat,
+    }
+
+    impl RhiTexture for FakeTexture {
+        fn raw_handle(&self) -> u64 {
+            self.raw_handle
+        }
+        fn image_handle(&self) -> u64 {
+            self.raw_handle
+        }
+        fn memory_handle(&self) -> u64 {
+            self.raw_handle
+        }
+        fn dimensions(&self) -> (u32, u32) {
+            (self.width, self.height)
+        }
+        fn format(&self) -> TextureFormat {
+            self.format
+        }
+        fn bindless_index(&self) -> Option<u32> {
+            None
+        }
+        fn size_bytes(&self) -> u64 {
+            u64::from(self.width) * u64::from(self.height) * 4
+        }
+    }
+
+    /// A minimal `RhiDevice` double for `execute_frame`'s `PushLayer`/
+    /// `PopLayer` tests (Step 6.4.2) -- only implements the resource-
+    /// management methods those tests actually exercise
+    /// (`acquire_transient_target`/`release_transient_target`/
+    /// `register_bindless`/`deregister_bindless`); `begin_frame`/
+    /// `submit_and_present`/`create_dynamic_ring_buffer`/`create_texture`
+    /// are `unimplemented!()` since no `execute_frame` test needs them.
+    /// Records its own calls into `calls` (a separate list from
+    /// `FakeCommandBuffer`'s own -- `RhiDevice`'s methods all take `&self`,
+    /// not `&mut self`, so a single shared list would need `RefCell`
+    /// interior mutability on both fakes; two independently-ordered lists
+    /// are simpler and just as conclusive, since `execute_frame` is
+    /// single-threaded and each fake's own call order is what actually
+    /// needs proving).
+    #[derive(Default)]
+    struct FakeDevice {
+        calls: RefCell<Vec<RecordedCall>>,
+        next_bindless_index: Cell<u32>,
+    }
+
+    impl RhiDevice for FakeDevice {
+        fn create_dynamic_ring_buffer(&self, _capacity: usize) -> Box<dyn RhiDynamicRingBuffer> {
+            unimplemented!("not exercised by any execute_frame test")
+        }
+
+        fn acquire_transient_target(
+            &self,
+            width: u32,
+            height: u32,
+            format: TextureFormat,
+        ) -> Result<Box<dyn RhiTexture>, EngineError> {
+            self.calls
+                .borrow_mut()
+                .push(RecordedCall::AcquireTransientTarget(width, height));
+            Ok(Box::new(FakeTexture {
+                raw_handle: 777,
+                width,
+                height,
+                format,
+            }))
+        }
+
+        fn release_transient_target(&self, texture: Box<dyn RhiTexture>) {
+            self.calls
+                .borrow_mut()
+                .push(RecordedCall::ReleaseTransientTarget(texture.raw_handle()));
+        }
+
+        fn create_texture(
+            &self,
+            _width: u32,
+            _height: u32,
+            _format: TextureFormat,
+            _pixels: &[u8],
+        ) -> Result<Box<dyn RhiTexture>, EngineError> {
+            unimplemented!("not exercised by any execute_frame test")
+        }
+
+        fn register_bindless(&self, texture: &dyn RhiTexture) -> Result<u32, EngineError> {
+            self.calls
+                .borrow_mut()
+                .push(RecordedCall::RegisterBindless(texture.raw_handle()));
+            let index = self.next_bindless_index.get();
+            self.next_bindless_index.set(index + 1);
+            Ok(index)
+        }
+
+        fn deregister_bindless(&self, bindless_index: u32) {
+            self.calls
+                .borrow_mut()
+                .push(RecordedCall::DeregisterBindless(bindless_index));
+        }
+
+        fn begin_frame(
+            &self,
+            _swapchain: &dyn RhiSwapchain,
+        ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
+            unimplemented!("not exercised by any execute_frame test")
+        }
+
+        fn submit_and_present(
+            &self,
+            _cmd_buffer: Box<dyn RhiCommandBuffer>,
+            _swapchain: &dyn RhiSwapchain,
+            _image: AcquiredImage,
+        ) -> Result<(), EngineError> {
+            unimplemented!("not exercised by any execute_frame test")
         }
     }
 
@@ -3868,12 +4207,14 @@ mod tests {
         };
 
         let mut cmd_buffer = FakeCommandBuffer::default();
+        let device = FakeDevice::default();
         execute_frame(
             &frame,
             &registry,
             &vertex_buffer,
             &index_buffer,
             &full_window,
+            &device,
             &mut cmd_buffer,
         );
 
@@ -3943,12 +4284,14 @@ mod tests {
         };
 
         let mut cmd_buffer = FakeCommandBuffer::default();
+        let device = FakeDevice::default();
         execute_frame(
             &frame,
             &registry,
             &vertex_buffer,
             &index_buffer,
             &full_window,
+            &device,
             &mut cmd_buffer,
         );
 
@@ -3989,6 +4332,7 @@ mod tests {
             accessibility_nodes: Vec::new(),
         };
         let mut cmd_buffer = FakeCommandBuffer::default();
+        let device = FakeDevice::default();
 
         execute_frame(
             &frame,
@@ -3996,6 +4340,7 @@ mod tests {
             &vertex_buffer,
             &index_buffer,
             &full_window,
+            &device,
             &mut cmd_buffer,
         );
     }
@@ -4018,6 +4363,7 @@ mod tests {
             accessibility_nodes: Vec::new(),
         };
         let mut cmd_buffer = FakeCommandBuffer::default();
+        let device = FakeDevice::default();
 
         execute_frame(
             &frame,
@@ -4025,9 +4371,214 @@ mod tests {
             &vertex_buffer,
             &index_buffer,
             &full_window,
+            &device,
             &mut cmd_buffer,
         );
 
         assert!(cmd_buffer.calls.is_empty());
+    }
+
+    #[test]
+    fn pop_layer_bakes_composite_quad_vertices_at_the_descs_own_screen_position() {
+        let mut canvas = RenderingCanvas::new();
+        canvas.push_layer(&LayerDesc {
+            x: 50,
+            y: 40,
+            width: 100,
+            height: 80,
+            format: TextureFormat::Rgba16Float,
+        });
+        canvas.pop_layer();
+        let frame = canvas.flatten();
+
+        assert_eq!(frame.vertices.len(), 4);
+        let positions: Vec<[f32; 2]> = frame.vertices.iter().map(|v| v.position).collect();
+        assert_eq!(
+            positions,
+            vec![[50.0, 40.0], [150.0, 40.0], [150.0, 120.0], [50.0, 120.0]],
+            "the composite quad's own vertices must cover the popped LayerDesc's own x/y/width/ \
+             height exactly, in raw screen space -- unlike draw_rounded_rect, never passed \
+             through the active Canvas transform (LayerDesc.x/y match ScissorRect's own \
+             untransformed semantics)"
+        );
+        let uvs: Vec<[f32; 2]> = frame.vertices.iter().map(|v| v.uv).collect();
+        assert_eq!(
+            uvs,
+            vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+            "a textured-quad composite samples its full (0,0)-(1,1) UV extent, not \
+             draw_rounded_rect's own center-relative SDF convention"
+        );
+
+        let pop_command = frame
+            .commands
+            .iter()
+            .find(|c| c.kind == CommandType::PopLayer)
+            .expect("flatten must still emit a PopLayer command");
+        assert_eq!(
+            pop_command.pipeline_state_id,
+            PipelineKind::TexturedQuad as u16
+        );
+        assert_eq!(pop_command.texture_handle, NO_TEXTURE);
+        assert_eq!(pop_command.element_count, 6);
+        assert_eq!(
+            &frame.indices[pop_command.vertex_offset as usize..][..6],
+            &[0, 1, 2, 0, 2, 3],
+            "PopLayer's own vertex_offset must be rebased into the flattened frame's real \
+             indices buffer (segment_and_flatten's fix), not left pointing at the canvas's own \
+             pre-flatten raw index positions"
+        );
+    }
+
+    #[test]
+    fn execute_frame_push_pop_layer_drives_the_full_render_to_texture_round_trip_in_order() {
+        let mut registry = PipelineRegistry::new();
+        registry.register(
+            PipelineKind::TexturedQuad as u16,
+            Box::new(FakePipeline { raw_handle: 333 }),
+        );
+        let vertex_buffer = FakeBuffer { raw_handle: 1000 };
+        let index_buffer = FakeBuffer { raw_handle: 2000 };
+        let full_window = ScissorRect {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+        };
+
+        let mut canvas = RenderingCanvas::new();
+        canvas.push_layer(&LayerDesc {
+            x: 10,
+            y: 20,
+            width: 64,
+            height: 48,
+            format: TextureFormat::Rgba16Float,
+        });
+        canvas.pop_layer();
+        let frame = canvas.flatten();
+
+        let mut cmd_buffer = FakeCommandBuffer::default();
+        let device = FakeDevice::default();
+        execute_frame(
+            &frame,
+            &registry,
+            &vertex_buffer,
+            &index_buffer,
+            &full_window,
+            &device,
+            &mut cmd_buffer,
+        );
+
+        assert_eq!(
+            device.calls.into_inner(),
+            vec![
+                RecordedCall::AcquireTransientTarget(64, 48),
+                RecordedCall::RegisterBindless(777),
+                RecordedCall::DeregisterBindless(0),
+                RecordedCall::ReleaseTransientTarget(777),
+            ],
+            "PushLayer must acquire a target sized to the LayerDesc, and PopLayer must \
+             register/deregister bindless and release the target back to the pool, in that order"
+        );
+        assert_eq!(
+            cmd_buffer.calls,
+            vec![
+                RecordedCall::BeginRenderToTexture(777),
+                RecordedCall::EndRenderToTexture(777),
+                RecordedCall::ResumeSwapchainRendering,
+                RecordedCall::SetScissor(full_window),
+                RecordedCall::SetPipeline(333),
+                RecordedCall::BindTexture(0, 0),
+                RecordedCall::BindVertexBuffer(1000, 0),
+                RecordedCall::BindIndexBuffer(2000, 0),
+                RecordedCall::DrawIndexed(6, 0, 0),
+            ],
+            "PopLayer must resume swapchain rendering, re-apply the current clip stack's top \
+             (full_window here, since no PushScissor is active), then draw the composite quad \
+             using the just-registered bindless index (0) -- not the IR's own NO_TEXTURE \
+             placeholder"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "nested PushLayer is not supported")]
+    fn execute_frame_panics_on_a_nested_push_layer() {
+        let registry = PipelineRegistry::new();
+        let vertex_buffer = FakeBuffer { raw_handle: 1 };
+        let index_buffer = FakeBuffer { raw_handle: 2 };
+        let full_window = ScissorRect {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+        };
+        let frame = FlattenedFrame {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            commands: vec![
+                UiDrawCommand {
+                    clip_bounds: ScissorRect {
+                        x: 0,
+                        y: 0,
+                        width: 10,
+                        height: 10,
+                    },
+                    ..marker_command(CommandType::PushLayer)
+                },
+                UiDrawCommand {
+                    clip_bounds: ScissorRect {
+                        x: 0,
+                        y: 0,
+                        width: 20,
+                        height: 20,
+                    },
+                    ..marker_command(CommandType::PushLayer)
+                },
+            ],
+            accessibility_nodes: Vec::new(),
+        };
+        let mut cmd_buffer = FakeCommandBuffer::default();
+        let device = FakeDevice::default();
+
+        execute_frame(
+            &frame,
+            &registry,
+            &vertex_buffer,
+            &index_buffer,
+            &full_window,
+            &device,
+            &mut cmd_buffer,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "PopLayer with no active PushLayer")]
+    fn execute_frame_panics_on_a_pop_layer_with_no_active_push_layer() {
+        let registry = PipelineRegistry::new();
+        let vertex_buffer = FakeBuffer { raw_handle: 1 };
+        let index_buffer = FakeBuffer { raw_handle: 2 };
+        let full_window = ScissorRect {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+        };
+        let frame = FlattenedFrame {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            commands: vec![marker_command(CommandType::PopLayer)],
+            accessibility_nodes: Vec::new(),
+        };
+        let mut cmd_buffer = FakeCommandBuffer::default();
+        let device = FakeDevice::default();
+
+        execute_frame(
+            &frame,
+            &registry,
+            &vertex_buffer,
+            &index_buffer,
+            &full_window,
+            &device,
+            &mut cmd_buffer,
+        );
     }
 }
