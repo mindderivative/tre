@@ -57,7 +57,13 @@ fn ensure_accessibility_enabled(bus: &Connection) -> bool {
     let Ok(status) = Proxy::new(bus, "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Status") else {
         return false;
     };
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    // Real evidence (2026-09-08): the first real CI run of this exact
+    // RegisterEvent call, in canvas_accessibility_verify, showed it
+    // succeeding but IsEnabled still not reading true after a 10s
+    // follow-up wait -- 30s matches the same ~30s worst-case delay
+    // already measured elsewhere against this exact CI environment
+    // (REVIEW.md finding #126) rather than a new guess.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
     while std::time::Instant::now() < deadline {
         if status.get_property::<bool>("IsEnabled").unwrap_or(false) {
             return true;
