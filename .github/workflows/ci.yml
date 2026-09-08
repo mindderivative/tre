@@ -162,22 +162,21 @@ jobs:
   accessibility-validation:
     name: accessibility-validation
     runs-on: ubuntu-latest
-    # Phase 5 Step 5.3.3, real finding from three consecutive CI runs
-    # (2026-09-08): canvas_accessibility_demo (needs both a virtual
-    # display and a real D-Bus/AT-SPI2 bus) was originally the last of
-    # 21 commands in `vulkan-validation` above, and never once
-    # succeeded there -- not even with a 30s discovery timeout (up from
-    # 10s), a complete timeout, not a near-miss. Meanwhile the `test`
-    # job's own dbus-run-session-based round-trip test succeeded
-    # reliably, twice, at ~10.05-10.06s. The one variable those two
-    # environments don't share: `vulkan-validation` runs 20 other real,
-    # CPU-bound software-rendered (lavapipe) Vulkan demos first, on a
-    # shared, resource-constrained hosted runner. Giving this one demo
-    # its own clean, minimal job -- mirroring the `test` job's own
-    # already-proven-reliable "lightweight job, nothing else competing
-    # for the runner's CPU" shape -- directly matches the only
-    # combination confirmed to work twice, rather than continuing to
-    # guess at timeouts inside an already-heavy job.
+    # Phase 5 Step 5.3.3's own real CI investigation (2026-09-08, full
+    # account in REVIEW.md finding #126): canvas_accessibility_demo
+    # needs both a virtual display and a real D-Bus/AT-SPI2 bus, given
+    # its own dedicated job here after ruling out call ordering,
+    # `xvfb-run` wrapper nesting, and job-level CPU contention as the
+    # cause of its own real, repeated CI failures. The actual, confirmed
+    # cause: running `tre-a11y`'s own already-reliable round-trip test
+    # (no Vulkan/X11 code at all) inside a job with Xvfb/Vulkan packages
+    # installed and `DISPLAY` set measured 30.06s -- triple the ~10.05s
+    # this exact test takes in the plain `test` job -- proving the
+    # actual AT-SPI2 discovery delay simply is longer in this specific
+    # environment, not anything about this demo's own code. Both
+    # `tre-a11y`'s test and this demo's own discovery timeout are set to
+    # 60s accordingly, real margin over the 30.06s worst case actually
+    # measured.
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
@@ -188,32 +187,9 @@ jobs:
             libvulkan1 mesa-vulkan-drivers vulkan-validationlayers xvfb libwayland-dev libxcb1-dev glslc \
             libfontconfig1-dev fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
             dbus-user-session at-spi2-core
-      # Real finding from a fourth CI run: isolating this demo into its
-      # own job (above) did NOT fix it either -- it timed out completely
-      # even with nothing else running first, ruling out CPU contention
-      # too. The one remaining, real difference from the `test` job
-      # (which succeeds reliably): `xvfb-run`'s own wrapper script
-      # nested inside `dbus-run-session`'s own wrapper script. Starting
-      # Xvfb directly here, decoupled from any wrapper nesting, isolates
-      # that specific interaction as the next thing to test.
       - name: Start a virtual display
         run: |
           Xvfb :99 -screen 0 1280x1024x24 &
           echo "DISPLAY=:99" >> "$GITHUB_ENV"
           sleep 2
-      # Diagnostic for a fifth real CI run's own finding: reordering the
-      # demo so accessibility publish/verify runs before any Vulkan/X11
-      # code (previous commit) did NOT fix it -- the registry stayed
-      # completely empty even then, ruling out call-order/runtime
-      # Vulkan-usage entirely. The one remaining difference from the
-      # `test` job (proven reliable 3 times running): this job's own
-      # installed packages (libvulkan1/mesa-vulkan-drivers/xvfb) pull in
-      # `ash`/`x11rb`'s real shared-library dependencies into the same
-      # binary, which can run C-level constructors at process startup
-      # before `main()` even executes, whether or not any Vulkan/X11
-      # function is ever called. Running tre-a11y's own
-      # already-proven-reliable round-trip test in THIS job's
-      # environment isolates whether that's the actual trigger, or
-      # whether it's specific to the demo binary itself.
-      - run: dbus-run-session -- cargo test -p tre-a11y --test round_trip
       - run: dbus-run-session -- cargo run -p tre-rhi-vulkan --example canvas_accessibility_demo

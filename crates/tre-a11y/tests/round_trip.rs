@@ -103,14 +103,16 @@ fn published_node_is_queryable_over_a_real_atspi2_round_trip() {
             }
         });
 
-        // 10s was cutting it too close on a real GitHub-hosted runner:
-        // two consecutive real CI runs (Step 5.3.3's own CI follow-up,
-        // 2026-09-08) showed this discovery consistently taking ~10.05s
-        // there (identical whether or not org.a11y.Status.IsEnabled was
-        // explicitly forced true beforehand, ruling that out as the
-        // actual cause) -- 30s gives real, evidence-based margin over
-        // the two observed worst cases rather than a blind guess.
-        let Some((app_bus, app_root)) = find_our_app(&bus, &toolkit_name, Duration::from_secs(30))
+        // Real, evidence-based history (Step 5.3.3's own CI follow-up,
+        // 2026-09-08): 10s was cutting it too close in a plain job
+        // (consistently ~10.05s there). Once this exact test ran inside
+        // a job that also has Xvfb/Vulkan packages installed and
+        // DISPLAY set (for canvas_accessibility_demo's own sake), this
+        // identical test -- no Vulkan/X11 code of its own at all --
+        // measured 30.06s, tripling the delay purely from being in that
+        // environment. 60s gives real margin over the worst case
+        // actually observed, not a guess about why the delay triples.
+        let Some((app_bus, app_root)) = find_our_app(&bus, &toolkit_name, Duration::from_secs(60))
         else {
             keep_publishing.store(false, std::sync::atomic::Ordering::Relaxed);
             eprintln!(

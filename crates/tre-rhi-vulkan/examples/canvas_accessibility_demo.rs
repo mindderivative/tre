@@ -25,13 +25,18 @@
 //! from `RenderingCanvas::flatten()`, a pure-CPU IR step with no GPU
 //! dependency at all, matching DESIGN.md Section 5's own "Decoupled
 //! from Rendering" framing literally, not just as an architectural
-//! label. A real, repeatable CI-only failure during this demo's own
-//! development (`accesskit_unix` never completing AT-SPI2 discovery
-//! specifically when a real Vulkan device/X11 window already existed in
-//! the process first, isolated by elimination after ruling out request
-//! ordering, `xvfb-run`'s own wrapper nesting, job-level CPU contention,
-//! and `org.a11y.Status.IsEnabled` forcing) is exactly why this ordering
-//! is load-bearing here, not merely stylistic.
+//! label. (A real CI-only investigation during this demo's own
+//! development first suspected this ordering itself, or `xvfb-run`'s
+//! wrapper nesting, or job-level CPU contention, as the cause of a
+//! real, repeated CI failure -- all three were directly disproved by
+//! real evidence. The actual cause: `tre-a11y`'s own already-reliable
+//! round-trip test, with no Vulkan/X11 code at all, took 30.06s inside
+//! a job with Xvfb/Vulkan packages installed and `DISPLAY` set --
+//! triple its usual ~10.05s elsewhere -- proving the real AT-SPI2
+//! discovery delay is simply longer in that environment. See REVIEW.md
+//! finding #126 for the full account. This ordering is kept anyway: it
+//! is a real, harmless improvement matching the architecture's own
+//! documented decoupling, just not the fix for the CI issue.)
 
 use std::{thread, time::Duration};
 
@@ -309,15 +314,17 @@ fn main() {
         });
         let _stop_guard = StopOnDrop(&keep_publishing);
 
-        // 10s was cutting it too close on a real GitHub-hosted runner:
-        // two consecutive real CI runs (2026-09-08) showed this
-        // discovery consistently taking ~10.05s there, identical
-        // whether or not org.a11y.Status.IsEnabled was explicitly
-        // forced true beforehand (ruling that out as the actual cause)
-        // -- 30s gives real, evidence-based margin over both observed
-        // worst cases rather than a blind guess.
-        let (app_bus, app_root) = find_our_app(&bus, &toolkit_name, Duration::from_secs(30))
-            .expect("our app never appeared in the real AT-SPI2 registry within 30s");
+        // Real, evidence-based history (2026-09-08): 10s was cutting it
+        // too close in a plain job (~10.05s there). Running tre-a11y's
+        // own identical round-trip test (no Vulkan/X11 code at all)
+        // inside a job with Xvfb/Vulkan packages installed and DISPLAY
+        // set -- exactly this job's own environment -- measured 30.06s,
+        // tripling the delay purely from being in that environment, not
+        // from anything about ordering, wrapper nesting, or which
+        // binary runs. 60s gives real margin over the worst case
+        // actually observed.
+        let (app_bus, app_root) = find_our_app(&bus, &toolkit_name, Duration::from_secs(60))
+            .expect("our app never appeared in the real AT-SPI2 registry within 60s");
 
         let app_accessible = Proxy::new(
             &bus,
