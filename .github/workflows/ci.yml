@@ -201,4 +201,19 @@ jobs:
           Xvfb :99 -screen 0 1280x1024x24 &
           echo "DISPLAY=:99" >> "$GITHUB_ENV"
           sleep 2
+      # Diagnostic for a fifth real CI run's own finding: reordering the
+      # demo so accessibility publish/verify runs before any Vulkan/X11
+      # code (previous commit) did NOT fix it -- the registry stayed
+      # completely empty even then, ruling out call-order/runtime
+      # Vulkan-usage entirely. The one remaining difference from the
+      # `test` job (proven reliable 3 times running): this job's own
+      # installed packages (libvulkan1/mesa-vulkan-drivers/xvfb) pull in
+      # `ash`/`x11rb`'s real shared-library dependencies into the same
+      # binary, which can run C-level constructors at process startup
+      # before `main()` even executes, whether or not any Vulkan/X11
+      # function is ever called. Running tre-a11y's own
+      # already-proven-reliable round-trip test in THIS job's
+      # environment isolates whether that's the actual trigger, or
+      # whether it's specific to the demo binary itself.
+      - run: dbus-run-session -- cargo test -p tre-a11y --test round_trip
       - run: dbus-run-session -- cargo run -p tre-rhi-vulkan --example canvas_accessibility_demo
