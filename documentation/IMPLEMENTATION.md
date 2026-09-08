@@ -1317,6 +1317,65 @@ until this is resolved.
   3. Stitch the entire engine together following a strictly enforced 8-stage sequence:
      *Wait Fences* $\rightarrow$ *Drain Events* $\rightarrow$ *Multi-Thread Canvas* $\rightarrow$ *Sub-Canvas Stitch* $\rightarrow$ *Tessellation/Atlas Check* $\rightarrow$ *Radix Sort & Batch* $\rightarrow$ *Ring Buffer Packing* $\rightarrow$ *RHI Submit & Present.*
 
+### Step 8.1.1: Real Frame Clock & Spring-Decay Primitives -- Status: Complete (2026-09-08)
+
+Split from Step 8.1 after real investigation found task 3 (wiring the
+entire engine into one real, continuously-running 8-stage loop) needs a
+genuinely separate, larger effort of its own -- confirmed, not assumed:
+no demo anywhere combines all 8 named stages together (`canvas_sub_
+canvas_demo.rs` combines the most -- SubCanvas + stitch + atlas +
+`execute_frame` -- but is single-frame and headless), and `execute_
+frame` was found to hardcode a zero vertex/index buffer offset, so it
+cannot yet accept a real per-frame ring-buffer-backed buffer at all
+(`RhiDynamicRingBuffer::write`'s one real, non-test call site,
+`memory_pools_demo.rs`, proves only pool/segment rotation mechanics,
+never real per-frame streaming) -- confirmed with the project owner via
+AskUserQuestion: split into 8.1.1/8.1.2, this step covers tasks 1-2
+only (`PLAN.md`, archived to `planning/archive/PLAN_PHASE8_STEP8_1_1.md`).
+
+Two new, independent, zero-consumer primitives, matching this project's
+own established "build and prove the primitive before its exact
+consumer exists" precedent (`Affine2::compose_batch`, `tone_map`):
+
+`FrameClock` (`tre-engine`) wraps `std::time::Instant` -- the portable
+primitive TECHNICAL.md Section 7.1's own `QueryPerformanceCounter`/
+`clock_gettime(CLOCK_MONOTONIC)` requirement already names, since Rust's
+standard library implements `Instant` on top of exactly those platform
+APIs internally, needing no hand-rolled per-platform `#[cfg]` code. Its
+one method, `tick(&mut self) -> f32`, returns the real elapsed seconds
+since the previous call, with the first call returning exactly `0.0`
+(no prior tick to measure from). Lives in `tre-engine`, not `tre-math`:
+it owns real, mutable frame-to-frame state (the previous tick's own
+timestamp), an engine-lifecycle concern, not a pure numeric function.
+
+`spring_decay(current, target, lambda, dt) -> f32` (`tre-math`)
+implements this step's own task 2 formula exactly, $x(t + \Delta t) =
+x_{\text{target}} + (x(t) - x_{\text{target}}) \cdot e^{-\lambda \Delta
+t}$ -- pure exponential decay toward a target, monotonic, never
+overshoots. Deliberately *not* a mass-spring-damper ODE with
+oscillation (position + velocity state, critical/under/over-damping):
+"spring physics and lerp decay" names one formula, not two, and
+implementing anything beyond it would be inventing scope the outline
+never specified.
+
+Neither primitive is wired to any real consumer yet -- deliberately:
+`FrameClock`'s real consumer (the continuous main loop) and `spring_
+decay`'s (real animation/UI state) are both Step 8.1.2's job or later,
+matching how `Affine2::compose_batch` and `tone_map` were each built and
+proven correct before their own real consumers existed.
+
+Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across
+the workspace. Real unit tests for both: `FrameClock` -- first `tick()`
+returns `0.0`; two ticks separated by a real `std::thread::sleep`
+report a delta consistent with the real sleep duration (a real, if
+coarse, hardware-timing check, not a mocked clock). `spring_decay` --
+`dt == 0.0` returns `current` unchanged; `lambda == 0.0` returns
+`current` unchanged regardless of `dt`; a large `dt` converges to
+within a small epsilon of `target`; monotonic approach across
+increasing `dt` never crosses `target`. Confirmed via grep that no
+existing demo or test touches either new item -- both are net-new,
+zero-consumer additions, as scoped.
+
 ## Architectural Decision Matrix
 
 | Architecture Choice | Alternative Considered | Selected Decision | Rationale | 

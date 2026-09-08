@@ -352,9 +352,20 @@ pub fn tone_map(linear: f32, headroom: f32) -> f32 {
     }
 }
 
+/// Frame-rate-independent exponential decay of `current` toward `target`
+/// (IMPLEMENTATION.md Phase 8 Step 8.1 task 2): `x(t+dt) = x_target +
+/// (x(t) - x_target) * e^(-lambda*dt)`. Pure exponential smoothing, not a
+/// mass-spring-damper ODE -- monotonic, never overshoots `target`. `lambda`
+/// is the decay rate (higher converges faster); `dt` is the real elapsed
+/// seconds since the previous call (e.g. from `FrameClock::tick`).
+#[must_use]
+pub fn spring_decay(current: f32, target: f32, lambda: f32, dt: f32) -> f32 {
+    target + (current - target) * (-lambda * dt).exp()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{compose_batch, lerp_points_batch, tone_map, Affine2};
+    use super::{compose_batch, lerp_points_batch, spring_decay, tone_map, Affine2};
     use std::f32::consts::PI;
 
     /// `wide::f32x8::mul_add` is true hardware FMA (one rounding) wherever
@@ -661,5 +672,46 @@ mod tests {
             "tone_map of a very large input must land extremely close to its own ceiling \
              {ceiling}, got {far_above}"
         );
+    }
+
+    #[test]
+    fn spring_decay_with_zero_dt_returns_current_unchanged() {
+        assert!((spring_decay(5.0, 100.0, 10.0, 0.0) - 5.0).abs() <= EPSILON);
+    }
+
+    #[test]
+    fn spring_decay_with_zero_lambda_never_decays_regardless_of_dt() {
+        assert!((spring_decay(5.0, 100.0, 0.0, 0.0) - 5.0).abs() <= EPSILON);
+        assert!((spring_decay(5.0, 100.0, 0.0, 1000.0) - 5.0).abs() <= EPSILON);
+    }
+
+    #[test]
+    fn spring_decay_with_large_dt_converges_to_target() {
+        let target = 100.0;
+        let result = spring_decay(5.0, target, 10.0, 1000.0);
+        assert!(
+            (result - target).abs() < 1e-3,
+            "a large dt must converge extremely close to target {target}, got {result}"
+        );
+    }
+
+    #[test]
+    fn spring_decay_is_monotonic_and_never_overshoots_target() {
+        let (current, target, lambda) = (0.0f32, 100.0f32, 2.0f32);
+        let dts: Vec<f32> = (0u16..50).map(|i| f32::from(i) * 0.05).collect();
+        let mut previous = current;
+        for &dt in &dts {
+            let value = spring_decay(current, target, lambda, dt);
+            assert!(
+                value >= previous - EPSILON,
+                "spring_decay must move monotonically toward target as dt increases: \
+                 previous = {previous}, value at dt={dt} = {value}"
+            );
+            assert!(
+                value <= target + EPSILON,
+                "spring_decay must never overshoot target {target}, got {value} at dt={dt}"
+            );
+            previous = value;
+        }
     }
 }

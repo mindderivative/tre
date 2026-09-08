@@ -345,6 +345,48 @@ impl InputEventQueue {
     }
 }
 
+/// A real, hardware-backed monotonic frame timer (IMPLEMENTATION.md Phase 8
+/// Step 8.1 task 1; TECHNICAL.md Section 7.1's `QueryPerformanceCounter`/
+/// `clock_gettime(CLOCK_MONOTONIC)` requirement -- satisfied by
+/// `std::time::Instant` itself, which wraps exactly these platform APIs
+/// internally, so no per-platform `#[cfg]` code is needed here). Owns real,
+/// mutable frame-to-frame state (the previous tick's own timestamp), an
+/// engine-lifecycle concern -- distinct from `tre-math::spring_decay`'s
+/// pure, state-free formula, which a caller feeds this clock's own output
+/// `dt` into.
+pub struct FrameClock {
+    previous_tick: Option<std::time::Instant>,
+}
+
+impl FrameClock {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            previous_tick: None,
+        }
+    }
+
+    /// Returns the real elapsed seconds since the previous call to `tick`,
+    /// as an `f32`. The first call has no prior tick to measure a delta
+    /// from, so it returns `0.0` rather than an arbitrary or undefined
+    /// value.
+    pub fn tick(&mut self) -> f32 {
+        let now = std::time::Instant::now();
+        let delta = match self.previous_tick {
+            Some(previous) => now.duration_since(previous).as_secs_f32(),
+            None => 0.0,
+        };
+        self.previous_tick = Some(now);
+        delta
+    }
+}
+
+impl Default for FrameClock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// An engine-level, backend-agnostic pixel format for transient render
 /// targets (TECHNICAL.md Section 3.2's `(Width, Height, Format)` pool
 /// key), swapchains, and (Phase 4 Step 4.2.3) regular uploaded textures.
@@ -2577,6 +2619,28 @@ mod tests {
     fn input_event_queue_drain_is_empty_when_nothing_was_pushed() {
         let mut queue = InputEventQueue::with_capacity(8);
         assert_eq!(queue.drain(), Vec::new());
+    }
+
+    #[test]
+    fn frame_clock_first_tick_returns_exactly_zero() {
+        let mut clock = FrameClock::new();
+        assert!(clock.tick().abs() <= f32::EPSILON);
+    }
+
+    #[test]
+    fn frame_clock_reports_real_elapsed_time_between_ticks() {
+        let mut clock = FrameClock::new();
+        clock.tick();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let delta = clock.tick();
+        assert!(
+            delta >= 0.015,
+            "a real ~20ms sleep must report a delta of at least 15ms, got {delta}s"
+        );
+        assert!(
+            delta < 1.0,
+            "a real ~20ms sleep must not report a wildly inflated delta, got {delta}s"
+        );
     }
 
     #[test]
