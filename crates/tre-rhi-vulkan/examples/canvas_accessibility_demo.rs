@@ -79,10 +79,12 @@ fn find_our_app(
     )
     .expect("failed to build registry proxy");
     let deadline = std::time::Instant::now() + timeout;
+    let mut last_seen: Vec<String> = Vec::new();
     while std::time::Instant::now() < deadline {
         let children: Vec<(String, OwnedObjectPath)> = registry
             .call("GetChildren", &())
             .expect("Registry.GetChildren failed");
+        last_seen.clear();
         for (bus_name, path) in children {
             let app = Proxy::new(
                 bus,
@@ -91,9 +93,9 @@ fn find_our_app(
                 "org.a11y.atspi.Application",
             )
             .expect("failed to build application proxy");
-            let matched = app
-                .get_property::<String>("ToolkitName")
-                .is_ok_and(|name| name == toolkit_name);
+            let toolkit_name_seen = app.get_property::<String>("ToolkitName").ok();
+            let matched = toolkit_name_seen.as_deref() == Some(toolkit_name);
+            last_seen.push(format!("{bus_name} -> {toolkit_name_seen:?}"));
             drop(app);
             if matched {
                 return Some((bus_name, path));
@@ -101,6 +103,14 @@ fn find_our_app(
         }
         thread::sleep(Duration::from_millis(50));
     }
+    // Real diagnostics for the next real failure, if there is one --
+    // this exact "just a bare timeout" message cost several real CI
+    // round trips to get past during this step's own development.
+    eprintln!(
+        "find_our_app timed out looking for toolkit_name={toolkit_name:?}; last registry \
+         contents ({} entries): {last_seen:#?}",
+        last_seen.len()
+    );
     None
 }
 

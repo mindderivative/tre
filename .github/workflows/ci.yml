@@ -188,4 +188,17 @@ jobs:
             libvulkan1 mesa-vulkan-drivers vulkan-validationlayers xvfb libwayland-dev libxcb1-dev glslc \
             libfontconfig1-dev fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
             dbus-user-session at-spi2-core
-      - run: dbus-run-session -- xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_accessibility_demo
+      # Real finding from a fourth CI run: isolating this demo into its
+      # own job (above) did NOT fix it either -- it timed out completely
+      # even with nothing else running first, ruling out CPU contention
+      # too. The one remaining, real difference from the `test` job
+      # (which succeeds reliably): `xvfb-run`'s own wrapper script
+      # nested inside `dbus-run-session`'s own wrapper script. Starting
+      # Xvfb directly here, decoupled from any wrapper nesting, isolates
+      # that specific interaction as the next thing to test.
+      - name: Start a virtual display
+        run: |
+          Xvfb :99 -screen 0 1280x1024x24 &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+          sleep 2
+      - run: dbus-run-session -- cargo run -p tre-rhi-vulkan --example canvas_accessibility_demo
