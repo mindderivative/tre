@@ -753,6 +753,64 @@ confirming the `NO_TEXTURE` change is a genuine no-op for existing
 render output, since none of them read `command.texture_handle` on the
 SDF-rect branch today.
 
+### Step 6.2: The Generic Frame Executor -- Status: Complete (2026-09-08)
+
+The real work the pre-existing outline's own "Step 6.2: Dynamic Index
+Stitching" task 3 named but never detailed ("Emit a single
+`RhiCommandBuffer::draw_indexed` call for the entire aggregated batch")
+-- tasks 1-2 of that original step (the sweep and index-offset
+consolidation) are already real via Step 5.1.3, per the correction note
+above. `canvas_batch_flattening_demo.rs:242-256` and
+`canvas_sub_canvas_demo.rs:359-373` were confirmed, before this step,
+to be byte-for-byte identical: both loop over `frame.commands`, skip
+non-`DrawGeometry` markers, branch on `pipeline_state_id ==
+PIPELINE_MSDF_TEXT` to choose a pipeline object and texture-bind policy,
+then bind vertex/index buffers and call `draw_indexed`. With Step 6.1's
+registry and unified `NO_TEXTURE` sentinel real, that branch collapses
+to one generic `registry.get(command.pipeline_state_id)` lookup plus an
+unconditional `bind_texture(0, command.texture_handle)` -- no
+per-pipeline-kind special case at all.
+
+A real `execute_draw_geometry_batches(frame, registry, vertex_buffer,
+index_buffer, cmd_buffer)` (`tre-engine`, alongside `PipelineRegistry`)
+does exactly this: skips `PushScissor`/`PopScissor`/`PushLayer`/
+`PopLayer` markers (real handling is Steps 6.3/6.4), resolves each
+`DrawGeometry` command's pipeline via the registry (panicking on an
+unresolved id -- a static setup bug for this function's real callers,
+not a transient condition, matching this crate's established
+`pop_layer`/`restore`-style precedent), and issues the same
+`set_pipeline`/`bind_texture`/`bind_vertex_buffer`/`bind_index_buffer`/
+`draw_indexed` sequence both demos already had, just once, shared,
+instead of duplicated. Vertex/index buffer upload stays the caller's
+job -- both demos build theirs via `VulkanDevice::upload_buffer`, a
+concrete, Vulkan-specific method with no place in a generic,
+backend-agnostic `tre-engine` function; "Buffer Packing" is its own
+distinct frame-lifecycle stage (DESIGN.md item 7) this function
+deliberately doesn't perform.
+
+Both demos were rewired to build a `PipelineRegistry` (registering
+`PipelineKind::SdfRoundedRect`/`MsdfText` in place of their own bare
+`rect_pipeline`/`msdf_pipeline` locals) and call the new shared
+function, replacing their own duplicated loops -- with zero change to
+either demo's own scene setup, buffer upload, or existing assertions.
+Each demo's own local `NO_TEXTURE` constant (now redundant with Step
+6.1's shared `tre_engine::NO_TEXTURE`) was removed.
+
+Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across
+the workspace: `tre-engine` gained 3 new tests (up to 54 total from 51)
+-- a `FakeCommandBuffer`/`FakeBuffer` test-double pair records the exact
+call sequence (not just "some calls happened") for a hand-built frame
+mixing marker commands with two `DrawGeometry` commands using two
+different registered pipelines; an unregistered pipeline id panics with
+a clear message; an empty command list makes zero calls. Both rewired
+demos re-run against real Vulkan hardware: every existing assertion
+(exact batch count/content at the IR level, real non-background pixels
+at every rect's/glyph's own position) still passes unchanged -- the real
+proof this step is a genuine behavioral no-op, now produced via shared
+code. No new demo this sub-step (see IMPLEMENTATION.md's own plan for
+why -- the two existing demos already exercise the only reachable
+pipeline kinds, so a new demo would add process, not coverage).
+
 ## Phase 7: Color Management & Compositing
 
 ### Step 7.1: Linear sRGB Conversions & HDR

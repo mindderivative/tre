@@ -194,6 +194,8 @@ The RHI maps the batched IR commands directly to Vulkan, DirectX 12, or Metal co
 
 *Updated for Phase 6 Step 6.1 (2026-09-08):* a real `PipelineRegistry` (`tre-engine`) maps a `UiDrawCommand::pipeline_state_id` to its real `RhiPipelineState` object -- generic over the trait below, no new RHI surface. Not part of this section's own canonical trait sketch since it lives one layer above the RHI itself (an IR-to-pipeline-object lookup a future executor consults, not something a backend implements) -- named here because it exists specifically to replace the two demos' own hardcoded `if pipeline_state_id == PIPELINE_MSDF_TEXT` dispatch, the same kind of "real design supersedes the original sketch" fact this section already tracks for `bind_texture`/`acquire_transient_target` above. See `planning/archive/PLAN_PHASE6_STEP6_1.md`.
 
+*Updated for Phase 6 Step 6.2 (2026-09-08):* `execute_draw_geometry_batches` (`tre-engine`) is the real consumer the previous note anticipated -- drives every `DrawGeometry` batch in a `FlattenedFrame` through `set_pipeline`/`bind_texture`/`bind_vertex_buffer`/`bind_index_buffer`/`draw_indexed` below, resolving each command's pipeline via `PipelineRegistry`, with `PushScissor`/`PushLayer` markers skipped (Steps 6.3/6.4's own job). Not itself part of the canonical trait sketch for the same reason `PipelineRegistry` isn't -- a free function driving the traits below, not one of them. See `planning/archive/PLAN_PHASE6_STEP6_2.md`.
+
 ```rust
 /// An acquired swapchain image, threaded from `RhiSwapchain::acquire_next_image`
 /// through `RhiDevice::begin_frame` to the caller and back to

@@ -19,8 +19,8 @@
 use ash::vk;
 use tre_atlas::AtlasOwner;
 use tre_engine::{
-    rgba8, CommandType, GlyphAtlasContext, OverlayLayerPriority, RenderingCanvas, RhiDevice,
-    TextureFormat, PIPELINE_MSDF_TEXT,
+    execute_draw_geometry_batches, rgba8, CommandType, GlyphAtlasContext, OverlayLayerPriority,
+    PipelineKind, PipelineRegistry, RenderingCanvas, RhiDevice, TextureFormat, PIPELINE_MSDF_TEXT,
 };
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 
@@ -39,13 +39,6 @@ const OVERLAY_RECT_ORIGIN: (f32, f32) = (10.0, 70.0);
 const RECT_SIZE: f32 = 40.0;
 const TEXT_ORIGIN: [f32; 2] = [110.0, 110.0];
 const TEXT_PX_SIZE: f32 = 32.0;
-
-/// No texture bound this draw (the SDF rect pipeline never samples the
-/// bindless array at all) -- passing the sentinel explicitly resets any
-/// stale `texture_index` left over from a preceding textured draw in
-/// the same command buffer, since this demo (unlike every prior one)
-/// records more than one pipeline's draws in a single frame.
-const NO_TEXTURE: u32 = u32::MAX;
 
 fn main() {
     // --- Real shaped glyph against a real cascade font, for the Text
@@ -132,6 +125,10 @@ fn main() {
             tre_rhi_vulkan::HEADLESS_FORMAT,
         )
         .expect("failed to create MSDF pipeline");
+
+    let mut pipelines = PipelineRegistry::new();
+    pipelines.register(PipelineKind::SdfRoundedRect as u16, Box::new(rect_pipeline));
+    pipelines.register(PipelineKind::MsdfText as u16, Box::new(msdf_pipeline));
 
     let texture = device
         .create_texture(
@@ -239,21 +236,13 @@ fn main() {
         .expect("failed to upload index buffer");
 
     let (mut cmd_buffer, image) = device.begin_frame(&swapchain).expect("begin_frame failed");
-    for command in &frame.commands {
-        if command.kind != CommandType::DrawGeometry {
-            continue;
-        }
-        if command.pipeline_state_id == PIPELINE_MSDF_TEXT {
-            cmd_buffer.set_pipeline(&msdf_pipeline);
-            cmd_buffer.bind_texture(0, command.texture_handle);
-        } else {
-            cmd_buffer.set_pipeline(&rect_pipeline);
-            cmd_buffer.bind_texture(0, NO_TEXTURE);
-        }
-        cmd_buffer.bind_vertex_buffer(&vertex_buffer, 0);
-        cmd_buffer.bind_index_buffer(&index_buffer, 0);
-        cmd_buffer.draw_indexed(command.element_count, command.vertex_offset, 0);
-    }
+    execute_draw_geometry_batches(
+        &frame,
+        &pipelines,
+        &vertex_buffer,
+        &index_buffer,
+        &mut *cmd_buffer,
+    );
     device
         .submit_and_present(cmd_buffer, &swapchain, image)
         .expect("submit_and_present failed");

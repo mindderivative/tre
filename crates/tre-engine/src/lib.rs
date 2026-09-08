@@ -2073,6 +2073,54 @@ pub trait RhiCommandBuffer {
     fn raw_handle(&self) -> u64;
 }
 
+/// The real, generic frame executor (IMPLEMENTATION.md Phase 6 Step
+/// 6.2) -- drives every `DrawGeometry` batch in `frame.commands` through
+/// the RHI, resolving each command's `pipeline_state_id` via `registry`
+/// (Step 6.1's [`PipelineRegistry`]) instead of a hardcoded per-pipeline
+/// branch. This is what `canvas_batch_flattening_demo.rs`/
+/// `canvas_sub_canvas_demo.rs` each used to duplicate by hand.
+///
+/// `PushScissor`/`PopScissor`/`PushLayer`/`PopLayer` commands are
+/// skipped -- real handling is Phase 6 Steps 6.3/6.4, not this function.
+/// `vertex_buffer`/`index_buffer` are already-uploaded whole-frame
+/// buffers the caller built (e.g. via a backend-specific upload helper);
+/// "Buffer Packing" (DESIGN.md's own frame-lifecycle item 7) is a
+/// distinct stage this function deliberately does not perform.
+///
+/// # Panics
+/// Panics if a `DrawGeometry` command's `pipeline_state_id` was never
+/// registered in `registry` -- for this function's real callers, every
+/// pipeline `Canvas` can emit is always registered before a frame is
+/// rendered, so an unresolved id is a static setup bug, not a transient,
+/// recoverable-mid-frame condition (matching this crate's established
+/// `pop_layer`/`restore`/`PipelineRegistry::register`-style precedent
+/// for invalid caller state, not `EngineError`'s own device/resource
+/// failure modes).
+pub fn execute_draw_geometry_batches(
+    frame: &FlattenedFrame,
+    registry: &PipelineRegistry,
+    vertex_buffer: &dyn RhiBuffer,
+    index_buffer: &dyn RhiBuffer,
+    cmd_buffer: &mut dyn RhiCommandBuffer,
+) {
+    for command in &frame.commands {
+        if command.kind != CommandType::DrawGeometry {
+            continue;
+        }
+        let pipeline = registry.get(command.pipeline_state_id).unwrap_or_else(|| {
+            panic!(
+                "execute_draw_geometry_batches: no pipeline registered for id {}",
+                command.pipeline_state_id
+            )
+        });
+        cmd_buffer.set_pipeline(pipeline);
+        cmd_buffer.bind_texture(0, command.texture_handle);
+        cmd_buffer.bind_vertex_buffer(vertex_buffer, 0);
+        cmd_buffer.bind_index_buffer(index_buffer, 0);
+        cmd_buffer.draw_indexed(command.element_count, command.vertex_offset, 0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3552,5 +3600,212 @@ mod tests {
             PipelineKind::MsdfText as u16,
             Box::new(FakePipeline { raw_handle: 2 }),
         );
+    }
+
+    /// A minimal `RhiBuffer` double for `execute_draw_geometry_batches`
+    /// tests, mirroring `FakePipeline`'s own reasoning above.
+    struct FakeBuffer {
+        raw_handle: u64,
+    }
+
+    impl RhiBuffer for FakeBuffer {
+        fn raw_handle(&self) -> u64 {
+            self.raw_handle
+        }
+    }
+
+    /// Every call `execute_draw_geometry_batches` can make against a
+    /// `RhiCommandBuffer`, recorded with its real arguments (by the
+    /// callee's own `raw_handle()`, not by object identity, since a
+    /// `&dyn Trait` reference itself isn't comparable) -- lets tests
+    /// assert the exact call sequence and its exact arguments, not just
+    /// "some calls happened."
+    #[derive(Debug, PartialEq)]
+    enum RecordedCall {
+        SetPipeline(u64),
+        SetScissor(ScissorRect),
+        BindTexture(u32, u32),
+        BindVertexBuffer(u64, u32),
+        BindIndexBuffer(u64, u32),
+        DrawIndexed(u32, u32, i32),
+    }
+
+    #[derive(Default)]
+    struct FakeCommandBuffer {
+        calls: Vec<RecordedCall>,
+    }
+
+    impl RhiCommandBuffer for FakeCommandBuffer {
+        fn set_pipeline(&mut self, pipeline: &dyn RhiPipelineState) {
+            self.calls
+                .push(RecordedCall::SetPipeline(pipeline.raw_handle()));
+        }
+
+        fn set_scissor(&mut self, rect: &ScissorRect) {
+            self.calls.push(RecordedCall::SetScissor(*rect));
+        }
+
+        fn bind_vertex_buffer(&mut self, buffer: &dyn RhiBuffer, offset: u32) {
+            self.calls
+                .push(RecordedCall::BindVertexBuffer(buffer.raw_handle(), offset));
+        }
+
+        fn bind_index_buffer(&mut self, buffer: &dyn RhiBuffer, offset: u32) {
+            self.calls
+                .push(RecordedCall::BindIndexBuffer(buffer.raw_handle(), offset));
+        }
+
+        fn bind_texture(&mut self, slot: u32, bindless_index: u32) {
+            self.calls
+                .push(RecordedCall::BindTexture(slot, bindless_index));
+        }
+
+        fn draw_indexed(&mut self, index_count: u32, start_index: u32, base_vertex: i32) {
+            self.calls.push(RecordedCall::DrawIndexed(
+                index_count,
+                start_index,
+                base_vertex,
+            ));
+        }
+
+        fn raw_handle(&self) -> u64 {
+            0
+        }
+    }
+
+    /// A hand-built `UiDrawCommand`, defaulting every field this test
+    /// module doesn't care about to an inert value -- extended per test
+    /// with the specific fields under test, matching this crate's own
+    /// established style for hand-constructed IR fixtures.
+    fn marker_command(kind: CommandType) -> UiDrawCommand {
+        UiDrawCommand {
+            kind,
+            sort_key: 0,
+            pipeline_state_id: 0,
+            texture_handle: 0,
+            element_count: 0,
+            vertex_offset: 0,
+            clip_bounds: FULL_WINDOW_CLIP,
+        }
+    }
+
+    #[test]
+    fn execute_draw_geometry_batches_skips_markers_and_dispatches_draw_geometry_correctly() {
+        let mut registry = PipelineRegistry::new();
+        registry.register(
+            PipelineKind::SdfRoundedRect as u16,
+            Box::new(FakePipeline { raw_handle: 111 }),
+        );
+        registry.register(
+            PipelineKind::MsdfText as u16,
+            Box::new(FakePipeline { raw_handle: 222 }),
+        );
+        let vertex_buffer = FakeBuffer { raw_handle: 1000 };
+        let index_buffer = FakeBuffer { raw_handle: 2000 };
+
+        let frame = FlattenedFrame {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            commands: vec![
+                marker_command(CommandType::PushScissor),
+                UiDrawCommand {
+                    kind: CommandType::DrawGeometry,
+                    pipeline_state_id: PipelineKind::SdfRoundedRect as u16,
+                    texture_handle: NO_TEXTURE,
+                    element_count: 6,
+                    vertex_offset: 0,
+                    ..marker_command(CommandType::DrawGeometry)
+                },
+                marker_command(CommandType::PopScissor),
+                UiDrawCommand {
+                    kind: CommandType::DrawGeometry,
+                    pipeline_state_id: PipelineKind::MsdfText as u16,
+                    texture_handle: 7,
+                    element_count: 24,
+                    vertex_offset: 6,
+                    ..marker_command(CommandType::DrawGeometry)
+                },
+            ],
+            accessibility_nodes: Vec::new(),
+        };
+
+        let mut cmd_buffer = FakeCommandBuffer::default();
+        execute_draw_geometry_batches(
+            &frame,
+            &registry,
+            &vertex_buffer,
+            &index_buffer,
+            &mut cmd_buffer,
+        );
+
+        assert_eq!(
+            cmd_buffer.calls,
+            vec![
+                RecordedCall::SetPipeline(111),
+                RecordedCall::BindTexture(0, NO_TEXTURE),
+                RecordedCall::BindVertexBuffer(1000, 0),
+                RecordedCall::BindIndexBuffer(2000, 0),
+                RecordedCall::DrawIndexed(6, 0, 0),
+                RecordedCall::SetPipeline(222),
+                RecordedCall::BindTexture(0, 7),
+                RecordedCall::BindVertexBuffer(1000, 0),
+                RecordedCall::BindIndexBuffer(2000, 0),
+                RecordedCall::DrawIndexed(24, 6, 0),
+            ],
+            "markers must produce no calls at all, and each DrawGeometry command must \
+             resolve its own pipeline id to the exact registered pipeline object and pass \
+             through its own real texture/element_count/vertex_offset unchanged"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "no pipeline registered for id 99")]
+    fn execute_draw_geometry_batches_panics_on_an_unregistered_pipeline_id() {
+        let registry = PipelineRegistry::new();
+        let vertex_buffer = FakeBuffer { raw_handle: 1 };
+        let index_buffer = FakeBuffer { raw_handle: 2 };
+        let frame = FlattenedFrame {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            commands: vec![UiDrawCommand {
+                kind: CommandType::DrawGeometry,
+                pipeline_state_id: 99,
+                ..marker_command(CommandType::DrawGeometry)
+            }],
+            accessibility_nodes: Vec::new(),
+        };
+        let mut cmd_buffer = FakeCommandBuffer::default();
+
+        execute_draw_geometry_batches(
+            &frame,
+            &registry,
+            &vertex_buffer,
+            &index_buffer,
+            &mut cmd_buffer,
+        );
+    }
+
+    #[test]
+    fn execute_draw_geometry_batches_with_no_commands_makes_no_calls() {
+        let registry = PipelineRegistry::new();
+        let vertex_buffer = FakeBuffer { raw_handle: 1 };
+        let index_buffer = FakeBuffer { raw_handle: 2 };
+        let frame = FlattenedFrame {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            commands: Vec::new(),
+            accessibility_nodes: Vec::new(),
+        };
+        let mut cmd_buffer = FakeCommandBuffer::default();
+
+        execute_draw_geometry_batches(
+            &frame,
+            &registry,
+            &vertex_buffer,
+            &index_buffer,
+            &mut cmd_buffer,
+        );
+
+        assert!(cmd_buffer.calls.is_empty());
     }
 }
