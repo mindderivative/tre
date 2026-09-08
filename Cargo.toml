@@ -12,6 +12,7 @@ members = [
     "crates/tre-rhi-dx12",
     "crates/tre-rhi-metal",
     "crates/tre-platform",
+    "crates/tre-a11y",
 ]
 
 [workspace.package]

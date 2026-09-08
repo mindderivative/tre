@@ -1,0 +1,33 @@
+[package]
+name = "tre-a11y"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+# PLAN_PHASE5_STEP5_3_2.md: publishes tagged accessibility nodes to the
+# real Linux AT-SPI2 accessibility bus via `accesskit`/`accesskit_unix`
+# rather than hand-rolling the AT-SPI2 D-Bus wire protocol ourselves --
+# the same "depend on a vetted crate for a complex wire format" reasoning
+# `tre-text` already applies to `fdsm` for MSDF and `tre-math` to `wide`
+# for SIMD. Both pinned to the newest version this workspace's
+# `rust-version = 1.75` can resolve (accesskit_unix 0.23.0/accesskit
+# 0.25.0 need rustc 1.85, confirmed via `cargo add --dry-run`, the same
+# technique `tre-svg` already used to pin `usvg`). `accesskit_unix`'s
+# default `async-io` feature (not `tokio`) matches this workspace's own
+# fully synchronous design -- nothing else here uses an async runtime.
+[dependencies]
+accesskit = "=0.17.1"
+accesskit_unix = "=0.13.1"
+tre-engine = { path = "../tre-engine" }
+
+[dev-dependencies]
+# Task 6's real round-trip test needs a second, independent D-Bus
+# connection to query what `A11yBridge` published -- `zbus`'s own
+# `blocking` API matches this workspace's fully synchronous design (no
+# async runtime elsewhere), same as `accesskit_unix`'s own choice above.
+# Only a dev-dependency: nothing in the crate's own public API touches
+# D-Bus directly, `accesskit_unix` already owns that.
+zbus = { version = "4.4.0", default-features = false, features = ["blocking"] }

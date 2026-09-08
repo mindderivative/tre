@@ -51,6 +51,8 @@ To satisfy ultra-responsive user interfaces across high-refresh displays ($60\te
 
 * **Linux:** Wayland primary (`wl_surface`, `xdg_shell`, `zwp_text_input_v3`), X11 fallback via XCB. Accessibility bridged via AT-SPI2 over D-Bus.
 
+  *Implementation status (Phase 5 Step 5.3.2, 2026-09-08):* the accessibility bridge is real for Linux -- a new `tre-a11y` crate publishes `tre-engine`'s tagged accessibility nodes onto the real AT-SPI2 bus via `accesskit`/`accesskit_unix` (a vetted crate for the wire protocol, not a hand-rolled D-Bus implementation), verified end to end against a real, live AT-SPI2 registry (`Registry.GetChildren` genuinely returns the published app; `Component.GetExtents` on its tagged node matches exactly what was published). Windows UI Automation/macOS NSAccessibility remain unimplemented, deferred with those platforms' own windowing work.
+
 * **macOS:** Cocoa/AppKit (`NSWindow`, `CAMetalLayer`), NSAccessibility protocols.
 
 ## 3. Memory Subsystem & Zero-Allocation Strategy

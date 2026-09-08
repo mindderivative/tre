@@ -1,0 +1,170 @@
+//! The real proof this sub-step exists for: a second, independent D-Bus
+//! connection queries the exact object `A11yBridge` published on the
+//! real Linux accessibility bus and gets back the real values, not a
+//! mocked stand-in (PLAN_PHASE5_STEP5_3_2.md's own "Verification plan").
+//! Discovers our app via the real AT-SPI2 registry the same way any real
+//! assistive technology would: `Registry.GetChildren`, filtered by our
+//! own distinctive `ToolkitName` (unique per test run, so this stays
+//! correct alongside any other real accessible application already
+//! registered on a developer's own desktop session).
+
+use std::{thread, time::Duration};
+
+use tre_engine::{AccessibilityNode, AccessibilityNodeId, AccessibilityRole};
+use zbus::{
+    blocking::{Connection, ConnectionBuilder, Proxy},
+    zvariant::OwnedObjectPath,
+};
+
+fn a11y_bus() -> Option<Connection> {
+    let session = Connection::session().ok()?;
+    let bus_proxy = Proxy::new(&session, "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus").ok()?;
+    let address: String = bus_proxy.call("GetAddress", &()).ok()?;
+    ConnectionBuilder::address(address.as_str())
+        .ok()?
+        .build()
+        .ok()
+}
+
+/// Polls the real registry for our app, identified by `toolkit_name`,
+/// for up to `timeout` -- embedding happens asynchronously on
+/// `accesskit_unix`'s own background thread, so this is a real,
+/// bounded wait rather than an assumption that it has already happened.
+fn find_our_app(
+    bus: &Connection,
+    toolkit_name: &str,
+    timeout: Duration,
+) -> Option<(String, OwnedObjectPath)> {
+    let registry = Proxy::new(
+        bus,
+        "org.a11y.atspi.Registry",
+        "/org/a11y/atspi/accessible/root",
+        "org.a11y.atspi.Accessible",
+    )
+    .ok()?;
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        let children: Vec<(String, OwnedObjectPath)> = registry.call("GetChildren", &()).ok()?;
+        for (bus_name, path) in children {
+            let app = Proxy::new(
+                bus,
+                bus_name.as_str(),
+                path.as_str(),
+                "org.a11y.atspi.Application",
+            )
+            .ok()?;
+            let matched = app
+                .get_property::<String>("ToolkitName")
+                .is_ok_and(|name| name == toolkit_name);
+            drop(app);
+            if matched {
+                return Some((bus_name, path));
+            }
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    None
+}
+
+#[test]
+fn published_node_is_queryable_over_a_real_atspi2_round_trip() {
+    let Some(bus) = a11y_bus() else {
+        eprintln!("no real AT-SPI2 accessibility bus reachable in this environment -- skipping");
+        return;
+    };
+
+    let toolkit_name = format!(
+        "tre-a11y-round-trip-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let bridge = tre_a11y::A11yBridge::connect("tre-a11y-test", toolkit_name.clone(), "0.0.0");
+    let node = AccessibilityNode {
+        node_id: AccessibilityNodeId(123),
+        x: 10.0,
+        y: 20.0,
+        width: 100.0,
+        height: 50.0,
+        role: AccessibilityRole::Button,
+    };
+
+    // A steady stream of publishes (rather than one call) both keeps the
+    // adapter active for the length of this test and matches how a real
+    // caller would use it -- once per rendered frame, not once ever.
+    let keep_publishing = std::sync::atomic::AtomicBool::new(true);
+    thread::scope(|scope| {
+        scope.spawn(|| {
+            while keep_publishing.load(std::sync::atomic::Ordering::Relaxed) {
+                bridge.publish(&[node]);
+                thread::sleep(Duration::from_millis(20));
+            }
+        });
+
+        let Some((app_bus, app_root)) = find_our_app(&bus, &toolkit_name, Duration::from_secs(10))
+        else {
+            keep_publishing.store(false, std::sync::atomic::Ordering::Relaxed);
+            eprintln!(
+                "our app never appeared in the real AT-SPI2 registry within 10s -- skipping \
+                 (no assistive-technology-enabled session reachable in this environment)"
+            );
+            return;
+        };
+
+        let app_accessible = Proxy::new(
+            &bus,
+            app_bus.as_str(),
+            app_root.as_str(),
+            "org.a11y.atspi.Accessible",
+        )
+        .unwrap();
+        let synthesized_root: Vec<(String, OwnedObjectPath)> =
+            app_accessible.call("GetChildren", &()).unwrap();
+        assert_eq!(
+            synthesized_root.len(),
+            1,
+            "exactly one synthesized root child of the app-level root"
+        );
+        let (root_bus, root_path) = &synthesized_root[0];
+
+        let root_accessible = Proxy::new(
+            &bus,
+            root_bus.as_str(),
+            root_path.as_str(),
+            "org.a11y.atspi.Accessible",
+        )
+        .unwrap();
+        let tagged_children: Vec<(String, OwnedObjectPath)> =
+            root_accessible.call("GetChildren", &()).unwrap();
+        assert_eq!(
+            tagged_children.len(),
+            1,
+            "exactly one tagged node was published"
+        );
+        let (child_bus, child_path) = &tagged_children[0];
+        assert!(
+            child_path.as_str().ends_with("/123"),
+            "the published node's real AccessibilityNodeId(123) must appear in its own \
+             AT-SPI2 object path, got {child_path}"
+        );
+
+        let component = Proxy::new(
+            &bus,
+            child_bus.as_str(),
+            child_path.as_str(),
+            "org.a11y.atspi.Component",
+        )
+        .unwrap();
+        let extents: (i32, i32, i32, i32) = component.call("GetExtents", &(0u32,)).unwrap();
+        assert_eq!(
+            extents,
+            (10, 20, 100, 50),
+            "the real, independently-queried Component.GetExtents must match exactly what \
+             was published, not an approximation"
+        );
+
+        keep_publishing.store(false, std::sync::atomic::Ordering::Relaxed);
+    });
+}

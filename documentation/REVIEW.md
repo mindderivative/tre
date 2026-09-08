@@ -1270,3 +1270,18 @@ Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the wor
 | # | Finding | Doc(s)/Code | Severity | Resolution |
 |---|---|---|---|---|
 | -- | No numbered findings this sub-step | tre-engine | -- | -- |
+
+## Phase 5 Step 5.3.2 Implementation (2026-09-08)
+
+Reviewer: Claude (Cowork), acting as Principal Engineer / Lead Tech Architect, per project standing instructions.
+Scope: implementing IMPLEMENTATION.md Step 5.3.2 (the real Linux AT-SPI2 bridge), the second of Step 5.3's three sub-steps. Full detail in `planning/archive/LOG_PHASE5_STEP5_3_2.md`; this is the summary for the documentation's own record.
+
+Status: **Complete, no numbered findings.** `PLAN.md`'s core approach (a new `tre-a11y` crate built on `accesskit`/`accesskit_unix` rather than hand-rolled `zbus`) held up completely. One deliberate, disclosed design correction was made *during* the plan's own Task 1 research step, not discovered as a defect afterward: reading `accesskit_unix::Adapter`'s real source revealed it already owns a dedicated background thread and an unbounded internal channel, making the plan's own speculative "hand-roll a second background thread with a bounded channel" unnecessary complexity -- removed before any code was written against it, not built and then reverted. Every other real API detail the plan deliberately left open (the `accesskit::Rect` coordinate convention, `Tree`'s `app_name`/`toolkit_name`/`toolkit_version` fields, `Node::set_bounds`/`set_children`, the `/org/a11y/atspi/accessible/<adapter>/<node_id>` object path scheme) was confirmed against `accesskit`/`accesskit_unix`/`accesskit_atspi_common`'s real source before writing the conversion code, and matched what the real, live AT-SPI2 stack on this development machine actually returned on the first genuine round-trip test.
+
+Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the workspace: the new `tre-a11y` crate ships 6 tests, including one real integration test that discovers the published application in the actual system AT-SPI2 registry (not a mock) and confirms `Component.GetExtents` matches exactly what was published. CI's `test` job was extended to install `dbus-user-session`/`at-spi2-core` and wrap `cargo test --workspace` in `dbus-run-session`, relying on `org.a11y.Bus`'s own standard D-Bus service-activation mechanism -- genuinely unconfirmed on the actual hosted runner as of this writing (this machine's own already-running desktop accessibility stack is what the local proof used), disclosed rather than assumed to work; the round-trip test itself is designed to skip gracefully, not fail, if CI's bus turns out unreachable. No new `tre-rhi-vulkan` demo this sub-step, matching 5.2.1/5.2.2/5.3.1's own precedent and DESIGN.md Section 5's "(Decoupled from Rendering)" framing -- the real end-to-end capstone wiring this bridge into a rendered scene is Step 5.3.3's job.
+
+## Summary table (Phase 5 Step 5.3.2)
+
+| # | Finding | Doc(s)/Code | Severity | Resolution |
+|---|---|---|---|---|
+| -- | No numbered findings this sub-step | tre-a11y, .github/workflows/ci.yml | -- | -- |
