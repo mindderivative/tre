@@ -163,23 +163,29 @@ jobs:
     name: accessibility-validation
     runs-on: ubuntu-latest
     # Phase 5 Step 5.3.3's own real CI investigation (2026-09-08, full
-    # seven-push account in REVIEW.md finding #126): the original
-    # single-process demo (real GPU render *and* real AT-SPI2
-    # publish-and-verify in one binary) never once completed AT-SPI2
-    # discovery in this hosted-runner image, even at a 60s timeout,
-    # after ordering/wrapper-nesting/CPU-contention/`IsEnabled` were
-    # each tried and directly disproved. The actual, confirmed cause:
-    # `accesskit_unix`'s own background thread -- which does the real
-    # AT-SPI2 registration -- cannot complete that registration inside a
-    # process that also links real Vulkan/X11 shared libraries, proven
-    # by `tre-a11y`'s own already-reliable round-trip test (zero
-    # Vulkan/X11 code) succeeding reliably in this exact job. The real
-    # fix is the two-process split below, not a longer timeout:
-    # `canvas_accessibility_demo` renders and tags only, handing its
-    # tagged nodes to `canvas_accessibility_verify` -- confirmed via
-    # `ldd` to link zero Vulkan/X11/Wayland libraries -- which does the
-    # real publish and verify. Each binary only needs the one real
-    # environment it actually depends on.
+    # account in REVIEW.md finding #126 -- twelve real pushes so far).
+    # Real, disproven-in-turn hypotheses: call ordering; `xvfb-run`
+    # wrapper nesting; job-level CPU contention; `IsEnabled` forced via
+    # `dbus-send`; Vulkan/X11 shared-library linking (the two-process
+    # split below was built to test this specifically -- it did NOT fix
+    # the real issue, but is kept as a real, independent improvement:
+    # `canvas_accessibility_demo` renders/tags only, `canvas_accessibility_verify`
+    # -- confirmed via `ldd` to link zero Vulkan/X11/Wayland libraries --
+    # does the real AT-SPI2 work). Real upstream research (reading
+    # `at-spi2-core`'s own source) found the real mechanism:
+    # `org.a11y.Status.IsEnabled` only flips true when `at-spi2-registryd`
+    # emits a real `EventListenerRegistered` signal, itself only sent
+    # when a client calls `org.a11y.atspi.Registry.RegisterEvent` --
+    # confirmed absent from `accesskit_unix`/`accesskit_atspi_common`'s
+    # own source. Both real fix attempts based on this (wait longer;
+    # retry the call ~150 times over 30s, in case the signal itself was
+    # simply lost before a subscriber was ready) still left `IsEnabled`
+    # false the entire time. The mechanism, confirmed via real source
+    # reading, is not in question; something about its real behavior in
+    # this specific container still isn't understood. This step is
+    # diagnostic only -- it does not attempt a fix -- capturing the real
+    # D-Bus wire traffic and process state during a real failing run so
+    # the next real step is based on direct evidence.
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
@@ -189,6 +195,24 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libvulkan1 mesa-vulkan-drivers vulkan-validationlayers xvfb libwayland-dev libxcb1-dev glslc \
             libfontconfig1-dev fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
-            dbus-user-session at-spi2-core
+            dbus dbus-user-session at-spi2-core
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_accessibility_demo
-      - run: dbus-run-session -- cargo run -p tre-rhi-vulkan --example canvas_accessibility_verify
+      - name: Dump real AT-SPI2 bus state for diagnosis (no fix attempted here)
+        run: |
+          dbus-run-session -- bash -c '
+            ADDR=$(dbus-send --session --print-reply --dest=org.a11y.Bus /org/a11y/bus org.a11y.Bus.GetAddress | tail -1 | sed "s/.*string \"\\(.*\\)\"/\\1/")
+            echo "a11y bus address: $ADDR"
+            dbus-monitor --address "$ADDR" > /tmp/dbus-monitor.log 2>&1 &
+            MONITOR_PID=$!
+            sleep 1
+            cargo run -p tre-rhi-vulkan --example canvas_accessibility_verify || true
+            sleep 1
+            kill "$MONITOR_PID" 2>/dev/null || true
+            wait "$MONITOR_PID" 2>/dev/null || true
+            echo "=== dbus-monitor output (real a11y bus traffic) ==="
+            cat /tmp/dbus-monitor.log
+            echo "=== ps aux (a11y/spi/dbus processes) ==="
+            ps aux | grep -iE "a11y|spi|dbus" | grep -v grep
+            echo "=== busctl list on the real a11y bus ==="
+            busctl --address "$ADDR" list 2>&1 || true
+          '
