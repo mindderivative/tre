@@ -126,18 +126,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - run: rustup show
-      # Phase 5 Step 5.3.3: canvas_accessibility_demo needs both this
-      # job's own virtual display AND a real D-Bus/AT-SPI2 bus (the
-      # `test` job's own dbus-user-session/at-spi2-core, added Step
-      # 5.3.2) at once -- installed here too rather than merging jobs,
-      # since only this one demo below needs both.
-      - name: Install a software Vulkan ICD, validation layers, a virtual display, libwayland-dev, real fonts, and a D-Bus/AT-SPI2 bus
+      - name: Install a software Vulkan ICD, validation layers, a virtual display, libwayland-dev, and real fonts
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libvulkan1 mesa-vulkan-drivers vulkan-validationlayers xvfb libwayland-dev libxcb1-dev glslc \
-            libfontconfig1-dev fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
-            dbus-user-session at-spi2-core
+            libfontconfig1-dev fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example walking_skeleton
         env:
           TRE_WALKING_SKELETON_FRAMES: 10
@@ -164,10 +158,34 @@ jobs:
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_draw_text_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_batch_flattening_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_sub_canvas_demo
-      # Only this demo needs a real AT-SPI2 bus, so only its own run line
-      # is wrapped in dbus-run-session -- every other line above is a
-      # plain xvfb-run, unaffected. See the `test` job's own comment
-      # above: this demo's own real 30s discovery timeout (bumped from
-      # 10s after two real CI runs) is what actually fixes this exact
-      # demo's own first live CI failure.
+
+  accessibility-validation:
+    name: accessibility-validation
+    runs-on: ubuntu-latest
+    # Phase 5 Step 5.3.3, real finding from three consecutive CI runs
+    # (2026-09-08): canvas_accessibility_demo (needs both a virtual
+    # display and a real D-Bus/AT-SPI2 bus) was originally the last of
+    # 21 commands in `vulkan-validation` above, and never once
+    # succeeded there -- not even with a 30s discovery timeout (up from
+    # 10s), a complete timeout, not a near-miss. Meanwhile the `test`
+    # job's own dbus-run-session-based round-trip test succeeded
+    # reliably, twice, at ~10.05-10.06s. The one variable those two
+    # environments don't share: `vulkan-validation` runs 20 other real,
+    # CPU-bound software-rendered (lavapipe) Vulkan demos first, on a
+    # shared, resource-constrained hosted runner. Giving this one demo
+    # its own clean, minimal job -- mirroring the `test` job's own
+    # already-proven-reliable "lightweight job, nothing else competing
+    # for the runner's CPU" shape -- directly matches the only
+    # combination confirmed to work twice, rather than continuing to
+    # guess at timeouts inside an already-heavy job.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: rustup show
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libvulkan1 mesa-vulkan-drivers vulkan-validationlayers xvfb libwayland-dev libxcb1-dev glslc \
+            libfontconfig1-dev fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
+            dbus-user-session at-spi2-core
       - run: dbus-run-session -- xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_accessibility_demo
