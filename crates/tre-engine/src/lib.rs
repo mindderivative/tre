@@ -122,11 +122,46 @@ pub struct UiDrawCommand {
 /// `UiDrawCommand::pipeline_state_id` for `Canvas::draw_text`'s MSDF
 /// glyph quads (IMPLEMENTATION.md Step 5.1.2) -- the first real
 /// distinction between pipeline ids in the IR; `draw_rounded_rect`'s own
-/// commands keep the implicit `0` (the SDF-rect pipeline). Nothing
-/// downstream reads either value yet (Step 5.1.3's real batch flattening
-/// is what would), the same up-front honesty already established for
-/// `sort_key: 0`.
+/// commands keep the implicit `0` (the SDF-rect pipeline). Step 5.1.3's
+/// real batch flattening does read this value (it is part of the top 44
+/// merge-key bits); a real, generic consumer that resolves it to an
+/// actual pipeline object via [`PipelineRegistry`] is Phase 6 Step 6.2's
+/// job -- today the only two readers are two demos' own hardcoded
+/// `if pipeline_state_id == PIPELINE_MSDF_TEXT` branches.
 pub const PIPELINE_MSDF_TEXT: u16 = 1;
+
+/// Real, type-safe names for [`UiDrawCommand::pipeline_state_id`]'s two
+/// currently `Canvas`-emittable values (IMPLEMENTATION.md Phase 6 Step
+/// 6.1) -- `PIPELINE_MSDF_TEXT` stays defined above as a plain `u16` for
+/// existing call sites and the sort-key-packing code, which only ever
+/// wants a bare 16-bit numeric field (ARCHITECTURE.md Section 4.1), not
+/// this enum. Other real pipeline kinds exist in `tre-rhi-vulkan`
+/// (plain bindless-textured quad, flat-vertex-color, stencil/cover) but
+/// are not represented here: none are reachable through any real
+/// `Canvas` drawing method today, so naming them here would have no real
+/// consumer -- see `planning/archive/PLAN_PHASE6_STEP6_1.md`'s "Scope
+/// decisions" for why this is deliberate, not an oversight.
+#[repr(u16)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PipelineKind {
+    SdfRoundedRect = 0,
+    MsdfText = 1,
+}
+
+/// The real "no texture bound" sentinel for
+/// [`UiDrawCommand::texture_handle`] on a `DrawGeometry` command whose
+/// pipeline doesn't sample a texture (`draw_rounded_rect`'s own) --
+/// IMPLEMENTATION.md Phase 6 Step 6.1. Not `0`: a real bindless index
+/// `0` is a legitimate value a future textured pipeline could validly
+/// use, so `0` cannot double as "nothing bound" without an ambiguity a
+/// future caller could hit for real. Matches the value
+/// `canvas_batch_flattening_demo.rs`/`canvas_sub_canvas_demo.rs` already
+/// each independently defined as their own local `NO_TEXTURE` constant
+/// for RHI-side binding -- promoted here into one real, shared
+/// definition both the IR-emission side (this constant) and any future
+/// RHI-execution side can agree on, rather than two sentinels for the
+/// same concept reconciled only by a hardcoded branch.
+pub const NO_TEXTURE: u32 = u32::MAX;
 
 /// Opaque identifier for a platform window, assigned by
 /// `tre-platform`'s `PlatformConnection` when a window is created
@@ -1026,7 +1061,7 @@ impl RenderingCanvas {
             kind: CommandType::DrawGeometry,
             sort_key,
             pipeline_state_id: 0,
-            texture_handle: 0,
+            texture_handle: NO_TEXTURE,
             element_count: 6,
             vertex_offset: base_index,
             clip_bounds,
@@ -1843,6 +1878,66 @@ pub trait RhiPipelineState {
     fn layout_handle(&self) -> u64;
 }
 
+/// Maps a [`UiDrawCommand::pipeline_state_id`] to the real
+/// [`RhiPipelineState`] object it names (IMPLEMENTATION.md Phase 6 Step
+/// 6.1) -- replaces the hardcoded `if pipeline_state_id ==
+/// PIPELINE_MSDF_TEXT {...} else {...}` branch
+/// `canvas_batch_flattening_demo.rs`/`canvas_sub_canvas_demo.rs`
+/// currently each duplicate. A backend builds its real pipeline objects
+/// exactly as it does today (`VulkanDevice::create_pipeline`, unchanged)
+/// and registers them here once at startup; this type owns no
+/// Vulkan-specific knowledge at all, generic purely over the
+/// `RhiPipelineState` trait. `HashMap` over a fixed-size array: only two
+/// real entries exist today (`PipelineKind::SdfRoundedRect`/`MsdfText`)
+/// against a 16-bit id space far too sparse for an array to make sense,
+/// and frame-time `get()` is not a measured hot path (Step 6.2's real
+/// executor is the first thing that will call it at all).
+pub struct PipelineRegistry {
+    pipelines: std::collections::HashMap<u16, Box<dyn RhiPipelineState>>,
+}
+
+impl PipelineRegistry {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            pipelines: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Registers `pipeline` under `id` (typically `PipelineKind::* as
+    /// u16`, though any `u16` is accepted -- the registry itself has no
+    /// opinion on where ids come from).
+    ///
+    /// # Panics
+    /// Panics if `id` is already registered -- two pipelines silently
+    /// sharing one id is a programmer error, not a recoverable runtime
+    /// condition, matching this crate's established `pop_layer`/
+    /// `restore`-style precedent for unbalanced/invalid caller state.
+    pub fn register(&mut self, id: u16, pipeline: Box<dyn RhiPipelineState>) {
+        assert!(
+            self.pipelines.insert(id, pipeline).is_none(),
+            "PipelineRegistry: id {id} was already registered"
+        );
+    }
+
+    /// Resolves `id` to its registered pipeline, or `None` if nothing is
+    /// registered under it -- distinct from `register`'s panic-on-
+    /// duplicate above, since a command referencing an unknown pipeline
+    /// id is a real runtime condition a caller (Step 6.2's executor)
+    /// should be able to detect and report, not necessarily a programmer
+    /// error caught at registration time.
+    #[must_use]
+    pub fn get(&self, id: u16) -> Option<&dyn RhiPipelineState> {
+        self.pipelines.get(&id).map(std::convert::AsRef::as_ref)
+    }
+}
+
+impl Default for PipelineRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// A per-window presentation surface. Referenced (as `&dyn RhiSwapchain`)
 /// but never defined by ARCHITECTURE.md Section 6; defined here with the
 /// minimum needed to make `RhiDevice::begin_frame`/`submit_and_present`
@@ -2101,6 +2196,10 @@ mod tests {
         assert_eq!(frame.vertices.len(), 4);
         assert_eq!(frame.indices.len(), 6);
         assert_eq!(frame.commands[0].element_count, 6);
+        // Step 6.1: NO_TEXTURE, not 0 -- 0 is a legitimate real bindless
+        // index a future textured pipeline could use, so it can't double
+        // as "nothing bound."
+        assert_eq!(frame.commands[0].texture_handle, NO_TEXTURE);
     }
 
     #[test]
@@ -3387,5 +3486,71 @@ mod tests {
                  stitching with its correct bounds, regardless of thread scheduling"
             );
         }
+    }
+
+    /// A minimal `RhiPipelineState` double for `PipelineRegistry` tests --
+    /// this crate has no Vulkan dependency and shouldn't gain one just to
+    /// test a registry that is itself generic over the trait, not over
+    /// any concrete backend.
+    struct FakePipeline {
+        raw_handle: u64,
+    }
+
+    impl RhiPipelineState for FakePipeline {
+        fn raw_handle(&self) -> u64 {
+            self.raw_handle
+        }
+
+        fn layout_handle(&self) -> u64 {
+            self.raw_handle
+        }
+    }
+
+    #[test]
+    fn pipeline_registry_resolves_registered_ids_back_to_the_exact_object() {
+        let mut registry = PipelineRegistry::new();
+        registry.register(
+            PipelineKind::SdfRoundedRect as u16,
+            Box::new(FakePipeline { raw_handle: 111 }),
+        );
+        registry.register(
+            PipelineKind::MsdfText as u16,
+            Box::new(FakePipeline { raw_handle: 222 }),
+        );
+
+        assert_eq!(
+            registry
+                .get(PipelineKind::SdfRoundedRect as u16)
+                .unwrap()
+                .raw_handle(),
+            111
+        );
+        assert_eq!(
+            registry
+                .get(PipelineKind::MsdfText as u16)
+                .unwrap()
+                .raw_handle(),
+            222
+        );
+    }
+
+    #[test]
+    fn pipeline_registry_get_on_an_unregistered_id_returns_none_not_a_panic() {
+        let registry = PipelineRegistry::new();
+        assert!(registry.get(PipelineKind::SdfRoundedRect as u16).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "id 1 was already registered")]
+    fn pipeline_registry_register_panics_on_a_duplicate_id() {
+        let mut registry = PipelineRegistry::new();
+        registry.register(
+            PipelineKind::MsdfText as u16,
+            Box::new(FakePipeline { raw_handle: 1 }),
+        );
+        registry.register(
+            PipelineKind::MsdfText as u16,
+            Box::new(FakePipeline { raw_handle: 2 }),
+        );
     }
 }

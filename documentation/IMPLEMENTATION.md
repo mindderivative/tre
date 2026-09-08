@@ -647,7 +647,21 @@ Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the wor
 
 ## Phase 6: Sorting, Batching, & RHI Execution
 
-### Step 6.1: The 64-Bit Radix Batching Engine
+**Correction (2026-09-08, found while starting real execution of this
+phase, not during the September 2026 documentation review that touched
+everything else on this page):** the two sub-steps immediately below are
+this phase's original pre-execution outline, written before any of
+Phase 5's real work existed -- they do not reflect what actually
+happened. Real execution of this phase starts below them, under its own
+real sub-step numbering (colliding on "Step 6.1" with the outline's own
+different Step 6.1 -- disclosed here rather than silently renumbered
+away). Also corrected: the color/HDR work this phase's own real planning
+briefly proposed folding in was moved back to match this outline's own
+pre-existing **Phase 7: Color Management & Compositing** below, once
+this outline was actually found -- see `planning/archive/PLAN_PHASE6_
+STEP6_1.md`'s "Scope decisions" for the full account.
+
+### Step 6.1 (original outline): The 64-Bit Radix Batching Engine -- Status: Superseded, completed early via Step 5.1.3
 
 * **Implementation Tasks:**
 
@@ -661,7 +675,9 @@ Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the wor
 
 * **Technical Rationale:** Radix sort guarantees deterministic sub-millisecond sorting times even for extreme outliers (e.g., sorting $50,000$ draw commands in under $0.2\text{ ms}$).
 
-### Step 6.2: Dynamic Index Stitching
+* **Implementation status:** real, but not built under this heading -- `RenderingCanvas::next_sort_key` (the real 64-bit key, exactly this bit layout) and `flatten_run`'s real sort/merge pass were built as part of Step 5.1.3 ("Real Sort Key, Overlay Routing, Real Batch Flattening"), needed early to prove that step's own capstone. A linear `sort_unstable_by_key` is used rather than a hand-rolled 4-pass radix sort (task 2) -- real frame command counts are far below where radix's $\mathcal{O}(N)$ advantage over `sort_unstable_by_key`'s $\mathcal{O}(N \log N)$ would matter against the $\le 0.50\text{ ms}$ CPU budget, and no profiling data has ever shown otherwise; revisiting this is real, deferred future work if measurement ever justifies it, not a gap in what Step 5.1.3 proved. Task 4's overflow assert is real (`tre-engine`'s own Depth ID assignment).
+
+### Step 6.2 (original outline): Dynamic Index Stitching -- Status: Tasks 1-2 complete via Step 5.1.3; task 3 is real Step 6.x execution, starting below
 
 * **Implementation Tasks:**
 
@@ -670,6 +686,72 @@ Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the wor
   2. Consolidate these commands by applying relative offsets to the index buffer: $idx_{\text{global}} = idx_{\text{local}} + \text{vertex}_{\text{offset}}$.
 
   3. Emit a single `RhiCommandBuffer::draw_indexed` call for the entire aggregated batch, drastically lowering driver submission overhead.
+
+* **Implementation status:** tasks 1-2 are real, also via Step 5.1.3 -- `flatten_run`'s batch-merge pass, `FlattenedFrame::commands` is real, sorted, merged `UiDrawCommand` output today. Task 3 -- actually calling `RhiCommandBuffer::draw_indexed` (and everything a real call needs: resolving which pipeline to bind, which texture, handling `PushScissor`/`PushLayer` markers along the way) -- was never built under this heading either; a pre-planning investigation for real execution (2026-09-08) found no generic consumer of `FlattenedFrame` exists at all, only two demos' own duplicated, hardcoded per-pipeline dispatch loops. That gap, broken down into real, buildable sub-steps, is what Step 6.1 below (and its own successors) actually builds.
+
+### Step 6.1: Real Pipeline State Registry -- Status: Complete (2026-09-08)
+
+Real execution of this phase's remaining work (see the correction note
+above) begins here. `Canvas` has exactly two real drawing methods today
+-- `draw_rounded_rect` (Phase 3) and `draw_text` (Phase 5.1.2) -- backed
+by exactly two pipeline kinds: an implicit, undocumented id `0` (the
+SDF-rect pipeline) and `PIPELINE_MSDF_TEXT = 1`, the only named
+constant. Three other real pipeline kinds exist in `tre-rhi-vulkan`
+(plain bindless-textured quad, a walking-skeleton-style flat-vertex-
+color quad, and a stencil/cover pair for self-intersecting-path fills),
+but every demo using them bypasses `Canvas`/`flatten()` entirely --
+reaching them through `Canvas` needs new drawing methods (`draw_image`/
+`draw_path`/`draw_svg`) this step does not build, so this step registers
+only the two kinds `Canvas` can actually reach today, not all five.
+
+A real `PipelineRegistry` (`tre-engine`, generic over the existing
+`RhiPipelineState` trait -- no new RHI trait surface) maps a pipeline id
+to its real pipeline object: `register(id, Box<dyn RhiPipelineState>)`
+(panics on a duplicate id, matching this crate's established `pop_layer`/
+`restore`-style precedent for invalid caller state) and `get(id) ->
+Option<&dyn RhiPipelineState>` (returns `None`, not a panic, for an
+unregistered id -- a real runtime condition a future executor should be
+able to detect, distinct from a programmer error at registration time).
+A new `PipelineKind` enum (`SdfRoundedRect = 0`, `MsdfText = 1`) gives
+both currently-reachable kinds a real, type-safe name; `PIPELINE_MSDF_
+TEXT` stays defined as a plain `u16` for existing call sites and the
+sort-key-packing code, which only ever wants a bare 16-bit field.
+
+**A real, previously-undiscovered `NO_TEXTURE` sentinel mismatch was
+found and fixed while investigating the two demos' own duplicated
+dispatch loops this registry exists to eventually replace (REVIEW.md
+finding #127).** `draw_rounded_rect` emitted `UiDrawCommand::texture_
+handle: 0` for "no texture bound"; `canvas_batch_flattening_demo.rs`/
+`canvas_sub_canvas_demo.rs` each independently defined their own `const
+NO_TEXTURE: u32 = u32::MAX` for RHI-side binding, reconciled only by
+each demo's own hardcoded `if pipeline_state_id == PIPELINE_MSDF_TEXT`
+branch. `0` is not safe to treat as "no texture" going forward -- it
+collides with a real bindless index `0` a future textured pipeline could
+validly use. Fixed by promoting `NO_TEXTURE: u32 = u32::MAX` into a real,
+shared `tre-engine` constant and changing `draw_rounded_rect`'s own
+emitted command to use it -- the one real `DrawGeometry`-emitting call
+site that needed it; the `PushScissor`/`PopScissor`/`PushLayer`/
+`PopLayer` marker commands (`element_count: 0`, never consumed as real
+draw calls) were left at their existing `texture_handle: 0`, since that
+field carries no meaning for a command a future executor will only ever
+`continue` past.
+
+Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across
+the workspace: `tre-engine` gained 4 new tests (up to 51 total from 48)
+-- `PipelineRegistry` resolves registered ids back to the exact object,
+`get()` on an unregistered id returns `None` not a panic, `register`
+panics on a duplicate id, and `draw_rounded_rect`'s own existing command-
+field test extended to assert `NO_TEXTURE` rather than `0`. No new demo
+this sub-step -- nothing yet queries the registry at render time (Step
+6.2 is what would), matching this project's own established precedent
+(Steps 5.2.1/5.3.1/5.3.2) of deferring visual proof to the step that
+gives foundational work a real consumer. `canvas_batch_flattening_demo`,
+`canvas_sub_canvas_demo`, `sdf_rounded_rect_demo`, `canvas_state_stack_
+demo`, and `canvas_draw_text_demo` (every demo touching `draw_rounded_
+rect`/`flatten()`) re-run manually end to end, zero regressions --
+confirming the `NO_TEXTURE` change is a genuine no-op for existing
+render output, since none of them read `command.texture_handle` on the
+SDF-rect branch today.
 
 ## Phase 7: Color Management & Compositing
 
