@@ -2073,19 +2073,37 @@ pub trait RhiCommandBuffer {
     fn raw_handle(&self) -> u64;
 }
 
-/// The real, generic frame executor (IMPLEMENTATION.md Phase 6 Step
-/// 6.2) -- drives every `DrawGeometry` batch in `frame.commands` through
-/// the RHI, resolving each command's `pipeline_state_id` via `registry`
-/// (Step 6.1's [`PipelineRegistry`]) instead of a hardcoded per-pipeline
-/// branch. This is what `canvas_batch_flattening_demo.rs`/
-/// `canvas_sub_canvas_demo.rs` each used to duplicate by hand.
+/// The real, generic frame executor (IMPLEMENTATION.md Phase 6 -- Step
+/// 6.2 built the `DrawGeometry` half, Step 6.3 the real `PushScissor`/
+/// `PopScissor` half; renamed from `execute_draw_geometry_batches` at
+/// Step 6.3 since its scope is no longer just draw batches). Drives
+/// every command in `frame.commands` through the RHI: a `DrawGeometry`
+/// resolves its own `pipeline_state_id` via `registry` (Step 6.1's
+/// [`PipelineRegistry`]) instead of a hardcoded per-pipeline branch,
+/// exactly as Step 6.2 left it; a `PushScissor`/`PopScissor` applies a
+/// real `RhiCommandBuffer::set_scissor` via a runtime clip stack, since
+/// a `PopScissor` command's own `clip_bounds` carries no restore data
+/// (`push_clip`/`pop_clip`'s own real source).
 ///
-/// `PushScissor`/`PopScissor`/`PushLayer`/`PopLayer` commands are
-/// skipped -- real handling is Phase 6 Steps 6.3/6.4, not this function.
-/// `vertex_buffer`/`index_buffer` are already-uploaded whole-frame
-/// buffers the caller built (e.g. via a backend-specific upload helper);
-/// "Buffer Packing" (DESIGN.md's own frame-lifecycle item 7) is a
-/// distinct stage this function deliberately does not perform.
+/// `full_window` is the real framebuffer extent, in real pixels -- the
+/// only thing the caller (not `tre-engine`, which has no notion of
+/// framebuffer size) knows. It stands in for [`FULL_WINDOW_CLIP`]'s own
+/// `u32::MAX`-sized sentinel wherever that sentinel would otherwise
+/// reach a real `set_scissor` call (`begin_overlay`'s own `PushScissor`
+/// command carries the raw sentinel directly; the clip stack emptying
+/// after a `PopScissor` represents the same "no active clip" concept) --
+/// passing the raw sentinel to a real GPU call would be an invalid,
+/// out-of-bounds scissor rect. `RhiDevice::begin_frame` already applies
+/// a real, correct full-framebuffer scissor before returning the command
+/// buffer, so a frame with no `PushScissor` at all needs no extra call
+/// here to stay correct.
+///
+/// `PushLayer`/`PopLayer` commands are recorded but produce no RHI calls
+/// yet -- real handling is Step 6.4. `vertex_buffer`/`index_buffer` are
+/// already-uploaded whole-frame buffers the caller built (e.g. via a
+/// backend-specific upload helper); "Buffer Packing" (DESIGN.md's own
+/// frame-lifecycle item 7) is a distinct stage this function
+/// deliberately does not perform.
 ///
 /// # Panics
 /// Panics if a `DrawGeometry` command's `pipeline_state_id` was never
@@ -2096,28 +2114,48 @@ pub trait RhiCommandBuffer {
 /// `pop_layer`/`restore`/`PipelineRegistry::register`-style precedent
 /// for invalid caller state, not `EngineError`'s own device/resource
 /// failure modes).
-pub fn execute_draw_geometry_batches(
+pub fn execute_frame(
     frame: &FlattenedFrame,
     registry: &PipelineRegistry,
     vertex_buffer: &dyn RhiBuffer,
     index_buffer: &dyn RhiBuffer,
+    full_window: &ScissorRect,
     cmd_buffer: &mut dyn RhiCommandBuffer,
 ) {
+    let mut clip_stack: Vec<ScissorRect> = Vec::new();
     for command in &frame.commands {
-        if command.kind != CommandType::DrawGeometry {
-            continue;
+        match command.kind {
+            CommandType::DrawGeometry => {
+                let pipeline = registry.get(command.pipeline_state_id).unwrap_or_else(|| {
+                    panic!(
+                        "execute_frame: no pipeline registered for id {}",
+                        command.pipeline_state_id
+                    )
+                });
+                cmd_buffer.set_pipeline(pipeline);
+                cmd_buffer.bind_texture(0, command.texture_handle);
+                cmd_buffer.bind_vertex_buffer(vertex_buffer, 0);
+                cmd_buffer.bind_index_buffer(index_buffer, 0);
+                cmd_buffer.draw_indexed(command.element_count, command.vertex_offset, 0);
+            }
+            CommandType::PushScissor => {
+                let resolved = if command.clip_bounds == FULL_WINDOW_CLIP {
+                    *full_window
+                } else {
+                    command.clip_bounds
+                };
+                clip_stack.push(resolved);
+                cmd_buffer.set_scissor(&resolved);
+            }
+            CommandType::PopScissor => {
+                clip_stack.pop();
+                let restored = clip_stack.last().copied().unwrap_or(*full_window);
+                cmd_buffer.set_scissor(&restored);
+            }
+            CommandType::PushLayer | CommandType::PopLayer => {
+                // Step 6.4: real transient-target acquisition/compositing.
+            }
         }
-        let pipeline = registry.get(command.pipeline_state_id).unwrap_or_else(|| {
-            panic!(
-                "execute_draw_geometry_batches: no pipeline registered for id {}",
-                command.pipeline_state_id
-            )
-        });
-        cmd_buffer.set_pipeline(pipeline);
-        cmd_buffer.bind_texture(0, command.texture_handle);
-        cmd_buffer.bind_vertex_buffer(vertex_buffer, 0);
-        cmd_buffer.bind_index_buffer(index_buffer, 0);
-        cmd_buffer.draw_indexed(command.element_count, command.vertex_offset, 0);
     }
 }
 
@@ -3602,8 +3640,8 @@ mod tests {
         );
     }
 
-    /// A minimal `RhiBuffer` double for `execute_draw_geometry_batches`
-    /// tests, mirroring `FakePipeline`'s own reasoning above.
+    /// A minimal `RhiBuffer` double for `execute_frame` tests, mirroring
+    /// `FakePipeline`'s own reasoning above.
     struct FakeBuffer {
         raw_handle: u64,
     }
@@ -3614,7 +3652,7 @@ mod tests {
         }
     }
 
-    /// Every call `execute_draw_geometry_batches` can make against a
+    /// Every call `execute_frame` can make against a
     /// `RhiCommandBuffer`, recorded with its real arguments (by the
     /// callee's own `raw_handle()`, not by object identity, since a
     /// `&dyn Trait` reference itself isn't comparable) -- lets tests
@@ -3690,7 +3728,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_draw_geometry_batches_skips_markers_and_dispatches_draw_geometry_correctly() {
+    fn execute_frame_dispatches_draw_geometry_and_scissor_markers_correctly() {
         let mut registry = PipelineRegistry::new();
         registry.register(
             PipelineKind::SdfRoundedRect as u16,
@@ -3702,7 +3740,17 @@ mod tests {
         );
         let vertex_buffer = FakeBuffer { raw_handle: 1000 };
         let index_buffer = FakeBuffer { raw_handle: 2000 };
+        let full_window = ScissorRect {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+        };
 
+        // Both markers here carry FULL_WINDOW_CLIP (marker_command's own
+        // default), reproducing begin_overlay's real emission -- so this
+        // also exercises the sentinel-substitution path, not just marker
+        // vs. draw dispatch.
         let frame = FlattenedFrame {
             vertices: Vec::new(),
             indices: Vec::new(),
@@ -3730,40 +3778,116 @@ mod tests {
         };
 
         let mut cmd_buffer = FakeCommandBuffer::default();
-        execute_draw_geometry_batches(
+        execute_frame(
             &frame,
             &registry,
             &vertex_buffer,
             &index_buffer,
+            &full_window,
             &mut cmd_buffer,
         );
 
         assert_eq!(
             cmd_buffer.calls,
             vec![
+                RecordedCall::SetScissor(full_window),
                 RecordedCall::SetPipeline(111),
                 RecordedCall::BindTexture(0, NO_TEXTURE),
                 RecordedCall::BindVertexBuffer(1000, 0),
                 RecordedCall::BindIndexBuffer(2000, 0),
                 RecordedCall::DrawIndexed(6, 0, 0),
+                RecordedCall::SetScissor(full_window),
                 RecordedCall::SetPipeline(222),
                 RecordedCall::BindTexture(0, 7),
                 RecordedCall::BindVertexBuffer(1000, 0),
                 RecordedCall::BindIndexBuffer(2000, 0),
                 RecordedCall::DrawIndexed(24, 6, 0),
             ],
-            "markers must produce no calls at all, and each DrawGeometry command must \
-             resolve its own pipeline id to the exact registered pipeline object and pass \
+            "each PushScissor/PopScissor must set the real full_window rect (not \
+             FULL_WINDOW_CLIP's own u32::MAX-sized sentinel), and each DrawGeometry command \
+             must resolve its own pipeline id to the exact registered pipeline object and pass \
              through its own real texture/element_count/vertex_offset unchanged"
         );
     }
 
     #[test]
-    #[should_panic(expected = "no pipeline registered for id 99")]
-    fn execute_draw_geometry_batches_panics_on_an_unregistered_pipeline_id() {
+    fn execute_frame_scissor_stack_restores_the_correct_nested_rect_and_full_window_when_empty() {
         let registry = PipelineRegistry::new();
         let vertex_buffer = FakeBuffer { raw_handle: 1 };
         let index_buffer = FakeBuffer { raw_handle: 2 };
+        let full_window = ScissorRect {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+        };
+        let rect_a = ScissorRect {
+            x: 10,
+            y: 10,
+            width: 100,
+            height: 100,
+        };
+        let rect_b = ScissorRect {
+            x: 20,
+            y: 20,
+            width: 30,
+            height: 30,
+        };
+
+        let frame = FlattenedFrame {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            commands: vec![
+                UiDrawCommand {
+                    clip_bounds: rect_a,
+                    ..marker_command(CommandType::PushScissor)
+                },
+                UiDrawCommand {
+                    clip_bounds: rect_b,
+                    ..marker_command(CommandType::PushScissor)
+                },
+                marker_command(CommandType::PopScissor),
+                marker_command(CommandType::PopScissor),
+            ],
+            accessibility_nodes: Vec::new(),
+        };
+
+        let mut cmd_buffer = FakeCommandBuffer::default();
+        execute_frame(
+            &frame,
+            &registry,
+            &vertex_buffer,
+            &index_buffer,
+            &full_window,
+            &mut cmd_buffer,
+        );
+
+        assert_eq!(
+            cmd_buffer.calls,
+            vec![
+                RecordedCall::SetScissor(rect_a),
+                RecordedCall::SetScissor(rect_b),
+                RecordedCall::SetScissor(rect_a),
+                RecordedCall::SetScissor(full_window),
+            ],
+            "popping the inner push must restore the outer rect from the runtime stack, not \
+             full_window -- and only popping the outermost push, emptying the stack, must \
+             restore full_window"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "no pipeline registered for id 99")]
+    fn execute_frame_panics_on_an_unregistered_pipeline_id() {
+        let registry = PipelineRegistry::new();
+        let vertex_buffer = FakeBuffer { raw_handle: 1 };
+        let index_buffer = FakeBuffer { raw_handle: 2 };
+        let full_window = ScissorRect {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+        };
         let frame = FlattenedFrame {
             vertices: Vec::new(),
             indices: Vec::new(),
@@ -3776,20 +3900,27 @@ mod tests {
         };
         let mut cmd_buffer = FakeCommandBuffer::default();
 
-        execute_draw_geometry_batches(
+        execute_frame(
             &frame,
             &registry,
             &vertex_buffer,
             &index_buffer,
+            &full_window,
             &mut cmd_buffer,
         );
     }
 
     #[test]
-    fn execute_draw_geometry_batches_with_no_commands_makes_no_calls() {
+    fn execute_frame_with_no_commands_makes_no_calls() {
         let registry = PipelineRegistry::new();
         let vertex_buffer = FakeBuffer { raw_handle: 1 };
         let index_buffer = FakeBuffer { raw_handle: 2 };
+        let full_window = ScissorRect {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+        };
         let frame = FlattenedFrame {
             vertices: Vec::new(),
             indices: Vec::new(),
@@ -3798,11 +3929,12 @@ mod tests {
         };
         let mut cmd_buffer = FakeCommandBuffer::default();
 
-        execute_draw_geometry_batches(
+        execute_frame(
             &frame,
             &registry,
             &vertex_buffer,
             &index_buffer,
+            &full_window,
             &mut cmd_buffer,
         );
 

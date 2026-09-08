@@ -19,8 +19,8 @@
 use ash::vk;
 use tre_atlas::AtlasOwner;
 use tre_engine::{
-    execute_draw_geometry_batches, rgba8, CommandType, GlyphAtlasContext, OverlayLayerPriority,
-    PipelineKind, PipelineRegistry, RenderingCanvas, RhiDevice, TextureFormat, PIPELINE_MSDF_TEXT,
+    execute_frame, rgba8, CommandType, GlyphAtlasContext, OverlayLayerPriority, PipelineKind,
+    PipelineRegistry, RenderingCanvas, RhiDevice, ScissorRect, TextureFormat, PIPELINE_MSDF_TEXT,
 };
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 
@@ -235,12 +235,19 @@ fn main() {
         )
         .expect("failed to upload index buffer");
 
+    let full_window = ScissorRect {
+        x: 0,
+        y: 0,
+        width: CANVAS_WIDTH,
+        height: CANVAS_HEIGHT,
+    };
     let (mut cmd_buffer, image) = device.begin_frame(&swapchain).expect("begin_frame failed");
-    execute_draw_geometry_batches(
+    execute_frame(
         &frame,
         &pipelines,
         &vertex_buffer,
         &index_buffer,
+        &full_window,
         &mut *cmd_buffer,
     );
     device

@@ -11,17 +11,21 @@
 //! inside a `save()`/`set_alpha()`/`restore()` bracket blends visibly
 //! against the background rather than rendering fully opaque.
 //!
-//! `push_clip`/`pop_clip` is checked at the IR level instead (the
-//! `UiDrawCommand::clip_bounds` this step records), not with a GPU
-//! scissor test -- nothing in the render pipeline consumes
-//! `clip_bounds` yet (that wiring is Step 5.1.3/Phase 6's real
-//! batch-flattening job); `tre-engine`'s own unit tests already prove
-//! the intersection logic in isolation, and this demo's own IR check
-//! confirms it still reaches a real, real-geometry-carrying frame
-//! correctly, not just an isolated `RenderingCanvas`.
+//! `push_clip`/`pop_clip` was originally checked at the IR level only
+//! (`UiDrawCommand::clip_bounds`) -- real GPU scissor execution didn't
+//! exist until Phase 6 Step 6.3, which this demo was rewired to prove
+//! against real, read-back pixels rather than just the IR (`tre-engine`'s
+//! own unit tests already prove the intersection logic in isolation and
+//! `execute_frame`'s own runtime clip-stack logic in isolation; this
+//! demo is the real, combined, rendered proof): Rect C's own drawn
+//! geometry is deliberately larger than its own clip rect, so a real
+//! `set_scissor` call genuinely has something to crop.
 
 use ash::vk;
-use tre_engine::{rgba8, CommandType, RenderingCanvas, RhiDevice, ScissorRect};
+use tre_engine::{
+    execute_frame, rgba8, CommandType, PipelineKind, PipelineRegistry, RenderingCanvas, RhiDevice,
+    ScissorRect,
+};
 use tre_math::Affine2;
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 
@@ -60,6 +64,8 @@ fn main() {
     let pipeline = device
         .create_pipeline(&vertex_spv, &fragment_spv, tre_rhi_vulkan::HEADLESS_FORMAT)
         .expect("failed to create pipeline");
+    let mut pipelines = PipelineRegistry::new();
+    pipelines.register(PipelineKind::SdfRoundedRect as u16, Box::new(pipeline));
 
     let white = rgba8(255, 255, 255, 255);
     let mut canvas = RenderingCanvas::new();
@@ -82,8 +88,8 @@ fn main() {
     canvas.draw_rounded_rect(10.0, 10.0, 50.0, 50.0, 0.0, white);
     canvas.restore();
 
-    // --- Rect C: push_clip()/pop_clip() -- checked at the IR level only,
-    // see this file's own doc comment for why. ---
+    // --- Rect C: push_clip()/pop_clip() -- checked at both the IR level
+    // and, since Step 6.3, with real GPU-level scissor cropping. ---
     // Step 5.1.3's real batch flattening merges Rect A and Rect B (both
     // default Layer/Pipeline/Texture, both drawn before any push_clip,
     // so both share the full-window clip_bounds) into a single command
@@ -97,8 +103,13 @@ fn main() {
         width: 30,
         height: 30,
     };
+    // Deliberately larger than clip_rect on every side (140-200 x 0-50
+    // vs. the clip's own 150-180 x 10-40) -- real cropping needs real
+    // geometry extending past the clip to crop, unlike the original
+    // Step 5.1.1 scene where the drawn rect exactly matched its own
+    // clip rect, making a real scissor test invisible either way.
     canvas.push_clip(&clip_rect);
-    canvas.draw_rounded_rect(150.0, 10.0, 30.0, 30.0, 0.0, white);
+    canvas.draw_rounded_rect(140.0, 0.0, 60.0, 50.0, 0.0, white);
     canvas.pop_clip();
 
     let frame = canvas.flatten();
@@ -125,11 +136,21 @@ fn main() {
         )
         .expect("failed to upload index buffer");
 
+    let full_window = ScissorRect {
+        x: 0,
+        y: 0,
+        width: CANVAS_WIDTH,
+        height: CANVAS_HEIGHT,
+    };
     let (mut cmd_buffer, image) = device.begin_frame(&swapchain).expect("begin_frame failed");
-    cmd_buffer.set_pipeline(&pipeline);
-    cmd_buffer.bind_vertex_buffer(&vertex_buffer, 0);
-    cmd_buffer.bind_index_buffer(&index_buffer, 0);
-    cmd_buffer.draw_indexed(frame.indices.len() as u32, 0, 0);
+    execute_frame(
+        &frame,
+        &pipelines,
+        &vertex_buffer,
+        &index_buffer,
+        &full_window,
+        &mut *cmd_buffer,
+    );
     device
         .submit_and_present(cmd_buffer, &swapchain, image)
         .expect("submit_and_present failed");
@@ -178,6 +199,33 @@ fn main() {
         "Rect B at alpha 0.5 must not render fully transparent, got {alpha_blended:?}"
     );
     eprintln!("save/set_alpha/restore: OK (genuine partial blend {alpha_blended:?})");
+
+    // Rect C: real GPU scissor cropping, not just an IR-level clip_bounds
+    // field. Its own drawn geometry (140,0)-(200,50) is deliberately
+    // larger than its own clip_rect (150,10)-(180,40) on every side.
+    // (165, 25) sits inside both -- real foreground either way, proving
+    // clipped content still paints correctly where it should. (145, 25)
+    // sits inside the drawn geometry but outside the clip -- without a
+    // real set_scissor call it would also be foreground; with one, it
+    // must be real background, the actual proof a real GPU scissor test
+    // cropped it, not just that a clip_bounds field was recorded.
+    let inside_clip = pixel_at(165, 25);
+    assert_eq!(
+        inside_clip,
+        [255, 255, 255, 255],
+        "a pixel inside both Rect C's own geometry and its clip rect must be real foreground, \
+         got {inside_clip:?}"
+    );
+    let outside_clip = pixel_at(145, 25);
+    assert_eq!(
+        outside_clip, background,
+        "a pixel inside Rect C's own geometry but outside its clip rect must be real \
+         background -- genuinely cropped by a real GPU scissor test, not just recorded in the \
+         IR -- got {outside_clip:?}"
+    );
+    eprintln!(
+        "push_clip/pop_clip: real GPU scissor OK (content cropped exactly at the clip boundary)"
+    );
 
     let mut rgba_out = bgra.clone();
     for px in rgba_out.chunks_exact_mut(4) {

@@ -811,6 +811,79 @@ code. No new demo this sub-step (see IMPLEMENTATION.md's own plan for
 why -- the two existing demos already exercise the only reachable
 pipeline kinds, so a new demo would add process, not coverage).
 
+### Step 6.3: Real Scissor Execution -- Status: Complete (2026-09-08)
+
+`RhiCommandBuffer::set_scissor` was a real, working Vulkan method with
+zero real callers before this step -- both demos' render loops, even
+after Step 6.2's rewiring, explicitly skipped every non-`DrawGeometry`
+command. `canvas_state_stack_demo.rs`'s own source said outright that
+this wiring was deferred to exactly this step.
+
+Two real findings shaped the design, both from reading real source, not
+assumed. First: `push_clip`/`begin_overlay` (`tre-engine/src/lib.rs:789-
+860`) both resolve the full clip rect directly into their own
+`PushScissor` command's `clip_bounds` -- `push_clip` the real
+intersected rect, `begin_overlay` the `FULL_WINDOW_CLIP` sentinel
+(entering the overlay plane resets to unclipped); `pop_clip`/
+`end_overlay`'s own `PopScissor` commands always carry a zeroed
+`clip_bounds`, so a real executor needs its own runtime stack to know
+what to restore, not the `Pop` command's own fields. Second: reading
+`VulkanDevice::begin_frame`'s real source
+(`tre-rhi-vulkan/src/lib.rs:1849-1856`) found it already calls a real
+`cmd_set_scissor` covering the true framebuffer extent before returning
+the command buffer -- so a scene that never calls `push_clip` at all
+stays correctly, safely scissored with no extra work from this step.
+But `FULL_WINDOW_CLIP` (`tre-engine`'s own IR-level sentinel, `{x:0,
+y:0, width: u32::MAX, height: u32::MAX}`) is CPU-side-only -- passing it
+literally to a real `set_scissor` call would be an invalid, out-of-
+bounds scissor rect on real hardware, and `begin_overlay`'s own
+`PushScissor` command carries this exact sentinel directly. A new
+`full_window: &ScissorRect` parameter (the real framebuffer extent, the
+only thing that genuinely knows it) is substituted for the sentinel
+wherever it would otherwise reach the GPU.
+
+`execute_draw_geometry_batches` (Step 6.2) was renamed to
+`execute_frame`, since its scope is no longer just draw batches -- a
+real `match` on `command.kind` now also processes `PushScissor`/
+`PopScissor` with a runtime `Vec<ScissorRect>` clip stack, calling
+`set_scissor` on every push/pop (no redundant-call elision, matching
+Step 6.2's own "correctness before profiling-driven optimization"
+precedent). `PushLayer`/`PopLayer` gained an empty match arm so the
+function stays exhaustive -- real handling is Step 6.4.
+
+Both existing callers (`canvas_batch_flattening_demo`, `canvas_sub_
+canvas_demo`) were updated to the renamed function with their own real
+`CANVAS_WIDTH`/`CANVAS_HEIGHT` as `full_window` -- a genuine no-op for
+their rendered pixels, since neither nests a narrower `push_clip` inside
+its own `begin_overlay` bracket. `canvas_state_stack_demo` is the one
+demo with a real, narrower clip -- but a real, previously-unnoticed gap
+surfaced while extending it: Rect C's own drawn geometry (`150,10,
+30,30`) exactly matched its own clip rect, meaning clipping was a no-op
+for that scene's own rendered pixels regardless of whether scissor
+execution was real. Widened Rect C's drawn rect to `140,0,60,50`
+(deliberately larger than its own clip on every side) so a real crop has
+something real to prove, and rewired the demo onto `execute_frame`/a
+real `PipelineRegistry` in place of its own single, command-stream-
+ignorant `draw_indexed` call.
+
+Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across
+the workspace: `tre-engine` gained 1 new test (up to 55 total from 54)
+-- a nested `PushScissor(A)`/`PushScissor(B)`/`PopScissor`/`PopScissor`
+frame asserts the exact `set_scissor` sequence (`A`, `B`, `A` restored
+from the stack -- not `full_window` -- then `full_window` once the
+stack truly empties); the existing 3 `execute_draw_geometry_batches_*`
+tests were renamed and updated for the new parameter, one of them
+extended to also cover the `FULL_WINDOW_CLIP` sentinel-substitution path
+via `begin_overlay`-shaped markers. `canvas_state_stack_demo` re-run
+against real Vulkan hardware: a pixel inside both Rect C's own geometry
+and its clip rect reads real foreground; the corresponding pixel inside
+the geometry but outside the clip reads real background -- the actual,
+new, GPU-level proof this step exists to deliver, not just an IR-level
+`clip_bounds` field. `canvas_batch_flattening_demo`/`canvas_sub_canvas_
+demo` re-run with every existing assertion unchanged, confirming the
+real no-op. All other pre-existing examples re-run manually, zero
+regressions.
+
 ## Phase 7: Color Management & Compositing
 
 ### Step 7.1: Linear sRGB Conversions & HDR

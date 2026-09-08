@@ -196,6 +196,8 @@ The RHI maps the batched IR commands directly to Vulkan, DirectX 12, or Metal co
 
 *Updated for Phase 6 Step 6.2 (2026-09-08):* `execute_draw_geometry_batches` (`tre-engine`) is the real consumer the previous note anticipated -- drives every `DrawGeometry` batch in a `FlattenedFrame` through `set_pipeline`/`bind_texture`/`bind_vertex_buffer`/`bind_index_buffer`/`draw_indexed` below, resolving each command's pipeline via `PipelineRegistry`, with `PushScissor`/`PushLayer` markers skipped (Steps 6.3/6.4's own job). Not itself part of the canonical trait sketch for the same reason `PipelineRegistry` isn't -- a free function driving the traits below, not one of them. See `planning/archive/PLAN_PHASE6_STEP6_2.md`.
 
+*Updated for Phase 6 Step 6.3 (2026-09-08):* renamed to `execute_frame` -- real `PushScissor`/`PopScissor` execution added, calling `set_scissor` below via a runtime clip stack (a `PopScissor` command's own `clip_bounds` carries no restore data). A new `full_window: &ScissorRect` parameter substitutes the real framebuffer extent for `FULL_WINDOW_CLIP`'s own CPU-side-only sentinel wherever it would otherwise reach `set_scissor` -- passing that sentinel's `u32::MAX` fields literally would be an invalid scissor rect on real hardware. See `planning/archive/PLAN_PHASE6_STEP6_3.md`.
+
 ```rust
 /// An acquired swapchain image, threaded from `RhiSwapchain::acquire_next_image`
 /// through `RhiDevice::begin_frame` to the caller and back to
