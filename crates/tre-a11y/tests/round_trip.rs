@@ -48,27 +48,29 @@ fn ensure_accessibility_enabled(bus: &Connection) -> bool {
     ) else {
         return false;
     };
-    if registry
-        .call::<_, _, ()>("RegisterEvent", &("object:state-changed",))
-        .is_err()
-    {
-        return false;
-    }
     let Ok(status) = Proxy::new(bus, "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Status") else {
         return false;
     };
-    // Real evidence (2026-09-08): the first real CI run of this exact
-    // RegisterEvent call, in canvas_accessibility_verify, showed it
-    // succeeding but IsEnabled still not reading true after a 10s
-    // follow-up wait -- 30s matches the same ~30s worst-case delay
-    // already measured elsewhere against this exact CI environment
-    // (REVIEW.md finding #126) rather than a new guess.
+
+    // Real evidence (2026-09-08): calling RegisterEvent exactly once,
+    // then passively waiting, left IsEnabled false for the full 30s in
+    // real CI runs -- twice, at two different wait lengths. Reading
+    // `registryd`'s own real source (`impl_RegisterEvent`) shows why a
+    // single call is not reliable: `EventListenerRegistered` is a plain
+    // D-Bus *signal* (`dbus_connection_send`, fire-and-forget), not a
+    // stored or replayed event -- if `at-spi-bus-launcher`'s own
+    // subscription to it isn't active yet at the exact moment we call,
+    // the signal is simply lost forever, and no amount of passively
+    // waiting afterward can recover it. Retrying the real call itself,
+    // not just the property check, guarantees some attempt eventually
+    // lands after that subscription is active.
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     while std::time::Instant::now() < deadline {
         if status.get_property::<bool>("IsEnabled").unwrap_or(false) {
             return true;
         }
-        thread::sleep(Duration::from_millis(50));
+        let _ = registry.call::<_, _, ()>("RegisterEvent", &("object:state-changed",));
+        thread::sleep(Duration::from_millis(200));
     }
     false
 }
