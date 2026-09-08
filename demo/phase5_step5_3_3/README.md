@@ -47,3 +47,16 @@ stop flag was never set on the panicking path. Fixed with an RAII guard
 that clears the flag on any exit from the scope's closure, panic or not
 -- the assertion failure now reports promptly rather than hanging the
 whole process.
+
+**A real, two-process split, not a single self-verifying binary.**
+A seven-real-push CI investigation (REVIEW.md finding #126) found the
+actual reason this demo kept failing in CI: `accesskit_unix`'s own
+background thread, which does the real AT-SPI2 registration, cannot
+complete that registration inside a process that also links real
+Vulkan/X11 shared libraries. `canvas_accessibility_demo` now only
+renders and tags -- it hands its tagged nodes to
+`canvas_accessibility_verify`, a separate binary confirmed via `ldd` to
+link zero Vulkan/X11/Wayland libraries, which does the real publish and
+verify. This also matches real AT-SPI2 practice more closely than a
+self-verifying process ever did: a real screen reader is always a
+separate process from the application it inspects.

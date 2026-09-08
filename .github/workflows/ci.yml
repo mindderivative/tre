@@ -163,20 +163,23 @@ jobs:
     name: accessibility-validation
     runs-on: ubuntu-latest
     # Phase 5 Step 5.3.3's own real CI investigation (2026-09-08, full
-    # account in REVIEW.md finding #126): canvas_accessibility_demo
-    # needs both a virtual display and a real D-Bus/AT-SPI2 bus, given
-    # its own dedicated job here after ruling out call ordering,
-    # `xvfb-run` wrapper nesting, and job-level CPU contention as the
-    # cause of its own real, repeated CI failures. The actual, confirmed
-    # cause: running `tre-a11y`'s own already-reliable round-trip test
-    # (no Vulkan/X11 code at all) inside a job with Xvfb/Vulkan packages
-    # installed and `DISPLAY` set measured 30.06s -- triple the ~10.05s
-    # this exact test takes in the plain `test` job -- proving the
-    # actual AT-SPI2 discovery delay simply is longer in this specific
-    # environment, not anything about this demo's own code. Both
-    # `tre-a11y`'s test and this demo's own discovery timeout are set to
-    # 60s accordingly, real margin over the 30.06s worst case actually
-    # measured.
+    # seven-push account in REVIEW.md finding #126): the original
+    # single-process demo (real GPU render *and* real AT-SPI2
+    # publish-and-verify in one binary) never once completed AT-SPI2
+    # discovery in this hosted-runner image, even at a 60s timeout,
+    # after ordering/wrapper-nesting/CPU-contention/`IsEnabled` were
+    # each tried and directly disproved. The actual, confirmed cause:
+    # `accesskit_unix`'s own background thread -- which does the real
+    # AT-SPI2 registration -- cannot complete that registration inside a
+    # process that also links real Vulkan/X11 shared libraries, proven
+    # by `tre-a11y`'s own already-reliable round-trip test (zero
+    # Vulkan/X11 code) succeeding reliably in this exact job. The real
+    # fix is the two-process split below, not a longer timeout:
+    # `canvas_accessibility_demo` renders and tags only, handing its
+    # tagged nodes to `canvas_accessibility_verify` -- confirmed via
+    # `ldd` to link zero Vulkan/X11/Wayland libraries -- which does the
+    # real publish and verify. Each binary only needs the one real
+    # environment it actually depends on.
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
@@ -187,9 +190,5 @@ jobs:
             libvulkan1 mesa-vulkan-drivers vulkan-validationlayers xvfb libwayland-dev libxcb1-dev glslc \
             libfontconfig1-dev fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
             dbus-user-session at-spi2-core
-      - name: Start a virtual display
-        run: |
-          Xvfb :99 -screen 0 1280x1024x24 &
-          echo "DISPLAY=:99" >> "$GITHUB_ENV"
-          sleep 2
-      - run: dbus-run-session -- cargo run -p tre-rhi-vulkan --example canvas_accessibility_demo
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_accessibility_demo
+      - run: dbus-run-session -- cargo run -p tre-rhi-vulkan --example canvas_accessibility_verify
