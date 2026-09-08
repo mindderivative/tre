@@ -1229,3 +1229,29 @@ Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the wor
 | # | Finding | Doc(s)/Code | Severity | Resolution |
 |---|---|---|---|---|
 | -- | No numbered findings this sub-step | tre-memory, tre-engine | -- | -- |
+
+## Phase 5 Step 5.2.3 Implementation (2026-09-07)
+
+Reviewer: Claude (Cowork), acting as Principal Engineer / Lead Tech Architect, per project standing instructions.
+Scope: implementing IMPLEMENTATION.md Step 5.2.3 (the capstone: real concurrent recording, rendered), the third and closing sub-step of Step 5.2. Full detail in `planning/archive/LOG_PHASE5_STEP5_2_3.md`; this is the summary for the documentation's own record.
+
+Status: **Complete.** Two real issues surfaced during the demo's own first-draft development, both caught before any commit -- exactly the kind of thing this capstone's real-stress approach exists to catch, unlike a demo that only exercises the happy path once.
+
+### 122. [Should-fix] The demo's own first draft used a second, independent `RenderingCanvas` for the root's rect, whose separate Depth ID counter collided with a worker's
+`root_canvas.draw_rounded_rect(...)` was called on a fresh `RenderingCanvas::new()`, distinct from the `root` instance `create_sub_canvas()` was called on -- meaning the root's own rect drew its Depth ID from a completely different counter than every worker's. Two commands (the root's rect and whichever worker happened to also land on depth `0` from its own counter) then shared an identical sort key, which `sort_unstable_by_key` has no defined tie-breaking behavior for -- observed directly as a real GPU render with 4 batches instead of the expected 3, one of them a plain rect that should have merged with the others but didn't.
+
+**Change:** draw the root's own rect directly on `root` (the same instance every `create_sub_canvas()` call already borrows and shares a Depth ID counter with), and defer `root.stitch_into(&arena)` (which consumes it by value) until after every `create_sub_canvas()` borrow is done.
+
+### 123. [Nice-to-have] The demo's first verification draft asserted an exact batch count that concurrent stitching cannot actually guarantee
+`canvas_batch_flattening_demo` (Step 5.1.3, one single-threaded call sequence) always collapses to exactly 3 batches, and the first draft of this demo asserted the same. But the overlay worker's `begin_overlay`/`end_overlay` markers are hard run-segmentation barriers (Step 5.1.3's own design), and *which* other threads' plain rects land before vs. after that marker pair in the concurrently-stitched command array depends on real thread scheduling -- observed directly: repeated runs on the same 24-core development machine produced anywhere from 1 to 2 separate batches for the same 4 plain rects. This is ARCHITECTURE.md Section 4.2's own documented "soft target, not a guarantee" caveat, genuinely exercised for the first time by a demo (every earlier demo's recording was single-threaded, where this variability cannot occur).
+
+**Change:** the assertion now checks what real batch flattening actually guarantees regardless of scheduling -- every plain rect's content (its own 6 indices) is accounted for *somewhere*, however many pieces it was split into, and the overlay rect and the text glyph each always remain their own, never-merging batch -- rather than a fixed total batch count.
+
+Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the workspace, plus 15+ real runs of the new demo on real hardware confirming the batch-count variability directly (not merely reasoned about) while every pixel and content assertion held on every single run. All 18 pre-existing examples re-run manually end to end, zero regressions. Added to the `vulkan-validation` CI job. **This closes Step 5.2 (5.2.1-5.2.3) in full.**
+
+## Summary table (Phase 5 Step 5.2.3)
+
+| # | Finding | Doc(s)/Code | Severity | Resolution |
+|---|---|---|---|---|
+| 122 | Demo's own second, independent root canvas had a Depth ID counter that collided with a worker's | tre-rhi-vulkan (example code) | Should-fix | Fixed — root's rect now drawn on and stitched from the same shared-counter canvas |
+| 123 | Demo asserted an exact batch count concurrent stitching cannot actually guarantee | tre-rhi-vulkan (example code) | Nice-to-have | Fixed — assertion now checks content/hard-guarantees instead of a fixed count |

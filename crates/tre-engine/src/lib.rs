@@ -579,6 +579,17 @@ impl RenderingCanvas {
         }
     }
 
+    /// The maximum number of concurrently-live `SubCanvas` instances
+    /// this canvas will allow (TECHNICAL.md Section 8:
+    /// `available_parallelism() - 1`, or a smaller test-injected value)
+    /// -- Step 5.2.3: a real caller deciding how many worker threads to
+    /// actually spawn reads this first, rather than guessing and
+    /// risking `create_sub_canvas()`'s own panic.
+    #[must_use]
+    pub fn max_sub_canvases(&self) -> usize {
+        self.max_sub_canvases
+    }
+
     /// Creates an independently-recordable `SubCanvas` sharing this
     /// canvas's Depth ID counter and concurrency-cap bookkeeping (Step
     /// 5.2.1, DESIGN.md Section 6.3). Intended to be moved into a real

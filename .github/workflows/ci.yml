@@ -131,3 +131,4 @@ jobs:
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_state_stack_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_draw_text_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_batch_flattening_demo
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_sub_canvas_demo
