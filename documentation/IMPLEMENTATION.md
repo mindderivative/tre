@@ -1064,6 +1064,69 @@ Vulkan demos (the 21 from Step 6.4.1 plus the new one) re-run manually
 end to end, zero regressions. CI's `vulkan-validation` job gained the
 new example.
 
+### Step 6.5: The Combining Capstone -- Status: Complete (2026-09-08); Phase 6 closed
+
+Phase 6's own closer, named explicitly in Step 6.1's own original plan
+(`planning/archive/PLAN_PHASE6_STEP6_1.md`'s "Scope decisions": "6.5: a
+combining capstone -- one real scene exercising multiple pipelines and
+real clipping together in one submitted frame (layer compositing joins
+once 6.4 makes it real)") -- ready once Step 6.4.2 closed. Adds no new
+`tre-engine`/RHI surface at all; a pure integration proof that every
+`execute_frame` command kind (`DrawGeometry`/`PushScissor`/`PopScissor`/
+`PushLayer`/`PopLayer`) interoperates correctly in one real scene, not
+just each in its own isolated demo.
+
+New demo (`canvas_combined_scene_demo.rs`, `demo/phase6_step6_5/`): one
+`Canvas` scene, one `execute_frame` call. `push_clip`/`draw_rounded_rect`
+(deliberately larger than the clip on every side, `canvas_state_stack_
+demo.rs`'s own Rect C precedent)/`pop_clip` draws a rect directly onto
+the swapchain via `PipelineKind::SdfRoundedRect`. `push_layer`/
+`draw_text`/`pop_layer` renders a real shaped word ("OK", via a real
+cascade font and a real background `AtlasOwner` -- the same warm-up-
+then-poll-to-resolution pattern `canvas_draw_text_demo.rs` already
+established, reused unchanged) into an offscreen layer via
+`PipelineKind::MsdfText`, then composites it back via `PipelineKind::
+TexturedQuad`. Three real pipeline ids, three real declared formats, no
+id used at two formats in the same frame -- each pipeline plays exactly
+one role in the scene (`SdfRoundedRect` only ever draws directly onto
+the swapchain here, `MsdfText` only ever draws inside the layer), the
+same constraint `canvas_layer_composite_demo.rs`'s own header comment
+already documented.
+
+Three real, independent pixel checks, reusing two already-established
+verification patterns rather than inventing new ones: clip cropping
+(`canvas_state_stack_demo.rs`'s inside-clip-vs-outside-clip check);
+composited text (`canvas_draw_text_demo.rs`'s own per-glyph quad scan,
+recomputed independently and offset by the layer's own composite
+origin, not a single fragile center-pixel assertion); and a composited-
+but-empty layer area showing real background
+(`render_to_texture_demo.rs`'s own transparency check).
+
+**No bugs found -- passed on its first real run.** Every prior Phase 6
+sub-step (6.1 through 6.4.2) already found and fixed a real bug or
+design gap before or during its own first run; this step's own first
+run passed every assertion immediately, which is itself worth recording
+honestly rather than manufacturing a finding -- the previous six steps'
+own rigor is what made this one boring.
+
+Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across
+the workspace (`tre-engine` untouched, still 59 tests -- confirmed, not
+assumed, since this step adds no engine code). All 23 Vulkan demos (the
+22 from Step 6.4.2 plus the new one) re-run manually end to end, zero
+regressions. CI's `vulkan-validation` job gained the new example.
+
+**Phase 6 ("Sorting, Batching, & RHI Execution") is closed.** Every real
+task the phase's own original outline described -- generating/sorting
+IR command keys, merging adjacent batches, and actually driving
+`RhiCommandBuffer` calls through a `PipelineRegistry`-resolved pipeline,
+including `PushScissor`/`PushLayer` markers -- is real, tested, and
+proven both in isolation (Steps 6.1-6.4.2) and combined (this step).
+Deferred, disclosed future work stays open, not silently dropped: true
+nested layers (`PushLayer` while another is already active,
+`execute_frame`'s own documented panic), visual filters/blur on a
+composited layer (Phase 7 Step 7.2's own job), and the pre-existing,
+unrelated `accessibility-validation` CI gate (REVIEW.md finding #126).
+
 ## Phase 7: Color Management & Compositing
 
 ### Step 7.1: Linear sRGB Conversions & HDR
