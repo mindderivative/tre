@@ -177,6 +177,8 @@ Input processing, window state listeners, multi-window focus changes, accessibil
 
 * **Zero Layout Re-evaluation:** Screen readers query spatial metadata generated directly from the visual rendering queue, guaranteeing $100\%$ alignment between what is visually rendered on screen and what is reported to assistive technology.
 
+* **Implementation status (Phase 5 Step 5.3.1, 2026-09-07):** "Spatial Boundary Tagging" is real -- `RenderingCanvas::tag_accessibility_node` records a node's real, transform-correct world-space bounds (the axis-aligned bounding box of all four transformed local corners, correct under rotation, not just translation/scale) into a flat per-frame list, surfaced through `flatten()`/`FlattenedFrame::accessibility_nodes` and correctly carried across threads via `SubCanvas`/`FrameArena`/`stitch_into` (Section 6's own aggregator). The "OS Accessibility Bridge" bullet is not yet built -- no tagged data is extracted or exported anywhere yet, deliberately deferred to Step 5.3.2 (Linux AT-SPI2 first, matching every prior OS-integration step's own "Linux complete; Windows/macOS deferred" precedent) and proven end to end by Step 5.3.3's capstone.
+
 ## 6. Rendering Canvas & Parallel Recording API
 
 The **Rendering Canvas** serves as the explicit API boundary and bridge between the high-level UI framework and the low-level rendering pipeline. It abstracts state management, clip stack hierarchy, geometry submission, overlay registration, offscreen compositing layers, and vector pass generation.

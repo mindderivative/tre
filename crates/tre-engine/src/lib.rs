@@ -331,11 +331,54 @@ pub struct LayerDesc {
 
 /// A frame's fully-recorded, sorted-and-flattened batch: one contiguous
 /// vertex/index stream plus the (currently trivial, Phase 0) list of
-/// draw commands describing how to slice it into RHI draw calls.
+/// draw commands describing how to slice it into RHI draw calls, plus
+/// (Step 5.3.1) every tagged accessibility node recorded this frame.
 pub struct FlattenedFrame {
     pub vertices: Vec<UiVertex>,
     pub indices: Vec<u32>,
     pub commands: Vec<UiDrawCommand>,
+    pub accessibility_nodes: Vec<AccessibilityNode>,
+}
+
+/// DESIGN.md Section 5.2's `Canvas::tag_accessibility_node`'s own
+/// `node_id` parameter (Step 5.3.1) -- an opaque, caller-assigned
+/// stable key. The UI framework already owns the real widget tree and
+/// its hierarchy; this engine only reports each tagged node's
+/// *rendered* spatial position back, keyed by whatever id the
+/// framework itself already tracks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AccessibilityNodeId(pub u64);
+
+/// DESIGN.md Section 5.2's `role_flags` parameter, concretized (Step
+/// 5.3.1) -- a small, real, useful starter set rather than an attempt
+/// at AT-SPI2's own roughly 130-role taxonomy or literal bitflags; no
+/// consumer exists yet to demand more than "what kind of element is
+/// this," and this is trivially extensible once Step 5.3.2's real OS
+/// bridge reveals which additional roles it actually needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessibilityRole {
+    Generic,
+    Button,
+    TextLabel,
+    Image,
+}
+
+/// One tagged node's real, transform-correct world-space bounds (Step
+/// 5.3.1) -- `x`/`y`/`width`/`height` are the axis-aligned bounding box
+/// of the local rect `Canvas::tag_accessibility_node` was given, after
+/// the active transform (see that method's own doc comment for why a
+/// full bounding-box computation, not a naive corner offset, is
+/// necessary once rotation is involved). Stored as `f32`, not yet
+/// rounded to whatever integer convention a real OS accessibility
+/// bridge (Step 5.3.2) will ultimately need.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AccessibilityNode {
+    pub node_id: AccessibilityNodeId,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub role: AccessibilityRole,
 }
 
 /// DESIGN.md Section 7.2's `Canvas::begin_overlay(OverlayLayerPriority)`
@@ -470,6 +513,11 @@ pub struct RenderingCanvas {
     /// a fire-and-forget increment only ever fixed up on the
     /// non-panicking path.
     live_sub_canvases: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// Every node tagged this frame via `tag_accessibility_node` (Step
+    /// 5.3.1) -- a flat list, not a tree the engine builds; the UI
+    /// framework already owns the real hierarchy and this only reports
+    /// each node's rendered spatial position back.
+    accessibility_nodes: Vec<AccessibilityNode>,
 }
 
 /// A worker thread's independently-recordable sub-canvas
@@ -1175,6 +1223,67 @@ impl RenderingCanvas {
         });
     }
 
+    /// DESIGN.md Section 5.2's `Canvas::tag_accessibility_node(node_id,
+    /// bounds, role_flags)` (Step 5.3.1). `x`/`y`/`width`/`height` are
+    /// in this canvas's *local* space, matching every other drawing
+    /// primitive's own convention; all four corners are transformed by
+    /// the active `Affine2` (not just the top-left -- the active
+    /// transform can rotate) and the stored bounds are the real
+    /// axis-aligned bounding box of those four transformed corners --
+    /// a genuine axis-aligned rect an OS accessibility API can consume
+    /// directly (AT-SPI2's `Component::GetExtents`, UIA's
+    /// `BoundingRectangle`), not a naive reuse of the local
+    /// width/height at a transformed origin, which would be wrong the
+    /// moment the active transform includes a rotation.
+    ///
+    /// Deliberately does not intersect against the active clip stack --
+    /// a disclosed, deliberate simplification (Step 5.3.1's own scope
+    /// decision), not silently assumed away: a node partially scrolled
+    /// out of view still reports its full transformed bounds.
+    ///
+    /// # Panics
+    /// Never in practice -- see `save()`'s own `# Panics` section for why
+    /// `state_stack` is never empty.
+    pub fn tag_accessibility_node(
+        &mut self,
+        node_id: AccessibilityNodeId,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        role: AccessibilityRole,
+    ) {
+        let state = *self
+            .state_stack
+            .last()
+            .expect("state_stack must always have at least one entry");
+        let corners = [
+            [x, y],
+            [x + width, y],
+            [x + width, y + height],
+            [x, y + height],
+        ]
+        .map(|corner| state.transform.transform_point(corner));
+
+        let mut min = corners[0];
+        let mut max = corners[0];
+        for corner in &corners[1..] {
+            min[0] = min[0].min(corner[0]);
+            min[1] = min[1].min(corner[1]);
+            max[0] = max[0].max(corner[0]);
+            max[1] = max[1].max(corner[1]);
+        }
+
+        self.accessibility_nodes.push(AccessibilityNode {
+            node_id,
+            x: min[0],
+            y: min[1],
+            width: max[0] - min[0],
+            height: max[1] - min[1],
+            role,
+        });
+    }
+
     /// Real sort/flatten stage (ARCHITECTURE.md Section 4.2, Step
     /// 5.1.3): every non-`DrawGeometry` command (`PushScissor`/
     /// `PopScissor`/`PushLayer`/`PopLayer`) is a hard barrier -- sorting
@@ -1224,9 +1333,10 @@ impl RenderingCanvas {
             vertices,
             indices,
             commands,
+            accessibility_nodes,
             ..
         } = self;
-        segment_and_flatten(vertices, &indices, commands)
+        segment_and_flatten(vertices, &indices, commands, accessibility_nodes)
     }
 
     /// Merges this canvas's locally-recorded data into `arena` (Step
@@ -1285,6 +1395,7 @@ impl RenderingCanvas {
             vertices,
             indices,
             commands,
+            accessibility_nodes,
             ..
         } = self;
 
@@ -1312,6 +1423,16 @@ impl RenderingCanvas {
             };
         }
 
+        // Accessibility nodes reference no position in any other array
+        // (unlike indices/vertex_offset), so this is a literal bulk
+        // copy -- no rebasing needed at all.
+        let Some(mut accessibility_slice) =
+            arena.accessibility_nodes.reserve(accessibility_nodes.len())
+        else {
+            return false;
+        };
+        accessibility_slice.copy_from_slice(&accessibility_nodes);
+
         true
     }
 }
@@ -1331,6 +1452,11 @@ pub struct FrameArena {
     vertices: tre_memory::ScatterArena<UiVertex>,
     indices: tre_memory::ScatterArena<u32>,
     commands: tre_memory::ScatterArena<UiDrawCommand>,
+    /// Step 5.3.1: `AccessibilityNode` is `Copy`, fitting the existing
+    /// `ScatterArena` primitive unchanged -- merging tagged nodes needs
+    /// no rebasing at all (unlike vertices/indices/commands), since
+    /// nothing about one references a position in another array.
+    accessibility_nodes: tre_memory::ScatterArena<AccessibilityNode>,
 }
 
 impl FrameArena {
@@ -1339,11 +1465,13 @@ impl FrameArena {
         vertex_capacity: usize,
         index_capacity: usize,
         command_capacity: usize,
+        accessibility_capacity: usize,
     ) -> Self {
         Self {
             vertices: tre_memory::ScatterArena::with_capacity(vertex_capacity),
             indices: tre_memory::ScatterArena::with_capacity(index_capacity),
             commands: tre_memory::ScatterArena::with_capacity(command_capacity),
+            accessibility_nodes: tre_memory::ScatterArena::with_capacity(accessibility_capacity),
         }
     }
 
@@ -1361,6 +1489,7 @@ impl FrameArena {
             self.vertices.into_vec(),
             &self.indices.into_vec(),
             self.commands.into_vec(),
+            self.accessibility_nodes.into_vec(),
         )
     }
 }
@@ -1505,6 +1634,7 @@ fn segment_and_flatten(
     vertices: Vec<UiVertex>,
     indices: &[u32],
     mut commands: Vec<UiDrawCommand>,
+    accessibility_nodes: Vec<AccessibilityNode>,
 ) -> FlattenedFrame {
     let mut out_commands = Vec::with_capacity(commands.len());
     let mut out_indices = Vec::with_capacity(indices.len());
@@ -1530,6 +1660,7 @@ fn segment_and_flatten(
         vertices,
         indices: out_indices,
         commands: out_commands,
+        accessibility_nodes,
     }
 }
 
@@ -2964,7 +3095,7 @@ mod tests {
         // their sort keys never tie -- see next_sort_key's own
         // uniqueness guarantee), each drawing one rect, stitched into
         // the same arena in order.
-        let arena = FrameArena::with_capacity(20, 20, 20);
+        let arena = FrameArena::with_capacity(20, 20, 20, 0);
         let root = RenderingCanvas::new();
 
         let mut first = root.create_sub_canvas();
@@ -2997,7 +3128,7 @@ mod tests {
 
     #[test]
     fn stitch_into_reports_false_when_the_arena_is_too_small() {
-        let arena = FrameArena::with_capacity(2, 2, 2);
+        let arena = FrameArena::with_capacity(2, 2, 2, 0);
         let mut canvas = RenderingCanvas::new();
         canvas.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
         assert!(
@@ -3016,8 +3147,12 @@ mod tests {
         const THREADS: usize = 4;
 
         let root = RenderingCanvas::new_with_sub_canvas_cap(THREADS);
-        let arena =
-            std::sync::Arc::new(FrameArena::with_capacity(THREADS * 4, THREADS * 6, THREADS));
+        let arena = std::sync::Arc::new(FrameArena::with_capacity(
+            THREADS * 4,
+            THREADS * 6,
+            THREADS,
+            0,
+        ));
 
         let handles: Vec<_> = (0..THREADS)
             .map(|i| {
@@ -3070,6 +3205,186 @@ mod tests {
                 found,
                 "thread {i}'s rect at x={expected_x} must appear somewhere in the merged \
                  vertices, regardless of scheduling order"
+            );
+        }
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact arithmetic on literal f32s (whole-number positions, no rounding), same \
+                   reasoning as this crate's other exact-arithmetic tests"
+    )]
+    fn tag_accessibility_node_translates_local_bounds_into_world_space() {
+        let mut canvas = RenderingCanvas::new();
+        canvas.transform(&tre_math::Affine2::from_translation(10.0, 5.0));
+        canvas.tag_accessibility_node(
+            AccessibilityNodeId(1),
+            0.0,
+            0.0,
+            20.0,
+            8.0,
+            AccessibilityRole::Button,
+        );
+
+        let frame = canvas.flatten();
+        assert_eq!(frame.accessibility_nodes.len(), 1);
+        let node = frame.accessibility_nodes[0];
+        assert_eq!(node.node_id, AccessibilityNodeId(1));
+        assert_eq!(node.role, AccessibilityRole::Button);
+        assert_eq!(
+            (node.x, node.y, node.width, node.height),
+            (10.0, 5.0, 20.0, 8.0)
+        );
+    }
+
+    #[test]
+    fn tag_accessibility_node_under_rotation_reports_the_real_axis_aligned_bounding_box() {
+        // A 90-degree CCW rotation maps (x, y) -> (-y, x) (up to f32
+        // sin/cos rounding), so a 10x4 local rect's four corners land
+        // near (0,0), (0,10), (-4,10), (-4,0). A naive implementation
+        // that only transforms the top-left corner and reuses the
+        // local width/height would wrongly report (0, 0, 10, 4) -- the
+        // real axis-aligned bounding box of all four rotated corners is
+        // (-4, 0, 4, 10), the opposite aspect ratio, which is this
+        // sub-step's whole reason for existing. `sin_cos` on
+        // `FRAC_PI_2` doesn't land on exactly 0.0/1.0 in f32, so this
+        // compares within a small epsilon rather than asserting exact
+        // equality.
+        const EPSILON: f32 = 1e-4;
+        let mut canvas = RenderingCanvas::new();
+        canvas.transform(&tre_math::Affine2::from_rotation(
+            std::f32::consts::FRAC_PI_2,
+        ));
+        canvas.tag_accessibility_node(
+            AccessibilityNodeId(7),
+            0.0,
+            0.0,
+            10.0,
+            4.0,
+            AccessibilityRole::Generic,
+        );
+
+        let frame = canvas.flatten();
+        assert_eq!(frame.accessibility_nodes.len(), 1);
+        let node = frame.accessibility_nodes[0];
+        for (actual, expected, label) in [
+            (node.x, -4.0, "x"),
+            (node.y, 0.0, "y"),
+            (node.width, 4.0, "width"),
+            (node.height, 10.0, "height"),
+        ] {
+            assert!(
+                (actual - expected).abs() < EPSILON,
+                "{label}: expected the real bounding box of all four rotated corners \
+                 (~{expected}), got {actual} -- not the naive untransformed rect"
+            );
+        }
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact arithmetic on literal f32s (whole-number positions, no rounding), same \
+                   reasoning as this crate's other exact-arithmetic tests"
+    )]
+    fn tagging_from_a_sub_canvas_carries_the_node_into_a_frame_arena_via_stitch_into() {
+        let arena = FrameArena::with_capacity(20, 20, 20, 4);
+        let root = RenderingCanvas::new();
+
+        let mut sub = root.create_sub_canvas();
+        sub.tag_accessibility_node(
+            AccessibilityNodeId(42),
+            1.0,
+            2.0,
+            3.0,
+            4.0,
+            AccessibilityRole::TextLabel,
+        );
+        assert!(sub.stitch_into(&arena));
+
+        let frame = arena.flatten();
+        assert_eq!(frame.accessibility_nodes.len(), 1);
+        let node = frame.accessibility_nodes[0];
+        assert_eq!(node.node_id, AccessibilityNodeId(42));
+        assert_eq!(node.role, AccessibilityRole::TextLabel);
+        assert_eq!(
+            (node.x, node.y, node.width, node.height),
+            (1.0, 2.0, 3.0, 4.0)
+        );
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact arithmetic on literal f32s (whole-number x offsets, no rounding), same \
+                   reasoning as this crate's other exact-arithmetic tests"
+    )]
+    fn many_real_worker_threads_tag_accessibility_nodes_alongside_their_rects_concurrently() {
+        const THREADS: usize = 4;
+
+        let root = RenderingCanvas::new_with_sub_canvas_cap(THREADS);
+        let arena = std::sync::Arc::new(FrameArena::with_capacity(
+            THREADS * 4,
+            THREADS * 6,
+            THREADS,
+            THREADS,
+        ));
+
+        let handles: Vec<_> = (0..THREADS)
+            .map(|i| {
+                let mut sub = root.create_sub_canvas();
+                let arena = std::sync::Arc::clone(&arena);
+                let node_id = AccessibilityNodeId(u64::try_from(i).unwrap());
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "THREADS is a small constant, far below f32's exact-integer range"
+                )]
+                let x = i as f32 * 20.0;
+                std::thread::spawn(move || {
+                    sub.draw_rounded_rect(x, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+                    sub.tag_accessibility_node(
+                        node_id,
+                        x,
+                        0.0,
+                        10.0,
+                        10.0,
+                        AccessibilityRole::Button,
+                    );
+                    assert!(
+                        sub.stitch_into(&arena),
+                        "arena was sized exactly for this test"
+                    );
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().expect("worker thread panicked");
+        }
+
+        let arena = std::sync::Arc::try_unwrap(arena)
+            .unwrap_or_else(|_| panic!("all worker threads have joined"));
+        let frame = arena.flatten();
+
+        assert_eq!(frame.accessibility_nodes.len(), THREADS);
+        for i in 0..THREADS {
+            let expected_id = AccessibilityNodeId(u64::try_from(i).unwrap());
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "THREADS is a small constant, far below f32's exact-integer range"
+            )]
+            let expected_x = i as f32 * 20.0;
+            let found = frame.accessibility_nodes.iter().any(|node| {
+                node.node_id == expected_id
+                    && node.x == expected_x
+                    && node.y == 0.0
+                    && node.width == 10.0
+                    && node.height == 10.0
+            });
+            assert!(
+                found,
+                "thread {i}'s tagged node at x={expected_x} must survive concurrent \
+                 stitching with its correct bounds, regardless of thread scheduling"
             );
         }
     }

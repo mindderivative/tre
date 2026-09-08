@@ -1255,3 +1255,18 @@ Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the wor
 |---|---|---|---|---|
 | 122 | Demo's own second, independent root canvas had a Depth ID counter that collided with a worker's | tre-rhi-vulkan (example code) | Should-fix | Fixed — root's rect now drawn on and stitched from the same shared-counter canvas |
 | 123 | Demo asserted an exact batch count concurrent stitching cannot actually guarantee | tre-rhi-vulkan (example code) | Nice-to-have | Fixed — assertion now checks content/hard-guarantees instead of a fixed count |
+
+## Phase 5 Step 5.3.1 Implementation (2026-09-07)
+
+Reviewer: Claude (Cowork), acting as Principal Engineer / Lead Tech Architect, per project standing instructions.
+Scope: implementing IMPLEMENTATION.md Step 5.3.1 (`Canvas::tag_accessibility_node` and its IR-adjacent data), the first of Step 5.3's three sub-steps. Full detail in `planning/archive/LOG_PHASE5_STEP5_3_1.md`; this is the summary for the documentation's own record.
+
+Status: **Complete, no numbered findings.** Every design decision locked into `PLAN.md` (four transformed corners reduced to a real axis-aligned bounding box rather than `draw_rounded_rect`'s vertex-only corner transform; `f32` bounds with no rounding to an OS-native integer convention yet; no clip-stack intersection; a small 4-variant starter `AccessibilityRole` rather than AT-SPI2's full taxonomy; a flat per-frame node list with no engine-built tree; mandatory `SubCanvas`/`FrameArena`/`stitch_into` integration this sub-step, not deferred) held up unchanged through implementation. The only code changes needed beyond the new feature itself were three pre-existing test call sites and one demo call site updated for `FrameArena::with_capacity`'s new fourth parameter -- mechanical, not a design issue.
+
+Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the workspace: `tre-engine` gained 4 new tests (48 total, up from 44) -- a pure-translation sanity check, a rotation-correctness test proving the real axis-aligned bounding box of four rotated corners rather than the naive untransformed rect, a `SubCanvas` + `stitch_into` carry-through check, and a real 4-worker-thread test extending Step 5.2.3's own capstone pattern with per-thread tagging. No new demo this sub-step, matching 5.2.1/5.2.2's own precedent -- tagged data has nowhere real to go until 5.3.2's OS bridge exists; the real end-to-end proof is deferred to the 5.3.3 capstone. All 4 examples touching the shared `flatten`/`stitch_into`/`FrameArena` code path re-run manually end to end, zero regressions.
+
+## Summary table (Phase 5 Step 5.3.1)
+
+| # | Finding | Doc(s)/Code | Severity | Resolution |
+|---|---|---|---|---|
+| -- | No numbered findings this sub-step | tre-engine | -- | -- |

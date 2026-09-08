@@ -184,6 +184,7 @@ fn main() {
         total_shapes * 4,
         total_shapes * 6,
         command_capacity,
+        0, // this demo doesn't tag any accessibility nodes (Step 5.3.1)
     ));
 
     // --- Root draws its own rect directly, before any worker thread is
