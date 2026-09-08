@@ -23,4 +23,11 @@ tre-math = { path = "../tre-math" }
 tre-platform = { path = "../tre-platform" }
 tre-svg = { path = "../tre-svg" }
 tre-text = { path = "../tre-text" }
+# PLAN_PHASE5_STEP5_3_3.md: canvas_accessibility_demo publishes via a
+# real tre-a11y::A11yBridge and re-queries the real AT-SPI2 bus as its
+# own second D-Bus client -- zbus pinned to the same 4.4.0 already
+# resolved elsewhere in this workspace (tre-a11y's own dev-dependency),
+# avoiding a second, different zbus major version in the graph.
+tre-a11y = { path = "../tre-a11y" }
+zbus = { version = "4.4.0", default-features = false, features = ["blocking"] }
 # implementation begins; TECHNICAL.md Section 2.1, IMPLEMENTATION.md Step 2.1.

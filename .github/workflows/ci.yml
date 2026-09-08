@@ -116,12 +116,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - run: rustup show
-      - name: Install a software Vulkan ICD, validation layers, a virtual display, libwayland-dev, and real fonts
+      # Phase 5 Step 5.3.3: canvas_accessibility_demo needs both this
+      # job's own virtual display AND a real D-Bus/AT-SPI2 bus (the
+      # `test` job's own dbus-user-session/at-spi2-core, added Step
+      # 5.3.2) at once -- installed here too rather than merging jobs,
+      # since only this one demo below needs both.
+      - name: Install a software Vulkan ICD, validation layers, a virtual display, libwayland-dev, real fonts, and a D-Bus/AT-SPI2 bus
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libvulkan1 mesa-vulkan-drivers vulkan-validationlayers xvfb libwayland-dev libxcb1-dev glslc \
-            libfontconfig1-dev fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji
+            libfontconfig1-dev fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
+            dbus-user-session at-spi2-core
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example walking_skeleton
         env:
           TRE_WALKING_SKELETON_FRAMES: 10
@@ -148,3 +154,7 @@ jobs:
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_draw_text_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_batch_flattening_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_sub_canvas_demo
+      # Only this demo needs a real AT-SPI2 bus, so only its own run line
+      # is wrapped in dbus-run-session -- every other line above is a
+      # plain xvfb-run, unaffected.
+      - run: dbus-run-session -- xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_accessibility_demo

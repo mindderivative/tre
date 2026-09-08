@@ -1285,3 +1285,29 @@ Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the wor
 | # | Finding | Doc(s)/Code | Severity | Resolution |
 |---|---|---|---|---|
 | -- | No numbered findings this sub-step | tre-a11y, .github/workflows/ci.yml | -- | -- |
+
+## Phase 5 Step 5.3.3 Implementation (2026-09-08)
+
+Reviewer: Claude (Cowork), acting as Principal Engineer / Lead Tech Architect, per project standing instructions.
+Scope: implementing IMPLEMENTATION.md Step 5.3.3 (the capstone -- a real rendered scene, verified live), the third and closing sub-step of Step 5.3. Full detail in `planning/archive/LOG_PHASE5_STEP5_3_3.md`; this is the summary for the documentation's own record.
+
+Status: **Complete.** Two real issues surfaced while building the new demo's own first draft, both caught before any commit -- exactly the kind of thing a real, combined end-to-end capstone exists to catch, unlike three isolated tests that each only ever exercised their own layer.
+
+### 124. [Should-fix] `tre-a11y`'s `AccessibilityRole::Generic -> accesskit::Role::GenericContainer` mapping (Step 5.3.2) made every `Generic`-tagged node invisible to real assistive technology
+`accesskit_consumer::common_filter` (the filter `accesskit_atspi_common` uses to decide what actually reaches the platform accessibility tree) hard-codes `Role::GenericContainer`/`Role::TextRun` as always excluded -- the real accesskit equivalent of ARIA's `role="none"`/`"presentation"`, a "hide this from assistive technology" signal, not "a generic taggable element." Step 5.3.2's own tests never caught this because its round-trip test tagged a `Button`, never a `Generic` node, against a live bus. This capstone's own first-draft scene tags one `Generic` rect among three, and its real AT-SPI2 `Registry`-side `GetChildren` on the synthesized root returned 2 children instead of 3 -- observed directly, not reasoned about in the abstract.
+
+**Change:** `tre-a11y`'s `map_role` now maps `AccessibilityRole::Generic -> Role::Unknown` (confirmed via `accesskit_consumer::common_filter`'s own real source to be the correct, unfiltered choice -- `Unknown` is this enum's own `#[default]` variant and is not special-cased anywhere in the filter). `tre-a11y`'s own existing unit test updated to match.
+
+### 125. [Nice-to-have] The demo's own first-draft verification hung forever, instead of failing, once an assertion inside a `thread::scope` actually failed
+While the regression above was still unfixed, the demo's own `thread::scope` block (main thread verifying while a background thread steadily republishes) panicked on the failing node-count assertion -- but `thread::scope`'s own contract requires every spawned thread to be joined before the scope returns, even while unwinding, and the spawned "keep publishing" thread's stop flag (a plain `AtomicBool`) was only ever cleared on the success path at the very end of the closure. The whole process hung indefinitely instead of reporting the real failure, discovered only by manually observing the process was still running via `ps`/`/proc/<pid>/wchan` well past a 120-second command timeout.
+
+**Change:** an RAII guard (`StopOnDrop`) now clears the flag when the scope's closure exits for any reason, panic included, so a real assertion failure now reports promptly instead of hanging the session.
+
+Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the workspace, plus 3 consecutive real runs of the new demo against this development machine's own live AT-SPI2 stack, all passing: every rect's real `Component.GetExtents` matches its own real IR bounds exactly, including the rotated rect's real axis-aligned bounding box, and all 3 rects' distinct roles survive as 3 pairwise-distinct real AT-SPI2 roles. `demo/phase5_step5_3_3/` added. `vulkan-validation`'s CI job gained `dbus-user-session`/`at-spi2-core`, with only the one new demo's run line wrapped in `dbus-run-session -- xvfb-run -a ...`. All pre-existing examples re-run manually, zero regressions from `tre-rhi-vulkan`'s new `tre-a11y`/`zbus` dev-dependencies. **This closes Step 5.3 (5.3.1-5.3.3) in full.**
+
+## Summary table (Phase 5 Step 5.3.3)
+
+| # | Finding | Doc(s)/Code | Severity | Resolution |
+|---|---|---|---|---|
+| 124 | `AccessibilityRole::Generic` mapped onto an `accesskit::Role` that is always filtered out of the real platform tree | tre-a11y | Should-fix | Fixed — remapped to `Role::Unknown`, confirmed unfiltered via the real filter source |
+| 125 | Demo's own verification hung forever instead of failing when an assertion panicked inside a `thread::scope` | tre-rhi-vulkan (example code) | Nice-to-have | Fixed — an RAII guard now always clears the publisher thread's stop flag on scope exit |

@@ -1862,12 +1862,14 @@ dependencies = [
  "raw-window-handle",
  "rustybuzz",
  "skrifa",
+ "tre-a11y",
  "tre-atlas",
  "tre-engine",
  "tre-math",
  "tre-platform",
  "tre-svg",
  "tre-text",
+ "zbus",
 ]
 
 [[package]]

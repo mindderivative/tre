@@ -23,7 +23,20 @@ const ROOT_ID: NodeId = NodeId(u64::MAX);
 
 fn map_role(role: AccessibilityRole) -> Role {
     match role {
-        AccessibilityRole::Generic => Role::GenericContainer,
+        // NOT `Role::GenericContainer`: `accesskit_consumer::common_filter`
+        // (used by `accesskit_atspi_common`) hard-codes `GenericContainer`
+        // as always excluded from the platform tree entirely -- its real
+        // semantics are ARIA's `role="none"`/`"presentation"` (hide this
+        // from assistive technology), the opposite of what a caller
+        // tagging a real, generic element wants. `Role::Unknown` (this
+        // enum's own `#[default]`) is the correct real match for "a
+        // taggable element with no more specific role" -- confirmed via
+        // `accesskit_consumer`'s own filter source, which excludes only
+        // `GenericContainer`/`TextRun` and includes everything else.
+        // Found by Step 5.3.3's own real, live end-to-end query: a
+        // `Generic`-tagged node was silently absent from every AT-SPI2
+        // query, a real regression since this crate first shipped.
+        AccessibilityRole::Generic => Role::Unknown,
         AccessibilityRole::Button => Role::Button,
         AccessibilityRole::TextLabel => Role::Label,
         AccessibilityRole::Image => Role::Image,
@@ -189,7 +202,7 @@ mod tests {
 
     #[test]
     fn map_role_covers_every_accessibility_role_variant() {
-        assert_eq!(map_role(AccessibilityRole::Generic), Role::GenericContainer);
+        assert_eq!(map_role(AccessibilityRole::Generic), Role::Unknown);
         assert_eq!(map_role(AccessibilityRole::Button), Role::Button);
         assert_eq!(map_role(AccessibilityRole::TextLabel), Role::Label);
         assert_eq!(map_role(AccessibilityRole::Image), Role::Image);
