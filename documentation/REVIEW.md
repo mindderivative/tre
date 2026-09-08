@@ -1311,3 +1311,18 @@ Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the wor
 |---|---|---|---|---|
 | 124 | `AccessibilityRole::Generic` mapped onto an `accesskit::Role` that is always filtered out of the real platform tree | tre-a11y | Should-fix | Fixed — remapped to `Role::Unknown`, confirmed unfiltered via the real filter source |
 | 125 | Demo's own verification hung forever instead of failing when an assertion panicked inside a `thread::scope` | tre-rhi-vulkan (example code) | Nice-to-have | Fixed — an RAII guard now always clears the publisher thread's stop flag on scope exit |
+
+## Phase 5 Step 5.3.3 CI Verification (2026-09-08)
+
+Discovered while checking the actual GitHub-hosted `vulkan-validation` run for the first time after pushing Step 5.3.3 (the standing "check CI via `gh run watch` after every push" process, applied here to a job whose own docs had explicitly flagged its D-Bus wiring as "genuinely unconfirmed on the actual hosted runner"). Real evidence, not speculation: `org.a11y.Bus`/`org.a11y.atspi.Registry` both D-Bus-activated successfully on the runner (the core wiring from Step 5.3.2 works), but `canvas_accessibility_demo` panicked with "our app never appeared in the real AT-SPI2 registry within 10s." Comparing timestamps against the same run's `test` job showed its own round-trip test had passed, but only by finding the app at the very edge of its own 10-second deadline (10.05s of a 10s budget) -- not a comfortable margin.
+
+### 126. [Should-fix] A freshly D-Bus-activated `at-spi2-registryd` on a hosted CI runner starts with `org.a11y.Status.IsEnabled` false, racing every 10-second discovery timeout
+Unlike a developer's own real desktop (where a running session already sets `IsEnabled` true well before any test runs), nothing on a fresh, headless `dbus-run-session` ever flips it -- `accesskit_unix`'s adapter only activates (embeds into the registry) once it observes that property become true. The `test` job's round-trip test happened to still pass because activation apparently completes just under 10 seconds even from cold, but `canvas_accessibility_demo` -- running later in a job under heavier load (many prior Vulkan examples, `xvfb-run` overhead) -- missed the same race outright.
+
+**Change:** both the `test` and `vulkan-validation` CI jobs now explicitly set `org.a11y.Status.IsEnabled` to `true` via a real `dbus-send org.freedesktop.DBus.Properties.Set` call, inside the same `dbus-run-session` invocation, before running anything that depends on it -- removing the race outright rather than widening the timeout and hoping. Verified as an isolated, syntactically-correct D-Bus call locally (`exit: 0`, `get-property` echoing back `true`); the full effect on the actual hosted runner is confirmed by the next real push and CI run, matching this project's own established "disclose, then let the real CI run confirm" practice for exactly this class of environment-specific gap (Step 5.3.2's own docs already used this same honest framing).
+
+## Summary table (Phase 5 Step 5.3.3 CI Verification)
+
+| # | Finding | Doc(s)/Code | Severity | Resolution |
+|---|---|---|---|---|
+| 126 | Fresh CI `at-spi2-registryd` starts with `IsEnabled` false, racing both jobs' 10s discovery timeouts | .github/workflows/ci.yml | Should-fix | Fixed — both jobs now explicitly set `IsEnabled=true` via `dbus-send` before running |

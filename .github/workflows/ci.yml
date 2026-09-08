@@ -95,7 +95,22 @@ jobs:
             libwayland-dev libxcb1-dev glslc libfontconfig1-dev \
             fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
             dbus-user-session at-spi2-core
-      - run: dbus-run-session -- cargo test --workspace
+      # Real finding from this workflow's own first live run (Step
+      # 5.3.3, 2026-09-08): a freshly D-Bus-activated at-spi2-registryd
+      # on this runner starts with org.a11y.Status.IsEnabled false (no
+      # desktop session ever flips it, unlike a developer's own real
+      # desktop) -- the round-trip test happened to still pass, but only
+      # by reaching IsEnabled=true within a hair of its own 10s
+      # deadline, while canvas_accessibility_demo below (running later,
+      # under more system load) missed the same race entirely. Setting
+      # it explicitly removes the race outright rather than hoping the
+      # timeout is wide enough.
+      - run: |
+          dbus-run-session -- bash -c '
+            dbus-send --session --type=method_call --dest=org.a11y.Bus /org/a11y/bus \
+              org.freedesktop.DBus.Properties.Set string:org.a11y.Status string:IsEnabled variant:boolean:true
+            cargo test --workspace
+          '
       # Phase 4 Step 4.2.2: no GPU/Vulkan involved at all -- MSDF
       # generation is pure CPU, so this runs as a plain example here
       # rather than in the vulkan-validation job below.
@@ -156,5 +171,13 @@ jobs:
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_sub_canvas_demo
       # Only this demo needs a real AT-SPI2 bus, so only its own run line
       # is wrapped in dbus-run-session -- every other line above is a
-      # plain xvfb-run, unaffected.
-      - run: dbus-run-session -- xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_accessibility_demo
+      # plain xvfb-run, unaffected. See the `test` job's own comment
+      # above for why org.a11y.Status.IsEnabled is set explicitly here
+      # too, a real fix (not a guess) for this exact demo's own first
+      # live CI failure.
+      - run: |
+          dbus-run-session -- bash -c '
+            dbus-send --session --type=method_call --dest=org.a11y.Bus /org/a11y/bus \
+              org.freedesktop.DBus.Properties.Set string:org.a11y.Status string:IsEnabled variant:boolean:true
+            xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_accessibility_demo
+          '
