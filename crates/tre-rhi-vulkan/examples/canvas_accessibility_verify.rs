@@ -22,6 +22,47 @@ use zbus::{
     zvariant::OwnedObjectPath,
 };
 
+/// Real, upstream-confirmed root cause (REVIEW.md finding #126's final
+/// account, after nine real CI pushes and two disproven hypotheses):
+/// `org.a11y.Status.IsEnabled` is not a simple flag an application can
+/// set -- reading `at-spi-bus-launcher.c`'s own real source
+/// (`on_event_listener_registered`) shows it flips true only when
+/// `at-spi2-registryd` emits a real `EventListenerRegistered` D-Bus
+/// signal, which only happens when some real client calls
+/// `org.a11y.atspi.Registry.RegisterEvent`. A real desktop session
+/// already has some component that has done this at some point (a
+/// screen reader, an accessibility-aware background service); a fresh
+/// CI container has nothing that ever does, so `IsEnabled` never flips
+/// and `accesskit_unix`'s own adapter -- which only activates upon
+/// observing that transition -- waits forever, regardless of timeout
+/// length. This is exactly what a real assistive technology does on
+/// startup, so registering here is not a workaround -- it is this
+/// binary honestly playing the AT role it already occupies by querying
+/// the tree at all.
+fn ensure_accessibility_enabled(bus: &Connection) {
+    let registry = Proxy::new(
+        bus,
+        "org.a11y.atspi.Registry",
+        "/org/a11y/atspi/registry",
+        "org.a11y.atspi.Registry",
+    )
+    .expect("failed to build registry event proxy");
+    registry
+        .call::<_, _, ()>("RegisterEvent", &("object:state-changed",))
+        .expect("Registry.RegisterEvent failed");
+
+    let status = Proxy::new(bus, "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Status")
+        .expect("failed to build status proxy");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        if status.get_property::<bool>("IsEnabled").unwrap_or(false) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    panic!("org.a11y.Status.IsEnabled never became true within 10s of RegisterEvent");
+}
+
 fn a11y_bus() -> Connection {
     let session = Connection::session().expect("failed to connect to the D-Bus session bus");
     let bus_proxy = Proxy::new(&session, "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus")
@@ -195,6 +236,13 @@ fn main() {
     // background thread to open its own session/a11y-bus connection --
     // matching tre-a11y's own round-trip test's exact call order.
     let bus = a11y_bus();
+    // Must happen before A11yBridge::connect, and must confirm
+    // IsEnabled is already true before returning: accesskit_unix's own
+    // adapter only activates on *observing* IsEnabled transition to
+    // true, so starting it only after this function confirms the
+    // property already reads true avoids any risk of it missing a
+    // transition that already happened.
+    ensure_accessibility_enabled(&bus);
     let bridge = tre_a11y::A11yBridge::connect(
         "tre-canvas-accessibility-demo",
         toolkit_name.clone(),

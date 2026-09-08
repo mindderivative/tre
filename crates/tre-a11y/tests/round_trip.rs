@@ -26,6 +26,47 @@ fn a11y_bus() -> Option<Connection> {
         .ok()
 }
 
+/// Real, upstream-confirmed mechanism (REVIEW.md finding #126's final
+/// account): `org.a11y.Status.IsEnabled` flips true only when
+/// `at-spi2-registryd` emits a real `EventListenerRegistered` signal,
+/// which only happens when some real client calls
+/// `org.a11y.atspi.Registry.RegisterEvent` (confirmed by reading
+/// `at-spi-bus-launcher.c`'s own real source). Neither `accesskit_unix`
+/// nor `accesskit_atspi_common` ever call this themselves. A real
+/// desktop session usually already has some component that has done
+/// this at some point; this makes it true unconditionally rather than
+/// relying on that ambient state, matching what a real assistive
+/// technology does on startup anyway. Returns `false` (not a panic) so
+/// the caller can skip gracefully, matching this test's own established
+/// convention for an environment that doesn't cooperate.
+fn ensure_accessibility_enabled(bus: &Connection) -> bool {
+    let Ok(registry) = Proxy::new(
+        bus,
+        "org.a11y.atspi.Registry",
+        "/org/a11y/atspi/registry",
+        "org.a11y.atspi.Registry",
+    ) else {
+        return false;
+    };
+    if registry
+        .call::<_, _, ()>("RegisterEvent", &("object:state-changed",))
+        .is_err()
+    {
+        return false;
+    }
+    let Ok(status) = Proxy::new(bus, "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Status") else {
+        return false;
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        if status.get_property::<bool>("IsEnabled").unwrap_or(false) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    false
+}
+
 /// Polls the real registry for our app, identified by `toolkit_name`,
 /// for up to `timeout` -- embedding happens asynchronously on
 /// `accesskit_unix`'s own background thread, so this is a real,
@@ -72,6 +113,10 @@ fn published_node_is_queryable_over_a_real_atspi2_round_trip() {
         eprintln!("no real AT-SPI2 accessibility bus reachable in this environment -- skipping");
         return;
     };
+    if !ensure_accessibility_enabled(&bus) {
+        eprintln!("could not make org.a11y.Status.IsEnabled true in this environment -- skipping");
+        return;
+    }
 
     let toolkit_name = format!(
         "tre-a11y-round-trip-test-{}-{}",
@@ -116,7 +161,7 @@ fn published_node_is_queryable_over_a_real_atspi2_round_trip() {
         else {
             keep_publishing.store(false, std::sync::atomic::Ordering::Relaxed);
             eprintln!(
-                "our app never appeared in the real AT-SPI2 registry within 10s -- skipping \
+                "our app never appeared in the real AT-SPI2 registry within 60s -- skipping \
                  (no assistive-technology-enabled session reachable in this environment)"
             );
             return;
