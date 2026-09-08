@@ -180,12 +180,37 @@ jobs:
     # own source. Both real fix attempts based on this (wait longer;
     # retry the call ~150 times over 30s, in case the signal itself was
     # simply lost before a subscriber was ready) still left `IsEnabled`
-    # false the entire time. The mechanism, confirmed via real source
-    # reading, is not in question; something about its real behavior in
-    # this specific container still isn't understood. This step is
-    # diagnostic only -- it does not attempt a fix -- capturing the real
-    # D-Bus wire traffic and process state during a real failing run so
-    # the next real step is based on direct evidence.
+    # false the entire time.
+    #
+    # A user-approved diagnostic-only step (no fix attempted) then
+    # captured the real D-Bus wire traffic, process list, and live bus
+    # connections during a real failing run (REVIEW.md #126, ninth
+    # push). Real findings: RegisterEvent/EventListenerRegistered
+    # genuinely work on the wire -- at-spi2-registryd answers every one
+    # of our ~150 calls -- but at-spi-bus-launcher, though alive and
+    # running (confirmed via ps aux, having correctly spawned the a11y
+    # bus's own dbus-daemon), never appears as a connected client on
+    # that bus at all. Reading at-spi-bus-launcher.c's own real source
+    # explains why: exactly one function, ensure_a11y_bus(), ever
+    # subscribes to EventListenerRegistered, on a second connection the
+    # launcher makes to the bus it just spawned; it runs at most once,
+    # triggered here by the very first GetAddress call (its other,
+    # eager trigger needs a --launch-immediately flag that D-Bus's own
+    # activation never passes); if that one connection attempt fails,
+    # the only consequence is a single g_critical log line -- no retry,
+    # no crash -- which a purely D-Bus-activated process never surfaces
+    # to anything captured so far. This also rules out an earlier
+    # gsettings-desktop-schemas theory: a failed schema lookup would
+    # g_error()-abort the whole process, contradicting ps aux showing it
+    # alive throughout. The one open question -- this same code path
+    # passes reliably in the test job's own round-trip test -- means
+    # whatever fails here isn't universal to the runner image, only to
+    # how it's triggered in this job. The new step below remains
+    # diagnostic only: it launches at-spi-bus-launcher directly (so its
+    # own stdout/stderr, with G_MESSAGES_DEBUG=all, is finally visible
+    # instead of vanishing into D-Bus's own activation plumbing) to
+    # capture the one piece of evidence still missing before any further
+    # fix is attempted.
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
@@ -215,4 +240,25 @@ jobs:
             ps aux | grep -iE "a11y|spi|dbus" | grep -v grep
             echo "=== busctl list on the real a11y bus ==="
             busctl --address "$ADDR" list 2>&1 || true
+          '
+      - name: Directly capture at-spi-bus-launchers own stderr (no fix attempted here)
+        run: |
+          dbus-run-session -- bash -c '
+            export G_MESSAGES_DEBUG=all
+            /usr/libexec/at-spi-bus-launcher --launch-immediately > /tmp/bus-launcher.log 2>&1 &
+            LAUNCHER_PID=$!
+            sleep 2
+            echo "=== at-spi-bus-launcher stdout/stderr, G_MESSAGES_DEBUG=all (before GetAddress) ==="
+            cat /tmp/bus-launcher.log
+            echo "=== is at-spi-bus-launcher still alive? ==="
+            ps -p "$LAUNCHER_PID" -o pid,cmd || echo "process $LAUNCHER_PID is no longer running"
+            ADDR=$(dbus-send --session --print-reply --dest=org.a11y.Bus /org/a11y/bus org.a11y.Bus.GetAddress | tail -1 | sed "s/.*string \"\\(.*\\)\"/\\1/")
+            echo "a11y bus address: $ADDR"
+            sleep 1
+            echo "=== at-spi-bus-launcher stdout/stderr (after GetAddress) ==="
+            cat /tmp/bus-launcher.log
+            echo "=== busctl list on the real a11y bus (launch-immediately) ==="
+            busctl --address "$ADDR" list 2>&1 || true
+            kill "$LAUNCHER_PID" 2>/dev/null || true
+            wait "$LAUNCHER_PID" 2>/dev/null || true
           '
