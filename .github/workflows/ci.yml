@@ -211,6 +211,17 @@ jobs:
     # instead of vanishing into D-Bus's own activation plumbing) to
     # capture the one piece of evidence still missing before any further
     # fix is attempted.
+    #
+    # That capture (twelfth push) logged a clean startup all the way
+    # through reading the bus address -- including the dconf/GSettings
+    # backend loading successfully, ruling the gsettings-desktop-schemas
+    # theory out for good -- then nothing: no g_critical, no success
+    # trace, and busctl list again showed no connection, this time with
+    # at-spi2-registryd never even activated. That run only checked
+    # liveness once, before the self-connect would run, so a late silent
+    # death after reading the address couldn't be told apart from a
+    # silent no-op. This step now re-checks liveness and captures the
+    # real wait exit status immediately before the final busctl list.
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
@@ -250,15 +261,31 @@ jobs:
             sleep 2
             echo "=== at-spi-bus-launcher stdout/stderr, G_MESSAGES_DEBUG=all (before GetAddress) ==="
             cat /tmp/bus-launcher.log
-            echo "=== is at-spi-bus-launcher still alive? ==="
-            ps -p "$LAUNCHER_PID" -o pid,cmd || echo "process $LAUNCHER_PID is no longer running"
+            echo "=== is at-spi-bus-launcher still alive (before GetAddress)? ==="
+            ps -p "$LAUNCHER_PID" -o pid,stat,cmd || echo "process $LAUNCHER_PID is no longer running"
             ADDR=$(dbus-send --session --print-reply --dest=org.a11y.Bus /org/a11y/bus org.a11y.Bus.GetAddress | tail -1 | sed "s/.*string \"\\(.*\\)\"/\\1/")
             echo "a11y bus address: $ADDR"
             sleep 1
             echo "=== at-spi-bus-launcher stdout/stderr (after GetAddress) ==="
             cat /tmp/bus-launcher.log
+            echo "=== is at-spi-bus-launcher still alive (immediately before busctl list)? ==="
+            if ps -p "$LAUNCHER_PID" -o pid,stat,cmd; then
+              echo "still alive -- the self-connect produced no visible busctl connection while the process stayed up"
+              STILL_ALIVE=1
+            else
+              echo "already gone -- it exited on its own some time after reading the bus address"
+              STILL_ALIVE=0
+            fi
             echo "=== busctl list on the real a11y bus (launch-immediately) ==="
             busctl --address "$ADDR" list 2>&1 || true
-            kill "$LAUNCHER_PID" 2>/dev/null || true
-            wait "$LAUNCHER_PID" 2>/dev/null || true
+            if [ "$STILL_ALIVE" = "0" ]; then
+              echo "=== real exit status of at-spi-bus-launcher (it already exited on its own, not from us) ==="
+              wait "$LAUNCHER_PID"
+              echo "wait reported exit code: $?"
+            else
+              echo "=== killing at-spi-bus-launcher ourselves and reporting the resulting exit status ==="
+              kill "$LAUNCHER_PID" 2>/dev/null || true
+              wait "$LAUNCHER_PID" 2>/dev/null
+              echo "wait reported exit code (after our own kill): $?"
+            fi
           '
