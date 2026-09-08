@@ -362,6 +362,15 @@ fn main() {
             .unwrap()
             .as_nanos()
     );
+    // Connect our OWN verifying client to the real a11y bus before
+    // A11yBridge::connect below triggers accesskit_unix's own internal
+    // background thread to open its own session/a11y-bus connection --
+    // matching tre-a11y's own round-trip test's exact call order.
+    // Reversing this order (tried first, during this demo's own initial
+    // development) made this connection fail with a real, repeatable
+    // `ConnectionRefused` on a freshly-activated at-spi-bus-launcher, a
+    // real connection race between two near-simultaneous first clients.
+    let bus = a11y_bus();
     let bridge = tre_a11y::A11yBridge::connect(
         "tre-canvas-accessibility-demo",
         toolkit_name.clone(),
@@ -392,9 +401,15 @@ fn main() {
         });
         let _stop_guard = StopOnDrop(&keep_publishing);
 
-        let bus = a11y_bus();
-        let (app_bus, app_root) = find_our_app(&bus, &toolkit_name, Duration::from_secs(10))
-            .expect("our app never appeared in the real AT-SPI2 registry within 10s");
+        // 10s was cutting it too close on a real GitHub-hosted runner:
+        // two consecutive real CI runs (2026-09-08) showed this
+        // discovery consistently taking ~10.05s there, identical
+        // whether or not org.a11y.Status.IsEnabled was explicitly
+        // forced true beforehand (ruling that out as the actual cause)
+        // -- 30s gives real, evidence-based margin over both observed
+        // worst cases rather than a blind guess.
+        let (app_bus, app_root) = find_our_app(&bus, &toolkit_name, Duration::from_secs(30))
+            .expect("our app never appeared in the real AT-SPI2 registry within 30s");
 
         let app_accessible = Proxy::new(
             &bus,

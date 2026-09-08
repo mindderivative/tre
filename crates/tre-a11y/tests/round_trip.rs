@@ -103,7 +103,14 @@ fn published_node_is_queryable_over_a_real_atspi2_round_trip() {
             }
         });
 
-        let Some((app_bus, app_root)) = find_our_app(&bus, &toolkit_name, Duration::from_secs(10))
+        // 10s was cutting it too close on a real GitHub-hosted runner:
+        // two consecutive real CI runs (Step 5.3.3's own CI follow-up,
+        // 2026-09-08) showed this discovery consistently taking ~10.05s
+        // there (identical whether or not org.a11y.Status.IsEnabled was
+        // explicitly forced true beforehand, ruling that out as the
+        // actual cause) -- 30s gives real, evidence-based margin over
+        // the two observed worst cases rather than a blind guess.
+        let Some((app_bus, app_root)) = find_our_app(&bus, &toolkit_name, Duration::from_secs(30))
         else {
             keep_publishing.store(false, std::sync::atomic::Ordering::Relaxed);
             eprintln!(
