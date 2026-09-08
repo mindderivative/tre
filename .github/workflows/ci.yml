@@ -220,8 +220,22 @@ jobs:
     # at-spi2-registryd never even activated. That run only checked
     # liveness once, before the self-connect would run, so a late silent
     # death after reading the address couldn't be told apart from a
-    # silent no-op. This step now re-checks liveness and captures the
-    # real wait exit status immediately before the final busctl list.
+    # silent no-op.
+    #
+    # The liveness re-check (thirteenth push) ruled that out too: process
+    # state Sl (healthy sleep, not a zombie) immediately before busctl
+    # list, and a clean exit-code-0 shutdown when we killed it ourselves
+    # afterward (matching its own real SIGTERM handler), not a crash.
+    # Alive, responsive, no logged error, still no visible bus
+    # connection -- nothing left in GLib's own message log explains this.
+    # G_MESSAGES_DEBUG only controls log verbosity; G_DBUS_DEBUG is the
+    # separate, GDBus-specific variable that traces the actual wire-level
+    # authentication handshake, which the process's own debug output
+    # already flags as a named, version-gated risk for connections shaped
+    # exactly like this self-connect ("cross-namespace EXTERNAL
+    # authentication ... will deadlock if server is GDBus < 2.73.3").
+    # This step now adds it, scoped to authentication/connection/call/
+    # address rather than the full message/payload firehose.
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
@@ -256,10 +270,11 @@ jobs:
         run: |
           dbus-run-session -- bash -c '
             export G_MESSAGES_DEBUG=all
+            export G_DBUS_DEBUG=authentication,connection,call,address
             /usr/libexec/at-spi-bus-launcher --launch-immediately > /tmp/bus-launcher.log 2>&1 &
             LAUNCHER_PID=$!
             sleep 2
-            echo "=== at-spi-bus-launcher stdout/stderr, G_MESSAGES_DEBUG=all (before GetAddress) ==="
+            echo "=== at-spi-bus-launcher stdout/stderr, G_MESSAGES_DEBUG=all + G_DBUS_DEBUG=authentication,connection,call,address (before GetAddress) ==="
             cat /tmp/bus-launcher.log
             echo "=== is at-spi-bus-launcher still alive (before GetAddress)? ==="
             ps -p "$LAUNCHER_PID" -o pid,stat,cmd || echo "process $LAUNCHER_PID is no longer running"
