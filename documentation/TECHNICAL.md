@@ -163,6 +163,26 @@ To maximize PCIe bandwidth, the primary UI vertex structure is tightly packed in
 
 * **Implementation status (Phase 3 Step 3.3.3, 2026-09-06):** the self-intersecting-path/`EvenOdd` case named above is real -- a two-pass stencil-and-cover technique (`VulkanDevice::create_stencil_and_cover_pipelines`), supporting both `NonZero` and `EvenOdd` fill rules (`tre_engine::FillRule`). Stencil support is now a permanent part of the shared per-frame RHI surface: every swapchain owns its own stencil image (sized to its own extent), `begin_frame` always attaches it, and every pipeline (including ordinary flat-color/SDF ones) declares a compatible stencil format, matching the "declared everywhere, unused where not referenced" precedent already used for the bindless descriptor set. `tre-svg`'s `fan_triangles`/`bounding_box` supply the CPU-side geometry -- an anchor-based fan that makes no validity assumption at all, unlike `triangulate`, since overlap and self-intersection are exactly what the GPU's stencil accumulation resolves correctly. Fixing this step's own verification demo surfaced a genuine gap in Step 3.3.1's `triangulate`: its ear-validity checks only ever compare a candidate diagonal against the boundary still remaining *during* clipping, which does not by itself guarantee catching every self-intersecting *original* polygon (a classic pentagram clipped cleanly with no diagonal ever conflicting, silently producing a wrong triangulation instead of an error) -- fixed with an explicit, global `has_self_intersection` pre-check run once before clipping starts.
 
+### 5.5 Dual-Kawase Blur
+
+* **Downsample filter (5-tap):** for a destination texel at `uv`, sampling a source texture whose own texel size is `halfpixel = 0.5 / source_dimensions`:
+
+  $$
+  C_{\text{down}}(uv) = \frac{4 \cdot C(uv) + C(uv - h) + C(uv + h) + C(uv + (h_x, -h_y)) + C(uv - (h_x, -h_y))}{8}
+  $$
+
+  where $h = \text{halfpixel}$. The center sample is weighted 4x the four diagonal taps combined (each diagonal tap weight 1), summed and divided by 8.
+
+* **Upsample filter (8-tap ring, no center sample):** for a destination texel at `uv`, sampling a source texture (the next-smaller level) whose own texel size is `halfpixel`:
+
+  $$
+  C_{\text{up}}(uv) = \frac{C(uv{-}(2h_x,0)) + 2C(uv{-}(h_x,{-}h_y)) + C(uv{+}(0,2h_y)) + 2C(uv{+}(h_x,h_y)) + C(uv{+}(2h_x,0)) + 2C(uv{+}(h_x,{-}h_y)) + C(uv{-}(0,2h_y)) + 2C(uv{-}(h_x,h_y))}{12}
+  $$
+
+  The four axis-aligned taps (at `2*halfpixel` offsets) are weighted 1 each; the four diagonal taps (at `halfpixel` offsets) are weighted 2 each; no center sample is taken. Sum divided by 12.
+
+* **The standard, widely-cited Dual-Kawase technique** (Marius Bjørge, "Bandwidth-Efficient Rendering," SIGGRAPH 2015 Mobile Graphics and Games course) -- iteratively halving resolution on the way down and doubling back up trades a large-radius single-pass Gaussian blur's own bandwidth cost for a chain of small, fixed-tap-count passes at progressively smaller (then larger) resolutions, each pass touching far fewer texels in total. This is the canonical formula -- IMPLEMENTATION.md Step 7.2.1 references it rather than restating it.
+
 ## 6. Color Management & HDR Specifications
 
 ### 6.1 Swapchain Formats

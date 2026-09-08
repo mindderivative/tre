@@ -1226,6 +1226,80 @@ unrelated `accessibility-validation` CI gate (REVIEW.md finding #126).
 
 * **Technical Rationale:** The Dual-Kawase approach slashes memory bandwidth by iteratively reducing texture sizes, massively outperforming large-radius, single-pass Gaussian blurs.
 
+### Step 7.2.1: Real Dual-Kawase Blur RHI Capability -- Status: STOPPED, real blocker found and precisely documented (2026-09-08); Step not closed
+
+Split from Step 7.2 after real investigation found genuinely new
+shader/algorithm surface was needed and a real semantic fork (own-
+content vs. true backdrop blur) DESIGN.md doesn't resolve on its own --
+confirmed with the project owner via AskUserQuestion: split into
+7.2.1/7.2.2, own-content blur only, true backdrop sampling explicitly
+deferred (`planning/archive/PLAN_PHASE7_STEP7_2_1.md`).
+
+Real investigation before writing any code found the split's own
+initial framing overstated how much new RHI surface was needed: `begin_
+render_to_texture`'s own existing implementation already ends whatever
+rendering scope is active before beginning the next, so a real, chained
+downsample/upsample sequence needs no new trait methods at all in
+principle -- just correct sequencing of Step 6.4.1's own existing calls,
+plus two new shaders (`kawase_downsample.frag`/`kawase_upsample.frag`,
+TECHNICAL.md Section 5.5's own new canonical formula, paired with the
+existing `bindless_textured.vert` unchanged).
+
+**A real bug was found and fixed while building the first real demo.**
+Chaining `end_render_to_texture(previous)` directly into `begin_render_
+to_texture(next)` calls `cmd_end_rendering` twice for one active
+rendering scope -- the second call finds nothing active, a real Vulkan
+validation error. Fixed by adding `RhiCommandBuffer::begin_render_to_
+texture_no_end` (identical to `begin_render_to_texture` except it never
+calls `cmd_end_rendering` first), paired with a plain `end_render_to_
+texture` call immediately before it. A first, combined design
+(`chain_render_to_texture`, doing both the end-and-barrier and the next
+begin in one call) was tried and reverted: it left no point between "the
+previous texture is sampling-ready" and "the next render pass is already
+active" to call `RhiDevice::register_bindless`, and calling it while a
+pass *was* active turned out to matter (see below) -- this method's own
+design was corrected mid-implementation once that was discovered, not
+silently forced through.
+
+**A second, deeper real bug was found and, after extensive
+investigation, could not be resolved -- REVIEW.md finding #130 has the
+full account.** Sampling a bindless texture (via the exact same,
+already-proven `bindless_textured.frag` sampling expression Step 2.1/
+6.4.1 already established) while the *active render target* is an
+offscreen texture (reached via `begin_render_to_texture`/`begin_render_
+to_texture_no_end`, rather than `resume_swapchain_rendering`) reads back
+all-zero data on real hardware, with no validation error of any kind.
+Twelve independent hypotheses were each directly tested and ruled out --
+the double-`cmd_end_rendering` bug above; `register_bindless` timing
+relative to an active render pass; `nonuniformEXT` decoration loss
+through a local variable or function parameter; the 5-tap/8-tap
+averaging math itself; descriptor-index reuse within one frame;
+render-target format; render-target size; the shader source file itself
+(the real, working `bindless_textured.frag`, swapped in unmodified,
+*also* fails under this exact condition); whether `frag_uv`/
+`pc.texture_index` reach the shader correctly (confirmed via direct
+color visualization); descriptor-indexing device features (confirmed
+enabled); and the pipeline/render-pass/compositing machinery itself
+(confirmed working via a hardcoded, texture-independent color output).
+No prior code in this project has ever exercised "sample a bindless
+texture while rendering into a *different*, non-swapchain target" --
+every existing bindless-sampling call happens while rendering into the
+swapchain (`render_to_texture_demo.rs`'s own composite step included).
+
+**Not fixed. Explicitly stopped, not silently abandoned.**
+`begin_render_to_texture_no_end` is real, independently correct, and
+kept -- verified via all 24 pre-existing Vulkan demos re-run manually,
+zero regressions, since nothing existing calls it yet. `dual_kawase_
+blur_demo.rs` and the two new shaders are kept as a real, precisely-
+documented reproduction case for future debugging with a real GPU
+frame-capture tool (e.g. RenderDoc), beyond what this session's own
+CLI-based investigation could resolve -- deliberately **not** added to
+`ci.yml`, since it currently fails its own real pixel assertions.
+TECHNICAL.md Section 5.5's canonical Dual-Kawase formula is unaffected
+and remains correct regardless of this blocker. Step 7.2.1 is not
+closed; Step 7.2.2 (wiring to `push_layer`/`pop_layer`) cannot proceed
+until this is resolved.
+
 ## Phase 8: Main Event Loop & The 8-Stage Render Pipeline
 
 ### Step 8.1: Loop Orchestration & Frame Timing

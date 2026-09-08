@@ -2746,6 +2746,98 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
         }
     }
 
+    fn begin_render_to_texture_no_end(&mut self, texture: &dyn RhiTexture) {
+        // IMPLEMENTATION.md Step 7.2.1: identical to `begin_render_to_
+        // texture` above except it never calls `cmd_end_rendering` first
+        // -- the caller's own contract (that method's doc comment) is
+        // that nothing is currently active, having just called `end_
+        // render_to_texture` on the previous level. A first design tried
+        // combining that end-and-barrier step with this begin into one
+        // call (`chain_render_to_texture`) but left no point to call
+        // `RhiDevice::register_bindless` with no render pass active --
+        // every proven-working caller of that method needs exactly that,
+        // and calling it while a pass *was* active produced fully wrong
+        // sampled output on real hardware. Reverted in favor of this
+        // smaller, separate method, used together with a plain `end_
+        // render_to_texture` call immediately before it.
+        let image = vk::Image::from_raw(texture.image_handle());
+        let view = vk::ImageView::from_raw(texture.raw_handle());
+        let (width, height) = texture.dimensions();
+
+        let barrier = vk::ImageMemoryBarrier::default()
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .src_access_mask(vk::AccessFlags::empty())
+            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+            .image(image)
+            .subresource_range(
+                vk::ImageSubresourceRange::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .level_count(1)
+                    .layer_count(1),
+            );
+
+        let color_attachment = vk::RenderingAttachmentInfo::default()
+            .image_view(view)
+            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .clear_value(vk::ClearValue {
+                color: vk::ClearColorValue {
+                    float32: [0.0, 0.0, 0.0, 0.0],
+                },
+            });
+        let color_attachments = [color_attachment];
+        let rendering_info = vk::RenderingInfo::default()
+            .render_area(vk::Rect2D {
+                offset: vk::Offset2D::default(),
+                extent: vk::Extent2D { width, height },
+            })
+            .layer_count(1)
+            .color_attachments(&color_attachments);
+
+        // SAFETY: `self.command_buffer` is recording, with no rendering
+        // scope currently active (this method's own contract, above);
+        // `image`/`view` come from `texture`, guaranteed live by
+        // `RhiTexture`'s own contract, same as `begin_render_to_texture`.
+        unsafe {
+            self.device.cmd_pipeline_barrier(
+                self.command_buffer,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[barrier],
+            );
+            self.dynamic_rendering
+                .cmd_begin_rendering(self.command_buffer, &rendering_info);
+            self.device.cmd_set_viewport(
+                self.command_buffer,
+                0,
+                &[vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: width as f32,
+                    height: height as f32,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                }],
+            );
+            self.device.cmd_set_scissor(
+                self.command_buffer,
+                0,
+                &[vk::Rect2D {
+                    offset: vk::Offset2D::default(),
+                    extent: vk::Extent2D { width, height },
+                }],
+            );
+        }
+
+        self.width = width;
+        self.height = height;
+    }
+
     fn resume_swapchain_rendering(&mut self) {
         let color_attachment = vk::RenderingAttachmentInfo::default()
             .image_view(self.swapchain_color_view)

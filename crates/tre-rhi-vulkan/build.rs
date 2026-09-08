@@ -68,4 +68,17 @@ fn main() {
     // MSDF sampling needs, and this build script already compiles every
     // shader file independently rather than as fixed vert/frag pairs.
     compile_shader("shaders/msdf.frag", "msdf.frag.spv", &out_dir);
+    // Phase 7 Step 7.2.1: the real Dual-Kawase blur downsample/upsample
+    // shaders (TECHNICAL.md Section 5.5) -- also paired with the
+    // existing `bindless_textured.vert`, same reasoning as `msdf.frag`.
+    compile_shader(
+        "shaders/kawase_downsample.frag",
+        "kawase_downsample.frag.spv",
+        &out_dir,
+    );
+    compile_shader(
+        "shaders/kawase_upsample.frag",
+        "kawase_upsample.frag.spv",
+        &out_dir,
+    );
 }

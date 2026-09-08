@@ -2264,6 +2264,34 @@ pub trait RhiCommandBuffer {
     /// afterward (e.g. via `RhiDevice::register_bindless` then
     /// `bind_texture`).
     fn end_render_to_texture(&mut self, texture: &dyn RhiTexture);
+    /// Begins a new rendering scope targeting `texture`, cleared to
+    /// transparent black -- identical to `begin_render_to_texture`
+    /// except it never calls `cmd_end_rendering` first, because nothing
+    /// is currently active to end.
+    ///
+    /// Exists specifically for chaining multiple render-to-texture
+    /// passes back to back (IMPLEMENTATION.md Step 7.2.1's own
+    /// Dual-Kawase downsample/upsample levels), used together with a
+    /// plain `end_render_to_texture(previous)` call immediately before
+    /// it -- **not** `begin_render_to_texture(texture)` directly, which
+    /// would call `cmd_end_rendering` a second time for the one scope
+    /// `end_render_to_texture` already ended, a real Vulkan validation
+    /// error found by actually running Step 7.2.1's own first demo.
+    ///
+    /// A first, combined `chain_render_to_texture(ending, beginning)`
+    /// design (one call doing both the end-and-barrier and the next
+    /// begin) was tried and reverted during this same step's own
+    /// implementation: it left no point between "the previous texture is
+    /// in a sampling-ready layout" and "the next render pass is already
+    /// active" to call `RhiDevice::register_bindless` -- every proven
+    /// working caller of that method (Step 6.4.1's own single-level
+    /// flow) calls it with *no* render pass active, and calling it while
+    /// one *is* active (as the combined design forced) produced fully
+    /// transparent/wrong sampled output on real hardware, not a
+    /// validation error -- caught only by a real GPU pixel check, not
+    /// design review. This split keeps every call's own preconditions
+    /// identical to the already-proven single-level usage.
+    fn begin_render_to_texture_no_end(&mut self, texture: &dyn RhiTexture);
     /// Resumes rendering into the swapchain image `RhiDevice::begin_frame`
     /// originally set up, preserving whatever it already had drawn --
     /// unlike `begin_render_to_texture`, this never clears.
@@ -3951,6 +3979,7 @@ mod tests {
         DrawIndexed(u32, u32, i32),
         BeginRenderToTexture(u64),
         EndRenderToTexture(u64),
+        BeginRenderToTextureNoEnd(u64),
         ResumeSwapchainRendering,
         AcquireTransientTarget(u32, u32),
         RegisterBindless(u64),
@@ -4004,6 +4033,12 @@ mod tests {
         fn end_render_to_texture(&mut self, texture: &dyn RhiTexture) {
             self.calls
                 .push(RecordedCall::EndRenderToTexture(texture.raw_handle()));
+        }
+
+        fn begin_render_to_texture_no_end(&mut self, texture: &dyn RhiTexture) {
+            self.calls.push(RecordedCall::BeginRenderToTextureNoEnd(
+                texture.raw_handle(),
+            ));
         }
 
         fn resume_swapchain_rendering(&mut self) {
