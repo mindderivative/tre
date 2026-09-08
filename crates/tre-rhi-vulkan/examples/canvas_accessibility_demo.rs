@@ -19,6 +19,19 @@
 //! capstone, and already unit-tested for accessibility nodes specifically
 //! in Step 5.3.1) -- this sub-step closes new ground, not already-closed
 //! ground.
+//!
+//! Accessibility publish-and-verify runs *before* any Vulkan/window
+//! setup, not after: `tag_accessibility_node`'s own data comes entirely
+//! from `RenderingCanvas::flatten()`, a pure-CPU IR step with no GPU
+//! dependency at all, matching DESIGN.md Section 5's own "Decoupled
+//! from Rendering" framing literally, not just as an architectural
+//! label. A real, repeatable CI-only failure during this demo's own
+//! development (`accesskit_unix` never completing AT-SPI2 discovery
+//! specifically when a real Vulkan device/X11 window already existed in
+//! the process first, isolated by elimination after ruling out request
+//! ordering, `xvfb-run`'s own wrapper nesting, job-level CPU contention,
+//! and `org.a11y.Status.IsEnabled` forcing) is exactly why this ordering
+//! is load-bearing here, not merely stylistic.
 
 use std::{thread, time::Duration};
 
@@ -181,38 +194,9 @@ fn expected_atspi_extents(node: &AccessibilityNode) -> (i32, i32, i32, i32) {
 }
 
 fn main() {
-    // --- Real device/pipeline, matching sdf_rounded_rect_demo's own
-    // minimal single-pipeline setup exactly -- no atlas/text needed ---
-    let mut probe_connection =
-        tre_platform::PlatformConnection::new().expect("failed to connect to display server");
-    let probe_window = probe_connection
-        .create_window("tre canvas accessibility probe (never shown)", 1, 1)
-        .expect("failed to open probe window");
-    use raw_window_handle::HasDisplayHandle;
-    let display_handle = probe_connection.display_handle().unwrap().as_raw();
-    let window_handle = probe_connection
-        .window_handle(probe_window)
-        .unwrap()
-        .as_raw();
-    let (device, surface_loader, surface) =
-        VulkanDevice::new(display_handle, window_handle).expect("failed to create VulkanDevice");
-    unsafe {
-        surface_loader.destroy_surface(surface, None);
-    }
-    let swapchain = HeadlessSwapchain::new(&device, CANVAS_WIDTH, CANVAS_HEIGHT)
-        .expect("failed to create HeadlessSwapchain");
-
-    let out_dir = env!("OUT_DIR");
-    let vertex_spv = std::fs::read(format!("{out_dir}/sdf_rounded_rect.vert.spv"))
-        .expect("failed to read compiled vertex shader");
-    let fragment_spv = std::fs::read(format!("{out_dir}/sdf_rounded_rect.frag.spv"))
-        .expect("failed to read compiled fragment shader");
-    let pipeline = device
-        .create_pipeline(&vertex_spv, &fragment_spv, tre_rhi_vulkan::HEADLESS_FORMAT)
-        .expect("failed to create pipeline");
-
     // --- The scene: each rect is drawn and tagged from the exact same
-    // local coordinates, one shared source of truth for both ---
+    // local coordinates, one shared source of truth for both -- pure
+    // CPU IR, no GPU/window dependency at all ---
     let white = rgba8(255, 255, 255, 255);
     let mut canvas = RenderingCanvas::new();
 
@@ -275,95 +259,9 @@ fn main() {
         "exactly 3 tagged nodes were recorded"
     );
 
-    // --- Real GPU render ---
-    let vertex_buffer = device
-        .upload_buffer(
-            bytemuck::cast_slice(&frame.vertices),
-            vk::BufferUsageFlags::VERTEX_BUFFER,
-        )
-        .expect("failed to upload vertex buffer");
-    let index_buffer = device
-        .upload_buffer(
-            bytemuck::cast_slice(&frame.indices),
-            vk::BufferUsageFlags::INDEX_BUFFER,
-        )
-        .expect("failed to upload index buffer");
-
-    let (mut cmd_buffer, image) = device.begin_frame(&swapchain).expect("begin_frame failed");
-    cmd_buffer.set_pipeline(&pipeline);
-    cmd_buffer.bind_vertex_buffer(&vertex_buffer, 0);
-    cmd_buffer.bind_index_buffer(&index_buffer, 0);
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "this demo's index count is far below u32::MAX"
-    )]
-    cmd_buffer.draw_indexed(frame.indices.len() as u32, 0, 0);
-    device
-        .submit_and_present(cmd_buffer, &swapchain, image)
-        .expect("submit_and_present failed");
-
-    let bgra = swapchain
-        .read_pixels_bgra8()
-        .expect("failed to read back pixels");
-    let pixel_at =
-        |x: u32, y: u32| -> [u8; 4] { pixel_helpers::bgra_pixel_at(&bgra, CANVAS_WIDTH, x, y) };
-    let background = pixel_at(0, 0);
-
-    // --- Pixel verification: rect A/B's own plain centers, and rect
-    // C's real transformed center -- computed via the exact same
-    // Affine2 used to draw and tag it, not an independently-guessed
-    // coordinate ---
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "this canvas's coordinates are fixed, well within [0, CANVAS_WIDTH/HEIGHT)"
-    )]
-    let to_pixel = |p: [f32; 2]| -> (u32, u32) { (p[0].round() as u32, p[1].round() as u32) };
-
-    let (ax, ay) = to_pixel([
-        RECT_A_ORIGIN.0 + RECT_SIZE.0 / 2.0,
-        RECT_A_ORIGIN.1 + RECT_SIZE.1 / 2.0,
-    ]);
-    assert_eq!(
-        pixel_at(ax, ay),
-        [255, 255, 255, 255],
-        "Rect A must render at its own center"
-    );
-
-    let (bx, by) = to_pixel([
-        RECT_B_ORIGIN.0 + RECT_SIZE.0 / 2.0,
-        RECT_B_ORIGIN.1 + RECT_SIZE.1 / 2.0,
-    ]);
-    assert_eq!(
-        pixel_at(bx, by),
-        [255, 255, 255, 255],
-        "Rect B must render at its own center"
-    );
-
-    let rect_c_center_world =
-        rect_c_transform.transform_point([RECT_SIZE.0 / 2.0, RECT_SIZE.1 / 2.0]);
-    let (cx, cy) = to_pixel(rect_c_center_world);
-    assert_eq!(
-        pixel_at(cx, cy),
-        [255, 255, 255, 255],
-        "rotated Rect C must render at its own real transformed center ({cx}, {cy})"
-    );
-
-    let (gap_x, gap_y) = to_pixel([
-        (RECT_A_ORIGIN.0 + RECT_SIZE.0 + RECT_B_ORIGIN.0) / 2.0,
-        RECT_A_ORIGIN.1 + RECT_SIZE.1 / 2.0,
-    ]);
-    assert_eq!(
-        pixel_at(gap_x, gap_y),
-        background,
-        "the gap between Rect A and Rect B must stay background"
-    );
-    eprintln!(
-        "pixel level: all 3 rects (including rotated Rect C) rendered at their real transformed \
-         positions -- OK"
-    );
-
-    // --- Real accessibility publish, real AT-SPI2 verification ---
+    // --- Real accessibility publish, real AT-SPI2 verification --
+    // deliberately before any Vulkan/window setup below, see this
+    // file's own top-level doc comment for why ---
     let toolkit_name = format!(
         "tre-canvas-accessibility-demo-{}-{}",
         std::process::id(),
@@ -519,6 +417,124 @@ fn main() {
     eprintln!(
         "accessibility level: all 3 tagged nodes' real AT-SPI2 bounds match the IR exactly, and \
          each rect's role stayed distinct end to end -- OK"
+    );
+
+    // --- Real device/pipeline, matching sdf_rounded_rect_demo's own
+    // minimal single-pipeline setup exactly -- no atlas/text needed ---
+    let mut probe_connection =
+        tre_platform::PlatformConnection::new().expect("failed to connect to display server");
+    let probe_window = probe_connection
+        .create_window("tre canvas accessibility probe (never shown)", 1, 1)
+        .expect("failed to open probe window");
+    use raw_window_handle::HasDisplayHandle;
+    let display_handle = probe_connection.display_handle().unwrap().as_raw();
+    let window_handle = probe_connection
+        .window_handle(probe_window)
+        .unwrap()
+        .as_raw();
+    let (device, surface_loader, surface) =
+        VulkanDevice::new(display_handle, window_handle).expect("failed to create VulkanDevice");
+    unsafe {
+        surface_loader.destroy_surface(surface, None);
+    }
+    let swapchain = HeadlessSwapchain::new(&device, CANVAS_WIDTH, CANVAS_HEIGHT)
+        .expect("failed to create HeadlessSwapchain");
+
+    let out_dir = env!("OUT_DIR");
+    let vertex_spv = std::fs::read(format!("{out_dir}/sdf_rounded_rect.vert.spv"))
+        .expect("failed to read compiled vertex shader");
+    let fragment_spv = std::fs::read(format!("{out_dir}/sdf_rounded_rect.frag.spv"))
+        .expect("failed to read compiled fragment shader");
+    let pipeline = device
+        .create_pipeline(&vertex_spv, &fragment_spv, tre_rhi_vulkan::HEADLESS_FORMAT)
+        .expect("failed to create pipeline");
+
+    // --- Real GPU render ---
+    let vertex_buffer = device
+        .upload_buffer(
+            bytemuck::cast_slice(&frame.vertices),
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+        )
+        .expect("failed to upload vertex buffer");
+    let index_buffer = device
+        .upload_buffer(
+            bytemuck::cast_slice(&frame.indices),
+            vk::BufferUsageFlags::INDEX_BUFFER,
+        )
+        .expect("failed to upload index buffer");
+
+    let (mut cmd_buffer, image) = device.begin_frame(&swapchain).expect("begin_frame failed");
+    cmd_buffer.set_pipeline(&pipeline);
+    cmd_buffer.bind_vertex_buffer(&vertex_buffer, 0);
+    cmd_buffer.bind_index_buffer(&index_buffer, 0);
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "this demo's index count is far below u32::MAX"
+    )]
+    cmd_buffer.draw_indexed(frame.indices.len() as u32, 0, 0);
+    device
+        .submit_and_present(cmd_buffer, &swapchain, image)
+        .expect("submit_and_present failed");
+
+    let bgra = swapchain
+        .read_pixels_bgra8()
+        .expect("failed to read back pixels");
+    let pixel_at =
+        |x: u32, y: u32| -> [u8; 4] { pixel_helpers::bgra_pixel_at(&bgra, CANVAS_WIDTH, x, y) };
+    let background = pixel_at(0, 0);
+
+    // --- Pixel verification: rect A/B's own plain centers, and rect
+    // C's real transformed center -- computed via the exact same
+    // Affine2 used to draw and tag it, not an independently-guessed
+    // coordinate ---
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "this canvas's coordinates are fixed, well within [0, CANVAS_WIDTH/HEIGHT)"
+    )]
+    let to_pixel = |p: [f32; 2]| -> (u32, u32) { (p[0].round() as u32, p[1].round() as u32) };
+
+    let (ax, ay) = to_pixel([
+        RECT_A_ORIGIN.0 + RECT_SIZE.0 / 2.0,
+        RECT_A_ORIGIN.1 + RECT_SIZE.1 / 2.0,
+    ]);
+    assert_eq!(
+        pixel_at(ax, ay),
+        [255, 255, 255, 255],
+        "Rect A must render at its own center"
+    );
+
+    let (bx, by) = to_pixel([
+        RECT_B_ORIGIN.0 + RECT_SIZE.0 / 2.0,
+        RECT_B_ORIGIN.1 + RECT_SIZE.1 / 2.0,
+    ]);
+    assert_eq!(
+        pixel_at(bx, by),
+        [255, 255, 255, 255],
+        "Rect B must render at its own center"
+    );
+
+    let rect_c_center_world =
+        rect_c_transform.transform_point([RECT_SIZE.0 / 2.0, RECT_SIZE.1 / 2.0]);
+    let (cx, cy) = to_pixel(rect_c_center_world);
+    assert_eq!(
+        pixel_at(cx, cy),
+        [255, 255, 255, 255],
+        "rotated Rect C must render at its own real transformed center ({cx}, {cy})"
+    );
+
+    let (gap_x, gap_y) = to_pixel([
+        (RECT_A_ORIGIN.0 + RECT_SIZE.0 + RECT_B_ORIGIN.0) / 2.0,
+        RECT_A_ORIGIN.1 + RECT_SIZE.1 / 2.0,
+    ]);
+    assert_eq!(
+        pixel_at(gap_x, gap_y),
+        background,
+        "the gap between Rect A and Rect B must stay background"
+    );
+    eprintln!(
+        "pixel level: all 3 rects (including rotated Rect C) rendered at their real transformed \
+         positions -- OK"
     );
 
     let mut rgba_out = bgra.clone();
