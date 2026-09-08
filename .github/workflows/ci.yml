@@ -163,79 +163,28 @@ jobs:
     name: accessibility-validation
     runs-on: ubuntu-latest
     # Phase 5 Step 5.3.3's own real CI investigation (2026-09-08, full
-    # account in REVIEW.md finding #126 -- twelve real pushes so far).
-    # Real, disproven-in-turn hypotheses: call ordering; `xvfb-run`
-    # wrapper nesting; job-level CPU contention; `IsEnabled` forced via
-    # `dbus-send`; Vulkan/X11 shared-library linking (the two-process
-    # split below was built to test this specifically -- it did NOT fix
-    # the real issue, but is kept as a real, independent improvement:
-    # `canvas_accessibility_demo` renders/tags only, `canvas_accessibility_verify`
-    # -- confirmed via `ldd` to link zero Vulkan/X11/Wayland libraries --
-    # does the real AT-SPI2 work). Real upstream research (reading
-    # `at-spi2-core`'s own source) found the real mechanism:
-    # `org.a11y.Status.IsEnabled` only flips true when `at-spi2-registryd`
-    # emits a real `EventListenerRegistered` signal, itself only sent
-    # when a client calls `org.a11y.atspi.Registry.RegisterEvent` --
-    # confirmed absent from `accesskit_unix`/`accesskit_atspi_common`'s
-    # own source. Both real fix attempts based on this (wait longer;
-    # retry the call ~150 times over 30s, in case the signal itself was
-    # simply lost before a subscriber was ready) still left `IsEnabled`
-    # false the entire time.
+    # account across eighteen real pushes in REVIEW.md finding #126 --
+    # kept there rather than duplicated here, since most of it is a
+    # record of real, disproven-in-turn hypotheses, not the current
+    # config). The short version: `org.a11y.Status.IsEnabled` is a
+    # plain, boring GSettings-backed property in the actually-installed
+    # at-spi2-core 2.52.0 (Ubuntu 24.04, confirmed via
+    # packages.ubuntu.com) -- initialized once at `at-spi-bus-launcher`
+    # startup directly from `org.gnome.desktop.interface`'s
+    # `toolkit-accessibility` key, no dynamic per-client mechanism
+    # involved at all. Most of this investigation (REVIEW.md's seventh
+    # through eleventh corrections) chased a real-looking
+    # `RegisterEvent`/`EventListenerRegistered` mechanism that turned
+    # out to be a `main`-branch-only addition, confirmed absent from the
+    # exact 2.52.0 tag's own real source once directly diffed (twelfth
+    # correction) -- every individual fact gathered chasing it was real
+    # (the signal genuinely fires, the launcher genuinely stays alive),
+    # the mechanism connecting those facts to `IsEnabled` was just the
+    # wrong one, because it isn't the code running here.
     #
-    # A user-approved diagnostic-only step (no fix attempted) then
-    # captured the real D-Bus wire traffic, process list, and live bus
-    # connections during a real failing run (REVIEW.md #126, ninth
-    # push). Real findings: RegisterEvent/EventListenerRegistered
-    # genuinely work on the wire -- at-spi2-registryd answers every one
-    # of our ~150 calls -- but at-spi-bus-launcher, though alive and
-    # running (confirmed via ps aux, having correctly spawned the a11y
-    # bus's own dbus-daemon), never appears as a connected client on
-    # that bus at all. Reading at-spi-bus-launcher.c's own real source
-    # explains why: exactly one function, ensure_a11y_bus(), ever
-    # subscribes to EventListenerRegistered, on a second connection the
-    # launcher makes to the bus it just spawned; it runs at most once,
-    # triggered here by the very first GetAddress call (its other,
-    # eager trigger needs a --launch-immediately flag that D-Bus's own
-    # activation never passes); if that one connection attempt fails,
-    # the only consequence is a single g_critical log line -- no retry,
-    # no crash -- which a purely D-Bus-activated process never surfaces
-    # to anything captured so far. This also rules out an earlier
-    # gsettings-desktop-schemas theory: a failed schema lookup would
-    # g_error()-abort the whole process, contradicting ps aux showing it
-    # alive throughout. The one open question -- this same code path
-    # passes reliably in the test job's own round-trip test -- means
-    # whatever fails here isn't universal to the runner image, only to
-    # how it's triggered in this job. The new step below remains
-    # diagnostic only: it launches at-spi-bus-launcher directly (so its
-    # own stdout/stderr, with G_MESSAGES_DEBUG=all, is finally visible
-    # instead of vanishing into D-Bus's own activation plumbing) to
-    # capture the one piece of evidence still missing before any further
-    # fix is attempted.
-    #
-    # That capture (twelfth push) logged a clean startup all the way
-    # through reading the bus address -- including the dconf/GSettings
-    # backend loading successfully, ruling the gsettings-desktop-schemas
-    # theory out for good -- then nothing: no g_critical, no success
-    # trace, and busctl list again showed no connection, this time with
-    # at-spi2-registryd never even activated. That run only checked
-    # liveness once, before the self-connect would run, so a late silent
-    # death after reading the address couldn't be told apart from a
-    # silent no-op.
-    #
-    # The liveness re-check (thirteenth push) ruled that out too: process
-    # state Sl (healthy sleep, not a zombie) immediately before busctl
-    # list, and a clean exit-code-0 shutdown when we killed it ourselves
-    # afterward (matching its own real SIGTERM handler), not a crash.
-    # Alive, responsive, no logged error, still no visible bus
-    # connection -- nothing left in GLib's own message log explains this.
-    # G_MESSAGES_DEBUG only controls log verbosity; G_DBUS_DEBUG is the
-    # separate, GDBus-specific variable that traces the actual wire-level
-    # authentication handshake, which the process's own debug output
-    # already flags as a named, version-gated risk for connections shaped
-    # exactly like this self-connect ("cross-namespace EXTERNAL
-    # authentication ... will deadlock if server is GDBus < 2.73.3").
-    # This step now adds it, scoped to authentication/connection/call/
-    # address rather than the full message/payload firehose.
+    # The real fix: set that GSettings key true, via `dconf`, before the
+    # a11y bus is ever first activated -- exactly what
+    # `at-spi-bus-launcher`'s own actually-installed source reads.
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
@@ -245,62 +194,15 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libvulkan1 mesa-vulkan-drivers vulkan-validationlayers xvfb libwayland-dev libxcb1-dev glslc \
             libfontconfig1-dev fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
-            dbus dbus-user-session at-spi2-core
+            dbus dbus-user-session at-spi2-core dconf-cli
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_accessibility_demo
-      - name: Dump real AT-SPI2 bus state for diagnosis (no fix attempted here)
+      - name: Enable accessibility via the real toolkit-accessibility GSettings key
         run: |
           dbus-run-session -- bash -c '
-            ADDR=$(dbus-send --session --print-reply --dest=org.a11y.Bus /org/a11y/bus org.a11y.Bus.GetAddress | tail -1 | sed "s/.*string \"\\(.*\\)\"/\\1/")
-            echo "a11y bus address: $ADDR"
-            dbus-monitor --address "$ADDR" > /tmp/dbus-monitor.log 2>&1 &
-            MONITOR_PID=$!
-            sleep 1
-            cargo run -p tre-rhi-vulkan --example canvas_accessibility_verify || true
-            sleep 1
-            kill "$MONITOR_PID" 2>/dev/null || true
-            wait "$MONITOR_PID" 2>/dev/null || true
-            echo "=== dbus-monitor output (real a11y bus traffic) ==="
-            cat /tmp/dbus-monitor.log
-            echo "=== ps aux (a11y/spi/dbus processes) ==="
-            ps aux | grep -iE "a11y|spi|dbus" | grep -v grep
-            echo "=== busctl list on the real a11y bus ==="
-            busctl --address "$ADDR" list 2>&1 || true
+            echo "=== org.gnome.desktop.interface toolkit-accessibility, before (blank means unset -- schema default applies) ==="
+            dconf read /org/gnome/desktop/interface/toolkit-accessibility
+            dconf write /org/gnome/desktop/interface/toolkit-accessibility true
+            echo "=== org.gnome.desktop.interface toolkit-accessibility, after ==="
+            dconf read /org/gnome/desktop/interface/toolkit-accessibility
           '
-      - name: Directly capture at-spi-bus-launchers own stderr (no fix attempted here)
-        run: |
-          dbus-run-session -- bash -c '
-            export G_MESSAGES_DEBUG=all
-            export G_DBUS_DEBUG=authentication,connection,call,address
-            /usr/libexec/at-spi-bus-launcher --launch-immediately > /tmp/bus-launcher.log 2>&1 &
-            LAUNCHER_PID=$!
-            sleep 2
-            echo "=== at-spi-bus-launcher stdout/stderr, G_MESSAGES_DEBUG=all + G_DBUS_DEBUG=authentication,connection,call,address (before GetAddress) ==="
-            cat /tmp/bus-launcher.log
-            echo "=== is at-spi-bus-launcher still alive (before GetAddress)? ==="
-            ps -p "$LAUNCHER_PID" -o pid,stat,cmd || echo "process $LAUNCHER_PID is no longer running"
-            ADDR=$(dbus-send --session --print-reply --dest=org.a11y.Bus /org/a11y/bus org.a11y.Bus.GetAddress | tail -1 | sed "s/.*string \"\\(.*\\)\"/\\1/")
-            echo "a11y bus address: $ADDR"
-            sleep 1
-            echo "=== at-spi-bus-launcher stdout/stderr (after GetAddress) ==="
-            cat /tmp/bus-launcher.log
-            echo "=== is at-spi-bus-launcher still alive (immediately before busctl list)? ==="
-            if ps -p "$LAUNCHER_PID" -o pid,stat,cmd; then
-              echo "still alive -- the self-connect produced no visible busctl connection while the process stayed up"
-              STILL_ALIVE=1
-            else
-              echo "already gone -- it exited on its own some time after reading the bus address"
-              STILL_ALIVE=0
-            fi
-            echo "=== busctl list on the real a11y bus (launch-immediately) ==="
-            busctl --address "$ADDR" list 2>&1 || true
-            if [ "$STILL_ALIVE" = "0" ]; then
-              echo "=== real exit status of at-spi-bus-launcher (it already exited on its own, not from us) ==="
-              wait "$LAUNCHER_PID"
-              echo "wait reported exit code: $?"
-            else
-              echo "=== killing at-spi-bus-launcher ourselves and reporting the resulting exit status ==="
-              kill "$LAUNCHER_PID" 2>/dev/null || true
-              wait "$LAUNCHER_PID" 2>/dev/null
-              echo "wait reported exit code (after our own kill): $?"
-            fi
-          '
+      - run: dbus-run-session -- cargo run -p tre-rhi-vulkan --example canvas_accessibility_verify
