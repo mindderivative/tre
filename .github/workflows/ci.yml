@@ -184,7 +184,17 @@ jobs:
     #
     # The real fix: set that GSettings key true, via `dconf`, before the
     # a11y bus is ever first activated -- exactly what
-    # `at-spi-bus-launcher`'s own actually-installed source reads.
+    # `at-spi-bus-launcher`'s own actually-installed source reads. Tried
+    # for real (eighteenth push): the write demonstrably took (an
+    # independent `dconf read`, same session, confirmed `true`), but a
+    # later, separate session's `canvas_accessibility_verify` still saw
+    # `IsEnabled` false (REVIEW.md's thirteenth correction) -- three live
+    # explanations not yet disambiguated: the write not persisting to a
+    # later fresh session; something else blocking `IsEnabled` besides
+    # this GSettings key; or our own `.unwrap_or(false)` masking a real
+    # D-Bus error as a false reading. The step below checks both values
+    # independently (`dconf`, `dbus-send`) inside a session shaped
+    # exactly like the verify step's own, before trying anything else.
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
@@ -204,5 +214,15 @@ jobs:
             dconf write /org/gnome/desktop/interface/toolkit-accessibility true
             echo "=== org.gnome.desktop.interface toolkit-accessibility, after ==="
             dconf read /org/gnome/desktop/interface/toolkit-accessibility
+          '
+      - name: Independently check, in a fresh session, whether the write actually took and IsEnabled reflects it (no fix attempted here)
+        run: |
+          dbus-run-session -- bash -c '
+            echo "=== toolkit-accessibility, read fresh in a brand-new session, independent of the write session ==="
+            dconf read /org/gnome/desktop/interface/toolkit-accessibility
+            echo "=== activating org.a11y.Bus in this fresh session, the same way canvas_accessibility_verify will ==="
+            dbus-send --session --print-reply --dest=org.a11y.Bus /org/a11y/bus org.a11y.Bus.GetAddress
+            echo "=== org.a11y.Status.IsEnabled, read directly via dbus-send -- independent of our own Rust code entirely ==="
+            dbus-send --session --print-reply --dest=org.a11y.Bus /org/a11y/bus org.freedesktop.DBus.Properties.Get string:org.a11y.Status string:IsEnabled
           '
       - run: dbus-run-session -- cargo run -p tre-rhi-vulkan --example canvas_accessibility_verify
