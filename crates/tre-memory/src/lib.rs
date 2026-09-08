@@ -9,9 +9,11 @@
 //! `// SAFETY:` comment stating the invariant being upheld.
 
 mod mpsc;
+mod scatter;
 mod spsc;
 mod swmr;
 
 pub use mpsc::MpscRingBuffer;
+pub use scatter::{ScatterArena, ScatterSlice};
 pub use spsc::SpscRingBuffer;
 pub use swmr::SwmrSlotTable;

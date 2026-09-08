@@ -517,6 +517,22 @@ impl Drop for SubCanvas {
     }
 }
 
+impl SubCanvas {
+    /// Delegates to the inner canvas's own `RenderingCanvas::
+    /// stitch_into` (Step 5.2.2). Extracts it via `std::mem::take`
+    /// first (leaving a throwaway, never-used-again placeholder behind)
+    /// rather than destructuring `self` directly -- `SubCanvas`
+    /// implements `Drop`, and Rust forbids partially moving fields out
+    /// of any type that does. `self`'s own `Drop` still runs normally
+    /// once this function returns, releasing this sub-canvas's slot in
+    /// `live_sub_canvases` exactly as it would for any other drop.
+    #[must_use]
+    pub fn stitch_into(mut self, arena: &FrameArena) -> bool {
+        let canvas = std::mem::take(&mut self.canvas);
+        canvas.stitch_into(arena)
+    }
+}
+
 /// Everything `Canvas::draw_text` needs to know about the caller's
 /// currently-uploaded shared dynamic texture atlas (IMPLEMENTATION.md
 /// Step 5.1.2) -- bundled since all four fields travel together at
@@ -1196,35 +1212,145 @@ impl RenderingCanvas {
         let RenderingCanvas {
             vertices,
             indices,
-            mut commands,
+            commands,
+            ..
+        } = self;
+        segment_and_flatten(vertices, &indices, commands)
+    }
+
+    /// Merges this canvas's locally-recorded data into `arena` (Step
+    /// 5.2.2), rebasing every index value and every command's
+    /// `vertex_offset` to their new positions within `arena`'s own
+    /// shared buffers. Safe to call concurrently with any other
+    /// canvas's own `stitch_into` call against the same `arena`,
+    /// including from a worker thread as its very last action before
+    /// it exits (`tre_memory::ScatterArena::reserve`'s own lock-free
+    /// contract is what makes this genuinely concurrent, not just
+    /// safe).
+    ///
+    /// Returns `false` if any of the three reservations this needs
+    /// (vertices, then indices rebased by the vertices reservation's
+    /// own start, then commands rebased by the indices reservation's
+    /// own start) would exceed `arena`'s fixed capacity -- this
+    /// canvas's contribution to the frame is then incomplete (some or
+    /// all of its content is missing from the final frame), not
+    /// corrupted; `arena`'s own data for whatever *did* fit stays
+    /// valid. Deciding what to do about an incomplete contribution
+    /// (e.g. DESIGN.md Section 2.6's prioritized-degradation policy)
+    /// is a future step's job, not this method's.
+    ///
+    /// # Panics
+    /// In debug builds, panics on the same unbalanced `save`/
+    /// `push_clip`/`push_layer`/`begin_overlay` conditions
+    /// `flatten`'s own `# Panics` section documents -- an unreleased
+    /// state otherwise leaks into `arena`'s shared frame just as
+    /// silently as it would have leaked into a lone `flatten()` call.
+    #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a single frame's vertex/index count stays far below u32::MAX, the same \
+                   headroom reasoning ARCHITECTURE.md Section 4.1 applies to Depth ID"
+    )]
+    pub fn stitch_into(self, arena: &FrameArena) -> bool {
+        debug_assert_eq!(
+            self.layer_depth, 0,
+            "push_layer/pop_layer calls are unbalanced at frame boundary"
+        );
+        debug_assert_eq!(
+            self.state_stack.len(),
+            1,
+            "save/restore calls are unbalanced at frame boundary"
+        );
+        debug_assert!(
+            self.clip_stack.is_empty(),
+            "push_clip/pop_clip calls are unbalanced at frame boundary"
+        );
+        debug_assert!(
+            self.overlay_stack.is_empty(),
+            "begin_overlay/end_overlay calls are unbalanced at frame boundary"
+        );
+
+        let RenderingCanvas {
+            vertices,
+            indices,
+            commands,
             ..
         } = self;
 
-        let mut out_commands = Vec::with_capacity(commands.len());
-        let mut out_indices = Vec::with_capacity(indices.len());
-        let mut run_start = 0;
-        for i in 0..=commands.len() {
-            let at_boundary = i == commands.len() || commands[i].kind != CommandType::DrawGeometry;
-            if !at_boundary {
-                continue;
-            }
-            flatten_run(
-                &mut commands[run_start..i],
-                &indices,
-                &mut out_commands,
-                &mut out_indices,
-            );
-            if i < commands.len() {
-                out_commands.push(commands[i]);
-            }
-            run_start = i + 1;
+        let Some(mut vertex_slice) = arena.vertices.reserve(vertices.len()) else {
+            return false;
+        };
+        vertex_slice.copy_from_slice(&vertices);
+        let vertex_base = vertex_slice.start_index() as u32;
+
+        let Some(mut index_slice) = arena.indices.reserve(indices.len()) else {
+            return false;
+        };
+        for (dest, &source) in index_slice.iter_mut().zip(&indices) {
+            *dest = source + vertex_base;
+        }
+        let index_base = index_slice.start_index() as u32;
+
+        let Some(mut command_slice) = arena.commands.reserve(commands.len()) else {
+            return false;
+        };
+        for (dest, &source) in command_slice.iter_mut().zip(&commands) {
+            *dest = UiDrawCommand {
+                vertex_offset: source.vertex_offset + index_base,
+                ..source
+            };
         }
 
-        FlattenedFrame {
-            vertices,
-            indices: out_indices,
-            commands: out_commands,
+        true
+    }
+}
+
+/// Bundles the three shared `tre_memory::ScatterArena`s a real,
+/// multi-source frame needs (Step 5.2.2): one for `vertices`, one for
+/// `indices`, one for `commands`. Constructed once by the coordinating
+/// thread before any worker thread is spawned; every `RenderingCanvas`/
+/// `SubCanvas` that should contribute to the same final frame calls
+/// `stitch_into` with a shared reference to the same `FrameArena`.
+///
+/// Capacities are fixed at construction and never grown mid-frame
+/// (DESIGN.md Section 2.1) -- the caller decides them, the same way
+/// every other pre-allocated pool in this codebase (the transient
+/// render-target pool, the MPSC ring buffers) is caller-sized.
+pub struct FrameArena {
+    vertices: tre_memory::ScatterArena<UiVertex>,
+    indices: tre_memory::ScatterArena<u32>,
+    commands: tre_memory::ScatterArena<UiDrawCommand>,
+}
+
+impl FrameArena {
+    #[must_use]
+    pub fn with_capacity(
+        vertex_capacity: usize,
+        index_capacity: usize,
+        command_capacity: usize,
+    ) -> Self {
+        Self {
+            vertices: tre_memory::ScatterArena::with_capacity(vertex_capacity),
+            indices: tre_memory::ScatterArena::with_capacity(index_capacity),
+            commands: tre_memory::ScatterArena::with_capacity(command_capacity),
         }
+    }
+
+    /// Consumes every stitched source's data and produces the real,
+    /// sorted-and-merged `FlattenedFrame` -- the exact same Step 5.1.3
+    /// algorithm `RenderingCanvas::flatten` uses (shared via
+    /// `segment_and_flatten`), just fed from `arena`'s already-merged
+    /// buffers instead of one canvas's own. Call only after every
+    /// `stitch_into` call that could contribute to this frame has
+    /// already returned -- typically "after every worker thread has
+    /// been joined."
+    #[must_use]
+    pub fn flatten(self) -> FlattenedFrame {
+        segment_and_flatten(
+            self.vertices.into_vec(),
+            &self.indices.into_vec(),
+            self.commands.into_vec(),
+        )
     }
 }
 
@@ -1352,6 +1478,48 @@ fn compute_sort_key(
         | (u64::from(pipeline_state_id) << 32)
         | (u64::from(texture_handle & TEXTURE_ID_MASK) << 20)
         | u64::from(depth_id & DEPTH_ID_MASK)
+}
+
+/// The shared segmentation-sort-merge core of both `RenderingCanvas::
+/// flatten` and `FrameArena::flatten` (Step 5.2.2) -- takes plain,
+/// already-assembled `vertices`/`indices`/`commands` rather than
+/// `self`, so it doesn't care whether they came from one canvas's own
+/// recording or from several sources a `FrameArena` already merged
+/// together. Segments `commands` into maximal runs bounded by any
+/// non-`DrawGeometry` command (every marker passes through unchanged),
+/// running `flatten_run` over each -- identical to `RenderingCanvas::
+/// flatten`'s own Step 5.1.3 logic, just extracted so it has exactly
+/// one implementation instead of two.
+fn segment_and_flatten(
+    vertices: Vec<UiVertex>,
+    indices: &[u32],
+    mut commands: Vec<UiDrawCommand>,
+) -> FlattenedFrame {
+    let mut out_commands = Vec::with_capacity(commands.len());
+    let mut out_indices = Vec::with_capacity(indices.len());
+    let mut run_start = 0;
+    for i in 0..=commands.len() {
+        let at_boundary = i == commands.len() || commands[i].kind != CommandType::DrawGeometry;
+        if !at_boundary {
+            continue;
+        }
+        flatten_run(
+            &mut commands[run_start..i],
+            indices,
+            &mut out_commands,
+            &mut out_indices,
+        );
+        if i < commands.len() {
+            out_commands.push(commands[i]);
+        }
+        run_start = i + 1;
+    }
+
+    FlattenedFrame {
+        vertices,
+        indices: out_indices,
+        commands: out_commands,
+    }
 }
 
 /// `source_indices[command.vertex_offset..][..command.element_count]` --
@@ -2772,5 +2940,126 @@ mod tests {
         // delegated-through-Deref call as the root canvas's own
         // save_transform_restore test.
         assert_eq!(sub.vertices[0].position, [100.0, 200.0]);
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact arithmetic on literal f32s (whole-number positions, no rounding), same \
+                   reasoning as this crate's other exact-arithmetic tests"
+    )]
+    fn stitch_into_rebases_indices_and_vertex_offset_correctly() {
+        // Two sub-canvases sharing one root's Depth ID counter (so
+        // their sort keys never tie -- see next_sort_key's own
+        // uniqueness guarantee), each drawing one rect, stitched into
+        // the same arena in order.
+        let arena = FrameArena::with_capacity(20, 20, 20);
+        let root = RenderingCanvas::new();
+
+        let mut first = root.create_sub_canvas();
+        first.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        assert!(first.stitch_into(&arena));
+
+        let mut second = root.create_sub_canvas();
+        second.draw_rounded_rect(50.0, 50.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        assert!(second.stitch_into(&arena));
+
+        let frame = arena.flatten();
+
+        // Vertices never move regardless of merging: the first source's
+        // 4 vertices land first, the second source's right after.
+        assert_eq!(frame.vertices.len(), 8);
+        assert_eq!(frame.vertices[0].position, [0.0, 0.0]);
+        assert_eq!(frame.vertices[4].position, [50.0, 50.0]);
+
+        // Both rects share Layer/Pipeline/Texture/clip_bounds with
+        // nothing between them, so they merge into one 12-index
+        // command -- and the exact rebased index values prove the
+        // second source's own local indices (recorded relative to its
+        // own vertex buffer starting at 0) were correctly shifted by
+        // +4 once its vertices landed at that offset in the shared
+        // arena.
+        assert_eq!(frame.commands.len(), 1);
+        assert_eq!(frame.commands[0].element_count, 12);
+        assert_eq!(frame.indices, vec![0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]);
+    }
+
+    #[test]
+    fn stitch_into_reports_false_when_the_arena_is_too_small() {
+        let arena = FrameArena::with_capacity(2, 2, 2);
+        let mut canvas = RenderingCanvas::new();
+        canvas.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        assert!(
+            !canvas.stitch_into(&arena),
+            "a 4-vertex/6-index/1-command rect cannot fit in a 2/2/2 arena"
+        );
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact arithmetic on literal f32s (whole-number x offsets, no rounding), same \
+                   reasoning as this crate's other exact-arithmetic tests"
+    )]
+    fn many_real_worker_threads_stitch_concurrently_into_one_arena_correctly() {
+        const THREADS: usize = 4;
+
+        let root = RenderingCanvas::new_with_sub_canvas_cap(THREADS);
+        let arena =
+            std::sync::Arc::new(FrameArena::with_capacity(THREADS * 4, THREADS * 6, THREADS));
+
+        let handles: Vec<_> = (0..THREADS)
+            .map(|i| {
+                let mut sub = root.create_sub_canvas();
+                let arena = std::sync::Arc::clone(&arena);
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "THREADS is a small constant, far below f32's exact-integer range"
+                )]
+                let x = i as f32 * 20.0;
+                std::thread::spawn(move || {
+                    sub.draw_rounded_rect(x, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+                    assert!(
+                        sub.stitch_into(&arena),
+                        "arena was sized exactly for this test"
+                    );
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().expect("worker thread panicked");
+        }
+
+        let arena = std::sync::Arc::try_unwrap(arena)
+            .unwrap_or_else(|_| panic!("all worker threads have joined"));
+        let frame = arena.flatten();
+
+        assert_eq!(frame.vertices.len(), THREADS * 4);
+        // All 4 rects share Layer/Pipeline/Texture/clip_bounds with no
+        // marker anywhere -- real batch flattening must merge them all
+        // into one command regardless of which thread's reservation
+        // landed first.
+        assert_eq!(frame.commands.len(), 1);
+        assert_eq!(
+            frame.commands[0].element_count,
+            u32::try_from(THREADS * 6).unwrap()
+        );
+
+        for i in 0..THREADS {
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "THREADS is a small constant, far below f32's exact-integer range"
+            )]
+            let expected_x = i as f32 * 20.0;
+            let found = frame
+                .vertices
+                .iter()
+                .any(|v| v.position == [expected_x, 0.0]);
+            assert!(
+                found,
+                "thread {i}'s rect at x={expected_x} must appear somewhere in the merged \
+                 vertices, regardless of scheduling order"
+            );
+        }
     }
 }

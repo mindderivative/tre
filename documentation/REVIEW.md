@@ -1214,3 +1214,18 @@ Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the wor
 | # | Finding | Doc(s)/Code | Severity | Resolution |
 |---|---|---|---|---|
 | -- | No numbered findings this sub-step | tre-engine | -- | -- |
+
+## Phase 5 Step 5.2.2 Implementation (2026-09-07)
+
+Reviewer: Claude (Cowork), acting as Principal Engineer / Lead Tech Architect, per project standing instructions.
+Scope: implementing IMPLEMENTATION.md Step 5.2.2 (the real lock-free stitching primitive and wiring it into a multi-source `flatten`), the second of Step 5.2's three sub-steps. Full detail in `planning/archive/LOG_PHASE5_STEP5_2_2.md`; this is the summary for the documentation's own record.
+
+Status: **Complete, no numbered findings.** Every design decision locked into `PLAN.md` (workers stitch themselves rather than a sequential coordinator-only merge; `ScatterArena<T>` following `MpscRingBuffer`'s own `UnsafeCell<MaybeUninit<T>>` pattern rather than a new one; copy-and-rebase instead of a literal `copy_from_slice`; `std::mem::take` to extract a `Drop`-implementing `SubCanvas`'s inner data; reusing Step 5.1.3's sort/merge logic via a shared `segment_and_flatten` function) held up unchanged through implementation -- the whole feature, including the two real concurrency stress tests, compiled and passed clippy pedantic on the first run. Two small, purely mechanical clippy fixes surfaced (a `needless_pass_by_value` on `segment_and_flatten`'s `indices` parameter once it became borrowed rather than owned, and a stray `drop()` call on a type with no `Drop` impl in a `ScatterArena` test) -- neither reflects a design issue, both were one-line fixes.
+
+Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the workspace: `tre-memory` gained 5 new tests (30 total, up from 25), including a real 8-thread/4,000-item concurrent stress test for `ScatterArena` confirming zero data corruption or overlap across all reserved ranges. `tre-engine` gained 3 new tests (44 total, up from 41): an exact-value rebasing check (two sequential sub-canvases' rects stitched into one arena, hand-verifying the second source's indices shifted by precisely the first source's vertex count -- `[0,1,2,0,2,3,4,5,6,4,6,7]`), an arena-overflow check (`stitch_into` reports `false` rather than corrupting anything when the destination is too small), and the centerpiece: a real 4-worker-thread test in which each thread stitches its own `SubCanvas` into one shared `FrameArena` as its own last action before exiting, with the resulting frame's 16 vertices and single merged 24-index command both confirmed correct regardless of which thread's reservation happened to land first. No new demo this sub-step, matching 5.2.1's own precedent -- the real end-to-end GPU proof (real worker threads, real merged render, real pixel readback) is Step 5.2.3's capstone job. All 19 pre-existing examples re-run manually end to end, zero regressions from the `flatten()` refactor.
+
+## Summary table (Phase 5 Step 5.2.2)
+
+| # | Finding | Doc(s)/Code | Severity | Resolution |
+|---|---|---|---|---|
+| -- | No numbered findings this sub-step | tre-memory, tre-engine | -- | -- |
