@@ -1494,6 +1494,49 @@ impl Drop for VulkanDevice {
     }
 }
 
+impl VulkanDevice {
+    /// Allocates a real bindless slot and points it at `view` -- the
+    /// shared core of `VulkanTexture::from_pixels`'s own registration
+    /// step and the new `RhiDevice::register_bindless` (IMPLEMENTATION.md
+    /// Phase 6 Step 6.4.1), factored out so a texture that's already
+    /// GPU-resident (rendered into directly, not freshly uploaded) can
+    /// register its own existing view without duplicating this logic.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::BindlessArrayExhausted`] if the bindless
+    /// texture array has no free slots left.
+    fn allocate_bindless_slot(&self, view: vk::ImageView) -> Result<u32, EngineError> {
+        let bindless_index = self
+            .bindless_registry
+            .lock()
+            .expect("bindless registry poisoned")
+            .allocate()
+            .ok_or(EngineError::BindlessArrayExhausted)?;
+
+        let image_info = vk::DescriptorImageInfo::default()
+            .image_view(view)
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        let write = vk::WriteDescriptorSet::default()
+            .dst_set(self.bindless_descriptor_set)
+            .dst_binding(1)
+            .dst_array_element(bindless_index)
+            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+            .image_info(std::slice::from_ref(&image_info));
+        // SAFETY: `self.device` is valid; `self.bindless_descriptor_set`
+        // was allocated in `VulkanDevice::new` from a layout whose binding
+        // 0 has `UPDATE_AFTER_BIND`, so writing to it here (potentially
+        // while other draws using this same set are in flight, though
+        // this step's scope keeps submission fully synchronous anyway) is
+        // explicitly permitted; `bindless_index` was just allocated above
+        // so it is `< bindless_capacity`, and `view` is the caller's own
+        // responsibility to have created on this same device.
+        unsafe {
+            self.device.update_descriptor_sets(&[write], &[]);
+        }
+        Ok(bindless_index)
+    }
+}
+
 impl RhiDevice for VulkanDevice {
     fn create_dynamic_ring_buffer(&self, capacity: usize) -> Box<dyn RhiDynamicRingBuffer> {
         Box::new(
@@ -1674,6 +1717,24 @@ impl RhiDevice for VulkanDevice {
         Ok(Box::new(VulkanTexture::from_pixels(
             self, width, height, format, pixels,
         )?))
+    }
+
+    fn register_bindless(&self, texture: &dyn RhiTexture) -> Result<u32, EngineError> {
+        // SAFETY: reconstructing a `vk::ImageView` from `texture`'s own
+        // opaque `raw_handle()` -- the same opaque-handle pattern this
+        // codebase uses everywhere a trait object needs to hand a
+        // concrete Vulkan object to backend-specific code, not a
+        // downcast. `RhiTexture`'s own contract guarantees this handle is
+        // a live view this same device created.
+        let view = vk::ImageView::from_raw(texture.raw_handle());
+        self.allocate_bindless_slot(view)
+    }
+
+    fn deregister_bindless(&self, bindless_index: u32) {
+        self.bindless_registry
+            .lock()
+            .expect("bindless registry poisoned")
+            .release(bindless_index);
     }
 
     fn begin_frame(
@@ -1866,6 +1927,11 @@ impl RhiDevice for VulkanDevice {
                 bindless_descriptor_set: self.bindless_descriptor_set,
                 bindless_capacity: self.bindless_capacity,
                 texture_index: BINDLESS_TEXTURE_SENTINEL,
+                dynamic_rendering: self.dynamic_rendering.clone(),
+                swapchain_color_view: target_view,
+                swapchain_stencil_view: stencil_view,
+                swapchain_width: width,
+                swapchain_height: height,
             }),
             image,
         ))
@@ -2318,6 +2384,40 @@ pub struct VulkanCommandBuffer {
     /// use vertex color") so a draw that never calls `bind_texture` keeps
     /// behaving exactly like Phase 0's flat-color path.
     texture_index: u32,
+    /// IMPLEMENTATION.md Phase 6 Step 6.4.1: cloned from `VulkanDevice`
+    /// (which owns the real loader) so `begin_render_to_texture`/
+    /// `end_render_to_texture`/`resume_swapchain_rendering` -- all
+    /// `RhiCommandBuffer` methods, called on this struct, not on
+    /// `VulkanDevice` -- can call `cmd_begin_rendering`/`cmd_end_rendering`
+    /// themselves; cheap to clone, the same pattern `device: ash::Device`
+    /// above already uses.
+    dynamic_rendering: ash::khr::dynamic_rendering::Device,
+    /// The swapchain image view/extent `VulkanDevice::begin_frame`
+    /// originally began rendering into, stashed here (nothing previously
+    /// persisted it past that function's own local scope) so
+    /// `resume_swapchain_rendering` can re-begin an equivalent rendering
+    /// scope after one or more `begin_render_to_texture`/
+    /// `end_render_to_texture` pairs redirected rendering elsewhere --
+    /// with `LOAD_OP_LOAD`, not `CLEAR`, since whatever was already drawn
+    /// (and the frame's own initial clear, from `begin_frame` itself)
+    /// must be preserved, not erased.
+    swapchain_color_view: vk::ImageView,
+    /// This same swapchain's own stencil view, stashed for the same
+    /// reason -- `resume_swapchain_rendering`'s own `RenderingInfo` must
+    /// still pair a stencil attachment, exactly as `begin_frame`'s own
+    /// did, so a stencil-and-cover draw recorded after a layer redirect
+    /// still has one to write into.
+    swapchain_stencil_view: vk::ImageView,
+    /// The swapchain's own real extent, stashed alongside its views for
+    /// the same reason: `self.width`/`self.height` above are repurposed
+    /// by `begin_render_to_texture` to mean "the currently active render
+    /// target's own dimensions" (`draw_indexed`'s push constants need the
+    /// *active* target's size to map pixel-space positions to NDC
+    /// correctly, not always the swapchain's) -- `resume_swapchain_
+    /// rendering` restores `self.width`/`self.height` from these two
+    /// fields, which never change once `begin_frame` sets them.
+    swapchain_width: u32,
+    swapchain_height: u32,
 }
 
 impl RhiCommandBuffer for VulkanCommandBuffer {
@@ -2473,6 +2573,226 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
                 0,
             );
         }
+    }
+
+    fn begin_render_to_texture(&mut self, texture: &dyn RhiTexture) {
+        let image = vk::Image::from_raw(texture.image_handle());
+        let view = vk::ImageView::from_raw(texture.raw_handle());
+        let (width, height) = texture.dimensions();
+
+        // Undefined -> COLOR_ATTACHMENT_OPTIMAL, the same reasoning as
+        // `VulkanDevice::begin_frame`'s own swapchain-image barrier:
+        // dynamic rendering has no render pass to do this transition
+        // implicitly. Always UNDEFINED as the old layout regardless of
+        // what a reused pooled texture's own prior layout actually was --
+        // correct and intentional, since this scope clears to transparent
+        // immediately after regardless of any prior content.
+        let barrier = vk::ImageMemoryBarrier::default()
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .src_access_mask(vk::AccessFlags::empty())
+            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+            .image(image)
+            .subresource_range(
+                vk::ImageSubresourceRange::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .level_count(1)
+                    .layer_count(1),
+            );
+
+        let color_attachment = vk::RenderingAttachmentInfo::default()
+            .image_view(view)
+            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .clear_value(vk::ClearValue {
+                color: vk::ClearColorValue {
+                    float32: [0.0, 0.0, 0.0, 0.0],
+                },
+            });
+        let color_attachments = [color_attachment];
+        // No stencil attachment -- transient targets don't have one
+        // (IMPLEMENTATION.md Phase 6 Step 6.4.1's own scope decision);
+        // stencil-and-cover draws are not supported inside a layer yet.
+        let rendering_info = vk::RenderingInfo::default()
+            .render_area(vk::Rect2D {
+                offset: vk::Offset2D::default(),
+                extent: vk::Extent2D { width, height },
+            })
+            .layer_count(1)
+            .color_attachments(&color_attachments);
+
+        // SAFETY: `self.command_buffer` is recording (begun by
+        // `VulkanDevice::begin_frame`); ending whatever rendering scope is
+        // currently active before beginning a new one is always valid --
+        // dynamic rendering permits any number of begin/end pairs within
+        // one command buffer, just never nested. `image`/`view` come from
+        // `texture`, whose `RhiTexture` contract guarantees they are live
+        // Vulkan objects this same device created with `COLOR_ATTACHMENT`
+        // usage (`RhiDevice::acquire_transient_target`).
+        unsafe {
+            self.dynamic_rendering
+                .cmd_end_rendering(self.command_buffer);
+            self.device.cmd_pipeline_barrier(
+                self.command_buffer,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[barrier],
+            );
+            self.dynamic_rendering
+                .cmd_begin_rendering(self.command_buffer, &rendering_info);
+            self.device.cmd_set_viewport(
+                self.command_buffer,
+                0,
+                &[vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: width as f32,
+                    height: height as f32,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                }],
+            );
+            self.device.cmd_set_scissor(
+                self.command_buffer,
+                0,
+                &[vk::Rect2D {
+                    offset: vk::Offset2D::default(),
+                    extent: vk::Extent2D { width, height },
+                }],
+            );
+        }
+
+        // `draw_indexed`'s push constants map pixel-space positions to
+        // NDC using `self.width`/`self.height` -- must reflect whichever
+        // target is currently active, not always the swapchain, or every
+        // vertex position recorded while rendering into this (likely
+        // differently-sized) layer would be wrong.
+        self.width = width;
+        self.height = height;
+    }
+
+    fn end_render_to_texture(&mut self, texture: &dyn RhiTexture) {
+        let image = vk::Image::from_raw(texture.image_handle());
+
+        // COLOR_ATTACHMENT_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL: the old
+        // layout is statically known, not queried -- nothing but
+        // `begin_render_to_texture`'s own barrier above can have touched
+        // this image's layout in between, within one command buffer.
+        let barrier = vk::ImageMemoryBarrier::default()
+            .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ)
+            .image(image)
+            .subresource_range(
+                vk::ImageSubresourceRange::default()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .level_count(1)
+                    .layer_count(1),
+            );
+
+        // SAFETY: `self.command_buffer` is recording, with a rendering
+        // scope `begin_render_to_texture` began still active (`RhiDevice`/
+        // `RhiCommandBuffer`'s own contract: every `begin_render_to_texture`
+        // call is paired with exactly one matching `end_render_to_texture`
+        // before anything else touches this command buffer's rendering
+        // state); `image` is that same call's own `texture`.
+        unsafe {
+            self.dynamic_rendering
+                .cmd_end_rendering(self.command_buffer);
+            self.device.cmd_pipeline_barrier(
+                self.command_buffer,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[barrier],
+            );
+        }
+    }
+
+    fn resume_swapchain_rendering(&mut self) {
+        let color_attachment = vk::RenderingAttachmentInfo::default()
+            .image_view(self.swapchain_color_view)
+            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            // LOAD, not CLEAR: whatever was already drawn into the
+            // swapchain before the redirect (plus `begin_frame`'s own
+            // initial clear) must be preserved, not erased.
+            .load_op(vk::AttachmentLoadOp::LOAD)
+            .store_op(vk::AttachmentStoreOp::STORE);
+        let color_attachments = [color_attachment];
+        let stencil_attachment = vk::RenderingAttachmentInfo::default()
+            .image_view(self.swapchain_stencil_view)
+            .image_layout(vk::ImageLayout::STENCIL_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::LOAD)
+            .store_op(vk::AttachmentStoreOp::DONT_CARE);
+        let rendering_info = vk::RenderingInfo::default()
+            .render_area(vk::Rect2D {
+                offset: vk::Offset2D::default(),
+                extent: vk::Extent2D {
+                    width: self.swapchain_width,
+                    height: self.swapchain_height,
+                },
+            })
+            .layer_count(1)
+            .color_attachments(&color_attachments)
+            .stencil_attachment(&stencil_attachment);
+
+        // SAFETY: `self.command_buffer` is recording, with no rendering
+        // scope currently active (the last `end_render_to_texture` call
+        // ended one); `self.swapchain_color_view`/`swapchain_stencil_view`
+        // are the same views `VulkanDevice::begin_frame` already
+        // transitioned to `COLOR_ATTACHMENT_OPTIMAL`/`STENCIL_ATTACHMENT_
+        // OPTIMAL` this frame, and nothing since has changed either
+        // layout (`begin_render_to_texture`/`end_render_to_texture` only
+        // ever touch a *texture's* own image, never the swapchain's), so
+        // no barrier is needed here -- only ending/beginning is. Viewport
+        // and scissor are separate, persistent command-buffer state --
+        // `cmd_begin_rendering` does not reset them on its own -- so both
+        // must be explicitly restored to the swapchain's own real extent
+        // here, or a draw recorded after resuming would still render
+        // through whatever a preceding `begin_render_to_texture` last set
+        // (a real bug this step's own first real run caught: the
+        // composite draw silently rendered through the layer's own
+        // smaller viewport instead of the swapchain's).
+        unsafe {
+            self.dynamic_rendering
+                .cmd_begin_rendering(self.command_buffer, &rendering_info);
+            self.device.cmd_set_viewport(
+                self.command_buffer,
+                0,
+                &[vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: self.swapchain_width as f32,
+                    height: self.swapchain_height as f32,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                }],
+            );
+            self.device.cmd_set_scissor(
+                self.command_buffer,
+                0,
+                &[vk::Rect2D {
+                    offset: vk::Offset2D::default(),
+                    extent: vk::Extent2D {
+                        width: self.swapchain_width,
+                        height: self.swapchain_height,
+                    },
+                }],
+            );
+        }
+
+        // Restore the real, active-target dimensions `draw_indexed`'s push
+        // constants need -- see `begin_render_to_texture`'s own comment on
+        // `self.width`/`self.height`.
+        self.width = self.swapchain_width;
+        self.height = self.swapchain_height;
     }
 
     fn raw_handle(&self) -> u64 {
@@ -3284,39 +3604,12 @@ impl VulkanTexture {
         // concurrent `create_texture` call proceed past its own `lock()`.
         drop(upload_pool_guard);
 
-        // Register into the bindless array: a free slot, assigned once,
-        // written via a single `vkUpdateDescriptorSets` call. Exhausting
-        // `bindless_capacity` is a real, reportable condition (Phase 2
-        // Code Review finding #67 -- `RhiDevice::create_texture` now
-        // actually propagates this `Result` instead of `.expect()`-ing it
-        // away).
-        let bindless_index = device
-            .bindless_registry
-            .lock()
-            .expect("bindless registry poisoned")
-            .allocate()
-            .ok_or(EngineError::BindlessArrayExhausted)?;
-
-        let image_info = vk::DescriptorImageInfo::default()
-            .image_view(view)
-            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-        let write = vk::WriteDescriptorSet::default()
-            .dst_set(device.bindless_descriptor_set)
-            .dst_binding(1)
-            .dst_array_element(bindless_index)
-            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
-            .image_info(std::slice::from_ref(&image_info));
-        // SAFETY: `device.device` is valid; `device.bindless_descriptor_set`
-        // was allocated in `VulkanDevice::new` from a layout whose binding 0
-        // has `UPDATE_AFTER_BIND`, so writing to it here (potentially while
-        // other draws using this same set are in flight, though this
-        // step's scope keeps submission fully synchronous anyway) is
-        // explicitly permitted; `bindless_index` was just allocated above
-        // so it is `< bindless_capacity`, and `view` was just created on
-        // this same device.
-        unsafe {
-            device.device.update_descriptor_sets(&[write], &[]);
-        }
+        // Register into the bindless array -- factored into `VulkanDevice::
+        // allocate_bindless_slot` (IMPLEMENTATION.md Phase 6 Step 6.4.1),
+        // shared with the new `RhiDevice::register_bindless`, which needs
+        // this same allocate-and-write-descriptor logic for a texture
+        // that's already GPU-resident rather than being freshly uploaded.
+        let bindless_index = device.allocate_bindless_slot(view)?;
 
         // Every fallible step is behind us -- claim the handles out of the
         // guard without running its `Drop`.

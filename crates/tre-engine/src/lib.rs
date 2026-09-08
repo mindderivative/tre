@@ -2030,6 +2030,56 @@ pub trait RhiDevice {
         pixels: &[u8],
     ) -> Result<Box<dyn RhiTexture>, EngineError>;
 
+    /// Registers an already-created texture -- typically one just
+    /// rendered into via [`RhiCommandBuffer::begin_render_to_texture`]/
+    /// [`RhiCommandBuffer::end_render_to_texture`] -- into the RHI's
+    /// persistent bindless texture array, returning the allocated slot
+    /// so it can be passed directly to [`RhiCommandBuffer::bind_texture`]
+    /// (IMPLEMENTATION.md Phase 6 Step 6.4.1). Unlike
+    /// [`RhiDevice::create_texture`], this performs no pixel upload at
+    /// all -- `texture` is already GPU-resident; this only allocates a
+    /// bindless slot and points it at the texture's own existing view.
+    /// Returns the raw index rather than mutating `texture.bindless_
+    /// index()` itself: `RhiTexture` exposes no setter (deliberately --
+    /// every other method on it is a read of state fixed at construction
+    /// time), so the caller is responsible for remembering the returned
+    /// index for as long as it needs it, exactly as it already must for
+    /// any other value this trait returns.
+    ///
+    /// A texture returned by [`RhiDevice::acquire_transient_target`] is
+    /// *not* bindless-registered by default ("written to, not sampled
+    /// from" is the common case that never needs a slot at all) -- this
+    /// is the explicit opt-in for the one real case that does:
+    /// compositing a rendered-into transient target back as a sampled
+    /// quad.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::BindlessArrayExhausted`] if the bindless
+    /// texture array has no free slots left -- the same failure mode
+    /// [`RhiDevice::create_texture`] can hit, for the same underlying
+    /// array.
+    fn register_bindless(&self, texture: &dyn RhiTexture) -> Result<u32, EngineError>;
+
+    /// Reverses [`RhiDevice::register_bindless`] -- frees `bindless_index`
+    /// (that call's own return value) back to the registry's free list.
+    /// Takes the raw index alone, not a texture reference: the free-list
+    /// release itself only ever needed the index (the descriptor slot's
+    /// contents are simply overwritten, harmlessly, whenever it's next
+    /// allocated to something else). Callers that bindless-register a
+    /// texture acquired via [`RhiDevice::acquire_transient_target`] must
+    /// call this before [`RhiDevice::release_transient_target`], not
+    /// after: that function's own safety guard (Phase 2 Code Review
+    /// finding #70) rejects any texture whose `bindless_index()` is
+    /// `Some`, since a *genuinely* `create_texture`-sourced texture
+    /// reaching it that way would otherwise be pooled as if it had
+    /// `COLOR_ATTACHMENT` usage it never actually has -- deregistering
+    /// first, here, keeps that guard's own logic completely untouched.
+    /// This crate's own `register_bindless` never mutates a transient
+    /// target's own `bindless_index()` field at all (see that method's
+    /// own doc comment), so that guard's check is unaffected by this
+    /// method's use either way.
+    fn deregister_bindless(&self, bindless_index: u32);
+
     // Command Submission
     /// # Errors
     /// Returns [`EngineError::DeviceLost`] on GPU device removal or driver
@@ -2069,6 +2119,29 @@ pub trait RhiCommandBuffer {
 
     // Execution
     fn draw_indexed(&mut self, index_count: u32, start_index: u32, base_vertex: i32);
+
+    // Offscreen render targets (IMPLEMENTATION.md Phase 6 Step 6.4.1) --
+    // real render-to-texture, the RHI capability real `PushLayer`/
+    // `PopLayer` execution (Step 6.4.2) is built on. Scoped to exactly
+    // one level of redirection: `begin_render_to_texture`/
+    // `end_render_to_texture` bracket rendering into one texture at a
+    // time, and `resume_swapchain_rendering` returns to the swapchain
+    // `RhiDevice::begin_frame` originally set up -- resuming an *outer*
+    // layer's own target (true nested layers) is real, separate future
+    // work with no real scene to prove it against yet.
+    /// Ends whatever rendering scope is currently active and begins a
+    /// new one targeting `texture`, cleared to transparent black, with
+    /// no stencil attachment (transient targets don't have one).
+    fn begin_render_to_texture(&mut self, texture: &dyn RhiTexture);
+    /// Ends the rendering scope `begin_render_to_texture` began and
+    /// transitions `texture` to a layout suitable for sampling
+    /// afterward (e.g. via `RhiDevice::register_bindless` then
+    /// `bind_texture`).
+    fn end_render_to_texture(&mut self, texture: &dyn RhiTexture);
+    /// Resumes rendering into the swapchain image `RhiDevice::begin_frame`
+    /// originally set up, preserving whatever it already had drawn --
+    /// unlike `begin_render_to_texture`, this never clears.
+    fn resume_swapchain_rendering(&mut self);
 
     fn raw_handle(&self) -> u64;
 }
@@ -3666,6 +3739,9 @@ mod tests {
         BindVertexBuffer(u64, u32),
         BindIndexBuffer(u64, u32),
         DrawIndexed(u32, u32, i32),
+        BeginRenderToTexture(u64),
+        EndRenderToTexture(u64),
+        ResumeSwapchainRendering,
     }
 
     #[derive(Default)]
@@ -3704,6 +3780,20 @@ mod tests {
                 start_index,
                 base_vertex,
             ));
+        }
+
+        fn begin_render_to_texture(&mut self, texture: &dyn RhiTexture) {
+            self.calls
+                .push(RecordedCall::BeginRenderToTexture(texture.raw_handle()));
+        }
+
+        fn end_render_to_texture(&mut self, texture: &dyn RhiTexture) {
+            self.calls
+                .push(RecordedCall::EndRenderToTexture(texture.raw_handle()));
+        }
+
+        fn resume_swapchain_rendering(&mut self) {
+            self.calls.push(RecordedCall::ResumeSwapchainRendering);
         }
 
         fn raw_handle(&self) -> u64 {

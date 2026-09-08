@@ -1398,3 +1398,19 @@ This single bug fully and cleanly explains every symptom gathered across this en
 | # | Finding | Doc(s)/Code | Severity | Resolution |
 |---|---|---|---|---|
 | 127 | `draw_rounded_rect` emitted `texture_handle: 0` for "no texture," while `canvas_batch_flattening_demo.rs`/`canvas_sub_canvas_demo.rs` each independently defined their own `NO_TEXTURE = u32::MAX` for RHI-side binding -- two sentinels for one concept, reconciled only by a hardcoded per-demo branch; `0` is unsafe to keep since it collides with a legitimate real bindless index | tre-engine (`draw_rounded_rect`, new `NO_TEXTURE`/`PipelineKind`/`PipelineRegistry`) | Should-fix | Fixed -- `NO_TEXTURE` promoted to one real, shared `tre-engine` constant; `draw_rounded_rect` emits it; verified via an extended unit test and all 5 affected demos re-run manually, zero regressions |
+
+## Phase 6 Step 6.4.1 Implementation (2026-09-08)
+
+### 128. [Should-fix] `resume_swapchain_rendering`'s first draft never restored the viewport, so a draw recorded after resuming silently rendered through a stale, smaller viewport
+
+Vulkan's dynamic viewport/scissor state is a persistent property of the command buffer, not scoped to one `cmd_begin_rendering` instance -- ending one rendering scope and beginning another does not reset it. `begin_render_to_texture` correctly sets its own viewport to match the offscreen target's own (typically smaller) dimensions before rendering into it, but the first draft of `resume_swapchain_rendering` only re-began rendering into the swapchain's own attachments -- it never re-issued `cmd_set_viewport`/`cmd_set_scissor`, leaving both stuck at whatever `begin_render_to_texture` last set for the layer.
+
+Found by `render_to_texture_demo`'s own first real run, not designed around in the abstract: the demo's real pixel assertions failed outright (a swapchain pixel expected to show the composited layer's own real content instead showed exactly the background clear color), even though the Vulkan validation layer raised nothing at all -- a viewport smaller than its actual render target is not itself invalid, just semantically wrong for what the caller wanted. Only checking the real, composited pixel caught it.
+
+**Fix:** `resume_swapchain_rendering` now explicitly restores both viewport and scissor to the real swapchain extent (`self.swapchain_width`/`self.swapchain_height`) as part of its own real work, rather than leaving this to a caller to remember -- the demo's own earlier workaround (explicitly re-calling `set_scissor` itself after resuming) was removed once the RHI method itself became self-sufficient. Verified: `render_to_texture_demo` re-run after the fix -- both real pixel assertions (composited interior shows real foreground, composited transparent area shows real background) pass; the fix is scoped to a genuinely new code path (`resume_swapchain_rendering` didn't exist before this step), so no other demo could have been affected either way -- confirmed anyway by re-running all 21 pre-existing Vulkan demos, zero regressions.
+
+## Summary table (Phase 6 Step 6.4.1)
+
+| # | Finding | Doc(s)/Code | Severity | Resolution |
+|---|---|---|---|---|
+| 128 | `resume_swapchain_rendering`'s first draft never restored the viewport (a persistent, command-buffer-wide piece of Vulkan state `begin_render_to_texture` had already changed for the layer's own smaller size) -- a draw recorded after resuming silently rendered through the wrong viewport, with no validation-layer warning at all | tre-rhi-vulkan (`VulkanCommandBuffer::resume_swapchain_rendering`) | Should-fix | Fixed -- both viewport and scissor now explicitly restored to the real swapchain extent inside `resume_swapchain_rendering` itself; verified via `render_to_texture_demo`'s own real pixel assertions and all 21 pre-existing Vulkan demos re-run, zero regressions |

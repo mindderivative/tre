@@ -884,6 +884,97 @@ demo` re-run with every existing assertion unchanged, confirming the
 real no-op. All other pre-existing examples re-run manually, zero
 regressions.
 
+### Step 6.4.1: Real RHI Render-to-Texture Capability -- Status: Complete (2026-09-08)
+
+Split from "Step 6.4: Real PushLayer/PopLayer Execution" after a real-code
+investigation found it needed genuinely new, cross-cutting RHI trait
+surface -- confirmed, not assumed: nothing anywhere ever renders into an
+acquired transient target (`gc_demo.rs`/`memory_pools_demo.rs`
+immediately release what they acquire), the only real `cmd_begin_
+rendering` construction in the whole codebase is inside `VulkanDevice::
+begin_frame`, hard-wired to the swapchain's own color *and* stencil
+views, and a transient target's `bindless_index()` is `None` by original
+design ("written to, not sampled from"). This step builds the real
+capability, driven entirely by hand-written RHI calls -- no `Canvas`/IR
+involvement; Step 6.4.2 wires `push_layer`/`pop_layer` to it.
+
+Three new `RhiCommandBuffer` methods: `begin_render_to_texture`
+(ends whatever rendering is active, barriers the target `UNDEFINED ->
+COLOR_ATTACHMENT_OPTIMAL`, begins a fresh, cleared-to-transparent
+rendering scope with no stencil attachment -- transient targets don't
+have one), `end_render_to_texture` (ends that scope, barriers
+`COLOR_ATTACHMENT_OPTIMAL -> SHADER_READ_ONLY_OPTIMAL` -- both barriers'
+old/new layouts are statically known given this scope, no per-texture
+layout-tracking field needed), and `resume_swapchain_rendering`
+(re-begins rendering into the swapchain `begin_frame` originally set up,
+with `LOAD_OP_LOAD` so whatever was already drawn is preserved, not
+erased -- requires `VulkanCommandBuffer` to stash the swapchain's own
+view/extent at `begin_frame` time, since nothing previously persisted it
+past that function's own local scope). A new `RhiDevice::register_
+bindless`/`deregister_bindless` pair lets an already-rendered-into
+texture become sample-able -- factored out of `VulkanTexture::
+from_pixels`'s own existing allocate-slot-and-write-descriptor logic,
+returning the allocated index directly rather than mutating the
+texture's own `bindless_index()` (which `RhiTexture` exposes no setter
+for, deliberately -- every other method on it is a read of state fixed
+at construction). Deregistering before `release_transient_target`, not
+after, was a deliberate design choice: that function's own existing
+safety guard (Phase 2 Code Review finding #70) rejects any texture whose
+`bindless_index()` is `Some`, and keeping that guard's logic completely
+untouched was preferred over teaching it to distinguish a legitimately
+transient-and-bindless texture from a genuinely misused `create_texture`-
+sourced one.
+
+Scoped deliberately to single-level layer use, not nested layers --
+nothing calls `push_layer`/`pop_layer` at all today, so building "resume
+an *outer* layer's own rendering without re-clearing it" now would be
+speculative; `resume_swapchain_rendering` only ever needs to resume the
+swapchain, named as real, honest future work rather than silently
+dropped, the same deferral discipline this project already applies to
+Windows/macOS accessibility, blur filters, and HDR.
+
+**A real bug found by this step's own first real run, not designed
+around in the abstract (REVIEW.md finding #128).** Vulkan's dynamic
+viewport/scissor state is a persistent property of the command buffer,
+not scoped to one `cmd_begin_rendering` instance. `begin_render_to_
+texture` correctly sets its own viewport for the layer's own smaller
+size, but the first draft of `resume_swapchain_rendering` never restored
+it -- the new demo's composite draw silently rendered through the
+*layer's* stale, smaller viewport instead of the swapchain's own real
+one, with zero validation-layer warning (a too-small viewport isn't
+itself invalid). Only the real pixel assertion caught it. Fixed by
+having `resume_swapchain_rendering` explicitly restore both viewport and
+scissor to the real swapchain extent as part of its own work, rather
+than leaving it to a caller to remember.
+
+New demo (`render_to_texture_demo.rs`, `demo/phase6_step6_4_1/`):
+acquires a `100x80` `Rgba16Float` transient target, renders a real
+rounded rect into it via the existing, unmodified `sdf_rounded_rect`
+pipeline (built against the layer's own `R16G16B16A16_SFLOAT` format,
+not the swapchain's -- dynamic rendering requires a pipeline's declared
+color format to match whatever it's actually bound against), registers
+it bindless, resumes swapchain rendering, and composites it back as a
+textured quad via the existing, unmodified bindless-textured pipeline
+and the default premultiplied-alpha blend state every pipeline already
+carries (confirmed real and unconditional, `VulkanDevice::create_
+pipeline`'s own blend-state setup) -- no special-casing needed for a
+correct "over" composite. Two real pixel checks: the composited rect's
+own deep interior reads exactly opaque foreground (content genuinely
+rendered offscreen and survived the round trip); a point inside the
+composited region but outside the rect's own rounded footprint reads
+exactly the real background (the layer was genuinely cleared to
+transparent, and default blending shows the background correctly
+through it).
+
+Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across
+the workspace, plus `tre-engine`'s own `FakeCommandBuffer` test double
+extended with the three new methods (recorded, not yet exercised by any
+test -- nothing calls them through `execute_frame` until Step 6.4.2).
+All 21 pre-existing Vulkan demos re-run manually end to end after the
+viewport fix, zero regressions -- this step touched shared
+`VulkanCommandBuffer`/`begin_frame` code every one of them depends on.
+CI's `vulkan-validation` job gained the new example.
+
 ## Phase 7: Color Management & Compositing
 
 ### Step 7.1: Linear sRGB Conversions & HDR

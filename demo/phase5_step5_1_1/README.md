@@ -21,12 +21,15 @@ Three rects prove three different things:
 - **Rect B** (`save()`/`set_alpha(0.5)`/`restore()`): a genuine, visible
   partial blend against the background -- neither the fully-opaque
   foreground color nor untouched background.
-- **Rect C** (`push_clip()`/`pop_clip()`): checked at the IR level only
-  (its recorded `UiDrawCommand::clip_bounds`), not with a real GPU
-  scissor test -- nothing in the render pipeline consumes `clip_bounds`
-  yet (that wiring is Step 5.1.3/Phase 6's job). `tre-engine`'s own unit
-  tests already prove the intersection logic in isolation; this demo
-  confirms it still reaches a real frame with real geometry alongside it.
+- **Rect C** (`push_clip()`/`pop_clip()`): checked at the IR level (its
+  recorded `UiDrawCommand::clip_bounds`) and, since Phase 6 Step 6.3,
+  with a real GPU scissor test -- its own drawn geometry is deliberately
+  larger than its own clip rect on every side, so a real `set_scissor`
+  call genuinely has something to crop: a pixel inside both the geometry
+  and the clip reads real foreground, the corresponding pixel inside the
+  geometry but outside the clip reads real background, proving the
+  content was actually cropped on real hardware, not just recorded in
+  the IR.
 
 **A real bug found along the way, not just designed around in the
 abstract.** The first draft of the alpha-scaling logic reduced only the
