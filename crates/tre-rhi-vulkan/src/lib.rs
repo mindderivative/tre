@@ -2085,6 +2085,36 @@ impl VulkanSwapchain {
             surface_loader.get_physical_device_surface_formats(device.physical_device, surface)
         }
         .map_err(|_| EngineError::DeviceLost)?;
+        // IMPLEMENTATION.md Step 7.1 task 1 / TECHNICAL.md Section 6.1: real,
+        // observable capability reporting, not yet an actual format switch --
+        // a genuine attempt to select `R16G16B16A16_SFLOAT` here was tried
+        // and reverted during this step's own implementation, once running it
+        // for real against this project's own dev machine surface showed *why*
+        // that's unsafe as a bare format-only match: the surface reports
+        // `R16G16B16A16_SFLOAT` paired only with `colorspace ==
+        // SRGB_NONLINEAR`, not a genuine wide-gamut/extended-linear
+        // colorspace (this crate's own `ash` dependency doesn't even expose
+        // `VK_EXT_swapchain_colorspace`'s extended constants, e.g.
+        // `EXTENDED_SRGB_LINEAR_EXT`, as named symbols, so distinguishing the
+        // two isn't possible here anyway). A float format has no implicit
+        // hardware encode-on-store the way an `_SRGB` format does, so
+        // presenting Step 7.1's own now-genuinely-linear shader output through
+        // an `SRGB_NONLINEAR`-tagged float surface would very likely display
+        // too dark -- a real, disclosed correctness risk, not a hypothetical
+        // one. The SDR search below stays exactly as before; this log line
+        // only reports what the real surface *also* offers, so real future
+        // HDR work has a genuine, observed starting fact instead of an
+        // assumption.
+        if let Some(hdr_candidate) = formats
+            .iter()
+            .find(|f| f.format == vk::Format::R16G16B16A16_SFLOAT)
+        {
+            eprintln!(
+                "[tre-rhi-vulkan] surface also reports {:?} (colorspace {:?}) -- not selected \
+                 yet: see this call site's own comment for why",
+                hdr_candidate.format, hdr_candidate.color_space
+            );
+        }
         let surface_format = formats
             .iter()
             .find(|f| f.format == vk::Format::B8G8R8A8_SRGB)

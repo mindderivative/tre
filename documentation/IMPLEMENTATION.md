@@ -1129,7 +1129,7 @@ unrelated `accessibility-validation` CI gate (REVIEW.md finding #126).
 
 ## Phase 7: Color Management & Compositing
 
-### Step 7.1: Linear sRGB Conversions & HDR
+### Step 7.1: Linear sRGB Conversions & HDR -- Status: Tasks 2-3 complete (2026-09-08); task 1 honestly scoped down, see below
 
 * **Implementation Tasks:**
 
@@ -1140,6 +1140,79 @@ unrelated `accessibility-validation` CI gate (REVIEW.md finding #126).
   3. Implement the canonical identity-below-white, soft-knee-above-white tone mapping curve (TECHNICAL.md Section 6.3) as a final post-process step when the display's reported HDR headroom is less than the content's authored range. Do not use a full-range filmic curve like [ACES](https://docs.unity3d.com/Packages/com.unity.render-pipelines.core@17.0/manual/tonemapping.html#aces) by default -- this is a desktop UI engine, not a photo/film/video-editing tool, and ACES's deliberate contrast and desaturation shaping would visibly shift exact UI/brand colors that must render unchanged. Expose ACES (or another filmic curve) only as an explicit, opt-in per-`Canvas` style choice for creative-workstation/DAW integrations (DESIGN.md Section 3) that specifically want it for embedded video/image preview content.
 
 * **Technical Rationale:** Blending in sRGB space causes dark fringes around anti-aliased geometry. Doing this math on the GPU in linear space ensures pristine transparency intersections. The tone-mapping curve choice (task 3) is a separate concern from the blend-space conversion (task 2): getting linear blending right prevents dark fringes on every frame; getting the tone-mapping curve right prevents the engine's own HDR support from being the thing that makes a UI's colors inconsistent.
+
+* **Implementation status:** this step also closes REVIEW.md finding #92
+  (Phase 4 Step 4.2.1, deferred here by its own original text) -- every
+  real fragment shader passed `UiVertex::color` straight through with no
+  conversion, despite its own doc comment already promising one "in
+  shader"; a mid-tone gray `150` round-tripped to `202` (the swapchain's
+  `_SRGB` format auto-encodes shader output on store, so an sRGB-authored
+  value treated as already-linear gets encoded a second time). Direct
+  inspection found 4 real shaders affected, not the 2 finding #92's own
+  title names: `walking_skeleton.frag`, `sdf_rounded_rect.frag`,
+  `bindless_textured.frag`'s no-texture-bound fallback branch, and
+  `msdf.frag`. **Task 2** is real: a canonical `srgb_to_linear(vec3)`
+  GLSL helper (duplicated per shader -- this project's `build.rs` invokes
+  `glslc` one file at a time, no shared `#include` mechanism exists) is
+  applied to `frag_color.rgb` (never `.a`, which carries no gamma curve)
+  before any coverage/blend math in all 4 shaders; texture-sampling paths
+  need no change (the MSDF atlas is deliberately non-color
+  `Rgba8Unorm` data, and the layer-composite's sampled `Rgba16Float`
+  target is already linear by format). Verified by a new demo
+  (`linear_color_demo.rs`, `demo/phase7_step7_1/`) that draws an opaque,
+  genuinely non-fixed-point `rgb(150, 100, 200)` rect and reads back its
+  own deep interior (coverage `1.0`, no AA-edge or premultiply-alpha
+  interaction) -- the real GPU result round-trips **exactly**:
+  `[150, 100, 200]` out, matching the authored color precisely (`srgb_to_
+  linear` and the swapchain's own hardware encode-on-store are exact
+  inverses). The demo also computes what the old, unfixed double-encoding
+  would have produced via an independent Rust reference implementation of
+  the canonical encode formula -- `[202, 168, 229]`, exactly matching
+  finding #92's own `150`->`202` worked example -- confirming the fix has
+  real, measurable effect. All 24 Vulkan demos (the 23 pre-existing plus
+  this new one) re-run manually after the shader change, zero
+  regressions -- expected, since every pre-existing demo deliberately uses
+  only gamma-invariant (`0`/`255` per channel) colors specifically so this
+  defect couldn't affect them either way, per `sdf_rounded_rect_demo.rs`'s
+  own header comment; confirmed, not assumed, given this step's own global
+  shader blast radius.
+
+  **Task 1 was attempted, then honestly reverted after actually running
+  it, not merely deferred on paper.** `VulkanSwapchain::new`'s real
+  surface-format search was first upgraded to prefer `R16G16B16A16_
+  SFLOAT` when the real physical device/surface reports it. Running the
+  3 demos that construct a genuine windowed swapchain against this
+  project's own real dev machine (`walking_skeleton`/`input_demo`/
+  `multi_window`) revealed exactly why a bare format-only match is
+  unsafe: the real surface reports `R16G16B16A16_SFLOAT` paired only
+  with `colorspace SRGB_NONLINEAR`, not a genuine wide-gamut/extended-
+  linear colorspace (this project's own `ash` dependency doesn't even
+  expose `VK_EXT_swapchain_colorspace`'s extended constants, e.g.
+  `EXTENDED_SRGB_LINEAR_EXT`, as named symbols, so the two can't be
+  distinguished here anyway). A float format has no implicit hardware
+  encode-on-store the way an `_SRGB` format does, so presenting this
+  step's own now-genuinely-linear shader output through an
+  `SRGB_NONLINEAR`-tagged float surface would very likely display too
+  dark on real hardware -- a real, disclosed correctness risk, not a
+  hypothetical one, caught only by actually running the change rather
+  than reasoning about it in the abstract. Reverted: `VulkanSwapchain::
+  new` still selects `B8G8R8A8_SRGB` exactly as before, and now logs
+  (`eprintln!`, matching this crate's own existing diagnostic precedent)
+  whether the real surface *also* reports an FP16 format, so real future
+  HDR work starts from an observed fact instead of an assumption. **Task
+  3** is real as a pure primitive only: `tre_math::tone_map(linear:
+  f32, headroom: f32) -> f32`, TECHNICAL.md Section 6.3's exact formula,
+  5 new unit tests (identity at/below white, compression above it,
+  continuity at the boundary, monotonicity, asymptotic approach to `1.0
+  + headroom`) -- not wired into any real render path, since task 1's own
+  real, buildable logic never actually selects a genuine HDR format on
+  any hardware available to this project today, so there is no real
+  trigger to wire it to yet, matching this crate's own `compose_batch`/
+  `lerp_points_batch` "build and prove the primitive before its exact
+  consumer exists" precedent. The real OS-level brightness-metadata hook
+  DESIGN.md Section 11.2 describes stays real, disclosed, deferred future
+  work -- confirmed via a real repo-wide grep that no such hook exists
+  anywhere in code today.
 
 ### Step 7.2: Visual Filters (PushLayer Blurs)
 

@@ -319,9 +319,42 @@ pub fn lerp_points_batch(from: &[[f32; 2]], to: &[[f32; 2]], t: f32, out: &mut [
     }
 }
 
+/// TECHNICAL.md Section 6.3's canonical HDR-to-SDR tone-mapping curve
+/// (IMPLEMENTATION.md Step 7.1 task 3): identity at or below standard
+/// white (`linear <= 1.0`), Reinhard-style compression of the excess
+/// above it otherwise. `headroom` is the display's real reported HDR
+/// headroom in SDR-white multiples (e.g. `3.0` for a display capable of
+/// 3x SDR peak brightness) -- a real, explicit parameter, never a fixed
+/// constant, matching TECHNICAL.md's own requirement. Continuous and
+/// monotonic across the `linear == 1.0` boundary, asymptotically
+/// approaching but never hard-clipping at `1.0 + headroom`.
+///
+/// A pure primitive only, not yet wired into any real render path --
+/// this project's own real, buildable swapchain-format-selection logic
+/// (`tre-rhi-vulkan`'s `VulkanSwapchain::new`) never actually selects a
+/// genuine HDR-capable surface on any hardware available to this project
+/// today (a real, disclosed environmental limit, not a gap in this
+/// function), so there is no real trigger to call this from yet. Matches
+/// this crate's own `compose_batch`/`lerp_points_batch` precedent of
+/// building and proving a primitive before its exact consumer exists.
+///
+/// # Panics
+/// Never in practice -- `headroom` is expected to be a positive real
+/// number (a genuine display headroom is never zero or negative); no
+/// real caller of this pure function can trigger a panic through normal
+/// use, and this function performs no assertions of its own.
+#[must_use]
+pub fn tone_map(linear: f32, headroom: f32) -> f32 {
+    if linear <= 1.0 {
+        linear
+    } else {
+        1.0 + (linear - 1.0) / (1.0 + (linear - 1.0) / headroom)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{compose_batch, lerp_points_batch, Affine2};
+    use super::{compose_batch, lerp_points_batch, tone_map, Affine2};
     use std::f32::consts::PI;
 
     /// `wide::f32x8::mul_add` is true hardware FMA (one rounding) wherever
@@ -568,5 +601,65 @@ mod tests {
         let to = sample_points(3);
         let mut out = vec![[0.0f32; 2]; 4];
         lerp_points_batch(&from, &to, 0.5, &mut out);
+    }
+
+    #[test]
+    fn tone_map_is_identity_at_and_below_standard_white() {
+        assert!((tone_map(0.0, 3.0) - 0.0).abs() <= EPSILON);
+        assert!((tone_map(0.5, 3.0) - 0.5).abs() <= EPSILON);
+        assert!((tone_map(1.0, 3.0) - 1.0).abs() <= EPSILON);
+    }
+
+    #[test]
+    fn tone_map_compresses_above_standard_white_but_never_reaches_it_uncompressed() {
+        let headroom = 3.0;
+        let compressed = tone_map(2.0, headroom);
+        assert!(
+            compressed > 1.0 && compressed < 2.0,
+            "input 1.0 above white must compress to somewhere between 1.0 and its own \
+             uncompressed value, got {compressed}"
+        );
+    }
+
+    #[test]
+    fn tone_map_is_continuous_across_the_standard_white_boundary() {
+        let headroom = 3.0;
+        let just_below = tone_map(1.0 - 1e-4, headroom);
+        let at = tone_map(1.0, headroom);
+        let just_above = tone_map(1.0 + 1e-4, headroom);
+        assert!((at - just_below).abs() < 1e-3);
+        assert!((just_above - at).abs() < 1e-3);
+    }
+
+    #[test]
+    fn tone_map_is_monotonically_increasing() {
+        let headroom = 3.0;
+        let samples: Vec<f32> = (0u16..50).map(|i| f32::from(i) * 0.5).collect();
+        for pair in samples.windows(2) {
+            let (a, b) = (tone_map(pair[0], headroom), tone_map(pair[1], headroom));
+            assert!(
+                b >= a,
+                "tone_map must never decrease as input increases: tone_map({}) = {a}, \
+                 tone_map({}) = {b}",
+                pair[0],
+                pair[1]
+            );
+        }
+    }
+
+    #[test]
+    fn tone_map_asymptotically_approaches_but_never_reaches_one_plus_headroom() {
+        let headroom = 3.0;
+        let ceiling = 1.0 + headroom;
+        let far_above = tone_map(1_000_000.0, headroom);
+        assert!(
+            far_above < ceiling,
+            "tone_map must never reach its own ceiling {ceiling}, got {far_above}"
+        );
+        assert!(
+            (ceiling - far_above).abs() < 0.01,
+            "tone_map of a very large input must land extremely close to its own ceiling \
+             {ceiling}, got {far_above}"
+        );
     }
 }

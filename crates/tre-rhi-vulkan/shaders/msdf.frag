@@ -19,6 +19,20 @@ layout(push_constant) uniform PushConstants {
     uint texture_index;
 } pc;
 
+// TECHNICAL.md Section 6.2's canonical sRGB->Linear formula
+// (IMPLEMENTATION.md Step 7.1, REVIEW.md finding #92): `frag_color.rgb`
+// is `UiVertex::color`'s own sRGB-authored text color -- must be
+// linearized before the premultiplied-coverage math below. The sampled
+// `msdf` texture is deliberately not color data (a distance-field
+// encoding, `TextureFormat::Rgba8Unorm`) and needs no conversion. Alpha
+// carries no gamma curve and is left unconverted.
+vec3 srgb_to_linear(vec3 c) {
+    bvec3 low = lessThanEqual(c, vec3(0.04045));
+    vec3 lo = c / 12.92;
+    vec3 hi = pow((c + 0.055) / 1.055, vec3(2.4));
+    return mix(hi, lo, low);
+}
+
 void main() {
     vec3 msdf = texture(
         sampler2D(bindless_textures[nonuniformEXT(pc.texture_index)], bindless_sampler),
@@ -35,8 +49,10 @@ void main() {
     float sig_dist = max(min(msdf.r, msdf.g), min(max(msdf.r, msdf.g), msdf.b)) - 0.5;
     float opacity = clamp(sig_dist / fwidth(sig_dist) + 0.5, 0.0, 1.0);
 
+    vec3 linear_color = srgb_to_linear(frag_color.rgb);
+
     // ARCHITECTURE.md Section 6.1's blend state expects premultiplied
     // alpha -- both color and alpha channels scaled by the same computed
     // coverage, matching `sdf_rounded_rect.frag`'s own closing line.
-    out_color = vec4(frag_color.rgb * opacity, frag_color.a * opacity);
+    out_color = vec4(linear_color * opacity, frag_color.a * opacity);
 }
