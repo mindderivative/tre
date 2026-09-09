@@ -150,6 +150,28 @@ fn bounding_box(contours: &[Contour]) -> Option<([f32; 2], [f32; 2])> {
     Some((min, max))
 }
 
+/// Whether `contours` has enough real, non-degenerate ink for
+/// [`generate_msdf`] to succeed -- i.e. `bounding_box(contours)` would
+/// return `Some`.
+///
+/// REVIEW.md finding #139: `Canvas::draw_text` (`tre-engine`) used to
+/// gate `GlyphRasterSource` construction on `!contours.is_empty()`
+/// alone -- a narrower, *wrong* condition. A non-empty `Vec<Contour>`
+/// (e.g. a single `[MoveTo, Close]` pair with no drawing segments in
+/// between, a real shape a corrupted/truncated `glyf` table -- or even
+/// an ordinary font's single-point contour, per skrifa's own real
+/// `to_path` behavior -- can produce) still fails `bounding_box`'s own
+/// degeneracy check, so `generate_msdf` legitimately returns `None` for
+/// it. `GlyphRasterSource::rasterize`'s `.expect(...)` on that `None`
+/// then panics on the atlas owner's shared background thread. This
+/// function exposes `bounding_box`'s exact real check so callers outside
+/// this crate can gate construction on the same, correct condition
+/// `generate_msdf` itself actually requires, not a narrower one.
+#[must_use]
+pub fn has_real_ink(contours: &[Contour]) -> bool {
+    bounding_box(contours).is_some()
+}
+
 fn apply_fit_transform(
     mut shape: Shape<FdsmContour>,
     (min, max): ([f32; 2], [f32; 2]),
@@ -354,5 +376,36 @@ mod tests {
             OutlineSegment::Close,
         ];
         assert!(generate_msdf(&[degenerate], 32, 4.0).is_none());
+    }
+
+    #[test]
+    fn has_real_ink_agrees_with_generate_msdf_on_a_real_non_degenerate_contour() {
+        let square = unit_square_contour();
+        assert!(has_real_ink(std::slice::from_ref(&square)));
+        assert!(generate_msdf(&[square], 32, 4.0).is_some());
+    }
+
+    #[test]
+    fn has_real_ink_is_false_for_an_empty_contour_list() {
+        // REVIEW.md finding #139: this is the case `Canvas::draw_text`'s
+        // old `!outline.is_empty()` guard *did* correctly catch --
+        // confirming this function doesn't regress the case that already
+        // worked.
+        assert!(!has_real_ink(&[]));
+    }
+
+    #[test]
+    fn has_real_ink_is_false_for_a_non_empty_but_single_point_contour() {
+        // REVIEW.md finding #139: the exact case `!outline.is_empty()`
+        // missed -- a real, non-empty `Vec<Contour>` (a lone `MoveTo` +
+        // `Close`, with no drawing segment between them) that skrifa's
+        // own `to_path` can produce for a real single-point TrueType
+        // contour, and that malformed/truncated font data can produce
+        // too. Must agree with `generate_msdf` returning `None` for the
+        // identical shape (see
+        // `generate_msdf_of_a_contour_collapsed_to_a_single_point_returns_none`
+        // above).
+        let degenerate = vec![OutlineSegment::MoveTo([5.0, 5.0]), OutlineSegment::Close];
+        assert!(!has_real_ink(&[degenerate]));
     }
 }

@@ -1064,6 +1064,31 @@ Vulkan demos (the 21 from Step 6.4.1 plus the new one) re-run manually
 end to end, zero regressions. CI's `vulkan-validation` job gained the
 new example.
 
+**A real, undisclosed limit found later (REVIEW.md finding #138, Phase
+1-8 Comprehensive Review, 2026-09-08): two or more sequential
+`PushLayer`/`PopLayer` pairs in one frame can alias the same bindless
+descriptor slot and physical transient texture before the GPU ever
+executes the earlier draw, silently corrupting rendered output with no
+validation-layer warning.** `active_layer.is_none()` only rejects
+*nested* `PushLayer` (this step's own documented scope); sequential,
+sibling layers are explicitly allowed and are DESIGN.md Section 6.2's
+own named common case (multiple blurred/glassmorphism panels in one
+scene). Because `execute_frame` records an entire frame into one
+command buffer submitted once at the end, `register_bindless`/
+`deregister_bindless`/`release_transient_target` all run immediately at
+*recording* time, not GPU execution time -- a second layer's `PopLayer`
+can free and immediately reuse the exact slot/texture a first layer's
+already-recorded (not yet executed) composite draw still references,
+so by submission time the first layer's draw samples the second layer's
+content instead of its own. No test exercises two sibling layers in one
+frame; `main_loop_demo.rs` (Step 8.1.2) never calls `push_layer` at all,
+so this has not yet manifested in any real demo. Real fix: defer
+`deregister_bindless`/`release_transient_target` until the GPU has
+actually finished with the resource (fence-gated, mirroring this
+project's own generational-GC deferred-release pattern, TECHNICAL.md
+Section 3.3) rather than immediately at recording time -- genuine new
+architecture, not attempted opportunistically inside that review.
+
 ### Step 6.5: The Combining Capstone -- Status: Complete (2026-09-08); Phase 6 closed
 
 Phase 6's own closer, named explicitly in Step 6.1's own original plan
@@ -1480,6 +1505,29 @@ manually, zero regressions. Added to `ci.yml`'s `vulkan-validation` job.
   performance work, not named by this step's own task list.
 - **SVG tessellation/morphing inside the loop**, and **Windows/macOS** --
   this project's own standing deferrals, unchanged.
+- **Multi-frame `push_layer`/`pop_layer` round-trips** (REVIEW.md finding
+  #150) -- this loop never composites an offscreen layer; that
+  combination remains proven only single-frame/headless (Steps
+  6.4.1/6.4.2/6.5). Also means the sibling-`PushLayer`/`PopLayer`-in-one-
+  frame bindless/texture-aliasing bug (finding #138) is never exercised
+  by this demo.
+- **A cross-frame reuse API for `FrameArena`/`ScatterArena`/
+  `RenderingCanvas`** (REVIEW.md finding #134) -- this loop constructs a
+  fresh `FrameArena` and up to 3 fresh `RenderingCanvas`/`SubCanvas`
+  instances every single frame (no `reset()`/reuse method exists on any
+  of the three types), roughly 20+ heap allocations per frame for a
+  trivial scene -- squarely inside DESIGN.md Section 2.1's own named
+  "RenderingCanvas recording, intermediate representation flattening"
+  zero-allocation boundary. Real future work: an in-place `reset()`/
+  `clear()` API on all three types, so a real application can own one
+  long-lived instance instead of rebuilding it every frame.
+- **Recovering from a window resize** (REVIEW.md finding #151) -- the
+  disclosed swapchain-recreation gap (finding #116, Step 1.1) means
+  resizing this demo's window mid-run panics the whole process
+  (`EngineError::SwapchainOutOfDate`, surfaced correctly but never
+  handled anywhere). This is the first step where that long-disclosed
+  gap becomes a concrete, guaranteed-panic risk in the project's own
+  reference main-loop shape, not just a latent one in short demos.
 
 ## Architectural Decision Matrix
 

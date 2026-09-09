@@ -54,4 +54,21 @@ Step 8.1.2 write-up for the full reasoning): live, mid-run atlas growth
 (the atlas is fully pre-seeded before the loop starts -- its owner
 thread's only readback API, `join()`, stops the thread); a persistent,
 reused worker-thread pool (real OS threads are spawned fresh every
-frame instead); SVG tessellation/morphing in the loop; Windows/macOS.
+frame instead); SVG tessellation/morphing in the loop; Windows/macOS;
+multi-frame `push_layer`/`pop_layer` round-trips (never exercised here,
+REVIEW.md finding #150); a cross-frame reuse API for
+`FrameArena`/`RenderingCanvas` (this loop allocates ~20+ times per
+frame, REVIEW.md finding #134).
+
+**Two things to know before you resize the window or add a second
+layer, found by the Phase 1-8 Comprehensive Review after this step
+shipped:** resizing this window mid-run panics the whole process --
+the disclosed swapchain-recreation gap (finding #116) has no recovery
+path anywhere, and this is the first step where that becomes a concrete
+risk rather than a latent one (finding #151). And two sibling
+`PushLayer`/`PopLayer` pairs in a single frame (not exercised by this
+demo, which never calls `push_layer` at all) can alias the same
+bindless descriptor slot and physical texture before the GPU executes
+the earlier draw, corrupting rendered output with no validation warning
+(finding #138) -- a real, disclosed-but-unfixed gap in `execute_frame`
+itself, not something specific to this demo.

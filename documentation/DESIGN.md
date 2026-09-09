@@ -252,6 +252,8 @@ The **Rendering Canvas** serves as the explicit API boundary and bridge between 
 
   * *Blend Modes:* Supports advanced layer blending operations including Multiply, Screen, Overlay, Soft Light, and Color Dodge.
 
+* **Implementation status (Phase 7 Step 7.2.1, 2026-09-08; REVIEW.md finding #149):** neither bullet above is a working capability today. *Backdrop & Gaussian Blurs* is **stopped, non-functional** -- Dual-Kawase blur's own real RHI investigation found sampling a bindless texture while the render target is offscreen reads back all-zero data, with the real root cause unresolved after twelve independent hypotheses were tested and ruled out (REVIEW.md finding #130; `dual_kawase_blur_demo.rs` is kept as a documented reproduction case, deliberately excluded from CI). *Blend Modes* were **never built at all** -- confirmed via a repo-wide grep for Multiply/Screen/Overlay/Soft Light/Color Dodge (no matches outside this bullet) and by `planning/archive/PLAN_PHASE7_STEP7_2_1.md`'s own explicit scope decision naming them "out of scope... never part of IMPLEMENTATION.md's own real Step 7.2 task list." The only real blend state anywhere in this engine is the single default premultiplied-alpha "over" mode every pipeline already carries unconditionally (IMPLEMENTATION.md Step 6.4.1).
+
 ### 6.3 Multi-Threaded Parallel Canvas Recording
 
 * **Thread-Local Sub-Canvases:** For complex interfaces with high widget counts, the UI framework can split command recording across worker threads using light child sub-canvases (`Canvas::create_sub_canvas()`).

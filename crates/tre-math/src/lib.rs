@@ -358,6 +358,11 @@ pub fn tone_map(linear: f32, headroom: f32) -> f32 {
 /// mass-spring-damper ODE -- monotonic, never overshoots `target`. `lambda`
 /// is the decay rate (higher converges faster); `dt` is the real elapsed
 /// seconds since the previous call (e.g. from `FrameClock::tick`).
+///
+/// # Panics
+/// Never -- pure arithmetic (`f32::exp` and the four basic operators),
+/// no assertions, matching every other public function in this module
+/// (REVIEW.md finding #144).
 #[must_use]
 pub fn spring_decay(current: f32, target: f32, lambda: f32, dt: f32) -> f32 {
     target + (current - target) * (-lambda * dt).exp()

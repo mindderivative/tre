@@ -4,7 +4,16 @@
 ./demo/phase5_step5_3_3/run_canvas_accessibility_demo.sh
 ```
 
-Closes Step 5.3 (5.3.1-5.3.3) in full. Step 5.3.1 proved
+**Status (corrected here, REVIEW.md finding #146): Step 5.3 is NOT yet
+closed.** The code and its logic are real and verified live on a real
+desktop session, but CI's own `accessibility-validation` job does not
+yet pass -- see IMPLEMENTATION.md's Step 5.3.3 section and REVIEW.md
+finding #126 for the real, still-open root cause (a D-Bus proxy queried
+on the wrong bus). An earlier version of this README (like an earlier
+version of IMPLEMENTATION.md's own Step 5.3.3 section) stated Step 5.3
+closed on a diagnosis that was later disproven; both are corrected now.
+
+Proves Step 5.3.1/5.3.2's own work composes correctly. Step 5.3.1 proved
 `tag_accessibility_node`'s IR-level math is correct (a unit test, no
 GPU, no D-Bus). Step 5.3.2 proved `tre-a11y` publishes correctly onto a
 real AT-SPI2 bus (a real D-Bus round trip, but the tagged node was a
@@ -48,15 +57,25 @@ that clears the flag on any exit from the scope's closure, panic or not
 -- the assertion failure now reports promptly rather than hanging the
 whole process.
 
-**A real, two-process split, not a single self-verifying binary.**
-A seven-real-push CI investigation (REVIEW.md finding #126) found the
-actual reason this demo kept failing in CI: `accesskit_unix`'s own
-background thread, which does the real AT-SPI2 registration, cannot
-complete that registration inside a process that also links real
-Vulkan/X11 shared libraries. `canvas_accessibility_demo` now only
-renders and tags -- it hands its tagged nodes to
-`canvas_accessibility_verify`, a separate binary confirmed via `ldd` to
-link zero Vulkan/X11/Wayland libraries, which does the real publish and
-verify. This also matches real AT-SPI2 practice more closely than a
-self-verifying process ever did: a real screen reader is always a
-separate process from the application it inspects.
+**A real, two-process split, not a single self-verifying binary --
+though not for the reason an earlier draft of this README claimed.**
+`canvas_accessibility_demo` only renders and tags -- it hands its
+tagged nodes to `canvas_accessibility_verify`, a separate binary
+confirmed via `ldd` to link zero Vulkan/X11/Wayland libraries, which
+does the real publish and verify. This matches real AT-SPI2 practice
+more closely than a self-verifying process ever did: a real screen
+reader is always a separate process from the application it inspects.
+
+An earlier version of this README stated the split's own reason was
+that `accesskit_unix`'s background thread "cannot complete registration
+inside a process that also links real Vulkan/X11 shared libraries" --
+REVIEW.md finding #126's own later investigation directly disproved
+this: `canvas_accessibility_verify` itself, genuinely Vulkan/X11-free,
+failed in CI identically to the original single-process demo, ruling
+out linked libraries as the cause. The real, still-unfixed root cause
+(a D-Bus proxy built against the session bus instead of the a11y bus)
+is unrelated to this two-process split at all -- see the "Status" note
+above and IMPLEMENTATION.md's Step 5.3.3 section for the corrected
+account. The two-process architecture itself remains real and correct
+on its own terms (it matches real AT-SPI2 deployment practice), just
+not for the reason originally given here.

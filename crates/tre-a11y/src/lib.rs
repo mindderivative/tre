@@ -186,6 +186,19 @@ impl A11yBridge {
     /// that (confirmed by reading its source, not assumed) -- this only
     /// mutates in-process state and, if a real AT is already connected,
     /// enqueues an update via that thread's own channel.
+    ///
+    /// # Concurrency (REVIEW.md finding #133)
+    /// Single-writer only: `self.state.nodes` and the live AT-SPI2 tree
+    /// (`self.adapter`) are updated via two separate lock acquisitions,
+    /// not one atomic step, so two threads calling `publish` concurrently
+    /// with different node sets could leave the two out of sync with each
+    /// other (whichever call's `nodes` store landed last vs. whichever
+    /// call's tree update ran last). Every real caller today publishes
+    /// from one thread only, so this is latent, not exercised -- but
+    /// unlike this crate's other cross-thread-shared types
+    /// (`SwmrSlotTable`, `MpscRingBuffer`), nothing enforced this
+    /// contract before now. A future multi-window/multi-render-thread
+    /// caller must serialize its own `publish` calls.
     pub fn publish(&self, nodes: &[AccessibilityNode]) {
         *self.state.nodes.lock().unwrap() = nodes.to_vec();
         let tree = &self.state.tree;

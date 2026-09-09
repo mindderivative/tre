@@ -59,16 +59,33 @@ impl<T: Copy> ScatterArena<T> {
     /// use, returning `None` (report, don't grow -- DESIGN.md Section
     /// 2.6) if doing so would exceed capacity. Safe to call
     /// concurrently from any number of threads; never blocks.
+    ///
+    /// # Concurrency note (REVIEW.md finding #132)
+    /// Uses `fetch_update` rather than a bare `fetch_add`, deliberately:
+    /// an unconditional `fetch_add` would advance `len` *before* checking
+    /// whether the reservation actually fits, and since `len` only ever
+    /// increases, one overflowing call would permanently leave `len`
+    /// above `capacity` for the rest of this arena's lifetime -- poisoning
+    /// every later `reserve` call from any thread, however small, even
+    /// one that would have easily fit in the space the failed caller's
+    /// own advance "consumed" without ever using. `fetch_update`'s
+    /// closure only commits the advance when it actually fits, so a
+    /// failed reservation leaves `len` untouched and a genuinely-fitting
+    /// later reservation from another thread can still succeed.
     #[must_use]
     pub fn reserve(&self, count: usize) -> Option<ScatterSlice<'_, T>> {
-        let start = self.len.fetch_add(count, Ordering::AcqRel);
-        if start + count > self.slots.len() {
-            return None;
-        }
+        let capacity = self.slots.len();
+        let start = self
+            .len
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current + count <= capacity).then_some(current + count)
+            })
+            .ok()?;
         // SAFETY: `start..start+count` was reserved by this call's own
-        // `fetch_add` and, since `len` only ever increases, is disjoint
-        // from every range any other `reserve` call has been or will
-        // be granted -- so treating it as an exclusive `&mut [T]`
+        // successful `fetch_update` and, since `len` only ever increases
+        // (and a failed `fetch_update` never advances it at all), is
+        // disjoint from every range any other `reserve` call has been or
+        // will be granted -- so treating it as an exclusive `&mut [T]`
         // aliases no other live reference. The memory may still be
         // uninitialized, but `T: Copy` guarantees `T` has no `Drop`
         // impl, so a plain assignment into this slice (`slice[i] =
@@ -76,8 +93,9 @@ impl<T: Copy> ScatterArena<T> {
         // garbage) bytes were there before -- unlike a `&mut [T]` over
         // uninitialized memory for a `T` with real drop glue, this is
         // sound. `UnsafeCell<MaybeUninit<T>>` and `T` share layout, so
-        // the cast below is valid; the bounds check above confirms the
-        // whole range lies within `self.slots`.
+        // the cast below is valid; `fetch_update`'s own closure already
+        // confirmed the whole range lies within `self.slots` before
+        // committing the advance.
         let slice = unsafe {
             let ptr = self.slots.as_ptr().add(start).cast::<T>().cast_mut();
             std::slice::from_raw_parts_mut(ptr, count)
@@ -172,6 +190,38 @@ mod tests {
         assert!(
             arena.reserve(2).is_none(),
             "3 + 2 exceeds the arena's capacity of 4"
+        );
+    }
+
+    #[test]
+    fn one_overflowing_reserve_does_not_permanently_poison_capacity_for_a_later_smaller_one() {
+        // REVIEW.md finding #132: the old `fetch_add`-then-check
+        // implementation advanced `len` before checking it fit, so a
+        // single overflowing call left `len` stuck above `capacity`
+        // forever -- every later `reserve` call, however small, failed
+        // even when genuinely enough room remained. Reproduced here
+        // without threads: a real caller (e.g. one oversized SubCanvas)
+        // must not be able to poison a shared FrameArena for every other
+        // canvas's own, independently-fitting `stitch_into` call.
+        let arena: ScatterArena<u32> = ScatterArena::with_capacity(4);
+        let mut first = arena.reserve(3).expect("3 fits in a capacity-4 arena");
+        first[0] = 1;
+        first[1] = 2;
+        first[2] = 3;
+        assert!(
+            arena.reserve(10).is_none(),
+            "3 + 10 overflows a capacity-4 arena"
+        );
+        let mut second = arena.reserve(1).expect(
+            "1 more slot still fits in the 1 remaining after the first, genuine \
+                 reservation of 3 -- the failed 10-slot request must not have consumed it",
+        );
+        second[0] = 99;
+        assert_eq!(
+            arena.into_vec(),
+            vec![1, 2, 3, 99],
+            "both real reservations (3 + 1) must be visible in the final vec, at their own \
+             correctly-disjoint positions"
         );
     }
 

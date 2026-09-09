@@ -78,6 +78,16 @@ const WORKER_RECT_Y: f32 = 20.0;
 const TEXT_ORIGIN: [f32; 2] = [40.0, 400.0];
 const TEXT_PX_SIZE: f32 = 32.0;
 
+// Field order matters: Rust drops a struct's fields in DECLARATION order
+// (not reverse), so everything that holds a handle into the Vulkan device
+// (pipelines, ring_buffer, atlas_texture) must be declared -- and
+// therefore dropped -- BEFORE `device` itself, and `device`/`swapchain`
+// before `connection`. Getting this backwards is exactly what produced a
+// real SIGSEGV in walking_skeleton.rs's own original development (see
+// documentation/REVIEW.md finding #43) -- REVIEW.md finding #143 flagged
+// that this struct has the identical footgun shape (atlas_texture must
+// drop before device) but, unlike its only sibling, carried no comment
+// warning a future field addition about it.
 struct Renderer {
     pipelines: PipelineRegistry,
     ring_buffer: Box<dyn RhiDynamicRingBuffer>,

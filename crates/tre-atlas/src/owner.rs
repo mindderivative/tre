@@ -271,6 +271,22 @@ fn process_insert(
 /// resurrected key with no backing space can result from only doing one
 /// half. A no-op below the capacity threshold, regardless of how stale
 /// any individual entry is -- capacity, not age alone, gates eviction.
+///
+/// # Known limitation (REVIEW.md finding #136, documented, not fixed)
+/// This runs unconditionally at the top of every real `process_insert`
+/// call, and once at/above the threshold, `SwmrSlotTable::scan_older_
+/// than`'s full `O(capacity)` linear scan (plus a growing `Vec`
+/// collecting matches) repeats on *every subsequent* insert while
+/// occupancy stays at/above it -- not once per threshold-crossing. A
+/// production atlas kept busy near its own capacity ceiling (exactly
+/// the steady state this eviction policy exists to run in, per
+/// DESIGN.md Section 10.2) pays this unamortized cost on the atlas
+/// owner's own background thread on every miss resolution while under
+/// that pressure. No current real caller exercises this repeatedly
+/// (every demo pre-seeds its atlas once and stops the owner thread
+/// before entering any real per-frame loop). Real fix: only re-scan
+/// periodically, or once the previous pass's freed budget is exhausted,
+/// rather than unconditionally.
 fn maybe_evict_stale_entries(
     packer: &mut AtlasPacker,
     slots: &SwmrSlotTable<AtlasKey>,

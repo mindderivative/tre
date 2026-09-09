@@ -1227,16 +1227,23 @@ impl RenderingCanvas {
     /// a fixed square, not each glyph's true design-space bounding box,
     /// same as `atlas_concurrency_demo` already renders.
     ///
-    /// A glyph whose outline has no real ink (whitespace) is skipped
-    /// entirely: no atlas interaction, no emitted quad, pen still
-    /// advances -- `tre_text::msdf`'s own doc comment already
-    /// establishes that this is the common case for e.g. U+0020 SPACE,
-    /// not an error. A glyph not yet resident in the atlas fires a real
-    /// `request_insert` (ignoring a `false`/queue-full return -- "report,
-    /// don't block," DESIGN.md Section 2.6) and renders nothing this
-    /// frame; a resident glyph emits one real textured `DrawGeometry`
-    /// command, current transform/alpha/clip state applied exactly as
-    /// `draw_rounded_rect` already does.
+    /// A glyph whose outline has no real ink is skipped entirely: no
+    /// atlas interaction, no emitted quad, pen still advances. "No real
+    /// ink" means `tre_text::has_real_ink` returns `false` -- both the
+    /// literal empty-outline case (whitespace, e.g. U+0020 SPACE, per
+    /// `tre_text::msdf`'s own doc comment) and a non-empty-but-degenerate
+    /// outline (all-coincident or non-finite points, real output some
+    /// corrupted/truncated font data -- or even an ordinary font's own
+    /// single-point contour -- can legitimately produce). Gating on the
+    /// narrower `!outline.is_empty()` alone (REVIEW.md finding #139) let
+    /// the latter case reach `GlyphRasterSource::rasterize`'s `.expect`,
+    /// panicking the shared atlas owner background thread instead of
+    /// being skipped here. A glyph not yet resident in the atlas fires a
+    /// real `request_insert` (ignoring a `false`/queue-full return --
+    /// "report, don't block," DESIGN.md Section 2.6) and renders nothing
+    /// this frame; a resident glyph emits one real textured
+    /// `DrawGeometry` command, current transform/alpha/clip state applied
+    /// exactly as `draw_rounded_rect` already does.
     ///
     /// # Panics
     /// Never in practice -- see `save()`'s own `# Panics` section for why
@@ -1301,7 +1308,31 @@ impl RenderingCanvas {
             } else if let Ok(outline) =
                 tre_text::glyph_outline(font, skrifa::GlyphId::from(glyph.glyph_id))
             {
-                if !outline.is_empty() {
+                // REVIEW.md finding #137 (documented, not fixed): this
+                // miss branch re-runs real outline extraction and fires
+                // another `request_insert` on every single frame a glyph
+                // stays unresolved -- no "already requested" tracking
+                // exists anywhere in this stack (`AtlasOwnerHandle::
+                // lookup`'s own doc comment states pending-vs-never-
+                // requested is deliberately indistinguishable). Latent
+                // today (every real demo pre-seeds its atlas, so no
+                // glyph here ever stays unresolved for more than one
+                // frame); a real live-text-under-load consumer would pay
+                // this cost scaling with (pending glyphs) x (frames to
+                // resolve). Real fix: track in-flight-requested keys, or
+                // extend `lookup`'s own contract to distinguish "pending"
+                // from "never requested."
+                //
+                // REVIEW.md finding #139: `!outline.is_empty()` alone is
+                // the wrong (too narrow) guard -- a non-empty-but-
+                // degenerate outline (e.g. a lone MoveTo/Close pair, or a
+                // real single-point contour some fonts legitimately
+                // produce) still fails `generate_msdf`'s own real
+                // degeneracy check, and `GlyphRasterSource::rasterize`
+                // panics on that `None` on the atlas owner's shared
+                // background thread. `has_real_ink` runs the same check
+                // `generate_msdf` itself requires, not a weaker one.
+                if tre_text::has_real_ink(&outline) {
                     let _ = atlas_context.atlas.request_insert(
                         key,
                         Box::new(tre_text::GlyphRasterSource {
@@ -2050,6 +2081,21 @@ pub trait RhiDynamicRingBuffer: RhiBuffer {
     /// Returns `None` if the segment has no room left this frame
     /// (DESIGN.md Section 2.6: ring-buffer starvation is reported, never
     /// grown dynamically mid-frame).
+    ///
+    /// # Note (REVIEW.md finding #142)
+    /// `Option<u32>`, not `Result<u32, EngineError>`, is a narrower
+    /// contract than DESIGN.md Section 2.6's own blanket "every fallible
+    /// operation returns `Result<T, EngineError>`" rule -- and that
+    /// section's own "ring buffer / transient pool starvation" bullet
+    /// describes graceful degradation (dropping the lowest-priority
+    /// pending draws and reporting a frame-budget diagnostic), not a bare
+    /// `None` for the caller to do whatever it likes with.
+    /// `main_loop_demo.rs` (Step 8.1.2), the first real per-frame caller,
+    /// currently `.expect()`s this -- i.e. starvation crashes the
+    /// process today, not graceful degradation. Implementing the real
+    /// policy is future work belonging with the overlay-priority/
+    /// depth-sorting machinery, not a signature tweak; flagged here so a
+    /// future reader doesn't assume this already matches policy.
     fn write(&self, bytes: &[u8]) -> Option<u32>;
 }
 
@@ -2430,12 +2476,16 @@ pub trait RhiCommandBuffer {
 /// active `PushLayer`; or if `device.acquire_transient_target`/
 /// `register_bindless` return `Err` (this function has no `Result`
 /// return type to propagate a genuinely mid-frame-recoverable failure
-/// through -- for this function's real callers, running out of
-/// transient-pool budget or bindless slots mid-frame is not yet a
-/// condition any real caller recovers from, so it panics here rather
-/// than silently corrupting the frame; see IMPLEMENTATION.md Step
-/// 6.4.2's own write-up for why this is an honest, documented limit, not
-/// an oversight). For this function's real callers, every pipeline
+/// through, even though `EngineError::TransientPoolBudgetExceeded`'s own
+/// doc comment calls that specific failure "recoverable" -- REVIEW.md
+/// finding #141: this is a real, undisclosed gap, not yet the honest,
+/// documented limit an earlier draft of this comment incorrectly cited
+/// IMPLEMENTATION.md's Step 6.4.2 write-up as already covering. The real
+/// fix is giving this function a `Result<(), EngineError>` return type
+/// and propagating both `Err`s instead of `.expect()`-ing them, updating
+/// every real call site -- substantial enough to be its own future work,
+/// not attempted opportunistically inside this review). For this
+/// function's real callers, every pipeline
 /// `Canvas` can emit is always registered before a frame is rendered, so
 /// an unresolved id is a static setup bug, not a transient,
 /// recoverable-mid-frame condition (matching this crate's established
@@ -2451,6 +2501,17 @@ pub fn execute_frame(
     device: &dyn RhiDevice,
     cmd_buffer: &mut dyn RhiCommandBuffer,
 ) {
+    // REVIEW.md finding #135: bound once, here, rather than inside the
+    // loop below -- `vertex_buffer`/`index_buffer` are this whole call's
+    // own parameters, invariant for every command in `frame`, and a
+    // vertex/index buffer binding is command-buffer state that persists
+    // across `PopLayer`'s own render-target switch (`begin_render_to_
+    // texture`/`resume_swapchain_rendering` never touch it -- unlike
+    // viewport/scissor, finding #128), so rebinding it per command was
+    // pure redundant driver overhead, not a correctness requirement.
+    cmd_buffer.bind_vertex_buffer(vertex_buffer.buffer, vertex_buffer.offset);
+    cmd_buffer.bind_index_buffer(index_buffer.buffer, index_buffer.offset);
+
     let mut clip_stack: Vec<ScissorRect> = Vec::new();
     let mut active_layer: Option<Box<dyn RhiTexture>> = None;
     for command in &frame.commands {
@@ -2464,8 +2525,6 @@ pub fn execute_frame(
                 });
                 cmd_buffer.set_pipeline(pipeline);
                 cmd_buffer.bind_texture(0, command.texture_handle);
-                cmd_buffer.bind_vertex_buffer(vertex_buffer.buffer, vertex_buffer.offset);
-                cmd_buffer.bind_index_buffer(index_buffer.buffer, index_buffer.offset);
                 cmd_buffer.draw_indexed(command.element_count, command.vertex_offset, 0);
             }
             CommandType::PushScissor => {
@@ -2518,8 +2577,6 @@ pub fn execute_frame(
                 });
                 cmd_buffer.set_pipeline(pipeline);
                 cmd_buffer.bind_texture(0, bindless_index);
-                cmd_buffer.bind_vertex_buffer(vertex_buffer.buffer, vertex_buffer.offset);
-                cmd_buffer.bind_index_buffer(index_buffer.buffer, index_buffer.offset);
                 cmd_buffer.draw_indexed(command.element_count, command.vertex_offset, 0);
 
                 device.deregister_bindless(bindless_index);
@@ -4348,23 +4405,23 @@ mod tests {
         assert_eq!(
             cmd_buffer.calls,
             vec![
+                RecordedCall::BindVertexBuffer(1000, 0),
+                RecordedCall::BindIndexBuffer(2000, 0),
                 RecordedCall::SetScissor(full_window),
                 RecordedCall::SetPipeline(111),
                 RecordedCall::BindTexture(0, NO_TEXTURE),
-                RecordedCall::BindVertexBuffer(1000, 0),
-                RecordedCall::BindIndexBuffer(2000, 0),
                 RecordedCall::DrawIndexed(6, 0, 0),
                 RecordedCall::SetScissor(full_window),
                 RecordedCall::SetPipeline(222),
                 RecordedCall::BindTexture(0, 7),
-                RecordedCall::BindVertexBuffer(1000, 0),
-                RecordedCall::BindIndexBuffer(2000, 0),
                 RecordedCall::DrawIndexed(24, 6, 0),
             ],
-            "each PushScissor/PopScissor must set the real full_window rect (not \
-             FULL_WINDOW_CLIP's own u32::MAX-sized sentinel), and each DrawGeometry command \
-             must resolve its own pipeline id to the exact registered pipeline object and pass \
-             through its own real texture/element_count/vertex_offset unchanged"
+            "the vertex/index buffer must be bound exactly once, up front (finding #135) -- \
+             not rebound before every DrawGeometry command -- and each PushScissor/PopScissor \
+             must set the real full_window rect (not FULL_WINDOW_CLIP's own u32::MAX-sized \
+             sentinel), with each DrawGeometry command resolving its own pipeline id to the \
+             exact registered pipeline object and passing through its own real texture/\
+             element_count/vertex_offset unchanged"
         );
     }
 
@@ -4501,6 +4558,8 @@ mod tests {
         assert_eq!(
             cmd_buffer.calls,
             vec![
+                RecordedCall::BindVertexBuffer(1, 0),
+                RecordedCall::BindIndexBuffer(2, 0),
                 RecordedCall::SetScissor(rect_a),
                 RecordedCall::SetScissor(rect_b),
                 RecordedCall::SetScissor(rect_a),
@@ -4555,7 +4614,7 @@ mod tests {
     }
 
     #[test]
-    fn execute_frame_with_no_commands_makes_no_calls() {
+    fn execute_frame_with_no_commands_only_binds_buffers_once_and_draws_nothing() {
         let registry = PipelineRegistry::new();
         let vertex_buffer = FakeBuffer { raw_handle: 1 };
         let index_buffer = FakeBuffer { raw_handle: 2 };
@@ -4590,7 +4649,17 @@ mod tests {
             &mut cmd_buffer,
         );
 
-        assert!(cmd_buffer.calls.is_empty());
+        // Finding #135: the vertex/index buffer bind is unconditional and
+        // happens once up front, regardless of whether `frame` has any
+        // commands at all -- cheap, and simpler than special-casing an
+        // empty frame.
+        assert_eq!(
+            cmd_buffer.calls,
+            vec![
+                RecordedCall::BindVertexBuffer(1, 0),
+                RecordedCall::BindIndexBuffer(2, 0),
+            ]
+        );
     }
 
     #[test]
@@ -4703,20 +4772,20 @@ mod tests {
         assert_eq!(
             cmd_buffer.calls,
             vec![
+                RecordedCall::BindVertexBuffer(1000, 0),
+                RecordedCall::BindIndexBuffer(2000, 0),
                 RecordedCall::BeginRenderToTexture(777),
                 RecordedCall::EndRenderToTexture(777),
                 RecordedCall::ResumeSwapchainRendering,
                 RecordedCall::SetScissor(full_window),
                 RecordedCall::SetPipeline(333),
                 RecordedCall::BindTexture(0, 0),
-                RecordedCall::BindVertexBuffer(1000, 0),
-                RecordedCall::BindIndexBuffer(2000, 0),
                 RecordedCall::DrawIndexed(6, 0, 0),
             ],
-            "PopLayer must resume swapchain rendering, re-apply the current clip stack's top \
-             (full_window here, since no PushScissor is active), then draw the composite quad \
-             using the just-registered bindless index (0) -- not the IR's own NO_TEXTURE \
-             placeholder"
+            "the vertex/index buffer is bound exactly once up front (finding #135); PopLayer \
+             must resume swapchain rendering, re-apply the current clip stack's top (full_window \
+             here, since no PushScissor is active), then draw the composite quad using the \
+             just-registered bindless index (0) -- not the IR's own NO_TEXTURE placeholder"
         );
     }
 

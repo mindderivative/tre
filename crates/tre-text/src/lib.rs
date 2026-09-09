@@ -20,7 +20,7 @@ mod shape;
 pub use error::TextError;
 #[cfg(target_os = "linux")]
 pub use fallback::{covers, resolve_font_index, resolve_run, FontCascade};
-pub use msdf::{generate_msdf, MsdfBitmap};
+pub use msdf::{generate_msdf, has_real_ink, MsdfBitmap};
 pub use outline::{glyph_outline, Contour, OutlineSegment};
 pub use raster::GlyphRasterSource;
 pub use shape::{segment_runs, shape_text, ShapedGlyph, ShapedRun, TextRun};

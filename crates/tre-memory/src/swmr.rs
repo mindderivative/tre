@@ -68,6 +68,19 @@ pub struct SwmrSlotTable<K> {
     /// threads write here (via `fetch_max`), never just the single
     /// writer that owns `keys`/`values`.
     last_used: Box<[AtomicU64]>,
+    /// Per-slot seqlock counter (REVIEW.md finding #131), bumped by the
+    /// single writer as the last step of every `insert`/`remove` that
+    /// touches a slot. `get`/`get_and_touch` read this before and after
+    /// their own key/value reads and reject the result if it changed --
+    /// re-checking `keys[index]` alone is *not* sufficient on its own:
+    /// a slot can cycle key A -> key B -> key A again entirely within a
+    /// reader's own read window (exactly what real sustained eviction-
+    /// then-reuse traffic produces), so a plain "does the key still
+    /// match" check can pass while the *value* actually read came from
+    /// the B-occupied instant in between -- classic ABA. The epoch
+    /// changing at all, even back to a value it held before, proves a
+    /// writer mutation overlapped this read.
+    epoch: Box<[AtomicU64]>,
     capacity: usize,
     _key: std::marker::PhantomData<K>,
 }
@@ -95,6 +108,7 @@ impl<K: Copy + Eq + Into<u64>> SwmrSlotTable<K> {
             keys: (0..capacity).map(|_| AtomicU64::new(EMPTY_KEY)).collect(),
             values: (0..capacity).map(|_| AtomicU64::new(0)).collect(),
             last_used: (0..capacity).map(|_| AtomicU64::new(0)).collect(),
+            epoch: (0..capacity).map(|_| AtomicU64::new(0)).collect(),
             capacity,
             _key: std::marker::PhantomData,
         }
@@ -148,6 +162,7 @@ impl<K: Copy + Eq + Into<u64>> SwmrSlotTable<K> {
             let existing = self.keys[index].load(Ordering::Relaxed);
             if existing == key_u64 {
                 self.values[index].store(value, Ordering::Release);
+                self.epoch[index].fetch_add(1, Ordering::Release);
                 return true;
             }
             if existing == EMPTY_KEY {
@@ -168,6 +183,9 @@ impl<K: Copy + Eq + Into<u64>> SwmrSlotTable<K> {
         // published.
         self.last_used[claim].store(0, Ordering::Relaxed);
         self.keys[claim].store(key_u64, Ordering::Release);
+        // Bumped last, after the key/value are both fully published --
+        // see `epoch`'s own doc comment (REVIEW.md finding #131).
+        self.epoch[claim].fetch_add(1, Ordering::Release);
         true
     }
 
@@ -197,6 +215,7 @@ impl<K: Copy + Eq + Into<u64>> SwmrSlotTable<K> {
             let existing = self.keys[index].load(Ordering::Relaxed);
             if existing == key_u64 {
                 self.keys[index].store(TOMBSTONE_KEY, Ordering::Release);
+                self.epoch[index].fetch_add(1, Ordering::Release);
                 return true;
             }
             if existing == EMPTY_KEY {
@@ -212,6 +231,29 @@ impl<K: Copy + Eq + Into<u64>> SwmrSlotTable<K> {
     /// writer's own `insert`/`remove` calls. Does not affect recency
     /// tracking -- use [`SwmrSlotTable::get_and_touch`] for a lookup that
     /// also marks the entry as still in use.
+    ///
+    /// # Concurrency note (REVIEW.md finding #131)
+    /// `probe_get` (finding the slot) and the subsequent value load are
+    /// two separate atomic steps, not one -- between them, the single
+    /// writer could `remove(key)` (tombstoning the slot) and then
+    /// `insert` a *different* key that reuses that exact slot, which is
+    /// exactly what the eviction policy's evict-then-immediately-reuse
+    /// sequence does under real load. A first fix attempt (re-loading
+    /// `keys[index]` once, after the value read) was not sufficient on
+    /// its own: a real stress test found the slot can cycle key A -> key
+    /// B -> key A again entirely within one reader's read window, so the
+    /// key can match *again* by the time of the recheck while the value
+    /// actually read came from the B-occupied instant in between --
+    /// classic ABA, not caught by a plain equality recheck. This is why
+    /// `epoch` exists: a real seqlock read (epoch before, value, key,
+    /// epoch after -- all four checked together) catches a slot changing
+    /// hands *any* number of times during the read, not just once,
+    /// because any writer mutation overlapping the read bumps `epoch` at
+    /// least once, regardless of what key ends up there by the time this
+    /// call finishes reading. A mismatch reports the same outcome a
+    /// lookup that lost the race entirely would have (`None`), which
+    /// this API already treats as indistinguishable from "pending" or
+    /// "evicted."
     #[must_use]
     pub fn get(&self, key: K) -> Option<u64> {
         let key_u64 = key.into();
@@ -219,7 +261,14 @@ impl<K: Copy + Eq + Into<u64>> SwmrSlotTable<K> {
             return None;
         }
         let index = self.probe_get(key_u64)?;
-        Some(self.values[index].load(Ordering::Acquire))
+        let epoch_before = self.epoch[index].load(Ordering::Acquire);
+        let value = self.values[index].load(Ordering::Acquire);
+        let key_after = self.keys[index].load(Ordering::Acquire);
+        let epoch_after = self.epoch[index].load(Ordering::Acquire);
+        if key_after != key_u64 || epoch_before != epoch_after {
+            return None;
+        }
+        Some(value)
     }
 
     /// Same lookup as [`SwmrSlotTable::get`], additionally recording
@@ -229,6 +278,13 @@ impl<K: Copy + Eq + Into<u64>> SwmrSlotTable<K> {
     /// observed frame number across any number of racing reader threads,
     /// not a plain timestamp). A miss touches nothing. Safe to call
     /// concurrently from any number of reader threads.
+    ///
+    /// Subject to the same slot-reuse race [`SwmrSlotTable::get`]'s own
+    /// doc comment describes (REVIEW.md finding #131); guarded the same
+    /// seqlock way. The recency touch only happens once the read is
+    /// confirmed consistent, so (unlike an earlier draft of this method)
+    /// a slot that turned out to have been reused by a different key
+    /// never gets a stray touch credited to it.
     #[must_use]
     pub fn get_and_touch(&self, key: K, frame: u64) -> Option<u64> {
         let key_u64 = key.into();
@@ -236,8 +292,15 @@ impl<K: Copy + Eq + Into<u64>> SwmrSlotTable<K> {
             return None;
         }
         let index = self.probe_get(key_u64)?;
+        let epoch_before = self.epoch[index].load(Ordering::Acquire);
+        let value = self.values[index].load(Ordering::Acquire);
+        let key_after = self.keys[index].load(Ordering::Acquire);
+        let epoch_after = self.epoch[index].load(Ordering::Acquire);
+        if key_after != key_u64 || epoch_before != epoch_after {
+            return None;
+        }
         self.last_used[index].fetch_max(frame, Ordering::Relaxed);
-        Some(self.values[index].load(Ordering::Acquire))
+        Some(value)
     }
 
     /// The shared probe loop behind both `get` and `get_and_touch`:
@@ -599,5 +662,78 @@ mod tests {
         );
         assert_eq!(table.get(Key(1)), None);
         assert_eq!(table.get(Key(2)), Some(222));
+    }
+
+    #[test]
+    fn a_reader_never_observes_a_different_keys_value_when_the_writer_evicts_and_immediately_reuses_its_slot(
+    ) {
+        // REVIEW.md finding #131: a real reproduction of the atlas
+        // owner's own eviction pattern (remove(key), then immediately
+        // insert a *different* key) -- the exact sequence the
+        // pre-existing `concurrent_readers_never_see_a_torn_value_while_
+        // a_remove_races_them` test above never exercises (it only
+        // removes, never reinserts a different key into the freed slot
+        // while readers are in flight). Capacity 1 forces both keys to
+        // collide on the same physical slot every time, guaranteeing
+        // real reuse rather than hoping for a hash collision.
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        const ROUNDS: usize = 50_000;
+        const KEY_A: Key = Key(1);
+        const VALUE_A: u64 = 0xAAAA_AAAA;
+        const KEY_B: Key = Key(2);
+        const VALUE_B: u64 = 0xBBBB_BBBB;
+
+        let table = Arc::new(SwmrSlotTable::<Key>::with_capacity(1));
+        assert!(table.insert(KEY_A, VALUE_A));
+        let ready = Arc::new(Barrier::new(2));
+        let stop = Arc::new(AtomicBool::new(false));
+        let saw_cross_key_value = Arc::new(AtomicBool::new(false));
+        let reads_of_b = Arc::new(AtomicUsize::new(0));
+
+        let reader_table = table.clone();
+        let reader_ready = ready.clone();
+        let reader_stop = stop.clone();
+        let reader_bad = saw_cross_key_value.clone();
+        let reader_b_count = reads_of_b.clone();
+        let reader = thread::spawn(move || {
+            reader_ready.wait();
+            while !reader_stop.load(Ordering::Relaxed) {
+                // Always asking about KEY_A: the only legitimate answers
+                // are VALUE_A (still present) or None (evicted/not yet
+                // reinserted). VALUE_B would mean this call read KEY_B's
+                // value while believing it answered a KEY_A lookup --
+                // exactly the bug #131 describes.
+                match reader_table.get_and_touch(KEY_A, 0) {
+                    Some(VALUE_A) | None => {}
+                    Some(v) => {
+                        reader_bad.store(true, Ordering::SeqCst);
+                        if v == VALUE_B {
+                            reader_b_count.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                }
+            }
+        });
+
+        ready.wait();
+        for _ in 0..ROUNDS {
+            assert!(table.remove(KEY_A));
+            assert!(table.insert(KEY_B, VALUE_B));
+            assert!(table.remove(KEY_B));
+            assert!(table.insert(KEY_A, VALUE_A));
+        }
+        stop.store(true, Ordering::Relaxed);
+        reader.join().unwrap();
+
+        assert!(
+            !saw_cross_key_value.load(Ordering::SeqCst),
+            "a reader asking about KEY_A observed a value other than VALUE_A or None -- \
+             {} of those were KEY_B's own value, meaning the reader read across a slot the \
+             writer had evicted-and-reused mid-lookup",
+            reads_of_b.load(Ordering::Relaxed)
+        );
     }
 }
