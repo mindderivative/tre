@@ -245,6 +245,7 @@ fn main() {
         width: LAYER_WIDTH,
         height: LAYER_HEIGHT,
         format: TextureFormat::Rgba16Float,
+        blur: false,
     });
     let scene_atlas_context = GlyphAtlasContext {
         atlas: &handle,

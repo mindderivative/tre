@@ -166,6 +166,7 @@ fn main() {
         width: FIRST_LAYER_SIZE.0,
         height: FIRST_LAYER_SIZE.1,
         format: TextureFormat::Rgba16Float,
+        blur: false,
     });
     first_canvas.draw_rounded_rect(
         5.0,
@@ -192,6 +193,7 @@ fn main() {
         width: SECOND_LAYER_SIZE.0,
         height: SECOND_LAYER_SIZE.1,
         format: TextureFormat::Rgba16Float,
+        blur: false,
     });
     // Nearly fills the layer's own local bounds.
     second_canvas.draw_rounded_rect(

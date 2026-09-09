@@ -125,6 +125,7 @@ fn main() {
         width: LAYER_WIDTH,
         height: LAYER_HEIGHT,
         format: TextureFormat::Rgba16Float,
+        blur: false,
     });
     // Local to the layer's own LAYER_WIDTH x LAYER_HEIGHT bounds --
     // independent of where the layer is later composited.

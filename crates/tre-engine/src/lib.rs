@@ -431,11 +431,12 @@ pub enum FillRule {
 
 /// Describes an offscreen compositing layer requested via
 /// `RenderingCanvas::push_layer` (DESIGN.md Section 6.2). Minimal for
-/// now -- opacity/blend-mode/blur-radius fields belong here once a later
-/// phase implements those visual filters (DESIGN.md Section 6.2's
-/// "Visual Filter Pipeline"); this step only needs enough to acquire a
+/// now -- opacity/blend-mode fields belong here once a later phase
+/// implements those visual filters (DESIGN.md Section 6.2's "Visual
+/// Filter Pipeline"); this step only needs enough to acquire a
 /// correctly-sized, correctly-formatted transient render target from the
-/// pool, plus (Step 6.4.2) where its composited result lands on screen.
+/// pool, plus (Step 6.4.2) where its composited result lands on screen,
+/// plus (Step 7.2.2) whether to blur it before compositing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LayerDesc {
     /// Screen-space position the composited layer is drawn back at
@@ -446,6 +447,15 @@ pub struct LayerDesc {
     pub width: u32,
     pub height: u32,
     pub format: TextureFormat,
+    /// Applies a real Dual-Kawase blur (`RhiCommandBuffer::
+    /// apply_layer_blur`, IMPLEMENTATION.md Step 7.2.2) to this layer's
+    /// own content before compositing -- own-content blur only, not a
+    /// true backdrop blur of whatever is visually behind the layer
+    /// (`planning/archive/PLAN_PHASE7_STEP7_2_1.md`'s own explicit scope
+    /// choice). A fixed chain depth, matching Step 7.2.1's own proven
+    /// demo -- no tunable radius/quality yet; real, separate future work
+    /// once a real caller needs it.
+    pub blur: bool,
 }
 
 /// A frame's fully-recorded, sorted-and-flattened batch: one contiguous
@@ -1049,13 +1059,18 @@ impl RenderingCanvas {
     /// (already premultiplied, by `end_render_to_texture`'s own layer
     /// content) alpha carry through unmodified.
     ///
-    /// The emitted command's `texture_handle` is `NO_TEXTURE` -- a
-    /// placeholder. The real bindless index only exists once
-    /// `execute_frame` renders into the layer and calls `RhiDevice::
-    /// register_bindless` at execute time; `execute_frame`'s own
-    /// `PopLayer` handling substitutes it in directly rather than trusting
-    /// this field, the same way it already substitutes `full_window` for
-    /// `PushScissor`'s `FULL_WINDOW_CLIP` sentinel.
+    /// The emitted command's `texture_handle` carries the popped
+    /// `LayerDesc`'s own `blur` flag (`1` if set, `0` otherwise) -- never
+    /// a real bindless index, which only exists once `execute_frame`
+    /// renders into the layer and calls `RhiDevice::register_bindless`
+    /// at execute time; `execute_frame`'s own `PopLayer` handling
+    /// substitutes the real index in directly rather than trusting this
+    /// field for that, the same way it already substitutes `full_window`
+    /// for `PushScissor`'s `FULL_WINDOW_CLIP` sentinel. Reusing this
+    /// field for `blur` (Step 7.2.2) rather than widening `UiDrawCommand`
+    /// matches `PushLayer`'s own established precedent of smuggling
+    /// `LayerDesc` data through an otherwise-inert IR field
+    /// (`texture_format_to_u16`/`pipeline_state_id`, above).
     ///
     /// # Panics
     /// Panics if called without a matching prior `push_layer` -- an
@@ -1108,7 +1123,7 @@ impl RenderingCanvas {
             kind: CommandType::PopLayer,
             sort_key: 0,
             pipeline_state_id: PipelineKind::TexturedQuad as u16,
-            texture_handle: NO_TEXTURE,
+            texture_handle: u32::from(desc.blur),
             element_count: 6,
             vertex_offset: base_index,
             clip_bounds: ScissorRect {
@@ -2433,6 +2448,40 @@ pub trait RhiCommandBuffer {
     /// unlike `begin_render_to_texture`, this never clears.
     fn resume_swapchain_rendering(&mut self);
 
+    /// Applies a real Dual-Kawase blur to `source` -- a texture already
+    /// `end_render_to_texture`'d (sampling-ready), `width`/`height` its
+    /// own real, intended/logical size (the same convention as
+    /// `begin_render_to_texture`'s own `logical_width`/`logical_height`
+    /// above) -- and returns a *new*, separately-owned, already
+    /// sampling-ready blurred texture. IMPLEMENTATION.md Step 7.2.2:
+    /// backs `LayerDesc::blur`; own-content blur only (blurs `source`'s
+    /// own already-rendered pixels, not whatever is visually behind it),
+    /// a fixed chain depth matching Step 7.2.1's own proven demo.
+    ///
+    /// Deliberately one opaque, purpose-built operation rather than
+    /// several smaller primitives the caller would orchestrate itself --
+    /// the real mechanism (a non-bindless downsample/upsample chain,
+    /// REVIEW.md finding #130's own real fix) needs a custom pipeline
+    /// layout/descriptor set incompatible with every other trait method
+    /// here, which deliberately assumes the universal bindless layout;
+    /// exposing that mismatch to callers has no benefit over hiding it
+    /// entirely behind one call, matching this trait's own precedent for
+    /// `begin_render_to_texture_no_end` (added narrowly for the one real
+    /// need it served, not as a speculative primitive family).
+    ///
+    /// The caller owns the returned texture exactly as if it had called
+    /// `RhiDevice::acquire_transient_target` itself -- release it the
+    /// same way once done. `source` itself is untouched (still owned by
+    /// the caller, still sampling-ready) -- this does not consume or
+    /// release it.
+    fn apply_layer_blur(
+        &mut self,
+        device: &dyn RhiDevice,
+        source: &dyn RhiTexture,
+        width: u32,
+        height: u32,
+    ) -> Box<dyn RhiTexture>;
+
     fn raw_handle(&self) -> u64;
 }
 
@@ -2468,15 +2517,21 @@ pub trait RhiCommandBuffer {
 /// `push_layer`'s own `texture_format_to_u16`), `device.
 /// acquire_transient_target`s a target sized to `command.clip_bounds`'
 /// `width`/`height`, and `cmd_buffer.begin_render_to_texture`s into it.
-/// `PopLayer` ends that render, `device.register_bindless`s the result,
-/// `cmd_buffer.resume_swapchain_rendering`s, then draws the `PopLayer`
-/// command's own baked composite-quad geometry (`element_count`/
-/// `vertex_offset`, `pop_layer`'s own doc comment) against the pipeline
-/// `command.pipeline_state_id` names (`PipelineKind::TexturedQuad`) --
-/// binding the just-registered index directly rather than trusting
-/// `command.texture_handle`'s `NO_TEXTURE` placeholder, the same
-/// substitution `PushScissor` already does for `FULL_WINDOW_CLIP`,
-/// below. `resume_swapchain_rendering` unconditionally resets the GPU
+/// `PopLayer` ends that render -- then, if the popped `LayerDesc`'s own
+/// `blur` flag was set (smuggled through `command.texture_handle`,
+/// `1`/`0`, `pop_layer`'s own doc comment; Step 7.2.2), calls
+/// `cmd_buffer.apply_layer_blur` and releases the original, now-
+/// unneeded layer texture, compositing the *returned* blurred one
+/// instead. Either way, `device.register_bindless`s whichever texture
+/// is actually being composited, `cmd_buffer.resume_swapchain_
+/// rendering`s, then draws the `PopLayer` command's own baked
+/// composite-quad geometry (`element_count`/`vertex_offset`, `pop_
+/// layer`'s own doc comment) against the pipeline `command.pipeline_
+/// state_id` names (`PipelineKind::TexturedQuad`) -- binding the
+/// just-registered index directly rather than trusting `command.
+/// texture_handle` (which carries the blur flag here, never a texture
+/// reference), the same substitution `PushScissor` already does for
+/// `FULL_WINDOW_CLIP`, below. `resume_swapchain_rendering` unconditionally resets the GPU
 /// scissor to the full swapchain extent (Step 6.4.1's own REVIEW.md
 /// #128 fix), so `PopLayer` re-applies `clip_stack`'s current top
 /// afterward -- otherwise a layer popped from inside an active
@@ -2543,7 +2598,11 @@ pub fn execute_frame(
     cmd_buffer.bind_index_buffer(index_buffer.buffer, index_buffer.offset);
 
     let mut clip_stack: Vec<ScissorRect> = Vec::new();
-    let mut active_layer: Option<Box<dyn RhiTexture>> = None;
+    // The layer's own requested (logical) width/height ride alongside
+    // the texture itself -- REVIEW.md finding #152: `PopLayer`'s own
+    // `apply_layer_blur` call (Step 7.2.2) needs the *requested* size,
+    // not whatever the acquired texture's own real dimensions are.
+    let mut active_layer: Option<(Box<dyn RhiTexture>, u32, u32)> = None;
     for command in &frame.commands {
         match command.kind {
             CommandType::DrawGeometry => {
@@ -2595,15 +2654,47 @@ pub fn execute_frame(
                     command.clip_bounds.width,
                     command.clip_bounds.height,
                 );
-                active_layer = Some(texture);
+                active_layer = Some((
+                    texture,
+                    command.clip_bounds.width,
+                    command.clip_bounds.height,
+                ));
             }
             CommandType::PopLayer => {
-                let texture = active_layer
+                let (texture, layer_width, layer_height) = active_layer
                     .take()
                     .expect("execute_frame: PopLayer with no active PushLayer");
                 cmd_buffer.end_render_to_texture(&*texture);
+
+                // `pop_layer`'s own doc comment: `texture_handle` carries
+                // the popped `LayerDesc`'s own `blur` flag here, never a
+                // real bindless index (Step 7.2.2).
+                let composited_texture = if command.texture_handle != 0 {
+                    let blurred =
+                        cmd_buffer.apply_layer_blur(device, &*texture, layer_width, layer_height);
+                    device.release_transient_target(texture);
+                    // REVIEW.md finding #153: `apply_layer_blur`'s own
+                    // internal hops rebind the command buffer's vertex/
+                    // index buffers to its own small, unit-quad ones --
+                    // finding #135's own "bound once, at the top"
+                    // invariant otherwise leaves this frame's real
+                    // vertex/index buffers un-bound for the composite
+                    // draw below, a real bug a real GPU run caught
+                    // immediately (an out-of-bounds index read, since the
+                    // composite quad's own real `vertex_offset` doesn't
+                    // exist in `apply_layer_blur`'s own tiny buffer).
+                    // Restored here, the same "undo whatever
+                    // this call disturbed" responsibility `resume_
+                    // swapchain_rendering`'s own scissor-restore already
+                    // established.
+                    cmd_buffer.bind_vertex_buffer(vertex_buffer.buffer, vertex_buffer.offset);
+                    cmd_buffer.bind_index_buffer(index_buffer.buffer, index_buffer.offset);
+                    blurred
+                } else {
+                    texture
+                };
                 let bindless_index = device
-                    .register_bindless(&*texture)
+                    .register_bindless(&*composited_texture)
                     .expect("execute_frame: register_bindless failed for PopLayer");
                 cmd_buffer.resume_swapchain_rendering();
                 let restored = clip_stack.last().copied().unwrap_or(*full_window);
@@ -2620,7 +2711,7 @@ pub fn execute_frame(
                 cmd_buffer.draw_indexed(command.element_count, command.vertex_offset, 0);
 
                 device.deregister_bindless(bindless_index);
-                device.release_transient_target(texture);
+                device.release_transient_target(composited_texture);
             }
         }
     }
@@ -2852,6 +2943,7 @@ mod tests {
             width: 256,
             height: 256,
             format: TextureFormat::Bgra8Srgb,
+            blur: false,
         };
         canvas.push_layer(&desc);
         canvas.pop_layer();
@@ -2875,6 +2967,7 @@ mod tests {
             width: 64,
             height: 64,
             format: TextureFormat::Bgra8Srgb,
+            blur: false,
         });
         let _ = canvas.flatten();
     }
@@ -4168,6 +4261,7 @@ mod tests {
         RegisterBindless(u64),
         DeregisterBindless(u32),
         ReleaseTransientTarget(u64),
+        ApplyLayerBlur(u64, u32, u32),
     }
 
     #[derive(Default)]
@@ -4241,6 +4335,29 @@ mod tests {
 
         fn resume_swapchain_rendering(&mut self) {
             self.calls.push(RecordedCall::ResumeSwapchainRendering);
+        }
+
+        fn apply_layer_blur(
+            &mut self,
+            _device: &dyn RhiDevice,
+            source: &dyn RhiTexture,
+            width: u32,
+            height: u32,
+        ) -> Box<dyn RhiTexture> {
+            self.calls.push(RecordedCall::ApplyLayerBlur(
+                source.raw_handle(),
+                width,
+                height,
+            ));
+            // A distinct raw_handle (888) from every other fake texture in
+            // this test module -- lets a test assert the *blurred*
+            // texture, not the original, is what gets composited.
+            Box::new(FakeTexture {
+                raw_handle: 888,
+                width,
+                height,
+                format: TextureFormat::Rgba16Float,
+            })
         }
 
         fn raw_handle(&self) -> u64 {
@@ -4736,6 +4853,7 @@ mod tests {
             width: 100,
             height: 80,
             format: TextureFormat::Rgba16Float,
+            blur: false,
         });
         canvas.pop_layer();
         let frame = canvas.flatten();
@@ -4767,7 +4885,11 @@ mod tests {
             pop_command.pipeline_state_id,
             PipelineKind::TexturedQuad as u16
         );
-        assert_eq!(pop_command.texture_handle, NO_TEXTURE);
+        assert_eq!(
+            pop_command.texture_handle, 0,
+            "texture_handle carries the popped LayerDesc's own blur flag (Step 7.2.2), not \
+             NO_TEXTURE -- this LayerDesc requested blur: false"
+        );
         assert_eq!(pop_command.element_count, 6);
         assert_eq!(
             &frame.indices[pop_command.vertex_offset as usize..][..6],
@@ -4801,6 +4923,7 @@ mod tests {
             width: 64,
             height: 48,
             format: TextureFormat::Rgba16Float,
+            blur: false,
         });
         canvas.pop_layer();
         let frame = canvas.flatten();
@@ -4888,6 +5011,7 @@ mod tests {
             width: 50,
             height: 40,
             format: TextureFormat::Rgba16Float,
+            blur: false,
         });
         canvas.pop_layer();
         let frame = canvas.flatten();
@@ -4924,6 +5048,82 @@ mod tests {
             "begin_render_to_texture must be told the requested 50x40 size, not the oversized \
              texture's own 200x150 -- got {:?}",
             cmd_buffer.calls
+        );
+    }
+
+    #[test]
+    fn execute_frame_pop_layer_with_blur_composites_the_blurred_texture_not_the_raw_one() {
+        // Step 7.2.2: LayerDesc.blur, smuggled through PopLayer's own
+        // command.texture_handle field, must make execute_frame call
+        // apply_layer_blur and composite *its* returned texture (raw_
+        // handle 888 in FakeCommandBuffer's own double) instead of the
+        // layer's own raw content (raw_handle 777, FakeDevice's own
+        // fixed acquire_transient_target return value) -- and release
+        // the original, now-unneeded layer texture along the way.
+        let mut registry = PipelineRegistry::new();
+        registry.register(
+            PipelineKind::TexturedQuad as u16,
+            Box::new(FakePipeline { raw_handle: 333 }),
+        );
+        let vertex_buffer = FakeBuffer { raw_handle: 1000 };
+        let index_buffer = FakeBuffer { raw_handle: 2000 };
+        let full_window = ScissorRect {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+        };
+
+        let mut canvas = RenderingCanvas::new();
+        canvas.push_layer(&LayerDesc {
+            x: 10,
+            y: 20,
+            width: 64,
+            height: 48,
+            format: TextureFormat::Rgba16Float,
+            blur: true,
+        });
+        canvas.pop_layer();
+        let frame = canvas.flatten();
+
+        let mut cmd_buffer = FakeCommandBuffer::default();
+        let device = FakeDevice::default();
+        execute_frame(
+            &frame,
+            &registry,
+            BufferBinding {
+                buffer: &vertex_buffer,
+                offset: 0,
+            },
+            BufferBinding {
+                buffer: &index_buffer,
+                offset: 0,
+            },
+            &full_window,
+            &device,
+            &mut cmd_buffer,
+        );
+
+        assert!(
+            cmd_buffer
+                .calls
+                .contains(&RecordedCall::ApplyLayerBlur(777, 64, 48)),
+            "apply_layer_blur must be called with the layer's own raw texture and its real \
+             requested size -- got {:?}",
+            cmd_buffer.calls
+        );
+        assert_eq!(
+            device.calls.into_inner(),
+            vec![
+                RecordedCall::AcquireTransientTarget(64, 48),
+                RecordedCall::ReleaseTransientTarget(777),
+                RecordedCall::RegisterBindless(888),
+                RecordedCall::DeregisterBindless(0),
+                RecordedCall::ReleaseTransientTarget(888),
+            ],
+            "the original layer texture (777) must be released right after blurring, and the \
+             blurred texture (888) must be what gets registered bindless, composited, and \
+             released -- not the original"
         );
     }
 

@@ -1363,6 +1363,134 @@ until this is resolved.
 
 **Fourth step (2026-09-08): the bindless array was never actually the cause -- the real root cause found, fixed, and verified; Step 7.2.1 closes for real.** Converting `dual_kawase_blur_demo.rs`'s real 5-hop chain to the non-bindless approach the third step proved -- graduating the experiment's own descriptor/pipeline machinery in, one descriptor set per hop -- built cleanly but *still failed* past the second hop, reading back exactly the background clear color at the interior, the identical symptom every earlier attempt produced. This was unexpected: the third step's own experiment only ever exercised a single hop. Bisecting the chain hop by hop (2-hop: passed; 3-hop, reusing the downsample pipeline a second time: failed) and then substituting sources/pipelines/destinations one variable at a time (bindless-produced L0 sampled a second time into an offscreen target: passed; non-bindless-produced L1 sampled into the swapchain: passed; non-bindless-produced L1 sampled into a second offscreen target, with the pipeline object swapped out for a different one: still failed) isolated the failure to reading a texture that was itself produced by a non-bindless pass, specifically when the destination was a second offscreen target. Printing the acquired texture's own real `dimensions()` found the actual defect: `RhiDevice::acquire_transient_target`'s own documented "oversized borrow" fallback (it hands back a *larger* already-freed texture when no free bucket of the exact requested size exists yet) returned L0's freed 256x128 texture when L2's 64x32 bucket was requested for the first time -- and `RhiCommandBuffer::draw_indexed` (`tre-rhi-vulkan/src/lib.rs`) unconditionally performs its own, second `cmd_push_constants` call using `self.width`/`self.height` (the render target's own real, now-oversized dimensions), silently clobbering the correct, already-pushed per-hop `screen_size` right before the draw executes. This confined the actual draw to a small corner of the oversized backing image, leaving the real interior/center untouched at the clear color -- exactly the symptom chased since the second session, under three different framings (bindless array, missing barrier, "second render-to-texture round trip"), none of which were the real cause. **Fix**: every non-bindless downsample/upsample/composite pass now issues its draw via a raw `cmd_draw_indexed` call instead of `RhiCommandBuffer::draw_indexed`, so the wrapper's own redundant, potentially-stale push constant call never executes for these passes; the non-bindless conversion itself (a plain `COMBINED_IMAGE_SAMPLER` per hop, matching how other engines actually do this) is kept, since it remains a real, independently-reasonable design even though it wasn't what was actually broken. Verified: the full, real 5-hop chain's own pixel assertions (interior stays foreground; edge shows genuine partial blend) pass consistently across 5 separate real runs against actual GPU hardware, with clean cleanup (no leaked Vulkan objects) each time. `dual_kawase_blur_demo.rs`'s own header has the complete technical account. Added to `ci.yml`'s `vulkan-validation` job. `dual_kawase_nonbindless_experiment.rs`'s header is updated to note it carries the same latent `draw_indexed` hazard, just never triggered by its own single-hop shape. Step 7.2.1 is closed; Step 7.2.2 (wiring this real capability to `push_layer`/`pop_layer`) is real, separate future work.
 
+### Step 7.2.2: Wire Dual-Kawase Blur to `push_layer`/`pop_layer` -- Status: Complete (2026-09-08)
+
+Lets a caller request a real, GPU-accelerated blur on a compositing
+layer via `Canvas::push_layer`/`pop_layer`, using the Dual-Kawase chain
+Step 7.2.1 proved works on real hardware. Own-content blur only
+(`planning/archive/PLAN_PHASE7_STEP7_2_1.md`'s own explicit scope
+choice, unchanged) -- a layer's own newly-drawn content gets blurred
+before compositing, not whatever is visually behind it on the
+swapchain; true backdrop blur needs a real swapchain snapshot/copy
+capability this project doesn't have yet, real, disclosed future work.
+
+Two real design forks were confirmed with the project owner before
+writing any code: `LayerDesc` gains a simple `blur: bool` (fixed chain
+depth matching Step 7.2.1's own proven demo, no tunable radius/quality
+yet -- that step explicitly deferred tunability to "once a real
+consumer needs it," and this is that consumer, so the honest next
+increment is the smallest real capability, not the ceiling); and the
+blur mechanism is exposed as one purpose-built trait method
+(`RhiCommandBuffer::apply_layer_blur`) rather than several smaller
+primitives `execute_frame` would orchestrate itself -- matching this
+project's own precedent for `begin_render_to_texture_no_end` (added
+narrowly for exactly the chaining need it served, not as a speculative
+primitive family).
+
+**A real, load-bearing finding from this step's own pre-work.** Before
+designing this step, a scratch test checked whether REVIEW.md finding
+#152's general fix (`begin_render_to_texture`'s new `logical_width`/
+`logical_height` parameters) also resolved finding #130's own original
+bindless-sampling symptom -- since both findings shared the same root
+mechanism. It did not: a plain two-hop chain (draw a square into L0,
+downsample L0 -> L1 via the *original*, bindless `kawase_downsample.
+frag`, entirely through standard `RhiCommandBuffer`/`RhiDevice` trait
+calls, exactly `PopLayer`'s own existing pattern) still read back the
+destination's own center as background. This means finding #130's
+original symptom was never *fully* explained by #152's fix alone --
+there is a second, still-unexplained defect specific to bindless
+sampling under this exact condition (sampling while rendering into a
+*different* offscreen target), disclosed here as a known gap rather
+than investigated further (see REVIEW.md's own updated finding #130
+write-up). This step instead reuses `dual_kawase_blur_demo.rs`'s own
+already-proven non-bindless mechanism for its *internal* downsample/
+upsample chain -- unaffected by this gap, since the chain's own *final*
+composite step samples while rendering into the *swapchain*, exactly
+the condition `PopLayer`'s own existing composite step already proves
+works.
+
+**Design.** `RhiCommandBuffer::apply_layer_blur(&mut self, device: &dyn
+RhiDevice, source: &dyn RhiTexture, width: u32, height: u32) -> Box<dyn
+RhiTexture>` -- `source` is a texture already `end_render_to_texture`'d
+(sampling-ready); `width`/`height` are its own real, intended/logical
+size. Internally acquires L1 (half), L2 (quarter), U1 (half) transient
+targets, chains downsample L0(`source`)->L1->L2 then upsample
+L2->U1->U0 (full) -- `dual_kawase_blur_demo.rs`'s own proven 4-hop
+shape and non-bindless mechanism, graduated into real engine capability:
+4 real descriptor sets (one per hop -- reusing a single set via
+`vkUpdateDescriptorSets` between binds was tried first and rejected, a
+real Vulkan validation error the first actual run caught, since this
+descriptor set layout deliberately has no `UPDATE_AFTER_BIND` flag,
+matching the demo's own proven plain layout exactly); a new dedicated
+vertex shader, `fullscreen_quad_nonbindless.vert` (outputs NDC-authored
+positions directly, letting one small, cached unit quad -- uploaded
+once -- serve every hop of every call regardless of the caller's real
+width/height, so no per-call vertex-buffer allocation is ever needed,
+keeping this whole operation free of dynamic RHI allocation inside the
+render tick, DESIGN.md Section 2.6, beyond its own one-time setup);
+every draw issued via a raw `cmd_draw_indexed` call, matching REVIEW.md
+finding #130's own real fix. Releases L1/L2/U1 internally; returns U0,
+already sampling-ready -- the caller owns and releases it exactly like
+any other transient target acquired directly.
+
+The blur-specific descriptor set layout/pool/4 sets/sampler/pipeline
+layout/2 pipelines/unit quad buffers are created lazily, once, cached
+on `VulkanDevice` (`blur_resources: Arc<Mutex<Option<BlurResources>>>`,
+the same established pattern `transient_pool` already uses) -- no
+caller, `execute_frame` included, needs any awareness that blur
+pipelines exist at all. `VulkanCommandBuffer` holds its own `Arc` clone
+(plus `instance`/`physical_device`/`stencil_format` copies, the same
+reason `bindless_descriptor_set` is already copied in at construction),
+since `apply_layer_blur`'s own `device: &dyn RhiDevice` parameter is a
+trait object with no way back to `VulkanDevice`'s own concrete fields.
+
+`LayerDesc` gains `blur: bool`. Threaded through the IR by reusing
+`PopLayer`'s own otherwise-inert `texture_handle` field (`0`/`1`) --
+matching `PushLayer`'s own established precedent of smuggling
+`LayerDesc` data through an otherwise-unused field
+(`texture_format_to_u16`/`pipeline_state_id`) rather than widening
+`UiDrawCommand`. `execute_frame`'s `PushLayer` handling now also tracks
+the layer's own requested width/height alongside its texture (needed at
+`PopLayer` time to call `apply_layer_blur` with the right size);
+`PopLayer` branches on the smuggled flag -- if set, calls `apply_layer_
+blur`, releases the original unblurred texture, and composites the
+*returned* blurred one instead; if unset, the existing Step 6.4.2 path
+is untouched.
+
+**A real bug found and fixed by an actual GPU run, not caught by design
+review.** The first real run of `layer_blur_demo.rs` hit a genuine
+Vulkan validation error: `apply_layer_blur`'s own internal hops rebind
+the command buffer's vertex/index buffers to its own small, unit-quad
+ones, but nothing rebound the frame's *real* shared vertex/index
+buffers afterward -- REVIEW.md finding #135's own "bound once, at the
+top" invariant left the composite draw immediately following reading
+through `apply_layer_blur`'s own tiny 24-byte index buffer at the
+composite quad's real (much larger) offset, an out-of-bounds read
+caught immediately by validation. Fixed by having `execute_frame`'s own
+`PopLayer` handling re-bind the frame's real vertex/index buffers right
+after the `apply_layer_blur` call returns -- the same "restore whatever
+this call disturbed" responsibility `resume_swapchain_rendering`'s own
+scissor-restore already established at Step 6.4.2.
+
+**Verification.** New demo (`layer_blur_demo.rs`, `demo/phase7_step7_
+2_2/`): reproduces `dual_kawase_blur_demo.rs`'s own real pixel-assertion
+shape (bounded interior stays foreground; a point just outside the
+original content's hard edge shows a genuine partial blend), recorded
+entirely through `Canvas`/`execute_frame` -- `push_layer(&LayerDesc {
+blur: true, .. })`, one `draw_rounded_rect` in the layer's own local
+space, `pop_layer`, `flatten()`, one `execute_frame` call, no
+hand-written RHI calls anywhere. Both real pixel assertions pass,
+confirmed across 4 separate real runs against actual GPU hardware.
+Added to `ci.yml`'s `vulkan-validation` job. Full regression sweep:
+every pre-existing Vulkan demo re-run manually, zero regressions,
+`canvas_layer_composite_demo.rs`/`canvas_combined_scene_demo.rs`
+specifically (their own un-blurred `PushLayer`/`PopLayer` paths, proving
+the `blur: false` branch stays exactly Step 6.4.2's own original
+behavior). `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across
+the workspace, including a new `tre-engine` unit test proving
+`execute_frame` calls `apply_layer_blur` and composites its returned
+texture (not the original) when `blur: true`.
+
 ## Phase 8: Main Event Loop & The 8-Stage Render Pipeline
 
 ### Step 8.1: Loop Orchestration & Frame Timing

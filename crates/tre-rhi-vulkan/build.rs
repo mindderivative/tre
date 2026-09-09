@@ -100,4 +100,13 @@ fn main() {
         "kawase_upsample_nonbindless.frag.spv",
         &out_dir,
     );
+    // IMPLEMENTATION.md Step 7.2.2: `RhiCommandBuffer::apply_layer_blur`'s
+    // own dedicated vertex shader, letting it reuse one cached, unit-NDC
+    // quad for every hop of every call regardless of the caller's real
+    // width/height -- no per-call vertex-buffer upload needed.
+    compile_shader(
+        "shaders/fullscreen_quad_nonbindless.vert",
+        "fullscreen_quad_nonbindless.vert.spv",
+        &out_dir,
+    );
 }

@@ -203,6 +203,17 @@ pub struct VulkanDevice {
     /// thread can hold its own clone -- the "later" the doc comment above
     /// refers to has arrived.
     transient_pool: Arc<Mutex<TransientPool>>,
+    /// `RhiCommandBuffer::apply_layer_blur`'s own non-bindless descriptor
+    /// set/pool/sampler/pipeline-layout/2-pipeline resources
+    /// (IMPLEMENTATION.md Step 7.2.2), lazily created on the first real
+    /// call -- `None` until then. `Arc<Mutex<..>>` for the same reason
+    /// `transient_pool` is: `VulkanCommandBuffer` holds its own clone
+    /// (set in `begin_frame`, mirroring `bindless_descriptor_set`'s own
+    /// copied-at-construction precedent immediately below), since
+    /// `apply_layer_blur`'s trait signature takes `device: &dyn
+    /// RhiDevice` -- a trait object with no way back to this concrete
+    /// field -- not `&VulkanDevice` directly.
+    blur_resources: Arc<Mutex<Option<BlurResources>>>,
     /// A single shared sampler used by every bindless-array texture
     /// (IMPLEMENTATION.md Step 2.1) -- baked into
     /// `bindless_descriptor_set_layout` as an immutable sampler, so it is
@@ -747,6 +758,7 @@ impl VulkanDevice {
                 dynamic_rendering,
                 frame_sync,
                 transient_pool,
+                blur_resources: Arc::new(Mutex::new(None)),
                 deferred_release,
                 gc_running,
                 gc_thread: Some(gc_thread),
@@ -1460,6 +1472,30 @@ impl Drop for VulkanDevice {
         // `VulkanRingBuffer` never touches `frame_sync.fence` at all (see
         // its own doc comment).
         unsafe {
+            // IMPLEMENTATION.md Step 7.2.2: `apply_layer_blur`'s own
+            // lazily-created resources, if this process ever actually
+            // called it -- `descriptor_pool` frees `descriptor_set` too
+            // (destroying a pool frees every set allocated from it), the
+            // same reasoning `bindless_descriptor_pool` below relies on.
+            if let Ok(mut blur) = self.blur_resources.lock() {
+                if let Some(blur) = blur.take() {
+                    self.device.destroy_pipeline(blur.downsample_pipeline, None);
+                    self.device.destroy_pipeline(blur.upsample_pipeline, None);
+                    self.device
+                        .destroy_pipeline_layout(blur.pipeline_layout, None);
+                    self.device.destroy_sampler(blur.sampler, None);
+                    self.device
+                        .destroy_descriptor_pool(blur.descriptor_pool, None);
+                    self.device
+                        .destroy_descriptor_set_layout(blur.descriptor_set_layout, None);
+                    self.device
+                        .destroy_buffer(blur.unit_quad_vertex_buffer, None);
+                    self.device.free_memory(blur.unit_quad_vertex_memory, None);
+                    self.device
+                        .destroy_buffer(blur.unit_quad_index_buffer, None);
+                    self.device.free_memory(blur.unit_quad_index_memory, None);
+                }
+            }
             self.device
                 .destroy_descriptor_pool(self.bindless_descriptor_pool, None);
             self.device
@@ -1924,6 +1960,10 @@ impl RhiDevice for VulkanDevice {
                 width,
                 height,
                 pipeline_layout: None,
+                blur_resources: Arc::clone(&self.blur_resources),
+                instance: self.instance.clone(),
+                physical_device: self.physical_device,
+                stencil_format: self.stencil_format,
                 bindless_descriptor_set: self.bindless_descriptor_set,
                 bindless_capacity: self.bindless_capacity,
                 texture_index: BINDLESS_TEXTURE_SENTINEL,
@@ -2395,12 +2435,450 @@ struct PushConstants {
     texture_index: u32,
 }
 
+/// `RhiCommandBuffer::apply_layer_blur`'s own real, non-bindless Dual-
+/// Kawase machinery (IMPLEMENTATION.md Step 7.2.2), graduated from
+/// `dual_kawase_blur_demo.rs`'s own proven design (REVIEW.md finding
+/// #130's real fix) into real, reusable engine capability -- lazily
+/// created once (`VulkanDevice::blur_resources`), then reused for every
+/// call this process ever makes. One plain `COMBINED_IMAGE_SAMPLER`
+/// descriptor set (repointed at each hop's own source view via
+/// `vkUpdateDescriptorSets` before that hop's draw, matching
+/// `point_descriptor_at`'s own proven pattern) -- one set suffices since
+/// a chain only ever needs "the set for the current source" at any one
+/// moment, never several alive at once. `unit_quad_vertex_buffer`/
+/// `unit_quad_index_buffer` are a single, fixed, NDC-authored quad
+/// (`-1..1`, paired with `fullscreen_quad_nonbindless.vert`'s own
+/// dedicated vertex shader) reused unchanged for every hop of every
+/// call regardless of the caller's real width/height -- no per-call
+/// vertex-buffer upload, keeping this whole operation free of dynamic
+/// RHI allocation inside the render tick (DESIGN.md Section 2.6) beyond
+/// its own one-time setup cost.
+#[derive(Clone, Copy)]
+struct BlurResources {
+    descriptor_set_layout: vk::DescriptorSetLayout,
+    descriptor_pool: vk::DescriptorPool,
+    /// One descriptor set per real hop (4: L0-read, L1-read, L2-read,
+    /// U1-read), matching `dual_kawase_blur_demo.rs`'s own proven
+    /// design exactly -- each is `vkUpdateDescriptorSets`-written exactly
+    /// once, before its own first use, then never touched again.
+    /// Reusing a *single* set across hops (updating it between binds)
+    /// was tried first and rejected: this descriptor set layout has no
+    /// `UPDATE_AFTER_BIND` flag (deliberately -- matching the same,
+    /// already-proven-sufficient plain layout the demo itself uses), so
+    /// updating a set already bound to a still-recording command buffer
+    /// is invalid per the Vulkan spec, caught immediately by validation
+    /// (`vkCmdPipelineBarrier(): ... invalid state ... VkDescriptorSet
+    /// ... was destroyed or updated without UPDATE_AFTER_BIND`) the
+    /// first time this code actually ran.
+    descriptor_sets: [vk::DescriptorSet; 4],
+    sampler: vk::Sampler,
+    pipeline_layout: vk::PipelineLayout,
+    downsample_pipeline: vk::Pipeline,
+    upsample_pipeline: vk::Pipeline,
+    unit_quad_vertex_buffer: vk::Buffer,
+    unit_quad_vertex_memory: vk::DeviceMemory,
+    unit_quad_index_buffer: vk::Buffer,
+    unit_quad_index_memory: vk::DeviceMemory,
+}
+
+fn create_blur_shader_module(device: &ash::Device, spv_bytes: &[u8]) -> vk::ShaderModule {
+    let mut cursor = std::io::Cursor::new(spv_bytes);
+    let code = ash::util::read_spv(&mut cursor).expect("invalid SPIR-V bytecode");
+    let info = vk::ShaderModuleCreateInfo::default().code(&code);
+    unsafe { device.create_shader_module(&info, None) }
+        .expect("failed to create blur shader module")
+}
+
+/// Mirrors `dual_kawase_blur_demo.rs`'s own `create_custom_pipeline`
+/// exactly (proven correct there across many real runs) -- vertex
+/// input/blend/dynamic-viewport-scissor state identical to
+/// `VulkanDevice::create_pipeline`'s own, only `layout` differs.
+fn create_blur_pipeline(
+    device: &ash::Device,
+    vertex_spv: &[u8],
+    fragment_spv: &[u8],
+    layout: vk::PipelineLayout,
+    color_format: vk::Format,
+    stencil_format: vk::Format,
+) -> vk::Pipeline {
+    let vertex_module = create_blur_shader_module(device, vertex_spv);
+    let fragment_module = create_blur_shader_module(device, fragment_spv);
+    let entry_point = c"main";
+    let stages = [
+        vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::VERTEX)
+            .module(vertex_module)
+            .name(entry_point),
+        vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::FRAGMENT)
+            .module(fragment_module)
+            .name(entry_point),
+    ];
+
+    let bindings = [vk::VertexInputBindingDescription::default()
+        .binding(0)
+        .stride(std::mem::size_of::<UiVertex>() as u32)
+        .input_rate(vk::VertexInputRate::VERTEX)];
+    let attributes = [
+        vk::VertexInputAttributeDescription::default()
+            .location(0)
+            .binding(0)
+            .format(vk::Format::R32G32_SFLOAT)
+            .offset(0),
+        vk::VertexInputAttributeDescription::default()
+            .location(1)
+            .binding(0)
+            .format(vk::Format::R32G32_SFLOAT)
+            .offset(8),
+        vk::VertexInputAttributeDescription::default()
+            .location(2)
+            .binding(0)
+            .format(vk::Format::R8G8B8A8_UNORM)
+            .offset(16),
+        vk::VertexInputAttributeDescription::default()
+            .location(3)
+            .binding(0)
+            .format(vk::Format::R32G32B32_SFLOAT)
+            .offset(20),
+    ];
+    let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
+        .vertex_binding_descriptions(&bindings)
+        .vertex_attribute_descriptions(&attributes);
+
+    let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
+        .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+    let viewport_state = vk::PipelineViewportStateCreateInfo::default()
+        .viewport_count(1)
+        .scissor_count(1);
+    let rasterization = vk::PipelineRasterizationStateCreateInfo::default()
+        .polygon_mode(vk::PolygonMode::FILL)
+        .cull_mode(vk::CullModeFlags::NONE)
+        .line_width(1.0);
+    let multisample = vk::PipelineMultisampleStateCreateInfo::default()
+        .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+    let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
+        .depth_test_enable(false)
+        .depth_write_enable(false);
+
+    let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default()
+        .blend_enable(true)
+        .src_color_blend_factor(vk::BlendFactor::ONE)
+        .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+        .color_blend_op(vk::BlendOp::ADD)
+        .src_alpha_blend_factor(vk::BlendFactor::ONE)
+        .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+        .alpha_blend_op(vk::BlendOp::ADD)
+        .color_write_mask(vk::ColorComponentFlags::RGBA);
+    let attachments = [color_blend_attachment];
+    let color_blend = vk::PipelineColorBlendStateCreateInfo::default().attachments(&attachments);
+
+    let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+    let dynamic_state =
+        vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
+
+    let color_formats = [color_format];
+    let mut rendering_info = vk::PipelineRenderingCreateInfo::default()
+        .color_attachment_formats(&color_formats)
+        .stencil_attachment_format(stencil_format);
+
+    let create_info = vk::GraphicsPipelineCreateInfo::default()
+        .stages(&stages)
+        .vertex_input_state(&vertex_input)
+        .input_assembly_state(&input_assembly)
+        .viewport_state(&viewport_state)
+        .rasterization_state(&rasterization)
+        .multisample_state(&multisample)
+        .depth_stencil_state(&depth_stencil)
+        .color_blend_state(&color_blend)
+        .dynamic_state(&dynamic_state)
+        .layout(layout)
+        .push_next(&mut rendering_info);
+
+    let pipeline = unsafe {
+        device.create_graphics_pipelines(vk::PipelineCache::null(), &[create_info], None)
+    }
+    .expect("failed to create blur graphics pipeline")[0];
+
+    unsafe {
+        device.destroy_shader_module(vertex_module, None);
+        device.destroy_shader_module(fragment_module, None);
+    }
+    pipeline
+}
+
+/// One-time setup for `RhiCommandBuffer::apply_layer_blur`
+/// (IMPLEMENTATION.md Step 7.2.2) -- called at most once per process,
+/// behind `VulkanDevice::blur_resources`'s own lazy-init check.
+fn create_blur_resources(
+    instance: &ash::Instance,
+    physical_device: vk::PhysicalDevice,
+    device: &ash::Device,
+    stencil_format: vk::Format,
+) -> BlurResources {
+    let descriptor_set_layout_bindings = [vk::DescriptorSetLayoutBinding::default()
+        .binding(0)
+        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT)];
+    let descriptor_set_layout = unsafe {
+        device.create_descriptor_set_layout(
+            &vk::DescriptorSetLayoutCreateInfo::default().bindings(&descriptor_set_layout_bindings),
+            None,
+        )
+    }
+    .expect("failed to create blur descriptor set layout");
+
+    const HOP_COUNT: u32 = 4; // L0-read, L1-read, L2-read, U1-read
+    let pool_sizes = [vk::DescriptorPoolSize::default()
+        .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+        .descriptor_count(HOP_COUNT)];
+    let descriptor_pool = unsafe {
+        device.create_descriptor_pool(
+            &vk::DescriptorPoolCreateInfo::default()
+                .pool_sizes(&pool_sizes)
+                .max_sets(HOP_COUNT),
+            None,
+        )
+    }
+    .expect("failed to create blur descriptor pool");
+    let set_layouts = vec![descriptor_set_layout; HOP_COUNT as usize];
+    let allocated_sets = unsafe {
+        device.allocate_descriptor_sets(
+            &vk::DescriptorSetAllocateInfo::default()
+                .descriptor_pool(descriptor_pool)
+                .set_layouts(&set_layouts),
+        )
+    }
+    .expect("failed to allocate blur descriptor sets");
+    let descriptor_sets: [vk::DescriptorSet; 4] = allocated_sets
+        .try_into()
+        .expect("allocate_descriptor_sets returned HOP_COUNT sets");
+
+    let sampler = unsafe {
+        device.create_sampler(
+            &vk::SamplerCreateInfo::default()
+                .mag_filter(vk::Filter::LINEAR)
+                .min_filter(vk::Filter::LINEAR)
+                .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+                .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE),
+            None,
+        )
+    }
+    .expect("failed to create blur sampler");
+
+    let pipeline_layout = unsafe {
+        device.create_pipeline_layout(
+            &vk::PipelineLayoutCreateInfo::default()
+                .set_layouts(std::slice::from_ref(&descriptor_set_layout))
+                .push_constant_ranges(&[vk::PushConstantRange::default()
+                    .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
+                    .offset(0)
+                    .size(12)]),
+            None,
+        )
+    }
+    .expect("failed to create blur pipeline layout");
+
+    let vertex_spv = include_bytes!(concat!(
+        env!("OUT_DIR"),
+        "/fullscreen_quad_nonbindless.vert.spv"
+    ));
+    let downsample_spv = include_bytes!(concat!(
+        env!("OUT_DIR"),
+        "/kawase_downsample_nonbindless.frag.spv"
+    ));
+    let upsample_spv = include_bytes!(concat!(
+        env!("OUT_DIR"),
+        "/kawase_upsample_nonbindless.frag.spv"
+    ));
+    let downsample_pipeline = create_blur_pipeline(
+        device,
+        vertex_spv,
+        downsample_spv,
+        pipeline_layout,
+        vk::Format::R16G16B16A16_SFLOAT,
+        stencil_format,
+    );
+    let upsample_pipeline = create_blur_pipeline(
+        device,
+        vertex_spv,
+        upsample_spv,
+        pipeline_layout,
+        vk::Format::R16G16B16A16_SFLOAT,
+        stencil_format,
+    );
+
+    // A single, fixed, NDC-authored (-1..1) quad -- see this struct's
+    // own doc comment for why this needs no per-call/per-hop variant.
+    let white = 0xFFFF_FFFFu32;
+    let quad_vertices = [
+        UiVertex {
+            position: [-1.0, -1.0],
+            uv: [0.0, 0.0],
+            color: white,
+            params: [0.0; 3],
+        },
+        UiVertex {
+            position: [1.0, -1.0],
+            uv: [1.0, 0.0],
+            color: white,
+            params: [0.0; 3],
+        },
+        UiVertex {
+            position: [1.0, 1.0],
+            uv: [1.0, 1.0],
+            color: white,
+            params: [0.0; 3],
+        },
+        UiVertex {
+            position: [-1.0, 1.0],
+            uv: [0.0, 1.0],
+            color: white,
+            params: [0.0; 3],
+        },
+    ];
+    let quad_indices: [u32; 6] = [0, 1, 2, 0, 2, 3];
+    // Mirrors `VulkanDevice::upload_buffer`'s own exact allocation
+    // pattern for a small, one-time, host-visible buffer -- that method
+    // is only reachable through a concrete `&VulkanDevice`, not the
+    // `&dyn RhiDevice` trait object `apply_layer_blur`'s own signature
+    // is given, so this crate's own memory-type-selection logic is
+    // duplicated here rather than reused directly.
+    let (unit_quad_vertex_buffer, unit_quad_vertex_memory) = create_blur_static_buffer(
+        instance,
+        physical_device,
+        device,
+        bytemuck::cast_slice(&quad_vertices),
+        vk::BufferUsageFlags::VERTEX_BUFFER,
+    );
+    let (unit_quad_index_buffer, unit_quad_index_memory) = create_blur_static_buffer(
+        instance,
+        physical_device,
+        device,
+        bytemuck::cast_slice(&quad_indices),
+        vk::BufferUsageFlags::INDEX_BUFFER,
+    );
+
+    BlurResources {
+        descriptor_set_layout,
+        descriptor_pool,
+        descriptor_sets,
+        sampler,
+        pipeline_layout,
+        downsample_pipeline,
+        upsample_pipeline,
+        unit_quad_vertex_buffer,
+        unit_quad_vertex_memory,
+        unit_quad_index_buffer,
+        unit_quad_index_memory,
+    }
+}
+
+/// Mirrors `VulkanDevice::upload_buffer`'s own memory-type-selection and
+/// host-visible-map-and-copy logic exactly, for the one case that method
+/// itself is unreachable from (`create_blur_resources`'s own callers
+/// only have `&ash::Instance`/`vk::PhysicalDevice`/`&ash::Device`
+/// individually, never a concrete `&VulkanDevice`). Returns the raw
+/// buffer and its backing memory, both owned by the caller from here on
+/// -- `create_blur_resources`'s own result never wraps these in a
+/// `VulkanBuffer` (whose `Drop` would destroy them the moment it went
+/// out of scope; these are meant to outlive that scope, cached in
+/// `BlurResources` for the rest of the process).
+fn create_blur_static_buffer(
+    instance: &ash::Instance,
+    physical_device: vk::PhysicalDevice,
+    device: &ash::Device,
+    bytes: &[u8],
+    usage: vk::BufferUsageFlags,
+) -> (vk::Buffer, vk::DeviceMemory) {
+    // SAFETY: `device` is a valid, live logical device; `bytes.len()` is
+    // used directly as `size`, matching `VulkanDevice::upload_buffer`'s
+    // own reasoning exactly.
+    let buffer = unsafe {
+        device.create_buffer(
+            &vk::BufferCreateInfo::default()
+                .size(bytes.len() as u64)
+                .usage(usage)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE),
+            None,
+        )
+    }
+    .expect("failed to create blur static buffer");
+
+    // SAFETY: `buffer` was just created above on this device.
+    let requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
+    // SAFETY: `physical_device` is the device `VulkanDevice::new` itself
+    // selected, valid for as long as `instance` (also alive here) is.
+    let memory_properties =
+        unsafe { instance.get_physical_device_memory_properties(physical_device) };
+    let wanted = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
+    let memory_type_index = (0..memory_properties.memory_type_count)
+        .find(|&i| {
+            (requirements.memory_type_bits & (1 << i)) != 0
+                && memory_properties.memory_types[i as usize]
+                    .property_flags
+                    .contains(wanted)
+        })
+        .expect("no host-visible/host-coherent memory type available for blur static buffer");
+
+    // SAFETY: `device` is valid, `requirements.size` comes directly from
+    // `get_buffer_memory_requirements` above, and `memory_type_index` was
+    // selected from the `find` above so it is one of the bits set in
+    // `requirements.memory_type_bits`.
+    let memory = unsafe {
+        device.allocate_memory(
+            &vk::MemoryAllocateInfo::default()
+                .allocation_size(requirements.size)
+                .memory_type_index(memory_type_index),
+            None,
+        )
+    }
+    .expect("failed to allocate blur static buffer memory");
+
+    // SAFETY: `buffer`/`memory` were both just created above on this
+    // device, `buffer` has not been bound to memory before now, and
+    // `memory` was allocated host-visible/host-coherent (selected via
+    // `wanted` above), so mapping it is valid; `dst` is writable for at
+    // least `bytes.len()` bytes, matching `copy_nonoverlapping`'s write,
+    // and `unmap_memory` is called exactly once right after.
+    unsafe {
+        device
+            .bind_buffer_memory(buffer, memory, 0)
+            .expect("failed to bind blur static buffer memory");
+        let dst = device
+            .map_memory(memory, 0, bytes.len() as u64, vk::MemoryMapFlags::empty())
+            .expect("failed to map blur static buffer memory");
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst.cast::<u8>(), bytes.len());
+        device.unmap_memory(memory);
+    }
+
+    (buffer, memory)
+}
+
 pub struct VulkanCommandBuffer {
     device: ash::Device,
     command_buffer: vk::CommandBuffer,
     width: u32,
     height: u32,
     pipeline_layout: Option<vk::PipelineLayout>,
+    /// `VulkanDevice::blur_resources`'s own `Arc` clone -- see that
+    /// field's own doc comment for why `apply_layer_blur` needs this
+    /// copied in at construction rather than reached through its own
+    /// `device: &dyn RhiDevice` parameter.
+    blur_resources: Arc<Mutex<Option<BlurResources>>>,
+    /// `VulkanDevice::instance`/`physical_device`, copied in for the same
+    /// reason `blur_resources` is -- `apply_layer_blur`'s own lazy
+    /// pipeline/buffer setup (`create_blur_resources`) needs both to
+    /// select a real memory type, and neither is reachable through the
+    /// `device: &dyn RhiDevice` trait object its signature is given.
+    instance: ash::Instance,
+    physical_device: vk::PhysicalDevice,
+    /// `VulkanDevice::stencil_format`, copied in for `create_blur_
+    /// resources`'s own pipeline creation -- the same reason `instance`/
+    /// `physical_device` above are.
+    stencil_format: vk::Format,
     /// The one persistent bindless descriptor set (`VulkanDevice::
     /// bindless_descriptor_set`), bound once per `set_pipeline` call.
     bindless_descriptor_set: vk::DescriptorSet,
@@ -2941,6 +3419,140 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
         // `self.width`/`self.height`.
         self.width = self.swapchain_width;
         self.height = self.swapchain_height;
+    }
+
+    fn apply_layer_blur(
+        &mut self,
+        device: &dyn RhiDevice,
+        source: &dyn RhiTexture,
+        width: u32,
+        height: u32,
+    ) -> Box<dyn RhiTexture> {
+        // Lazy, once-per-process setup (IMPLEMENTATION.md Step 7.2.2) --
+        // see `BlurResources`'s own doc comment for the full design.
+        let blur = {
+            let mut guard = self.blur_resources.lock().expect("blur resources poisoned");
+            if guard.is_none() {
+                *guard = Some(create_blur_resources(
+                    &self.instance,
+                    self.physical_device,
+                    &self.device,
+                    self.stencil_format,
+                ));
+            }
+            guard.expect("just initialized above if it was None")
+        };
+
+        let half_size = ((width / 2).max(1), (height / 2).max(1));
+        let quarter_size = ((width / 4).max(1), (height / 4).max(1));
+
+        let raw_device = self.device.clone();
+        let raw_cmd_buffer = self.command_buffer;
+        // `set_index` selects one of `blur.descriptor_sets`'s own 4 real
+        // hop sets -- see that field's own doc comment for why this
+        // demo-proven "one set per hop" shape is used instead of
+        // reusing (and repeatedly updating) a single one.
+        let point_at = |set_index: usize, view: vk::ImageView| {
+            let image_info = vk::DescriptorImageInfo::default()
+                .image_view(view)
+                .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .sampler(blur.sampler);
+            unsafe {
+                raw_device.update_descriptor_sets(
+                    &[vk::WriteDescriptorSet::default()
+                        .dst_set(blur.descriptor_sets[set_index])
+                        .dst_binding(0)
+                        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                        .image_info(std::slice::from_ref(&image_info))],
+                    &[],
+                );
+            }
+        };
+        // REVIEW.md finding #130's own real fix: a raw `cmd_draw_indexed`
+        // call, never `RhiCommandBuffer::draw_indexed` -- that wrapper's
+        // own second, unconditional `cmd_push_constants` call would
+        // silently clobber `dest_size` below with `self.width`/`self.
+        // height` instead.
+        let draw_hop = |pipeline: vk::Pipeline, set_index: usize, dest_size: (u32, u32)| {
+            let push_constants: [f32; 2] = [dest_size.0 as f32, dest_size.1 as f32];
+            unsafe {
+                raw_device.cmd_bind_pipeline(
+                    raw_cmd_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    pipeline,
+                );
+                raw_device.cmd_bind_descriptor_sets(
+                    raw_cmd_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    blur.pipeline_layout,
+                    0,
+                    &[blur.descriptor_sets[set_index]],
+                    &[],
+                );
+                raw_device.cmd_push_constants(
+                    raw_cmd_buffer,
+                    blur.pipeline_layout,
+                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                    0,
+                    bytemuck::cast_slice(&push_constants),
+                );
+                raw_device.cmd_bind_vertex_buffers(
+                    raw_cmd_buffer,
+                    0,
+                    &[blur.unit_quad_vertex_buffer],
+                    &[0],
+                );
+                raw_device.cmd_bind_index_buffer(
+                    raw_cmd_buffer,
+                    blur.unit_quad_index_buffer,
+                    0,
+                    vk::IndexType::UINT32,
+                );
+                raw_device.cmd_draw_indexed(raw_cmd_buffer, 6, 1, 0, 0, 0);
+            }
+        };
+
+        // L0 (`source`) -> L1: downsample to half size. Set 0 reads L0.
+        point_at(0, vk::ImageView::from_raw(source.raw_handle()));
+        let l1 = device
+            .acquire_transient_target(half_size.0, half_size.1, TextureFormat::Rgba16Float)
+            .expect("apply_layer_blur: failed to acquire L1");
+        self.begin_render_to_texture_no_end(&*l1, half_size.0, half_size.1);
+        draw_hop(blur.downsample_pipeline, 0, half_size);
+        self.end_render_to_texture(&*l1);
+
+        // L1 -> L2: downsample to quarter size. Set 1 reads L1.
+        point_at(1, vk::ImageView::from_raw(l1.raw_handle()));
+        let l2 = device
+            .acquire_transient_target(quarter_size.0, quarter_size.1, TextureFormat::Rgba16Float)
+            .expect("apply_layer_blur: failed to acquire L2");
+        self.begin_render_to_texture_no_end(&*l2, quarter_size.0, quarter_size.1);
+        draw_hop(blur.downsample_pipeline, 1, quarter_size);
+        self.end_render_to_texture(&*l2);
+        device.release_transient_target(l1);
+
+        // L2 -> U1: upsample back to half size. Set 2 reads L2.
+        point_at(2, vk::ImageView::from_raw(l2.raw_handle()));
+        let u1 = device
+            .acquire_transient_target(half_size.0, half_size.1, TextureFormat::Rgba16Float)
+            .expect("apply_layer_blur: failed to acquire U1");
+        self.begin_render_to_texture_no_end(&*u1, half_size.0, half_size.1);
+        draw_hop(blur.upsample_pipeline, 2, half_size);
+        self.end_render_to_texture(&*u1);
+        device.release_transient_target(l2);
+
+        // U1 -> U0: upsample back to full size -- the real result. Set 3
+        // reads U1.
+        point_at(3, vk::ImageView::from_raw(u1.raw_handle()));
+        let u0 = device
+            .acquire_transient_target(width, height, TextureFormat::Rgba16Float)
+            .expect("apply_layer_blur: failed to acquire U0");
+        self.begin_render_to_texture_no_end(&*u0, width, height);
+        draw_hop(blur.upsample_pipeline, 3, (width, height));
+        self.end_render_to_texture(&*u0);
+        device.release_transient_target(u1);
+
+        u0
     }
 
     fn raw_handle(&self) -> u64 {
