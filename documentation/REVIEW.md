@@ -160,12 +160,12 @@ Scope: the Rust-specific mechanisms introduced by the language migration above (
 Status: **All findings implemented.**
 
 ### 19. [Critical] Panic strategy contradicts its own FFI-safety mechanism
-TECHNICAL.md Section 9.1 stated the `cdylib`/`staticlib` build targets set `panic = "abort"`, while that same paragraph — plus DESIGN.md Section 2.7 and IMPLEMENTATION.md Phase 10 Step 10.1 — relies on `std::panic::catch_unwind` at every FFI entry point to convert a panic into a recoverable `EngineError`. These are mutually exclusive: `panic = "abort"` terminates the process the instant a panic fires, before any stack unwinding occurs, so `catch_unwind` can never trigger and silently becomes dead code. As written, any panic anywhere in the engine crashes the host Python process outright — precisely the outcome Section 2.7 says the `catch_unwind` wrapper exists to prevent.
+TECHNICAL.md Section 9.1 stated the `cdylib`/`staticlib` build targets set `panic = "abort"`, while that same paragraph — plus DESIGN.md Section 2.7 and IMPLEMENTATION.md Phase 10 Step 10.2 (renumbered from 10.1 on 2026-09-09 when Step 10.1 became the new shape-primitive step; this finding's own content is about the `tre-ffi` crate, still the step this reference means) — relies on `std::panic::catch_unwind` at every FFI entry point to convert a panic into a recoverable `EngineError`. These are mutually exclusive: `panic = "abort"` terminates the process the instant a panic fires, before any stack unwinding occurs, so `catch_unwind` can never trigger and silently becomes dead code. As written, any panic anywhere in the engine crashes the host Python process outright — precisely the outcome Section 2.7 says the `catch_unwind` wrapper exists to prevent.
 
 **Change:** TECHNICAL.md Section 9.1 corrected: the `tre-ffi` crate and its full dependency graph must build with the default `panic = "unwind"` strategy, and `panic = "abort"` is now explicitly called out as prohibited on any profile used to build the shipped `cdylib`/`staticlib`, with the reasoning (it makes `catch_unwind` a no-op) stated inline so a future contributor optimizing binary size doesn't reintroduce it.
 
 ### 20. [Should-fix] "Only crate compiled into the cdylib" is imprecise to the point of being misleading
-TECHNICAL.md Section 9.2 and IMPLEMENTATION.md Phase 10 Step 10.1 both stated that `tre-ffi` is "the only crate compiled into the shipped `cdylib`/`staticlib`." Taken literally this is false: `tre-engine` and the RHI backend crates' code must be statically linked into that same binary for the engine to function at all. The intended meaning — that `tre-ffi` is the only crate whose items are exported as public `extern "C"` symbols — was never actually stated.
+TECHNICAL.md Section 9.2 and IMPLEMENTATION.md Phase 10 Step 10.2 (renumbered from 10.1 on 2026-09-09, see finding #19's own note) both stated that `tre-ffi` is "the only crate compiled into the shipped `cdylib`/`staticlib`." Taken literally this is false: `tre-engine` and the RHI backend crates' code must be statically linked into that same binary for the engine to function at all. The intended meaning — that `tre-ffi` is the only crate whose items are exported as public `extern "C"` symbols — was never actually stated.
 
 **Change:** Both documents reworded to distinguish *linked into* (true of every crate in the dependency graph) from *exports symbols from* (true of `tre-ffi` alone), so the symbol-hiding goal is stated accurately instead of implying the engine and RHI backends aren't part of the shipped binary at all.
 
@@ -1981,3 +1981,143 @@ manual regression sweep of all 31 pre-existing Vulkan demos re-run after
 `radix_sort_by_key`'s new `counts` parameter: zero regressions beyond
 the same pre-existing, already-documented `canvas_accessibility_verify`
 environmental limitation (finding #126).
+
+## Follow-up: Python Bindings via Direct PyO3, Bypassing `tre-ffi` (2026-09-09)
+
+Status: **Documented, not yet implemented** (Phase 10 Steps 10.2/10.3
+are still both planned, not built) -- this is a subsequent project
+decision revising Phase 10's own planned architecture before any of it
+ships, not a finding from a review of shipped code, recorded here as a
+follow-up entry matching finding #18's own precedent (the original
+Rust/Python language decision) rather than folded into the numbered
+findings above.
+
+### 160. [Decision] Python UI framework bindings will use PyO3 directly against `tre-engine`'s native Rust API, not `tre-ffi`'s C-ABI
+
+Every document previously specified one cross-language boundary --
+`tre-ffi`'s `#[repr(C)]`/`extern "C"` API -- shared by every language
+binding, Python included. DESIGN.md Section 2.7 stated this explicitly
+and repeatedly: Python binds "through this same C-ABI boundary,"
+receiving "no engine access that a UI framework written in C++, C#, or
+any other language could not also obtain through the same bindings."
+IMPLEMENTATION.md's original Step 10.3 (Python bindings) task list
+required "wrapping `tre-ffi`'s C-ABI -- not calling into `tre-engine`
+internals directly -- so the Python bindings exercise the identical
+boundary any other language would use."
+
+**Change, per explicit project-owner direction:** `tre-ffi` (Phase 10
+Step 10.2) remains real and necessary -- the stable C-ABI boundary for
+every language *other* than Python (C, C++, any future non-Python
+dynamic-language binding). The project's own Python UI framework
+(Phase 10 Step 10.3) now binds directly to `tre-engine`'s native Rust
+API via a new, dedicated `tre-python` crate using PyO3's `#[pyclass]`/
+`#[pymethods]` machinery, depending on `tre-engine` directly and never
+depending on `tre-ffi` at all. **Real, stated rationale: efficiency and
+performance** -- a `tre-ffi`-routed binding pays a double marshalling
+cost on every call (native Rust type -> C-compatible shadow
+representation -> PyO3 conversion back to a Python object) and opaque-
+handle-plus-getter/setter indirection for high-frequency calls (e.g., a
+Phase 10 Step 10.1 shape's own per-frame property mutation) that a
+direct binding has no reason to pay. PyO3's own built-in mechanisms
+replace what `tre-ffi`'s hand-written C-ABI machinery would otherwise
+need to provide for Python specifically: `Drop`-integrated ownership
+(no `tre_*_free` calls), a native panic-to-exception boundary (no
+hand-written `catch_unwind` wrapper), and direct `Result<T, EngineError>`
+-to-`PyErr` conversion (no integer result code round trip).
+
+**This is a genuine, disclosed departure from this project's own
+previously-stated "one boundary, no privileged access" principle, not a
+silent one.** Python -- as the project's own first-party UI framework,
+not a third-party integration -- now receives real, privileged access
+(direct native-Rust-type binding) that a UI framework written in any
+other language does not. DESIGN.md Section 2.7 is corrected to state
+this plainly under a new "Cross-Language Boundary: Two Real Paths"
+heading rather than leave the superseded "equal footing" claim standing
+uncorrected -- the same discipline finding #145 (a stale REVIEW.md
+preamble) and finding #146 (a since-disproven demo README claim)
+already established for this document set: correct a stated claim
+openly, with a dated note, rather than silently edit around it.
+
+**Per-document changes:**
+
+- **DESIGN.md:** Section 2.7 rewritten with a new "Cross-Language
+  Boundary: Two Real Paths" subsection stating the real architecture
+  and the performance rationale; its own FFI-safety paragraph and the
+  Executive Summary's/Section 3's own Python-related claims corrected
+  to match.
+- **TECHNICAL.md:** Section 9.4 split into 9.4.1 (`tre-ffi`, for C/C++/
+  other non-Python bindings, otherwise unchanged) and 9.4.2 (`tre-python`,
+  the new direct PyO3 binding mechanism, ownership, concurrency, panic
+  safety, and testing story). Section 9.1's `panic = "unwind"`
+  requirement extended to cover `tre-python`'s own build for the same
+  underlying reason. Section 9.2's Build System bullet updated to name
+  the new `tre-python` crate as a second, independent build output.
+- **IMPLEMENTATION.md:** Step 10.2 (`tre-ffi`) re-scoped to "for C, C++,
+  and other non-Python bindings," with a new task building `tre-ffi`'s
+  own dedicated non-Python test harness (Python's test suite no longer
+  covers it). Step 10.3 (Python bindings) rewritten in full: a new
+  `tre-python` crate, direct `#[pyclass]`/`#[pymethods]` wrapping, and
+  the corrected technical rationale. Step 10.1's own cross-reference to
+  "Python via ... `tre-ffi`" corrected.
+- **ARCHITECTURE.md:** Section 7 (the planned shape-primitive system,
+  written earlier this same session) had three passages describing
+  Python reaching `ShapeId` through `tre-ffi`'s opaque-handle pattern --
+  all three corrected to describe the real, now-two-path design: `tre-ffi`
+  opaque handles for non-Python languages, direct PyO3 `#[pyclass]`
+  wrapping for Python.
+- **`PLAN.md`** (Phase 10 Step 10.1's own working plan, not yet
+  archived): its own three references to Python reaching this layer
+  via `tre-ffi` corrected to match.
+
+**Note for future reviewers:** Like finding #18, this is a language/
+architecture-boundary decision record, not a re-review -- the shape-
+primitive data model itself (ARCHITECTURE.md Section 7's structs/enums)
+is unaffected; only *which mechanism* Python uses to reach it changed.
+No code exists yet for either `tre-ffi` or `tre-python` (Phase 10 is
+still entirely planned, not implemented), so there is no shipped
+behavior this decision contradicts -- only prior *documentation* of a
+planned architecture, corrected before it was ever built the old way.
+
+## Phase 10 Step 10.1 Implementation (2026-09-09)
+
+### 161. [Should-fix] IMPLEMENTATION.md's own Step 10.1 task 4 claimed `Path` shapes could be filled via `tre-svg`'s existing tessellator; real implementation found this needs new, not-yet-built geometry work
+Task 4's original wording named `tre-svg`'s existing ear-clipping
+tessellator (Phase 3 Step 3.3.1) as the real rendering path for filled
+`Path` shapes -- implying "wire an existing function," a bug-fix-sized
+addition. Investigating what that would actually take, before writing
+the flattening pass, found this is not accurate: `tre-svg`'s
+tessellator consumes an already-flattened polygon point list, and the
+new `Path::commands: Vec<PathCommand>` (`MoveTo`/`LineTo`/quadratic/
+cubic Bezier segments) has no existing flattening step anywhere in this
+codebase to convert it into that point-list form -- SVG's own path
+parsing (Step 3.3.1) does this internally via the `usvg` dependency,
+not through any function `tre-engine`'s new `shapes` module could call
+directly. Real, separate geometry work (Bezier subdivision/flattening
+at some tolerance), not a bug-fix-sized addition.
+
+**Change:** `ShapeRegistry::flatten_into` panics loudly
+(`unimplemented!`) on any `Path` shape, fill or stroke both, rather than
+half-implementing fill support the task list's own wording assumed was
+trivial. IMPLEMENTATION.md Step 10.1's "Explicitly out of scope" list
+corrected to name `Path` rendering as entirely out of scope (was
+previously only naming stroking), matching the same "confirmed via
+investigation, corrected rather than silently built around or silently
+expanded" discipline every prior step's own real discrepancies (radix
+sort, atlas placeholder fallback, Section 9.4's own Python binding
+mechanism) received.
+
+Verified by `cargo fmt --all -- --check`/`cargo clippy --workspace
+--all-targets -- -D warnings`/`cargo build --workspace --all-targets`/
+`cargo test --workspace` clean across the whole workspace (`tre-engine`
+90 tests, up from 78). A new real GPU demo (`shape_registry_demo.rs`,
+`demo/phase10_step10_1/`) proves the one real-rendering-supported case
+(a `Rectangle` with uniform `CornerRadii`, `FillStyle::Solid`, no
+border, no smoothing) produces byte-for-byte identical pixels whether
+drawn directly via today's `draw_rounded_rect` or via `ShapeRegistry::
+insert` + `flatten_into`, confirmed stable across 3 real runs. A full
+manual regression sweep of all 32 Vulkan demos (31 pre-existing plus
+this step's own new one): 31 passed; `canvas_accessibility_verify`
+failed only on the same pre-existing, already-documented environmental
+limitation as finding #126, unrelated to this step -- this step touches
+no existing public API signature, so zero regressions were expected and
+confirmed.

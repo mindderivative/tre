@@ -7,6 +7,13 @@
 //! `tre-memory`; this crate depends on both but contains no `unsafe` itself.
 #![forbid(unsafe_code)]
 
+mod shapes;
+pub use shapes::{
+    AnimationId, BlendMode, Circle, Color as ShapeColor, CornerRadii, FillStyle, GradientId,
+    LineCap, LineJoin, Path, PathCommand, Polygon, Primitive, PrimitiveCommon, Rectangle, ShapeId,
+    ShapePrimitive, ShapeRegistry, ShapeSlot, Transform2D, Vec2 as ShapeVec2, Visibility,
+};
+
 /// Recoverable engine failure (DESIGN.md Section 2.6). Every fallible
 /// engine operation returns `Result<T, EngineError>`; panics are reserved
 /// for programmer errors, never for these expected failure modes.

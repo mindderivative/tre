@@ -388,4 +388,453 @@ Added in the September 2026 documentation review -- the standard 2D content pipe
 * **Culling:** Disabled (or front-and-back both drawn) -- 2D quads have no meaningful winding-order culling benefit and disabling it removes a class of "invisible rect" bugs from incorrect vertex winding.
 * **Stencil Test:** Disabled by default, same reasoning as depth. IMPLEMENTATION.md Step 3.3.3's stencil-and-cover fallback (for self-intersecting paths ear-clipping cannot triangulate) is the one deliberate exception -- its two pipelines (`create_stencil_and_cover_pipelines`) enable stencil test/write to encode a per-pixel winding count or even-odd parity, while depth test/write stay disabled exactly as above. Every pipeline, including the ordinary default ones described here, declares a stencil-compatible `PipelineRenderingCreateInfo` regardless of whether it enables the test -- the same "declared everywhere, unused by pipelines that don't reference it" precedent as the bindless descriptor set and push-constant range, needed because every swapchain now always has a stencil buffer attached.
 
+---
+
+## 7. UI Primitive Shape System (Phase 10 Step 10.1)
+
+**Status: Complete (2026-09-09), real in `crates/tre-engine/src/
+shapes.rs`.** Every struct/trait/enum below is now shipped code, matching
+this section's own text exactly (no drift found during implementation).
+Real rendering support is intentionally narrow, exactly as originally
+scoped -- see Section 7.5's own "Implementation status" note, unchanged
+from planning, for the itemized disposition of every field. The per-step
+plan (`planning/archive/PLAN_PHASE10_STEP10_1.md`) is the authoritative
+task breakdown; this section remains the canonical struct/trait/enum
+reference every other document points to, matching this document's own
+established "define once here, reference elsewhere" convention (Sections
+3.1, 4.1).
+
+**Why a retained-mode layer at all.** Every existing drawing entry point
+(`RenderingCanvas::draw_rounded_rect`, `draw_text`, `draw_path`) is
+immediate-mode: the caller re-issues every draw call every frame, and
+`RenderingCanvas` itself is rebuilt from scratch each frame (Phase 9
+Step 9.2's own `reset()`-based reuse only avoids reallocating that
+per-frame `Vec` storage, it does not let a caller skip re-recording
+unchanged content). An external UI framework driving this engine --
+Python via Phase 10 Step 10.3's direct PyO3 binding, or any other
+language via Step 10.2's `tre-ffi` C-ABI (DESIGN.md Section 2.7's own
+"Two Real Paths") -- wants the opposite shape of API: create a shape
+once, hold a stable handle to it, mutate a handful of
+properties as the UI framework's own layout/animation system runs, and
+let the engine decide what actually needs re-recording this frame. This
+section's `ShapeRegistry` is that layer -- a retained store of shape
+*descriptions*, each translated into the exact same immediate-mode
+`RenderingCanvas` calls (and therefore the exact same IR/radix-sort/
+batch/RHI pipeline, Phases 5 through 9) every other caller already uses,
+whenever it is dirty. It is a convenience layer over the existing
+pipeline, never a second one.
+
+### 7.1 Shared Layout Properties
+
+Every concrete shape embeds one `PrimitiveCommon` by composition, not
+inheritance -- Rust has no struct inheritance, and this project's own
+established style (`CanvasState`, `LayerDesc`) already prefers a shared
+data struct embedded by value over a deep trait hierarchy:
+
+```rust
+/// Fields every shape primitive carries, regardless of kind -- embedded
+/// by value in `Rectangle`/`Circle`/`Polygon`/`Path` (Section 7.3), not
+/// inherited. `Primitive::common`/`common_mut` (below) give generic code
+/// (the per-frame flattening pass, hit-testing) uniform access without
+/// matching every concrete shape variant.
+#[derive(Debug, Clone, Copy)]
+pub struct PrimitiveCommon {
+    pub transform: Transform2D,
+    pub opacity: f32,
+    pub blend_mode: BlendMode,
+    pub visibility: Visibility,
+    pub hit_testable: bool,
+}
+
+/// A decomposed, animation-friendly transform -- deliberately *not* the
+/// existing `tre_math::Affine2` (Section 3.1's compact 6-float matrix).
+/// `Affine2` is the pipeline's own canonical, composable representation,
+/// but a raw matrix's rotation component cannot be cleanly interpolated
+/// (a lerp between two matrices is not a lerp between two rotations);
+/// `position`/`scale`/`rotation` can each be animated independently and
+/// combined into a real `Affine2` once per frame during flattening
+/// (`to_affine2`, Section 7.4) -- `Affine2::from_translation(position)
+/// .compose(&Affine2::from_rotation(rotation).compose(&Affine2::
+/// from_scale(scale[0], scale[1])))`, standard translate*rotate*scale
+/// order, using `Affine2::compose`'s own existing method (Section 3.1),
+/// not a new matrix implementation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Transform2D {
+    pub position: Vec2,
+    pub scale: Vec2,
+    /// Radians, matching `Affine2::from_rotation`'s own convention
+    /// (Section 3.1) -- not degrees.
+    pub rotation: f32,
+}
+
+/// A plain 2D point/extent -- a *type alias* for the `[f32; 2]` this
+/// codebase already uses everywhere a 2D point appears
+/// (`UiVertex::position`, `tre_math::lerp_points_batch`'s own
+/// signature), not a new nominal struct. Deliberate: introducing a
+/// distinct `Vec2` type would need its own `Add`/`Sub`/`Mul` impls and
+/// would stop being interchangeable with every existing `[f32; 2]` call
+/// site for no real benefit -- this section only reaches for a genuinely
+/// new nominal type where the existing convention has no equivalent
+/// (`CornerRadii`, Section 7.2).
+pub type Vec2 = [f32; 2];
+
+/// TECHNICAL.md Section 3.4/DESIGN.md Section 6.2's own long-named
+/// "Visual Filter Pipeline" concept, concretized here as the actual
+/// enum a shape's `blend_mode` field holds -- `LayerDesc`'s own doc
+/// comment (Section 5) already named blend mode as belonging to "a
+/// later phase [that] implements those visual filters"; this is that
+/// phase's own data-model piece. **No rendering support exists for any
+/// non-`Normal` variant yet** -- see this section's own closing
+/// "Implementation status" note.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlendMode {
+    Normal,
+    Multiply,
+    Screen,
+    Overlay,
+    SoftLight,
+    ColorDodge,
+}
+
+/// Layout-participation state, distinct from `opacity == 0.0` (which
+/// still occupies layout space and still hit-tests) -- `Collapsed`
+/// mirrors the common "display: none" UI-framework concept: no layout
+/// space, no hit-testing, no recording into the IR at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    Visible,
+    Hidden,
+    Collapsed,
+}
+
+/// Every concrete shape (Section 7.3) implements this so generic code
+/// can reach `PrimitiveCommon` without a `match` over every variant --
+/// an ordinary object-safe accessor trait, not a marker for dynamic
+/// dispatch: every real call site uses the `ShapePrimitive` enum
+/// (Section 7.3), never `dyn Primitive`, per TECHNICAL.md Section 9.1's
+/// "no dynamic type inspection in hot paths" rule.
+pub trait Primitive {
+    fn common(&self) -> &PrimitiveCommon;
+    fn common_mut(&mut self) -> &mut PrimitiveCommon;
+}
+```
+
+### 7.2 Fill, Stroke & Color
+
+```rust
+/// `UiVertex::color`'s own existing packed-`u32` convention (Section
+/// 3.1, `rgba8`'s own doc comment) -- a type alias, not a new struct,
+/// for the same reason `Vec2` is one: every existing color call site
+/// already speaks this exact representation.
+pub type Color = u32;
+
+/// What a shape's interior is painted with. `Gradient` and `Texture`
+/// reference subsystems at two different real-vs-planned points:
+/// `Texture` is real today (the existing bindless texture-handle system,
+/// Phase 2 Step 2.1/Phase 4 Step 4.2.4) -- a shape's fill can bind an
+/// already-uploaded bindless texture index immediately. `Gradient` has
+/// **no evaluator anywhere in this codebase** -- DESIGN.md's own
+/// architecture diagram names a "Dynamic Gradient & Pattern Fill
+/// Evaluator" as a future box, never built; `GradientId` is a real,
+/// stable handle *type* a shape can reference now, satisfying the data
+/// model, but resolving one to actual pixels is separate, disclosed,
+/// not-yet-scheduled future work.
+#[derive(Debug, Clone, Copy)]
+pub enum FillStyle {
+    Solid(Color),
+    Gradient(GradientId),
+    Texture(u32),
+}
+
+/// Opaque handle into the not-yet-built gradient evaluator's own future
+/// table -- exists so `FillStyle::Gradient` is a real, stable type today
+/// rather than a placeholder that would need a breaking change once the
+/// evaluator lands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GradientId(pub u32);
+
+/// `Rectangle::corner_radius`'s own per-corner field type -- clockwise
+/// from top-left, matching the field order every CSS-derived UI
+/// framework already expects. A genuinely new nominal type (not a
+/// `Vec2`-style alias): unlike a generic 2D point/extent, "four corner
+/// radii in a fixed clockwise order" is a real, distinct concept with
+/// its own indexing convention worth naming.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CornerRadii {
+    pub top_left: f32,
+    pub top_right: f32,
+    pub bottom_right: f32,
+    pub bottom_left: f32,
+}
+
+impl CornerRadii {
+    /// The common case -- one radius applied to all four corners,
+    /// exactly what today's real `draw_rounded_rect` already supports
+    /// (Phase 3 Step 3.2). A `Rectangle` using only this constructor
+    /// needs no new rendering work at all to flatten correctly.
+    #[must_use]
+    pub const fn uniform(radius: f32) -> Self {
+        Self { top_left: radius, top_right: radius, bottom_right: radius, bottom_left: radius }
+    }
+}
+```
+
+### 7.3 The Concrete Shapes
+
+```rust
+#[derive(Debug, Clone, Copy)]
+pub struct Rectangle {
+    pub common: PrimitiveCommon,
+    pub size: Vec2,
+    pub fill: FillStyle,
+    pub border_color: Color,
+    pub border_thickness: f32,
+    pub corner_radius: CornerRadii,
+    /// Squircle interpolation factor, `0.0` (pure circular-arc rounding,
+    /// today's real shader) to `1.0` (full squircle) -- see this
+    /// section's closing "Implementation status" note.
+    pub corner_smoothing: f32,
+}
+
+/// Unifies circle and ellipse: `radius[0] == radius[1]` is a circle,
+/// otherwise an ellipse -- one struct, no separate `Circle`/`Ellipse`
+/// types, matching how a UI framework caller almost always wants "the
+/// same shape, sometimes with unequal axes," not two APIs to learn.
+#[derive(Debug, Clone, Copy)]
+pub struct Circle {
+    pub common: PrimitiveCommon,
+    pub radius: Vec2,
+    pub fill: FillStyle,
+    pub border_color: Color,
+    pub border_thickness: f32,
+    /// Degrees, `0.0..=360.0` -- a progress-wheel/pie-chart partial
+    /// sweep starting at 12 o'clock, clockwise. `360.0` (the default)
+    /// is a full circle/ellipse.
+    pub arc_length: f32,
+}
+
+/// Covers triangle/hexagon/N-gon and star shapes with one struct: a
+/// regular `sides`-gon when `star_points` is `None`, an alternating
+/// inner/outer-radius star when it is `Some`.
+#[derive(Debug, Clone, Copy)]
+pub struct Polygon {
+    pub common: PrimitiveCommon,
+    pub sides: u32,
+    pub radius: f32,
+    /// Uniform rounding applied to every vertex -- distinct from
+    /// `Rectangle::corner_radius`'s per-corner `CornerRadii`, since a
+    /// regular polygon's own symmetry makes a single value both
+    /// sufficient and simpler to reason about.
+    pub vertex_radius: f32,
+    pub star_points: Option<u32>,
+    pub fill: FillStyle,
+    pub border_color: Color,
+    pub border_thickness: f32,
+}
+
+/// One instruction in a `Path`'s command list -- deliberately a small,
+/// closed set matching SVG path-data's own real primitives (the same
+/// vocabulary `tre-svg`'s existing parser already consumes, Phase 3 Step
+/// 3.3.1), not a speculative superset.
+#[derive(Debug, Clone, Copy)]
+pub enum PathCommand {
+    MoveTo(Vec2),
+    LineTo(Vec2),
+    QuadraticTo { control: Vec2, to: Vec2 },
+    CubicTo { control1: Vec2, control2: Vec2, to: Vec2 },
+    Close,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineCap {
+    Butt,
+    Round,
+    Square,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineJoin {
+    Miter,
+    Round,
+    Bevel,
+}
+
+/// The one shape whose own data model already names a real, deliberate
+/// heap allocation (`commands: Vec<PathCommand>`) -- consistent with
+/// DESIGN.md Section 2.1's own zero-allocation *boundary*, which
+/// exempts "complex external subsystems" (its own named example:
+/// SVG/path data) from the per-frame steady-state rule as long as they
+/// use arena-bounded allocation outside the active render tick.
+/// `commands` is recorded once (or replaced wholesale on a real edit,
+/// not appended to every frame), the same shape `tre-svg`'s existing
+/// parsed-path storage already has.
+#[derive(Debug, Clone)]
+pub struct Path {
+    pub common: PrimitiveCommon,
+    pub commands: Vec<PathCommand>,
+    pub fill: FillStyle,
+    pub border_color: Color,
+    pub border_thickness: f32,
+    pub stroke_line_cap: LineCap,
+    pub stroke_line_join: LineJoin,
+}
+
+/// The one type every shape's own real, concrete storage and every
+/// per-frame flattening call site actually holds -- `enum` dispatch,
+/// not `Box<dyn Primitive>`: matching a fixed, closed set of variants
+/// costs one branch and no heap allocation or vtable indirection, the
+/// same reasoning `CommandType`/`UiDrawCommand` (Section 3.2) already
+/// establishes for the IR itself, and required by TECHNICAL.md Section
+/// 9.1's "no dynamic type inspection in hot paths" rule for anything
+/// touched during a render tick.
+#[derive(Debug, Clone)]
+pub enum ShapePrimitive {
+    Rectangle(Rectangle),
+    Circle(Circle),
+    Polygon(Polygon),
+    Path(Path),
+}
+```
+
+### 7.4 Retained State & the Shape Registry
+
+```rust
+/// A stable-until-removed handle into `ShapeRegistry` -- the type an
+/// external UI framework actually holds across many frames: wrapped as
+/// a `tre-ffi` opaque handle for non-Python languages (Phase 10 Step
+/// 10.2), or held directly inside a PyO3 `#[pyclass]` for Python (Step
+/// 10.3, DESIGN.md Section 2.7's "Two Real Paths") -- never the raw
+/// struct exposed to either. `generation` is what makes a stale handle
+/// (one whose slot was removed and reused) detectable rather than
+/// silently resolving to a different, unrelated shape -- the same real
+/// hazard `tre_memory::SwmrSlotTable`'s own per-slot generation counter
+/// exists to prevent for atlas glyph slots (Step 4.3.1), applied here
+/// to a different concrete storage shape (see this subsection's own
+/// closing note on why `SwmrSlotTable` itself isn't reused directly).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ShapeId {
+    index: u32,
+    generation: u32,
+}
+
+/// One caller-assigned tween/animation this project's own future
+/// animation-timeline system (DESIGN.md Section 12.3's spring/lerp-decay
+/// math, Phase 8 Step 8.1.1's real `spring_decay` primitive) is actively
+/// driving against a shape's property -- opaque here, since owning and
+/// stepping the animation itself is that system's job, not the shape
+/// registry's; a non-empty `active_animations` on a `ShapeSlot` is only
+/// ever a *signal* ("this shape needs re-flattening this frame even
+/// though nothing external marked it `layout_dirty`"), matching
+/// `tre_math`'s own established "stateless evaluation library, the
+/// caller owns state" boundary (DESIGN.md Section 12.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AnimationId(pub u64);
+
+/// One `ShapeRegistry` slot -- the shape itself plus the UI-framework-
+/// facing state hooks that decide whether this frame's flattening pass
+/// needs to touch it at all.
+#[derive(Debug, Clone)]
+pub struct ShapeSlot {
+    pub shape: ShapePrimitive,
+    pub active_animations: Vec<AnimationId>,
+    pub layout_dirty: bool,
+    /// A shape-local clip rect, in the same coordinate space
+    /// `Canvas::push_clip`'s existing `ScissorRect` (Section 3.2) uses
+    /// -- reuses that exact real type rather than a new `Rect`, matching
+    /// this whole section's own "alias/reuse an existing type unless a
+    /// genuinely new concept requires one" discipline.
+    pub clip_bounds: Option<ScissorRect>,
+}
+
+/// The retained-mode shape store -- a hand-built generational slot
+/// arena, not `Box<dyn Primitive>`s in a `Vec` (dynamic dispatch,
+/// TECHNICAL.md Section 9.1) and not the pre-existing `tre_memory::
+/// ScatterArena`/`SwmrSlotTable` (both real but the wrong shape for this
+/// job: `ScatterArena` is single-write-then-consumed-once per frame,
+/// `SwmrSlotTable`'s own value slot is a bare `u64`, not an owned,
+/// in-place-mutable `ShapeSlot`). A new, small, purpose-built primitive
+/// -- matching this project's own established "hand-build the
+/// concurrency/memory primitive rather than reach for a crate"
+/// precedent (`ScatterArena`, `SwmrSlotTable`, `MpscRingBuffer`,
+/// `SpscRingBuffer`), not a dependency on the `slotmap` crate or
+/// similar.
+pub struct ShapeRegistry {
+    slots: Vec<Option<ShapeSlot>>,
+    generations: Vec<u32>,
+    free_list: Vec<u32>,
+    /// Added during implementation (2026-09-09), not part of this
+    /// section's original planning sketch -- an `O(1)` live-shape count
+    /// for `len()`/`is_empty()` (`clippy::pedantic`'s own
+    /// `len_without_is_empty` convention this crate already follows
+    /// elsewhere), maintained incrementally on `insert`/`remove` rather
+    /// than recomputed by scanning `slots` on every call. The only real
+    /// difference found between this section's own planned shape and
+    /// the shipped one.
+    live_count: usize,
+}
+```
+
+### 7.5 Efficiency & FFI Design
+
+* **Neither real cross-language path sees raw struct layout, by two
+  different mechanisms (revised 2026-09-09).** Every field above stays
+  ordinary (non-`#[repr(C)]`) Rust, exactly like `RenderingCanvas`
+  itself today. Non-Python languages reach `ShapeId` through Phase 10
+  Step 10.2's `tre-ffi` crate, exactly as originally designed: an
+  opaque handle plus `extern "C"` getter/setter functions per field
+  (the same pattern already used for `RhiTexture`/`RhiCommandBuffer`/
+  `AcquiredImage`, Section 6), never a transmuted pointer into a
+  `Rectangle`. **Python, per DESIGN.md Section 2.7's "Two Real Paths"
+  correction, does not go through `tre-ffi` at all** -- Phase 10 Step
+  10.3's `tre-python` crate wraps `ShapeId`/`Rectangle`/`Circle`/
+  `Polygon`/`Path` directly as PyO3 `#[pyclass]` types, with
+  `#[pymethods]` as the real field-access boundary instead of `extern
+  "C"` getters/setters; PyO3 itself, not this project's own code,
+  guarantees the Python interpreter never sees or transmutes the raw
+  Rust layout. Either way, `Vec<PathCommand>`, `Option<ScissorRect>`,
+  and enum-with-data fields (`FillStyle`, `ShapePrimitive` itself)
+  exist exactly as written above -- none of those are FFI-safe by
+  value under `tre-ffi`'s own C-ABI rules, and none need to be, since
+  neither real path ever crosses either boundary by raw value.
+* **Zero allocation in the hot path stays real by construction, not yet
+  verified live under the real guard.** Creating or removing a shape
+  touches `ShapeRegistry`'s own `free_list` (amortized `O(1)`, no
+  allocation once the registry has grown to its steady-state slot count
+  -- the same "grow once, reuse after" discipline Phase 9 Step 9.2
+  already established for `FrameArena`'s own scratch buffers).
+  *Mutating* an existing shape's fields is a plain in-place write. Only
+  the per-frame *flattening* pass (`ShapeRegistry::flatten_into`)
+  touches `RenderingCanvas`, and it does so through the exact same
+  already-zero-allocation-verified `reset()`/`draw_*`/`flatten_into`
+  path Step 9.2 built and proved with a real, self-checking
+  `RenderTickGuard` (TECHNICAL.md Section 3.4). This section adds no new
+  steady-state allocation source of its own by construction -- but,
+  disclosed honestly: `RenderTickGuard` is only wired into
+  `main_loop_demo.rs` today, not into `shape_registry_demo.rs` or any
+  other automated check, so this claim is architecturally sound but not
+  yet *proven* the same way `main_loop_demo`'s own zero-allocation claim
+  is. Wiring a shape-registry-driven scene into `main_loop_demo` (or an
+  equivalent guarded demo) to close that gap is real, separate future
+  work, not done as part of this step.
+* **Implementation status, itemized against real rendering support
+  (2026-09-09):** buildable with *zero* new GPU/tessellation work --
+  `PrimitiveCommon` (transform/opacity/visibility/hit-testable, all pure
+  CPU-side bookkeeping), `ShapeRegistry`/`ShapeId`/state hooks, and
+  `Rectangle` using only `CornerRadii::uniform` (today's real
+  `draw_rounded_rect` shader). Needs real, separate, not-yet-scheduled
+  rendering work before it can render correctly: `Rectangle`'s
+  non-uniform `corner_radius`/any `corner_smoothing` > 0.0 (new SDF
+  shader), `Circle`'s ellipse/`arc_length` cases (new SDF shader, no
+  circle/ellipse primitive exists at all today), `Polygon`/`Star`
+  (new procedural-geometry generation, though real triangulation
+  already exists to tessellate the resulting point list via `tre-svg`'s
+  existing ear-clipping code, Step 3.3.1), `Path`'s *stroking*
+  (`stroke_line_cap`/`stroke_line_join` -- the existing tessellator only
+  fills), `border_color`/`border_thickness` on any shape (no shape
+  anywhere in this engine renders a separate outline today), and
+  `FillStyle::Gradient`/non-`Normal` `BlendMode` (both real, both
+  already disclosed elsewhere in this document as unbuilt). See
+  IMPLEMENTATION.md Step 10.1's own "Explicitly out of scope" list for
+  the authoritative version of this same disclosure.
+
 *Future consideration -- opaque pre-pass (not implemented; profile before building):* Depth-test-off means the GPU gets no early-Z rejection, so overdraw-heavy scenes (e.g. a dense data grid with thousands of large, fully-opaque cell backgrounds) pay full fragment cost for content later fragments completely cover. A front-to-back, depth-tested pre-pass restricted to batches provably fully opaque (nothing SDF-antialiased or alpha-sampled can participate) could reclaim that cost via early-Z, at the price of a second pipeline state, a second command-buffer pass, and careful ordering against the existing Depth-ID-driven painter's-algorithm pass so the two agree on what's already covered. Do not build this speculatively: profile a representative overdraw-heavy scene first and confirm GPU time -- not CPU submission time -- is the actual bottleneck before spending the complexity budget here.

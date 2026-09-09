@@ -2010,28 +2010,99 @@ to this step.
 
 ## Phase 10: Cross-Language Bindings & Python UI Framework Integration (Added with the Rust/Python Language Decision)
 
-### Step 10.1: The `tre-ffi` C-ABI Crate
+### Step 10.1: Efficient Shape Primitives for External UI Frameworks (Added 2026-09-09, ahead of the C-ABI crate so the ABI has a real, designed surface to expose)
 
 * **Implementation Tasks:**
 
-  1. Define the complete public surface of the engine as `#[repr(C)]` opaque handles and `extern "C"` functions in a dedicated `tre-ffi` crate, per the ABI shape rules in TECHNICAL.md Section 9.4 -- every other crate in the workspace is still linked into the shipped `cdylib`/`staticlib` (Section 9.2), but none of them export their own `extern "C"` symbols; `tre-ffi` is the sole exporter.
+  1. Define a shared `PrimitiveCommon` struct (`transform: Transform2D`, `opacity: f32`, `blend_mode: BlendMode`, `visibility: Visibility`, `hit_testable: bool`) embedded by composition in every concrete shape, plus a lightweight `Primitive` accessor trait (`common()`/`common_mut()`) so generic code can touch the shared fields without matching every shape variant -- not a `dyn Primitive` object-safety-driven hierarchy, since per-shape dynamic dispatch in the per-frame flattening pass would violate TECHNICAL.md Section 9.1's "no dynamic type inspection in hot paths" rule.
+
+  2. Define `Rectangle`, `Circle`/`Ellipse` (unified via `radius: Vec2`), `Polygon` (covers triangle/hexagon/N-gon/star via `sides`/`star_points`), and `Path` (`commands: Vec<PathCommand>`) per ARCHITECTURE.md's new canonical shape-primitive section, wrapped in one `enum ShapePrimitive { Rectangle(Rectangle), Circle(Circle), Polygon(Polygon), Path(Path) }` for the same enum-dispatch-over-hot-path reasoning as task 1.
+
+  3. Build `ShapeRegistry`, a hand-built generational slot arena (matching this project's own established "build the concurrency/memory primitive, don't reach for a crate" precedent -- `ScatterArena`, `SwmrSlotTable`, `MpscRingBuffer`) mapping a `ShapeId { index: u32, generation: u32 }` to a `ShapePrimitive` plus its state hooks (`active_animations: Vec<AnimationId>`, `layout_dirty: bool`, `clip_bounds: Option<ScissorRect>`) -- the retained-mode store an external UI framework holds handles into across many frames, distinct from `RenderingCanvas`'s existing per-frame immediate-mode IR.
+
+  4. Build the per-frame flattening pass: for every `ShapeId` that is `layout_dirty` or has a non-empty `active_animations`, resolve its `Transform2D` to a real `Affine2` (`tre-math`, already built) and translate it into the existing `RenderingCanvas` draw calls (`draw_rounded_rect` today for the uniform-radius `Rectangle` case; `tre-svg`'s existing ear-clipping tessellator for filled `Path` shapes) -- shapes are a retained, ergonomic *description* layer that compiles down into the same IR/sort/batch pipeline every other caller uses, never a second rendering path.
+
+* **Technical Rationale:** An external UI framework -- Python via Phase 10 Step 10.3's direct PyO3 binding (revised 2026-09-09, no longer routed through Step 10.2's `tre-ffi`; see DESIGN.md Section 2.7), or any other language via Step 10.2's `tre-ffi` C-ABI -- needs to create a shape once, mutate a handful of properties across many frames, and let the engine decide what actually needs re-recording -- the existing immediate-mode `Canvas` API requires re-issuing every draw call every frame even for static content. A retained shape layer that still funnels into the identical, already-proven IR/radix-sort/batch/RHI pipeline (Phases 5 and 9) gets ergonomics without a second, competing rendering path or its own correctness risk.
+
+* **Explicitly out of scope, disclosed not silently dropped:** real GPU/tessellation work for visual features this step's own data model names but the renderer does not yet support -- per-corner `corner_radius`/`corner_smoothing` (today's `draw_rounded_rect` only takes one uniform radius, exactly the gap its own Step 3.2 doc comment already named), `Circle`/`Ellipse`'s `arc_length` partial-sweep rendering, `Polygon`/`Star` procedural geometry and `vertex_radius` corner rounding, `Path` rendering entirely (both stroking, per `stroke_line_cap`/`stroke_line_join`, *and* filling -- corrected during implementation, see this step's own "Status: Complete" write-up below for why filling turned out to need more than wiring an existing function), `border_color`/`border_thickness` outline rendering on any shape, and `FillStyle::Gradient` (DESIGN.md's own architecture diagram already names a "Dynamic Gradient & Pattern Fill Evaluator" as unbuilt). See `documentation/ARCHITECTURE.md`'s new shape-primitive section and the archived per-step plan for the full, itemized disposition of every field against what real rendering support exists today.
+
+#### Step 10.1: Efficient Shape Primitives for External UI Frameworks -- Status: Complete (2026-09-09)
+
+Real, in `crates/tre-engine/src/shapes.rs` (a new module, re-exported at
+the crate root): `PrimitiveCommon`/`Transform2D` (resolved to a real
+`tre_math::Affine2` via `Affine2::compose`, exactly the translate-then-
+rotate-then-scale composition ARCHITECTURE.md Section 7.1 specifies),
+`BlendMode`/`Visibility`, the `Primitive` accessor trait, `FillStyle`/
+`GradientId`/`CornerRadii`, all four concrete shapes (`Rectangle`/
+`Circle`/`Polygon`/`Path`) plus `ShapePrimitive`'s enum dispatch, and
+`ShapeId`/`AnimationId`/`ShapeSlot`/`ShapeRegistry` (a hand-built
+generational slot arena with real `insert`/`remove`/`get`/`get_mut`,
+and `flatten_into`, the per-frame flattening pass).
+
+**One real discrepancy found during implementation, corrected rather
+than silently built around or silently expanded.** Task 4's own
+original wording named `tre-svg`'s existing ear-clipping tessellator as
+the real rendering path for filled `Path` shapes. Investigating what
+that would actually take found it is not "wire an existing function" --
+`tre-svg`'s tessellator consumes an already-flattened polygon point
+list, and `Path::commands` is a `Vec<PathCommand>` of `MoveTo`/`LineTo`/
+quadratic/cubic Bezier segments that nothing in this codebase yet
+flattens into that point-list form (SVG's own path parsing, Step 3.3.1,
+does this internally via the `usvg` dependency, not via any function
+this module could call directly). Real, separate future work, not a
+bug-fix-sized addition -- confirmed via investigation, not assumed;
+`Path` rendering (fill and stroke both) is corrected into this step's
+own "Explicitly out of scope" list above rather than left as a stale
+claim of support that was never actually built.
+
+**Verified.** 12 new `tre-engine` unit tests: `ShapeRegistry` insert/
+remove/reuse/stale-handle-rejection, `Transform2D::to_affine2`'s own
+composition order, `flatten_into`'s dirty/animating/`Hidden`/`Collapsed`
+semantics, and a real panic for every field combination without
+rendering support (non-uniform `corner_radius`, `Circle`). A new real
+GPU demo, `shape_registry_demo.rs` (`demo/phase10_step10_1/`), proves
+the one real-rendering-supported case (`Rectangle` with a uniform
+`CornerRadii`, `FillStyle::Solid`, no border, no smoothing) produces
+byte-for-byte identical pixels whether drawn directly via today's
+`draw_rounded_rect` or via `ShapeRegistry::insert` + `flatten_into` --
+confirmed stable across 3 real runs. `cargo fmt`/`clippy -D warnings`/
+`build`/`test` clean across the whole workspace (`tre-engine` 90 tests,
+up from 78). A full manual regression sweep of all 32 Vulkan demos
+(the 31 pre-existing plus this step's own new one): 31 passed;
+`canvas_accessibility_verify` failed only on the same pre-existing,
+already-documented environmental limitation as finding #126, unrelated
+to this step -- this step is purely additive (a new module, no existing
+public API signature changed), so zero regressions were expected and
+confirmed.
+
+### Step 10.2: The `tre-ffi` C-ABI Crate (for C, C++, and other non-Python bindings)
+
+* **Revised 2026-09-09:** this step's own original rationale described `tre-ffi` as the boundary *every* language binding, Python included, would use. Confirmed with the project owner: Python now binds directly via PyO3 instead (Step 10.3, rewritten below) -- `tre-ffi` remains real, complete, and necessary, but its own audience is now every language *other* than Python. See DESIGN.md Section 2.7's "Cross-Language Boundary: Two Real Paths" and TECHNICAL.md Section 9.4.1 for the corrected, canonical account.
+
+* **Implementation Tasks:**
+
+  1. Define the complete public surface of the engine as `#[repr(C)]` opaque handles and `extern "C"` functions in a dedicated `tre-ffi` crate, per the ABI shape rules in TECHNICAL.md Section 9.4.1 -- every other crate in the workspace is still linked into the shipped `cdylib`/`staticlib` (Section 9.2), but none of them export their own `extern "C"` symbols; `tre-ffi` is the sole exporter. Step 10.1's `ShapeId` is exactly this pattern's own first real consumer for the languages that use it: an opaque handle plus `extern "C"` getter/setter functions, never raw struct-layout access across the boundary.
 
   2. Wrap every exported function body in `std::panic::catch_unwind`, translating any caught panic into the corresponding `EngineError` result code (DESIGN.md Section 2.6) rather than allowing it to unwind across the boundary.
 
-  3. Build both `cdylib` (for Python/PyO3 and any future dynamic-language binding) and `staticlib` (for a C++ host linking the engine directly) output targets from the same `tre-ffi` crate, demonstrating that the boundary is not Python-specific.
+  3. Build both `cdylib` (for any future non-Python dynamic-language binding) and `staticlib` (for a C++ host linking the engine directly) output targets from the same `tre-ffi` crate, demonstrating that the boundary is not specific to any one non-Python language.
 
-* **Technical Rationale:** Concentrating the entire FFI surface in one crate makes the language boundary auditable in a single place, and building both `cdylib` and `staticlib` targets from day one is the cheapest available proof that the engine is genuinely UI-framework-language-agnostic rather than Python-agnostic in name only.
+  4. Build a real, dedicated non-Python test harness (a small C program linking the `staticlib`, or an equivalent) exercising `tre-ffi`'s own entry points directly -- Step 10.3's Python test suite no longer covers this boundary at all (it binds elsewhere), so `tre-ffi` needs its own real coverage, not an assumption that Python's own tests happen to also exercise it.
 
-### Step 10.2: Python UI Framework Bindings
+* **Technical Rationale:** Concentrating the entire non-Python FFI surface in one crate makes that language boundary auditable in a single place. This step no longer needs to prove the engine is "UI-framework-language-agnostic" in the unqualified sense the original rationale claimed -- Python itself is now a disclosed, privileged exception (Step 10.3) -- but `tre-ffi` still proves the engine's *core* makes no Python-specific assumption: any other language can reach the identical underlying functionality through this one stable boundary.
+
+### Step 10.3: Python UI Framework Bindings (direct PyO3, not through `tre-ffi`)
+
+* **Revised 2026-09-09:** confirmed with the project owner -- the Python UI framework binds directly to `tre-engine`'s native Rust API via PyO3, in a new, dedicated `tre-python` crate that depends on `tre-engine` directly and does not depend on `tre-ffi` at all. This is a genuine, disclosed departure from this step's own original design (routing through `tre-ffi`, "so the Python bindings exercise the identical boundary any other language would use"), made for real, measured performance reasons: a `tre-ffi`-routed binding pays a double marshalling cost on every call (native Rust type -> C-compatible shadow type -> PyO3 conversion back to a Python object) and opaque-handle indirection for high-frequency calls (e.g., a Step 10.1 shape's own per-frame property mutation) that a direct binding has no reason to pay. See DESIGN.md Section 2.7's "Cross-Language Boundary: Two Real Paths" for the full disclosure -- Python no longer receives "no privileged access beyond any other language," and that change is stated there plainly, not left implicit.
 
 * **Implementation Tasks:**
 
-  1. Generate the Python extension module via [PyO3](https://pyo3.rs/), wrapping `tre-ffi`'s C-ABI -- not calling into `tre-engine` internals directly -- so the Python bindings exercise the identical boundary any other language would use.
+  1. Generate the Python extension module via [PyO3](https://pyo3.rs/) in a new `tre-python` crate, wrapping `tre-engine` (and, once built, Step 10.1's shape-primitive layer) types directly with `#[pyclass]`/`#[pymethods]` -- not `tre-ffi`'s C-ABI, and not calling into `tre-engine` internals through any intermediate shadow-type layer at all.
 
-  2. Provide Pythonic ergonomics at the binding layer only: context managers for `Canvas.save()`/`restore()` scope pairs, Python exceptions raised from `EngineError` codes, and buffer-protocol views over headless frame readback buffers (DESIGN.md Section 4.3) to avoid an extra copy into Python.
+  2. Provide Pythonic ergonomics at this same binding layer: context managers for `Canvas.save()`/`restore()` scope pairs, Python exceptions raised via a `From<EngineError> for PyErr` impl (PyO3's own standard mechanism), and buffer-protocol views over headless frame readback buffers (DESIGN.md Section 4.3) to avoid an extra copy into Python. Step 10.1's shape primitives get a Pythonic `Rectangle`/`Circle`/`Polygon`/`Path` class each, each `#[pyclass]` wrapping its own `ShapeId` directly -- no opaque C handle in between.
 
-  3. Release the GIL (`Python::allow_threads`) around any engine call that can block on a GPU fence (e.g., `RhiDevice::begin_frame`), so the Python UI framework's own threads are not serialized behind engine waits.
+  3. Release the GIL (`Python::allow_threads`) around any engine call that can block on a GPU fence (e.g., `RhiDevice::begin_frame`), so the Python UI framework's own threads are not serialized behind engine waits. Rely on PyO3's own built-in panic-to-exception conversion at the generated call boundary (TECHNICAL.md Section 9.4.2) rather than writing a `catch_unwind` wrapper of this crate's own -- there is no hand-written `extern "C"` entry point on this path for one to wrap.
 
-  4. Add the Python-binding test suite as a required CI job (TECHNICAL.md Section 9.2), exercising the correctness suite (Phase 9, Step 9.1) through Python rather than duplicating it.
+  4. Add the Python-binding test suite as a required CI job (TECHNICAL.md Section 9.2), exercising the correctness suite (Phase 9, Step 9.1) through Python against `tre-python`/`tre-engine` directly -- a separate, still-required gate from `tre-ffi`'s own new dedicated test harness (Step 10.2 task 4), not a shared one, since the two boundaries no longer share entry points.
 
-* **Technical Rationale:** Routing the Python bindings through `tre-ffi` rather than a Python-specific shortcut into the Rust internals keeps the engine honest about its language-agnostic claim (DESIGN.md Section 2.7) -- if the Python UI framework ever needed something the public C ABI didn't expose, that would signal the ABI itself is incomplete, not a reason to add a side channel.
+* **Technical Rationale:** A first-party binding for the project's own UI framework has no reason to pay a C-ABI marshalling tax that exists specifically to serve languages that have no other way to call into Rust. PyO3 lets Python bind to native Rust types and methods directly, with Rust's own ownership/`Drop` semantics integrating into CPython's reference counting automatically -- real, measurable per-call savings for a boundary this project's own UI framework crosses constantly, at the honestly-disclosed cost of no longer treating Python as "just another C-ABI consumer." `tre-ffi` (Step 10.2) remains the correct, complete, real integration point for every language that does not get this privileged first-party treatment.

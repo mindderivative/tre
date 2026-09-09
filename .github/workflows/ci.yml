@@ -202,6 +202,10 @@ jobs:
       # Phase 9 Step 9.1: real GPU proof that flatten()'s batching merge
       # step is pixel-equivalent to the same scene left unbatched.
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example batching_equivalence_demo
+      # Phase 10 Step 10.1: real GPU proof that ShapeRegistry's retained-
+      # mode flattening pass is pixel-equivalent to the same scene drawn
+      # directly through today's immediate-mode draw_rounded_rect.
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example shape_registry_demo
 
   accessibility-validation:
     name: accessibility-validation
