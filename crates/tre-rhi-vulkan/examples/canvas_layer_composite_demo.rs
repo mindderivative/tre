@@ -42,8 +42,8 @@
 //! -- just recorded through `Canvas`/`execute_frame` instead of by hand.
 
 use tre_engine::{
-    execute_frame, rgba8, CommandType, LayerDesc, PipelineKind, PipelineRegistry, RenderingCanvas,
-    RhiDevice, ScissorRect, TextureFormat,
+    execute_frame, rgba8, BufferBinding, CommandType, LayerDesc, PipelineKind, PipelineRegistry,
+    RenderingCanvas, RhiDevice, ScissorRect, TextureFormat,
 };
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 
@@ -170,8 +170,14 @@ fn main() {
     execute_frame(
         &frame,
         &pipelines,
-        &vertex_buffer,
-        &index_buffer,
+        BufferBinding {
+            buffer: &vertex_buffer,
+            offset: 0,
+        },
+        BufferBinding {
+            buffer: &index_buffer,
+            offset: 0,
+        },
         &full_window,
         &device,
         &mut *cmd_buffer,

@@ -23,8 +23,8 @@
 
 use ash::vk;
 use tre_engine::{
-    execute_frame, rgba8, CommandType, PipelineKind, PipelineRegistry, RenderingCanvas, RhiDevice,
-    ScissorRect,
+    execute_frame, rgba8, BufferBinding, CommandType, PipelineKind, PipelineRegistry,
+    RenderingCanvas, RhiDevice, ScissorRect,
 };
 use tre_math::Affine2;
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
@@ -146,8 +146,14 @@ fn main() {
     execute_frame(
         &frame,
         &pipelines,
-        &vertex_buffer,
-        &index_buffer,
+        BufferBinding {
+            buffer: &vertex_buffer,
+            offset: 0,
+        },
+        BufferBinding {
+            buffer: &index_buffer,
+            offset: 0,
+        },
         &full_window,
         &device,
         &mut *cmd_buffer,

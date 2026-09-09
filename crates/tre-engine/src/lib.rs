@@ -1974,6 +1974,24 @@ pub trait RhiBuffer {
     fn raw_handle(&self) -> u64;
 }
 
+/// A GPU buffer paired with the byte offset to bind it at
+/// (IMPLEMENTATION.md Phase 8 Step 8.1.2) -- lets [`execute_frame`]
+/// accept either a one-shot-uploaded whole-frame buffer (`offset: 0`)
+/// or a real per-frame `RhiDynamicRingBuffer`-backed segment (whatever
+/// offset that buffer's own `write` call returned) through the same
+/// parameter, without `execute_frame` itself needing to know which.
+/// Bundled rather than left as two separate parameters -- matching this
+/// crate's own `GlyphAtlasContext` precedent for `draw_text` -- since a
+/// buffer and its own offset are always meant to travel together; two
+/// bare `u32` parameters next to each other would risk a caller
+/// transposing a vertex offset and an index offset with no compiler
+/// error either way.
+#[derive(Clone, Copy)]
+pub struct BufferBinding<'a> {
+    pub buffer: &'a dyn RhiBuffer,
+    pub offset: u32,
+}
+
 /// A GPU texture (atlas page or offscreen render target). Referenced but
 /// undefined by ARCHITECTURE.md Section 6; defined here.
 ///
@@ -2393,10 +2411,14 @@ pub trait RhiCommandBuffer {
 /// hand-written calls. Scoped to one level: a nested `PushLayer` (while
 /// another is already active) panics -- see `# Panics`.
 ///
-/// `vertex_buffer`/`index_buffer` are already-uploaded whole-frame
-/// buffers the caller built (e.g. via a backend-specific upload helper);
-/// "Buffer Packing" (DESIGN.md's own frame-lifecycle item 7) is a
-/// distinct stage this function deliberately does not perform.
+/// `vertex_buffer`/`index_buffer` are [`BufferBinding`]s the caller
+/// already populated -- via a one-shot backend upload helper (`offset:
+/// 0`), or via a real per-frame `RhiDynamicRingBuffer::write` call
+/// (whatever offset it returned). Either way, "Buffer Packing"
+/// (DESIGN.md's own frame-lifecycle item 7) is a distinct stage this
+/// function deliberately does not perform -- it only binds at whatever
+/// offset the caller's own packing already produced (IMPLEMENTATION.md
+/// Phase 8 Step 8.1.2).
 ///
 /// # Panics
 /// Panics if a `DrawGeometry` or `PopLayer` command's
@@ -2423,8 +2445,8 @@ pub trait RhiCommandBuffer {
 pub fn execute_frame(
     frame: &FlattenedFrame,
     registry: &PipelineRegistry,
-    vertex_buffer: &dyn RhiBuffer,
-    index_buffer: &dyn RhiBuffer,
+    vertex_buffer: BufferBinding<'_>,
+    index_buffer: BufferBinding<'_>,
     full_window: &ScissorRect,
     device: &dyn RhiDevice,
     cmd_buffer: &mut dyn RhiCommandBuffer,
@@ -2442,8 +2464,8 @@ pub fn execute_frame(
                 });
                 cmd_buffer.set_pipeline(pipeline);
                 cmd_buffer.bind_texture(0, command.texture_handle);
-                cmd_buffer.bind_vertex_buffer(vertex_buffer, 0);
-                cmd_buffer.bind_index_buffer(index_buffer, 0);
+                cmd_buffer.bind_vertex_buffer(vertex_buffer.buffer, vertex_buffer.offset);
+                cmd_buffer.bind_index_buffer(index_buffer.buffer, index_buffer.offset);
                 cmd_buffer.draw_indexed(command.element_count, command.vertex_offset, 0);
             }
             CommandType::PushScissor => {
@@ -2496,8 +2518,8 @@ pub fn execute_frame(
                 });
                 cmd_buffer.set_pipeline(pipeline);
                 cmd_buffer.bind_texture(0, bindless_index);
-                cmd_buffer.bind_vertex_buffer(vertex_buffer, 0);
-                cmd_buffer.bind_index_buffer(index_buffer, 0);
+                cmd_buffer.bind_vertex_buffer(vertex_buffer.buffer, vertex_buffer.offset);
+                cmd_buffer.bind_index_buffer(index_buffer.buffer, index_buffer.offset);
                 cmd_buffer.draw_indexed(command.element_count, command.vertex_offset, 0);
 
                 device.deregister_bindless(bindless_index);
@@ -4310,8 +4332,14 @@ mod tests {
         execute_frame(
             &frame,
             &registry,
-            &vertex_buffer,
-            &index_buffer,
+            BufferBinding {
+                buffer: &vertex_buffer,
+                offset: 0,
+            },
+            BufferBinding {
+                buffer: &index_buffer,
+                offset: 0,
+            },
             &full_window,
             &device,
             &mut cmd_buffer,
@@ -4337,6 +4365,76 @@ mod tests {
              FULL_WINDOW_CLIP's own u32::MAX-sized sentinel), and each DrawGeometry command \
              must resolve its own pipeline id to the exact registered pipeline object and pass \
              through its own real texture/element_count/vertex_offset unchanged"
+        );
+    }
+
+    #[test]
+    fn execute_frame_binds_the_real_ring_buffer_offsets_it_was_given() {
+        // IMPLEMENTATION.md Phase 8 Step 8.1.2: `execute_frame` used to
+        // hardcode a `0` literal at both bind call sites, so a real
+        // `RhiDynamicRingBuffer::write` offset (always non-zero once the
+        // ring has advanced past its first segment) could never be
+        // passed through. Non-zero, non-equal offsets here would have
+        // failed against the old hardcoded-0 behavior.
+        let mut registry = PipelineRegistry::new();
+        registry.register(
+            PipelineKind::SdfRoundedRect as u16,
+            Box::new(FakePipeline { raw_handle: 111 }),
+        );
+        let vertex_buffer = FakeBuffer { raw_handle: 1000 };
+        let index_buffer = FakeBuffer { raw_handle: 2000 };
+        let full_window = ScissorRect {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+        };
+
+        let frame = FlattenedFrame {
+            vertices: Vec::new(),
+            indices: Vec::new(),
+            commands: vec![UiDrawCommand {
+                kind: CommandType::DrawGeometry,
+                pipeline_state_id: PipelineKind::SdfRoundedRect as u16,
+                texture_handle: NO_TEXTURE,
+                element_count: 6,
+                vertex_offset: 0,
+                ..marker_command(CommandType::DrawGeometry)
+            }],
+            accessibility_nodes: Vec::new(),
+        };
+
+        let mut cmd_buffer = FakeCommandBuffer::default();
+        let device = FakeDevice::default();
+        execute_frame(
+            &frame,
+            &registry,
+            BufferBinding {
+                buffer: &vertex_buffer,
+                offset: 768,
+            },
+            BufferBinding {
+                buffer: &index_buffer,
+                offset: 256,
+            },
+            &full_window,
+            &device,
+            &mut cmd_buffer,
+        );
+
+        assert!(
+            cmd_buffer
+                .calls
+                .contains(&RecordedCall::BindVertexBuffer(1000, 768)),
+            "the real vertex_offset argument must reach RhiCommandBuffer::bind_vertex_buffer \
+             verbatim, not the old hardcoded 0"
+        );
+        assert!(
+            cmd_buffer
+                .calls
+                .contains(&RecordedCall::BindIndexBuffer(2000, 256)),
+            "the real index_offset argument must reach RhiCommandBuffer::bind_index_buffer \
+             verbatim, not the old hardcoded 0"
         );
     }
 
@@ -4387,8 +4485,14 @@ mod tests {
         execute_frame(
             &frame,
             &registry,
-            &vertex_buffer,
-            &index_buffer,
+            BufferBinding {
+                buffer: &vertex_buffer,
+                offset: 0,
+            },
+            BufferBinding {
+                buffer: &index_buffer,
+                offset: 0,
+            },
             &full_window,
             &device,
             &mut cmd_buffer,
@@ -4436,8 +4540,14 @@ mod tests {
         execute_frame(
             &frame,
             &registry,
-            &vertex_buffer,
-            &index_buffer,
+            BufferBinding {
+                buffer: &vertex_buffer,
+                offset: 0,
+            },
+            BufferBinding {
+                buffer: &index_buffer,
+                offset: 0,
+            },
             &full_window,
             &device,
             &mut cmd_buffer,
@@ -4467,8 +4577,14 @@ mod tests {
         execute_frame(
             &frame,
             &registry,
-            &vertex_buffer,
-            &index_buffer,
+            BufferBinding {
+                buffer: &vertex_buffer,
+                offset: 0,
+            },
+            BufferBinding {
+                buffer: &index_buffer,
+                offset: 0,
+            },
             &full_window,
             &device,
             &mut cmd_buffer,
@@ -4560,8 +4676,14 @@ mod tests {
         execute_frame(
             &frame,
             &registry,
-            &vertex_buffer,
-            &index_buffer,
+            BufferBinding {
+                buffer: &vertex_buffer,
+                offset: 0,
+            },
+            BufferBinding {
+                buffer: &index_buffer,
+                offset: 0,
+            },
             &full_window,
             &device,
             &mut cmd_buffer,
@@ -4641,8 +4763,14 @@ mod tests {
         execute_frame(
             &frame,
             &registry,
-            &vertex_buffer,
-            &index_buffer,
+            BufferBinding {
+                buffer: &vertex_buffer,
+                offset: 0,
+            },
+            BufferBinding {
+                buffer: &index_buffer,
+                offset: 0,
+            },
             &full_window,
             &device,
             &mut cmd_buffer,
@@ -4673,8 +4801,14 @@ mod tests {
         execute_frame(
             &frame,
             &registry,
-            &vertex_buffer,
-            &index_buffer,
+            BufferBinding {
+                buffer: &vertex_buffer,
+                offset: 0,
+            },
+            BufferBinding {
+                buffer: &index_buffer,
+                offset: 0,
+            },
             &full_window,
             &device,
             &mut cmd_buffer,

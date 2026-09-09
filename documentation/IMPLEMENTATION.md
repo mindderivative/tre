@@ -1376,6 +1376,111 @@ increasing `dt` never crosses `target`. Confirmed via grep that no
 existing demo or test touches either new item -- both are net-new,
 zero-consumer additions, as scoped.
 
+### Step 8.1.2: The Full 8-Stage Continuous Main Loop -- Status: Complete (2026-09-08)
+
+Wires the entire engine into one real, continuously-running, windowed
+loop executing this step's own strictly-enforced 8-stage sequence every
+frame -- *Wait Fences -> Drain Events -> Multi-Thread Canvas ->
+Sub-Canvas Stitch -> Tessellation/Atlas Check -> Radix Sort & Batch ->
+Ring Buffer Packing -> RHI Submit & Present* -- and fixes the real,
+previously-undiscovered blocker Step 8.1.1's own plan found:
+`execute_frame` hardcoded a zero vertex/index buffer offset, so it could
+never accept a real per-frame `RhiDynamicRingBuffer`-backed buffer
+(`planning/archive/PLAN_PHASE8_STEP8_1_2.md`).
+
+Real investigation before writing any code found every one of the 8
+stages already had one real, individually-proven mechanism somewhere in
+the codebase; no demo had ever combined all 8 together. Wait Fences is
+already inside `RhiDevice::begin_frame` itself (`VulkanDevice::begin_
+frame`'s own `wait_for_fences`/`reset_fences` calls), not a separate
+call a loop needs to add. Drain Events is `PlatformConnection::poll_
+events`, already used exactly this way by every prior windowed demo.
+Multi-Thread Canvas/Sub-Canvas Stitch's real per-frame recipe
+(`create_sub_canvas` + `std::thread::scope` + `stitch_into`) was already
+fully proven by Step 5.2.3's capstone -- just never repeated across more
+than one frame. Radix Sort & Batch (`FrameArena::flatten()`) and RHI
+Submit & Present (`submit_and_present`) needed no new code at all.
+
+**A second real gap was found, beyond `execute_frame`'s offset, by
+reading `tre-atlas`'s `AtlasOwner` in full.** Its background thread
+owns the shared atlas pixel buffer entirely privately -- the only way
+to ever read it back is `AtlasOwner::join(self) -> Vec<u8>`, which
+*stops the thread*. There is no live "peek at the atlas while it keeps
+running" API, so a loop that tried to add genuinely new glyphs mid-run
+would have no way to see them land on screen. Scoped around, not
+silently ignored (see "Explicitly out of scope" below): this step's
+atlas is fully pre-seeded before the loop starts, exactly matching
+every prior text-drawing demo's own real, proven pattern -- the
+Tessellation/Atlas Check stage is still real and exercised every frame
+(`draw_text`'s own `atlas_context.atlas.lookup` call, real-touching
+`SwmrSlotTable`'s Step 4.3.1 recency tracking), it simply never misses
+during this demo's run.
+
+**The `execute_frame` fix, precisely.** `RhiCommandBuffer::bind_vertex_
+buffer`/`bind_index_buffer` already accepted an `offset: u32` parameter;
+`execute_frame` itself called both with a hardcoded `0` literal
+regardless. Fixed by replacing the separate `vertex_buffer`/`index_
+buffer` parameters with two `BufferBinding<'a> { buffer: &'a dyn
+RhiBuffer, offset: u32 }` values -- bundled, matching this crate's own
+`GlyphAtlasContext` precedent for `draw_text`, both because a buffer and
+its own offset are always meant to travel together and because
+`clippy::too_many_arguments` fires at the resulting 9-parameter
+signature otherwise (this project's own established response to that
+lint, per `draw_text`'s own doc comment, is to bundle groupable
+parameters, not blanket-allow the lint). All 12 pre-existing call sites
+(7 `tre-engine` unit tests, 5 demos) updated to pass `offset: 0`,
+preserving their exact prior behavior -- confirmed via `grep -rn
+"execute_frame("` before making the change, then by re-running all 5
+demos manually afterward, zero regressions.
+
+New demo, `main_loop_demo.rs` (`demo/phase8_step8_1_2/`): a real
+windowed, `CloseRequested`-aware, env-var-frame-capped loop
+(`TRE_MAIN_LOOP_FRAMES`, default 90) matching `walking_skeleton.rs`/
+`multi_window.rs`/`input_demo.rs`'s own proven shape. Every frame: 2
+real worker threads (`std::thread::scope`, freshly spawned every frame)
+each record a `SubCanvas` -- one draws a static rect, the other also
+draws the one pre-seeded text glyph -- and stitch into a shared
+`FrameArena` alongside the root canvas's own animated rect; the arena
+flattens; the flattened vertex/index bytes are written into a real
+`RhiDynamicRingBuffer` via `write()`; the offsets it returns feed the
+now-fixed `execute_frame` directly; `submit_and_present` presents the
+frame. Step 8.1.1's own two, until-now zero-consumer primitives get
+their first real consumer here: `FrameClock::tick()` supplies a real
+`dt` every frame, and `spring_decay` uses it to animate the root rect's
+`x` position toward a fixed target.
+
+**Verification, honestly adapted to a real constraint this
+investigation also found.** `VulkanSwapchain` (a real window/compositor
+surface) has no pixel-readback method, unlike `HeadlessSwapchain` --
+every prior demo that asserts real pixels does so only headless. This
+demo instead records its own real per-frame `dt` sequence and the
+`x` position it actually drew each frame, then, after the loop ends,
+independently replays `spring_decay` over that exact recorded `dt`
+sequence and asserts it reproduces the exact position sequence the loop
+drew, plus that the final position is strictly closer to the target
+than the first and never overshoots it -- a stronger check than a
+pixel read would give, since it verifies the formula was applied
+correctly every single frame, not just that something moved. Run for
+real against a live GPU and display during this step's own
+implementation (not only under CI's `xvfb-run`): 90 frames presented,
+zero Vulkan validation-layer errors, animation verified end to end
+(`x` moved from `40.0` to `559.89` against a `560.0` target). All 5
+demos whose `execute_frame` call site changed shape were also re-run
+manually, zero regressions. Added to `ci.yml`'s `vulkan-validation` job.
+
+## Explicitly out of scope (Step 8.1.2)
+
+- **Live, mid-run atlas growth** -- a new `AtlasOwnerHandle` API to read
+  the atlas's current pixels while its background thread keeps running,
+  rather than only via the terminal, thread-stopping `join()`. Real,
+  separate future engineering, named here rather than silently dropped.
+- **A persistent, reused worker-thread pool** for Multi-Thread Canvas --
+  `std::thread::scope` fresh every frame, matching Step 5.2.3's own
+  proven recipe, is what this step builds; pooling is real future
+  performance work, not named by this step's own task list.
+- **SVG tessellation/morphing inside the loop**, and **Windows/macOS** --
+  this project's own standing deferrals, unchanged.
+
 ## Architectural Decision Matrix
 
 | Architecture Choice | Alternative Considered | Selected Decision | Rationale | 

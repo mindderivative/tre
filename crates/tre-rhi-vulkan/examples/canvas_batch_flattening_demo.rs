@@ -19,8 +19,9 @@
 use ash::vk;
 use tre_atlas::AtlasOwner;
 use tre_engine::{
-    execute_frame, rgba8, CommandType, GlyphAtlasContext, OverlayLayerPriority, PipelineKind,
-    PipelineRegistry, RenderingCanvas, RhiDevice, ScissorRect, TextureFormat, PIPELINE_MSDF_TEXT,
+    execute_frame, rgba8, BufferBinding, CommandType, GlyphAtlasContext, OverlayLayerPriority,
+    PipelineKind, PipelineRegistry, RenderingCanvas, RhiDevice, ScissorRect, TextureFormat,
+    PIPELINE_MSDF_TEXT,
 };
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 
@@ -245,8 +246,14 @@ fn main() {
     execute_frame(
         &frame,
         &pipelines,
-        &vertex_buffer,
-        &index_buffer,
+        BufferBinding {
+            buffer: &vertex_buffer,
+            offset: 0,
+        },
+        BufferBinding {
+            buffer: &index_buffer,
+            offset: 0,
+        },
         &full_window,
         &device,
         &mut *cmd_buffer,
