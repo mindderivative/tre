@@ -6,21 +6,21 @@
 //! retained-store layer over the existing IR/sort/batch/RHI pipeline,
 //! never a second rendering path.
 //!
-//! Real rendering support today is intentionally narrow. Only a
-//! `Rectangle` with a uniform `CornerRadii` (all four corners equal), a
-//! zero `corner_smoothing`, a `FillStyle::Solid` fill, and a zero
-//! `border_thickness` can actually be flattened right now -- that is
-//! exactly, and only, what today's real `draw_rounded_rect` shader
-//! supports (Phase 3 Step 3.2). Every other shape/field combination
-//! this module's own data model allows for (`Circle`/`Polygon`/`Path`,
-//! non-uniform corners, a nonzero `corner_smoothing`, borders,
-//! gradients) has no rendering support anywhere in this engine yet --
-//! [`ShapeRegistry::flatten_into`] panics loudly on any of them
-//! (`unimplemented!`), rather than silently skipping or rendering
-//! something wrong, matching this project's own established "fail loud
-//! on a real, not-yet-built capability" discipline. See
+//! Real rendering support (Phase 10 Step 10.2): `Rectangle` (any corner
+//! radii, uniform or not, plus real borders and corner smoothing) and
+//! `Circle`/`Ellipse` (including borders and a partial-arc sweep) both
+//! flatten for real now, via `RenderingCanvas::draw_styled_rectangle`/
+//! `draw_ellipse` and the two new `sdf_rect_styled`/`sdf_ellipse` GPU
+//! pipelines -- `crates/tre-engine/src/gpu_style.rs`'s own doc comment
+//! covers the GPU-side style-buffer mechanism both rely on. `Polygon`/
+//! `Path` still have no geometry-generation/tessellation wiring, and
+//! `FillStyle::Gradient`/`Texture` still have no evaluator anywhere for
+//! ANY shape kind -- [`ShapeRegistry::flatten_into`] panics loudly on
+//! any of those (`unimplemented!`), rather than silently skipping or
+//! rendering something wrong, matching this project's own established
+//! "fail loud on a real, not-yet-built capability" discipline. See
 //! ARCHITECTURE.md Section 7.5's own "Implementation status" note and
-//! IMPLEMENTATION.md Step 10.1's "Explicitly out of scope" list for the
+//! IMPLEMENTATION.md Step 10.2's "Explicitly out of scope" list for the
 //! full, itemized disposition.
 
 use crate::{RenderingCanvas, ScissorRect};
@@ -543,13 +543,21 @@ impl ShapeRegistry {
     /// entirely (still has `layout_dirty` cleared, so it doesn't attempt
     /// to re-flatten every frame while simply invisible).
     ///
+    /// `device` (Phase 10 Step 10.2, new this step) is needed because
+    /// `Rectangle`/`Circle`'s real rendering paths beyond the trivial
+    /// case write a style record into the device's live, per-frame-
+    /// segmented shape-style buffer at flatten time -- see
+    /// `RenderingCanvas::draw_styled_rectangle`'s own doc comment for why
+    /// that can't be deferred to upload time the way plain vertex/index
+    /// data is.
+    ///
     /// # Panics
     /// Panics (`unimplemented!`) on any shape/field combination that has
     /// no real rendering support yet -- see this module's own top-level
     /// doc comment for the complete, itemized list. This is a
     /// deliberate, loud failure for a genuinely-not-yet-built rendering
     /// capability, not a recoverable `EngineError` condition.
-    pub fn flatten_into(&mut self, canvas: &mut RenderingCanvas) {
+    pub fn flatten_into(&mut self, canvas: &mut RenderingCanvas, device: &dyn crate::RhiDevice) {
         for slot in &mut self.slots {
             let Some(slot) = slot else { continue };
             if !slot.layout_dirty && slot.active_animations.is_empty() {
@@ -573,24 +581,17 @@ impl ShapeRegistry {
             }
 
             match &slot.shape {
-                ShapePrimitive::Rectangle(rect) => flatten_rectangle(canvas, rect),
-                ShapePrimitive::Circle(_) => {
-                    unimplemented!(
-                        "Circle/Ellipse rendering has no shader support yet -- see \
-                         ARCHITECTURE.md Section 7.5's own Implementation status note"
-                    )
-                }
-                ShapePrimitive::Polygon(_) => {
-                    unimplemented!(
-                        "Polygon/Star rendering has no geometry-generation support yet -- see \
-                         ARCHITECTURE.md Section 7.5's own Implementation status note"
-                    )
-                }
+                ShapePrimitive::Rectangle(rect) => flatten_rectangle(canvas, device, rect),
+                ShapePrimitive::Circle(circle) => flatten_circle(canvas, device, circle),
+                ShapePrimitive::Polygon(polygon) => flatten_polygon(canvas, polygon),
                 ShapePrimitive::Path(_) => {
                     unimplemented!(
-                        "Path rendering (fill or stroke) is not yet wired into this registry's \
-                         own flattening pass -- see ARCHITECTURE.md Section 7.5's own \
-                         Implementation status note"
+                        "Path rendering (fill or stroke) has no rendering path wired in yet -- \
+                         fill needs a general (non-star-shaped) triangulator this crate cannot \
+                         reach without a circular dependency on tre-svg, and stroke needs a \
+                         tessellator not yet built; flatten_path (this module) is real and \
+                         tested today, just not yet a renderer -- see ARCHITECTURE.md Section \
+                         7.5's own Implementation status note"
                     )
                 }
             }
@@ -601,28 +602,185 @@ impl ShapeRegistry {
             canvas.restore();
         }
     }
+
+    /// Phase 10 Step 10.2: the actual "backbone of UI frameworks" need
+    /// `hit_testable` (present on every shape since Step 10.1, but read
+    /// by nothing until now) exists for -- routing a click/hover/touch
+    /// point to the topmost shape underneath it. Returns the topmost
+    /// (highest slot index -- later `insert` calls paint over earlier
+    /// ones, the same implicit paint order `flatten_into`'s own forward
+    /// iteration gives every render) shape whose real geometry contains
+    /// `point` (given in the SAME world space `flatten_into`'s own
+    /// `Rectangle`/`Circle`/etc. world-space output uses), skipping any
+    /// shape with `hit_testable == false` or `Visibility::Hidden`/
+    /// `Collapsed` (mirroring `flatten_into`'s own skip logic) or whose
+    /// transform has collapsed to a non-invertible degenerate (a zero
+    /// scale on some axis -- such a shape has zero on-screen area, so
+    /// "no point can hit it" is the correct answer, not a panic).
+    ///
+    /// `Path` hit-testing uses [`flatten_path`]'s own real, tested
+    /// flattening even though `flatten_into`'s own `Path` case is still
+    /// unimplemented for rendering -- hit-testing only needs CPU-side
+    /// geometry, not the GPU rendering plumbing fill/stroke still lack.
+    #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "this registry's own slot count stays far below u32::MAX -- ShapeId::index is \
+                   u32 everywhere else already"
+    )]
+    pub fn hit_test(&self, point: Vec2) -> Option<ShapeId> {
+        for (index, slot) in self.slots.iter().enumerate().rev() {
+            let Some(slot) = slot else { continue };
+            let common = slot.shape.common();
+            if !common.hit_testable
+                || matches!(
+                    common.visibility,
+                    Visibility::Hidden | Visibility::Collapsed
+                )
+            {
+                continue;
+            }
+            let Some(inverse) = common.transform.to_affine2().invert() else {
+                continue;
+            };
+            let local = inverse.transform_point(point);
+            let hit = match &slot.shape {
+                ShapePrimitive::Rectangle(rect) => hit_test_rectangle(local, rect),
+                ShapePrimitive::Circle(circle) => hit_test_circle(local, circle),
+                ShapePrimitive::Polygon(polygon) => hit_test_polygon(local, polygon),
+                ShapePrimitive::Path(path) => hit_test_path(local, path),
+            };
+            if hit {
+                return Some(ShapeId {
+                    index: index as u32,
+                    generation: self.generations[index],
+                });
+            }
+        }
+        None
+    }
 }
 
-/// `ShapeRegistry::flatten_into`'s own `Rectangle` case -- the one real,
-/// rendering-supported shape today. Panics if `rect` uses any field
-/// combination today's shader cannot express; see this module's own
-/// top-level doc comment.
-fn flatten_rectangle(canvas: &mut RenderingCanvas, rect: &Rectangle) {
-    assert!(
-        rect.corner_radius.is_uniform(),
-        "non-uniform corner_radius has no shader support yet -- see ARCHITECTURE.md Section \
-         7.5's own Implementation status note"
-    );
-    assert!(
-        rect.corner_smoothing == 0.0,
-        "corner_smoothing > 0.0 (squircle rounding) has no shader support yet -- see \
-         ARCHITECTURE.md Section 7.5's own Implementation status note"
-    );
-    assert!(
-        rect.border_thickness == 0.0,
-        "border rendering has no shader support yet -- see ARCHITECTURE.md Section 7.5's own \
-         Implementation status note"
-    );
+/// `ShapeRegistry::hit_test`'s own `Rectangle` case: the exact same
+/// non-uniform rounded-box signed-distance formula
+/// `sdf_rect_styled.frag` evaluates on the GPU (see that shader's own
+/// `sd_rounded_box`), evaluated here on the CPU instead -- a point hits
+/// whenever the fill OR border would have painted a pixel there
+/// (`d <= 0`), regardless of `border_thickness` (a border is still part
+/// of the shape for hit-testing purposes, not a hollow ring).
+fn select_corner_radius(p: Vec2, radii: [f32; 4]) -> f32 {
+    match (p[0] < 0.0, p[1] < 0.0) {
+        (true, true) => radii[0],   // top_left
+        (false, true) => radii[1],  // top_right
+        (false, false) => radii[2], // bottom_right
+        (true, false) => radii[3],  // bottom_left
+    }
+}
+
+fn sd_rounded_box(p: Vec2, half_extent: Vec2, radii: [f32; 4]) -> f32 {
+    let r = select_corner_radius(p, radii);
+    let qx = p[0].abs() - half_extent[0] + r;
+    let qy = p[1].abs() - half_extent[1] + r;
+    let (qmx, qmy) = (qx.max(0.0), qy.max(0.0));
+    qmx.hypot(qmy) + qx.max(qy).min(0.0) - r
+}
+
+fn hit_test_rectangle(local: Vec2, rect: &Rectangle) -> bool {
+    let half_extent = [rect.size[0] / 2.0, rect.size[1] / 2.0];
+    let center_relative = [local[0] - half_extent[0], local[1] - half_extent[1]];
+    let radii = [
+        rect.corner_radius.top_left,
+        rect.corner_radius.top_right,
+        rect.corner_radius.bottom_right,
+        rect.corner_radius.bottom_left,
+    ];
+    sd_rounded_box(center_relative, half_extent, radii) <= 0.0
+}
+
+/// `ShapeRegistry::hit_test`'s own `Circle` case: an exact (not
+/// approximate) point-in-ellipse test (`(x/rx)^2 + (y/ry)^2 <= 1`, unlike
+/// `sdf_ellipse.frag`'s own scaled-circle SDF *approximation* -- a plain
+/// inside/outside membership test has an exact closed form an SDF
+/// doesn't need to reach for), plus the same angular-sector convention
+/// `sdf_ellipse.frag` uses for a partial arc.
+fn hit_test_circle(local: Vec2, circle: &Circle) -> bool {
+    const TWELVE_OCLOCK: f32 = -std::f32::consts::FRAC_PI_2;
+
+    let [rx, ry] = circle.radius;
+    if rx <= 0.0 || ry <= 0.0 {
+        return false;
+    }
+    // Local center matches `flatten_circle`'s own convention:
+    // (radius[0], radius[1]), not (0, 0).
+    let p = [local[0] - circle.radius[0], local[1] - circle.radius[1]];
+    let normalized = (p[0] / rx).powi(2) + (p[1] / ry).powi(2);
+    if normalized > 1.0 {
+        return false;
+    }
+    if circle.arc_length >= 360.0 {
+        return true;
+    }
+    let mut angle = p[1].atan2(p[0]);
+    if angle < 0.0 {
+        angle += std::f32::consts::TAU;
+    }
+    let start = TWELVE_OCLOCK.rem_euclid(std::f32::consts::TAU);
+    let mut relative = angle - start;
+    if relative < 0.0 {
+        relative += std::f32::consts::TAU;
+    }
+    relative <= circle.arc_length.to_radians()
+}
+
+/// The standard even-odd ray-casting point-in-polygon test (PNPOLY, W.
+/// Randolph Franklin) -- counts how many polygon edges a horizontal ray
+/// from `p` crosses; an odd count means `p` is inside. Shared by
+/// `ShapeRegistry::hit_test`'s `Polygon` case (one contour) and `Path`
+/// case (`XOR`ed across every subpath, which composes to exactly the same
+/// even-odd rule across multiple contours since XOR of per-contour
+/// crossing parities equals the parity of their sum).
+fn point_in_polygon(p: Vec2, points: &[Vec2]) -> bool {
+    let n = points.len();
+    if n < 3 {
+        return false;
+    }
+    let mut inside = false;
+    let mut j = n - 1;
+    for i in 0..n {
+        let (xi, yi) = (points[i][0], points[i][1]);
+        let (xj, yj) = (points[j][0], points[j][1]);
+        if ((yi > p[1]) != (yj > p[1])) && (p[0] < (xj - xi) * (p[1] - yi) / (yj - yi) + xi) {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
+fn hit_test_polygon(local: Vec2, polygon: &Polygon) -> bool {
+    let boundary = generate_polygon_points(polygon);
+    point_in_polygon(local, &boundary)
+}
+
+fn hit_test_path(local: Vec2, path: &Path) -> bool {
+    flatten_path(&path.commands)
+        .iter()
+        .fold(false, |hit, subpath| hit ^ point_in_polygon(local, subpath))
+}
+
+/// `ShapeRegistry::flatten_into`'s own `Rectangle` case (Phase 10 Step
+/// 10.2: now real for non-uniform corners, borders, and corner smoothing
+/// too, via `RenderingCanvas::draw_styled_rectangle`). The plain, older
+/// `draw_rounded_rect` path is still used for the common trivial case
+/// (uniform radius, no border, no smoothing) -- cheaper (no style-buffer
+/// write) and byte-for-byte what it always rendered. `FillStyle::
+/// Gradient`/`Texture` remain genuinely unimplemented; see this module's
+/// own top-level doc comment.
+fn flatten_rectangle(
+    canvas: &mut RenderingCanvas,
+    device: &dyn crate::RhiDevice,
+    rect: &Rectangle,
+) {
     let FillStyle::Solid(color) = rect.fill else {
         unimplemented!(
             "FillStyle::Gradient/Texture have no rendering support wired into this registry's \
@@ -630,19 +788,392 @@ fn flatten_rectangle(canvas: &mut RenderingCanvas, rect: &Rectangle) {
              status note"
         );
     };
-    canvas.draw_rounded_rect(
-        0.0,
-        0.0,
-        rect.size[0],
-        rect.size[1],
-        rect.corner_radius.top_left,
+
+    let needs_styled_path = !rect.corner_radius.is_uniform()
+        || rect.corner_smoothing != 0.0
+        || rect.border_thickness > 0.0;
+
+    if needs_styled_path {
+        canvas.draw_styled_rectangle(
+            device,
+            0.0,
+            0.0,
+            rect.size[0],
+            rect.size[1],
+            [
+                rect.corner_radius.top_left,
+                rect.corner_radius.top_right,
+                rect.corner_radius.bottom_right,
+                rect.corner_radius.bottom_left,
+            ],
+            color,
+            rect.border_color,
+            rect.border_thickness,
+            rect.corner_smoothing,
+        );
+    } else {
+        canvas.draw_rounded_rect(
+            0.0,
+            0.0,
+            rect.size[0],
+            rect.size[1],
+            rect.corner_radius.top_left,
+            color,
+        );
+    }
+}
+
+/// `ShapeRegistry::flatten_into`'s own `Circle` case (Phase 10 Step
+/// 10.2, real for the first time), via `RenderingCanvas::draw_ellipse`.
+///
+/// Origin convention: matches `Rectangle`'s own (bounding-box top-left at
+/// the shape's local transform origin) rather than centering on it, so a
+/// UI framework author positions every shape kind the same way regardless
+/// of which one it is -- the circle's own center is therefore
+/// `(radius[0], radius[1])` in local space, not `(0, 0)`.
+///
+/// `Circle::arc_length` is degrees, `0.0..=360.0`, sweeping clockwise
+/// from 12 o'clock (that field's own doc comment); converted here to the
+/// radians + `atan2`-relative-angle convention `sdf_ellipse.frag` uses
+/// (12 o'clock is `-FRAC_PI_2` in that shader's own `atan2(y, x)`
+/// convention, since screen-space `y` increases downward).
+fn flatten_circle(canvas: &mut RenderingCanvas, device: &dyn crate::RhiDevice, circle: &Circle) {
+    const TWELVE_OCLOCK: f32 = -std::f32::consts::FRAC_PI_2;
+
+    let FillStyle::Solid(color) = circle.fill else {
+        unimplemented!(
+            "FillStyle::Gradient/Texture have no rendering support wired into this registry's \
+             own flattening pass yet -- see ARCHITECTURE.md Section 7.5's own Implementation \
+             status note"
+        );
+    };
+
+    canvas.draw_ellipse(
+        device,
+        circle.radius[0],
+        circle.radius[1],
+        circle.radius,
         color,
+        circle.border_color,
+        circle.border_thickness,
+        TWELVE_OCLOCK,
+        circle.arc_length.to_radians(),
     );
+}
+
+/// Generates a regular N-gon's or star's boundary vertices in LOCAL
+/// space, centered on the shape's own transform origin (NOT the
+/// bounding-box-top-left convention `Rectangle`/`Circle` use -- a
+/// deliberate, disclosed exception: a regular polygon's own bounding box
+/// is not a clean function of `radius` alone the way a rect's or
+/// circle's is, so anchoring on the geometric center instead is the
+/// simpler, more honest choice here). Clockwise from 12 o'clock, matching
+/// `Circle`'s own convention.
+///
+/// `star_points.is_none()`: `sides` vertices, all at `radius`.
+/// `star_points = Some(k)`: `2*k` vertices alternating outer (`radius`,
+/// even index, starting at 12 o'clock) / inner (`vertex_radius`, odd
+/// index) -- the standard star-polygon construction, guaranteed
+/// star-shaped with respect to its own center by this very construction
+/// (every ray from the center crosses the boundary exactly once), which
+/// is exactly what makes [`fan_from_center`]'s triangulation valid for
+/// it, unlike an arbitrary (possibly non-star-shaped) polygon.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "a real UI polygon/star has at most a handful of sides/points -- vertex counts stay \
+               many orders of magnitude below 2^24, f32's exact-integer range"
+)]
+fn generate_polygon_points(polygon: &Polygon) -> Vec<Vec2> {
+    const TWELVE_OCLOCK: f32 = -std::f32::consts::FRAC_PI_2;
+
+    let count = match polygon.star_points {
+        Some(points) => points * 2,
+        None => polygon.sides,
+    };
+    if count < 3 {
+        return Vec::new();
+    }
+    (0..count)
+        .map(|i| {
+            let radius = match polygon.star_points {
+                Some(_) if i % 2 == 1 => polygon.vertex_radius,
+                _ => polygon.radius,
+            };
+            let angle = TWELVE_OCLOCK + (i as f32) * std::f32::consts::TAU / (count as f32);
+            [radius * angle.cos(), radius * angle.sin()]
+        })
+        .collect()
+}
+
+/// Fans triangles from local index `0` (the caller's own prepended
+/// center point) across `1..=vertex_count` (the boundary points, in
+/// order), including the closing triangle back to boundary point `1` --
+/// unlike `tre_svg::fan_triangles` (which fans from `points[0]` and
+/// relies on that point already being a shared boundary vertex, so never
+/// needs to close the loop), this fan's pivot is NOT itself a boundary
+/// point, so the wraparound triangle is real, required geometry, not an
+/// omission. Valid whenever the boundary is star-shaped with respect to
+/// the pivot -- true for [`generate_polygon_points`]'s own output by
+/// construction, per that function's own doc comment.
+fn fan_from_center(vertex_count: u32) -> Vec<[u32; 3]> {
+    if vertex_count < 3 {
+        return Vec::new();
+    }
+    (1..vertex_count)
+        .map(|i| [0, i, i + 1])
+        .chain(std::iter::once([0, vertex_count, 1]))
+        .collect()
+}
+
+/// `ShapeRegistry::flatten_into`'s own `Polygon` case (Phase 10 Step
+/// 10.2, real for the first time) -- fill only, via
+/// `RenderingCanvas::draw_flat_polygon`. Border/stroke rendering has no
+/// tessellator wired in yet, disclosed below rather than silently
+/// skipped.
+fn flatten_polygon(canvas: &mut RenderingCanvas, polygon: &Polygon) {
+    let FillStyle::Solid(color) = polygon.fill else {
+        unimplemented!(
+            "FillStyle::Gradient/Texture have no rendering support wired into this registry's \
+             own flattening pass yet -- see ARCHITECTURE.md Section 7.5's own Implementation \
+             status note"
+        );
+    };
+    assert!(
+        polygon.border_thickness == 0.0,
+        "Polygon/Star border (stroke) rendering has no tessellator wired in yet -- see \
+         ARCHITECTURE.md Section 7.5's own Implementation status note"
+    );
+
+    let boundary = generate_polygon_points(polygon);
+    let vertex_count = u32::try_from(boundary.len()).unwrap_or(0);
+    let mut points = Vec::with_capacity(boundary.len() + 1);
+    points.push([0.0, 0.0]); // the fan's own pivot -- the polygon's local center.
+    points.extend(boundary);
+    let triangles = fan_from_center(vertex_count);
+    canvas.draw_flat_polygon(&points, &triangles, color);
+}
+
+/// Recursive tolerance-based de Casteljau subdivision, the same
+/// algorithm and tolerance `tre_svg::flatten::flatten_cubic`/
+/// `flatten_quad` already use for SVG curve data -- a small, self-
+/// contained duplicate rather than a shared dependency, since
+/// `tre-svg` already depends on `tre-engine` (for
+/// `tre_engine::UiVertex`, `to_ui_vertices`), so `tre-engine` cannot
+/// depend back on `tre-svg` without a circular-dependency cycle. Moving
+/// both crates' curve math into a new shared low-level crate would be
+/// the fully clean fix; duplicating ~40 lines of well-understood,
+/// independently-tested math here is the pragmatic one, real and
+/// disclosed (REVIEW.md's own Phase 10 Step 10.2 finding), not a hidden
+/// shortcut.
+const PATH_FLATTEN_TOLERANCE: f32 = 0.25;
+const PATH_FLATTEN_MAX_DEPTH: u32 = 10;
+
+fn lerp_points(a: Vec2, b: Vec2, t: f32) -> Vec2 {
+    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+}
+
+fn point_line_distance(p: Vec2, line_a: Vec2, line_b: Vec2) -> f32 {
+    let (dx, dy) = (line_b[0] - line_a[0], line_b[1] - line_a[1]);
+    let len_sq = dx.mul_add(dx, dy * dy);
+    if len_sq < f32::EPSILON {
+        let (px, py) = (p[0] - line_a[0], p[1] - line_a[1]);
+        return px.hypot(py);
+    }
+    ((p[0] - line_a[0]) * dy - (p[1] - line_a[1]) * dx).abs() / len_sq.sqrt()
+}
+
+/// Appends line-segment endpoints approximating the cubic Bezier
+/// `p0 -> p1 -> p2 -> p3` to `out`, NOT including `p0` itself -- the
+/// caller already has `p0` as the current point (matches
+/// `tre_svg::flatten_cubic`'s own documented convention).
+#[allow(
+    clippy::similar_names,
+    reason = "p01/p12/p23/p012/p123 are the standard de Casteljau midpoint labels (subscripts \
+               denote which original control points each midpoint was interpolated between) -- \
+               matches tre_svg::flatten::flatten_cubic_recursive's own identical allow"
+)]
+fn flatten_cubic(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, out: &mut Vec<Vec2>) {
+    fn recurse(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, out: &mut Vec<Vec2>, depth: u32) {
+        let flat = point_line_distance(p1, p0, p3) <= PATH_FLATTEN_TOLERANCE
+            && point_line_distance(p2, p0, p3) <= PATH_FLATTEN_TOLERANCE;
+        if depth >= PATH_FLATTEN_MAX_DEPTH || flat {
+            out.push(p3);
+            return;
+        }
+        let p01 = lerp_points(p0, p1, 0.5);
+        let p12 = lerp_points(p1, p2, 0.5);
+        let p23 = lerp_points(p2, p3, 0.5);
+        let p012 = lerp_points(p01, p12, 0.5);
+        let p123 = lerp_points(p12, p23, 0.5);
+        let mid = lerp_points(p012, p123, 0.5);
+        recurse(p0, p01, p012, mid, out, depth + 1);
+        recurse(mid, p123, p23, p3, out, depth + 1);
+    }
+    recurse(p0, p1, p2, p3, out, 0);
+}
+
+/// Same convention as [`flatten_cubic`], for a quadratic Bezier
+/// `p0 -> control -> p1`.
+fn flatten_quad(p0: Vec2, control: Vec2, p1: Vec2, out: &mut Vec<Vec2>) {
+    let cubic_control1 = lerp_points(p0, control, 2.0 / 3.0);
+    let cubic_control2 = lerp_points(p1, control, 2.0 / 3.0);
+    flatten_cubic(p0, cubic_control1, cubic_control2, p1, out);
+}
+
+/// Flattens one `Path`'s `commands` into local-space polylines, one
+/// `Vec<Vec2>` per subpath (a new subpath starts at each `MoveTo`,
+/// matching `tre_svg::parse_svg`'s own subpath-splitting convention). A
+/// `Close` neither duplicates the start point into the output nor
+/// implicitly draws back to it -- callers that need a truly closed loop
+/// (hit-testing, a future stroke tessellator) already treat the last
+/// point as implicitly connected back to the first, the same convention
+/// `tre_svg::Polygon` itself documents.
+///
+/// This is real, tested geometry -- used today by
+/// [`ShapeRegistry::hit_test`]'s own `Path` case. `ShapeRegistry::
+/// flatten_into`'s `Path` case does NOT call this yet: fill needs a
+/// general (non-star-shaped) triangulator this crate cannot reach
+/// (`tre_svg::triangulate`, blocked by the circular-dependency
+/// constraint above), and stroke needs a tessellator not yet built --
+/// both disclosed, not silently faked.
+#[must_use]
+pub fn flatten_path(commands: &[PathCommand]) -> Vec<Vec<Vec2>> {
+    let mut subpaths = Vec::new();
+    let mut current: Vec<Vec2> = Vec::new();
+    let mut cursor = [0.0, 0.0];
+
+    for command in commands {
+        match *command {
+            PathCommand::MoveTo(point) => {
+                if current.len() >= 2 {
+                    subpaths.push(std::mem::take(&mut current));
+                } else {
+                    current.clear();
+                }
+                current.push(point);
+                cursor = point;
+            }
+            PathCommand::LineTo(point) => {
+                current.push(point);
+                cursor = point;
+            }
+            PathCommand::QuadraticTo { control, to } => {
+                flatten_quad(cursor, control, to, &mut current);
+                cursor = to;
+            }
+            PathCommand::CubicTo {
+                control1,
+                control2,
+                to,
+            } => {
+                flatten_cubic(cursor, control1, control2, to, &mut current);
+                cursor = to;
+            }
+            PathCommand::Close => {
+                if current.len() >= 2 {
+                    subpaths.push(std::mem::take(&mut current));
+                } else {
+                    current.clear();
+                }
+            }
+        }
+    }
+    if current.len() >= 2 {
+        subpaths.push(current);
+    }
+    subpaths
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{RhiBuffer, RhiDynamicRingBuffer};
+    use std::cell::RefCell;
+
+    /// A minimal `RhiDevice` double for this module's own `flatten_into`
+    /// tests -- only `shape_style_buffer()` is real (a plain,
+    /// alignment-agnostic bump allocator); every other method is
+    /// `unimplemented!()` since nothing here exercises it. Distinct from
+    /// `lib.rs`'s own private `FakeDevice` (a different, unrelated `mod
+    /// tests`) -- not worth threading a shared test-support module
+    /// through the crate for a handful of fields.
+    #[derive(Default)]
+    struct FakeDevice {
+        style_buffer: FakeStyleBuffer,
+    }
+
+    #[derive(Default)]
+    struct FakeStyleBuffer {
+        bytes: RefCell<Vec<u8>>,
+    }
+
+    impl RhiBuffer for FakeStyleBuffer {
+        fn raw_handle(&self) -> u64 {
+            0
+        }
+    }
+
+    impl RhiDynamicRingBuffer for FakeStyleBuffer {
+        fn write(&self, bytes: &[u8]) -> Option<u32> {
+            let mut buf = self.bytes.borrow_mut();
+            let offset = u32::try_from(buf.len()).ok()?;
+            buf.extend_from_slice(bytes);
+            Some(offset)
+        }
+    }
+
+    impl crate::RhiDevice for FakeDevice {
+        fn create_dynamic_ring_buffer(&self, _capacity: usize) -> Box<dyn RhiDynamicRingBuffer> {
+            unimplemented!("not exercised by any shapes.rs test")
+        }
+        fn shape_style_buffer(&self) -> &dyn RhiDynamicRingBuffer {
+            &self.style_buffer
+        }
+        fn acquire_transient_target(
+            &self,
+            _width: u32,
+            _height: u32,
+            _format: crate::TextureFormat,
+        ) -> Result<Box<dyn crate::RhiTexture>, crate::EngineError> {
+            unimplemented!("not exercised by any shapes.rs test")
+        }
+        fn release_transient_target(&self, _texture: Box<dyn crate::RhiTexture>) {
+            unimplemented!("not exercised by any shapes.rs test")
+        }
+        fn create_texture(
+            &self,
+            _width: u32,
+            _height: u32,
+            _format: crate::TextureFormat,
+            _pixels: &[u8],
+        ) -> Result<Box<dyn crate::RhiTexture>, crate::EngineError> {
+            unimplemented!("not exercised by any shapes.rs test")
+        }
+        fn register_bindless(
+            &self,
+            _texture: &dyn crate::RhiTexture,
+        ) -> Result<u32, crate::EngineError> {
+            unimplemented!("not exercised by any shapes.rs test")
+        }
+        fn deregister_bindless(&self, _bindless_index: u32) {
+            unimplemented!("not exercised by any shapes.rs test")
+        }
+        fn begin_frame(
+            &self,
+            _swapchain: &dyn crate::RhiSwapchain,
+        ) -> Result<(Box<dyn crate::RhiCommandBuffer>, crate::AcquiredImage), crate::EngineError>
+        {
+            unimplemented!("not exercised by any shapes.rs test")
+        }
+        fn submit_and_present(
+            &self,
+            _cmd_buffer: Box<dyn crate::RhiCommandBuffer>,
+            _swapchain: &dyn crate::RhiSwapchain,
+            _image: crate::AcquiredImage,
+        ) -> Result<(), crate::EngineError> {
+            unimplemented!("not exercised by any shapes.rs test")
+        }
+    }
 
     #[test]
     #[allow(
@@ -744,13 +1275,14 @@ mod tests {
 
     #[test]
     fn flatten_into_records_a_dirty_rectangle_and_clears_its_dirty_flag() {
+        let device = FakeDevice::default();
         let mut registry = ShapeRegistry::new();
         let id = registry.insert(ShapePrimitive::Rectangle(Rectangle::new(
             [10.0, 10.0],
             0xFFFF_FFFF,
         )));
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas);
+        registry.flatten_into(&mut canvas, &device);
         let frame = canvas.flatten();
         assert_eq!(frame.vertices.len(), 4, "one rectangle emits 4 vertices");
         assert_eq!(frame.commands.len(), 1);
@@ -762,16 +1294,17 @@ mod tests {
 
     #[test]
     fn flatten_into_skips_a_shape_that_is_neither_dirty_nor_animating() {
+        let device = FakeDevice::default();
         let mut registry = ShapeRegistry::new();
         registry.insert(ShapePrimitive::Rectangle(Rectangle::new(
             [10.0, 10.0],
             0xFFFF_FFFF,
         )));
         let mut warm_up = RenderingCanvas::new();
-        registry.flatten_into(&mut warm_up); // clears layout_dirty
+        registry.flatten_into(&mut warm_up, &device); // clears layout_dirty
 
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas);
+        registry.flatten_into(&mut canvas, &device);
         let frame = canvas.flatten();
         assert!(
             frame.vertices.is_empty(),
@@ -781,6 +1314,7 @@ mod tests {
 
     #[test]
     fn flatten_into_skips_hidden_and_collapsed_shapes_without_panicking() {
+        let device = FakeDevice::default();
         let mut registry = ShapeRegistry::new();
         let mut hidden = Rectangle::new([10.0, 10.0], 0xFFFF_FFFF);
         hidden.common.visibility = Visibility::Hidden;
@@ -790,7 +1324,7 @@ mod tests {
         registry.insert(ShapePrimitive::Rectangle(collapsed));
 
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas);
+        registry.flatten_into(&mut canvas, &device);
         let frame = canvas.flatten();
         assert!(
             frame.vertices.is_empty(),
@@ -799,8 +1333,8 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "non-uniform corner_radius")]
-    fn flatten_into_panics_on_a_non_uniform_corner_radius() {
+    fn flatten_into_renders_a_non_uniform_corner_radius_via_the_styled_path() {
+        let device = FakeDevice::default();
         let mut registry = ShapeRegistry::new();
         let mut rect = Rectangle::new([10.0, 10.0], 0xFFFF_FFFF);
         rect.corner_radius = CornerRadii {
@@ -811,12 +1345,26 @@ mod tests {
         };
         registry.insert(ShapePrimitive::Rectangle(rect));
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas);
+        registry.flatten_into(&mut canvas, &device);
+        let frame = canvas.flatten();
+
+        assert_eq!(frame.vertices.len(), 4);
+        assert_eq!(
+            frame.commands[0].pipeline_state_id,
+            crate::PipelineKind::SdfRectStyled as u16,
+            "a non-uniform corner radius must route through the styled pipeline, not \
+             draw_rounded_rect's uniform-only one"
+        );
+        assert_eq!(
+            device.style_buffer.bytes.borrow().len(),
+            28,
+            "exactly one GpuRectStyle record must have been written"
+        );
     }
 
     #[test]
-    #[should_panic(expected = "Circle/Ellipse rendering has no shader support")]
-    fn flatten_into_panics_on_a_circle() {
+    fn flatten_into_renders_a_circle_via_the_ellipse_pipeline() {
+        let device = FakeDevice::default();
         let mut registry = ShapeRegistry::new();
         registry.insert(ShapePrimitive::Circle(Circle {
             common: PrimitiveCommon::new(),
@@ -827,18 +1375,31 @@ mod tests {
             arc_length: 360.0,
         }));
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas);
+        registry.flatten_into(&mut canvas, &device);
+        let frame = canvas.flatten();
+
+        assert_eq!(frame.vertices.len(), 4);
+        assert_eq!(
+            frame.commands[0].pipeline_state_id,
+            crate::PipelineKind::SdfEllipse as u16
+        );
+        assert_eq!(
+            device.style_buffer.bytes.borrow().len(),
+            16,
+            "exactly one GpuEllipseStyle record must have been written"
+        );
     }
 
     #[test]
     fn an_active_animation_keeps_a_shape_flattened_every_frame_even_without_layout_dirty() {
+        let device = FakeDevice::default();
         let mut registry = ShapeRegistry::new();
         let id = registry.insert(ShapePrimitive::Rectangle(Rectangle::new(
             [10.0, 10.0],
             0xFFFF_FFFF,
         )));
         let mut warm_up = RenderingCanvas::new();
-        registry.flatten_into(&mut warm_up); // clears layout_dirty
+        registry.flatten_into(&mut warm_up, &device); // clears layout_dirty
 
         registry
             .get_mut(id)
@@ -847,12 +1408,354 @@ mod tests {
             .push(AnimationId(1));
 
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas);
+        registry.flatten_into(&mut canvas, &device);
         let frame = canvas.flatten();
         assert_eq!(
             frame.vertices.len(),
             4,
             "a non-empty active_animations must still trigger re-flattening"
         );
+    }
+
+    // --- Polygon generation/fill (Phase 10 Step 10.2) ---
+
+    #[test]
+    fn generate_polygon_points_of_a_square_gives_four_points_at_the_requested_radius() {
+        let mut polygon = Polygon {
+            common: PrimitiveCommon::new(),
+            sides: 4,
+            radius: 10.0,
+            vertex_radius: 0.0,
+            star_points: None,
+            fill: FillStyle::Solid(0),
+            border_color: 0,
+            border_thickness: 0.0,
+        };
+        let points = generate_polygon_points(&polygon);
+        assert_eq!(points.len(), 4);
+        for [x, y] in points {
+            let distance = (x * x + y * y).sqrt();
+            assert!(
+                (distance - 10.0).abs() < 1e-4,
+                "every regular-polygon vertex must sit at the requested radius, got {distance}"
+            );
+        }
+        // 12 o'clock start: the first vertex is straight up (x ~= 0, y < 0).
+        polygon.sides = 4;
+        let points = generate_polygon_points(&polygon);
+        assert!(points[0][0].abs() < 1e-4 && points[0][1] < 0.0);
+    }
+
+    #[test]
+    fn generate_polygon_points_of_a_star_alternates_outer_and_inner_radius() {
+        let star = Polygon {
+            common: PrimitiveCommon::new(),
+            sides: 0,
+            radius: 20.0,
+            vertex_radius: 8.0,
+            star_points: Some(5),
+            fill: FillStyle::Solid(0),
+            border_color: 0,
+            border_thickness: 0.0,
+        };
+        let points = generate_polygon_points(&star);
+        assert_eq!(points.len(), 10, "5 star points = 10 alternating vertices");
+        for (i, [x, y]) in points.into_iter().enumerate() {
+            let distance = (x * x + y * y).sqrt();
+            let expected = if i % 2 == 0 { 20.0 } else { 8.0 };
+            assert!(
+                (distance - expected).abs() < 1e-4,
+                "vertex {i}: expected radius {expected}, got {distance}"
+            );
+        }
+    }
+
+    #[test]
+    fn fan_from_center_of_a_square_covers_all_four_edges_including_the_wraparound() {
+        let triangles = fan_from_center(4);
+        assert_eq!(triangles, vec![[0, 1, 2], [0, 2, 3], [0, 3, 4], [0, 4, 1]]);
+    }
+
+    #[test]
+    fn fan_from_center_of_fewer_than_three_vertices_is_empty() {
+        assert_eq!(fan_from_center(2), Vec::<[u32; 3]>::new());
+    }
+
+    #[test]
+    fn flatten_into_renders_a_regular_polygon_via_the_flat_color_pipeline() {
+        let device = FakeDevice::default();
+        let mut registry = ShapeRegistry::new();
+        registry.insert(ShapePrimitive::Polygon(Polygon {
+            common: PrimitiveCommon::new(),
+            sides: 6,
+            radius: 15.0,
+            vertex_radius: 0.0,
+            star_points: None,
+            fill: FillStyle::Solid(0xFFFF_FFFF),
+            border_color: 0,
+            border_thickness: 0.0,
+        }));
+        let mut canvas = RenderingCanvas::new();
+        registry.flatten_into(&mut canvas, &device);
+        let frame = canvas.flatten();
+
+        assert_eq!(frame.commands.len(), 1);
+        assert_eq!(
+            frame.commands[0].pipeline_state_id,
+            crate::PipelineKind::FlatColor as u16
+        );
+        // 6 boundary + 1 center = 7 vertices; 6 fan triangles = 18 indices.
+        assert_eq!(frame.vertices.len(), 7);
+        assert_eq!(frame.indices.len(), 18);
+    }
+
+    // --- Path Bezier flattening (Phase 10 Step 10.2) ---
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact arithmetic on literal f32s (a straight line has no curvature to \
+                   subdivide), same reasoning as tre-svg's own identical test"
+    )]
+    fn flatten_cubic_of_a_straight_line_produces_no_extra_points() {
+        let mut out = Vec::new();
+        flatten_cubic([0.0, 0.0], [3.0, 0.0], [6.0, 0.0], [10.0, 0.0], &mut out);
+        assert_eq!(out, vec![[10.0, 0.0]]);
+    }
+
+    #[test]
+    fn flatten_cubic_of_a_real_curve_approximates_it_within_tolerance() {
+        // A quarter-circle-ish cubic from (1, 0) to (0, 1) via the
+        // standard k=0.5522847 control-point approximation -- every
+        // flattened point must land close to the unit circle.
+        const K: f32 = 0.552_284_7;
+        let mut out = Vec::new();
+        flatten_cubic([1.0, 0.0], [1.0, K], [K, 1.0], [0.0, 1.0], &mut out);
+        assert!(
+            out.len() > 1,
+            "a real curve must subdivide into more than one segment"
+        );
+        for [x, y] in out {
+            let radius = (x * x + y * y).sqrt();
+            assert!(
+                (radius - 1.0).abs() < 0.05,
+                "flattened point ({x}, {y}) strayed too far from the unit circle: r={radius}"
+            );
+        }
+    }
+
+    #[test]
+    fn flatten_path_splits_subpaths_on_move_to() {
+        let commands = [
+            PathCommand::MoveTo([0.0, 0.0]),
+            PathCommand::LineTo([10.0, 0.0]),
+            PathCommand::LineTo([10.0, 10.0]),
+            PathCommand::MoveTo([20.0, 20.0]),
+            PathCommand::LineTo([30.0, 20.0]),
+            PathCommand::LineTo([30.0, 30.0]),
+        ];
+        let subpaths = flatten_path(&commands);
+        assert_eq!(subpaths.len(), 2);
+        assert_eq!(subpaths[0], vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]]);
+        assert_eq!(subpaths[1], vec![[20.0, 20.0], [30.0, 20.0], [30.0, 30.0]]);
+    }
+
+    #[test]
+    fn flatten_path_a_close_ends_the_current_subpath_without_duplicating_the_start_point() {
+        let commands = [
+            PathCommand::MoveTo([0.0, 0.0]),
+            PathCommand::LineTo([10.0, 0.0]),
+            PathCommand::LineTo([10.0, 10.0]),
+            PathCommand::Close,
+        ];
+        let subpaths = flatten_path(&commands);
+        assert_eq!(subpaths.len(), 1);
+        assert_eq!(
+            subpaths[0].len(),
+            3,
+            "Close must not duplicate the MoveTo start point"
+        );
+    }
+
+    #[test]
+    fn flatten_path_of_a_quadratic_curve_ends_at_the_requested_endpoint() {
+        let commands = [
+            PathCommand::MoveTo([0.0, 0.0]),
+            PathCommand::QuadraticTo {
+                control: [5.0, 10.0],
+                to: [10.0, 0.0],
+            },
+        ];
+        let subpaths = flatten_path(&commands);
+        assert_eq!(subpaths.len(), 1);
+        assert_eq!(subpaths[0].last(), Some(&[10.0, 0.0]));
+        assert!(
+            subpaths[0].len() > 1,
+            "a real curve must produce more than its endpoint"
+        );
+    }
+
+    // --- Hit-testing (Phase 10 Step 10.2) ---
+
+    #[test]
+    fn hit_test_finds_a_point_inside_a_plain_rectangle() {
+        let mut registry = ShapeRegistry::new();
+        let mut rect = Rectangle::new([100.0, 50.0], 0xFFFF_FFFF);
+        rect.common.transform.position = [10.0, 10.0];
+        let id = registry.insert(ShapePrimitive::Rectangle(rect));
+
+        assert_eq!(registry.hit_test([60.0, 35.0]), Some(id));
+        assert_eq!(registry.hit_test([5.0, 5.0]), None);
+    }
+
+    #[test]
+    fn hit_test_excludes_a_point_in_a_rounded_corners_own_cut_off_area() {
+        let mut registry = ShapeRegistry::new();
+        let mut rect = Rectangle::new([100.0, 100.0], 0xFFFF_FFFF);
+        rect.corner_radius = CornerRadii::uniform(30.0);
+        registry.insert(ShapePrimitive::Rectangle(rect));
+
+        // Right at the raw bounding-box corner (0, 0) -- well outside the
+        // real 30px-radius rounded arc.
+        assert_eq!(registry.hit_test([1.0, 1.0]), None);
+        // The rect's own center is always inside, corners or not.
+        assert!(registry.hit_test([50.0, 50.0]).is_some());
+    }
+
+    #[test]
+    fn hit_test_respects_hit_testable_false() {
+        let mut registry = ShapeRegistry::new();
+        let mut rect = Rectangle::new([100.0, 100.0], 0xFFFF_FFFF);
+        rect.common.hit_testable = false;
+        registry.insert(ShapePrimitive::Rectangle(rect));
+
+        assert_eq!(registry.hit_test([50.0, 50.0]), None);
+    }
+
+    #[test]
+    fn hit_test_skips_hidden_shapes() {
+        let mut registry = ShapeRegistry::new();
+        let mut rect = Rectangle::new([100.0, 100.0], 0xFFFF_FFFF);
+        rect.common.visibility = Visibility::Hidden;
+        registry.insert(ShapePrimitive::Rectangle(rect));
+
+        assert_eq!(registry.hit_test([50.0, 50.0]), None);
+    }
+
+    #[test]
+    fn hit_test_returns_the_topmost_of_two_overlapping_shapes() {
+        let mut registry = ShapeRegistry::new();
+        let bottom = Rectangle::new([100.0, 100.0], 0xFFFF_FFFF);
+        registry.insert(ShapePrimitive::Rectangle(bottom));
+        let top = Rectangle::new([100.0, 100.0], 0xFF00_00FF);
+        let top_id = registry.insert(ShapePrimitive::Rectangle(top));
+
+        assert_eq!(registry.hit_test([50.0, 50.0]), Some(top_id));
+    }
+
+    #[test]
+    fn hit_test_finds_a_point_inside_a_circle_and_excludes_one_outside_it() {
+        let mut registry = ShapeRegistry::new();
+        let id = registry.insert(ShapePrimitive::Circle(Circle {
+            common: PrimitiveCommon::new(),
+            radius: [20.0, 20.0],
+            fill: FillStyle::Solid(0xFFFF_FFFF),
+            border_color: 0,
+            border_thickness: 0.0,
+            arc_length: 360.0,
+        }));
+        // Local center is (20, 20) (bounding-box-top-left convention).
+        assert_eq!(registry.hit_test([20.0, 20.0]), Some(id));
+        assert_eq!(registry.hit_test([0.5, 0.5]), None);
+    }
+
+    #[test]
+    fn hit_test_excludes_a_point_in_a_circles_own_excluded_arc_wedge() {
+        let mut registry = ShapeRegistry::new();
+        registry.insert(ShapePrimitive::Circle(Circle {
+            common: PrimitiveCommon::new(),
+            radius: [20.0, 20.0],
+            fill: FillStyle::Solid(0xFFFF_FFFF),
+            border_color: 0,
+            border_thickness: 0.0,
+            arc_length: 270.0, // excludes the northwest wedge, same as the GPU demo.
+        }));
+        // Northwest of local center (20, 20): local point (10, 10).
+        assert_eq!(registry.hit_test([10.0, 10.0]), None);
+        // Due east of local center: well inside the 270-degree sweep.
+        assert!(registry.hit_test([35.0, 20.0]).is_some());
+    }
+
+    #[test]
+    fn hit_test_finds_a_point_inside_a_regular_polygon() {
+        let mut registry = ShapeRegistry::new();
+        let mut hexagon = Polygon {
+            common: PrimitiveCommon::new(),
+            sides: 6,
+            radius: 20.0,
+            vertex_radius: 0.0,
+            star_points: None,
+            fill: FillStyle::Solid(0xFFFF_FFFF),
+            border_color: 0,
+            border_thickness: 0.0,
+        };
+        hexagon.common.transform.position = [50.0, 50.0];
+        let id = registry.insert(ShapePrimitive::Polygon(hexagon));
+
+        assert_eq!(
+            registry.hit_test([50.0, 50.0]),
+            Some(id),
+            "the center must always hit"
+        );
+        assert_eq!(
+            registry.hit_test([50.0, 500.0]),
+            None,
+            "far outside the polygon must not hit"
+        );
+    }
+
+    #[test]
+    fn hit_test_a_star_excludes_a_point_in_one_of_its_own_concave_notches() {
+        let mut registry = ShapeRegistry::new();
+        registry.insert(ShapePrimitive::Polygon(Polygon {
+            common: PrimitiveCommon::new(),
+            sides: 0,
+            radius: 20.0,
+            vertex_radius: 5.0,
+            star_points: Some(5),
+            fill: FillStyle::Solid(0xFFFF_FFFF),
+            border_color: 0,
+            border_thickness: 0.0,
+        }));
+        // Just inside the outer radius, exactly between two star points
+        // (a concave notch) -- must be excluded even though it's well
+        // within the star's own bounding circle.
+        assert_eq!(registry.hit_test([18.0, 0.0]), None);
+        assert!(
+            registry.hit_test([0.0, 0.0]).is_some(),
+            "dead center must hit"
+        );
+    }
+
+    #[test]
+    fn hit_test_finds_a_point_inside_a_closed_path_triangle() {
+        let mut registry = ShapeRegistry::new();
+        let id = registry.insert(ShapePrimitive::Path(Path {
+            common: PrimitiveCommon::new(),
+            commands: vec![
+                PathCommand::MoveTo([0.0, 0.0]),
+                PathCommand::LineTo([100.0, 0.0]),
+                PathCommand::LineTo([50.0, 100.0]),
+                PathCommand::Close,
+            ],
+            fill: FillStyle::Solid(0xFFFF_FFFF),
+            border_color: 0,
+            border_thickness: 0.0,
+            stroke_line_cap: LineCap::Butt,
+            stroke_line_join: LineJoin::Bevel,
+        }));
+
+        assert_eq!(registry.hit_test([50.0, 40.0]), Some(id));
+        assert_eq!(registry.hit_test([5.0, 90.0]), None);
     }
 }

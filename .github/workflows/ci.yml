@@ -206,6 +206,12 @@ jobs:
       # mode flattening pass is pixel-equivalent to the same scene drawn
       # directly through today's immediate-mode draw_rounded_rect.
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example shape_registry_demo
+      # Phase 10 Step 10.2: real GPU proof of full shape rendering support
+      # -- a non-uniform-corner bordered Rectangle and a bordered partial-
+      # arc Circle, both through ShapeRegistry, with real pixel-level
+      # correctness assertions (sharp vs. rounded corners, border vs.
+      # fill, the arc sweep's own excluded wedge).
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example shape_full_rendering_demo
 
   accessibility-validation:
     name: accessibility-validation

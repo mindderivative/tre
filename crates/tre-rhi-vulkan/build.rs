@@ -62,6 +62,17 @@ fn main() {
         "sdf_rounded_rect.frag.spv",
         &out_dir,
     );
+    // Phase 10 Step 10.2: the non-uniform-corner/border/smoothing and
+    // Circle/Ellipse SDF shaders -- both paired at pipeline-creation time
+    // with the existing `sdf_rounded_rect.vert` above (see each shader's
+    // own doc comment for why), so neither needs its own compiled vertex
+    // shader entry here.
+    compile_shader(
+        "shaders/sdf_rect_styled.frag",
+        "sdf_rect_styled.frag.spv",
+        &out_dir,
+    );
+    compile_shader("shaders/sdf_ellipse.frag", "sdf_ellipse.frag.spv", &out_dir);
     // Phase 4 Step 4.2.3: the real MSDF evaluation shader. Deliberately
     // paired at pipeline-creation time with `bindless_textured.vert`, not
     // a new vertex shader -- its inputs/outputs are already exactly what

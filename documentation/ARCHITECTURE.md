@@ -390,16 +390,24 @@ Added in the September 2026 documentation review -- the standard 2D content pipe
 
 ---
 
-## 7. UI Primitive Shape System (Phase 10 Step 10.1)
+## 7. UI Primitive Shape System (Phase 10 Steps 10.1-10.2)
 
-**Status: Complete (2026-09-09), real in `crates/tre-engine/src/
-shapes.rs`.** Every struct/trait/enum below is now shipped code, matching
-this section's own text exactly (no drift found during implementation).
-Real rendering support is intentionally narrow, exactly as originally
-scoped -- see Section 7.5's own "Implementation status" note, unchanged
-from planning, for the itemized disposition of every field. The per-step
-plan (`planning/archive/PLAN_PHASE10_STEP10_1.md`) is the authoritative
-task breakdown; this section remains the canonical struct/trait/enum
+**Status: Complete (2026-09-09), extended (2026-09-09, Step 10.2).**
+Every struct/trait/enum below is real, shipped code in
+`crates/tre-engine/src/shapes.rs`, matching this section's own text
+exactly (no drift found during implementation). Step 10.1 shipped the
+data model plus real rendering for one narrow case (uniform-radius,
+borderless `Rectangle`); Step 10.2 made real rendering support MUCH
+broader -- `Rectangle` (any corner radii, real borders, corner
+smoothing) and `Circle`/`Ellipse` (borders, partial-arc sweep) both
+render for real now, `Polygon`/`Star` fill for real (no border/stroke
+yet), and `Path`'s Bezier-flattening math is real and tested even though
+no `Path` rendering path (fill or stroke) exists yet. See Section 7.5's
+own "Implementation status" note for the current, itemized disposition
+of every field. The per-step plans
+(`planning/archive/PLAN_PHASE10_STEP10_1.md`,
+`planning/archive/PLAN_PHASE10_STEP10_2.md`) are the authoritative task
+breakdowns; this section remains the canonical struct/trait/enum
 reference every other document points to, matching this document's own
 established "define once here, reference elsewhere" convention (Sections
 3.1, 4.1).
@@ -411,8 +419,8 @@ immediate-mode: the caller re-issues every draw call every frame, and
 Step 9.2's own `reset()`-based reuse only avoids reallocating that
 per-frame `Vec` storage, it does not let a caller skip re-recording
 unchanged content). An external UI framework driving this engine --
-Python via Phase 10 Step 10.3's direct PyO3 binding, or any other
-language via Step 10.2's `tre-ffi` C-ABI (DESIGN.md Section 2.7's own
+Python via Phase 10 Step 10.4's direct PyO3 binding, or any other
+language via Step 10.3's `tre-ffi` C-ABI (DESIGN.md Section 2.7's own
 "Two Real Paths") -- wants the opposite shape of API: create a shape
 once, hold a stable handle to it, mutate a handful of
 properties as the UI framework's own layout/animation system runs, and
@@ -777,16 +785,17 @@ pub struct ShapeRegistry {
 ### 7.5 Efficiency & FFI Design
 
 * **Neither real cross-language path sees raw struct layout, by two
-  different mechanisms (revised 2026-09-09).** Every field above stays
+  different mechanisms (revised 2026-09-09, renumbered 2026-09-09 when
+  Step 10.2 was inserted for shape rendering).** Every field above stays
   ordinary (non-`#[repr(C)]`) Rust, exactly like `RenderingCanvas`
   itself today. Non-Python languages reach `ShapeId` through Phase 10
-  Step 10.2's `tre-ffi` crate, exactly as originally designed: an
+  Step 10.3's `tre-ffi` crate, exactly as originally designed: an
   opaque handle plus `extern "C"` getter/setter functions per field
   (the same pattern already used for `RhiTexture`/`RhiCommandBuffer`/
   `AcquiredImage`, Section 6), never a transmuted pointer into a
   `Rectangle`. **Python, per DESIGN.md Section 2.7's "Two Real Paths"
   correction, does not go through `tre-ffi` at all** -- Phase 10 Step
-  10.3's `tre-python` crate wraps `ShapeId`/`Rectangle`/`Circle`/
+  10.4's `tre-python` crate wraps `ShapeId`/`Rectangle`/`Circle`/
   `Polygon`/`Path` directly as PyO3 `#[pyclass]` types, with
   `#[pymethods]` as the real field-access boundary instead of `extern
   "C"` getters/setters; PyO3 itself, not this project's own code,
@@ -817,24 +826,88 @@ pub struct ShapeRegistry {
   equivalent guarded demo) to close that gap is real, separate future
   work, not done as part of this step.
 * **Implementation status, itemized against real rendering support
-  (2026-09-09):** buildable with *zero* new GPU/tessellation work --
-  `PrimitiveCommon` (transform/opacity/visibility/hit-testable, all pure
-  CPU-side bookkeeping), `ShapeRegistry`/`ShapeId`/state hooks, and
-  `Rectangle` using only `CornerRadii::uniform` (today's real
-  `draw_rounded_rect` shader). Needs real, separate, not-yet-scheduled
-  rendering work before it can render correctly: `Rectangle`'s
-  non-uniform `corner_radius`/any `corner_smoothing` > 0.0 (new SDF
-  shader), `Circle`'s ellipse/`arc_length` cases (new SDF shader, no
-  circle/ellipse primitive exists at all today), `Polygon`/`Star`
-  (new procedural-geometry generation, though real triangulation
-  already exists to tessellate the resulting point list via `tre-svg`'s
-  existing ear-clipping code, Step 3.3.1), `Path`'s *stroking*
-  (`stroke_line_cap`/`stroke_line_join` -- the existing tessellator only
-  fills), `border_color`/`border_thickness` on any shape (no shape
-  anywhere in this engine renders a separate outline today), and
-  `FillStyle::Gradient`/non-`Normal` `BlendMode` (both real, both
-  already disclosed elsewhere in this document as unbuilt). See
-  IMPLEMENTATION.md Step 10.1's own "Explicitly out of scope" list for
-  the authoritative version of this same disclosure.
+  (revised 2026-09-09, Step 10.2):**
+  - **`Rectangle`: fully real.** Any `corner_radius` (uniform or not),
+    a real border (`border_color`/`border_thickness`), and
+    `corner_smoothing` (a real, if approximate, superellipse blend --
+    see the Shape Style Buffer subsection below) all render correctly,
+    via a new `sdf_rect_styled.frag` pipeline
+    (`RenderingCanvas::draw_styled_rectangle`) alongside the original
+    uniform-radius `draw_rounded_rect` path (kept, unmodified, as the
+    cheaper common case).
+  - **`Circle`/`Ellipse`: fully real.** A new `sdf_ellipse.frag`
+    pipeline (`RenderingCanvas::draw_ellipse`) renders the exact circle
+    case exactly and the non-uniform-radius ellipse case via a real,
+    disclosed *approximate* SDF (exact only when `radius.x ==
+    radius.y`); border and `arc_length` (a hard-edged angular sector
+    cutoff, no rounded stroke caps at the cut) are both real.
+  - **`Polygon`/`Star`: fill is real**, via procedural boundary-point
+    generation (`generate_polygon_points`) and a from-center triangle
+    fan (`fan_from_center`) -- valid because a regular/star polygon
+    generated this way is star-shaped with respect to its own center by
+    construction. **Border/stroke rendering is not built** (no stroke
+    tessellator exists yet).
+  - **`Path`: Bezier-flattening is real and tested**
+    (`shapes::flatten_path`, reusing the exact tolerance-based recursive
+    de Casteljau algorithm `tre_svg::flatten_cubic`/`flatten_quad`
+    already use for SVG curves -- duplicated, not shared, since
+    `tre-svg` already depends on `tre-engine`, so the reverse dependency
+    this would need is circular; see REVIEW.md's own Phase 10 Step 10.2
+    finding). **No `Path` rendering path exists at all** -- fill needs a
+    general (non-star-shaped) triangulator this crate cannot reach for
+    the same circular-dependency reason, and stroke needs a tessellator
+    not yet built. `flatten_path`'s real output is used today by
+    `ShapeRegistry::hit_test`'s own `Path` case, which needs no GPU
+    rendering plumbing.
+  - **`FillStyle::Gradient`/`Texture`: still not built, for any shape
+    kind.** **Non-`Normal` `BlendMode`: still not built** -- the
+    Vulkan fixed-function blend state a subset could use, and the
+    framebuffer-read capability the rest would need, are both real,
+    separate, not-yet-scheduled RHI work.
+  - **Hit-testing is real for all four shape kinds**
+    (`ShapeRegistry::hit_test`) -- the actual concrete need
+    `hit_testable` (present since Step 10.1, read by nothing until now)
+    exists for. Exact point-in-shape tests: the same non-uniform
+    rounded-box SDF `sdf_rect_styled.frag` evaluates, on the CPU, for
+    `Rectangle`; an exact closed-form ellipse-membership test (not the
+    GPU's own SDF approximation) plus the same arc-sector convention for
+    `Circle`; the standard even-odd ray-casting algorithm (PNPOLY) for
+    `Polygon` and (XORed across subpaths) `Path`.
+
+  See IMPLEMENTATION.md Step 10.2's own "Explicitly out of scope" list
+  for the authoritative version of this same disclosure.
+* **The Shape Style Buffer (new, Step 10.2).** `UiVertex`'s hard
+  32-byte layout (`params: [f32; 3]`, Section 3.1) has no room for
+  non-uniform corner radii, a border color/thickness, or corner
+  smoothing -- `draw_rounded_rect`'s own doc comment already says this
+  out loud ("uniform across all 4 vertices since the vertex format has
+  no per-quad channel"). Rather than grow `UiVertex` itself (which would
+  bloat every pipeline in the system -- text, flat tessellated fills,
+  blur -- that doesn't need any of this data), Step 10.2 reuses the
+  bindless pattern Step 2.1 already established for textures: a new
+  binding-1 `STORAGE_BUFFER` on the same bindless descriptor set (the
+  texture array itself moved from binding 1 to binding 2 to keep the
+  spec-required "`VARIABLE_DESCRIPTOR_COUNT` binding must be the
+  highest-numbered one" invariant), holding per-shape `GpuRectStyle`/
+  `GpuEllipseStyle` records (`crates/tre-engine/src/gpu_style.rs`) that
+  a single word-index -- carried NUMERICALLY (not bit-cast, see below)
+  in one existing `UiVertex.params` float slot -- references. The
+  underlying buffer is a `VulkanRingBuffer` (the same triple-buffered,
+  persistent-mapped type the vertex/index ring buffer already uses),
+  bump-allocated into fresh each frame via the same
+  `RhiDynamicRingBuffer::write` contract, exposed through a new
+  `RhiDevice::shape_style_buffer()` method. This is real, general
+  infrastructure -- any future per-shape data (a future gradient
+  evaluator's stop tables, say) has a ready home in a new record type
+  using the same mechanism, without another `UiVertex` conversation.
+  **A real GPU bug found and fixed while building this (REVIEW.md's own
+  finding):** the word index was originally bit-cast (`f32::from_bits`)
+  into the float slot -- for small indices this produces a *subnormal*
+  float, and real GPU hardware was observed to silently flush it to
+  `0.0` (denormal flush-to-zero, common ALU/interpolation behavior),
+  so the shader read the wrong style record entirely. Fixed by carrying
+  the index as a plain numeric value (`as f32`/`uint(...)`) instead --
+  every real word index is a small integer, exactly representable as a
+  normal `f32`, with no denormal ever in play.
 
 *Future consideration -- opaque pre-pass (not implemented; profile before building):* Depth-test-off means the GPU gets no early-Z rejection, so overdraw-heavy scenes (e.g. a dense data grid with thousands of large, fully-opaque cell backgrounds) pay full fragment cost for content later fragments completely cover. A front-to-back, depth-tested pre-pass restricted to batches provably fully opaque (nothing SDF-antialiased or alpha-sampled can participate) could reclaim that cost via early-Z, at the price of a second pipeline state, a second command-buffer pass, and careful ordering against the existing Depth-ID-driven painter's-algorithm pass so the two agree on what's already covered. Do not build this speculatively: profile a representative overdraw-heavy scene first and confirm GPU time -- not CPU submission time -- is the actual bottleneck before spending the complexity budget here.

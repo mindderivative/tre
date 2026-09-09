@@ -112,7 +112,7 @@ fn main() {
     registry.insert(ShapePrimitive::Rectangle(rect));
 
     let mut registry_canvas = RenderingCanvas::new();
-    registry.flatten_into(&mut registry_canvas);
+    registry.flatten_into(&mut registry_canvas, &device);
     let registry_pixels = render(&registry_canvas.flatten());
     eprintln!("ShapeRegistry::flatten_into: rendered");
 

@@ -136,6 +136,46 @@ impl Affine2 {
             self.c * x + self.d * y + self.ty,
         ]
     }
+
+    /// The inverse transform: `self.invert().unwrap().transform_point(
+    /// self.transform_point(p))` equals `p` (up to floating-point
+    /// rounding), for any non-degenerate `self`. Phase 10 Step 10.2's
+    /// own first real caller (`ShapeRegistry::hit_test`, `tre-engine`,
+    /// needs to map a world-space query point back into a shape's own
+    /// local space -- the exact inverse of what every `flatten_into`
+    /// case already does forward via `to_affine2`).
+    ///
+    /// Standard 2x2-block affine inverse: for the linear part
+    /// `[[a, b], [c, d]]`, the inverse is `(1/det) * [[d, -b], [-c, a]]`
+    /// where `det = a*d - b*c`; the inverse translation is `-(inverse
+    /// linear part) * (tx, ty)`, so that composing the two undoes the
+    /// original translation exactly.
+    ///
+    /// Returns `None` if `self` is degenerate (its determinant is at or
+    /// below `f32::EPSILON` in magnitude -- a zero or near-zero scale
+    /// collapses the transform to a line or point, which has no true
+    /// inverse) rather than dividing by a near-zero determinant and
+    /// returning a numerically meaningless result.
+    #[must_use]
+    pub fn invert(&self) -> Option<Self> {
+        let det = self.a * self.d - self.b * self.c;
+        if det.abs() <= f32::EPSILON {
+            return None;
+        }
+        let inv_det = 1.0 / det;
+        let a = self.d * inv_det;
+        let b = -self.b * inv_det;
+        let c = -self.c * inv_det;
+        let d = self.a * inv_det;
+        Some(Self {
+            a,
+            b,
+            tx: -(a * self.tx + b * self.ty),
+            c,
+            d,
+            ty: -(c * self.tx + d * self.ty),
+        })
+    }
 }
 
 /// Gathers one field from 8 (or fewer, zero-padded) items into a
@@ -718,5 +758,58 @@ mod tests {
             );
             previous = value;
         }
+    }
+
+    #[test]
+    fn invert_of_identity_is_identity() {
+        assert_affine_approx_eq(
+            Affine2::IDENTITY.invert().expect("identity is invertible"),
+            Affine2::IDENTITY,
+        );
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "translation by small integers involves no rounding"
+    )]
+    fn invert_undoes_a_pure_translation() {
+        let t = Affine2::from_translation(10.0, -5.0);
+        let inv = t.invert().expect("a pure translation is invertible");
+        let p = [3.0, 4.0];
+        assert_eq!(inv.transform_point(t.transform_point(p)), p);
+    }
+
+    #[test]
+    fn invert_undoes_a_rotation_scale_translation_composition() {
+        let transform =
+            Affine2::from_translation_rotation_scale([12.0, -7.0], PI / 5.0, [2.0, 0.5]);
+        let inv = transform
+            .invert()
+            .expect("a real non-degenerate transform is invertible");
+        for p in [[0.0, 0.0], [1.0, 0.0], [-3.0, 8.0], [100.0, -50.0]] {
+            let round_tripped = inv.transform_point(transform.transform_point(p));
+            assert!(
+                (round_tripped[0] - p[0]).abs() <= EPSILON
+                    && (round_tripped[1] - p[1]).abs() <= EPSILON,
+                "expected {p:?}, got {round_tripped:?} after transform then invert"
+            );
+        }
+    }
+
+    #[test]
+    fn invert_composed_with_the_original_is_the_identity() {
+        let transform = Affine2::from_translation_rotation_scale([5.0, 5.0], 1.0, [1.5, 3.0]);
+        let inv = transform
+            .invert()
+            .expect("a real non-degenerate transform is invertible");
+        assert_affine_approx_eq(inv.compose(&transform), Affine2::IDENTITY);
+        assert_affine_approx_eq(transform.compose(&inv), Affine2::IDENTITY);
+    }
+
+    #[test]
+    fn invert_reports_none_for_a_zero_scale_degenerate_transform() {
+        let degenerate = Affine2::from_scale(0.0, 1.0);
+        assert!(degenerate.invert().is_none());
     }
 }

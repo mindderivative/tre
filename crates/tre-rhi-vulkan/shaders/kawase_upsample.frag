@@ -7,7 +7,7 @@
 // weight 2, sum/12. Paired with the existing `bindless_textured.vert`
 // unchanged, matching `kawase_downsample.frag`'s own reasoning.
 layout(set = 0, binding = 0) uniform sampler bindless_sampler;
-layout(set = 0, binding = 1) uniform texture2D bindless_textures[];
+layout(set = 0, binding = 2) uniform texture2D bindless_textures[];
 
 layout(location = 0) in vec4 frag_color;
 layout(location = 1) in vec2 frag_uv;

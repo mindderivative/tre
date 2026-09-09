@@ -103,6 +103,14 @@ const FRAMES_IN_FLIGHT: usize = 3;
 /// offsets."
 const RING_BUFFER_ALIGNMENT: usize = 256;
 
+/// Phase 10 Step 10.2: total capacity (across all `FRAMES_IN_FLIGHT`
+/// segments) of `VulkanDevice::shape_style_buffer`, the bindless
+/// binding-2 storage buffer `GpuShapeStyle` records are bump-allocated
+/// into. 1 MiB / 3 segments / 192 bytes-per-record (`GpuShapeStyle`'s
+/// real size) is a little under 1,800 styled shapes per frame -- far more
+/// than one real UI frame draws today, with headroom to grow.
+const SHAPE_STYLE_BUFFER_CAPACITY: usize = 1 << 20;
+
 fn align_up(value: usize, alignment: usize) -> usize {
     (value + alignment - 1) & !(alignment - 1)
 }
@@ -227,8 +235,9 @@ pub struct VulkanDevice {
     /// that reference different textures, unlike traditional per-texture
     /// descriptor sets.
     bindless_descriptor_set: vk::DescriptorSet,
-    /// Which of `bindless_descriptor_set`'s array slots (binding 0) are
-    /// currently assigned to a live texture. `Mutex`-guarded for the same
+    /// Which of `bindless_descriptor_set`'s array slots (binding 2, since
+    /// Phase 10 Step 10.2 renumbered it from binding 1) are currently
+    /// assigned to a live texture. `Mutex`-guarded for the same
     /// forward-looking reason as `transient_pool`; `Arc`-wrapped (like
     /// `frame_sync`) so every `VulkanTexture` created via `create_texture`
     /// can hold a clone and release its own slot on `Drop` without needing
@@ -239,6 +248,23 @@ pub struct VulkanDevice {
     /// `VulkanCommandBuffer::bind_texture` to bounds-check against without
     /// locking `bindless_registry` (Phase 2 Code Review finding #69).
     bindless_capacity: u32,
+    /// Phase 10 Step 10.2: the bindless set's binding-2 `STORAGE_BUFFER`
+    /// -- a `VulkanRingBuffer` reused for a new purpose (per-shape
+    /// `GpuShapeStyle` records: non-uniform corner radii, border,
+    /// gradient stops, etc.) rather than vertex/index data, since
+    /// `UiVertex`'s hard 32-byte layout (`params: [f32; 3]`) has no room
+    /// for it -- see `documentation/ARCHITECTURE.md` Section 7's "Shape
+    /// Style Buffer" write-up. Bound to the bindless descriptor set
+    /// exactly once, in `new` (like `bindless_sampler`'s immutable
+    /// sampler), since the buffer OBJECT never changes across a
+    /// `VulkanDevice`'s lifetime -- only its contents, via the same
+    /// persistent-mapped `write` every ring buffer already supports.
+    /// `Option` only so `Drop for VulkanDevice` can `.take()` it and let
+    /// it destroy its own Vulkan resources (via its own cloned
+    /// `ash::Device`) BEFORE `destroy_device` runs, the same early-drop
+    /// pattern `gc_thread`/`blur_resources` already use here -- unlike
+    /// those, this is never `None` while the device is alive.
+    shape_style_buffer: Option<VulkanRingBuffer>,
     /// A command pool dedicated to `VulkanTexture::from_pixels`'s one-time
     /// upload command buffers -- deliberately SEPARATE from `command_pool`
     /// above (the per-frame render loop's pool). Vulkan requires external
@@ -610,6 +636,19 @@ impl VulkanDevice {
             total_frame_count: AtomicU64::new(0),
         });
 
+        // Phase 10 Step 10.2: the shape-style storage buffer, built here
+        // (rather than inside the `Self { .. }` literal below, like
+        // `transient_pool`/`deferred_release`) so its raw buffer handle is
+        // available for the binding-1 descriptor write further down, once
+        // `bindless_descriptor_set` exists.
+        let shape_style_buffer = VulkanRingBuffer::new(
+            &device,
+            physical_device,
+            &instance,
+            frame_sync.clone(),
+            SHAPE_STYLE_BUFFER_CAPACITY,
+        )?;
+
         // IMPLEMENTATION.md Step 2.1: one persistent bindless descriptor
         // set, created once here and bound once per pipeline
         // (`VulkanCommandBuffer::set_pipeline`) rather than rebuilt or
@@ -630,7 +669,7 @@ impl VulkanDevice {
         }
         .map_err(|_| EngineError::DeviceLost)?;
 
-        // Binding 1 (the HIGHEST-numbered binding -- required, per spec,
+        // Binding 2 (the HIGHEST-numbered binding -- required, per spec,
         // since `VARIABLE_DESCRIPTOR_COUNT` may only be set on the binding
         // with the highest binding number in the layout): the unbounded
         // `texture2D textures[]` array IMPLEMENTATION.md Step 2.1 describes
@@ -638,7 +677,14 @@ impl VulkanDevice {
         // wording (a separate, single shared sampler at binding 0 instead).
         // Binding 0's `immutable_samplers` bakes `bindless_sampler` into
         // the layout itself, so that binding is never written via
-        // `vkUpdateDescriptorSets`.
+        // `vkUpdateDescriptorSets`. Binding 1 (Phase 10 Step 10.2) is the
+        // new `shape_style_buffer` storage buffer -- deliberately placed
+        // BEFORE the texture array (not appended after it) specifically so
+        // the array keeps the highest binding number the spec requires for
+        // `VARIABLE_DESCRIPTOR_COUNT`; every shader referencing the
+        // texture array was renumbered from `binding = 1` to `binding = 2`
+        // to match (`bindless_textured.frag`, `msdf.frag`,
+        // `kawase_downsample.frag`, `kawase_upsample.frag`).
         let bindless_layout_bindings = [
             vk::DescriptorSetLayoutBinding::default()
                 .binding(0)
@@ -648,11 +694,16 @@ impl VulkanDevice {
                 .immutable_samplers(std::slice::from_ref(&bindless_sampler)),
             vk::DescriptorSetLayoutBinding::default()
                 .binding(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(2)
                 .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
                 .descriptor_count(bindless_capacity)
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT),
         ];
-        // Binding 1 (the texture array) needs all four flags:
+        // Binding 2 (the texture array) needs all four flags:
         // `UPDATE_AFTER_BIND` (textures are registered after the set is
         // bound elsewhere in a frame's lifetime), `PARTIALLY_BOUND` (most
         // of a 4,096-slot array is unused at any given moment),
@@ -661,8 +712,13 @@ impl VulkanDevice {
         // `BINDLESS_TEXTURE_CAPACITY_TARGET` unconditionally), and
         // `UPDATE_UNUSED_WHILE_PENDING` (registering a new texture must not
         // require waiting for in-flight draws that don't reference it).
-        // Binding 0's immutable sampler needs none of them.
+        // Binding 0's immutable sampler and binding 1's storage buffer
+        // (written exactly once, right after this set is allocated below,
+        // and never again -- its CONTENTS change every frame via the same
+        // persistent `mapped_ptr` write every ring buffer already uses,
+        // not via a second `vkUpdateDescriptorSets`) need none of them.
         let bindless_binding_flags = [
+            vk::DescriptorBindingFlags::empty(),
             vk::DescriptorBindingFlags::empty(),
             vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
                 | vk::DescriptorBindingFlags::PARTIALLY_BOUND
@@ -692,6 +748,9 @@ impl VulkanDevice {
                 .descriptor_count(bindless_capacity),
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::SAMPLER)
+                .descriptor_count(1),
+            vk::DescriptorPoolSize::default()
+                .ty(vk::DescriptorType::STORAGE_BUFFER)
                 .descriptor_count(1),
         ];
         // SAFETY: `device` is valid, and `bindless_pool_sizes` is a local
@@ -725,6 +784,34 @@ impl VulkanDevice {
             )
         }
         .map_err(|_| EngineError::DeviceLost)?[0];
+
+        // Phase 10 Step 10.2: binding 1's one-and-only descriptor write --
+        // `shape_style_buffer`'s underlying `VkBuffer` never changes for
+        // the life of this `VulkanDevice`, so the descriptor is pointed at
+        // it exactly once here; every later "update" is a plain memory
+        // write through `shape_style_buffer`'s own persistent `mapped_ptr`
+        // (`RhiDynamicRingBuffer::write`), not a second
+        // `vkUpdateDescriptorSets` call.
+        let shape_style_buffer_info = vk::DescriptorBufferInfo::default()
+            .buffer(shape_style_buffer.buffer)
+            .offset(0)
+            .range(vk::WHOLE_SIZE);
+        // SAFETY: `device` is valid; `bindless_descriptor_set` was just
+        // allocated above from this same device; `shape_style_buffer_info`
+        // references `shape_style_buffer.buffer`, created earlier in this
+        // same function and not yet moved anywhere -- both outlive this
+        // call.
+        unsafe {
+            device.update_descriptor_sets(
+                &[vk::WriteDescriptorSet::default()
+                    .dst_set(bindless_descriptor_set)
+                    .dst_binding(1)
+                    .dst_array_element(0)
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .buffer_info(std::slice::from_ref(&shape_style_buffer_info))],
+                &[],
+            );
+        }
 
         // IMPLEMENTATION.md Step 2.3: the transient pool and the
         // deferred-release queue are constructed as locals first (not
@@ -768,6 +855,7 @@ impl VulkanDevice {
                 bindless_descriptor_set,
                 bindless_registry: Arc::new(Mutex::new(BindlessRegistry::new(bindless_capacity))),
                 bindless_capacity,
+                shape_style_buffer: Some(shape_style_buffer),
                 #[cfg(debug_assertions)]
                 debug_utils,
             },
@@ -1461,6 +1549,18 @@ impl Drop for VulkanDevice {
         if let Ok(mut queue) = self.deferred_release.lock() {
             queue.clear();
         }
+        // Phase 10 Step 10.2: `shape_style_buffer` is a real
+        // `VulkanRingBuffer`, not a container of Vulkan-owning items like
+        // `transient_pool`/`deferred_release` above -- its own `Drop`
+        // impl makes real `unmap_memory`/`destroy_buffer`/`free_memory`
+        // calls (through its own cloned `ash::Device`, functionally as
+        // valid as `self.device` until `destroy_device` below actually
+        // runs). Rust only drops a struct's other fields AFTER this
+        // function's body returns, which would run that Drop AFTER
+        // `destroy_device` -- a real use-after-free -- unless taken and
+        // dropped explicitly here first, same reasoning as `gc_thread`'s
+        // early `.take()`-and-`.join()` above.
+        drop(self.shape_style_buffer.take());
         // SAFETY: `self` is being dropped, so no other code holds
         // references to these handles afterward; destroying the fences and
         // command pools (children of the device) before the device, and
@@ -1554,13 +1654,15 @@ impl VulkanDevice {
             .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         let write = vk::WriteDescriptorSet::default()
             .dst_set(self.bindless_descriptor_set)
-            .dst_binding(1)
+            .dst_binding(2)
             .dst_array_element(bindless_index)
             .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
             .image_info(std::slice::from_ref(&image_info));
         // SAFETY: `self.device` is valid; `self.bindless_descriptor_set`
         // was allocated in `VulkanDevice::new` from a layout whose binding
-        // 0 has `UPDATE_AFTER_BIND`, so writing to it here (potentially
+        // 2 (the texture array -- renumbered from binding 1 at Phase 10
+        // Step 10.2, when the new shape-style storage buffer took binding
+        // 1) has `UPDATE_AFTER_BIND`, so writing to it here (potentially
         // while other draws using this same set are in flight, though
         // this step's scope keeps submission fully synchronous anyway) is
         // explicitly permitted; `bindless_index` was just allocated above
@@ -1576,8 +1678,33 @@ impl VulkanDevice {
 impl RhiDevice for VulkanDevice {
     fn create_dynamic_ring_buffer(&self, capacity: usize) -> Box<dyn RhiDynamicRingBuffer> {
         Box::new(
-            VulkanRingBuffer::new(self, capacity).expect("failed to create dynamic ring buffer"),
+            VulkanRingBuffer::new(
+                &self.device,
+                self.physical_device,
+                &self.instance,
+                self.frame_sync.clone(),
+                capacity,
+            )
+            .expect("failed to create dynamic ring buffer"),
         )
+    }
+
+    /// Phase 10 Step 10.2: the bindless binding-2 storage buffer
+    /// `GpuShapeStyle` records are bump-allocated into (see
+    /// `shape_style_buffer`'s own field doc comment). Reuses the exact
+    /// same `RhiDynamicRingBuffer::write` bump-allocate contract the
+    /// vertex/index ring buffer already implements -- a style record is
+    /// written once per styled shape per frame, never re-read after
+    /// upload, the same lifecycle.
+    ///
+    /// # Panics
+    /// Never in practice -- `shape_style_buffer` is `Some` from the moment
+    /// `VulkanDevice::new` returns until `Drop` takes it, and nothing
+    /// outside `Drop` ever calls `.take()`.
+    fn shape_style_buffer(&self) -> &dyn RhiDynamicRingBuffer {
+        self.shape_style_buffer
+            .as_ref()
+            .expect("shape_style_buffer is Some for the entire lifetime of a live VulkanDevice")
     }
 
     fn acquire_transient_target(
@@ -4492,21 +4619,41 @@ unsafe impl Send for VulkanRingBuffer {}
 unsafe impl Sync for VulkanRingBuffer {}
 
 impl VulkanRingBuffer {
-    fn new(device: &VulkanDevice, capacity: usize) -> Result<Self, EngineError> {
+    /// Takes the raw pieces (rather than `&VulkanDevice`) so this can be
+    /// called from inside `VulkanDevice::new` itself -- Phase 10 Step
+    /// 10.2's `shape_style_buffer` field needs to exist before `Self` does
+    /// (it must be fully built to go in the constructor's own `Self { .. }`
+    /// literal), which a `&VulkanDevice`-taking constructor could never
+    /// support. `RhiDevice::create_dynamic_ring_buffer` (the original,
+    /// still the only *external* caller) just forwards its own device's
+    /// fields through.
+    fn new(
+        device: &ash::Device,
+        physical_device: vk::PhysicalDevice,
+        instance: &ash::Instance,
+        frame_sync: Arc<FrameSync>,
+        capacity: usize,
+    ) -> Result<Self, EngineError> {
         let segment_size = align_up(capacity.div_ceil(FRAMES_IN_FLIGHT), RING_BUFFER_ALIGNMENT);
         let total_size = segment_size * FRAMES_IN_FLIGHT;
 
-        // SAFETY: `device.device` is valid, and `total_size` is used
-        // directly as `size` so the create info describes exactly this
-        // buffer's full triple-segment span.
+        // SAFETY: `device` is valid, and `total_size` is used directly as
+        // `size` so the create info describes exactly this buffer's full
+        // triple-segment span. `STORAGE_BUFFER` (Phase 10 Step 10.2, on
+        // top of the pre-existing three usages) lets any ring buffer this
+        // constructor builds double as an SSBO -- harmless for the
+        // vertex/index ring buffers that never use it, and exactly what
+        // `VulkanDevice::shape_style_buffer` needs to be bindable at the
+        // bindless set's binding 2.
         let buffer = unsafe {
-            device.device.create_buffer(
+            device.create_buffer(
                 &vk::BufferCreateInfo::default()
                     .size(total_size as u64)
                     .usage(
                         vk::BufferUsageFlags::VERTEX_BUFFER
                             | vk::BufferUsageFlags::INDEX_BUFFER
-                            | vk::BufferUsageFlags::UNIFORM_BUFFER,
+                            | vk::BufferUsageFlags::UNIFORM_BUFFER
+                            | vk::BufferUsageFlags::STORAGE_BUFFER,
                     )
                     .sharing_mode(vk::SharingMode::EXCLUSIVE),
                 None,
@@ -4515,14 +4662,11 @@ impl VulkanRingBuffer {
         .map_err(|_| EngineError::DeviceLost)?;
 
         // SAFETY: `buffer` was just created above on this device.
-        let requirements = unsafe { device.device.get_buffer_memory_requirements(buffer) };
-        // SAFETY: `device.physical_device` is valid for as long as
-        // `device.instance` (also alive here) is.
-        let memory_properties = unsafe {
-            device
-                .instance
-                .get_physical_device_memory_properties(device.physical_device)
-        };
+        let requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
+        // SAFETY: `physical_device` is valid for as long as `instance`
+        // (also alive here) is.
+        let memory_properties =
+            unsafe { instance.get_physical_device_memory_properties(physical_device) };
         let wanted = vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT;
         let memory_type_index = (0..memory_properties.memory_type_count)
             .find(|&i| {
@@ -4533,12 +4677,12 @@ impl VulkanRingBuffer {
             })
             .ok_or(EngineError::DeviceLost)?;
 
-        // SAFETY: `device.device` is valid, `requirements.size` comes
-        // directly from `get_buffer_memory_requirements` above, and
+        // SAFETY: `device` is valid, `requirements.size` comes directly
+        // from `get_buffer_memory_requirements` above, and
         // `memory_type_index` was selected from the `find` above so it is
         // one of the bits set in `requirements.memory_type_bits`.
         let memory = unsafe {
-            device.device.allocate_memory(
+            device.allocate_memory(
                 &vk::MemoryAllocateInfo::default()
                     .allocation_size(requirements.size)
                     .memory_type_index(memory_type_index),
@@ -4557,11 +4701,9 @@ impl VulkanRingBuffer {
         // unmapped exactly once, in `Drop`.
         let mapped_ptr = unsafe {
             device
-                .device
                 .bind_buffer_memory(buffer, memory, 0)
                 .map_err(|_| EngineError::DeviceLost)?;
             device
-                .device
                 .map_memory(memory, 0, total_size as u64, vk::MemoryMapFlags::empty())
                 .map_err(|_| EngineError::DeviceLost)? as *mut u8
         };
@@ -4571,12 +4713,12 @@ impl VulkanRingBuffer {
             memory,
             mapped_ptr,
             segment_size,
-            frame_sync: device.frame_sync.clone(),
+            frame_sync,
             state: Mutex::new(RingBufferState {
                 last_seen_frame_index: usize::MAX,
                 cursor: 0,
             }),
-            device: device.device.clone(),
+            device: device.clone(),
         })
     }
 }

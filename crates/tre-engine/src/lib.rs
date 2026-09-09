@@ -7,11 +7,17 @@
 //! `tre-memory`; this crate depends on both but contains no `unsafe` itself.
 #![forbid(unsafe_code)]
 
+mod gpu_style;
+pub use gpu_style::{
+    style_index_param, GpuEllipseStyle, GpuRectStyle, ELLIPSE_STYLE_WORDS, RECT_STYLE_WORDS,
+};
+
 mod shapes;
 pub use shapes::{
-    AnimationId, BlendMode, Circle, Color as ShapeColor, CornerRadii, FillStyle, GradientId,
-    LineCap, LineJoin, Path, PathCommand, Polygon, Primitive, PrimitiveCommon, Rectangle, ShapeId,
-    ShapePrimitive, ShapeRegistry, ShapeSlot, Transform2D, Vec2 as ShapeVec2, Visibility,
+    flatten_path, AnimationId, BlendMode, Circle, Color as ShapeColor, CornerRadii, FillStyle,
+    GradientId, LineCap, LineJoin, Path, PathCommand, Polygon, Primitive, PrimitiveCommon,
+    Rectangle, ShapeId, ShapePrimitive, ShapeRegistry, ShapeSlot, Transform2D, Vec2 as ShapeVec2,
+    Visibility,
 };
 
 /// Recoverable engine failure (DESIGN.md Section 2.6). Every fallible
@@ -157,6 +163,26 @@ pub enum PipelineKind {
     SdfRoundedRect = 0,
     MsdfText = 1,
     TexturedQuad = 2,
+    /// Phase 10 Step 10.2: non-uniform corner radii / border / corner
+    /// smoothing, sourced from a `GpuRectStyle` record
+    /// (`RenderingCanvas::draw_styled_rectangle`). Deliberately a
+    /// separate pipeline/shader from `SdfRoundedRect`, not a second code
+    /// path inside it -- `draw_rounded_rect`'s existing callers and tests
+    /// stay byte-for-byte unaffected.
+    SdfRectStyled = 3,
+    /// Phase 10 Step 10.2: Circle/Ellipse, sourced from a
+    /// `GpuEllipseStyle` record (`RenderingCanvas::draw_ellipse`).
+    SdfEllipse = 4,
+    /// Phase 10 Step 10.2: plain flat-vertex-color triangle fill
+    /// (`RenderingCanvas::draw_flat_polygon`) -- `Polygon`/`Path` fill,
+    /// via `walking_skeleton.vert`/`.frag` (Phase 0's own placeholder
+    /// shader, unmodified). This is that shader's first real `Canvas`
+    /// caller; `planning/archive/PLAN_PHASE6_STEP6_1.md`'s "Scope
+    /// decisions" note it as deliberately unrepresented until one existed
+    /// (see also REVIEW.md's Phase 10 Step 10.2 finding on
+    /// `walking_skeleton.frag`'s own non-premultiplied output, disclosed
+    /// but not fixed here).
+    FlatColor = 5,
 }
 
 /// Packs a [`TextureFormat`] into the `u16` [`UiDrawCommand::PushLayer`]
@@ -1267,6 +1293,282 @@ impl RenderingCanvas {
             pipeline_state_id: 0,
             texture_handle: NO_TEXTURE,
             element_count: 6,
+            vertex_offset: base_index,
+            clip_bounds,
+        });
+    }
+
+    /// Phase 10 Step 10.2: the non-uniform-corner-radii / bordered /
+    /// corner-smoothed rectangle path -- `ShapeRegistry::flatten_into`'s
+    /// real caller for any `Rectangle` beyond `draw_rounded_rect`'s
+    /// narrower uniform-radius/borderless case. A SEPARATE method (and
+    /// pipeline, `PipelineKind::SdfRectStyled`) from `draw_rounded_rect`,
+    /// not a second code path inside it, specifically so `draw_rounded_
+    /// rect`'s existing callers/tests stay byte-for-byte unaffected.
+    ///
+    /// Requires a live `device` handle -- unlike every other `Canvas`
+    /// method, this one writes a `GpuRectStyle` record into `device`'s
+    /// per-frame-segmented `shape_style_buffer` immediately (not deferred
+    /// to upload time), since that buffer's "current segment" is decided
+    /// by the device's own live frame state at write time; see
+    /// `crates/tre-engine/src/gpu_style.rs`'s module doc comment for why
+    /// `UiVertex` itself has no room for this data.
+    ///
+    /// `corner_radii` is `[top_left, top_right, bottom_right,
+    /// bottom_left]`, each independently clamped to half the smaller
+    /// extent (`draw_rounded_rect`'s own clamp, applied per-corner here).
+    /// `border_thickness <= 0.0` disables the border entirely (pure fill,
+    /// matching `draw_rounded_rect`'s visual result when `border_rgba` is
+    /// irrelevant). `corner_smoothing` is clamped to `[0, 1]` --
+    /// `sdf_rect_styled.frag`'s own doc comment on what `0`/`1` mean.
+    ///
+    /// # Panics
+    /// Panics if the shape style buffer has no room left this frame
+    /// (DESIGN.md Section 2.6: ring-buffer starvation is reported, not
+    /// silently dropped -- the same policy `RhiDynamicRingBuffer::write`'s
+    /// own doc comment already applies to the vertex/index ring buffer).
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a single frame's vertex/index count stays far below u32::MAX, matching \
+                   draw_rounded_rect's own identical reasoning"
+    )]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors Rectangle's own real field set 1:1"
+    )]
+    pub fn draw_styled_rectangle(
+        &mut self,
+        device: &dyn RhiDevice,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        corner_radii: [f32; 4],
+        fill_rgba: u32,
+        border_rgba: u32,
+        border_thickness: f32,
+        corner_smoothing: f32,
+    ) {
+        let base_vertex = self.vertices.len() as u32;
+        let base_index = self.indices.len() as u32;
+
+        let half_width = w / 2.0;
+        let half_height = h / 2.0;
+        let max_radius = half_width.min(half_height);
+        let clamped_radii = corner_radii.map(|r| r.clamp(0.0, max_radius));
+
+        let state = *self
+            .state_stack
+            .last()
+            .expect("state_stack must always have at least one entry");
+        let fill_color = premultiply_alpha(fill_rgba, state.alpha);
+        let border_color = premultiply_alpha(border_rgba, state.alpha);
+
+        let style = GpuRectStyle {
+            corner_radii: clamped_radii,
+            border_color,
+            border_thickness: border_thickness.max(0.0),
+            corner_smoothing: corner_smoothing.clamp(0.0, 1.0),
+        };
+        let byte_offset = device
+            .shape_style_buffer()
+            .write(bytemuck::bytes_of(&style))
+            .expect("shape style buffer starved for this frame");
+        let params = [style_index_param(byte_offset), half_width, half_height];
+
+        let positions = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+        let uvs = [
+            [-half_width, -half_height],
+            [half_width, -half_height],
+            [half_width, half_height],
+            [-half_width, half_height],
+        ];
+        self.vertices.extend(
+            positions
+                .into_iter()
+                .zip(uvs)
+                .map(|(position, uv)| UiVertex {
+                    position: state.transform.transform_point(position),
+                    uv,
+                    color: fill_color,
+                    params,
+                }),
+        );
+        self.indices.extend_from_slice(&[
+            base_vertex,
+            base_vertex + 1,
+            base_vertex + 2,
+            base_vertex,
+            base_vertex + 2,
+            base_vertex + 3,
+        ]);
+
+        let clip_bounds = self.clip_stack.last().copied().unwrap_or(FULL_WINDOW_CLIP);
+        let pipeline_id = PipelineKind::SdfRectStyled as u16;
+        let sort_key = self.next_sort_key(pipeline_id, 0);
+        self.commands.push(UiDrawCommand {
+            kind: CommandType::DrawGeometry,
+            sort_key,
+            pipeline_state_id: pipeline_id,
+            texture_handle: NO_TEXTURE,
+            element_count: 6,
+            vertex_offset: base_index,
+            clip_bounds,
+        });
+    }
+
+    /// Phase 10 Step 10.2: Circle/Ellipse rendering --
+    /// `ShapeRegistry::flatten_into`'s real caller for `ShapePrimitive::
+    /// Circle`. `radius` is `[radius_x, radius_y]` (a uniform circle when
+    /// equal); `arc_sweep_angle >= TAU` (`std::f32::consts::TAU`) draws a
+    /// complete, unswept ellipse. See `draw_styled_rectangle`'s own doc
+    /// comment for why this needs a live `device` handle.
+    ///
+    /// # Panics
+    /// Panics if the shape style buffer has no room left this frame --
+    /// same policy as `draw_styled_rectangle`'s identical case.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "mirrors draw_rounded_rect's own identical reasoning"
+    )]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors Circle's own real field set 1:1"
+    )]
+    pub fn draw_ellipse(
+        &mut self,
+        device: &dyn RhiDevice,
+        center_x: f32,
+        center_y: f32,
+        radius: [f32; 2],
+        fill_rgba: u32,
+        border_rgba: u32,
+        border_thickness: f32,
+        arc_start_angle: f32,
+        arc_sweep_angle: f32,
+    ) {
+        let base_vertex = self.vertices.len() as u32;
+        let base_index = self.indices.len() as u32;
+
+        let state = *self
+            .state_stack
+            .last()
+            .expect("state_stack must always have at least one entry");
+        let fill_color = premultiply_alpha(fill_rgba, state.alpha);
+        let border_color = premultiply_alpha(border_rgba, state.alpha);
+
+        let style = GpuEllipseStyle {
+            border_color,
+            border_thickness: border_thickness.max(0.0),
+            arc_start_angle,
+            arc_sweep_angle: arc_sweep_angle.max(0.0),
+        };
+        let byte_offset = device
+            .shape_style_buffer()
+            .write(bytemuck::bytes_of(&style))
+            .expect("shape style buffer starved for this frame");
+        let params = [style_index_param(byte_offset), radius[0], radius[1]];
+
+        let [rx, ry] = radius;
+        let positions = [
+            [center_x - rx, center_y - ry],
+            [center_x + rx, center_y - ry],
+            [center_x + rx, center_y + ry],
+            [center_x - rx, center_y + ry],
+        ];
+        let uvs = [[-rx, -ry], [rx, -ry], [rx, ry], [-rx, ry]];
+        self.vertices.extend(
+            positions
+                .into_iter()
+                .zip(uvs)
+                .map(|(position, uv)| UiVertex {
+                    position: state.transform.transform_point(position),
+                    uv,
+                    color: fill_color,
+                    params,
+                }),
+        );
+        self.indices.extend_from_slice(&[
+            base_vertex,
+            base_vertex + 1,
+            base_vertex + 2,
+            base_vertex,
+            base_vertex + 2,
+            base_vertex + 3,
+        ]);
+
+        let clip_bounds = self.clip_stack.last().copied().unwrap_or(FULL_WINDOW_CLIP);
+        let pipeline_id = PipelineKind::SdfEllipse as u16;
+        let sort_key = self.next_sort_key(pipeline_id, 0);
+        self.commands.push(UiDrawCommand {
+            kind: CommandType::DrawGeometry,
+            sort_key,
+            pipeline_state_id: pipeline_id,
+            texture_handle: NO_TEXTURE,
+            element_count: 6,
+            vertex_offset: base_index,
+            clip_bounds,
+        });
+    }
+
+    /// Phase 10 Step 10.2: a plain, flat-vertex-color triangle mesh --
+    /// `ShapeRegistry::flatten_into`'s real caller for `Polygon`/`Path`
+    /// fill (both ultimately reduce to "world-space points plus a
+    /// triangle-index list plus one solid color" once generated/
+    /// tessellated). `positions` are already in the shape's own LOCAL
+    /// space -- each gets the active transform applied here, exactly
+    /// like every other `draw_*` method's own corners. `uv`/`params` are
+    /// zeroed (`tre_svg::to_ui_vertices`' own established convention for
+    /// a plain triangle soup with no SDF to evaluate).
+    ///
+    /// Emits no command at all if `triangles` is empty (a degenerate
+    /// input, e.g. fewer than 3 points) -- no vertices are pushed either,
+    /// so this is a true no-op rather than inert unreferenced data.
+    ///
+    /// # Panics
+    /// Never in practice -- see `save()`'s own `# Panics` section for why
+    /// `state_stack` is never empty.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a single frame's vertex/index count stays far below u32::MAX, matching \
+                   draw_rounded_rect's own identical reasoning"
+    )]
+    pub fn draw_flat_polygon(&mut self, positions: &[[f32; 2]], triangles: &[[u32; 3]], rgba: u32) {
+        if triangles.is_empty() {
+            return;
+        }
+
+        let base_vertex = self.vertices.len() as u32;
+        let base_index = self.indices.len() as u32;
+
+        let state = *self
+            .state_stack
+            .last()
+            .expect("state_stack must always have at least one entry");
+        let color = premultiply_alpha(rgba, state.alpha);
+
+        self.vertices
+            .extend(positions.iter().map(|&position| UiVertex {
+                position: state.transform.transform_point(position),
+                uv: [0.0, 0.0],
+                color,
+                params: [0.0; 3],
+            }));
+        self.indices.extend(
+            triangles
+                .iter()
+                .flat_map(|&[a, b, c]| [base_vertex + a, base_vertex + b, base_vertex + c]),
+        );
+
+        let clip_bounds = self.clip_stack.last().copied().unwrap_or(FULL_WINDOW_CLIP);
+        let pipeline_id = PipelineKind::FlatColor as u16;
+        let sort_key = self.next_sort_key(pipeline_id, 0);
+        self.commands.push(UiDrawCommand {
+            kind: CommandType::DrawGeometry,
+            sort_key,
+            pipeline_state_id: pipeline_id,
+            texture_handle: NO_TEXTURE,
+            element_count: (triangles.len() * 3) as u32,
             vertex_offset: base_index,
             clip_bounds,
         });
@@ -2596,6 +2898,18 @@ pub trait RhiDevice {
     /// Section 3.1's $16\text{-}32\text{MB}$), divided evenly across the
     /// 3 frame-in-flight segments -- not the per-segment size.
     fn create_dynamic_ring_buffer(&self, capacity: usize) -> Box<dyn RhiDynamicRingBuffer>;
+    /// Phase 10 Step 10.2: the backend's one persistent shape-style
+    /// storage buffer -- bound once, at device construction, to the
+    /// bindless descriptor set's binding 1 (see
+    /// `documentation/ARCHITECTURE.md` Section 7's "Shape Style Buffer").
+    /// `shapes::GpuShapeStyle` records are bump-allocated into it via the
+    /// same `RhiDynamicRingBuffer::write` contract `create_dynamic_ring_
+    /// buffer`'s own vertex/index buffers already use -- a distinct
+    /// method (not a second `create_dynamic_ring_buffer` call) because
+    /// this buffer's identity is fixed at device construction and bound
+    /// into the bindless set then; a caller-created ring buffer has no
+    /// way to reach that binding.
+    fn shape_style_buffer(&self) -> &dyn RhiDynamicRingBuffer;
     /// # Errors
     /// Returns [`EngineError::TransientPoolBudgetExceeded`] if a genuinely
     /// novel size would need cold-allocating while the pool's idle free
@@ -3288,6 +3602,177 @@ mod tests {
                 "a negative radius must be clamped to zero"
             );
         }
+    }
+
+    #[test]
+    fn draw_styled_rectangle_emits_one_command_using_the_styled_pipeline() {
+        let device = FakeDevice::default();
+        let mut canvas = RenderingCanvas::new();
+        canvas.draw_styled_rectangle(
+            &device,
+            0.0,
+            0.0,
+            100.0,
+            40.0,
+            [4.0, 8.0, 12.0, 16.0],
+            0xFF00_FFFF,
+            0xFF00_00FF,
+            2.0,
+            0.5,
+        );
+        let frame = canvas.flatten();
+
+        assert_eq!(frame.commands.len(), 1);
+        assert_eq!(frame.vertices.len(), 4);
+        assert_eq!(frame.indices.len(), 6);
+        assert_eq!(
+            frame.commands[0].pipeline_state_id,
+            PipelineKind::SdfRectStyled as u16
+        );
+        assert_eq!(frame.commands[0].texture_handle, NO_TEXTURE);
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact arithmetic on literal f32s, same reasoning as draw_rounded_rect's own \
+                   exact-arithmetic tests"
+    )]
+    fn draw_styled_rectangle_writes_a_real_style_record_and_embeds_its_word_index() {
+        let device = FakeDevice::default();
+        let mut canvas = RenderingCanvas::new();
+        canvas.draw_styled_rectangle(
+            &device,
+            10.0,
+            20.0,
+            100.0,
+            40.0,
+            [4.0, 8.0, 12.0, 16.0],
+            0xFF00_FFFF,
+            0xAABB_CCDD,
+            3.0,
+            0.25,
+        );
+        let frame = canvas.flatten();
+
+        // Every vertex carries the SAME style word index (uniform per
+        // quad, matching draw_rounded_rect's own "no per-quad channel"
+        // convention) -- word index 0, since this is the first (only)
+        // write into a fresh FakeStyleBuffer.
+        for vertex in &frame.vertices {
+            assert_eq!(floatBitsToUint_test_helper(vertex.params[0]), 0);
+            assert_eq!(vertex.params[1], 50.0, "half_width");
+            assert_eq!(vertex.params[2], 20.0, "half_height");
+        }
+
+        let bytes = device.style_buffer.bytes.borrow();
+        assert_eq!(bytes.len(), 28, "one GpuRectStyle record (7 words)");
+        let style: &GpuRectStyle = bytemuck::from_bytes(&bytes);
+        assert_eq!(style.corner_radii, [4.0, 8.0, 12.0, 16.0]);
+        assert_eq!(style.border_color, 0xAABB_CCDD);
+        assert_eq!(style.border_thickness, 3.0);
+        assert_eq!(style.corner_smoothing, 0.25);
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact arithmetic on literal f32s, same reasoning as draw_rounded_rect's own \
+                   exact-arithmetic tests"
+    )]
+    fn draw_styled_rectangle_clamps_each_corner_radius_independently() {
+        let device = FakeDevice::default();
+        let mut canvas = RenderingCanvas::new();
+        // half_width=50, half_height=20 -> max radius 20.0.
+        canvas.draw_styled_rectangle(
+            &device,
+            0.0,
+            0.0,
+            100.0,
+            40.0,
+            [1000.0, -5.0, 10.0, 1000.0],
+            0xFF00_FFFF,
+            0,
+            0.0,
+            0.0,
+        );
+        let bytes = device.style_buffer.bytes.borrow();
+        let style: &GpuRectStyle = bytemuck::from_bytes(&bytes);
+        assert_eq!(style.corner_radii, [20.0, 0.0, 10.0, 20.0]);
+    }
+
+    #[test]
+    fn draw_ellipse_emits_one_command_using_the_ellipse_pipeline() {
+        let device = FakeDevice::default();
+        let mut canvas = RenderingCanvas::new();
+        canvas.draw_ellipse(
+            &device,
+            50.0,
+            50.0,
+            [30.0, 20.0],
+            0xFF00_FFFF,
+            0,
+            0.0,
+            0.0,
+            std::f32::consts::TAU,
+        );
+        let frame = canvas.flatten();
+
+        assert_eq!(frame.commands.len(), 1);
+        assert_eq!(frame.vertices.len(), 4);
+        assert_eq!(
+            frame.commands[0].pipeline_state_id,
+            PipelineKind::SdfEllipse as u16
+        );
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact arithmetic on literal f32s, same reasoning as draw_rounded_rect's own \
+                   exact-arithmetic tests"
+    )]
+    fn draw_ellipse_writes_a_real_style_record_with_arc_angles() {
+        let device = FakeDevice::default();
+        let mut canvas = RenderingCanvas::new();
+        canvas.draw_ellipse(
+            &device,
+            0.0,
+            0.0,
+            [30.0, 30.0],
+            0xFF00_FFFF,
+            0x1122_3344,
+            2.5,
+            0.1,
+            1.5,
+        );
+        let frame = canvas.flatten();
+
+        for vertex in &frame.vertices {
+            assert_eq!(vertex.params[1], 30.0);
+            assert_eq!(vertex.params[2], 30.0);
+        }
+
+        let bytes = device.style_buffer.bytes.borrow();
+        assert_eq!(bytes.len(), 16, "one GpuEllipseStyle record (4 words)");
+        let style: &GpuEllipseStyle = bytemuck::from_bytes(&bytes);
+        assert_eq!(style.border_color, 0x1122_3344);
+        assert_eq!(style.border_thickness, 2.5);
+        assert_eq!(style.arc_start_angle, 0.1);
+        assert_eq!(style.arc_sweep_angle, 1.5);
+    }
+
+    /// A tiny standalone `floatBitsToUint` mirror for asserting a
+    /// `UiVertex.params[0]` style-index encoding in tests without
+    /// depending on `gpu_style::style_index_param`'s own inverse (which
+    /// would make the test tautological against the function it's meant
+    /// to check).
+    #[allow(
+        non_snake_case,
+        reason = "mirrors the GLSL intrinsic it stands in for by name"
+    )]
+    fn floatBitsToUint_test_helper(value: f32) -> u32 {
+        value.to_bits()
     }
 
     #[test]
@@ -5096,6 +5581,33 @@ mod tests {
     /// are simpler and just as conclusive, since `execute_frame` is
     /// single-threaded and each fake's own call order is what actually
     /// needs proving).
+    /// Phase 10 Step 10.2: a minimal `RhiDynamicRingBuffer` double for
+    /// `draw_styled_rectangle`/`draw_ellipse` tests -- a plain,
+    /// alignment-agnostic bump allocator. Real segment-rotation/alignment
+    /// behavior is `VulkanRingBuffer`'s own concern (`tre-rhi-vulkan`),
+    /// not exercised here; these tests only need something real to write
+    /// into so the returned byte offset (and its `style_index_param`
+    /// numeric encoding) can be asserted against.
+    #[derive(Default)]
+    struct FakeStyleBuffer {
+        bytes: RefCell<Vec<u8>>,
+    }
+
+    impl RhiBuffer for FakeStyleBuffer {
+        fn raw_handle(&self) -> u64 {
+            0
+        }
+    }
+
+    impl RhiDynamicRingBuffer for FakeStyleBuffer {
+        fn write(&self, bytes: &[u8]) -> Option<u32> {
+            let mut buf = self.bytes.borrow_mut();
+            let offset = u32::try_from(buf.len()).ok()?;
+            buf.extend_from_slice(bytes);
+            Some(offset)
+        }
+    }
+
     #[derive(Default)]
     struct FakeDevice {
         calls: RefCell<Vec<RecordedCall>>,
@@ -5108,11 +5620,18 @@ mod tests {
         /// have no way to reproduce (it always echoes the requested size
         /// back by default, unlike the real transient pool).
         oversized_borrow: Cell<Option<(u32, u32)>>,
+        /// Phase 10 Step 10.2: backs `shape_style_buffer()` for
+        /// `draw_styled_rectangle`/`draw_ellipse` tests.
+        style_buffer: FakeStyleBuffer,
     }
 
     impl RhiDevice for FakeDevice {
         fn create_dynamic_ring_buffer(&self, _capacity: usize) -> Box<dyn RhiDynamicRingBuffer> {
             unimplemented!("not exercised by any execute_frame test")
+        }
+
+        fn shape_style_buffer(&self) -> &dyn RhiDynamicRingBuffer {
+            &self.style_buffer
         }
 
         fn acquire_transient_target(
