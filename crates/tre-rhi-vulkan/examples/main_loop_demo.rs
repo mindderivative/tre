@@ -21,9 +21,14 @@
 //!    fences` calls) -- not a separate call this loop makes.
 //! 3. **Multi-Thread Canvas**: real OS worker threads (`std::thread::
 //!    scope`, matching Step 5.2.3's own recipe) each record their own
-//!    `SubCanvas`, repeated fresh every frame -- a persistent, reused
-//!    thread pool is real future work (`planning/archive/PLAN_PHASE8_
-//!    STEP8_1_2.md`'s own scope decision), not built here.
+//!    `SubCanvas`, freshly spawned every frame -- a persistent, reused
+//!    thread *pool* is real future work (`planning/archive/PLAN_PHASE8_
+//!    STEP8_1_2.md`'s own scope decision, unchanged by Step 9.2), not
+//!    built here. What Step 9.2 *did* change: each worker's own
+//!    `SubCanvas` (its recorded vertex/index/command data) is built
+//!    once, before this loop starts, and `reset()` every frame instead
+//!    of being reconstructed -- see that step's own header comment
+//!    below for why.
 //! 4. **Sub-Canvas Stitch**: every worker (and the root canvas) calls
 //!    `stitch_into` on one shared `FrameArena`.
 //! 5. **Tessellation/Atlas Check**: the text-drawing worker's `draw_
@@ -33,11 +38,11 @@
 //!    starts -- live, mid-run atlas growth is real, separate future
 //!    work (the atlas owner's background thread has no API to read its
 //!    own pixels back without stopping it, only `AtlasOwner::join`).
-//! 6. **Radix Sort & Batch**: `FrameArena::flatten()`.
+//! 6. **Radix Sort & Batch**: `FrameArena::flatten_into()`.
 //! 7. **Ring Buffer Packing**: the flattened vertex/index bytes are
 //!    written into a real `RhiDynamicRingBuffer` via `write()`, and the
 //!    offsets it returns are passed straight into `execute_frame` --
-//!    which, until this step, hardcoded a `0` byte offset and could
+//!    which, until Step 8.1.2, hardcoded a `0` byte offset and could
 //!    never have accepted them.
 //! 8. **RHI Submit & Present**: `execute_frame` + `submit_and_present`.
 //!
@@ -52,16 +57,80 @@
 //! a stronger check than a pixel read would give, since it verifies the
 //! formula was applied correctly frame-by-frame, not just "something
 //! moved."
-
+//!
+//! # Phase 9 Step 9.2: real zero-allocation enforcement (REVIEW.md
+//! finding #134, TECHNICAL.md Section 3.4)
+//!
+//! This demo used to allocate ~20+ times per frame (finding #134):
+//! a fresh `Arc<FrameArena>`, a fresh root `RenderingCanvas`, and a
+//! fresh `SubCanvas` per worker, every single iteration -- squarely
+//! inside DESIGN.md Section 2.1's own named zero-allocation boundary.
+//! Fixed here by building every one of those once, before the loop
+//! starts, and `reset()`/`flatten_into()`-ing them every frame instead:
+//! `root`/`workers` (persistent `RenderingCanvas`/`SubCanvas` values,
+//! reused via `reset()`), `arena` (a plain owned `FrameArena`, no longer
+//! wrapped in `Arc` -- `std::thread::scope` lets the spawned closures
+//! below borrow it directly, so the old `Arc::new`/`Arc::try_unwrap`
+//! dance, itself a real per-frame allocation, is gone entirely), and
+//! `flattened` (a reused `FlattenedFrame`, filled via the new,
+//! non-consuming `FrameArena::flatten_into`).
+//!
+//! The real `#[global_allocator]` guard below (`tre_memory::
+//! DebugAllocGuard`) enforces this as a hard, self-checking assertion,
+//! not just an unverified claim: `tre_memory::RenderTickGuard` wraps
+//! the CPU-side span this step actually made allocation-free -- canvas
+//! recording, sort/batch (`flatten_into`), and the ring-buffer `write`
+//! calls -- on the main thread and, separately (the flag is
+//! thread-local), inside each worker thread's own closure. Any real
+//! allocation inside a wrapped span panics immediately with a clear
+//! message, not just eventually shows up as a perf regression.
+//!
+//! **Two exclusions, both disclosed, not silently hidden:**
+//!
+//! 1. **RHI submission** (`begin_frame`/`execute_frame`/`submit_and_
+//!    present`) is deliberately *outside* the guard's scope.
+//!    Investigating this step's own real behavior found `VulkanDevice::
+//!    begin_frame` allocates a fresh `Box<dyn RhiCommandBuffer>` every
+//!    frame, even though the underlying Vulkan `vk::CommandBuffer`
+//!    handle it wraps is already reused -- a real, previously-
+//!    undiscovered gap (REVIEW.md's new finding for this step). A real
+//!    fix means redesigning `RhiDevice::begin_frame`/`submit_and_
+//!    present`'s `Box`-by-value ownership model, rippling through all
+//!    31 demo call sites -- genuine trait-boundary redesign, not a
+//!    bug-fix-sized change (the same shape finding #134 itself had,
+//!    legitimately deferred with that exact reasoning).
+//! 2. **The `std::thread::scope` call itself**, on the main thread, is
+//!    also outside any guarded span (each worker's *own* guard, started
+//!    inside its spawned closure, still covers that worker's real work
+//!    fully). Investigating a real guard violation during this step's
+//!    own development found `std::thread::scope` allocates an
+//!    `Arc<ScopeData>` bookkeeping value on every call -- a real,
+//!    unavoidable cost of spawning fresh OS threads every frame, and
+//!    this step's own plan already named that specific boundary as
+//!    deliberately deferred (a persistent worker-thread *pool* is real
+//!    future work; this step reuses each worker's `SubCanvas` *data*,
+//!    never claimed to eliminate the per-frame OS thread spawn itself).
+//!
+//! Wrapping either span in the guard today would just fail on an
+//! already-disclosed, separate gap; excluding them here is an honest
+//! scope boundary, not a narrowing done quietly.
 use raw_window_handle::HasDisplayHandle;
 use tre_atlas::AtlasOwner;
 use tre_engine::{
-    execute_frame, rgba8, BufferBinding, FrameArena, FrameClock, GlyphAtlasContext, InputEvent,
-    PipelineKind, PipelineRegistry, RenderingCanvas, RhiDevice, RhiDynamicRingBuffer, RhiTexture,
-    ScissorRect, TextureFormat, WindowId,
+    execute_frame, rgba8, BufferBinding, FlattenedFrame, FrameArena, FrameClock, GlyphAtlasContext,
+    InputEvent, PipelineKind, PipelineRegistry, RenderingCanvas, RhiDevice, RhiDynamicRingBuffer,
+    RhiTexture, ScissorRect, SubCanvas, TextureFormat, WindowId,
 };
+use tre_memory::{DebugAllocGuard, RenderTickGuard};
 use tre_platform::PlatformConnection;
 use tre_rhi_vulkan::{VulkanDevice, VulkanSwapchain};
+
+// Phase 9 Step 9.2: this demo's own real, self-checking proof that its
+// CPU-side per-frame work is genuinely allocation-free -- see this
+// file's own header comment for the guard's real scope and the one
+// disclosed exclusion (RHI submission).
+#[global_allocator]
+static ALLOCATOR: DebugAllocGuard = DebugAllocGuard::new();
 
 const CANVAS_WIDTH: u32 = 640;
 const CANVAS_HEIGHT: u32 = 480;
@@ -116,7 +185,7 @@ fn main() {
     let mut connection = PlatformConnection::new().expect("failed to connect to display server");
     let window = connection
         .create_window(
-            "tre main loop (Phase 8 Step 8.1.2)",
+            "tre main loop (Phase 8 Step 8.1.2 / Phase 9 Step 9.2)",
             CANVAS_WIDTH,
             CANVAS_HEIGHT,
         )
@@ -213,18 +282,94 @@ fn main() {
 
     let ring_buffer = device.create_dynamic_ring_buffer(RING_BUFFER_CAPACITY);
 
-    let probe_root = RenderingCanvas::new();
+    // --- Phase 9 Step 9.2: every per-frame structure built exactly
+    // once, here, before the loop -- reset()/flatten_into() every frame
+    // from this point on, never reconstructed (REVIEW.md finding #134).
+    let mut root = RenderingCanvas::new();
     assert!(
-        probe_root.max_sub_canvases() >= 1,
+        root.max_sub_canvases() >= 1,
         "this demo needs at least 1 core beyond the main thread \
          (available_parallelism() - 1 was 0 on this machine)"
     );
-    let worker_count = probe_root.max_sub_canvases().min(MAX_WORKERS);
+    let worker_count = root.max_sub_canvases().min(MAX_WORKERS);
     eprintln!(
         "using {worker_count} real worker threads per frame (available_parallelism() - 1 = {}, \
          capped at {MAX_WORKERS})",
-        probe_root.max_sub_canvases()
+        root.max_sub_canvases()
     );
+    let mut workers: Vec<SubCanvas> = (0..worker_count)
+        .map(|_| root.create_sub_canvas())
+        .collect();
+
+    let total_shapes = worker_count + 2; // root's rect + each worker's rect + 1 text glyph
+    let mut arena = FrameArena::with_capacity(total_shapes * 4, total_shapes * 6, total_shapes, 0);
+    let mut flattened = FlattenedFrame::default();
+
+    // --- Phase 9 Step 9.2: one unguarded warm-up pass, recording the
+    // exact same shapes the real loop below will every frame, so every
+    // `Vec` this loop touches (root's/each worker's own vertices/
+    // indices/commands, `arena`'s own `raw_commands`/`raw_indices`/
+    // `sort_scratch`, `flattened`'s own fields) grows to this demo's
+    // real steady-state capacity *before* `RenderTickGuard` starts
+    // checking. Without this, the very first guarded frame would panic
+    // on `Vec::reserve` growing a still-empty-capacity `Vec` from
+    // `RenderingCanvas::new()`'s own genuinely-empty starting point --
+    // a real, expected one-time warm-up cost, not a steady-state
+    // violation the guard exists to catch. Deliberately single-threaded
+    // (unlike the real loop's `std::thread::scope`): warm-up only needs
+    // to touch the same allocation-growing code paths once each, not
+    // real concurrency. ---
+    root.draw_rounded_rect(
+        START_X,
+        RECT_Y,
+        RECT_SIZE,
+        RECT_SIZE,
+        0.0,
+        rgba8(0xE0, 0xA0, 0x40, 0xFF),
+    );
+    for (i, sub) in workers.iter_mut().enumerate() {
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "MAX_WORKERS is a small constant, far below f32's exact-integer range"
+        )]
+        let worker_x = 20.0 + i as f32 * 60.0;
+        sub.draw_rounded_rect(
+            worker_x,
+            WORKER_RECT_Y,
+            RECT_SIZE,
+            RECT_SIZE,
+            0.0,
+            rgba8(255, 255, 255, 255),
+        );
+        if i == worker_count - 1 {
+            let atlas_context = GlyphAtlasContext {
+                atlas: &handle,
+                texture_handle: texture_index,
+                dimensions: (ATLAS_SIZE, ATLAS_SIZE),
+                current_frame: 0,
+            };
+            sub.draw_text(
+                &shaped,
+                &font,
+                0,
+                TEXT_ORIGIN,
+                TEXT_PX_SIZE,
+                rgba8(255, 255, 255, 255),
+                &atlas_context,
+            );
+        }
+        assert!(
+            sub.stitch_into(&arena),
+            "arena was sized exactly for this demo"
+        );
+        sub.reset();
+    }
+    assert!(
+        root.stitch_into(&arena),
+        "arena was sized exactly for this demo"
+    );
+    root.reset();
+    arena.flatten_into(&mut flattened);
 
     let mut renderer = Renderer {
         pipelines,
@@ -268,16 +413,22 @@ fn main() {
         recorded_dt.push(dt);
         recorded_x.push(x);
 
-        // --- Stage: Multi-Thread Canvas / Sub-Canvas Stitch ---
-        let total_shapes = worker_count + 2; // root's rect + each worker's rect + 1 text glyph
-        let arena = std::sync::Arc::new(FrameArena::with_capacity(
-            total_shapes * 4,
-            total_shapes * 6,
-            total_shapes,
-            0,
-        ));
-
-        let mut root = RenderingCanvas::new();
+        // Phase 9 Step 9.2: the CPU-side render tick begins here on the
+        // main thread -- root recording must be genuinely allocation-
+        // free. This guard deliberately does *not* span the
+        // `std::thread::scope` call just below: investigating this
+        // step's own real behavior found `std::thread::scope` itself
+        // allocates an `Arc<ScopeData>` bookkeeping value on every call
+        // -- a real, unavoidable cost of spawning fresh OS threads every
+        // frame, which this step's own plan already named as a
+        // deliberately separate, deferred boundary (a persistent worker-
+        // thread *pool* is real future work; this step reuses each
+        // worker's `SubCanvas` *data*, not the OS thread itself). Each
+        // worker's own `RenderTickGuard`, started inside its spawned
+        // closure below, still covers that worker's own real per-frame
+        // work.
+        let root_tick = RenderTickGuard::begin();
+        root.reset();
         root.draw_rounded_rect(
             x,
             RECT_Y,
@@ -286,11 +437,12 @@ fn main() {
             0.0,
             rgba8(0xE0, 0xA0, 0x40, 0xFF),
         );
+        drop(root_tick);
 
+        // --- Stage: Multi-Thread Canvas / Sub-Canvas Stitch ---
+        let arena_ref = &arena;
         std::thread::scope(|scope| {
-            for i in 0..worker_count {
-                let mut sub = root.create_sub_canvas();
-                let arena = std::sync::Arc::clone(&arena);
+            for (i, sub) in workers.iter_mut().enumerate() {
                 #[allow(
                     clippy::cast_precision_loss,
                     reason = "MAX_WORKERS is a small constant, far below f32's exact-integer range"
@@ -301,6 +453,11 @@ fn main() {
                 let shaped = &shaped;
                 let handle = &handle;
                 scope.spawn(move || {
+                    // A worker thread's own allocations are invisible
+                    // to the main thread's guard (the flag is
+                    // thread-local) -- each thread needs its own.
+                    let _worker_tick = RenderTickGuard::begin();
+                    sub.reset();
                     sub.draw_rounded_rect(
                         worker_x,
                         WORKER_RECT_Y,
@@ -328,29 +485,27 @@ fn main() {
                         );
                     }
                     assert!(
-                        sub.stitch_into(&arena),
+                        sub.stitch_into(arena_ref),
                         "arena was sized exactly for this demo"
                     );
                 });
             }
         });
+        // A second guarded span, resuming now that thread::scope's own
+        // (disclosed, unavoidable) allocation is behind us -- stitching
+        // the root canvas, sort/batch, and the ring-buffer writes below
+        // must all still be genuinely allocation-free.
+        let main_tick = RenderTickGuard::begin();
         assert!(
             root.stitch_into(&arena),
             "arena was sized exactly for this demo"
         );
 
-        let arena =
-            std::sync::Arc::try_unwrap(arena).unwrap_or_else(|_| panic!("all workers have joined"));
         // --- Stage: Radix Sort & Batch ---
-        let frame = arena.flatten();
+        arena.flatten_into(&mut flattened);
 
-        let vertex_bytes: &[u8] = bytemuck::cast_slice(&frame.vertices);
-        let index_bytes: &[u8] = bytemuck::cast_slice(&frame.indices);
-
-        let (mut cmd_buffer, image) = renderer
-            .device
-            .begin_frame(&renderer.swapchain)
-            .expect("begin_frame failed");
+        let vertex_bytes: &[u8] = bytemuck::cast_slice(&flattened.vertices);
+        let index_bytes: &[u8] = bytemuck::cast_slice(&flattened.indices);
 
         // --- Stage: Ring Buffer Packing ---
         let vertex_offset = renderer.ring_buffer.write(vertex_bytes).expect(
@@ -362,9 +517,19 @@ fn main() {
             .write(index_bytes)
             .expect("ring buffer write failed for indices");
 
+        // The zero-allocation-checked span ends here -- RHI submission
+        // below is deliberately outside it; see this file's own header
+        // comment for why.
+        drop(main_tick);
+
+        let (mut cmd_buffer, image) = renderer
+            .device
+            .begin_frame(&renderer.swapchain)
+            .expect("begin_frame failed");
+
         // --- Stage: RHI Submit & Present ---
         execute_frame(
-            &frame,
+            &flattened,
             &renderer.pipelines,
             BufferBinding {
                 buffer: &*renderer.ring_buffer,
@@ -423,6 +588,10 @@ fn main() {
         "spring_decay animation verified across {frame_count} real frames -- final x = {:.2} \
          (started at {START_X}, target {TARGET_X})",
         recorded_x.last().copied().unwrap_or(START_X)
+    );
+    eprintln!(
+        "zero-allocation guard: {frame_count} real frames of canvas-record -> sort/batch -> \
+         ring-buffer-write with zero heap allocations detected -- Phase 9 Step 9.2 verified"
     );
     eprintln!("main loop demo exited cleanly");
 }

@@ -1880,6 +1880,134 @@ IsEnabled`), unrelated to any change this step made.
 
 * **Technical Rationale:** These are cheap, deterministic, always-on gates that turn two of the engine's most important invariants -- zero steady-state allocation and balanced transient resource acquisition -- into build failures instead of production incidents.
 
+#### Step 9.2: Zero-Allocation & Balance Assertions in CI -- Status: Complete (2026-09-09)
+
+Real pre-work investigation found this step's own two tasks in very
+different states. Task 2 (the balance-assertion gate) turned out to
+already be real: the `debug_assert_eq!`/`debug_assert!` checks in
+`flatten()`/`flatten_unbatched()`/`FrameArena`'s stitch path already
+existed (Phase 2 Step 2.2, extended through Step 5.1.3), were already
+covered by 4 passing `should_panic` tests, and CI's `test`/`vulkan-
+validation` jobs already build in debug mode (`cargo test`/`cargo run`,
+no `--release`) -- an unbalanced stack anywhere already failed CI
+before this step touched anything. This task needed one more explicit
+regression test on the new reused-canvas path, not new enforcement
+machinery.
+
+Task 1 (the zero-allocation debug guard) was the opposite: TECHNICAL.md
+Section 3.4 fully specified a custom `#[global_allocator]` wrapper
+checking a thread-local "render tick active" flag, but nothing
+implementing it existed anywhere -- confirmed via grep, zero hits for
+`global_allocator`/`GlobalAlloc`/`thread_local` in the whole codebase.
+Built for real: `tre_memory::DebugAllocGuard` (a `GlobalAlloc` wrapper
+around `System`) and `tre_memory::RenderTickGuard` (the RAII scope
+guard), in `tre-memory` rather than `tre-engine` -- `tre-engine` carries
+`#![forbid(unsafe_code)]`, and implementing `GlobalAlloc` requires
+`unsafe`; `tre-memory` is one of the four workspace locations
+TECHNICAL.md Section 9.1 permits it in. A real, non-obvious
+implementation detail found and fixed during development: both
+`DebugAllocGuard::check`'s own violation panic and `RenderTickGuard::
+begin`'s own nesting-guard panic must disarm the thread-local flag
+*before* calling `panic!()` -- the panic machinery's own allocations
+(backtrace capture, payload boxing) would otherwise re-enter the check
+while the flag was still set, in one observed case causing a genuine
+double-panic process abort rather than reporting the real violation.
+
+**Wiring the guard to the real main loop required fixing REVIEW.md
+finding #134 first, exactly as confirmed with the project owner.**
+`main_loop_demo.rs`'s ~20+ per-frame allocations (a fresh root
+`RenderingCanvas`, a fresh `SubCanvas` per worker, a fresh
+`Arc<FrameArena>`, every iteration) were fixed by building every one of
+those once, before the loop, and reusing them every frame instead:
+`RenderingCanvas::reset()` (new -- clears every internal `Vec` while
+keeping capacity, reseeds `state_stack` to one identity entry, resets
+the shared `next_depth_id` counter to 0, available on `SubCanvas`
+automatically via `DerefMut`); `RenderingCanvas::stitch_into`/
+`SubCanvas::stitch_into` changed from consuming `self` to borrowing
+`&self` (the method only ever copies data out, never needed ownership
+-- this is what actually makes reusing a `SubCanvas` across frames
+possible, and let `SubCanvas::stitch_into`'s own `std::mem::take`
+Drop-workaround be deleted entirely); `FrameArena::flatten_into` (new
+-- the non-consuming sibling of `flatten()`, draining each internal
+`ScatterArena` via a new `ScatterArena::reset`/`drain_into` pair into a
+caller-reused `FlattenedFrame` instead of allocating fresh output
+`Vec`s every call, sharing its sort/merge core with the existing
+`segment_and_flatten` via a new `sort_and_batch_into` helper). The old
+`Arc<FrameArena>`/`Arc::try_unwrap` dance was removed entirely, not just
+made reusable: `std::thread::scope` lets its spawned closures borrow a
+plain owned `FrameArena` directly, so the `Arc` was never load-bearing.
+
+**Two more real, previously-undetected allocation sources were found
+only because the guard was actually run against real GPU hardware, not
+assumed correct from code review** (REVIEW.md findings #156-158,
+#157 fixed, #156/#158 disclosed as genuine, separate scope boundaries):
+`radix_sort_by_key`'s own `counts` histogram buffer was allocated fresh
+on every call, not just `scratch` as Step 9.1 intended -- fixed by
+threading it through as a caller-provided, reused parameter, the same
+pattern `scratch` already used. `VulkanDevice::begin_frame` allocates a
+fresh `Box<dyn RhiCommandBuffer>` every frame despite reusing the
+underlying Vulkan handle -- a real trait-boundary redesign, not fixed
+here, disclosed in `main_loop_demo.rs`'s own header comment as the
+reason RHI submission stays outside the guard's coverage. `std::thread::
+scope` itself allocates an `Arc<ScopeData>` bookkeeping value on every
+call -- real standard-library behavior, not a bug, and exactly the cost
+of this project's own already-disclosed "fresh OS thread every frame,
+no persistent pool" design (Step 8.1.2); the main thread's own guard
+coverage is split into two spans bracketing the unguarded `thread::
+scope` call, while each worker's own guard (started inside its spawned
+closure) still covers that worker's real work in full.
+
+**A minimal criterion performance suite was also built** (confirmed
+with the project owner, beyond this step's own literal task list, since
+TECHNICAL.md Section 9.2 explicitly names it as running "alongside" the
+allocation guard): `crates/tre-engine/benches/frame_processing.rs`,
+one representative benchmark (`record_and_flatten_10k_nodes`, at the
+Architectural Decision Matrix's own stated ">10,000 active nodes"
+scale) measuring real `RenderingCanvas` record-then-`flatten()` cost.
+Real, honest result: ~796µs mean, roughly 1.6x the documented
+$\le 0.50\text{ ms}$ budget -- the first time this budget has ever been
+measured against real code. Confirmed with the project owner: this is
+real, separate performance-tuning work, not fixed here, and the new
+`ci.yml` `test`-job step that parses the bench's own reported time and
+fails the build if it exceeds the budget is deliberately wired to fail
+honestly on this real gap (REVIEW.md finding #159) rather than being
+silently skipped or having its threshold quietly loosened to match
+current reality.
+
+**Full-workspace verification.** `cargo fmt --check`, `cargo clippy
+--workspace --all-targets -- -D warnings`, `cargo build --workspace
+--all-targets`, and `cargo test --workspace` all clean (`tre-memory` 41
+tests, up from 32; `tre-engine` 78 tests, up from 72). `main_loop_demo`
+re-run live against real GPU hardware multiple times: 90 real frames
+each run, zero allocations detected inside any guarded span, the
+existing spring-decay animation verification still passing exactly as
+before. A full manual regression sweep of all 31 pre-existing Vulkan
+demos, re-run after `stitch_into`'s signature change and
+`radix_sort_by_key`'s new `counts` parameter: 30 passed; `canvas_
+accessibility_verify` failed only on the same pre-existing,
+already-documented environmental limitation as finding #126, unrelated
+to this step.
+
+## Explicitly out of scope (Step 9.2)
+
+- **Fixing `begin_frame`'s per-frame `Box<dyn RhiCommandBuffer>`
+  allocation** (finding #156) -- genuine `RhiDevice` trait-boundary
+  redesign work, rippling through all 31 demo call sites; disclosed,
+  not fixed.
+- **A persistent, reused worker-thread pool** for Multi-Thread Canvas --
+  still real, separate future work (Step 8.1.2's own disclosed
+  boundary, unchanged); this step reuses each worker's `SubCanvas`
+  *data*, never claimed to eliminate `std::thread::scope`'s own
+  per-call allocation (finding #158).
+- **Optimizing the sort/flatten pipeline to actually meet the
+  documented $\le 0.50\text{ ms}$ budget** (finding #159) -- real,
+  separate performance-tuning work (TECHNICAL.md Section 9.2's own
+  scope); the new CI gate is deliberately left failing on this real,
+  honestly-measured gap rather than quietly loosened.
+- **A full per-demo-scene benchmark suite** -- this step builds one
+  minimal, real, representative benchmark; TECHNICAL.md Section 9.2's
+  own larger scope, not this step's task list.
+
 ## Phase 10: Cross-Language Bindings & Python UI Framework Integration (Added with the Rust/Python Language Decision)
 
 ### Step 10.1: The `tre-ffi` C-ABI Crate

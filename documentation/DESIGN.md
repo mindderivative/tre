@@ -18,6 +18,8 @@ During active frame rendering, the core loop must perform zero dynamic CPU memor
 
 *Boundary Definition:* This strict zero-allocation rule applies exclusively to the `RenderingCanvas` recording, intermediate representation flattening, and RHI submission phases. Complex external subsystems operating during layout (e.g., initial SVG DOM parsing, HarfBuzz text shaping) should utilize custom arena allocators to tightly bound their memory usage outside the active render tick.
 
+*Implementation status (Phase 9 Step 9.2, 2026-09-09):* the real, CI-enforced boundary (`tre_memory::RenderTickGuard`, `main_loop_demo.rs`) currently covers recording and IR flattening but not RHI submission -- `VulkanDevice::begin_frame` was found to allocate a fresh `Box<dyn RhiCommandBuffer>` every frame (REVIEW.md finding #156), a genuine `RhiDevice` trait-boundary redesign disclosed as separate, not-yet-fixed work, so extending real enforcement to this document's own full stated boundary is real future work, not yet done.
+
 ### 2.2 Strict Architectural Separation of Concerns
 
 Rendering, event handling, accessibility metadata sync, and layout calculations operate in distinct, decoupled subsystems. Event polling, signal dispatching, accessibility querying, and hit-testing must never block or pollute graphics context state, ensuring that input processing and visual pipeline scheduling maintain clear boundaries.

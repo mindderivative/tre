@@ -8,11 +8,13 @@
 //! (TECHNICAL.md Section 9.1) -- every `unsafe` block requires an adjacent
 //! `// SAFETY:` comment stating the invariant being upheld.
 
+mod alloc_guard;
 mod mpsc;
 mod scatter;
 mod spsc;
 mod swmr;
 
+pub use alloc_guard::{DebugAllocGuard, RenderTickGuard};
 pub use mpsc::MpscRingBuffer;
 pub use scatter::{ScatterArena, ScatterSlice};
 pub use spsc::SpscRingBuffer;

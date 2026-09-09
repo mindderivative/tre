@@ -462,6 +462,11 @@ pub struct LayerDesc {
 /// vertex/index stream plus the (currently trivial, Phase 0) list of
 /// draw commands describing how to slice it into RHI draw calls, plus
 /// (Step 5.3.1) every tagged accessibility node recorded this frame.
+///
+/// `Default` (Phase 9 Step 9.2): a real caller reusing one `FlattenedFrame`
+/// across many frames via [`FrameArena::flatten_into`] needs an empty
+/// starting value to construct once, before its own loop begins.
+#[derive(Default)]
 pub struct FlattenedFrame {
     pub vertices: Vec<UiVertex>,
     pub indices: Vec<u32>,
@@ -662,12 +667,17 @@ pub struct RenderingCanvas {
 /// `RenderingCanvas::next_depth_id`'s own doc comment for why that
 /// specific field, and only that one, must be genuinely shared.
 ///
-/// Cannot be flattened or have its recorded data extracted yet --
-/// `RenderingCanvas::flatten` takes `self` by value, which `Deref`/
-/// `DerefMut` cannot forward, and this sub-step deliberately adds no
-/// escape hatch of its own. Merging a `SubCanvas`'s output back into a
-/// real frame is Step 5.2.2's job, not this one's -- dropping a
-/// `SubCanvas` (ordinary scope exit) is the only way to end one today.
+/// Still cannot be `flatten()`ed directly -- that takes `self` by value,
+/// which `Deref`/`DerefMut` cannot forward, and a `SubCanvas` (unlike a
+/// root canvas) is never the final destination for a frame's data
+/// anyway. Merging a `SubCanvas`'s recorded data into a shared
+/// [`FrameArena`] is `stitch_into`'s job (Step 5.2.2), forwarded
+/// unchanged via `Deref` since Phase 9 Step 9.2 made it take `&self`
+/// rather than consume `self` (REVIEW.md finding #134) -- a `SubCanvas`
+/// can therefore now be `reset()` (also forwarded via `DerefMut`) and
+/// reused across many frames instead of being dropped and recreated
+/// every one, though dropping it (ordinary scope exit) remains a
+/// perfectly normal way to end one when reuse isn't wanted.
 pub struct SubCanvas {
     canvas: RenderingCanvas,
     live_sub_canvases: std::sync::Arc<std::sync::atomic::AtomicUsize>,
@@ -691,22 +701,6 @@ impl Drop for SubCanvas {
     fn drop(&mut self) {
         self.live_sub_canvases
             .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
-    }
-}
-
-impl SubCanvas {
-    /// Delegates to the inner canvas's own `RenderingCanvas::
-    /// stitch_into` (Step 5.2.2). Extracts it via `std::mem::take`
-    /// first (leaving a throwaway, never-used-again placeholder behind)
-    /// rather than destructuring `self` directly -- `SubCanvas`
-    /// implements `Drop`, and Rust forbids partially moving fields out
-    /// of any type that does. `self`'s own `Drop` still runs normally
-    /// once this function returns, releasing this sub-canvas's slot in
-    /// `live_sub_canvases` exactly as it would for any other drop.
-    #[must_use]
-    pub fn stitch_into(mut self, arena: &FrameArena) -> bool {
-        let canvas = std::mem::take(&mut self.canvas);
-        canvas.stitch_into(arena)
     }
 }
 
@@ -765,6 +759,49 @@ impl RenderingCanvas {
     #[must_use]
     pub fn max_sub_canvases(&self) -> usize {
         self.max_sub_canvases
+    }
+
+    /// Resets this canvas to a freshly-`new()`-like empty state *without*
+    /// releasing any of its `Vec`s' own backing allocations -- Phase 9
+    /// Step 9.2's own zero-allocation reuse path (REVIEW.md finding
+    /// #134: a real caller with a long-running loop can now build one
+    /// `RenderingCanvas` and reuse it every frame via `reset()` instead
+    /// of constructing a fresh one, which always allocated at least
+    /// `state_stack`'s own single entry). `vertices`/`indices`/
+    /// `commands`/`accessibility_nodes`/`layer_stack`/`clip_stack`/
+    /// `overlay_stack`/`saved_clip_stacks` are all `.clear()`d (kept
+    /// capacity, no allocation on a warm canvas); `state_stack` is
+    /// cleared and given back exactly the one identity entry `new()`
+    /// itself seeds, matching `flatten()`'s own "always has at least one
+    /// entry" invariant. `next_depth_id` is reset to 0 -- a reused
+    /// canvas must not let this shared, monotonically-increasing counter
+    /// grow unbounded across a long-running session the way a genuinely
+    /// fresh-every-frame canvas (today's only real caller) never could;
+    /// this exactly reproduces `new()`'s own `AtomicU32::new(0)` starting
+    /// point. Available on [`SubCanvas`] automatically via its existing
+    /// `DerefMut` -- resetting a `SubCanvas` also re-zeroes the shared
+    /// counter (harmless if the root or a sibling also resets it to the
+    /// same value the same frame; see `create_sub_canvas`'s own doc
+    /// comment for why this field, uniquely, is shared via `Arc`).
+    /// `max_sub_canvases`/`live_sub_canvases` are untouched -- a reused
+    /// canvas's own concurrency-cap bookkeeping does not change just
+    /// because a new frame started.
+    pub fn reset(&mut self) {
+        self.vertices.clear();
+        self.indices.clear();
+        self.commands.clear();
+        self.accessibility_nodes.clear();
+        self.layer_stack.clear();
+        self.clip_stack.clear();
+        self.overlay_stack.clear();
+        self.saved_clip_stacks.clear();
+        self.state_stack.clear();
+        self.state_stack.push(CanvasState {
+            transform: tre_math::Affine2::IDENTITY,
+            alpha: 1.0,
+        });
+        self.next_depth_id
+            .store(0, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Creates an independently-recordable `SubCanvas` sharing this
@@ -1633,6 +1670,15 @@ impl RenderingCanvas {
     /// (e.g. DESIGN.md Section 2.6's prioritized-degradation policy)
     /// is a future step's job, not this method's.
     ///
+    /// Takes `&self`, not `self` -- Phase 9 Step 9.2 (REVIEW.md finding
+    /// #134): this method only ever *copies* data out into `arena`'s own
+    /// reserved slices (`copy_from_slice`, never a move), so it never
+    /// actually needed ownership; the original consuming signature was
+    /// incidental, not load-bearing. Borrowing is what lets a real
+    /// caller `reset()` and reuse the same canvas across frames instead
+    /// of constructing a fresh one every frame -- call `reset()`
+    /// afterward to prepare this canvas for the next frame's recording.
+    ///
     /// # Panics
     /// In debug builds, panics on the same unbalanced `save`/
     /// `push_clip`/`push_layer`/`begin_overlay` conditions
@@ -1645,7 +1691,7 @@ impl RenderingCanvas {
         reason = "a single frame's vertex/index count stays far below u32::MAX, the same \
                    headroom reasoning ARCHITECTURE.md Section 4.1 applies to Depth ID"
     )]
-    pub fn stitch_into(self, arena: &FrameArena) -> bool {
+    pub fn stitch_into(&self, arena: &FrameArena) -> bool {
         debug_assert_eq!(
             self.layer_stack.len(),
             0,
@@ -1665,24 +1711,21 @@ impl RenderingCanvas {
             "begin_overlay/end_overlay calls are unbalanced at frame boundary"
         );
 
-        let RenderingCanvas {
-            vertices,
-            indices,
-            commands,
-            accessibility_nodes,
-            ..
-        } = self;
+        let vertices: &[UiVertex] = &self.vertices;
+        let indices: &[u32] = &self.indices;
+        let commands: &[UiDrawCommand] = &self.commands;
+        let accessibility_nodes: &[AccessibilityNode] = &self.accessibility_nodes;
 
         let Some(mut vertex_slice) = arena.vertices.reserve(vertices.len()) else {
             return false;
         };
-        vertex_slice.copy_from_slice(&vertices);
+        vertex_slice.copy_from_slice(vertices);
         let vertex_base = vertex_slice.start_index() as u32;
 
         let Some(mut index_slice) = arena.indices.reserve(indices.len()) else {
             return false;
         };
-        for (dest, &source) in index_slice.iter_mut().zip(&indices) {
+        for (dest, &source) in index_slice.iter_mut().zip(indices) {
             *dest = source + vertex_base;
         }
         let index_base = index_slice.start_index() as u32;
@@ -1690,7 +1733,7 @@ impl RenderingCanvas {
         let Some(mut command_slice) = arena.commands.reserve(commands.len()) else {
             return false;
         };
-        for (dest, &source) in command_slice.iter_mut().zip(&commands) {
+        for (dest, &source) in command_slice.iter_mut().zip(commands) {
             *dest = UiDrawCommand {
                 vertex_offset: source.vertex_offset + index_base,
                 ..source
@@ -1705,7 +1748,7 @@ impl RenderingCanvas {
         else {
             return false;
         };
-        accessibility_slice.copy_from_slice(&accessibility_nodes);
+        accessibility_slice.copy_from_slice(accessibility_nodes);
 
         true
     }
@@ -1731,6 +1774,23 @@ pub struct FrameArena {
     /// no rebasing at all (unlike vertices/indices/commands), since
     /// nothing about one references a position in another array.
     accessibility_nodes: tre_memory::ScatterArena<AccessibilityNode>,
+    /// Phase 9 Step 9.2 (REVIEW.md finding #134): persistent, reused
+    /// scratch storage for `flatten_into`'s own sort/segment/merge pass
+    /// only -- `flatten`/`flatten_unbatched` (the consuming, single-shot
+    /// path) never touch these. `raw_commands`/`raw_indices` hold this
+    /// frame's drained-but-not-yet-sorted commands/indices
+    /// (`sort_and_batch_into`'s own input); `sort_scratch` is
+    /// `radix_sort_by_key`'s own reused scratch buffer; `counts` is
+    /// `radix_sort_by_key`'s own reused histogram buffer (a second real,
+    /// previously-undetected per-call allocation this step's own new
+    /// zero-allocation debug guard found and fixed, beyond the
+    /// originally-planned `raw_commands`/`raw_indices`/`sort_scratch`).
+    /// All four start empty and grow to this session's steady-state size
+    /// across their first few calls, then never reallocate again.
+    raw_commands: Vec<UiDrawCommand>,
+    raw_indices: Vec<u32>,
+    sort_scratch: Vec<UiDrawCommand>,
+    counts: Vec<u32>,
 }
 
 impl FrameArena {
@@ -1746,6 +1806,10 @@ impl FrameArena {
             indices: tre_memory::ScatterArena::with_capacity(index_capacity),
             commands: tre_memory::ScatterArena::with_capacity(command_capacity),
             accessibility_nodes: tre_memory::ScatterArena::with_capacity(accessibility_capacity),
+            raw_commands: Vec::new(),
+            raw_indices: Vec::new(),
+            sort_scratch: Vec::new(),
+            counts: Vec::new(),
         }
     }
 
@@ -1766,6 +1830,49 @@ impl FrameArena {
             self.accessibility_nodes.into_vec(),
             true,
         )
+    }
+
+    /// The non-consuming, zero-allocation-in-steady-state sibling of
+    /// `flatten()` -- Phase 9 Step 9.2 (REVIEW.md finding #134). Drains
+    /// each internal `ScatterArena` (via `ScatterArena::drain_into`,
+    /// which also resets it so this same `FrameArena` can be `reserve`d
+    /// into again for the next frame) into `out`'s own fields and this
+    /// arena's own persistent `raw_commands`/`raw_indices` scratch, then
+    /// runs the identical sort/segment/merge pass `flatten()` does
+    /// (`sort_and_batch_into`, the same core `segment_and_flatten`
+    /// shares) into `out.commands`/`out.indices` (cleared first, kept
+    /// capacity) using `sort_scratch` as the reused radix-sort scratch
+    /// buffer. Always merges (`flatten()`'s own default) -- unlike
+    /// `flatten`/`flatten_unbatched`, there is no unbatched sibling of
+    /// this method: it exists for Step 9.2's own real, production reuse
+    /// path, not Step 9.1's validation-only batching-equivalence test.
+    ///
+    /// A real caller builds one `FrameArena` and one `FlattenedFrame`
+    /// once, before its own loop begins, and calls `flatten_into` every
+    /// frame instead of reconstructing either -- once every internal
+    /// buffer has grown to this session's steady-state size (typically
+    /// within the first frame or two), no further call allocates at
+    /// all. Call only after every `stitch_into` call that could
+    /// contribute to this frame has already returned, exactly like
+    /// `flatten()`.
+    pub fn flatten_into(&mut self, out: &mut FlattenedFrame) {
+        self.vertices.drain_into(&mut out.vertices);
+        self.accessibility_nodes
+            .drain_into(&mut out.accessibility_nodes);
+        self.commands.drain_into(&mut self.raw_commands);
+        self.indices.drain_into(&mut self.raw_indices);
+
+        out.commands.clear();
+        out.indices.clear();
+        sort_and_batch_into(
+            &mut self.raw_commands,
+            &self.raw_indices,
+            &mut self.sort_scratch,
+            &mut self.counts,
+            &mut out.commands,
+            &mut out.indices,
+            true,
+        );
     }
 }
 
@@ -1965,7 +2072,12 @@ const RADIX_PASSES: u32 = 64 / RADIX_BITS;
     reason = "digit_of's own result is always masked to RADIX_BUCKETS - 1 (0xFFFF) before the \
                cast, provably in range for usize on every real target this project builds for"
 )]
-fn radix_sort_by_key<T: Copy>(items: &mut [T], scratch: &mut [T], key_fn: impl Fn(&T) -> u64) {
+fn radix_sort_by_key<T: Copy>(
+    items: &mut [T],
+    scratch: &mut [T],
+    counts: &mut Vec<u32>,
+    key_fn: impl Fn(&T) -> u64,
+) {
     assert_eq!(
         items.len(),
         scratch.len(),
@@ -1979,7 +2091,19 @@ fn radix_sort_by_key<T: Copy>(items: &mut [T], scratch: &mut [T], key_fn: impl F
     // index for digit `d` -- one extra slot isn't needed since digits
     // run `0..RADIX_BUCKETS` and the prefix sum is computed in place,
     // left to right, before any scatter reads it.
-    let mut counts = vec![0u32; RADIX_BUCKETS];
+    //
+    // Phase 9 Step 9.2 (real bug found by the new zero-allocation debug
+    // guard, TECHNICAL.md Section 3.4): this used to be `vec![0u32;
+    // RADIX_BUCKETS]`, allocated fresh on *every single call* -- a real,
+    // previously-undetected per-run heap allocation Step 9.1's own
+    // "allocate once, reuse across the frame" discipline had already
+    // applied to `scratch` but missed here. `counts` is now caller-
+    // provided and grown at most once ever (`RADIX_BUCKETS` is a fixed
+    // compile-time constant, so a persistent `counts` `Vec` reaches its
+    // final length on its very first call and never resizes again).
+    if counts.len() < RADIX_BUCKETS {
+        counts.resize(RADIX_BUCKETS, 0);
+    }
 
     let mut src: &mut [T] = items;
     let mut dst: &mut [T] = scratch;
@@ -1992,7 +2116,7 @@ fn radix_sort_by_key<T: Copy>(items: &mut [T], scratch: &mut [T], key_fn: impl F
             counts[digit_of(item)] += 1;
         }
         let mut running = 0u32;
-        for count in &mut counts {
+        for count in counts.iter_mut() {
             let this_bucket = *count;
             *count = running;
             running += this_bucket;
@@ -2021,28 +2145,79 @@ fn segment_and_flatten(
 ) -> FlattenedFrame {
     let mut out_commands = Vec::with_capacity(commands.len());
     let mut out_indices = Vec::with_capacity(indices.len());
-    // Phase 9 Step 9.1: one scratch buffer, sized to the whole frame's
-    // own command count (an upper bound for any single run below),
-    // allocated once here and reused across every `flatten_run` call --
-    // `radix_sort_by_key`'s own doc comment explains why it needs
-    // caller-provided scratch space rather than allocating its own.
-    let mut sort_scratch = vec![
-        UiDrawCommand {
-            kind: CommandType::DrawGeometry,
-            sort_key: 0,
-            pipeline_state_id: 0,
-            texture_handle: 0,
-            element_count: 0,
-            vertex_offset: 0,
-            clip_bounds: ScissorRect {
-                x: 0,
-                y: 0,
-                width: 0,
-                height: 0,
-            },
-        };
-        commands.len()
-    ];
+    let mut scratch = Vec::new();
+    let mut counts = Vec::new();
+    sort_and_batch_into(
+        &mut commands,
+        indices,
+        &mut scratch,
+        &mut counts,
+        &mut out_commands,
+        &mut out_indices,
+        merge,
+    );
+
+    FlattenedFrame {
+        vertices,
+        indices: out_indices,
+        commands: out_commands,
+        accessibility_nodes,
+    }
+}
+
+/// The neutral placeholder `flatten_run`'s own scratch buffer is filled
+/// with before `radix_sort_by_key` overwrites every element -- factored
+/// out since Phase 9 Step 9.2's `sort_and_batch_into` needs it wherever
+/// its own `scratch` buffer must grow, the same reason `segment_and_
+/// flatten` (Step 9.1) originally needed it inline.
+fn neutral_draw_command() -> UiDrawCommand {
+    UiDrawCommand {
+        kind: CommandType::DrawGeometry,
+        sort_key: 0,
+        pipeline_state_id: 0,
+        texture_handle: 0,
+        element_count: 0,
+        vertex_offset: 0,
+        clip_bounds: ScissorRect {
+            x: 0,
+            y: 0,
+            width: 0,
+            height: 0,
+        },
+    }
+}
+
+/// The real sort/segment/merge core (Step 5.1.3/9.1), factored out here
+/// (Phase 9 Step 9.2, REVIEW.md finding #134) so it can be shared by
+/// both the consuming, single-shot `segment_and_flatten` and the
+/// reusable, zero-allocation-in-steady-state `FrameArena::flatten_into`
+/// -- the algorithm itself is identical either way; only whether
+/// `out_commands`/`out_indices`/`scratch` start genuinely empty or
+/// pre-cleared-but-warm (kept capacity from a prior call) differs.
+///
+/// `scratch` is grown (`Vec::resize`, which only ever truncates or
+/// extends -- never shrinks its own backing capacity) to at least
+/// `commands.len()` if it isn't already that long; a caller that reuses
+/// the same `scratch` across many calls at a stable-or-shrinking
+/// command count therefore only ever reallocates on the call that first
+/// reaches this session's steady-state command count, never again after.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "a single frame's index count stays far below u32::MAX, the same headroom \
+               reasoning ARCHITECTURE.md Section 4.1 applies to Depth ID"
+)]
+fn sort_and_batch_into(
+    commands: &mut [UiDrawCommand],
+    indices: &[u32],
+    scratch: &mut Vec<UiDrawCommand>,
+    counts: &mut Vec<u32>,
+    out_commands: &mut Vec<UiDrawCommand>,
+    out_indices: &mut Vec<u32>,
+    merge: bool,
+) {
+    if scratch.len() < commands.len() {
+        scratch.resize(commands.len(), neutral_draw_command());
+    }
     let mut run_start = 0;
     for i in 0..=commands.len() {
         let at_boundary = i == commands.len() || commands[i].kind != CommandType::DrawGeometry;
@@ -2052,10 +2227,11 @@ fn segment_and_flatten(
         let run_len = i - run_start;
         flatten_run(
             &mut commands[run_start..i],
-            &mut sort_scratch[..run_len],
+            &mut scratch[..run_len],
+            counts,
             indices,
-            &mut out_commands,
-            &mut out_indices,
+            out_commands,
+            out_indices,
             merge,
         );
         if i < commands.len() {
@@ -2068,13 +2244,6 @@ fn segment_and_flatten(
             out_commands.push(boundary_command);
         }
         run_start = i + 1;
-    }
-
-    FlattenedFrame {
-        vertices,
-        indices: out_indices,
-        commands: out_commands,
-        accessibility_nodes,
     }
 }
 
@@ -2109,7 +2278,8 @@ fn command_indices<'a>(source_indices: &'a [u32], command: &UiDrawCommand) -> &'
 ///
 /// `sort_scratch` must be exactly `run.len()` long -- see
 /// `radix_sort_by_key`'s own doc comment for why it's the caller's own
-/// reused buffer, not allocated here.
+/// reused buffer, not allocated here. `counts` is `radix_sort_by_key`'s
+/// own reused histogram buffer (Phase 9 Step 9.2) -- same reasoning.
 #[allow(
     clippy::cast_possible_truncation,
     reason = "a single frame's index count stays far below u32::MAX, the same headroom \
@@ -2118,12 +2288,13 @@ fn command_indices<'a>(source_indices: &'a [u32], command: &UiDrawCommand) -> &'
 fn flatten_run(
     run: &mut [UiDrawCommand],
     sort_scratch: &mut [UiDrawCommand],
+    counts: &mut Vec<u32>,
     source_indices: &[u32],
     out_commands: &mut Vec<UiDrawCommand>,
     out_indices: &mut Vec<u32>,
     merge: bool,
 ) {
-    radix_sort_by_key(run, sort_scratch, |command| command.sort_key);
+    radix_sort_by_key(run, sort_scratch, counts, |command| command.sort_key);
 
     let mut remaining = run.iter();
     let Some(&first) = remaining.next() else {
@@ -3878,11 +4049,13 @@ mod tests {
         let source_indices: Vec<u32> = (0..12).collect();
         let mut run = [a, b];
         let mut sort_scratch = run;
+        let mut counts = Vec::new();
         let mut out_commands = Vec::new();
         let mut out_indices = Vec::new();
         flatten_run(
             &mut run,
             &mut sort_scratch,
+            &mut counts,
             &source_indices,
             &mut out_commands,
             &mut out_indices,
@@ -3920,7 +4093,8 @@ mod tests {
     fn radix_sorted_keys(keys: &[u64]) -> Vec<u64> {
         let mut items: Vec<u64> = keys.to_vec();
         let mut scratch = items.clone();
-        radix_sort_by_key(&mut items, &mut scratch, |&k| k);
+        let mut counts = Vec::new();
+        radix_sort_by_key(&mut items, &mut scratch, &mut counts, |&k| k);
         items
     }
 
@@ -3989,7 +4163,38 @@ mod tests {
     fn radix_sort_panics_on_a_mismatched_scratch_length() {
         let mut items = vec![3u64, 1, 2];
         let mut scratch = vec![0u64; 2];
-        radix_sort_by_key(&mut items, &mut scratch, |&k| k);
+        let mut counts = Vec::new();
+        radix_sort_by_key(&mut items, &mut scratch, &mut counts, |&k| k);
+    }
+
+    #[test]
+    fn radix_sort_reuses_the_same_counts_buffer_across_calls_without_reallocating() {
+        // Phase 9 Step 9.2: `counts` used to be a fresh `vec![0u32;
+        // RADIX_BUCKETS]` allocated on *every* radix_sort_by_key call --
+        // a real, previously-undetected per-run heap allocation the new
+        // zero-allocation debug guard (tre-memory) caught in
+        // main_loop_demo.rs. This proves the fix directly: the same
+        // `counts` Vec, reused across two independent sort calls, must
+        // never change its own backing allocation after the first call
+        // grows it to RADIX_BUCKETS.
+        let mut counts = Vec::new();
+
+        let mut first_items = vec![5u64, 3, 1];
+        let mut first_scratch = first_items.clone();
+        radix_sort_by_key(&mut first_items, &mut first_scratch, &mut counts, |&k| k);
+        assert_eq!(first_items, vec![1, 3, 5]);
+        let counts_ptr_after_first_call = counts.as_ptr();
+
+        let mut second_items = vec![9u64, 2, 7, 4];
+        let mut second_scratch = second_items.clone();
+        radix_sort_by_key(&mut second_items, &mut second_scratch, &mut counts, |&k| k);
+        assert_eq!(second_items, vec![2, 4, 7, 9]);
+        assert_eq!(
+            counts.as_ptr(),
+            counts_ptr_after_first_call,
+            "counts must reuse its existing backing allocation on a second call, not reallocate \
+             -- this is the whole point of threading it through as a caller-provided buffer"
+        );
     }
 
     #[test]
@@ -4213,6 +4418,170 @@ mod tests {
             !canvas.stitch_into(&arena),
             "a 4-vertex/6-index/1-command rect cannot fit in a 2/2/2 arena"
         );
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact arithmetic on literal f32s (whole-number x/y offsets, no rounding), \
+                   same reasoning as this crate's other exact-arithmetic tests"
+    )]
+    fn stitch_into_no_longer_consumes_the_canvas_and_can_be_called_again_after_reset() {
+        // Phase 9 Step 9.2 (REVIEW.md finding #134): stitch_into takes
+        // &self now, so the same canvas can be reset() and reused for a
+        // second frame instead of being constructed fresh every time.
+        let mut canvas = RenderingCanvas::new();
+        canvas.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+
+        let first_arena = FrameArena::with_capacity(4, 6, 1, 0);
+        assert!(canvas.stitch_into(&first_arena));
+        let first_frame = first_arena.flatten();
+        assert_eq!(first_frame.vertices.len(), 4);
+
+        canvas.reset();
+        assert!(
+            canvas.stitch_into(&FrameArena::with_capacity(4, 6, 1, 0)),
+            "a freshly reset() canvas has recorded nothing -- stitching it into any arena, \
+             even a zero-capacity-shaped one that only fits nothing, must trivially succeed"
+        );
+
+        canvas.draw_rounded_rect(50.0, 50.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        let second_arena = FrameArena::with_capacity(4, 6, 1, 0);
+        assert!(canvas.stitch_into(&second_arena));
+        let second_frame = second_arena.flatten();
+        assert_eq!(
+            second_frame.vertices[0].position,
+            [50.0, 50.0],
+            "the reused canvas's second frame must contain only the second rect, not a stale \
+             leftover copy of the first"
+        );
+    }
+
+    #[test]
+    fn reset_restores_the_exact_new_state_including_the_shared_depth_id_counter() {
+        let mut root = RenderingCanvas::new();
+        root.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        root.draw_rounded_rect(10.0, 10.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        root.reset();
+
+        // A fresh RenderingCanvas::new() draws its first command with
+        // Depth ID 0 -- if reset() genuinely reproduces that starting
+        // point, drawing once more here and flattening must show the
+        // exact same sort_key a lone fresh canvas's own first draw would.
+        root.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        let reset_then_drawn = root.flatten();
+
+        let mut fresh = RenderingCanvas::new();
+        fresh.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        let fresh_drawn = fresh.flatten();
+
+        assert_eq!(
+            reset_then_drawn.commands[0].sort_key, fresh_drawn.commands[0].sort_key,
+            "reset() must reproduce new()'s own Depth ID counter starting point exactly, or a \
+             long-running reused canvas would drift from a fresh canvas's own sort order"
+        );
+        assert_eq!(
+            reset_then_drawn.vertices.len(),
+            4,
+            "only the post-reset draw must remain"
+        );
+    }
+
+    #[test]
+    fn flatten_into_produces_the_same_result_as_flatten_across_repeated_reused_frames() {
+        // Phase 9 Step 9.2 (REVIEW.md finding #134): flatten_into is the
+        // reusable, non-consuming sibling of flatten() -- feeding it the
+        // exact same real scene across several simulated "frames," reused
+        // via reset()/flatten_into() throughout, must produce identical
+        // output to a lone, fresh flatten() call every single time.
+        let mut out = FlattenedFrame::default();
+        let mut arena = FrameArena::with_capacity(8, 12, 2, 0);
+
+        for round in 0..3 {
+            let mut root = RenderingCanvas::new();
+            root.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+            let mut sub = root.create_sub_canvas();
+            sub.draw_rounded_rect(20.0, 20.0, 10.0, 10.0, 0.0, 0xAABB_CCDD);
+            assert!(sub.stitch_into(&arena), "round {round}: sub stitch failed");
+            assert!(
+                root.stitch_into(&arena),
+                "round {round}: root stitch failed"
+            );
+
+            arena.flatten_into(&mut out);
+
+            let mut expected_root = RenderingCanvas::new();
+            expected_root.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+            let mut expected_sub = expected_root.create_sub_canvas();
+            expected_sub.draw_rounded_rect(20.0, 20.0, 10.0, 10.0, 0.0, 0xAABB_CCDD);
+            let expected_arena = FrameArena::with_capacity(8, 12, 2, 0);
+            assert!(expected_sub.stitch_into(&expected_arena));
+            assert!(expected_root.stitch_into(&expected_arena));
+            let expected = expected_arena.flatten();
+
+            assert_eq!(out.vertices.len(), expected.vertices.len(), "round {round}");
+            assert_eq!(out.indices, expected.indices, "round {round}");
+            assert_eq!(out.commands.len(), expected.commands.len(), "round {round}");
+            assert_eq!(
+                out.accessibility_nodes.len(),
+                expected.accessibility_nodes.len(),
+                "round {round}"
+            );
+        }
+    }
+
+    #[test]
+    fn flatten_into_reuses_out_and_arena_scratch_buffers_across_calls_without_reallocating() {
+        // The whole point of flatten_into over flatten(): once every
+        // internal buffer has grown to this session's steady-state size,
+        // a later call at the same or smaller scene size must not
+        // reallocate any of out's own Vecs.
+        let mut out = FlattenedFrame::default();
+        let mut arena = FrameArena::with_capacity(4, 6, 1, 0);
+
+        let mut canvas = RenderingCanvas::new();
+        canvas.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        assert!(canvas.stitch_into(&arena));
+        arena.flatten_into(&mut out);
+
+        let vertices_ptr = out.vertices.as_ptr();
+        let indices_ptr = out.indices.as_ptr();
+        let commands_ptr = out.commands.as_ptr();
+
+        let mut canvas2 = RenderingCanvas::new();
+        canvas2.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        assert!(canvas2.stitch_into(&arena));
+        arena.flatten_into(&mut out);
+
+        assert_eq!(
+            out.vertices.as_ptr(),
+            vertices_ptr,
+            "out.vertices must reuse its existing backing allocation on a same-size second frame"
+        );
+        assert_eq!(
+            out.indices.as_ptr(),
+            indices_ptr,
+            "out.indices must reuse its existing backing allocation on a same-size second frame"
+        );
+        assert_eq!(
+            out.commands.as_ptr(),
+            commands_ptr,
+            "out.commands must reuse its existing backing allocation on a same-size second frame"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "save/restore calls are unbalanced")]
+    fn flatten_into_still_enforces_the_balance_assertion_on_the_reused_path() {
+        // Phase 9 Step 9.2 task 2: the balance-assertion gate must keep
+        // working on flatten_into's own new, reused-arena path, not just
+        // the original consuming flatten().
+        let mut out = FlattenedFrame::default();
+        let mut arena = FrameArena::with_capacity(4, 6, 1, 0);
+        let mut canvas = RenderingCanvas::new();
+        canvas.save();
+        assert!(canvas.stitch_into(&arena));
+        arena.flatten_into(&mut out);
     }
 
     #[test]

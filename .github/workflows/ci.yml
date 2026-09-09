@@ -110,6 +110,38 @@ jobs:
       # generation is pure CPU, so this runs as a plain example here
       # rather than in the vulkan-validation job below.
       - run: cargo run -p tre-text --example msdf_generation_demo
+      # Phase 9 Step 9.2: TECHNICAL.md Section 9.2's own "cargo bench via
+      # criterion, verifying the <=0.50ms CPU frame processing budget"
+      # gate -- pure CPU (RenderingCanvas record + flatten), same
+      # reasoning as msdf_generation_demo above for belonging here, not
+      # vulkan-validation. Real, measured performance at this bench's own
+      # 10,000-node scale (~0.80ms) currently exceeds the documented
+      # budget -- disclosed in REVIEW.md as a new, real, deliberately
+      # NOT-fixed-here finding (optimizing the sort/flatten hot path is
+      # genuine, separate performance work, not this CI-gating step's
+      # job); this gate is intentionally wired to fail on that real gap
+      # rather than silently passing, confirmed with the project owner.
+      - run: cargo bench -p tre-engine --bench frame_processing
+      - name: Check frame_processing bench against the 0.50ms CPU budget (TECHNICAL.md Section 9.2)
+        run: |
+          python3 - <<'PY'
+          import json
+          import sys
+
+          with open(
+              "target/criterion/record_and_flatten_10k_nodes/new/estimates.json"
+          ) as f:
+              data = json.load(f)
+          mean_ns = data["mean"]["point_estimate"]
+          budget_ns = 500_000
+          print(f"record_and_flatten_10k_nodes: {mean_ns:.0f} ns (budget: {budget_ns} ns)")
+          if mean_ns > budget_ns:
+              print(
+                  f"FAIL: {mean_ns:.0f} ns exceeds the {budget_ns} ns (0.50ms) CPU budget "
+                  "(TECHNICAL.md Section 9.2)"
+              )
+              sys.exit(1)
+          PY
 
   vulkan-validation:
     name: vulkan-validation

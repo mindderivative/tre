@@ -20,6 +20,12 @@ rustybuzz = "0.20.1"
 skrifa = "=0.33.2"
 tre-atlas = { path = "../tre-atlas" }
 tre-math = { path = "../tre-math" }
+# Phase 9 Step 9.2: main_loop_demo.rs's own #[global_allocator] opt-in
+# (DebugAllocGuard) and per-frame RenderTickGuard scopes -- dev-only,
+# since the zero-allocation debug guard is a testing/enforcement
+# primitive, never a production dependency of this crate's own library
+# code (which has none).
+tre-memory = { path = "../tre-memory" }
 tre-platform = { path = "../tre-platform" }
 tre-svg = { path = "../tre-svg" }
 tre-text = { path = "../tre-text" }

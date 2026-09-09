@@ -1873,3 +1873,111 @@ same pre-existing, already-documented environmental limitation as
 finding #126 (no AT-SPI registry daemon in this sandbox), unrelated to
 any change this step made. New demo `batching_equivalence_demo` added
 to `ci.yml`'s `vulkan-validation` job.
+
+## Phase 9 Step 9.2 Implementation (2026-09-09)
+
+Real pre-work investigation, before writing any code, found this
+step's own task list rested on primitives that had never actually been
+built: TECHNICAL.md Section 3.4's zero-allocation debug guard (no
+`global_allocator`/`GlobalAlloc`/`thread_local` anywhere in the
+codebase) and Section 9.2's own `criterion`-based performance suite (no
+`criterion` dependency, no `benches/` directory anywhere) -- both
+confirmed with the project owner via `AskUserQuestion` before
+proceeding, alongside the real, disclosed risk that wiring the guard to
+the real continuous main loop would immediately fail on finding #134's
+own already-disclosed ~20+ allocations/frame. All three were confirmed:
+build the real guard, fix finding #134 first, and build the minimal
+criterion bench too.
+
+### 156. [Should-fix] `VulkanDevice::begin_frame` allocates a fresh `Box<dyn RhiCommandBuffer>` every frame, even though the underlying Vulkan command buffer handle it wraps is already reused
+Surfaced only once the real zero-allocation debug guard existed to
+catch it -- `begin_frame`'s own comment already states the Vulkan-level
+`vk::CommandBuffer` handle is "the one persistent command buffer
+(allocated once in `new`)," but the Rust-level `VulkanCommandBuffer`
+wrapper struct holding it is still `Box::new`'d fresh every single call,
+purely to satisfy `RhiDevice::begin_frame`'s own `Box<dyn
+RhiCommandBuffer>`-by-value return type.
+
+**Change:** not fixed here -- a real fix means redesigning `RhiDevice::
+begin_frame`/`submit_and_present`'s ownership model away from consuming
+`Box<dyn RhiCommandBuffer>` by value, which would ripple through all 31
+demo call sites that construct/consume one -- genuine trait-boundary
+redesign, not a bug-fix-sized change, the same shape finding #134 itself
+has and was legitimately deferred with that exact reasoning. Disclosed
+directly in `main_loop_demo.rs`'s own header comment as the reason RHI
+submission stays outside this step's new `RenderTickGuard` coverage.
+
+### 157. [Critical] `radix_sort_by_key`'s own `counts` histogram buffer was allocated fresh on every call, not just once per frame -- a real bug the new zero-allocation guard caught on its very first real run against `main_loop_demo`
+Step 9.1's own "allocate once, reuse across the frame" discipline was
+applied to `radix_sort_by_key`'s `scratch` parameter but missed the
+function's *own* internal `counts` buffer (`vec![0u32; RADIX_BUCKETS]`,
+65,536 elements = 256 KiB), which was constructed fresh inside the
+function on every single call -- once per marker-free run within every
+`flatten_run` call, every frame. Real, previously undetected: Step
+9.1's own randomized/adversarial tests never checked for allocation
+behavior, only sort correctness.
+
+**Change:** `counts` is now a caller-provided, reused `&mut Vec<u32>`
+parameter threaded through `radix_sort_by_key` -> `flatten_run` ->
+`sort_and_batch_into`, with a matching new persistent field on
+`FrameArena` (alongside `raw_commands`/`raw_indices`/`sort_scratch`) for
+the real, reused `flatten_into` path; `segment_and_flatten`'s own
+consuming path allocates a fresh one per call, matching `scratch`'s own
+existing behavior there. Since `RADIX_BUCKETS` is a fixed compile-time
+constant, a persistent `counts` reaches its final length on its first
+call and never resizes again. New regression test
+(`radix_sort_reuses_the_same_counts_buffer_across_calls_without_
+reallocating`) asserts the buffer's own pointer is stable across two
+independent sort calls.
+
+### 158. [Nice-to-have] `std::thread::scope` allocates an `Arc<ScopeData>` bookkeeping value on every call -- a real, unavoidable cost of this project's own "fresh OS thread every frame" design, only visible once a zero-allocation guard actually wrapped it
+Found during this step's own development: wrapping the *entire*
+per-frame span (including the `std::thread::scope` call itself) in
+`RenderTickGuard` panicked on `std::thread::scope`'s own internal `Arc`
+allocation, not on any TRE-side code. This is real standard-library
+behavior, not a bug -- `std::thread::scope` must allocate shared
+bookkeeping so its spawned threads can synchronize back to the caller
+before it returns.
+
+**Change:** not fixed here -- eliminating it requires a persistent,
+reused worker-thread pool, already named as real, separate future work
+by Step 8.1.2's own "Explicitly out of scope" list, unchanged and
+re-confirmed by this step's own `PLAN.md`. `main_loop_demo.rs`'s
+`RenderTickGuard` coverage is split into two spans (root recording, and
+stitch/sort-batch/ring-buffer-write) bracketing the unguarded
+`std::thread::scope` call, disclosed directly in the demo's own header
+comment; each worker's own guard, started inside its spawned closure,
+still covers that worker's real per-frame work in full.
+
+### 159. [Should-fix] Real, measured frame-processing performance (~0.80ms at the Architectural Decision Matrix's own 10,000-node scale) exceeds the documented $\le 0.50\text{ ms}$ CPU budget (TECHNICAL.md Section 9.2)
+The new `record_and_flatten_10k_nodes` criterion benchmark
+(`crates/tre-engine/benches/frame_processing.rs`) is the first time this
+budget has ever been measured against real code -- no benchmark of any
+kind existed before this step. Real result: ~796µs mean, roughly 1.6x
+the documented budget.
+
+**Change:** not fixed here -- confirmed with the project owner:
+optimizing the sort/flatten hot path to actually meet the budget is
+real, separate performance-tuning work (TECHNICAL.md Section 9.2's own
+scope, not this correctness/CI-gating step's), and the new `ci.yml`
+`test` job step that runs this bench and checks its result against the
+budget is deliberately wired to fail honestly on this real, pre-existing
+gap rather than silently passing or having its threshold quietly
+loosened to match current reality. This CI job is expected to be red
+until real optimization work lands as a future step.
+
+Verified by `cargo fmt --all -- --check`/`cargo clippy --workspace
+--all-targets -- -D warnings`/`cargo build --workspace --all-targets`/
+`cargo test --workspace` clean across the whole workspace (`tre-memory`
+41 tests, up from 32, including 6 new tests for the real zero-allocation
+debug guard; `tre-engine` 78 tests, up from 72). `main_loop_demo.rs`,
+rebuilt to reuse every per-frame structure via the new `reset()`/
+non-consuming `stitch_into`/`flatten_into` APIs and wrapped in the real
+`#[global_allocator]` guard, re-run live against real GPU hardware
+multiple times: 90 real frames each run, zero allocations detected
+inside any guarded span, animation independently re-verified. A full
+manual regression sweep of all 31 pre-existing Vulkan demos re-run after
+`stitch_into`'s signature change (consuming -> borrowing) and
+`radix_sort_by_key`'s new `counts` parameter: zero regressions beyond
+the same pre-existing, already-documented `canvas_accessibility_verify`
+environmental limitation (finding #126).

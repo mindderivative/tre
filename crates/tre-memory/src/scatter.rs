@@ -123,6 +123,46 @@ impl<T: Copy> ScatterArena<T> {
         }
         out
     }
+
+    /// Resets this arena to empty (`len` back to 0) without touching
+    /// `slots`' own backing allocation, so the exact same arena can be
+    /// `reserve`d into again for a fresh frame -- Phase 9 Step 9.2's own
+    /// zero-allocation reuse path (REVIEW.md finding #134), the
+    /// in-place sibling of consuming `into_vec`/`drain_into`. Like
+    /// those two, callers must not call this until every
+    /// [`ScatterSlice`] this arena ever granted has finished writing and
+    /// been dropped -- the exclusive `&mut self` receiver already
+    /// enforces that no `ScatterSlice` (which only ever borrows `&self`)
+    /// can still be outstanding when this runs. Does not drop the
+    /// previously-written values in `0..len`: `T: Copy` (this impl
+    /// block's own bound) means none of them own a destructor to run,
+    /// the same reasoning `into_vec`'s own `assume_init_read` already
+    /// relies on -- simply forgetting them by resetting `len` is sound.
+    pub fn reset(&mut self) {
+        self.len.store(0, Ordering::Release);
+    }
+
+    /// The in-place, reusable sibling of `into_vec`: clears `out` (kept
+    /// capacity, no allocation on a warm buffer) and copies the
+    /// actually-written prefix into it, then resets this arena to empty
+    /// exactly as `reset` does -- one call does both "extract this
+    /// frame's data" and "prepare for next frame's reservations,"
+    /// avoiding the separate always-allocating `Vec::with_capacity`
+    /// `into_vec` performs on every call. `&mut self` (not `self`) is
+    /// exactly what makes reuse possible; see `reset`'s own doc comment
+    /// for why no outstanding `ScatterSlice` can race this.
+    pub fn drain_into(&mut self, out: &mut Vec<T>) {
+        let len = self.len.load(Ordering::Acquire).min(self.slots.len());
+        out.clear();
+        out.reserve(len);
+        for slot in &self.slots[..len] {
+            // SAFETY: identical reasoning to `into_vec`'s own -- `&mut
+            // self` guarantees no `ScatterSlice` can still be
+            // outstanding to race this read.
+            out.push(unsafe { (*slot.get()).assume_init_read() });
+        }
+        self.reset();
+    }
 }
 
 /// One thread's exclusive write access to `[start, start + slice.len())`
@@ -278,6 +318,78 @@ mod tests {
         assert!(
             seen.iter().all(|&s| s),
             "every (thread_id, i) pair must appear exactly once"
+        );
+    }
+
+    #[test]
+    fn reset_lets_the_same_arena_be_reserved_into_again() {
+        let mut arena: ScatterArena<u32> = ScatterArena::with_capacity(4);
+        let mut first = arena.reserve(4).unwrap();
+        for (i, slot) in first.iter_mut().enumerate() {
+            *slot = u32::try_from(i).unwrap();
+        }
+        assert!(
+            arena.reserve(1).is_none(),
+            "arena is fully reserved before reset"
+        );
+        arena.reset();
+        let mut second = arena
+            .reserve(4)
+            .expect("reset must free the whole capacity again");
+        for slot in second.iter_mut() {
+            *slot = 99;
+        }
+        assert_eq!(
+            arena.into_vec(),
+            vec![99, 99, 99, 99],
+            "into_vec after reset must see only the second round's own writes, proving reset \
+             genuinely freed the whole capacity for reuse rather than merely permitting a \
+             smaller reservation"
+        );
+    }
+
+    #[test]
+    fn drain_into_extracts_then_resets_in_one_call() {
+        let mut arena: ScatterArena<u32> = ScatterArena::with_capacity(4);
+        let mut slice = arena.reserve(3).unwrap();
+        slice[0] = 1;
+        slice[1] = 2;
+        slice[2] = 3;
+
+        let mut out = Vec::new();
+        arena.drain_into(&mut out);
+        assert_eq!(out, vec![1, 2, 3]);
+
+        // The arena must be fully reset by drain_into -- reserving its
+        // whole original capacity again must succeed.
+        let mut second = arena
+            .reserve(4)
+            .expect("drain_into must reset len back to 0");
+        for slot in second.iter_mut() {
+            *slot = 42;
+        }
+        let mut out2 = Vec::new();
+        arena.drain_into(&mut out2);
+        assert_eq!(out2, vec![42, 42, 42, 42]);
+    }
+
+    #[test]
+    fn drain_into_reuses_the_output_vecs_existing_capacity() {
+        let mut arena: ScatterArena<u32> = ScatterArena::with_capacity(3);
+        let mut slice = arena.reserve(3).unwrap();
+        slice[0] = 1;
+        slice[1] = 2;
+        slice[2] = 3;
+
+        let mut out = Vec::with_capacity(3);
+        let out_ptr_before = out.as_ptr();
+        arena.drain_into(&mut out);
+        assert_eq!(out, vec![1, 2, 3]);
+        assert_eq!(
+            out.as_ptr(),
+            out_ptr_before,
+            "drain_into must reuse out's existing capacity when it already fits, not allocate a \
+             fresh backing buffer -- this is the whole point of drain_into over into_vec"
         );
     }
 }

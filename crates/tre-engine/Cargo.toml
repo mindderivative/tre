@@ -37,3 +37,13 @@ skrifa = "=0.33.2"
 # build one -- pinned to the same version `tre-text`'s own Cargo.toml
 # uses. Dev-only: never part of the built library.
 rustybuzz = "0.20.1"
+# Phase 9 Step 9.2: TECHNICAL.md Section 9.2's own "cargo bench via
+# criterion, verifying the <=0.50ms CPU frame processing budget" gate,
+# never previously built (no criterion dependency, no benches/ anywhere
+# in this workspace before this step). Minimal real gate, not the full
+# per-demo benchmark suite Section 9.2 itself separately owns.
+criterion = "0.5"
+
+[[bench]]
+name = "frame_processing"
+harness = false
