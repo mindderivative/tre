@@ -163,6 +163,7 @@ jobs:
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_combined_scene_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example linear_color_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example main_loop_demo
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example dual_kawase_nonbindless_experiment
 
   accessibility-validation:
     name: accessibility-validation

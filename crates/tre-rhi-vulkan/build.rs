@@ -81,4 +81,18 @@ fn main() {
         "kawase_upsample.frag.spv",
         &out_dir,
     );
+    // REVIEW.md finding #130, second research session: a non-bindless
+    // experiment testing whether routing a same-frame offscreen render
+    // target through the persistent bindless array is itself what
+    // triggers the all-zero read.
+    compile_shader(
+        "shaders/kawase_downsample_nonbindless.frag",
+        "kawase_downsample_nonbindless.frag.spv",
+        &out_dir,
+    );
+    compile_shader(
+        "shaders/passthrough_nonbindless.frag",
+        "passthrough_nonbindless.frag.spv",
+        &out_dir,
+    );
 }
