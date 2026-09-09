@@ -386,7 +386,7 @@ fn main() {
     let l0 = device
         .acquire_transient_target(SIZE_FULL.0, SIZE_FULL.1, TextureFormat::Rgba16Float)
         .expect("failed to acquire L0");
-    cmd_buffer.begin_render_to_texture(&*l0);
+    cmd_buffer.begin_render_to_texture(&*l0, SIZE_FULL.0, SIZE_FULL.1);
     cmd_buffer.set_pipeline(&rect_pipeline);
     cmd_buffer.bind_vertex_buffer(&square_vertex_buffer, 0);
     cmd_buffer.bind_index_buffer(&square_index_buffer, 0);
@@ -417,7 +417,7 @@ fn main() {
     let l1 = device
         .acquire_transient_target(SIZE_HALF.0, SIZE_HALF.1, TextureFormat::Rgba16Float)
         .expect("failed to acquire L1");
-    cmd_buffer.begin_render_to_texture_no_end(&*l1);
+    cmd_buffer.begin_render_to_texture_no_end(&*l1, SIZE_HALF.0, SIZE_HALF.1);
     // Raw bind: `RhiCommandBuffer::set_pipeline` would unconditionally
     // rebind the bindless descriptor set, which is wrong for this
     // pipeline's own, deliberately different layout.

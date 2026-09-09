@@ -48,6 +48,19 @@
 //! backdrop blur, even though it turned out not to be what was actually
 //! broken).
 //!
+//! **Update (2026-09-08, REVIEW.md finding #152):** the same underlying
+//! defect (a render target's own *real* dimensions silently diverging
+//! from what a caller's vertex data assumed) also broke the standard,
+//! bindless `PushLayer`/`PopLayer` compositing path, via `RhiDevice::
+//! acquire_transient_target`'s own "oversized borrow" fallback rather
+//! than a stale `draw_indexed` push. The real, general fix landed at the
+//! shared `begin_render_to_texture`/`begin_render_to_texture_no_end`
+//! trait level (an explicit `logical_width`/`logical_height` parameter),
+//! making this file's own raw-`cmd_draw_indexed` workaround technically
+//! redundant for *new* code -- kept here anyway, unchanged, since
+//! reverting an already-shipped, already-verified step to prove that
+//! point is no part of what finding #152 needed fixed.
+//!
 //! Real, unmodified RHI machinery, unaffected by this fix: the
 //! render-to-texture lifecycle (`begin_render_to_texture`/`end_render_
 //! to_texture`/`begin_render_to_texture_no_end`/`resume_swapchain_
@@ -557,7 +570,7 @@ fn main() {
     let l0 = device
         .acquire_transient_target(SIZE_FULL.0, SIZE_FULL.1, TextureFormat::Rgba16Float)
         .expect("failed to acquire L0");
-    cmd_buffer.begin_render_to_texture(&*l0);
+    cmd_buffer.begin_render_to_texture(&*l0, SIZE_FULL.0, SIZE_FULL.1);
     cmd_buffer.set_pipeline(&rect_pipeline);
     cmd_buffer.bind_vertex_buffer(&square_vertex_buffer, 0);
     cmd_buffer.bind_index_buffer(&square_index_buffer, 0);
@@ -578,7 +591,7 @@ fn main() {
     let l1 = device
         .acquire_transient_target(SIZE_HALF.0, SIZE_HALF.1, TextureFormat::Rgba16Float)
         .expect("failed to acquire L1");
-    cmd_buffer.begin_render_to_texture_no_end(&*l1);
+    cmd_buffer.begin_render_to_texture_no_end(&*l1, SIZE_HALF.0, SIZE_HALF.1);
     draw_nonbindless_pass(
         downsample_pipeline,
         set_l0,
@@ -600,7 +613,7 @@ fn main() {
     let l2 = device
         .acquire_transient_target(SIZE_QUARTER.0, SIZE_QUARTER.1, TextureFormat::Rgba16Float)
         .expect("failed to acquire L2");
-    cmd_buffer.begin_render_to_texture_no_end(&*l2);
+    cmd_buffer.begin_render_to_texture_no_end(&*l2, SIZE_QUARTER.0, SIZE_QUARTER.1);
     draw_nonbindless_pass(
         downsample_pipeline,
         set_l1,
@@ -622,7 +635,7 @@ fn main() {
     let u1 = device
         .acquire_transient_target(SIZE_HALF.0, SIZE_HALF.1, TextureFormat::Rgba16Float)
         .expect("failed to acquire U1");
-    cmd_buffer.begin_render_to_texture_no_end(&*u1);
+    cmd_buffer.begin_render_to_texture_no_end(&*u1, SIZE_HALF.0, SIZE_HALF.1);
     draw_nonbindless_pass(
         upsample_pipeline,
         set_l2,
@@ -644,7 +657,7 @@ fn main() {
     let u0 = device
         .acquire_transient_target(SIZE_FULL.0, SIZE_FULL.1, TextureFormat::Rgba16Float)
         .expect("failed to acquire U0");
-    cmd_buffer.begin_render_to_texture_no_end(&*u0);
+    cmd_buffer.begin_render_to_texture_no_end(&*u0, SIZE_FULL.0, SIZE_FULL.1);
     draw_nonbindless_pass(
         upsample_pipeline,
         set_u1,

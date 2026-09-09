@@ -2605,7 +2605,12 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
         }
     }
 
-    fn begin_render_to_texture(&mut self, texture: &dyn RhiTexture) {
+    fn begin_render_to_texture(
+        &mut self,
+        texture: &dyn RhiTexture,
+        logical_width: u32,
+        logical_height: u32,
+    ) {
         let image = vk::Image::from_raw(texture.image_handle());
         let view = vk::ImageView::from_raw(texture.raw_handle());
         let (width, height) = texture.dimensions();
@@ -2697,12 +2702,25 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
         }
 
         // `draw_indexed`'s push constants map pixel-space positions to
-        // NDC using `self.width`/`self.height` -- must reflect whichever
-        // target is currently active, not always the swapchain, or every
-        // vertex position recorded while rendering into this (likely
-        // differently-sized) layer would be wrong.
-        self.width = width;
-        self.height = height;
+        // NDC using `self.width`/`self.height` -- REVIEW.md finding #152:
+        // this must be the caller's own intended/logical size, not
+        // `texture`'s own real physical size. `RhiDevice::acquire_
+        // transient_target`'s documented "oversized borrow" fallback can
+        // hand back a texture larger than requested, and any command
+        // recorded against the smaller, intended size (every `PushLayer`
+        // inner draw, baked at `Canvas` record time before the real
+        // texture is ever acquired) would otherwise get its NDC mapping
+        // computed against the wrong, larger size, confining it to a
+        // small corner of the oversized image. Using the intended size
+        // here instead is provably equivalent to sizing the texture
+        // exactly right: the viewport/scissor/render area below are still
+        // the texture's own real (possibly larger) extent, so content
+        // simply draws "stretched" to fill it -- and that stretch is
+        // exactly undone later when it's sampled back through a
+        // normalized `(0,0)`-`(1,1)` UV read (`PopLayer`'s own composite
+        // quad) and redrawn at its own real, requested on-screen size.
+        self.width = logical_width;
+        self.height = logical_height;
     }
 
     fn end_render_to_texture(&mut self, texture: &dyn RhiTexture) {
@@ -2746,7 +2764,12 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
         }
     }
 
-    fn begin_render_to_texture_no_end(&mut self, texture: &dyn RhiTexture) {
+    fn begin_render_to_texture_no_end(
+        &mut self,
+        texture: &dyn RhiTexture,
+        logical_width: u32,
+        logical_height: u32,
+    ) {
         // IMPLEMENTATION.md Step 7.2.1: identical to `begin_render_to_
         // texture` above except it never calls `cmd_end_rendering` first
         // -- the caller's own contract (that method's doc comment) is
@@ -2834,8 +2857,11 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
             );
         }
 
-        self.width = width;
-        self.height = height;
+        // REVIEW.md finding #152: same reasoning as `begin_render_to_
+        // texture`'s own comment above -- the caller's intended/logical
+        // size, not the texture's real (possibly oversized) one.
+        self.width = logical_width;
+        self.height = logical_height;
     }
 
     fn resume_swapchain_rendering(&mut self) {

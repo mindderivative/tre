@@ -1494,6 +1494,100 @@ Printing the acquired texture's own real `dimensions()` (rather than assuming th
 |---|---|---|---|---|
 | 130 | Sampling a bindless texture while the active render target is an offscreen texture (not the swapchain) produced all-zero output; 13 hypotheses on the bindless path itself were ruled out -- the bindless array turned out not to be the cause at all | tre-rhi-vulkan (`dual_kawase_blur_demo.rs`, `dual_kawase_nonbindless_experiment.rs`, `lib.rs`'s `RhiCommandBuffer::draw_indexed`) | Should-fix, **Fixed** | **Real root cause found and fixed**: `RhiCommandBuffer::draw_indexed`'s own unconditional, second `cmd_push_constants` call (using the render target's real dimensions) silently clobbered a manually-pushed `screen_size` for these custom pipelines, whenever `acquire_transient_target`'s documented "oversized borrow" fallback returned a texture larger than requested -- confining the actual draw to a small corner of the oversized image and leaving the real interior at the clear color. Fixed by issuing every non-bindless pass's draw via a raw `cmd_draw_indexed` call instead of the wrapper method. Verified: the full real 5-hop chain's own pixel assertions pass consistently across 5 real runs against actual GPU hardware, zero leaked objects; added to `ci.yml`. Step 7.2.1 is closed |
 
+## Phase 6 Step 6.4.2 Regression -- REVIEW.md Finding #152 (2026-09-08)
+
+### 152. [Should-fix, Fixed] The real, shipped `PushLayer`/`PopLayer` compositing silently drops a layer's own content when `acquire_transient_target`'s oversized-borrow fallback fires
+
+Found while checking whether Step 7.2.2 (wiring Dual-Kawase blur into
+`push_layer`/`pop_layer`) would be building on solid ground, immediately
+after closing finding #130 above. Same underlying mechanism as #130's
+real root cause, reached through the standard, *production*
+`PushLayer`/`PopLayer` path instead of a hand-rolled demo -- meaning
+this bug has been live in Step 6.4.2's own shipped compositing capability
+since it was built, not something this session introduced.
+
+**Confirmed via a real, GPU-backed repro before being treated as fact.**
+Push+pop a first, larger layer (200x150, a fresh transient-pool
+allocation), letting it release back to the pool at frame end; push+pop
+a second, smaller, never-before-requested layer (50x40) in a later
+frame. `acquire_transient_target`'s own documented "oversized borrow"
+fallback (any free bucket at least as large as requested is usable) has
+no exact 50x40 bucket yet, so it hands back the freed 200x150 texture
+instead. The second layer's own content -- a rect meant to nearly fill
+its own local 50x40 bounds -- read back as exactly the background clear
+color at its own center: silently missing, no error, no validation
+warning.
+
+**Root cause, precisely:** `RhiCommandBuffer::begin_render_to_texture`/
+`begin_render_to_texture_no_end` (`tre-rhi-vulkan/src/lib.rs`) set
+`self.width`/`self.height` -- `draw_indexed`'s own NDC-mapping push
+constant source -- from `texture.dimensions()`, the render target's
+*real* physical size. `PushLayer`'s own inner `DrawGeometry` commands
+have their vertex positions baked at `Canvas` record time against the
+`LayerDesc`'s own requested, *logical* size, before the real texture is
+ever acquired. When the two diverge (oversized borrow), the NDC mapping
+uses the wrong, larger size, confining the actual draw to a small corner
+of the oversized image.
+
+**The fix, worked out in full before writing any code, not just
+patched by trial and error:** viewport/scissor/render area can stay
+driven by the texture's real size unchanged -- NDC always spans -1..1
+across whatever the *current* viewport actually is, so a real target
+larger than intended just means the content draws proportionally
+"stretched" to fill it. That stretch is exactly undone later:
+`PopLayer`'s own composite quad samples the texture across its full,
+un-scaled `(0,0)`-`(1,1)` UV range (unchanged) and redraws it at the
+`LayerDesc`'s own real, requested on-screen size (unchanged) -- an
+encode-with-intended-size / decode-via-normalized-UV round trip that is
+a mathematical identity regardless of the intermediate real texture's
+own physical size or aspect ratio. The only thing that actually needed
+to change is what feeds `self.width`/`self.height`: `begin_render_to_
+texture`/`begin_render_to_texture_no_end` now take explicit
+`logical_width`/`logical_height` parameters -- the caller's own
+intended size, always already known (exactly what it passed to
+`acquire_transient_target`) -- used only for `self.width`/`self.height`.
+No UV rescaling, no dynamic vertex-buffer rewriting, no viewport/scissor
+change needed anywhere.
+
+**Change:** `RhiCommandBuffer::begin_render_to_texture`/`begin_render_
+to_texture_no_end` gained the two new parameters (a real trait
+signature change); `execute_frame`'s `PushLayer` handling now passes
+`command.clip_bounds.width`/`.height` (the requested size) instead of
+letting the callee infer it from the acquired texture. Every other real
+call site updated mechanically, using each caller's own already-known
+intended size: `render_to_texture_demo.rs`, `dual_kawase_nonbindless_
+experiment.rs`, and `dual_kawase_blur_demo.rs` (5 call sites --
+`dual_kawase_blur_demo.rs`'s own REVIEW.md #130 raw-`cmd_draw_indexed`
+workaround is left unchanged, now technically redundant for new code
+but not reverted, since undoing an already-shipped, already-verified
+step to prove that point is no part of what this finding needed).
+`RhiDevice::acquire_transient_target`'s own oversized-borrow logic is
+untouched -- it is deliberate and correctly documented (DESIGN.md
+Section 2.6's "no dynamic RHI allocation inside the render tick"); the
+bug was always in how a caller's NDC math reacted to it, never in the
+fallback itself.
+
+**Verified at two levels.** A new `tre-engine` unit test
+(`execute_frame_push_layer_passes_the_requested_size_not_an_oversized_
+borrowed_textures_own`) extends `FakeDevice` with an `oversized_borrow`
+override returning a texture larger than requested, proving
+`execute_frame` passes the *requested* size to `begin_render_to_texture`
+regardless -- all 63 `tre-engine` tests pass. A new, permanent,
+real-GPU demo (`layer_oversize_regression_demo.rs`, added to `ci.yml`'s
+`vulkan-validation` job) reproduces the exact two-frame triggering
+sequence against the real `VulkanDevice`/`acquire_transient_target`
+oversized-borrow path and asserts the second layer's own content
+composites correctly -- confirmed passing across 3 consecutive real
+runs. Full regression sweep: every pre-existing Vulkan demo re-run
+manually, zero regressions, `cargo fmt`/`clippy -D warnings`/`build`/
+`test` clean across the workspace.
+
+## Summary table (Phase 6 Step 6.4.2 Regression)
+
+| # | Finding | Doc(s)/Code | Severity | Resolution |
+|---|---|---|---|---|
+| 152 | `execute_frame`'s real `PushLayer`/`PopLayer` compositing silently drops a layer's own content whenever `acquire_transient_target`'s documented oversized-borrow fallback hands back a texture larger than requested -- same underlying mechanism as finding #130, reached through the production path instead of a demo | tre-engine (`RhiCommandBuffer::begin_render_to_texture`/`begin_render_to_texture_no_end`, `execute_frame`), tre-rhi-vulkan (`lib.rs`) | Should-fix, **Fixed** | **Fixed**: `begin_render_to_texture`/`begin_render_to_texture_no_end` gained explicit `logical_width`/`logical_height` parameters, used only for the NDC-mapping push-constant source, not viewport/scissor/render area -- provably equivalent to sizing the texture exactly right, since the resulting "stretch" is exactly undone by `PopLayer`'s own normalized-UV composite read. Verified by a new `tre-engine` unit test (oversized `FakeTexture`) and a new permanent real-GPU demo (`layer_oversize_regression_demo.rs`, in `ci.yml`), plus a full zero-regression sweep |
+
 ## Phase 8 Step 8.1.1 Implementation (2026-09-08)
 
 Reviewer: Claude (Cowork), acting as Principal Engineer / Lead Tech Architect, per project standing instructions.

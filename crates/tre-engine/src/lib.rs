@@ -2364,7 +2364,30 @@ pub trait RhiCommandBuffer {
     /// Ends whatever rendering scope is currently active and begins a
     /// new one targeting `texture`, cleared to transparent black, with
     /// no stencil attachment (transient targets don't have one).
-    fn begin_render_to_texture(&mut self, texture: &dyn RhiTexture);
+    ///
+    /// `logical_width`/`logical_height` are the caller's own *intended*
+    /// size -- exactly what it originally passed to `RhiDevice::
+    /// acquire_transient_target` -- not necessarily `texture`'s own real
+    /// physical size. REVIEW.md finding #152: `acquire_transient_
+    /// target`'s documented "oversized borrow" fallback can hand back a
+    /// texture larger than requested, and every subsequent `draw_indexed`
+    /// call's own NDC-mapping push constant must be computed against the
+    /// caller's *intended* size, not the texture's real one, or content
+    /// recorded assuming the smaller size (every `PushLayer` inner draw,
+    /// baked at `Canvas` record time before the real texture is ever
+    /// acquired) silently confines itself to a small corner of the
+    /// oversized image. Viewport/scissor/render area stay driven by the
+    /// texture's own real size regardless -- content simply draws
+    /// "stretched" to fill it, a stretch exactly undone later when it's
+    /// sampled back through a normalized `(0,0)`-`(1,1)` UV read and
+    /// redrawn at its own real, requested on-screen size (`PopLayer`'s
+    /// own composite quad). No other caller-side change is needed.
+    fn begin_render_to_texture(
+        &mut self,
+        texture: &dyn RhiTexture,
+        logical_width: u32,
+        logical_height: u32,
+    );
     /// Ends the rendering scope `begin_render_to_texture` began and
     /// transitions `texture` to a layout suitable for sampling
     /// afterward (e.g. via `RhiDevice::register_bindless` then
@@ -2373,7 +2396,9 @@ pub trait RhiCommandBuffer {
     /// Begins a new rendering scope targeting `texture`, cleared to
     /// transparent black -- identical to `begin_render_to_texture`
     /// except it never calls `cmd_end_rendering` first, because nothing
-    /// is currently active to end.
+    /// is currently active to end. `logical_width`/`logical_height` carry
+    /// the same meaning as `begin_render_to_texture`'s own parameters of
+    /// the same name -- see that method's own doc comment.
     ///
     /// Exists specifically for chaining multiple render-to-texture
     /// passes back to back (IMPLEMENTATION.md Step 7.2.1's own
@@ -2397,7 +2422,12 @@ pub trait RhiCommandBuffer {
     /// validation error -- caught only by a real GPU pixel check, not
     /// design review. This split keeps every call's own preconditions
     /// identical to the already-proven single-level usage.
-    fn begin_render_to_texture_no_end(&mut self, texture: &dyn RhiTexture);
+    fn begin_render_to_texture_no_end(
+        &mut self,
+        texture: &dyn RhiTexture,
+        logical_width: u32,
+        logical_height: u32,
+    );
     /// Resumes rendering into the swapchain image `RhiDevice::begin_frame`
     /// originally set up, preserving whatever it already had drawn --
     /// unlike `begin_render_to_texture`, this never clears.
@@ -2554,7 +2584,17 @@ pub fn execute_frame(
                         format,
                     )
                     .expect("execute_frame: acquire_transient_target failed for PushLayer");
-                cmd_buffer.begin_render_to_texture(&*texture);
+                // REVIEW.md finding #152: pass the *requested* size, not
+                // whatever `texture` itself reports -- `acquire_transient_
+                // target`'s oversized-borrow fallback can return something
+                // larger, and `begin_render_to_texture`'s own doc comment
+                // is explicit that its `logical_width`/`logical_height`
+                // parameters must be the caller's original intent.
+                cmd_buffer.begin_render_to_texture(
+                    &*texture,
+                    command.clip_bounds.width,
+                    command.clip_bounds.height,
+                );
                 active_layer = Some(texture);
             }
             CommandType::PopLayer => {
@@ -4120,9 +4160,9 @@ mod tests {
         BindVertexBuffer(u64, u32),
         BindIndexBuffer(u64, u32),
         DrawIndexed(u32, u32, i32),
-        BeginRenderToTexture(u64),
+        BeginRenderToTexture(u64, u32, u32),
         EndRenderToTexture(u64),
-        BeginRenderToTextureNoEnd(u64),
+        BeginRenderToTextureNoEnd(u64, u32, u32),
         ResumeSwapchainRendering,
         AcquireTransientTarget(u32, u32),
         RegisterBindless(u64),
@@ -4168,9 +4208,17 @@ mod tests {
             ));
         }
 
-        fn begin_render_to_texture(&mut self, texture: &dyn RhiTexture) {
-            self.calls
-                .push(RecordedCall::BeginRenderToTexture(texture.raw_handle()));
+        fn begin_render_to_texture(
+            &mut self,
+            texture: &dyn RhiTexture,
+            logical_width: u32,
+            logical_height: u32,
+        ) {
+            self.calls.push(RecordedCall::BeginRenderToTexture(
+                texture.raw_handle(),
+                logical_width,
+                logical_height,
+            ));
         }
 
         fn end_render_to_texture(&mut self, texture: &dyn RhiTexture) {
@@ -4178,9 +4226,16 @@ mod tests {
                 .push(RecordedCall::EndRenderToTexture(texture.raw_handle()));
         }
 
-        fn begin_render_to_texture_no_end(&mut self, texture: &dyn RhiTexture) {
+        fn begin_render_to_texture_no_end(
+            &mut self,
+            texture: &dyn RhiTexture,
+            logical_width: u32,
+            logical_height: u32,
+        ) {
             self.calls.push(RecordedCall::BeginRenderToTextureNoEnd(
                 texture.raw_handle(),
+                logical_width,
+                logical_height,
             ));
         }
 
@@ -4246,6 +4301,14 @@ mod tests {
     struct FakeDevice {
         calls: RefCell<Vec<RecordedCall>>,
         next_bindless_index: Cell<u32>,
+        /// REVIEW.md finding #152's own regression test: when `Some`,
+        /// `acquire_transient_target` returns a texture of *this* size
+        /// instead of whatever was actually requested -- simulating
+        /// `RhiDevice::acquire_transient_target`'s real, documented
+        /// "oversized borrow" fallback, which this fake would otherwise
+        /// have no way to reproduce (it always echoes the requested size
+        /// back by default, unlike the real transient pool).
+        oversized_borrow: Cell<Option<(u32, u32)>>,
     }
 
     impl RhiDevice for FakeDevice {
@@ -4262,10 +4325,12 @@ mod tests {
             self.calls
                 .borrow_mut()
                 .push(RecordedCall::AcquireTransientTarget(width, height));
+            let (returned_width, returned_height) =
+                self.oversized_borrow.get().unwrap_or((width, height));
             Ok(Box::new(FakeTexture {
                 raw_handle: 777,
-                width,
-                height,
+                width: returned_width,
+                height: returned_height,
                 format,
             }))
         }
@@ -4774,7 +4839,7 @@ mod tests {
             vec![
                 RecordedCall::BindVertexBuffer(1000, 0),
                 RecordedCall::BindIndexBuffer(2000, 0),
-                RecordedCall::BeginRenderToTexture(777),
+                RecordedCall::BeginRenderToTexture(777, 64, 48),
                 RecordedCall::EndRenderToTexture(777),
                 RecordedCall::ResumeSwapchainRendering,
                 RecordedCall::SetScissor(full_window),
@@ -4786,6 +4851,79 @@ mod tests {
              must resume swapchain rendering, re-apply the current clip stack's top (full_window \
              here, since no PushScissor is active), then draw the composite quad using the \
              just-registered bindless index (0) -- not the IR's own NO_TEXTURE placeholder"
+        );
+    }
+
+    #[test]
+    fn execute_frame_push_layer_passes_the_requested_size_not_an_oversized_borrowed_textures_own() {
+        // REVIEW.md finding #152: `RhiDevice::acquire_transient_target`'s
+        // real, documented "oversized borrow" fallback can hand back a
+        // texture larger than requested. `FakeDevice::oversized_borrow`
+        // simulates exactly that -- a 50x40 layer is requested, but the
+        // fake returns a 200x150 texture, mirroring the real pool handing
+        // back a larger, already-freed bucket. `execute_frame`'s own
+        // `PushLayer` handling must still tell `begin_render_to_texture`
+        // the *requested* 50x40 size, not the oversized texture's own
+        // 200x150 -- this is the exact defect a real GPU repro found in
+        // this session (a genuinely smaller layer's content vanishing
+        // from the composited frame after a larger one was released).
+        let mut registry = PipelineRegistry::new();
+        registry.register(
+            PipelineKind::TexturedQuad as u16,
+            Box::new(FakePipeline { raw_handle: 333 }),
+        );
+        let vertex_buffer = FakeBuffer { raw_handle: 1000 };
+        let index_buffer = FakeBuffer { raw_handle: 2000 };
+        let full_window = ScissorRect {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+        };
+
+        let mut canvas = RenderingCanvas::new();
+        canvas.push_layer(&LayerDesc {
+            x: 220,
+            y: 20,
+            width: 50,
+            height: 40,
+            format: TextureFormat::Rgba16Float,
+        });
+        canvas.pop_layer();
+        let frame = canvas.flatten();
+
+        let mut cmd_buffer = FakeCommandBuffer::default();
+        let device = FakeDevice::default();
+        device.oversized_borrow.set(Some((200, 150)));
+        execute_frame(
+            &frame,
+            &registry,
+            BufferBinding {
+                buffer: &vertex_buffer,
+                offset: 0,
+            },
+            BufferBinding {
+                buffer: &index_buffer,
+                offset: 0,
+            },
+            &full_window,
+            &device,
+            &mut cmd_buffer,
+        );
+
+        assert_eq!(
+            device.calls.into_inner()[0],
+            RecordedCall::AcquireTransientTarget(50, 40),
+            "PushLayer must still request the LayerDesc's own real size from the pool, \
+             regardless of what it's handed back"
+        );
+        assert!(
+            cmd_buffer
+                .calls
+                .contains(&RecordedCall::BeginRenderToTexture(777, 50, 40)),
+            "begin_render_to_texture must be told the requested 50x40 size, not the oversized \
+             texture's own 200x150 -- got {:?}",
+            cmd_buffer.calls
         );
     }
 

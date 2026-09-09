@@ -181,7 +181,7 @@ fn main() {
 
     let (mut cmd_buffer, image) = device.begin_frame(&swapchain).expect("begin_frame failed");
 
-    cmd_buffer.begin_render_to_texture(&*layer_texture);
+    cmd_buffer.begin_render_to_texture(&*layer_texture, LAYER_WIDTH, LAYER_HEIGHT);
     cmd_buffer.set_pipeline(&rect_pipeline);
     cmd_buffer.bind_vertex_buffer(&layer_vertex_buffer, 0);
     cmd_buffer.bind_index_buffer(&layer_index_buffer, 0);

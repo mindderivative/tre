@@ -1054,6 +1054,38 @@ checks pass: the composited rect's own interior reads exactly opaque
 foreground, and a point inside the composited region but outside the
 rect's own footprint reads exactly the real background.
 
+**Regression found and fixed (2026-09-08, REVIEW.md finding #152), while
+checking whether Step 7.2.2 would be building on solid ground.** This
+step's own `PushLayer` handling has always silently dropped a layer's
+own content whenever `RhiDevice::acquire_transient_target`'s documented
+"oversized borrow" fallback hands back a texture larger than requested
+-- the same underlying mechanism as REVIEW.md finding #130's real root
+cause (a render target's real dimensions silently diverging from what a
+caller's vertex data assumed), just reached through this step's own
+production compositing path instead of a hand-rolled demo. Confirmed via
+a real GPU repro before being treated as fact: push/pop a 200x150 layer
+(fresh alloc, then released), then push/pop a never-before-requested
+50x40 layer -- the pool hands back the freed 200x150 texture, and the
+smaller layer's own content vanishes from the composite, reading back
+exactly the background clear color at its own center.
+
+**Fix:** `RhiCommandBuffer::begin_render_to_texture`/`begin_render_to_
+texture_no_end` gained explicit `logical_width`/`logical_height`
+parameters -- the caller's own intended size, always already known --
+used only to set `self.width`/`self.height` (`draw_indexed`'s own
+NDC-mapping push-constant source). Viewport/scissor/render area stay
+driven by the texture's real size unchanged; the resulting "stretch" is
+exactly undone later by `PopLayer`'s own normalized-`(0,0)`-`(1,1)`-UV
+composite read, so no other change was needed anywhere. `execute_frame`'s
+`PushLayer` handling now passes `command.clip_bounds.width`/`.height`
+explicitly rather than letting the callee infer size from the acquired
+texture. Verified by a new `tre-engine` unit test (an oversized
+`FakeTexture` proving `execute_frame` still passes the *requested* size)
+and a new permanent real-GPU demo (`layer_oversize_regression_demo.rs`,
+added to `ci.yml`), plus a full zero-regression sweep across every
+pre-existing Vulkan demo. REVIEW.md finding #152 has the complete
+technical account.
+
 Verified by `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across
 the workspace (`tre-engine` now at 59 tests, up from 55 -- 4 new: a full
 `FakeDevice`-driven push/pop round trip asserting the exact call order
