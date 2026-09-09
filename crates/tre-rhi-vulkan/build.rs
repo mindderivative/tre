@@ -95,4 +95,9 @@ fn main() {
         "passthrough_nonbindless.frag.spv",
         &out_dir,
     );
+    compile_shader(
+        "shaders/kawase_upsample_nonbindless.frag",
+        "kawase_upsample_nonbindless.frag.spv",
+        &out_dir,
+    );
 }

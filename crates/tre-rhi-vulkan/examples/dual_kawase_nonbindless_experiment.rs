@@ -13,10 +13,26 @@
 //! (game-engine post-process chains in particular) bind a just-rendered
 //! offscreen target as a plain, dedicated sampler for that one pass,
 //! rather than through a persistent, `UPDATE_AFTER_BIND` bindless array
-//! shared with every other texture in the engine. If this experiment's
-//! plain-binding read succeeds where the bindless one fails, that
-//! isolates the bindless array itself (or its specific interaction with
-//! a same-frame offscreen render target) as the real root cause.
+//! shared with every other texture in the engine.
+//!
+//! **Update (2026-09-08): this experiment's own read genuinely worked,
+//! but not for the reason originally assumed.** Converting the real
+//! `dual_kawase_blur_demo.rs` to this same non-bindless approach still
+//! failed past its second hop -- a shape this single-hop experiment
+//! never exercised. The real defect (`dual_kawase_blur_demo.rs`'s own
+//! updated header has the full account) is in `RhiCommandBuffer::
+//! draw_indexed` silently clobbering a manually-pushed `screen_size`
+//! push constant with the render target's own real dimensions, which
+//! only diverge from the intended per-hop size when `acquire_
+//! transient_target`'s "oversized borrow" fallback hands back a larger
+//! texture than requested. This experiment's own two non-bindless draws
+//! (below) still call the wrapper's `draw_indexed`, carrying the exact
+//! same latent hazard -- it simply never triggers here, because this
+//! file's single-hop, single-hand-off shape never acquires a smaller
+//! bucket size after releasing a larger one first. Bindless vs.
+//! non-bindless was never actually the variable that mattered; this
+//! experiment's success was real, but the isolation it seemed to prove
+//! was not.
 //!
 //! Hand-rolled Vulkan throughout (raw `ash::Device` access via
 //! `VulkanDevice::device`, `RhiCommandBuffer::raw_handle()` to recover
