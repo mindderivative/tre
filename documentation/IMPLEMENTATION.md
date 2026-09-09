@@ -1730,6 +1730,146 @@ Prior drafts specified only performance regression testing (TECHNICAL.md Section
 
 * **Technical Rationale:** The performance suite alone cannot catch a batching pass that is fast but wrong (e.g., silently dropping or misordering a draw command). Pixel-diff equivalence testing is the only test that directly validates the "batched output looks identical to unbatched output" invariant the entire architecture depends on.
 
+#### Step 9.1: Correctness Test Suite -- Status: Complete (2026-09-09)
+
+Real pre-work investigation, before writing any test, found this step's
+own task list rested on two documented behaviors that had never actually
+been built or no longer matched the real code -- both surfaced to the
+project owner via `AskUserQuestion` rather than assumed, since each was
+a real scope fork, not an implementation detail:
+
+**Discrepancy 1 -- the radix sort never existed.** TECHNICAL.md Section
+4 and ARCHITECTURE.md Section 4.1 both specified a linear $\mathcal{O}(N)$
+4-pass radix sort for the 64-bit draw-command sort key (also named in
+this file's own Architectural Decision Matrix above); `UiDrawCommand::
+sort_key`'s own doc comment already called it a "64-bit Radix Sort Key."
+The real `flatten_run` had always used `std::sort_unstable_by_key` (a
+comparison sort) instead, unchanged since Step 5.1.3 first built it --
+task 1's own "unit-test the radix sort against adversarial key
+distributions" had no real subject to test. Resolved (confirmed via
+AskUserQuestion: "Build the real radix sort now"): a genuine, from-
+scratch LSD (least-significant-digit) radix sort, `radix_sort_by_key`
+(`tre-engine`), 4 passes of a 16-bit digit each ($4 \times 16 = 64$
+bits), each pass a counting sort (histogram, prefix-sum, scatter),
+ping-ponging between caller-provided `items`/`scratch` buffers so no
+per-call heap allocation is needed -- matching this project's own
+established "allocate once, reuse across the frame" discipline already
+used for transient pools/ring buffers. `segment_and_flatten` now
+allocates one `sort_scratch` buffer up front and threads it through
+every `flatten_run` call for the frame. Deliberately no small-N
+comparison-sort fallback threshold: that is TECHNICAL.md Section 9.2's
+own performance-tuning concern, out of scope for this correctness pass.
+Adversarially tested per task 1's own list -- all-identical keys,
+fully reverse-sorted input, keys clustered at every field boundary
+(Layer/Pipeline/Texture/Depth ID, per ARCHITECTURE.md Section 4.1's bit
+layout), maximum Depth ID values, empty and single-element runs, a
+`should_panic` mismatched-scratch-length guard, and 200 rounds of
+randomized inputs (both full-`u64`-range and narrow-range keys) checked
+byte-for-byte against `sort_unstable_by_key`'s own output as the
+independent oracle -- plus a `flatten_unbatched` (below) whole-pipeline
+GPU proof that the new sort produces identical rendered output to the
+old comparison sort ever did.
+
+**Discrepancy 2 -- the documented atlas-exhaustion fallback was never
+real.** DESIGN.md Section 2.6 described falling back to "a lower-
+fidelity placeholder (e.g., a bounding-box glyph or solid-color swatch)"
+when eviction cannot free enough atlas space; the real `AtlasOwner::
+process_insert` has always silently dropped the request instead (`let
+Some(rect) = packer.insert(..) else { return; }`), with a prior
+session's own code comment already independently reasoning this
+satisfies the section's "report, don't block" contract. Resolved
+(confirmed via AskUserQuestion: "Correct the docs, test the real drop
+behavior"): DESIGN.md Section 2.6 rewritten to describe the real
+silent-drop behavior; task 2's own "placeholder glyph fallback" wording
+retired as describing something that was never built. The real drop
+path is now covered by a dedicated test (below) instead.
+
+**Task 2, precisely characterized via test-driven investigation, not
+assumption.** Two real, non-obvious boundary conditions in the
+Guillotine atlas's eviction logic were found only because the first
+version of the new fragmentation/eviction test failed against its own
+wrong mental model, then were fixed and turned into real regression
+coverage: `maybe_evict_stale_entries`'s `EVICTION_CAPACITY_THRESHOLD
+= 0.85` check reads the atlas's **pre-insert** `used_fraction()` --
+an insert sequence that would only cross 85% counting the incoming
+request's own space never triggers eviction at all, so the first test
+draft (three 81%-usage entries) saw nothing evicted. And `SwmrSlotTable
+::scan_older_than`'s staleness comparison is **strict** (`last_used <
+cutoff_frame`): an entry idle for *exactly* `EVICTION_MIN_IDLE_FRAMES`
+(600) frames survives, only strictly-longer idle time is evicted -- the
+second test draft assumed the boundary frame itself was evicted and
+failed until corrected. Both corrected assumptions are now permanent,
+passing regression tests (`eviction_boundary_is_correct_across_several_
+entries_with_mixed_staleness_at_once`), alongside a 40-round sustained
+insert/evict churn test and a dedicated test for the real silent-drop
+path (`a_request_that_can_never_fit_even_after_a_full_eviction_pass_is_
+silently_dropped`) proving a permanently-oversized request is dropped
+every time, over 1000 real polling iterations, without ever wedging the
+atlas thread or corrupting a subsequent normal insert.
+
+**Task 3, the batching-equivalence test, needed one new API.**
+`RenderingCanvas` only ever exposed `flatten()`, which always merges
+adjacent same-Layer/Pipeline/Texture/clip commands -- there was no way
+to isolate *batching itself* as the one variable under test. Added
+`RenderingCanvas::flatten_unbatched()`, identical to `flatten()` in
+every way except it passes `merge: false` through to `segment_and_
+flatten`/`flatten_run`, which now gate their merge decision on that
+flag. A real GPU demo, `batching_equivalence_demo.rs` (`crates/tre-rhi-
+vulkan/examples/`, `demo/phase9_step9_1/`), records the identical
+four-rect scene twice, renders both through the real, unmodified
+`execute_frame`, and asserts the two framebuffers are byte-for-byte
+identical -- confirming `flatten()`'s batched output (1 draw call) and
+`flatten_unbatched()`'s unbatched output (4 draw calls) are visually
+indistinguishable, exactly the invariant this step's own task 3
+rationale names. Passed on the first real run, confirmed stable across
+3 repeated runs. Added to `ci.yml`'s `vulkan-validation` job.
+
+**Task 4, fuzzing, used a disclosed substitution for `cargo-fuzz`.**
+`cargo fuzz --version` errors ("no such command") and `rustup toolchain
+list` confirms only `stable-x86_64-unknown-linux-gnu` is installed --
+real coverage-guided fuzzing needs a nightly toolchain unavailable in
+this environment. `proptest` (added as a `tre-svg` dev-dependency) is a
+well-established, stable-Rust property-testing crate serving the same
+real intent: generating randomized/adversarial inputs and asserting
+bounded behavior, with automatic shrinking of any failing case to a
+minimal reproduction. Three properties, each bounded to a 2-second
+per-case wall-clock budget: `parse_svg` never panics or hangs on
+arbitrary byte sequences (0-4096 bytes); `parse_svg` never panics or
+hangs on syntactically-plausible-but-adversarial path `d` data; `tri
+angulate` never panics or hangs on arbitrary point sets (0-500 points,
+full `f32` coordinate range). All three passed (256 generated cases
+each, the crate's own default) with no shrinking ever required --
+disclosed here, not silently substituted, per REVIEW.md.
+
+**Full-workspace verification.** `cargo fmt --check`, `cargo clippy
+--workspace --all-targets -- -D warnings`, `cargo build --workspace
+--all-targets`, and `cargo test --workspace` all clean (`tre-engine`
+72 tests, up from 64; `tre-atlas` 22 tests, up from 18; `tre-svg` 28
+tests, up from 25). A full manual regression sweep of all 31 real
+Vulkan demos re-run after the sort-algorithm swap under `flatten()`/
+`execute_frame`'s entire draw pipeline: 30 passed; `canvas_
+accessibility_verify` failed only on the same pre-existing, already-
+documented environmental limitation as REVIEW.md finding #126 (no
+AT-SPI registry daemon in this sandbox to flip `org.a11y.Status.
+IsEnabled`), unrelated to any change this step made.
+
+## Explicitly out of scope (Step 9.1)
+
+- **Step 9.2** (zero-allocation debug guard and `PushLayer`/`PopLayer`
+  balance-assertion CI gating) -- confirmed via AskUserQuestion as a
+  real, separate future step, not part of this pass.
+- **A small-N comparison-sort fallback threshold** for `radix_sort_by_
+  key` -- a real, deliberate scope boundary; that is performance tuning
+  (TECHNICAL.md Section 9.2's own concern), not correctness.
+- **The placeholder-glyph atlas-exhaustion fallback** DESIGN.md Section
+  2.6 previously described -- confirmed never real and not built now;
+  the section is corrected to describe the real silent-drop behavior
+  instead.
+- **Real coverage-guided fuzzing via `cargo-fuzz`** -- needs a nightly
+  Rust toolchain unavailable in this environment; `proptest` is a
+  disclosed, real substitution serving the same intent, not a silent
+  scope reduction.
+
 ### Step 9.2: Zero-Allocation & Balance Assertions in CI
 
 * **Implementation Tasks:**

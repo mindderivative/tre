@@ -394,3 +394,110 @@ mod tests {
         }
     }
 }
+
+/// Phase 9 Step 9.1's own "fuzz-test the SVG parser and tessellator...
+/// with malformed and adversarial documents, asserting bounded
+/// tessellation time and memory regardless of input" -- via `proptest`
+/// (this crate's `Cargo.toml` has the full account of why, not
+/// `cargo-fuzz`). Every property here generates hundreds of randomized
+/// inputs per run and asserts two things regardless of what comes out:
+/// the real function never panics (a `proptest!` assertion failure
+/// inside the closure -- including a Rust panic -- fails the specific
+/// case and, on first failure, proptest automatically *shrinks* the
+/// input to the smallest one that still reproduces it, so a real
+/// failure here comes with a minimal repro, not just "some 4KB input
+/// broke it somewhere"), and it completes within a generous, fixed wall
+/// -clock bound -- a real, if coarse, stand-in for "bounded time" that
+/// doesn't need instrumenting the tessellator's own internals.
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+    use std::time::{Duration, Instant};
+
+    /// Generous on purpose: this exists to catch a real hang/blowup
+    /// (unbounded, not just slow), not to enforce a tight performance
+    /// budget -- TECHNICAL.md Section 9.2's own criterion benchmark
+    /// suite owns real performance budgets.
+    const BOUNDED_TIME: Duration = Duration::from_secs(2);
+
+    proptest! {
+        /// Pure random bytes, no SVG/XML structure at all -- the
+        /// adversarial case most likely to exercise usvg's own error
+        /// paths (malformed XML) rather than this crate's own logic,
+        /// but still a real, direct test that garbage input can never
+        /// panic or hang `parse_svg` before it even reaches XML
+        /// parsing (the `max_bytes` check) or after (usvg's own parse
+        /// failure, surfaced as `Err(SvgError::Parse(..))`).
+        #[test]
+        fn parse_svg_never_panics_or_hangs_on_arbitrary_bytes(
+            bytes in proptest::collection::vec(any::<u8>(), 0..4096)
+        ) {
+            let start = Instant::now();
+            let _ = parse_svg(&bytes, 1_000_000, 10_000);
+            prop_assert!(
+                start.elapsed() < BOUNDED_TIME,
+                "parse_svg took {:?} on {} bytes of pure random input -- expected bounded, not \
+                 unbounded, worst-case time regardless of how malformed the input is",
+                start.elapsed(),
+                bytes.len()
+            );
+        }
+
+        /// A real SVG/XML skeleton (so usvg's own parser actually
+        /// engages, not just its unicode/XML-level guard rails), but
+        /// with a randomly-generated `d` path attribute -- extreme,
+        /// negative, huge, or malformed-looking coordinate sequences
+        /// are exactly the "adversarial document" shape this task
+        /// names, more targeted than pure random bytes at stressing
+        /// this crate's own path-resolution and point-budget logic.
+        #[test]
+        fn parse_svg_never_panics_or_hangs_on_random_path_data(
+            path_data in "[MLZmlz0-9.,\\- ]{0,500}"
+        ) {
+            let svg = format!(
+                r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><path d="{path_data}" fill="white"/></svg>"#
+            );
+            let start = Instant::now();
+            let _ = parse_svg(svg.as_bytes(), 1_000_000, 10_000);
+            prop_assert!(
+                start.elapsed() < BOUNDED_TIME,
+                "parse_svg took {:?} on a random path data string of length {} -- expected \
+                 bounded, not unbounded, worst-case time",
+                start.elapsed(),
+                path_data.len()
+            );
+        }
+
+        /// Random point sets fed directly to `triangulate`, bypassing
+        /// SVG parsing entirely -- degenerate (0-2 points), duplicate/
+        /// coincident points, and self-intersecting orderings are all
+        /// real, reachable shapes a resolved SVG path can produce
+        /// (`triangulate`'s own doc comment already names self-
+        /// intersection as a real `SvgError::NotSimplePolygon` case,
+        /// not a panic), so this property is real adversarial coverage
+        /// for the tessellator specifically, independent of whatever
+        /// the parser's own point-budget already bounds.
+        #[test]
+        fn triangulate_never_panics_or_hangs_on_arbitrary_point_sets(
+            points in proptest::collection::vec(
+                (-1.0e6f32..1.0e6f32, -1.0e6f32..1.0e6f32),
+                0..500
+            )
+        ) {
+            let polygon = Polygon {
+                points: points.into_iter().map(|(x, y)| [x, y]).collect(),
+            };
+            let start = Instant::now();
+            let _ = triangulate(&polygon);
+            prop_assert!(
+                start.elapsed() < BOUNDED_TIME,
+                "triangulate took {:?} on {} arbitrary points -- expected bounded, not \
+                 unbounded, worst-case time regardless of how degenerate or self-intersecting \
+                 the polygon is",
+                start.elapsed(),
+                polygon.points.len()
+            );
+        }
+    }
+}

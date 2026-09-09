@@ -1563,7 +1563,53 @@ impl RenderingCanvas {
             accessibility_nodes,
             ..
         } = self;
-        segment_and_flatten(vertices, &indices, commands, accessibility_nodes)
+        segment_and_flatten(vertices, &indices, commands, accessibility_nodes, true)
+    }
+
+    /// Identical to [`Self::flatten`] except it skips batch-merging
+    /// entirely -- every recorded `DrawGeometry` command becomes its own
+    /// separate output command, one draw call each, still ordered by
+    /// the exact same real sort. Exists specifically for Phase 9 Step
+    /// 9.1's own batching-equivalence test
+    /// (`batching_equivalence_demo.rs`): rendering the identical scene
+    /// through this and through [`Self::flatten`] isolates *batching*
+    /// as the only variable that can differ between the two outputs,
+    /// so a pixel mismatch between them indicates a real batching or
+    /// sort-key bug, not a performance regression. A validation-only
+    /// utility, not a production rendering path -- real callers always
+    /// want [`Self::flatten`]'s own merged output.
+    ///
+    /// # Panics
+    /// Same balance-assertion panics as [`Self::flatten`].
+    #[must_use]
+    pub fn flatten_unbatched(self) -> FlattenedFrame {
+        debug_assert_eq!(
+            self.layer_stack.len(),
+            0,
+            "push_layer/pop_layer calls are unbalanced at frame boundary"
+        );
+        debug_assert_eq!(
+            self.state_stack.len(),
+            1,
+            "save/restore calls are unbalanced at frame boundary"
+        );
+        debug_assert!(
+            self.clip_stack.is_empty(),
+            "push_clip/pop_clip calls are unbalanced at frame boundary"
+        );
+        debug_assert!(
+            self.overlay_stack.is_empty(),
+            "begin_overlay/end_overlay calls are unbalanced at frame boundary"
+        );
+
+        let RenderingCanvas {
+            vertices,
+            indices,
+            commands,
+            accessibility_nodes,
+            ..
+        } = self;
+        segment_and_flatten(vertices, &indices, commands, accessibility_nodes, false)
     }
 
     /// Merges this canvas's locally-recorded data into `arena` (Step
@@ -1718,6 +1764,7 @@ impl FrameArena {
             &self.indices.into_vec(),
             self.commands.into_vec(),
             self.accessibility_nodes.into_vec(),
+            true,
         )
     }
 }
@@ -1868,6 +1915,98 @@ fn compute_sort_key(
 /// returned `FlattenedFrame` actually carries; leaving it unrebased
 /// would have `execute_frame`'s `draw_indexed` read from the wrong
 /// buffer entirely.
+/// The radix width `radix_sort_by_key` processes per pass -- 16 bits,
+/// matching TECHNICAL.md Section 4 / ARCHITECTURE.md Section 4.1's own
+/// "4-pass Radix Sort" for a 64-bit key (4 passes * 16 bits = 64 bits).
+const RADIX_BITS: u32 = 16;
+const RADIX_BUCKETS: usize = 1 << RADIX_BITS;
+const RADIX_PASSES: u32 = 64 / RADIX_BITS;
+
+/// A real least-significant-digit radix sort, ascending by `key_fn(item)`
+/// -- 4 passes of a 16-bit digit each, $O(N)$ per pass (a counting sort:
+/// one histogram pass, one prefix-sum pass, one scatter pass, all
+/// linear in `items.len()` plus the fixed $2^{16}$-bucket overhead).
+/// Replaces `flatten_run`'s own former `sort_unstable_by_key` call
+/// (Phase 9 Step 9.1, REVIEW.md): TECHNICAL.md Section 4 has always
+/// specified this exact algorithm for the 64-bit draw-command sort key
+/// -- `UiDrawCommand::sort_key`'s own doc comment even already says
+/// "64-bit Radix Sort Key" -- but no prior step actually built it.
+///
+/// `scratch` must have the same length as `items`; every pass scatters
+/// into it and the two halves swap roles, so after an even number of
+/// passes (4) the fully-sorted result ends up back in `items` with no
+/// final copy needed. Callers own `scratch` and are expected to reuse
+/// one buffer across many calls (`segment_and_flatten` allocates one
+/// per frame, sized to the frame's own total command count, an upper
+/// bound for any single run) rather than allocating fresh scratch space
+/// per call -- this function itself never allocates.
+///
+/// Deliberately unconditional: no small-`N` fallback to a comparison
+/// sort. TECHNICAL.md's own specification names this algorithm
+/// unconditionally, and Step 9.1 is a correctness pass, not a
+/// performance-tuning one (TECHNICAL.md Section 9.2's own benchmark
+/// suite owns that) -- a hybrid crossover threshold would be a real
+/// performance decision with no measured data behind it yet. A real,
+/// deliberate, disclosed scope boundary, not an oversight.
+///
+/// Stable (ties keep their original relative order): each pass's
+/// scatter step preserves relative order among equal digits, and LSD
+/// radix sort's own correctness proof relies on every pass being
+/// stable, from the least-significant digit up. `flatten_run`'s own
+/// real keys are always unique within one frame in practice
+/// (`RenderingCanvas::next_depth_id` never repeats or resets), so no
+/// real caller depends on this today -- it falls out of the algorithm
+/// for free, not because anything requires it.
+///
+/// # Panics
+/// Panics if `scratch.len() != items.len()`.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "digit_of's own result is always masked to RADIX_BUCKETS - 1 (0xFFFF) before the \
+               cast, provably in range for usize on every real target this project builds for"
+)]
+fn radix_sort_by_key<T: Copy>(items: &mut [T], scratch: &mut [T], key_fn: impl Fn(&T) -> u64) {
+    assert_eq!(
+        items.len(),
+        scratch.len(),
+        "radix_sort_by_key: scratch must be exactly as long as items"
+    );
+    if items.len() <= 1 {
+        return;
+    }
+
+    // `counts[d]` becomes, after the prefix-sum step, the first output
+    // index for digit `d` -- one extra slot isn't needed since digits
+    // run `0..RADIX_BUCKETS` and the prefix sum is computed in place,
+    // left to right, before any scatter reads it.
+    let mut counts = vec![0u32; RADIX_BUCKETS];
+
+    let mut src: &mut [T] = items;
+    let mut dst: &mut [T] = scratch;
+    for pass in 0..RADIX_PASSES {
+        let shift = pass * RADIX_BITS;
+        let digit_of = |item: &T| ((key_fn(item) >> shift) & (RADIX_BUCKETS as u64 - 1)) as usize;
+
+        counts.fill(0);
+        for item in src.iter() {
+            counts[digit_of(item)] += 1;
+        }
+        let mut running = 0u32;
+        for count in &mut counts {
+            let this_bucket = *count;
+            *count = running;
+            running += this_bucket;
+        }
+        for item in src.iter() {
+            let digit = digit_of(item);
+            dst[counts[digit] as usize] = *item;
+            counts[digit] += 1;
+        }
+
+        std::mem::swap(&mut src, &mut dst);
+    }
+}
+
 #[allow(
     clippy::cast_possible_truncation,
     reason = "a single frame's index count stays far below u32::MAX, the same headroom \
@@ -1878,20 +2017,46 @@ fn segment_and_flatten(
     indices: &[u32],
     mut commands: Vec<UiDrawCommand>,
     accessibility_nodes: Vec<AccessibilityNode>,
+    merge: bool,
 ) -> FlattenedFrame {
     let mut out_commands = Vec::with_capacity(commands.len());
     let mut out_indices = Vec::with_capacity(indices.len());
+    // Phase 9 Step 9.1: one scratch buffer, sized to the whole frame's
+    // own command count (an upper bound for any single run below),
+    // allocated once here and reused across every `flatten_run` call --
+    // `radix_sort_by_key`'s own doc comment explains why it needs
+    // caller-provided scratch space rather than allocating its own.
+    let mut sort_scratch = vec![
+        UiDrawCommand {
+            kind: CommandType::DrawGeometry,
+            sort_key: 0,
+            pipeline_state_id: 0,
+            texture_handle: 0,
+            element_count: 0,
+            vertex_offset: 0,
+            clip_bounds: ScissorRect {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            },
+        };
+        commands.len()
+    ];
     let mut run_start = 0;
     for i in 0..=commands.len() {
         let at_boundary = i == commands.len() || commands[i].kind != CommandType::DrawGeometry;
         if !at_boundary {
             continue;
         }
+        let run_len = i - run_start;
         flatten_run(
             &mut commands[run_start..i],
+            &mut sort_scratch[..run_len],
             indices,
             &mut out_commands,
             &mut out_indices,
+            merge,
         );
         if i < commands.len() {
             let mut boundary_command = commands[i];
@@ -1924,17 +2089,27 @@ fn command_indices<'a>(source_indices: &'a [u32], command: &UiDrawCommand) -> &'
 }
 
 /// Sorts one marker-free run of `DrawGeometry` commands by `sort_key`
-/// (safe as `sort_unstable_by_key` -- no two commands in one frame ever
-/// share a full sort key, since `RenderingCanvas::next_depth_id` never
-/// repeats or resets, so there is nothing tied to preserve the order
-/// of), then merges adjacent commands sharing Layer+Pipeline+Texture
-/// (the key's top 44 bits, `sort_key >> 20`) and identical `clip_bounds`
-/// into one -- ARCHITECTURE.md Section 4.2's own three-step batch-
-/// flattening algorithm. Every merged command's original (possibly
-/// non-contiguous) index slice is concatenated into `out_indices`, the
-/// actual contiguous buffer the RHI will read from -- each output
-/// command's `vertex_offset` refers to a position in `out_indices`,
-/// never `source_indices`.
+/// via `radix_sort_by_key` (Phase 9 Step 9.1 -- TECHNICAL.md Section
+/// 4's own always-specified algorithm, real as of this step; stable
+/// regardless, though nothing relies on that -- see its own doc
+/// comment), then, when `merge` is set, merges adjacent commands
+/// sharing Layer+Pipeline+Texture (the key's top 44 bits, `sort_key >>
+/// 20`) and identical `clip_bounds` into one -- ARCHITECTURE.md Section
+/// 4.2's own three-step batch-flattening algorithm. When `merge` is
+/// unset, every command is emitted as its own separate output instead
+/// -- `RenderingCanvas::flatten_unbatched`'s own real consumer (Phase 9
+/// Step 9.1's batching-equivalence test), isolating *batching*
+/// specifically as the only variable that differs from the real
+/// `flatten()` path, since both still use the identical real sort.
+/// Either way, every emitted command's original (possibly
+/// non-contiguous, when merged) index slice is concatenated into
+/// `out_indices`, the actual contiguous buffer the RHI will read from
+/// -- each output command's `vertex_offset` refers to a position in
+/// `out_indices`, never `source_indices`.
+///
+/// `sort_scratch` must be exactly `run.len()` long -- see
+/// `radix_sort_by_key`'s own doc comment for why it's the caller's own
+/// reused buffer, not allocated here.
 #[allow(
     clippy::cast_possible_truncation,
     reason = "a single frame's index count stays far below u32::MAX, the same headroom \
@@ -1942,11 +2117,13 @@ fn command_indices<'a>(source_indices: &'a [u32], command: &UiDrawCommand) -> &'
 )]
 fn flatten_run(
     run: &mut [UiDrawCommand],
+    sort_scratch: &mut [UiDrawCommand],
     source_indices: &[u32],
     out_commands: &mut Vec<UiDrawCommand>,
     out_indices: &mut Vec<u32>,
+    merge: bool,
 ) {
-    run.sort_unstable_by_key(|command| command.sort_key);
+    radix_sort_by_key(run, sort_scratch, |command| command.sort_key);
 
     let mut remaining = run.iter();
     let Some(&first) = remaining.next() else {
@@ -1957,7 +2134,8 @@ fn flatten_run(
     out_indices.extend_from_slice(command_indices(source_indices, &current));
 
     for &command in remaining {
-        let same_batch = command.sort_key >> 20 == current.sort_key >> 20
+        let same_batch = merge
+            && command.sort_key >> 20 == current.sort_key >> 20
             && command.clip_bounds == current.clip_bounds;
         if same_batch {
             out_indices.extend_from_slice(command_indices(source_indices, &command));
@@ -3699,13 +3877,16 @@ mod tests {
         };
         let source_indices: Vec<u32> = (0..12).collect();
         let mut run = [a, b];
+        let mut sort_scratch = run;
         let mut out_commands = Vec::new();
         let mut out_indices = Vec::new();
         flatten_run(
             &mut run,
+            &mut sort_scratch,
             &source_indices,
             &mut out_commands,
             &mut out_indices,
+            true,
         );
 
         assert_eq!(
@@ -3714,6 +3895,131 @@ mod tests {
             "differing clip_bounds must prevent merging even with identical \
              Layer+Pipeline+Texture"
         );
+    }
+
+    /// A small, deterministic xorshift64 PRNG -- no new dependency
+    /// needed for one differential property test (Phase 9 Step 9.1),
+    /// and fully reproducible run to run, unlike a system-entropy seed.
+    struct Xorshift64(u64);
+    impl Xorshift64 {
+        fn next_u64(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            x
+        }
+    }
+
+    /// Sorts `keys` via `radix_sort_by_key` and returns the resulting
+    /// key order -- every adversarial test below only cares about the
+    /// resulting *order*, not any other `UiDrawCommand` field, so this
+    /// keeps each test's own assertion reading as a plain `Vec<u64>`
+    /// comparison rather than constructing full commands throughout.
+    fn radix_sorted_keys(keys: &[u64]) -> Vec<u64> {
+        let mut items: Vec<u64> = keys.to_vec();
+        let mut scratch = items.clone();
+        radix_sort_by_key(&mut items, &mut scratch, |&k| k);
+        items
+    }
+
+    #[test]
+    fn radix_sort_handles_all_identical_keys() {
+        let keys = vec![42u64; 500];
+        assert_eq!(radix_sorted_keys(&keys), keys);
+    }
+
+    #[test]
+    fn radix_sort_handles_fully_reverse_sorted_input() {
+        let keys: Vec<u64> = (0..500).rev().collect();
+        let mut expected = keys.clone();
+        expected.sort_unstable();
+        assert_eq!(radix_sorted_keys(&keys), expected);
+    }
+
+    #[test]
+    fn radix_sort_handles_keys_clustered_at_every_field_boundary() {
+        // ARCHITECTURE.md Section 4.1's own field layout: Layer (63:48),
+        // Pipeline (47:32), Texture (31:20), Depth (19:0). One key
+        // exactly at 0 and one at the max value of each field alone,
+        // plus every field maxed simultaneously and every field zeroed
+        // simultaneously -- the exact boundary values a byte/digit-wise
+        // radix sort is most likely to get wrong if a shift/mask is off
+        // by even one bit.
+        let keys: Vec<u64> = vec![
+            0,
+            u64::from(u16::MAX) << 48,              // Layer ID maxed alone
+            u64::from(u16::MAX) << 32,              // Pipeline ID maxed alone
+            0xFFF << 20,                            // Texture ID maxed alone
+            0xF_FFFF,                               // Depth ID maxed alone
+            u64::MAX,                               // every field maxed
+            (u64::from(u16::MAX) << 48) | 0xF_FFFF, // Layer + Depth maxed, rest zero
+        ];
+        let mut expected = keys.clone();
+        expected.sort_unstable();
+        assert_eq!(radix_sorted_keys(&keys), expected);
+    }
+
+    #[test]
+    fn radix_sort_handles_maximum_depth_id_values() {
+        // Depth ID's own real 20-bit budget (ARCHITECTURE.md Section
+        // 4.1) -- every value packed into the field's own low 20 bits,
+        // including the field's own real maximum, `0xFFFFF`.
+        let keys: Vec<u64> = vec![0xF_FFFF, 0, 0xF_FFFE, 1, 0x8_0000];
+        let mut expected = keys.clone();
+        expected.sort_unstable();
+        assert_eq!(radix_sorted_keys(&keys), expected);
+    }
+
+    #[test]
+    fn radix_sort_handles_an_empty_run_without_panicking() {
+        let keys: Vec<u64> = Vec::new();
+        assert_eq!(radix_sorted_keys(&keys), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn radix_sort_handles_a_single_element_run() {
+        let keys = vec![777u64];
+        assert_eq!(radix_sorted_keys(&keys), keys);
+    }
+
+    #[test]
+    #[should_panic(expected = "scratch must be exactly as long as items")]
+    fn radix_sort_panics_on_a_mismatched_scratch_length() {
+        let mut items = vec![3u64, 1, 2];
+        let mut scratch = vec![0u64; 2];
+        radix_sort_by_key(&mut items, &mut scratch, |&k| k);
+    }
+
+    #[test]
+    fn radix_sort_agrees_with_sort_unstable_on_many_randomized_inputs() {
+        // Differential property test (Phase 9 Step 9.1): rather than
+        // trusting a handful of specific cases above to cover every
+        // real bug shape, generate many pseudo-random key sets of
+        // varying size and distribution and check the real radix sort
+        // produces exactly the same *sorted order* std's own
+        // comparison sort would -- a mismatch on any single run would
+        // be a real correctness bug in the new algorithm.
+        let mut rng = Xorshift64(0x9E37_79B9_7F4A_7C15);
+        for run in 0..200u32 {
+            let len = (rng.next_u64() % 300) as usize;
+            // Every few runs, bias toward small key ranges (heavy
+            // duplicate/clustering pressure) instead of the full u64
+            // range, matching the "adversarial distribution" spirit of
+            // the specific cases above with real randomized coverage.
+            let mask: u64 = if run % 3 == 0 { 0xFF } else { u64::MAX };
+            let keys: Vec<u64> = (0..len).map(|_| rng.next_u64() & mask).collect();
+
+            let mut expected = keys.clone();
+            expected.sort_unstable();
+            assert_eq!(
+                radix_sorted_keys(&keys),
+                expected,
+                "radix sort disagreed with sort_unstable on randomized run {run} (len {len}, \
+                 mask {mask:#x})"
+            );
+        }
     }
 
     #[test]

@@ -33,3 +33,15 @@ tre-engine = { path = "../tre-engine" }
 # affine formula, see `to_affine2` in src/lib.rs -- rather than
 # reimplementing the same 2D affine math a second time.
 tre-math = { path = "../tre-math" }
+
+# Phase 9 Step 9.1: adversarial/malformed-input testing for parse_svg/
+# triangulate (IMPLEMENTATION.md's own "fuzz-test... with malformed and
+# adversarial documents" task). Real coverage-guided fuzzing via
+# `cargo-fuzz` needs a nightly Rust toolchain, unavailable in this
+# environment -- `proptest` is a well-established, stable-Rust-compatible
+# property-testing crate that directly serves the same real intent
+# (randomized/adversarial input generation, bounded-behavior assertions)
+# without a new toolchain dependency. Disclosed as a deliberate
+# substitution, not a silent scope reduction -- see REVIEW.md.
+[dev-dependencies]
+proptest = "1"

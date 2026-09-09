@@ -167,6 +167,9 @@ jobs:
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example main_loop_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example dual_kawase_nonbindless_experiment
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example dual_kawase_blur_demo
+      # Phase 9 Step 9.1: real GPU proof that flatten()'s batching merge
+      # step is pixel-equivalent to the same scene left unbatched.
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example batching_equivalence_demo
 
   accessibility-validation:
     name: accessibility-validation

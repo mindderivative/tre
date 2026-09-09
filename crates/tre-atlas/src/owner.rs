@@ -582,4 +582,170 @@ mod tests {
 
         let _ = owner.join();
     }
+
+    #[test]
+    fn eviction_boundary_is_correct_across_several_entries_with_mixed_staleness_at_once() {
+        // Phase 9 Step 9.1: extends the single-stale-entry case above to
+        // several entries at once, spanning the exact
+        // EVICTION_MIN_IDLE_FRAMES (600) cutoff from both sides -- real
+        // adversarial coverage for an off-by-one in the age comparison,
+        // not just "eviction happens at all." A 10x10 atlas (100px^2):
+        // three 10x3 entries (30px^2 each, 90px^2 total = 0.90 used --
+        // `maybe_evict_stale_entries` checks *pre*-insert usage, so this
+        // must already be at/above the 0.85 threshold on its own,
+        // unlike a fraction that only crosses it once the trigger
+        // insert's own space is added) inserted at frame 0. Requesting
+        // a fourth 1x1 entry at frame 700 crosses the threshold; idle =
+        // 700 - last_used for each of the first three.
+        let owner = AtlasOwner::spawn(10, 10, 8, 8);
+        let handle = owner.handle();
+
+        // `maybe_evict_stale_entries` computes `cutoff_frame =
+        // current_frame - EVICTION_MIN_IDLE_FRAMES` (700 - 600 = 100
+        // here) and evicts only entries with `last_used < cutoff_frame`
+        // (`SwmrSlotTable::scan_older_than`'s own real, strict
+        // comparison) -- so `last_used == cutoff_frame` exactly
+        // *survives* (idle == 600 exactly is not evicted), and only
+        // `last_used < cutoff_frame` (idle > 600) is.
+        let stale = AtlasKey::from_glyph(1, 1);
+        insert_and_wait(&handle, stale, 10, 3, 0);
+        // Touched at frame 100 -- last_used == cutoff_frame exactly
+        // (idle 600 at the trigger frame): must survive, the strict
+        // `<` comparison excludes it.
+        let at_cutoff_survives = AtlasKey::from_glyph(1, 2);
+        insert_and_wait(&handle, at_cutoff_survives, 10, 3, 0);
+        assert!(handle.lookup(at_cutoff_survives, 100).is_some());
+        // Touched at frame 99 -- last_used is one frame *under*
+        // cutoff_frame (idle 601 at the trigger frame): must be
+        // evicted.
+        let past_cutoff_evicted = AtlasKey::from_glyph(1, 3);
+        insert_and_wait(&handle, past_cutoff_evicted, 10, 3, 0);
+        assert!(handle.lookup(past_cutoff_evicted, 99).is_some());
+
+        let trigger = AtlasKey::from_glyph(1, 4);
+        insert_and_wait(&handle, trigger, 1, 1, 700);
+
+        assert!(
+            handle.lookup(stale, 700).is_none(),
+            "never touched since frame 0 -- idle 700, well past the cutoff"
+        );
+        assert!(
+            handle.lookup(past_cutoff_evicted, 700).is_none(),
+            "idle 601 (700 - 99), one frame past the cutoff, must be evicted"
+        );
+        assert!(
+            handle.lookup(at_cutoff_survives, 700).is_some(),
+            "idle exactly 600 (700 - 100) at the trigger frame must survive -- the strict `<` \
+             comparison in scan_older_than excludes it"
+        );
+
+        let _ = owner.join();
+    }
+
+    #[test]
+    fn sustained_insert_evict_churn_stays_correct_across_many_cycles() {
+        // Phase 9 Step 9.1's own "fragmentation behavior... under
+        // sustained insert/evict churn" -- a single eviction event
+        // proves the mechanism works once; real production use cycles
+        // through many rounds of insert-some/evict-some/insert-again,
+        // repeatedly fragmenting and reclaiming the same atlas space at
+        // varying sizes. 40 rounds: each round inserts one small, one
+        // medium, and one large entry (varying dimensions round to
+        // round, so the packer never sees the exact same request twice
+        // in a row), touches the *previous* round's own entries to keep
+        // them alive, and lets the round-before-that's entries go
+        // stale. Every round's own newly-inserted entries must resolve
+        // correctly; the atlas must never wedge (every insert either
+        // succeeds or is a genuine capacity miss, never a hang).
+        let owner = AtlasOwner::spawn(64, 64, 256, 256);
+        let handle = owner.handle();
+
+        let mut previous_round_keys: Vec<AtlasKey> = Vec::new();
+        let mut round_before_keys: Vec<AtlasKey> = Vec::new();
+
+        for round in 0..40u32 {
+            let frame = u64::from(round) * 700;
+            let sizes = [(3, 3), (5, 7), (2, 9)];
+            let mut this_round_keys = Vec::new();
+            for (i, &(w, h)) in sizes.iter().enumerate() {
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "round/i are small test-loop counters"
+                )]
+                let key = AtlasKey::from_glyph(round, (i as u32) + 1);
+                // Vary the exact size slightly round to round so the
+                // packer must genuinely reclaim fragmented space of
+                // differing shapes, not just the identical rect repeatedly.
+                let width = w + (round % 3);
+                let height = h + (round % 2);
+                let (rect, _) = insert_and_wait(&handle, key, width, height, frame);
+                assert_eq!(
+                    (rect.width, rect.height),
+                    (width, height),
+                    "round {round}'s own entry {i} must resolve at its real requested size"
+                );
+                this_round_keys.push(key);
+            }
+
+            // Keep the previous round's own entries alive by touching
+            // them; let the round-before-that's entries go stale and
+            // become real eviction candidates on some later round once
+            // capacity is crossed.
+            for &key in &previous_round_keys {
+                let _ = handle.lookup(key, frame);
+            }
+
+            round_before_keys = std::mem::replace(&mut previous_round_keys, this_round_keys);
+        }
+        let _ = round_before_keys;
+
+        let _ = owner.join();
+    }
+
+    #[test]
+    fn a_request_that_can_never_fit_even_after_a_full_eviction_pass_is_silently_dropped() {
+        // REVIEW.md/DESIGN.md Section 2.6 (corrected, Phase 9 Step
+        // 9.1): a request larger than the atlas itself can never be
+        // satisfied no matter how much eviction frees -- `process_
+        // insert`'s own real behavior is to silently drop it (`let
+        // Some(rect) = packer.insert(..) else { return; }`), not to
+        // render any kind of placeholder. The request must simply never
+        // resolve, and -- critically -- the owner thread itself must
+        // keep working correctly afterward, proving the drop path
+        // doesn't corrupt any shared state (the packer, the slot
+        // table, or the owner's own request loop).
+        let owner = AtlasOwner::spawn(10, 10, 8, 8);
+        let handle = owner.handle();
+
+        let too_big = AtlasKey::from_glyph(9, 9);
+        assert!(handle.request_insert(
+            too_big,
+            Box::new(SolidColor {
+                width: 20,
+                height: 20,
+                color: [1, 2, 3, 255],
+            }),
+            0,
+        ));
+        // Give the owner thread real time to actually process (and
+        // drop) the request before asserting it never resolves --
+        // `wait_for`'s own retry loop would be the wrong tool here,
+        // since it exists to prove a request *does* eventually resolve.
+        for _ in 0..1_000 {
+            assert!(
+                handle.lookup(too_big, 0).is_none(),
+                "a request bigger than the whole atlas must never resolve"
+            );
+            thread::yield_now();
+        }
+
+        // The owner must still be alive and correct: a real, fittable
+        // request submitted right after the dropped one must resolve
+        // normally.
+        let fits = AtlasKey::from_glyph(1, 1);
+        let (rect, _) = insert_and_wait(&handle, fits, 4, 4, 0);
+        assert_eq!((rect.width, rect.height), (4, 4));
+
+        let _ = owner.join();
+    }
 }

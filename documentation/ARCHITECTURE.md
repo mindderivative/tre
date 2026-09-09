@@ -155,6 +155,8 @@ $$\text{SortKey} = (\text{Layer ID} \ll 48) \mid (\text{Pipeline ID} \ll 32) \mi
 
 *Z-Index Resolution Order (added in the September 2026 documentation review):* Depth ID is assigned *after* z-index resolution, not from raw traversal order -- an element with an explicit z-index override gets the Depth ID matching its resolved paint position, not its position in the widget tree. This keeps Depth ID a true "final paint order" index in all cases, including the ones DESIGN.md Section 7.1 describes where z-index breaks strict depth-first order.
 
+*Updated for Phase 9 Step 9.1 (2026-09-09):* the "linear $\mathcal{O}(N)$ 4-pass Radix Sort" this section has always specified is real as of this step (`tre-engine`'s `radix_sort_by_key`) -- `flatten_run` had used `std::sort_unstable_by_key` (a comparison sort) since Step 5.1.3 first built it, an undisclosed gap this step's own pre-work found and closed, not a design change. See TECHNICAL.md Section 4's own matching annotation and REVIEW.md for the full account, including the adversarial and randomized-differential test coverage that verifies it.
+
 ### 4.2 Batch Flattening
 After sorting, a linear sweep consolidates commands:
 1. If Command $A$ and Command $B$ share the exact same top 44 bits of their `sortKey` (Layer + Pipeline + Texture) and have identical `clipBounds`.
