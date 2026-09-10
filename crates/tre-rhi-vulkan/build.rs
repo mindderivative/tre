@@ -73,6 +73,15 @@ fn main() {
         &out_dir,
     );
     compile_shader("shaders/sdf_ellipse.frag", "sdf_ellipse.frag.spv", &out_dir);
+    // Phase 10 Step 10.2.1: Polygon/Path gradient fill. Deliberately
+    // paired at pipeline-creation time with the EXISTING
+    // `bindless_textured.vert` (see that shader's own doc comment for
+    // why) -- no new vertex shader compiled here.
+    compile_shader(
+        "shaders/gradient_fill.frag",
+        "gradient_fill.frag.spv",
+        &out_dir,
+    );
     // Phase 4 Step 4.2.3: the real MSDF evaluation shader. Deliberately
     // paired at pipeline-creation time with `bindless_textured.vert`, not
     // a new vertex shader -- its inputs/outputs are already exactly what

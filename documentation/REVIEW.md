@@ -2405,3 +2405,52 @@ sub-step's own real, tested, demoed work lands.
 | # | Severity | Status | One-line summary |
 |---|----------|--------|-------------------|
 | 166 | Decision | Planned | Sequenced Steps 10.2.1-10.2.6 close every remaining disclosed Full Shape Rendering Support gap; research surfaced a real, better blend-mode technical path (`VK_EXT_blend_operation_advanced`) than originally assumed |
+
+## Phase 10 Step 10.2.1 Implementation (2026-09-09)
+
+### 167. [Fixed same-day] A `GradientDef`'s points were authored in `Rectangle`/`Circle`'s public top-left-relative local space, but `frag_uv` is center-relative -- the demo's own first real run caught the mismatch directly
+`sdf_rect_styled.frag`/`sdf_ellipse.frag`'s own `frag_uv` is CENTER-
+relative (`draw_styled_rectangle`/`draw_ellipse`'s own `uv` construction,
+an internal shader convention chosen for symmetric SDF math). But
+`GradientDef`'s own points -- `GradientKind::Linear { start, end }` /
+`Radial { center, radius }` -- were originally written straight into the
+`GpuGradientStyle` record with no conversion, while every other
+`Rectangle`/`Circle` field (`corner_radius`, `border_thickness`, and
+`flatten_circle`'s own explicit doc comment) is authored in the shape's
+PUBLIC local space: bounding-box top-left at the origin.
+
+Caught by `gradient_fill_demo.rs`'s own first real run, not by
+inspection: a rectangle gradient defined `[0,0] -> [200,0]` (its own
+public top-left-relative space) with a probe at local `(30, 50)`
+(expected `t = 0.15`, a blended red-purple tone) instead rendered pure,
+unmixed red -- the shader was evaluating `t` against `frag_uv`'s own
+center-relative origin, not the origin the gradient was actually
+authored against, so every real point landed far outside `[0, 1]` and
+clamped to one end.
+
+**Fixed same day:** `build_gpu_gradient_style`/`write_gradient_style`
+gained a `local_origin_offset: Vec2` parameter -- `[half_width,
+half_height]` for `Rectangle`, `radius` for `Circle` (exactly the
+center `flatten_circle`'s own doc comment already names), `[0, 0]` for
+`Polygon`/`Path` (whose own local space is already center-relative by
+construction, or -- for `Path` -- has no fixed convention at all, so a
+gradient on one is defined in those same raw coordinates directly) --
+subtracted from every point/center before the record is written. Gradient
+authors keep thinking in the same top-left-relative coordinates as every
+other shape property; the center-relative conversion is now an internal
+implementation detail, never surfaced.
+
+**Verified.** `gradient_fill_demo.rs` re-run after the fix: all three
+shapes' gradients (rectangle linear, circle radial, hexagon linear via
+the separate `GradientFill` pipeline) match an independent Rust
+reference of the exact gradient math within a small disclosed tolerance.
+A new unit test (`flatten_into_renders_a_rectangles_gradient_fill_via_
+the_styled_path`) asserts the real, offset-corrected `GpuGradientStyle`
+point values directly, so a regression here would be caught without
+needing a GPU run.
+
+## Summary table (Phase 10 Step 10.2.1 Implementation)
+
+| # | Severity | Status | One-line summary |
+|---|----------|--------|-------------------|
+| 167 | Should-fix | Fixed | Gradient points authored in public top-left-relative local space now correctly offset into `frag_uv`'s own center-relative space for `Rectangle`/`Circle`; caught by the new demo's own first real run |

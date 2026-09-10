@@ -63,6 +63,69 @@ float sd_ellipse(vec2 p, vec2 r) {
     return k1 * (k1 - 1.0) / k2;
 }
 
+// Phase 10 Step 10.2.1: evaluates a `GpuGradientStyle` record at
+// `word_index` for the LOCAL point `p` -- see `sdf_rect_styled.frag`'s
+// own identical function for the full account (duplicated here, not
+// shared: this codebase's shaders have no include mechanism). Returns
+// unpremultiplied linear RGB in `.rgb` and alpha in `.a`.
+const uint GRADIENT_MAX_STOPS = 8u;
+
+vec4 eval_gradient(uint word_index, vec2 p) {
+    uint kind = style_buffer.words[word_index + 0];
+    vec2 point0 = vec2(
+        uintBitsToFloat(style_buffer.words[word_index + 1]),
+        uintBitsToFloat(style_buffer.words[word_index + 2])
+    );
+    vec2 point1_or_radius = vec2(
+        uintBitsToFloat(style_buffer.words[word_index + 3]),
+        uintBitsToFloat(style_buffer.words[word_index + 4])
+    );
+    uint stop_count = style_buffer.words[word_index + 5];
+
+    float t;
+    if (kind == 0u) {
+        vec2 axis = point1_or_radius - point0;
+        float len_sq = dot(axis, axis);
+        t = len_sq > 0.0 ? dot(p - point0, axis) / len_sq : 0.0;
+    } else {
+        float radius = point1_or_radius.x;
+        t = radius > 0.0 ? length(p - point0) / radius : 0.0;
+    }
+    t = clamp(t, 0.0, 1.0);
+
+    uint positions_base = word_index + 6u;
+    uint colors_base = word_index + 6u + GRADIENT_MAX_STOPS;
+
+    if (stop_count <= 1u) {
+        vec4 c = unpack_rgba8(style_buffer.words[colors_base + 0]);
+        return vec4(srgb_to_linear(c.rgb), c.a);
+    }
+    float first_pos = uintBitsToFloat(style_buffer.words[positions_base + 0]);
+    float last_pos = uintBitsToFloat(style_buffer.words[positions_base + stop_count - 1u]);
+    if (t <= first_pos) {
+        vec4 c = unpack_rgba8(style_buffer.words[colors_base + 0]);
+        return vec4(srgb_to_linear(c.rgb), c.a);
+    }
+    if (t >= last_pos) {
+        vec4 c = unpack_rgba8(style_buffer.words[colors_base + stop_count - 1u]);
+        return vec4(srgb_to_linear(c.rgb), c.a);
+    }
+    uint lower = 0u;
+    for (uint i = 0u; i < stop_count - 1u; i++) {
+        float pos_i = uintBitsToFloat(style_buffer.words[positions_base + i]);
+        float pos_next = uintBitsToFloat(style_buffer.words[positions_base + i + 1u]);
+        if (t >= pos_i && t <= pos_next) {
+            lower = i;
+        }
+    }
+    float pos_lower = uintBitsToFloat(style_buffer.words[positions_base + lower]);
+    float pos_upper = uintBitsToFloat(style_buffer.words[positions_base + lower + 1u]);
+    float local_t = (pos_upper > pos_lower) ? (t - pos_lower) / (pos_upper - pos_lower) : 0.0;
+    vec4 c0 = unpack_rgba8(style_buffer.words[colors_base + lower]);
+    vec4 c1 = unpack_rgba8(style_buffer.words[colors_base + lower + 1u]);
+    return vec4(mix(srgb_to_linear(c0.rgb), srgb_to_linear(c1.rgb), local_t), mix(c0.a, c1.a, local_t));
+}
+
 void main() {
     uint style_index = uint(frag_params.x);
     vec2 radius = frag_params.yz;
@@ -71,6 +134,8 @@ void main() {
     float border_thickness = uintBitsToFloat(style_buffer.words[style_index + 1]);
     float arc_start_angle = uintBitsToFloat(style_buffer.words[style_index + 2]);
     float arc_sweep_angle = uintBitsToFloat(style_buffer.words[style_index + 3]);
+    uint fill_kind = style_buffer.words[style_index + 4];
+    uint gradient_word_index = style_buffer.words[style_index + 5];
 
     float d = sd_ellipse(frag_uv, radius);
 
@@ -97,7 +162,11 @@ void main() {
     float dd = fwidth(d);
     float outer_alpha = clamp(0.5 - d / dd, 0.0, 1.0);
 
-    vec3 fill_linear = srgb_to_linear(frag_color.rgb);
+    vec4 fill = (fill_kind == 1u)
+        ? eval_gradient(gradient_word_index, frag_uv)
+        : vec4(srgb_to_linear(frag_color.rgb), frag_color.a);
+    vec3 fill_linear = fill.rgb;
+    float fill_alpha = fill.a;
     vec3 rgb;
     float a;
     if (border_thickness > 0.0) {
@@ -105,10 +174,10 @@ void main() {
         float inner_alpha = clamp(0.5 - inner_d / dd, 0.0, 1.0);
         vec3 border_linear = srgb_to_linear(border_color.rgb);
         rgb = mix(border_linear, fill_linear, inner_alpha);
-        a = mix(border_color.a, frag_color.a, inner_alpha);
+        a = mix(border_color.a, fill_alpha, inner_alpha);
     } else {
         rgb = fill_linear;
-        a = frag_color.a;
+        a = fill_alpha;
     }
     a *= outer_alpha;
 

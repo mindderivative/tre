@@ -2160,6 +2160,62 @@ TRE Build Tracker as each moves from PLANNED to DONE:
   but not proven live" gap the same way `main_loop_demo` already proves
   its own claim.
 
+#### Step 10.2.1: Gradient Fill (Linear + Radial) -- Status: Complete (2026-09-09)
+
+Real, in `crates/tre-engine/src/gpu_style.rs` (new `GpuGradientStyle`
+record + `GRADIENT_MAX_STOPS`/`GRADIENT_STYLE_WORDS`; `GpuRectStyle`/
+`GpuEllipseStyle` extended with `fill_kind`/`gradient_word_index`),
+`crates/tre-engine/src/shapes.rs` (new `GradientDef`/`GradientKind`/
+`GradientStop`/`GradientError`, `ShapeRegistry::create_gradient`,
+`build_gpu_gradient_style`/`write_gradient_style`, a shared
+`resolve_style_fill` for `Rectangle`/`Circle` and `draw_polygon_fill` for
+`Polygon`/`Path`), `crates/tre-engine/src/lib.rs` (`draw_styled_
+rectangle`/`draw_ellipse` extended with `fill_kind`/`gradient_word_index`
+parameters; new `draw_gradient_polygon`; new `PipelineKind::
+GradientFill`), and a new shader, `gradient_fill.frag` (paired with the
+existing `bindless_textured.vert`, not a new vertex shader).
+`sdf_rect_styled.frag`/`sdf_ellipse.frag` each gained a duplicated
+`eval_gradient` function (this codebase's shaders have no include
+mechanism) reading the same `GpuGradientStyle` word layout.
+
+**A real coordinate-space bug found and fixed by the demo's own first
+real run, not assumed away.** `sdf_rect_styled.frag`/`sdf_ellipse.frag`'s
+own `frag_uv` is CENTER-relative (an internal shader convention for
+symmetric SDF math), but a `GradientDef`'s own points are authored in
+`Rectangle`/`Circle`'s PUBLIC local space (bounding-box top-left at the
+origin -- the same convention their own `corner_radius`/`border`
+thinking already uses, per `flatten_circle`'s own established doc
+comment). The demo's first real run caught this directly: a rectangle
+gradient that should have shown a blended red-purple tone at one probe
+instead showed pure, unmixed red -- diagnosed as the shader evaluating
+`t` against the wrong origin, not a shader-math bug. Fixed by
+`build_gpu_gradient_style` taking a `local_origin_offset` parameter
+(`[half_width, half_height]` for `Rectangle`, `radius` for `Circle`,
+`[0, 0]` for `Polygon`/`Path` -- whose own local space is already
+center-relative by construction) and subtracting it from every point/
+center before writing the record, so gradient authors keep thinking in
+the same top-left-relative coordinates as every other shape property.
+
+**Verified.** 11 new `tre-engine` tests (137 total, up from 126):
+gradient validation (empty/too-many/out-of-range/out-of-order stops, a
+non-positive radial radius), `GpuGradientStyle` byte-layout round-trips,
+and `flatten_into` wiring for all three real code paths (`Rectangle`
+forcing the styled pipeline even with no border/radii/smoothing, since
+`draw_rounded_rect` has no fill-kind branch at all; `Circle`'s own
+`fill_kind`/`gradient_word_index`; `Polygon` routing through
+`PipelineKind::GradientFill` with the word index riding in
+`texture_handle`). A new real GPU demo, `gradient_fill_demo.rs`
+(`demo/phase10_step10_2_1/`), renders a bordered rectangle (linear,
+red-to-blue), a bordered circle (radial, white-to-green), and a hexagon
+(linear, red-to-green, via `GradientFill`) through `ShapeRegistry`, with
+every probed pixel checked against an independent Rust reference
+implementation of the exact same premultiplied, linear-space gradient
+math (mirroring `translucent_flat_fill_demo.rs`'s own established
+discipline) -- including proof that a gradient composes correctly with
+an existing solid border. Every pre-existing demo re-run and confirmed
+bit-for-bit unchanged. `cargo fmt`/`clippy -D warnings`/`build`/`test`
+clean across the whole workspace.
+
 ### Step 10.3: The `tre-ffi` C-ABI Crate (for C, C++, and other non-Python bindings)
 
 * **Renumbered 2026-09-09** from Step 10.2 to 10.3, when Step 10.2 was inserted ahead of it for full shape rendering support (shapes are what this boundary and Step 10.4's Python binding will actually expose -- finishing real rendering for all four primitives first avoids binding an API surface still mostly stubbed).

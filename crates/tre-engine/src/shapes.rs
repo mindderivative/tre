@@ -6,22 +6,24 @@
 //! retained-store layer over the existing IR/sort/batch/RHI pipeline,
 //! never a second rendering path.
 //!
-//! Real rendering support (Phase 10 Step 10.2): `Rectangle` (any corner
-//! radii, uniform or not, plus real borders and corner smoothing) and
-//! `Circle`/`Ellipse` (including borders and a partial-arc sweep) both
-//! flatten for real now, via `RenderingCanvas::draw_styled_rectangle`/
-//! `draw_ellipse` and the two new `sdf_rect_styled`/`sdf_ellipse` GPU
-//! pipelines -- `crates/tre-engine/src/gpu_style.rs`'s own doc comment
-//! covers the GPU-side style-buffer mechanism both rely on. `Polygon`/
-//! `Path` still have no geometry-generation/tessellation wiring, and
-//! `FillStyle::Gradient`/`Texture` still have no evaluator anywhere for
-//! ANY shape kind -- [`ShapeRegistry::flatten_into`] panics loudly on
-//! any of those (`unimplemented!`), rather than silently skipping or
-//! rendering something wrong, matching this project's own established
-//! "fail loud on a real, not-yet-built capability" discipline. See
-//! ARCHITECTURE.md Section 7.5's own "Implementation status" note and
-//! IMPLEMENTATION.md Step 10.2's "Explicitly out of scope" list for the
-//! full, itemized disposition.
+//! Real rendering support: `Rectangle` (any corner radii, real borders,
+//! corner smoothing), `Circle`/`Ellipse` (borders, partial-arc sweep),
+//! `Polygon`/`Path` (real fill -- including compound shapes with holes --
+//! and real stroke, via `lyon`, Phase 10 Step 10.2's own lyon-migration
+//! follow-up) all flatten for real. `FillStyle::Gradient` (linear and
+//! radial, Phase 10 Step 10.2.1) is real for all four shape kinds too,
+//! via [`ShapeRegistry::create_gradient`] and a `GpuGradientStyle`
+//! record (`crates/tre-engine/src/gpu_style.rs`'s own doc comment covers
+//! the GPU-side style-buffer mechanism `Rectangle`/`Circle` both rely on;
+//! `Polygon`/`Path` route gradient fill through `PipelineKind::
+//! GradientFill` instead, since neither has a per-vertex style record).
+//! `FillStyle::Texture` still has no evaluator anywhere -- [`ShapeRegistry
+//! ::flatten_into`] panics loudly on it (`unimplemented!`), rather than
+//! silently skipping or rendering something wrong, matching this
+//! project's own established "fail loud on a real, not-yet-built
+//! capability" discipline. See ARCHITECTURE.md Section 7.5's own
+//! "Implementation status" note and `PLAN.md`'s Steps 10.2.1-10.2.6 for
+//! the full, itemized disposition of every remaining gap.
 
 use crate::{RenderingCanvas, ScissorRect};
 
@@ -149,9 +151,10 @@ pub trait Primitive {
 }
 
 /// What a shape's interior is painted with (ARCHITECTURE.md Section
-/// 7.2). `Texture` is real today (the existing bindless texture-handle
-/// system); `Gradient` has no evaluator anywhere in this codebase yet
-/// -- see this module's own top-level doc comment.
+/// 7.2). `Gradient` is real (Phase 10 Step 10.2.1: linear and radial,
+/// via [`ShapeRegistry::create_gradient`]); `Texture` still has no
+/// evaluator anywhere in this codebase yet -- see this module's own
+/// top-level doc comment.
 #[derive(Debug, Clone, Copy)]
 pub enum FillStyle {
     Solid(Color),
@@ -159,10 +162,220 @@ pub enum FillStyle {
     Texture(u32),
 }
 
-/// Opaque handle into the not-yet-built gradient evaluator's own future
-/// table (ARCHITECTURE.md Section 7.2).
+/// A stable handle into a [`ShapeRegistry`]'s own gradient table (Phase
+/// 10 Step 10.2.1), returned by [`ShapeRegistry::create_gradient`] and
+/// referenced by [`FillStyle::Gradient`]. Scoped to the registry that
+/// created it -- this table has no generational reuse or removal (a real,
+/// disclosed scope decision: no real UI use case this step targets
+/// creates and discards gradients at the same churn rate shapes
+/// themselves do), so a `GradientId` from one registry is meaningless
+/// against another, and stays valid for as long as that registry exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GradientId(pub u32);
+
+/// A real, evaluatable linear-or-radial gradient definition (Phase 10
+/// Step 10.2.1), created via [`ShapeRegistry::create_gradient`]. All
+/// points/positions are in the SAME local, untransformed space a shape's
+/// own geometry is defined in -- a gradient moves and rotates rigidly
+/// with the shape referencing it, matching every other per-shape style
+/// field's own convention (`crates/tre-engine/src/gpu_style.rs`'s own
+/// `GpuGradientStyle` doc comment has the full GPU-side account).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GradientDef {
+    pub kind: GradientKind,
+    pub stops: Vec<GradientStop>,
+}
+
+/// [`GradientDef`]'s own axis/shape -- linear (interpolates along a
+/// `start -> end` segment) or radial (interpolates by distance from
+/// `center`, out to `radius`). Conic/angular gradients are explicitly out
+/// of scope this step (`PLAN.md`'s own "Scope decisions").
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GradientKind {
+    Linear { start: Vec2, end: Vec2 },
+    Radial { center: Vec2, radius: f32 },
+}
+
+/// One color stop in a [`GradientDef`] -- `position` is `0.0..=1.0` along
+/// the gradient's own axis/radius; stops must be given in non-decreasing
+/// `position` order (`ShapeRegistry::create_gradient` validates this).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GradientStop {
+    pub position: f32,
+    pub color: Color,
+}
+
+/// [`ShapeRegistry::create_gradient`]'s own real validation failures --
+/// deliberately NOT [`crate::EngineError`] (whose every existing variant
+/// is a real RHI/GPU failure class, `documentation/DESIGN.md` Section
+/// 2.6): this is caller-input validation, checked entirely on the CPU
+/// before any GPU call, the same category `tre_svg::SvgError` already
+/// occupies for that crate's own untrusted-input checks.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GradientError {
+    /// `stops` was empty -- a gradient needs at least one color.
+    NoStops,
+    /// More than [`crate::gpu_style::GRADIENT_MAX_STOPS`] stops were
+    /// given; rejected outright rather than silently truncated.
+    TooManyStops { count: usize, max: usize },
+    /// A stop's own `position` was outside `0.0..=1.0`.
+    StopPositionOutOfRange { index: usize, position: f32 },
+    /// Stops were not given in non-decreasing `position` order -- the
+    /// shader's own interpolation walks them assuming this, and silently
+    /// reordering them would produce a real, wrong, non-obvious visual
+    /// result rather than a loud rejection.
+    StopsNotAscending { index: usize },
+    /// [`GradientKind::Radial`]'s own `radius` was not a real, positive
+    /// number -- a non-positive radius has no real geometric meaning and
+    /// would divide by zero / produce `NaN` in the shader's own `t =
+    /// distance / radius` evaluation.
+    NonPositiveRadius(f32),
+}
+
+impl std::fmt::Display for GradientError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoStops => write!(f, "a gradient needs at least one color stop"),
+            Self::TooManyStops { count, max } => {
+                write!(
+                    f,
+                    "gradient has {count} stops, exceeding the maximum of {max}"
+                )
+            }
+            Self::StopPositionOutOfRange { index, position } => write!(
+                f,
+                "gradient stop {index} has position {position}, outside 0.0..=1.0"
+            ),
+            Self::StopsNotAscending { index } => write!(
+                f,
+                "gradient stop {index} is out of order -- stops must be given in ascending \
+                 position order"
+            ),
+            Self::NonPositiveRadius(radius) => {
+                write!(
+                    f,
+                    "radial gradient radius {radius} must be a positive number"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for GradientError {}
+
+fn validate_gradient(def: &GradientDef) -> Result<(), GradientError> {
+    if def.stops.is_empty() {
+        return Err(GradientError::NoStops);
+    }
+    if def.stops.len() > crate::gpu_style::GRADIENT_MAX_STOPS {
+        return Err(GradientError::TooManyStops {
+            count: def.stops.len(),
+            max: crate::gpu_style::GRADIENT_MAX_STOPS,
+        });
+    }
+    let mut previous = f32::NEG_INFINITY;
+    for (index, stop) in def.stops.iter().enumerate() {
+        if !(0.0..=1.0).contains(&stop.position) {
+            return Err(GradientError::StopPositionOutOfRange {
+                index,
+                position: stop.position,
+            });
+        }
+        if stop.position < previous {
+            return Err(GradientError::StopsNotAscending { index });
+        }
+        previous = stop.position;
+    }
+    if let GradientKind::Radial { radius, .. } = def.kind {
+        if radius <= 0.0 {
+            return Err(GradientError::NonPositiveRadius(radius));
+        }
+    }
+    Ok(())
+}
+
+/// Builds a [`crate::gpu_style::GpuGradientStyle`] record from a real,
+/// already-validated [`GradientDef`] -- called fresh every frame a shape
+/// referencing this gradient is flattened (the style buffer itself is a
+/// ring buffer reset each frame, so nothing could persist across frames
+/// even if this were cached), matching every other per-shape style
+/// record's own per-frame-rewrite pattern.
+///
+/// `local_origin_offset` corrects for a real coordinate-space mismatch
+/// between two DIFFERENT "local space" conventions this crate already
+/// has: a `GradientDef`'s own points are authored in the shape's PUBLIC
+/// local space (bounding-box top-left at the origin -- the same
+/// convention `Rectangle`/`Circle`'s own `corner_radius`/`border`
+/// thinking already uses, per `flatten_circle`'s own doc comment), but
+/// `sdf_rect_styled.frag`/`sdf_ellipse.frag`'s own `frag_uv` is CENTER-
+/// relative (an internal shader convention, chosen for symmetric SDF
+/// math, `draw_styled_rectangle`/`draw_ellipse`'s own `uv` construction).
+/// `local_origin_offset` is that shape's own center, in its public local
+/// space (`[half_width, half_height]` for `Rectangle`, `radius` for
+/// `Circle`) -- subtracted from every point/center here so the stored
+/// record already speaks `frag_uv`'s own coordinate space. `Polygon`/
+/// `Path` pass `[0.0, 0.0]`: their own local space is ALREADY
+/// center-relative by construction (`generate_polygon_points`'s own doc
+/// comment; a `Path`'s own `PathCommand` coordinates have no fixed
+/// convention at all, so a gradient on one is defined in those same raw
+/// coordinates directly).
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "def.stops.len() is already validated <= GRADIENT_MAX_STOPS (8) by \
+               ShapeRegistry::create_gradient before this is ever called"
+)]
+fn build_gpu_gradient_style(
+    def: &GradientDef,
+    local_origin_offset: Vec2,
+) -> crate::gpu_style::GpuGradientStyle {
+    use crate::gpu_style::{GpuGradientStyle, GRADIENT_MAX_STOPS};
+
+    let mut stop_positions = [0.0f32; GRADIENT_MAX_STOPS];
+    let mut stop_colors = [0u32; GRADIENT_MAX_STOPS];
+    for (i, stop) in def.stops.iter().enumerate() {
+        stop_positions[i] = stop.position;
+        stop_colors[i] = stop.color;
+    }
+    let sub = |p: Vec2| [p[0] - local_origin_offset[0], p[1] - local_origin_offset[1]];
+    let (kind, point0, point1_or_radius) = match def.kind {
+        GradientKind::Linear { start, end } => (0u32, sub(start), sub(end)),
+        // radius is a magnitude, not a point -- only `center` gets the
+        // offset correction.
+        GradientKind::Radial { center, radius } => (1u32, sub(center), [radius, 0.0]),
+    };
+    GpuGradientStyle {
+        kind,
+        point0,
+        point1_or_radius,
+        stop_count: def.stops.len() as u32,
+        stop_positions,
+        stop_colors,
+    }
+}
+
+/// Writes `def`'s own `GpuGradientStyle` record into `device`'s current
+/// per-frame style buffer segment and returns its word index -- the
+/// SAME per-frame-rewrite mechanism `draw_styled_rectangle`/`draw_
+/// ellipse` already use for `GpuRectStyle`/`GpuEllipseStyle`, just for a
+/// gradient's own, independently word-indexed record in that same
+/// buffer. See [`build_gpu_gradient_style`]'s own doc comment for what
+/// `local_origin_offset` corrects for.
+///
+/// # Panics
+/// Panics if the shape style buffer has no room left this frame -- same
+/// policy as every other style-buffer write in this crate.
+fn write_gradient_style(
+    device: &dyn crate::RhiDevice,
+    def: &GradientDef,
+    local_origin_offset: Vec2,
+) -> u32 {
+    let style = build_gpu_gradient_style(def, local_origin_offset);
+    let byte_offset = device
+        .shape_style_buffer()
+        .write(bytemuck::bytes_of(&style))
+        .expect("shape style buffer starved for this frame");
+    byte_offset / 4
+}
 
 /// `Rectangle::corner_radius`'s own per-corner field type -- clockwise
 /// from top-left (ARCHITECTURE.md Section 7.2).
@@ -425,6 +638,10 @@ pub struct ShapeRegistry {
     generations: Vec<u32>,
     free_list: Vec<u32>,
     live_count: usize,
+    /// Real gradient definitions (Phase 10 Step 10.2.1), indexed
+    /// directly by `GradientId(index)` -- append-only, no generational
+    /// reuse (see [`GradientId`]'s own doc comment for why).
+    gradients: Vec<GradientDef>,
 }
 
 impl ShapeRegistry {
@@ -551,12 +768,46 @@ impl ShapeRegistry {
     /// that can't be deferred to upload time the way plain vertex/index
     /// data is.
     ///
+    /// Defines a new, real, evaluatable gradient and returns a stable
+    /// handle to it (Phase 10 Step 10.2.1). Validates `def` fully on the
+    /// CPU before storing it -- a caller mistake (too many stops, an
+    /// out-of-range or out-of-order position, a non-positive radial
+    /// radius) is a real, loud `Err`, never silently clamped/reordered/
+    /// truncated into something that renders differently than what was
+    /// asked for.
+    ///
+    /// The gradient itself is stored once, here, on the CPU -- its own
+    /// GPU-side `GpuGradientStyle` record is written fresh into the
+    /// CURRENT frame's style buffer every frame a shape referencing it is
+    /// flattened ([`flatten_into`](Self::flatten_into)'s own
+    /// `FillStyle::Gradient` handling), the same per-frame-rewrite
+    /// pattern every other style record in this crate already uses.
+    ///
+    /// # Errors
+    /// See [`GradientError`]'s own variants.
+    ///
+    /// # Panics
+    /// Never in practice -- only if this registry has already created
+    /// more than `u32::MAX` gradients in one session, far beyond any real
+    /// use case.
+    pub fn create_gradient(&mut self, def: GradientDef) -> Result<GradientId, GradientError> {
+        validate_gradient(&def)?;
+        let index = u32::try_from(self.gradients.len())
+            .expect("far fewer gradients than u32::MAX are ever created in one real session");
+        self.gradients.push(def);
+        Ok(GradientId(index))
+    }
+
     /// # Panics
     /// Panics (`unimplemented!`) on any shape/field combination that has
     /// no real rendering support yet -- see this module's own top-level
     /// doc comment for the complete, itemized list. This is a
     /// deliberate, loud failure for a genuinely-not-yet-built rendering
-    /// capability, not a recoverable `EngineError` condition.
+    /// capability, not a recoverable `EngineError` condition. Also panics
+    /// if a `FillStyle::Gradient` names a `GradientId` this registry
+    /// never issued (via [`create_gradient`](Self::create_gradient)) --
+    /// a real programmer error (a stale or foreign handle), not a normal
+    /// runtime condition this registry validates against.
     pub fn flatten_into(&mut self, canvas: &mut RenderingCanvas, device: &dyn crate::RhiDevice) {
         for slot in &mut self.slots {
             let Some(slot) = slot else { continue };
@@ -581,10 +832,18 @@ impl ShapeRegistry {
             }
 
             match &slot.shape {
-                ShapePrimitive::Rectangle(rect) => flatten_rectangle(canvas, device, rect),
-                ShapePrimitive::Circle(circle) => flatten_circle(canvas, device, circle),
-                ShapePrimitive::Polygon(polygon) => flatten_polygon(canvas, polygon),
-                ShapePrimitive::Path(path) => flatten_path_shape(canvas, path),
+                ShapePrimitive::Rectangle(rect) => {
+                    flatten_rectangle(canvas, device, rect, &self.gradients);
+                }
+                ShapePrimitive::Circle(circle) => {
+                    flatten_circle(canvas, device, circle, &self.gradients);
+                }
+                ShapePrimitive::Polygon(polygon) => {
+                    flatten_polygon(canvas, device, polygon, &self.gradients);
+                }
+                ShapePrimitive::Path(path) => {
+                    flatten_path_shape(canvas, device, path, &self.gradients);
+                }
             }
 
             if slot.clip_bounds.is_some() {
@@ -759,30 +1018,72 @@ fn hit_test_path(local: Vec2, path: &Path) -> bool {
         .fold(false, |hit, subpath| hit ^ point_in_polygon(local, subpath))
 }
 
+/// A `FillStyle::Solid`/`Gradient` fill resolved to what `draw_styled_
+/// rectangle`/`draw_ellipse` actually need: a solid `Color` (meaningful
+/// only when `fill_kind == 0`; a harmless opaque-white placeholder
+/// otherwise, since the shader ignores it), `fill_kind` (`0`/`1`), and a
+/// `gradient_word_index` (real only when `fill_kind == 1`, from writing
+/// the gradient's own `GpuGradientStyle` record into THIS frame's style
+/// buffer). Shared by `flatten_rectangle`/`flatten_circle` -- `Polygon`/
+/// `Path` resolve their own fill differently (a completely different
+/// `Canvas` method, not a style-buffer field), so they don't use this.
+///
+/// # Panics
+/// Panics (`unimplemented!`) for `FillStyle::Texture` (Step 10.2.2's own
+/// job, not yet built) or if `fill` names a `GradientId` this registry
+/// never issued.
+fn resolve_style_fill(
+    device: &dyn crate::RhiDevice,
+    fill: FillStyle,
+    gradients: &[GradientDef],
+    local_origin_offset: Vec2,
+) -> (Color, u32, u32) {
+    match fill {
+        FillStyle::Solid(color) => (color, 0, 0),
+        FillStyle::Gradient(id) => {
+            let def = gradients.get(id.0 as usize).unwrap_or_else(|| {
+                panic!(
+                    "FillStyle::Gradient names GradientId({}), which this registry never \
+                     issued via create_gradient",
+                    id.0
+                )
+            });
+            let word_index = write_gradient_style(device, def, local_origin_offset);
+            (0xFFFF_FFFF, 1, word_index)
+        }
+        FillStyle::Texture(_) => unimplemented!(
+            "FillStyle::Texture has no rendering support wired into this registry's own \
+             flattening pass yet -- see ARCHITECTURE.md Section 7.5's own Implementation \
+             status note"
+        ),
+    }
+}
+
 /// `ShapeRegistry::flatten_into`'s own `Rectangle` case (Phase 10 Step
-/// 10.2: now real for non-uniform corners, borders, and corner smoothing
-/// too, via `RenderingCanvas::draw_styled_rectangle`). The plain, older
-/// `draw_rounded_rect` path is still used for the common trivial case
-/// (uniform radius, no border, no smoothing) -- cheaper (no style-buffer
-/// write) and byte-for-byte what it always rendered. `FillStyle::
-/// Gradient`/`Texture` remain genuinely unimplemented; see this module's
-/// own top-level doc comment.
+/// 10.2: real for non-uniform corners, borders, and corner smoothing;
+/// Step 10.2.1: real gradient fill too), via `RenderingCanvas::draw_
+/// styled_rectangle`. The plain, older `draw_rounded_rect` path is still
+/// used for the common trivial case (uniform radius, no border, no
+/// smoothing, solid fill) -- cheaper (no style-buffer write) and
+/// byte-for-byte what it always rendered. `FillStyle::Texture` remains
+/// genuinely unimplemented; see this module's own top-level doc comment.
 fn flatten_rectangle(
     canvas: &mut RenderingCanvas,
     device: &dyn crate::RhiDevice,
     rect: &Rectangle,
+    gradients: &[GradientDef],
 ) {
-    let FillStyle::Solid(color) = rect.fill else {
-        unimplemented!(
-            "FillStyle::Gradient/Texture have no rendering support wired into this registry's \
-             own flattening pass yet -- see ARCHITECTURE.md Section 7.5's own Implementation \
-             status note"
-        );
-    };
+    // A gradient's own points are authored in Rectangle's PUBLIC local
+    // space (top-left at the origin); frag_uv is center-relative -- see
+    // build_gpu_gradient_style's own doc comment for the full account.
+    let local_origin_offset = [rect.size[0] / 2.0, rect.size[1] / 2.0];
+    let (color, fill_kind, gradient_word_index) =
+        resolve_style_fill(device, rect.fill, gradients, local_origin_offset);
 
     let needs_styled_path = !rect.corner_radius.is_uniform()
         || rect.corner_smoothing != 0.0
-        || rect.border_thickness > 0.0;
+        || rect.border_thickness > 0.0
+        || fill_kind == 1;
 
     if needs_styled_path {
         canvas.draw_styled_rectangle(
@@ -801,6 +1102,8 @@ fn flatten_rectangle(
             rect.border_color,
             rect.border_thickness,
             rect.corner_smoothing,
+            fill_kind,
+            gradient_word_index,
         );
     } else {
         canvas.draw_rounded_rect(
@@ -828,16 +1131,20 @@ fn flatten_rectangle(
 /// radians + `atan2`-relative-angle convention `sdf_ellipse.frag` uses
 /// (12 o'clock is `-FRAC_PI_2` in that shader's own `atan2(y, x)`
 /// convention, since screen-space `y` increases downward).
-fn flatten_circle(canvas: &mut RenderingCanvas, device: &dyn crate::RhiDevice, circle: &Circle) {
+fn flatten_circle(
+    canvas: &mut RenderingCanvas,
+    device: &dyn crate::RhiDevice,
+    circle: &Circle,
+    gradients: &[GradientDef],
+) {
     const TWELVE_OCLOCK: f32 = -std::f32::consts::FRAC_PI_2;
 
-    let FillStyle::Solid(color) = circle.fill else {
-        unimplemented!(
-            "FillStyle::Gradient/Texture have no rendering support wired into this registry's \
-             own flattening pass yet -- see ARCHITECTURE.md Section 7.5's own Implementation \
-             status note"
-        );
-    };
+    // Circle's own public local space has its center at `radius` (this
+    // function's own doc comment); frag_uv is relative to that same
+    // center already, so `radius` is exactly the correction
+    // build_gpu_gradient_style's own doc comment describes.
+    let (color, fill_kind, gradient_word_index) =
+        resolve_style_fill(device, circle.fill, gradients, circle.radius);
 
     canvas.draw_ellipse(
         device,
@@ -849,6 +1156,8 @@ fn flatten_circle(canvas: &mut RenderingCanvas, device: &dyn crate::RhiDevice, c
         circle.border_thickness,
         TWELVE_OCLOCK,
         circle.arc_length.to_radians(),
+        fill_kind,
+        gradient_word_index,
     );
 }
 
@@ -922,22 +1231,60 @@ fn fan_from_center(vertex_count: u32) -> Vec<[u32; 3]> {
 /// construction, so the simple fan is already exactly correct and does
 /// not need a general tessellator). Border/stroke is real now too
 /// (Phase 10 Step 10.2 follow-up), via [`tessellate_stroke`].
-fn flatten_polygon(canvas: &mut RenderingCanvas, polygon: &Polygon) {
-    let FillStyle::Solid(color) = polygon.fill else {
-        unimplemented!(
-            "FillStyle::Gradient/Texture have no rendering support wired into this registry's \
-             own flattening pass yet -- see ARCHITECTURE.md Section 7.5's own Implementation \
+/// `Polygon`/`Path` fill dispatch, shared by `flatten_polygon`/`flatten_
+/// path_shape` (their border/stroke is always solid -- `border_color` is
+/// a plain `Color`, never a `FillStyle`, so only the interior fill needs
+/// this 3-way dispatch).
+///
+/// # Panics
+/// Panics (`unimplemented!`) for `FillStyle::Texture`, or if `fill` names
+/// a `GradientId` this registry never issued.
+fn draw_polygon_fill(
+    canvas: &mut RenderingCanvas,
+    device: &dyn crate::RhiDevice,
+    fill: FillStyle,
+    gradients: &[GradientDef],
+    positions: &[Vec2],
+    triangles: &[[u32; 3]],
+) {
+    match fill {
+        FillStyle::Solid(color) => canvas.draw_flat_polygon(positions, triangles, color),
+        FillStyle::Gradient(id) => {
+            let def = gradients.get(id.0 as usize).unwrap_or_else(|| {
+                panic!(
+                    "FillStyle::Gradient names GradientId({}), which this registry never \
+                     issued via create_gradient",
+                    id.0
+                )
+            });
+            // Polygon/Path's own local space is already center-relative
+            // (Polygon) or whatever raw coordinates the caller used
+            // (Path) -- no offset correction needed, unlike Rectangle/
+            // Circle (build_gpu_gradient_style's own doc comment).
+            let word_index = write_gradient_style(device, def, [0.0, 0.0]);
+            canvas.draw_gradient_polygon(positions, triangles, word_index);
+        }
+        FillStyle::Texture(_) => unimplemented!(
+            "FillStyle::Texture has no rendering support wired into this registry's own \
+             flattening pass yet -- see ARCHITECTURE.md Section 7.5's own Implementation \
              status note"
-        );
-    };
+        ),
+    }
+}
 
+fn flatten_polygon(
+    canvas: &mut RenderingCanvas,
+    device: &dyn crate::RhiDevice,
+    polygon: &Polygon,
+    gradients: &[GradientDef],
+) {
     let boundary = generate_polygon_points(polygon);
     let vertex_count = u32::try_from(boundary.len()).unwrap_or(0);
     let mut points = Vec::with_capacity(boundary.len() + 1);
     points.push([0.0, 0.0]); // the fan's own pivot -- the polygon's local center.
     points.extend(&boundary);
     let triangles = fan_from_center(vertex_count);
-    canvas.draw_flat_polygon(&points, &triangles, color);
+    draw_polygon_fill(canvas, device, polygon.fill, gradients, &points, &triangles);
 
     if polygon.border_thickness > 0.0 {
         // A polygon boundary is always closed.
@@ -1087,15 +1434,12 @@ fn tessellate_stroke(
 /// self-intersecting boundaries, not just the simple single-contour case
 /// `Polygon`'s own fan triangulation handles); stroke via
 /// [`tessellate_stroke`], honoring `stroke_line_cap`/`stroke_line_join`.
-fn flatten_path_shape(canvas: &mut RenderingCanvas, path: &Path) {
-    let FillStyle::Solid(color) = path.fill else {
-        unimplemented!(
-            "FillStyle::Gradient/Texture have no rendering support wired into this registry's \
-             own flattening pass yet -- see ARCHITECTURE.md Section 7.5's own Implementation \
-             status note"
-        );
-    };
-
+fn flatten_path_shape(
+    canvas: &mut RenderingCanvas,
+    device: &dyn crate::RhiDevice,
+    path: &Path,
+    gradients: &[GradientDef],
+) {
     let subpaths_with_closed = flatten_path_with_closed(&path.commands);
     let subpaths: Vec<Vec<Vec2>> = subpaths_with_closed
         .iter()
@@ -1103,7 +1447,14 @@ fn flatten_path_shape(canvas: &mut RenderingCanvas, path: &Path) {
         .collect();
 
     let (fill_positions, fill_triangles) = tessellate_fill(&subpaths);
-    canvas.draw_flat_polygon(&fill_positions, &fill_triangles, color);
+    draw_polygon_fill(
+        canvas,
+        device,
+        path.fill,
+        gradients,
+        &fill_positions,
+        &fill_triangles,
+    );
 
     if path.border_thickness > 0.0 {
         let (stroke_positions, stroke_triangles) = tessellate_stroke(
@@ -1507,7 +1858,7 @@ mod tests {
         );
         assert_eq!(
             device.style_buffer.bytes.borrow().len(),
-            28,
+            36,
             "exactly one GpuRectStyle record must have been written"
         );
     }
@@ -1535,7 +1886,7 @@ mod tests {
         );
         assert_eq!(
             device.style_buffer.bytes.borrow().len(),
-            16,
+            24,
             "exactly one GpuEllipseStyle record must have been written"
         );
     }
@@ -2141,5 +2492,364 @@ mod tests {
             fill_only_vertex_count,
             frame.vertices.len()
         );
+    }
+
+    #[test]
+    fn create_gradient_rejects_an_empty_stop_list() {
+        let mut registry = ShapeRegistry::new();
+        let err = registry
+            .create_gradient(GradientDef {
+                kind: GradientKind::Linear {
+                    start: [0.0, 0.0],
+                    end: [1.0, 0.0],
+                },
+                stops: vec![],
+            })
+            .unwrap_err();
+        assert_eq!(err, GradientError::NoStops);
+    }
+
+    #[test]
+    fn create_gradient_rejects_more_than_the_maximum_stop_count() {
+        let mut registry = ShapeRegistry::new();
+        // Position doesn't matter for this test -- every stop shares the
+        // same one (`0.0` still satisfies the ascending-order check),
+        // avoiding a real precision-loss cast this test has no need to
+        // introduce.
+        let stops: Vec<GradientStop> = (0..=crate::gpu_style::GRADIENT_MAX_STOPS)
+            .map(|_| GradientStop {
+                position: 0.0,
+                color: 0xFFFF_FFFF,
+            })
+            .collect();
+        let err = registry
+            .create_gradient(GradientDef {
+                kind: GradientKind::Linear {
+                    start: [0.0, 0.0],
+                    end: [1.0, 0.0],
+                },
+                stops,
+            })
+            .unwrap_err();
+        assert_eq!(
+            err,
+            GradientError::TooManyStops {
+                count: crate::gpu_style::GRADIENT_MAX_STOPS + 1,
+                max: crate::gpu_style::GRADIENT_MAX_STOPS,
+            }
+        );
+    }
+
+    #[test]
+    fn create_gradient_rejects_an_out_of_range_stop_position() {
+        let mut registry = ShapeRegistry::new();
+        let err = registry
+            .create_gradient(GradientDef {
+                kind: GradientKind::Linear {
+                    start: [0.0, 0.0],
+                    end: [1.0, 0.0],
+                },
+                stops: vec![GradientStop {
+                    position: 1.5,
+                    color: 0xFFFF_FFFF,
+                }],
+            })
+            .unwrap_err();
+        assert_eq!(
+            err,
+            GradientError::StopPositionOutOfRange {
+                index: 0,
+                position: 1.5
+            }
+        );
+    }
+
+    #[test]
+    fn create_gradient_rejects_out_of_order_stops() {
+        let mut registry = ShapeRegistry::new();
+        let err = registry
+            .create_gradient(GradientDef {
+                kind: GradientKind::Linear {
+                    start: [0.0, 0.0],
+                    end: [1.0, 0.0],
+                },
+                stops: vec![
+                    GradientStop {
+                        position: 0.5,
+                        color: 0xFFFF_FFFF,
+                    },
+                    GradientStop {
+                        position: 0.2,
+                        color: 0x0000_00FF,
+                    },
+                ],
+            })
+            .unwrap_err();
+        assert_eq!(err, GradientError::StopsNotAscending { index: 1 });
+    }
+
+    #[test]
+    fn create_gradient_rejects_a_non_positive_radial_radius() {
+        let mut registry = ShapeRegistry::new();
+        let err = registry
+            .create_gradient(GradientDef {
+                kind: GradientKind::Radial {
+                    center: [0.0, 0.0],
+                    radius: 0.0,
+                },
+                stops: vec![GradientStop {
+                    position: 0.0,
+                    color: 0xFFFF_FFFF,
+                }],
+            })
+            .unwrap_err();
+        assert_eq!(err, GradientError::NonPositiveRadius(0.0));
+    }
+
+    #[test]
+    fn create_gradient_accepts_a_valid_gradient_and_returns_sequential_ids() {
+        let mut registry = ShapeRegistry::new();
+        let stops = vec![
+            GradientStop {
+                position: 0.0,
+                color: 0xFF00_00FF,
+            },
+            GradientStop {
+                position: 1.0,
+                color: 0x0000_FFFF,
+            },
+        ];
+        let first = registry
+            .create_gradient(GradientDef {
+                kind: GradientKind::Linear {
+                    start: [0.0, 0.0],
+                    end: [10.0, 0.0],
+                },
+                stops: stops.clone(),
+            })
+            .expect("a valid gradient must be accepted");
+        let second = registry
+            .create_gradient(GradientDef {
+                kind: GradientKind::Radial {
+                    center: [0.0, 0.0],
+                    radius: 5.0,
+                },
+                stops,
+            })
+            .expect("a second valid gradient must also be accepted");
+        assert_eq!(first, GradientId(0));
+        assert_eq!(second, GradientId(1));
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact arithmetic on literal f32s, same reasoning as this crate's other \
+                   exact-arithmetic tests"
+    )]
+    fn flatten_into_renders_a_rectangles_gradient_fill_via_the_styled_path() {
+        let device = FakeDevice::default();
+        let mut registry = ShapeRegistry::new();
+        let gradient_id = registry
+            .create_gradient(GradientDef {
+                kind: GradientKind::Linear {
+                    start: [0.0, 0.0],
+                    end: [10.0, 0.0],
+                },
+                stops: vec![
+                    GradientStop {
+                        position: 0.0,
+                        color: 0xFF00_00FF,
+                    },
+                    GradientStop {
+                        position: 1.0,
+                        color: 0x0000_FFFF,
+                    },
+                ],
+            })
+            .expect("a valid gradient must be accepted");
+        // No corner radius, smoothing, or border -- the trivial-case
+        // conditions that would normally route through draw_rounded_rect
+        // -- proving the gradient fill alone is enough to force the
+        // styled path, since draw_rounded_rect has no fill-kind branch.
+        registry.insert(ShapePrimitive::Rectangle(Rectangle {
+            common: PrimitiveCommon::new(),
+            size: [10.0, 10.0],
+            fill: FillStyle::Gradient(gradient_id),
+            border_color: 0,
+            border_thickness: 0.0,
+            corner_radius: CornerRadii::uniform(0.0),
+            corner_smoothing: 0.0,
+        }));
+        let mut canvas = RenderingCanvas::new();
+        registry.flatten_into(&mut canvas, &device);
+        let frame = canvas.flatten();
+
+        assert_eq!(
+            frame.commands[0].pipeline_state_id,
+            crate::PipelineKind::SdfRectStyled as u16,
+            "a gradient fill must route through the styled pipeline even with no border/radii/\
+             smoothing, since draw_rounded_rect has no fill-kind branch at all"
+        );
+
+        let bytes = device.style_buffer.bytes.borrow();
+        let gradient_bytes = (crate::gpu_style::GRADIENT_STYLE_WORDS as usize) * 4;
+        assert_eq!(
+            bytes.len(),
+            gradient_bytes + (crate::gpu_style::RECT_STYLE_WORDS as usize) * 4,
+            "exactly one GpuGradientStyle record and one GpuRectStyle record must have been \
+             written"
+        );
+        // The gradient record is written FIRST -- a real data dependency,
+        // not an arbitrary choice: GpuRectStyle's own gradient_word_index
+        // field must already know the gradient's word index at the point
+        // GpuRectStyle itself is constructed.
+        let gradient_style: &crate::gpu_style::GpuGradientStyle =
+            bytemuck::from_bytes(&bytes[..gradient_bytes]);
+        assert_eq!(
+            gradient_style.kind, 0,
+            "GradientKind::Linear must encode as kind 0"
+        );
+        // Authored in Rectangle's own public local space ([0,0]..[10,0]
+        // for this 10x10 rect) but stored center-relative (offset by
+        // [5,5], the rect's own half-size) to match frag_uv's own
+        // convention -- see build_gpu_gradient_style's own doc comment.
+        assert_eq!(gradient_style.point0, [-5.0, -5.0]);
+        assert_eq!(gradient_style.point1_or_radius, [5.0, -5.0]);
+        assert_eq!(gradient_style.stop_count, 2);
+        assert_eq!(gradient_style.stop_colors[0], 0xFF00_00FF);
+        assert_eq!(gradient_style.stop_colors[1], 0x0000_FFFF);
+
+        let rect_style: &crate::GpuRectStyle = bytemuck::from_bytes(&bytes[gradient_bytes..]);
+        assert_eq!(rect_style.fill_kind, 1);
+        assert_eq!(
+            rect_style.gradient_word_index, 0,
+            "must point at the gradient's own real word index (0, the first write this frame)"
+        );
+    }
+
+    #[test]
+    fn flatten_into_renders_a_circles_gradient_fill() {
+        let device = FakeDevice::default();
+        let mut registry = ShapeRegistry::new();
+        let gradient_id = registry
+            .create_gradient(GradientDef {
+                kind: GradientKind::Radial {
+                    center: [5.0, 5.0],
+                    radius: 5.0,
+                },
+                stops: vec![GradientStop {
+                    position: 0.0,
+                    color: 0xFFFF_FFFF,
+                }],
+            })
+            .expect("a valid gradient must be accepted");
+        registry.insert(ShapePrimitive::Circle(Circle {
+            common: PrimitiveCommon::new(),
+            radius: [5.0, 5.0],
+            fill: FillStyle::Gradient(gradient_id),
+            border_color: 0,
+            border_thickness: 0.0,
+            arc_length: 360.0,
+        }));
+        let mut canvas = RenderingCanvas::new();
+        registry.flatten_into(&mut canvas, &device);
+        let frame = canvas.flatten();
+
+        assert_eq!(
+            frame.commands[0].pipeline_state_id,
+            crate::PipelineKind::SdfEllipse as u16
+        );
+        let bytes = device.style_buffer.bytes.borrow();
+        // The gradient record is written FIRST (see the matching
+        // rectangle test's own comment for why); the ellipse style
+        // record follows it.
+        let gradient_bytes = (crate::gpu_style::GRADIENT_STYLE_WORDS as usize) * 4;
+        let ellipse_style: &crate::GpuEllipseStyle = bytemuck::from_bytes(&bytes[gradient_bytes..]);
+        assert_eq!(ellipse_style.fill_kind, 1);
+        assert_eq!(ellipse_style.gradient_word_index, 0);
+    }
+
+    #[test]
+    fn flatten_into_renders_a_polygons_gradient_fill_via_the_gradient_fill_pipeline() {
+        let device = FakeDevice::default();
+        let mut registry = ShapeRegistry::new();
+        let gradient_id = registry
+            .create_gradient(GradientDef {
+                kind: GradientKind::Linear {
+                    start: [-20.0, 0.0],
+                    end: [20.0, 0.0],
+                },
+                stops: vec![
+                    GradientStop {
+                        position: 0.0,
+                        color: 0xFF00_00FF,
+                    },
+                    GradientStop {
+                        position: 1.0,
+                        color: 0x00FF_00FF,
+                    },
+                ],
+            })
+            .expect("a valid gradient must be accepted");
+        registry.insert(ShapePrimitive::Polygon(Polygon {
+            common: PrimitiveCommon::new(),
+            sides: 6,
+            radius: 20.0,
+            vertex_radius: 0.0,
+            star_points: None,
+            fill: FillStyle::Gradient(gradient_id),
+            border_color: 0,
+            border_thickness: 0.0,
+        }));
+        let mut canvas = RenderingCanvas::new();
+        registry.flatten_into(&mut canvas, &device);
+        let frame = canvas.flatten();
+
+        assert_eq!(
+            frame.commands[0].pipeline_state_id,
+            crate::PipelineKind::GradientFill as u16
+        );
+        let word_index = frame.commands[0].texture_handle;
+        assert_eq!(
+            word_index, 0,
+            "the gradient word index rides in texture_handle, the same push-constant channel \
+             TexturedQuad's own texture_index already uses"
+        );
+        let bytes = device.style_buffer.bytes.borrow();
+        assert_eq!(
+            bytes.len(),
+            (crate::gpu_style::GRADIENT_STYLE_WORDS as usize) * 4,
+            "exactly one GpuGradientStyle record must have been written -- Polygon/Path have no \
+             per-vertex style record of their own"
+        );
+
+        // Every vertex's own uv carries its LOCAL (pre-transform)
+        // position, not a real texture coordinate -- gradient_fill.frag's
+        // own evaluation point.
+        assert!(
+            frame.vertices.iter().any(|v| v.uv != [0.0, 0.0]),
+            "at least one vertex must carry a real, non-origin local position in its own uv \
+             field for the gradient to evaluate correctly across the shape"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "which this registry never issued")]
+    fn flatten_into_panics_on_a_stale_or_foreign_gradient_id() {
+        let device = FakeDevice::default();
+        let mut registry = ShapeRegistry::new();
+        registry.insert(ShapePrimitive::Polygon(Polygon {
+            common: PrimitiveCommon::new(),
+            sides: 6,
+            radius: 20.0,
+            vertex_radius: 0.0,
+            star_points: None,
+            fill: FillStyle::Gradient(GradientId(999)),
+            border_color: 0,
+            border_thickness: 0.0,
+        }));
+        let mut canvas = RenderingCanvas::new();
+        registry.flatten_into(&mut canvas, &device);
     }
 }

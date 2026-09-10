@@ -52,6 +52,14 @@ today's already-shipped Step 10.2 code.
 
 ## Step 10.2.1 — Gradient Fill (Linear + Radial)
 
+**Status: Complete (2026-09-09) -- archived to
+`planning/archive/PLAN_PHASE10_STEP10_2_1.md`** (with real
+implementation notes on top of this original plan). See
+`documentation/IMPLEMENTATION.md`'s own write-up, REVIEW.md finding
+#167 (a real coordinate-space bug found and fixed by this step's own
+demo), and `demo/phase10_step10_2_1/`. Kept below unchanged as
+reference context for Steps 10.2.2 onward.
+
 ### Investigation
 
 - `FillStyle::Gradient(GradientId)` and `GradientId(pub u32)` already exist

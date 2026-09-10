@@ -874,12 +874,23 @@ pub struct ShapeRegistry {
     at `lyon` as the current Rust ecosystem's real answer for GPU 2D
     tessellation). `flatten_path`'s real output is also still used by
     `ShapeRegistry::hit_test`'s own `Path` case.
-  - **`FillStyle::Gradient`/`Texture`: still not built, for any shape
-    kind.** **Non-`Normal` `BlendMode`: still not built.** **The ellipse
-    SDF's disclosed scaled-circle approximation, `corner_smoothing`'s
-    unverified squircle match, and rounded stroke caps on a partial-arc
-    `Circle`: all still real, disclosed gaps.** All six are now planned,
-    in dependency order, as Steps 10.2.1-10.2.6 (`PLAN.md`, 2026-09-09) --
+  - **`FillStyle::Gradient`: fully real (Step 10.2.1, 2026-09-09),
+    for all four shape kinds.** Linear and radial, defined via
+    `ShapeRegistry::create_gradient(GradientDef) -> Result<GradientId,
+    GradientError>` (real validation: empty/too-many/out-of-range/
+    out-of-order stops and a non-positive radial radius are all a real
+    `Err`, never silently clamped) and evaluated in LINEAR color space in
+    the shader. `Rectangle`/`Circle` route through their own existing
+    per-vertex style-buffer record (`GpuRectStyle`/`GpuEllipseStyle`,
+    extended with `fill_kind`/`gradient_word_index`); `Polygon`/`Path`
+    (no per-vertex style record) route through a new, entirely separate
+    `PipelineKind::GradientFill` pipeline instead. **`FillStyle::
+    Texture`: still not built, for any shape kind.** **Non-`Normal`
+    `BlendMode`: still not built.** **The ellipse SDF's disclosed
+    scaled-circle approximation, `corner_smoothing`'s unverified squircle
+    match, and rounded stroke caps on a partial-arc `Circle`: all still
+    real, disclosed gaps.** The remaining five are planned, in dependency
+    order, as Steps 10.2.2-10.2.6 (`PLAN.md`, 2026-09-09) --
     including a real, researched correction to the original "non-`Normal`
     blend needs framebuffer-read" assumption above: `VK_EXT_blend_
     operation_advanced` maps these blend modes directly onto hardware

@@ -222,6 +222,12 @@ jobs:
       # flat fill's blended color must match a real, independent
       # premultiplied-alpha reference, not the old, unfixed math.
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example translucent_flat_fill_demo
+      # Phase 10 Step 10.2.1: real GPU proof of gradient fill (linear +
+      # radial) for Rectangle/Circle (the per-vertex style-buffer path)
+      # and Polygon (the separate GradientFill pipeline), each probed
+      # pixel checked against an independent Rust reference of the exact
+      # gradient math.
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example gradient_fill_demo
 
   accessibility-validation:
     name: accessibility-validation
