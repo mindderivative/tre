@@ -875,10 +875,16 @@ pub struct ShapeRegistry {
     tessellation). `flatten_path`'s real output is also still used by
     `ShapeRegistry::hit_test`'s own `Path` case.
   - **`FillStyle::Gradient`/`Texture`: still not built, for any shape
-    kind.** **Non-`Normal` `BlendMode`: still not built** -- the
-    Vulkan fixed-function blend state a subset could use, and the
-    framebuffer-read capability the rest would need, are both real,
-    separate, not-yet-scheduled RHI work.
+    kind.** **Non-`Normal` `BlendMode`: still not built.** **The ellipse
+    SDF's disclosed scaled-circle approximation, `corner_smoothing`'s
+    unverified squircle match, and rounded stroke caps on a partial-arc
+    `Circle`: all still real, disclosed gaps.** All six are now planned,
+    in dependency order, as Steps 10.2.1-10.2.6 (`PLAN.md`, 2026-09-09) --
+    including a real, researched correction to the original "non-`Normal`
+    blend needs framebuffer-read" assumption above: `VK_EXT_blend_
+    operation_advanced` maps these blend modes directly onto hardware
+    `VkBlendOp` values, no framebuffer read needed, if the extension is
+    present (verified via real device-capability query, not assumed).
   - **Hit-testing is real for all four shape kinds**
     (`ShapeRegistry::hit_test`) -- the actual concrete need
     `hit_testable` (present since Step 10.1, read by nothing until now)

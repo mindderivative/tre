@@ -2358,3 +2358,50 @@ up from 119).
 |---|----------|--------|-------------------|
 | 165 | Decision | Resolved | Adopted `lyon` as the one tessellation backend for `tre-svg` and `tre-engine`, retiring the hand-rolled ear-clipper and stencil-and-cover technique entirely (user-directed "full replacement"), closing finding #163 by a different fix than originally proposed |
 | 164 | Should-fix | Fixed | `walking_skeleton.frag` (`PipelineKind::FlatColor`) now premultiplies its own output by alpha; verified with a new, dedicated translucent-fill GPU demo that would have caught the original bug |
+
+## Phase 10 Step 10.2 Completion Roadmap (2026-09-09)
+
+### 166. [Decision] Full Shape Rendering Support's six remaining disclosed gaps are now planned as sequenced Steps 10.2.1-10.2.6, including a real correction to this project's own prior blend-mode assumption
+The user asked what remained open in "Full Shape Rendering Support" after
+finding #163 (`Path` fill) and #164 (premultiplied alpha) both closed the
+same day. The honest answer, cross-checked against the real, current code
+(not just prior documentation) rather than assumed from memory: six real
+gaps remain --
+
+1. `FillStyle::Gradient`/`Texture` -- real enum variants since Step 10.1,
+   still `unimplemented!()` at all four `flatten_*` call sites.
+2. Non-`Normal` `BlendMode` -- a real, already-threaded field, read by
+   nothing.
+3. `sd_ellipse`'s disclosed scaled-circle approximation and
+   `corner_smoothing`'s unverified squircle match.
+4. No rounded stroke caps on a partial-arc `Circle`/`Ellipse`.
+5. The shape system's zero-allocation claim is architecturally sound but
+   not proven live the way `main_loop_demo`'s own claim is.
+
+The user directed these be finished, in full, as sequenced Steps
+10.2.1-10.2.6 (`PLAN.md`, full investigation/scope/task breakdown per
+sub-step). **One real, useful correction surfaced while researching the
+blend-mode sub-step before writing the plan, not during implementation:**
+Step 10.2's own original disclosure claimed non-`Normal` blend modes
+"need new RHI framebuffer-read capability." Direct research into
+`VK_EXT_blend_operation_advanced` (not relied on from memory) shows this
+extension maps `Multiply`/`Screen`/`Overlay`/`SoftLight`/`ColorDodge`
+directly onto hardware `VkBlendOp` values with no framebuffer read at
+all, if the real device supports it (a capability query, not an
+assumption) -- a materially better, simpler technical path than this
+project's own prior finding assumed, caught only by verifying the real
+extension's real behavior before committing the plan to an approach.
+Documented in `PLAN.md`'s own Step 10.2.3 section and ARCHITECTURE.md
+Section 7.5.
+
+**Not yet built as of this entry** -- this is a planning decision, not an
+implementation report. Each sub-step gets its own REVIEW.md finding(s) as
+real issues surface during its own implementation, and the TRE Build
+Tracker artifact's six new rows flip from PLANNED to DONE only as each
+sub-step's own real, tested, demoed work lands.
+
+## Summary table (Phase 10 Step 10.2 Completion Roadmap)
+
+| # | Severity | Status | One-line summary |
+|---|----------|--------|-------------------|
+| 166 | Decision | Planned | Sequenced Steps 10.2.1-10.2.6 close every remaining disclosed Full Shape Rendering Support gap; research surfaced a real, better blend-mode technical path (`VK_EXT_blend_operation_advanced`) than originally assumed |

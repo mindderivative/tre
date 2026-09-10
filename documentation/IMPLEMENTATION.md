@@ -2119,6 +2119,47 @@ Real, in `crates/tre-engine/src/gpu_style.rs` (new), `crates/tre-engine/src/shap
 
 * **Verified.** `tre-svg`'s new `tessellate` module: 5 tests, including a real self-intersecting pentagram tessellating correctly (rejected outright by the old ear-clipper) and a real ring-with-a-hole via two contours. `tre-engine` gained matching fill/stroke tests plus real `ShapeRegistry::flatten_into` coverage for `Polygon` and `Path` borders. Every consumer of the retired API was found and updated: `svg_tessellation_demo.rs`, `svg_morph_demo.rs`, `text_shaping_demo.rs` (missed in the first sweep, caught only by a full `cargo build -p tre-rhi-vulkan --all-targets`), and `stencil_and_cover_demo.rs` (renamed to `self_intersecting_fill_demo.rs`, rewritten to prove the same textbook pentagram fill-rule disagreement via `tessellate_fill` directly, no stencil GPU technique needed). A new demo, `path_and_polygon_demo.rs` (`demo/phase10_step10_2_followup/`), proves the original ask end to end: a "donut" `Path` (two oppositely-wound subpaths -- a real compound shape with a hole) and a bordered hexagon `Polygon`, both rendered through `ShapeRegistry`, with real pixel assertions (ring fill, hole genuinely background, both shapes' own border colors). `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the whole workspace. See `documentation/REVIEW.md`'s closing note on finding #163 and its new finding documenting the full-replacement scope decision.
 
+### Steps 10.2.1-10.2.6: Finishing Full Shape Rendering Support (Planned 2026-09-09)
+
+Sub-numbered, not a renumbering -- these sit between the already-shipped
+10.2 and the already-planned 10.3/10.4 below, the same dotted-decimal
+convention Phase 3's own 3.3.1-3.3.3 already established. Full technical
+plan, investigation findings, and scope decisions for each: `PLAN.md`
+(archived per sub-step to `planning/archive/PLAN_PHASE10_STEP10_2_X.md` as
+each lands). One-line summary per sub-step, kept current here and in the
+TRE Build Tracker as each moves from PLANNED to DONE:
+
+* **10.2.1 -- Gradient Fill (Linear + Radial).** Real `FillStyle::Gradient`
+  rendering for all four shape kinds, evaluated in linear color space, via
+  a new `GpuGradientStyle` style-buffer record and a new `fill_kind`
+  dispatch shared with 10.2.2.
+* **10.2.2 -- Texture Fill.** Real `FillStyle::Texture` rendering for all
+  four shape kinds via the existing bindless texture array, extending
+  10.2.1's `fill_kind` dispatch to a third branch.
+* **10.2.3 -- Non-`Normal` Blend Modes.** Real `BlendMode` rendering
+  (`Multiply`/`Screen`/`Overlay`/`SoftLight`/`ColorDodge`), primarily via
+  `VK_EXT_blend_operation_advanced` (a real, researched correction to
+  Step 10.2's own original assumption that this needs framebuffer-read
+  support), with a disclosed, tested fallback to `Normal` if the real
+  device lacks the extension.
+* **10.2.4 -- SDF Fidelity: Exact Ellipse Distance Field & Corner-Smoothing
+  Reconciliation.** Replaces `sd_ellipse`'s disclosed scaled-circle
+  approximation with a verified-correct formula (researched from a real
+  published source, not assumed), and resolves `corner_smoothing`'s
+  unverified squircle-match disclosure one way or the other, honestly.
+* **10.2.5 -- Rounded Stroke Caps on Partial-Arc Circles/Ellipses.** Real
+  analytic SDF cap geometry at a partial arc's two cut edges, keeping the
+  SDF pipeline's existing antialiasing (a real alternative -- routing
+  through `lyon`'s own tessellated stroke caps -- was considered and
+  rejected specifically because `draw_flat_polygon` has no antialiasing,
+  and circles/rings are a highly AA-sensitive, common real UI element).
+* **10.2.6 -- Zero-Allocation Live Verification for the Shape System.** A
+  new demo wraps a real, mutating, mixed shape scene (exercising every
+  feature landed by 10.2.1-10.2.5) in `tre_memory::RenderTickGuard`,
+  closing ARCHITECTURE.md Section 7.5's disclosed "architecturally sound
+  but not proven live" gap the same way `main_loop_demo` already proves
+  its own claim.
+
 ### Step 10.3: The `tre-ffi` C-ABI Crate (for C, C++, and other non-Python bindings)
 
 * **Renumbered 2026-09-09** from Step 10.2 to 10.3, when Step 10.2 was inserted ahead of it for full shape rendering support (shapes are what this boundary and Step 10.4's Python binding will actually expose -- finishing real rendering for all four primitives first avoids binding an API surface still mostly stubbed).
