@@ -2,22 +2,27 @@
 //! "Platform & Event Layer"). Linux only (Wayland primary, X11/XCB
 //! fallback), per IMPLEMENTATION.md Step 1.1's scope decision.
 //!
-//! [`PlatformConnection`] owns ONE connection per backend (a single
-//! `wayland_client::Connection` or `x11rb::xcb_ffi::XCBConnection`) shared
-//! by every window it creates, rather than one connection per window
+//! [`PlatformConnection`] owns ONE connection per backend, shared by every
+//! window it creates, rather than one connection per window
 //! (IMPLEMENTATION.md Step 1.2) -- matching how a real desktop client
 //! actually talks to the display server, and letting `poll_events` drain
 //! one shared event source instead of one per window.
 //!
-//! One of the crates permitted to contain `unsafe` (TECHNICAL.md Section
-//! 9.1): implementing `raw-window-handle`'s traits requires it, and the
-//! X11 backend uses XCB FFI directly (`x11rb`'s `allow-unsafe-code`
-//! feature) to get a real `xcb_connection_t*` for Vulkan's
-//! `VK_KHR_xcb_surface`.
-#![deny(unsafe_op_in_unsafe_fn)]
+//! Both variants are backed by `winit` (Phase 11 Step 11.1, replacing the
+//! previous hand-rolled `wayland-client`/`x11rb` protocol integrations --
+//! see `winit_backend`'s own module doc for the migration rationale and
+//! IMPLEMENTATION.md's Step 11.1 write-up), forced to a specific backend
+//! via `winit`'s own `EventLoopBuilderExtWayland`/`EventLoopBuilderExtX11`.
+//!
+//! Unlike the hand-rolled backends it replaced, this crate needs no
+//! `unsafe` of its own: `winit`'s `Window`/`EventLoop` implement
+//! `raw-window-handle` 0.6's traits directly, so no `RawWindowHandle`/
+//! `RawDisplayHandle` is ever constructed by hand here. `tre-platform` is
+//! accordingly removed from TECHNICAL.md Section 9.1's closed set of
+//! crates permitted to contain `unsafe`.
+#![forbid(unsafe_code)]
 
-mod wayland;
-mod x11;
+mod winit_backend;
 
 use raw_window_handle::{DisplayHandle, HandleError, HasDisplayHandle, WindowHandle};
 pub use tre_engine::{ElementState, InputEvent, MouseButton, WindowId};
@@ -48,8 +53,8 @@ impl std::error::Error for PlatformError {}
 /// second, independent connection to the display server, defeating the
 /// point of this consolidation.
 pub enum PlatformConnection {
-    Wayland(wayland::WaylandConnection),
-    X11(x11::X11Connection),
+    Wayland(winit_backend::WinitConnection),
+    X11(winit_backend::WinitConnection),
 }
 
 impl PlatformConnection {
@@ -69,13 +74,13 @@ impl PlatformConnection {
     /// # Errors
     /// See [`PlatformConnection::new`].
     pub fn new_wayland() -> Result<Self, PlatformError> {
-        Ok(Self::Wayland(wayland::WaylandConnection::new()?))
+        Ok(Self::Wayland(winit_backend::WinitConnection::new_wayland()?))
     }
 
     /// # Errors
     /// See [`PlatformConnection::new`].
     pub fn new_x11() -> Result<Self, PlatformError> {
-        Ok(Self::X11(x11::X11Connection::new()?))
+        Ok(Self::X11(winit_backend::WinitConnection::new_x11()?))
     }
 
     /// Creates a new top-level window on this connection.

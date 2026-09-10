@@ -1,280 +1,116 @@
-# Plan: Phase 10 Steps 10.2.1 – 10.2.6 — Finishing Full Shape Rendering Support
+# Plan: Phase 11 Step 11.1 — Migrate `tre-platform` to a `winit`-Backed Windowing Implementation
 
-## User request (verbatim)
+**Status: Complete (2026-09-10).** See `documentation/IMPLEMENTATION.md`'s
+own Phase 11 write-up for the full technical account of what shipped,
+`documentation/REVIEW.md`'s Phase 11 Step 11.1 section (findings #177-179:
+one incidental fix, two disclosed-not-fixed decisions), and
+`demo/phase11_step11_1/README.md` for the verification summary. This file
+is the original plan (as approved via `EnterPlanMode`/`ExitPlanMode`),
+archived unchanged below now that this step's real work is done; the
+full-detail engineering plan itself (including the exact source-verified
+winit API research) is preserved at
+`/home/phil/.claude/plans/warm-painting-squid.md`.
 
-> Create a plan for 10.2.1 - 10.2.6 for the real gaps still open. Update the
-> TRE Build Tracker and other documentation. We are going to finish out 10.2
-> completely.
+## User request (verbatim, across the conversation that led to this plan)
 
-Sub-numbering, not a renumbering: 10.2.1–10.2.6 sit between the already-shipped
-10.2 and the already-planned 10.3 (`tre-ffi`)/10.4 (Python bindings) — the same
-dotted-decimal convention Phase 3's own 3.3.1–3.3.3 already established. No
-existing step number changes.
+> Ok, I believe we should look at window creation management crates...
+> app_window looks promising with async runtimes, and supports all the
+> desktop platforms.
 
-## The six real gaps, as disclosed to the user and confirmed against the
-## real, current code before writing this plan
+> I understand wayland handles the position and movement of the window and
+> is not something we can control. I am more concerned about efficiency and
+> performance. I do not believe a hand-rolled approach for windowing is the
+> right path as there are fully developed and tested options available.
+> Winit seems like the best and most robust choice for us.
 
-1. `FillStyle::Gradient(GradientId)` — a real enum variant since Step 10.1,
-   still `unimplemented!()` at all four `flatten_*` call sites in
-   `crates/tre-engine/src/shapes.rs` (confirmed: lines ~775, 834, 926, 1091,
-   each `let FillStyle::Solid(color) = shape.fill else { panic!(...) }`).
-2. `FillStyle::Texture(u32)` — same enum, same panic sites.
-3. `BlendMode` (`Normal`/`Multiply`/`Screen`/`Overlay`/`SoftLight`/
-   `ColorDodge`) — a real, already-threaded `PrimitiveCommon::blend_mode`
-   field since Step 10.1, read by nothing (`ShapeRegistry::flatten_into`
-   never branches on it; every pipeline's blend state is `Normal` today).
-4. `sd_ellipse`'s disclosed approximate SDF (`sdf_ellipse.frag`) — exact only
-   when `radius.x == radius.y`; and `sdf_rect_styled.frag`'s
-   `corner_smoothing` superellipse blend, explicitly not claimed to match
-   any specific reference squircle algorithm.
-5. Rounded stroke caps on a partial-arc `Circle`/`Ellipse` (`arc_length <
-   360`) — `sdf_ellipse.frag`'s sector cutoff is hard-edged
-   (`d = max(d, 0.001)` past the sweep), no cap geometry at the two cuts.
-6. The shape system's zero-allocation claim (ARCHITECTURE.md Section 7.5) is
-   architecturally sound but not proven live the way `main_loop_demo`'s own
-   claim is — `RenderTickGuard` is wired into that one demo only.
+## Context
 
-## Sequencing rationale
+A prior investigation (same session) into whether `tre-platform` exposed a
+full window-chrome/lifecycle interface (resize, position/movement, title
+bar with close/minimize/maximize, icon) found real gaps in the hand-rolled
+Wayland (`wayland-client`)/X11 (`x11rb`) backends: no post-creation title
+change, no minimize/maximize, no icon support, plus a concrete leftover bug
+(Wayland's `app_id` hardcoded to `"tre-walking-skeleton"`). Position/
+movement control was confirmed to be a genuine Wayland-protocol-level
+restriction no library can lift. The project owner's conclusion: replace
+the hand-rolled protocol integrations with `winit`, primarily for
+robustness/correctness, not to chase new API surface.
 
-10.2.1 and 10.2.2 share one new piece of infrastructure (a per-shape
-"fill kind" dispatch: solid vs. gradient vs. texture) and are sequenced
-together so that infrastructure is designed once, not twice. 10.2.3 (blend
-modes) is a pipeline-level, shader-independent axis and is sequenced after
-the fill-kind shaders stabilize, so its own new pipeline variants are built
-against final shader code, not code still in flux. 10.2.4 and 10.2.5 both
-touch `sdf_ellipse.frag`; 10.2.4 (the exact SDF) is sequenced first so 10.2.5
-builds its cap geometry on the corrected distance field, not the outgoing
-approximation. 10.2.6 runs last by design — its own new demo should prove
-every new code path landed by 10.2.1–10.2.5 is zero-alloc too, not just
-today's already-shipped Step 10.2 code.
+**Explicit non-goal:** no new public API surface (`set_title`,
+`set_minimized`, `set_maximized`, `set_window_icon`, etc.) — `tre_platform::
+PlatformConnection`'s public method signatures are preserved exactly, so
+none of the 40 pre-existing demo files in `crates/tre-rhi-vulkan/examples/`
+needed to change.
 
----
+## Design (verified against winit 0.30.13's actual source before writing
+## any code)
 
-## Step 10.2.1 — Gradient Fill (Linear + Radial)
+- `ActiveEventLoop` (required to create a `Window`) is only reachable
+  inside an `ApplicationHandler` callback. Traced through winit's own
+  `platform_impl` for both X11 and Wayland: passing `timeout: Some(Duration
+  ::ZERO)` to `pump_app_events` guarantees `ApplicationHandler::new_events`
+  runs on every single pump call (not just `resumed`, which fires exactly
+  once). `create_window()` stages a request and immediately pumps once
+  itself, draining it inside `new_events` before returning — fully
+  synchronous from the caller's perspective.
+- One `winit_backend::WinitConnection` (new) replaces both `wayland.rs` and
+  `x11.rs` (deleted) — winit unifies both backends behind one set of types.
+  `PlatformConnection::Wayland`/`X11` both wrap it, forced via
+  `EventLoopBuilderExtWayland::with_wayland`/`EventLoopBuilderExtX11::
+  with_x11`.
+- `WindowId` allocation keeps the previous internal counter scheme exactly
+  (grep-confirmed nothing outside `tre-platform` ever constructs a
+  `WindowId` directly).
+- `WindowEvent` → `tre_engine::InputEvent` translates 1:1, still routed
+  through the existing `InputEventQueue` (pointer-move coalescing
+  unchanged). `key_code` sourced from `winit::platform::scancode::
+  PhysicalKeyExtScancode::to_scancode()`, confirmed to produce the same
+  Linux evdev numbering the engine's `InputEvent::KeyboardKey` already
+  contracts.
+- `winit = { version = "0.30", default-features = false, features =
+  ["rwh_06", "x11", "wayland", "wayland-dlopen"] }` — explicitly without
+  `wayland-csd-adwaita` (client-side-decoration title-bar rendering this
+  project doesn't need, since it talks to real compositors directly).
 
-**Status: Complete (2026-09-09) -- archived to
-`planning/archive/PLAN_PHASE10_STEP10_2_1.md`** (with real
-implementation notes on top of this original plan). See
-`documentation/IMPLEMENTATION.md`'s own write-up, REVIEW.md finding
-#167 (a real coordinate-space bug found and fixed by this step's own
-demo), and `demo/phase10_step10_2_1/`. Kept below unchanged as
-reference context for Steps 10.2.2 onward.
+## Real risks disclosed before implementation (see REVIEW.md #177-179 for
+## final disposition)
 
-### Investigation
+1. `scale_factor`'s preserved `i32` signature rounds away the real
+   per-window `f64` precision winit now supplies.
+2. `EventLoop` may only be constructed once per OS process, ever — a real,
+   permanent restriction, confirmed harmless for every current call site.
+3. Dependency footprint increases even with the trimmed feature set.
 
-- `FillStyle::Gradient(GradientId)` and `GradientId(pub u32)` already exist
-  (`shapes.rs`); nothing defines what a `GradientId` actually points to yet
-  — this step adds the missing definition-and-storage half.
-- The per-shape GPU style buffer (`crates/tre-engine/src/gpu_style.rs`,
-  `RhiDevice::shape_style_buffer`, bindless set binding 1) is a plain
-  `readonly buffer { uint words[]; }` — appending a new, independently
-  word-indexed record type (`GpuGradientStyle`) costs nothing structural;
-  the existing bump allocator doesn't care that records have different
-  sizes (`gpu_style.rs`'s own doc comment already says so).
-- `GpuRectStyle`/`GpuEllipseStyle` currently assume `frag_color` (solid,
-  vertex-interpolated) is the only fill source. Both records gain two new
-  trailing `u32` words: `fill_kind` (0 = solid via `frag_color`, 1 =
-  gradient) and `gradient_word_index` (a second style-buffer word index,
-  valid only when `fill_kind == 1`) — additive, so existing solid-fill
-  callers are unaffected (`fill_kind` defaults to 0).
-- Polygon/Path fill (`PipelineKind::FlatColor`, `walking_skeleton.frag`) has
-  no per-shape style record today (`params` is unused, `uv` is zeroed) —
-  a gradient fill here needs local-space position at the fragment stage
-  (repurpose the currently-zeroed `uv` slot to carry it) plus a
-  `gradient_word_index`, carried the same way `TexturedQuad`'s
-  `texture_index` already is: a push constant (constant across one draw,
-  matching how gradient fills already can't currently batch across
-  different gradients any more than textured draws batch across different
-  textures today).
+## Tasks
 
-### Scope decisions
+1. Update `crates/tre-platform/Cargo.toml` deps.
+2. Add `crates/tre-platform/src/winit_backend.rs`; delete `wayland.rs`/
+   `x11.rs`.
+3. Update `lib.rs`: both `PlatformConnection` variants wrap
+   `WinitConnection`; all five public methods delegate unchanged.
+4. Update `ARCHITECTURE.md`/`IMPLEMENTATION.md`/`TECHNICAL.md`/`REVIEW.md`.
+5. `demo/phase11_step11_1/README.md`.
 
-- Linear and radial gradients only (conic/angular explicitly out of scope,
-  matching the original Step 10.2 plan's own disclosure).
-- Up to 8 stops (position `0.0..=1.0` + `Color`), a fixed cap matching this
-  codebase's own "small, fixed, disclosed limit" precedent (e.g. `tre-svg`'s
-  own input caps) — more than 8 stops returns a real `Result` error from
-  the new gradient-creation API, not silent truncation.
-- Stop colors stored packed sRGB (same `rgba8` convention as everywhere
-  else); interpolation happens in LINEAR space in the shader (`srgb_to_
-  linear` per endpoint, then `mix`), matching this codebase's own
-  established blending discipline (ARCHITECTURE.md Section 6.1) — not
-  interpolated in sRGB space, which would produce the well-known "muddy
-  midpoint" artifact.
-- New public API: `ShapeRegistry::create_gradient(GradientDef) -> Result<GradientId, EngineError>`
-  (a new registry-owned table, mirroring `ShapeRegistry::insert`'s own
-  generational-handle precedent) rather than a global/static table —
-  keeps gradients scoped to the registry that owns the shapes referencing
-  them, consistent with how shapes themselves are scoped.
-- New pipeline: `PipelineKind::GradientFill` (its own vertex/fragment shader
-  pair) for Polygon/Path — a new pipeline rather than branching inside
-  `walking_skeleton.frag`, matching this codebase's own established
-  "separate pipeline per real style variant" precedent (`SdfRectStyled`
-  next to `SdfRoundedRect`, `SdfEllipse` next to nothing before it).
+**All five tasks completed as written**, plus one real, additional
+hardening found and taken during implementation, not originally planned:
+`tre-platform` no longer contains any `unsafe` code at all (winit's
+`Window`/`EventLoop` implement `raw-window-handle` 0.6's traits directly),
+so the crate now carries `#![forbid(unsafe_code)]` and is removed from
+TECHNICAL.md Section 9.1's closed set of crates permitted to contain
+`unsafe`.
 
-### Tasks
-
-1. `GradientDef`/`GradientKind` (`Linear { start: Vec2, end: Vec2 }` /
-   `Radial { center: Vec2, radius: f32 }`) + up to 8 `(f32, Color)` stops,
-   in `tre-engine`.
-2. `ShapeRegistry::create_gradient` — validates stop count/ordering,
-   bump-allocates a `GpuGradientStyle` record (header: kind tag, start/end
-   or center/radius, real stop count; then up to 8 `(f32 position, u32
-   color)` pairs) into the shape style buffer once per unique gradient
-   per frame (or once per `create_gradient` call if gradients are meant to
-   be stable across frames — resolve during implementation against how
-   `ShapeRegistry`'s own per-frame vs. per-registry lifetime already
-   works for other data).
-3. Extend `GpuRectStyle`/`GpuEllipseStyle` with `fill_kind`/
-   `gradient_word_index`; update `sdf_rect_styled.frag`/`sdf_ellipse.frag`
-   with a gradient-evaluation branch (shared GLSL `vec3 eval_gradient(...)`
-   snippet, kept in lockstep by hand like every other style-buffer field
-   already is).
-4. New `gradient_fill.vert`/`gradient_fill.frag` + `PipelineKind::
-   GradientFill`, registered everywhere `PipelineRegistry` is built.
-5. Wire all four `flatten_*` functions' `FillStyle::Gradient` arm.
-6. Tests: gradient stop validation (empty/too-many/unordered), linear/radial
-   evaluation at known `t` values (a CPU-side Rust reference mirroring the
-   shader's own math, same pattern `translucent_flat_fill_demo.rs` already
-   established for verifying shader math independently), a real GPU demo
-   with pixel samples along a gradient's own axis confirming a real,
-   monotonic color change (not just "didn't crash").
-
----
-
-## Step 10.2.2 — Texture Fill
-
-**Status: Complete (2026-09-09) -- archived to
-`planning/archive/PLAN_PHASE10_STEP10_2_2.md`** (with real
-implementation notes on top of this original plan). See
-`documentation/IMPLEMENTATION.md`'s own write-up, REVIEW.md findings
-#168/#169, and `demo/phase10_step10_2_2/`. Kept below unchanged as
-reference context for Steps 10.2.3 onward.
-
-### Investigation
-
-- `FillStyle::Texture(u32)` already exists; the `u32` is the same bindless
-  texture-array index space `PipelineKind::TexturedQuad`/
-  `bindless_textured.frag` already use (`layout(set = 0, binding = 2)
-  uniform texture2D bindless_textures[]`) — no new descriptor infrastructure
-  needed, only UV generation and a fill-kind branch, reusing the exact
-  sentinel convention (`0xFFFFFFFF` = no texture) `bindless_textured.frag`
-  already established.
-- UV mapping is shape-kind-specific: `Rectangle`/`Circle`/`Ellipse` map
-  local coordinates to `[0,1]` via their own known half-extent/radius (no
-  new bookkeeping); `Polygon`/`Path` need each shape's own local bounding
-  box, computed once at flatten time (a small, real addition — matches the
-  original Step 10.2 plan's own "bounding-box-mapped UVs" note).
-
-### Scope decisions
-
-- Extends 10.2.1's `fill_kind` field to a third value (`2 = texture`) rather
-  than inventing a parallel mechanism — `GpuRectStyle`/`GpuEllipseStyle`
-  gain one more trailing `u32` (`texture_index`); Polygon/Path route
-  through `PipelineKind::GradientFill`'s own shader pair extended with a
-  texture branch (renaming it, e.g., to a more general `StyledFill`
-  pipeline naming decision made at implementation time) rather than a
-  fourth pipeline — avoids a combinatorial pipeline explosion across
-  (shape kind × fill kind).
-- No filtering/wrap-mode configuration this pass (uses the existing single
-  shared bindless sampler, same as `TexturedQuad` today) — a real,
-  disclosed simplification, not silently different per shape.
-
-### Tasks
-
-1. Bounding-box computation for Polygon/Path (`generate_polygon_points`'s
-   output, `flatten_path`'s output) — a small, pure function, real unit
-   tests against known shapes.
-2. Extend style records + shaders with the texture branch (sampling via
-   `nonuniformEXT`, matching `bindless_textured.frag`'s own real code).
-3. Wire `FillStyle::Texture` at all four `flatten_*` call sites.
-4. Tests + a real GPU demo: a texture (e.g. the existing atlas-packing
-   demo's own checkerboard/solid-color test texture) sampled correctly
-   across all four shape kinds, pixel-verified against the source texture's
-   own known content at known UV coordinates.
-
----
-
-## Step 10.2.3 — Non-`Normal` Blend Modes
-
-**Status: Complete (2026-09-09) -- archived to
-`planning/archive/PLAN_PHASE10_STEP10_2_3.md`** (with real
-implementation notes on top of this original plan, including a real,
-disclosed pivot away from this plan's own primary path -- `VK_EXT_
-blend_operation_advanced` turned out not to be implemented by RADV, this
-project's own real dev GPU/driver; the real implementation uses
-`VK_KHR_dynamic_rendering_local_read` instead, at the user's explicit
-direction). See `documentation/IMPLEMENTATION.md`'s own write-up,
-REVIEW.md findings #170/#171/#172, and `demo/phase10_step10_2_3/`. See
-the archive file for the original plan text, kept there as historical
-record.
-
----
-
-## Step 10.2.4 — SDF Fidelity: Exact Ellipse Distance Field & Corner-Smoothing Reconciliation
-
-**Status: Complete (2026-09-09) -- archived to
-`planning/archive/PLAN_PHASE10_STEP10_2_4.md`** (with real
-implementation notes on top of this original plan, including a real,
-disclosed correction to this plan's own expectation about where the old
-ellipse SDF approximation's real error would show up). See
-`documentation/IMPLEMENTATION.md`'s own write-up, REVIEW.md findings
-#173/#174, and `demo/phase10_step10_2_4/`. See the archive file for the
-original plan text, kept there as historical record.
-
----
-
-## Step 10.2.5 — Rounded Stroke Caps on Partial-Arc Circles/Ellipses
-
-**Status: Complete (2026-09-09) -- archived to
-`planning/archive/PLAN_PHASE10_STEP10_2_5.md`** (with real
-implementation notes on top of this original plan). See
-`documentation/IMPLEMENTATION.md`'s own write-up, REVIEW.md finding
-#175, and `demo/phase10_step10_2_5/`. See the archive file for the
-original plan text, kept there as historical record.
-
----
-
-## Step 10.2.6 — Zero-Allocation Live Verification for the Shape System
-
-**Status: Complete (2026-09-09) -- archived to
-`planning/archive/PLAN_PHASE10_STEP10_2_6.md`** (with real
-implementation notes on top of this original plan). See
-`documentation/IMPLEMENTATION.md`'s own write-up, REVIEW.md finding
-#176, and `demo/phase10_step10_2_6/`. See the archive file for the
-original plan text, kept there as historical record.
-
-**With this step's completion, Steps 10.2.1–10.2.6 are all complete --
-every gap Step 10.2's own original implementation disclosed is now
-closed.** Phase 10 continues with Step 10.3 (`tre-ffi`) below.
-
----
-
-## Documentation & tracking (every sub-step)
-
-- REVIEW.md: a new finding/decision entry per sub-step for any real issue
-  found during implementation (matching this project's own standing
-  practice — never silently fixed, never silently deferred).
-- ARCHITECTURE.md Section 7.5's "Implementation status" note updated as
-  each gap closes.
-- IMPLEMENTATION.md: a new `#### Step 10.2.X` write-up per sub-step,
-  "Status: Complete" only once real, tested, demoed.
-- `demo/phase10_step10_2_X/` per sub-step, matching this project's own
-  established per-step demo-folder convention.
-- TRE Build Tracker (Artifact `714bd0d7-87d1-4615-9ae3-6b99c44cd378`):
-  six new rows under Phase 10, each `PLANNED` until its own sub-step
-  actually lands, then flipped to `DONE` with a real one-line summary —
-  never batch-flipped ahead of real, verified work.
-- This `PLAN.md` gets archived to `planning/archive/PLAN_PHASE10_STEP10_2_X.md`
-  as each sub-step's own real work begins in earnest (matching this
-  project's established one-active-plan convention), with a fresh `PLAN.md`
-  scoped to the next sub-step.
-
-## Verification plan (every sub-step)
+## Verification plan — executed exactly as planned
 
 `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D
-warnings`, `cargo test --workspace`, a full regression sweep of every
-pre-existing GPU demo (not just the new one), and the new sub-step's own
-real GPU demo with real pixel assertions — the same bar every prior real
-step in this project has been held to, no exceptions for "just a smaller
-sub-step."
+warnings`, `cargo build --workspace --all-targets`, `cargo test --workspace`
+all clean (zero failures). `smoke_test.rs` run against a real Wayland
+session and, forced via `TRE_FORCE_BACKEND=x11`, against XWayland — both
+created a real window and received real `Resized`/`PointerMoved` events.
+All 41 `tre_platform`-dependent demos re-run on real GPU hardware
+(`VK_LAYER_KHRONOS_validation` enabled), zero failures: `main_loop_demo.rs`
+(the project's own reference imperative main loop) completed 90 real
+frames with its animation and Step 9.2 zero-allocation guard both verified;
+`multi_window.rs` created two real windows on one `PlatformConnection` and
+rendered both for 120 frames. `cargo tree -p tre-platform` inspected to
+honestly report the real dependency-footprint increase (REVIEW.md #179)
+rather than assume it acceptable without looking.
