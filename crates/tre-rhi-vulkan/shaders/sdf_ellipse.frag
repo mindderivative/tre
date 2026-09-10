@@ -29,6 +29,13 @@ layout(std430, set = 0, binding = 1) readonly buffer ShapeStyleBuffer {
 }
 style_buffer;
 
+// Phase 10 Step 10.2.2: the SAME bindless sampler/texture array
+// `bindless_textured.frag` already declares -- no new descriptor
+// infrastructure, this shader just reads a binding every pipeline's
+// descriptor set already carries.
+layout(set = 0, binding = 0) uniform sampler bindless_sampler;
+layout(set = 0, binding = 2) uniform texture2D bindless_textures[];
+
 const float TAU = 6.28318530718;
 
 vec3 srgb_to_linear(vec3 c) {
@@ -136,6 +143,7 @@ void main() {
     float arc_sweep_angle = uintBitsToFloat(style_buffer.words[style_index + 3]);
     uint fill_kind = style_buffer.words[style_index + 4];
     uint gradient_word_index = style_buffer.words[style_index + 5];
+    uint texture_index = style_buffer.words[style_index + 6];
 
     float d = sd_ellipse(frag_uv, radius);
 
@@ -162,9 +170,21 @@ void main() {
     float dd = fwidth(d);
     float outer_alpha = clamp(0.5 - d / dd, 0.0, 1.0);
 
-    vec4 fill = (fill_kind == 1u)
-        ? eval_gradient(gradient_word_index, frag_uv)
-        : vec4(srgb_to_linear(frag_color.rgb), frag_color.a);
+    vec4 fill;
+    if (fill_kind == 1u) {
+        fill = eval_gradient(gradient_word_index, frag_uv);
+    } else if (fill_kind == 2u) {
+        // Maps frag_uv onto the ellipse's own bounding box, [0, 1] -- the
+        // real texture is already stored linear-space (no srgb_to_linear
+        // needed), matching bindless_textured.frag's own convention.
+        vec2 tex_uv = (frag_uv / radius + vec2(1.0)) * 0.5;
+        fill = texture(
+            sampler2D(bindless_textures[nonuniformEXT(texture_index)], bindless_sampler),
+            tex_uv
+        );
+    } else {
+        fill = vec4(srgb_to_linear(frag_color.rgb), frag_color.a);
+    }
     vec3 fill_linear = fill.rgb;
     float fill_alpha = fill.a;
     vec3 rgb;

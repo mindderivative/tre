@@ -2216,6 +2216,55 @@ an existing solid border. Every pre-existing demo re-run and confirmed
 bit-for-bit unchanged. `cargo fmt`/`clippy -D warnings`/`build`/`test`
 clean across the whole workspace.
 
+#### Step 10.2.2: Texture Fill -- Status: Complete (2026-09-09)
+
+Real, in `crates/tre-engine/src/gpu_style.rs` (new `StyleFill` struct
+bundling `fill_kind`/`gradient_word_index`/`texture_index`; `GpuRectStyle`
+extended to 10 words, `GpuEllipseStyle` to 7, each gaining `texture_index`),
+`crates/tre-engine/src/shapes.rs` (`resolve_style_fill` returns `(Color,
+StyleFill)` and now handles `FillStyle::Texture`; new `bounding_box_uvs`
+helper for `Polygon`/`Path`; `draw_polygon_fill`'s `FillStyle::Texture`
+arm wired), `crates/tre-engine/src/lib.rs` (`draw_styled_rectangle`/
+`draw_ellipse` take one bundled `StyleFill` parameter instead of two
+trailing `u32`s; new `draw_textured_polygon`), and `sdf_rect_styled.
+frag`/`sdf_ellipse.frag` (each gained a `fill_kind == 2` texture branch,
+declaring the same bindless sampler/texture-array bindings `bindless_
+textured.frag` already uses -- no new descriptor infrastructure).
+`Polygon`/`Path` need no new shader at all: they reuse the EXISTING
+`PipelineKind::TexturedQuad`/`bindless_textured.frag` pipeline directly,
+since sampling a texture is not new math the way gradient evaluation
+was -- a real, disclosed departure from `PLAN.md`'s own original
+suggestion (extending `GradientFill`'s shader with a texture branch),
+made once the simpler reuse became obvious during implementation.
+
+**A parameter-list refactor made along the way.** `draw_styled_
+rectangle`/`draw_ellipse` were about to grow a fourth trailing
+fill-selection parameter (`texture_index`, alongside Step 10.2.1's
+`fill_kind`/`gradient_word_index`). Bundled all three into one new
+`StyleFill` value instead (with a `StyleFill::SOLID` constant for the
+common case), so the signature doesn't grow again the next time a fill
+kind is added -- all 5 existing test call sites and both real callers
+(`flatten_rectangle`/`flatten_circle`) updated to match.
+
+**Verified.** 5 new `tre-engine` tests (143 total, up from 137):
+`bounding_box_uvs`' own real normalization and degenerate (zero-extent)
+fallback, and `flatten_into` wiring for all three real code paths
+(`Rectangle` forcing the styled pipeline even with no border/radii/
+smoothing; `Circle`'s own `fill_kind`/`texture_index`; `Polygon` routing
+through `TexturedQuad` with real per-vertex UVs and no style-buffer
+write at all). A new real GPU demo, `texture_fill_demo.rs`
+(`demo/phase10_step10_2_2/`), renders a rectangle, a circle, a hexagon,
+and a square path all filled with a real four-quadrant flag texture
+(red/green/blue/yellow, pure 0/255 channel values for exact sRGB
+round-tripping), each shape's own upper-left and lower-right quadrant
+probed and confirmed against the texture's own known content -- proving
+the UV mapping is correct for every shape kind and both code paths, not
+just "some texture appeared." Every pre-existing demo re-run and
+confirmed bit-for-bit unchanged, including `bindless_textures_demo.rs`
+(confirming the shared `TexturedQuad` pipeline and bindless descriptor
+bindings are untouched). `cargo fmt`/`clippy -D warnings`/`build`/`test`
+clean across the whole workspace.
+
 ### Step 10.3: The `tre-ffi` C-ABI Crate (for C, C++, and other non-Python bindings)
 
 * **Renumbered 2026-09-09** from Step 10.2 to 10.3, when Step 10.2 was inserted ahead of it for full shape rendering support (shapes are what this boundary and Step 10.4's Python binding will actually expose -- finishing real rendering for all four primitives first avoids binding an API surface still mostly stubbed).

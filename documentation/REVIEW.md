@@ -2454,3 +2454,52 @@ needing a GPU run.
 | # | Severity | Status | One-line summary |
 |---|----------|--------|-------------------|
 | 167 | Should-fix | Fixed | Gradient points authored in public top-left-relative local space now correctly offset into `frag_uv`'s own center-relative space for `Rectangle`/`Circle`; caught by the new demo's own first real run |
+
+## Phase 10 Step 10.2.2 Implementation (2026-09-09)
+
+### 168. [Decision] Polygon/Path texture fill reuses the existing TexturedQuad pipeline directly, a better path than PLAN.md's own original suggestion
+`PLAN.md`'s own Step 10.2.2 scope decision proposed extending
+`PipelineKind::GradientFill`'s shader with a texture branch for
+`Polygon`/`Path`, avoiding "a fourth pipeline" and the combinatorial
+pipeline growth that would otherwise result. Implementation found a
+better option once the real shape of the problem was in front of it:
+`PipelineKind::TexturedQuad`/`bindless_textured.frag` -- a real, already
+-built, already-registered-in-other-demos pipeline -- already does
+exactly what Polygon/Path texture fill needs (sample a bindless texture
+at a real per-vertex UV, with the exact `0xFFFFFFFF`-sentinel-for-
+"no texture" fallback convention this workspace already established).
+Gradient evaluation was genuinely new math needing a new shader
+(`gradient_fill.frag`); texture sampling is not -- reusing the existing
+pipeline needed zero new GLSL, zero new pipeline objects, and zero new
+descriptor bindings, only a new `RenderingCanvas::draw_textured_polygon`
+method carrying real UVs instead of `draw_flat_polygon`'s zeroed ones.
+Disclosed here as a real, deliberate departure from the written plan,
+not a silent scope change -- `PLAN.md`'s own text is left as the
+historical record of the original, reasonable-at-the-time proposal.
+
+### 169. [Decision] draw_styled_rectangle/draw_ellipse's fill-selection parameters bundled into one StyleFill value before they grew a third time
+Step 10.2.1 added two trailing `u32` parameters (`fill_kind`,
+`gradient_word_index`) to `draw_styled_rectangle`/`draw_ellipse`. Step
+10.2.2 was about to add a third (`texture_index`) to the same two
+methods -- a real, growing "one more `u32` every time a fill kind
+ships" pattern that would only get worse at Step 10.2.3 (blend modes)
+and beyond. Consolidated all three into one new `StyleFill` struct
+(`fill_kind`/`gradient_word_index`/`texture_index`, plus a `StyleFill::
+SOLID` constant for the common case) instead of a fourth trailing
+parameter, updating both real callers (`flatten_rectangle`/`flatten_
+circle`) and all 5 existing test call sites. A real, disclosed
+mid-course correction to `PLAN.md`'s own original phrasing ("`GpuRectStyle`/
+`GpuEllipseStyle` gain one more trailing `u32`"), made for the Rust API
+surface specifically -- the GPU-side word layout itself is unaffected,
+still three separate `u32` words in the style buffer.
+
+**Verified.** All 5 pre-existing `draw_styled_rectangle`/`draw_ellipse`
+tests updated and passing; no behavioral change, a pure API-surface
+consolidation.
+
+## Summary table (Phase 10 Step 10.2.2 Implementation)
+
+| # | Severity | Status | One-line summary |
+|---|----------|--------|-------------------|
+| 168 | Decision | Resolved | Polygon/Path texture fill reuses the existing TexturedQuad/bindless_textured.frag pipeline directly instead of extending GradientFill, avoiding all new shader/pipeline/descriptor work for this shape-kind pair |
+| 169 | Decision | Resolved | Bundled fill_kind/gradient_word_index/texture_index into one new StyleFill value for draw_styled_rectangle/draw_ellipse, avoiding a third trailing u32 parameter and future growth |

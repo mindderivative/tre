@@ -54,15 +54,25 @@
 //! not a per-vertex style word) -- see that pipeline's own shader for the
 //! account of why Polygon/Path can't use a per-vertex style record at
 //! all today.
+//!
+//! # Texture fill (Phase 10 Step 10.2.2)
+//! [`GpuRectStyle`]/[`GpuEllipseStyle`] gained one more trailing word --
+//! `texture_index`, a real bindless texture-array index (the exact same
+//! index space `PipelineKind::TexturedQuad`/`bindless_textured.frag`
+//! already use), valid only when `fill_kind == 2`. [`StyleFill`] bundles
+//! all three fill-selection fields (`fill_kind`/`gradient_word_index`/
+//! `texture_index`) into one value, so `RenderingCanvas::draw_styled_
+//! rectangle`/`draw_ellipse`'s own parameter list doesn't grow by one
+//! more trailing `u32` every time a new fill kind is added.
 
 /// [`GpuRectStyle`]'s size in `u32` words -- the fixed stride
 /// `sdf_rect_styled.frag` reads from a rectangle's own word index.
-pub const RECT_STYLE_WORDS: u32 = 9;
+pub const RECT_STYLE_WORDS: u32 = 10;
 
 /// Rectangle's non-uniform-corner/border/smoothing/fill style record
-/// (Phase 10 Step 10.2, extended Step 10.2.1 for gradient fill). Read by
-/// `sdf_rect_styled.frag` as 9 sequential `uint`s starting at a vertex's
-/// own style word index:
+/// (Phase 10 Step 10.2, extended Step 10.2.1 for gradient fill, Step
+/// 10.2.2 for texture fill). Read by `sdf_rect_styled.frag` as 10
+/// sequential `uint`s starting at a vertex's own style word index:
 ///
 /// | word | field                        |
 /// |------|------------------------------|
@@ -73,8 +83,9 @@ pub const RECT_STYLE_WORDS: u32 = 9;
 /// | 4    | `border_color` (packed RGBA8, `rgba8`'s byte order) |
 /// | 5    | `border_thickness` |
 /// | 6    | `corner_smoothing` (0 = circular arc, 1 = full superellipse blend) |
-/// | 7    | `fill_kind` (0 = solid, via `frag_color`; 1 = gradient) |
+/// | 7    | `fill_kind` (0 = solid, via `frag_color`; 1 = gradient; 2 = texture) |
 /// | 8    | `gradient_word_index` (a [`GpuGradientStyle`] word index, valid only when `fill_kind == 1`) |
+/// | 9    | `texture_index` (a bindless texture-array index, valid only when `fill_kind == 2`) |
 ///
 /// The GLSL side must stay in lockstep with this field order by hand --
 /// nothing automatically checks it against the literal word offsets in
@@ -89,17 +100,19 @@ pub struct GpuRectStyle {
     pub corner_smoothing: f32,
     pub fill_kind: u32,
     pub gradient_word_index: u32,
+    pub texture_index: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<GpuRectStyle>() == (RECT_STYLE_WORDS as usize) * 4);
 
 /// [`GpuEllipseStyle`]'s size in `u32` words -- the fixed stride
 /// `sdf_ellipse.frag` reads from an ellipse's own word index.
-pub const ELLIPSE_STYLE_WORDS: u32 = 6;
+pub const ELLIPSE_STYLE_WORDS: u32 = 7;
 
 /// Circle/Ellipse's border/arc/fill style record (Phase 10 Step 10.2,
-/// extended Step 10.2.1 for gradient fill). Read by `sdf_ellipse.frag` as
-/// 6 sequential `uint`s starting at a vertex's own style word index:
+/// extended Step 10.2.1 for gradient fill, Step 10.2.2 for texture fill).
+/// Read by `sdf_ellipse.frag` as 7 sequential `uint`s starting at a
+/// vertex's own style word index:
 ///
 /// | word | field                |
 /// |------|----------------------|
@@ -107,8 +120,9 @@ pub const ELLIPSE_STYLE_WORDS: u32 = 6;
 /// | 1    | `border_thickness`   |
 /// | 2    | `arc_start_angle` (radians) |
 /// | 3    | `arc_sweep_angle` (radians; `TAU` = a full, unswept ellipse) |
-/// | 4    | `fill_kind` (0 = solid, via `frag_color`; 1 = gradient) |
+/// | 4    | `fill_kind` (0 = solid, via `frag_color`; 1 = gradient; 2 = texture) |
 /// | 5    | `gradient_word_index` (a [`GpuGradientStyle`] word index, valid only when `fill_kind == 1`) |
+/// | 6    | `texture_index` (a bindless texture-array index, valid only when `fill_kind == 2`) |
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuEllipseStyle {
@@ -118,9 +132,43 @@ pub struct GpuEllipseStyle {
     pub arc_sweep_angle: f32,
     pub fill_kind: u32,
     pub gradient_word_index: u32,
+    pub texture_index: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<GpuEllipseStyle>() == (ELLIPSE_STYLE_WORDS as usize) * 4);
+
+/// The GPU-side fill-selection fields every non-`Solid` fill needs
+/// (Phase 10 Steps 10.2.1/10.2.2), bundled into one value so
+/// `RenderingCanvas::draw_styled_rectangle`/`draw_ellipse`'s own
+/// parameter list doesn't grow by one more trailing `u32` every time a
+/// new fill kind is added. Mutually exclusive by construction --
+/// `gradient_word_index`/`texture_index` are read only when `fill_kind`
+/// names them; both are simply unused (and, via [`Default`], zero)
+/// otherwise.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StyleFill {
+    /// `0` = solid (the vertex's own interpolated `frag_color`), `1` =
+    /// gradient, `2` = texture.
+    pub fill_kind: u32,
+    /// A [`GpuGradientStyle`] word index, valid only when `fill_kind ==
+    /// 1`.
+    pub gradient_word_index: u32,
+    /// A bindless texture-array index, valid only when `fill_kind == 2`.
+    pub texture_index: u32,
+}
+
+impl StyleFill {
+    /// The common case: a plain solid fill, sourced entirely from the
+    /// vertex's own interpolated `frag_color` -- every field zero, the
+    /// same value `Default` already gives, spelled out for callers who'd
+    /// rather not write `StyleFill::default()` for something this
+    /// central.
+    pub const SOLID: Self = Self {
+        fill_kind: 0,
+        gradient_word_index: 0,
+        texture_index: 0,
+    };
+}
 
 /// The maximum number of color stops a single gradient can carry
 /// (Phase 10 Step 10.2.1) -- a small, fixed, disclosed limit (matching
@@ -250,9 +298,10 @@ mod gpu_style_tests {
             corner_smoothing: 0.5,
             fill_kind: 1,
             gradient_word_index: 128,
+            texture_index: 7,
         };
         let bytes = bytemuck::bytes_of(&style);
-        assert_eq!(bytes.len(), 36);
+        assert_eq!(bytes.len(), 40);
         let words: Vec<u32> = bytes
             .chunks_exact(4)
             .map(|c| u32::from_ne_bytes(c.try_into().expect("4-byte chunk")))
@@ -266,6 +315,7 @@ mod gpu_style_tests {
         assert_eq!(f32::from_bits(words[6]), 0.5);
         assert_eq!(words[7], 1);
         assert_eq!(words[8], 128);
+        assert_eq!(words[9], 7);
     }
 
     #[test]
@@ -282,9 +332,10 @@ mod gpu_style_tests {
             arc_sweep_angle: std::f32::consts::TAU,
             fill_kind: 1,
             gradient_word_index: 64,
+            texture_index: 3,
         };
         let bytes = bytemuck::bytes_of(&style);
-        assert_eq!(bytes.len(), 24);
+        assert_eq!(bytes.len(), 28);
         let words: Vec<u32> = bytes
             .chunks_exact(4)
             .map(|c| u32::from_ne_bytes(c.try_into().expect("4-byte chunk")))
@@ -295,6 +346,7 @@ mod gpu_style_tests {
         assert_eq!(f32::from_bits(words[3]), std::f32::consts::TAU);
         assert_eq!(words[4], 1);
         assert_eq!(words[5], 64);
+        assert_eq!(words[6], 3);
     }
 
     #[test]
@@ -356,5 +408,13 @@ mod gpu_style_tests {
     #[should_panic(expected = "not 4-byte aligned")]
     fn style_index_param_rejects_a_misaligned_offset_in_debug_builds() {
         let _ = style_index_param(3);
+    }
+
+    #[test]
+    fn style_fill_solid_is_all_zero_and_matches_default() {
+        assert_eq!(StyleFill::SOLID, StyleFill::default());
+        assert_eq!(StyleFill::SOLID.fill_kind, 0);
+        assert_eq!(StyleFill::SOLID.gradient_word_index, 0);
+        assert_eq!(StyleFill::SOLID.texture_index, 0);
     }
 }

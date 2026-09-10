@@ -9,8 +9,8 @@
 
 mod gpu_style;
 pub use gpu_style::{
-    style_index_param, GpuEllipseStyle, GpuGradientStyle, GpuRectStyle, ELLIPSE_STYLE_WORDS,
-    GRADIENT_MAX_STOPS, GRADIENT_STYLE_WORDS, RECT_STYLE_WORDS,
+    style_index_param, GpuEllipseStyle, GpuGradientStyle, GpuRectStyle, StyleFill,
+    ELLIPSE_STYLE_WORDS, GRADIENT_MAX_STOPS, GRADIENT_STYLE_WORDS, RECT_STYLE_WORDS,
 };
 
 mod shapes;
@@ -1318,18 +1318,21 @@ impl RenderingCanvas {
     /// irrelevant). `corner_smoothing` is clamped to `[0, 1]` --
     /// `sdf_rect_styled.frag`'s own doc comment on what `0`/`1` mean.
     ///
-    /// `fill_kind`/`gradient_word_index` (Phase 10 Step 10.2.1): `0`/`0`
-    /// for a plain solid fill (`fill_rgba` is what renders, the common
-    /// case); `1`/<a real `GpuGradientStyle` word index, from writing one
-    /// via this same `device`'s style buffer first> to fill with a
-    /// gradient instead -- `fill_rgba` is then ignored by the shader
-    /// entirely (still written into the vertex `color` field regardless,
-    /// since `UiVertex` always carries one, but never read for a gradient
-    /// fill). `ShapeRegistry::flatten_into`'s own `FillStyle::Gradient`
-    /// handling is the real, intended caller for the gradient case; a
-    /// direct caller passing `fill_kind: 1` is responsible for having
-    /// already written a real `GpuGradientStyle` record into THIS SAME
-    /// frame's style buffer itself.
+    /// `fill` (Phase 10 Step 10.2.1, extended Step 10.2.2 for texture
+    /// fill) bundles every GPU-side fill-selection field into one value
+    /// ([`StyleFill`]'s own doc comment has the full field-by-`fill_kind`
+    /// account): [`StyleFill::SOLID`] for a plain solid fill (`fill_rgba`
+    /// is what renders, the common case); `fill_kind: 1` with a real
+    /// `GpuGradientStyle` word index (from writing one via this same
+    /// `device`'s style buffer first) to fill with a gradient instead;
+    /// `fill_kind: 2` with a real bindless texture index to fill with a
+    /// texture. `fill_rgba` is ignored by the shader for either non-solid
+    /// case (still written into the vertex `color` field regardless,
+    /// since `UiVertex` always carries one). `ShapeRegistry::flatten_
+    /// into`'s own `FillStyle` handling is the real, intended caller for
+    /// the non-solid cases; a direct caller passing a non-zero
+    /// `fill_kind` is responsible for having already written the
+    /// referenced style-buffer record itself.
     ///
     /// # Panics
     /// Panics if the shape style buffer has no room left this frame
@@ -1343,7 +1346,7 @@ impl RenderingCanvas {
     )]
     #[allow(
         clippy::too_many_arguments,
-        reason = "mirrors Rectangle's own real field set 1:1, plus Step 10.2.1's fill-kind pair"
+        reason = "mirrors Rectangle's own real field set 1:1, plus one bundled StyleFill"
     )]
     pub fn draw_styled_rectangle(
         &mut self,
@@ -1357,8 +1360,7 @@ impl RenderingCanvas {
         border_rgba: u32,
         border_thickness: f32,
         corner_smoothing: f32,
-        fill_kind: u32,
-        gradient_word_index: u32,
+        fill: StyleFill,
     ) {
         let base_vertex = self.vertices.len() as u32;
         let base_index = self.indices.len() as u32;
@@ -1380,8 +1382,9 @@ impl RenderingCanvas {
             border_color,
             border_thickness: border_thickness.max(0.0),
             corner_smoothing: corner_smoothing.clamp(0.0, 1.0),
-            fill_kind,
-            gradient_word_index,
+            fill_kind: fill.fill_kind,
+            gradient_word_index: fill.gradient_word_index,
+            texture_index: fill.texture_index,
         };
         let byte_offset = device
             .shape_style_buffer()
@@ -1436,8 +1439,7 @@ impl RenderingCanvas {
     /// equal); `arc_sweep_angle >= TAU` (`std::f32::consts::TAU`) draws a
     /// complete, unswept ellipse. See `draw_styled_rectangle`'s own doc
     /// comment for why this needs a live `device` handle, and for
-    /// `fill_kind`/`gradient_word_index`'s own identical Step 10.2.1
-    /// contract.
+    /// `fill`'s own identical `StyleFill` contract.
     ///
     /// # Panics
     /// Panics if the shape style buffer has no room left this frame --
@@ -1448,7 +1450,7 @@ impl RenderingCanvas {
     )]
     #[allow(
         clippy::too_many_arguments,
-        reason = "mirrors Circle's own real field set 1:1, plus Step 10.2.1's fill-kind pair"
+        reason = "mirrors Circle's own real field set 1:1, plus one bundled StyleFill"
     )]
     pub fn draw_ellipse(
         &mut self,
@@ -1461,8 +1463,7 @@ impl RenderingCanvas {
         border_thickness: f32,
         arc_start_angle: f32,
         arc_sweep_angle: f32,
-        fill_kind: u32,
-        gradient_word_index: u32,
+        fill: StyleFill,
     ) {
         let base_vertex = self.vertices.len() as u32;
         let base_index = self.indices.len() as u32;
@@ -1479,8 +1480,9 @@ impl RenderingCanvas {
             border_thickness: border_thickness.max(0.0),
             arc_start_angle,
             arc_sweep_angle: arc_sweep_angle.max(0.0),
-            fill_kind,
-            gradient_word_index,
+            fill_kind: fill.fill_kind,
+            gradient_word_index: fill.gradient_word_index,
+            texture_index: fill.texture_index,
         };
         let byte_offset = device
             .shape_style_buffer()
@@ -1667,6 +1669,80 @@ impl RenderingCanvas {
             sort_key,
             pipeline_state_id: pipeline_id,
             texture_handle: gradient_word_index,
+            element_count: (triangles.len() * 3) as u32,
+            vertex_offset: base_index,
+            clip_bounds,
+        });
+    }
+
+    /// `Polygon`/`Path` texture fill (Phase 10 Step 10.2.2) --
+    /// `ShapeRegistry::flatten_into`'s real caller for a `Polygon`/`Path`
+    /// whose `fill` is `FillStyle::Texture`. `uvs` are real,
+    /// already-computed bounding-box-normalized `[0, 1]` texture
+    /// coordinates, one per `positions` entry (`draw_polygon_fill`'s own
+    /// bounding-box helper computes them) -- unlike [`draw_gradient_
+    /// polygon`]'s own `uv` (repurposed to carry local position), this is
+    /// a REAL texture coordinate, so this reuses the EXISTING
+    /// `PipelineKind::TexturedQuad`/`bindless_textured.frag` pipeline
+    /// directly: no new shader, no new pipeline -- sampling a texture is
+    /// not new math the way gradient evaluation was, `bindless_textured.
+    /// frag` already does exactly this for its own existing callers
+    /// (`PopLayer`'s own compositing quad).
+    ///
+    /// # Panics
+    /// Panics if `positions.len() != uvs.len()` (a real caller
+    /// programming error, not a normal runtime condition), or if
+    /// `state_stack` is empty (see [`draw_flat_polygon`]'s own `#
+    /// Panics` section for why that never happens in practice).
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "mirrors draw_flat_polygon's own identical reasoning"
+    )]
+    pub fn draw_textured_polygon(
+        &mut self,
+        positions: &[[f32; 2]],
+        uvs: &[[f32; 2]],
+        triangles: &[[u32; 3]],
+        texture_index: u32,
+    ) {
+        assert_eq!(
+            positions.len(),
+            uvs.len(),
+            "draw_textured_polygon: positions and uvs must be the same length"
+        );
+        if triangles.is_empty() {
+            return;
+        }
+
+        let base_vertex = self.vertices.len() as u32;
+        let base_index = self.indices.len() as u32;
+
+        let state = *self
+            .state_stack
+            .last()
+            .expect("state_stack must always have at least one entry");
+
+        self.vertices
+            .extend(positions.iter().zip(uvs).map(|(&position, &uv)| UiVertex {
+                position: state.transform.transform_point(position),
+                uv,
+                color: 0xFFFF_FFFF,
+                params: [0.0; 3],
+            }));
+        self.indices.extend(
+            triangles
+                .iter()
+                .flat_map(|&[a, b, c]| [base_vertex + a, base_vertex + b, base_vertex + c]),
+        );
+
+        let clip_bounds = self.clip_stack.last().copied().unwrap_or(FULL_WINDOW_CLIP);
+        let pipeline_id = PipelineKind::TexturedQuad as u16;
+        let sort_key = self.next_sort_key(pipeline_id, texture_index);
+        self.commands.push(UiDrawCommand {
+            kind: CommandType::DrawGeometry,
+            sort_key,
+            pipeline_state_id: pipeline_id,
+            texture_handle: texture_index,
             element_count: (triangles.len() * 3) as u32,
             vertex_offset: base_index,
             clip_bounds,
@@ -3718,8 +3794,7 @@ mod tests {
             0xFF00_00FF,
             2.0,
             0.5,
-            0,
-            0,
+            StyleFill::SOLID,
         );
         let frame = canvas.flatten();
 
@@ -3753,8 +3828,7 @@ mod tests {
             0xAABB_CCDD,
             3.0,
             0.25,
-            0,
-            0,
+            StyleFill::SOLID,
         );
         let frame = canvas.flatten();
 
@@ -3769,7 +3843,7 @@ mod tests {
         }
 
         let bytes = device.style_buffer.bytes.borrow();
-        assert_eq!(bytes.len(), 36, "one GpuRectStyle record (9 words)");
+        assert_eq!(bytes.len(), 40, "one GpuRectStyle record (10 words)");
         let style: &GpuRectStyle = bytemuck::from_bytes(&bytes);
         assert_eq!(style.corner_radii, [4.0, 8.0, 12.0, 16.0]);
         assert_eq!(style.border_color, 0xAABB_CCDD);
@@ -3799,8 +3873,7 @@ mod tests {
             0,
             0.0,
             0.0,
-            0,
-            0,
+            StyleFill::SOLID,
         );
         let bytes = device.style_buffer.bytes.borrow();
         let style: &GpuRectStyle = bytemuck::from_bytes(&bytes);
@@ -3821,8 +3894,7 @@ mod tests {
             0.0,
             0.0,
             std::f32::consts::TAU,
-            0,
-            0,
+            StyleFill::SOLID,
         );
         let frame = canvas.flatten();
 
@@ -3853,8 +3925,7 @@ mod tests {
             2.5,
             0.1,
             1.5,
-            0,
-            0,
+            StyleFill::SOLID,
         );
         let frame = canvas.flatten();
 
@@ -3864,7 +3935,7 @@ mod tests {
         }
 
         let bytes = device.style_buffer.bytes.borrow();
-        assert_eq!(bytes.len(), 24, "one GpuEllipseStyle record (6 words)");
+        assert_eq!(bytes.len(), 28, "one GpuEllipseStyle record (7 words)");
         let style: &GpuEllipseStyle = bytemuck::from_bytes(&bytes);
         assert_eq!(style.border_color, 0x1122_3344);
         assert_eq!(style.border_thickness, 2.5);

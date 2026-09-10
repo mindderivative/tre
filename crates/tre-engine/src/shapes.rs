@@ -1018,28 +1018,26 @@ fn hit_test_path(local: Vec2, path: &Path) -> bool {
         .fold(false, |hit, subpath| hit ^ point_in_polygon(local, subpath))
 }
 
-/// A `FillStyle::Solid`/`Gradient` fill resolved to what `draw_styled_
-/// rectangle`/`draw_ellipse` actually need: a solid `Color` (meaningful
-/// only when `fill_kind == 0`; a harmless opaque-white placeholder
-/// otherwise, since the shader ignores it), `fill_kind` (`0`/`1`), and a
-/// `gradient_word_index` (real only when `fill_kind == 1`, from writing
-/// the gradient's own `GpuGradientStyle` record into THIS frame's style
-/// buffer). Shared by `flatten_rectangle`/`flatten_circle` -- `Polygon`/
-/// `Path` resolve their own fill differently (a completely different
-/// `Canvas` method, not a style-buffer field), so they don't use this.
+/// A `FillStyle` resolved to what `draw_styled_rectangle`/`draw_ellipse`
+/// actually need: a solid `Color` (meaningful only for
+/// `FillStyle::Solid`; a harmless opaque-white placeholder otherwise,
+/// since the shader ignores it for a non-solid fill) and a
+/// [`crate::StyleFill`] bundling `fill_kind`/`gradient_word_index`/
+/// `texture_index`. Shared by `flatten_rectangle`/`flatten_circle` --
+/// `Polygon`/`Path` resolve their own fill differently (a completely
+/// different `Canvas` method per fill kind, not a style-buffer field),
+/// so they don't use this.
 ///
 /// # Panics
-/// Panics (`unimplemented!`) for `FillStyle::Texture` (Step 10.2.2's own
-/// job, not yet built) or if `fill` names a `GradientId` this registry
-/// never issued.
+/// Panics if `fill` names a `GradientId` this registry never issued.
 fn resolve_style_fill(
     device: &dyn crate::RhiDevice,
     fill: FillStyle,
     gradients: &[GradientDef],
     local_origin_offset: Vec2,
-) -> (Color, u32, u32) {
+) -> (Color, crate::StyleFill) {
     match fill {
-        FillStyle::Solid(color) => (color, 0, 0),
+        FillStyle::Solid(color) => (color, crate::StyleFill::SOLID),
         FillStyle::Gradient(id) => {
             let def = gradients.get(id.0 as usize).unwrap_or_else(|| {
                 panic!(
@@ -1049,12 +1047,22 @@ fn resolve_style_fill(
                 )
             });
             let word_index = write_gradient_style(device, def, local_origin_offset);
-            (0xFFFF_FFFF, 1, word_index)
+            (
+                0xFFFF_FFFF,
+                crate::StyleFill {
+                    fill_kind: 1,
+                    gradient_word_index: word_index,
+                    texture_index: 0,
+                },
+            )
         }
-        FillStyle::Texture(_) => unimplemented!(
-            "FillStyle::Texture has no rendering support wired into this registry's own \
-             flattening pass yet -- see ARCHITECTURE.md Section 7.5's own Implementation \
-             status note"
+        FillStyle::Texture(texture_index) => (
+            0xFFFF_FFFF,
+            crate::StyleFill {
+                fill_kind: 2,
+                gradient_word_index: 0,
+                texture_index,
+            },
         ),
     }
 }
@@ -1077,13 +1085,12 @@ fn flatten_rectangle(
     // space (top-left at the origin); frag_uv is center-relative -- see
     // build_gpu_gradient_style's own doc comment for the full account.
     let local_origin_offset = [rect.size[0] / 2.0, rect.size[1] / 2.0];
-    let (color, fill_kind, gradient_word_index) =
-        resolve_style_fill(device, rect.fill, gradients, local_origin_offset);
+    let (color, fill) = resolve_style_fill(device, rect.fill, gradients, local_origin_offset);
 
     let needs_styled_path = !rect.corner_radius.is_uniform()
         || rect.corner_smoothing != 0.0
         || rect.border_thickness > 0.0
-        || fill_kind == 1;
+        || fill.fill_kind != 0;
 
     if needs_styled_path {
         canvas.draw_styled_rectangle(
@@ -1102,8 +1109,7 @@ fn flatten_rectangle(
             rect.border_color,
             rect.border_thickness,
             rect.corner_smoothing,
-            fill_kind,
-            gradient_word_index,
+            fill,
         );
     } else {
         canvas.draw_rounded_rect(
@@ -1143,8 +1149,7 @@ fn flatten_circle(
     // function's own doc comment); frag_uv is relative to that same
     // center already, so `radius` is exactly the correction
     // build_gpu_gradient_style's own doc comment describes.
-    let (color, fill_kind, gradient_word_index) =
-        resolve_style_fill(device, circle.fill, gradients, circle.radius);
+    let (color, fill) = resolve_style_fill(device, circle.fill, gradients, circle.radius);
 
     canvas.draw_ellipse(
         device,
@@ -1156,8 +1161,7 @@ fn flatten_circle(
         circle.border_thickness,
         TWELVE_OCLOCK,
         circle.arc_length.to_radians(),
-        fill_kind,
-        gradient_word_index,
+        fill,
     );
 }
 
@@ -1239,6 +1243,42 @@ fn fan_from_center(vertex_count: u32) -> Vec<[u32; 3]> {
 /// # Panics
 /// Panics (`unimplemented!`) for `FillStyle::Texture`, or if `fill` names
 /// a `GradientId` this registry never issued.
+/// Maps `positions` into real, bounding-box-normalized `[0, 1]` texture
+/// coordinates (Phase 10 Step 10.2.2) -- `Rectangle`/`Circle` derive
+/// theirs directly from their own known half-extent/radius, in-shader
+/// (`sdf_rect_styled.frag`/`sdf_ellipse.frag`'s own texture branch);
+/// `Polygon`/`Path` have no such fixed extent, so this computes their
+/// own real bounding box once, here, at flatten time. A degenerate
+/// (zero-width or zero-height) bounding box maps every point on that
+/// axis to `0.5` rather than dividing by zero.
+fn bounding_box_uvs(positions: &[Vec2]) -> Vec<Vec2> {
+    let mut min = [f32::INFINITY, f32::INFINITY];
+    let mut max = [f32::NEG_INFINITY, f32::NEG_INFINITY];
+    for &[x, y] in positions {
+        min[0] = min[0].min(x);
+        min[1] = min[1].min(y);
+        max[0] = max[0].max(x);
+        max[1] = max[1].max(y);
+    }
+    let extent = [max[0] - min[0], max[1] - min[1]];
+    positions
+        .iter()
+        .map(|&[x, y]| {
+            let u = if extent[0] > 0.0 {
+                (x - min[0]) / extent[0]
+            } else {
+                0.5
+            };
+            let v = if extent[1] > 0.0 {
+                (y - min[1]) / extent[1]
+            } else {
+                0.5
+            };
+            [u, v]
+        })
+        .collect()
+}
+
 fn draw_polygon_fill(
     canvas: &mut RenderingCanvas,
     device: &dyn crate::RhiDevice,
@@ -1264,11 +1304,10 @@ fn draw_polygon_fill(
             let word_index = write_gradient_style(device, def, [0.0, 0.0]);
             canvas.draw_gradient_polygon(positions, triangles, word_index);
         }
-        FillStyle::Texture(_) => unimplemented!(
-            "FillStyle::Texture has no rendering support wired into this registry's own \
-             flattening pass yet -- see ARCHITECTURE.md Section 7.5's own Implementation \
-             status note"
-        ),
+        FillStyle::Texture(texture_index) => {
+            let uvs = bounding_box_uvs(positions);
+            canvas.draw_textured_polygon(positions, &uvs, triangles, texture_index);
+        }
     }
 }
 
@@ -1858,7 +1897,7 @@ mod tests {
         );
         assert_eq!(
             device.style_buffer.bytes.borrow().len(),
-            36,
+            40,
             "exactly one GpuRectStyle record must have been written"
         );
     }
@@ -1886,7 +1925,7 @@ mod tests {
         );
         assert_eq!(
             device.style_buffer.bytes.borrow().len(),
-            24,
+            28,
             "exactly one GpuEllipseStyle record must have been written"
         );
     }
@@ -2851,5 +2890,145 @@ mod tests {
         }));
         let mut canvas = RenderingCanvas::new();
         registry.flatten_into(&mut canvas, &device);
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact arithmetic on literal f32s, same reasoning as this crate's other \
+                   exact-arithmetic tests"
+    )]
+    fn bounding_box_uvs_normalizes_a_real_non_degenerate_box() {
+        let uvs = bounding_box_uvs(&[[0.0, 0.0], [10.0, 0.0], [10.0, 4.0], [0.0, 4.0]]);
+        assert_eq!(uvs, vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact arithmetic on literal f32s, same reasoning as this crate's other \
+                   exact-arithmetic tests"
+    )]
+    fn bounding_box_uvs_maps_a_degenerate_zero_extent_axis_to_one_half() {
+        // Every point shares the same x -- a zero-width bounding box.
+        let uvs = bounding_box_uvs(&[[5.0, 0.0], [5.0, 10.0]]);
+        assert_eq!(uvs, vec![[0.5, 0.0], [0.5, 1.0]]);
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact arithmetic on literal f32s, same reasoning as this crate's other \
+                   exact-arithmetic tests"
+    )]
+    fn flatten_into_renders_a_rectangles_texture_fill_via_the_styled_path() {
+        let device = FakeDevice::default();
+        let mut registry = ShapeRegistry::new();
+        // No corner radius, smoothing, or border -- proving the texture
+        // fill alone is enough to force the styled path, since
+        // draw_rounded_rect has no fill-kind branch at all.
+        registry.insert(ShapePrimitive::Rectangle(Rectangle {
+            common: PrimitiveCommon::new(),
+            size: [10.0, 10.0],
+            fill: FillStyle::Texture(42),
+            border_color: 0,
+            border_thickness: 0.0,
+            corner_radius: CornerRadii::uniform(0.0),
+            corner_smoothing: 0.0,
+        }));
+        let mut canvas = RenderingCanvas::new();
+        registry.flatten_into(&mut canvas, &device);
+        let frame = canvas.flatten();
+
+        assert_eq!(
+            frame.commands[0].pipeline_state_id,
+            crate::PipelineKind::SdfRectStyled as u16,
+            "a texture fill must route through the styled pipeline even with no border/radii/\
+             smoothing, since draw_rounded_rect has no fill-kind branch at all"
+        );
+        let bytes = device.style_buffer.bytes.borrow();
+        let style: &crate::GpuRectStyle = bytemuck::from_bytes(&bytes);
+        assert_eq!(style.fill_kind, 2);
+        assert_eq!(style.texture_index, 42);
+    }
+
+    #[test]
+    fn flatten_into_renders_a_circles_texture_fill() {
+        let device = FakeDevice::default();
+        let mut registry = ShapeRegistry::new();
+        registry.insert(ShapePrimitive::Circle(Circle {
+            common: PrimitiveCommon::new(),
+            radius: [5.0, 5.0],
+            fill: FillStyle::Texture(7),
+            border_color: 0,
+            border_thickness: 0.0,
+            arc_length: 360.0,
+        }));
+        let mut canvas = RenderingCanvas::new();
+        registry.flatten_into(&mut canvas, &device);
+        let frame = canvas.flatten();
+
+        assert_eq!(
+            frame.commands[0].pipeline_state_id,
+            crate::PipelineKind::SdfEllipse as u16
+        );
+        let bytes = device.style_buffer.bytes.borrow();
+        let style: &crate::GpuEllipseStyle = bytemuck::from_bytes(&bytes);
+        assert_eq!(style.fill_kind, 2);
+        assert_eq!(style.texture_index, 7);
+    }
+
+    #[test]
+    fn flatten_into_renders_a_polygons_texture_fill_via_the_textured_quad_pipeline() {
+        let device = FakeDevice::default();
+        let mut registry = ShapeRegistry::new();
+        registry.insert(ShapePrimitive::Polygon(Polygon {
+            common: PrimitiveCommon::new(),
+            sides: 6,
+            radius: 20.0,
+            vertex_radius: 0.0,
+            star_points: None,
+            fill: FillStyle::Texture(3),
+            border_color: 0,
+            border_thickness: 0.0,
+        }));
+        let mut canvas = RenderingCanvas::new();
+        registry.flatten_into(&mut canvas, &device);
+        let frame = canvas.flatten();
+
+        assert_eq!(
+            frame.commands[0].pipeline_state_id,
+            crate::PipelineKind::TexturedQuad as u16,
+            "Polygon/Path texture fill has no per-vertex style record, so it reuses the \
+             existing TexturedQuad pipeline directly -- no new pipeline, no new shader"
+        );
+        assert_eq!(
+            frame.commands[0].texture_handle, 3,
+            "the real bindless texture index must ride in texture_handle, exactly like any \
+             other TexturedQuad draw"
+        );
+        assert!(
+            device.style_buffer.bytes.borrow().is_empty(),
+            "Polygon texture fill needs no style-buffer write at all -- no GpuRectStyle/\
+             GpuEllipseStyle, no GpuGradientStyle"
+        );
+        // Every vertex's own uv is a real, bounding-box-normalized [0, 1]
+        // texture coordinate, not the zeroed uv draw_flat_polygon uses.
+        assert!(
+            frame
+                .vertices
+                .iter()
+                .all(|v| (0.0..=1.0).contains(&v.uv[0]) && (0.0..=1.0).contains(&v.uv[1])),
+            "every vertex's uv must be a real, bounding-box-normalized [0, 1] coordinate"
+        );
+        assert!(
+            frame
+                .vertices
+                .iter()
+                .any(|v| (v.uv[0] - 0.5).abs() > f32::EPSILON
+                    || (v.uv[1] - 0.5).abs() > f32::EPSILON),
+            "a real hexagon's own bounding box is non-degenerate, so uvs must vary, not all \
+             collapse to the degenerate-box fallback"
+        );
     }
 }

@@ -884,13 +884,20 @@ pub struct ShapeRegistry {
     per-vertex style-buffer record (`GpuRectStyle`/`GpuEllipseStyle`,
     extended with `fill_kind`/`gradient_word_index`); `Polygon`/`Path`
     (no per-vertex style record) route through a new, entirely separate
-    `PipelineKind::GradientFill` pipeline instead. **`FillStyle::
-    Texture`: still not built, for any shape kind.** **Non-`Normal`
-    `BlendMode`: still not built.** **The ellipse SDF's disclosed
-    scaled-circle approximation, `corner_smoothing`'s unverified squircle
-    match, and rounded stroke caps on a partial-arc `Circle`: all still
-    real, disclosed gaps.** The remaining five are planned, in dependency
-    order, as Steps 10.2.2-10.2.6 (`PLAN.md`, 2026-09-09) --
+    `PipelineKind::GradientFill` pipeline instead. **`FillStyle::Texture`:
+    fully real too (Step 10.2.2, 2026-09-09), for all four shape kinds.**
+    `Rectangle`/`Circle` extend the SAME style-buffer record with one more
+    field (`texture_index`) and sample the existing bindless texture array
+    directly in-shader (`frag_uv` mapped onto the shape's own bounding
+    box); `Polygon`/`Path` reuse the EXISTING `PipelineKind::TexturedQuad`
+    pipeline directly -- no new shader, since sampling a texture is not
+    new math the way gradient evaluation was -- with real per-vertex UVs
+    from a new `bounding_box_uvs` helper. **Non-`Normal` `BlendMode`:
+    still not built.** **The ellipse SDF's disclosed scaled-circle
+    approximation, `corner_smoothing`'s unverified squircle match, and
+    rounded stroke caps on a partial-arc `Circle`: all still real,
+    disclosed gaps.** The remaining four are planned, in dependency
+    order, as Steps 10.2.3-10.2.6 (`PLAN.md`, 2026-09-09) --
     including a real, researched correction to the original "non-`Normal`
     blend needs framebuffer-read" assumption above: `VK_EXT_blend_
     operation_advanced` maps these blend modes directly onto hardware

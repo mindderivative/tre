@@ -228,6 +228,12 @@ jobs:
       # pixel checked against an independent Rust reference of the exact
       # gradient math.
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example gradient_fill_demo
+      # Phase 10 Step 10.2.2: real GPU proof of texture fill for all four
+      # shape kinds -- Rectangle/Circle sampling a bindless texture
+      # directly inside their own SDF shaders, Polygon/Path reusing the
+      # existing TexturedQuad pipeline with real bounding-box-normalized
+      # UVs, each probed against a known four-quadrant flag texture.
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example texture_fill_demo
 
   accessibility-validation:
     name: accessibility-validation

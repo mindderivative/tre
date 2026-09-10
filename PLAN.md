@@ -144,6 +144,13 @@ reference context for Steps 10.2.2 onward.
 
 ## Step 10.2.2 — Texture Fill
 
+**Status: Complete (2026-09-09) -- archived to
+`planning/archive/PLAN_PHASE10_STEP10_2_2.md`** (with real
+implementation notes on top of this original plan). See
+`documentation/IMPLEMENTATION.md`'s own write-up, REVIEW.md findings
+#168/#169, and `demo/phase10_step10_2_2/`. Kept below unchanged as
+reference context for Steps 10.2.3 onward.
+
 ### Investigation
 
 - `FillStyle::Texture(u32)` already exists; the `u32` is the same bindless
