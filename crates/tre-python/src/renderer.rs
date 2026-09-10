@@ -20,14 +20,13 @@
 //! environment (a bare CI container with no compositor at all, for
 //! example).
 
-use ash::vk;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use raw_window_handle::HasDisplayHandle;
 use tre_engine::{
     execute_frame, submit_frame, BufferBinding, EngineError, PipelineRegistry, RenderingCanvas,
-    ScissorRect,
+    RhiDevice, RhiDynamicRingBuffer, ScissorRect,
 };
 use tre_rhi_vulkan::{register_shape_pipelines, HeadlessSwapchain, VulkanDevice, HEADLESS_FORMAT};
 
@@ -36,6 +35,45 @@ use crate::shapes::PyShapeRegistry;
 
 fn setup_err<E: std::fmt::Display>(e: E) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
+}
+
+/// Shared by vertex and index writes every `render()` call (REVIEW.md
+/// #203/#204's own fix): comfortably above what `shape_registry_zero_
+/// alloc_demo.rs`/`main_loop_demo.rs` already prove sufficient for a
+/// real, mixed multi-shape scene (`64 * 1024`) -- widened here since a
+/// real Python UI framework's scene is not bounded the way a fixed demo
+/// scene is. Not tunable yet (a real, disclosed scope boundary): ring-
+/// buffer starvation raises a clean `TreError` rather than growing
+/// dynamically mid-frame (`RhiDynamicRingBuffer::write`'s own contract),
+/// so a caller with a genuinely larger scene has no way to raise this
+/// short of a future constructor parameter.
+const RING_BUFFER_CAPACITY: usize = 512 * 1024;
+
+/// The `py.detach`'d render closure's own error type -- kept local to
+/// this module rather than widening `tre_engine::EngineError` itself,
+/// since `RhiDynamicRingBuffer::write`'s `Option<u32>` starvation signal
+/// is deliberately not yet part of that enum (its own doc comment:
+/// real graceful-degradation policy is future work, REVIEW.md #142).
+enum RenderError {
+    Engine(EngineError),
+    RingBufferStarved,
+}
+
+impl From<EngineError> for RenderError {
+    fn from(e: EngineError) -> Self {
+        Self::Engine(e)
+    }
+}
+
+fn render_err(e: RenderError) -> PyErr {
+    match e {
+        RenderError::Engine(e) => engine_err(e),
+        RenderError::RingBufferStarved => crate::error::TreError::new_err(format!(
+            "scene too large for this frame's ring-buffer capacity ({RING_BUFFER_CAPACITY} \
+             bytes, shared between vertex and index data) -- reduce the scene's shape count, \
+             or split it across multiple render() calls"
+        )),
+    }
 }
 
 /// Real Vulkan hardware limits on the smallest reachable machine still
@@ -79,7 +117,10 @@ pub struct PyHeadlessRenderer {
     // dropped, LAST -- declaring it first (as this struct originally
     // did) destroyed the logical device while `swapchain`/`pipelines`
     // still held handles against it, a real use-after-free that
-    // segfaulted at Python interpreter shutdown.
+    // segfaulted at Python interpreter shutdown. `ring_buffer` joins
+    // `pipelines`/`swapchain` here for the identical reason (REVIEW.md
+    // #203/#204): it too holds a live buffer built from `device`.
+    ring_buffer: Box<dyn RhiDynamicRingBuffer>,
     pipelines: PipelineRegistry,
     swapchain: HeadlessSwapchain,
     device: VulkanDevice,
@@ -122,11 +163,13 @@ impl PyHeadlessRenderer {
         let swapchain = HeadlessSwapchain::new(&device, width, height).map_err(engine_err)?;
         let mut pipelines = PipelineRegistry::new();
         register_shape_pipelines(&device, &mut pipelines, HEADLESS_FORMAT).map_err(engine_err)?;
+        let ring_buffer = device.create_dynamic_ring_buffer(RING_BUFFER_CAPACITY);
 
         Ok(Self {
             device,
             swapchain,
             pipelines,
+            ring_buffer,
             width,
             height,
         })
@@ -184,15 +227,21 @@ impl PyHeadlessRenderer {
             canvas.flatten()
         };
 
-        let bgra: Result<Vec<u8>, EngineError> = py.detach(|| {
-            let vertex_buffer = self.device.upload_buffer(
-                bytemuck::cast_slice(&frame.vertices),
-                vk::BufferUsageFlags::VERTEX_BUFFER,
-            )?;
-            let index_buffer = self.device.upload_buffer(
-                bytemuck::cast_slice(&frame.indices),
-                vk::BufferUsageFlags::INDEX_BUFFER,
-            )?;
+        let bgra: Result<Vec<u8>, RenderError> = py.detach(|| {
+            let vertex_bytes: &[u8] = bytemuck::cast_slice(&frame.vertices);
+            let index_bytes: &[u8] = bytemuck::cast_slice(&frame.indices);
+            // `&*self.ring_buffer` (not `&self.ring_buffer`) -- `write`
+            // is a `RhiDynamicRingBuffer` trait method, and `ring_buffer`
+            // is a `Box<dyn RhiDynamicRingBuffer>`; `BufferBinding.buffer`
+            // needs the same `&dyn RhiBuffer` either write returns from.
+            let vertex_offset = self
+                .ring_buffer
+                .write(vertex_bytes)
+                .ok_or(RenderError::RingBufferStarved)?;
+            let index_offset = self
+                .ring_buffer
+                .write(index_bytes)
+                .ok_or(RenderError::RingBufferStarved)?;
             let full_window = ScissorRect {
                 x: 0,
                 y: 0,
@@ -204,22 +253,22 @@ impl PyHeadlessRenderer {
                     &frame,
                     &self.pipelines,
                     BufferBinding {
-                        buffer: &vertex_buffer,
-                        offset: 0,
+                        buffer: &*self.ring_buffer,
+                        offset: vertex_offset,
                     },
                     BufferBinding {
-                        buffer: &index_buffer,
-                        offset: 0,
+                        buffer: &*self.ring_buffer,
+                        offset: index_offset,
                     },
                     &full_window,
                     &self.device,
                     cmd_buffer,
                 );
             })?;
-            self.swapchain.read_pixels_bgra8()
+            Ok(self.swapchain.read_pixels_bgra8()?)
         });
 
-        let bgra = bgra.map_err(engine_err)?;
+        let bgra = bgra.map_err(render_err)?;
         Ok(PyBytes::new(py, &bgra).unbind())
     }
 }

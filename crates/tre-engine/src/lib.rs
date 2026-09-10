@@ -2963,7 +2963,17 @@ pub struct AcquiredImage {
 /// references `&dyn RhiBuffer` in `RhiCommandBuffer` but never defines
 /// this trait's own methods -- defined here using the same opaque-handle
 /// pattern as `AcquiredImage`.
-pub trait RhiBuffer {
+///
+/// `Send + Sync` (REVIEW.md #203/#204's own fix, same real need as
+/// `RhiPipelineState`'s identical bound): `tre-python`'s renderer holds
+/// a `Box<dyn RhiDynamicRingBuffer>` (a `RhiBuffer` subtrait) across a
+/// `Python::detach` call, and `BufferBinding.buffer: &dyn RhiBuffer`
+/// needs this bound at the *base* trait -- adding it only to
+/// `RhiDynamicRingBuffer` would leave `&dyn RhiBuffer` itself still
+/// non-`Send` after the coercion `BufferBinding` performs, since
+/// auto-trait properties belong to the trait object's own static type,
+/// not to whatever concrete type was coerced from.
+pub trait RhiBuffer: Send + Sync {
     fn raw_handle(&self) -> u64;
 }
 
@@ -3779,6 +3789,7 @@ where
 mod tests {
     use super::*;
     use std::cell::{Cell, RefCell};
+    use std::sync::Mutex;
 
     #[test]
     fn rgba8_packs_bytes_in_memory_order_not_hex_literal_order() {
@@ -4055,7 +4066,11 @@ mod tests {
             assert_eq!(vertex.params[2], 20.0, "half_height");
         }
 
-        let bytes = device.style_buffer.bytes.borrow();
+        let bytes = device
+            .style_buffer
+            .bytes
+            .lock()
+            .expect("FakeStyleBuffer mutex poisoned");
         assert_eq!(bytes.len(), 40, "one GpuRectStyle record (10 words)");
         let style: &GpuRectStyle = bytemuck::from_bytes(&bytes);
         assert_eq!(style.corner_radii, [4.0, 8.0, 12.0, 16.0]);
@@ -4088,7 +4103,11 @@ mod tests {
             0.0,
             StyleFill::SOLID,
         );
-        let bytes = device.style_buffer.bytes.borrow();
+        let bytes = device
+            .style_buffer
+            .bytes
+            .lock()
+            .expect("FakeStyleBuffer mutex poisoned");
         let style: &GpuRectStyle = bytemuck::from_bytes(&bytes);
         assert_eq!(style.corner_radii, [20.0, 0.0, 10.0, 20.0]);
     }
@@ -4147,7 +4166,11 @@ mod tests {
             assert_eq!(vertex.params[2], 30.0);
         }
 
-        let bytes = device.style_buffer.bytes.borrow();
+        let bytes = device
+            .style_buffer
+            .bytes
+            .lock()
+            .expect("FakeStyleBuffer mutex poisoned");
         assert_eq!(bytes.len(), 28, "one GpuEllipseStyle record (7 words)");
         let style: &GpuEllipseStyle = bytemuck::from_bytes(&bytes);
         assert_eq!(style.border_color, 0x1122_3344);
@@ -5990,7 +6013,12 @@ mod tests {
     /// numeric encoding) can be asserted against.
     #[derive(Default)]
     struct FakeStyleBuffer {
-        bytes: RefCell<Vec<u8>>,
+        // `Mutex`, not `RefCell` (REVIEW.md #203/#204's own fallout):
+        // `RhiBuffer` gained a real `Send + Sync` bound this fix needed,
+        // so every fake implementing it must be `Sync` too -- a test
+        // double never actually touched from more than one thread, but
+        // still has to satisfy the same trait bound real implementors do.
+        bytes: Mutex<Vec<u8>>,
     }
 
     impl RhiBuffer for FakeStyleBuffer {
@@ -6001,7 +6029,7 @@ mod tests {
 
     impl RhiDynamicRingBuffer for FakeStyleBuffer {
         fn write(&self, bytes: &[u8]) -> Option<u32> {
-            let mut buf = self.bytes.borrow_mut();
+            let mut buf = self.bytes.lock().expect("FakeStyleBuffer mutex poisoned");
             let offset = u32::try_from(buf.len()).ok()?;
             buf.extend_from_slice(bytes);
             Some(offset)

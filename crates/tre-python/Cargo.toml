@@ -12,7 +12,6 @@ name = "tre_python"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-ash = "0.38.0"
 bytemuck = "1.25.2"
 pyo3 = { version = "0.27.2", features = ["extension-module"] }
 raw-window-handle = "0.6.2"

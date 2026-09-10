@@ -1916,7 +1916,8 @@ fn flatten_path_with_closed(commands: &[PathCommand]) -> Vec<(Vec<Vec2>, bool)> 
 mod tests {
     use super::*;
     use crate::{RhiBuffer, RhiDynamicRingBuffer};
-    use std::cell::{Cell, RefCell};
+    use std::cell::Cell;
+    use std::sync::Mutex;
 
     /// Phase 10 Step 10.2.4: independent Rust references for `sdf_
     /// ellipse.frag`'s real shader code -- sharing no math with the
@@ -2217,7 +2218,10 @@ mod tests {
 
     #[derive(Default)]
     struct FakeStyleBuffer {
-        bytes: RefCell<Vec<u8>>,
+        // `Mutex`, not `RefCell` (REVIEW.md #203/#204's own fallout):
+        // `RhiBuffer` gained a real `Send + Sync` bound this fix needed,
+        // so every fake implementing it must be `Sync` too.
+        bytes: Mutex<Vec<u8>>,
     }
 
     impl RhiBuffer for FakeStyleBuffer {
@@ -2228,7 +2232,7 @@ mod tests {
 
     impl RhiDynamicRingBuffer for FakeStyleBuffer {
         fn write(&self, bytes: &[u8]) -> Option<u32> {
-            let mut buf = self.bytes.borrow_mut();
+            let mut buf = self.bytes.lock().expect("FakeStyleBuffer mutex poisoned");
             let offset = u32::try_from(buf.len()).ok()?;
             buf.extend_from_slice(bytes);
             Some(offset)
@@ -2472,7 +2476,12 @@ mod tests {
              draw_rounded_rect's uniform-only one"
         );
         assert_eq!(
-            device.style_buffer.bytes.borrow().len(),
+            device
+                .style_buffer
+                .bytes
+                .lock()
+                .expect("FakeStyleBuffer mutex poisoned")
+                .len(),
             40,
             "exactly one GpuRectStyle record must have been written"
         );
@@ -2500,7 +2509,12 @@ mod tests {
             crate::PipelineKind::SdfEllipse as u16
         );
         assert_eq!(
-            device.style_buffer.bytes.borrow().len(),
+            device
+                .style_buffer
+                .bytes
+                .lock()
+                .expect("FakeStyleBuffer mutex poisoned")
+                .len(),
             28,
             "exactly one GpuEllipseStyle record must have been written"
         );
@@ -3358,7 +3372,11 @@ mod tests {
              smoothing, since draw_rounded_rect has no fill-kind branch at all"
         );
 
-        let bytes = device.style_buffer.bytes.borrow();
+        let bytes = device
+            .style_buffer
+            .bytes
+            .lock()
+            .expect("FakeStyleBuffer mutex poisoned");
         let gradient_bytes = (crate::gpu_style::GRADIENT_STYLE_WORDS as usize) * 4;
         assert_eq!(
             bytes.len(),
@@ -3426,7 +3444,11 @@ mod tests {
             frame.commands[0].pipeline_state_id,
             crate::PipelineKind::SdfEllipse as u16
         );
-        let bytes = device.style_buffer.bytes.borrow();
+        let bytes = device
+            .style_buffer
+            .bytes
+            .lock()
+            .expect("FakeStyleBuffer mutex poisoned");
         // The gradient record is written FIRST (see the matching
         // rectangle test's own comment for why); the ellipse style
         // record follows it.
@@ -3482,7 +3504,11 @@ mod tests {
             "the gradient word index rides in texture_handle, the same push-constant channel \
              TexturedQuad's own texture_index already uses"
         );
-        let bytes = device.style_buffer.bytes.borrow();
+        let bytes = device
+            .style_buffer
+            .bytes
+            .lock()
+            .expect("FakeStyleBuffer mutex poisoned");
         assert_eq!(
             bytes.len(),
             (crate::gpu_style::GRADIENT_STYLE_WORDS as usize) * 4,
@@ -3588,7 +3614,11 @@ mod tests {
             "a texture fill must route through the styled pipeline even with no border/radii/\
              smoothing, since draw_rounded_rect has no fill-kind branch at all"
         );
-        let bytes = device.style_buffer.bytes.borrow();
+        let bytes = device
+            .style_buffer
+            .bytes
+            .lock()
+            .expect("FakeStyleBuffer mutex poisoned");
         let style: &crate::GpuRectStyle = bytemuck::from_bytes(&bytes);
         assert_eq!(style.fill_kind, 2);
         assert_eq!(style.texture_index, 42);
@@ -3614,7 +3644,11 @@ mod tests {
             frame.commands[0].pipeline_state_id,
             crate::PipelineKind::SdfEllipse as u16
         );
-        let bytes = device.style_buffer.bytes.borrow();
+        let bytes = device
+            .style_buffer
+            .bytes
+            .lock()
+            .expect("FakeStyleBuffer mutex poisoned");
         let style: &crate::GpuEllipseStyle = bytemuck::from_bytes(&bytes);
         assert_eq!(style.fill_kind, 2);
         assert_eq!(style.texture_index, 7);
@@ -3650,7 +3684,12 @@ mod tests {
              other TexturedQuad draw"
         );
         assert!(
-            device.style_buffer.bytes.borrow().is_empty(),
+            device
+                .style_buffer
+                .bytes
+                .lock()
+                .expect("FakeStyleBuffer mutex poisoned")
+                .is_empty(),
             "Polygon texture fill needs no style-buffer write at all -- no GpuRectStyle/\
              GpuEllipseStyle, no GpuGradientStyle"
         );

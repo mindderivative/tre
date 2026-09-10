@@ -3045,7 +3045,6 @@ dependencies = [
 name = "tre-python"
 version = "0.1.0"
 dependencies = [
- "ash",
  "bytemuck",
  "pyo3",
  "raw-window-handle",
