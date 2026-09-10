@@ -11,11 +11,22 @@
 //! `PrimitiveCommon` field exposed here, since it's the one a real caller
 //! reaches for immediately (fades) and costs nothing extra to wire.
 
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use tre_engine::{
     CornerRadii, LineCap, LineJoin, Path, PathCommand, Polygon, PrimitiveCommon, Rectangle,
     ShapeColor as Color, ShapeId, ShapePrimitive, ShapeRegistry, Transform2D,
 };
+
+/// A real cap on `Polygon::sides`/`star_points`, found necessary by this
+/// project's own review process (REVIEW.md #196-198): `tre_engine`'s own
+/// `generate_polygon_points` computes `star_points * 2` with no overflow
+/// guard and allocates one `Vec2` per resulting vertex with no upper
+/// bound -- both real, reachable DoS/panic surfaces for a value that
+/// crosses straight from untrusted Python input into that code with no
+/// validation anywhere in between. Comfortably above any real polygon a
+/// UI would ever draw.
+const MAX_POLYGON_SIDES: u32 = 4096;
 
 fn common(x: f32, y: f32, opacity: f32) -> PrimitiveCommon {
     PrimitiveCommon {
@@ -69,7 +80,6 @@ pub struct PyRectangle {
 #[pymethods]
 impl PyRectangle {
     #[new]
-    #[pyo3(signature = (x, y, width, height, fill_color))]
     fn new(x: f32, y: f32, width: f32, height: f32, fill_color: u32) -> Self {
         Self {
             x,
@@ -134,7 +144,6 @@ pub struct PyCircle {
 #[pymethods]
 impl PyCircle {
     #[new]
-    #[pyo3(signature = (x, y, radius, fill_color))]
     fn new(x: f32, y: f32, radius: f32, fill_color: u32) -> Self {
         Self {
             x,
@@ -194,7 +203,6 @@ pub struct PyPolygon {
 #[pymethods]
 impl PyPolygon {
     #[new]
-    #[pyo3(signature = (x, y, sides, radius, fill_color))]
     fn new(x: f32, y: f32, sides: u32, radius: f32, fill_color: u32) -> Self {
         Self {
             x,
@@ -245,7 +253,6 @@ pub struct PyPath {
 #[pymethods]
 impl PyPath {
     #[new]
-    #[pyo3(signature = (fill_color))]
     fn new(fill_color: u32) -> Self {
         Self {
             commands: Vec::new(),
@@ -329,11 +336,23 @@ impl PyShapeRegistry {
         )
     }
 
-    fn insert_polygon(&mut self, polygon: &PyPolygon) -> PyShapeId {
-        PyShapeId(
+    /// # Errors
+    /// Raises `ValueError` if `polygon.sides` or `polygon.star_points`
+    /// exceeds [`MAX_POLYGON_SIDES`].
+    fn insert_polygon(&mut self, polygon: &PyPolygon) -> PyResult<PyShapeId> {
+        if polygon.sides > MAX_POLYGON_SIDES
+            || polygon.star_points.is_some_and(|p| p > MAX_POLYGON_SIDES)
+        {
+            return Err(PyValueError::new_err(format!(
+                "Polygon sides/star_points must be <= {MAX_POLYGON_SIDES}, got sides={}, \
+                 star_points={:?}",
+                polygon.sides, polygon.star_points
+            )));
+        }
+        Ok(PyShapeId(
             self.inner
                 .insert(ShapePrimitive::Polygon(Polygon::from(polygon))),
-        )
+        ))
     }
 
     fn insert_path(&mut self, path: &PyPath) -> PyShapeId {

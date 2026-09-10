@@ -922,6 +922,29 @@ impl ShapeRegistry {
         self.gradients.get(id.0 as usize)
     }
 
+    /// Forces every live slot's [`ShapeSlot::layout_dirty`] to `true`,
+    /// so the next [`flatten_into`](Self::flatten_into) call re-records
+    /// the entire registry regardless of what was already flattened
+    /// before -- for a caller that wants "draw the full current state,"
+    /// not `flatten_into`'s own default incremental-only semantics.
+    ///
+    /// Added for `tre_python`'s `HeadlessRenderer::render`
+    /// (IMPLEMENTATION.md Phase 10 Step 10.4): a Python caller
+    /// re-rendering an unchanged registry has no way to know or care
+    /// which shapes are already-clean from a prior call (there is no
+    /// Python-visible dirty-flag protocol at all), so treating every
+    /// `render()` call as "flatten everything now" is the only sound
+    /// semantics without one. This closes a real bug found via this
+    /// project's own review process (REVIEW.md finding #196): a second
+    /// `render()` call on the same, unmutated registry produced an
+    /// empty frame (every shape already non-dirty from the first call),
+    /// which further crashed on the resulting zero-length vertex buffer.
+    pub fn mark_all_dirty(&mut self) {
+        for slot in self.slots.iter_mut().flatten() {
+            slot.layout_dirty = true;
+        }
+    }
+
     /// The per-frame flattening pass (ARCHITECTURE.md Section 7,
     /// IMPLEMENTATION.md Step 10.1 task 4): for every live slot that is
     /// `layout_dirty` or has a non-empty `active_animations`, resolves

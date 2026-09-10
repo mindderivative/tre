@@ -21,7 +21,7 @@
 //! example).
 
 use ash::vk;
-use pyo3::exceptions::PyRuntimeError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use raw_window_handle::HasDisplayHandle;
@@ -36,6 +36,33 @@ use crate::shapes::PyShapeRegistry;
 
 fn setup_err<E: std::fmt::Display>(e: E) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
+}
+
+/// Real Vulkan hardware limits on the smallest reachable machine still
+/// rejects `width`/`height == 0` (`VUID-VkImageCreateInfo-extent-00944`)
+/// -- undefined behavior on a release build with no validation layer,
+/// not a clean error -- and a caller-supplied dimension has no other
+/// bound before reaching a real GPU image allocation. `MAX_DIMENSION` is
+/// a conservative cap (found via this project's own review process,
+/// REVIEW.md #196-198): comfortably above any real UI use case, safely
+/// below the `maxImageDimension2D` every target GPU class supports, and
+/// small enough that a caller who mistypes zeros doesn't get to request
+/// a multi-gigabyte allocation before this constructor ever calls into
+/// Vulkan.
+const MAX_DIMENSION: u32 = 8192;
+
+fn validate_dimensions(width: u32, height: u32) -> PyResult<()> {
+    if width == 0 || height == 0 {
+        return Err(PyValueError::new_err(format!(
+            "HeadlessRenderer width/height must be non-zero, got {width}x{height}"
+        )));
+    }
+    if width > MAX_DIMENSION || height > MAX_DIMENSION {
+        return Err(PyValueError::new_err(format!(
+            "HeadlessRenderer width/height must be <= {MAX_DIMENSION}, got {width}x{height}"
+        )));
+    }
+    Ok(())
 }
 
 /// Renders a [`crate::shapes::PyShapeRegistry`] scene headlessly and
@@ -63,11 +90,14 @@ pub struct PyHeadlessRenderer {
 #[pymethods]
 impl PyHeadlessRenderer {
     /// # Errors
-    /// Raises `TreError` (a real `EngineError`) or `RuntimeError` (a
-    /// display-server/window-setup failure -- see this module's own doc
-    /// comment for why one is needed at all for a headless renderer).
+    /// Raises `ValueError` if `width`/`height` are zero or exceed
+    /// [`MAX_DIMENSION`], `TreError` (a real `EngineError`), or
+    /// `RuntimeError` (a display-server/window-setup failure -- see
+    /// this module's own doc comment for why one is needed at all for a
+    /// headless renderer).
     #[new]
     fn new(width: u32, height: u32) -> PyResult<Self> {
+        validate_dimensions(width, height)?;
         let mut probe = tre_platform::PlatformConnection::new().map_err(setup_err)?;
         let probe_window = probe
             .create_window("tre-python headless probe (never shown)", 1, 1)
@@ -122,16 +152,34 @@ impl PyHeadlessRenderer {
     /// other Python threads keep running while this one blocks on the
     /// GPU fence.
     ///
+    /// Takes `&mut self`, not `&self` (found via this project's own
+    /// review process, REVIEW.md #196-198): the device/swapchain/
+    /// pipelines this method drives are single-buffered, single-frame-
+    /// in-flight Vulkan state (one reused command buffer, one fence, one
+    /// swapchain image) -- calling `render()` on the same renderer from
+    /// two threads at once would race on that shared state. `&mut self`
+    /// makes PyO3's own runtime borrow check enforce exclusive access:
+    /// a second concurrent call raises a clean `PyBorrowMutError`
+    /// instead of corrupting GPU command state.
+    ///
     /// # Errors
     /// Raises `TreError` on any real, recoverable engine failure.
     fn render(
-        &self,
+        &mut self,
         py: Python<'_>,
         registry: &Bound<'_, PyShapeRegistry>,
     ) -> PyResult<Py<PyBytes>> {
         let frame = {
             let mut reg = registry.borrow_mut();
             let mut canvas = RenderingCanvas::new();
+            // Every call renders the registry's full current state, not
+            // an incremental delta -- a Python caller has no way to
+            // observe or manage `flatten_into`'s own per-shape dirty
+            // flag, so without this, any call after the first would
+            // skip every already-flattened (and thus already
+            // non-dirty) shape, producing an empty frame -- see
+            // `mark_all_dirty`'s own doc comment (REVIEW.md #196).
+            reg.inner.mark_all_dirty();
             reg.inner.flatten_into(&mut canvas, &self.device);
             canvas.flatten()
         };

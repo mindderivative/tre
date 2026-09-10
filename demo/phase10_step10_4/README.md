@@ -57,3 +57,13 @@ test suite (IMPLEMENTATION.md Step 10.4 task 4); a zero-copy
 buffer-protocol return type (would require expanding the project's
 `unsafe`-permitted closed set further than the one call this step already
 needed to add `tre-python` to it for).
+
+**Update (2026-09-10):** a `/review-project` pass found and fixed a
+critical bug this demo's own single `render()` call had not caught: a
+*second* `render()` call on the same, unmutated registry produced an
+empty frame and crashed in release builds. `demo.py` now also asserts
+that a second `render()` call reproduces the exact same frame as the
+first -- see REVIEW.md findings #196-199 for the full account (also:
+input validation on `HeadlessRenderer` dimensions and `Polygon` side
+count, and a `&mut self` fix closing a real concurrent-call GPU-state
+race).

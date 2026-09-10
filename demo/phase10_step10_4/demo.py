@@ -80,6 +80,14 @@ def main() -> None:
     print(f"circle center {circle_center}: {circle_px} -- OK (exact green)")
     print(f"polygon center {polygon_center}: {polygon_px} -- OK (exact blue)")
 
+    # Regression check for REVIEW.md #196: a second render() call on the
+    # same, unmutated registry used to produce an empty frame (every
+    # shape already non-dirty from the first call) -- fixed via
+    # ShapeRegistry::mark_all_dirty(), called internally by render().
+    frame2 = renderer.render(registry)
+    assert frame2 == frame, "re-rendering an unmutated registry must reproduce the same frame"
+    print("second render() call on the same registry: OK (matches first frame, no crash)")
+
     try:
         from PIL import Image
 
