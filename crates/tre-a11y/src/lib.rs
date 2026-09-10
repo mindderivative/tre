@@ -199,6 +199,13 @@ impl A11yBridge {
     /// (`SwmrSlotTable`, `MpscRingBuffer`), nothing enforced this
     /// contract before now. A future multi-window/multi-render-thread
     /// caller must serialize its own `publish` calls.
+    ///
+    /// # Panics
+    /// Panics if either internal `Mutex` (`self.state.nodes` or
+    /// `self.adapter`) is poisoned -- i.e. a prior call panicked while
+    /// holding that lock. Not expected in normal operation; a real
+    /// panic inside this method's own body (or `accesskit_unix`'s) would
+    /// be the trigger, not routine use.
     pub fn publish(&self, nodes: &[AccessibilityNode]) {
         *self.state.nodes.lock().unwrap() = nodes.to_vec();
         let tree = &self.state.tree;

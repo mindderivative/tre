@@ -54,6 +54,9 @@ impl<T> MpscRingBuffer<T> {
     /// `capacity` is the number of items the buffer can hold before
     /// `push` starts reporting it as full (DESIGN.md Section 2.6:
     /// overflow is reported, never grown dynamically mid-frame).
+    ///
+    /// # Panics
+    /// Panics if `capacity` is zero.
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         assert!(capacity > 0, "MpscRingBuffer capacity must be non-zero");
@@ -158,6 +161,16 @@ impl<T> MpscRingBuffer<T> {
         Some(item)
     }
 
+    /// Whether the queue held no items at the moment of this call. Under
+    /// concurrent producers this is a best-effort snapshot, not an
+    /// authoritative fact -- a producer can publish an item immediately
+    /// after this returns `true`. Safe to call from any thread.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.dequeue_pos.load(Ordering::Relaxed) == self.enqueue_pos.load(Ordering::Relaxed)
+    }
+
+    /// The capacity passed to [`MpscRingBuffer::with_capacity`].
     #[must_use]
     pub fn capacity(&self) -> usize {
         self.capacity

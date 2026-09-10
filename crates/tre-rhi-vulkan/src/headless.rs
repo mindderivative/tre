@@ -12,6 +12,12 @@ use tre_engine::{AcquiredImage, EngineError, RhiSwapchain};
 
 use crate::VulkanDevice;
 
+/// The zero-window `RhiSwapchain` implementation -- see this module's own
+/// top-level doc comment. `supports_local_read_input_attachment()` always
+/// returns `true` (a manually allocated image, not a presentable surface,
+/// so nothing to query), and `present` synchronously waits on
+/// `readback_fence` before returning, so [`HeadlessSwapchain::
+/// read_pixels_bgra8`] always sees the latest frame's real content.
 pub struct HeadlessSwapchain {
     device: ash::Device,
     queue: vk::Queue,
@@ -42,6 +48,15 @@ pub struct HeadlessSwapchain {
 pub const HEADLESS_FORMAT: vk::Format = vk::Format::B8G8R8A8_SRGB;
 
 impl HeadlessSwapchain {
+    /// Creates the real, manually allocated `width x height` color and
+    /// stencil images, a host-visible staging buffer sized for a full
+    /// `B8G8R8A8` readback, and the command pool/semaphores/fence a
+    /// real frame cycle needs -- no real window or `VkSurfaceKHR`
+    /// involved anywhere.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::DeviceLost`] if any allocation/creation
+    /// step fails.
     pub fn new(device: &VulkanDevice, width: u32, height: u32) -> Result<Self, EngineError> {
         let raw_device = &device.device;
 
@@ -247,11 +262,15 @@ impl HeadlessSwapchain {
         }
     }
 
+    /// Same value `RhiSwapchain::extent().0` returns -- an inherent
+    /// accessor a caller holding a concrete `HeadlessSwapchain` (not a
+    /// `&dyn RhiSwapchain`) can use without the trait import.
     #[must_use]
     pub fn width(&self) -> u32 {
         self.width
     }
 
+    /// Same value `RhiSwapchain::extent().1` returns.
     #[must_use]
     pub fn height(&self) -> u32 {
         self.height

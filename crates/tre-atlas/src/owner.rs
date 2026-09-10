@@ -157,6 +157,9 @@ impl AtlasOwner {
         }
     }
 
+    /// A new, `Clone`-able handle to this same atlas owner -- give one to
+    /// every producer thread that needs to request insertions or read
+    /// back placements.
     #[must_use]
     pub fn handle(&self) -> AtlasOwnerHandle {
         self.handle.clone()

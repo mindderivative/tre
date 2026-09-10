@@ -44,6 +44,29 @@ impl Affine2 {
         ty: 0.0,
     };
 
+    /// The six fields as `[a, b, tx, c, d, ty]`, matching this type's own
+    /// `#[repr(C)]` field order exactly -- for a caller uploading this
+    /// transform into a GPU buffer or an FFI boundary that wants a plain
+    /// array rather than the named fields.
+    #[must_use]
+    pub const fn to_array(self) -> [f32; 6] {
+        [self.a, self.b, self.tx, self.c, self.d, self.ty]
+    }
+
+    /// The inverse of [`Affine2::to_array`]: `[a, b, tx, c, d, ty]` back
+    /// into the named fields.
+    #[must_use]
+    pub const fn from_array(v: [f32; 6]) -> Self {
+        Self {
+            a: v[0],
+            b: v[1],
+            tx: v[2],
+            c: v[3],
+            d: v[4],
+            ty: v[5],
+        }
+    }
+
     /// A pure translation by `(tx, ty)`.
     #[must_use]
     pub const fn from_translation(tx: f32, ty: f32) -> Self {

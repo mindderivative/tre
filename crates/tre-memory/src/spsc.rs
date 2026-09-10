@@ -36,6 +36,9 @@ impl<T> SpscRingBuffer<T> {
     /// overflow is reported, never grown dynamically mid-frame). One
     /// extra internal slot is allocated to distinguish "full" from
     /// "empty" without a separate length counter.
+    ///
+    /// # Panics
+    /// Panics if `capacity` is zero.
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         assert!(capacity > 0, "SpscRingBuffer capacity must be non-zero");
@@ -88,11 +91,14 @@ impl<T> SpscRingBuffer<T> {
         Some(item)
     }
 
+    /// Whether the queue currently holds no items.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.tail.load(Ordering::Acquire) == self.head.load(Ordering::Acquire)
     }
 
+    /// The real usable capacity passed to [`SpscRingBuffer::with_capacity`]
+    /// (the one extra internal sentinel slot is not counted).
     #[must_use]
     pub fn capacity(&self) -> usize {
         self.capacity - 1

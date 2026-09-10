@@ -31,6 +31,9 @@ pub use tre_engine::{ElementState, InputEvent, MouseButton, WindowId};
 pub enum PlatformError {
     ConnectionFailed,
     ProtocolMissing(&'static str),
+    /// `window` does not identify a window created by this connection (it
+    /// was never created here, or has already been closed and removed).
+    UnknownWindow,
     Other(String),
 }
 
@@ -39,12 +42,23 @@ impl std::fmt::Display for PlatformError {
         match self {
             Self::ConnectionFailed => write!(f, "failed to connect to the display server"),
             Self::ProtocolMissing(name) => write!(f, "required protocol/extension missing: {name}"),
+            Self::UnknownWindow => write!(f, "window was not created by this connection"),
             Self::Other(msg) => write!(f, "{msg}"),
         }
     }
 }
 
 impl std::error::Error for PlatformError {}
+
+/// RGBA8 pixel data for [`PlatformConnection::set_icon`]. `rgba.len()` must
+/// equal `width * height * 4`; a mismatch surfaces as
+/// [`PlatformError::Other`] from `set_icon`, not a panic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowIcon {
+    pub rgba: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
 
 /// One shared display-server connection, owning every window created
 /// through it. Pick a backend once per process (Wayland if available,
@@ -128,6 +142,118 @@ impl PlatformConnection {
         match self {
             Self::Wayland(c) => c.window_handle(window),
             Self::X11(c) => c.window_handle(window),
+        }
+    }
+
+    /// Changes `window`'s title after creation (`create_window`'s own
+    /// `title` argument only sets it once, at creation).
+    ///
+    /// # Errors
+    /// Returns [`PlatformError::UnknownWindow`] if `window` was not created
+    /// by this connection.
+    pub fn set_title(&self, window: WindowId, title: &str) -> Result<(), PlatformError> {
+        match self {
+            Self::Wayland(c) => c.set_title(window, title),
+            Self::X11(c) => c.set_title(window, title),
+        }
+    }
+
+    /// Requests `window` be minimized or un-minimized.
+    ///
+    /// This only sends the request -- neither this call nor the very next
+    /// [`is_minimized`](Self::is_minimized) reflects the new state
+    /// immediately. Confirmed by real testing, not assumed: on Linux,
+    /// `set_minimized` sends a one-way protocol request to the
+    /// compositor/window manager, and `is_minimized` reads a value only
+    /// updated once that compositor's own confirmation is later received
+    /// and processed by [`poll_events`](Self::poll_events) -- a real
+    /// round trip, not a local flag this call sets directly. Call
+    /// `poll_events` (possibly more than once, across real wall-clock
+    /// time) before `is_minimized` reflects a just-requested change.
+    ///
+    /// # Platform-specific
+    /// On Wayland, un-minimizing (`minimized: false`) is a protocol-level
+    /// limitation winit itself cannot lift -- the request is sent (no
+    /// error) but has no visible effect. Minimizing (`minimized: true`)
+    /// works on both backends.
+    ///
+    /// # Errors
+    /// Returns [`PlatformError::UnknownWindow`] if `window` was not created
+    /// by this connection.
+    pub fn set_minimized(&self, window: WindowId, minimized: bool) -> Result<(), PlatformError> {
+        match self {
+            Self::Wayland(c) => c.set_minimized(window, minimized),
+            Self::X11(c) => c.set_minimized(window, minimized),
+        }
+    }
+
+    /// Whether `window` is currently minimized, as of the last processed
+    /// compositor/window-manager update (see
+    /// [`set_minimized`](Self::set_minimized)'s own doc comment for why
+    /// this can lag a just-sent request).
+    ///
+    /// Returns `None` if `window` is unknown to this connection, or if the
+    /// state can't be determined -- on Wayland this is always `None`, the
+    /// protocol has no way to query it.
+    #[must_use]
+    pub fn is_minimized(&self, window: WindowId) -> Option<bool> {
+        match self {
+            Self::Wayland(c) => c.is_minimized(window),
+            Self::X11(c) => c.is_minimized(window),
+        }
+    }
+
+    /// Requests `window` be maximized or restored. Works fully on both
+    /// backends, but -- exactly like [`set_minimized`](Self::set_minimized)
+    /// -- only sends the request; see that method's own doc comment for
+    /// why an immediately-following [`is_maximized`](Self::is_maximized)
+    /// will not yet reflect it.
+    ///
+    /// # Errors
+    /// Returns [`PlatformError::UnknownWindow`] if `window` was not created
+    /// by this connection.
+    pub fn set_maximized(&self, window: WindowId, maximized: bool) -> Result<(), PlatformError> {
+        match self {
+            Self::Wayland(c) => c.set_maximized(window, maximized),
+            Self::X11(c) => c.set_maximized(window, maximized),
+        }
+    }
+
+    /// Whether `window` is currently maximized, as of the last processed
+    /// compositor/window-manager update (see
+    /// [`set_maximized`](Self::set_maximized)'s own doc comment for why
+    /// this can lag a just-sent request). Returns `false` if `window` is
+    /// unknown to this connection.
+    #[must_use]
+    pub fn is_maximized(&self, window: WindowId) -> bool {
+        match self {
+            Self::Wayland(c) => c.is_maximized(window),
+            Self::X11(c) => c.is_maximized(window),
+        }
+    }
+
+    /// Sets or clears `window`'s icon (`None` clears it).
+    ///
+    /// # Platform-specific
+    /// Unsupported on Wayland -- the protocol has no client-side icon
+    /// mechanism (icons come from the application's own desktop-file
+    /// metadata, matched by `app_id`, entirely outside this call). The
+    /// call still succeeds (no error) on Wayland; it is simply a no-op.
+    /// Works on X11, subject to the window manager's own icon-size
+    /// conventions.
+    ///
+    /// # Errors
+    /// Returns [`PlatformError::UnknownWindow`] if `window` was not created
+    /// by this connection, or [`PlatformError::Other`] if `icon`'s `rgba`
+    /// buffer doesn't match `width * height * 4`.
+    pub fn set_icon(
+        &self,
+        window: WindowId,
+        icon: Option<WindowIcon>,
+    ) -> Result<(), PlatformError> {
+        match self {
+            Self::Wayland(c) => c.set_icon(window, icon),
+            Self::X11(c) => c.set_icon(window, icon),
         }
     }
 }

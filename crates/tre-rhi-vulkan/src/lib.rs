@@ -186,7 +186,9 @@ struct FrameSync {
 /// it still tracks a rotating index despite that.
 pub struct VulkanDevice {
     entry: ash::Entry,
+    /// The real Vulkan instance this device was created against.
     pub instance: ash::Instance,
+    /// The physical device (GPU) `new` selected.
     pub physical_device: vk::PhysicalDevice,
     /// A combined depth/stencil format this physical device actually
     /// supports for `DEPTH_STENCIL_ATTACHMENT_OPTIMAL` tiling (queried
@@ -194,7 +196,11 @@ pub struct VulkanDevice {
     /// stencil image, and every pipeline's declared
     /// `stencilAttachmentFormat`, uses this same format.
     pub stencil_format: vk::Format,
+    /// The real logical device every other Vulkan call in this crate is
+    /// issued against.
     pub device: ash::Device,
+    /// The graphics+present-capable queue family index `new` selected;
+    /// `graphics_queue()` is the actual `VkQueue` handle from this family.
     pub queue_family_index: u32,
     graphics_queue: vk::Queue,
     command_pool: vk::CommandPool,
@@ -1002,6 +1008,8 @@ impl VulkanDevice {
         ))
     }
 
+    /// The real `VkQueue` handle for `queue_family_index`.
+    #[must_use]
     pub fn graphics_queue(&self) -> vk::Queue {
         self.graphics_queue
     }
@@ -1052,6 +1060,16 @@ impl VulkanDevice {
             .map_err(|_| EngineError::DeviceLost)
     }
 
+    /// Builds a `Normal`-blend-only graphics pipeline from `vertex_spv`/
+    /// `fragment_spv` (SPIR-V bytecode), bound to `color_format`, against
+    /// this device's own single universal pipeline layout (the bindless
+    /// descriptor set plus the `texture_index` push constant). For a
+    /// non-`Normal`-blend-capable pipeline, see
+    /// [`VulkanDevice::create_blend_mode_pipeline`].
+    ///
+    /// # Errors
+    /// Returns [`EngineError::PipelineCreationFailed`] if shader module
+    /// or pipeline creation fails.
     pub fn create_pipeline(
         &self,
         vertex_spv: &[u8],
@@ -1178,12 +1196,17 @@ impl VulkanDevice {
     /// IMPLEMENTATION.md Step 2.1's "ONE universal pipeline layout every
     /// pipeline gets" (the bindless descriptor set plus the 4-byte
     /// `texture_index` push constant), factored out of `create_pipeline`
-    /// so `create_stencil_and_cover_pipelines` (IMPLEMENTATION.md Step
-    /// 3.3.3) can build its own two pipelines against the exact same
-    /// layout shape without duplicating this construction a second and
-    /// third time. Each pipeline still gets its OWN `VkPipelineLayout`
-    /// object (not a shared one), matching `create_pipeline`'s existing
-    /// one-layout-per-`VulkanPipelineState` ownership/destruction model.
+    /// so more than one pipeline-creation function could share it without
+    /// duplicating this construction. (Originally factored out for a
+    /// second caller, `create_stencil_and_cover_pipelines` from Step
+    /// 3.3.3's stencil-and-cover fill technique -- that function and the
+    /// technique it built were retired 2026-09-09, REVIEW.md finding
+    /// #165, in favor of `lyon`'s real sweep-line fill tessellator; this
+    /// helper stayed factored out since `create_blend_mode_pipeline`,
+    /// Step 10.2.3, is now its second real caller.) Each pipeline still
+    /// gets its OWN `VkPipelineLayout` object (not a shared one), matching
+    /// `create_pipeline`'s existing one-layout-per-`VulkanPipelineState`
+    /// ownership/destruction model.
     fn create_universal_pipeline_layout(&self) -> Result<vk::PipelineLayout, EngineError> {
         let bindless_set_layouts = [self.bindless_descriptor_set_layout];
         // SAFETY: `self.device` is the valid logical device owned by this
@@ -1535,9 +1558,9 @@ impl VulkanDevice {
     }
 }
 
-/// `UiVertex`'s per-vertex binding, shared by `create_pipeline` and
-/// `create_stencil_and_cover_pipelines` so both build the exact same
-/// vertex input layout from one definition.
+/// `UiVertex`'s per-vertex binding, shared by every pipeline-creation
+/// function in this crate so each builds the exact same vertex input
+/// layout from one definition.
 fn ui_vertex_binding() -> vk::VertexInputBindingDescription {
     vk::VertexInputBindingDescription::default()
         .binding(0)
@@ -1546,10 +1569,10 @@ fn ui_vertex_binding() -> vk::VertexInputBindingDescription {
 }
 
 /// `UiVertex`'s four attributes (position/uv/color/params), shared by
-/// `create_pipeline` and `create_stencil_and_cover_pipelines`. See
-/// `create_pipeline`'s original inline version (IMPLEMENTATION.md Step
-/// 3.2) for why `params` (location 3) is declared on every pipeline
-/// uniformly even though most shaders don't read it.
+/// every pipeline-creation function in this crate. See `create_pipeline`'s
+/// original inline version (IMPLEMENTATION.md Step 3.2) for why `params`
+/// (location 3) is declared on every pipeline uniformly even though most
+/// shaders don't read it.
 fn ui_vertex_attributes() -> [vk::VertexInputAttributeDescription; 4] {
     [
         vk::VertexInputAttributeDescription::default()
@@ -2178,10 +2201,13 @@ impl RhiDevice for VulkanDevice {
                 },
             });
         let color_attachments = [color_attachment];
-        // Cleared to 0 every frame; individual stencil-and-cover draws
-        // never need a mid-frame clear between shapes -- the cover pass's
-        // own `pass_op = ZERO` (see `create_stencil_and_cover_pipelines`)
-        // resets the buffer to a clean 0 after each shape it covers.
+        // Cleared to 0 every frame. Historical note: this once also
+        // relied on the stencil-and-cover technique's own cover-pass
+        // `pass_op = ZERO` to reset the buffer to a clean 0 between
+        // shapes within a frame, so no shape needed its own mid-frame
+        // clear -- that technique (and `create_stencil_and_cover_
+        // pipelines`, which built its pipelines) was retired 2026-09-09,
+        // REVIEW.md finding #165, in favor of `lyon`'s fill tessellator.
         let stencil_attachment = vk::RenderingAttachmentInfo::default()
             .image_view(stencil_view)
             .image_layout(vk::ImageLayout::STENCIL_ATTACHMENT_OPTIMAL)
@@ -2440,6 +2466,14 @@ pub struct VulkanSwapchain {
 }
 
 impl VulkanSwapchain {
+    /// Creates a real `VkSwapchainKHR` and its own dedicated stencil
+    /// image against `surface` (already created against `device`, e.g.
+    /// via `VulkanDevice::new`'s own probe surface or a later
+    /// `VulkanDevice::create_surface` call), sized `width x height`.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::DeviceLost`] if any step of swapchain,
+    /// image view, semaphore, or stencil-image creation fails.
     pub fn new(
         device: &VulkanDevice,
         surface_loader: ash::khr::surface::Instance,
@@ -2672,6 +2706,8 @@ impl VulkanSwapchain {
         })
     }
 
+    /// This swapchain's own real, selected surface format.
+    #[must_use]
     pub fn format(&self) -> vk::Format {
         self.format
     }
@@ -3213,6 +3249,11 @@ fn create_blur_static_buffer(
     (buffer, memory)
 }
 
+/// The Vulkan `RhiCommandBuffer` implementation -- see the `RhiCommandBuffer`
+/// trait (`tre_engine`) for the full method contract this type provides.
+/// Returned (as `Box<dyn RhiCommandBuffer>`) from `RhiDevice::begin_frame`;
+/// owns no exclusively-its-own GPU resources beyond shared, cloned handles,
+/// so it implements no `Drop` of its own.
 pub struct VulkanCommandBuffer {
     device: ash::Device,
     command_buffer: vk::CommandBuffer,
@@ -4009,6 +4050,10 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
     }
 }
 
+/// A single host-visible, host-coherent GPU buffer (`VulkanDevice::
+/// upload_buffer`'s own return type) -- the `RhiBuffer` this crate hands
+/// back for one-shot vertex/index uploads. For a reusable, per-frame
+/// dynamic buffer, see [`VulkanRingBuffer`] instead.
 pub struct VulkanBuffer {
     buffer: vk::Buffer,
     memory: vk::DeviceMemory,
@@ -4036,6 +4081,9 @@ impl Drop for VulkanBuffer {
 
 pub struct VulkanPipelineState {
     pipeline: vk::Pipeline,
+    /// This pipeline's own `VkPipelineLayout` -- not shared across
+    /// pipelines, even where two pipelines' layouts are structurally
+    /// identical (`create_universal_pipeline_layout`'s own doc comment).
     pub layout: vk::PipelineLayout,
     device: ash::Device,
 }
@@ -4067,7 +4115,9 @@ impl Drop for VulkanPipelineState {
 /// after warmup) rather than asserting on internal state.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct TransientPoolStats {
+    /// Requests satisfied by reusing an already-allocated pool entry.
     pub hits: u64,
+    /// Requests that required a cold allocation (no matching free entry).
     pub misses: u64,
     /// Entries the background GC thread has moved from the free list into
     /// the deferred-release queue (IMPLEMENTATION.md Step 2.3) -- not yet

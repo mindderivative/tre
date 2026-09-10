@@ -50,6 +50,7 @@ impl<T: Copy> ScatterArena<T> {
         }
     }
 
+    /// The fixed total size passed to [`ScatterArena::with_capacity`].
     #[must_use]
     pub fn capacity(&self) -> usize {
         self.slots.len()
@@ -180,6 +181,9 @@ pub struct ScatterSlice<'a, T> {
 }
 
 impl<T> ScatterSlice<'_, T> {
+    /// The index within the owning [`ScatterArena`] this reservation
+    /// starts at -- needed to rebase any data that refers to positions
+    /// relative to this reservation's own start.
     #[must_use]
     pub fn start_index(&self) -> usize {
         self.start

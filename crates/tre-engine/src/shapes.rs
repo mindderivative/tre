@@ -7,23 +7,29 @@
 //! never a second rendering path.
 //!
 //! Real rendering support: `Rectangle` (any corner radii, real borders,
-//! corner smoothing), `Circle`/`Ellipse` (borders, partial-arc sweep),
-//! `Polygon`/`Path` (real fill -- including compound shapes with holes --
-//! and real stroke, via `lyon`, Phase 10 Step 10.2's own lyon-migration
-//! follow-up) all flatten for real. `FillStyle::Gradient` (linear and
-//! radial, Phase 10 Step 10.2.1) is real for all four shape kinds too,
-//! via [`ShapeRegistry::create_gradient`] and a `GpuGradientStyle`
-//! record (`crates/tre-engine/src/gpu_style.rs`'s own doc comment covers
-//! the GPU-side style-buffer mechanism `Rectangle`/`Circle` both rely on;
-//! `Polygon`/`Path` route gradient fill through `PipelineKind::
-//! GradientFill` instead, since neither has a per-vertex style record).
-//! `FillStyle::Texture` still has no evaluator anywhere -- [`ShapeRegistry
-//! ::flatten_into`] panics loudly on it (`unimplemented!`), rather than
-//! silently skipping or rendering something wrong, matching this
-//! project's own established "fail loud on a real, not-yet-built
-//! capability" discipline. See ARCHITECTURE.md Section 7.5's own
-//! "Implementation status" note and `PLAN.md`'s Steps 10.2.1-10.2.6 for
-//! the full, itemized disposition of every remaining gap.
+//! corner smoothing), `Circle`/`Ellipse` (borders, partial-arc sweep,
+//! rounded stroke caps on a partial arc since Step 10.2.5), `Polygon`/
+//! `Path` (real fill -- including compound shapes with holes -- and real
+//! stroke, via `lyon`, Phase 10 Step 10.2's own lyon-migration follow-up)
+//! all flatten for real. Every [`FillStyle`] variant is real for all four
+//! shape kinds: `Solid` (always was); `Gradient` (linear and radial,
+//! Step 10.2.1), via [`ShapeRegistry::create_gradient`] and a
+//! `GpuGradientStyle` record (`crates/tre-engine/src/gpu_style.rs`'s own
+//! doc comment covers the GPU-side style-buffer mechanism `Rectangle`/
+//! `Circle` both rely on; `Polygon`/`Path` route gradient fill through
+//! `PipelineKind::GradientFill` instead, since neither has a per-vertex
+//! style record); `Texture` (Step 10.2.2), sampling the existing bindless
+//! texture array -- `Rectangle`/`Circle` via a `fill_kind == 2` shader
+//! branch mapping onto the shape's own bounding box, `Polygon`/`Path` via
+//! the existing `TexturedQuad` pipeline. [`ShapeRegistry::flatten_into`]
+//! still panics loudly (`unimplemented!`/`panic!`) on the one remaining
+//! real gap -- a `FillStyle::Gradient` naming a `GradientId` this
+//! registry never issued -- matching this project's own established
+//! "fail loud on a real, not-yet-built or genuinely invalid case"
+//! discipline. See ARCHITECTURE.md Section 7.5's own "Implementation
+//! status" note and `documentation/REVIEW.md`'s Phase 10 Step 10.2.1-
+//! 10.2.6 sections for the full, itemized history of every gap this
+//! module once had and how each was closed.
 
 use crate::{RenderingCanvas, ScissorRect};
 
@@ -432,9 +438,10 @@ pub struct Rectangle {
 }
 
 impl Rectangle {
-    /// A corner-radius-free rectangle of `size`, filled `color`, at the
-    /// identity transform -- the common case, and the one real-
-    /// rendering-supported shape this module currently produces.
+    /// A corner-radius-free, borderless rectangle of `size`, filled
+    /// `color`, at the identity transform -- the common case. Every
+    /// other field (border, corner radii/smoothing) defaults to "off";
+    /// set them directly on the returned value.
     #[must_use]
     pub fn new(size: Vec2, color: Color) -> Self {
         Self {
@@ -459,9 +466,9 @@ impl Primitive for Rectangle {
 }
 
 /// Unifies circle and ellipse: `radius[0] == radius[1]` is a circle,
-/// otherwise an ellipse (ARCHITECTURE.md Section 7.3). No rendering
-/// support exists for this shape at all yet -- see this module's own
-/// top-level doc comment.
+/// otherwise an ellipse (ARCHITECTURE.md Section 7.3). Fully rendered,
+/// including borders, corner-case-free partial-arc sweeps with real
+/// rounded stroke caps (Step 10.2.5), and every `FillStyle` variant.
 #[derive(Debug, Clone, Copy)]
 pub struct Circle {
     pub common: PrimitiveCommon,
@@ -474,6 +481,24 @@ pub struct Circle {
     pub arc_length: f32,
 }
 
+impl Circle {
+    /// A full (`arc_length: 360.0`), borderless circle/ellipse of
+    /// `radius`, filled `color`, at the identity transform. Set
+    /// `arc_length`/border fields directly on the returned value for
+    /// anything beyond that.
+    #[must_use]
+    pub fn new(radius: Vec2, color: Color) -> Self {
+        Self {
+            common: PrimitiveCommon::new(),
+            radius,
+            fill: FillStyle::Solid(color),
+            border_color: 0,
+            border_thickness: 0.0,
+            arc_length: 360.0,
+        }
+    }
+}
+
 impl Primitive for Circle {
     fn common(&self) -> &PrimitiveCommon {
         &self.common
@@ -484,18 +509,44 @@ impl Primitive for Circle {
 }
 
 /// Covers triangle/hexagon/N-gon and star shapes with one struct
-/// (ARCHITECTURE.md Section 7.3). No rendering support exists for this
-/// shape at all yet -- see this module's own top-level doc comment.
+/// (ARCHITECTURE.md Section 7.3). Fully rendered: fill (via `lyon`'s fan
+/// triangulation, real for a star-shaped-by-construction regular/star
+/// polygon) and stroke, and every `FillStyle` variant.
 #[derive(Debug, Clone, Copy)]
 pub struct Polygon {
     pub common: PrimitiveCommon,
     pub sides: u32,
     pub radius: f32,
+    /// Only used when `star_points` is `Some` -- the inner (odd-index)
+    /// vertex radius; `radius` alone is the outer (even-index) one.
     pub vertex_radius: f32,
+    /// `None`: a regular `sides`-gon, every vertex at `radius`. `Some(k)`:
+    /// a `2*k`-vertex star alternating `radius` (even index) and
+    /// `vertex_radius` (odd index).
     pub star_points: Option<u32>,
     pub fill: FillStyle,
     pub border_color: Color,
     pub border_thickness: f32,
+}
+
+impl Polygon {
+    /// A regular `sides`-gon (not a star -- `star_points: None`) of
+    /// `radius`, filled `color`, borderless, at the identity transform.
+    /// Set `star_points`/`vertex_radius`/border fields directly on the
+    /// returned value for a star shape or a border.
+    #[must_use]
+    pub fn new(sides: u32, radius: f32, color: Color) -> Self {
+        Self {
+            common: PrimitiveCommon::new(),
+            sides,
+            radius,
+            vertex_radius: 0.0,
+            star_points: None,
+            fill: FillStyle::Solid(color),
+            border_color: 0,
+            border_thickness: 0.0,
+        }
+    }
 }
 
 impl Primitive for Polygon {
@@ -525,17 +576,30 @@ pub enum PathCommand {
     Close,
 }
 
+/// How a `Path`'s open stroke ends are capped, via `lyon`'s stroke
+/// tessellator (the SVG `stroke-linecap` values).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineCap {
+    /// The stroke ends exactly at the endpoint, no extension.
     Butt,
+    /// A semicircle extends the stroke past the endpoint by half the
+    /// stroke width.
     Round,
+    /// A square extends the stroke past the endpoint by half the stroke
+    /// width, like `Butt` but with a flat extension instead of none.
     Square,
 }
 
+/// How a `Path`'s stroke segments meet at a corner, via `lyon`'s stroke
+/// tessellator (the SVG `stroke-linejoin` values).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineJoin {
+    /// Segments extend to a sharp point.
     Miter,
+    /// A rounded arc fills the corner.
     Round,
+    /// The corner is cut off with a flat segment connecting the two
+    /// stroke edges directly.
     Bevel,
 }
 
@@ -543,9 +607,9 @@ pub enum LineJoin {
 /// heap allocation (`commands: Vec<PathCommand>`) -- consistent with
 /// DESIGN.md Section 2.1's own zero-allocation boundary, which exempts
 /// complex external subsystems from the per-frame steady-state rule
-/// (ARCHITECTURE.md Section 7.3). No rendering support (stroking, or
-/// wiring into the existing `tre-svg` fill tessellator) exists for this
-/// shape yet -- see this module's own top-level doc comment.
+/// (ARCHITECTURE.md Section 7.3). Fully rendered: real fill (including
+/// compound shapes with holes) and real stroke via `lyon`, and every
+/// `FillStyle` variant.
 #[derive(Debug, Clone)]
 pub struct Path {
     pub common: PrimitiveCommon,
@@ -555,6 +619,25 @@ pub struct Path {
     pub border_thickness: f32,
     pub stroke_line_cap: LineCap,
     pub stroke_line_join: LineJoin,
+}
+
+impl Path {
+    /// A borderless path of `commands`, filled `color`, at the identity
+    /// transform, with `Butt`/`Miter` stroke caps/joins (irrelevant
+    /// without a border). Set border/stroke-cap fields directly on the
+    /// returned value for a stroked path.
+    #[must_use]
+    pub fn new(commands: Vec<PathCommand>, color: Color) -> Self {
+        Self {
+            common: PrimitiveCommon::new(),
+            commands,
+            fill: FillStyle::Solid(color),
+            border_color: 0,
+            border_thickness: 0.0,
+            stroke_line_cap: LineCap::Butt,
+            stroke_line_join: LineJoin::Miter,
+        }
+    }
 }
 
 impl Primitive for Path {
@@ -668,6 +751,7 @@ pub struct ShapeRegistry {
 }
 
 impl ShapeRegistry {
+    /// An empty registry, no shapes or gradients yet.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -765,32 +849,12 @@ impl ShapeRegistry {
         self.live_count
     }
 
+    /// Whether the registry currently holds no live shapes.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.live_count == 0
     }
 
-    /// The per-frame flattening pass (ARCHITECTURE.md Section 7,
-    /// IMPLEMENTATION.md Step 10.1 task 4): for every live slot that is
-    /// `layout_dirty` or has a non-empty `active_animations`, resolves
-    /// its `Transform2D` to a real `Affine2` and records it into `canvas`
-    /// via the exact same immediate-mode calls any other caller would
-    /// use, then clears `layout_dirty` (a shape re-flattened only
-    /// because of an active animation stays flagged for next frame too
-    /// -- clearing `active_animations` itself is the animation system's
-    /// own job, not this registry's, per `AnimationId`'s own doc
-    /// comment). A `Visibility::Hidden`/`Collapsed` shape is skipped
-    /// entirely (still has `layout_dirty` cleared, so it doesn't attempt
-    /// to re-flatten every frame while simply invisible).
-    ///
-    /// `device` (Phase 10 Step 10.2, new this step) is needed because
-    /// `Rectangle`/`Circle`'s real rendering paths beyond the trivial
-    /// case write a style record into the device's live, per-frame-
-    /// segmented shape-style buffer at flatten time -- see
-    /// `RenderingCanvas::draw_styled_rectangle`'s own doc comment for why
-    /// that can't be deferred to upload time the way plain vertex/index
-    /// data is.
-    ///
     /// Defines a new, real, evaluatable gradient and returns a stable
     /// handle to it (Phase 10 Step 10.2.1). Validates `def` fully on the
     /// CPU before storing it -- a caller mistake (too many stops, an
@@ -848,16 +912,45 @@ impl ShapeRegistry {
         self.gradients.get_mut(id.0 as usize)
     }
 
+    /// Read-only access to an already-created gradient's own definition,
+    /// or `None` if `id` is out of range -- the immutable counterpart to
+    /// [`gradient_mut`](Self::gradient_mut), for a caller (e.g. a UI panel
+    /// displaying a gradient's current stops) that needs to inspect one
+    /// without needing `&mut self`.
+    #[must_use]
+    pub fn gradient(&self, id: GradientId) -> Option<&GradientDef> {
+        self.gradients.get(id.0 as usize)
+    }
+
+    /// The per-frame flattening pass (ARCHITECTURE.md Section 7,
+    /// IMPLEMENTATION.md Step 10.1 task 4): for every live slot that is
+    /// `layout_dirty` or has a non-empty `active_animations`, resolves
+    /// its `Transform2D` to a real `Affine2` and records it into `canvas`
+    /// via the exact same immediate-mode calls any other caller would
+    /// use, then clears `layout_dirty` (a shape re-flattened only
+    /// because of an active animation stays flagged for next frame too
+    /// -- clearing `active_animations` itself is the animation system's
+    /// own job, not this registry's, per `AnimationId`'s own doc
+    /// comment). A `Visibility::Hidden`/`Collapsed` shape is skipped
+    /// entirely (still has `layout_dirty` cleared, so it doesn't attempt
+    /// to re-flatten every frame while simply invisible).
+    ///
+    /// `device` (Phase 10 Step 10.2) is needed because `Rectangle`/
+    /// `Circle`'s real rendering paths beyond the trivial case write a
+    /// style record into the device's live, per-frame-segmented
+    /// shape-style buffer at flatten time -- see `RenderingCanvas::
+    /// draw_styled_rectangle`'s own doc comment for why that can't be
+    /// deferred to upload time the way plain vertex/index data is.
+    ///
     /// # Panics
-    /// Panics (`unimplemented!`) on any shape/field combination that has
-    /// no real rendering support yet -- see this module's own top-level
-    /// doc comment for the complete, itemized list. This is a
-    /// deliberate, loud failure for a genuinely-not-yet-built rendering
-    /// capability, not a recoverable `EngineError` condition. Also panics
-    /// if a `FillStyle::Gradient` names a `GradientId` this registry
-    /// never issued (via [`create_gradient`](Self::create_gradient)) --
-    /// a real programmer error (a stale or foreign handle), not a normal
-    /// runtime condition this registry validates against.
+    /// Panics if a `FillStyle::Gradient` names a `GradientId` this
+    /// registry never issued (via [`create_gradient`](Self::create_gradient))
+    /// -- a real programmer error (a stale or foreign handle), not a
+    /// normal runtime condition this registry validates against. Every
+    /// `FillStyle` variant itself (`Solid`/`Gradient`/`Texture`) is fully
+    /// implemented for all four shape kinds (see this module's own
+    /// top-level doc comment) -- there is no remaining "not yet built"
+    /// rendering capability this method can hit.
     pub fn flatten_into(&mut self, canvas: &mut RenderingCanvas, device: &dyn crate::RhiDevice) {
         for slot in &mut self.slots {
             let Some(slot) = slot else { continue };
@@ -1333,20 +1426,6 @@ fn fan_from_center_into(vertex_count: u32, out: &mut Vec<[u32; 3]>) {
     out.push([0, vertex_count, 1]);
 }
 
-/// `ShapeRegistry::flatten_into`'s own `Polygon` case -- fill via
-/// [`fan_from_center_into`] (unaffected by the lyon migration below: a
-/// regular/star polygon is star-shaped with respect to its own center by
-/// construction, so the simple fan is already exactly correct and does
-/// not need a general tessellator). Border/stroke is real now too
-/// (Phase 10 Step 10.2 follow-up), via [`tessellate_stroke`].
-/// `Polygon`/`Path` fill dispatch, shared by `flatten_polygon`/`flatten_
-/// path_shape` (their border/stroke is always solid -- `border_color` is
-/// a plain `Color`, never a `FillStyle`, so only the interior fill needs
-/// this 3-way dispatch).
-///
-/// # Panics
-/// Panics (`unimplemented!`) for `FillStyle::Texture`, or if `fill` names
-/// a `GradientId` this registry never issued.
 /// Maps `positions` into real, bounding-box-normalized `[0, 1]` texture
 /// coordinates (Phase 10 Step 10.2.2) -- `Rectangle`/`Circle` derive
 /// theirs directly from their own known half-extent/radius, in-shader
@@ -1387,6 +1466,15 @@ fn bounding_box_uvs_into(positions: &[Vec2], out: &mut Vec<Vec2>) {
     }));
 }
 
+/// `ShapeRegistry::flatten_into`'s own `Polygon`/`Path` fill dispatch,
+/// shared by `flatten_polygon`/`flatten_path_shape` (their border/stroke
+/// is always solid -- `border_color` is a plain `Color`, never a
+/// `FillStyle`, so only the interior fill needs this 3-way dispatch).
+/// All three `FillStyle` variants are real here: `Solid` (optionally
+/// blended, see below), `Gradient` via [`write_gradient_style`] and
+/// `RenderingCanvas::draw_gradient_polygon`, and `Texture` via
+/// [`bounding_box_uvs_into`] and `RenderingCanvas::draw_textured_polygon`.
+///
 /// `blend_mode` (Phase 10 Step 10.2.3) is honored only for
 /// `FillStyle::Solid` -- gradient/texture fill under a non-`Normal`
 /// blend mode is real, separate, not-yet-scheduled follow-up work, not
@@ -1394,6 +1482,10 @@ fn bounding_box_uvs_into(positions: &[Vec2], out: &mut Vec<Vec2>) {
 /// non-`Normal` value for a shape whose fill genuinely is `Solid`, so
 /// this never silently drops a real request; see `ShapeRegistry::
 /// flatten_into`'s own doc comment for the itemized disposition).
+///
+/// # Panics
+/// Panics if `fill` is `FillStyle::Gradient` naming a `GradientId` this
+/// registry never issued.
 #[allow(
     clippy::too_many_arguments,
     reason = "each parameter is a distinct, real piece of state (no natural sub-struct groups \

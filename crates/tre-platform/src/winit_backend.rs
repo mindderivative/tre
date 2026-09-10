@@ -30,9 +30,9 @@ use winit::platform::pump_events::EventLoopExtPumpEvents;
 use winit::platform::scancode::PhysicalKeyExtScancode;
 use winit::platform::wayland::EventLoopBuilderExtWayland;
 use winit::platform::x11::EventLoopBuilderExtX11;
-use winit::window::{Window, WindowAttributes};
+use winit::window::{Icon, Window, WindowAttributes};
 
-use crate::PlatformError;
+use crate::{PlatformError, WindowIcon};
 
 /// One connection's worth of queued events, sized generously for a
 /// per-frame drain of a handful of windows' worth of input (matches the
@@ -288,6 +288,55 @@ impl WinitConnection {
             .get(&window.0)
             .ok_or(HandleError::Unavailable)?
             .window_handle()
+    }
+
+    fn window(&self, window: WindowId) -> Result<&Window, PlatformError> {
+        self.handler
+            .windows
+            .get(&window.0)
+            .ok_or(PlatformError::UnknownWindow)
+    }
+
+    pub fn set_title(&self, window: WindowId, title: &str) -> Result<(), PlatformError> {
+        self.window(window)?.set_title(title);
+        Ok(())
+    }
+
+    pub fn set_minimized(&self, window: WindowId, minimized: bool) -> Result<(), PlatformError> {
+        self.window(window)?.set_minimized(minimized);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn is_minimized(&self, window: WindowId) -> Option<bool> {
+        self.handler.windows.get(&window.0)?.is_minimized()
+    }
+
+    pub fn set_maximized(&self, window: WindowId, maximized: bool) -> Result<(), PlatformError> {
+        self.window(window)?.set_maximized(maximized);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn is_maximized(&self, window: WindowId) -> bool {
+        self.handler
+            .windows
+            .get(&window.0)
+            .is_some_and(Window::is_maximized)
+    }
+
+    pub fn set_icon(
+        &self,
+        window: WindowId,
+        icon: Option<WindowIcon>,
+    ) -> Result<(), PlatformError> {
+        let win = self.window(window)?;
+        let icon = icon
+            .map(|i| Icon::from_rgba(i.rgba, i.width, i.height))
+            .transpose()
+            .map_err(|e| PlatformError::Other(e.to_string()))?;
+        win.set_window_icon(icon);
+        Ok(())
     }
 }
 
