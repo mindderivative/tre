@@ -299,6 +299,32 @@ pub struct VulkanDevice {
     /// an unused `Option`) in a shipped binary.
     #[cfg(debug_assertions)]
     debug_utils: Option<(ash::ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
+    /// Phase 10 Step 10.2.3: `true` only when this physical device
+    /// actually advertises `VK_KHR_dynamic_rendering_local_read`
+    /// (queried once in `new`, mirroring `debug_validation_available`'s
+    /// own optional-extension pattern). `RhiDevice::
+    /// local_read_blend_supported` reports this value so `shapes.rs`'s
+    /// dispatch fails closed to ordinary `Normal` blending on any
+    /// driver that lacks it -- `VK_EXT_blend_operation_advanced` (this
+    /// step's originally-planned primary path) turned out to be one
+    /// such driver (RADV, this project's own real dev GPU); see
+    /// `documentation/REVIEW.md` for the full account.
+    local_read_supported: bool,
+    /// Phase 10 Step 10.2.3: the dedicated set-1 resources every
+    /// `PipelineKind::FlatColorBlend` pipeline's layout declares --
+    /// `None` when `local_read_supported` is `false`, so nothing here
+    /// is ever built, bound, or dereferenced on hardware without the
+    /// capability. The descriptor SET's contents (which image view it
+    /// points at) are rewritten every frame in `begin_frame`, since the
+    /// color attachment view can change frame to frame.
+    blend_read: Option<BlendReadResources>,
+}
+
+/// See `VulkanDevice::blend_read`'s own doc comment.
+struct BlendReadResources {
+    descriptor_set_layout: vk::DescriptorSetLayout,
+    descriptor_pool: vk::DescriptorPool,
+    descriptor_set: vk::DescriptorSet,
 }
 
 /// `VK_EXT_debug_utils` messenger callback (IMPLEMENTATION.md Step 2.4).
@@ -505,10 +531,42 @@ impl VulkanDevice {
             .queue_priorities(&queue_priorities);
         let queue_create_infos = [queue_create_info];
 
-        let device_extension_names: Vec<*const c_char> = REQUIRED_DEVICE_EXTENSIONS
+        // Phase 10 Step 10.2.3: a real, disclosed capability query, not
+        // an assumption -- `VK_EXT_blend_operation_advanced` (this
+        // project's own original plan for non-`Normal` `BlendMode`
+        // rendering) is not implemented by RADV, the driver on this
+        // project's own real dev GPU, confirmed both via `vulkaninfo`
+        // and Mesa's own release notes (REVIEW.md has the full account).
+        // `VK_KHR_dynamic_rendering_local_read` -- confirmed present on
+        // this same real GPU -- is the real, portable alternative:
+        // reading the destination pixel a preceding draw already wrote,
+        // via a real input attachment, computing the blend formula in
+        // the shader itself. Queried here, once, exactly like
+        // `debug_validation_available`'s own identical pattern for an
+        // optional instance layer/extension.
+        //
+        // SAFETY: `physical_device` was chosen above from this
+        // instance's own enumeration and is still valid; `None` queries
+        // every extension the base driver implementation exposes
+        // (rather than a specific layer's own).
+        let local_read_supported =
+            unsafe { instance.enumerate_device_extension_properties(physical_device) }
+                .unwrap_or_default()
+                .iter()
+                .any(|ext| {
+                    // SAFETY: `ext.extension_name` is a fixed-size buffer the
+                    // Vulkan implementation NUL-terminates.
+                    (unsafe { CStr::from_ptr(ext.extension_name.as_ptr()) })
+                        == ash::khr::dynamic_rendering_local_read::NAME
+                });
+
+        let mut device_extension_names: Vec<*const c_char> = REQUIRED_DEVICE_EXTENSIONS
             .iter()
             .map(|e| e.as_ptr())
             .collect();
+        if local_read_supported {
+            device_extension_names.push(ash::khr::dynamic_rendering_local_read::NAME.as_ptr());
+        }
 
         let mut dynamic_rendering_feature =
             vk::PhysicalDeviceDynamicRenderingFeatures::default().dynamic_rendering(true);
@@ -555,12 +613,24 @@ impl VulkanDevice {
                 .descriptor_binding_update_unused_while_pending(true)
                 .runtime_descriptor_array(true);
 
-        let device_create_info = vk::DeviceCreateInfo::default()
+        // Phase 10 Step 10.2.3: only chained in when `local_read_supported`
+        // is true above -- requesting a feature struct for an extension the
+        // device didn't advertise is invalid per the Vulkan spec, so this
+        // must stay conditional rather than always-on like the other
+        // features above (all of which are hard requirements).
+        let mut local_read_feature =
+            vk::PhysicalDeviceDynamicRenderingLocalReadFeaturesKHR::default()
+                .dynamic_rendering_local_read(true);
+
+        let mut device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_create_infos)
             .enabled_extension_names(&device_extension_names)
             .push_next(&mut dynamic_rendering_feature)
             .push_next(&mut descriptor_indexing_feature)
             .push_next(&mut separate_depth_stencil_layouts_feature);
+        if local_read_supported {
+            device_create_info = device_create_info.push_next(&mut local_read_feature);
+        }
 
         // SAFETY: `physical_device` was chosen above from this instance's
         // own enumeration, and `device_create_info`'s borrowed
@@ -812,6 +882,73 @@ impl VulkanDevice {
             );
         }
 
+        // Phase 10 Step 10.2.3: a SEPARATE descriptor set (set 1), never
+        // folded into the bindless set 0 above -- extending that set
+        // would require renumbering every other shader's bindings 1/2,
+        // since `VARIABLE_DESCRIPTOR_COUNT` must stay on the
+        // highest-numbered binding in a layout. Built once here (even
+        // though `local_read_supported` is checked first) purely so its
+        // handles exist as plain fields rather than needing a `Result`
+        // returned from inside the `local_read_supported`-guarded branch
+        // below -- nothing here is created unless that flag is `true`.
+        let blend_read = if local_read_supported {
+            let input_attachment_bindings = [vk::DescriptorSetLayoutBinding::default()
+                .binding(0)
+                .descriptor_type(vk::DescriptorType::INPUT_ATTACHMENT)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::FRAGMENT)];
+            // SAFETY: `device` is valid, and `input_attachment_bindings`
+            // is a local that outlives this call.
+            let descriptor_set_layout = unsafe {
+                device.create_descriptor_set_layout(
+                    &vk::DescriptorSetLayoutCreateInfo::default()
+                        .bindings(&input_attachment_bindings),
+                    None,
+                )
+            }
+            .map_err(|_| EngineError::DeviceLost)?;
+
+            let pool_sizes = [vk::DescriptorPoolSize::default()
+                .ty(vk::DescriptorType::INPUT_ATTACHMENT)
+                .descriptor_count(1)];
+            // SAFETY: `device` is valid, and `pool_sizes` is a local
+            // that outlives this call.
+            let descriptor_pool = unsafe {
+                device.create_descriptor_pool(
+                    &vk::DescriptorPoolCreateInfo::default()
+                        .max_sets(1)
+                        .pool_sizes(&pool_sizes),
+                    None,
+                )
+            }
+            .map_err(|_| EngineError::DeviceLost)?;
+
+            let set_layouts = [descriptor_set_layout];
+            // SAFETY: `device` is valid; `descriptor_pool` and
+            // `descriptor_set_layout` were both just created above on
+            // this same device, and `set_layouts` is a local that
+            // outlives this call. This descriptor is left unwritten
+            // here -- `begin_frame` writes it fresh every frame, before
+            // any draw could bind it, once a real color attachment view
+            // exists to point it at.
+            let descriptor_set = unsafe {
+                device.allocate_descriptor_sets(
+                    &vk::DescriptorSetAllocateInfo::default()
+                        .descriptor_pool(descriptor_pool)
+                        .set_layouts(&set_layouts),
+                )
+            }
+            .map_err(|_| EngineError::DeviceLost)?[0];
+
+            Some(BlendReadResources {
+                descriptor_set_layout,
+                descriptor_pool,
+                descriptor_set,
+            })
+        } else {
+            None
+        };
+
         // IMPLEMENTATION.md Step 2.3: the transient pool and the
         // deferred-release queue are constructed as locals first (not
         // directly inside the `Self { .. }` literal below) specifically so
@@ -857,6 +994,8 @@ impl VulkanDevice {
                 shape_style_buffer: Some(shape_style_buffer),
                 #[cfg(debug_assertions)]
                 debug_utils,
+                local_read_supported,
+                blend_read,
             },
             surface_loader,
             surface,
@@ -1068,6 +1207,177 @@ impl VulkanDevice {
             )
         }
         .map_err(|_| EngineError::PipelineCreationFailed)
+    }
+
+    /// Phase 10 Step 10.2.3's own two-set variant of
+    /// `create_universal_pipeline_layout`, for `PipelineKind::
+    /// FlatColorBlend` alone: the same bindless set 0 plus the new
+    /// `blend_read`'s input-attachment set 1, so a blend-mode fragment
+    /// shader can `subpassLoad` the destination pixel a preceding draw
+    /// already wrote. Callers must already know `local_read_blend_
+    /// supported()` is `true` -- see `create_blend_mode_pipeline`.
+    fn create_blend_pipeline_layout(&self) -> Result<vk::PipelineLayout, EngineError> {
+        let blend_read = self
+            .blend_read
+            .as_ref()
+            .expect("create_blend_pipeline_layout requires local_read_blend_supported()");
+        let set_layouts = [
+            self.bindless_descriptor_set_layout,
+            blend_read.descriptor_set_layout,
+        ];
+        // SAFETY: `self.device` is valid; `set_layouts` references this
+        // device's own `bindless_descriptor_set_layout` and `blend_read
+        // .descriptor_set_layout`, both created in `new` and still
+        // alive, and `set_layouts`/`push_constant_ranges`'s slice are
+        // local temporaries that outlive this call.
+        unsafe {
+            self.device.create_pipeline_layout(
+                &vk::PipelineLayoutCreateInfo::default()
+                    .set_layouts(&set_layouts)
+                    .push_constant_ranges(&[
+                        vk::PushConstantRange::default()
+                            .stage_flags(
+                                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                            )
+                            .offset(0)
+                            .size(12), // vec2 screen_size, uint blend_mode
+                    ]),
+                None,
+            )
+        }
+        .map_err(|_| EngineError::PipelineCreationFailed)
+    }
+
+    /// Phase 10 Step 10.2.3's dedicated pipeline-creation function for
+    /// `PipelineKind::FlatColorBlend` -- a near-duplicate of
+    /// `create_pipeline` (matching `create_blur_pipeline`'s own existing
+    /// precedent of a fully separate function rather than a shared
+    /// parameterized helper for a differently-blended pipeline), with
+    /// exactly two real differences: `blend_enable(false)` (the
+    /// fragment shader computes the fully-composited color itself via
+    /// `subpassLoad` and writes it directly, rather than letting fixed-
+    /// function hardware blending combine it with the destination), and
+    /// `create_blend_pipeline_layout` instead of `create_universal_
+    /// pipeline_layout` for the extra input-attachment set.
+    ///
+    /// # Panics
+    /// Panics if `local_read_blend_supported()` is `false` -- callers
+    /// must check that capability before ever calling this.
+    pub fn create_blend_mode_pipeline(
+        &self,
+        vertex_spv: &[u8],
+        fragment_spv: &[u8],
+        color_format: vk::Format,
+    ) -> Result<VulkanPipelineState, EngineError> {
+        assert!(
+            self.local_read_supported,
+            "create_blend_mode_pipeline requires local_read_blend_supported()"
+        );
+
+        let vertex_module = self.create_shader_module(vertex_spv)?;
+        let fragment_module = self.create_shader_module(fragment_spv)?;
+
+        let entry_point = c"main";
+        let stages = [
+            vk::PipelineShaderStageCreateInfo::default()
+                .stage(vk::ShaderStageFlags::VERTEX)
+                .module(vertex_module)
+                .name(entry_point),
+            vk::PipelineShaderStageCreateInfo::default()
+                .stage(vk::ShaderStageFlags::FRAGMENT)
+                .module(fragment_module)
+                .name(entry_point),
+        ];
+
+        let bindings = [ui_vertex_binding()];
+        let attribute_descriptions = ui_vertex_attributes();
+        let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
+            .vertex_binding_descriptions(&bindings)
+            .vertex_attribute_descriptions(&attribute_descriptions);
+
+        let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
+            .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+
+        let viewport_state = vk::PipelineViewportStateCreateInfo::default()
+            .viewport_count(1)
+            .scissor_count(1);
+
+        let rasterization = vk::PipelineRasterizationStateCreateInfo::default()
+            .polygon_mode(vk::PolygonMode::FILL)
+            .cull_mode(vk::CullModeFlags::NONE)
+            .line_width(1.0);
+        let multisample = vk::PipelineMultisampleStateCreateInfo::default()
+            .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+        let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
+            .depth_test_enable(false)
+            .depth_write_enable(false);
+
+        // `blend_enable(false)`: unlike every other pipeline in this
+        // codebase, the shader itself computes the fully-composited
+        // final color (via `subpassLoad` plus the blend formula) and
+        // writes it directly -- fixed-function hardware blending must
+        // stay off, or the hardware would blend this already-blended
+        // result AGAIN against the destination.
+        let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default()
+            .blend_enable(false)
+            .color_write_mask(vk::ColorComponentFlags::RGBA);
+        let attachments = [color_blend_attachment];
+        let color_blend =
+            vk::PipelineColorBlendStateCreateInfo::default().attachments(&attachments);
+
+        let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+        let dynamic_state =
+            vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
+
+        let layout = self.create_blend_pipeline_layout()?;
+
+        let color_formats = [color_format];
+        let mut rendering_info = vk::PipelineRenderingCreateInfo::default()
+            .color_attachment_formats(&color_formats)
+            .stencil_attachment_format(self.stencil_format);
+
+        let pipeline_create_info = vk::GraphicsPipelineCreateInfo::default()
+            .stages(&stages)
+            .vertex_input_state(&vertex_input)
+            .input_assembly_state(&input_assembly)
+            .viewport_state(&viewport_state)
+            .rasterization_state(&rasterization)
+            .multisample_state(&multisample)
+            .depth_stencil_state(&depth_stencil)
+            .color_blend_state(&color_blend)
+            .dynamic_state(&dynamic_state)
+            .layout(layout)
+            .push_next(&mut rendering_info);
+
+        // SAFETY: `self.device` is valid; `pipeline_create_info` and
+        // everything it borrows (`stages`, `vertex_input`, `attachments`
+        // via `color_blend`, `dynamic_states`, and `rendering_info` via
+        // `push_next`) are locals that outlive this call; `layout` was
+        // just created above on this same device, and
+        // `vk::PipelineCache::null()` is a valid null handle meaning "no
+        // cache".
+        let pipeline = unsafe {
+            self.device.create_graphics_pipelines(
+                vk::PipelineCache::null(),
+                &[pipeline_create_info],
+                None,
+            )
+        }
+        .map_err(|_| EngineError::PipelineCreationFailed)?[0];
+
+        // SAFETY: `vertex_module`/`fragment_module` were created by this
+        // same device above and are no longer needed once
+        // `create_graphics_pipelines` has consumed them into `pipeline`.
+        unsafe {
+            self.device.destroy_shader_module(vertex_module, None);
+            self.device.destroy_shader_module(fragment_module, None);
+        }
+
+        Ok(VulkanPipelineState {
+            pipeline,
+            layout,
+            device: self.device.clone(),
+        })
     }
 
     fn create_shader_module(&self, spv: &[u8]) -> Result<vk::ShaderModule, EngineError> {
@@ -1396,6 +1706,15 @@ impl Drop for VulkanDevice {
             self.device
                 .destroy_descriptor_set_layout(self.bindless_descriptor_set_layout, None);
             self.device.destroy_sampler(self.bindless_sampler, None);
+            // Phase 10 Step 10.2.3: destroying the pool frees
+            // `blend_read.descriptor_set` too, same reasoning as
+            // `bindless_descriptor_pool` above.
+            if let Some(blend_read) = &self.blend_read {
+                self.device
+                    .destroy_descriptor_pool(blend_read.descriptor_pool, None);
+                self.device
+                    .destroy_descriptor_set_layout(blend_read.descriptor_set_layout, None);
+            }
             self.device.destroy_fence(self.frame_sync.fence, None);
             self.device.destroy_command_pool(self.command_pool, None);
             if let Ok(pool) = self.upload_command_pool.lock() {
@@ -1500,6 +1819,10 @@ impl RhiDevice for VulkanDevice {
         self.shape_style_buffer
             .as_ref()
             .expect("shape_style_buffer is Some for the entire lifetime of a live VulkanDevice")
+    }
+
+    fn local_read_blend_supported(&self) -> bool {
+        self.local_read_supported
     }
 
     fn acquire_transient_target(
@@ -1747,11 +2070,45 @@ impl RhiDevice for VulkanDevice {
         let target_image = vk::Image::from_raw(image.target_image_handle);
         let (width, height) = swapchain.extent();
 
-        // Undefined -> COLOR_ATTACHMENT_OPTIMAL: dynamic rendering has no
+        // Phase 10 Step 10.2.3: when this device supports it, the
+        // swapchain's color attachment lives in `RENDERING_LOCAL_READ_KHR`
+        // for the whole frame instead of the ordinary
+        // `COLOR_ATTACHMENT_OPTIMAL` -- a layout usable for a color
+        // attachment AND an input attachment simultaneously, so a later
+        // `PipelineKind::FlatColorBlend` draw's `subpassLoad` can read
+        // back whatever an earlier draw in this same frame already wrote,
+        // with no extra layout transitions between ordinary and
+        // blend-mode draws. Every ordinary (non-blend) draw this frame
+        // still writes through it exactly as before -- this layout has no
+        // effect on a shader that never reads the new input attachment.
+        // Out of scope for this pass: a layer's own render-to-texture
+        // target (`begin_render_to_texture`) always stays in
+        // `COLOR_ATTACHMENT_OPTIMAL` and never gets its own input-
+        // attachment descriptor written -- `PipelineKind::FlatColorBlend`
+        // is only correct against the swapchain target set up here, not
+        // while a `PushLayer` is active (see `insert_blend_read_barrier`'s
+        // own doc comment).
+        //
+        // Also requires `swapchain.supports_local_read_input_attachment()`
+        // -- a real windowed swapchain's images might not support
+        // `INPUT_ATTACHMENT` usage even when the device extension itself
+        // is present (see that method's own doc comment); every real GPU
+        // demo in this codebase uses `HeadlessSwapchain`, which always
+        // returns `true` here, so this can only ever fail closed for a
+        // windowed surface, never change behavior for an existing demo.
+        let local_read_active =
+            self.local_read_supported && swapchain.supports_local_read_input_attachment();
+        let color_attachment_layout = if local_read_active {
+            vk::ImageLayout::RENDERING_LOCAL_READ_KHR
+        } else {
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+        };
+
+        // Undefined -> `color_attachment_layout`: dynamic rendering has no
         // render pass to do this transition implicitly.
         let barrier = vk::ImageMemoryBarrier::default()
             .old_layout(vk::ImageLayout::UNDEFINED)
-            .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .new_layout(color_attachment_layout)
             .src_access_mask(vk::AccessFlags::empty())
             .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
             .image(target_image)
@@ -1812,7 +2169,7 @@ impl RhiDevice for VulkanDevice {
 
         let color_attachment = vk::RenderingAttachmentInfo::default()
             .image_view(target_view)
-            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .image_layout(color_attachment_layout)
             .load_op(vk::AttachmentLoadOp::CLEAR)
             .store_op(vk::AttachmentStoreOp::STORE)
             .clear_value(vk::ClearValue {
@@ -1875,6 +2232,42 @@ impl RhiDevice for VulkanDevice {
             );
         }
 
+        // Phase 10 Step 10.2.3: the input-attachment descriptor is
+        // rewritten every frame (not just once) to point at THIS frame's
+        // real color attachment view -- safe to do unconditionally here,
+        // with no extra synchronization, because the fence wait at the
+        // very top of `begin_frame` already guarantees the GPU is done
+        // with whatever the prior frame bound it to (the single-frame-
+        // in-flight model this whole device is built around). Gated on
+        // `local_read_active`, not just `self.blend_read.is_some()`, so a
+        // windowed swapchain whose surface doesn't support `INPUT_
+        // ATTACHMENT` usage never gets a descriptor pointed at an image
+        // that wasn't created with that usage flag.
+        if local_read_active {
+            if let Some(blend_read) = &self.blend_read {
+                let image_info = vk::DescriptorImageInfo::default()
+                    .image_view(target_view)
+                    .image_layout(color_attachment_layout);
+                // SAFETY: `self.device` is valid; `blend_read.
+                // descriptor_set` was allocated in `new` from a layout
+                // with exactly one `INPUT_ATTACHMENT` binding at 0;
+                // `image_info` (referencing `target_view`, this frame's
+                // own acquired image view) is a local that outlives this
+                // call.
+                unsafe {
+                    self.device.update_descriptor_sets(
+                        &[vk::WriteDescriptorSet::default()
+                            .dst_set(blend_read.descriptor_set)
+                            .dst_binding(0)
+                            .dst_array_element(0)
+                            .descriptor_type(vk::DescriptorType::INPUT_ATTACHMENT)
+                            .image_info(std::slice::from_ref(&image_info))],
+                        &[],
+                    );
+                }
+            }
+        }
+
         Ok((
             Box::new(VulkanCommandBuffer {
                 device: self.device.clone(),
@@ -1894,6 +2287,12 @@ impl RhiDevice for VulkanDevice {
                 swapchain_stencil_view: stencil_view,
                 swapchain_width: width,
                 swapchain_height: height,
+                swapchain_color_layout: color_attachment_layout,
+                blend_input_descriptor_set: if local_read_active {
+                    self.blend_read.as_ref().map(|b| b.descriptor_set)
+                } else {
+                    None
+                },
             }),
             image,
         ))
@@ -1908,8 +2307,18 @@ impl RhiDevice for VulkanDevice {
         let raw_cmd = vk::CommandBuffer::from_raw(cmd_buffer.raw_handle());
         let target_image = vk::Image::from_raw(image.target_image_handle);
 
+        // Must match whatever layout `begin_frame` transitioned this same
+        // image into -- `RENDERING_LOCAL_READ_KHR` when this device AND
+        // this swapchain both support it, `COLOR_ATTACHMENT_OPTIMAL`
+        // otherwise (see `begin_frame`'s own `local_read_active`).
+        let old_layout =
+            if self.local_read_supported && swapchain.supports_local_read_input_attachment() {
+                vk::ImageLayout::RENDERING_LOCAL_READ_KHR
+            } else {
+                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+            };
         let barrier = vk::ImageMemoryBarrier::default()
-            .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .old_layout(old_layout)
             .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
             .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
             .dst_access_mask(vk::AccessFlags::empty())
@@ -2024,6 +2433,10 @@ pub struct VulkanSwapchain {
     render_finished_semaphores: Vec<vk::Semaphore>,
     device: ash::Device,
     present_queue: vk::Queue,
+    /// See `RhiSwapchain::supports_local_read_input_attachment`'s own doc
+    /// comment -- queried once above, against this real surface's own
+    /// `VkSurfaceCapabilitiesKHR::supportedUsageFlags`.
+    supports_local_read_input_attachment: bool,
 }
 
 impl VulkanSwapchain {
@@ -2092,6 +2505,22 @@ impl VulkanSwapchain {
 
         let extent = vk::Extent2D { width, height };
 
+        // Phase 10 Step 10.2.3: unlike a manually allocated image (e.g.
+        // `HeadlessSwapchain`'s own, which always safely declares
+        // `INPUT_ATTACHMENT_BIT`), a presentable surface's own supported
+        // usage flags are platform/driver-defined -- `vkCreateSwapchainKHR`
+        // requires `imageUsage` be a subset of `capabilities.
+        // supportedUsageFlags`, so this is queried for real, not assumed.
+        // See `RhiSwapchain::supports_local_read_input_attachment`'s own
+        // doc comment for how `VulkanDevice::begin_frame` uses this.
+        let supports_local_read_input_attachment = capabilities
+            .supported_usage_flags
+            .contains(vk::ImageUsageFlags::INPUT_ATTACHMENT);
+        let mut image_usage = vk::ImageUsageFlags::COLOR_ATTACHMENT;
+        if supports_local_read_input_attachment {
+            image_usage |= vk::ImageUsageFlags::INPUT_ATTACHMENT;
+        }
+
         let swapchain_loader = ash::khr::swapchain::Device::new(&device.instance, &device.device);
         // SAFETY: `device.instance`/`device.device` (backing
         // `swapchain_loader`) are valid, `surface` is the same live
@@ -2108,7 +2537,7 @@ impl VulkanSwapchain {
                     .image_color_space(surface_format.color_space)
                     .image_extent(extent)
                     .image_array_layers(1)
-                    .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+                    .image_usage(image_usage)
                     .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
                     .pre_transform(capabilities.current_transform)
                     .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
@@ -2239,6 +2668,7 @@ impl VulkanSwapchain {
             render_finished_semaphores,
             device: device.device.clone(),
             present_queue: device.graphics_queue(),
+            supports_local_read_input_attachment,
         })
     }
 
@@ -2258,6 +2688,10 @@ impl RhiSwapchain for VulkanSwapchain {
 
     fn stencil_image_handle(&self) -> u64 {
         self.stencil_image.as_raw()
+    }
+
+    fn supports_local_read_input_attachment(&self) -> bool {
+        self.supports_local_read_input_attachment
     }
 
     fn acquire_next_image(&self) -> Result<AcquiredImage, EngineError> {
@@ -2848,6 +3282,27 @@ pub struct VulkanCommandBuffer {
     /// fields, which never change once `begin_frame` sets them.
     swapchain_width: u32,
     swapchain_height: u32,
+    /// Phase 10 Step 10.2.3: the layout `VulkanDevice::begin_frame`
+    /// actually transitioned `swapchain_color_view` into this frame --
+    /// `RENDERING_LOCAL_READ_KHR` when `local_read_active` was true,
+    /// `COLOR_ATTACHMENT_OPTIMAL` otherwise. `resume_swapchain_rendering`
+    /// must declare this SAME layout (not hardcode `COLOR_ATTACHMENT_
+    /// OPTIMAL`) when re-beginning rendering into the swapchain after a
+    /// `PushLayer`/`PopLayer` redirect -- a real regression this step's
+    /// own first full demo regression sweep caught: `vkCmdBeginRendering`
+    /// validation fails outright if the declared `imageLayout` doesn't
+    /// match the image's actual current layout, since nothing transitions
+    /// the swapchain image back to `COLOR_ATTACHMENT_OPTIMAL` in between
+    /// (`begin_render_to_texture`/`end_render_to_texture` only ever touch
+    /// a *texture's* own image, never the swapchain's).
+    swapchain_color_layout: vk::ImageLayout,
+    /// `VulkanDevice::blend_read`'s descriptor set, copied in at
+    /// construction (`VulkanDevice::begin_frame`) for the same reason
+    /// `bindless_descriptor_set` above is -- `insert_blend_read_barrier`
+    /// needs to bind it directly, with no way back to a `VulkanDevice`
+    /// through this struct's `RhiCommandBuffer` trait methods. `None`
+    /// when `local_read_blend_supported()` is `false`.
+    blend_input_descriptor_set: Option<vk::DescriptorSet>,
 }
 
 impl RhiCommandBuffer for VulkanCommandBuffer {
@@ -3001,6 +3456,77 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
                 start_index,
                 base_vertex,
                 0,
+            );
+        }
+    }
+
+    /// Phase 10 Step 10.2.3: called before every `PipelineKind::
+    /// FlatColorBlend` draw (`execute_frame`'s own special case), never
+    /// once per frame -- each such draw must see whatever the LATEST
+    /// framebuffer state is, including ordinary draws that ran since the
+    /// last blend-mode draw. Inserts the by-region barrier the spec
+    /// requires between a color-attachment WRITE and a later input-
+    /// attachment READ of the same pixels, then binds set 1 (the
+    /// input-attachment descriptor `VulkanDevice::begin_frame` rewrote
+    /// this frame) against `self.pipeline_layout` -- safe to bind here,
+    /// immediately after `set_pipeline`, since `execute_frame` always
+    /// calls `set_pipeline` with the `FlatColorBlend` pipeline (whose
+    /// layout is `create_blend_pipeline_layout`'s own two-set layout)
+    /// right before this.
+    ///
+    /// Classic (non-`_2`) `vkCmdPipelineBarrier`, not `VK_KHR_
+    /// synchronization2`'s `vkCmdPipelineBarrier2`: `INPUT_ATTACHMENT_
+    /// READ`/`BY_REGION` are both core (non-KHR) enum values, so nothing
+    /// here needed that extension as a new dependency.
+    ///
+    /// Out of scope for this pass: only correct when the active render
+    /// target is the swapchain/headless attachment `begin_frame` set up
+    /// -- a `PushLayer` render-to-texture target never gets its own
+    /// `RENDERING_LOCAL_READ_KHR` layout or input-attachment descriptor
+    /// write, so a `FlatColorBlend` draw issued while one is active would
+    /// bind this same (stale, swapchain-pointing) descriptor set instead
+    /// of the layer's own texture.
+    ///
+    /// # Panics
+    /// Panics if called with no pipeline yet bound, or on a device
+    /// without `local_read_blend_supported()` -- both are caller
+    /// contract violations: `execute_frame` only calls this immediately
+    /// after `set_pipeline` for a `FlatColorBlend` draw, and `shapes.rs`
+    /// never dispatches to that pipeline kind unless the capability was
+    /// already checked.
+    fn insert_blend_read_barrier(&mut self) {
+        let barrier = vk::MemoryBarrier::default()
+            .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+            .dst_access_mask(vk::AccessFlags::INPUT_ATTACHMENT_READ);
+        let descriptor_set = self
+            .blend_input_descriptor_set
+            .expect("insert_blend_read_barrier requires local_read_blend_supported()");
+        let layout = self
+            .pipeline_layout
+            .expect("set_pipeline must be called before insert_blend_read_barrier");
+        // SAFETY: `self.command_buffer` is recording; `descriptor_set`
+        // was allocated by this same device in `VulkanDevice::new` and
+        // rewritten fresh this frame in `begin_frame`; `layout` is the
+        // `FlatColorBlend` pipeline's own two-set layout, whose set 1
+        // matches `descriptor_set`'s own layout exactly
+        // (`create_blend_pipeline_layout`).
+        unsafe {
+            self.device.cmd_pipeline_barrier(
+                self.command_buffer,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::DependencyFlags::BY_REGION,
+                &[barrier],
+                &[],
+                &[],
+            );
+            self.device.cmd_bind_descriptor_sets(
+                self.command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                layout,
+                1,
+                &[descriptor_set],
+                &[],
             );
         }
     }
@@ -3267,7 +3793,7 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
     fn resume_swapchain_rendering(&mut self) {
         let color_attachment = vk::RenderingAttachmentInfo::default()
             .image_view(self.swapchain_color_view)
-            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .image_layout(self.swapchain_color_layout)
             // LOAD, not CLEAR: whatever was already drawn into the
             // swapchain before the redirect (plus `begin_frame`'s own
             // initial clear) must be preserved, not erased.
@@ -3295,11 +3821,12 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
         // scope currently active (the last `end_render_to_texture` call
         // ended one); `self.swapchain_color_view`/`swapchain_stencil_view`
         // are the same views `VulkanDevice::begin_frame` already
-        // transitioned to `COLOR_ATTACHMENT_OPTIMAL`/`STENCIL_ATTACHMENT_
-        // OPTIMAL` this frame, and nothing since has changed either
-        // layout (`begin_render_to_texture`/`end_render_to_texture` only
-        // ever touch a *texture's* own image, never the swapchain's), so
-        // no barrier is needed here -- only ending/beginning is. Viewport
+        // transitioned to `self.swapchain_color_layout`/
+        // `STENCIL_ATTACHMENT_OPTIMAL` this frame, and nothing since has
+        // changed either layout (`begin_render_to_texture`/`end_render_
+        // to_texture` only ever touch a *texture's* own image, never the
+        // swapchain's), so no barrier is needed here -- only ending/
+        // beginning is. Viewport
         // and scissor are separate, persistent command-buffer state --
         // `cmd_begin_rendering` does not reset them on its own -- so both
         // must be explicitly restored to the swapchain's own real extent

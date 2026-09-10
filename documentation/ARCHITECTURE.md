@@ -893,16 +893,40 @@ pub struct ShapeRegistry {
     pipeline directly -- no new shader, since sampling a texture is not
     new math the way gradient evaluation was -- with real per-vertex UVs
     from a new `bounding_box_uvs` helper. **Non-`Normal` `BlendMode`:
-    still not built.** **The ellipse SDF's disclosed scaled-circle
+    fully real too (Step 10.2.3, 2026-09-09), for `Polygon`/`Path` solid
+    fill.** `PLAN.md`'s original primary path, `VK_EXT_blend_operation_
+    advanced` (mapping each blend mode directly onto a hardware
+    `VkBlendOp`), turned out NOT to be implemented by RADV, this
+    project's own real dev GPU/driver -- confirmed via direct
+    `vulkaninfo` inspection and independently corroborated via Mesa's
+    own release notes (REVIEW.md has the full account). The real,
+    portable alternative actually built: `VK_KHR_dynamic_rendering_
+    local_read`, confirmed present on this same real GPU. A new
+    `PipelineKind::FlatColorBlend` pipeline (`flat_color_blend.frag`)
+    reads the destination pixel a preceding draw already wrote via a
+    real `VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT` descriptor and GLSL
+    `subpassLoad`, computes the requested W3C blend formula
+    (`Multiply`/`Screen`/`Overlay`/`SoftLight`/`ColorDodge`) itself, and
+    writes the fully-composited result directly with hardware blending
+    disabled. Gated behind a real, disclosed device-level capability
+    query (`RhiDevice::local_read_blend_supported`) AND, for a windowed
+    swapchain specifically, a real per-swapchain capability query
+    (`RhiSwapchain::supports_local_read_input_attachment`, since a
+    presentable surface's supported usage flags aren't spec-guaranteed
+    to include `INPUT_ATTACHMENT` the way a manually allocated headless
+    image's always safely can) -- unsupported hardware falls back to
+    plain `FlatColor` (`Normal` blending). Scoped, disclosed narrowing
+    for this pass: `Polygon`/`Path` solid fill only (not `Rectangle`/
+    `Circle`, not gradient/texture fill), opaque source AND destination
+    only (both alphas assumed 1 -- a shape drawn under active `Canvas`
+    opacity does not get that opacity correctly applied to a blend-mode
+    fill), and only correct against the swapchain/headless attachment
+    `begin_frame` sets up (not while a `PushLayer` render-to-texture
+    target is active). **The ellipse SDF's disclosed scaled-circle
     approximation, `corner_smoothing`'s unverified squircle match, and
     rounded stroke caps on a partial-arc `Circle`: all still real,
-    disclosed gaps.** The remaining four are planned, in dependency
-    order, as Steps 10.2.3-10.2.6 (`PLAN.md`, 2026-09-09) --
-    including a real, researched correction to the original "non-`Normal`
-    blend needs framebuffer-read" assumption above: `VK_EXT_blend_
-    operation_advanced` maps these blend modes directly onto hardware
-    `VkBlendOp` values, no framebuffer read needed, if the extension is
-    present (verified via real device-capability query, not assumed).
+    disclosed gaps.** The remaining three are planned, in dependency
+    order, as Steps 10.2.4-10.2.6 (`PLAN.md`, 2026-09-09).
   - **Hit-testing is real for all four shape kinds**
     (`ShapeRegistry::hit_test`) -- the actual concrete need
     `hit_testable` (present since Step 10.1, read by nothing until now)

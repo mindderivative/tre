@@ -7,6 +7,8 @@ Status: **All findings implemented.** See "Follow-up: Rust/Python Language Migra
 
 **Extending the index above (REVIEW.md finding #145: the paragraph above had gone stale, silently omitting the most consequential unresolved content in this document).** "Phase 5 Step 5.1.2 Implementation," "Phase 5 Step 5.1.3 Implementation," "Phase 5 Step 5.2.1 Implementation," "Phase 5 Step 5.2.2 Implementation," and "Phase 5 Step 5.2.3 Implementation" (2026-09-07) are also complete, below — no numbered findings in 5.1.2/5.2.1/5.2.2 (each states so directly); 5.1.3 fixed and re-verified real bugs in its own demo assertions; 5.2.3's own capstone found and fixed two real bugs during development, both documented in that section. "Phase 5 Step 5.3.1 Implementation" and "Phase 5 Step 5.3.2 Implementation" (2026-09-07/08) are also complete, below — see those sections for disposition. **"Phase 5 Step 5.3.3 Implementation" and "Phase 5 Step 5.3.3 CI Verification" (2026-09-08) are NOT complete — Step 5.3 stays open.** The capstone demo's own code and logic are real, verified live on a real desktop session, and found/fixed two real bugs along the way (a role-mapping regression, a `thread::scope` panic-hang) — but CI's own `accessibility-validation` job does not pass, and a nineteen-real-push investigation (recorded in full below, ending at "STOPPING POINT (nineteenth push...)") found the real, precise root cause (a D-Bus proxy built against the session bus instead of the a11y bus) and paused there, unfixed, at the user's own explicit instruction. Two earlier, now-superseded diagnoses in this same investigation were each found and explicitly disproven before the real cause was located — read the CI Verification section in full for that history, not just its ending. "Phase 6 Step 6.1 Implementation," "Phase 6 Step 6.4.1 Implementation," and "Phase 6 Step 6.4.2 Implementation" (2026-09-08) are also complete, below, with findings #127-129 fixed and re-verified in each. **Phase 6 Step 6.5 (the Phase 6 closing capstone) has no REVIEW.md section of its own at all** — a real gap in this document's own indexing discipline, found only during the Phase 1-8 Comprehensive Review below (finding #147); IMPLEMENTATION.md's own Step 6.5 write-up states "No bugs found — passed on its first real run," so nothing was ever lost, only never indexed here. **"Phase 7 Step 7.2.1 Investigation" (2026-09-08) is STOPPED, unfixed, and Step 7.2 stays open.** Finding #130 records a real Dual-Kawase blur RHI bug (sampling a bindless texture while the render target is offscreen reads back all-zero) with twelve independent hypotheses tested and ruled out; one real, independently-correct fix (`begin_render_to_texture_no_end`, closing a genuine double-`cmd_end_rendering` bug found along the way) is kept, but the sampling failure itself remains unresolved. **Phase 8 (Steps 8.1.1 and 8.1.2) is also complete, but — like Phase 6 Step 6.5 — has no REVIEW.md section of its own** (finding #147); both real gaps IMPLEMENTATION.md's own Step 8.1.2 write-up describes (`execute_frame`'s hardcoded zero buffer offset; the atlas owner's no-live-peek limitation) are recorded properly there, just never indexed here until now. **"Phase 1-8 Comprehensive Review" (2026-09-08), below, is the newest section** — a second full six-dimension, twice-checked (independent Find + adversarial Verify) audit, this time across everything built through Phase 8, requested once the project owner wanted a second pass while an external review of the Step 7.2.1 blocker ran in parallel. All 21 findings (#131-151) were independently confirmed (several strengthened, not merely rubber-stamped, by their verifier); the fully-triaged disposition (which were fixed directly vs. left as disclosed gaps, and why) is recorded in that section's own summary table. **"Phase 9 Step 9.1 Implementation" (2026-09-09) is also complete, below** — real pre-work investigation found two of the step's own task-list premises no longer matched the real codebase (findings #154-155: a documented-but-never-built radix sort, and a documented-but-never-built atlas-exhaustion placeholder-glyph fallback), both resolved by building the real missing primitive (radix sort) or correcting the documentation to match reality (atlas fallback), each confirmed with the project owner via `AskUserQuestion` before any code was written. "Phase 9 Step 9.2 Implementation" (2026-09-09) is also complete, below — a real zero-allocation guard (`tre_memory::DebugAllocGuard`/`RenderTickGuard`) found and fixed a real per-frame allocation bug (finding #157) and disclosed two more real gaps left unfixed (#156, #158), plus a criterion perf-budget gate deliberately left red on a real, honestly-measured gap (#159). "Phase 10 Step 10.1 Implementation" (2026-09-09) is also complete, below — real Rectangle-only shape-primitive rendering, with one real discrepancy found and corrected during implementation (finding #161: `Path` fill needs new geometry work, not a wiring task). **"Phase 10 Step 10.2 Implementation" (2026-09-09), below, is the newest section** — full shape rendering support (non-uniform corners/borders/smoothing on `Rectangle`, real `Circle`/`Ellipse`, `Polygon` fill, real Bezier-flattening for `Path`, and real hit-testing for all four shape kinds). Finding #162 is a real GPU bug (a subnormal-float style-buffer index silently flushed to zero by real hardware) found by observing wrong pixels and fixed; #163 and #164 are disclosed-not-fixed gaps (`Path` fill blocked by a real circular-crate-dependency constraint; a pre-existing, newly-exposed non-premultiplied-alpha gap in the Phase-0-era `walking_skeleton.frag` shader).
 
+**Further extending the index (2026-09-09).** "Phase 10 Step 10.2 Follow-up: `lyon` Migration," "Phase 10 Step 10.2 Completion Roadmap," "Phase 10 Step 10.2.1 Implementation," and "Phase 10 Step 10.2.2 Implementation" are also complete, below — see each section's own summary table for disposition (findings #165, #166 [decisions], #167 [fixed same-day], #168-169 [decisions]). **"Phase 10 Step 10.2.3 Implementation" (2026-09-09), below, is the newest section** — real non-`Normal` `BlendMode` rendering for `Polygon`/`Path` solid fill. Finding #170 is a plan-invalidating discovery, not a bug: `VK_EXT_blend_operation_advanced` (this project's own written primary path, and finding #166's own prior conclusion) is not implemented by RADV, this project's own real dev GPU/driver — confirmed via `vulkaninfo` and independently corroborated via Mesa's own release notes — so the step pivoted to the real, portable `VK_KHR_dynamic_rendering_local_read` alternative, at the user's own explicit direction, rather than the originally-planned hardware `VkBlendOp` path. Findings #171-172 are two real regressions this step's own first full GPU demo-regression sweep caught (a windowed swapchain's surface not being guaranteed to support `INPUT_ATTACHMENT` usage; `resume_swapchain_rendering`'s hardcoded stale layout breaking every `PushLayer`/`PopLayer` demo) — both fixed same-day and re-verified.
+
 ---
 
 ## How to read this
@@ -2503,3 +2505,127 @@ consolidation.
 |---|----------|--------|-------------------|
 | 168 | Decision | Resolved | Polygon/Path texture fill reuses the existing TexturedQuad/bindless_textured.frag pipeline directly instead of extending GradientFill, avoiding all new shader/pipeline/descriptor work for this shape-kind pair |
 | 169 | Decision | Resolved | Bundled fill_kind/gradient_word_index/texture_index into one new StyleFill value for draw_styled_rectangle/draw_ellipse, avoiding a third trailing u32 parameter and future growth |
+
+## Phase 10 Step 10.2.3 Implementation (2026-09-09)
+
+### 170. [Decision] `VK_EXT_blend_operation_advanced`, this project's own written primary path for non-`Normal` `BlendMode` rendering, is not implemented by RADV -- pivoted to the real `VK_KHR_dynamic_rendering_local_read` alternative, at the user's explicit direction
+Finding #166 (Phase 10 Step 10.2 Completion Roadmap) had already recorded
+a "correction" to this project's own original blend-mode assumption,
+concluding `VK_EXT_blend_operation_advanced` needed no framebuffer read
+at all -- a real device-capability query would confirm it, not assumed.
+That query, run for real at the start of this step, returned `false`:
+direct `vulkaninfo` inspection of this project's own real dev GPU (AMD
+Radeon 890M, Mesa 26.2.2-arch3.2, RADV driver) shows the extension
+simply absent from the device's advertised extension list.
+Independently corroborated via Mesa's own release notes (not a one-off
+local misconfiguration) before treating it as settled. `PLAN.md`'s
+entire primary path for this step was therefore invalidated before any
+implementation code was written -- a direct conflict with this
+project's standing "real code, real GPU demos as the correctness
+oracle" discipline, since that path could never be exercised by a real
+GPU demo on this project's own hardware.
+
+Surfaced to the user as a genuine three-way fork via `AskUserQuestion`
+(build the real `VK_KHR_dynamic_rendering_local_read` framebuffer-read
+path; ship only the capability-gated `Normal`-blending fallback; build
+both). The user's first response was a genuine clarifying question, not
+a selection ("is there an external package that would save time?") --
+researched honestly rather than guessed at: no relevant blend-mode
+shader crate exists in the Rust ecosystem, and `vk-sync-fork` (a real
+candidate for Vulkan barrier ergonomics) predates the new
+`VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR` layout and would be
+inconsistent with this codebase's own 100%-hand-rolled-via-`ash`
+barrier convention. Re-presented the same three options after reporting
+that research; the user's final, explicit direction: "use the
+alternative, it sounds like the designed way to do it,
+VK_KHR_dynamic_rendering_local_read" -- build ONLY the real
+framebuffer-read path, no dual-path, no fallback-only shortcut.
+
+`VK_KHR_dynamic_rendering_local_read` -- confirmed present on this same
+real GPU via `vulkaninfo` -- is real, portable, and fully implemented in
+this step (see IMPLEMENTATION.md's own Step 10.2.3 write-up for the
+complete technical account: the new descriptor set/pipeline layout,
+`RENDERING_LOCAL_READ_KHR` layout, by-region barrier, and
+`flat_color_blend.frag`'s own W3C blend-formula math). `PLAN.md`'s own
+text, and finding #166's now-superseded conclusion, are left as the
+historical record of the original, reasonable-at-the-time plan.
+
+### 171. [Fixed same-day] A real windowed swapchain's presentable surface is not spec-guaranteed to support `INPUT_ATTACHMENT` usage the way a manually allocated headless image's always safely can
+`HeadlessSwapchain`'s color image is allocated directly via
+`vkCreateImage` (a `VulkanDevice`-owned, general-purpose image), so
+declaring `VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT` on it is always valid --
+a core Vulkan 1.0 flag with no capability query needed. `VulkanSwapchain`'s
+images instead come from `vkCreateSwapchainKHR` against a real
+presentable surface, whose `imageUsage` must be a subset of that
+surface's own `VkSurfaceCapabilitiesKHR::supportedUsageFlags` --
+`INPUT_ATTACHMENT` support there is real, driver/platform-defined
+behavior, not a spec guarantee, unlike `HeadlessSwapchain`'s case.
+
+Caught by this step's own real GPU demo-regression sweep, not reasoned
+out in advance: `local_read_supported` (the device-level capability
+flag `begin_frame` originally gated `RENDERING_LOCAL_READ_KHR` on) is
+`true` on this project's own real dev GPU/driver regardless of which
+swapchain is in use -- meaning every windowed demo (`walking_skeleton`,
+`multi_window`, `input_demo`, `main_loop_demo`) would have silently
+started requesting a layout the windowed swapchain's own images were
+never created to support, a real correctness risk (validation error, or
+driver-defined behavior) that had nothing to do with those demos'
+own actual behavior. Fixed by querying `capabilities.
+supported_usage_flags` for real in `VulkanSwapchain::new` (the same
+"query, don't assume" discipline `local_read_supported` itself already
+established) and exposing the result via a new `RhiSwapchain::
+supports_local_read_input_attachment` trait method; `begin_frame`/
+`submit_and_present` now require BOTH the device-level AND this
+swapchain-level query before choosing `RENDERING_LOCAL_READ_KHR`,
+failing closed to ordinary `COLOR_ATTACHMENT_OPTIMAL` (blend modes then
+unavailable on that specific window, exactly as if the device itself
+lacked the capability) rather than risking a validation error.
+
+**Verified.** All four windowed demos re-run directly against this
+machine's real X11 session (`xvfb-run` unavailable locally) and confirmed
+passing, both before this fix was needed to be checked for (they never
+actually failed, since `VulkanSwapchain::new`'s query happens to return
+`true` on this project's own real surface) and after, proving the new
+code path is at minimum inert on real hardware that does support the
+flag.
+
+### 172. [Fixed same-day] `resume_swapchain_rendering` hardcoded `COLOR_ATTACHMENT_OPTIMAL`, but `begin_frame` had already moved the swapchain image to `RENDERING_LOCAL_READ_KHR`
+A second real regression the same demo-regression sweep caught, distinct
+from #171: every demo exercising a `PushLayer`/`PopLayer` redirect
+(`render_to_texture_demo`, `canvas_layer_composite_demo`,
+`layer_oversize_regression_demo`, `layer_blur_demo`,
+`canvas_combined_scene_demo`, `dual_kawase_nonbindless_experiment`,
+`dual_kawase_blur_demo`) crashed outright with a real Vulkan validation
+error and a core dump:
+
+```
+vkCmdBeginRenderingKHR(): pRenderingInfo->pColorAttachments[0] ... is
+expected to have layout VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL but
+previous known layout is VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ.
+```
+
+`VulkanCommandBuffer::resume_swapchain_rendering` (re-begins rendering
+into the swapchain after one or more `begin_render_to_texture`/
+`end_render_to_texture` pairs redirected rendering to a layer's own
+texture) hardcoded `vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL` in its own
+`RenderingAttachmentInfo`, written before this step under the
+correct-at-the-time assumption that `begin_frame` always left the
+swapchain image in exactly that layout. This step's own `begin_frame`
+change (using `RENDERING_LOCAL_READ_KHR` instead, when supported) broke
+that assumption, and nothing in between (`begin_render_to_texture`/
+`end_render_to_texture` only ever touch a *texture's* own image, never
+the swapchain's) transitions the swapchain image back. Fixed by stashing
+the real layout `begin_frame` actually chose on a new `VulkanCommandBuffer`
+field (`swapchain_color_layout`) and having `resume_swapchain_rendering`
+declare that same layout instead of a hardcoded constant.
+
+**Verified.** All seven previously-crashing demos re-run and confirmed
+passing after the fix, with no change to any other demo's output.
+
+## Summary table (Phase 10 Step 10.2.3 Implementation)
+
+| # | Severity | Status | One-line summary |
+|---|----------|--------|-------------------|
+| 170 | Decision | Resolved | VK_EXT_blend_operation_advanced is not implemented by RADV (this project's own real dev GPU); pivoted to the real VK_KHR_dynamic_rendering_local_read framebuffer-read path at the user's explicit direction |
+| 171 | Fixed | Resolved | A windowed swapchain's surface isn't spec-guaranteed to support INPUT_ATTACHMENT usage the way a manually allocated headless image's always safely can -- added a real per-swapchain capability query (RhiSwapchain::supports_local_read_input_attachment) alongside the device-level one |
+| 172 | Fixed | Resolved | resume_swapchain_rendering hardcoded COLOR_ATTACHMENT_OPTIMAL after begin_frame had moved the swapchain image to RENDERING_LOCAL_READ_KHR, crashing every PushLayer/PopLayer demo with a real validation error -- fixed by stashing and reusing the real layout |

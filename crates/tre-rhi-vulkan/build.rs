@@ -129,4 +129,14 @@ fn main() {
         "fullscreen_quad_nonbindless.vert.spv",
         &out_dir,
     );
+    // Phase 10 Step 10.2.3: the real non-`Normal` `BlendMode` shader
+    // (`VK_KHR_dynamic_rendering_local_read`'s `subpassLoad` path).
+    // Deliberately paired at pipeline-creation time with the EXISTING
+    // `walking_skeleton.vert` (see `flat_color_blend.frag`'s own doc
+    // comment for why) -- no new vertex shader compiled here.
+    compile_shader(
+        "shaders/flat_color_blend.frag",
+        "flat_color_blend.frag.spv",
+        &out_dir,
+    );
 }

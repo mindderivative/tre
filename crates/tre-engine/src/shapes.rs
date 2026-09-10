@@ -83,8 +83,11 @@ impl Default for Transform2D {
 
 /// TECHNICAL.md Section 3.4/DESIGN.md Section 6.2's own "Visual Filter
 /// Pipeline" concept, concretized as the enum a shape's `blend_mode`
-/// field holds. **No rendering support exists for any non-`Normal`
-/// variant** -- see this module's own top-level doc comment.
+/// field holds. **Real for `Polygon`/`Path` solid fill** (Phase 10 Step
+/// 10.2.3), gated behind `RhiDevice::local_read_blend_supported` --
+/// falls back to `Normal` on hardware without it, never a silent wrong
+/// render. `Rectangle`/`Circle` and non-solid fills don't read this
+/// field yet; see this module's own top-level doc comment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BlendMode {
     #[default]
@@ -1279,6 +1282,13 @@ fn bounding_box_uvs(positions: &[Vec2]) -> Vec<Vec2> {
         .collect()
 }
 
+/// `blend_mode` (Phase 10 Step 10.2.3) is honored only for
+/// `FillStyle::Solid` -- gradient/texture fill under a non-`Normal`
+/// blend mode is real, separate, not-yet-scheduled follow-up work, not
+/// silently ignored (this function's own callers only ever pass a
+/// non-`Normal` value for a shape whose fill genuinely is `Solid`, so
+/// this never silently drops a real request; see `ShapeRegistry::
+/// flatten_into`'s own doc comment for the itemized disposition).
 fn draw_polygon_fill(
     canvas: &mut RenderingCanvas,
     device: &dyn crate::RhiDevice,
@@ -1286,9 +1296,22 @@ fn draw_polygon_fill(
     gradients: &[GradientDef],
     positions: &[Vec2],
     triangles: &[[u32; 3]],
+    blend_mode: BlendMode,
 ) {
     match fill {
-        FillStyle::Solid(color) => canvas.draw_flat_polygon(positions, triangles, color),
+        FillStyle::Solid(color) => {
+            if blend_mode == BlendMode::Normal || !device.local_read_blend_supported() {
+                // Either the common case (Normal), or a real, disclosed
+                // fail-closed degradation: this hardware never got the
+                // capability query to pass, so FlatColorBlend's own
+                // pipeline/descriptor set were never created -- selecting
+                // it here would reach a pipeline registry lookup that
+                // was never populated, not a silent wrong render.
+                canvas.draw_flat_polygon(positions, triangles, color);
+            } else {
+                canvas.draw_flat_polygon_blended(positions, triangles, color, blend_mode as u32);
+            }
+        }
         FillStyle::Gradient(id) => {
             let def = gradients.get(id.0 as usize).unwrap_or_else(|| {
                 panic!(
@@ -1323,7 +1346,15 @@ fn flatten_polygon(
     points.push([0.0, 0.0]); // the fan's own pivot -- the polygon's local center.
     points.extend(&boundary);
     let triangles = fan_from_center(vertex_count);
-    draw_polygon_fill(canvas, device, polygon.fill, gradients, &points, &triangles);
+    draw_polygon_fill(
+        canvas,
+        device,
+        polygon.fill,
+        gradients,
+        &points,
+        &triangles,
+        polygon.common.blend_mode,
+    );
 
     if polygon.border_thickness > 0.0 {
         // A polygon boundary is always closed.
@@ -1493,6 +1524,7 @@ fn flatten_path_shape(
         gradients,
         &fill_positions,
         &fill_triangles,
+        path.common.blend_mode,
     );
 
     if path.border_thickness > 0.0 {
@@ -1628,7 +1660,7 @@ fn flatten_path_with_closed(commands: &[PathCommand]) -> Vec<(Vec<Vec2>, bool)> 
 mod tests {
     use super::*;
     use crate::{RhiBuffer, RhiDynamicRingBuffer};
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
 
     /// A minimal `RhiDevice` double for this module's own `flatten_into`
     /// tests -- only `shape_style_buffer()` is real (a plain,
@@ -1640,6 +1672,11 @@ mod tests {
     #[derive(Default)]
     struct FakeDevice {
         style_buffer: FakeStyleBuffer,
+        /// Phase 10 Step 10.2.3: `false` by default, matching real
+        /// hardware that lacks `VK_KHR_dynamic_rendering_local_read` --
+        /// tests exercising the "supported" branch set this via
+        /// `Cell::set` before calling `flatten_into`.
+        local_read_blend_supported: Cell<bool>,
     }
 
     #[derive(Default)]
@@ -1668,6 +1705,9 @@ mod tests {
         }
         fn shape_style_buffer(&self) -> &dyn RhiDynamicRingBuffer {
             &self.style_buffer
+        }
+        fn local_read_blend_supported(&self) -> bool {
+            self.local_read_blend_supported.get()
         }
         fn acquire_transient_target(
             &self,
@@ -3029,6 +3069,100 @@ mod tests {
                     || (v.uv[1] - 0.5).abs() > f32::EPSILON),
             "a real hexagon's own bounding box is non-degenerate, so uvs must vary, not all \
              collapse to the degenerate-box fallback"
+        );
+    }
+
+    #[test]
+    fn flatten_into_falls_back_to_normal_blending_on_unsupported_hardware() {
+        let device = FakeDevice::default();
+        device.local_read_blend_supported.set(false);
+        let mut registry = ShapeRegistry::new();
+        registry.insert(ShapePrimitive::Polygon(Polygon {
+            common: {
+                let mut common = PrimitiveCommon::new();
+                common.blend_mode = BlendMode::Multiply;
+                common
+            },
+            sides: 6,
+            radius: 20.0,
+            vertex_radius: 0.0,
+            star_points: None,
+            fill: FillStyle::Solid(0xFFFF_FFFF),
+            border_color: 0,
+            border_thickness: 0.0,
+        }));
+        let mut canvas = RenderingCanvas::new();
+        registry.flatten_into(&mut canvas, &device);
+        let frame = canvas.flatten();
+
+        assert_eq!(
+            frame.commands[0].pipeline_state_id,
+            crate::PipelineKind::FlatColor as u16,
+            "a non-Normal blend_mode must fall back to plain FlatColor when the device lacks \
+             local-read support -- never a silent attempt to use a pipeline that was never \
+             created"
+        );
+    }
+
+    #[test]
+    fn flatten_into_routes_a_non_normal_blend_mode_through_flatcolorblend_when_supported() {
+        let device = FakeDevice::default();
+        device.local_read_blend_supported.set(true);
+        let mut registry = ShapeRegistry::new();
+        registry.insert(ShapePrimitive::Polygon(Polygon {
+            common: {
+                let mut common = PrimitiveCommon::new();
+                common.blend_mode = BlendMode::Multiply;
+                common
+            },
+            sides: 6,
+            radius: 20.0,
+            vertex_radius: 0.0,
+            star_points: None,
+            fill: FillStyle::Solid(0xFFFF_FFFF),
+            border_color: 0,
+            border_thickness: 0.0,
+        }));
+        let mut canvas = RenderingCanvas::new();
+        registry.flatten_into(&mut canvas, &device);
+        let frame = canvas.flatten();
+
+        assert_eq!(
+            frame.commands[0].pipeline_state_id,
+            crate::PipelineKind::FlatColorBlend as u16
+        );
+        assert_eq!(
+            frame.commands[0].texture_handle,
+            BlendMode::Multiply as u32,
+            "the numeric blend mode must ride in texture_handle, the same push-constant \
+             channel gradient/texture fill already repurpose"
+        );
+    }
+
+    #[test]
+    fn flatten_into_uses_flatcolor_for_a_normal_blend_mode_even_when_local_read_is_supported() {
+        let device = FakeDevice::default();
+        device.local_read_blend_supported.set(true);
+        let mut registry = ShapeRegistry::new();
+        registry.insert(ShapePrimitive::Polygon(Polygon {
+            common: PrimitiveCommon::new(), // blend_mode defaults to Normal
+            sides: 6,
+            radius: 20.0,
+            vertex_radius: 0.0,
+            star_points: None,
+            fill: FillStyle::Solid(0xFFFF_FFFF),
+            border_color: 0,
+            border_thickness: 0.0,
+        }));
+        let mut canvas = RenderingCanvas::new();
+        registry.flatten_into(&mut canvas, &device);
+        let frame = canvas.flatten();
+
+        assert_eq!(
+            frame.commands[0].pipeline_state_id,
+            crate::PipelineKind::FlatColor as u16,
+            "Normal blending never needs the blend-capable pipeline, even on hardware that \
+             supports it"
         );
     }
 }

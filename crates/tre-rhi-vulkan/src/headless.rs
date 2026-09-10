@@ -63,7 +63,17 @@ impl HeadlessSwapchain {
                     .samples(vk::SampleCountFlags::TYPE_1)
                     .tiling(vk::ImageTiling::OPTIMAL)
                     .usage(
-                        vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
+                        // Phase 10 Step 10.2.3: `INPUT_ATTACHMENT` (a
+                        // core Vulkan 1.0 flag, always safe to declare)
+                        // lets this same image be bound as
+                        // `VulkanDevice::blend_read`'s input attachment
+                        // when a `PipelineKind::FlatColorBlend` draw
+                        // reads back a pixel a preceding draw already
+                        // wrote -- unused, at no cost, on a device
+                        // without `local_read_blend_supported()`.
+                        vk::ImageUsageFlags::COLOR_ATTACHMENT
+                            | vk::ImageUsageFlags::TRANSFER_SRC
+                            | vk::ImageUsageFlags::INPUT_ATTACHMENT,
                     )
                     .sharing_mode(vk::SharingMode::EXCLUSIVE)
                     .initial_layout(vk::ImageLayout::UNDEFINED),
@@ -259,6 +269,13 @@ impl RhiSwapchain for HeadlessSwapchain {
 
     fn stencil_image_handle(&self) -> u64 {
         self.stencil_image.as_raw()
+    }
+
+    fn supports_local_read_input_attachment(&self) -> bool {
+        // `HeadlessSwapchain::new`'s single persistent color image always
+        // declares `INPUT_ATTACHMENT_BIT` (a manually allocated image, not
+        // a presentable surface, so nothing to query -- always safe).
+        true
     }
 
     fn acquire_next_image(&self) -> Result<AcquiredImage, EngineError> {

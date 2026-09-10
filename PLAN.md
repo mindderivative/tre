@@ -197,65 +197,17 @@ reference context for Steps 10.2.3 onward.
 
 ## Step 10.2.3 — Non-`Normal` Blend Modes
 
-### Investigation
-
-- Vulkan blend state is baked into each `VkPipeline` at creation
-  (`crates/tre-rhi-vulkan/src/lib.rs`'s `dynamic_states` only covers
-  `VIEWPORT`/`SCISSOR` today) — a shape's `blend_mode` therefore selects a
-  *pipeline variant*, not a shader branch; fill-kind (10.2.1/10.2.2) and
-  blend mode are genuinely orthogonal axes (fragment color math vs.
-  fixed-function blend equation).
-- `VK_EXT_blend_operation_advanced` maps `Multiply`/`Screen`/`Overlay`/
-  `SoftLight`/`ColorDodge` directly onto hardware advanced-blend `VkBlendOp`
-  values (`MULTIPLY_EXT`/`SCREEN_EXT`/`OVERLAY_EXT`/`SOFTLIGHT_EXT`/
-  `COLORDODGE_EXT`) — this is the REAL, correct answer this project's own
-  finding (which assumed "needs new RHI framebuffer-read capability") did
-  not have researched at the time it was written. `ash` 0.38 exposes these
-  as ordinary `vk::BlendOp` values; the extension itself must be verified
-  present and enabled at `VulkanDevice::new` (a real, disclosed capability
-  query, not assumed) before this path can be used.
-- No framebuffer-read shader trick needed if the extension is present —
-  a real, better technical path than the original Step 10.2 plan's own
-  finding assumed, discovered only by researching the extension directly
-  (not from memory) before writing this plan, matching this project's
-  standing "verify real behavior before committing to an approach"
-  discipline.
-
-### Scope decisions
-
-- Primary path: `VK_EXT_blend_operation_advanced`, queried for real support
-  at device creation; if genuinely unavailable on the running GPU/driver,
-  fail closed to `Normal` blending with a clear, disclosed, non-panicking
-  degradation (an `EngineError`-surfaced capability flag, not a silent
-  behavior change) — this project's own established RHI-capability-gap
-  discipline (e.g. `RhiCommandBuffer` trait methods that return `Result`
-  for genuinely-optional capabilities).
-- One `VkPipeline` per (shape-rendering shader × non-`Normal` `BlendMode`)
-  combination, added to `PipelineRegistry` under new `PipelineKind` values
-  — mechanical given `PipelineRegistry`'s already-generic
-  `HashMap<u16, Box<dyn RhiPipelineState>>` design; exact ID-space encoding
-  (e.g. `base_pipeline_id + blend_mode as u16 * NUM_BASE_PIPELINES`, or a
-  separate `blend_mode` field carried on `DrawGeometry` and combined with
-  the shape's own base pipeline id at lookup time) is an implementation-time
-  decision, not fixed here.
-
-### Tasks
-
-1. Research + confirm `VK_EXT_blend_operation_advanced` availability
-   assumptions against the actual CI/dev GPU (`vulkaninfo` or equivalent
-   real query) before committing further — a real go/no-go gate for the
-   primary path.
-2. Device-creation-time capability query + a real, tested fallback path.
-3. Pipeline-variant construction for each real (shape pipeline × blend
-   mode) combination actually needed.
-4. `ShapeRegistry::flatten_into` selects the blend-mode-appropriate
-   pipeline id per shape's own `blend_mode` field (already threaded, never
-   read).
-5. Tests + a real GPU demo: two overlapping shapes under each non-`Normal`
-   `BlendMode`, pixel-verified against an independent Rust reference of
-   each blend equation (same "compute the correct answer independently,
-   compare against real GPU output" discipline `translucent_flat_fill_
-   demo.rs` established this session).
+**Status: Complete (2026-09-09) -- archived to
+`planning/archive/PLAN_PHASE10_STEP10_2_3.md`** (with real
+implementation notes on top of this original plan, including a real,
+disclosed pivot away from this plan's own primary path -- `VK_EXT_
+blend_operation_advanced` turned out not to be implemented by RADV, this
+project's own real dev GPU/driver; the real implementation uses
+`VK_KHR_dynamic_rendering_local_read` instead, at the user's explicit
+direction). See `documentation/IMPLEMENTATION.md`'s own write-up,
+REVIEW.md findings #170/#171/#172, and `demo/phase10_step10_2_3/`. See
+the archive file for the original plan text, kept there as historical
+record.
 
 ---
 

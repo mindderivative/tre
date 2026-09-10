@@ -234,6 +234,15 @@ jobs:
       # existing TexturedQuad pipeline with real bounding-box-normalized
       # UVs, each probed against a known four-quadrant flag texture.
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example texture_fill_demo
+      # Phase 10 Step 10.2.3: real GPU proof of non-Normal BlendMode
+      # rendering (Multiply/Screen/Overlay/SoftLight/ColorDodge) for
+      # Polygon/Path solid fill, via VK_KHR_dynamic_rendering_local_read
+      # (VK_EXT_blend_operation_advanced, this step's original plan, is
+      # not implemented by RADV -- see documentation/REVIEW.md) -- a real
+      # subpassLoad framebuffer read against a real input-attachment
+      # descriptor, each swatch's own center pixel checked against an
+      # independent Rust reference of the exact W3C blend formula.
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example blend_mode_demo
 
   accessibility-validation:
     name: accessibility-validation

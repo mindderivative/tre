@@ -2265,6 +2265,155 @@ confirmed bit-for-bit unchanged, including `bindless_textures_demo.rs`
 bindings are untouched). `cargo fmt`/`clippy -D warnings`/`build`/`test`
 clean across the whole workspace.
 
+#### Step 10.2.3: Non-Normal Blend Modes -- Status: Complete (2026-09-09)
+
+**A plan-invalidating finding, surfaced before any code was written.**
+`PLAN.md`'s own primary path, `VK_EXT_blend_operation_advanced` (mapping
+each `BlendMode` directly onto a hardware `VkBlendOp`), is NOT
+implemented by RADV -- this project's own real dev GPU/driver (AMD
+Radeon 890M, Mesa 26.2.2-arch3.2). Confirmed via direct `vulkaninfo`
+inspection (the extension is absent from the device's advertised list)
+and independently corroborated via Mesa's own release notes, ruling out
+a one-off local misconfiguration. That path could never be exercised by
+a real GPU demo on this project's own hardware -- a direct conflict with
+this project's standing "real code, real GPU demos as the correctness
+oracle" discipline. Presented to the user as a genuine three-way fork
+(build the real `VK_KHR_dynamic_rendering_local_read` alternative, ship
+only a capability-gated fallback, or build both); the user's first
+response was a genuine clarifying question ("is there an external
+package that would save time?" -- researched honestly: no relevant
+blend-mode shader crate exists, and `vk-sync-fork` predates the new
+`VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR` layout and would be
+inconsistent with this codebase's own hand-rolled-via-`ash` barrier
+convention), then chose the real alternative explicitly: "use the
+alternative, it sounds like the designed way to do it,
+VK_KHR_dynamic_rendering_local_read."
+
+**Real, in `crates/tre-rhi-vulkan/src/lib.rs`:**
+- A real, disclosed capability query in `VulkanDevice::new` (mirroring
+  `debug_validation_available`'s own pattern): `local_read_supported`,
+  conditionally enabling the extension name and
+  `vk::PhysicalDeviceDynamicRenderingLocalReadFeaturesKHR` in
+  `device_create_info`'s `push_next` chain.
+- A SEPARATE descriptor set (set 1, one `VK_DESCRIPTOR_TYPE_INPUT_
+  ATTACHMENT` binding, fragment-stage-only), built once in `new` when
+  supported (`BlendReadResources`) -- not folded into the existing
+  bindless set 0, which would have required renumbering every other
+  shader's bindings (`VARIABLE_DESCRIPTOR_COUNT` must stay the
+  highest-numbered binding in a layout).
+- `create_blend_pipeline_layout`/`create_blend_mode_pipeline`: a second
+  pipeline layout (bindless set 0 + the new input-attachment set 1, same
+  12-byte push-constant range) and a dedicated pipeline-creation
+  function (near-duplicate of `create_pipeline`, matching `create_blur_
+  pipeline`'s own existing "separate function, not a shared parameterized
+  helper" precedent) with `blend_enable(false)` -- the shader computes
+  the fully-composited color itself, so fixed-function hardware blending
+  must stay off.
+- `begin_frame`: the swapchain/headless color attachment lives in
+  `VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ_KHR` for the whole frame when
+  `local_read_active` (device support AND, for `VulkanSwapchain`, a real
+  per-surface `supported_usage_flags` check -- see `RhiSwapchain::
+  supports_local_read_input_attachment` below), instead of the ordinary
+  `COLOR_ATTACHMENT_OPTIMAL` -- a layout valid as a color attachment AND
+  an input attachment simultaneously, so no extra transitions are needed
+  between ordinary and blend-mode draws. The input-attachment descriptor
+  is rewritten every frame (safe with no extra sync, since the fence
+  wait at the top of `begin_frame` already guarantees the GPU is done
+  with the prior frame's binding, under this device's single-frame-in-
+  flight model).
+- `insert_blend_read_barrier` (`VulkanCommandBuffer`): a real by-region
+  barrier (`COLOR_ATTACHMENT_WRITE` -> `INPUT_ATTACHMENT_READ`) using
+  this codebase's own already-established classic (non-`_2`)
+  `vkCmdPipelineBarrier` API -- `INPUT_ATTACHMENT_READ`/`BY_REGION` are
+  both core (non-sync2) enum values, so `VK_KHR_synchronization2` was
+  never needed as a new dependency. Also binds set 1 against `self.
+  pipeline_layout`, safe immediately after `set_pipeline` since
+  `execute_frame` always calls both together for a `FlatColorBlend` draw.
+  Called before EVERY such draw, not once per frame.
+- `HeadlessSwapchain`'s color image gains `VK_IMAGE_USAGE_INPUT_
+  ATTACHMENT_BIT` (a core, always-safe-to-declare flag on a manually
+  allocated image). `VulkanSwapchain` cannot assume the same: a
+  presentable surface's `imageUsage` must be a subset of that surface's
+  own `VkSurfaceCapabilitiesKHR::supportedUsageFlags`, which is NOT
+  spec-guaranteed to include `INPUT_ATTACHMENT` the way a manually
+  allocated image's support always is -- queried for real and
+  conditionally included, with the result exposed via a new `RhiSwapchain
+  ::supports_local_read_input_attachment` trait method (`tre-engine/src/
+  lib.rs`) that `begin_frame`/`submit_and_present` AND the layout the
+  descriptor points at all require alongside the device-level query.
+  This was a real gap the step's own first full demo-regression sweep
+  caught: without it, every windowed demo would have broken (or, on a
+  hypothetical surface lacking the flag, hit a validation error) purely
+  from the device supporting the extension, regardless of whether that
+  particular window's surface did.
+- `resume_swapchain_rendering`: a second, distinct regression the same
+  sweep caught. It hardcoded `COLOR_ATTACHMENT_OPTIMAL` when re-beginning
+  rendering into the swapchain after a `PushLayer`/`PopLayer` redirect,
+  but the swapchain image was actually left in `RENDERING_LOCAL_READ_KHR`
+  by `begin_frame` -- `vkCmdBeginRendering` validation fails outright
+  when the declared layout doesn't match the image's real one. Fixed by
+  stashing the real layout `begin_frame` chose
+  (`VulkanCommandBuffer::swapchain_color_layout`) and using it here too.
+
+**Real, in `crates/tre-engine/src/lib.rs`/`shapes.rs`:**
+`PipelineKind::FlatColorBlend`; `RhiDevice::local_read_blend_supported`/
+`RhiCommandBuffer::insert_blend_read_barrier` trait methods;
+`execute_frame`'s `DrawGeometry` arm special-cases `FlatColorBlend` to
+call `insert_blend_read_barrier` before `draw_indexed`, mirroring
+`PopLayer`'s own existing per-`PipelineKind` special-casing precedent;
+`RenderingCanvas::draw_flat_polygon_blended` (mirrors `draw_flat_polygon`,
+repurposing the existing `texture_handle`/push-constant slot to carry a
+`blend_mode` value -- no growth of the shared `PushConstants` struct).
+`shapes.rs`'s `draw_polygon_fill` gained a `blend_mode: BlendMode`
+parameter: `FillStyle::Solid` dispatches to `draw_flat_polygon_blended`
+only when `blend_mode != Normal` AND `device.local_read_blend_supported()`
+-- unsupported hardware, or a plain `Normal` blend, falls back to the
+existing `draw_flat_polygon` path, a real, disclosed degradation, never
+a silent attempt to use resources that were never created. `Gradient`/
+`Texture` fill arms are unchanged (blend mode not applied to them this
+pass).
+
+**Real, in `crates/tre-rhi-vulkan/shaders/flat_color_blend.frag`
+(new, paired with the existing `walking_skeleton.vert`):** reads the
+destination via `subpassInput`/`subpassLoad`, computes each of the five
+W3C separable blend formulas (Multiply/Screen/Overlay/SoftLight/
+ColorDodge) per channel in linear space, and writes the composited
+result directly. Scoped to opaque source AND destination (both alphas
+assumed 1) -- at full opacity the general W3C alpha-weighted compositing
+formula collapses to `Co = B(Cb, Cs)` directly, so no unpremultiply/
+premultiply step is needed; a shape drawn under active `Canvas` opacity
+does not get that opacity correctly applied to a blend-mode fill in this
+pass (disclosed follow-up work, not built speculatively here).
+
+**Scope decisions, disclosed not accidental:** `Polygon`/`Path` solid
+fill only (not `Rectangle`/`Circle`, not gradient/texture fill) -- one
+shared pipeline with a runtime blend-mode branch (the same
+`texture_index`/`gradient_word_index`-repurposing precedent), not one
+pipeline per mode. Only correct against the swapchain/headless attachment
+`begin_frame` sets up, not while a `PushLayer` render-to-texture target
+is active (`begin_render_to_texture` never gets its own `RENDERING_
+LOCAL_READ_KHR` layout or input-attachment descriptor write in this
+pass).
+
+**Verified.** 3 new `tre-engine` tests (146 total, up from 143):
+`flatten_into`'s real fallback-to-`Normal`-on-unsupported-hardware
+routing, real routing through `FlatColorBlend` when supported, and a
+plain `Normal` blend mode still using `FlatColor` even on hardware that
+supports the capability. A new real GPU demo, `blend_mode_demo.rs`
+(`demo/phase10_step10_2_3/`), draws a background rectangle then six
+polygon swatches (one per `BlendMode`, including `Normal` as a
+routing-correctness control) on top of it; every swatch's own center
+pixel is compared against an independent Rust reference implementation
+of the exact same W3C blend formula -- on this real GPU, every channel
+of every swatch matched the independent reference exactly or within 1 of
+255 levels. Every pre-existing GPU demo re-run (including the four
+`PushLayer`/`PopLayer` demos that surfaced the two real regressions
+above, and the windowed-swapchain demos `walking_skeleton`/
+`multi_window`/`input_demo`/`main_loop_demo`, run against this
+machine's real X11 session rather than `xvfb-run`, unavailable locally)
+and confirmed passing. `cargo fmt`/`clippy -D warnings`/`build`/`test`
+clean across the whole workspace.
+
 ### Step 10.3: The `tre-ffi` C-ABI Crate (for C, C++, and other non-Python bindings)
 
 * **Renumbered 2026-09-09** from Step 10.2 to 10.3, when Step 10.2 was inserted ahead of it for full shape rendering support (shapes are what this boundary and Step 10.4's Python binding will actually expose -- finishing real rendering for all four primitives first avoids binding an API surface still mostly stubbed).

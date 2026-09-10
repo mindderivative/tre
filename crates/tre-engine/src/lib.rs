@@ -197,6 +197,22 @@ pub enum PipelineKind {
     /// comment has the full account of why Polygon/Path can't use a
     /// per-vertex style record the way `Rectangle`/`Circle` do).
     GradientFill = 6,
+    /// Phase 10 Step 10.2.3: `Polygon`/`Path` solid fill under a
+    /// non-`Normal` `BlendMode` (`RenderingCanvas::draw_flat_polygon_
+    /// blended`). Reads the destination pixel a PRECEDING draw already
+    /// wrote via `VK_KHR_dynamic_rendering_local_read` (a real framebuffer
+    /// read, not a `VkBlendOp` selection -- `VK_EXT_blend_operation_
+    /// advanced`, this project's own original assumption, is not
+    /// implemented by RADV, this project's own real dev GPU driver, as
+    /// of Mesa 26.1; confirmed both locally via `vulkaninfo` and via
+    /// Mesa's own release notes, REVIEW.md's own account of this
+    /// finding has the full story), computes the requested blend formula
+    /// itself, and writes the already-composited result with hardware
+    /// blending DISABLED. `RhiDevice::local_read_blend_supported` is the
+    /// real, disclosed capability gate this pipeline is only ever
+    /// selected behind -- unsupported hardware falls back to plain
+    /// `FlatColor` (`Normal` blending), never a silent wrong render.
+    FlatColorBlend = 7,
 }
 
 /// Packs a [`TextureFormat`] into the `u16` [`UiDrawCommand::PushLayer`]
@@ -1749,6 +1765,80 @@ impl RenderingCanvas {
         });
     }
 
+    /// `Polygon`/`Path` solid fill under a non-`Normal` `BlendMode`
+    /// (Phase 10 Step 10.2.3) -- `ShapeRegistry::flatten_into`'s real
+    /// caller once it has confirmed `RhiDevice::local_read_blend_
+    /// supported()`; callers MUST check that themselves first (this
+    /// method has no way to, and would otherwise silently select a
+    /// pipeline/descriptor set that was never created on unsupported
+    /// hardware). `blend_mode` is `BlendMode as u32` (`Multiply` = 1
+    /// through `ColorDodge` = 5 -- `Normal`/`0` has no reason to call
+    /// this method at all, since it is exactly what [`draw_flat_
+    /// polygon`] already renders via ordinary hardware blending).
+    ///
+    /// Carried to `flat_color_blend.frag` via the SAME per-draw push
+    /// constant [`draw_gradient_polygon`]'s own `gradient_word_index`
+    /// and [`draw_textured_polygon`]'s own `texture_index` already use
+    /// (`execute_frame`'s `cmd_buffer.bind_texture(0, command.
+    /// texture_handle)` call runs for every `DrawGeometry` command
+    /// regardless of pipeline) -- not a new push-constant range, since a
+    /// blend mode is constant across one whole draw exactly like those
+    /// two values already are.
+    ///
+    /// # Panics
+    /// Panics if `state_stack` is empty -- see [`draw_flat_polygon`]'s
+    /// own `# Panics` section for why that never happens in practice.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "mirrors draw_flat_polygon's own identical reasoning"
+    )]
+    pub fn draw_flat_polygon_blended(
+        &mut self,
+        positions: &[[f32; 2]],
+        triangles: &[[u32; 3]],
+        rgba: u32,
+        blend_mode: u32,
+    ) {
+        if triangles.is_empty() {
+            return;
+        }
+
+        let base_vertex = self.vertices.len() as u32;
+        let base_index = self.indices.len() as u32;
+
+        let state = *self
+            .state_stack
+            .last()
+            .expect("state_stack must always have at least one entry");
+        let color = premultiply_alpha(rgba, state.alpha);
+
+        self.vertices
+            .extend(positions.iter().map(|&position| UiVertex {
+                position: state.transform.transform_point(position),
+                uv: [0.0, 0.0],
+                color,
+                params: [0.0; 3],
+            }));
+        self.indices.extend(
+            triangles
+                .iter()
+                .flat_map(|&[a, b, c]| [base_vertex + a, base_vertex + b, base_vertex + c]),
+        );
+
+        let clip_bounds = self.clip_stack.last().copied().unwrap_or(FULL_WINDOW_CLIP);
+        let pipeline_id = PipelineKind::FlatColorBlend as u16;
+        let sort_key = self.next_sort_key(pipeline_id, blend_mode);
+        self.commands.push(UiDrawCommand {
+            kind: CommandType::DrawGeometry,
+            sort_key,
+            pipeline_state_id: pipeline_id,
+            texture_handle: blend_mode,
+            element_count: (triangles.len() * 3) as u32,
+            vertex_offset: base_index,
+            clip_bounds,
+        });
+    }
+
     /// Renders one already-shaped `ShapedRun` (IMPLEMENTATION.md Step
     /// 5.1.2, `tre-engine`'s first wiring into `tre-text`/`tre-atlas`) as
     /// a sequence of atlas-backed MSDF glyph quads. `font_id`
@@ -3041,6 +3131,30 @@ pub trait RhiSwapchain {
     /// `RhiDevice::begin_frame` issues before rendering can use it.
     fn stencil_image_handle(&self) -> u64;
 
+    /// Phase 10 Step 10.2.3: `true` only when THIS swapchain's own color
+    /// image(s) were created with `VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT` --
+    /// a real, disclosed, per-swapchain capability query, distinct from
+    /// `RhiDevice::local_read_blend_supported()`'s own device-wide query.
+    /// A headless swapchain's single persistent image always declares
+    /// this flag (a core, always-safe-to-declare usage on a manually
+    /// allocated image), but a real windowed swapchain's images come
+    /// from `vkCreateSwapchainKHR`, whose `imageUsage` must be a subset
+    /// of that specific surface's own `VkSurfaceCapabilitiesKHR::
+    /// supportedUsageFlags` -- unlike `INPUT_ATTACHMENT`'s always-
+    /// guaranteed presence on a manually allocated image, a given
+    /// platform's presentable surface is not spec-guaranteed to support
+    /// it, so `VulkanSwapchain::new` queries it for real rather than
+    /// assuming. `VulkanDevice::begin_frame` requires BOTH this AND
+    /// `local_read_blend_supported()` before choosing `RENDERING_LOCAL_
+    /// READ_KHR` for the active color attachment -- so a
+    /// `PipelineKind::FlatColorBlend` draw against a window whose
+    /// surface doesn't support this fails closed to ordinary
+    /// `COLOR_ATTACHMENT_OPTIMAL` rendering (with blend modes then
+    /// unavailable, exactly as if the device itself lacked the
+    /// extension) rather than hitting a validation error or driver-
+    /// defined behavior.
+    fn supports_local_read_input_attachment(&self) -> bool;
+
     /// # Errors
     /// Returns [`EngineError::SwapchainOutOfDate`] if the surface no longer
     /// matches the window (DESIGN.md Section 2.6) or
@@ -3085,6 +3199,18 @@ pub trait RhiDevice {
     /// into the bindless set then; a caller-created ring buffer has no
     /// way to reach that binding.
     fn shape_style_buffer(&self) -> &dyn RhiDynamicRingBuffer;
+    /// Phase 10 Step 10.2.3: whether this real device supports
+    /// `VK_KHR_dynamic_rendering_local_read` (queried once, at device
+    /// construction, never assumed) -- the real capability gate for
+    /// non-`Normal` `BlendMode` rendering (`PipelineKind::
+    /// FlatColorBlend`). A real, disclosed capability query, not a
+    /// silent assumption: `ShapeRegistry::flatten_into` falls back to
+    /// plain `Normal` blending when this is `false`, rather than
+    /// attempting to use a pipeline/descriptor set that was never
+    /// created. See `PipelineKind::FlatColorBlend`'s own doc comment for
+    /// why the originally-planned `VK_EXT_blend_operation_advanced` path
+    /// was abandoned instead of gated the same way.
+    fn local_read_blend_supported(&self) -> bool;
     /// # Errors
     /// Returns [`EngineError::TransientPoolBudgetExceeded`] if a genuinely
     /// novel size would need cold-allocating while the pool's idle free
@@ -3211,6 +3337,20 @@ pub trait RhiCommandBuffer {
 
     // Execution
     fn draw_indexed(&mut self, index_count: u32, start_index: u32, base_vertex: i32);
+
+    /// Phase 10 Step 10.2.3: a by-region pipeline barrier making the
+    /// current color attachment's own already-written pixels visible as
+    /// input-attachment reads to the NEXT draw in this same rendering
+    /// scope -- `VK_KHR_dynamic_rendering_local_read`'s own real
+    /// mechanism (`execute_frame`'s own doc comment on why this is
+    /// called before every `PipelineKind::FlatColorBlend` draw, never
+    /// only once per frame: each such draw must see whatever the very
+    /// latest framebuffer state is, including ordinary draws that ran
+    /// since the last blend-mode draw). A real, disclosed no-op on a
+    /// device where `RhiDevice::local_read_blend_supported` is `false`
+    /// -- never called in that case, since `FlatColorBlend` itself is
+    /// never selected without that capability.
+    fn insert_blend_read_barrier(&mut self);
 
     // Offscreen render targets (IMPLEMENTATION.md Phase 6 Step 6.4.1) --
     // real render-to-texture, the RHI capability real `PushLayer`/
@@ -3459,6 +3599,16 @@ pub fn execute_frame(
                 });
                 cmd_buffer.set_pipeline(pipeline);
                 cmd_buffer.bind_texture(0, command.texture_handle);
+                // Phase 10 Step 10.2.3: a `PipelineKind::FlatColorBlend`
+                // draw reads the destination pixel a PRECEDING draw
+                // already wrote (`VK_KHR_dynamic_rendering_local_read`)
+                // -- the barrier runs before EVERY such draw, not once
+                // per frame, since each one must see whatever the very
+                // latest framebuffer state is, including ordinary draws
+                // that ran since the last blend-mode draw.
+                if command.pipeline_state_id == PipelineKind::FlatColorBlend as u16 {
+                    cmd_buffer.insert_blend_read_barrier();
+                }
                 cmd_buffer.draw_indexed(command.element_count, command.vertex_offset, 0);
             }
             CommandType::PushScissor => {
@@ -5611,6 +5761,7 @@ mod tests {
         DeregisterBindless(u32),
         ReleaseTransientTarget(u64),
         ApplyLayerBlur(u64, u32, u32),
+        InsertBlendReadBarrier,
     }
 
     #[derive(Default)]
@@ -5649,6 +5800,10 @@ mod tests {
                 start_index,
                 base_vertex,
             ));
+        }
+
+        fn insert_blend_read_barrier(&mut self) {
+            self.calls.push(RecordedCall::InsertBlendReadBarrier);
         }
 
         fn begin_render_to_texture(
@@ -5805,6 +5960,11 @@ mod tests {
         /// Phase 10 Step 10.2: backs `shape_style_buffer()` for
         /// `draw_styled_rectangle`/`draw_ellipse` tests.
         style_buffer: FakeStyleBuffer,
+        /// Phase 10 Step 10.2.3: `false` by default (`Default`'s own
+        /// zero value), matching real hardware that lacks
+        /// `VK_KHR_dynamic_rendering_local_read` -- tests that need the
+        /// "supported" branch set this via `Cell::set` before use.
+        local_read_blend_supported: Cell<bool>,
     }
 
     impl RhiDevice for FakeDevice {
@@ -5814,6 +5974,10 @@ mod tests {
 
         fn shape_style_buffer(&self) -> &dyn RhiDynamicRingBuffer {
             &self.style_buffer
+        }
+
+        fn local_read_blend_supported(&self) -> bool {
+            self.local_read_blend_supported.get()
         }
 
         fn acquire_transient_target(
