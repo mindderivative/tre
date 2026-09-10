@@ -2898,3 +2898,49 @@ The previous backends' `scale_factor` was either a single connection-wide, last-
 | 177 | Nice-to-have | Fixed (incidental) | Wayland's `app_id` was hardcoded to `"tre-walking-skeleton"`; disappeared when the hand-rolled backend was deleted and replaced by `winit`, not from a targeted fix |
 | 178 | Nice-to-have | Fixed (same-day) | `scale_factor`'s preserved `i32` return type rounded away the real per-window `f64` precision `winit` now supplies; widened to `f64` at the project owner's explicit direction -- the only real caller anywhere was a diagnostic print |
 | 179 | Nice-to-have | Documented | `winit` materially increases `tre-platform`'s dependency tree even with a trimmed feature set; accepted as the direct, expected cost of the project owner's own decision to move off a hand-rolled backend |
+
+## Full Workspace API Audit, for `API.md` (2026-09-10)
+
+Requested as part of writing `API.md` (a complete, LLM-facing API reference) and an interactive human-facing artifact: "Make sure it is complete and correct. If API functionality is missing then fix it." Four parallel `Explore` agents extracted the complete public API surface of every real crate (`tre-engine`, `tre-platform`, `tre-memory`, `tre-math`, `tre-a11y`, `tre-svg`, `tre-text`, `tre-atlas`, `tre-rhi-vulkan`; `tre-ffi`/`tre-rhi-dx12`/`tre-rhi-metal` confirmed still genuinely empty placeholders, matching their known IMPLEMENTATION.md status), each also flagged undocumented panics, doc/code mismatches, and real API asymmetries. Findings actually fixed:
+
+### 180. [Fixed] `tre-platform` still had no post-creation title/minimize/maximize/icon control
+
+The exact gap identified in this session's earlier window-interface investigation, now closed: `PlatformConnection::set_title`/`set_minimized`/`is_minimized`/`set_maximized`/`is_maximized`/`set_icon` added, backed by `winit::window::Window`'s own real methods. Real testing (not assumed) found and disclosed a genuine, protocol-level behavior: `is_maximized()`/`is_minimized()` lag their own just-sent `set_*` request by a real compositor round trip -- `smoke_test.rs`'s own demo initially showed `is_maximized() == false` immediately after `set_maximized(true)` before a `poll_events()`-based fix confirmed the settled value updates correctly once the compositor's own confirmation is processed. `set_icon` (`WindowIcon`, a new `rgba`/`width`/`height` struct) confirmed working on X11, confirmed a real, disclosed no-op on Wayland (the protocol has no client-side icon mechanism at all). New `PlatformError::UnknownWindow` variant for all six new fallible methods.
+
+### 181. [Fixed] Three places in `tre-engine/src/shapes.rs` falsely claimed `FillStyle::Texture` still panics via `unimplemented!()`
+
+Stale since Step 10.2.2 shipped real texture-fill support for all four shape kinds -- the module's own top-level doc comment, `ShapeRegistry::flatten_into`'s `# Panics` section, and a doc block misattached to `bounding_box_uvs_into` (see #182) all still described a gap that closed weeks earlier. Corrected in all three places to state plainly that every `FillStyle` variant is real for every shape kind; the only remaining real panic is a `FillStyle::Gradient` naming a `GradientId` this registry never issued.
+
+### 182. [Fixed] Two doc comments in `shapes.rs` were misattached to the wrong function, per Rust's own "a doc comment attaches to the next item" rule
+
+A block describing both `ShapeRegistry::flatten_into` and `create_gradient` sat entirely above `create_gradient` (the actual `flatten_into`, far below, had only its own short `# Panics`-only block) -- so the `flatten_into` prose was orphaned onto the wrong function. The same pattern recurred: a block describing `draw_polygon_fill`'s fill dispatch sat above the unrelated private `bounding_box_uvs_into` instead of `draw_polygon_fill` itself. Both split apart and moved to sit directly above the function each actually describes.
+
+### 183. [Fixed] `Rectangle::new()` existed; `Circle`/`Polygon`/`Path` had no equivalent convenience constructor
+
+A real, evidenced asymmetry (`Rectangle` itself established the precedent). Added `Circle::new(radius, color)`, `Polygon::new(sides, radius, color)`, `Path::new(commands, color)`, each mirroring `Rectangle::new`'s own "minimal fields, sane defaults, set the rest directly" shape. Also fixed stale "No rendering support exists for this shape at all yet" claims on all three structs' own doc comments (predating Step 10.2's real rendering work).
+
+### 184. [Fixed] `ShapeRegistry::gradient_mut()` had no read-only counterpart
+
+Added `gradient(&self, id) -> Option<&GradientDef>`, matching the `get`/`get_mut` pattern the registry already uses for shapes themselves.
+
+### 185. [Fixed] Four comments in `tre-rhi-vulkan/src/lib.rs` still named `create_stencil_and_cover_pipelines`, a function deleted 2026-09-09 (REVIEW.md finding #165) when the stencil-and-cover fill technique was retired for `lyon`
+
+Updated to describe current reality (the helper functions these comments actually document are now shared by `create_pipeline`/`create_blend_mode_pipeline` instead).
+
+### 186. [Fixed] Several real, reachable panics lacked `# Panics` documentation
+
+`SpscRingBuffer::with_capacity`/`MpscRingBuffer::with_capacity` (both panic on `capacity == 0`, inconsistent with `SwmrSlotTable::with_capacity`'s own correctly-documented identical check) and `A11yBridge::publish` (poisoned-mutex panic via `.lock().unwrap()`, previously not even acknowledged as a possibility) all fixed.
+
+### 187. [Fixed] Two small, real, low-risk API completeness gaps
+
+`MpscRingBuffer::is_empty()` (its sibling `SpscRingBuffer` already had one) and `Affine2::to_array`/`from_array` (the type is `#[repr(C)]`, implying GPU/FFI-buffer intent, but had no raw-array conversion at all).
+
+### 188. [Documented, not fixed] A substantial number of individual struct fields, enum variants, and trivial accessor methods across every crate lack their own doc comment
+
+Every crate's *type-level* doc comments are thorough without exception; the gap is specifically at the field/variant/single-method granularity (e.g. most fields of `ScissorRect`, `UiDrawCommand`, `AccessibilityNode`, `PackedRect`, `ShapedGlyph`, and dozens more). Not fixed in this pass -- the volume (dozens of individually low-value one-line additions across the whole workspace) was judged out of proportion to this task's real scope (auditing for *missing functionality* and *incorrect* documentation, not a blanket doc-comment completeness pass). `API.md` itself supplies field-level descriptions for the reference regardless of what the source comments say.
+
+### 189. [Documented, not fixed] Two RHI trait-impl methods swallow a real, recoverable `Err` into an undocumented panic
+
+`RhiCommandBuffer::apply_layer_blur` (`tre-rhi-vulkan`) calls `.expect(...)` on `acquire_transient_target`'s `Result`, which can legitimately return `Err(EngineError::TransientPoolBudgetExceeded)` under real VRAM pressure; `RhiDevice::create_dynamic_ring_buffer` does the same on its own allocation. Both would require widening the `RhiCommandBuffer`/`RhiDevice` trait signatures themselves (in `tre-engine`, affecting every RHI backend) to fix properly -- a real, disclosed, deliberately out-of-scope architectural change for this pass, not silently worked around.
+
+**Verified.** `cargo fmt --all -- --check`/`cargo clippy --workspace --all-targets -- -D warnings`/`cargo build --workspace --all-targets`/`cargo test --workspace` all clean. `smoke_test.rs` re-run on both Wayland and forced X11/XWayland, confirming every new method's real, live behavior (including the settled-state round trip). `shape_full_rendering_demo`, `shape_registry_demo`, `main_loop_demo`, and `texture_fill_demo` re-run with their own real pixel-level assertions, confirming the `shapes.rs` doc/comment restructuring introduced no behavioral change.
