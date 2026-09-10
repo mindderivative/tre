@@ -22,7 +22,7 @@
 use ash::vk;
 use tre_atlas::AtlasOwner;
 use tre_engine::{
-    execute_frame, rgba8, BufferBinding, CommandType, FrameArena, GlyphAtlasContext,
+    execute_frame, rgba8, submit_frame, BufferBinding, CommandType, FrameArena, GlyphAtlasContext,
     OverlayLayerPriority, PipelineKind, PipelineRegistry, RenderingCanvas, RhiDevice, ScissorRect,
     TextureFormat, PIPELINE_MSDF_TEXT,
 };
@@ -362,25 +362,24 @@ fn main() {
         width: CANVAS_WIDTH,
         height: CANVAS_HEIGHT,
     };
-    let (mut cmd_buffer, image) = device.begin_frame(&swapchain).expect("begin_frame failed");
-    execute_frame(
-        &frame,
-        &pipelines,
-        BufferBinding {
-            buffer: &vertex_buffer,
-            offset: 0,
-        },
-        BufferBinding {
-            buffer: &index_buffer,
-            offset: 0,
-        },
-        &full_window,
-        &device,
-        &mut *cmd_buffer,
-    );
-    device
-        .submit_and_present(cmd_buffer, &swapchain, image)
-        .expect("submit_and_present failed");
+    submit_frame(&device, &swapchain, |cmd_buffer| {
+        execute_frame(
+            &frame,
+            &pipelines,
+            BufferBinding {
+                buffer: &vertex_buffer,
+                offset: 0,
+            },
+            BufferBinding {
+                buffer: &index_buffer,
+                offset: 0,
+            },
+            &full_window,
+            &device,
+            cmd_buffer,
+        );
+    })
+    .expect("submit_frame failed");
 
     let bgra = swapchain
         .read_pixels_bgra8()

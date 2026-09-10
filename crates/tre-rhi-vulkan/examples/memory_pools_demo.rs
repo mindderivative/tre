@@ -10,7 +10,7 @@
 //! depend on. Nothing is drawn -- this demo proves memory management, not
 //! rendering.
 
-use tre_engine::{RhiDevice, TextureFormat};
+use tre_engine::{submit_frame, RhiDevice, TextureFormat};
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 
 fn main() {
@@ -48,13 +48,12 @@ fn main() {
 
     eprintln!("--- dynamic ring buffer: writing across 7 frames (2 full rotations + 1) ---");
     for frame in 0..7 {
-        let (cmd_buffer, image) = device.begin_frame(&swapchain).expect("begin_frame failed");
-        // No draw calls -- this demo proves memory management, not
-        // rendering; an empty (cleared-to-background) frame is a valid,
-        // real frame to submit.
-        device
-            .submit_and_present(cmd_buffer, &swapchain, image)
-            .expect("submit_and_present failed");
+        submit_frame(&device, &swapchain, |_cmd_buffer| {
+            // No draw calls -- this demo proves memory management, not
+            // rendering; an empty (cleared-to-background) frame is a
+            // valid, real frame to submit.
+        })
+        .expect("submit_frame failed");
 
         let a = ring_buffer
             .write(&[0xAAu8; 300])

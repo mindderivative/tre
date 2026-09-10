@@ -811,6 +811,8 @@ code. No new demo this sub-step (see IMPLEMENTATION.md's own plan for
 why -- the two existing demos already exercise the only reachable
 pipeline kinds, so a new demo would add process, not coverage).
 
+* **Follow-up (2026-09-10):** `execute_frame` (the free function this step's own `PipelineRegistry`/`execute_draw_geometry_batches` work led to) still left every real caller hand-writing the identical `begin_frame`/(record)/`submit_and_present` sandwich around it -- found via this project's own `/review-project` process (REVIEW.md #200-201) to be duplicated across all 41 `tre-rhi-vulkan` examples plus `tre-python`'s `HeadlessRenderer`, roughly half of which don't even call `execute_frame` (hand-written draw calls instead). Added `tre_engine::submit_frame(device, swapchain, record: impl FnOnce(&mut dyn RhiCommandBuffer))`, generic over both, wrapping only `begin_frame`/`submit_and_present` and leaving the recording itself to the caller's closure -- migrated every one of those 41+1 real call sites to it, full real-GPU regression sweep clean.
+
 ### Step 6.3: Real Scissor Execution -- Status: Complete (2026-09-08)
 
 `RhiCommandBuffer::set_scissor` was a real, working Vulkan method with

@@ -26,7 +26,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use raw_window_handle::HasDisplayHandle;
 use tre_engine::{
-    execute_frame, BufferBinding, EngineError, PipelineRegistry, RenderingCanvas, RhiDevice,
+    execute_frame, submit_frame, BufferBinding, EngineError, PipelineRegistry, RenderingCanvas,
     ScissorRect,
 };
 use tre_rhi_vulkan::{register_shape_pipelines, HeadlessSwapchain, VulkanDevice, HEADLESS_FORMAT};
@@ -199,24 +199,23 @@ impl PyHeadlessRenderer {
                 width: self.width,
                 height: self.height,
             };
-            let (mut cmd_buffer, image) = self.device.begin_frame(&self.swapchain)?;
-            execute_frame(
-                &frame,
-                &self.pipelines,
-                BufferBinding {
-                    buffer: &vertex_buffer,
-                    offset: 0,
-                },
-                BufferBinding {
-                    buffer: &index_buffer,
-                    offset: 0,
-                },
-                &full_window,
-                &self.device,
-                &mut *cmd_buffer,
-            );
-            self.device
-                .submit_and_present(cmd_buffer, &self.swapchain, image)?;
+            submit_frame(&self.device, &self.swapchain, |cmd_buffer| {
+                execute_frame(
+                    &frame,
+                    &self.pipelines,
+                    BufferBinding {
+                        buffer: &vertex_buffer,
+                        offset: 0,
+                    },
+                    BufferBinding {
+                        buffer: &index_buffer,
+                        offset: 0,
+                    },
+                    &full_window,
+                    &self.device,
+                    cmd_buffer,
+                );
+            })?;
             self.swapchain.read_pixels_bgra8()
         });
 

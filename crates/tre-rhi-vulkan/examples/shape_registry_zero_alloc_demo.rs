@@ -49,10 +49,10 @@
 //! comment has the full account.
 
 use tre_engine::{
-    execute_frame, rgba8, BlendMode, BufferBinding, Circle, FillStyle, FlattenedFrame, FrameArena,
-    GradientDef, GradientKind, GradientStop, PipelineKind, PipelineRegistry, Polygon,
-    PrimitiveCommon, Rectangle, RenderingCanvas, RhiDevice, ScissorRect, ShapePrimitive,
-    ShapeRegistry, TextureFormat,
+    execute_frame, rgba8, submit_frame, BlendMode, BufferBinding, Circle, FillStyle,
+    FlattenedFrame, FrameArena, GradientDef, GradientKind, GradientStop, PipelineKind,
+    PipelineRegistry, Polygon, PrimitiveCommon, Rectangle, RenderingCanvas, RhiDevice, ScissorRect,
+    ShapePrimitive, ShapeRegistry, TextureFormat,
 };
 use tre_memory::{DebugAllocGuard, RenderTickGuard};
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
@@ -382,25 +382,24 @@ fn main() {
 
         drop(tick);
 
-        let (mut cmd_buffer, image) = device.begin_frame(&swapchain).expect("begin_frame failed");
-        execute_frame(
-            &flattened,
-            &pipelines,
-            BufferBinding {
-                buffer: &*ring_buffer,
-                offset: vertex_offset,
-            },
-            BufferBinding {
-                buffer: &*ring_buffer,
-                offset: index_offset,
-            },
-            &full_window,
-            &device,
-            &mut *cmd_buffer,
-        );
-        device
-            .submit_and_present(cmd_buffer, &swapchain, image)
-            .expect("submit_and_present failed");
+        submit_frame(&device, &swapchain, |cmd_buffer| {
+            execute_frame(
+                &flattened,
+                &pipelines,
+                BufferBinding {
+                    buffer: &*ring_buffer,
+                    offset: vertex_offset,
+                },
+                BufferBinding {
+                    buffer: &*ring_buffer,
+                    offset: index_offset,
+                },
+                &full_window,
+                &device,
+                cmd_buffer,
+            );
+        })
+        .expect("submit_frame failed");
 
         if (frame + 1) % 30 == 0 {
             eprintln!("frame {} rendered with zero heap allocations", frame + 1);

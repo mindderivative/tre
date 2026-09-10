@@ -104,7 +104,9 @@
 
 use ash::vk;
 use ash::vk::Handle;
-use tre_engine::{rgba8, RenderingCanvas, RhiBuffer, RhiDevice, TextureFormat, UiVertex};
+use tre_engine::{
+    rgba8, submit_frame, RenderingCanvas, RhiBuffer, RhiDevice, TextureFormat, UiVertex,
+};
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 
 #[path = "support/pixel_helpers.rs"]
@@ -495,208 +497,209 @@ fn main() {
     let (quarter_quad_vb, quarter_quad_ib) = upload_quad(SIZE_QUARTER.0, SIZE_QUARTER.1);
 
     // --- The real chain. ---
-    let (mut cmd_buffer, image) = device.begin_frame(&swapchain).expect("begin_frame failed");
-    let raw_cmd_buffer = vk::CommandBuffer::from_raw(cmd_buffer.raw_handle());
+    submit_frame(&device, &swapchain, |cmd_buffer| {
+        let raw_cmd_buffer = vk::CommandBuffer::from_raw(cmd_buffer.raw_handle());
 
-    // Raw-binds a non-bindless pipeline + its one descriptor set + this
-    // pass's own `screen_size` push constant, then issues the draw call
-    // itself via a raw `cmd_draw_indexed` -- never `RhiCommandBuffer::
-    // draw_indexed`. That wrapper method unconditionally performs its own
-    // *second* `cmd_push_constants` call using `self.width`/`self.height`
-    // (this render target's own real dimensions, per whatever `begin_
-    // render_to_texture[_no_end]` last set them to), which silently
-    // clobbers the correct `size` just pushed below. This isn't
-    // theoretical: `acquire_transient_target`'s own documented "oversized
-    // borrow" fallback (`RhiDevice::acquire_transient_target`'s doc
-    // comment) can and does hand back a differently-sized (larger)
-    // texture than requested whenever no free bucket of the exact
-    // requested size exists yet but a larger one does -- exactly the case
-    // here the first time L2/U1/U0's own bucket sizes are ever requested,
-    // after L0/L1 have already been released. When that happens, `self.
-    // width`/`self.height` reflect the REAL (oversized) size, not this
-    // hop's intended one, and the wrapper's redundant push would silently
-    // substitute the wrong `screen_size` into the vertex shader's NDC
-    // mapping right before the draw -- confining the actual draw to a
-    // small corner of the oversized backing image while every later hop
-    // (and the final composite) keeps sampling/rendering at the real,
-    // larger extent, reading back untouched clear-color everywhere except
-    // that corner. This raw draw path sidesteps the whole hazard: the
-    // manually-pushed `screen_size` above is the only one ever pushed for
-    // these draws, and downstream UV math is scale-invariant regardless
-    // of the backing image's real physical size.
-    let draw_nonbindless_pass = |pipeline: vk::Pipeline,
-                                 set: vk::DescriptorSet,
-                                 size: (u32, u32),
-                                 vertex_buffer: &dyn RhiBuffer,
-                                 index_buffer: &dyn RhiBuffer,
-                                 index_count: u32| {
-        let push_constants: [f32; 2] = [size.0 as f32, size.1 as f32];
-        let vb_raw = vk::Buffer::from_raw(vertex_buffer.raw_handle());
-        let ib_raw = vk::Buffer::from_raw(index_buffer.raw_handle());
-        unsafe {
-            device.device.cmd_bind_pipeline(
-                raw_cmd_buffer,
-                vk::PipelineBindPoint::GRAPHICS,
-                pipeline,
-            );
-            device.device.cmd_bind_descriptor_sets(
-                raw_cmd_buffer,
-                vk::PipelineBindPoint::GRAPHICS,
-                pipeline_layout,
-                0,
-                &[set],
-                &[],
-            );
-            device.device.cmd_push_constants(
-                raw_cmd_buffer,
-                pipeline_layout,
-                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                0,
-                bytemuck::cast_slice(&push_constants),
-            );
-            device
-                .device
-                .cmd_bind_vertex_buffers(raw_cmd_buffer, 0, &[vb_raw], &[0]);
-            device
-                .device
-                .cmd_bind_index_buffer(raw_cmd_buffer, ib_raw, 0, vk::IndexType::UINT32);
-            device
-                .device
-                .cmd_draw_indexed(raw_cmd_buffer, index_count, 1, 0, 0, 0);
-        }
-    };
+        // Raw-binds a non-bindless pipeline + its one descriptor set + this
+        // pass's own `screen_size` push constant, then issues the draw call
+        // itself via a raw `cmd_draw_indexed` -- never `RhiCommandBuffer::
+        // draw_indexed`. That wrapper method unconditionally performs its own
+        // *second* `cmd_push_constants` call using `self.width`/`self.height`
+        // (this render target's own real dimensions, per whatever `begin_
+        // render_to_texture[_no_end]` last set them to), which silently
+        // clobbers the correct `size` just pushed below. This isn't
+        // theoretical: `acquire_transient_target`'s own documented "oversized
+        // borrow" fallback (`RhiDevice::acquire_transient_target`'s doc
+        // comment) can and does hand back a differently-sized (larger)
+        // texture than requested whenever no free bucket of the exact
+        // requested size exists yet but a larger one does -- exactly the case
+        // here the first time L2/U1/U0's own bucket sizes are ever requested,
+        // after L0/L1 have already been released. When that happens, `self.
+        // width`/`self.height` reflect the REAL (oversized) size, not this
+        // hop's intended one, and the wrapper's redundant push would silently
+        // substitute the wrong `screen_size` into the vertex shader's NDC
+        // mapping right before the draw -- confining the actual draw to a
+        // small corner of the oversized backing image while every later hop
+        // (and the final composite) keeps sampling/rendering at the real,
+        // larger extent, reading back untouched clear-color everywhere except
+        // that corner. This raw draw path sidesteps the whole hazard: the
+        // manually-pushed `screen_size` above is the only one ever pushed for
+        // these draws, and downstream UV math is scale-invariant regardless
+        // of the backing image's real physical size.
+        let draw_nonbindless_pass = |pipeline: vk::Pipeline,
+                                     set: vk::DescriptorSet,
+                                     size: (u32, u32),
+                                     vertex_buffer: &dyn RhiBuffer,
+                                     index_buffer: &dyn RhiBuffer,
+                                     index_count: u32| {
+            let push_constants: [f32; 2] = [size.0 as f32, size.1 as f32];
+            let vb_raw = vk::Buffer::from_raw(vertex_buffer.raw_handle());
+            let ib_raw = vk::Buffer::from_raw(index_buffer.raw_handle());
+            unsafe {
+                device.device.cmd_bind_pipeline(
+                    raw_cmd_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    pipeline,
+                );
+                device.device.cmd_bind_descriptor_sets(
+                    raw_cmd_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    pipeline_layout,
+                    0,
+                    &[set],
+                    &[],
+                );
+                device.device.cmd_push_constants(
+                    raw_cmd_buffer,
+                    pipeline_layout,
+                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                    0,
+                    bytemuck::cast_slice(&push_constants),
+                );
+                device
+                    .device
+                    .cmd_bind_vertex_buffers(raw_cmd_buffer, 0, &[vb_raw], &[0]);
+                device.device.cmd_bind_index_buffer(
+                    raw_cmd_buffer,
+                    ib_raw,
+                    0,
+                    vk::IndexType::UINT32,
+                );
+                device
+                    .device
+                    .cmd_draw_indexed(raw_cmd_buffer, index_count, 1, 0, 0, 0);
+            }
+        };
 
-    // L0: the square, rendered into a full-size transient target.
-    let l0 = device
-        .acquire_transient_target(SIZE_FULL.0, SIZE_FULL.1, TextureFormat::Rgba16Float)
-        .expect("failed to acquire L0");
-    cmd_buffer.begin_render_to_texture(&*l0, SIZE_FULL.0, SIZE_FULL.1);
-    cmd_buffer.set_pipeline(&rect_pipeline);
-    cmd_buffer.bind_vertex_buffer(&square_vertex_buffer, 0);
-    cmd_buffer.bind_index_buffer(&square_index_buffer, 0);
-    cmd_buffer.draw_indexed(square_frame.indices.len() as u32, 0, 0);
+        // L0: the square, rendered into a full-size transient target.
+        let l0 = device
+            .acquire_transient_target(SIZE_FULL.0, SIZE_FULL.1, TextureFormat::Rgba16Float)
+            .expect("failed to acquire L0");
+        cmd_buffer.begin_render_to_texture(&*l0, SIZE_FULL.0, SIZE_FULL.1);
+        cmd_buffer.set_pipeline(&rect_pipeline);
+        cmd_buffer.bind_vertex_buffer(&square_vertex_buffer, 0);
+        cmd_buffer.bind_index_buffer(&square_index_buffer, 0);
+        cmd_buffer.draw_indexed(square_frame.indices.len() as u32, 0, 0);
 
-    // L0 -> L1: downsample to half size, via the plain descriptor set --
-    // `end_render_to_texture` transitions L0 to SHADER_READ_ONLY_OPTIMAL
-    // with the real, already-proven barrier; `point_descriptor_at` just
-    // points a conventional descriptor at that same real view instead of
-    // registering it into the bindless array.
-    cmd_buffer.end_render_to_texture(&*l0);
-    point_descriptor_at(
-        &device.device,
-        set_l0,
-        vk::ImageView::from_raw(l0.raw_handle()),
-        sampler,
-    );
-    let l1 = device
-        .acquire_transient_target(SIZE_HALF.0, SIZE_HALF.1, TextureFormat::Rgba16Float)
-        .expect("failed to acquire L1");
-    cmd_buffer.begin_render_to_texture_no_end(&*l1, SIZE_HALF.0, SIZE_HALF.1);
-    draw_nonbindless_pass(
-        downsample_pipeline,
-        set_l0,
-        SIZE_HALF,
-        &half_quad_vb,
-        &half_quad_ib,
-        6,
-    );
-    device.release_transient_target(l0);
+        // L0 -> L1: downsample to half size, via the plain descriptor set --
+        // `end_render_to_texture` transitions L0 to SHADER_READ_ONLY_OPTIMAL
+        // with the real, already-proven barrier; `point_descriptor_at` just
+        // points a conventional descriptor at that same real view instead of
+        // registering it into the bindless array.
+        cmd_buffer.end_render_to_texture(&*l0);
+        point_descriptor_at(
+            &device.device,
+            set_l0,
+            vk::ImageView::from_raw(l0.raw_handle()),
+            sampler,
+        );
+        let l1 = device
+            .acquire_transient_target(SIZE_HALF.0, SIZE_HALF.1, TextureFormat::Rgba16Float)
+            .expect("failed to acquire L1");
+        cmd_buffer.begin_render_to_texture_no_end(&*l1, SIZE_HALF.0, SIZE_HALF.1);
+        draw_nonbindless_pass(
+            downsample_pipeline,
+            set_l0,
+            SIZE_HALF,
+            &half_quad_vb,
+            &half_quad_ib,
+            6,
+        );
+        device.release_transient_target(l0);
 
-    // L1 -> L2: downsample to quarter size.
-    cmd_buffer.end_render_to_texture(&*l1);
-    point_descriptor_at(
-        &device.device,
-        set_l1,
-        vk::ImageView::from_raw(l1.raw_handle()),
-        sampler,
-    );
-    let l2 = device
-        .acquire_transient_target(SIZE_QUARTER.0, SIZE_QUARTER.1, TextureFormat::Rgba16Float)
-        .expect("failed to acquire L2");
-    cmd_buffer.begin_render_to_texture_no_end(&*l2, SIZE_QUARTER.0, SIZE_QUARTER.1);
-    draw_nonbindless_pass(
-        downsample_pipeline,
-        set_l1,
-        SIZE_QUARTER,
-        &quarter_quad_vb,
-        &quarter_quad_ib,
-        6,
-    );
-    device.release_transient_target(l1);
+        // L1 -> L2: downsample to quarter size.
+        cmd_buffer.end_render_to_texture(&*l1);
+        point_descriptor_at(
+            &device.device,
+            set_l1,
+            vk::ImageView::from_raw(l1.raw_handle()),
+            sampler,
+        );
+        let l2 = device
+            .acquire_transient_target(SIZE_QUARTER.0, SIZE_QUARTER.1, TextureFormat::Rgba16Float)
+            .expect("failed to acquire L2");
+        cmd_buffer.begin_render_to_texture_no_end(&*l2, SIZE_QUARTER.0, SIZE_QUARTER.1);
+        draw_nonbindless_pass(
+            downsample_pipeline,
+            set_l1,
+            SIZE_QUARTER,
+            &quarter_quad_vb,
+            &quarter_quad_ib,
+            6,
+        );
+        device.release_transient_target(l1);
 
-    // L2 -> U1: upsample back to half size.
-    cmd_buffer.end_render_to_texture(&*l2);
-    point_descriptor_at(
-        &device.device,
-        set_l2,
-        vk::ImageView::from_raw(l2.raw_handle()),
-        sampler,
-    );
-    let u1 = device
-        .acquire_transient_target(SIZE_HALF.0, SIZE_HALF.1, TextureFormat::Rgba16Float)
-        .expect("failed to acquire U1");
-    cmd_buffer.begin_render_to_texture_no_end(&*u1, SIZE_HALF.0, SIZE_HALF.1);
-    draw_nonbindless_pass(
-        upsample_pipeline,
-        set_l2,
-        SIZE_HALF,
-        &half_quad_vb,
-        &half_quad_ib,
-        6,
-    );
-    device.release_transient_target(l2);
+        // L2 -> U1: upsample back to half size.
+        cmd_buffer.end_render_to_texture(&*l2);
+        point_descriptor_at(
+            &device.device,
+            set_l2,
+            vk::ImageView::from_raw(l2.raw_handle()),
+            sampler,
+        );
+        let u1 = device
+            .acquire_transient_target(SIZE_HALF.0, SIZE_HALF.1, TextureFormat::Rgba16Float)
+            .expect("failed to acquire U1");
+        cmd_buffer.begin_render_to_texture_no_end(&*u1, SIZE_HALF.0, SIZE_HALF.1);
+        draw_nonbindless_pass(
+            upsample_pipeline,
+            set_l2,
+            SIZE_HALF,
+            &half_quad_vb,
+            &half_quad_ib,
+            6,
+        );
+        device.release_transient_target(l2);
 
-    // U1 -> U0: upsample back to full size.
-    cmd_buffer.end_render_to_texture(&*u1);
-    point_descriptor_at(
-        &device.device,
-        set_u1,
-        vk::ImageView::from_raw(u1.raw_handle()),
-        sampler,
-    );
-    let u0 = device
-        .acquire_transient_target(SIZE_FULL.0, SIZE_FULL.1, TextureFormat::Rgba16Float)
-        .expect("failed to acquire U0");
-    cmd_buffer.begin_render_to_texture_no_end(&*u0, SIZE_FULL.0, SIZE_FULL.1);
-    draw_nonbindless_pass(
-        upsample_pipeline,
-        set_u1,
-        SIZE_FULL,
-        &full_quad_vb,
-        &full_quad_ib,
-        6,
-    );
-    device.release_transient_target(u1);
+        // U1 -> U0: upsample back to full size.
+        cmd_buffer.end_render_to_texture(&*u1);
+        point_descriptor_at(
+            &device.device,
+            set_u1,
+            vk::ImageView::from_raw(u1.raw_handle()),
+            sampler,
+        );
+        let u0 = device
+            .acquire_transient_target(SIZE_FULL.0, SIZE_FULL.1, TextureFormat::Rgba16Float)
+            .expect("failed to acquire U0");
+        cmd_buffer.begin_render_to_texture_no_end(&*u0, SIZE_FULL.0, SIZE_FULL.1);
+        draw_nonbindless_pass(
+            upsample_pipeline,
+            set_u1,
+            SIZE_FULL,
+            &full_quad_vb,
+            &full_quad_ib,
+            6,
+        );
+        device.release_transient_target(u1);
 
-    // U0 is the chain's final texture -- what follows is `resume_
-    // swapchain_rendering`, which never calls `cmd_end_rendering` itself
-    // (Step 6.4.1's own original single-level pairing, unchanged).
-    cmd_buffer.end_render_to_texture(&*u0);
-    point_descriptor_at(
-        &device.device,
-        set_u0,
-        vk::ImageView::from_raw(u0.raw_handle()),
-        sampler,
-    );
+        // U0 is the chain's final texture -- what follows is `resume_
+        // swapchain_rendering`, which never calls `cmd_end_rendering` itself
+        // (Step 6.4.1's own original single-level pairing, unchanged).
+        cmd_buffer.end_render_to_texture(&*u0);
+        point_descriptor_at(
+            &device.device,
+            set_u0,
+            vk::ImageView::from_raw(u0.raw_handle()),
+            sampler,
+        );
 
-    // Composite the final blurred result back onto the swapchain --
-    // `passthrough_nonbindless.frag` reads no push constants, but this
-    // still goes through the same raw draw path as every other
-    // non-bindless pass for consistency (its push is simply unused).
-    cmd_buffer.resume_swapchain_rendering();
-    draw_nonbindless_pass(
-        composite_pipeline,
-        set_u0,
-        SIZE_FULL,
-        &full_quad_vb,
-        &full_quad_ib,
-        6,
-    );
-
-    device
-        .submit_and_present(cmd_buffer, &swapchain, image)
-        .expect("submit_and_present failed");
-    device.release_transient_target(u0);
+        // Composite the final blurred result back onto the swapchain --
+        // `passthrough_nonbindless.frag` reads no push constants, but this
+        // still goes through the same raw draw path as every other
+        // non-bindless pass for consistency (its push is simply unused).
+        cmd_buffer.resume_swapchain_rendering();
+        draw_nonbindless_pass(
+            composite_pipeline,
+            set_u0,
+            SIZE_FULL,
+            &full_quad_vb,
+            &full_quad_ib,
+            6,
+        );
+        device.release_transient_target(u0);
+    })
+    .expect("submit_frame failed");
 
     let bgra = swapchain
         .read_pixels_bgra8()

@@ -9,7 +9,7 @@
 
 use ash::vk;
 use raw_window_handle::HasDisplayHandle;
-use tre_engine::{rgba8, InputEvent, RenderingCanvas, RhiDevice, WindowId};
+use tre_engine::{rgba8, submit_frame, InputEvent, RenderingCanvas, WindowId};
 use tre_platform::PlatformConnection;
 use tre_rhi_vulkan::{VulkanBuffer, VulkanDevice, VulkanPipelineState, VulkanSwapchain};
 
@@ -77,16 +77,13 @@ fn make_window_slot(
 }
 
 fn render_one(device: &VulkanDevice, slot: &mut WindowSlot) {
-    let (mut cmd_buffer, image) = device
-        .begin_frame(&slot.swapchain)
-        .expect("begin_frame failed");
-    cmd_buffer.set_pipeline(&slot.pipeline);
-    cmd_buffer.bind_vertex_buffer(&slot.vertex_buffer, 0);
-    cmd_buffer.bind_index_buffer(&slot.index_buffer, 0);
-    cmd_buffer.draw_indexed(slot.index_count, 0, 0);
-    device
-        .submit_and_present(cmd_buffer, &slot.swapchain, image)
-        .expect("submit_and_present failed");
+    submit_frame(device, &slot.swapchain, |cmd_buffer| {
+        cmd_buffer.set_pipeline(&slot.pipeline);
+        cmd_buffer.bind_vertex_buffer(&slot.vertex_buffer, 0);
+        cmd_buffer.bind_index_buffer(&slot.index_buffer, 0);
+        cmd_buffer.draw_indexed(slot.index_count, 0, 0);
+    })
+    .expect("submit_frame failed");
 }
 
 /// Resolves an `InputEvent`'s `WindowId` to whichever slot's label it

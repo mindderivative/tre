@@ -38,7 +38,7 @@
 //! process from the application it inspects.
 
 use ash::vk;
-use tre_engine::{rgba8, AccessibilityNodeId, AccessibilityRole, RenderingCanvas, RhiDevice};
+use tre_engine::{rgba8, submit_frame, AccessibilityNodeId, AccessibilityRole, RenderingCanvas};
 use tre_math::Affine2;
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 
@@ -168,18 +168,17 @@ fn main() {
         )
         .expect("failed to upload index buffer");
 
-    let (mut cmd_buffer, image) = device.begin_frame(&swapchain).expect("begin_frame failed");
-    cmd_buffer.set_pipeline(&pipeline);
-    cmd_buffer.bind_vertex_buffer(&vertex_buffer, 0);
-    cmd_buffer.bind_index_buffer(&index_buffer, 0);
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "this demo's index count is far below u32::MAX"
-    )]
-    cmd_buffer.draw_indexed(frame.indices.len() as u32, 0, 0);
-    device
-        .submit_and_present(cmd_buffer, &swapchain, image)
-        .expect("submit_and_present failed");
+    submit_frame(&device, &swapchain, |cmd_buffer| {
+        cmd_buffer.set_pipeline(&pipeline);
+        cmd_buffer.bind_vertex_buffer(&vertex_buffer, 0);
+        cmd_buffer.bind_index_buffer(&index_buffer, 0);
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "this demo's index count is far below u32::MAX"
+        )]
+        cmd_buffer.draw_indexed(frame.indices.len() as u32, 0, 0);
+    })
+    .expect("submit_frame failed");
 
     let bgra = swapchain
         .read_pixels_bgra8()

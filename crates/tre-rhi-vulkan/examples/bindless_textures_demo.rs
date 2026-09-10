@@ -12,7 +12,7 @@
 //! didn't crash.
 
 use ash::vk;
-use tre_engine::{rgba8, RhiDevice, TextureFormat, UiVertex};
+use tre_engine::{rgba8, submit_frame, RhiDevice, TextureFormat, UiVertex};
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 
 /// A `width` x `height` solid-color pixel buffer, tightly packed to match
@@ -149,52 +149,50 @@ fn main() {
         )
         .expect("failed to upload index buffer");
 
-    let (mut cmd_buffer, image) = device.begin_frame(&swapchain).expect("begin_frame failed");
-    cmd_buffer.set_pipeline(&pipeline);
-    cmd_buffer.bind_vertex_buffer(&vertex_buffer, 0);
-    cmd_buffer.bind_index_buffer(&index_buffer, 0);
+    submit_frame(&device, &swapchain, |cmd_buffer| {
+        cmd_buffer.set_pipeline(&pipeline);
+        cmd_buffer.bind_vertex_buffer(&vertex_buffer, 0);
+        cmd_buffer.bind_index_buffer(&index_buffer, 0);
 
-    // Same bound pipeline, same bound descriptor set (see
-    // `VulkanCommandBuffer::set_pipeline`) for all four draws below --
-    // only the push-constant texture index (or its absence) changes
-    // between them. This is the property that makes it "bindless": no
-    // `vkCmdBindDescriptorSets` call happens again after the one inside
-    // `set_pipeline` above, no matter how many different textures get
-    // drawn.
-    cmd_buffer.bind_texture(
-        0,
-        red.bindless_index()
-            .expect("red texture has no bindless index"),
-    );
-    cmd_buffer.draw_indexed(indices.len() as u32, 0, 0);
+        // Same bound pipeline, same bound descriptor set (see
+        // `VulkanCommandBuffer::set_pipeline`) for all four draws below --
+        // only the push-constant texture index (or its absence) changes
+        // between them. This is the property that makes it "bindless": no
+        // `vkCmdBindDescriptorSets` call happens again after the one inside
+        // `set_pipeline` above, no matter how many different textures get
+        // drawn.
+        cmd_buffer.bind_texture(
+            0,
+            red.bindless_index()
+                .expect("red texture has no bindless index"),
+        );
+        cmd_buffer.draw_indexed(indices.len() as u32, 0, 0);
 
-    cmd_buffer.bind_texture(
-        0,
-        green
-            .bindless_index()
-            .expect("green texture has no bindless index"),
-    );
-    cmd_buffer.draw_indexed(indices.len() as u32, 0, 4);
+        cmd_buffer.bind_texture(
+            0,
+            green
+                .bindless_index()
+                .expect("green texture has no bindless index"),
+        );
+        cmd_buffer.draw_indexed(indices.len() as u32, 0, 4);
 
-    cmd_buffer.bind_texture(
-        0,
-        blue.bindless_index()
-            .expect("blue texture has no bindless index"),
-    );
-    cmd_buffer.draw_indexed(indices.len() as u32, 0, 8);
+        cmd_buffer.bind_texture(
+            0,
+            blue.bindless_index()
+                .expect("blue texture has no bindless index"),
+        );
+        cmd_buffer.draw_indexed(indices.len() as u32, 0, 8);
 
-    // `bind_texture`'s bound index is command-buffer state that persists
-    // across draws until explicitly changed (like every other piece of
-    // Vulkan command-buffer state -- pipeline, vertex buffer, scissor), so
-    // proving the "no texture" fallback means explicitly rebinding the
-    // sentinel here, not simply skipping the call (which would just keep
-    // sampling `blue` from the previous draw).
-    cmd_buffer.bind_texture(0, u32::MAX);
-    cmd_buffer.draw_indexed(indices.len() as u32, 0, 12);
-
-    device
-        .submit_and_present(cmd_buffer, &swapchain, image)
-        .expect("submit_and_present failed");
+        // `bind_texture`'s bound index is command-buffer state that persists
+        // across draws until explicitly changed (like every other piece of
+        // Vulkan command-buffer state -- pipeline, vertex buffer, scissor), so
+        // proving the "no texture" fallback means explicitly rebinding the
+        // sentinel here, not simply skipping the call (which would just keep
+        // sampling `blue` from the previous draw).
+        cmd_buffer.bind_texture(0, u32::MAX);
+        cmd_buffer.draw_indexed(indices.len() as u32, 0, 12);
+    })
+    .expect("submit_frame failed");
 
     let bgra = swapchain
         .read_pixels_bgra8()

@@ -16,7 +16,7 @@
 
 use ash::vk;
 use tre_engine::{
-    rgba8, CornerRadii, FillStyle, Rectangle, RenderingCanvas, RhiDevice, ShapePrimitive,
+    rgba8, submit_frame, CornerRadii, FillStyle, Rectangle, RenderingCanvas, ShapePrimitive,
     ShapeRegistry,
 };
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
@@ -76,14 +76,13 @@ fn main() {
                 vk::BufferUsageFlags::INDEX_BUFFER,
             )
             .expect("failed to upload index buffer");
-        let (mut cmd_buffer, image) = device.begin_frame(&swapchain).expect("begin_frame failed");
-        cmd_buffer.set_pipeline(&pipeline);
-        cmd_buffer.bind_vertex_buffer(&vertex_buffer, 0);
-        cmd_buffer.bind_index_buffer(&index_buffer, 0);
-        cmd_buffer.draw_indexed(frame.indices.len() as u32, 0, 0);
-        device
-            .submit_and_present(cmd_buffer, &swapchain, image)
-            .expect("submit_and_present failed");
+        submit_frame(&device, &swapchain, |cmd_buffer| {
+            cmd_buffer.set_pipeline(&pipeline);
+            cmd_buffer.bind_vertex_buffer(&vertex_buffer, 0);
+            cmd_buffer.bind_index_buffer(&index_buffer, 0);
+            cmd_buffer.draw_indexed(frame.indices.len() as u32, 0, 0);
+        })
+        .expect("submit_frame failed");
         swapchain
             .read_pixels_bgra8()
             .expect("failed to read back pixels")

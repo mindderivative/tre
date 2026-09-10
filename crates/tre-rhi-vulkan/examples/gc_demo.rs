@@ -12,7 +12,7 @@
 
 use std::time::{Duration, Instant};
 
-use tre_engine::{EngineError, RhiDevice, TextureFormat};
+use tre_engine::{submit_frame, EngineError, RhiDevice, TextureFormat};
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 
 fn main() {
@@ -101,10 +101,7 @@ fn main() {
     let deadline = Instant::now() + Duration::from_secs(60);
     let mut frames: u64 = 0;
     loop {
-        let (cmd_buffer, image) = device.begin_frame(&swapchain).expect("begin_frame failed");
-        device
-            .submit_and_present(cmd_buffer, &swapchain, image)
-            .expect("submit_and_present failed");
+        submit_frame(&device, &swapchain, |_cmd_buffer| {}).expect("submit_frame failed");
         frames += 1;
 
         let stats = device.transient_pool_stats();

@@ -15,8 +15,8 @@
 
 use ash::vk;
 use tre_engine::{
-    execute_frame, rgba8, BufferBinding, FillStyle, LineCap, LineJoin, Path, PathCommand,
-    PipelineKind, PipelineRegistry, Polygon, PrimitiveCommon, RenderingCanvas, RhiDevice,
+    execute_frame, rgba8, submit_frame, BufferBinding, FillStyle, LineCap, LineJoin, Path,
+    PathCommand, PipelineKind, PipelineRegistry, Polygon, PrimitiveCommon, RenderingCanvas,
     ScissorRect, ShapePrimitive, ShapeRegistry,
 };
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
@@ -154,25 +154,24 @@ fn main() {
         width: SWAPCHAIN_WIDTH,
         height: SWAPCHAIN_HEIGHT,
     };
-    let (mut cmd_buffer, image) = device.begin_frame(&swapchain).expect("begin_frame failed");
-    execute_frame(
-        &frame,
-        &pipelines,
-        BufferBinding {
-            buffer: &vertex_buffer,
-            offset: 0,
-        },
-        BufferBinding {
-            buffer: &index_buffer,
-            offset: 0,
-        },
-        &full_window,
-        &device,
-        &mut *cmd_buffer,
-    );
-    device
-        .submit_and_present(cmd_buffer, &swapchain, image)
-        .expect("submit_and_present failed");
+    submit_frame(&device, &swapchain, |cmd_buffer| {
+        execute_frame(
+            &frame,
+            &pipelines,
+            BufferBinding {
+                buffer: &vertex_buffer,
+                offset: 0,
+            },
+            BufferBinding {
+                buffer: &index_buffer,
+                offset: 0,
+            },
+            &full_window,
+            &device,
+            cmd_buffer,
+        );
+    })
+    .expect("submit_frame failed");
 
     let bgra = swapchain
         .read_pixels_bgra8()

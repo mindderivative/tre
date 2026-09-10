@@ -29,7 +29,7 @@
 //!    must.
 
 use ash::vk;
-use tre_engine::{rgba8, RenderingCanvas, RhiDevice, TextureFormat, UiVertex};
+use tre_engine::{rgba8, submit_frame, RenderingCanvas, RhiDevice, TextureFormat, UiVertex};
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 
 #[path = "support/pixel_helpers.rs"]
@@ -179,29 +179,29 @@ fn main() {
         .acquire_transient_target(LAYER_WIDTH, LAYER_HEIGHT, TextureFormat::Rgba16Float)
         .expect("failed to acquire transient layer target");
 
-    let (mut cmd_buffer, image) = device.begin_frame(&swapchain).expect("begin_frame failed");
-
-    cmd_buffer.begin_render_to_texture(&*layer_texture, LAYER_WIDTH, LAYER_HEIGHT);
-    cmd_buffer.set_pipeline(&rect_pipeline);
-    cmd_buffer.bind_vertex_buffer(&layer_vertex_buffer, 0);
-    cmd_buffer.bind_index_buffer(&layer_index_buffer, 0);
-    cmd_buffer.draw_indexed(layer_frame.indices.len() as u32, 0, 0);
-    cmd_buffer.end_render_to_texture(&*layer_texture);
-
+    // Hoisted above the closure: `deregister_bindless` below needs this
+    // value again after `submit_frame` returns, and registration itself
+    // is a pure device-side call with no dependency on `cmd_buffer`.
     let bindless_index = device
         .register_bindless(&*layer_texture)
         .expect("failed to register the rendered-into layer as bindless");
 
-    cmd_buffer.resume_swapchain_rendering();
-    cmd_buffer.set_pipeline(&textured_pipeline);
-    cmd_buffer.bind_texture(0, bindless_index);
-    cmd_buffer.bind_vertex_buffer(&quad_vertex_buffer, 0);
-    cmd_buffer.bind_index_buffer(&quad_index_buffer, 0);
-    cmd_buffer.draw_indexed(quad_indices.len() as u32, 0, 0);
+    submit_frame(&device, &swapchain, |cmd_buffer| {
+        cmd_buffer.begin_render_to_texture(&*layer_texture, LAYER_WIDTH, LAYER_HEIGHT);
+        cmd_buffer.set_pipeline(&rect_pipeline);
+        cmd_buffer.bind_vertex_buffer(&layer_vertex_buffer, 0);
+        cmd_buffer.bind_index_buffer(&layer_index_buffer, 0);
+        cmd_buffer.draw_indexed(layer_frame.indices.len() as u32, 0, 0);
+        cmd_buffer.end_render_to_texture(&*layer_texture);
 
-    device
-        .submit_and_present(cmd_buffer, &swapchain, image)
-        .expect("submit_and_present failed");
+        cmd_buffer.resume_swapchain_rendering();
+        cmd_buffer.set_pipeline(&textured_pipeline);
+        cmd_buffer.bind_texture(0, bindless_index);
+        cmd_buffer.bind_vertex_buffer(&quad_vertex_buffer, 0);
+        cmd_buffer.bind_index_buffer(&quad_index_buffer, 0);
+        cmd_buffer.draw_indexed(quad_indices.len() as u32, 0, 0);
+    })
+    .expect("submit_frame failed");
 
     device.deregister_bindless(bindless_index);
     device.release_transient_target(layer_texture);

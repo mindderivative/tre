@@ -46,7 +46,7 @@
 
 use ash::vk;
 use ash::vk::Handle;
-use tre_engine::{rgba8, RenderingCanvas, RhiDevice, TextureFormat, UiVertex};
+use tre_engine::{rgba8, submit_frame, RenderingCanvas, RhiDevice, TextureFormat, UiVertex};
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 
 #[path = "support/pixel_helpers.rs"]
@@ -378,122 +378,120 @@ fn main() {
     let (half_quad_vb, half_quad_ib) = upload_quad(SIZE_HALF.0, SIZE_HALF.1);
     let (full_quad_vb, full_quad_ib) = upload_quad(SIZE_FULL.0, SIZE_FULL.1);
 
-    let (mut cmd_buffer, image) = device.begin_frame(&swapchain).expect("begin_frame failed");
-    let raw_cmd_buffer = vk::CommandBuffer::from_raw(cmd_buffer.raw_handle());
+    submit_frame(&device, &swapchain, |cmd_buffer| {
+        let raw_cmd_buffer = vk::CommandBuffer::from_raw(cmd_buffer.raw_handle());
 
-    // L0: the square, rendered into a full-size transient target -- real,
-    // unmodified RHI render-to-texture, identical to the bindless demo.
-    let l0 = device
-        .acquire_transient_target(SIZE_FULL.0, SIZE_FULL.1, TextureFormat::Rgba16Float)
-        .expect("failed to acquire L0");
-    cmd_buffer.begin_render_to_texture(&*l0, SIZE_FULL.0, SIZE_FULL.1);
-    cmd_buffer.set_pipeline(&rect_pipeline);
-    cmd_buffer.bind_vertex_buffer(&square_vertex_buffer, 0);
-    cmd_buffer.bind_index_buffer(&square_index_buffer, 0);
-    cmd_buffer.draw_indexed(square_frame.indices.len() as u32, 0, 0);
+        // L0: the square, rendered into a full-size transient target -- real,
+        // unmodified RHI render-to-texture, identical to the bindless demo.
+        let l0 = device
+            .acquire_transient_target(SIZE_FULL.0, SIZE_FULL.1, TextureFormat::Rgba16Float)
+            .expect("failed to acquire L0");
+        cmd_buffer.begin_render_to_texture(&*l0, SIZE_FULL.0, SIZE_FULL.1);
+        cmd_buffer.set_pipeline(&rect_pipeline);
+        cmd_buffer.bind_vertex_buffer(&square_vertex_buffer, 0);
+        cmd_buffer.bind_index_buffer(&square_index_buffer, 0);
+        cmd_buffer.draw_indexed(square_frame.indices.len() as u32, 0, 0);
 
-    // L0 -> L1: downsample, via the plain non-bindless descriptor set --
-    // the one variable under test. `end_render_to_texture` transitions L0
-    // to SHADER_READ_ONLY_OPTIMAL with the real, already-proven barrier;
-    // this just points a conventional descriptor at that same real view
-    // instead of registering it into the bindless array.
-    cmd_buffer.end_render_to_texture(&*l0);
-    let l0_view = vk::ImageView::from_raw(l0.raw_handle());
-    let l0_image_info = vk::DescriptorImageInfo::default()
-        .image_view(l0_view)
-        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-        .sampler(sampler);
-    unsafe {
-        device.device.update_descriptor_sets(
-            &[vk::WriteDescriptorSet::default()
-                .dst_set(set_for_l0)
-                .dst_binding(0)
-                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .image_info(std::slice::from_ref(&l0_image_info))],
-            &[],
-        );
-    }
+        // L0 -> L1: downsample, via the plain non-bindless descriptor set --
+        // the one variable under test. `end_render_to_texture` transitions L0
+        // to SHADER_READ_ONLY_OPTIMAL with the real, already-proven barrier;
+        // this just points a conventional descriptor at that same real view
+        // instead of registering it into the bindless array.
+        cmd_buffer.end_render_to_texture(&*l0);
+        let l0_view = vk::ImageView::from_raw(l0.raw_handle());
+        let l0_image_info = vk::DescriptorImageInfo::default()
+            .image_view(l0_view)
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .sampler(sampler);
+        unsafe {
+            device.device.update_descriptor_sets(
+                &[vk::WriteDescriptorSet::default()
+                    .dst_set(set_for_l0)
+                    .dst_binding(0)
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .image_info(std::slice::from_ref(&l0_image_info))],
+                &[],
+            );
+        }
 
-    let l1 = device
-        .acquire_transient_target(SIZE_HALF.0, SIZE_HALF.1, TextureFormat::Rgba16Float)
-        .expect("failed to acquire L1");
-    cmd_buffer.begin_render_to_texture_no_end(&*l1, SIZE_HALF.0, SIZE_HALF.1);
-    // Raw bind: `RhiCommandBuffer::set_pipeline` would unconditionally
-    // rebind the bindless descriptor set, which is wrong for this
-    // pipeline's own, deliberately different layout.
-    let push_constants: [f32; 2] = [SIZE_HALF.0 as f32, SIZE_HALF.1 as f32];
-    unsafe {
-        device.device.cmd_bind_pipeline(
-            raw_cmd_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            downsample_pipeline,
-        );
-        device.device.cmd_bind_descriptor_sets(
-            raw_cmd_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            pipeline_layout,
-            0,
-            &[set_for_l0],
-            &[],
-        );
-        device.device.cmd_push_constants(
-            raw_cmd_buffer,
-            pipeline_layout,
-            vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-            0,
-            bytemuck::cast_slice(&push_constants),
-        );
-    }
-    cmd_buffer.bind_vertex_buffer(&half_quad_vb, 0);
-    cmd_buffer.bind_index_buffer(&half_quad_ib, 0);
-    cmd_buffer.draw_indexed(6, 0, 0);
-    device.release_transient_target(l0);
+        let l1 = device
+            .acquire_transient_target(SIZE_HALF.0, SIZE_HALF.1, TextureFormat::Rgba16Float)
+            .expect("failed to acquire L1");
+        cmd_buffer.begin_render_to_texture_no_end(&*l1, SIZE_HALF.0, SIZE_HALF.1);
+        // Raw bind: `RhiCommandBuffer::set_pipeline` would unconditionally
+        // rebind the bindless descriptor set, which is wrong for this
+        // pipeline's own, deliberately different layout.
+        let push_constants: [f32; 2] = [SIZE_HALF.0 as f32, SIZE_HALF.1 as f32];
+        unsafe {
+            device.device.cmd_bind_pipeline(
+                raw_cmd_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                downsample_pipeline,
+            );
+            device.device.cmd_bind_descriptor_sets(
+                raw_cmd_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipeline_layout,
+                0,
+                &[set_for_l0],
+                &[],
+            );
+            device.device.cmd_push_constants(
+                raw_cmd_buffer,
+                pipeline_layout,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                0,
+                bytemuck::cast_slice(&push_constants),
+            );
+        }
+        cmd_buffer.bind_vertex_buffer(&half_quad_vb, 0);
+        cmd_buffer.bind_index_buffer(&half_quad_ib, 0);
+        cmd_buffer.draw_indexed(6, 0, 0);
+        device.release_transient_target(l0);
 
-    // L1 -> swapchain: composite, again via a plain descriptor -- L1 was
-    // ALSO this same frame's own render target a moment ago, so this
-    // step alone reproduces the exact scenario under test for the final
-    // composite too, not just the downsample hop.
-    cmd_buffer.end_render_to_texture(&*l1);
-    let l1_view = vk::ImageView::from_raw(l1.raw_handle());
-    let l1_image_info = vk::DescriptorImageInfo::default()
-        .image_view(l1_view)
-        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-        .sampler(sampler);
-    unsafe {
-        device.device.update_descriptor_sets(
-            &[vk::WriteDescriptorSet::default()
-                .dst_set(set_for_l1)
-                .dst_binding(0)
-                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .image_info(std::slice::from_ref(&l1_image_info))],
-            &[],
-        );
-    }
+        // L1 -> swapchain: composite, again via a plain descriptor -- L1 was
+        // ALSO this same frame's own render target a moment ago, so this
+        // step alone reproduces the exact scenario under test for the final
+        // composite too, not just the downsample hop.
+        cmd_buffer.end_render_to_texture(&*l1);
+        let l1_view = vk::ImageView::from_raw(l1.raw_handle());
+        let l1_image_info = vk::DescriptorImageInfo::default()
+            .image_view(l1_view)
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .sampler(sampler);
+        unsafe {
+            device.device.update_descriptor_sets(
+                &[vk::WriteDescriptorSet::default()
+                    .dst_set(set_for_l1)
+                    .dst_binding(0)
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .image_info(std::slice::from_ref(&l1_image_info))],
+                &[],
+            );
+        }
 
-    cmd_buffer.resume_swapchain_rendering();
-    unsafe {
-        device.device.cmd_bind_pipeline(
-            raw_cmd_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            composite_pipeline,
-        );
-        device.device.cmd_bind_descriptor_sets(
-            raw_cmd_buffer,
-            vk::PipelineBindPoint::GRAPHICS,
-            pipeline_layout,
-            0,
-            &[set_for_l1],
-            &[],
-        );
-    }
-    cmd_buffer.bind_vertex_buffer(&full_quad_vb, 0);
-    cmd_buffer.bind_index_buffer(&full_quad_ib, 0);
-    cmd_buffer.draw_indexed(6, 0, 0);
-
-    device
-        .submit_and_present(cmd_buffer, &swapchain, image)
-        .expect("submit_and_present failed");
-    device.release_transient_target(l1);
+        cmd_buffer.resume_swapchain_rendering();
+        unsafe {
+            device.device.cmd_bind_pipeline(
+                raw_cmd_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                composite_pipeline,
+            );
+            device.device.cmd_bind_descriptor_sets(
+                raw_cmd_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipeline_layout,
+                0,
+                &[set_for_l1],
+                &[],
+            );
+        }
+        cmd_buffer.bind_vertex_buffer(&full_quad_vb, 0);
+        cmd_buffer.bind_index_buffer(&full_quad_ib, 0);
+        cmd_buffer.draw_indexed(6, 0, 0);
+        device.release_transient_target(l1);
+    })
+    .expect("submit_frame failed");
 
     let bgra = swapchain
         .read_pixels_bgra8()

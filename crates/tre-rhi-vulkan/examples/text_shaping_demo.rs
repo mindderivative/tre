@@ -11,7 +11,7 @@
 use ash::vk;
 use rustybuzz::{Direction, Face};
 use skrifa::MetadataProvider;
-use tre_engine::{rgba8, RhiDevice};
+use tre_engine::{rgba8, submit_frame};
 use tre_rhi_vulkan::{HeadlessSwapchain, VulkanDevice};
 use tre_svg::Polygon;
 use tre_text::OutlineSegment;
@@ -284,14 +284,13 @@ fn main() {
         )
         .expect("failed to upload index buffer");
 
-    let (mut cmd_buffer, image) = device.begin_frame(&swapchain).expect("begin_frame failed");
-    cmd_buffer.set_pipeline(&pipeline);
-    cmd_buffer.bind_vertex_buffer(&vertex_buffer, 0);
-    cmd_buffer.bind_index_buffer(&index_buffer, 0);
-    cmd_buffer.draw_indexed(indices.len() as u32, 0, 0);
-    device
-        .submit_and_present(cmd_buffer, &swapchain, image)
-        .expect("submit_and_present failed");
+    submit_frame(&device, &swapchain, |cmd_buffer| {
+        cmd_buffer.set_pipeline(&pipeline);
+        cmd_buffer.bind_vertex_buffer(&vertex_buffer, 0);
+        cmd_buffer.bind_index_buffer(&index_buffer, 0);
+        cmd_buffer.draw_indexed(indices.len() as u32, 0, 0);
+    })
+    .expect("submit_frame failed");
 
     let bgra = swapchain
         .read_pixels_bgra8()
@@ -463,20 +462,17 @@ fn main() {
         ));
     }
 
-    let (mut word_cmd_buffer, word_image) = device
-        .begin_frame(&swapchain)
-        .expect("begin_frame failed for word render");
-    word_cmd_buffer.set_pipeline(&pipeline);
-    for (vertex_buffer, (index_buffer, index_count)) in
-        word_vertex_buffers.iter().zip(&word_index_buffers)
-    {
-        word_cmd_buffer.bind_vertex_buffer(vertex_buffer, 0);
-        word_cmd_buffer.bind_index_buffer(index_buffer, 0);
-        word_cmd_buffer.draw_indexed(*index_count, 0, 0);
-    }
-    device
-        .submit_and_present(word_cmd_buffer, &swapchain, word_image)
-        .expect("submit_and_present failed for word render");
+    submit_frame(&device, &swapchain, |word_cmd_buffer| {
+        word_cmd_buffer.set_pipeline(&pipeline);
+        for (vertex_buffer, (index_buffer, index_count)) in
+            word_vertex_buffers.iter().zip(&word_index_buffers)
+        {
+            word_cmd_buffer.bind_vertex_buffer(vertex_buffer, 0);
+            word_cmd_buffer.bind_index_buffer(index_buffer, 0);
+            word_cmd_buffer.draw_indexed(*index_count, 0, 0);
+        }
+    })
+    .expect("submit_frame failed for word render");
 
     let word_bgra = swapchain
         .read_pixels_bgra8()

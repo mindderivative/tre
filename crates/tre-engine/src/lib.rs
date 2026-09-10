@@ -3736,6 +3736,45 @@ pub fn execute_frame(
     }
 }
 
+/// Wraps the "begin a frame, record into it, submit and present" sandwich
+/// every real caller in the workspace was hand-writing identically --
+/// found via this project's own `/review-project` process (REVIEW.md
+/// #200): ~40 example programs plus `tre-python`'s own `HeadlessRenderer`
+/// each repeated
+/// `device.begin_frame(swapchain)` -> (some per-frame recording) ->
+/// `device.submit_and_present(cmd_buffer, swapchain, image)` verbatim,
+/// with only the recording step itself ever differing -- a single
+/// [`execute_frame`] call for callers that go through the sorted/batched
+/// IR pipeline, or hand-written `set_pipeline`/`bind_vertex_buffer`/
+/// `draw_indexed` calls for callers that don't.
+///
+/// `record` receives the freshly acquired command buffer and does
+/// whatever per-frame work this caller needs -- an [`execute_frame`]
+/// call, several draw calls, or (Step 6.4.2/7.2.2) a `push_layer`/
+/// `pop_layer` render-to-texture sequence entirely encoded as `UiDrawCommand`s
+/// `execute_frame` already dispatches. This function only owns the part
+/// that never varies: fence-wait/image-acquire (inside `begin_frame`)
+/// and submit/present (inside `submit_and_present`), both real,
+/// swapchain-agnostic RHI operations already generic over `&dyn
+/// RhiSwapchain` -- headless and windowed callers share this one
+/// function with no branching.
+///
+/// # Errors
+/// Returns whatever [`RhiDevice::begin_frame`]/[`RhiDevice::
+/// submit_and_present`] themselves return -- see their own docs.
+pub fn submit_frame<F>(
+    device: &dyn RhiDevice,
+    swapchain: &dyn RhiSwapchain,
+    record: F,
+) -> Result<(), EngineError>
+where
+    F: FnOnce(&mut dyn RhiCommandBuffer),
+{
+    let (mut cmd_buffer, image) = device.begin_frame(swapchain)?;
+    record(&mut *cmd_buffer);
+    device.submit_and_present(cmd_buffer, swapchain, image)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
