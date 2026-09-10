@@ -1,31 +1,41 @@
-//! SVG ingestion, tessellation, morphing, and stencil-and-cover geometry
-//! (IMPLEMENTATION.md Steps 3.3.1-3.3.3). Parses real SVG documents via
-//! the `usvg` crate -- which resolves the DOM (`<use>`/`<g>`/CSS) and
-//! converts every shape to absolute-coordinate path data but performs no
-//! rasterization itself -- then hand-rolls the actual geometry work this
-//! project owns: Bezier curve flattening ([`flatten_cubic`]/[`flatten_quad`],
-//! also reused by `tre-text` for glyph outline geometry), ear-clipping
-//! triangulation ([`triangulate`]) for simple polygons, SIMD keyframe
-//! interpolation ([`morph`]), and stencil-and-cover CPU-side geometry
-//! ([`stencil`]) for polygons [`triangulate`] cannot handle (self-
-//! intersecting contours) -- see [`SvgError::NotSimplePolygon`]. The
-//! actual stencil-and-cover GPU rendering (the two-pass pipeline that
-//! consumes this module's geometry) lives in `tre-rhi-vulkan`'s
-//! `create_stencil_and_cover_pipelines`, not here -- this crate stays
-//! backend-agnostic.
+//! SVG ingestion, tessellation, and morphing (IMPLEMENTATION.md Steps
+//! 3.3.1-3.3.2; Step 3.3.3's stencil-and-cover fallback is retired, see
+//! below). Parses real SVG documents via the `usvg` crate -- which
+//! resolves the DOM (`<use>`/`<g>`/CSS) and converts every shape to
+//! absolute-coordinate path data but performs no rasterization itself --
+//! then flattens curves ([`flatten_cubic`]/[`flatten_quad`], also reused
+//! by `tre-text` for glyph outline geometry) and tessellates the result
+//! ([`tessellate_fill`]) for the existing IR/sort/batch/RHI pipeline to
+//! render, plus SIMD keyframe interpolation ([`morph`]) between two
+//! already-flattened keyframe shapes.
+//!
+//! **Phase 10 Step 10.2 follow-up: real fill tessellation now goes
+//! through `lyon` (`nical/lyon`), the industry-standard Rust 2D
+//! tessellation library, not a hand-rolled ear-clipping triangulator.**
+//! The original ear-clipper could only ever handle a single simple
+//! (non-self-intersecting) contour, rejecting everything else
+//! (`SvgError::NotSimplePolygon`) -- which is why Step 3.3.3 built a
+//! separate stencil-and-cover GPU fallback technique for exactly that
+//! rejected case. `lyon`'s real sweep-line fill tessellator handles
+//! self-intersection, compound shapes with holes, and both winding rules
+//! directly, as one algorithm -- there is no longer a case ear-clipping
+//! could handle that this can't, and no case needing a fallback
+//! technique at all. See REVIEW.md for the full account of this
+//! retirement (the ear-clipping triangulator and the CPU-side
+//! stencil/fan-triangle geometry it needed are both deleted; the GPU-side
+//! stencil-and-cover pipeline in `tre-rhi-vulkan` is unused but not yet
+//! removed).
 #![forbid(unsafe_code)]
 
 mod flatten;
 mod morph;
-mod stencil;
-mod triangulate;
+mod tessellate;
 
 use tre_math::Affine2;
 
 pub use flatten::{flatten_cubic, flatten_quad};
 pub use morph::{morph, morph_into};
-pub use stencil::{bounding_box, fan_triangles};
-pub use triangulate::triangulate;
+pub use tessellate::{tessellate_fill, FillRule};
 
 /// A single closed polygon contour: an ordered list of points with the
 /// last point implicitly connected back to the first (not repeated in
@@ -59,11 +69,14 @@ pub enum SvgError {
     /// detection -- verified by reading `usvg`'s source, not assumed from
     /// its reputation).
     Parse(String),
-    /// A path's fill region could not be triangulated by ear-clipping --
-    /// e.g. a self-intersecting contour. IMPLEMENTATION.md Step 3.3.3's
-    /// stencil-and-cover fallback is the right tool for such a path, not
-    /// a guess from this algorithm.
-    NotSimplePolygon,
+    /// [`tessellate_fill`]'s own lyon `FillTessellator` reported an
+    /// internal failure -- rare in practice (Phase 10 Step 10.2
+    /// follow-up: lyon's real sweep-line fill tessellator is designed to
+    /// succeed on self-intersecting and multi-contour input, unlike the
+    /// ear-clipping algorithm it replaced, which rejected such input
+    /// outright via the now-retired `NotSimplePolygon` variant this one
+    /// replaces).
+    TessellationFailed,
     /// [`morph`]'s two keyframe `Polygon`s have different vertex counts --
     /// IMPLEMENTATION.md Step 3.3 task 2's "topological equivalence"
     /// requirement, for already-flattened polygons, means equal vertex
@@ -86,10 +99,7 @@ impl std::fmt::Display for SvgError {
                 "SVG resolves to {count} path points, exceeding the {max}-point limit"
             ),
             Self::Parse(msg) => write!(f, "failed to parse SVG: {msg}"),
-            Self::NotSimplePolygon => write!(
-                f,
-                "polygon is self-intersecting or otherwise not simple; ear-clipping cannot triangulate it"
-            ),
+            Self::TessellationFailed => write!(f, "lyon's fill tessellator reported an internal failure"),
             Self::TopologyMismatch { from_points, to_points } => write!(
                 f,
                 "cannot morph: keyframes have different vertex counts ({from_points} vs {to_points})"
@@ -247,7 +257,7 @@ fn collect_polygons(
 
 /// Parses `source` as an SVG document and returns every filled path's
 /// geometry as absolute-coordinate, curve-flattened [`Polygon`]s, ready
-/// for [`triangulate`].
+/// for [`tessellate_fill`].
 ///
 /// # Errors
 /// Returns [`SvgError::TooLarge`] if `source.len()` exceeds `max_bytes`
@@ -260,12 +270,12 @@ fn collect_polygons(
 /// while walking the tree -- exceeds `max_points`, a cap `usvg` does not
 /// itself enforce.
 ///
-/// `max_points` bounds peak memory (and, transitively, [`triangulate`]'s
+/// `max_points` bounds peak memory (and, transitively, [`tessellate_fill`]'s
 /// input size) across the *whole document*, but NOT worst-case CPU time:
 /// it says nothing about how those points are distributed across
-/// individual paths, and [`triangulate`]'s own doc comment explains why a
-/// single adversarially-shaped path even within this budget can still be
-/// far more expensive than a well-behaved one of the same point count.
+/// individual paths, and a single adversarially-shaped path even within
+/// this budget can still be far more expensive to tessellate than a
+/// well-behaved one of the same point count.
 pub fn parse_svg(
     source: &[u8],
     max_bytes: usize,
@@ -285,31 +295,6 @@ pub fn parse_svg(
     let mut point_budget = 0usize;
     collect_polygons(tree.root(), &mut polygons, &mut point_budget, max_points)?;
     Ok(polygons)
-}
-
-/// Converts a triangulated polygon into flat-colored `UiVertex`/index
-/// buffers, ready for the exact same `upload_buffer`/`draw_indexed` path
-/// every pre-Step-3.2 flat-color example already uses. `uv`/`params` are
-/// zeroed, matching that convention -- a plain triangle soup has no SDF
-/// to evaluate.
-#[must_use]
-pub fn to_ui_vertices(
-    polygon: &Polygon,
-    triangles: &[[u32; 3]],
-    rgba: u32,
-) -> (Vec<tre_engine::UiVertex>, Vec<u32>) {
-    let vertices = polygon
-        .points
-        .iter()
-        .map(|&position| tre_engine::UiVertex {
-            position,
-            uv: [0.0, 0.0],
-            color: rgba,
-            params: [0.0; 3],
-        })
-        .collect();
-    let indices = triangles.iter().flat_map(|&t| t).collect();
-    (vertices, indices)
 }
 
 #[cfg(test)]
@@ -369,29 +354,6 @@ mod tests {
             .iter()
             .any(|&[x, y]| x >= 4.9 && y >= 4.9));
         assert!(!polygons[0].points.iter().any(|&[x, y]| x < 0.1 && y < 0.1));
-    }
-
-    #[test]
-    #[allow(
-        clippy::float_cmp,
-        reason = "position/uv/params pass through UiVertex construction unchanged (a plain \
-                   struct-literal copy in to_ui_vertices), not a rounded computed value"
-    )]
-    fn to_ui_vertices_zeroes_uv_and_params_and_preserves_position_and_color() {
-        let square = Polygon {
-            points: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
-        };
-        let triangles = triangulate(&square).expect("a square is a simple polygon");
-        let (vertices, indices) = to_ui_vertices(&square, &triangles, 0xFF00_FFFF);
-
-        assert_eq!(vertices.len(), 4);
-        assert_eq!(indices.len(), 6);
-        for (vertex, &position) in vertices.iter().zip(&square.points) {
-            assert_eq!(vertex.position, position);
-            assert_eq!(vertex.uv, [0.0, 0.0]);
-            assert_eq!(vertex.params, [0.0; 3]);
-            assert_eq!(vertex.color, 0xFF00_FFFF);
-        }
     }
 }
 
@@ -469,17 +431,15 @@ mod proptests {
             );
         }
 
-        /// Random point sets fed directly to `triangulate`, bypassing
+        /// Random point sets fed directly to `tessellate_fill`, bypassing
         /// SVG parsing entirely -- degenerate (0-2 points), duplicate/
         /// coincident points, and self-intersecting orderings are all
-        /// real, reachable shapes a resolved SVG path can produce
-        /// (`triangulate`'s own doc comment already names self-
-        /// intersection as a real `SvgError::NotSimplePolygon` case,
-        /// not a panic), so this property is real adversarial coverage
-        /// for the tessellator specifically, independent of whatever
-        /// the parser's own point-budget already bounds.
+        /// real, reachable shapes a resolved SVG path can produce, so
+        /// this property is real adversarial coverage for the
+        /// tessellator specifically, independent of whatever the
+        /// parser's own point-budget already bounds.
         #[test]
-        fn triangulate_never_panics_or_hangs_on_arbitrary_point_sets(
+        fn tessellate_fill_never_panics_or_hangs_on_arbitrary_point_sets(
             points in proptest::collection::vec(
                 (-1.0e6f32..1.0e6f32, -1.0e6f32..1.0e6f32),
                 0..500
@@ -489,10 +449,10 @@ mod proptests {
                 points: points.into_iter().map(|(x, y)| [x, y]).collect(),
             };
             let start = Instant::now();
-            let _ = triangulate(&polygon);
+            let _ = tessellate_fill(std::slice::from_ref(&polygon), FillRule::NonZero, 0);
             prop_assert!(
                 start.elapsed() < BOUNDED_TIME,
-                "triangulate took {:?} on {} arbitrary points -- expected bounded, not \
+                "tessellate_fill took {:?} on {} arbitrary points -- expected bounded, not \
                  unbounded, worst-case time regardless of how degenerate or self-intersecting \
                  the polygon is",
                 start.elapsed(),

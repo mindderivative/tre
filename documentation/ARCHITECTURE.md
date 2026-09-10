@@ -386,7 +386,7 @@ Added in the September 2026 documentation review -- the standard 2D content pipe
 * **Depth Write:** Disabled, for the same reason.
 * **Blending:** Enabled, premultiplied-alpha "over" compositing, evaluated in linear color space (DESIGN.md Section 11.1 / TECHNICAL.md Section 6.2). Premultiplied alpha is required for correct results when `PushLayer` offscreen composites (Section 5) are later blended back into a parent target.
 * **Culling:** Disabled (or front-and-back both drawn) -- 2D quads have no meaningful winding-order culling benefit and disabling it removes a class of "invisible rect" bugs from incorrect vertex winding.
-* **Stencil Test:** Disabled by default, same reasoning as depth. IMPLEMENTATION.md Step 3.3.3's stencil-and-cover fallback (for self-intersecting paths ear-clipping cannot triangulate) is the one deliberate exception -- its two pipelines (`create_stencil_and_cover_pipelines`) enable stencil test/write to encode a per-pixel winding count or even-odd parity, while depth test/write stay disabled exactly as above. Every pipeline, including the ordinary default ones described here, declares a stencil-compatible `PipelineRenderingCreateInfo` regardless of whether it enables the test -- the same "declared everywhere, unused by pipelines that don't reference it" precedent as the bindless descriptor set and push-constant range, needed because every swapchain now always has a stencil buffer attached.
+* **Stencil Test:** Disabled by default, same reasoning as depth. IMPLEMENTATION.md Step 3.3.3 originally added a stencil-and-cover fallback (for self-intersecting paths the hand-rolled ear-clipper could not triangulate), enabling stencil test/write on two dedicated pipelines to encode a per-pixel winding count or even-odd parity. **Retired (2026-09-09, Step 10.2 follow-up):** the project adopted `lyon` as its one tessellation backend (see Section 7.5's "Implementation status" note and REVIEW.md's closing of finding #163) -- its real sweep-line fill tessellator resolves self-intersection/holes/winding rules directly, with no GPU-side stencil trick needed, so `create_stencil_and_cover_pipelines` was deleted entirely. Every pipeline, including the ordinary default ones described here, still declares a stencil-compatible `PipelineRenderingCreateInfo` regardless of whether it enables the test -- the same "declared everywhere, unused by pipelines that don't reference it" precedent as the bindless descriptor set and push-constant range, needed because every swapchain still always has a stencil buffer attached (kept for any future real use, not only the now-retired one).
 
 ---
 
@@ -400,11 +400,14 @@ data model plus real rendering for one narrow case (uniform-radius,
 borderless `Rectangle`); Step 10.2 made real rendering support MUCH
 broader -- `Rectangle` (any corner radii, real borders, corner
 smoothing) and `Circle`/`Ellipse` (borders, partial-arc sweep) both
-render for real now, `Polygon`/`Star` fill for real (no border/stroke
-yet), and `Path`'s Bezier-flattening math is real and tested even though
-no `Path` rendering path (fill or stroke) exists yet. See Section 7.5's
-own "Implementation status" note for the current, itemized disposition
-of every field. The per-step plans
+render for real now, `Polygon`/`Star` fill for real, and `Path`'s
+Bezier-flattening math is real and tested. **A same-day follow-up
+(2026-09-09) closed the two gaps Step 10.2 itself disclosed here:**
+`Path` fill (including real compound shapes with holes) and
+`Polygon`/`Path` border/stroke are now both real too, via `lyon`
+(see Section 7.5's own "Implementation status" note for the full
+account). See Section 7.5's own "Implementation status" note for the
+current, itemized disposition of every field. The per-step plans
 (`planning/archive/PLAN_PHASE10_STEP10_1.md`,
 `planning/archive/PLAN_PHASE10_STEP10_2.md`) are the authoritative task
 breakdowns; this section remains the canonical struct/trait/enum
@@ -826,7 +829,8 @@ pub struct ShapeRegistry {
   equivalent guarded demo) to close that gap is real, separate future
   work, not done as part of this step.
 * **Implementation status, itemized against real rendering support
-  (revised 2026-09-09, Step 10.2):**
+  (revised 2026-09-09, Step 10.2; updated again same-day for the
+  lyon-migration follow-up):**
   - **`Rectangle`: fully real.** Any `corner_radius` (uniform or not),
     a real border (`border_color`/`border_thickness`), and
     `corner_smoothing` (a real, if approximate, superellipse blend --
@@ -841,24 +845,35 @@ pub struct ShapeRegistry {
     disclosed *approximate* SDF (exact only when `radius.x ==
     radius.y`); border and `arc_length` (a hard-edged angular sector
     cutoff, no rounded stroke caps at the cut) are both real.
-  - **`Polygon`/`Star`: fill is real**, via procedural boundary-point
-    generation (`generate_polygon_points`) and a from-center triangle
-    fan (`fan_from_center`) -- valid because a regular/star polygon
-    generated this way is star-shaped with respect to its own center by
-    construction. **Border/stroke rendering is not built** (no stroke
-    tessellator exists yet).
-  - **`Path`: Bezier-flattening is real and tested**
-    (`shapes::flatten_path`, reusing the exact tolerance-based recursive
-    de Casteljau algorithm `tre_svg::flatten_cubic`/`flatten_quad`
-    already use for SVG curves -- duplicated, not shared, since
-    `tre-svg` already depends on `tre-engine`, so the reverse dependency
-    this would need is circular; see REVIEW.md's own Phase 10 Step 10.2
-    finding). **No `Path` rendering path exists at all** -- fill needs a
-    general (non-star-shaped) triangulator this crate cannot reach for
-    the same circular-dependency reason, and stroke needs a tessellator
-    not yet built. `flatten_path`'s real output is used today by
-    `ShapeRegistry::hit_test`'s own `Path` case, which needs no GPU
-    rendering plumbing.
+  - **`Polygon`/`Star`: fully real.** Fill is via procedural
+    boundary-point generation (`generate_polygon_points`) and a
+    from-center triangle fan (`fan_from_center`) -- valid because a
+    regular/star polygon generated this way is star-shaped with respect
+    to its own center by construction. **Border/stroke is now real too
+    (2026-09-09 follow-up)**, via `lyon`'s real `StrokeTessellator`
+    (`shapes::tessellate_stroke`), honoring `border_color`/
+    `border_thickness`.
+  - **`Path`: fully real (2026-09-09 follow-up; previously the one
+    disclosed gap in this whole system).** Bezier-flattening
+    (`shapes::flatten_path`) is now a thin wrapper over
+    `lyon_geom::{CubicBezierSegment, QuadraticBezierSegment}::flattened`
+    (same public contract, no longer a duplicated hand-rolled recursive
+    de Casteljau algorithm) and additionally tracks each subpath's own
+    closedness (`PathCommand::Close`) for correct stroke-cap behavior.
+    **Fill is real**, including genuine compound shapes with holes
+    (opposite-wound subpaths under `NonZero`) -- exactly the case the
+    project's old hand-rolled ear-clipper could never express, since it
+    only ever handled a single simple contour. **Stroke is real**,
+    honoring `stroke_line_cap`/`stroke_line_join` per subpath. Both go
+    through `shapes::tessellate_fill`/`tessellate_stroke`, backed
+    directly by `lyon` (`tre-engine` now depends on `lyon` itself --
+    see REVIEW.md's closing of finding #163: the real fix for the
+    original tre-svg/tre-engine circular-dependency blocker was
+    "reach for the same industry-standard external library from both
+    sides," not a shared internal bridge crate, once the user pointed
+    at `lyon` as the current Rust ecosystem's real answer for GPU 2D
+    tessellation). `flatten_path`'s real output is also still used by
+    `ShapeRegistry::hit_test`'s own `Path` case.
   - **`FillStyle::Gradient`/`Texture`: still not built, for any shape
     kind.** **Non-`Normal` `BlendMode`: still not built** -- the
     Vulkan fixed-function blend state a subset could use, and the
@@ -875,7 +890,8 @@ pub struct ShapeRegistry {
     `Polygon` and (XORed across subpaths) `Path`.
 
   See IMPLEMENTATION.md Step 10.2's own "Explicitly out of scope" list
-  for the authoritative version of this same disclosure.
+  (and its 2026-09-09 follow-up note) for the authoritative version of
+  this same disclosure.
 * **The Shape Style Buffer (new, Step 10.2).** `UiVertex`'s hard
   32-byte layout (`params: [f32; 3]`, Section 3.1) has no room for
   non-uniform corner radii, a border color/thickness, or corner

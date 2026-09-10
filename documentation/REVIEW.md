@@ -2172,7 +2172,7 @@ assertions pass, confirmed stable across 3 repeated runs) and the full
 `style_index_param_numerically_encodes_the_word_index_not_the_byte_offset`
 regression test).
 
-### 163. [Disclosed, not fixed] `Path` fill rendering remains unimplemented -- the real triangulator this engine would reuse (`tre_svg::triangulate`) is unreachable from `tre-engine` without a circular crate dependency
+### 163. [Fixed same-day, 2026-09-09] `Path` fill rendering remains unimplemented -- the real triangulator this engine would reuse (`tre_svg::triangulate`) is unreachable from `tre-engine` without a circular crate dependency
 `tre-svg` already depends on `tre-engine` (for `tre_engine::UiVertex`,
 reused by `tre_svg::to_ui_vertices`) -- so `tre-engine` cannot depend
 back on `tre-svg` to reuse its existing, real, tested ear-clipping
@@ -2200,6 +2200,22 @@ depend on -- is real, separate, not-yet-scheduled future work.
 today regardless (used by `ShapeRegistry::hit_test`'s `Path` case, which
 needs no triangulation at all); only the *rendering* path is blocked.
 
+**Closed the same day (2026-09-09), by a different fix than the one
+proposed above.** The user directed this fixed for real rather than
+left disclosed, and, mid-implementation, pointed at
+[`lyon`](https://github.com/nical/lyon) as an alternative to the
+shared-bridge-crate plan this finding named -- then explicitly chose
+"full replacement": migrate `tre-svg`'s own tessellation pipeline to
+`lyon` too, retiring the hand-rolled ear-clipper (`tre_svg::triangulate`)
+and the stencil-and-cover technique (Step 3.3.3) entirely. The real fix
+this circular dependency needed was not a shared internal crate at all:
+once `tre-engine` depends directly on the same external `lyon` crate
+`tre-svg` now also uses, neither crate needs to reach into the other's
+tessellation code, so the cycle this finding described simply doesn't
+need routing around. See finding #165 and IMPLEMENTATION.md's "Step
+10.2 Follow-up" write-up for the full account of everything this
+decision retired.
+
 ### 164. [Disclosed, not fixed] `walking_skeleton.frag` (now `PipelineKind::FlatColor`, `Polygon`/`Path` fill's real shader) does not premultiply its own output by alpha, unlike every other pipeline in this engine
 Every other real fragment shader in this codebase (`sdf_rounded_rect.
 frag`, `sdf_rect_styled.frag`, `sdf_ellipse.frag`, `msdf.frag`) outputs
@@ -2223,3 +2239,96 @@ changing behavior for whatever (if anything) else might come to depend
 on its exact current output, and is out of this step's own stated scope
 (shape rendering, not a Phase-0-shader audit). Disclosed here so a
 future translucent-fill caller does not discover it the hard way.
+
+## Phase 10 Step 10.2 Follow-up: `lyon` Migration (2026-09-09)
+
+### 165. [Decision] Full replacement of this project's hand-rolled tessellation (ear-clipping triangulator, stencil-and-cover fallback) with `lyon`, a real architecture pivot -- what it retired and why
+Closing finding #163 (`Path` fill blocked by a real, one-directional
+circular-dependency constraint between `tre-svg` and `tre-engine`) was
+originally planned as a new, lower-level shared bridge crate exposing
+`tre-svg`'s existing curve-flattening/triangulation primitives to both
+sides. Mid-implementation (only an empty `Cargo.toml` stub had been
+created, no source files -- confirmed and cleaned up before proceeding),
+the user pointed at [`lyon`](https://github.com/nical/lyon), the current
+Rust ecosystem's de facto standard 2D GPU tessellation library, as an
+alternative. Given new information mid-task, this was treated as a
+genuine architecture decision needing the user's own judgment call
+rather than a default continuation of the original plan: presented via
+`AskUserQuestion` as three real options ("new work only" -- fix `Path`
+fill with `lyon`, leave `tre-svg`'s own existing, shipped, tested
+tessellation code untouched; "full replacement" -- migrate `tre-svg` to
+`lyon` too, retiring its hand-rolled work entirely; "keep hand-rolled,
+just relocate" -- the original bridge-crate plan). **The user chose full
+replacement.**
+
+**What this retired, named explicitly, not silently dropped:**
+- `tre-svg::triangulate` (Phase 3 Step 3.3.1's ear-clipping
+  triangulator, `crates/tre-svg/src/triangulate.rs`, ~463 lines) --
+  including the documented record of three separately hard-won
+  correctness bugs found only via real GPU demo pixel readbacks, never
+  its own unit tests. Deleted outright, not deprecated.
+- The stencil-and-cover GPU fallback (Phase 3 Step 3.3.3):
+  `VulkanDevice::create_stencil_and_cover_pipelines`
+  (`crates/tre-rhi-vulkan/src/lib.rs`, ~204 lines) and `tre-svg`'s own
+  `stencil.rs` (`fan_triangles`/`bounding_box`). Deleted outright.
+- `tre_engine::FillRule` (`crates/tre-engine/src/lib.rs`) -- existed
+  solely to parameterize the now-deleted stencil-and-cover pipelines.
+  Deleted (confirmed `tre-text`'s own unrelated `FillRule` usage is a
+  distinct third-party `fdsm::bezier::scanline::FillRule`, not this
+  one, before removing it).
+- `SvgError::NotSimplePolygon` (the old ear-clipper's own rejection for
+  every case it structurally couldn't handle -- self-intersection, true
+  holes, multiple contours). Replaced by `SvgError::TessellationFailed`,
+  now reached only on `lyon`'s own genuine tessellation failure, not as
+  the routine "this shape is too complex for this algorithm" case it
+  used to be -- because `lyon`'s real sweep-line fill tessellator
+  handles every one of those cases directly.
+
+**Why this counts as a real architecture pivot, not scope creep.** 2D
+path tessellation -- fill with self-intersection/hole/winding-rule
+resolution, plus stroke joins/caps/miter limits (a capability this
+workspace never had at all until this follow-up) -- is a deep,
+well-solved problem domain with a mature, actively-maintained,
+ecosystem-standard answer, matching the same category this project
+already treats `usvg` (SVG DOM/parsing) and `wide` (SIMD) as being in,
+rather than a core-identity primitive this project deliberately hand-
+rolls (sort, atlas, arena). `lyon`'s real behavior was verified directly
+against its published documentation and source (via `docs.rs` and
+`gh api`/raw GitHub fetches, not assumed from training data) before any
+integration code was written, including two non-obvious, easy-to-get-
+wrong facts: `Flattened`'s iterator contract exactly matches the old
+hand-rolled flattening functions' own contract (starts after the current
+point, ends exactly at the segment's endpoint), and `StrokeVertex::
+position()` -- not `position_on_path()`, the pre-offset centerline point
+-- is the correct final tessellated stroke position to consume.
+
+**A real, self-found correctness bug beyond what was asked, disclosed
+here.** While rewriting `tre-engine`'s own `flatten_path`, the original
+function discarded per-subpath closedness (whether a subpath ended via
+`PathCommand::Close`) entirely. An explicitly-closed subpath needs a
+continuous stroke loop with no end caps; an open subpath needs real caps
+at both ends (per `stroke_line_cap`). Fixed by splitting `flatten_path`
+(public, unchanged signature) into a thin wrapper over a new private
+`flatten_path_with_closed`, which now threads closedness through to
+`tessellate_stroke`.
+
+**Verified.** Every real consumer of the retired API was found and
+updated, including one (`text_shaping_demo.rs`) missed in the initial
+sweep and caught only via a full `cargo build -p tre-rhi-vulkan
+--all-targets`. `self_intersecting_fill_demo.rs` (renamed from
+`stencil_and_cover_demo.rs`) re-proves the exact same textbook pentagram
+fill-rule disagreement this project used to prove the old technique with,
+now via `tessellate_fill` directly -- confirmed via a real run and visual
+inspection of the output PNG. A new demo, `path_and_polygon_demo.rs`
+(`demo/phase10_step10_2_followup/`), proves the original motivating goal
+end to end: a "donut" `Path` with a real subtractive hole, and a bordered
+`Polygon`, both rendered through `ShapeRegistry`, with real pixel
+assertions and visual confirmation. `cargo fmt`/`clippy -D warnings`/
+`build`/`test` clean across the whole workspace (126 `tre-engine` tests,
+up from 119).
+
+## Summary table (Phase 10 Step 10.2 Follow-up)
+
+| # | Severity | Status | One-line summary |
+|---|----------|--------|-------------------|
+| 165 | Decision | Resolved | Adopted `lyon` as the one tessellation backend for `tre-svg` and `tre-engine`, retiring the hand-rolled ear-clipper and stencil-and-cover technique entirely (user-directed "full replacement"), closing finding #163 by a different fix than originally proposed |

@@ -444,24 +444,6 @@ pub enum TextureFormat {
     Rgba8Unorm,
 }
 
-/// Which pixels inside a (possibly self-intersecting) path's boundary
-/// count as "filled" (IMPLEMENTATION.md Step 3.3 task 3). Backend-agnostic
-/// -- a stencil-and-cover renderer encodes each rule as different GPU
-/// stencil-buffer operations, but the rule itself is a property of the
-/// path, not of any one backend.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FillRule {
-    /// A point is inside if the path's signed winding number around it is
-    /// nonzero. Encoded in stencil as a genuine per-triangle increment/
-    /// decrement counter (two-sided: opposite ops for front- and
-    /// back-facing fan triangles).
-    NonZero,
-    /// A point is inside if a ray from it to infinity crosses the path's
-    /// boundary an odd number of times. Encoded in stencil as a single
-    /// `INVERT` op per fan triangle, regardless of triangle winding.
-    EvenOdd,
-}
-
 /// Describes an offscreen compositing layer requested via
 /// `RenderingCanvas::push_layer` (DESIGN.md Section 6.2). Minimal for
 /// now -- opacity/blend-mode fields belong here once a later phase

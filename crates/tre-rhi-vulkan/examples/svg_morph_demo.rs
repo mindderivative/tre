@@ -103,9 +103,12 @@ fn main() {
 
     for (t, point_a_expected_fg, point_b_expected_fg) in cases {
         let morphed = tre_svg::morph(from, to, t).expect("equal vertex counts");
-        let triangles = tre_svg::triangulate(&morphed)
-            .expect("both keyframes and their interpolation are simple polygons");
-        let (vertices, indices) = tre_svg::to_ui_vertices(&morphed, &triangles, white);
+        let (vertices, indices) = tre_svg::tessellate_fill(
+            std::slice::from_ref(&morphed),
+            tre_svg::FillRule::NonZero,
+            white,
+        )
+        .expect("both keyframes and their interpolation tessellate");
 
         let vertex_buffer = device
             .upload_buffer(

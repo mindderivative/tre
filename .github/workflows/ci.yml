@@ -180,7 +180,7 @@ jobs:
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example sdf_rounded_rect_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example svg_tessellation_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example svg_morph_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example stencil_and_cover_demo
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example self_intersecting_fill_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example text_shaping_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example atlas_packing_demo
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example msdf_rendering_demo
@@ -212,6 +212,10 @@ jobs:
       # correctness assertions (sharp vs. rounded corners, border vs.
       # fill, the arc sweep's own excluded wedge).
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example shape_full_rendering_demo
+      # Phase 10 Step 10.2 follow-up: real GPU proof of lyon-backed Path
+      # fill (a compound shape with a real hole) and Path/Polygon
+      # border/stroke rendering, both through ShapeRegistry.
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example path_and_polygon_demo
 
   accessibility-validation:
     name: accessibility-validation

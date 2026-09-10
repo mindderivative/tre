@@ -30,6 +30,17 @@ tre-memory = { path = "../tre-memory" }
 # resolved `skrifa::FontRef` directly, so this crate needs the same
 # type, not a re-export.
 skrifa = "=0.33.2"
+# Phase 10 Step 10.2 follow-up: real fill (and stroke) tessellation for
+# `Path`/`Polygon` shapes -- the industry-standard Rust 2D tessellation
+# library (`nical/lyon`), same real reasoning as `tre-svg`'s own adoption
+# (REVIEW.md). `tre-engine` cannot depend on `tre-svg` to reach ITS
+# tessellation code (`tre-svg` already depends on `tre-engine`, for
+# `UiVertex` -- a dependency cycle), so this crate depends on lyon
+# directly instead; no bridge crate needed, since neither crate reaches
+# into the other's tessellation code anymore. `#![forbid(unsafe_code)]`
+# is unaffected: that lint only governs code written in this crate, not
+# its dependencies' own internals.
+lyon = "=1.0.19"
 
 [dev-dependencies]
 # `Canvas::draw_text`'s own tests need a real shaped run: `tre_text::

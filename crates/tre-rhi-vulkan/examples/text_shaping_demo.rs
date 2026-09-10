@@ -5,7 +5,7 @@
 //! hand-authored test data. No MSDF, no atlas, no new shader: outline
 //! extraction is verified by flattening a real glyph's outline (via
 //! `tre-svg`'s now-`pub` curve flatteners) and rendering it through the
-//! pre-existing ear-clipping + flat-color pipeline, same as
+//! pre-existing lyon-tessellated + flat-color pipeline, same as
 //! `svg_tessellation_demo`.
 
 use ash::vk;
@@ -44,6 +44,27 @@ fn point_in_polygon(point: [f32; 2], points: &[[f32; 2]]) -> bool {
         }
     }
     inside
+}
+
+/// The axis-aligned bounding box (`min`, `max`) of `polygon`'s points --
+/// used here only to choose probe points (a letter's own bbox center, or
+/// the horizontal midpoint of the gap between two letters), never for
+/// tessellation. Previously `tre_svg::bounding_box`, retired alongside
+/// the stencil-and-cover technique it existed for (Phase 10 Step 10.2
+/// follow-up) -- this demo's own need for a bounding box is unrelated to
+/// that retired technique, so it gets this small local copy instead of
+/// resurrecting a whole crate-level API for one internal use.
+fn bounding_box(polygon: &Polygon) -> ([f32; 2], [f32; 2]) {
+    let first = polygon.points[0];
+    polygon
+        .points
+        .iter()
+        .fold((first, first), |(min, max), &[x, y]| {
+            (
+                [min[0].min(x), min[1].min(y)],
+                [max[0].max(x), max[1].max(y)],
+            )
+        })
 }
 
 /// Flattens a `tre_text::Contour` (already-decoded `skrifa` outline
@@ -222,7 +243,7 @@ fn main() {
         points: screen_points,
     };
 
-    let bbox = tre_svg::bounding_box(&polygon);
+    let bbox = bounding_box(&polygon);
     // Inside the vertical stroke every 'L' has along its left edge.
     let inside_probe = [
         bbox.0[0] + 0.15 * (bbox.1[0] - bbox.0[0]),
@@ -242,10 +263,13 @@ fn main() {
          extracted 'L' outline -- the outline extraction or flattening is wrong"
     );
 
-    let triangles = tre_svg::triangulate(&polygon)
-        .expect("a real font's 'L' outline must be a simple (non-self-intersecting) polygon");
     let white = rgba8(255, 255, 255, 255);
-    let (vertices, indices) = tre_svg::to_ui_vertices(&polygon, &triangles, white);
+    let (vertices, indices) = tre_svg::tessellate_fill(
+        std::slice::from_ref(&polygon),
+        tre_svg::FillRule::NonZero,
+        white,
+    )
+    .expect("a real font's 'L' outline must tessellate");
 
     let vertex_buffer = device
         .upload_buffer(
@@ -388,14 +412,14 @@ fn main() {
     // that made two letters overlap would also be caught here).
     let mut probes: Vec<([f32; 2], bool)> = Vec::new();
     for polygon in &glyph_polygons {
-        let bbox = tre_svg::bounding_box(polygon);
+        let bbox = bounding_box(polygon);
         let center = [(bbox.0[0] + bbox.1[0]) / 2.0, (bbox.0[1] + bbox.1[1]) / 2.0];
         let expected = point_in_polygon(center, &polygon.points);
         probes.push((center, expected));
     }
     for pair in glyph_polygons.windows(2) {
-        let left_bbox = tre_svg::bounding_box(&pair[0]);
-        let right_bbox = tre_svg::bounding_box(&pair[1]);
+        let left_bbox = bounding_box(&pair[0]);
+        let right_bbox = bounding_box(&pair[1]);
         let gap = [
             (left_bbox.1[0] + right_bbox.0[0]) / 2.0,
             (left_bbox.0[1] + left_bbox.1[1]) / 2.0,
@@ -414,9 +438,12 @@ fn main() {
     let mut word_vertex_buffers = Vec::new();
     let mut word_index_buffers = Vec::new();
     for polygon in &glyph_polygons {
-        let triangles = tre_svg::triangulate(polygon)
-            .expect("every letter in \"TEXT\" must be a simple (non-self-intersecting) polygon");
-        let (vertices, indices) = tre_svg::to_ui_vertices(polygon, &triangles, white);
+        let (vertices, indices) = tre_svg::tessellate_fill(
+            std::slice::from_ref(polygon),
+            tre_svg::FillRule::NonZero,
+            white,
+        )
+        .expect("every letter in \"TEXT\" must tessellate");
         word_vertex_buffers.push(
             device
                 .upload_buffer(

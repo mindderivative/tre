@@ -1,41 +1,29 @@
-//! Cubic/quadratic Bezier flattening into polylines via recursive de
-//! Casteljau subdivision, tolerance-based rather than a fixed segment
-//! count -- IMPLEMENTATION.md Step 3.3.1's own hand-rolled tessellation
-//! primitive (`usvg` supplies the curve control points; this module turns
-//! them into the straight edges [`crate::triangulate`] needs).
+//! Cubic/quadratic Bezier flattening into polylines -- Phase 10 Step
+//! 10.2 follow-up: now backed by `lyon_geom`'s own tolerance-based curve
+//! flattening rather than this crate's original hand-rolled recursive de
+//! Casteljau subdivision (see REVIEW.md for the real reason: `lyon` is
+//! the industry-standard Rust 2D tessellation library, and this
+//! project's own hand-rolled ear-clipping triangulator -- the reason
+//! this module existed in the first place -- is retired in favor of it
+//! too, in `triangulate.rs`). Kept as small, standalone functions here
+//! (not inlined at each call site) since `PLAN_PHASE4_STEP4_1.md`
+//! anticipated `tre-text` reusing exactly this signature for glyph
+//! outline geometry -- the public contract (excludes the start point,
+//! includes the end point) is unchanged, confirmed against
+//! `lyon_geom::Flattened`'s own documented behavior ("starting *after*
+//! the current point," ending at the segment's `to`), so no caller of
+//! the old hand-rolled version needs to change.
+
+use lyon::geom::{CubicBezierSegment, QuadraticBezierSegment};
+use lyon::math::point;
 
 /// Maximum perpendicular deviation (in the same units as the input
 /// points -- SVG user units, absolute/document space after
 /// `crate::to_affine2` has already been applied) a flattened polyline may
 /// have from the true curve before a segment is considered flat enough to
-/// stop subdividing.
+/// stop subdividing. Unchanged from this module's original hand-rolled
+/// tolerance.
 const FLATTEN_TOLERANCE: f32 = 0.25;
-
-/// Hard recursion-depth cap, independent of the tolerance check above --
-/// defense in depth against a pathological curve (e.g. control points at
-/// extreme coordinates) for which tolerance-based termination alone could
-/// recurse far more than any real icon geometry ever needs. `2^10 = 1024`
-/// points is already generous for a single curve.
-const MAX_SUBDIVISION_DEPTH: u32 = 10;
-
-fn lerp(a: [f32; 2], b: [f32; 2], t: f32) -> [f32; 2] {
-    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
-}
-
-fn point_line_distance(p: [f32; 2], line_a: [f32; 2], line_b: [f32; 2]) -> f32 {
-    let (dx, dy) = (line_b[0] - line_a[0], line_b[1] - line_a[1]);
-    let len_sq = dx.mul_add(dx, dy * dy);
-    if len_sq < f32::EPSILON {
-        let (px, py) = (p[0] - line_a[0], p[1] - line_a[1]);
-        return px.hypot(py);
-    }
-    ((p[0] - line_a[0]) * dy - (p[1] - line_a[1]) * dx).abs() / len_sq.sqrt()
-}
-
-fn cubic_is_flat(p0: [f32; 2], p1: [f32; 2], p2: [f32; 2], p3: [f32; 2]) -> bool {
-    point_line_distance(p1, p0, p3) <= FLATTEN_TOLERANCE
-        && point_line_distance(p2, p0, p3) <= FLATTEN_TOLERANCE
-}
 
 /// Appends line-segment endpoints approximating the cubic Bezier
 /// `p0 -> p1 -> p2 -> p3` to `out`, NOT including `p0` itself -- the
@@ -54,54 +42,29 @@ pub fn flatten_cubic(
     p3: [f32; 2],
     out: &mut Vec<[f32; 2]>,
 ) {
-    flatten_cubic_recursive(p0, p1, p2, p3, out, 0);
-}
-
-#[allow(
-    clippy::many_single_char_names,
-    reason = "p0/p1/p2/p3 are the four canonical Bezier control point names -- renaming them \
-               to satisfy this lint would make the de Casteljau construction below harder to \
-               read, not easier"
-)]
-#[allow(
-    clippy::similar_names,
-    reason = "p01/p12/p23/p012/p123 are the standard de Casteljau midpoint labels (subscripts \
-               denote which original control points each midpoint was interpolated between) -- \
-               a real, well-known naming convention, not an accidental near-collision"
-)]
-fn flatten_cubic_recursive(
-    p0: [f32; 2],
-    p1: [f32; 2],
-    p2: [f32; 2],
-    p3: [f32; 2],
-    out: &mut Vec<[f32; 2]>,
-    depth: u32,
-) {
-    if depth >= MAX_SUBDIVISION_DEPTH || cubic_is_flat(p0, p1, p2, p3) {
-        out.push(p3);
-        return;
-    }
-    let p01 = lerp(p0, p1, 0.5);
-    let p12 = lerp(p1, p2, 0.5);
-    let p23 = lerp(p2, p3, 0.5);
-    let p012 = lerp(p01, p12, 0.5);
-    let p123 = lerp(p12, p23, 0.5);
-    let p0123 = lerp(p012, p123, 0.5);
-    flatten_cubic_recursive(p0, p01, p012, p0123, out, depth + 1);
-    flatten_cubic_recursive(p0123, p123, p23, p3, out, depth + 1);
+    let segment = CubicBezierSegment {
+        from: point(p0[0], p0[1]),
+        ctrl1: point(p1[0], p1[1]),
+        ctrl2: point(p2[0], p2[1]),
+        to: point(p3[0], p3[1]),
+    };
+    out.extend(segment.flattened(FLATTEN_TOLERANCE).map(|p| [p.x, p.y]));
 }
 
 /// Appends line-segment endpoints approximating the quadratic Bezier
-/// `p0 -> control -> p1` to `out`, via the standard degree-elevation to a
-/// cubic (`c1 = p0 + 2/3*(control - p0)`, `c2 = p1 + 2/3*(control - p1)`)
-/// rather than a second, separately-tuned flattening routine.
+/// `p0 -> control -> p1` to `out`, via `lyon_geom`'s own quadratic
+/// flattening (previously: degree-elevation to a cubic, done by hand;
+/// `lyon_geom::QuadraticBezierSegment` flattens a true quadratic
+/// directly, no elevation needed).
 ///
 /// `pub` for the same reason as [`flatten_cubic`] -- reused by `tre-text`.
 pub fn flatten_quad(p0: [f32; 2], control: [f32; 2], p1: [f32; 2], out: &mut Vec<[f32; 2]>) {
-    const TWO_THIRDS: f32 = 2.0 / 3.0;
-    let c1 = lerp(p0, control, TWO_THIRDS);
-    let c2 = lerp(p1, control, TWO_THIRDS);
-    flatten_cubic(p0, c1, c2, p1, out);
+    let segment = QuadraticBezierSegment {
+        from: point(p0[0], p0[1]),
+        ctrl: point(control[0], control[1]),
+        to: point(p1[0], p1[1]),
+    };
+    out.extend(segment.flattened(FLATTEN_TOLERANCE).map(|p| [p.x, p.y]));
 }
 
 #[cfg(test)]
@@ -111,7 +74,7 @@ mod tests {
     #[test]
     fn flatten_cubic_of_a_straight_line_produces_no_extra_points() {
         // Control points collinear with the endpoints -- already flat,
-        // must terminate at depth 0 with just the endpoint.
+        // must terminate with just the endpoint.
         let mut out = Vec::new();
         flatten_cubic([0.0, 0.0], [1.0, 1.0], [2.0, 2.0], [3.0, 3.0], &mut out);
         assert_eq!(out, vec![[3.0, 3.0]]);
@@ -143,7 +106,7 @@ mod tests {
     #[allow(
         clippy::float_cmp,
         reason = "the flattened curve's final point is exactly the literal endpoint passed in \
-                   (out.push(p3) in the base case), not a rounded computed value"
+                   (lyon_geom's own documented Flattened contract), not a rounded computed value"
     )]
     fn flatten_quad_ends_at_the_requested_endpoint() {
         let mut out = Vec::new();
@@ -153,10 +116,12 @@ mod tests {
     }
 
     #[test]
-    fn deeply_recursive_curve_still_terminates() {
-        // Control points far enough apart that the flatness tolerance
-        // alone would keep subdividing well past any real icon's needs --
-        // MAX_SUBDIVISION_DEPTH must still bound the output.
+    fn a_curve_with_extreme_control_points_still_produces_a_bounded_number_of_points() {
+        // Control points far enough apart that a naive fixed-tolerance
+        // flattener could in principle subdivide a great many times --
+        // lyon_geom's own flattening is iterative (not recursive), so
+        // there is no stack-depth concern, but the point count must
+        // still stay bounded for a single curve.
         let mut out = Vec::new();
         flatten_cubic(
             [0.0, 0.0],
@@ -165,6 +130,6 @@ mod tests {
             [1_000_000.0, 0.0],
             &mut out,
         );
-        assert!(out.len() <= (1 << MAX_SUBDIVISION_DEPTH));
+        assert!(out.len() < 10_000, "got {} points for one curve", out.len());
     }
 }

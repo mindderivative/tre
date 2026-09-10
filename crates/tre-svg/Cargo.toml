@@ -27,6 +27,18 @@ pedantic = "warn"
 # 4's HarfBuzz integration, a wholly separate concern this crate shouldn't
 # pull in early.
 usvg = { version = "=0.45.1", default-features = false }
+# Phase 10 Step 10.2 follow-up: the real fill/stroke tessellation backend,
+# replacing this crate's own hand-rolled ear-clipping triangulator and
+# stencil-and-cover fallback (Phase 3 Step 3.3.1/3.3.3). The industry-
+# standard Rust 2D tessellation library (nical/lyon) -- a real sweep-line
+# fill tessellator handling self-intersection, holes, and both winding
+# rules correctly (ear-clipping could only ever handle a single simple
+# contour, rejecting everything else), plus a real stroke tessellator
+# (joins/caps/miter limit) this workspace never had at all. No default
+# features needed: the base crate already re-exports `lyon_path`/
+# `lyon_geom`/`lyon_tessellation` as modules; `extra`/`debugger`/
+# `profiling`/`serialization` are opt-in features this crate doesn't use.
+lyon = "=1.0.19"
 tre-engine = { path = "../tre-engine" }
 # Reuses `Affine2::transform_point` (Phase 3 Step 3.1) to apply usvg's
 # resolved per-path `abs_transform()` -- the field-for-field-equivalent

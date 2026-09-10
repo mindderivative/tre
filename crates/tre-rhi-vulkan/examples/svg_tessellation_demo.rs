@@ -1,6 +1,8 @@
-//! Phase 3 Step 3.3.1 proof: real SVG path data (parsed via `usvg`, not
-//! hand-authored `UiVertex` arrays), tessellated by `tre-svg`'s own
-//! ear-clipping triangulator, rendered through the pre-existing
+//! Phase 3 Step 3.3.1 proof (updated Phase 10 Step 10.2 follow-up): real
+//! SVG path data (parsed via `usvg`, not hand-authored `UiVertex`
+//! arrays), tessellated by `tre-svg`'s own `tessellate_fill` (backed by
+//! `lyon`'s real sweep-line fill tessellator, not a hand-rolled
+//! ear-clipping triangulator), rendered through the pre-existing
 //! flat-color `walking_skeleton` pipeline -- no new shader needed, since
 //! a plain triangle soup has no SDF to evaluate.
 //!
@@ -8,9 +10,9 @@
 //! a point deep inside a five-pointed star is the fill color, and a point
 //! in one of the star's concave notches (inside the star's bounding box,
 //! but outside the actual polygon) is the background -- proving the
-//! triangulation is topologically correct, not just "some triangles got
-//! drawn somewhere." A non-convex shape is used deliberately so
-//! ear-clipping's real behavior is exercised, not the trivial convex case.
+//! tessellation is topologically correct, not just "some triangles got
+//! drawn somewhere." A non-convex shape is used deliberately so a real
+//! non-trivial case is exercised, not the trivial convex case.
 
 use ash::vk;
 use std::fmt::Write as _;
@@ -90,10 +92,13 @@ fn main() {
     assert_eq!(polygons.len(), 1, "expected exactly one star polygon");
     let star = &polygons[0];
 
-    let triangles =
-        tre_svg::triangulate(star).expect("the star is a simple (non-self-intersecting) polygon");
     let white = rgba8(255, 255, 255, 255);
-    let (vertices, indices) = tre_svg::to_ui_vertices(star, &triangles, white);
+    let (vertices, indices) = tre_svg::tessellate_fill(
+        std::slice::from_ref(star),
+        tre_svg::FillRule::NonZero,
+        white,
+    )
+    .expect("the star tessellates");
 
     let vertex_buffer = device
         .upload_buffer(

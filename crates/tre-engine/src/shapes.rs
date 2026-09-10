@@ -584,16 +584,7 @@ impl ShapeRegistry {
                 ShapePrimitive::Rectangle(rect) => flatten_rectangle(canvas, device, rect),
                 ShapePrimitive::Circle(circle) => flatten_circle(canvas, device, circle),
                 ShapePrimitive::Polygon(polygon) => flatten_polygon(canvas, polygon),
-                ShapePrimitive::Path(_) => {
-                    unimplemented!(
-                        "Path rendering (fill or stroke) has no rendering path wired in yet -- \
-                         fill needs a general (non-star-shaped) triangulator this crate cannot \
-                         reach without a circular dependency on tre-svg, and stroke needs a \
-                         tessellator not yet built; flatten_path (this module) is real and \
-                         tested today, just not yet a renderer -- see ARCHITECTURE.md Section \
-                         7.5's own Implementation status note"
-                    )
-                }
+                ShapePrimitive::Path(path) => flatten_path_shape(canvas, path),
             }
 
             if slot.clip_bounds.is_some() {
@@ -925,11 +916,12 @@ fn fan_from_center(vertex_count: u32) -> Vec<[u32; 3]> {
         .collect()
 }
 
-/// `ShapeRegistry::flatten_into`'s own `Polygon` case (Phase 10 Step
-/// 10.2, real for the first time) -- fill only, via
-/// `RenderingCanvas::draw_flat_polygon`. Border/stroke rendering has no
-/// tessellator wired in yet, disclosed below rather than silently
-/// skipped.
+/// `ShapeRegistry::flatten_into`'s own `Polygon` case -- fill via
+/// [`fan_from_center`] (unaffected by the lyon migration below: a
+/// regular/star polygon is star-shaped with respect to its own center by
+/// construction, so the simple fan is already exactly correct and does
+/// not need a general tessellator). Border/stroke is real now too
+/// (Phase 10 Step 10.2 follow-up), via [`tessellate_stroke`].
 fn flatten_polygon(canvas: &mut RenderingCanvas, polygon: &Polygon) {
     let FillStyle::Solid(color) = polygon.fill else {
         unimplemented!(
@@ -938,86 +930,232 @@ fn flatten_polygon(canvas: &mut RenderingCanvas, polygon: &Polygon) {
              status note"
         );
     };
-    assert!(
-        polygon.border_thickness == 0.0,
-        "Polygon/Star border (stroke) rendering has no tessellator wired in yet -- see \
-         ARCHITECTURE.md Section 7.5's own Implementation status note"
-    );
 
     let boundary = generate_polygon_points(polygon);
     let vertex_count = u32::try_from(boundary.len()).unwrap_or(0);
     let mut points = Vec::with_capacity(boundary.len() + 1);
     points.push([0.0, 0.0]); // the fan's own pivot -- the polygon's local center.
-    points.extend(boundary);
+    points.extend(&boundary);
     let triangles = fan_from_center(vertex_count);
     canvas.draw_flat_polygon(&points, &triangles, color);
-}
 
-/// Recursive tolerance-based de Casteljau subdivision, the same
-/// algorithm and tolerance `tre_svg::flatten::flatten_cubic`/
-/// `flatten_quad` already use for SVG curve data -- a small, self-
-/// contained duplicate rather than a shared dependency, since
-/// `tre-svg` already depends on `tre-engine` (for
-/// `tre_engine::UiVertex`, `to_ui_vertices`), so `tre-engine` cannot
-/// depend back on `tre-svg` without a circular-dependency cycle. Moving
-/// both crates' curve math into a new shared low-level crate would be
-/// the fully clean fix; duplicating ~40 lines of well-understood,
-/// independently-tested math here is the pragmatic one, real and
-/// disclosed (REVIEW.md's own Phase 10 Step 10.2 finding), not a hidden
-/// shortcut.
-const PATH_FLATTEN_TOLERANCE: f32 = 0.25;
-const PATH_FLATTEN_MAX_DEPTH: u32 = 10;
-
-fn lerp_points(a: Vec2, b: Vec2, t: f32) -> Vec2 {
-    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
-}
-
-fn point_line_distance(p: Vec2, line_a: Vec2, line_b: Vec2) -> f32 {
-    let (dx, dy) = (line_b[0] - line_a[0], line_b[1] - line_a[1]);
-    let len_sq = dx.mul_add(dx, dy * dy);
-    if len_sq < f32::EPSILON {
-        let (px, py) = (p[0] - line_a[0], p[1] - line_a[1]);
-        return px.hypot(py);
+    if polygon.border_thickness > 0.0 {
+        // A polygon boundary is always closed.
+        let (stroke_positions, stroke_triangles) = tessellate_stroke(
+            &[(boundary, true)],
+            polygon.border_thickness,
+            lyon::path::LineJoin::Miter,
+            lyon::path::LineCap::Butt,
+            lyon::path::LineCap::Butt,
+        );
+        canvas.draw_flat_polygon(&stroke_positions, &stroke_triangles, polygon.border_color);
     }
-    ((p[0] - line_a[0]) * dy - (p[1] - line_a[1]) * dx).abs() / len_sq.sqrt()
 }
 
-/// Appends line-segment endpoints approximating the cubic Bezier
-/// `p0 -> p1 -> p2 -> p3` to `out`, NOT including `p0` itself -- the
-/// caller already has `p0` as the current point (matches
-/// `tre_svg::flatten_cubic`'s own documented convention).
-#[allow(
-    clippy::similar_names,
-    reason = "p01/p12/p23/p012/p123 are the standard de Casteljau midpoint labels (subscripts \
-               denote which original control points each midpoint was interpolated between) -- \
-               matches tre_svg::flatten::flatten_cubic_recursive's own identical allow"
-)]
-fn flatten_cubic(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, out: &mut Vec<Vec2>) {
-    fn recurse(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, out: &mut Vec<Vec2>, depth: u32) {
-        let flat = point_line_distance(p1, p0, p3) <= PATH_FLATTEN_TOLERANCE
-            && point_line_distance(p2, p0, p3) <= PATH_FLATTEN_TOLERANCE;
-        if depth >= PATH_FLATTEN_MAX_DEPTH || flat {
-            out.push(p3);
-            return;
+fn to_lyon_line_join(join: LineJoin) -> lyon::path::LineJoin {
+    match join {
+        LineJoin::Miter => lyon::path::LineJoin::Miter,
+        LineJoin::Round => lyon::path::LineJoin::Round,
+        LineJoin::Bevel => lyon::path::LineJoin::Bevel,
+    }
+}
+
+fn to_lyon_line_cap(cap: LineCap) -> lyon::path::LineCap {
+    match cap {
+        LineCap::Butt => lyon::path::LineCap::Butt,
+        LineCap::Round => lyon::path::LineCap::Round,
+        LineCap::Square => lyon::path::LineCap::Square,
+    }
+}
+
+/// Builds one lyon `Path` from one or more already-flattened contours,
+/// each with its own closed/open flag -- shared by [`tessellate_fill`]
+/// (which always passes `true`: a fill region's own boundary is
+/// implicitly closed regardless of how the source `Path` was authored)
+/// and [`tessellate_stroke`] (which needs the real per-contour distinction
+/// -- an explicitly-closed subpath gets a continuous stroke loop with no
+/// end caps, an open one gets real caps at both ends). Each contour
+/// becomes its own `begin`/`line_to`.../`end(closed)` sequence within the
+/// SAME path, so a fill rule (for fill) or a shared stroke pass (for
+/// stroke) correctly handles multiple subpaths together, not each in
+/// isolation. A contour with fewer than the minimum useful point count is
+/// skipped (degenerate).
+fn build_lyon_path(contours: &[(Vec<Vec2>, bool)], min_points: usize) -> lyon::path::Path {
+    let mut builder = lyon::path::Path::builder();
+    for (contour, closed) in contours {
+        if contour.len() < min_points {
+            continue;
         }
-        let p01 = lerp_points(p0, p1, 0.5);
-        let p12 = lerp_points(p1, p2, 0.5);
-        let p23 = lerp_points(p2, p3, 0.5);
-        let p012 = lerp_points(p01, p12, 0.5);
-        let p123 = lerp_points(p12, p23, 0.5);
-        let mid = lerp_points(p012, p123, 0.5);
-        recurse(p0, p01, p012, mid, out, depth + 1);
-        recurse(mid, p123, p23, p3, out, depth + 1);
+        let mut points = contour.iter();
+        let &first = points.next().expect("length checked above");
+        builder.begin(lyon::math::point(first[0], first[1]));
+        for &p in points {
+            builder.line_to(lyon::math::point(p[0], p[1]));
+        }
+        builder.end(*closed);
     }
-    recurse(p0, p1, p2, p3, out, 0);
+    builder.build()
+}
+
+/// Real fill tessellation for `Path` (Phase 10 Step 10.2 follow-up,
+/// closing REVIEW.md finding #163): `lyon`'s sweep-line `FillTessellator`
+/// handles multi-contour (a shape with a real hole) and self-intersecting
+/// input directly, as one algorithm -- exactly the case this crate could
+/// not reach before adopting `lyon` (the general triangulator it would
+/// have reused, `tre_svg::triangulate`, was unreachable without a
+/// circular dependency on `tre-engine` itself). `NonZero` is the fixed
+/// fill rule: `Path` has no `fill_rule` field of its own to select
+/// `EvenOdd` instead, a disclosed simplification rather than a wider,
+/// separate API change.
+fn tessellate_fill(contours: &[Vec<Vec2>]) -> (Vec<Vec2>, Vec<[u32; 3]>) {
+    let closed_contours: Vec<(Vec<Vec2>, bool)> =
+        contours.iter().cloned().map(|c| (c, true)).collect();
+    let path = build_lyon_path(&closed_contours, 3);
+    let mut geometry: lyon::tessellation::VertexBuffers<Vec2, u32> =
+        lyon::tessellation::VertexBuffers::new();
+    let mut tessellator = lyon::tessellation::FillTessellator::new();
+    let result = tessellator.tessellate_path(
+        &path,
+        &lyon::tessellation::FillOptions::tolerance(PATH_FLATTEN_TOLERANCE)
+            .with_fill_rule(lyon::tessellation::FillRule::NonZero),
+        &mut lyon::tessellation::BuffersBuilder::new(
+            &mut geometry,
+            |vertex: lyon::tessellation::FillVertex<'_>| -> Vec2 {
+                let p = vertex.position();
+                [p.x, p.y]
+            },
+        ),
+    );
+    if result.is_err() {
+        return (Vec::new(), Vec::new());
+    }
+    let triangles = geometry
+        .indices
+        .chunks_exact(3)
+        .map(|c| [c[0], c[1], c[2]])
+        .collect();
+    (geometry.vertices, triangles)
+}
+
+/// Real stroke tessellation, shared by `Polygon` and `Path` borders
+/// (Phase 10 Step 10.2 follow-up) -- previously entirely unbuilt for
+/// either shape kind. `lyon`'s `StrokeTessellator` handles joins
+/// (`Miter`, with lyon's own built-in bounded miter-limit fallback to a
+/// bevel), caps, and variable contour counts directly; this project never
+/// had a stroke tessellator of its own to compare against.
+fn tessellate_stroke(
+    contours: &[(Vec<Vec2>, bool)],
+    line_width: f32,
+    line_join: lyon::path::LineJoin,
+    start_cap: lyon::path::LineCap,
+    end_cap: lyon::path::LineCap,
+) -> (Vec<Vec2>, Vec<[u32; 3]>) {
+    let path = build_lyon_path(contours, 2);
+    let mut geometry: lyon::tessellation::VertexBuffers<Vec2, u32> =
+        lyon::tessellation::VertexBuffers::new();
+    let mut tessellator = lyon::tessellation::StrokeTessellator::new();
+    let options = lyon::tessellation::StrokeOptions::tolerance(PATH_FLATTEN_TOLERANCE)
+        .with_line_width(line_width)
+        .with_line_join(line_join)
+        .with_start_cap(start_cap)
+        .with_end_cap(end_cap);
+    let result = tessellator.tessellate_path(
+        &path,
+        &options,
+        &mut lyon::tessellation::BuffersBuilder::new(
+            &mut geometry,
+            |vertex: lyon::tessellation::StrokeVertex<'_, '_>| -> Vec2 {
+                let p = vertex.position();
+                [p.x, p.y]
+            },
+        ),
+    );
+    if result.is_err() {
+        return (Vec::new(), Vec::new());
+    }
+    let triangles = geometry
+        .indices
+        .chunks_exact(3)
+        .map(|c| [c[0], c[1], c[2]])
+        .collect();
+    (geometry.vertices, triangles)
+}
+
+/// `ShapeRegistry::flatten_into`'s own `Path` case (Phase 10 Step 10.2
+/// follow-up, real for the first time -- closing REVIEW.md finding
+/// #163). Fill via [`tessellate_fill`] (real for multi-contour and
+/// self-intersecting boundaries, not just the simple single-contour case
+/// `Polygon`'s own fan triangulation handles); stroke via
+/// [`tessellate_stroke`], honoring `stroke_line_cap`/`stroke_line_join`.
+fn flatten_path_shape(canvas: &mut RenderingCanvas, path: &Path) {
+    let FillStyle::Solid(color) = path.fill else {
+        unimplemented!(
+            "FillStyle::Gradient/Texture have no rendering support wired into this registry's \
+             own flattening pass yet -- see ARCHITECTURE.md Section 7.5's own Implementation \
+             status note"
+        );
+    };
+
+    let subpaths_with_closed = flatten_path_with_closed(&path.commands);
+    let subpaths: Vec<Vec<Vec2>> = subpaths_with_closed
+        .iter()
+        .map(|(points, _)| points.clone())
+        .collect();
+
+    let (fill_positions, fill_triangles) = tessellate_fill(&subpaths);
+    canvas.draw_flat_polygon(&fill_positions, &fill_triangles, color);
+
+    if path.border_thickness > 0.0 {
+        let (stroke_positions, stroke_triangles) = tessellate_stroke(
+            &subpaths_with_closed,
+            path.border_thickness,
+            to_lyon_line_join(path.stroke_line_join),
+            to_lyon_line_cap(path.stroke_line_cap),
+            to_lyon_line_cap(path.stroke_line_cap),
+        );
+        canvas.draw_flat_polygon(&stroke_positions, &stroke_triangles, path.border_color);
+    }
+}
+
+/// Bezier curve flattening -- Phase 10 Step 10.2 follow-up: now backed
+/// by `lyon_geom`'s own tolerance-based curve flattening, the same real
+/// fix `tre-svg`'s own `flatten.rs` uses (REVIEW.md has the full
+/// account). This module's own original version hand-rolled recursive
+/// de Casteljau subdivision as a deliberate, disclosed *duplicate* of
+/// `tre_svg::flatten_cubic`/`flatten_quad` (a circular dependency
+/// prevented reusing them directly) -- adopting `lyon` directly in both
+/// crates instead means neither needs to reach into the other's
+/// tessellation code at all, so there is no duplicate to maintain
+/// anymore.
+const PATH_FLATTEN_TOLERANCE: f32 = 0.25;
+
+fn flatten_cubic(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, out: &mut Vec<Vec2>) {
+    let segment = lyon::geom::CubicBezierSegment {
+        from: lyon::math::point(p0[0], p0[1]),
+        ctrl1: lyon::math::point(p1[0], p1[1]),
+        ctrl2: lyon::math::point(p2[0], p2[1]),
+        to: lyon::math::point(p3[0], p3[1]),
+    };
+    out.extend(
+        segment
+            .flattened(PATH_FLATTEN_TOLERANCE)
+            .map(|p| [p.x, p.y]),
+    );
 }
 
 /// Same convention as [`flatten_cubic`], for a quadratic Bezier
 /// `p0 -> control -> p1`.
 fn flatten_quad(p0: Vec2, control: Vec2, p1: Vec2, out: &mut Vec<Vec2>) {
-    let cubic_control1 = lerp_points(p0, control, 2.0 / 3.0);
-    let cubic_control2 = lerp_points(p1, control, 2.0 / 3.0);
-    flatten_cubic(p0, cubic_control1, cubic_control2, p1, out);
+    let segment = lyon::geom::QuadraticBezierSegment {
+        from: lyon::math::point(p0[0], p0[1]),
+        ctrl: lyon::math::point(control[0], control[1]),
+        to: lyon::math::point(p1[0], p1[1]),
+    };
+    out.extend(
+        segment
+            .flattened(PATH_FLATTEN_TOLERANCE)
+            .map(|p| [p.x, p.y]),
+    );
 }
 
 /// Flattens one `Path`'s `commands` into local-space polylines, one
@@ -1025,19 +1163,31 @@ fn flatten_quad(p0: Vec2, control: Vec2, p1: Vec2, out: &mut Vec<Vec2>) {
 /// matching `tre_svg::parse_svg`'s own subpath-splitting convention). A
 /// `Close` neither duplicates the start point into the output nor
 /// implicitly draws back to it -- callers that need a truly closed loop
-/// (hit-testing, a future stroke tessellator) already treat the last
-/// point as implicitly connected back to the first, the same convention
+/// (hit-testing, [`tessellate_stroke`]) already treat the last point as
+/// implicitly connected back to the first, the same convention
 /// `tre_svg::Polygon` itself documents.
 ///
 /// This is real, tested geometry -- used today by
-/// [`ShapeRegistry::hit_test`]'s own `Path` case. `ShapeRegistry::
-/// flatten_into`'s `Path` case does NOT call this yet: fill needs a
-/// general (non-star-shaped) triangulator this crate cannot reach
-/// (`tre_svg::triangulate`, blocked by the circular-dependency
-/// constraint above), and stroke needs a tessellator not yet built --
-/// both disclosed, not silently faked.
+/// [`ShapeRegistry::hit_test`]'s own `Path` case and (Phase 10 Step 10.2
+/// follow-up) [`ShapeRegistry::flatten_into`]'s own `Path` fill/stroke
+/// rendering, via [`tessellate_fill`]/[`tessellate_stroke`].
 #[must_use]
 pub fn flatten_path(commands: &[PathCommand]) -> Vec<Vec<Vec2>> {
+    flatten_path_with_closed(commands)
+        .into_iter()
+        .map(|(points, _closed)| points)
+        .collect()
+}
+
+/// Same as [`flatten_path`], but also reports whether each subpath was
+/// explicitly closed via [`PathCommand::Close`] -- [`tessellate_stroke`]
+/// needs this: an explicitly-closed subpath gets a continuous stroke
+/// loop with no end caps, while an open one gets real caps
+/// (`stroke_line_cap`) at both ends. [`flatten_path`] itself drops this
+/// bit since hit-testing's point-in-polygon test always treats a contour
+/// as implicitly closed regardless (`tre_svg::Polygon`'s own convention),
+/// so it never needed to know.
+fn flatten_path_with_closed(commands: &[PathCommand]) -> Vec<(Vec<Vec2>, bool)> {
     let mut subpaths = Vec::new();
     let mut current: Vec<Vec2> = Vec::new();
     let mut cursor = [0.0, 0.0];
@@ -1046,7 +1196,7 @@ pub fn flatten_path(commands: &[PathCommand]) -> Vec<Vec<Vec2>> {
         match *command {
             PathCommand::MoveTo(point) => {
                 if current.len() >= 2 {
-                    subpaths.push(std::mem::take(&mut current));
+                    subpaths.push((std::mem::take(&mut current), false));
                 } else {
                     current.clear();
                 }
@@ -1071,7 +1221,7 @@ pub fn flatten_path(commands: &[PathCommand]) -> Vec<Vec<Vec2>> {
             }
             PathCommand::Close => {
                 if current.len() >= 2 {
-                    subpaths.push(std::mem::take(&mut current));
+                    subpaths.push((std::mem::take(&mut current), true));
                 } else {
                     current.clear();
                 }
@@ -1079,7 +1229,7 @@ pub fn flatten_path(commands: &[PathCommand]) -> Vec<Vec<Vec2>> {
         }
     }
     if current.len() >= 2 {
-        subpaths.push(current);
+        subpaths.push((current, false));
     }
     subpaths
 }
@@ -1514,13 +1664,30 @@ mod tests {
     #[test]
     #[allow(
         clippy::float_cmp,
-        reason = "exact arithmetic on literal f32s (a straight line has no curvature to \
-                   subdivide), same reasoning as tre-svg's own identical test"
+        reason = "the flattened curve's final point is exactly the literal endpoint passed in \
+                   (lyon_geom's own documented Flattened contract), not a rounded computed value"
     )]
-    fn flatten_cubic_of_a_straight_line_produces_no_extra_points() {
+    fn flatten_cubic_of_a_straight_line_stays_on_the_line_and_ends_at_the_endpoint() {
+        // Control points collinear with the endpoints, but NOT evenly
+        // spaced along the line (0, 3, 6, 10) -- lyon_geom's own
+        // flattening (unlike this module's original hand-rolled
+        // perpendicular-distance-to-chord check) can still emit an
+        // intermediate point here, based on the curve's own parametric
+        // speed rather than pure geometric flatness alone. That's a
+        // real, harmless difference from the old algorithm's behavior,
+        // not a correctness bug: every emitted point still lies exactly
+        // on the line, so this test checks that instead of an exact
+        // point count.
         let mut out = Vec::new();
         flatten_cubic([0.0, 0.0], [3.0, 0.0], [6.0, 0.0], [10.0, 0.0], &mut out);
-        assert_eq!(out, vec![[10.0, 0.0]]);
+        assert!(!out.is_empty());
+        for &[x, y] in &out {
+            assert!(
+                y.abs() < 1e-4,
+                "point ({x}, {y}) must lie on the straight line y=0"
+            );
+        }
+        assert_eq!(*out.last().unwrap(), [10.0, 0.0]);
     }
 
     #[test]
@@ -1757,5 +1924,222 @@ mod tests {
 
         assert_eq!(registry.hit_test([50.0, 40.0]), Some(id));
         assert_eq!(registry.hit_test([5.0, 90.0]), None);
+    }
+
+    // --- Path fill/stroke via lyon (Phase 10 Step 10.2 follow-up) ---
+
+    fn triangle_area(vertices: &[Vec2], triangles: &[[u32; 3]]) -> f32 {
+        triangles
+            .iter()
+            .map(|&[a, b, c]| {
+                let [a, b, c] = [
+                    vertices[a as usize],
+                    vertices[b as usize],
+                    vertices[c as usize],
+                ];
+                ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs() / 2.0
+            })
+            .sum()
+    }
+
+    #[test]
+    fn tessellate_fill_of_a_simple_triangle_produces_the_correct_area() {
+        let triangle = vec![vec![[0.0, 0.0], [100.0, 0.0], [50.0, 100.0]]];
+        let (vertices, triangles) = tessellate_fill(&triangle);
+        assert!((triangle_area(&vertices, &triangles) - 5000.0).abs() < 1e-2);
+    }
+
+    #[test]
+    fn tessellate_fill_handles_a_real_hole_via_two_contours() {
+        // An outer 20x20 square with an inner 10x10 "hole" -- real area =
+        // 400 - 100 = 300. Ear-clipping (this crate's own hand-rolled
+        // fan/triangulation) could never express this at all; lyon's
+        // real fill tessellator resolves it directly under NonZero.
+        let outer = vec![[0.0, 0.0], [20.0, 0.0], [20.0, 20.0], [0.0, 20.0]];
+        // Wound OPPOSITE to the outer contour -- NonZero needs opposite
+        // winding for a hole to actually subtract (unlike EvenOdd, which
+        // doesn't care about relative winding).
+        let hole = vec![[5.0, 5.0], [5.0, 15.0], [15.0, 15.0], [15.0, 5.0]];
+        let (vertices, triangles) = tessellate_fill(&[outer, hole]);
+        assert!(
+            (triangle_area(&vertices, &triangles) - 300.0).abs() < 1e-1,
+            "expected area 300 (outer 400 minus hole 100), got {}",
+            triangle_area(&vertices, &triangles)
+        );
+    }
+
+    #[test]
+    fn tessellate_fill_handles_a_self_intersecting_pentagram() {
+        let mut raw = Vec::with_capacity(5);
+        for i in 0_u8..5 {
+            let angle =
+                std::f32::consts::FRAC_PI_2 + f32::from(i) * 2.0 * std::f32::consts::PI / 5.0;
+            raw.push([100.0 * angle.cos(), -100.0 * angle.sin()]);
+        }
+        let pentagram = vec![raw[0], raw[2], raw[4], raw[1], raw[3]];
+        let (vertices, triangles) = tessellate_fill(&[pentagram]);
+        assert!(
+            !triangles.is_empty(),
+            "a pentagram has real area; tessellation must not be empty"
+        );
+        assert!(triangle_area(&vertices, &triangles) > 0.0);
+    }
+
+    #[test]
+    fn tessellate_stroke_of_an_open_line_produces_real_geometry() {
+        let line: Vec<Vec2> = vec![[0.0, 0.0], [100.0, 0.0]];
+        let (vertices, triangles) = tessellate_stroke(
+            &[(line, false)],
+            10.0,
+            lyon::path::LineJoin::Miter,
+            lyon::path::LineCap::Butt,
+            lyon::path::LineCap::Butt,
+        );
+        assert!(!triangles.is_empty());
+        // A 100-unit-long, 10-unit-wide stroke has area ~1000 (butt caps
+        // add no extra length).
+        assert!((triangle_area(&vertices, &triangles) - 1000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn flatten_into_renders_a_path_fill_via_the_flat_color_pipeline() {
+        let device = FakeDevice::default();
+        let mut registry = ShapeRegistry::new();
+        registry.insert(ShapePrimitive::Path(Path {
+            common: PrimitiveCommon::new(),
+            commands: vec![
+                PathCommand::MoveTo([0.0, 0.0]),
+                PathCommand::LineTo([100.0, 0.0]),
+                PathCommand::LineTo([50.0, 100.0]),
+                PathCommand::Close,
+            ],
+            fill: FillStyle::Solid(0xFFFF_FFFF),
+            border_color: 0,
+            border_thickness: 0.0,
+            stroke_line_cap: LineCap::Butt,
+            stroke_line_join: LineJoin::Bevel,
+        }));
+        let mut canvas = RenderingCanvas::new();
+        registry.flatten_into(&mut canvas, &device);
+        let frame = canvas.flatten();
+
+        assert_eq!(frame.commands.len(), 1, "fill only, no border requested");
+        assert_eq!(
+            frame.commands[0].pipeline_state_id,
+            crate::PipelineKind::FlatColor as u16
+        );
+        assert!(!frame.vertices.is_empty());
+    }
+
+    #[test]
+    fn flatten_into_renders_both_a_paths_fill_and_its_stroke() {
+        // Step 5.1.3's own real batch flattening merges the fill and
+        // stroke draws into ONE combined command (same pipeline, same
+        // texture, same clip, issued back to back) -- a real, existing,
+        // correct optimization, not something this test should fight.
+        // The real thing to prove is that the border contributes real
+        // EXTRA geometry on top of the fill-only case, and that the
+        // (possibly merged) command(s) still all use the flat-color
+        // pipeline.
+        let fill_only_vertex_count = {
+            let device = FakeDevice::default();
+            let mut registry = ShapeRegistry::new();
+            registry.insert(ShapePrimitive::Path(Path {
+                common: PrimitiveCommon::new(),
+                commands: vec![
+                    PathCommand::MoveTo([0.0, 0.0]),
+                    PathCommand::LineTo([100.0, 0.0]),
+                    PathCommand::LineTo([50.0, 100.0]),
+                    PathCommand::Close,
+                ],
+                fill: FillStyle::Solid(0xFFFF_FFFF),
+                border_color: 0,
+                border_thickness: 0.0,
+                stroke_line_cap: LineCap::Round,
+                stroke_line_join: LineJoin::Round,
+            }));
+            let mut canvas = RenderingCanvas::new();
+            registry.flatten_into(&mut canvas, &device);
+            canvas.flatten().vertices.len()
+        };
+
+        let device = FakeDevice::default();
+        let mut registry = ShapeRegistry::new();
+        registry.insert(ShapePrimitive::Path(Path {
+            common: PrimitiveCommon::new(),
+            commands: vec![
+                PathCommand::MoveTo([0.0, 0.0]),
+                PathCommand::LineTo([100.0, 0.0]),
+                PathCommand::LineTo([50.0, 100.0]),
+                PathCommand::Close,
+            ],
+            fill: FillStyle::Solid(0xFFFF_FFFF),
+            border_color: 0xFF00_00FF,
+            border_thickness: 5.0,
+            stroke_line_cap: LineCap::Round,
+            stroke_line_join: LineJoin::Round,
+        }));
+        let mut canvas = RenderingCanvas::new();
+        registry.flatten_into(&mut canvas, &device);
+        let frame = canvas.flatten();
+
+        assert!(
+            frame.vertices.len() > fill_only_vertex_count,
+            "a real border must contribute real extra vertices on top of the fill-only case \
+             ({} fill-only vs {} with border)",
+            fill_only_vertex_count,
+            frame.vertices.len()
+        );
+        for command in &frame.commands {
+            assert_eq!(
+                command.pipeline_state_id,
+                crate::PipelineKind::FlatColor as u16
+            );
+        }
+    }
+
+    #[test]
+    fn flatten_into_renders_a_polygons_stroke() {
+        let fill_only_vertex_count = {
+            let device = FakeDevice::default();
+            let mut registry = ShapeRegistry::new();
+            registry.insert(ShapePrimitive::Polygon(Polygon {
+                common: PrimitiveCommon::new(),
+                sides: 6,
+                radius: 20.0,
+                vertex_radius: 0.0,
+                star_points: None,
+                fill: FillStyle::Solid(0xFFFF_FFFF),
+                border_color: 0,
+                border_thickness: 0.0,
+            }));
+            let mut canvas = RenderingCanvas::new();
+            registry.flatten_into(&mut canvas, &device);
+            canvas.flatten().vertices.len()
+        };
+
+        let device = FakeDevice::default();
+        let mut registry = ShapeRegistry::new();
+        registry.insert(ShapePrimitive::Polygon(Polygon {
+            common: PrimitiveCommon::new(),
+            sides: 6,
+            radius: 20.0,
+            vertex_radius: 0.0,
+            star_points: None,
+            fill: FillStyle::Solid(0xFFFF_FFFF),
+            border_color: 0xFF00_00FF,
+            border_thickness: 3.0,
+        }));
+        let mut canvas = RenderingCanvas::new();
+        registry.flatten_into(&mut canvas, &device);
+        let frame = canvas.flatten();
+
+        assert!(
+            frame.vertices.len() > fill_only_vertex_count,
+            "a real border must contribute real extra vertices on top of the fill-only case \
+             ({} fill-only vs {} with border)",
+            fill_only_vertex_count,
+            frame.vertices.len()
+        );
     }
 }
