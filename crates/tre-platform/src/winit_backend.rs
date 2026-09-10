@@ -265,16 +265,18 @@ impl WinitConnection {
     }
 
     /// Real per-window value from winit (Wayland `wp-fractional-scale`
-    /// falling back to integer scale; X11 `Xft.dpi`/RandR) -- rounded
-    /// (not truncated) to the nearest `i32` to preserve this method's
-    /// existing return type. An unknown/already-closed `window` returns
-    /// `1`, matching the previous X11 backend's own unconditional default.
+    /// falling back to integer scale; X11 `Xft.dpi`/RandR), returned at
+    /// its own real `f64` precision (REVIEW.md finding #178: the previous
+    /// `i32` signature rounded this away deliberately, as a bounded-scope
+    /// trade-off; widened here since it's now the whole point of the
+    /// call). An unknown/already-closed `window` returns `1.0`, matching
+    /// the previous X11 backend's own unconditional integer default.
     #[must_use]
-    pub fn scale_factor(&self, window: WindowId) -> i32 {
+    pub fn scale_factor(&self, window: WindowId) -> f64 {
         self.handler
             .windows
             .get(&window.0)
-            .map_or(1, |w| w.scale_factor().round() as i32)
+            .map_or(1.0, Window::scale_factor)
     }
 
     /// # Errors

@@ -66,10 +66,14 @@ findings #177-179):
 - Wayland's `app_id` (hardcoded to `"tre-walking-skeleton"`, a Phase-0
   leftover) disappeared as a side effect of deleting the backend it lived
   in -- an incidental fix, not a targeted one.
-- `scale_factor`'s preserved `i32` return type rounds away the real
+- `scale_factor`'s `i32` return type initially rounded away the real
   per-window `f64` precision winit now supplies (Wayland
-  `wp-fractional-scale`, X11 `Xft.dpi`/RandR) -- a deliberate, scope-bounded
-  trade-off, not an oversight.
+  `wp-fractional-scale`, X11 `Xft.dpi`/RandR) -- **fixed same-day**, at the
+  project owner's explicit follow-up direction: both `PlatformConnection::
+  scale_factor` and `WinitConnection::scale_factor` were widened to `f64`.
+  A workspace-wide grep before making the change confirmed the only real
+  caller anywhere was `smoke_test.rs`'s own diagnostic print -- none of the
+  40 `tre-rhi-vulkan` demos call this method at all.
 - `winit`'s dependency tree is materially larger than the four crates it
   replaced, even with `default-features = false` and a trimmed feature
   list excluding `wayland-csd-adwaita` -- the accepted, expected cost of

@@ -110,8 +110,11 @@ impl PlatformConnection {
         }
     }
 
+    /// Real per-window DPI scale factor, at winit's own `f64` precision
+    /// (REVIEW.md finding #178: widened from a previously API-stability-
+    /// preserved `i32`, at the project owner's explicit direction).
     #[must_use]
-    pub fn scale_factor(&self, window: WindowId) -> i32 {
+    pub fn scale_factor(&self, window: WindowId) -> f64 {
         match self {
             Self::Wayland(c) => c.scale_factor(window),
             Self::X11(c) => c.scale_factor(window),
