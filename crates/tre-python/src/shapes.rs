@@ -28,6 +28,35 @@ use tre_engine::{
 /// UI would ever draw.
 const MAX_POLYGON_SIDES: u32 = 4096;
 
+/// Rejects a non-finite (`NaN`/`+-inf`) coordinate before it can cross
+/// into `tre_engine`'s flatten path -- found necessary by this project's
+/// own review process (REVIEW.md #202): none of `Rectangle`/`Circle`/
+/// `Polygon`/`Path`'s own flatten code, nor `lyon`'s tessellator the
+/// `Path` coordinates feed into, checks finiteness, and `lyon` documents
+/// finite input as a caller obligation (non-finite points there are a
+/// real panic/hang surface, not just a wrong render).
+fn validate_finite(field: &str, value: f32) -> PyResult<()> {
+    if !value.is_finite() {
+        return Err(PyValueError::new_err(format!(
+            "{field} must be finite, got {value}"
+        )));
+    }
+    Ok(())
+}
+
+/// Rejects a negative size/radius -- distinct from [`validate_finite`]
+/// since a negative-but-finite value passes that check yet is still
+/// nonsensical geometry (REVIEW.md #202).
+fn validate_non_negative(field: &str, value: f32) -> PyResult<()> {
+    validate_finite(field, value)?;
+    if value < 0.0 {
+        return Err(PyValueError::new_err(format!(
+            "{field} must be >= 0, got {value}"
+        )));
+    }
+    Ok(())
+}
+
 fn common(x: f32, y: f32, opacity: f32) -> PrimitiveCommon {
     PrimitiveCommon {
         transform: Transform2D {
@@ -263,27 +292,55 @@ impl PyPath {
         }
     }
 
-    fn move_to(&mut self, x: f32, y: f32) {
+    /// # Errors
+    /// Raises `ValueError` if `x`/`y` is not finite -- a non-finite
+    /// point reaching `lyon`'s tessellator is a real panic/hang surface,
+    /// not just a wrong render (REVIEW.md #202).
+    fn move_to(&mut self, x: f32, y: f32) -> PyResult<()> {
+        validate_finite("x", x)?;
+        validate_finite("y", y)?;
         self.commands.push(PathCommand::MoveTo([x, y]));
+        Ok(())
     }
 
-    fn line_to(&mut self, x: f32, y: f32) {
+    /// # Errors
+    /// See [`PyPath::move_to`].
+    fn line_to(&mut self, x: f32, y: f32) -> PyResult<()> {
+        validate_finite("x", x)?;
+        validate_finite("y", y)?;
         self.commands.push(PathCommand::LineTo([x, y]));
+        Ok(())
     }
 
-    fn quad_to(&mut self, cx: f32, cy: f32, x: f32, y: f32) {
+    /// # Errors
+    /// See [`PyPath::move_to`].
+    fn quad_to(&mut self, cx: f32, cy: f32, x: f32, y: f32) -> PyResult<()> {
+        validate_finite("cx", cx)?;
+        validate_finite("cy", cy)?;
+        validate_finite("x", x)?;
+        validate_finite("y", y)?;
         self.commands.push(PathCommand::QuadraticTo {
             control: [cx, cy],
             to: [x, y],
         });
+        Ok(())
     }
 
-    fn cubic_to(&mut self, c1x: f32, c1y: f32, c2x: f32, c2y: f32, x: f32, y: f32) {
+    /// # Errors
+    /// See [`PyPath::move_to`].
+    fn cubic_to(&mut self, c1x: f32, c1y: f32, c2x: f32, c2y: f32, x: f32, y: f32) -> PyResult<()> {
+        validate_finite("c1x", c1x)?;
+        validate_finite("c1y", c1y)?;
+        validate_finite("c2x", c2x)?;
+        validate_finite("c2y", c2y)?;
+        validate_finite("x", x)?;
+        validate_finite("y", y)?;
         self.commands.push(PathCommand::CubicTo {
             control1: [c1x, c1y],
             control2: [c2x, c2y],
             to: [x, y],
         });
+        Ok(())
     }
 
     fn close(&mut self) {
@@ -322,23 +379,50 @@ impl PyShapeRegistry {
         }
     }
 
-    fn insert_rectangle(&mut self, rect: &PyRectangle) -> PyShapeId {
-        PyShapeId(
+    /// # Errors
+    /// Raises `ValueError` if any of `rect`'s numeric fields is
+    /// non-finite, or if `width`/`height` is negative (REVIEW.md #202).
+    fn insert_rectangle(&mut self, rect: &PyRectangle) -> PyResult<PyShapeId> {
+        validate_finite("x", rect.x)?;
+        validate_finite("y", rect.y)?;
+        validate_non_negative("width", rect.width)?;
+        validate_non_negative("height", rect.height)?;
+        validate_non_negative("border_thickness", rect.border_thickness)?;
+        validate_non_negative("corner_radius", rect.corner_radius)?;
+        validate_finite("opacity", rect.opacity)?;
+        let mut rect = rect.clone();
+        // Documented 0.0..=1.0 contract (gpu_style.rs), never enforced
+        // before this fix -- clamped, not rejected, since it's a
+        // cosmetic parameter an animation can briefly overshoot.
+        rect.corner_smoothing = rect.corner_smoothing.clamp(0.0, 1.0);
+        Ok(PyShapeId(
             self.inner
-                .insert(ShapePrimitive::Rectangle(Rectangle::from(rect))),
-        )
+                .insert(ShapePrimitive::Rectangle(Rectangle::from(&rect))),
+        ))
     }
 
-    fn insert_circle(&mut self, circle: &PyCircle) -> PyShapeId {
-        PyShapeId(
-            self.inner
-                .insert(ShapePrimitive::Circle(tre_engine::Circle::from(circle))),
-        )
+    /// # Errors
+    /// Raises `ValueError` if any of `circle`'s numeric fields is
+    /// non-finite, or if `radius_x`/`radius_y` is negative
+    /// (REVIEW.md #202).
+    fn insert_circle(&mut self, circle: &PyCircle) -> PyResult<PyShapeId> {
+        validate_finite("x", circle.x)?;
+        validate_finite("y", circle.y)?;
+        validate_non_negative("radius_x", circle.radius_x)?;
+        validate_non_negative("radius_y", circle.radius_y)?;
+        validate_non_negative("border_thickness", circle.border_thickness)?;
+        validate_finite("arc_length", circle.arc_length)?;
+        validate_finite("opacity", circle.opacity)?;
+        Ok(PyShapeId(self.inner.insert(ShapePrimitive::Circle(
+            tre_engine::Circle::from(circle),
+        ))))
     }
 
     /// # Errors
     /// Raises `ValueError` if `polygon.sides` or `polygon.star_points`
-    /// exceeds [`MAX_POLYGON_SIDES`].
+    /// exceeds [`MAX_POLYGON_SIDES`], if any numeric field is
+    /// non-finite, or if `radius`/`vertex_radius` is negative
+    /// (REVIEW.md #202).
     fn insert_polygon(&mut self, polygon: &PyPolygon) -> PyResult<PyShapeId> {
         if polygon.sides > MAX_POLYGON_SIDES
             || polygon.star_points.is_some_and(|p| p > MAX_POLYGON_SIDES)
@@ -349,14 +433,29 @@ impl PyShapeRegistry {
                 polygon.sides, polygon.star_points
             )));
         }
+        validate_finite("x", polygon.x)?;
+        validate_finite("y", polygon.y)?;
+        validate_non_negative("radius", polygon.radius)?;
+        validate_non_negative("vertex_radius", polygon.vertex_radius)?;
+        validate_non_negative("border_thickness", polygon.border_thickness)?;
+        validate_finite("opacity", polygon.opacity)?;
         Ok(PyShapeId(
             self.inner
                 .insert(ShapePrimitive::Polygon(Polygon::from(polygon))),
         ))
     }
 
-    fn insert_path(&mut self, path: &PyPath) -> PyShapeId {
-        PyShapeId(self.inner.insert(ShapePrimitive::Path(Path::from(path))))
+    /// # Errors
+    /// Raises `ValueError` if `path.border_thickness`/`path.opacity` is
+    /// non-finite, or `border_thickness` is negative (REVIEW.md #202).
+    /// Path command coordinates are already validated at `move_to`/
+    /// `line_to`/`quad_to`/`cubic_to` call time.
+    fn insert_path(&mut self, path: &PyPath) -> PyResult<PyShapeId> {
+        validate_non_negative("border_thickness", path.border_thickness)?;
+        validate_finite("opacity", path.opacity)?;
+        Ok(PyShapeId(
+            self.inner.insert(ShapePrimitive::Path(Path::from(path))),
+        ))
     }
 
     fn remove(&mut self, id: &PyShapeId) -> bool {
