@@ -2216,7 +2216,7 @@ need routing around. See finding #165 and IMPLEMENTATION.md's "Step
 10.2 Follow-up" write-up for the full account of everything this
 decision retired.
 
-### 164. [Disclosed, not fixed] `walking_skeleton.frag` (now `PipelineKind::FlatColor`, `Polygon`/`Path` fill's real shader) does not premultiply its own output by alpha, unlike every other pipeline in this engine
+### 164. [Fixed, 2026-09-09] `walking_skeleton.frag` (now `PipelineKind::FlatColor`, `Polygon`/`Path` fill's real shader) does not premultiply its own output by alpha, unlike every other pipeline in this engine
 Every other real fragment shader in this codebase (`sdf_rounded_rect.
 frag`, `sdf_rect_styled.frag`, `sdf_ellipse.frag`, `msdf.frag`) outputs
 premultiplied color (`vec4(linear_color * alpha, frag_color.a * alpha)`)
@@ -2239,6 +2239,31 @@ changing behavior for whatever (if anything) else might come to depend
 on its exact current output, and is out of this step's own stated scope
 (shape rendering, not a Phase-0-shader audit). Disclosed here so a
 future translucent-fill caller does not discover it the hard way.
+
+**Fixed the same day (2026-09-09), immediately after the lyon migration
+follow-up gave `Polygon`/`Path` a real stroke -- a second, independent
+reason a translucent flat fill could now reach this shader for real.**
+`main()` now premultiplies: `vec4(linear_color * frag_color.a,
+frag_color.a)`, the same pattern every other real shader in this
+codebase already used. **Verified with a real, dedicated GPU demo**
+(`translucent_flat_fill_demo.rs`, `demo/phase10_step10_2_finding_164/`),
+not just re-running the existing (all fully-opaque) demos: draws a
+genuinely translucent flat fill and compares the real GPU readback
+against an independent Rust reference of the correct premultiplied
+blend AND against what the old, unfixed math would have produced --
+confirmed to match the correct reference almost exactly (`[169, 77,
+139]` expected vs. measured) and to be measurably different from the
+broken one (`[233, 100, 187]`). The demo's own regression-catching power
+was itself verified, not assumed: temporarily reverting the shader to
+its old, buggy form during development made this exact demo fail with
+`got 233, expected 169`, proving it would genuinely have caught the
+original bug. Every other real consumer of this shader
+(`walking_skeleton`, `svg_morph_demo`, `svg_tessellation_demo`,
+`text_shaping_demo`, `self_intersecting_fill_demo`,
+`path_and_polygon_demo`, `atlas_packing_demo`, `headless`) re-run and
+confirmed bit-for-bit unchanged, since all of them draw only
+fully-opaque geometry. `cargo fmt`/`clippy -D warnings`/`build`/`test`
+clean across the whole workspace.
 
 ## Phase 10 Step 10.2 Follow-up: `lyon` Migration (2026-09-09)
 
@@ -2332,3 +2357,4 @@ up from 119).
 | # | Severity | Status | One-line summary |
 |---|----------|--------|-------------------|
 | 165 | Decision | Resolved | Adopted `lyon` as the one tessellation backend for `tre-svg` and `tre-engine`, retiring the hand-rolled ear-clipper and stencil-and-cover technique entirely (user-directed "full replacement"), closing finding #163 by a different fix than originally proposed |
+| 164 | Should-fix | Fixed | `walking_skeleton.frag` (`PipelineKind::FlatColor`) now premultiplies its own output by alpha; verified with a new, dedicated translucent-fill GPU demo that would have caught the original bug |

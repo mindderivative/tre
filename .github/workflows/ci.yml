@@ -216,6 +216,12 @@ jobs:
       # fill (a compound shape with a real hole) and Path/Polygon
       # border/stroke rendering, both through ShapeRegistry.
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example path_and_polygon_demo
+      # REVIEW.md finding #164: real GPU proof that walking_skeleton.frag
+      # (PipelineKind::FlatColor, Polygon/Path fill and stroke's own
+      # shader) now premultiplies its output by alpha -- a translucent
+      # flat fill's blended color must match a real, independent
+      # premultiplied-alpha reference, not the old, unfixed math.
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example translucent_flat_fill_demo
 
   accessibility-validation:
     name: accessibility-validation
