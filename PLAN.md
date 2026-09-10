@@ -1,116 +1,100 @@
-# Plan: Phase 11 Step 11.1 — Migrate `tre-platform` to a `winit`-Backed Windowing Implementation
+# Plan: Phase 10 Step 10.4 — Direct PyO3 Python Bindings (`tre-python`), First Slice
 
 **Status: Complete (2026-09-10).** See `documentation/IMPLEMENTATION.md`'s
-own Phase 11 write-up for the full technical account of what shipped,
-`documentation/REVIEW.md`'s Phase 11 Step 11.1 section (findings #177-179:
-one incidental fix, two disclosed-not-fixed decisions), and
-`demo/phase11_step11_1/README.md` for the verification summary. This file
-is the original plan (as approved via `EnterPlanMode`/`ExitPlanMode`),
-archived unchanged below now that this step's real work is done; the
-full-detail engineering plan itself (including the exact source-verified
-winit API research) is preserved at
-`/home/phil/.claude/plans/warm-painting-squid.md`.
+own "Implementation status (Phase 10 Step 10.4, 2026-09-10)" write-up for
+the full technical account, `documentation/REVIEW.md`'s "Phase 10 Step
+10.4 Implementation" section (findings #190-195), and
+`demo/phase10_step10_4/README.md` for the verification summary. This file
+records the plan as it was actually executed (this step ran via direct
+instruction, not `EnterPlanMode`/`ExitPlanMode`), archived here now that
+the work is done, per this project's own "one active plan, archived once
+real work begins" convention (see `documentation/PLAN.md`'s own git
+history for prior steps' plans, each superseded in place the same way).
 
-## User request (verbatim, across the conversation that led to this plan)
+## User request (verbatim)
 
-> Ok, I believe we should look at window creation management crates...
-> app_window looks promising with async runtimes, and supports all the
-> desktop platforms.
+> Start 10.4 we will work on 10.3 after.
 
-> I understand wayland handles the position and movement of the window and
-> is not something we can control. I am more concerned about efficiency and
-> performance. I do not believe a hand-rolled approach for windowing is the
-> right path as there are fully developed and tested options available.
-> Winit seems like the best and most robust choice for us.
+Mid-turn: > Work with pySilver project for this if you need
+
+Scope confirmed via `AskUserQuestion`: **"Generic PyO3 wrapper (original
+plan)"** — bind `tre-engine`'s existing `Canvas`/`ShapeRegistry` API
+directly, not an attempt to match the separate `pySilver` project's own
+incompatible single-instanced-draw-call rendering contract.
 
 ## Context
 
-A prior investigation (same session) into whether `tre-platform` exposed a
-full window-chrome/lifecycle interface (resize, position/movement, title
-bar with close/minimize/maximize, icon) found real gaps in the hand-rolled
-Wayland (`wayland-client`)/X11 (`x11rb`) backends: no post-creation title
-change, no minimize/maximize, no icon support, plus a concrete leftover bug
-(Wayland's `app_id` hardcoded to `"tre-walking-skeleton"`). Position/
-movement control was confirmed to be a genuine Wayland-protocol-level
-restriction no library can lift. The project owner's conclusion: replace
-the hand-rolled protocol integrations with `winit`, primarily for
-robustness/correctness, not to chase new API surface.
+IMPLEMENTATION.md's own pre-existing Step 10.4 plan (written 2026-09-09,
+before this session) already specified: a new `tre-python` crate binding
+`tre-engine` directly via PyO3 (not through `tre-ffi`'s C-ABI), four
+tasks (shape/registry bindings, Pythonic ergonomics, GIL release around
+blocking GPU calls, a CI job), and the rationale for bypassing `tre-ffi`
+(avoiding a double marshalling round trip for a first-party, high-frequency
+boundary). This step executes that existing plan's first real slice.
 
-**Explicit non-goal:** no new public API surface (`set_title`,
-`set_minimized`, `set_maximized`, `set_window_icon`, etc.) — `tre_platform::
-PlatformConnection`'s public method signatures are preserved exactly, so
-none of the 40 pre-existing demo files in `crates/tre-rhi-vulkan/examples/`
-needed to change.
+Before writing any binding code, investigated the project's own real
+Python UI framework, `pySilver` (`/home/phil/pyDev/projects/pysilver`), per
+the user's mid-turn direction. Found its actual rendering contract (one
+instanced draw call per frame over a flat 144-byte-per-instance `numpy`
+array, 7 primitive kinds, its own WGSL SDF shader) is architecturally
+incompatible with `tre-engine`'s multi-pipeline `Canvas`/`ShapeRegistry`
+design, and that `pySilver`'s own `ARCHITECTURE.md` has zero TRE-integration
+detail despite its README's stated migration intent. Surfaced this via
+`AskUserQuestion` rather than guessing; the project owner's answer (above)
+is this step's definitive scope.
 
-## Design (verified against winit 0.30.13's actual source before writing
-## any code)
+## Tasks (against IMPLEMENTATION.md's own pre-existing four-task plan)
 
-- `ActiveEventLoop` (required to create a `Window`) is only reachable
-  inside an `ApplicationHandler` callback. Traced through winit's own
-  `platform_impl` for both X11 and Wayland: passing `timeout: Some(Duration
-  ::ZERO)` to `pump_app_events` guarantees `ApplicationHandler::new_events`
-  runs on every single pump call (not just `resumed`, which fires exactly
-  once). `create_window()` stages a request and immediately pumps once
-  itself, draining it inside `new_events` before returning — fully
-  synchronous from the caller's perspective.
-- One `winit_backend::WinitConnection` (new) replaces both `wayland.rs` and
-  `x11.rs` (deleted) — winit unifies both backends behind one set of types.
-  `PlatformConnection::Wayland`/`X11` both wrap it, forced via
-  `EventLoopBuilderExtWayland::with_wayland`/`EventLoopBuilderExtX11::
-  with_x11`.
-- `WindowId` allocation keeps the previous internal counter scheme exactly
-  (grep-confirmed nothing outside `tre-platform` ever constructs a
-  `WindowId` directly).
-- `WindowEvent` → `tre_engine::InputEvent` translates 1:1, still routed
-  through the existing `InputEventQueue` (pointer-move coalescing
-  unchanged). `key_code` sourced from `winit::platform::scancode::
-  PhysicalKeyExtScancode::to_scancode()`, confirmed to produce the same
-  Linux evdev numbering the engine's `InputEvent::KeyboardKey` already
-  contracts.
-- `winit = { version = "0.30", default-features = false, features =
-  ["rwh_06", "x11", "wayland", "wayland-dlopen"] }` — explicitly without
-  `wayland-csd-adwaita` (client-side-decoration title-bar rendering this
-  project doesn't need, since it talks to real compositors directly).
+1. Shape/registry bindings: `Rectangle`/`Circle`/`Polygon`/`Path` +
+   `ShapeRegistry`, `#[pyclass]`/`#[pymethods]` directly over `tre-engine`
+   types. **Done for solid fill only** — `Gradient`/`Texture` fill deferred.
+2. Pythonic ergonomics: `TreError` exception mapping, `Canvas.save()`/
+   `restore()` context manager, buffer-protocol-adjacent frame readback.
+   **Partially done** — exceptions and `Canvas` save/restore are real;
+   zero-copy buffer protocol deliberately not built (would need `unsafe`
+   FFI code expanding TECHNICAL.md Section 9.1's closed set beyond the one
+   call this step already needed to add `tre-python` to it for); a real
+   `bytes` copy is returned instead.
+3. Release the GIL around blocking GPU calls. **Done** — required a real,
+   necessary upstream fix: `RhiPipelineState: Send + Sync` in `tre-engine`
+   (REVIEW.md #192), without which `Python::detach` (PyO3 0.27's
+   `allow_threads` replacement) could not be used at all.
+4. Wire a CI job for the Python-binding test suite. **Not done** — a real
+   local demo (`demo/phase10_step10_4/demo.py`) is this pass's own
+   correctness-oracle proof instead, matching every prior phase's own
+   "real demo before CI automation" sequencing.
 
-## Real risks disclosed before implementation (see REVIEW.md #177-179 for
-## final disposition)
+## Real defects found and fixed while building and actually running this
+## (not merely compiling it) — full detail in REVIEW.md #190-194
 
-1. `scale_factor`'s preserved `i32` signature rounds away the real
-   per-window `f64` precision winit now supplies.
-2. `EventLoop` may only be constructed once per OS process, ever — a real,
-   permanent restriction, confirmed harmless for every current call site.
-3. Dependency footprint increases even with the trimmed feature set.
-
-## Tasks
-
-1. Update `crates/tre-platform/Cargo.toml` deps.
-2. Add `crates/tre-platform/src/winit_backend.rs`; delete `wayland.rs`/
-   `x11.rs`.
-3. Update `lib.rs`: both `PlatformConnection` variants wrap
-   `WinitConnection`; all five public methods delegate unchanged.
-4. Update `ARCHITECTURE.md`/`IMPLEMENTATION.md`/`TECHNICAL.md`/`REVIEW.md`.
-5. `demo/phase11_step11_1/README.md`.
-
-**All five tasks completed as written**, plus one real, additional
-hardening found and taken during implementation, not originally planned:
-`tre-platform` no longer contains any `unsafe` code at all (winit's
-`Window`/`EventLoop` implement `raw-window-handle` 0.6's traits directly),
-so the crate now carries `#![forbid(unsafe_code)]` and is removed from
-TECHNICAL.md Section 9.1's closed set of crates permitted to contain
-`unsafe`.
+- A real, release-build-only `unused_mut` warning in `tre-rhi-vulkan`,
+  previously undetected because this session's own verification had only
+  ever run in debug mode until `maturin develop --release` forced a real
+  release build for the first time.
+- `EngineError` was the only error type in the workspace missing
+  `Display`/`Error` impls, needed for `TreError`'s own message text.
+- `RhiPipelineState` lacked `Send + Sync` (see task 3 above).
+- A real segfault at Python interpreter shutdown: `PyHeadlessRenderer`'s
+  struct fields were declared in the wrong order (Rust drops struct fields
+  in *declaration* order, the opposite of local variables, which every RHI
+  *example*'s own `main()` gets the safe order from for free) — `device`
+  was destroyed before `swapchain`/`pipelines` still held live handles
+  against it. Fixed by reordering fields so `device` drops last.
+- `Circle`'s `x`/`y` mean bounding-box top-left (matching `Rectangle`),
+  not center — undocumented on `PyCircle`, and this step's own demo script
+  got it wrong on first use before being corrected and documented.
 
 ## Verification plan — executed exactly as planned
 
 `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D
 warnings`, `cargo build --workspace --all-targets`, `cargo test --workspace`
-all clean (zero failures). `smoke_test.rs` run against a real Wayland
-session and, forced via `TRE_FORCE_BACKEND=x11`, against XWayland — both
-created a real window and received real `Resized`/`PointerMoved` events.
-All 41 `tre_platform`-dependent demos re-run on real GPU hardware
-(`VK_LAYER_KHRONOS_validation` enabled), zero failures: `main_loop_demo.rs`
-(the project's own reference imperative main loop) completed 90 real
-frames with its animation and Step 9.2 zero-allocation guard both verified;
-`multi_window.rs` created two real windows on one `PlatformConnection` and
-rendered both for 120 frames. `cargo tree -p tre-platform` inspected to
-honestly report the real dependency-footprint increase (REVIEW.md #179)
-rather than assume it acceptable without looking.
+all clean, in both debug and `--release` profiles. `demo/phase10_step10_4/
+demo.py`, run against real GPU hardware via `maturin develop --release`,
+builds a `ShapeRegistry` with a red `Rectangle`, a green `Circle`, and a
+blue `Polygon`, renders via `HeadlessRenderer`, and asserts exact expected
+BGRA8 bytes at each shape's own center pixel — exits 0, no crash, after the
+struct-field-ordering fix.
+
+## Deferred (explicit user instruction: "we will work on 10.3 after")
+
+Phase 10 Step 10.3 (the `tre-ffi` C-ABI crate) — not started this step.

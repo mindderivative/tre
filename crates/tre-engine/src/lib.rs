@@ -58,6 +58,30 @@ pub enum EngineError {
     TransientPoolBudgetExceeded,
 }
 
+impl std::fmt::Display for EngineError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DeviceLost => write!(
+                f,
+                "GPU device lost (removal, driver TDR, or a stale swapchain)"
+            ),
+            Self::SwapchainOutOfDate => write!(f, "swapchain is out of date and must be recreated"),
+            Self::PipelineCreationFailed => write!(f, "graphics pipeline creation failed"),
+            Self::InvalidTextureData => {
+                write!(f, "texture pixel data doesn't match width/height/format")
+            }
+            Self::BindlessArrayExhausted => {
+                write!(f, "bindless texture array has no free slots left")
+            }
+            Self::TransientPoolBudgetExceeded => {
+                write!(f, "transient render target pool's VRAM budget exceeded")
+            }
+        }
+    }
+}
+
+impl std::error::Error for EngineError {}
+
 /// A clip rectangle in the coordinate space `Canvas::push_clip`/scissor
 /// operations use. Referenced but never defined by ARCHITECTURE.md's
 /// `UiDrawCommand`/`RhiCommandBuffer::set_scissor` sketch -- defined here.
@@ -3039,7 +3063,7 @@ pub trait RhiDynamicRingBuffer: RhiBuffer {
 
 /// A compiled graphics pipeline state object. Referenced but undefined by
 /// ARCHITECTURE.md Section 6; defined here.
-pub trait RhiPipelineState {
+pub trait RhiPipelineState: Send + Sync {
     fn raw_handle(&self) -> u64;
     /// Opaque handle of this pipeline's layout, needed by
     /// `RhiCommandBuffer::set_pipeline` implementations that push

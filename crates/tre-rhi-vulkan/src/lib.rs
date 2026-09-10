@@ -8,8 +8,10 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 mod headless;
+mod shape_pipelines;
 
 pub use headless::{HeadlessSwapchain, HEADLESS_FORMAT};
+pub use shape_pipelines::register_shape_pipelines;
 
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -424,6 +426,13 @@ impl VulkanDevice {
             .to_vec();
         required_extensions.push(ash::khr::get_physical_device_properties2::NAME.as_ptr());
 
+        #[allow(
+            unused_mut,
+            reason = "only mutated inside the #[cfg(debug_assertions)] validation-layer setup \
+                      just below -- a release build never pushes to this Vec, a real, \
+                      cfg-dependent asymmetry only visible when actually built in --release \
+                      (debug builds' own clippy/build runs never see this warning)"
+        )]
         let mut enabled_layers: Vec<*const c_char> = Vec::new();
         #[cfg(debug_assertions)]
         let validation_requested = if debug_validation_available(&entry) {

@@ -13,6 +13,7 @@ members = [
     "crates/tre-rhi-metal",
     "crates/tre-platform",
     "crates/tre-a11y",
+    "crates/tre-python",
 ]
 
 [workspace.package]
