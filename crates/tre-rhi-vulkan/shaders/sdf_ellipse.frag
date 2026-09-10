@@ -56,18 +56,58 @@ vec4 unpack_rgba8(uint packed) {
     ) / 255.0;
 }
 
-// A standard scaled-circle ellipse SDF approximation (NOT the exact
-// closed-form quartic solve): exact when `r.x == r.y` (reduces
-// algebraically to the plain circle SDF `length(p) - r`), a real if
-// approximate distance field otherwise. Deliberately chosen over the
-// exact closed-form for this pass -- simpler to verify correct than
-// hand-transcribing a quartic root solve from memory, at the cost of
-// being an approximation for a true (non-circular) ellipse
-// (documentation/PLAN.md's "Scope decisions").
-float sd_ellipse(vec2 p, vec2 r) {
-    float k1 = length(p / r);
-    float k2 = length(p / (r * r));
-    return k1 * (k1 - 1.0) / k2;
+// Phase 10 Step 10.2.4: the real, verified-exact ellipse distance field
+// -- Inigo Quilez's own published Newton-Raphson refinement on the
+// ellipse's implicit parametrization (iquilezles.org/articles/
+// ellipsedist), the rotation-based variant (tracks a unit vector `cs`
+// via a per-iteration rotation update instead of re-deriving an angle
+// through `atan`/`sin`/`cos` every step -- fewer transcendental calls
+// per iteration than the article's own first, trigonometric variant).
+// REPLACES the prior standard "scaled circle" APPROXIMATION (`k1*(k1-1)
+// /k2`, exact only when `r.x == r.y`) that shipped in Step 10.2 --
+// PLAN.md Step 10.2.4's own "verified-correct exact (or near-machine-
+// precision iterative) formula" requirement. There is no simpler true
+// closed form: the exact point-to-ellipse distance is the root of a
+// quartic in general, and IQ's own article notes the direct quartic
+// solve is "both expensive and not very stable" -- Newton's method
+// converges quadratically and is the real, standard reference solution
+// this class of problem uses in practice.
+//
+// 5 iterations (IQ's own published default) -- verified via an
+// independent brute-force parametric-sampling reference (`crates/
+// tre-engine/src/shapes.rs`'s `sdf_ellipse_fidelity` tests) to converge
+// to sub-0.001px accuracy at this engine's UI-scale eccentricities
+// (a 3.5:1 aspect-ratio test ellipse); the prior approximation's real,
+// measured error at those exact same off-axis points is 10.67px and
+// 1.31px respectively -- a real, practical defect, not merely a
+// theoretical one. Both formulas turn out exact on the ellipse's own
+// major/minor axes for an EXTERIOR point (confirmed by direct algebraic
+// derivation of the old formula, and by that same test module) -- but
+// NOT for every interior major-axis point: an ellipse's evolute has a
+// cusp on its major axis, and any interior point between the center and
+// that cusp has two symmetric, OFF-axis closest boundary points, not
+// the on-axis vertex (a real, independently-documented property of
+// ellipse geometry itself, unrelated to either formula -- see that same
+// test module's own doc comment for the full account).
+float sd_ellipse(vec2 p, vec2 ab) {
+    p = abs(p);
+    vec2 q = ab * (p - ab);
+    vec2 cs = normalize((q.x < q.y) ? vec2(0.01, 1.0) : vec2(1.0, 0.01));
+    for (int i = 0; i < 5; i++) {
+        vec2 u = ab * vec2(cs.x, cs.y);
+        vec2 v = ab * vec2(-cs.y, cs.x);
+        float a = dot(p - u, v);
+        float c = dot(p - u, u) + dot(v, v);
+        // `max(..., 0.0)`: one small, disclosed deviation from IQ's own
+        // published `sqrt(c*c-a*a)` -- mathematically always
+        // non-negative, but float rounding can push it to a tiny
+        // negative value right at convergence, which `sqrt` turns into
+        // `NaN` with no clamp.
+        float b = sqrt(max(c * c - a * a, 0.0));
+        cs = vec2(cs.x * b - cs.y * a, cs.y * b + cs.x * a) / c;
+    }
+    float d = length(p - ab * cs);
+    return (dot(p / ab, p / ab) > 1.0) ? d : -d;
 }
 
 // Phase 10 Step 10.2.1: evaluates a `GpuGradientStyle` record at

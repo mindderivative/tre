@@ -2414,6 +2414,96 @@ machine's real X11 session rather than `xvfb-run`, unavailable locally)
 and confirmed passing. `cargo fmt`/`clippy -D warnings`/`build`/`test`
 clean across the whole workspace.
 
+#### Step 10.2.4: SDF Fidelity: Exact Ellipse Distance Field & Corner-Smoothing Reconciliation -- Status: Complete (2026-09-09)
+
+**Real research before any code, per this project's own standing
+discipline.** Fetched Inigo Quilez's own published ellipse-distance
+article (iquilezles.org/articles/ellipsedist) directly rather than
+relying on memory: the exact point-to-ellipse distance is the root of a
+quartic in general (no simpler true closed form exists), and IQ's own
+article states the direct quartic solve is "both expensive and not very
+stable" -- his real, published solution is a Newton-Raphson refinement
+on the ellipse's implicit parametrization, 5 iterations by default. Two
+variants exist (trigonometric, and a rotation-based variant tracking a
+unit vector through a per-iteration rotation update instead of
+re-deriving an angle via `atan`/`sin`/`cos` every step); implemented the
+rotation-based one (fewer transcendental calls per iteration).
+
+**Real, in `crates/tre-rhi-vulkan/shaders/sdf_ellipse.frag`:** `sd_ellipse`
+replaced entirely -- the old "scaled circle" approximation
+(`k1*(k1-1)/k2`, exact only when `r.x == r.y`) is gone, replaced by IQ's
+real Newton-Raphson formula (with one small, disclosed numerical-
+stability guard: `max(c*c-a*a, 0.0)` before the `sqrt`, since float
+rounding can push that expression slightly negative right at
+convergence, which IQ's own published code doesn't guard against).
+
+**A real, measured finding that reframed the whole fix.** `tre-engine`'s
+new `sdf_ellipse_fidelity` test module (independent Rust references:
+the old formula, the new formula, and a fully independent brute-force
+ground truth via dense parametric-boundary sampling) found that the old
+approximation's fill/no-fill BOUNDARY was always exactly correct -- `k1
+= length(p/r)` is exactly `1.0` everywhere ON the true ellipse boundary
+by construction, so `k1*(k1-1)/k2` is always exactly `0` there,
+regardless of angle. The real, practical defect was in the SDF's actual
+MAGNITUDE away from the boundary (measured: 10.67px and 1.31px real
+error at two off-axis points on a 3.5:1-eccentricity ellipse, vs.
+essentially zero for the new formula) -- exactly the value
+`border_thickness` rendering depends on (`inner_d = d + border_thickness`),
+meaning a bordered, eccentric ellipse's border thickness would have
+visibly varied around its own perimeter under the old formula, even
+though its outer silhouette was always correct. This also explained why
+`PLAN.md`'s own task language (expecting the old formula to show real
+error at major/minor-axis reference points) didn't match what was
+found there -- both formulas are exact on-axis for an exterior point (a
+real, disclosed correction, `sdf_ellipse_exact_matches_analytic_
+distance_on_the_major_and_minor_axes`'s own doc comment has the full
+account, including a genuine ellipse-geometry subtlety found along the
+way: an interior major-axis point can have its nearest boundary point be
+a pair of symmetric OFF-axis points, not the vertex, whenever it sits
+inside the ellipse's own evolute cusp).
+
+**`corner_smoothing`'s own disclosed gap, resolved by research with NO
+code change.** Fetched Figma's own blog post
+(figma.com/blog/desperately-seeking-squircles) plus the real, widely-
+cited open-source transcription of their algorithm
+(github.com/tienphaw/figma-squircle) directly, rather than guessing:
+Figma's construction is a real SVG path per corner -- two curvature-
+continuous cubic Beziers plus a circular arc -- not an implicit
+distance field at all. There is no simple closed form of THAT
+construction to drop into `sdf_rect_styled.frag`'s own `corner_norm`
+superellipse-exponent blend; computing an exact per-pixel distance to
+an arbitrary Bezier curve is real, substantially harder, out-of-scope
+work for this one bounded step. `corner_norm` is kept exactly as-is (a
+real, legitimate, monotonic smoothing control), with a new `tre-engine`
+test module (`corner_smoothing_fidelity`: an independent Rust
+transcription of Figma's real corner-path-parameter algorithm, a real
+SVG-arc endpoint-to-center solver, and a cubic Bezier evaluator)
+quantifying the real, previously-unmeasured deviation: identical to
+Figma's construction at `smoothing == 0` (both reduce to the same plain
+circular-arc rounded corner), diverging up to ~71% of the corner radius
+at `smoothing == 1.0` (confirmed to scale linearly with radius) -- a
+real, visually significant difference disclosed precisely now, not left
+as a vague "not verified" caveat.
+
+**Verified.** 5 new `tre-engine` tests (151 total, up from 146): three
+ellipse-fidelity tests (analytic axis-point exactness, brute-force
+off-axis agreement for the new formula, brute-force off-axis error for
+the old one) and two corner-smoothing-fidelity tests (exact match at
+`smoothing == 0`, real quantified divergence at `smoothing == 0.5`/`1.0`).
+A new real GPU demo, `ellipse_sdf_fidelity_demo.rs`
+(`demo/phase10_step10_2_4/`) -- the first ever to draw a genuinely
+non-circular ellipse (every prior demo's `radius.x == radius.y`, the one
+case the old approximation already got right) -- draws a real,
+eccentric, bordered ellipse and finds the real border/fill transition
+pixel by bisecting on actual GPU-rendered color at four angles, each
+confirmed against a second, independent CPU transcription of the exact
+formula (sharing no code with either the shader or the unit tests).
+Every pre-existing GPU demo re-run and confirmed passing, including the
+three real consumers of the ellipse pipeline (`shape_full_rendering_
+demo`, `gradient_fill_demo`, `texture_fill_demo`) at their own circular
+cases. `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the
+whole workspace.
+
 ### Step 10.3: The `tre-ffi` C-ABI Crate (for C, C++, and other non-Python bindings)
 
 * **Renumbered 2026-09-09** from Step 10.2 to 10.3, when Step 10.2 was inserted ahead of it for full shape rendering support (shapes are what this boundary and Step 10.4's Python binding will actually expose -- finishing real rendering for all four primitives first avoids binding an API surface still mostly stubbed).

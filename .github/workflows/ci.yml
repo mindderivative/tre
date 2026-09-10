@@ -243,6 +243,12 @@ jobs:
       # descriptor, each swatch's own center pixel checked against an
       # independent Rust reference of the exact W3C blend formula.
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example blend_mode_demo
+      # Phase 10 Step 10.2.4: real GPU proof of the exact ellipse SDF
+      # (Inigo Quilez's Newton-Raphson refinement, replacing the old
+      # "scaled circle" approximation) -- the first real render of a
+      # genuinely non-circular ellipse, its border/fill transition
+      # checked at several angles against an independent CPU reference.
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example ellipse_sdf_fidelity_demo
 
   accessibility-validation:
     name: accessibility-validation

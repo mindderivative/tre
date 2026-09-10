@@ -1662,6 +1662,286 @@ mod tests {
     use crate::{RhiBuffer, RhiDynamicRingBuffer};
     use std::cell::{Cell, RefCell};
 
+    /// Phase 10 Step 10.2.4: independent Rust references for `sdf_
+    /// ellipse.frag`'s real shader code -- sharing no math with the
+    /// shader itself, used only to prove the new formula's real
+    /// correctness and the old approximation's real, measured error
+    /// (this codebase's own established "compute the correct answer
+    /// independently, compare against real output" discipline, e.g.
+    /// `gradient_fill_demo.rs`). See `sdf_ellipse_fidelity` tests below.
+    mod sdf_ellipse_fidelity {
+        /// The OLD "scaled circle" ellipse SDF approximation Step 10.2
+        /// originally shipped (`sd_ellipse` in `sdf_ellipse.frag`,
+        /// before Step 10.2.4 replaced it) -- exact only when `r.x ==
+        /// r.y`, transcribed line-for-line from that prior GLSL.
+        pub(super) fn scaled_circle_approx(p: [f32; 2], r: [f32; 2]) -> f32 {
+            let k1 = (p[0] / r[0]).hypot(p[1] / r[1]);
+            let k2 = (p[0] / (r[0] * r[0])).hypot(p[1] / (r[1] * r[1]));
+            k1 * (k1 - 1.0) / k2
+        }
+
+        /// The NEW, real shader formula (`sdf_ellipse.frag`'s current
+        /// `sd_ellipse`), transcribed line-for-line into Rust -- Inigo
+        /// Quilez's own published Newton-Raphson refinement on the
+        /// ellipse's implicit parametrization (iquilezles.org/articles/
+        /// ellipsedist), 5 iterations.
+        #[allow(clippy::many_single_char_names)] // mirrors sd_ellipse.frag's own variable names exactly, for direct side-by-side comparison
+        pub(super) fn exact(p: [f32; 2], ab: [f32; 2]) -> f32 {
+            let p = [p[0].abs(), p[1].abs()];
+            let q = [ab[0] * (p[0] - ab[0]), ab[1] * (p[1] - ab[1])];
+            let seed: [f32; 2] = if q[0] < q[1] {
+                [0.01, 1.0]
+            } else {
+                [1.0, 0.01]
+            };
+            let norm = (seed[0] * seed[0] + seed[1] * seed[1]).sqrt();
+            let mut cs = [seed[0] / norm, seed[1] / norm];
+            for _ in 0..5 {
+                let u = [ab[0] * cs[0], ab[1] * cs[1]];
+                let v = [ab[0] * -cs[1], ab[1] * cs[0]];
+                let pu = [p[0] - u[0], p[1] - u[1]];
+                let a = pu[0] * v[0] + pu[1] * v[1];
+                let c = pu[0] * u[0] + pu[1] * u[1] + v[0] * v[0] + v[1] * v[1];
+                let b = (c * c - a * a).max(0.0).sqrt();
+                cs = [(cs[0] * b - cs[1] * a) / c, (cs[1] * b + cs[0] * a) / c];
+            }
+            let d = ((p[0] - ab[0] * cs[0]).powi(2) + (p[1] - ab[1] * cs[1]).powi(2)).sqrt();
+            let outside = (p[0] / ab[0]).powi(2) + (p[1] / ab[1]).powi(2) > 1.0;
+            if outside {
+                d
+            } else {
+                -d
+            }
+        }
+
+        /// A fully independent ground truth sharing no math with either
+        /// formula above: dense-sampled minimum distance from `p` to
+        /// the ellipse's own parametric boundary `(r.x*cos(theta),
+        /// r.y*sin(theta))`. Precision is bounded by `SAMPLES` (angular
+        /// resolution ~1.3e-5 rad), not iterative convergence -- good
+        /// enough to confirm both formulas' real accuracy at the
+        /// tolerances these tests assert, not intended as a
+        /// production-quality distance field itself.
+        #[allow(clippy::cast_precision_loss)] // SAMPLES tops out at 500_000, well inside f32's exact-integer range; only used to pick a sample angle
+        pub(super) fn brute_force(p: [f32; 2], r: [f32; 2]) -> f32 {
+            const SAMPLES: u32 = 500_000;
+            let mut min_dist_sq = f32::MAX;
+            for i in 0..SAMPLES {
+                let theta = (i as f32 / SAMPLES as f32) * std::f32::consts::TAU;
+                let dx = p[0] - r[0] * theta.cos();
+                let dy = p[1] - r[1] * theta.sin();
+                let dist_sq = dx * dx + dy * dy;
+                if dist_sq < min_dist_sq {
+                    min_dist_sq = dist_sq;
+                }
+            }
+            let d = min_dist_sq.sqrt();
+            let inside = (p[0] / r[0]).powi(2) + (p[1] / r[1]).powi(2) <= 1.0;
+            if inside {
+                -d
+            } else {
+                d
+            }
+        }
+    }
+
+    /// Phase 10 Step 10.2.4: an independent Rust reference of Figma's
+    /// REAL squircle corner construction (their own published article,
+    /// "Desperately Seeking Squircles," figma.com/blog/desperately-
+    /// seeking-squircles -- transcribed from the widely-cited, real
+    /// open-source implementation at github.com/tienphaw/figma-squircle
+    /// `getPathParamsForCorner`/`draw.ts`, itself a direct port of
+    /// Figma's own published formulas), used ONLY to research and
+    /// quantify `corner_norm`/`sd_rounded_box`'s (`sdf_rect_styled.
+    /// frag`) real deviation from that reference -- PLAN.md Step
+    /// 10.2.4's own "Scope decisions" authorizes exactly this outcome
+    /// ("formally verify and document the existing superellipse
+    /// blend's real deviation... within a quantified tolerance") as an
+    /// alternative to a rewrite, once research determines which one the
+    /// evidence actually supports.
+    ///
+    /// The key finding driving that call: Figma's construction is NOT
+    /// an implicit distance field at all -- it is a real SVG path (two
+    /// curvature-continuous cubic Beziers plus a circular arc PER
+    /// corner), a fundamentally different mathematical object from an
+    /// implicit superellipse-exponent blend evaluated per-pixel. There
+    /// is no "simple closed form" version of Figma's own construction to
+    /// drop into an SDF shader -- computing the exact per-pixel distance
+    /// to an arbitrary cubic Bezier curve is a substantially harder,
+    /// more expensive real-time problem than this one bounded step's own
+    /// scope, so a rewrite was not attempted; this module exists to
+    /// quantify the real, disclosed difference instead.
+    mod corner_smoothing_fidelity {
+        struct FigmaCornerParams {
+            a: f32,
+            b: f32,
+            c: f32,
+            d: f32,
+            p: f32,
+            arc_section_length: f32,
+        }
+
+        /// Figma's own `getPathParamsForCorner`, `preserveSmoothing:
+        /// false` (the real, shipped default) -- see this module's own
+        /// doc comment for the source. `budget` is `figma-squircle`'s
+        /// own `roundingAndSmoothingBudget`; callers here always pass a
+        /// generous value that never actually clamps anything, so this
+        /// reference doesn't need to reimplement Figma's own separate
+        /// multi-corner budget-sharing logic for adjacent corners on
+        /// the same edge.
+        #[allow(clippy::many_single_char_names)] // mirrors figma-squircle's own a/b/c/d/p variable names exactly, for direct side-by-side comparison against the source
+        fn figma_corner_params(radius: f32, smoothing: f32, budget: f32) -> FigmaCornerParams {
+            let mut p = (1.0 + smoothing) * radius;
+            let max_smoothing = budget / radius - 1.0;
+            let smoothing = smoothing.min(max_smoothing);
+            p = p.min(budget);
+
+            let arc_measure = 90.0 * (1.0 - smoothing);
+            let arc_section_length =
+                (arc_measure / 2.0).to_radians().sin() * radius * std::f32::consts::SQRT_2;
+
+            let angle_alpha = (90.0 - arc_measure) / 2.0;
+            let p3_to_p4 = radius * (angle_alpha / 2.0).to_radians().tan();
+
+            let angle_beta = 45.0 * smoothing;
+            let c = p3_to_p4 * angle_beta.to_radians().cos();
+            let d = c * angle_beta.to_radians().tan();
+
+            let b = (p - arc_section_length - c - d) / 3.0;
+            let a = 2.0 * b;
+            FigmaCornerParams {
+                a,
+                b,
+                c,
+                d,
+                p,
+                arc_section_length,
+            }
+        }
+
+        fn cubic_bezier(
+            p0: [f32; 2],
+            p1: [f32; 2],
+            p2: [f32; 2],
+            p3: [f32; 2],
+            t: f32,
+        ) -> [f32; 2] {
+            let mt = 1.0 - t;
+            let (w0, w1, w2, w3) = (mt * mt * mt, 3.0 * mt * mt * t, 3.0 * mt * t * t, t * t * t);
+            [
+                w0 * p0[0] + w1 * p1[0] + w2 * p2[0] + w3 * p3[0],
+                w0 * p0[1] + w1 * p1[1] + w2 * p2[1] + w3 * p3[1],
+            ]
+        }
+
+        /// A point at parameter `t` along the real SVG circular arc
+        /// Figma's own path uses between the two Bezier ramps (`rx=ry=
+        /// radius`, no rotation, `large-arc-flag=0`, `sweep-flag=1` --
+        /// the standard "endpoint to center" conversion the SVG spec
+        /// itself defines, specialized to equal radii and this fixed
+        /// flag combination, which fixes the ambiguous-center sign to
+        /// always `+1`).
+        fn svg_arc_point(p0: [f32; 2], p1: [f32; 2], radius: f32, t: f32) -> [f32; 2] {
+            let x1p = (p0[0] - p1[0]) / 2.0;
+            let y1p = (p0[1] - p1[1]) / 2.0;
+            let den = x1p * x1p + y1p * y1p;
+            let co = if den > 1e-9 {
+                ((radius * radius - den).max(0.0) / den).sqrt()
+            } else {
+                0.0
+            };
+            let center = [
+                co * y1p + (p0[0] + p1[0]) / 2.0,
+                -co * x1p + (p0[1] + p1[1]) / 2.0,
+            ];
+            let theta1 = (p0[1] - center[1]).atan2(p0[0] - center[0]);
+            let theta2 = (p1[1] - center[1]).atan2(p1[0] - center[0]);
+            let mut delta = theta2 - theta1;
+            if delta < 0.0 {
+                delta += std::f32::consts::TAU;
+            }
+            let theta = theta1 + delta * t;
+            [
+                center[0] + radius * theta.cos(),
+                center[1] + radius * theta.sin(),
+            ]
+        }
+
+        /// This engine's own real `corner_norm`/`sd_rounded_box`
+        /// (`sdf_rect_styled.frag`), transcribed line-for-line into
+        /// Rust, specialized to a uniform corner radius (so
+        /// `select_radius`'s quadrant branch collapses to a constant).
+        fn engine_sd_rounded_box(
+            p: [f32; 2],
+            half_extent: f32,
+            radius: f32,
+            smoothing: f32,
+        ) -> f32 {
+            let q = [
+                p[0].abs() - half_extent + radius,
+                p[1].abs() - half_extent + radius,
+            ];
+            let qm = [q[0].max(0.0), q[1].max(0.0)];
+            let outer = if smoothing <= 0.0001 {
+                (qm[0] * qm[0] + qm[1] * qm[1]).sqrt()
+            } else {
+                let n = 2.0 + 3.0 * smoothing.clamp(0.0, 1.0);
+                (qm[0].powf(n) + qm[1].powf(n)).powf(1.0 / n)
+            };
+            outer + q[0].max(q[1]).min(0.0) - radius
+        }
+
+        /// Builds Figma's real top-right corner path for a `size x
+        /// size` square (a square keeps the per-corner budget/geometry
+        /// simple and representative; nothing about the comparison
+        /// below depends on the rect being non-square) and samples it
+        /// densely, returning the maximum `|engine_sd_rounded_box|`
+        /// across every sampled point -- zero would mean the two
+        /// constructions trace the identical curve; any nonzero value
+        /// is this engine's own real, measured deviation from Figma's
+        /// real construction, in pixels, at that `size`/`radius`/
+        /// `smoothing`.
+        pub(super) fn max_deviation_from_engine(size: f32, radius: f32, smoothing: f32) -> f32 {
+            const STEPS: u16 = 32;
+
+            let prm = figma_corner_params(radius, smoothing, 1000.0);
+            let half = size / 2.0;
+
+            let start = [size - prm.p, 0.0];
+            let s1 = [
+                start,
+                [start[0] + prm.a, start[1]],
+                [start[0] + prm.a + prm.b, start[1]],
+                [start[0] + prm.a + prm.b + prm.c, start[1] + prm.d],
+            ];
+            let arc_p1 = [
+                s1[3][0] + prm.arc_section_length,
+                s1[3][1] + prm.arc_section_length,
+            ];
+            let s2 = [
+                arc_p1,
+                [arc_p1[0] + prm.d, arc_p1[1] + prm.c],
+                [arc_p1[0] + prm.d, arc_p1[1] + prm.b + prm.c],
+                [arc_p1[0] + prm.d, arc_p1[1] + prm.a + prm.b + prm.c],
+            ];
+
+            let mut max_dev = 0.0_f32;
+            for i in 0..=STEPS {
+                let t = f32::from(i) / f32::from(STEPS);
+                for absolute in [
+                    cubic_bezier(s1[0], s1[1], s1[2], s1[3], t),
+                    svg_arc_point(s1[3], arc_p1, radius, t),
+                    cubic_bezier(s2[0], s2[1], s2[2], s2[3], t),
+                ] {
+                    let local = [absolute[0] - half, absolute[1] - half];
+                    let dev = engine_sd_rounded_box(local, half, radius, smoothing).abs();
+                    max_dev = max_dev.max(dev);
+                }
+            }
+            max_dev
+        }
+    }
+
     /// A minimal `RhiDevice` double for this module's own `flatten_into`
     /// tests -- only `shape_style_buffer()` is real (a plain,
     /// alignment-agnostic bump allocator); every other method is
@@ -3164,5 +3444,167 @@ mod tests {
             "Normal blending never needs the blend-capable pipeline, even on hardware that \
              supports it"
         );
+    }
+
+    /// Phase 10 Step 10.2.4: `sdf_ellipse.frag`'s new exact ellipse SDF
+    /// (`sd_ellipse`, Inigo Quilez's Newton-Raphson refinement) proven
+    /// against the analytically-known exact distance on the ellipse's
+    /// own major/minor axes -- for a point at distance `d > r` along
+    /// either axis, the exact signed distance is trivially `d - r`
+    /// (PLAN.md Step 10.2.4's own "Scope decisions").
+    ///
+    /// Both the new AND old formulas turn out to be exact here -- a
+    /// real, verified property of the OLD "scaled circle" approximation
+    /// too (direct algebraic derivation: at `p = (x, 0)`, `k1 = x/r.x`
+    /// and `k2 = k1/r.x`, so `k1*(k1-1)/k2` reduces exactly to `x -
+    /// r.x`). PLAN.md's own task language expected the old formula to
+    /// show real error at these same reference points; it does not --
+    /// see `sd_ellipse_scaled_circle_approximation_has_real_off_axis_
+    /// error` below for where its real, measured error actually shows
+    /// up (an off-axis point), a disclosed correction to that
+    /// expectation once actually checked, not silently dropped.
+    ///
+    /// No interior major-axis point is included here (unlike the minor
+    /// axis, which has no such case): verifying this test's own naive
+    /// "`d - r` on-axis" assumption against `brute_force` during this
+    /// step's own development found it to be a genuinely wrong
+    /// assumption for SOME interior major-axis points, not a bug in
+    /// either SDF formula -- an ellipse's evolute has a cusp on its
+    /// major axis at `x = (r.x^2 - r.y^2) / r.x` from center (here,
+    /// `(140^2-40^2)/140 ≈ 128.6`); any interior point between the
+    /// center and that cusp has TWO equally-near, symmetric, OFF-axis
+    /// closest boundary points, not the on-axis vertex -- a real,
+    /// independently-documented property of ellipse geometry (the
+    /// vertex's own evolute/focal-curve structure), not specific to
+    /// either formula tested here. The minor axis has no such cusp in
+    /// its own interior (its vertices have the ellipse's LARGEST radius
+    /// of curvature, not the smallest), so `[0.0, 10.0]` below is safe.
+    #[test]
+    fn sd_ellipse_exact_matches_analytic_distance_on_the_major_and_minor_axes() {
+        let r = [140.0_f32, 40.0];
+
+        for &(p, expected) in &[
+            ([200.0_f32, 0.0], 60.0_f32), // major axis, outside
+            ([0.0, 90.0], 50.0_f32),      // minor axis, outside
+            ([0.0, 10.0], -30.0_f32),     // minor axis, inside
+        ] {
+            let new = sdf_ellipse_fidelity::exact(p, r);
+            let old = sdf_ellipse_fidelity::scaled_circle_approx(p, r);
+            assert!(
+                (new - expected).abs() < 1e-3,
+                "new formula at {p:?}: expected {expected}, got {new}"
+            );
+            assert!(
+                (old - expected).abs() < 1e-3,
+                "old formula at {p:?}: expected {expected}, got {old} (both formulas are exact \
+                 on-axis -- see this test's own doc comment)"
+            );
+        }
+    }
+
+    /// The real, measured error PLAN.md's own task language anticipated
+    /// finding on-axis (see the test above for why it isn't there
+    /// instead) actually shows up off-axis, at a genuinely eccentric
+    /// ellipse (`r = [140, 40]`, a 3.5:1 aspect ratio) -- proven against
+    /// `sdf_ellipse_fidelity::brute_force`, an independent ground truth
+    /// sharing no math with either formula (dense parametric-boundary
+    /// sampling, not Newton refinement or the scaled-circle identity).
+    #[test]
+    fn sd_ellipse_exact_matches_an_independent_brute_force_reference_off_axis() {
+        let r = [140.0_f32, 40.0];
+        for p in [[160.0_f32, 60.0], [50.0, 20.0]] {
+            let exact = sdf_ellipse_fidelity::exact(p, r);
+            let truth = sdf_ellipse_fidelity::brute_force(p, r);
+            let error = (exact - truth).abs();
+            assert!(
+                error < 0.05,
+                "new exact formula at {p:?}: brute-force reference {truth}, got {exact} \
+                 (error {error}) -- expected sub-0.05px agreement"
+            );
+        }
+    }
+
+    /// The OLD "scaled circle" approximation's real, measured error at
+    /// the SAME off-axis points the test above proves the new formula
+    /// gets right, against the SAME independent brute-force ground
+    /// truth -- this is the real defect Step 10.2.4 fixes, quantified,
+    /// not merely asserted.
+    #[test]
+    fn sd_ellipse_scaled_circle_approximation_has_real_off_axis_error() {
+        let r = [140.0_f32, 40.0];
+        for (p, min_expected_error) in [([160.0_f32, 60.0], 1.0_f32), ([50.0, 20.0], 1.0)] {
+            let approx = sdf_ellipse_fidelity::scaled_circle_approx(p, r);
+            let truth = sdf_ellipse_fidelity::brute_force(p, r);
+            let error = (approx - truth).abs();
+            assert!(
+                error > min_expected_error,
+                "old scaled-circle approximation at {p:?}: brute-force reference {truth}, got \
+                 {approx} (error {error}) -- expected a real, measurable error over \
+                 {min_expected_error}px at this eccentricity, proving Step 10.2's original \
+                 approximation was not just theoretically inexact but practically wrong here"
+            );
+        }
+    }
+
+    /// Phase 10 Step 10.2.4: at `smoothing == 0.0`, both `corner_norm`/
+    /// `sd_rounded_box`'s superellipse blend AND Figma's real
+    /// construction reduce to the exact same thing -- a plain circular-
+    /// arc rounded corner (Figma's own `arcMeasure` is `90 * (1 -
+    /// smoothing)`, i.e. the full 90-degree circular arc with both
+    /// Bezier ramps collapsed to zero length when `smoothing == 0`).
+    /// This is the ONE point on the `[0, 1]` smoothing range where an
+    /// exact match is not just expected but mathematically guaranteed,
+    /// regardless of how the two techniques otherwise diverge -- proven
+    /// here rather than assumed.
+    #[test]
+    fn corner_smoothing_matches_figmas_construction_exactly_at_zero_smoothing() {
+        let deviation = corner_smoothing_fidelity::max_deviation_from_engine(200.0, 30.0, 0.0);
+        assert!(
+            deviation < 0.01,
+            "at smoothing=0.0 (plain rounded corner) the two constructions must be identical; \
+             measured deviation {deviation}px"
+        );
+    }
+
+    /// The real, measured divergence PLAN.md Step 10.2.4 asked this
+    /// step to either close or honestly quantify (its own "Scope
+    /// decisions": "formally verify and document the existing
+    /// superellipse blend's real deviation from that reference within a
+    /// quantified tolerance"). The engineering call made here, once
+    /// this number was in hand: Figma's own construction is a real SVG
+    /// path (curvature-continuous Beziers plus a circular arc), not an
+    /// implicit distance field -- there is no simple closed form to
+    /// swap in, and computing an exact per-pixel distance to an
+    /// arbitrary Bezier curve is real, substantial, out-of-scope work
+    /// for this one step. `corner_norm` is kept as-is (still a real,
+    /// legitimate, monotonic smoothing control), with its own real
+    /// deviation now disclosed precisely instead of left as an
+    /// unquantified "not verified against any reference" caveat.
+    ///
+    /// The deviation scales linearly with corner radius (confirmed
+    /// during this step's own research at `radius=60`: deviation
+    /// doubles too) -- `smoothing=1.0`'s ~71% of the corner radius is
+    /// not a rounding-error-scale gap, it is a real, visually
+    /// significant difference from Figma's own squircle at maximum
+    /// smoothing. Anyone wanting a byte-for-byte Figma match at high
+    /// `corner_smoothing` values should treat this engine's own control
+    /// as a distinct, engine-native smoothing curve, not a drop-in
+    /// equivalent.
+    #[test]
+    fn corner_smoothing_diverges_substantially_from_figmas_construction_at_high_smoothing() {
+        let radius = 30.0;
+        for (smoothing, min_expected_deviation, max_expected_deviation) in
+            [(0.5_f32, 3.0_f32, 6.0_f32), (1.0, 18.0, 25.0)]
+        {
+            let deviation =
+                corner_smoothing_fidelity::max_deviation_from_engine(200.0, radius, smoothing);
+            assert!(
+                (min_expected_deviation..max_expected_deviation).contains(&deviation),
+                "smoothing={smoothing}: measured deviation {deviation}px, expected in \
+                 [{min_expected_deviation}, {max_expected_deviation}) -- either the reference \
+                 implementation or this engine's own corner_norm changed; re-verify against \
+                 Figma's real construction before adjusting this bound"
+            );
+        }
     }
 }

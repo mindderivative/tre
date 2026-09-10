@@ -213,58 +213,14 @@ record.
 
 ## Step 10.2.4 — SDF Fidelity: Exact Ellipse Distance Field & Corner-Smoothing Reconciliation
 
-### Investigation
-
-- `sd_ellipse` (`sdf_ellipse.frag`) is a standard scaled-circle
-  approximation, exact only when `radius.x == radius.y`. A real "exact"
-  ellipse SDF (Inigo Quilez's own published derivation) is not actually a
-  closed-form quartic in practice — it's typically an iterative
-  (Newton-style) refinement on the ellipse's implicit parametrization; the
-  real, current formula must be verified against IQ's own published
-  article before implementation (this codebase's own standing discipline:
-  verify real external algorithms via direct research, not from memory,
-  before integrating — exactly how the `lyon` migration's own API
-  assumptions were verified this session).
-- `corner_smoothing`'s superellipse blend (`sdf_rect_styled.frag`) is a
-  real, legitimate, monotonic smoothing technique (superellipse/"squircle"
-  blending is itself a standard real technique, not an ad hoc hack) — the
-  disclosed gap is that it was never checked against any specific
-  reference (e.g. Figma's own published squircle parametrization), not
-  that it's known wrong.
-
-### Scope decisions
-
-- Ellipse: replace `sd_ellipse` with a verified-correct exact (or
-  near-machine-precision iterative) formula, with a NEW unit test
-  comparing against analytically-known exact distances at reference points
-  (e.g. along the major/minor axis, where the exact distance is trivially
-  `d - a`/`d - b` for a point at distance `d > a`/`b` from center) — proving
-  BOTH the new formula's correctness AND, for honesty, the OLD
-  approximation's real error at the same points (matching this session's
-  own `translucent_flat_fill_demo.rs` precedent of proving a fix against
-  an independent reference, not just asserting "looks fine").
-- Corner smoothing: research a specific real reference formula (e.g.
-  Figma's own published squircle article) and make an honest,
-  evidence-based call at implementation time — either match it if a simple
-  closed form exists, or formally verify and document the existing
-  superellipse blend's real deviation from that reference within a
-  quantified tolerance, whichever the research actually supports. Not
-  presupposing a rewrite is needed; presupposing only that the current
-  disclosed uncertainty gets resolved one way or the other, honestly.
-
-### Tasks
-
-1. Research IQ's real published exact/near-exact ellipse SDF article;
-   confirm the formula before writing GLSL against it.
-2. Implement + a CPU-side Rust reference of the same formula for testing
-   (mirroring `translucent_flat_fill_demo.rs`'s "independent reference"
-   pattern), with reference-point unit tests.
-3. Research a real squircle/corner-smoothing reference formula; make and
-   document the scope call above.
-4. Re-run `shape_full_rendering_demo` and every other consumer of these two
-   shaders to confirm no visual regression at `radius.x == radius.y` /
-   `smoothing == 0` (the two cases where old and new must be bit-identical
-   or near-identical).
+**Status: Complete (2026-09-09) -- archived to
+`planning/archive/PLAN_PHASE10_STEP10_2_4.md`** (with real
+implementation notes on top of this original plan, including a real,
+disclosed correction to this plan's own expectation about where the old
+ellipse SDF approximation's real error would show up). See
+`documentation/IMPLEMENTATION.md`'s own write-up, REVIEW.md findings
+#173/#174, and `demo/phase10_step10_2_4/`. See the archive file for the
+original plan text, kept there as historical record.
 
 ---
 

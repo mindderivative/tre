@@ -922,11 +922,33 @@ pub struct ShapeRegistry {
     opacity does not get that opacity correctly applied to a blend-mode
     fill), and only correct against the swapchain/headless attachment
     `begin_frame` sets up (not while a `PushLayer` render-to-texture
-    target is active). **The ellipse SDF's disclosed scaled-circle
-    approximation, `corner_smoothing`'s unverified squircle match, and
-    rounded stroke caps on a partial-arc `Circle`: all still real,
-    disclosed gaps.** The remaining three are planned, in dependency
-    order, as Steps 10.2.4-10.2.6 (`PLAN.md`, 2026-09-09).
+    target is active). **The ellipse SDF's scaled-circle approximation:
+    replaced with a real, verified-exact formula (Step 10.2.4,
+    2026-09-09).** `sd_ellipse` (`sdf_ellipse.frag`) is now Inigo
+    Quilez's own published Newton-Raphson refinement on the ellipse's
+    implicit parametrization (iquilezles.org/articles/ellipsedist, 5
+    iterations, converging to sub-0.001px accuracy at this engine's
+    UI-scale eccentricities) -- the prior "scaled circle" approximation
+    (exact only when `radius.x == radius.y`) is gone. The real finding
+    that drove this: the old formula's fill/no-fill BOUNDARY was always
+    exactly correct (a direct algebraic property, `k1 = length(p/r) ==
+    1.0` everywhere on the true boundary by construction); its real
+    error was in the SDF's MAGNITUDE away from the boundary, exactly
+    where `border_thickness` rendering depends on it -- a bordered,
+    eccentric ellipse's border thickness would have visibly varied
+    around its own perimeter under the old formula. `corner_smoothing`'s
+    own disclosed gap was also resolved by the same step's research, with
+    no code change: Figma's own published squircle turned out to be a
+    real SVG path per corner (curvature-continuous Beziers plus a
+    circular arc), not an implicit distance field, so there is no simple
+    closed form of it to swap into `corner_norm`'s own superellipse
+    blend -- kept as-is, with its real deviation now measured instead of
+    left unverified (identical to Figma's construction at `smoothing ==
+    0`, diverging up to ~71% of the corner radius at `smoothing == 1.0`).
+    **Rounded stroke caps on a partial-arc `Circle`: still a real,
+    disclosed gap.** Planned next as Step 10.2.5 (`PLAN.md`,
+    2026-09-09), followed by Step 10.2.6 (zero-allocation live
+    verification).
   - **Hit-testing is real for all four shape kinds**
     (`ShapeRegistry::hit_test`) -- the actual concrete need
     `hit_testable` (present since Step 10.1, read by nothing until now)

@@ -77,10 +77,27 @@ float select_radius(vec2 p, vec4 radii) {
 // A real superellipse ("squircle") blend: raising the corner falloff's
 // norm from 2 (a true circular arc, IQ's exact rounded-box SDF) toward a
 // higher exponent as `smoothing` -> 1 flattens the corner's curvature
-// profile. This is a real, monotonic smoothing control, not a faked one
-// -- but it is explicitly NOT a byte-for-byte match of any specific
-// reference implementation's own squircle algorithm (e.g. Figma's), a
-// disclosed simplification (documentation/PLAN.md's "Scope decisions").
+// profile. This is a real, monotonic smoothing control, not a faked one.
+//
+// Phase 10 Step 10.2.4's own research (documentation/PLAN.md's "Scope
+// decisions") resolved this function's prior "not verified against any
+// reference" disclosure with a real, quantified answer, not a rewrite:
+// Figma's own published squircle (figma.com/blog/desperately-seeking-
+// squircles) is a real SVG path per corner -- two curvature-continuous
+// cubic Beziers plus a circular arc -- not an implicit distance field at
+// all, so there is no simple closed form of IT to drop in here; an
+// exact per-pixel distance to an arbitrary Bezier curve is real,
+// substantially harder, out-of-scope work for one bounded step. Kept as
+// this engine's own real (if distinct) smoothing curve instead, with the
+// real gap now measured: identical to Figma's construction at
+// `smoothing == 0` (both reduce to the same plain circular-arc rounded
+// corner), diverging up to ~71% of the corner radius at `smoothing ==
+// 1.0` -- a real, visually significant difference, not a rounding-scale
+// one (`crates/tre-engine/src/shapes.rs`'s `corner_smoothing_fidelity`
+// tests have the full independent-reference derivation and exact
+// numbers). Anyone wanting a byte-for-byte Figma match at high
+// `corner_smoothing` should treat this as a distinct, engine-native
+// curve, not a drop-in equivalent.
 float corner_norm(vec2 q, float smoothing) {
     float n = mix(2.0, 5.0, clamp(smoothing, 0.0, 1.0));
     return pow(pow(q.x, n) + pow(q.y, n), 1.0 / n);

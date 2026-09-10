@@ -7,7 +7,7 @@ Status: **All findings implemented.** See "Follow-up: Rust/Python Language Migra
 
 **Extending the index above (REVIEW.md finding #145: the paragraph above had gone stale, silently omitting the most consequential unresolved content in this document).** "Phase 5 Step 5.1.2 Implementation," "Phase 5 Step 5.1.3 Implementation," "Phase 5 Step 5.2.1 Implementation," "Phase 5 Step 5.2.2 Implementation," and "Phase 5 Step 5.2.3 Implementation" (2026-09-07) are also complete, below — no numbered findings in 5.1.2/5.2.1/5.2.2 (each states so directly); 5.1.3 fixed and re-verified real bugs in its own demo assertions; 5.2.3's own capstone found and fixed two real bugs during development, both documented in that section. "Phase 5 Step 5.3.1 Implementation" and "Phase 5 Step 5.3.2 Implementation" (2026-09-07/08) are also complete, below — see those sections for disposition. **"Phase 5 Step 5.3.3 Implementation" and "Phase 5 Step 5.3.3 CI Verification" (2026-09-08) are NOT complete — Step 5.3 stays open.** The capstone demo's own code and logic are real, verified live on a real desktop session, and found/fixed two real bugs along the way (a role-mapping regression, a `thread::scope` panic-hang) — but CI's own `accessibility-validation` job does not pass, and a nineteen-real-push investigation (recorded in full below, ending at "STOPPING POINT (nineteenth push...)") found the real, precise root cause (a D-Bus proxy built against the session bus instead of the a11y bus) and paused there, unfixed, at the user's own explicit instruction. Two earlier, now-superseded diagnoses in this same investigation were each found and explicitly disproven before the real cause was located — read the CI Verification section in full for that history, not just its ending. "Phase 6 Step 6.1 Implementation," "Phase 6 Step 6.4.1 Implementation," and "Phase 6 Step 6.4.2 Implementation" (2026-09-08) are also complete, below, with findings #127-129 fixed and re-verified in each. **Phase 6 Step 6.5 (the Phase 6 closing capstone) has no REVIEW.md section of its own at all** — a real gap in this document's own indexing discipline, found only during the Phase 1-8 Comprehensive Review below (finding #147); IMPLEMENTATION.md's own Step 6.5 write-up states "No bugs found — passed on its first real run," so nothing was ever lost, only never indexed here. **"Phase 7 Step 7.2.1 Investigation" (2026-09-08) is STOPPED, unfixed, and Step 7.2 stays open.** Finding #130 records a real Dual-Kawase blur RHI bug (sampling a bindless texture while the render target is offscreen reads back all-zero) with twelve independent hypotheses tested and ruled out; one real, independently-correct fix (`begin_render_to_texture_no_end`, closing a genuine double-`cmd_end_rendering` bug found along the way) is kept, but the sampling failure itself remains unresolved. **Phase 8 (Steps 8.1.1 and 8.1.2) is also complete, but — like Phase 6 Step 6.5 — has no REVIEW.md section of its own** (finding #147); both real gaps IMPLEMENTATION.md's own Step 8.1.2 write-up describes (`execute_frame`'s hardcoded zero buffer offset; the atlas owner's no-live-peek limitation) are recorded properly there, just never indexed here until now. **"Phase 1-8 Comprehensive Review" (2026-09-08), below, is the newest section** — a second full six-dimension, twice-checked (independent Find + adversarial Verify) audit, this time across everything built through Phase 8, requested once the project owner wanted a second pass while an external review of the Step 7.2.1 blocker ran in parallel. All 21 findings (#131-151) were independently confirmed (several strengthened, not merely rubber-stamped, by their verifier); the fully-triaged disposition (which were fixed directly vs. left as disclosed gaps, and why) is recorded in that section's own summary table. **"Phase 9 Step 9.1 Implementation" (2026-09-09) is also complete, below** — real pre-work investigation found two of the step's own task-list premises no longer matched the real codebase (findings #154-155: a documented-but-never-built radix sort, and a documented-but-never-built atlas-exhaustion placeholder-glyph fallback), both resolved by building the real missing primitive (radix sort) or correcting the documentation to match reality (atlas fallback), each confirmed with the project owner via `AskUserQuestion` before any code was written. "Phase 9 Step 9.2 Implementation" (2026-09-09) is also complete, below — a real zero-allocation guard (`tre_memory::DebugAllocGuard`/`RenderTickGuard`) found and fixed a real per-frame allocation bug (finding #157) and disclosed two more real gaps left unfixed (#156, #158), plus a criterion perf-budget gate deliberately left red on a real, honestly-measured gap (#159). "Phase 10 Step 10.1 Implementation" (2026-09-09) is also complete, below — real Rectangle-only shape-primitive rendering, with one real discrepancy found and corrected during implementation (finding #161: `Path` fill needs new geometry work, not a wiring task). **"Phase 10 Step 10.2 Implementation" (2026-09-09), below, is the newest section** — full shape rendering support (non-uniform corners/borders/smoothing on `Rectangle`, real `Circle`/`Ellipse`, `Polygon` fill, real Bezier-flattening for `Path`, and real hit-testing for all four shape kinds). Finding #162 is a real GPU bug (a subnormal-float style-buffer index silently flushed to zero by real hardware) found by observing wrong pixels and fixed; #163 and #164 are disclosed-not-fixed gaps (`Path` fill blocked by a real circular-crate-dependency constraint; a pre-existing, newly-exposed non-premultiplied-alpha gap in the Phase-0-era `walking_skeleton.frag` shader).
 
-**Further extending the index (2026-09-09).** "Phase 10 Step 10.2 Follow-up: `lyon` Migration," "Phase 10 Step 10.2 Completion Roadmap," "Phase 10 Step 10.2.1 Implementation," and "Phase 10 Step 10.2.2 Implementation" are also complete, below — see each section's own summary table for disposition (findings #165, #166 [decisions], #167 [fixed same-day], #168-169 [decisions]). **"Phase 10 Step 10.2.3 Implementation" (2026-09-09), below, is the newest section** — real non-`Normal` `BlendMode` rendering for `Polygon`/`Path` solid fill. Finding #170 is a plan-invalidating discovery, not a bug: `VK_EXT_blend_operation_advanced` (this project's own written primary path, and finding #166's own prior conclusion) is not implemented by RADV, this project's own real dev GPU/driver — confirmed via `vulkaninfo` and independently corroborated via Mesa's own release notes — so the step pivoted to the real, portable `VK_KHR_dynamic_rendering_local_read` alternative, at the user's own explicit direction, rather than the originally-planned hardware `VkBlendOp` path. Findings #171-172 are two real regressions this step's own first full GPU demo-regression sweep caught (a windowed swapchain's surface not being guaranteed to support `INPUT_ATTACHMENT` usage; `resume_swapchain_rendering`'s hardcoded stale layout breaking every `PushLayer`/`PopLayer` demo) — both fixed same-day and re-verified.
+**Further extending the index (2026-09-09).** "Phase 10 Step 10.2 Follow-up: `lyon` Migration," "Phase 10 Step 10.2 Completion Roadmap," "Phase 10 Step 10.2.1 Implementation," and "Phase 10 Step 10.2.2 Implementation" are also complete, below — see each section's own summary table for disposition (findings #165, #166 [decisions], #167 [fixed same-day], #168-169 [decisions]). "Phase 10 Step 10.2.3 Implementation" (2026-09-09) is also complete, below — real non-`Normal` `BlendMode` rendering for `Polygon`/`Path` solid fill. Finding #170 is a plan-invalidating discovery, not a bug: `VK_EXT_blend_operation_advanced` (this project's own written primary path, and finding #166's own prior conclusion) is not implemented by RADV, this project's own real dev GPU/driver — confirmed via `vulkaninfo` and independently corroborated via Mesa's own release notes — so the step pivoted to the real, portable `VK_KHR_dynamic_rendering_local_read` alternative, at the user's own explicit direction, rather than the originally-planned hardware `VkBlendOp` path. Findings #171-172 are two real regressions this step's own first full GPU demo-regression sweep caught (a windowed swapchain's surface not being guaranteed to support `INPUT_ATTACHMENT` usage; `resume_swapchain_rendering`'s hardcoded stale layout breaking every `PushLayer`/`PopLayer` demo) — both fixed same-day and re-verified. **"Phase 10 Step 10.2.4 Implementation" (2026-09-09), below, is the newest section** — the ellipse SDF's disclosed "scaled circle" approximation replaced with Inigo Quilez's own published, verified-exact Newton-Raphson formula (finding #173), and `corner_smoothing`'s own disclosed "unverified against any reference" gap resolved via real research into Figma's actual squircle construction — a Bezier path, not an implicit distance field, so no code changed, only a real, quantified deviation now disclosed (finding #174, a decision, not a fix).
 
 ---
 
@@ -2629,3 +2629,103 @@ passing after the fix, with no change to any other demo's output.
 | 170 | Decision | Resolved | VK_EXT_blend_operation_advanced is not implemented by RADV (this project's own real dev GPU); pivoted to the real VK_KHR_dynamic_rendering_local_read framebuffer-read path at the user's explicit direction |
 | 171 | Fixed | Resolved | A windowed swapchain's surface isn't spec-guaranteed to support INPUT_ATTACHMENT usage the way a manually allocated headless image's always safely can -- added a real per-swapchain capability query (RhiSwapchain::supports_local_read_input_attachment) alongside the device-level one |
 | 172 | Fixed | Resolved | resume_swapchain_rendering hardcoded COLOR_ATTACHMENT_OPTIMAL after begin_frame had moved the swapchain image to RENDERING_LOCAL_READ_KHR, crashing every PushLayer/PopLayer demo with a real validation error -- fixed by stashing and reusing the real layout |
+
+## Phase 10 Step 10.2.4 Implementation (2026-09-09)
+
+### 173. [Fixed, real finding along the way] The ellipse SDF's "scaled circle" approximation was replaced with Inigo Quilez's real, verified-exact Newton-Raphson formula -- and its actual real-world defect turned out to be border-thickness magnitude, not the fill boundary PLAN.md's own task language expected
+`sdf_ellipse.frag`'s `sd_ellipse` shipped in Step 10.2 as a standard
+"scaled circle" approximation (`k1*(k1-1)/k2`), disclosed as exact only
+when `radius.x == radius.y`. Real research (fetching Inigo Quilez's own
+published article, iquilezles.org/articles/ellipsedist, directly rather
+than trusting memory) confirmed the exact point-to-ellipse distance has
+no simpler closed form than a Newton-Raphson refinement on the
+ellipse's implicit parametrization (a direct quartic solve is, per IQ's
+own article, "both expensive and not very stable") -- implemented the
+real, rotation-based variant (5 iterations, IQ's own published default),
+replacing the old approximation entirely.
+
+A real, independent-reference investigation (`tre-engine`'s new
+`sdf_ellipse_fidelity` test module: the old formula, the new formula,
+and a fully independent brute-force ground truth via dense parametric-
+boundary sampling, sharing no math with either) found something
+`PLAN.md`'s own task language did not anticipate: the old approximation's
+fill/no-fill BOUNDARY was always exactly correct everywhere, not just
+on-axis -- `k1 = length(p/r)` is exactly `1.0` on the true ellipse
+boundary by construction (regardless of angle), so the approximation's
+own zero-crossing always coincided with the real one. Its actual,
+measured, practical defect was in the SDF's MAGNITUDE away from the
+boundary (10.67px and 1.31px real error at two representative off-axis
+points on a 3.5:1-eccentricity ellipse) -- exactly the value
+`border_thickness` rendering depends on (`inner_d = d + border_thickness`),
+meaning a bordered, eccentric ellipse's border thickness would have
+visibly varied around its own perimeter under the old formula even
+though its outer silhouette was always drawn correctly. `PLAN.md`'s own
+task 2 expected the old formula to show real error at reference points
+"along the major/minor axis" -- direct derivation and this same test
+module confirmed it is, in fact, exact there too (for an exterior
+point); a genuine ellipse-geometry subtlety was found and disclosed
+along the way instead: an INTERIOR major-axis point can have its true
+nearest boundary point be a pair of symmetric, off-axis points rather
+than the vertex, whenever it falls inside the ellipse's own evolute
+cusp (at `x = (r.x^2 - r.y^2) / r.x` from center) -- a real property of
+ellipse geometry itself, unrelated to either formula tested.
+
+**Verified.** 3 new tests (analytic axis-point exactness for an exterior
+point; the new formula's real, sub-0.05px agreement with the
+independent brute-force reference off-axis; the old formula's real,
+measured error against that same reference, over 1px at both tested
+off-axis points). A new real GPU demo, `ellipse_sdf_fidelity_demo.rs`
+(`demo/phase10_step10_2_4/`) -- the first ever to render a genuinely
+non-circular ellipse -- confirms the real border/fill transition on
+actual GPU-rendered pixels matches a second, independent CPU
+transcription of the exact formula at four angles. Every pre-existing
+GPU demo re-run and confirmed passing, including the three real
+consumers of the ellipse pipeline at their own circular cases (where
+old and new are both exact, so no regression is possible or found).
+
+### 174. [Decision] corner_smoothing's disclosed "not verified against any reference" gap resolved by real research into Figma's actual squircle construction -- quantified, not fixed, since no simple closed form of it exists
+`sdf_rect_styled.frag`'s `corner_norm` (a superellipse-exponent blend,
+`smoothing` raising the corner falloff's norm from 2 toward 5) shipped
+in Step 10.2 disclosed as "not a byte-for-byte match of any specific
+reference implementation's own squircle algorithm (e.g. Figma's)."
+`PLAN.md` Step 10.2.4's own "Scope decisions" authorized researching a
+real reference and either matching it (if a simple closed form exists)
+or formally verifying and documenting the real deviation instead.
+
+Real research (Figma's own blog post, figma.com/blog/desperately-
+seeking-squircles, plus the real, independently-verified, widely-cited
+open-source transcription of their actual algorithm at
+github.com/tienphaw/figma-squircle -- fetched and read directly, not
+assumed) found that Figma's construction is a real SVG path per corner
+(two curvature-continuous cubic Bezier ramps plus a circular arc), not
+an implicit distance field at all. This settles the scope call the plan
+itself left open: there is no simple closed form of Figma's own
+construction to drop into an SDF shader -- computing an exact per-pixel
+distance to an arbitrary Bezier curve is a substantially harder,
+more expensive real-time problem than this one bounded step's scope, so
+no rewrite was attempted. `corner_norm` is kept exactly as it shipped
+(still a real, legitimate, monotonic smoothing control), with its real
+deviation from Figma's own construction now measured and disclosed
+precisely instead of left as an open question: a new `tre-engine` test
+module (`corner_smoothing_fidelity`, an independent Rust transcription
+of Figma's real corner-path-parameter algorithm, a real SVG-arc
+endpoint-to-center solver, and a cubic Bezier evaluator) found the two
+constructions produce the identical corner at `smoothing == 0` (both
+reduce to the same plain circular-arc rounded corner) but diverge up to
+~71% of the corner radius at `smoothing == 1.0` (confirmed to scale
+linearly with radius by testing at two radii) -- a real, visually
+significant difference, not a rounding-scale one. Anyone wanting a
+byte-for-byte Figma match at high `corner_smoothing` values should treat
+this engine's own control as a distinct, engine-native smoothing curve.
+
+**Verified.** 2 new tests (exact match at `smoothing == 0.0`; the real,
+quantified divergence bounded within a measured range at `smoothing ==
+0.5`/`1.0`, re-checked against the real reference implementation rather
+than an assumed number).
+
+## Summary table (Phase 10 Step 10.2.4 Implementation)
+
+| # | Severity | Status | One-line summary |
+|---|----------|--------|-------------------|
+| 173 | Fixed | Resolved | Replaced the ellipse SDF's "scaled circle" approximation with Inigo Quilez's real, verified-exact Newton-Raphson formula; the real, measured defect turned out to be border-thickness magnitude away from the boundary, not the fill boundary itself (which was always exact) |
+| 174 | Decision | Resolved | Researched Figma's real squircle construction (a Bezier-path per corner, not an implicit distance field) -- no simple closed form exists to swap into corner_norm, so its real deviation from Figma's construction was measured and disclosed instead (up to ~71% of corner radius at max smoothing) |
