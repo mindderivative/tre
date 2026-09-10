@@ -7,7 +7,7 @@ Status: **All findings implemented.** See "Follow-up: Rust/Python Language Migra
 
 **Extending the index above (REVIEW.md finding #145: the paragraph above had gone stale, silently omitting the most consequential unresolved content in this document).** "Phase 5 Step 5.1.2 Implementation," "Phase 5 Step 5.1.3 Implementation," "Phase 5 Step 5.2.1 Implementation," "Phase 5 Step 5.2.2 Implementation," and "Phase 5 Step 5.2.3 Implementation" (2026-09-07) are also complete, below — no numbered findings in 5.1.2/5.2.1/5.2.2 (each states so directly); 5.1.3 fixed and re-verified real bugs in its own demo assertions; 5.2.3's own capstone found and fixed two real bugs during development, both documented in that section. "Phase 5 Step 5.3.1 Implementation" and "Phase 5 Step 5.3.2 Implementation" (2026-09-07/08) are also complete, below — see those sections for disposition. **"Phase 5 Step 5.3.3 Implementation" and "Phase 5 Step 5.3.3 CI Verification" (2026-09-08) are NOT complete — Step 5.3 stays open.** The capstone demo's own code and logic are real, verified live on a real desktop session, and found/fixed two real bugs along the way (a role-mapping regression, a `thread::scope` panic-hang) — but CI's own `accessibility-validation` job does not pass, and a nineteen-real-push investigation (recorded in full below, ending at "STOPPING POINT (nineteenth push...)") found the real, precise root cause (a D-Bus proxy built against the session bus instead of the a11y bus) and paused there, unfixed, at the user's own explicit instruction. Two earlier, now-superseded diagnoses in this same investigation were each found and explicitly disproven before the real cause was located — read the CI Verification section in full for that history, not just its ending. "Phase 6 Step 6.1 Implementation," "Phase 6 Step 6.4.1 Implementation," and "Phase 6 Step 6.4.2 Implementation" (2026-09-08) are also complete, below, with findings #127-129 fixed and re-verified in each. **Phase 6 Step 6.5 (the Phase 6 closing capstone) has no REVIEW.md section of its own at all** — a real gap in this document's own indexing discipline, found only during the Phase 1-8 Comprehensive Review below (finding #147); IMPLEMENTATION.md's own Step 6.5 write-up states "No bugs found — passed on its first real run," so nothing was ever lost, only never indexed here. **"Phase 7 Step 7.2.1 Investigation" (2026-09-08) is STOPPED, unfixed, and Step 7.2 stays open.** Finding #130 records a real Dual-Kawase blur RHI bug (sampling a bindless texture while the render target is offscreen reads back all-zero) with twelve independent hypotheses tested and ruled out; one real, independently-correct fix (`begin_render_to_texture_no_end`, closing a genuine double-`cmd_end_rendering` bug found along the way) is kept, but the sampling failure itself remains unresolved. **Phase 8 (Steps 8.1.1 and 8.1.2) is also complete, but — like Phase 6 Step 6.5 — has no REVIEW.md section of its own** (finding #147); both real gaps IMPLEMENTATION.md's own Step 8.1.2 write-up describes (`execute_frame`'s hardcoded zero buffer offset; the atlas owner's no-live-peek limitation) are recorded properly there, just never indexed here until now. **"Phase 1-8 Comprehensive Review" (2026-09-08), below, is the newest section** — a second full six-dimension, twice-checked (independent Find + adversarial Verify) audit, this time across everything built through Phase 8, requested once the project owner wanted a second pass while an external review of the Step 7.2.1 blocker ran in parallel. All 21 findings (#131-151) were independently confirmed (several strengthened, not merely rubber-stamped, by their verifier); the fully-triaged disposition (which were fixed directly vs. left as disclosed gaps, and why) is recorded in that section's own summary table. **"Phase 9 Step 9.1 Implementation" (2026-09-09) is also complete, below** — real pre-work investigation found two of the step's own task-list premises no longer matched the real codebase (findings #154-155: a documented-but-never-built radix sort, and a documented-but-never-built atlas-exhaustion placeholder-glyph fallback), both resolved by building the real missing primitive (radix sort) or correcting the documentation to match reality (atlas fallback), each confirmed with the project owner via `AskUserQuestion` before any code was written. "Phase 9 Step 9.2 Implementation" (2026-09-09) is also complete, below — a real zero-allocation guard (`tre_memory::DebugAllocGuard`/`RenderTickGuard`) found and fixed a real per-frame allocation bug (finding #157) and disclosed two more real gaps left unfixed (#156, #158), plus a criterion perf-budget gate deliberately left red on a real, honestly-measured gap (#159). "Phase 10 Step 10.1 Implementation" (2026-09-09) is also complete, below — real Rectangle-only shape-primitive rendering, with one real discrepancy found and corrected during implementation (finding #161: `Path` fill needs new geometry work, not a wiring task). **"Phase 10 Step 10.2 Implementation" (2026-09-09), below, is the newest section** — full shape rendering support (non-uniform corners/borders/smoothing on `Rectangle`, real `Circle`/`Ellipse`, `Polygon` fill, real Bezier-flattening for `Path`, and real hit-testing for all four shape kinds). Finding #162 is a real GPU bug (a subnormal-float style-buffer index silently flushed to zero by real hardware) found by observing wrong pixels and fixed; #163 and #164 are disclosed-not-fixed gaps (`Path` fill blocked by a real circular-crate-dependency constraint; a pre-existing, newly-exposed non-premultiplied-alpha gap in the Phase-0-era `walking_skeleton.frag` shader).
 
-**Further extending the index (2026-09-09).** "Phase 10 Step 10.2 Follow-up: `lyon` Migration," "Phase 10 Step 10.2 Completion Roadmap," "Phase 10 Step 10.2.1 Implementation," and "Phase 10 Step 10.2.2 Implementation" are also complete, below — see each section's own summary table for disposition (findings #165, #166 [decisions], #167 [fixed same-day], #168-169 [decisions]). "Phase 10 Step 10.2.3 Implementation" (2026-09-09) is also complete, below — real non-`Normal` `BlendMode` rendering for `Polygon`/`Path` solid fill. Finding #170 is a plan-invalidating discovery, not a bug: `VK_EXT_blend_operation_advanced` (this project's own written primary path, and finding #166's own prior conclusion) is not implemented by RADV, this project's own real dev GPU/driver — confirmed via `vulkaninfo` and independently corroborated via Mesa's own release notes — so the step pivoted to the real, portable `VK_KHR_dynamic_rendering_local_read` alternative, at the user's own explicit direction, rather than the originally-planned hardware `VkBlendOp` path. Findings #171-172 are two real regressions this step's own first full GPU demo-regression sweep caught (a windowed swapchain's surface not being guaranteed to support `INPUT_ATTACHMENT` usage; `resume_swapchain_rendering`'s hardcoded stale layout breaking every `PushLayer`/`PopLayer` demo) — both fixed same-day and re-verified. "Phase 10 Step 10.2.4 Implementation" (2026-09-09) is also complete, below — the ellipse SDF's disclosed "scaled circle" approximation replaced with Inigo Quilez's own published, verified-exact Newton-Raphson formula (finding #173), and `corner_smoothing`'s own disclosed "unverified against any reference" gap resolved via real research into Figma's actual squircle construction — a Bezier path, not an implicit distance field, so no code changed, only a real, quantified deviation now disclosed (finding #174, a decision, not a fix). **"Phase 10 Step 10.2.5 Implementation" (2026-09-09), below, is the newest section** — real, analytic, bounded rounded stroke caps at a partial arc's own two cut angles (finding #175), a circle-SDF union of radius `border_thickness / 2` at each cut, proven on real GPU pixels a few degrees past each cut edge.
+**Further extending the index (2026-09-09).** "Phase 10 Step 10.2 Follow-up: `lyon` Migration," "Phase 10 Step 10.2 Completion Roadmap," "Phase 10 Step 10.2.1 Implementation," and "Phase 10 Step 10.2.2 Implementation" are also complete, below — see each section's own summary table for disposition (findings #165, #166 [decisions], #167 [fixed same-day], #168-169 [decisions]). "Phase 10 Step 10.2.3 Implementation" (2026-09-09) is also complete, below — real non-`Normal` `BlendMode` rendering for `Polygon`/`Path` solid fill. Finding #170 is a plan-invalidating discovery, not a bug: `VK_EXT_blend_operation_advanced` (this project's own written primary path, and finding #166's own prior conclusion) is not implemented by RADV, this project's own real dev GPU/driver — confirmed via `vulkaninfo` and independently corroborated via Mesa's own release notes — so the step pivoted to the real, portable `VK_KHR_dynamic_rendering_local_read` alternative, at the user's own explicit direction, rather than the originally-planned hardware `VkBlendOp` path. Findings #171-172 are two real regressions this step's own first full GPU demo-regression sweep caught (a windowed swapchain's surface not being guaranteed to support `INPUT_ATTACHMENT` usage; `resume_swapchain_rendering`'s hardcoded stale layout breaking every `PushLayer`/`PopLayer` demo) — both fixed same-day and re-verified. "Phase 10 Step 10.2.4 Implementation" (2026-09-09) is also complete, below — the ellipse SDF's disclosed "scaled circle" approximation replaced with Inigo Quilez's own published, verified-exact Newton-Raphson formula (finding #173), and `corner_smoothing`'s own disclosed "unverified against any reference" gap resolved via real research into Figma's actual squircle construction — a Bezier path, not an implicit distance field, so no code changed, only a real, quantified deviation now disclosed (finding #174, a decision, not a fix). "Phase 10 Step 10.2.5 Implementation" (2026-09-09) is also complete, below — real, analytic, bounded rounded stroke caps at a partial arc's own two cut angles (finding #175), a circle-SDF union of radius `border_thickness / 2` at each cut, proven on real GPU pixels a few degrees past each cut edge. **"Phase 10 Step 10.2.6 Implementation" (2026-09-09), below, is the newest section — and closes all six of Step 10.2's own disclosed gaps.** Real, live zero-allocation proof for a `ShapeRegistry`-driven scene (`tre_memory::RenderTickGuard`), closing ARCHITECTURE.md Section 7.5's own disclosed gap; being the first real check of `Polygon`/texture-fill rendering under allocation pressure, it found and fixed two real, previously-undetected per-frame allocations (finding #176: `generate_polygon_points`/`fan_from_center` and `bounding_box_uvs` each returned a freshly heap-allocated `Vec` on every call), while disclosing one real, deeper, deliberately-unfixed gap (`lyon`-backed `Path`/bordered-`Polygon` tessellation, the same category as `main_loop_demo.rs`'s own Step 9.2 exclusions).
 
 ---
 
@@ -2779,3 +2779,94 @@ now visibly shows real rounded caps where it previously had flat ones.
 | # | Severity | Status | One-line summary |
 |---|----------|--------|-------------------|
 | 175 | Fixed | Resolved | Added real, analytic, bounded rounded stroke caps at a partial arc's two cut angles (a circle-SDF union of radius border_thickness/2 at each cut, via min()) -- proven on real GPU pixels a few degrees past each cut, both rounded (near) and still-excluded (far) |
+
+## Phase 10 Step 10.2.6 Implementation (2026-09-09)
+
+### 176. [Fixed] Two real, previously-undetected per-frame allocations found by this step's own new zero-allocation guard -- `generate_polygon_points`/`fan_from_center` and `bounding_box_uvs` each returned a freshly heap-allocated `Vec` on every call
+No demo had ever wrapped a `ShapeRegistry::flatten_into`-driven scene
+in `tre_memory::RenderTickGuard`/`DebugAllocGuard` (Step 9.2's own real,
+self-checking zero-allocation enforcement) before this step's own new
+`shape_registry_zero_alloc_demo.rs` -- ARCHITECTURE.md Section 7.5 had
+disclosed this as "architecturally sound but not yet proven" since Step
+9.2 itself. The very first real GPU render under the guard's own
+mutating, mixed scene (`Rectangle`, gradient `Circle`, texture
+`Polygon`, blend-mode `Polygon`, bordered arc `Circle`) panicked
+immediately, with a real backtrace pointing at two distinct, genuine
+per-call allocations neither `radix_sort_by_key`'s own Step 9.2 fix nor
+any prior GPU demo had ever exercised under allocation pressure:
+
+- `generate_polygon_points` (`crates/tre-engine/src/shapes.rs`), called
+  by `flatten_polygon` for every `Polygon` shape, built its output via
+  `.collect()` into a fresh `Vec<Vec2>` every call; `flatten_polygon`
+  then built a SECOND fresh `Vec` to prepend the fill's own fan pivot,
+  and `fan_from_center` returned a THIRD fresh `Vec<[u32; 3]>` for the
+  triangle indices -- three real allocations per `Polygon` flatten, not
+  one.
+- `bounding_box_uvs` (Step 10.2.2's own texture-fill UV helper, shared
+  by `Polygon`'s and `Path`'s `FillStyle::Texture` dispatch) did the
+  same for its own output.
+
+Both fixed the same way: new `_into` siblings (`generate_polygon_
+points_into`, `fan_from_center_into`, `bounding_box_uvs_into`) that
+clear and refill a caller-supplied `&mut Vec` instead of returning a
+freshly allocated one, backed by three new persistent scratch fields on
+`ShapeRegistry` itself (`polygon_points_scratch`/`polygon_triangles_
+scratch`/`polygon_uv_scratch`) -- the same "grow once during warm-up,
+reuse after" discipline Step 9.2 already established for `FrameArena`'s
+own scratch buffers. `flatten_polygon`'s own prepend-the-center-pivot
+step became a plain `Vec::insert(0, ..)` on the already-capacitized
+scratch buffer (an O(n) shift, not a reallocation) instead of building
+a second `Vec`. `generate_polygon_points` itself (the original, owned-
+`Vec`-returning form) is kept, since `hit_test_polygon` still calls it
+and that is not a per-frame guarded path; `fan_from_center` had no
+other real caller left once `flatten_polygon` moved to the reuse-
+friendly sibling, so it was removed outright (its own two tests
+rewritten against `fan_from_center_into` instead of kept as coverage
+for now-dead code).
+
+**A real, deeper gap found and deliberately NOT fixed, disclosed
+instead**: `lyon`-backed tessellation (`tessellate_fill`/`tessellate_
+stroke`, used by any `Path`'s own fill/stroke and any BORDERED
+`Polygon`) still constructs a fresh `lyon::path::Path`, a fresh
+`FillTessellator`/`StrokeTessellator`, and a fresh `VertexBuffers` on
+every single call -- a substantially larger reuse redesign (persistent,
+reusable `lyon` tessellator/buffer state threaded through `ShapeRegistry`)
+than this finding's own two fixes. This is the exact same category of
+deferred gap `main_loop_demo.rs`'s own Step 9.2 already disclosed for
+RHI submission (`Box<dyn RhiCommandBuffer>`, allocated fresh every
+frame in `VulkanDevice::begin_frame`) and `std::thread::scope`
+(`Arc<ScopeData>`) -- a real, unavoidable-this-pass cost, named
+explicitly rather than silently worked around. `shape_registry_zero_
+alloc_demo.rs`'s own scene deliberately uses only borderless shapes and
+no `Path` specifically to avoid exercising this gap, disclosed in that
+demo's own header comment, not hidden by omission.
+
+**A small, real, new public API added to make the demo's own required
+"mutates... gradient stops" scenario possible at all**: `ShapeRegistry::
+gradient_mut(&mut self, id: GradientId) -> Option<&mut GradientDef>`.
+No prior method let a caller update an already-registered gradient's
+own stops in place -- only `create_gradient` (push-only) existed, and
+calling that fresh every frame would grow `self.gradients` without
+bound (`GradientId`'s own doc comment already discloses this table has
+no generational reuse/removal), defeating any zero-allocation steady
+state. Mutating an existing entry's data in place is a different,
+orthogonal concern from that already-disclosed lifecycle constraint, so
+this method doesn't reopen it.
+
+**Verified.** 4 new tests (155 total, up from 151): `gradient_mut`'s
+own real mutation-is-visible and out-of-range-returns-`None` cases, plus
+a "clears prior contents before refilling" case for both new `_into`
+siblings that didn't already have one. The new demo runs 120 real
+frames of the real, mutating, mixed scene with zero heap allocations
+after warm-up. Every pre-existing GPU demo re-run and confirmed passing,
+including `path_and_polygon_demo` (a bordered `Polygon`/`Path` scene,
+confirming these fixes don't change real behavior for the lyon-
+tessellated path they deliberately don't touch) and `texture_fill_demo`
+(all four shape kinds' own UV mapping, confirming `bounding_box_uvs_
+into`'s real output is unchanged from the original `bounding_box_uvs`).
+
+## Summary table (Phase 10 Step 10.2.6 Implementation)
+
+| # | Severity | Status | One-line summary |
+|---|----------|--------|-------------------|
+| 176 | Fixed | Resolved | generate_polygon_points/fan_from_center and bounding_box_uvs each returned a freshly heap-allocated Vec on every Polygon/texture-fill call, found by this step's own new zero-allocation guard (the first real check of these code paths under allocation pressure) -- fixed via reuse-friendly _into siblings and new ShapeRegistry-owned scratch buffers; lyon-backed Path/bordered-Polygon tessellation remains a real, disclosed, unfixed gap in the same category as main_loop_demo's own Step 9.2 exclusions |

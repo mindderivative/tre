@@ -645,6 +645,26 @@ pub struct ShapeRegistry {
     /// directly by `GradientId(index)` -- append-only, no generational
     /// reuse (see [`GradientId`]'s own doc comment for why).
     gradients: Vec<GradientDef>,
+    /// Phase 10 Step 10.2.6: persistent scratch buffers `flatten_into`'s
+    /// own `Polygon` case reuses every call, closing a real per-frame
+    /// allocation this step's own zero-allocation guard found
+    /// (`generate_polygon_points`/`fan_from_center` each returned a
+    /// freshly allocated `Vec` on every call -- REVIEW.md finding
+    /// #176). Grows once to this registry's own steady-state largest
+    /// polygon vertex/triangle count, then never reallocates again,
+    /// the same "grow once, reuse after" discipline `FrameArena`'s own
+    /// scratch buffers already use (Phase 9 Step 9.2).
+    polygon_points_scratch: Vec<Vec2>,
+    polygon_triangles_scratch: Vec<[u32; 3]>,
+    /// Phase 10 Step 10.2.6: `draw_polygon_fill`'s own reused UV
+    /// scratch buffer for `FillStyle::Texture` (`Polygon`'s and
+    /// `Path`'s shared texture-fill dispatch), closing a second real
+    /// per-frame allocation this step's own zero-allocation guard found
+    /// (`bounding_box_uvs` returned a freshly allocated `Vec` on every
+    /// call -- REVIEW.md finding #176). Shared by both shape kinds:
+    /// `flatten_into`'s own loop processes one shape at a time, so
+    /// nothing ever needs this buffer reentrantly.
+    polygon_uv_scratch: Vec<Vec2>,
 }
 
 impl ShapeRegistry {
@@ -801,6 +821,33 @@ impl ShapeRegistry {
         Ok(GradientId(index))
     }
 
+    /// Phase 10 Step 10.2.6: mutable access to an already-created
+    /// gradient's own definition (its stops, or its axis/center/radius),
+    /// or `None` if `id` is out of range. `GradientId`'s own doc comment
+    /// discloses that this table has no generational reuse/removal --
+    /// that constraint is about an ID's own LIFECYCLE (nothing ever frees
+    /// a slot for reuse under a different ID), not about mutating an
+    /// existing entry's data in place, which this method exists for.
+    /// Real, mutating UI usage (an animated gradient, a live-updating
+    /// color picker preview) needs to change an existing gradient's own
+    /// stops across many frames without registering a new one each time
+    /// -- `create_gradient` called every frame would grow `self.
+    /// gradients` without bound, defeating any zero-allocation steady
+    /// state. Mutating a stop's fields in place, or reordering/replacing
+    /// entries in `stops` without changing the borrowed slice's
+    /// underlying capacity, never reallocates.
+    ///
+    /// Does NOT itself mark any shape referencing this gradient as
+    /// needing re-flattening -- `flatten_into` only re-evaluates a
+    /// gradient by re-flattening the shape that references it, so a
+    /// caller mutating a gradient a shape is already using must also
+    /// mark that shape's own [`ShapeSlot::layout_dirty`] via
+    /// [`get_mut`](Self::get_mut), or the mutation has no visible effect
+    /// on the next flatten.
+    pub fn gradient_mut(&mut self, id: GradientId) -> Option<&mut GradientDef> {
+        self.gradients.get_mut(id.0 as usize)
+    }
+
     /// # Panics
     /// Panics (`unimplemented!`) on any shape/field combination that has
     /// no real rendering support yet -- see this module's own top-level
@@ -842,10 +889,24 @@ impl ShapeRegistry {
                     flatten_circle(canvas, device, circle, &self.gradients);
                 }
                 ShapePrimitive::Polygon(polygon) => {
-                    flatten_polygon(canvas, device, polygon, &self.gradients);
+                    flatten_polygon(
+                        canvas,
+                        device,
+                        polygon,
+                        &self.gradients,
+                        &mut self.polygon_points_scratch,
+                        &mut self.polygon_triangles_scratch,
+                        &mut self.polygon_uv_scratch,
+                    );
                 }
                 ShapePrimitive::Path(path) => {
-                    flatten_path_shape(canvas, device, path, &self.gradients);
+                    flatten_path_shape(
+                        canvas,
+                        device,
+                        path,
+                        &self.gradients,
+                        &mut self.polygon_uv_scratch,
+                    );
                 }
             }
 
@@ -1183,8 +1244,8 @@ fn flatten_circle(
 /// index) -- the standard star-polygon construction, guaranteed
 /// star-shaped with respect to its own center by this very construction
 /// (every ray from the center crosses the boundary exactly once), which
-/// is exactly what makes [`fan_from_center`]'s triangulation valid for
-/// it, unlike an arbitrary (possibly non-star-shaped) polygon.
+/// is exactly what makes [`fan_from_center_into`]'s triangulation valid
+/// for it, unlike an arbitrary (possibly non-star-shaped) polygon.
 #[allow(
     clippy::cast_precision_loss,
     reason = "a real UI polygon/star has at most a handful of sides/points -- vertex counts stay \
@@ -1212,6 +1273,40 @@ fn generate_polygon_points(polygon: &Polygon) -> Vec<Vec2> {
         .collect()
 }
 
+/// The non-allocating, reuse-friendly sibling of
+/// [`generate_polygon_points`] (Phase 10 Step 10.2.6, REVIEW.md finding
+/// #176): clears and refills `out` instead of returning a freshly
+/// allocated `Vec` every call. `flatten_polygon`'s own per-frame hot
+/// path uses this, via `ShapeRegistry`'s own persistent scratch buffer;
+/// `generate_polygon_points` itself is kept, unchanged, for `hit_test_
+/// polygon` and this module's own tests, neither of which is a
+/// per-frame zero-allocation-guarded path.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "a real UI polygon/star has at most a handful of sides/points -- vertex counts stay \
+               many orders of magnitude below 2^24, f32's exact-integer range"
+)]
+fn generate_polygon_points_into(polygon: &Polygon, out: &mut Vec<Vec2>) {
+    const TWELVE_OCLOCK: f32 = -std::f32::consts::FRAC_PI_2;
+
+    out.clear();
+    let count = match polygon.star_points {
+        Some(points) => points * 2,
+        None => polygon.sides,
+    };
+    if count < 3 {
+        return;
+    }
+    out.extend((0..count).map(|i| {
+        let radius = match polygon.star_points {
+            Some(_) if i % 2 == 1 => polygon.vertex_radius,
+            _ => polygon.radius,
+        };
+        let angle = TWELVE_OCLOCK + (i as f32) * std::f32::consts::TAU / (count as f32);
+        [radius * angle.cos(), radius * angle.sin()]
+    }));
+}
+
 /// Fans triangles from local index `0` (the caller's own prepended
 /// center point) across `1..=vertex_count` (the boundary points, in
 /// order), including the closing triangle back to boundary point `1` --
@@ -1222,18 +1317,24 @@ fn generate_polygon_points(polygon: &Polygon) -> Vec<Vec2> {
 /// omission. Valid whenever the boundary is star-shaped with respect to
 /// the pivot -- true for [`generate_polygon_points`]'s own output by
 /// construction, per that function's own doc comment.
-fn fan_from_center(vertex_count: u32) -> Vec<[u32; 3]> {
+///
+/// Writes into `out` (cleared first) rather than returning a freshly
+/// allocated `Vec` every call -- Phase 10 Step 10.2.6 (REVIEW.md
+/// finding #176) replaced this function's own original owned-`Vec`-
+/// returning form with this reuse-friendly one, once `flatten_polygon`'s
+/// per-frame hot path became its only real caller (see `generate_
+/// polygon_points_into`'s own doc comment for the full reuse rationale).
+fn fan_from_center_into(vertex_count: u32, out: &mut Vec<[u32; 3]>) {
+    out.clear();
     if vertex_count < 3 {
-        return Vec::new();
+        return;
     }
-    (1..vertex_count)
-        .map(|i| [0, i, i + 1])
-        .chain(std::iter::once([0, vertex_count, 1]))
-        .collect()
+    out.extend((1..vertex_count).map(|i| [0, i, i + 1]));
+    out.push([0, vertex_count, 1]);
 }
 
 /// `ShapeRegistry::flatten_into`'s own `Polygon` case -- fill via
-/// [`fan_from_center`] (unaffected by the lyon migration below: a
+/// [`fan_from_center_into`] (unaffected by the lyon migration below: a
 /// regular/star polygon is star-shaped with respect to its own center by
 /// construction, so the simple fan is already exactly correct and does
 /// not need a general tessellator). Border/stroke is real now too
@@ -1254,7 +1355,13 @@ fn fan_from_center(vertex_count: u32) -> Vec<[u32; 3]> {
 /// own real bounding box once, here, at flatten time. A degenerate
 /// (zero-width or zero-height) bounding box maps every point on that
 /// axis to `0.5` rather than dividing by zero.
-fn bounding_box_uvs(positions: &[Vec2]) -> Vec<Vec2> {
+///
+/// Writes into `out` (cleared first) rather than returning a freshly
+/// allocated `Vec` every call -- Phase 10 Step 10.2.6 (REVIEW.md
+/// finding #176): `draw_polygon_fill`'s own `FillStyle::Texture` arm is
+/// this function's only real caller, and now passes `ShapeRegistry`'s
+/// own persistent scratch buffer.
+fn bounding_box_uvs_into(positions: &[Vec2], out: &mut Vec<Vec2>) {
     let mut min = [f32::INFINITY, f32::INFINITY];
     let mut max = [f32::NEG_INFINITY, f32::NEG_INFINITY];
     for &[x, y] in positions {
@@ -1264,22 +1371,20 @@ fn bounding_box_uvs(positions: &[Vec2]) -> Vec<Vec2> {
         max[1] = max[1].max(y);
     }
     let extent = [max[0] - min[0], max[1] - min[1]];
-    positions
-        .iter()
-        .map(|&[x, y]| {
-            let u = if extent[0] > 0.0 {
-                (x - min[0]) / extent[0]
-            } else {
-                0.5
-            };
-            let v = if extent[1] > 0.0 {
-                (y - min[1]) / extent[1]
-            } else {
-                0.5
-            };
-            [u, v]
-        })
-        .collect()
+    out.clear();
+    out.extend(positions.iter().map(|&[x, y]| {
+        let u = if extent[0] > 0.0 {
+            (x - min[0]) / extent[0]
+        } else {
+            0.5
+        };
+        let v = if extent[1] > 0.0 {
+            (y - min[1]) / extent[1]
+        } else {
+            0.5
+        };
+        [u, v]
+    }));
 }
 
 /// `blend_mode` (Phase 10 Step 10.2.3) is honored only for
@@ -1289,6 +1394,12 @@ fn bounding_box_uvs(positions: &[Vec2]) -> Vec<Vec2> {
 /// non-`Normal` value for a shape whose fill genuinely is `Solid`, so
 /// this never silently drops a real request; see `ShapeRegistry::
 /// flatten_into`'s own doc comment for the itemized disposition).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "each parameter is a distinct, real piece of state (no natural sub-struct groups \
+               them) -- both real callers (flatten_polygon/flatten_path_shape) already pass \
+               every one of them through unchanged from their own persistent scratch state"
+)]
 fn draw_polygon_fill(
     canvas: &mut RenderingCanvas,
     device: &dyn crate::RhiDevice,
@@ -1297,6 +1408,7 @@ fn draw_polygon_fill(
     positions: &[Vec2],
     triangles: &[[u32; 3]],
     blend_mode: BlendMode,
+    uv_scratch: &mut Vec<Vec2>,
 ) {
     match fill {
         FillStyle::Solid(color) => {
@@ -1328,36 +1440,63 @@ fn draw_polygon_fill(
             canvas.draw_gradient_polygon(positions, triangles, word_index);
         }
         FillStyle::Texture(texture_index) => {
-            let uvs = bounding_box_uvs(positions);
-            canvas.draw_textured_polygon(positions, &uvs, triangles, texture_index);
+            bounding_box_uvs_into(positions, uv_scratch);
+            canvas.draw_textured_polygon(positions, uv_scratch, triangles, texture_index);
         }
     }
 }
 
+/// Phase 10 Step 10.2.6 (REVIEW.md finding #176): `points_scratch`/
+/// `triangles_scratch` are `ShapeRegistry`'s own persistent, reused
+/// buffers -- this function used to call `generate_polygon_points`/
+/// `fan_from_center` (each returning a freshly heap-allocated `Vec` on
+/// every call) plus build a THIRD fresh `Vec` to prepend the fan's own
+/// center pivot, a real, previously-undetected per-frame allocation
+/// this step's own zero-allocation guard found. Fixed here by writing
+/// the boundary directly into a reused buffer via `generate_polygon_
+/// points_into`, then `insert`ing the center pivot at index 0 (an O(n)
+/// shift on an already-appropriately-capacitized `Vec`, not a
+/// reallocation -- a regular polygon's own small, bounded vertex count
+/// makes that shift cost negligible).
+///
+/// Border/stroke tessellation (`tessellate_stroke`, real lyon-backed
+/// geometry) is a real, DISCLOSED exception this step does not fix:
+/// lyon's own tessellator/path/`VertexBuffers` objects are constructed
+/// fresh on every call, a substantially larger reuse redesign than this
+/// function's own fill-path fix -- the same category of deferred gap
+/// `main_loop_demo.rs`'s own Step 9.2 already disclosed for RHI
+/// submission and `std::thread::scope` (REVIEW.md's new finding for
+/// this step has the full account).
 fn flatten_polygon(
     canvas: &mut RenderingCanvas,
     device: &dyn crate::RhiDevice,
     polygon: &Polygon,
     gradients: &[GradientDef],
+    points_scratch: &mut Vec<Vec2>,
+    triangles_scratch: &mut Vec<[u32; 3]>,
+    uv_scratch: &mut Vec<Vec2>,
 ) {
-    let boundary = generate_polygon_points(polygon);
-    let vertex_count = u32::try_from(boundary.len()).unwrap_or(0);
-    let mut points = Vec::with_capacity(boundary.len() + 1);
-    points.push([0.0, 0.0]); // the fan's own pivot -- the polygon's local center.
-    points.extend(&boundary);
-    let triangles = fan_from_center(vertex_count);
+    generate_polygon_points_into(polygon, points_scratch);
+    let vertex_count = u32::try_from(points_scratch.len()).unwrap_or(0);
+    points_scratch.insert(0, [0.0, 0.0]); // the fan's own pivot -- the polygon's local center.
+    fan_from_center_into(vertex_count, triangles_scratch);
     draw_polygon_fill(
         canvas,
         device,
         polygon.fill,
         gradients,
-        &points,
-        &triangles,
+        points_scratch,
+        triangles_scratch,
         polygon.common.blend_mode,
+        uv_scratch,
     );
 
     if polygon.border_thickness > 0.0 {
-        // A polygon boundary is always closed.
+        // A polygon boundary is always closed. `tessellate_stroke`
+        // still needs its own owned `Vec<Vec2>` per contour (lyon's own
+        // API shape) -- this `to_vec()` copy is the one real allocation
+        // this fix does not remove, disclosed above.
+        let boundary: Vec<Vec2> = points_scratch[1..].to_vec();
         let (stroke_positions, stroke_triangles) = tessellate_stroke(
             &[(boundary, true)],
             polygon.border_thickness,
@@ -1509,6 +1648,7 @@ fn flatten_path_shape(
     device: &dyn crate::RhiDevice,
     path: &Path,
     gradients: &[GradientDef],
+    uv_scratch: &mut Vec<Vec2>,
 ) {
     let subpaths_with_closed = flatten_path_with_closed(&path.commands);
     let subpaths: Vec<Vec<Vec2>> = subpaths_with_closed
@@ -1525,6 +1665,7 @@ fn flatten_path_shape(
         &fill_positions,
         &fill_triangles,
         path.common.blend_mode,
+        uv_scratch,
     );
 
     if path.border_thickness > 0.0 {
@@ -2331,14 +2472,24 @@ mod tests {
     }
 
     #[test]
-    fn fan_from_center_of_a_square_covers_all_four_edges_including_the_wraparound() {
-        let triangles = fan_from_center(4);
+    fn fan_from_center_into_of_a_square_covers_all_four_edges_including_the_wraparound() {
+        let mut triangles = Vec::new();
+        fan_from_center_into(4, &mut triangles);
         assert_eq!(triangles, vec![[0, 1, 2], [0, 2, 3], [0, 3, 4], [0, 4, 1]]);
     }
 
     #[test]
-    fn fan_from_center_of_fewer_than_three_vertices_is_empty() {
-        assert_eq!(fan_from_center(2), Vec::<[u32; 3]>::new());
+    fn fan_from_center_into_of_fewer_than_three_vertices_is_empty() {
+        let mut triangles = Vec::new();
+        fan_from_center_into(2, &mut triangles);
+        assert_eq!(triangles, Vec::<[u32; 3]>::new());
+    }
+
+    #[test]
+    fn fan_from_center_into_clears_any_prior_contents_before_refilling() {
+        let mut triangles = vec![[9, 9, 9]];
+        fan_from_center_into(4, &mut triangles);
+        assert_eq!(triangles, vec![[0, 1, 2], [0, 2, 3], [0, 3, 4], [0, 4, 1]]);
     }
 
     #[test]
@@ -3001,6 +3152,47 @@ mod tests {
     }
 
     #[test]
+    fn gradient_mut_mutates_an_existing_gradients_stops_in_place() {
+        let mut registry = ShapeRegistry::new();
+        let id = registry
+            .create_gradient(GradientDef {
+                kind: GradientKind::Linear {
+                    start: [0.0, 0.0],
+                    end: [10.0, 0.0],
+                },
+                stops: vec![
+                    GradientStop {
+                        position: 0.0,
+                        color: 0xFF00_00FF,
+                    },
+                    GradientStop {
+                        position: 1.0,
+                        color: 0x0000_FFFF,
+                    },
+                ],
+            })
+            .expect("a valid gradient must be accepted");
+
+        registry
+            .gradient_mut(id)
+            .expect("the gradient just created must be found")
+            .stops[0]
+            .color = 0x00FF_00FF;
+
+        assert_eq!(
+            registry.gradient_mut(id).unwrap().stops[0].color,
+            0x00FF_00FF,
+            "the mutation must be visible on a later lookup, not lost"
+        );
+    }
+
+    #[test]
+    fn gradient_mut_returns_none_for_an_out_of_range_id() {
+        let mut registry = ShapeRegistry::new();
+        assert!(registry.gradient_mut(GradientId(0)).is_none());
+    }
+
+    #[test]
     #[allow(
         clippy::float_cmp,
         reason = "exact arithmetic on literal f32s, same reasoning as this crate's other \
@@ -3219,7 +3411,11 @@ mod tests {
                    exact-arithmetic tests"
     )]
     fn bounding_box_uvs_normalizes_a_real_non_degenerate_box() {
-        let uvs = bounding_box_uvs(&[[0.0, 0.0], [10.0, 0.0], [10.0, 4.0], [0.0, 4.0]]);
+        let mut uvs = Vec::new();
+        bounding_box_uvs_into(
+            &[[0.0, 0.0], [10.0, 0.0], [10.0, 4.0], [0.0, 4.0]],
+            &mut uvs,
+        );
         assert_eq!(uvs, vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]);
     }
 
@@ -3231,8 +3427,19 @@ mod tests {
     )]
     fn bounding_box_uvs_maps_a_degenerate_zero_extent_axis_to_one_half() {
         // Every point shares the same x -- a zero-width bounding box.
-        let uvs = bounding_box_uvs(&[[5.0, 0.0], [5.0, 10.0]]);
+        let mut uvs = Vec::new();
+        bounding_box_uvs_into(&[[5.0, 0.0], [5.0, 10.0]], &mut uvs);
         assert_eq!(uvs, vec![[0.5, 0.0], [0.5, 1.0]]);
+    }
+
+    #[test]
+    fn bounding_box_uvs_into_clears_any_prior_contents_before_refilling() {
+        let mut uvs = vec![[9.0, 9.0]];
+        bounding_box_uvs_into(
+            &[[0.0, 0.0], [10.0, 0.0], [10.0, 4.0], [0.0, 4.0]],
+            &mut uvs,
+        );
+        assert_eq!(uvs.len(), 4);
     }
 
     #[test]

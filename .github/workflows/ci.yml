@@ -256,6 +256,12 @@ jobs:
       # pixels further past stay correctly excluded (the rounding is
       # bounded, not a removed cutoff).
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example arc_rounded_cap_demo
+      # Phase 10 Step 10.2.6: real, self-checking proof that
+      # ShapeRegistry/RenderingCanvas-driven rendering is genuinely
+      # zero-allocation in steady state (tre_memory::RenderTickGuard/
+      # DebugAllocGuard) -- 120 frames of a real, mutating, mixed scene
+      # covering every new fill/blend feature from Steps 10.2.1-10.2.5.
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example shape_registry_zero_alloc_demo
 
   accessibility-validation:
     name: accessibility-validation

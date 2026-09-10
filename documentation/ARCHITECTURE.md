@@ -808,26 +808,37 @@ pub struct ShapeRegistry {
   exist exactly as written above -- none of those are FFI-safe by
   value under `tre-ffi`'s own C-ABI rules, and none need to be, since
   neither real path ever crosses either boundary by raw value.
-* **Zero allocation in the hot path stays real by construction, not yet
-  verified live under the real guard.** Creating or removing a shape
+* **Zero allocation in the hot path: real, and now proven live under the
+  real guard (Step 10.2.6, 2026-09-09).** Creating or removing a shape
   touches `ShapeRegistry`'s own `free_list` (amortized `O(1)`, no
   allocation once the registry has grown to its steady-state slot count
   -- the same "grow once, reuse after" discipline Phase 9 Step 9.2
   already established for `FrameArena`'s own scratch buffers).
-  *Mutating* an existing shape's fields is a plain in-place write. Only
-  the per-frame *flattening* pass (`ShapeRegistry::flatten_into`)
-  touches `RenderingCanvas`, and it does so through the exact same
-  already-zero-allocation-verified `reset()`/`draw_*`/`flatten_into`
-  path Step 9.2 built and proved with a real, self-checking
-  `RenderTickGuard` (TECHNICAL.md Section 3.4). This section adds no new
-  steady-state allocation source of its own by construction -- but,
-  disclosed honestly: `RenderTickGuard` is only wired into
-  `main_loop_demo.rs` today, not into `shape_registry_demo.rs` or any
-  other automated check, so this claim is architecturally sound but not
-  yet *proven* the same way `main_loop_demo`'s own zero-allocation claim
-  is. Wiring a shape-registry-driven scene into `main_loop_demo` (or an
-  equivalent guarded demo) to close that gap is real, separate future
-  work, not done as part of this step.
+  *Mutating* an existing shape's fields is a plain in-place write (a new
+  `ShapeRegistry::gradient_mut` extends this to an already-registered
+  gradient's own stops too, Step 10.2.6). Only the per-frame
+  *flattening* pass (`ShapeRegistry::flatten_into`) touches
+  `RenderingCanvas`, and it does so through the exact same already-
+  zero-allocation-verified `reset()`/`draw_*`/`flatten_into` path Step
+  9.2 built and proved with a real, self-checking `RenderTickGuard`
+  (TECHNICAL.md Section 3.4). A new demo, `shape_registry_zero_alloc_
+  demo.rs` (`demo/phase10_step10_2_6/`), wraps a real, mutating, mixed
+  `ShapeRegistry` scene (covering every new fill/blend feature Steps
+  10.2.1-10.2.5 added -- gradient, texture, non-`Normal` blend mode, the
+  exact ellipse SDF, rounded stroke caps) in that same guard across 120
+  frames -- the gap `main_loop_demo.rs` alone left open is closed.
+  Being the first real check under actual allocation pressure found two
+  real, previously-undetected per-frame allocations (`generate_polygon_
+  points`/`fan_from_center`, `bounding_box_uvs`, REVIEW.md finding
+  #176), both fixed via reuse-friendly `_into` siblings writing into new
+  `ShapeRegistry`-owned scratch buffers. One real, deeper gap remains
+  disclosed, not fixed: `lyon`-backed tessellation (`tessellate_fill`/
+  `tessellate_stroke`, used by any `Path`'s own fill/stroke and any
+  BORDERED `Polygon`) still allocates fresh tessellator/path/
+  `VertexBuffers` objects on every call -- the same category of deferred
+  gap `main_loop_demo.rs`'s own Step 9.2 already disclosed for RHI
+  submission and `std::thread::scope`, not something this step's own
+  bounded scope attempted to redesign.
 * **Implementation status, itemized against real rendering support
   (revised 2026-09-09, Step 10.2; updated again same-day for the
   lyon-migration follow-up):**
@@ -960,9 +971,12 @@ pub struct ShapeRegistry {
     the cap center is placed along the RADIAL direction at each cut
     angle -- exact for a `Circle`, a real, consistent approximation for
     a true (non-uniform-radius) `Ellipse`, since the local outward
-    normal generally differs from the radial direction there. Planned
-    next: Step 10.2.6 (zero-allocation live verification), the last of
-    the six gaps.
+    normal generally differs from the radial direction there. **All six
+    of Step 10.2's own disclosed gaps are now closed (Steps 10.2.1-
+    10.2.6, 2026-09-09)** -- see this section's own "Zero allocation in
+    the hot path" bullet above for Step 10.2.6's own account (the sixth
+    and last gap: live zero-allocation verification for a `ShapeRegistry`-
+    driven scene).
   - **Hit-testing is real for all four shape kinds**
     (`ShapeRegistry::hit_test`) -- the actual concrete need
     `hit_testable` (present since Step 10.1, read by nothing until now)

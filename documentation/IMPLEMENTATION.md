@@ -2556,6 +2556,94 @@ existing arc-wedge-exclusion assertion is unaffected, since the caps'
 a filled one). `cargo fmt`/`clippy -D warnings`/`build`/`test` clean
 across the whole workspace.
 
+#### Step 10.2.6: Zero-Allocation Live Verification for the Shape System -- Status: Complete (2026-09-09)
+
+**The sixth and final gap in Step 10.2's own original roadmap, closing
+ARCHITECTURE.md Section 7.5's own disclosed gap.** `tre_memory::
+RenderTickGuard`/`DebugAllocGuard` (Step 9.2) already proved `main_loop_
+demo`'s own hand-drawn scene is genuinely zero-allocation, but no demo
+had ever wrapped a `ShapeRegistry::flatten_into`-driven scene in that
+same real, self-checking guard -- even though it reuses the exact same
+already-proven `reset()`/`flatten_into` primitives underneath.
+
+**Real, in `crates/tre-rhi-vulkan/examples/shape_registry_zero_alloc_
+demo.rs`:** modeled directly on `main_loop_demo.rs`'s own established
+warm-up-then-guard pattern (a single-threaded, headless simplification
+-- no `SubCanvas` workers, no windowing/input/atlas, since this step is
+about `ShapeRegistry`/`RenderingCanvas` specifically). One `root:
+RenderingCanvas` stitches into one persistent `FrameArena`, exactly
+like `main_loop_demo`'s own root canvas does alongside its worker
+canvases -- a worker count of zero is not a new capability, just this
+step's own new caller of the same reuse machinery. A real,
+representative MIXED scene (not a strawman) covers every new fill/blend
+feature Steps 10.2.1-10.2.5 added: a solid `Rectangle`, a gradient-
+filled non-circular `Circle` (Step 10.2.4's exact ellipse SDF), a
+texture-filled `Polygon`, a solid-fill `Polygon` under a non-`Normal`
+`BlendMode` (Step 10.2.3), and a bordered partial-arc `Circle` (Step
+10.2.5's rounded caps). 120 frames mutate real shape properties every
+frame -- position and solid-fill color via `ShapeRegistry::get_mut`,
+and a gradient's own stop colors via a new `ShapeRegistry::gradient_mut`
+method (this step's own real, small API addition: no prior method let a
+caller update an already-registered gradient's stops in place, and
+`create_gradient` called fresh every frame would grow `self.gradients`
+without bound, since `GradientId`'s own table has no generational
+reuse) -- matching this project's own standing discipline of testing
+what real, continuously-updating UI usage actually does.
+
+**Two real, previously-undetected per-frame allocations found and
+fixed** -- this step's own guard is the first to ever check `Polygon`/
+texture-fill rendering under real allocation pressure:
+
+- `generate_polygon_points`/`fan_from_center` (`crates/tre-engine/src/
+  shapes.rs`) each returned a freshly heap-allocated `Vec` on every
+  `Polygon` flatten. Fixed via new `generate_polygon_points_into`/
+  `fan_from_center_into` siblings writing into two new persistent
+  `ShapeRegistry`-owned scratch buffers (`polygon_points_scratch`/
+  `polygon_triangles_scratch`) instead -- the original owned-`Vec`-
+  returning `generate_polygon_points` is kept (still used by
+  `hit_test_polygon`, not a per-frame guarded path); `fan_from_center`
+  had no other real caller left, so it was removed outright rather than
+  kept as dead code.
+- `bounding_box_uvs` (Step 10.2.2's own texture-fill UV helper, shared
+  by `Polygon`'s and `Path`'s `FillStyle::Texture` dispatch) did the
+  same. Fixed via a new `bounding_box_uvs_into` sibling and a third
+  scratch buffer (`polygon_uv_scratch`, shared by both shape kinds since
+  `flatten_into`'s own loop processes one shape at a time). `draw_
+  polygon_fill`'s signature grew an eighth parameter for this (a real,
+  disclosed `#[allow(clippy::too_many_arguments)]`, not a design that
+  needs a sub-struct -- every parameter is distinct, real per-call
+  state, and both real callers already thread every one of them through
+  from their own persistent scratch state).
+
+**One real, deeper gap disclosed, not fixed.** `lyon`-backed
+tessellation (`tessellate_fill`/`tessellate_stroke`) still constructs
+fresh tessellator/path/`VertexBuffers` objects on every call -- used by
+any `Path`'s own fill/stroke and any BORDERED `Polygon`. A substantially
+larger reuse redesign than this step's own two fixes (would need
+persistent, reusable `lyon` tessellator/buffer state threaded through
+`ShapeRegistry`), the same category of deferred gap `main_loop_demo.rs`'s
+own Step 9.2 already disclosed for RHI submission (`Box<dyn
+RhiCommandBuffer>`) and `std::thread::scope` (`Arc<ScopeData>`). This
+step's own demo scene deliberately uses only borderless shapes and no
+`Path` so it never exercises this gap -- a bordered `Polygon`/`Path`
+shape stays real and correct, just not yet zero-allocation.
+
+**Verified.** 4 new `tre-engine` tests (`gradient_mut_mutates_an_
+existing_gradients_stops_in_place`, `gradient_mut_returns_none_for_an_
+out_of_range_id`, plus the `_into` siblings' own reuse/clearing tests
+replacing the two retired `fan_from_center` tests and adding a new
+`bounding_box_uvs_into_clears_any_prior_contents_before_refilling`
+case). The new demo runs 120 real frames with zero heap allocations
+after warm-up, and writes its final frame for visual disclosure. Every
+pre-existing GPU demo re-run and confirmed passing, including `path_
+and_polygon_demo` (a bordered `Polygon`/`Path` scene, proving this
+step's fixes didn't change real behavior for the lyon-tessellated path
+they deliberately don't touch) and `texture_fill_demo` (all four shape
+kinds' own UV mapping, proving `bounding_box_uvs_into`'s real output is
+unchanged from `bounding_box_uvs`'s own). `cargo fmt`/`clippy -D
+warnings`/`build`/`test` clean across the whole workspace. **All six of
+Step 10.2's own disclosed gaps (Steps 10.2.1-10.2.6) are now closed.**
+
 ### Step 10.3: The `tre-ffi` C-ABI Crate (for C, C++, and other non-Python bindings)
 
 * **Renumbered 2026-09-09** from Step 10.2 to 10.3, when Step 10.2 was inserted ahead of it for full shape rendering support (shapes are what this boundary and Step 10.4's Python binding will actually expose -- finishing real rendering for all four primitives first avoids binding an API surface still mostly stubbed).
