@@ -226,56 +226,12 @@ original plan text, kept there as historical record.
 
 ## Step 10.2.5 — Rounded Stroke Caps on Partial-Arc Circles/Ellipses
 
-### Investigation
-
-- `sdf_ellipse.frag`'s sector cutoff (`if (relative > arc_sweep_angle) { d
-  = max(d, 0.001); }`) hard-clips the fill/stroke past the arc's own sweep
-  -- no cap geometry, so a partial-arc progress-ring-style `Circle`'s two
-  cut edges are flat, not rounded, even when `stroke_line_cap` (already a
-  real field, borrowed from `Path`'s own convention conceptually) would
-  imply otherwise.
-- A real alternative considered and rejected: route partial-arc circles
-  through `lyon`'s own tessellated stroke path (flatten the arc into a
-  polyline, let `lyon`'s real `LineCap::Round` handle the caps) — this
-  session's own precedent for "don't hand-roll what lyon already solves."
-  Rejected here specifically because `draw_flat_polygon`'s tessellated
-  triangles have NO antialiasing (confirmed this session: hard triangle
-  edges only), and circles/rings are a highly AA-sensitive, extremely
-  common real UI element (progress indicators) — trading the SDF
-  pipeline's existing `fwidth`-based smooth edges for jagged tessellated
-  ones would be a real visual regression for a common case, not a neutral
-  implementation-detail swap. An analytic SDF cap keeps the existing
-  antialiasing.
-
-### Scope decisions
-
-- Real analytic rounded caps: at each of the arc's two cut angles, union
-  (`min()`) the existing sector-clipped ellipse SDF with two small circle
-  SDFs of radius `border_thickness / 2`, centered at the point where the
-  stroke band's own centerline meets that cut angle on the ellipse
-  boundary — the standard 2D "rounded line/capsule" SDF technique, applied
-  at the two cut points instead of a straight segment's two ends.
-- Disclosed approximation carried over from `sd_ellipse` itself for a true
-  (non-circular) `Ellipse`: the cap-center placement uses the LOCAL
-  boundary point at each cut angle (exact for a `Circle`, a real,
-  consistent approximation for a non-uniform-radius `Ellipse`, in the same
-  spirit as `sd_ellipse`'s own existing disclosed approximation, now
-  narrowed by 10.2.4 to only this one remaining case).
-- Only applies when `border_thickness > 0.0` and `arc_sweep_angle < TAU`
-  (a full ellipse or a borderless partial arc needs no cap geometry at
-  all — matches the shader's own existing early-out for a full sweep).
-
-### Tasks
-
-1. Derive and implement the two-cap-circle SDF union in `sd_ellipse`'s
-   sector-cutoff branch.
-2. New tests: a partial-arc `Circle` with a real border, pixel-sampled at
-   both cut edges, confirming a real rounded (not flat) transition — a
-   direct visual/pixel proof, matching this session's own established
-   demo discipline.
-3. Re-verify `shape_full_rendering_demo`'s own existing arc-wedge exclusion
-   test still passes unchanged (a full sweep and a borderless arc must be
-   bit-identical to before).
+**Status: Complete (2026-09-09) -- archived to
+`planning/archive/PLAN_PHASE10_STEP10_2_5.md`** (with real
+implementation notes on top of this original plan). See
+`documentation/IMPLEMENTATION.md`'s own write-up, REVIEW.md finding
+#175, and `demo/phase10_step10_2_5/`. See the archive file for the
+original plan text, kept there as historical record.
 
 ---
 

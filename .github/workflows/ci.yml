@@ -249,6 +249,13 @@ jobs:
       # genuinely non-circular ellipse, its border/fill transition
       # checked at several angles against an independent CPU reference.
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example ellipse_sdf_fidelity_demo
+      # Phase 10 Step 10.2.5: real GPU proof of rounded stroke caps at a
+      # partial arc's own two cut angles (a real circle-SDF union at
+      # each cut, radius border_thickness/2) -- pixels a few degrees
+      # past each cut confirmed border-colored (the rounding) while
+      # pixels further past stay correctly excluded (the rounding is
+      # bounded, not a removed cutoff).
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example arc_rounded_cap_demo
 
   accessibility-validation:
     name: accessibility-validation

@@ -110,6 +110,38 @@ float sd_ellipse(vec2 p, vec2 ab) {
     return (dot(p / ab, p / ab) > 1.0) ? d : -d;
 }
 
+// Phase 10 Step 10.2.5: the signed distance to a partial arc's own
+// rounded stroke cap at `angle` -- a plain circle of radius
+// `border_thickness / 2`, centered on the border band's own centerline
+// (`border_thickness / 2` inward from the ellipse boundary, along the
+// SAME radial direction the cut angle points in) -- the standard 2D
+// "rounded line/capsule end" SDF technique, applied at an arc's own cut
+// angle instead of a straight segment's end.
+//
+// `boundary_t`, the ellipse's own polar equation solved for the radial
+// distance to the boundary at `angle`, is a genuinely EXACT closed form
+// (unlike `sd_ellipse`'s own Newton refinement, needed only for
+// nearest-point distance from an ARBITRARY point) -- substituting
+// `p = t*(cos angle, sin angle)` into `(p.x/r.x)^2 + (p.y/r.y)^2 = 1`
+// and solving for `t` directly.
+//
+// Disclosed approximation carried over from `sd_ellipse` itself
+// (PLAN.md Step 10.2.5's own "Scope decisions"), now narrowed to only
+// this one remaining case: placing the cap center along the RADIAL
+// direction at `angle` is exact for a `Circle` (radial and normal
+// directions coincide), but a real, consistent approximation for a
+// true (non-uniform-radius) `Ellipse` -- the local outward normal at a
+// boundary point generally differs from the radial direction there
+// (Step 10.2.4's own REVIEW.md finding #173 has the full account of
+// this same radial-vs-normal distinction, found while researching the
+// exact ellipse SDF).
+float cap_sdf(vec2 p, vec2 radius, float angle, float cap_radius) {
+    vec2 dir = vec2(cos(angle), sin(angle));
+    float boundary_t = 1.0 / length(dir / radius);
+    vec2 cap_center = dir * (boundary_t - cap_radius);
+    return length(p - cap_center) - cap_radius;
+}
+
 // Phase 10 Step 10.2.1: evaluates a `GpuGradientStyle` record at
 // `word_index` for the LOCAL point `p` -- see `sdf_rect_styled.frag`'s
 // own identical function for the full account (duplicated here, not
@@ -187,11 +219,9 @@ void main() {
 
     float d = sd_ellipse(frag_uv, radius);
 
-    // A hard-edged angular sector cutoff for a partial arc/pie shape --
-    // no rounded stroke caps at the cut edges this pass (disclosed,
-    // documentation/PLAN.md's "Scope decisions"). Skipped entirely for a
-    // full sweep so a complete ellipse never risks an off-by-epsilon
-    // seam at the wraparound boundary.
+    // A hard-edged angular sector cutoff for a partial arc/pie shape.
+    // Skipped entirely for a full sweep so a complete ellipse never
+    // risks an off-by-epsilon seam at the wraparound boundary.
     if (arc_sweep_angle < TAU - 0.0001) {
         float angle = atan(frag_uv.y, frag_uv.x);
         if (angle < 0.0) {
@@ -204,6 +234,21 @@ void main() {
         }
         if (relative > arc_sweep_angle) {
             d = max(d, 0.001);
+        }
+
+        // Phase 10 Step 10.2.5: real analytic rounded stroke caps at
+        // the arc's own two cut angles, only when there's a real border
+        // band to round the end of (a borderless partial arc keeps its
+        // existing hard-edged cutoff above -- there is no stroke to cap
+        // at all). Unioned in via `min()`: this only ever pulls `d`
+        // MORE negative (more "inside") near the two cut points,
+        // rounding the transition there without perturbing `d`
+        // anywhere else (the plain sector-permitted body, or the
+        // excluded wedge away from both caps).
+        if (border_thickness > 0.0) {
+            float cap_radius = border_thickness * 0.5;
+            d = min(d, cap_sdf(frag_uv, radius, start, cap_radius));
+            d = min(d, cap_sdf(frag_uv, radius, start + arc_sweep_angle, cap_radius));
         }
     }
 

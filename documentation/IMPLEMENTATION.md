@@ -2504,6 +2504,58 @@ demo`, `gradient_fill_demo`, `texture_fill_demo`) at their own circular
 cases. `cargo fmt`/`clippy -D warnings`/`build`/`test` clean across the
 whole workspace.
 
+#### Step 10.2.5: Rounded Stroke Caps on Partial-Arc Circles/Ellipses -- Status: Complete (2026-09-09)
+
+**Real, in `crates/tre-rhi-vulkan/shaders/sdf_ellipse.frag`:** a new
+`cap_sdf(p, radius, angle, cap_radius)` function computes the signed
+distance to a real circle of radius `border_thickness / 2`, centered on
+the border band's own centerline (`border_thickness / 2` inward from
+the ellipse boundary) at a given cut `angle` -- the standard 2D
+"rounded line/capsule end" SDF technique, applied to an arc's own cut
+angle instead of a straight segment's end. The cap center's radial
+distance to the boundary at that angle (`boundary_t`) is a genuinely
+EXACT closed form (the ellipse's own polar equation solved for `t`,
+distinct from `sd_ellipse`'s own Newton refinement, which is needed
+only for nearest-point distance from an arbitrary point, not a ray
+from center at a known angle).
+
+The main sector-cutoff branch now additionally unions in both caps via
+`d = min(d, cap_sdf(...))` for each of the arc's two cut angles, gated
+on `border_thickness > 0.0` (a borderless partial arc keeps its
+existing flat cutoff -- there's no stroke to round the end of) --
+`min()` only ever pulls `d` more negative ("more inside") near the two
+cut points, so the plain swept interior and the rest of the excluded
+wedge are both provably unaffected by construction, not just by
+observation.
+
+**One disclosed approximation remains, narrowed from Step 10.2.4's own
+broader one:** the cap center is placed along the RADIAL direction at
+each cut angle -- exact for a `Circle` (radial and local outward-normal
+directions coincide there), a real, consistent approximation for a true
+(non-uniform-radius) `Ellipse`, since the local normal generally
+differs from radial there (the same distinction Step 10.2.4's own
+ellipse-SDF research surfaced, REVIEW.md finding #173).
+
+**Verified.** No CPU-side reference test is meaningful here (there is
+no independent formula for "the correct antialiased 2D render of a
+rounded cap" the way there was for `sd_ellipse`'s own distance value --
+the real per-pixel shader behavior IS the thing being proven). Instead,
+a new real GPU demo, `arc_rounded_cap_demo.rs`
+(`demo/phase10_step10_2_5/`), draws a bordered quarter-circle arc and
+samples real pixels a few degrees past each of the two cut angles at
+the border band's own centerline radius: 4° past each cut (within the
+cap's own bounded angular footprint) is confirmed border-colored --
+proving the real rounding, not merely that the cutoff stopped
+excluding anything -- while 25° past each cut is confirmed still
+background, proving the rounding is real and BOUNDED. Every
+pre-existing GPU demo re-run and confirmed passing, including
+`shape_full_rendering_demo`'s own pre-existing 270°-sweep bordered
+circle, which now visibly shows the same real rounded caps (its own
+existing arc-wedge-exclusion assertion is unaffected, since the caps'
+`min()` union never turns an excluded, far-from-both-caps fragment into
+a filled one). `cargo fmt`/`clippy -D warnings`/`build`/`test` clean
+across the whole workspace.
+
 ### Step 10.3: The `tre-ffi` C-ABI Crate (for C, C++, and other non-Python bindings)
 
 * **Renumbered 2026-09-09** from Step 10.2 to 10.3, when Step 10.2 was inserted ahead of it for full shape rendering support (shapes are what this boundary and Step 10.4's Python binding will actually expose -- finishing real rendering for all four primitives first avoids binding an API surface still mostly stubbed).

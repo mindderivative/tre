@@ -945,10 +945,24 @@ pub struct ShapeRegistry {
     blend -- kept as-is, with its real deviation now measured instead of
     left unverified (identical to Figma's construction at `smoothing ==
     0`, diverging up to ~71% of the corner radius at `smoothing == 1.0`).
-    **Rounded stroke caps on a partial-arc `Circle`: still a real,
-    disclosed gap.** Planned next as Step 10.2.5 (`PLAN.md`,
-    2026-09-09), followed by Step 10.2.6 (zero-allocation live
-    verification).
+    **Rounded stroke caps on a partial-arc `Circle`: fully real (Step
+    10.2.5, 2026-09-09).** A new `cap_sdf` function (`sdf_ellipse.frag`)
+    computes the signed distance to a real circle of radius
+    `border_thickness / 2`, centered on the border band's own
+    centerline at each of the arc's two cut angles -- the standard 2D
+    "rounded line/capsule end" SDF technique, unioned into the
+    sector-clipped distance via a plain `min()` (only pulls the
+    distance more "inside" near the two cut points; the swept interior
+    and the rest of the excluded wedge are both unaffected). Applies
+    only when `border_thickness > 0.0` (a borderless partial arc has no
+    stroke to round) and `arc_sweep_angle < TAU`. One disclosed
+    approximation remains, narrowed from Step 10.2.4's own broader one:
+    the cap center is placed along the RADIAL direction at each cut
+    angle -- exact for a `Circle`, a real, consistent approximation for
+    a true (non-uniform-radius) `Ellipse`, since the local outward
+    normal generally differs from the radial direction there. Planned
+    next: Step 10.2.6 (zero-allocation live verification), the last of
+    the six gaps.
   - **Hit-testing is real for all four shape kinds**
     (`ShapeRegistry::hit_test`) -- the actual concrete need
     `hit_testable` (present since Step 10.1, read by nothing until now)
