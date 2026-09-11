@@ -27,6 +27,7 @@ use tre_engine::{
 use tre_platform::{PlatformConnection, WindowIcon};
 use tre_rhi_vulkan::{register_shape_pipelines, VulkanDevice, VulkanSwapchain};
 
+use crate::canvas::PyCanvas;
 use crate::error::engine_err;
 use crate::input::{PyInputEvent, PyWindowId};
 use crate::renderer::{
@@ -274,23 +275,69 @@ impl PyWindowedRenderer {
         window: PyWindowId,
         registry: &Bound<'_, PyShapeRegistry>,
     ) -> PyResult<()> {
+        let canvas = Bound::new(
+            py,
+            PyCanvas {
+                inner: RenderingCanvas::new(),
+            },
+        )?;
+        self.flatten_into(&canvas, registry)?;
+        self.render_canvas(py, window, &canvas)
+    }
+
+    /// Flattens `registry`'s current shapes into `canvas` -- the real
+    /// seam (Phase 12 Step 12.5) letting more than one registry, with
+    /// `canvas.clip(...)`/`canvas.layer(...)` scopes interleaved between
+    /// them, share one canvas before a single
+    /// [`render_canvas`](Self::render_canvas) call submits it to a real
+    /// window. `render`'s own single-registry convenience wrapper calls
+    /// this internally with a fresh, throwaway canvas.
+    ///
+    /// # Errors
+    /// Raises `TreError` if a due text-atlas texture refresh fails.
+    fn flatten_into(
+        &mut self,
+        canvas: &Bound<'_, PyCanvas>,
+        registry: &Bound<'_, PyShapeRegistry>,
+    ) -> PyResult<()> {
+        let mut reg = registry.borrow_mut();
+        let mut canvas = canvas.borrow_mut();
+        reg.inner.mark_all_dirty();
+        let atlas_context = self.text_atlas.context(&self.device)?;
+        let (inner, fonts) = reg.inner_and_fonts();
+        let text_context = TextFlattenContext {
+            fonts,
+            atlas: &atlas_context,
+        };
+        inner.flatten_into(&mut canvas.inner, &self.device, Some(&text_context));
+        Ok(())
+    }
+
+    /// Renders an already-assembled [`PyCanvas`] to `window`'s own
+    /// swapchain -- the real "submit what I built" counterpart to
+    /// `render`'s own single-registry convenience wrapper. Consumes
+    /// `canvas`'s own recorded content (leaving it freshly empty, like a
+    /// new `Canvas`) rather than the `Canvas` object itself, so the same
+    /// Python `Canvas` can be reused next frame.
+    ///
+    /// # Errors
+    /// Raises `ValueError` if `window` is not a window this renderer
+    /// created (or has already been closed), `TreError` on any other
+    /// real, recoverable engine failure.
+    fn render_canvas(
+        &mut self,
+        py: Python<'_>,
+        window: PyWindowId,
+        canvas: &Bound<'_, PyCanvas>,
+    ) -> PyResult<()> {
         let window = window.0;
         if !self.windows.contains_key(&window) {
             return Err(unknown_window_err(window));
         }
 
         let frame = {
-            let mut reg = registry.borrow_mut();
-            let mut canvas = RenderingCanvas::new();
-            reg.inner.mark_all_dirty();
-            let atlas_context = self.text_atlas.context(&self.device)?;
-            let (inner, fonts) = reg.inner_and_fonts();
-            let text_context = TextFlattenContext {
-                fonts,
-                atlas: &atlas_context,
-            };
-            inner.flatten_into(&mut canvas, &self.device, Some(&text_context));
-            canvas.flatten()
+            let mut canvas = canvas.borrow_mut();
+            std::mem::replace(&mut canvas.inner, RenderingCanvas::new()).flatten()
         };
         let vertex_bytes: &[u8] = bytemuck::cast_slice(&frame.vertices);
         let index_bytes: &[u8] = bytemuck::cast_slice(&frame.indices);

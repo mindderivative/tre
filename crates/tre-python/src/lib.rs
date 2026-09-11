@@ -76,6 +76,9 @@ fn tre_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<texture::PyTexture>()?;
     m.add_class::<texture::PyTextureFormat>()?;
     m.add_class::<canvas::PyCanvas>()?;
+    m.add_class::<canvas::PyClipGuard>()?;
+    m.add_class::<canvas::PyLayerGuard>()?;
+    m.add_class::<canvas::PyAccessibilityRole>()?;
     m.add_class::<renderer::PyHeadlessRenderer>()?;
     m.add_class::<input::PyWindowId>()?;
     m.add_class::<input::PyMouseButton>()?;

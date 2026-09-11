@@ -30,6 +30,7 @@ use tre_engine::{
 };
 use tre_rhi_vulkan::{register_shape_pipelines, HeadlessSwapchain, VulkanDevice, HEADLESS_FORMAT};
 
+use crate::canvas::PyCanvas;
 use crate::error::engine_err;
 use crate::shapes::PyShapeRegistry;
 use crate::text_atlas::TextAtlas;
@@ -243,27 +244,89 @@ impl PyHeadlessRenderer {
         py: Python<'_>,
         registry: &Bound<'_, PyShapeRegistry>,
     ) -> PyResult<Py<PyBytes>> {
+        let canvas = Bound::new(
+            py,
+            PyCanvas {
+                inner: RenderingCanvas::new(),
+            },
+        )?;
+        self.flatten_into(&canvas, registry)?;
         let frame = {
-            let mut reg = registry.borrow_mut();
-            let mut canvas = RenderingCanvas::new();
-            // Every call renders the registry's full current state, not
-            // an incremental delta -- a Python caller has no way to
-            // observe or manage `flatten_into`'s own per-shape dirty
-            // flag, so without this, any call after the first would
-            // skip every already-flattened (and thus already
-            // non-dirty) shape, producing an empty frame -- see
-            // `mark_all_dirty`'s own doc comment (REVIEW.md #196).
-            reg.inner.mark_all_dirty();
-            let atlas_context = self.text_atlas.context(&self.device)?;
-            let (inner, fonts) = reg.inner_and_fonts();
-            let text_context = TextFlattenContext {
-                fonts,
-                atlas: &atlas_context,
-            };
-            inner.flatten_into(&mut canvas, &self.device, Some(&text_context));
-            canvas.flatten()
+            let mut canvas = canvas.borrow_mut();
+            std::mem::replace(&mut canvas.inner, RenderingCanvas::new()).flatten()
         };
+        self.submit_and_read_bgra(py, &frame)
+    }
 
+    /// Flattens `registry`'s current shapes into `canvas` -- the real
+    /// seam (Phase 12 Step 12.5) letting more than one registry, with
+    /// `canvas.clip(...)`/`canvas.layer(...)` scopes interleaved between
+    /// them, share one canvas before a single [`render_canvas`]
+    /// (`PyHeadlessRenderer::render_canvas`) call submits it. `render`'s
+    /// own single-registry convenience wrapper calls this internally
+    /// with a fresh, throwaway canvas.
+    ///
+    /// Like `render`, always flattens `registry`'s *full* current state
+    /// (`mark_all_dirty`), not an incremental delta -- see `render`'s own
+    /// doc comment for why.
+    ///
+    /// # Errors
+    /// Raises `TreError` if a due text-atlas texture refresh fails (see
+    /// `crate::text_atlas::TextAtlas`'s own doc comment).
+    fn flatten_into(
+        &mut self,
+        canvas: &Bound<'_, PyCanvas>,
+        registry: &Bound<'_, PyShapeRegistry>,
+    ) -> PyResult<()> {
+        let mut reg = registry.borrow_mut();
+        let mut canvas = canvas.borrow_mut();
+        reg.inner.mark_all_dirty();
+        let atlas_context = self.text_atlas.context(&self.device)?;
+        let (inner, fonts) = reg.inner_and_fonts();
+        let text_context = TextFlattenContext {
+            fonts,
+            atlas: &atlas_context,
+        };
+        inner.flatten_into(&mut canvas.inner, &self.device, Some(&text_context));
+        Ok(())
+    }
+
+    /// Renders an already-assembled [`PyCanvas`] (built via one or more
+    /// [`flatten_into`](Self::flatten_into) calls, optionally interleaved
+    /// with `canvas.clip(...)`/`canvas.layer(...)` scopes) and returns
+    /// the finished frame as `BGRA8` bytes -- the real "submit what I
+    /// built" counterpart to `render`'s own single-registry convenience
+    /// wrapper. Consumes `canvas`'s own recorded content (leaving it
+    /// freshly empty, like a new `Canvas`) rather than the `Canvas`
+    /// object itself, so the same Python `Canvas` can be reused next
+    /// frame.
+    ///
+    /// # Errors
+    /// Raises `TreError` on any real, recoverable engine failure.
+    fn render_canvas(
+        &mut self,
+        py: Python<'_>,
+        canvas: &Bound<'_, PyCanvas>,
+    ) -> PyResult<Py<PyBytes>> {
+        let frame = {
+            let mut canvas = canvas.borrow_mut();
+            std::mem::replace(&mut canvas.inner, RenderingCanvas::new()).flatten()
+        };
+        self.submit_and_read_bgra(py, &frame)
+    }
+}
+
+impl PyHeadlessRenderer {
+    /// Releases the GIL for the real GPU round trip (upload, submit,
+    /// present, readback) -- IMPLEMENTATION.md Step 10.4 task 3 -- so
+    /// other Python threads keep running while this one blocks on the
+    /// GPU fence. Shared by `render`/`render_canvas`, the only two real
+    /// differences between them being how `frame` itself gets built.
+    fn submit_and_read_bgra(
+        &mut self,
+        py: Python<'_>,
+        frame: &tre_engine::FlattenedFrame,
+    ) -> PyResult<Py<PyBytes>> {
         let bgra: Result<Vec<u8>, RenderError> = py.detach(|| {
             let vertex_bytes: &[u8] = bytemuck::cast_slice(&frame.vertices);
             let index_bytes: &[u8] = bytemuck::cast_slice(&frame.indices);
@@ -287,7 +350,7 @@ impl PyHeadlessRenderer {
             };
             submit_frame(&self.device, &self.swapchain, |cmd_buffer| {
                 execute_frame(
-                    &frame,
+                    frame,
                     &self.pipelines,
                     BufferBinding {
                         buffer: &*self.ring_buffer,
