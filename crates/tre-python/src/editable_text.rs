@@ -333,17 +333,50 @@ impl PyEditableText {
         Ok(tre_text::hit_test_2d(&positions, line_height, x, y))
     }
 
+    /// Moves the caret one real character left (not byte -- the same
+    /// UTF-8 boundary safety `delete_backward` already established), or
+    /// is a real no-op (`false`) at the very start of `text`. Operates
+    /// on the flat underlying string directly, so it needs no
+    /// shaping/layout at all (unlike `hit_test`/`move_caret_up`/`down`)
+    /// and crosses a real visual line boundary for free.
+    ///
+    /// `extend`: see [`apply_caret_move`](Self::apply_caret_move) for
+    /// the real Shift+arrow selection-extension semantics.
+    #[pyo3(signature = (extend = false))]
+    fn move_caret_left(&mut self, extend: bool) -> bool {
+        let Some(ch) = self.text[..self.caret].chars().next_back() else {
+            return false;
+        };
+        self.apply_caret_move(self.caret - ch.len_utf8(), extend);
+        true
+    }
+
+    /// The same real UTF-8-char movement as
+    /// [`move_caret_left`](Self::move_caret_left), one character right
+    /// instead. A real no-op (`false`) at the very end of `text`.
+    #[pyo3(signature = (extend = false))]
+    fn move_caret_right(&mut self, extend: bool) -> bool {
+        let Some(ch) = self.text[self.caret..].chars().next() else {
+            return false;
+        };
+        self.apply_caret_move(self.caret + ch.len_utf8(), extend);
+        true
+    }
+
     /// Moves the caret up one real visual line, preserving the pixel x
     /// position implied by its current line (real "sticky column"
     /// behavior -- recomputed fresh from the current caret each call,
-    /// not tracked as separate persistent state). Clears any active
-    /// selection, matching `set_caret`'s own convention. A real no-op
+    /// not tracked as separate persistent state). A real no-op
     /// (returns `false`) already on the first line.
+    ///
+    /// `extend`: see [`apply_caret_move`](Self::apply_caret_move) for
+    /// the real Shift+arrow selection-extension semantics.
     ///
     /// # Errors
     /// Raises `TreError` if `text` fails to shape against `font`.
-    fn move_caret_up(&mut self, py: Python<'_>) -> PyResult<bool> {
-        self.move_caret_vertically(py, -1)
+    #[pyo3(signature = (extend = false))]
+    fn move_caret_up(&mut self, py: Python<'_>, extend: bool) -> PyResult<bool> {
+        self.move_caret_vertically(py, -1, extend)
     }
 
     /// The same real sticky-column vertical movement as
@@ -353,8 +386,9 @@ impl PyEditableText {
     ///
     /// # Errors
     /// Raises `TreError` if `text` fails to shape against `font`.
-    fn move_caret_down(&mut self, py: Python<'_>) -> PyResult<bool> {
-        self.move_caret_vertically(py, 1)
+    #[pyo3(signature = (extend = false))]
+    fn move_caret_down(&mut self, py: Python<'_>, extend: bool) -> PyResult<bool> {
+        self.move_caret_vertically(py, 1, extend)
     }
 
     /// One real `(x, y, width, height)` rect per real visual line the
@@ -504,7 +538,12 @@ impl PyEditableText {
     /// sequence of moves; `line_of`'s own fallback is reused only for
     /// the case where `self.caret` has no exact stop at all (e.g. it
     /// sits inside a line's own consumed whitespace tail).
-    fn move_caret_vertically(&mut self, py: Python<'_>, direction: isize) -> PyResult<bool> {
+    fn move_caret_vertically(
+        &mut self,
+        py: Python<'_>,
+        direction: isize,
+        extend: bool,
+    ) -> PyResult<bool> {
         let (runs, lines, _line_height, units_per_em) = self.compute_layout(py)?;
         let positions =
             tre_text::multiline_caret_positions(&lines, &runs, self.px_size, units_per_em);
@@ -521,13 +560,39 @@ impl PyEditableText {
             return Ok(false);
         }
         let x = x_at_or_before(&positions, current_line, self.caret);
-        self.caret = positions
+        let new_caret = positions
             .iter()
             .filter(|p| p.line == target_line)
             .min_by(|a, b| (a.x - x).abs().total_cmp(&(b.x - x).abs()))
             .map_or(self.caret, |p| p.byte_offset);
-        self.selection_anchor = None;
+        self.apply_caret_move(new_caret, extend);
         Ok(true)
+    }
+
+    /// Real shared selection-anchor bookkeeping behind every caret-
+    /// moving method that supports Shift-extend (`move_caret_left`/
+    /// `right`/`up`/`down`).
+    ///
+    /// `extend=false` always clears any active selection first,
+    /// matching `set_caret`'s own established convention. `extend=true`
+    /// starts a new selection anchored at the caret's CURRENT position
+    /// the first time it's used with no selection already active, then
+    /// leaves that anchor untouched on every subsequent extend -- the
+    /// real Shift+arrow convention: the anchor stays fixed at wherever
+    /// selection began, only the caret's own end moves, in either
+    /// direction, even if the caret crosses back past the anchor (e.g.
+    /// several `move_caret_right(extend=True)` calls followed by
+    /// `move_caret_left(extend=True)` shrink the same selection back
+    /// toward, then past, the original anchor -- never resetting it).
+    fn apply_caret_move(&mut self, new_caret: usize, extend: bool) {
+        if extend {
+            if self.selection_anchor.is_none() {
+                self.selection_anchor = Some(self.caret);
+            }
+        } else {
+            self.selection_anchor = None;
+        }
+        self.caret = new_caret;
     }
 }
 
