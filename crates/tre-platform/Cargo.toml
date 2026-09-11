@@ -42,3 +42,20 @@ arboard = { version = "3", default-features = false }
 # Wayland/KDE session in complete isolation (a throwaway scratch crate
 # outside this repository) before adding it here.
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "async-std"] }
+# System tray icon + native menu (GUI-readiness recommendation #5, tray
+# half). `default-features = false` drops `libxdo` (`tray-icon`'s own
+# default feature): an X11-only dependency used solely to make muda's
+# *predefined* Copy/Cut/Paste/SelectAll menu items work, irrelevant here
+# since a real caller already has `Clipboard` (Step 14.1) and builds
+# regular `MenuItem`s, not predefined ones -- and this machine's real
+# session is Wayland anyway. `tray-icon` re-exports all of `muda` under
+# its own `menu` module, so `muda` is not a separate direct dependency.
+# `gtk` is required directly (not just transitively): Linux requires a
+# real GTK event loop pumped on the tray icon's own thread for it to
+# register/respond at all (confirmed via `dbus-monitor` against this
+# machine's real `org.kde.StatusNotifierWatcher`: a real
+# `RegisterStatusNotifierItem` call and `StatusNotifierItemRegistered`
+# signal were observed end to end in isolated feasibility testing,
+# before adding any of this to the real workspace).
+tray-icon = { version = "0.19", default-features = false }
+gtk = "0.18"

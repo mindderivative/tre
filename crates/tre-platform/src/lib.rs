@@ -24,11 +24,16 @@
 
 mod clipboard;
 mod file_dialog;
+mod tray;
 mod winit_backend;
 
 pub use clipboard::Clipboard;
 pub use file_dialog::{pick_file, pick_files, pick_folder, save_file, FileFilter};
 use raw_window_handle::{DisplayHandle, HandleError, HasDisplayHandle, WindowHandle};
+pub use tray::{
+    init as tray_init, poll_events as tray_poll_events, pump_events as tray_pump_events, Menu,
+    TrayEvent, TrayIcon,
+};
 pub use tre_engine::{ElementState, InputEvent, MouseButton, WindowId};
 
 #[derive(Debug)]

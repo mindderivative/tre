@@ -52,6 +52,7 @@ mod shapes;
 mod svg;
 mod text_atlas;
 mod texture;
+mod tray;
 mod tween;
 mod windowed_renderer;
 
@@ -111,5 +112,6 @@ fn tre_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<clipboard::PyClipboard>()?;
     m.add_class::<shapes::PyCustomShaded>()?;
     file_dialog::register(m)?;
+    tray::register(m)?;
     Ok(())
 }
