@@ -216,6 +216,12 @@ impl InputEventQueue {
 /// `dt` into.
 pub struct FrameClock {
     previous_tick: Option<std::time::Instant>,
+    /// This clock's own construction time -- distinct from
+    /// `previous_tick` (which chases the *previous frame*): `elapsed`
+    /// measures total real time since this clock was created, the real
+    /// "t" a `treTween`/`treAnimation` caller needs to sample a tween or
+    /// timeline against, independent of per-frame delta time.
+    created_at: std::time::Instant,
 }
 
 impl FrameClock {
@@ -223,6 +229,7 @@ impl FrameClock {
     pub fn new() -> Self {
         Self {
             previous_tick: None,
+            created_at: std::time::Instant::now(),
         }
     }
 
@@ -238,6 +245,14 @@ impl FrameClock {
         };
         self.previous_tick = Some(now);
         delta
+    }
+
+    /// Returns the real total elapsed seconds since this clock was
+    /// created (`FrameClock::new`), independent of how many times -- or
+    /// how recently -- `tick` has been called.
+    #[must_use]
+    pub fn elapsed(&self) -> f32 {
+        self.created_at.elapsed().as_secs_f32()
     }
 }
 

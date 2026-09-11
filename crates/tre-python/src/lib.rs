@@ -37,6 +37,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 mod canvas;
+mod clock;
 mod error;
 mod font;
 mod gradient;
@@ -89,5 +90,6 @@ fn tre_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<windowed_renderer::PyCursorIcon>()?;
     m.add_class::<svg::PySvg>()?;
     m.add_class::<svg::PyFillRule>()?;
+    m.add_class::<clock::PyClock>()?;
     Ok(())
 }

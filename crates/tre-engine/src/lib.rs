@@ -554,6 +554,21 @@ mod tests {
     }
 
     #[test]
+    fn frame_clock_elapsed_accumulates_independently_of_tick() {
+        let clock = FrameClock::new();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let elapsed = clock.elapsed();
+        assert!(
+            elapsed >= 0.015,
+            "a real ~20ms sleep must report at least 15ms elapsed, got {elapsed}s"
+        );
+        assert!(
+            elapsed < 1.0,
+            "a real ~20ms sleep must not report a wildly inflated elapsed time, got {elapsed}s"
+        );
+    }
+
+    #[test]
     fn draw_rounded_rect_emits_one_command_with_four_vertices_six_indices() {
         let mut canvas = RenderingCanvas::new();
         canvas.draw_rounded_rect(0.0, 0.0, 100.0, 40.0, 0.0, 0xFF00_FFFF);
