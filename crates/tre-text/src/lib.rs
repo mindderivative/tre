@@ -9,6 +9,7 @@
 //! packer will consume; this crate does no GPU work of its own.
 #![forbid(unsafe_code)]
 
+mod caret;
 mod error;
 #[cfg(target_os = "linux")]
 mod fallback;
@@ -17,6 +18,7 @@ mod outline;
 mod raster;
 mod shape;
 
+pub use caret::{caret_positions, hit_test, CaretPosition};
 pub use error::TextError;
 #[cfg(target_os = "linux")]
 pub use fallback::{covers, resolve_font_index, resolve_run, FontCascade};

@@ -22,6 +22,17 @@ pub struct PyWindowId(pub WindowId);
 
 #[pymethods]
 impl PyWindowId {
+    /// Constructs a `WindowId` directly from a raw `u64` -- a real
+    /// window's own id is normally handed out by `WindowedRenderer`
+    /// itself, but a caller synthesizing an `InputEvent` for a test or
+    /// demo (Phase 13 Step 13.5's own `EditableText.handle_ime` needs a
+    /// real `InputEvent.ImeCommit`/etc. to test against, with no real
+    /// window involved) has a real, legitimate need to build one plainly.
+    #[new]
+    fn new(id: u64) -> Self {
+        Self(WindowId(id))
+    }
+
     fn __repr__(&self) -> String {
         format!("WindowId({})", self.0 .0)
     }

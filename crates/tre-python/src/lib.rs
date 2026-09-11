@@ -39,6 +39,7 @@
 mod animation;
 mod canvas;
 mod clock;
+mod editable_text;
 mod error;
 mod font;
 mod gradient;
@@ -98,5 +99,6 @@ fn tre_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<tween::PyEasing>()?;
     m.add_class::<tween::PySpring>()?;
     m.add_class::<animation::PyTimeline>()?;
+    m.add_class::<editable_text::PyEditableText>()?;
     Ok(())
 }
