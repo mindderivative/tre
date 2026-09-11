@@ -359,6 +359,58 @@ pub struct LayerDesc {
     pub blur: bool,
 }
 
+/// Computes the screen-space `(x, y, width, height)` a shadow's own
+/// [`LayerDesc`] should use for a shape at `(x, y, width, height)`,
+/// casting a shadow offset by `(offset_x, offset_y)`, given
+/// `blur_margin` extra pixels on every side for the Dual-Kawase blur to
+/// spread into without being clipped at the layer's own edge (Phase 13
+/// Step 13.4: shadows, built entirely on `LayerDesc.blur`'s already-real
+/// Dual-Kawase blur -- no new GPU pipeline).
+///
+/// The result is the union of the shape's own bounding box and its
+/// offset copy, expanded by `blur_margin` on every side -- large enough
+/// to contain both the shape's real position and its shifted shadow
+/// silhouette, with room around the shadow's own edges for the blur.
+///
+/// # Panics
+/// In debug builds, panics if `blur_margin` is negative -- a negative
+/// margin would shrink the layer below the shadow's own extent, silently
+/// clipping it, which is never the real intent of a caller passing one.
+#[must_use]
+pub fn shadow_layer_bounds(
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    offset_x: f32,
+    offset_y: f32,
+    blur_margin: f32,
+) -> (i32, i32, u32, u32) {
+    debug_assert!(
+        blur_margin >= 0.0,
+        "shadow_layer_bounds: blur_margin must be >= 0.0, got {blur_margin}"
+    );
+    let left = x.min(x + offset_x) - blur_margin;
+    let top = y.min(y + offset_y) - blur_margin;
+    let right = (x + width).max(x + offset_x + width) + blur_margin;
+    let bottom = (y + height).max(y + offset_y + height) + blur_margin;
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "screen-space layer bounds are always well within i32/u32 range for any real \
+                  UI, and width/height are real spans (right >= left, bottom >= top always hold \
+                  since blur_margin >= 0.0 is enforced above) so never actually negative"
+    )]
+    {
+        (
+            left.floor() as i32,
+            top.floor() as i32,
+            (right - left).ceil() as u32,
+            (bottom - top).ceil() as u32,
+        )
+    }
+}
+
 /// A frame's fully-recorded, sorted-and-flattened batch: one contiguous
 /// vertex/index stream plus the (currently trivial, Phase 0) list of
 /// draw commands describing how to slice it into RHI draw calls, plus
@@ -3126,6 +3178,22 @@ mod tests {
                 RecordedCall::BindIndexBuffer(2, 0),
             ]
         );
+    }
+
+    #[test]
+    fn shadow_layer_bounds_covers_the_shape_and_its_offset_shadow_plus_margin() {
+        // A 100x50 rect at (10, 20), shadow offset (8, 12), 5px blur
+        // margin. left = min(10, 18) - 5 = 5. top = min(20, 32) - 5 =
+        // 15. right = max(110, 118) + 5 = 123. bottom = max(70, 82) + 5
+        // = 87. width = 123 - 5 = 118. height = 87 - 15 = 72.
+        let (x, y, width, height) = shadow_layer_bounds(10.0, 20.0, 100.0, 50.0, 8.0, 12.0, 5.0);
+        assert_eq!((x, y, width, height), (5, 15, 118, 72));
+    }
+
+    #[test]
+    fn shadow_layer_bounds_with_zero_offset_and_margin_matches_the_shapes_own_aabb_exactly() {
+        let (x, y, width, height) = shadow_layer_bounds(10.0, 20.0, 100.0, 50.0, 0.0, 0.0, 0.0);
+        assert_eq!((x, y, width, height), (10, 20, 100, 50));
     }
 
     #[test]

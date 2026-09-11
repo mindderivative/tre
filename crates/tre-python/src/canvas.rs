@@ -18,6 +18,33 @@ use tre_engine::{
     AccessibilityNodeId, AccessibilityRole, LayerDesc, RenderingCanvas, ScissorRect, TextureFormat,
 };
 
+/// Computes the `(x, y, width, height)` a real drop-shadow's own
+/// `canvas.layer(..., blur=True)` call should use for a shape at
+/// `(x, y, width, height)`, cast with `(offset_x, offset_y)` and
+/// `blur_margin` pixels of extra room on every side for the Dual-Kawase
+/// blur to spread into (Phase 13 Step 13.4: shadows). Binds directly to
+/// `tre_engine::shadow_layer_bounds` -- pure geometry, no new rendering
+/// path: the shadow itself is drawn using the SAME `canvas.layer(blur=
+/// True)` mechanism already real and exposed since Phase 12 Step 12.5.
+#[pyfunction]
+#[pyo3(signature = (x, y, width, height, offset_x, offset_y, blur_margin = 24.0))]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one field per real shadow-bounds input; a real \
+         caller almost always writes tre.shadow_layer_bounds(x, y, w, h, ox, oy)"
+)]
+pub fn shadow_layer_bounds(
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    offset_x: f32,
+    offset_y: f32,
+    blur_margin: f32,
+) -> (i32, i32, u32, u32) {
+    tre_engine::shadow_layer_bounds(x, y, width, height, offset_x, offset_y, blur_margin)
+}
+
 /// `tre_engine::AccessibilityRole`, bound directly.
 #[pyclass(name = "AccessibilityRole", eq)]
 #[derive(Clone, Copy, PartialEq, Eq)]

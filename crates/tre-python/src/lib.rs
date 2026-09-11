@@ -67,6 +67,7 @@ fn rgba8(r: u8, g: u8, b: u8, a: u8) -> u32 {
 fn tre_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TreError", m.py().get_type::<error::TreError>())?;
     m.add_function(pyo3::wrap_pyfunction!(rgba8, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(canvas::shadow_layer_bounds, m)?)?;
     m.add_class::<shapes::PyShapeId>()?;
     m.add_class::<shapes::PyRectangle>()?;
     m.add_class::<shapes::PyCircle>()?;
