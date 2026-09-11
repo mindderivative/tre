@@ -17,6 +17,7 @@ mod msdf;
 mod outline;
 mod raster;
 mod shape;
+mod word;
 mod wrap;
 
 pub use caret::{
@@ -30,4 +31,5 @@ pub use msdf::{generate_msdf, has_real_ink, MsdfBitmap};
 pub use outline::{glyph_outline, Contour, OutlineSegment};
 pub use raster::GlyphRasterSource;
 pub use shape::{segment_runs, shape_text, ShapedGlyph, ShapedRun, TextRun};
+pub use word::{next_word_end, prev_word_start};
 pub use wrap::{wrap_lines, WrappedLine};

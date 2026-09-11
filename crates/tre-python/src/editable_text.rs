@@ -363,6 +363,39 @@ impl PyEditableText {
         true
     }
 
+    /// Moves the caret to the end of the next real word (per real
+    /// Unicode word-boundary segmentation, UAX #29, via
+    /// `tre_text::next_word_end`) -- the standard Ctrl+Right convention.
+    /// Skips whitespace/punctuation entirely rather than stopping at
+    /// each one; a real no-op (`false`) once there is no real word left
+    /// after the caret. Pure string logic, no shaping needed, the same
+    /// as `move_caret_left`/`right`.
+    ///
+    /// `extend`: see [`apply_caret_move`](Self::apply_caret_move) for
+    /// the real Shift+arrow selection-extension semantics.
+    #[pyo3(signature = (extend = false))]
+    fn move_caret_word_right(&mut self, extend: bool) -> bool {
+        let Some(new_caret) = tre_text::next_word_end(&self.text, self.caret) else {
+            return false;
+        };
+        self.apply_caret_move(new_caret, extend);
+        true
+    }
+
+    /// The same real UAX #29 word-boundary jump as
+    /// [`move_caret_word_right`](Self::move_caret_word_right), to the
+    /// START of the previous real word instead -- the standard
+    /// Ctrl+Left convention. A real no-op (`false`) once there is no
+    /// real word left before the caret.
+    #[pyo3(signature = (extend = false))]
+    fn move_caret_word_left(&mut self, extend: bool) -> bool {
+        let Some(new_caret) = tre_text::prev_word_start(&self.text, self.caret) else {
+            return false;
+        };
+        self.apply_caret_move(new_caret, extend);
+        true
+    }
+
     /// Moves the caret up one real visual line, preserving the pixel x
     /// position implied by its current line (real "sticky column"
     /// behavior -- recomputed fresh from the current caret each call,
@@ -389,6 +422,69 @@ impl PyEditableText {
     #[pyo3(signature = (extend = false))]
     fn move_caret_down(&mut self, py: Python<'_>, extend: bool) -> PyResult<bool> {
         self.move_caret_vertically(py, 1, extend)
+    }
+
+    /// Moves the caret to the real start of its current visual line
+    /// (the standard `Home` convention) -- a real no-op (`false`) if
+    /// already there.
+    ///
+    /// `extend`: see [`apply_caret_move`](Self::apply_caret_move) for
+    /// the real Shift+arrow selection-extension semantics.
+    ///
+    /// # Errors
+    /// Raises `TreError` if `text` fails to shape against `font`.
+    #[pyo3(signature = (extend = false))]
+    fn move_caret_line_start(&mut self, py: Python<'_>, extend: bool) -> PyResult<bool> {
+        let (_runs, lines, _line_height, _units_per_em) = self.compute_layout(py)?;
+        let current_line = self.current_visual_line(&lines);
+        // `lines[N].byte_range.start` is never itself a real tie with
+        // the PREVIOUS line's own end under `move_caret_vertically`'s
+        // "always prefer the later of any tied lines" rule -- it
+        // already resolves to line N, this line, with no adjustment
+        // needed (unlike `move_caret_line_end`, see its own doc comment
+        // for why that direction genuinely does need one).
+        let new_caret = lines[current_line].byte_range.start;
+        if new_caret == self.caret {
+            return Ok(false);
+        }
+        self.apply_caret_move(new_caret, extend);
+        Ok(true)
+    }
+
+    /// Moves the caret to the real end of its current visual line's own
+    /// visible content (the standard `End` convention) -- a real no-op
+    /// (`false`) if already there.
+    ///
+    /// **Real, disclosed v1 design note**: this is NOT simply `lines[N].
+    /// byte_range.end` -- that value includes any real trailing
+    /// whitespace/newline this line's own wrap consumed (see `wrap_lines`'
+    /// own doc comment), which is ALSO the next line's own start byte, a
+    /// real tie `move_caret_vertically` always resolves toward the LATER
+    /// line. Landing `End` exactly there would make a following
+    /// `move_caret_up`/`down` treat the caret as already on the NEXT
+    /// line, not this one. Trimming real trailing whitespace from this
+    /// line's own text before measuring its end avoids that tie
+    /// entirely, at the real, disclosed cost that deliberately-typed
+    /// trailing whitespace (rare) is skipped by `End` too, same as most
+    /// real editors already visually collapse it.
+    ///
+    /// `extend`: see [`apply_caret_move`](Self::apply_caret_move) for
+    /// the real Shift+arrow selection-extension semantics.
+    ///
+    /// # Errors
+    /// Raises `TreError` if `text` fails to shape against `font`.
+    #[pyo3(signature = (extend = false))]
+    fn move_caret_line_end(&mut self, py: Python<'_>, extend: bool) -> PyResult<bool> {
+        let (_runs, lines, _line_height, _units_per_em) = self.compute_layout(py)?;
+        let current_line = self.current_visual_line(&lines);
+        let line = &lines[current_line];
+        let trimmed_len = self.text[line.byte_range.clone()].trim_end().len();
+        let new_caret = line.byte_range.start + trimmed_len;
+        if new_caret == self.caret {
+            return Ok(false);
+        }
+        self.apply_caret_move(new_caret, extend);
+        Ok(true)
     }
 
     /// One real `(x, y, width, height)` rect per real visual line the
@@ -545,20 +641,15 @@ impl PyEditableText {
         extend: bool,
     ) -> PyResult<bool> {
         let (runs, lines, _line_height, units_per_em) = self.compute_layout(py)?;
-        let positions =
-            tre_text::multiline_caret_positions(&lines, &runs, self.px_size, units_per_em);
-        let current_line = positions
-            .iter()
-            .filter(|p| p.byte_offset == self.caret)
-            .map(|p| p.line)
-            .max()
-            .unwrap_or_else(|| tre_text::line_of(&positions, self.caret));
+        let current_line = self.current_visual_line(&lines);
         let Some(target_line) = current_line.checked_add_signed(direction) else {
             return Ok(false);
         };
         if target_line >= lines.len() {
             return Ok(false);
         }
+        let positions =
+            tre_text::multiline_caret_positions(&lines, &runs, self.px_size, units_per_em);
         let x = x_at_or_before(&positions, current_line, self.caret);
         let new_caret = positions
             .iter()
@@ -567,6 +658,27 @@ impl PyEditableText {
             .map_or(self.caret, |p| p.byte_offset);
         self.apply_caret_move(new_caret, extend);
         Ok(true)
+    }
+
+    /// The real visual line index `self.caret` currently sits on, given
+    /// `lines` (from `compute_layout`) -- the largest line index whose
+    /// own `byte_range.start <= self.caret`. Lines are contiguous and
+    /// in byte order, so this is equivalent to (and replaces the need
+    /// for) scanning shaped caret positions for an exact `byte_offset`
+    /// match and falling back to `tre_text::line_of`: at a real
+    /// boundary tie (`self.caret` equals both line N's own end and line
+    /// N+1's own start), it naturally resolves to N+1 -- the same
+    /// "prefer the later tied line" convention `move_caret_vertically`
+    /// already established, derived here directly from `lines` alone,
+    /// with no shaping/positions needed at all.
+    fn current_visual_line(&self, lines: &[tre_text::WrappedLine]) -> usize {
+        lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| line.byte_range.start <= self.caret)
+            .map(|(i, _)| i)
+            .next_back()
+            .unwrap_or(0)
     }
 
     /// Real shared selection-anchor bookkeeping behind every caret-

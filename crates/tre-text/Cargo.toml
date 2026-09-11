@@ -47,6 +47,12 @@ skrifa = "=0.33.2"
 # direction-and-script-uniform run at a time; segmenting a mixed-direction
 # string into runs is the caller's job, not rustybuzz's own.
 unicode-bidi = "0.3.18"
+# Real UAX #29 word-boundary segmentation (Phase 15 Step 15.4) for
+# Ctrl+arrow word jumps -- already a transitive dependency (via
+# `unicode-bidi`/other deps) at 1.13.3; added here directly since
+# `tre-text` now calls it itself, not just benefits from it indirectly.
+# Pure string logic, no font/shaping dependency at all.
+unicode-segmentation = "1.13.3"
 # Real UAX #24 Script-property lookups for splitting runs by script,
 # instead of a hand-rolled Unicode-block heuristic.
 unicode-script = "0.5.8"
