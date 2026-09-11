@@ -23,9 +23,11 @@
 #![forbid(unsafe_code)]
 
 mod clipboard;
+mod file_dialog;
 mod winit_backend;
 
 pub use clipboard::Clipboard;
+pub use file_dialog::{pick_file, pick_files, pick_folder, save_file, FileFilter};
 use raw_window_handle::{DisplayHandle, HandleError, HasDisplayHandle, WindowHandle};
 pub use tre_engine::{ElementState, InputEvent, MouseButton, WindowId};
 

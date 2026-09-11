@@ -43,6 +43,7 @@ mod clock;
 mod custom_shader;
 mod editable_text;
 mod error;
+mod file_dialog;
 mod font;
 mod gradient;
 mod input;
@@ -109,5 +110,6 @@ fn tre_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<custom_shader::PyCustomShaderId>()?;
     m.add_class::<clipboard::PyClipboard>()?;
     m.add_class::<shapes::PyCustomShaded>()?;
+    file_dialog::register(m)?;
     Ok(())
 }
