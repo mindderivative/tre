@@ -176,6 +176,51 @@ impl PySvg {
     fn triangle_count(&self) -> usize {
         self.triangles.len()
     }
+
+    /// Real vertex animation (Phase 13 Step 13.6, Q12): interpolates
+    /// `from_`'s and `to`'s own already-tessellated `positions` at
+    /// parameter `t` (typically `0.0..=1.0`, though nothing here clamps
+    /// it -- overshoot is a legitimate easing technique, matching
+    /// `tre_tween::Tween::sample`'s own real "your `t`, your problem"
+    /// contract for out-of-range progress), keeping `from_`'s own
+    /// triangle indices unchanged -- morphing changes vertex positions,
+    /// never mesh connectivity, so `from_`/`to` must already share the
+    /// SAME triangulation (typically: both produced by tessellating two
+    /// hand-authored keyframe SVGs with matching path structure).
+    ///
+    /// Calls `tre_math::lerp_points_batch` directly (the identical real
+    /// SIMD primitive `tre_svg::morph_into` itself uses internally) --
+    /// `tre_svg::morph_into` itself isn't reusable here as-is since it
+    /// operates on `tre_svg::Polygon`'s raw, un-triangulated contour
+    /// points, not `Svg`'s already-tessellated positions.
+    ///
+    /// # Errors
+    /// Raises `ValueError` if `from_`/`to` don't have the same number of
+    /// positions (mirroring `tre_svg::SvgError::TopologyMismatch`'s own
+    /// real "equal vertex counts" contract -- no auto-resampling).
+    #[staticmethod]
+    fn morph(from_: &PySvg, to: &PySvg, t: f32) -> PyResult<Self> {
+        if from_.positions.len() != to.positions.len() {
+            return Err(PyValueError::new_err(format!(
+                "Svg.morph: topology mismatch -- from_ has {} positions, to has {}",
+                from_.positions.len(),
+                to.positions.len()
+            )));
+        }
+        let mut positions = from_.positions.clone();
+        tre_math::lerp_points_batch(&from_.positions, &to.positions, t, &mut positions);
+        Ok(Self {
+            positions,
+            triangles: from_.triangles.clone(),
+            x: from_.x,
+            y: from_.y,
+            fill_color: from_.fill_color,
+            opacity: from_.opacity,
+            scale_x: from_.scale_x,
+            scale_y: from_.scale_y,
+            rotation: from_.rotation,
+        })
+    }
 }
 
 impl PySvg {

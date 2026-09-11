@@ -3061,6 +3061,7 @@ dependencies = [
  "tre-animation",
  "tre-atlas",
  "tre-engine",
+ "tre-math",
  "tre-platform",
  "tre-rhi-vulkan",
  "tre-svg",
