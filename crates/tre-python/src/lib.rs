@@ -48,6 +48,7 @@ mod font;
 mod gradient;
 mod input;
 mod renderer;
+mod sdf_shadow;
 mod shapes;
 mod svg;
 mod text_atlas;
@@ -111,6 +112,7 @@ fn tre_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<custom_shader::PyCustomShaderId>()?;
     m.add_class::<clipboard::PyClipboard>()?;
     m.add_class::<shapes::PyCustomShaded>()?;
+    sdf_shadow::register(m)?;
     file_dialog::register(m)?;
     tray::register(m)?;
     Ok(())

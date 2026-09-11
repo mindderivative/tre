@@ -793,6 +793,13 @@ pub struct CustomShaded {
     pub size: Vec2,
     pub pipeline_id: u16,
     pub fill_color: Color,
+    /// Phase 16 Step 16.1: the third real per-vertex channel,
+    /// `UiVertex.params` -- previously always zeroed by
+    /// `draw_custom_shaded_quad`, now a real, settable field a caller's
+    /// own custom fragment shader can read via `frag_params`. Defaults
+    /// to `[0.0; 3]`, matching the prior hardcoded value exactly, so
+    /// every pre-existing caller renders unchanged.
+    pub params: [f32; 3],
 }
 
 impl CustomShaded {
@@ -803,6 +810,7 @@ impl CustomShaded {
             size,
             pipeline_id,
             fill_color,
+            params: [0.0; 3],
         }
     }
 }
@@ -1190,6 +1198,7 @@ impl ShapeRegistry {
                         custom.size[1],
                         custom.pipeline_id,
                         custom.fill_color,
+                        custom.params,
                     );
                 }
             }

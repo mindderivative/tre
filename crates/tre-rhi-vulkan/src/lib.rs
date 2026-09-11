@@ -1208,16 +1208,23 @@ impl VulkanDevice {
     /// through its `glslc` CLI invocation for this crate's own
     /// compile-time shaders, kept identical rather than introducing a
     /// second, potentially-divergent compiler -- then pairs it with
-    /// [`crate::shape_pipelines::BINDLESS_TEXTURED_VERT`], the SAME real
-    /// vertex shader `TexturedQuad`/`GradientFill`/`MsdfText` already
-    /// use, via [`Self::create_pipeline`] (unchanged -- no new pipeline-
-    /// creation code path, since `create_pipeline` already accepts any
-    /// vertex/fragment SPIR-V pair).
+    /// [`crate::shape_pipelines::SDF_ROUNDED_RECT_VERT`] via
+    /// [`Self::create_pipeline`] (unchanged -- no new pipeline-creation
+    /// code path, since `create_pipeline` already accepts any vertex/
+    /// fragment SPIR-V pair). Phase 16 Step 16.1 switched this from
+    /// `BINDLESS_TEXTURED_VERT` to `SDF_ROUNDED_RECT_VERT` -- a strict
+    /// superset (it additionally forwards `UiVertex.params` as
+    /// `frag_params`, letting a custom fragment shader read the same
+    /// per-vertex channel `sdf_rect_styled.frag`/`sdf_ellipse.frag`
+    /// already use) -- so every pre-existing `fragment_source` that only
+    /// declares `frag_color`/`frag_uv` still links correctly against the
+    /// new vertex shader's extra, unused `frag_params` output.
     ///
     /// **Real, disclosed v1 scope**: `fragment_source` must declare
     /// `layout(location = 0) in vec4 frag_color;`, `layout(location = 1)
-    /// in vec2 frag_uv;`, `layout(location = 0) out vec4 out_color;`,
-    /// and the identical 12-byte `PushConstants { vec2 screen_size; uint
+    /// in vec2 frag_uv;`, optionally `layout(location = 2) in vec3
+    /// frag_params;`, `layout(location = 0) out vec4 out_color;`, and
+    /// the identical 12-byte `PushConstants { vec2 screen_size; uint
     /// texture_index; }` block `bindless_textured.frag`'s own real
     /// source declares (see that file directly for the exact contract)
     /// -- no custom vertex shader, no arbitrary vertex attributes, no
@@ -1267,7 +1274,7 @@ impl VulkanDevice {
             )
             .map_err(|e| EngineError::ShaderCompilationFailed(e.to_string()))?;
         self.create_pipeline(
-            crate::shape_pipelines::BINDLESS_TEXTURED_VERT,
+            crate::shape_pipelines::SDF_ROUNDED_RECT_VERT,
             artifact.as_binary_u8(),
             color_format,
         )

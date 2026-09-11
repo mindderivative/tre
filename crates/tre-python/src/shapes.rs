@@ -634,6 +634,16 @@ impl PyText {
 /// `Svg`'s own "solid fill only" precedent, since what a custom
 /// fragment shader actually does with `frag_color` is entirely up to
 /// its own GLSL source.
+///
+/// `param_x`/`param_y`/`param_z` (Phase 16 Step 16.1) are the real
+/// third per-vertex channel, `UiVertex.params` -- a custom fragment
+/// shader paired via `renderer.create_custom_shader` reads them back as
+/// `frag_params.x`/`.y`/`.z` (see that function's own doc comment for
+/// the exact GLSL contract). Generic, opaque floats: what they mean is
+/// entirely up to the caller's own shader, the same "no engine-side
+/// interpretation" precedent `fill_color`'s own doc comment above
+/// already sets. Default `0.0` each, matching every pre-existing
+/// `CustomShaded` caller's actual behavior before this field existed.
 #[pyclass(name = "CustomShaded")]
 #[derive(Clone)]
 pub struct PyCustomShaded {
@@ -657,12 +667,22 @@ pub struct PyCustomShaded {
     pub scale_y: f32,
     #[pyo3(get, set)]
     pub rotation: f32,
+    #[pyo3(get, set)]
+    pub param_x: f32,
+    #[pyo3(get, set)]
+    pub param_y: f32,
+    #[pyo3(get, set)]
+    pub param_z: f32,
 }
 
 #[pymethods]
 impl PyCustomShaded {
     #[new]
-    #[pyo3(signature = (x, y, width, height, pipeline_id, fill_color, scale_x = 1.0, scale_y = 1.0, rotation = 0.0))]
+    #[pyo3(signature = (
+        x, y, width, height, pipeline_id, fill_color,
+        scale_x = 1.0, scale_y = 1.0, rotation = 0.0,
+        param_x = 0.0, param_y = 0.0, param_z = 0.0,
+    ))]
     #[allow(
         clippy::too_many_arguments,
         reason = "every trailing parameter has a real default; a \
@@ -678,6 +698,9 @@ impl PyCustomShaded {
         scale_x: f32,
         scale_y: f32,
         rotation: f32,
+        param_x: f32,
+        param_y: f32,
+        param_z: f32,
     ) -> Self {
         Self {
             x,
@@ -690,6 +713,9 @@ impl PyCustomShaded {
             scale_x,
             scale_y,
             rotation,
+            param_x,
+            param_y,
+            param_z,
         }
     }
 }
@@ -701,6 +727,7 @@ impl PyCustomShaded {
             self.pipeline_id.0,
             self.fill_color as Color,
         );
+        shape.params = [self.param_x, self.param_y, self.param_z];
         shape.common = common(
             self.x,
             self.y,

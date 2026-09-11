@@ -31,7 +31,18 @@ macro_rules! spv {
     };
 }
 
-const SDF_ROUNDED_RECT_VERT: &[u8] = spv!("sdf_rounded_rect.vert.spv");
+/// Public within this crate (Phase 16 Step 16.1: SDF-based soft shadows)
+/// -- reused by `VulkanDevice::create_custom_pipeline` in place of
+/// `BINDLESS_TEXTURED_VERT` so a custom fragment shader can also read
+/// the real third per-vertex channel, `frag_params` (`UiVertex.params`),
+/// which `bindless_textured.vert` never forwards. A fragment shader
+/// that only declares `frag_color`/`frag_uv` (every existing Step 13.8
+/// custom shader) still links correctly against this vertex shader's
+/// extra, unused `frag_params` output -- legal SPIR-V interface
+/// matching (a fragment shader may consume a subset of a vertex
+/// shader's outputs), verified by rerunning `demo/phase13_step13_8/
+/// demo.py` unchanged after this swap.
+pub(crate) const SDF_ROUNDED_RECT_VERT: &[u8] = spv!("sdf_rounded_rect.vert.spv");
 const SDF_ROUNDED_RECT_FRAG: &[u8] = spv!("sdf_rounded_rect.frag.spv");
 const SDF_RECT_STYLED_FRAG: &[u8] = spv!("sdf_rect_styled.frag.spv");
 const SDF_ELLIPSE_FRAG: &[u8] = spv!("sdf_ellipse.frag.spv");

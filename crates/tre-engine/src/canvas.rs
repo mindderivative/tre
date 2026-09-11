@@ -1071,9 +1071,10 @@ impl RenderingCanvas {
     }
 
     /// `ShapePrimitive::CustomShaded` (Phase 13 Step 13.8: custom shader
-    /// API) -- draws an axis-aligned `(0,0)`-`(w,h)` quad with real
-    /// `0..1` UVs (identical vertex layout to `TexturedQuad`'s own
-    /// draw path), tagged with a caller-registered `pipeline_id` instead
+    /// API; `params` added Phase 16 Step 16.1) -- draws an axis-aligned
+    /// `(0,0)`-`(w,h)` quad with real `0..1` UVs (identical vertex
+    /// layout to `TexturedQuad`'s own draw path), tagged with a
+    /// caller-registered `pipeline_id` instead
     /// of one of the eight built-in `PipelineKind`s. `execute_frame`
     /// already resolves any `pipeline_state_id` generically via
     /// `PipelineRegistry::get`, not a hardcoded per-`PipelineKind`
@@ -1090,6 +1091,11 @@ impl RenderingCanvas {
         reason = "a single frame's vertex/index count stays far below u32::MAX, matching \
                    draw_flat_polygon's own identical reasoning"
     )]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one field per real per-vertex/per-draw input; `params` (Phase 16 Step 16.1) \
+                   is the last of them, mirroring CustomShaded's own field list"
+    )]
     pub fn draw_custom_shaded_quad(
         &mut self,
         x: f32,
@@ -1098,6 +1104,7 @@ impl RenderingCanvas {
         h: f32,
         pipeline_id: u16,
         rgba: u32,
+        params: [f32; 3],
     ) {
         let base_vertex = self.vertices.len() as u32;
         let base_index = self.indices.len() as u32;
@@ -1117,7 +1124,7 @@ impl RenderingCanvas {
                     position: state.transform.transform_point(position),
                     uv,
                     color,
-                    params: [0.0; 3],
+                    params,
                 }),
         );
         self.indices.extend_from_slice(&[
