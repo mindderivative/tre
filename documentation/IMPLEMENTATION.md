@@ -2943,3 +2943,17 @@ Real, disclosed scope limits: no custom vertex shaders, no compute shaders, no d
 ## Phase 13 Summary
 
 All eight sections of the approved Phase 13 plan (`/home/phil/.claude/plans/warm-painting-squid.md`) are now complete: `treTime` (13.1), `treTween` (13.2), `treAnimation` (13.3), real blur-based shadows (13.4), editable text (13.5), vertex animation (13.6), SMIL SVG animation parsing (13.7), and the custom shader API (13.8) -- answering every one of the project owner's 15 Python-exposed-functionality questions plus the two immediate fixes (`border_enabled`, real scale/rotation exposure, both Phase 12 Step 12.9) from the governing directive that opened this phase.
+
+## Phase 14: Real System Clipboard Access (Added 2026-09-11)
+
+The [tre GUI Readiness assessment](https://claude.ai/code/artifact/2d7cafa8-bf78-4c65-ade1-a2f3c0362196) (updated after Phase 13) flagged clipboard support as its own recommendation #4, separate from the Phase 13 plan -- a new phase, not a Phase 13 addendum.
+
+### Step 14.1: `tre.Clipboard` -- Status: Complete (2026-09-11)
+
+**Real, working, and verified end to end.** Real system clipboard text access via `arboard` -- the exact crate the readiness assessment itself named ("a small, self-contained cross-platform crate with no architectural entanglement with the rest of tre"). Feasibility was verified in a throwaway scratch crate, outside the repository, against this machine's real clipboard service before touching any real `Cargo.toml` -- the same discipline used for the `shaderc` dependency in Phase 13 Step 13.8.
+
+New `crates/tre-platform/src/clipboard.rs`: `Clipboard::new()`/`get_text()`/`set_text()`, each mapping a real `arboard::Error` into `PlatformError::Other` with a real, specific message rather than a generic failure. `arboard`'s own `default-features = false` drops its `image-data` feature entirely -- the identical "smallest real slice first" precedent `tre-svg`'s own `usvg = { default-features = false }` already establishes; plain text only, a real, disclosed v1 scope. `tre-python` binds this directly as `tre.Clipboard`, marked `unsendable` (matching `PlatformConnection`'s own precedent for platform-connection state that isn't safely `Send`).
+
+**Verified:** `cargo fmt --all -- --check`/`cargo clippy --workspace --all-targets -- -D warnings`/`cargo build --workspace --all-targets`/`cargo test --workspace` all clean in debug (`tre-platform` 0 -> 1 test: a real round-trip against this machine's own live clipboard service, not mocked -- matching this project's own "real demos/tests as the correctness oracle" precedent for platform-level code, which previously had zero unit tests at all). `--release` clean apart from the same 5 pre-existing, already-flagged `debug_assert!` failures (2 in `tre-engine`, 3 in `tre-memory`, unrelated to this step). `demo/phase14_step14_1/demo.py`, run via `maturin develop --release`: a basic round-trip using a fresh UUID marker per run (the system clipboard is real, shared, stateful OS state -- the test never assumes it starts empty), a second `set_text` fully replacing the first, and real multi-byte UTF-8 content (accented Latin, a CJK phrase, a real 4-byte-UTF-8 emoji) round-tripping byte-exact through the real platform clipboard service.
+
+Not yet done: image/rich-text clipboard content (a real `arboard` feature, deliberately deferred); `EditableText` (Phase 13 Step 13.5) has no `.cut()`/`.copy()`/`.paste()` convenience methods wired to this `Clipboard` yet -- a real, natural next pairing now that both pieces exist independently.

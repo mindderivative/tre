@@ -17,3 +17,13 @@ workspace = true
 raw-window-handle = "0.6.2"
 tre-engine = { path = "../tre-engine" }
 winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
+# Real system clipboard access (GUI-readiness recommendation #4) -- the
+# same small, self-contained, cross-platform crate the assessment named.
+# `default-features = false` drops arboard's own `image-data` feature
+# (a real, disclosed v1 scope: text only, matching this project's own
+# "smallest real slice first" precedent elsewhere, e.g. usvg's identical
+# `default-features = false`). Verified to build and round-trip real
+# clipboard text against this machine's live Wayland session in complete
+# isolation (a throwaway scratch crate outside this repository) before
+# adding it here.
+arboard = { version = "3", default-features = false }

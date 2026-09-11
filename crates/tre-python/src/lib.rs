@@ -38,6 +38,7 @@
 
 mod animation;
 mod canvas;
+mod clipboard;
 mod clock;
 mod custom_shader;
 mod editable_text;
@@ -106,6 +107,7 @@ fn tre_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<animation::PyTimeline>()?;
     m.add_class::<editable_text::PyEditableText>()?;
     m.add_class::<custom_shader::PyCustomShaderId>()?;
+    m.add_class::<clipboard::PyClipboard>()?;
     m.add_class::<shapes::PyCustomShaded>()?;
     Ok(())
 }

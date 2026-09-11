@@ -22,8 +22,10 @@
 //! crates permitted to contain `unsafe`.
 #![forbid(unsafe_code)]
 
+mod clipboard;
 mod winit_backend;
 
+pub use clipboard::Clipboard;
 use raw_window_handle::{DisplayHandle, HandleError, HasDisplayHandle, WindowHandle};
 pub use tre_engine::{ElementState, InputEvent, MouseButton, WindowId};
 
