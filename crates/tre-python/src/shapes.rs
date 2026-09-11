@@ -15,11 +15,12 @@ use std::sync::Arc;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use tre_engine::{
-    CornerRadii, FillStyle, FontId, FontRegistry, GradientError, LineCap, LineJoin, Path,
-    PathCommand, Polygon, PrimitiveCommon, Rectangle, RhiTexture, ShapeColor as Color, ShapeId,
-    ShapePrimitive, ShapeRegistry, Text as EngineText, Transform2D,
+    CornerRadii, CustomShaded, FillStyle, FontId, FontRegistry, GradientError, LineCap, LineJoin,
+    Path, PathCommand, Polygon, PrimitiveCommon, Rectangle, RhiTexture, ShapeColor as Color,
+    ShapeId, ShapePrimitive, ShapeRegistry, Text as EngineText, Transform2D,
 };
 
+use crate::custom_shader::PyCustomShaderId;
 use crate::font::PyFont;
 use crate::gradient::{PyGradient, PyGradientId};
 use crate::texture::PyTexture;
@@ -610,6 +611,98 @@ impl PyText {
     }
 }
 
+/// A quad rendered through a caller-registered custom shader pipeline
+/// (Phase 13 Step 13.8, Q13). Mirrors `tre_engine::CustomShaded`. Get a
+/// real `CustomShaderId` via `renderer.create_custom_shader(fragment_
+/// source)` first -- this class carries no shader source itself, only
+/// a reference to an already-compiled, already-registered pipeline.
+///
+/// `fill_color` here is a plain flat color multiplier (the vertex
+/// color a custom fragment shader receives as `frag_color`), not the
+/// polymorphic `int | GradientId | Texture` union every other shape's
+/// `fill_color` accepts -- a real, disclosed simplification matching
+/// `Svg`'s own "solid fill only" precedent, since what a custom
+/// fragment shader actually does with `frag_color` is entirely up to
+/// its own GLSL source.
+#[pyclass(name = "CustomShaded")]
+#[derive(Clone)]
+pub struct PyCustomShaded {
+    #[pyo3(get, set)]
+    pub x: f32,
+    #[pyo3(get, set)]
+    pub y: f32,
+    #[pyo3(get, set)]
+    pub width: f32,
+    #[pyo3(get, set)]
+    pub height: f32,
+    #[pyo3(get, set)]
+    pub pipeline_id: PyCustomShaderId,
+    #[pyo3(get, set)]
+    pub fill_color: u32,
+    #[pyo3(get, set)]
+    pub opacity: f32,
+    #[pyo3(get, set)]
+    pub scale_x: f32,
+    #[pyo3(get, set)]
+    pub scale_y: f32,
+    #[pyo3(get, set)]
+    pub rotation: f32,
+}
+
+#[pymethods]
+impl PyCustomShaded {
+    #[new]
+    #[pyo3(signature = (x, y, width, height, pipeline_id, fill_color, scale_x = 1.0, scale_y = 1.0, rotation = 0.0))]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "every trailing parameter has a real default; a \
+             real caller almost always writes tre.CustomShaded(x, y, w, h, pipeline_id, color)"
+    )]
+    fn new(
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        pipeline_id: PyCustomShaderId,
+        fill_color: u32,
+        scale_x: f32,
+        scale_y: f32,
+        rotation: f32,
+    ) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+            pipeline_id,
+            fill_color,
+            opacity: 1.0,
+            scale_x,
+            scale_y,
+            rotation,
+        }
+    }
+}
+
+impl PyCustomShaded {
+    fn to_engine(&self) -> CustomShaded {
+        let mut shape = CustomShaded::new(
+            [self.width, self.height],
+            self.pipeline_id.0,
+            self.fill_color as Color,
+        );
+        shape.common = common(
+            self.x,
+            self.y,
+            self.opacity,
+            self.scale_x,
+            self.scale_y,
+            self.rotation,
+        );
+        shape
+    }
+}
+
 /// The generational shape store (`tre_engine::ShapeRegistry`). Insert
 /// shapes, get back a stable [`PyShapeId`], then render via
 /// [`crate::renderer::PyHeadlessRenderer`].
@@ -784,6 +877,29 @@ impl PyShapeRegistry {
         validate_finite("rotation", svg.rotation)?;
         Ok(PyShapeId(
             self.inner.insert(ShapePrimitive::Svg(svg.to_engine())),
+        ))
+    }
+
+    /// # Errors
+    /// Raises `ValueError` if any of `custom`'s numeric fields is
+    /// non-finite, or `width`/`height` is negative (REVIEW.md #202).
+    /// Does NOT validate that `custom.pipeline_id` is actually
+    /// registered against whatever renderer eventually renders this
+    /// shape -- that's a real runtime failure surfaced at render time
+    /// instead (matching `execute_frame`'s own existing "unregistered
+    /// pipeline id" contract for every other shape kind).
+    fn insert_custom_shaded(&mut self, custom: &PyCustomShaded) -> PyResult<PyShapeId> {
+        validate_finite("x", custom.x)?;
+        validate_finite("y", custom.y)?;
+        validate_non_negative("width", custom.width)?;
+        validate_non_negative("height", custom.height)?;
+        validate_finite("opacity", custom.opacity)?;
+        validate_finite("scale_x", custom.scale_x)?;
+        validate_finite("scale_y", custom.scale_y)?;
+        validate_finite("rotation", custom.rotation)?;
+        Ok(PyShapeId(
+            self.inner
+                .insert(ShapePrimitive::CustomShaded(custom.to_engine())),
         ))
     }
 

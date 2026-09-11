@@ -732,6 +732,7 @@ pub enum ShapePrimitive {
     Path(Path),
     Text(crate::text::Text),
     Svg(Svg),
+    CustomShaded(CustomShaded),
 }
 
 impl ShapePrimitive {
@@ -744,6 +745,7 @@ impl ShapePrimitive {
             Self::Path(shape) => shape.common(),
             Self::Text(shape) => shape.common(),
             Self::Svg(shape) => shape.common(),
+            Self::CustomShaded(shape) => shape.common(),
         }
     }
 
@@ -755,7 +757,62 @@ impl ShapePrimitive {
             Self::Path(shape) => shape.common_mut(),
             Self::Text(shape) => shape.common_mut(),
             Self::Svg(shape) => shape.common_mut(),
+            Self::CustomShaded(shape) => shape.common_mut(),
         }
+    }
+}
+
+/// The first real id a caller-registered custom pipeline (Phase 13 Step
+/// 13.8) should use -- comfortably above `PipelineKind`'s own 8 fixed
+/// ids (`0..=7`), so a custom id can never collide with a real built-in
+/// `PipelineKind` variant even if more are added later. Both this
+/// crate's own tests and `tre-python`'s renderer bindings reference this
+/// SAME constant, rather than each independently picking a "large
+/// enough" number.
+pub const CUSTOM_PIPELINE_ID_BASE: u16 = 1000;
+
+/// A user-supplied-fragment-shader-rendered quad (Phase 13 Step 13.8:
+/// custom shader API, Q13). Geometrically identical to [`Rectangle`] (an
+/// axis-aligned quad with real `0..1` UVs) but rendered through a
+/// caller-registered custom pipeline instead of one of the engine's own
+/// eight built-in `PipelineKind`s -- see `tre_rhi_vulkan::VulkanDevice::
+/// create_custom_pipeline`'s own doc comment for how that pipeline gets
+/// created (a caller-supplied GLSL fragment shader, compiled to SPIR-V
+/// at runtime via `shaderc`, paired with the engine's own existing
+/// bindless-textured vertex shader).
+///
+/// This primitive carries no shader source or compiled bytes itself --
+/// only `pipeline_id`, a reference to a pipeline a caller must already
+/// have registered into whatever `PipelineRegistry` renders this frame.
+/// A stale/unregistered id is a real, disclosed caller error (matching
+/// `execute_frame`'s own existing "unregistered pipeline id" panic for
+/// every other shape kind, not something this primitive re-validates).
+#[derive(Debug, Clone, Copy)]
+pub struct CustomShaded {
+    pub common: PrimitiveCommon,
+    pub size: Vec2,
+    pub pipeline_id: u16,
+    pub fill_color: Color,
+}
+
+impl CustomShaded {
+    #[must_use]
+    pub fn new(size: Vec2, pipeline_id: u16, fill_color: Color) -> Self {
+        Self {
+            common: PrimitiveCommon::new(),
+            size,
+            pipeline_id,
+            fill_color,
+        }
+    }
+}
+
+impl Primitive for CustomShaded {
+    fn common(&self) -> &PrimitiveCommon {
+        &self.common
+    }
+    fn common_mut(&mut self) -> &mut PrimitiveCommon {
+        &mut self.common
     }
 }
 
@@ -1125,6 +1182,16 @@ impl ShapeRegistry {
                 ShapePrimitive::Svg(svg) => {
                     canvas.draw_flat_polygon(&svg.positions, &svg.triangles, svg.fill_color);
                 }
+                ShapePrimitive::CustomShaded(custom) => {
+                    canvas.draw_custom_shaded_quad(
+                        0.0,
+                        0.0,
+                        custom.size[0],
+                        custom.size[1],
+                        custom.pipeline_id,
+                        custom.fill_color,
+                    );
+                }
             }
 
             if slot.clip_bounds.is_some() {
@@ -1193,6 +1260,12 @@ impl ShapeRegistry {
                 // either, if ever needed, is disclosed future work, not
                 // silently approximated here.
                 ShapePrimitive::Text(_) | ShapePrimitive::Svg(_) => false,
+                ShapePrimitive::CustomShaded(custom) => {
+                    local[0] >= 0.0
+                        && local[0] <= custom.size[0]
+                        && local[1] >= 0.0
+                        && local[1] <= custom.size[1]
+                }
             };
             if hit {
                 return Some(ShapeId {
@@ -4247,6 +4320,60 @@ mod tests {
         assert_eq!(
             frame.commands[0].element_count, 3,
             "one triangle, three indices"
+        );
+    }
+
+    #[test]
+    fn flatten_into_renders_a_custom_shaded_quad_under_its_own_registered_pipeline_id() {
+        let device = FakeDevice::default();
+        let mut registry = ShapeRegistry::new();
+        registry.insert(ShapePrimitive::CustomShaded(CustomShaded::new(
+            [40.0, 30.0],
+            CUSTOM_PIPELINE_ID_BASE,
+            0xFFFF_FFFF,
+        )));
+        let mut canvas = RenderingCanvas::new();
+        registry.flatten_into(&mut canvas, &device, None);
+        let frame = canvas.flatten();
+
+        assert_eq!(frame.vertices.len(), 4, "one quad, four vertices");
+        assert_eq!(frame.commands.len(), 1);
+        assert_eq!(
+            frame.commands[0].pipeline_state_id, CUSTOM_PIPELINE_ID_BASE,
+            "must dispatch under the caller-registered custom pipeline id, not a built-in PipelineKind"
+        );
+        assert_eq!(frame.commands[0].element_count, 6, "one quad, six indices");
+        let positions: Vec<[f32; 2]> = frame.vertices.iter().map(|v| v.position).collect();
+        assert_eq!(
+            positions,
+            vec![[0.0, 0.0], [40.0, 0.0], [40.0, 30.0], [0.0, 30.0]],
+            "a CustomShaded quad's own local-space corners must match its size exactly"
+        );
+        let uvs: Vec<[f32; 2]> = frame.vertices.iter().map(|v| v.uv).collect();
+        assert_eq!(
+            uvs,
+            vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+            "a CustomShaded quad must carry real 0..1 UVs for its own fragment shader to use"
+        );
+    }
+
+    #[test]
+    fn custom_shaded_hit_test_is_a_real_axis_aligned_rect_test() {
+        let mut registry = ShapeRegistry::new();
+        let id = registry.insert(ShapePrimitive::CustomShaded(CustomShaded::new(
+            [40.0, 30.0],
+            CUSTOM_PIPELINE_ID_BASE,
+            0xFFFF_FFFF,
+        )));
+        assert_eq!(
+            registry.hit_test([20.0, 15.0]),
+            Some(id),
+            "inside the quad must hit"
+        );
+        assert_eq!(
+            registry.hit_test([50.0, 15.0]),
+            None,
+            "outside the quad must miss"
         );
     }
 }

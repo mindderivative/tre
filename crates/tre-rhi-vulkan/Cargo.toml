@@ -13,6 +13,16 @@ ash-window = "0.13.0"
 bytemuck = "1.25.2"
 raw-window-handle = "0.6.2"
 tre-engine = { version = "0.1.0", path = "../tre-engine" }
+# Phase 13 Step 13.8: real GLSL fragment-shader compilation at runtime,
+# for the custom shader API -- Rust bindings to the identical real
+# Google `shaderc` library `build.rs`'s own `glslc` CLI invocation
+# already wraps for this crate's compile-time shaders, keeping runtime
+# and build-time compilation behavior identical rather than introducing
+# a second, potentially-divergent compiler (e.g. `naga`). Confirmed to
+# build and link against this machine's pre-installed
+# `libshaderc_combined` before adding it here as a real dependency, not
+# assumed.
+shaderc = "0.8.3"
 
 [dev-dependencies]
 png = "0.18.1"

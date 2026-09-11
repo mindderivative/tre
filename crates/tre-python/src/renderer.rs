@@ -32,6 +32,7 @@ use tre_engine::{
 use tre_rhi_vulkan::{register_shape_pipelines, HeadlessSwapchain, VulkanDevice, HEADLESS_FORMAT};
 
 use crate::canvas::PyCanvas;
+use crate::custom_shader::{custom_shader_err, PyCustomShaderId};
 use crate::error::engine_err;
 use crate::shapes::PyShapeRegistry;
 use crate::text_atlas::TextAtlas;
@@ -149,6 +150,10 @@ pub struct PyHeadlessRenderer {
     device: VulkanDevice,
     width: u32,
     height: u32,
+    /// Phase 13 Step 13.8 (custom shader API): the next id
+    /// `create_custom_shader` registers a freshly-compiled pipeline
+    /// under, starting from `tre_engine::CUSTOM_PIPELINE_ID_BASE`.
+    next_custom_pipeline_id: u16,
 }
 
 #[pymethods]
@@ -197,12 +202,39 @@ impl PyHeadlessRenderer {
             text_atlas,
             width,
             height,
+            next_custom_pipeline_id: tre_engine::CUSTOM_PIPELINE_ID_BASE,
         })
     }
 
     #[getter]
     fn width(&self) -> u32 {
         self.width
+    }
+
+    /// Real user-facing custom shader API (Phase 13 Step 13.8, Q13):
+    /// compiles `fragment_source` (real GLSL) to SPIR-V at runtime via
+    /// `shaderc` and registers the resulting pipeline against this
+    /// renderer's own `PipelineRegistry`, returning a real
+    /// `CustomShaderId` a `ShapeRegistry.insert_custom_shaded(...)` call
+    /// can reference. See `tre_rhi_vulkan::VulkanDevice::
+    /// create_custom_pipeline`'s own doc comment for the real, disclosed
+    /// v1 interface contract `fragment_source` must satisfy (the same
+    /// `frag_color`/`frag_uv`/push-constant interface `bindless_textured
+    /// .frag` itself declares).
+    ///
+    /// # Errors
+    /// Raises `ValueError` with `shaderc`'s own real compiler diagnostic
+    /// if `fragment_source` fails to compile. Raises `TreError` if the
+    /// (successfully compiled) shader still fails real pipeline creation.
+    fn create_custom_shader(&mut self, fragment_source: &str) -> PyResult<PyCustomShaderId> {
+        let pipeline = self
+            .device
+            .create_custom_pipeline(fragment_source, HEADLESS_FORMAT)
+            .map_err(custom_shader_err)?;
+        let id = self.next_custom_pipeline_id;
+        self.next_custom_pipeline_id += 1;
+        self.pipelines.register(id, Box::new(pipeline));
+        Ok(PyCustomShaderId(id))
     }
 
     #[getter]

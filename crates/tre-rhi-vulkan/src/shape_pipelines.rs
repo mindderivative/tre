@@ -35,7 +35,13 @@ const SDF_ROUNDED_RECT_VERT: &[u8] = spv!("sdf_rounded_rect.vert.spv");
 const SDF_ROUNDED_RECT_FRAG: &[u8] = spv!("sdf_rounded_rect.frag.spv");
 const SDF_RECT_STYLED_FRAG: &[u8] = spv!("sdf_rect_styled.frag.spv");
 const SDF_ELLIPSE_FRAG: &[u8] = spv!("sdf_ellipse.frag.spv");
-const BINDLESS_TEXTURED_VERT: &[u8] = spv!("bindless_textured.vert.spv");
+/// Public within this crate (Phase 13 Step 13.8: custom shader API) -- a
+/// custom fragment shader is paired with this SAME real vertex shader
+/// (via `VulkanDevice::create_custom_pipeline`), the identical one
+/// `TexturedQuad`/`GradientFill`/`MsdfText` already use, so a custom
+/// fragment shader can rely on the exact `frag_color`/`frag_uv`
+/// varyings `bindless_textured.frag`'s own source declares.
+pub(crate) const BINDLESS_TEXTURED_VERT: &[u8] = spv!("bindless_textured.vert.spv");
 const BINDLESS_TEXTURED_FRAG: &[u8] = spv!("bindless_textured.frag.spv");
 const GRADIENT_FILL_FRAG: &[u8] = spv!("gradient_fill.frag.spv");
 const MSDF_FRAG: &[u8] = spv!("msdf.frag.spv");

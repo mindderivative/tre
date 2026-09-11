@@ -15,10 +15,11 @@ pub use gpu_style::{
 
 mod shapes;
 pub use shapes::{
-    flatten_path, AnimationId, BlendMode, Circle, Color as ShapeColor, CornerRadii, FillStyle,
-    GradientDef, GradientError, GradientId, GradientKind, GradientStop, LineCap, LineJoin, Path,
-    PathCommand, Polygon, Primitive, PrimitiveCommon, Rectangle, ShapeId, ShapePrimitive,
-    ShapeRegistry, ShapeSlot, Svg, Transform2D, Vec2 as ShapeVec2, Visibility,
+    flatten_path, AnimationId, BlendMode, Circle, Color as ShapeColor, CornerRadii, CustomShaded,
+    FillStyle, GradientDef, GradientError, GradientId, GradientKind, GradientStop, LineCap,
+    LineJoin, Path, PathCommand, Polygon, Primitive, PrimitiveCommon, Rectangle, ShapeId,
+    ShapePrimitive, ShapeRegistry, ShapeSlot, Svg, Transform2D, Vec2 as ShapeVec2, Visibility,
+    CUSTOM_PIPELINE_ID_BASE,
 };
 
 mod input;
@@ -43,7 +44,7 @@ pub use rhi::{
 /// Recoverable engine failure (DESIGN.md Section 2.6). Every fallible
 /// engine operation returns `Result<T, EngineError>`; panics are reserved
 /// for programmer errors, never for these expected failure modes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EngineError {
     /// GPU device removal, driver TDR, or an out-of-date swapchain
     /// (DESIGN.md Section 2.6, "Device loss / swapchain acquire failure").
@@ -75,6 +76,13 @@ pub enum EngineError {
     /// a caller can release outstanding textures, wait for the GC thread
     /// to catch up, and retry.
     TransientPoolBudgetExceeded,
+    /// Real GLSL fragment-shader source (Phase 13 Step 13.8: custom
+    /// shader API) failed to compile to SPIR-V via `shaderc` -- carries
+    /// `shaderc`'s own real compiler diagnostic (line numbers, the exact
+    /// GLSL error) rather than the generic [`Self::PipelineCreationFailed`],
+    /// since a caller authoring their own shader source genuinely needs
+    /// to see *why* it failed, not just that it did.
+    ShaderCompilationFailed(String),
 }
 
 impl std::fmt::Display for EngineError {
@@ -94,6 +102,9 @@ impl std::fmt::Display for EngineError {
             }
             Self::TransientPoolBudgetExceeded => {
                 write!(f, "transient render target pool's VRAM budget exceeded")
+            }
+            Self::ShaderCompilationFailed(diagnostic) => {
+                write!(f, "shader compilation failed: {diagnostic}")
             }
         }
     }

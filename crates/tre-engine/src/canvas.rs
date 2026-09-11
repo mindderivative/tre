@@ -1070,6 +1070,78 @@ impl RenderingCanvas {
         });
     }
 
+    /// `ShapePrimitive::CustomShaded` (Phase 13 Step 13.8: custom shader
+    /// API) -- draws an axis-aligned `(0,0)`-`(w,h)` quad with real
+    /// `0..1` UVs (identical vertex layout to `TexturedQuad`'s own
+    /// draw path), tagged with a caller-registered `pipeline_id` instead
+    /// of one of the eight built-in `PipelineKind`s. `execute_frame`
+    /// already resolves any `pipeline_state_id` generically via
+    /// `PipelineRegistry::get`, not a hardcoded per-`PipelineKind`
+    /// branch (confirmed by reading its own source before adding this),
+    /// so no RHI-level change was needed to make an arbitrary
+    /// registered pipeline id actually render -- only this real,
+    /// disclosed engine-level seam to reach it from a `ShapePrimitive`.
+    ///
+    /// # Panics
+    /// Never in practice -- see `save()`'s own `# Panics` section for why
+    /// `state_stack` is never empty.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a single frame's vertex/index count stays far below u32::MAX, matching \
+                   draw_flat_polygon's own identical reasoning"
+    )]
+    pub fn draw_custom_shaded_quad(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        pipeline_id: u16,
+        rgba: u32,
+    ) {
+        let base_vertex = self.vertices.len() as u32;
+        let base_index = self.indices.len() as u32;
+
+        let state = *self
+            .state_stack
+            .last()
+            .expect("state_stack must always have at least one entry");
+        let color = premultiply_alpha(rgba, state.alpha);
+        let positions = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+        let uvs = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+        self.vertices.extend(
+            positions
+                .into_iter()
+                .zip(uvs)
+                .map(|(position, uv)| UiVertex {
+                    position: state.transform.transform_point(position),
+                    uv,
+                    color,
+                    params: [0.0; 3],
+                }),
+        );
+        self.indices.extend_from_slice(&[
+            base_vertex,
+            base_vertex + 1,
+            base_vertex + 2,
+            base_vertex,
+            base_vertex + 2,
+            base_vertex + 3,
+        ]);
+
+        let clip_bounds = self.clip_stack.last().copied().unwrap_or(FULL_WINDOW_CLIP);
+        let sort_key = self.next_sort_key(pipeline_id, 0);
+        self.commands.push(UiDrawCommand {
+            kind: CommandType::DrawGeometry,
+            sort_key,
+            pipeline_state_id: pipeline_id,
+            texture_handle: NO_TEXTURE,
+            element_count: 6,
+            vertex_offset: base_index,
+            clip_bounds,
+        });
+    }
+
     /// `Polygon`/`Path` gradient fill (Phase 10 Step 10.2.1) --
     /// `ShapeRegistry::flatten_into`'s real caller for a `Polygon`/`Path`
     /// whose `fill` is `FillStyle::Gradient`. `positions` are LOCAL,

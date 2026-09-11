@@ -1202,6 +1202,77 @@ impl VulkanDevice {
         })
     }
 
+    /// Real user-facing custom shader API (Phase 13 Step 13.8, Q13):
+    /// compiles `fragment_source` (real GLSL) to SPIR-V at runtime via
+    /// `shaderc` -- the same real library `build.rs` already wraps
+    /// through its `glslc` CLI invocation for this crate's own
+    /// compile-time shaders, kept identical rather than introducing a
+    /// second, potentially-divergent compiler -- then pairs it with
+    /// [`crate::shape_pipelines::BINDLESS_TEXTURED_VERT`], the SAME real
+    /// vertex shader `TexturedQuad`/`GradientFill`/`MsdfText` already
+    /// use, via [`Self::create_pipeline`] (unchanged -- no new pipeline-
+    /// creation code path, since `create_pipeline` already accepts any
+    /// vertex/fragment SPIR-V pair).
+    ///
+    /// **Real, disclosed v1 scope**: `fragment_source` must declare
+    /// `layout(location = 0) in vec4 frag_color;`, `layout(location = 1)
+    /// in vec2 frag_uv;`, `layout(location = 0) out vec4 out_color;`,
+    /// and the identical 12-byte `PushConstants { vec2 screen_size; uint
+    /// texture_index; }` block `bindless_textured.frag`'s own real
+    /// source declares (see that file directly for the exact contract)
+    /// -- no custom vertex shader, no arbitrary vertex attributes, no
+    /// descriptor sets beyond the engine's own shared bindless set,
+    /// matching this project's own real RHI constraints (confirmed by
+    /// reading `create_pipeline`/`create_universal_pipeline_layout`'s
+    /// own source before designing this, not assumed): every pipeline
+    /// created through here shares the identical fixed `UiVertex`
+    /// layout, triangle topology, and bindless descriptor set every
+    /// other real pipeline already uses.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::ShaderCompilationFailed`] with `shaderc`'s
+    /// own real compiler diagnostic if `fragment_source` fails to
+    /// compile. Returns [`EngineError::PipelineCreationFailed`] if the
+    /// (successfully compiled) SPIR-V still fails real pipeline
+    /// creation (e.g. a genuine interface mismatch against the paired
+    /// vertex shader).
+    pub fn create_custom_pipeline(
+        &self,
+        fragment_source: &str,
+        color_format: vk::Format,
+    ) -> Result<VulkanPipelineState, EngineError> {
+        let compiler = shaderc::Compiler::new().ok_or_else(|| {
+            EngineError::ShaderCompilationFailed(
+                "shaderc::Compiler::new() failed to initialize -- no usable shaderc backend on \
+                 this system"
+                    .to_string(),
+            )
+        })?;
+        let mut options = shaderc::CompileOptions::new().ok_or_else(|| {
+            EngineError::ShaderCompilationFailed(
+                "shaderc::CompileOptions::new() failed to initialize".to_string(),
+            )
+        })?;
+        options.set_target_env(
+            shaderc::TargetEnv::Vulkan,
+            shaderc::EnvVersion::Vulkan1_2 as u32,
+        );
+        let artifact = compiler
+            .compile_into_spirv(
+                fragment_source,
+                shaderc::ShaderKind::Fragment,
+                "custom_shader.frag",
+                "main",
+                Some(&options),
+            )
+            .map_err(|e| EngineError::ShaderCompilationFailed(e.to_string()))?;
+        self.create_pipeline(
+            crate::shape_pipelines::BINDLESS_TEXTURED_VERT,
+            artifact.as_binary_u8(),
+            color_format,
+        )
+    }
+
     /// IMPLEMENTATION.md Step 2.1's "ONE universal pipeline layout every
     /// pipeline gets" (the bindless descriptor set plus the 4-byte
     /// `texture_index` push constant), factored out of `create_pipeline`
