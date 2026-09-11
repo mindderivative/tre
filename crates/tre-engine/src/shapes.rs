@@ -649,6 +649,61 @@ impl Primitive for Path {
     }
 }
 
+/// A pre-tessellated flat-color triangle mesh (Phase 12 Step 12.8) --
+/// most directly, real, arbitrary SVG geometry, but genuinely useful
+/// for any caller-supplied custom mesh, not an SVG-specific type.
+/// `positions`/`triangles` are stored already-tessellated (real, correct
+/// fill-rule resolution -- nonzero or even-odd, self-intersection,
+/// compound shapes with real holes -- already happened once, at
+/// construction time, not here) rather than re-tessellated every
+/// flatten, since this content is typically static across many frames
+/// (an SVG icon doesn't usually change shape) unlike, say, `Text`'s own
+/// per-frame-cheap re-shape.
+///
+/// Deliberately NOT a `tre-svg` type embedded here: `tre-engine` cannot
+/// depend on `tre-svg` at all (`tre-svg` already depends on `tre-engine`
+/// for `UiVertex`, so the reverse would be a real dependency cycle --
+/// see `tre-engine`'s own `Cargo.toml` for the identical reasoning
+/// behind its separate `Path`/`Polygon` lyon tessellation). Real SVG
+/// parsing and tessellation (via `tre-svg::parse_svg`/`tessellate_fill`,
+/// which correctly handle both fill rules) happen in `tre-python`
+/// instead, which has no such cycle -- this primitive just stores their
+/// already-tessellated output.
+///
+/// **Solid fill only** (`fill_color`, not a full [`FillStyle`]) -- the
+/// same real, disclosed scope boundary [`crate::text::Text`] already
+/// establishes: [`crate::RenderingCanvas::draw_flat_polygon`], the real
+/// method this flattens through, only ever takes one flat `rgba`, not a
+/// gradient/texture fill.
+#[derive(Debug, Clone)]
+pub struct Svg {
+    pub common: PrimitiveCommon,
+    pub positions: Vec<Vec2>,
+    pub triangles: Vec<[u32; 3]>,
+    pub fill_color: Color,
+}
+
+impl Svg {
+    #[must_use]
+    pub fn new(positions: Vec<Vec2>, triangles: Vec<[u32; 3]>, fill_color: Color) -> Self {
+        Self {
+            common: PrimitiveCommon::new(),
+            positions,
+            triangles,
+            fill_color,
+        }
+    }
+}
+
+impl Primitive for Svg {
+    fn common(&self) -> &PrimitiveCommon {
+        &self.common
+    }
+    fn common_mut(&mut self) -> &mut PrimitiveCommon {
+        &mut self.common
+    }
+}
+
 /// The one type every shape's own real, concrete storage and every
 /// per-frame flattening call site actually holds -- `enum` dispatch,
 /// not `Box<dyn Primitive>` (ARCHITECTURE.md Section 7.3, TECHNICAL.md
@@ -660,6 +715,7 @@ pub enum ShapePrimitive {
     Polygon(Polygon),
     Path(Path),
     Text(crate::text::Text),
+    Svg(Svg),
 }
 
 impl ShapePrimitive {
@@ -671,6 +727,7 @@ impl ShapePrimitive {
             Self::Polygon(shape) => shape.common(),
             Self::Path(shape) => shape.common(),
             Self::Text(shape) => shape.common(),
+            Self::Svg(shape) => shape.common(),
         }
     }
 
@@ -681,6 +738,7 @@ impl ShapePrimitive {
             Self::Polygon(shape) => shape.common_mut(),
             Self::Path(shape) => shape.common_mut(),
             Self::Text(shape) => shape.common_mut(),
+            Self::Svg(shape) => shape.common_mut(),
         }
     }
 }
@@ -1048,6 +1106,9 @@ impl ShapeRegistry {
                     );
                     crate::text::flatten_text(canvas, text, context);
                 }
+                ShapePrimitive::Svg(svg) => {
+                    canvas.draw_flat_polygon(&svg.positions, &svg.triangles, svg.fill_color);
+                }
             }
 
             if slot.clip_bounds.is_some() {
@@ -1103,17 +1164,19 @@ impl ShapeRegistry {
                 ShapePrimitive::Circle(circle) => hit_test_circle(local, circle),
                 ShapePrimitive::Polygon(polygon) => hit_test_polygon(local, polygon),
                 ShapePrimitive::Path(path) => hit_test_path(local, path),
-                // Phase 12 Step 12.2, a real disclosed scope boundary: a
-                // Text shape has no cached bounding box (its real extent
-                // is only known after shaping, which flatten_into does
-                // lazily, not at insert/mutate time), so it never
-                // reports a hit here. Real UI text is normally hit-
-                // tested via its containing control's own background
-                // shape (e.g. a Rectangle) anyway, not the glyph
-                // outlines directly -- a real "text bounding box" hit
-                // test, if ever needed standalone, is disclosed future
-                // work, not silently approximated here.
-                ShapePrimitive::Text(_) => false,
+                // Phase 12 Step 12.2/12.8, a real disclosed scope
+                // boundary shared by both: neither shape has a cached
+                // bounding box -- `Text`'s real extent is only known
+                // after shaping, which `flatten_into` does lazily, not
+                // at insert/mutate time; `Svg`'s own arbitrary
+                // tessellated triangles would need a real point-in-mesh
+                // test, not a `Rectangle`-style analytic check. Real UI
+                // text/icons are normally hit-tested via their
+                // containing control's own background shape (e.g. a
+                // `Rectangle`) anyway -- a real standalone hit test for
+                // either, if ever needed, is disclosed future work, not
+                // silently approximated here.
+                ShapePrimitive::Text(_) | ShapePrimitive::Svg(_) => false,
             };
             if hit {
                 return Some(ShapeId {
@@ -4102,5 +4165,38 @@ mod tests {
         );
 
         let _ = owner.join();
+    }
+
+    /// Phase 12 Step 12.8: a real proof that `ShapePrimitive::Svg`
+    /// actually renders through `flatten_into`'s dispatch (reusing
+    /// `RenderingCanvas::draw_flat_polygon`'s existing, already-tested
+    /// `FlatColor` pipeline) -- not just that it compiles. Mirrors a
+    /// real, pre-tessellated triangle a `tre-python` SVG binding would
+    /// hand it (this crate cannot depend on `tre-svg` itself to produce
+    /// one -- see `Svg`'s own doc comment for the dependency-cycle
+    /// reason).
+    #[test]
+    fn flatten_into_renders_an_svg_mesh_via_the_flat_color_pipeline() {
+        let device = FakeDevice::default();
+        let mut registry = ShapeRegistry::new();
+        registry.insert(ShapePrimitive::Svg(Svg::new(
+            vec![[0.0, 0.0], [100.0, 0.0], [50.0, 100.0]],
+            vec![[0, 1, 2]],
+            0xFFFF_FFFF,
+        )));
+        let mut canvas = RenderingCanvas::new();
+        registry.flatten_into(&mut canvas, &device, None);
+        let frame = canvas.flatten();
+
+        assert_eq!(frame.vertices.len(), 3, "one triangle, three vertices");
+        assert_eq!(frame.commands.len(), 1);
+        assert_eq!(
+            frame.commands[0].pipeline_state_id,
+            crate::PipelineKind::FlatColor as u16
+        );
+        assert_eq!(
+            frame.commands[0].element_count, 3,
+            "one triangle, three indices"
+        );
     }
 }

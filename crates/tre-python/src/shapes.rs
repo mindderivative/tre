@@ -73,7 +73,7 @@ fn gradient_err(e: GradientError) -> PyErr {
     PyValueError::new_err(e.to_string())
 }
 
-fn common(x: f32, y: f32, opacity: f32) -> PrimitiveCommon {
+pub(crate) fn common(x: f32, y: f32, opacity: f32) -> PrimitiveCommon {
     PrimitiveCommon {
         transform: Transform2D {
             position: [x, y],
@@ -579,6 +579,21 @@ impl PyShapeRegistry {
         Ok(PyShapeId(
             self.inner
                 .insert(ShapePrimitive::Path(path.to_engine(fill))),
+        ))
+    }
+
+    /// # Errors
+    /// Raises `ValueError` if `svg.x`/`svg.y`/`svg.opacity` is
+    /// non-finite. `svg.fill_color` is always a plain `int` (see
+    /// [`crate::svg::PySvg`]'s own doc comment for why it doesn't accept
+    /// a `GradientId`/`Texture` the way every other shape's `fill_color`
+    /// does).
+    fn insert_svg(&mut self, svg: &crate::svg::PySvg) -> PyResult<PyShapeId> {
+        validate_finite("x", svg.x)?;
+        validate_finite("y", svg.y)?;
+        validate_finite("opacity", svg.opacity)?;
+        Ok(PyShapeId(
+            self.inner.insert(ShapePrimitive::Svg(svg.to_engine())),
         ))
     }
 

@@ -34,3 +34,9 @@ rustybuzz = "0.20.1"
 # thread directly, the same real atlas primitive `tre-engine`'s own
 # `Text` primitive renders through.
 tre-atlas = { path = "../tre-atlas" }
+# Phase 12 Step 12.8: real SVG parsing/tessellation for `tre.Svg`. No
+# dependency cycle here (unlike `tre-engine`, which cannot depend on
+# `tre-svg` at all -- see `tre_engine::Svg`'s own doc comment): this
+# crate is a leaf, so it can depend on `tre-svg` directly and hand
+# `tre-engine`'s new `Svg` primitive already-tessellated output.
+tre-svg = { path = "../tre-svg" }

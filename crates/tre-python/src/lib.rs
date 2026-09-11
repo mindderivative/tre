@@ -43,6 +43,7 @@ mod gradient;
 mod input;
 mod renderer;
 mod shapes;
+mod svg;
 mod text_atlas;
 mod texture;
 mod windowed_renderer;
@@ -86,5 +87,7 @@ fn tre_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<input::PyInputEvent>()?;
     m.add_class::<windowed_renderer::PyWindowedRenderer>()?;
     m.add_class::<windowed_renderer::PyCursorIcon>()?;
+    m.add_class::<svg::PySvg>()?;
+    m.add_class::<svg::PyFillRule>()?;
     Ok(())
 }

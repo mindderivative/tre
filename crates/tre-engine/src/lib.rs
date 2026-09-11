@@ -18,7 +18,7 @@ pub use shapes::{
     flatten_path, AnimationId, BlendMode, Circle, Color as ShapeColor, CornerRadii, FillStyle,
     GradientDef, GradientError, GradientId, GradientKind, GradientStop, LineCap, LineJoin, Path,
     PathCommand, Polygon, Primitive, PrimitiveCommon, Rectangle, ShapeId, ShapePrimitive,
-    ShapeRegistry, ShapeSlot, Transform2D, Vec2 as ShapeVec2, Visibility,
+    ShapeRegistry, ShapeSlot, Svg, Transform2D, Vec2 as ShapeVec2, Visibility,
 };
 
 mod input;

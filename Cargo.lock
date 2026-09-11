@@ -3054,6 +3054,7 @@ dependencies = [
  "tre-engine",
  "tre-platform",
  "tre-rhi-vulkan",
+ "tre-svg",
  "tre-text",
 ]
 
