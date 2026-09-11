@@ -199,6 +199,7 @@ fn main() {
         fill: FillStyle::Gradient(gradient_id),
         border_color: 0,
         border_thickness: 0.0,
+        border_enabled: true,
         arc_length: 360.0,
     }));
 
@@ -215,6 +216,7 @@ fn main() {
         fill: FillStyle::Texture(texture_index),
         border_color: 0,
         border_thickness: 0.0,
+        border_enabled: true,
     }));
 
     // A borderless Polygon, not a Path: `flatten_polygon`'s own fill
@@ -243,6 +245,7 @@ fn main() {
         fill: FillStyle::Solid(rgba8(60, 200, 90, 255)),
         border_color: 0,
         border_thickness: 0.0,
+        border_enabled: true,
     }));
 
     let arc_id = registry.insert(ShapePrimitive::Circle(Circle {
@@ -255,6 +258,7 @@ fn main() {
         fill: FillStyle::Solid(rgba8(255, 255, 255, 255)),
         border_color: rgba8(20, 20, 20, 255),
         border_thickness: 18.0,
+        border_enabled: true,
         arc_length: 270.0,
     }));
 

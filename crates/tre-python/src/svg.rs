@@ -94,6 +94,13 @@ pub struct PySvg {
     pub fill_color: u32,
     #[pyo3(get, set)]
     pub opacity: f32,
+    #[pyo3(get, set)]
+    pub scale_x: f32,
+    #[pyo3(get, set)]
+    pub scale_y: f32,
+    /// Radians, matching `tre_engine::Transform2D::rotation`'s own convention.
+    #[pyo3(get, set)]
+    pub rotation: f32,
 }
 
 #[pymethods]
@@ -112,6 +119,9 @@ impl PySvg {
         x = 0.0,
         y = 0.0,
         opacity = 1.0,
+        scale_x = 1.0,
+        scale_y = 1.0,
+        rotation = 0.0,
         max_bytes = DEFAULT_MAX_BYTES,
         max_points = DEFAULT_MAX_POINTS,
     ))]
@@ -127,6 +137,9 @@ impl PySvg {
         x: f32,
         y: f32,
         opacity: f32,
+        scale_x: f32,
+        scale_y: f32,
+        rotation: f32,
         max_bytes: usize,
         max_points: usize,
     ) -> PyResult<Self> {
@@ -150,6 +163,9 @@ impl PySvg {
             y,
             fill_color,
             opacity,
+            scale_x,
+            scale_y,
+            rotation,
         })
     }
 
@@ -169,7 +185,14 @@ impl PySvg {
             self.triangles.clone(),
             self.fill_color as Color,
         );
-        shape.common = crate::shapes::common(self.x, self.y, self.opacity);
+        shape.common = crate::shapes::common(
+            self.x,
+            self.y,
+            self.opacity,
+            self.scale_x,
+            self.scale_y,
+            self.rotation,
+        );
         shape
     }
 }

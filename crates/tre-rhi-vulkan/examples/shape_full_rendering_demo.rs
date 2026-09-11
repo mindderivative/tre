@@ -127,6 +127,7 @@ fn main() {
         fill: FillStyle::Solid(blue),
         border_color: yellow,
         border_thickness: CIRCLE_BORDER_THICKNESS,
+        border_enabled: true,
         arc_length: CIRCLE_ARC_LENGTH_DEGREES,
     }));
 

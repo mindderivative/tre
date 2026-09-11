@@ -159,6 +159,7 @@ fn main() {
         fill: tre_engine::FillStyle::Solid(white),
         border_color: black,
         border_thickness: BORDER_THICKNESS,
+        border_enabled: true,
         arc_length: 360.0,
     }));
 

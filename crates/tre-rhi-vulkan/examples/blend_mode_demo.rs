@@ -239,6 +239,7 @@ fn main() {
             fill: FillStyle::Solid(rgba8(FOREGROUND.0, FOREGROUND.1, FOREGROUND.2, 255)),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
         }));
     }
 

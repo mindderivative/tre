@@ -299,6 +299,7 @@ fn main() {
         fill: FillStyle::Gradient(circle_gradient),
         border_color: black,
         border_thickness: CIRCLE_BORDER_THICKNESS,
+        border_enabled: true,
         arc_length: 360.0,
     }));
 
@@ -345,6 +346,7 @@ fn main() {
         fill: FillStyle::Gradient(hexagon_gradient),
         border_color: 0,
         border_thickness: 0.0,
+        border_enabled: true,
     }));
 
     let mut canvas = RenderingCanvas::new();

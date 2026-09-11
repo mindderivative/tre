@@ -176,6 +176,7 @@ fn main() {
         fill: FillStyle::Texture(texture_index),
         border_color: 0,
         border_thickness: 0.0,
+        border_enabled: true,
         arc_length: 360.0,
     }));
 
@@ -192,6 +193,7 @@ fn main() {
         fill: FillStyle::Texture(texture_index),
         border_color: 0,
         border_thickness: 0.0,
+        border_enabled: true,
     }));
 
     registry.insert(ShapePrimitive::Path(Path {
@@ -210,6 +212,7 @@ fn main() {
         fill: FillStyle::Texture(texture_index),
         border_color: 0,
         border_thickness: 0.0,
+        border_enabled: true,
         stroke_line_cap: tre_engine::LineCap::Butt,
         stroke_line_join: tre_engine::LineJoin::Miter,
     }));

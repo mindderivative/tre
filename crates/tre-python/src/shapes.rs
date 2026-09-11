@@ -4,11 +4,10 @@
 //! Every shape's `fill_color` accepts a real `int | GradientId | Texture`
 //! union (Phase 12 Step 12.4) -- `PyShapeRegistry::resolve_fill` resolves
 //! whichever was passed into the matching `FillStyle` variant at
-//! `insert_*` time. Every shape's `common.transform` beyond position
-//! (rotation, non-uniform scale) and `blend_mode`/`visibility` still stay
-//! at their Rust-side defaults -- `opacity` is the one `PrimitiveCommon`
-//! field exposed here, since it's the one a real caller reaches for
-//! immediately (fades) and costs nothing extra to wire.
+//! `insert_*` time. Every shape exposes its full `common.transform`
+//! (position, non-uniform `scale_x`/`scale_y`, `rotation` in radians --
+//! GUI-framework gap remediation, Added 2026-09-10) plus `opacity`;
+//! `blend_mode`/`visibility` still stay at their Rust-side defaults.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -73,11 +72,24 @@ fn gradient_err(e: GradientError) -> PyErr {
     PyValueError::new_err(e.to_string())
 }
 
-pub(crate) fn common(x: f32, y: f32, opacity: f32) -> PrimitiveCommon {
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one field per real Transform2D component; a real \
+         caller almost always leaves scale_x/scale_y/rotation at their defaults"
+)]
+pub(crate) fn common(
+    x: f32,
+    y: f32,
+    opacity: f32,
+    scale_x: f32,
+    scale_y: f32,
+    rotation: f32,
+) -> PrimitiveCommon {
     PrimitiveCommon {
         transform: Transform2D {
             position: [x, y],
-            ..Transform2D::IDENTITY
+            scale: [scale_x, scale_y],
+            rotation,
         },
         opacity,
         ..PrimitiveCommon::new()
@@ -126,12 +138,38 @@ pub struct PyRectangle {
     pub corner_smoothing: f32,
     #[pyo3(get, set)]
     pub opacity: f32,
+    /// A real on/off switch, independent of `border_thickness` -- see
+    /// `tre_engine::Rectangle::border_enabled`'s own doc comment.
+    #[pyo3(get, set)]
+    pub border_enabled: bool,
+    #[pyo3(get, set)]
+    pub scale_x: f32,
+    #[pyo3(get, set)]
+    pub scale_y: f32,
+    /// Radians, matching `tre_engine::Transform2D::rotation`'s own convention.
+    #[pyo3(get, set)]
+    pub rotation: f32,
 }
 
 #[pymethods]
 impl PyRectangle {
     #[new]
-    fn new(x: f32, y: f32, width: f32, height: f32, fill_color: Py<PyAny>) -> Self {
+    #[pyo3(signature = (x, y, width, height, fill_color, scale_x = 1.0, scale_y = 1.0, rotation = 0.0))]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "every trailing parameter has a real default; a \
+             real caller almost always writes tre.Rectangle(x, y, w, h, color)"
+    )]
+    fn new(
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        fill_color: Py<PyAny>,
+        scale_x: f32,
+        scale_y: f32,
+        rotation: f32,
+    ) -> Self {
         Self {
             x,
             y,
@@ -143,6 +181,10 @@ impl PyRectangle {
             corner_radius: 0.0,
             corner_smoothing: 0.0,
             opacity: 1.0,
+            border_enabled: true,
+            scale_x,
+            scale_y,
+            rotation,
         }
     }
 }
@@ -150,11 +192,19 @@ impl PyRectangle {
 impl PyRectangle {
     fn to_engine(&self, fill: FillStyle) -> Rectangle {
         Rectangle {
-            common: common(self.x, self.y, self.opacity),
+            common: common(
+                self.x,
+                self.y,
+                self.opacity,
+                self.scale_x,
+                self.scale_y,
+                self.rotation,
+            ),
             size: [self.width, self.height],
             fill,
             border_color: self.border_color as Color,
             border_thickness: self.border_thickness,
+            border_enabled: self.border_enabled,
             corner_radius: CornerRadii::uniform(self.corner_radius),
             corner_smoothing: self.corner_smoothing,
         }
@@ -192,12 +242,36 @@ pub struct PyCircle {
     pub arc_length: f32,
     #[pyo3(get, set)]
     pub opacity: f32,
+    /// See `tre_engine::Rectangle::border_enabled`'s own doc comment.
+    #[pyo3(get, set)]
+    pub border_enabled: bool,
+    #[pyo3(get, set)]
+    pub scale_x: f32,
+    #[pyo3(get, set)]
+    pub scale_y: f32,
+    /// Radians, matching `tre_engine::Transform2D::rotation`'s own convention.
+    #[pyo3(get, set)]
+    pub rotation: f32,
 }
 
 #[pymethods]
 impl PyCircle {
     #[new]
-    fn new(x: f32, y: f32, radius: f32, fill_color: Py<PyAny>) -> Self {
+    #[pyo3(signature = (x, y, radius, fill_color, scale_x = 1.0, scale_y = 1.0, rotation = 0.0))]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "every trailing parameter has a real default; a \
+             real caller almost always writes tre.Circle(x, y, r, color)"
+    )]
+    fn new(
+        x: f32,
+        y: f32,
+        radius: f32,
+        fill_color: Py<PyAny>,
+        scale_x: f32,
+        scale_y: f32,
+        rotation: f32,
+    ) -> Self {
         Self {
             x,
             y,
@@ -208,6 +282,10 @@ impl PyCircle {
             border_thickness: 0.0,
             arc_length: 360.0,
             opacity: 1.0,
+            border_enabled: true,
+            scale_x,
+            scale_y,
+            rotation,
         }
     }
 }
@@ -215,11 +293,19 @@ impl PyCircle {
 impl PyCircle {
     fn to_engine(&self, fill: FillStyle) -> tre_engine::Circle {
         tre_engine::Circle {
-            common: common(self.x, self.y, self.opacity),
+            common: common(
+                self.x,
+                self.y,
+                self.opacity,
+                self.scale_x,
+                self.scale_y,
+                self.rotation,
+            ),
             radius: [self.radius_x, self.radius_y],
             fill,
             border_color: self.border_color as Color,
             border_thickness: self.border_thickness,
+            border_enabled: self.border_enabled,
             arc_length: self.arc_length,
         }
     }
@@ -253,12 +339,37 @@ pub struct PyPolygon {
     pub border_thickness: f32,
     #[pyo3(get, set)]
     pub opacity: f32,
+    /// See `tre_engine::Rectangle::border_enabled`'s own doc comment.
+    #[pyo3(get, set)]
+    pub border_enabled: bool,
+    #[pyo3(get, set)]
+    pub scale_x: f32,
+    #[pyo3(get, set)]
+    pub scale_y: f32,
+    /// Radians, matching `tre_engine::Transform2D::rotation`'s own convention.
+    #[pyo3(get, set)]
+    pub rotation: f32,
 }
 
 #[pymethods]
 impl PyPolygon {
     #[new]
-    fn new(x: f32, y: f32, sides: u32, radius: f32, fill_color: Py<PyAny>) -> Self {
+    #[pyo3(signature = (x, y, sides, radius, fill_color, scale_x = 1.0, scale_y = 1.0, rotation = 0.0))]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "every trailing parameter has a real default; a \
+             real caller almost always writes tre.Polygon(x, y, sides, r, color)"
+    )]
+    fn new(
+        x: f32,
+        y: f32,
+        sides: u32,
+        radius: f32,
+        fill_color: Py<PyAny>,
+        scale_x: f32,
+        scale_y: f32,
+        rotation: f32,
+    ) -> Self {
         Self {
             x,
             y,
@@ -270,6 +381,10 @@ impl PyPolygon {
             border_color: 0,
             border_thickness: 0.0,
             opacity: 1.0,
+            border_enabled: true,
+            scale_x,
+            scale_y,
+            rotation,
         }
     }
 }
@@ -277,7 +392,14 @@ impl PyPolygon {
 impl PyPolygon {
     fn to_engine(&self, fill: FillStyle) -> Polygon {
         Polygon {
-            common: common(self.x, self.y, self.opacity),
+            common: common(
+                self.x,
+                self.y,
+                self.opacity,
+                self.scale_x,
+                self.scale_y,
+                self.rotation,
+            ),
             sides: self.sides,
             radius: self.radius,
             vertex_radius: self.vertex_radius,
@@ -285,6 +407,7 @@ impl PyPolygon {
             fill,
             border_color: self.border_color as Color,
             border_thickness: self.border_thickness,
+            border_enabled: self.border_enabled,
         }
     }
 }
@@ -305,18 +428,36 @@ pub struct PyPath {
     pub border_thickness: f32,
     #[pyo3(get, set)]
     pub opacity: f32,
+    /// See `tre_engine::Rectangle::border_enabled`'s own doc comment.
+    #[pyo3(get, set)]
+    pub border_enabled: bool,
+    #[pyo3(get, set)]
+    pub scale_x: f32,
+    #[pyo3(get, set)]
+    pub scale_y: f32,
+    /// Radians, matching `tre_engine::Transform2D::rotation`'s own
+    /// convention. `Path` has no `x`/`y` (its own commands are already
+    /// authored in absolute coordinates), so scale/rotation apply about
+    /// the local origin `(0, 0)` those commands are drawn relative to.
+    #[pyo3(get, set)]
+    pub rotation: f32,
 }
 
 #[pymethods]
 impl PyPath {
     #[new]
-    fn new(fill_color: Py<PyAny>) -> Self {
+    #[pyo3(signature = (fill_color, scale_x = 1.0, scale_y = 1.0, rotation = 0.0))]
+    fn new(fill_color: Py<PyAny>, scale_x: f32, scale_y: f32, rotation: f32) -> Self {
         Self {
             commands: Vec::new(),
             fill_color,
             border_color: 0,
             border_thickness: 0.0,
             opacity: 1.0,
+            border_enabled: true,
+            scale_x,
+            scale_y,
+            rotation,
         }
     }
 
@@ -379,11 +520,19 @@ impl PyPath {
 impl PyPath {
     fn to_engine(&self, fill: FillStyle) -> Path {
         Path {
-            common: common(0.0, 0.0, self.opacity),
+            common: common(
+                0.0,
+                0.0,
+                self.opacity,
+                self.scale_x,
+                self.scale_y,
+                self.rotation,
+            ),
             commands: self.commands.clone(),
             fill,
             border_color: self.border_color as Color,
             border_thickness: self.border_thickness,
+            border_enabled: self.border_enabled,
             stroke_line_cap: LineCap::Butt,
             stroke_line_join: LineJoin::Miter,
         }
@@ -417,12 +566,35 @@ pub struct PyText {
     pub fill_color: u32,
     #[pyo3(get, set)]
     pub opacity: f32,
+    #[pyo3(get, set)]
+    pub scale_x: f32,
+    #[pyo3(get, set)]
+    pub scale_y: f32,
+    /// Radians, matching `tre_engine::Transform2D::rotation`'s own convention.
+    #[pyo3(get, set)]
+    pub rotation: f32,
 }
 
 #[pymethods]
 impl PyText {
     #[new]
-    fn new(x: f32, y: f32, text: String, font: Py<PyFont>, px_size: f32, fill_color: u32) -> Self {
+    #[pyo3(signature = (x, y, text, font, px_size, fill_color, scale_x = 1.0, scale_y = 1.0, rotation = 0.0))]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "every trailing parameter has a real default; a \
+             real caller almost always writes tre.Text(x, y, text, font, size, color)"
+    )]
+    fn new(
+        x: f32,
+        y: f32,
+        text: String,
+        font: Py<PyFont>,
+        px_size: f32,
+        fill_color: u32,
+        scale_x: f32,
+        scale_y: f32,
+        rotation: f32,
+    ) -> Self {
         Self {
             x,
             y,
@@ -431,6 +603,9 @@ impl PyText {
             px_size,
             fill_color,
             opacity: 1.0,
+            scale_x,
+            scale_y,
+            rotation,
         }
     }
 }
@@ -506,6 +681,9 @@ impl PyShapeRegistry {
         validate_non_negative("border_thickness", rect.border_thickness)?;
         validate_non_negative("corner_radius", rect.corner_radius)?;
         validate_finite("opacity", rect.opacity)?;
+        validate_finite("scale_x", rect.scale_x)?;
+        validate_finite("scale_y", rect.scale_y)?;
+        validate_finite("rotation", rect.rotation)?;
         let fill = self.resolve_fill(py, &rect.fill_color)?;
         let mut rect = rect.to_engine(fill);
         // Documented 0.0..=1.0 contract (gpu_style.rs), never enforced
@@ -530,6 +708,9 @@ impl PyShapeRegistry {
         validate_non_negative("border_thickness", circle.border_thickness)?;
         validate_finite("arc_length", circle.arc_length)?;
         validate_finite("opacity", circle.opacity)?;
+        validate_finite("scale_x", circle.scale_x)?;
+        validate_finite("scale_y", circle.scale_y)?;
+        validate_finite("rotation", circle.rotation)?;
         let fill = self.resolve_fill(py, &circle.fill_color)?;
         Ok(PyShapeId(
             self.inner
@@ -559,6 +740,9 @@ impl PyShapeRegistry {
         validate_non_negative("vertex_radius", polygon.vertex_radius)?;
         validate_non_negative("border_thickness", polygon.border_thickness)?;
         validate_finite("opacity", polygon.opacity)?;
+        validate_finite("scale_x", polygon.scale_x)?;
+        validate_finite("scale_y", polygon.scale_y)?;
+        validate_finite("rotation", polygon.rotation)?;
         let fill = self.resolve_fill(py, &polygon.fill_color)?;
         Ok(PyShapeId(
             self.inner
@@ -575,6 +759,9 @@ impl PyShapeRegistry {
     fn insert_path(&mut self, path: &PyPath, py: Python<'_>) -> PyResult<PyShapeId> {
         validate_non_negative("border_thickness", path.border_thickness)?;
         validate_finite("opacity", path.opacity)?;
+        validate_finite("scale_x", path.scale_x)?;
+        validate_finite("scale_y", path.scale_y)?;
+        validate_finite("rotation", path.rotation)?;
         let fill = self.resolve_fill(py, &path.fill_color)?;
         Ok(PyShapeId(
             self.inner
@@ -592,6 +779,9 @@ impl PyShapeRegistry {
         validate_finite("x", svg.x)?;
         validate_finite("y", svg.y)?;
         validate_finite("opacity", svg.opacity)?;
+        validate_finite("scale_x", svg.scale_x)?;
+        validate_finite("scale_y", svg.scale_y)?;
+        validate_finite("rotation", svg.rotation)?;
         Ok(PyShapeId(
             self.inner.insert(ShapePrimitive::Svg(svg.to_engine())),
         ))
@@ -611,6 +801,9 @@ impl PyShapeRegistry {
             )));
         }
         validate_finite("opacity", text.opacity)?;
+        validate_finite("scale_x", text.scale_x)?;
+        validate_finite("scale_y", text.scale_y)?;
+        validate_finite("rotation", text.rotation)?;
 
         let font_id = {
             let font = text.font.borrow(py);
@@ -623,7 +816,14 @@ impl PyShapeRegistry {
             text.px_size,
             text.fill_color as Color,
         );
-        shape.common = common(text.x, text.y, text.opacity);
+        shape.common = common(
+            text.x,
+            text.y,
+            text.opacity,
+            text.scale_x,
+            text.scale_y,
+            text.rotation,
+        );
         Ok(PyShapeId(self.inner.insert(ShapePrimitive::Text(shape))))
     }
 

@@ -430,6 +430,12 @@ pub struct Rectangle {
     pub fill: FillStyle,
     pub border_color: Color,
     pub border_thickness: f32,
+    /// A real on/off switch, independent of `border_thickness` -- lets a
+    /// caller toggle a border without discarding a configured thickness
+    /// (e.g. a hover state that flips a border on/off but keeps its
+    /// width). `border_thickness > 0.0` alone still must hold for a
+    /// border to actually render even when this is `true`.
+    pub border_enabled: bool,
     pub corner_radius: CornerRadii,
     /// Squircle interpolation factor, `0.0` (pure circular-arc
     /// rounding, today's real shader) to `1.0` (full squircle) -- see
@@ -450,6 +456,7 @@ impl Rectangle {
             fill: FillStyle::Solid(color),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
             corner_radius: CornerRadii::uniform(0.0),
             corner_smoothing: 0.0,
         }
@@ -476,6 +483,8 @@ pub struct Circle {
     pub fill: FillStyle,
     pub border_color: Color,
     pub border_thickness: f32,
+    /// See [`Rectangle::border_enabled`]'s own doc comment.
+    pub border_enabled: bool,
     /// Degrees, `0.0..=360.0` -- a progress-wheel/pie-chart partial
     /// sweep starting at 12 o'clock, clockwise.
     pub arc_length: f32,
@@ -494,6 +503,7 @@ impl Circle {
             fill: FillStyle::Solid(color),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
             arc_length: 360.0,
         }
     }
@@ -527,6 +537,8 @@ pub struct Polygon {
     pub fill: FillStyle,
     pub border_color: Color,
     pub border_thickness: f32,
+    /// See [`Rectangle::border_enabled`]'s own doc comment.
+    pub border_enabled: bool,
 }
 
 impl Polygon {
@@ -545,6 +557,7 @@ impl Polygon {
             fill: FillStyle::Solid(color),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
         }
     }
 }
@@ -617,6 +630,8 @@ pub struct Path {
     pub fill: FillStyle,
     pub border_color: Color,
     pub border_thickness: f32,
+    /// See [`Rectangle::border_enabled`]'s own doc comment.
+    pub border_enabled: bool,
     pub stroke_line_cap: LineCap,
     pub stroke_line_join: LineJoin,
 }
@@ -634,6 +649,7 @@ impl Path {
             fill: FillStyle::Solid(color),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
             stroke_line_cap: LineCap::Butt,
             stroke_line_join: LineJoin::Miter,
         }
@@ -1364,10 +1380,15 @@ fn flatten_rectangle(
     // build_gpu_gradient_style's own doc comment for the full account.
     let local_origin_offset = [rect.size[0] / 2.0, rect.size[1] / 2.0];
     let (color, fill) = resolve_style_fill(device, rect.fill, gradients, local_origin_offset);
+    let border_thickness = if rect.border_enabled {
+        rect.border_thickness
+    } else {
+        0.0
+    };
 
     let needs_styled_path = !rect.corner_radius.is_uniform()
         || rect.corner_smoothing != 0.0
-        || rect.border_thickness > 0.0
+        || border_thickness > 0.0
         || fill.fill_kind != 0;
 
     if needs_styled_path {
@@ -1385,7 +1406,7 @@ fn flatten_rectangle(
             ],
             color,
             rect.border_color,
-            rect.border_thickness,
+            border_thickness,
             rect.corner_smoothing,
             fill,
         );
@@ -1428,6 +1449,11 @@ fn flatten_circle(
     // center already, so `radius` is exactly the correction
     // build_gpu_gradient_style's own doc comment describes.
     let (color, fill) = resolve_style_fill(device, circle.fill, gradients, circle.radius);
+    let border_thickness = if circle.border_enabled {
+        circle.border_thickness
+    } else {
+        0.0
+    };
 
     canvas.draw_ellipse(
         device,
@@ -1436,7 +1462,7 @@ fn flatten_circle(
         circle.radius,
         color,
         circle.border_color,
-        circle.border_thickness,
+        border_thickness,
         TWELVE_OCLOCK,
         circle.arc_length.to_radians(),
         fill,
@@ -1704,7 +1730,7 @@ fn flatten_polygon(
         uv_scratch,
     );
 
-    if polygon.border_thickness > 0.0 {
+    if polygon.border_enabled && polygon.border_thickness > 0.0 {
         // A polygon boundary is always closed. `tessellate_stroke`
         // still needs its own owned `Vec<Vec2>` per contour (lyon's own
         // API shape) -- this `to_vec()` copy is the one real allocation
@@ -1881,7 +1907,7 @@ fn flatten_path_shape(
         uv_scratch,
     );
 
-    if path.border_thickness > 0.0 {
+    if path.border_enabled && path.border_thickness > 0.0 {
         let (stroke_positions, stroke_triangles) = tessellate_stroke(
             &subpaths_with_closed,
             path.border_thickness,
@@ -2595,6 +2621,7 @@ mod tests {
             fill: FillStyle::Solid(0xFFFF_FFFF),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
             arc_length: 360.0,
         }));
         let mut canvas = RenderingCanvas::new();
@@ -2658,6 +2685,7 @@ mod tests {
             fill: FillStyle::Solid(0),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
         };
         let points = generate_polygon_points(&polygon);
         assert_eq!(points.len(), 4);
@@ -2685,6 +2713,7 @@ mod tests {
             fill: FillStyle::Solid(0),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
         };
         let points = generate_polygon_points(&star);
         assert_eq!(points.len(), 10, "5 star points = 10 alternating vertices");
@@ -2732,6 +2761,7 @@ mod tests {
             fill: FillStyle::Solid(0xFFFF_FFFF),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
         }));
         let mut canvas = RenderingCanvas::new();
         registry.flatten_into(&mut canvas, &device, None);
@@ -2917,6 +2947,7 @@ mod tests {
             fill: FillStyle::Solid(0xFFFF_FFFF),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
             arc_length: 360.0,
         }));
         // Local center is (20, 20) (bounding-box-top-left convention).
@@ -2933,6 +2964,7 @@ mod tests {
             fill: FillStyle::Solid(0xFFFF_FFFF),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
             arc_length: 270.0, // excludes the northwest wedge, same as the GPU demo.
         }));
         // Northwest of local center (20, 20): local point (10, 10).
@@ -2953,6 +2985,7 @@ mod tests {
             fill: FillStyle::Solid(0xFFFF_FFFF),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
         };
         hexagon.common.transform.position = [50.0, 50.0];
         let id = registry.insert(ShapePrimitive::Polygon(hexagon));
@@ -2981,6 +3014,7 @@ mod tests {
             fill: FillStyle::Solid(0xFFFF_FFFF),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
         }));
         // Just inside the outer radius, exactly between two star points
         // (a concave notch) -- must be excluded even though it's well
@@ -3006,6 +3040,7 @@ mod tests {
             fill: FillStyle::Solid(0xFFFF_FFFF),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
             stroke_line_cap: LineCap::Butt,
             stroke_line_join: LineJoin::Bevel,
         }));
@@ -3104,6 +3139,7 @@ mod tests {
             fill: FillStyle::Solid(0xFFFF_FFFF),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
             stroke_line_cap: LineCap::Butt,
             stroke_line_join: LineJoin::Bevel,
         }));
@@ -3143,6 +3179,7 @@ mod tests {
                 fill: FillStyle::Solid(0xFFFF_FFFF),
                 border_color: 0,
                 border_thickness: 0.0,
+                border_enabled: true,
                 stroke_line_cap: LineCap::Round,
                 stroke_line_join: LineJoin::Round,
             }));
@@ -3164,6 +3201,7 @@ mod tests {
             fill: FillStyle::Solid(0xFFFF_FFFF),
             border_color: 0xFF00_00FF,
             border_thickness: 5.0,
+            border_enabled: true,
             stroke_line_cap: LineCap::Round,
             stroke_line_join: LineJoin::Round,
         }));
@@ -3200,6 +3238,7 @@ mod tests {
                 fill: FillStyle::Solid(0xFFFF_FFFF),
                 border_color: 0,
                 border_thickness: 0.0,
+                border_enabled: true,
             }));
             let mut canvas = RenderingCanvas::new();
             registry.flatten_into(&mut canvas, &device, None);
@@ -3217,6 +3256,7 @@ mod tests {
             fill: FillStyle::Solid(0xFFFF_FFFF),
             border_color: 0xFF00_00FF,
             border_thickness: 3.0,
+            border_enabled: true,
         }));
         let mut canvas = RenderingCanvas::new();
         registry.flatten_into(&mut canvas, &device, None);
@@ -3456,6 +3496,7 @@ mod tests {
             fill: FillStyle::Gradient(gradient_id),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
             corner_radius: CornerRadii::uniform(0.0),
             corner_smoothing: 0.0,
         }));
@@ -3532,6 +3573,7 @@ mod tests {
             fill: FillStyle::Gradient(gradient_id),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
             arc_length: 360.0,
         }));
         let mut canvas = RenderingCanvas::new();
@@ -3587,6 +3629,7 @@ mod tests {
             fill: FillStyle::Gradient(gradient_id),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
         }));
         let mut canvas = RenderingCanvas::new();
         registry.flatten_into(&mut canvas, &device, None);
@@ -3638,6 +3681,7 @@ mod tests {
             fill: FillStyle::Gradient(GradientId(999)),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
         }));
         let mut canvas = RenderingCanvas::new();
         registry.flatten_into(&mut canvas, &device, None);
@@ -3699,6 +3743,7 @@ mod tests {
             fill: FillStyle::Texture(42),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
             corner_radius: CornerRadii::uniform(0.0),
             corner_smoothing: 0.0,
         }));
@@ -3732,6 +3777,7 @@ mod tests {
             fill: FillStyle::Texture(7),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
             arc_length: 360.0,
         }));
         let mut canvas = RenderingCanvas::new();
@@ -3765,6 +3811,7 @@ mod tests {
             fill: FillStyle::Texture(3),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
         }));
         let mut canvas = RenderingCanvas::new();
         registry.flatten_into(&mut canvas, &device, None);
@@ -3829,6 +3876,7 @@ mod tests {
             fill: FillStyle::Solid(0xFFFF_FFFF),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
         }));
         let mut canvas = RenderingCanvas::new();
         registry.flatten_into(&mut canvas, &device, None);
@@ -3861,6 +3909,7 @@ mod tests {
             fill: FillStyle::Solid(0xFFFF_FFFF),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
         }));
         let mut canvas = RenderingCanvas::new();
         registry.flatten_into(&mut canvas, &device, None);
@@ -3892,6 +3941,7 @@ mod tests {
             fill: FillStyle::Solid(0xFFFF_FFFF),
             border_color: 0,
             border_thickness: 0.0,
+            border_enabled: true,
         }));
         let mut canvas = RenderingCanvas::new();
         registry.flatten_into(&mut canvas, &device, None);

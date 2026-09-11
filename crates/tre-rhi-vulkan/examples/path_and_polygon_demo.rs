@@ -112,6 +112,7 @@ fn main() {
         fill: FillStyle::Solid(white),
         border_color: red,
         border_thickness: DONUT_BORDER_THICKNESS,
+        border_enabled: true,
         stroke_line_cap: LineCap::Butt,
         stroke_line_join: LineJoin::Miter,
     }));
@@ -129,6 +130,7 @@ fn main() {
         fill: FillStyle::Solid(green),
         border_color: yellow,
         border_thickness: HEXAGON_BORDER_THICKNESS,
+        border_enabled: true,
     }));
 
     let mut canvas = RenderingCanvas::new();
