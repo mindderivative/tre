@@ -25,8 +25,9 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use raw_window_handle::HasDisplayHandle;
 use tre_engine::{
-    execute_frame, submit_frame, BufferBinding, EngineError, PipelineRegistry, RenderingCanvas,
-    RhiDevice, RhiDynamicRingBuffer, ScissorRect, TextFlattenContext,
+    execute_frame, submit_frame, BufferBinding, EngineError, FlattenedFrame, FrameArena,
+    PipelineRegistry, RenderingCanvas, RhiDevice, RhiDynamicRingBuffer, ScissorRect,
+    TextFlattenContext,
 };
 use tre_rhi_vulkan::{register_shape_pipelines, HeadlessSwapchain, VulkanDevice, HEADLESS_FORMAT};
 
@@ -51,6 +52,22 @@ pub(crate) fn setup_err<E: std::fmt::Display>(e: E) -> PyErr {
 /// so a caller with a genuinely larger scene has no way to raise this
 /// short of a future constructor parameter.
 pub(crate) const RING_BUFFER_CAPACITY: usize = 512 * 1024;
+
+/// `render_parallel`'s own `FrameArena` element capacities (Phase 12
+/// Step 12.6) -- comfortably above `RING_BUFFER_CAPACITY`'s own real
+/// per-frame scale (that constant is a *byte* budget for vertices+
+/// indices combined; these are per-kind *element* counts, since
+/// `FrameArena`'s three `ScatterArena`s are typed, not raw bytes). Not
+/// tunable yet, the same real, disclosed scope boundary
+/// `RING_BUFFER_CAPACITY`'s own doc comment already establishes:
+/// `SubCanvas::stitch_into` reports `false` (mapped to a clean
+/// `TreError`) rather than growing mid-frame, so a caller whose combined
+/// parallel scene is genuinely larger has no way to raise this short of
+/// a future constructor parameter.
+pub(crate) const PARALLEL_ARENA_VERTEX_CAPACITY: usize = 65536;
+pub(crate) const PARALLEL_ARENA_INDEX_CAPACITY: usize = 131072;
+pub(crate) const PARALLEL_ARENA_COMMAND_CAPACITY: usize = 8192;
+pub(crate) const PARALLEL_ARENA_ACCESSIBILITY_CAPACITY: usize = 1024;
 
 /// The `py.detach`'d render closure's own error type -- kept local to
 /// this module rather than widening `tre_engine::EngineError` itself,
@@ -312,6 +329,121 @@ impl PyHeadlessRenderer {
             let mut canvas = canvas.borrow_mut();
             std::mem::replace(&mut canvas.inner, RenderingCanvas::new()).flatten()
         };
+        self.submit_and_read_bgra(py, &frame)
+    }
+
+    /// Renders `registries` in real, genuine parallel (Phase 12 Step
+    /// 12.6) -- Python only supplies the work; every threading decision
+    /// (how many real OS threads, when they run, how their output is
+    /// merged) is made here, in Rust. Each registry is flattened into
+    /// its own real `SubCanvas` on its own real OS thread (the GIL
+    /// released for the whole span, so this is true parallelism, not
+    /// GIL-serialized cooperative scheduling), then every `SubCanvas` is
+    /// stitched into one shared `FrameArena` and submitted as a single
+    /// frame.
+    ///
+    /// The real concurrency-safety story, verified before building this
+    /// (not assumed): `SubCanvas::stitch_into`'s own `ScatterArena`
+    /// reservations are lock-free; the real per-shape GPU style-buffer
+    /// writes (`RhiDevice::shape_style_buffer`) are mutex-protected in
+    /// the real Vulkan backend (`VulkanRingBuffer::write`); and the
+    /// shared text atlas's own request/lookup path is lock-free by
+    /// design (Phase 4) -- none of `ShapeRegistry::flatten_into`'s own
+    /// real work needs any *new* synchronization to run concurrently
+    /// across registries. The one genuinely serialized step is the text
+    /// atlas's own texture-refresh check (`TextAtlas::context`), done
+    /// once up front, before any worker thread starts -- every thread
+    /// shares that one already-resolved `GlyphAtlasContext` read-only.
+    ///
+    /// Each registry's own current state is always flattened in full
+    /// (`mark_all_dirty`), matching `render`'s own single-registry
+    /// convenience wrapper.
+    ///
+    /// # Errors
+    /// Raises `ValueError` if `registries.len()` exceeds this machine's
+    /// own concurrency cap (`available_parallelism() - 1`), `TreError`
+    /// if the combined scene exceeds `render_parallel`'s own fixed
+    /// `FrameArena` capacity (see [`PARALLEL_ARENA_VERTEX_CAPACITY`]'s
+    /// own doc comment) or any other real, recoverable engine failure.
+    fn render_parallel(
+        &mut self,
+        py: Python<'_>,
+        registries: Vec<Py<PyShapeRegistry>>,
+    ) -> PyResult<Py<PyBytes>> {
+        let root = RenderingCanvas::new();
+        if registries.len() > root.max_sub_canvases() {
+            return Err(PyValueError::new_err(format!(
+                "render_parallel got {} registries, more than this machine's own concurrency cap \
+                 of {} (available_parallelism() - 1)",
+                registries.len(),
+                root.max_sub_canvases()
+            )));
+        }
+
+        let atlas_context = self.text_atlas.context(&self.device)?;
+
+        // `try_borrow_mut`, not `borrow_mut` -- the latter panics on a
+        // bad borrow (e.g. the same registry object passed twice in
+        // `registries`, or already borrowed elsewhere), a real caller
+        // mistake this should report cleanly, not crash on.
+        let mut guards: Vec<PyRefMut<'_, PyShapeRegistry>> = registries
+            .iter()
+            .map(|r| r.bind(py).try_borrow_mut().map_err(PyErr::from))
+            .collect::<PyResult<_>>()?;
+        // `PyRefMut` itself is `!Send` (it carries a `Python<'py>` GIL
+        // token internally), so it cannot cross into the `py.detach`
+        // closure below at all -- not even just captured, unused. Each
+        // guard stays right here, keeping its own borrow-flag set (and
+        // therefore keeping any *other* concurrent Python-side access to
+        // the same registry correctly rejected) for this whole method's
+        // duration; only a plain `&mut PyShapeRegistry` re-borrowed out
+        // of it -- ordinary Rust data with no GIL ties -- actually moves
+        // into a worker thread.
+        let mut registry_refs: Vec<&mut PyShapeRegistry> =
+            guards.iter_mut().map(|g| &mut **g).collect();
+        let mut sub_canvases: Vec<_> = registry_refs
+            .iter()
+            .map(|_| root.create_sub_canvas())
+            .collect();
+
+        let device = &self.device;
+        let atlas_context = &atlas_context;
+        py.detach(|| {
+            std::thread::scope(|scope| {
+                for (registry, sub_canvas) in registry_refs.iter_mut().zip(sub_canvases.iter_mut())
+                {
+                    let registry: &mut PyShapeRegistry = registry;
+                    scope.spawn(move || {
+                        registry.inner.mark_all_dirty();
+                        let (inner, fonts) = registry.inner_and_fonts();
+                        let text_context = TextFlattenContext {
+                            fonts,
+                            atlas: atlas_context,
+                        };
+                        inner.flatten_into(sub_canvas, device, Some(&text_context));
+                    });
+                }
+            });
+        });
+
+        let mut arena = FrameArena::with_capacity(
+            PARALLEL_ARENA_VERTEX_CAPACITY,
+            PARALLEL_ARENA_INDEX_CAPACITY,
+            PARALLEL_ARENA_COMMAND_CAPACITY,
+            PARALLEL_ARENA_ACCESSIBILITY_CAPACITY,
+        );
+        for sub_canvas in &sub_canvases {
+            if !sub_canvas.stitch_into(&arena) {
+                return Err(crate::error::TreError::new_err(
+                    "render_parallel's combined scene exceeded its own fixed FrameArena capacity \
+                     -- reduce the total shape count across all registries, or split it across \
+                     multiple render_parallel() calls",
+                ));
+            }
+        }
+        let mut frame = FlattenedFrame::default();
+        arena.flatten_into(&mut frame);
+
         self.submit_and_read_bgra(py, &frame)
     }
 }

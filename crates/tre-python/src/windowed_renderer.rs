@@ -330,79 +330,94 @@ impl PyWindowedRenderer {
         window: PyWindowId,
         canvas: &Bound<'_, PyCanvas>,
     ) -> PyResult<()> {
-        let window = window.0;
-        if !self.windows.contains_key(&window) {
-            return Err(unknown_window_err(window));
-        }
-
         let frame = {
             let mut canvas = canvas.borrow_mut();
             std::mem::replace(&mut canvas.inner, RenderingCanvas::new()).flatten()
         };
-        let vertex_bytes: &[u8] = bytemuck::cast_slice(&frame.vertices);
-        let index_bytes: &[u8] = bytemuck::cast_slice(&frame.indices);
+        self.submit_frame_to_window(py, window.0, &frame)
+    }
 
-        // Real resize recovery (this module's own doc comment): retry
-        // exactly once against a freshly recreated swapchain if the
-        // current one is stale.
-        for attempt in 0..2 {
-            let device = &self.device;
-            let ring_buffer = &*self.ring_buffer;
-            let slot = self
-                .windows
-                .get(&window)
-                .expect("checked present above; only removed by close_window, not called here");
-            let pipelines = &slot.pipelines;
-            let swapchain = &slot.swapchain;
-            let full_window = ScissorRect {
-                x: 0,
-                y: 0,
-                width: slot.width,
-                height: slot.height,
-            };
-            let frame_ref = &frame;
+    /// Renders `registries` in real, genuine parallel to `window` (Phase
+    /// 12 Step 12.6) -- see `PyHeadlessRenderer::render_parallel`'s own
+    /// doc comment for the full real concurrency-safety account (lock-
+    /// free `stitch_into`, a mutex-protected GPU style buffer, a
+    /// lock-free shared text atlas); the only difference here is the
+    /// final step submits to `window`'s own swapchain (with the same
+    /// real resize-recovery retry every other `render`/`render_canvas`
+    /// call already gets) instead of returning readback bytes.
+    ///
+    /// # Errors
+    /// Raises `ValueError` if `window` is unknown to this renderer or
+    /// `registries.len()` exceeds this machine's own concurrency cap,
+    /// `TreError` on any other real, recoverable engine failure.
+    fn render_parallel(
+        &mut self,
+        py: Python<'_>,
+        window: PyWindowId,
+        registries: Vec<Py<PyShapeRegistry>>,
+    ) -> PyResult<()> {
+        let root = RenderingCanvas::new();
+        if registries.len() > root.max_sub_canvases() {
+            return Err(PyValueError::new_err(format!(
+                "render_parallel got {} registries, more than this machine's own concurrency cap \
+                 of {} (available_parallelism() - 1)",
+                registries.len(),
+                root.max_sub_canvases()
+            )));
+        }
 
-            let outcome: Result<(), RenderError> = py.detach(move || {
-                let vertex_offset = ring_buffer
-                    .write(vertex_bytes)
-                    .ok_or(RenderError::RingBufferStarved)?;
-                let index_offset = ring_buffer
-                    .write(index_bytes)
-                    .ok_or(RenderError::RingBufferStarved)?;
-                submit_frame(device, swapchain, |cmd_buffer| {
-                    execute_frame(
-                        frame_ref,
-                        pipelines,
-                        BufferBinding {
-                            buffer: ring_buffer,
-                            offset: vertex_offset,
-                        },
-                        BufferBinding {
-                            buffer: ring_buffer,
-                            offset: index_offset,
-                        },
-                        &full_window,
-                        device,
-                        cmd_buffer,
-                    );
-                })?;
-                Ok(())
-            });
+        let atlas_context = self.text_atlas.context(&self.device)?;
 
-            match outcome {
-                Ok(()) => return Ok(()),
-                Err(RenderError::Engine(EngineError::SwapchainOutOfDate)) if attempt == 0 => {
-                    let (width, height) = (slot.width, slot.height);
-                    let fresh =
-                        WindowSlot::create(&self.device, &self.connection, window, width, height)?;
-                    self.windows.insert(window, fresh);
+        let mut guards: Vec<PyRefMut<'_, PyShapeRegistry>> = registries
+            .iter()
+            .map(|r| r.bind(py).try_borrow_mut().map_err(PyErr::from))
+            .collect::<PyResult<_>>()?;
+        let mut registry_refs: Vec<&mut PyShapeRegistry> =
+            guards.iter_mut().map(|g| &mut **g).collect();
+        let mut sub_canvases: Vec<_> = registry_refs
+            .iter()
+            .map(|_| root.create_sub_canvas())
+            .collect();
+
+        let device = &self.device;
+        let atlas_context = &atlas_context;
+        py.detach(|| {
+            std::thread::scope(|scope| {
+                for (registry, sub_canvas) in registry_refs.iter_mut().zip(sub_canvases.iter_mut())
+                {
+                    let registry: &mut PyShapeRegistry = registry;
+                    scope.spawn(move || {
+                        registry.inner.mark_all_dirty();
+                        let (inner, fonts) = registry.inner_and_fonts();
+                        let text_context = TextFlattenContext {
+                            fonts,
+                            atlas: atlas_context,
+                        };
+                        inner.flatten_into(sub_canvas, device, Some(&text_context));
+                    });
                 }
-                Err(e) => return Err(render_err(e)),
+            });
+        });
+
+        let mut arena = tre_engine::FrameArena::with_capacity(
+            crate::renderer::PARALLEL_ARENA_VERTEX_CAPACITY,
+            crate::renderer::PARALLEL_ARENA_INDEX_CAPACITY,
+            crate::renderer::PARALLEL_ARENA_COMMAND_CAPACITY,
+            crate::renderer::PARALLEL_ARENA_ACCESSIBILITY_CAPACITY,
+        );
+        for sub_canvas in &sub_canvases {
+            if !sub_canvas.stitch_into(&arena) {
+                return Err(crate::error::TreError::new_err(
+                    "render_parallel's combined scene exceeded its own fixed FrameArena capacity \
+                     -- reduce the total shape count across all registries, or split it across \
+                     multiple render_parallel() calls",
+                ));
             }
         }
-        Err(render_err(RenderError::Engine(
-            EngineError::SwapchainOutOfDate,
-        )))
+        let mut frame = tre_engine::FlattenedFrame::default();
+        arena.flatten_into(&mut frame);
+
+        self.submit_frame_to_window(py, window.0, &frame)
     }
 
     /// # Errors
@@ -464,5 +479,85 @@ impl PyWindowedRenderer {
             height,
         });
         self.connection.set_icon(window.0, icon).map_err(setup_err)
+    }
+}
+
+impl PyWindowedRenderer {
+    /// Submits `frame` to `window`'s own swapchain, with the same real
+    /// resize-recovery retry (this module's own doc comment) every
+    /// submission path shares. Factored out so `render_canvas`/
+    /// `render_parallel` differ only in how `frame` itself gets built.
+    fn submit_frame_to_window(
+        &mut self,
+        py: Python<'_>,
+        window: WindowId,
+        frame: &tre_engine::FlattenedFrame,
+    ) -> PyResult<()> {
+        if !self.windows.contains_key(&window) {
+            return Err(unknown_window_err(window));
+        }
+
+        let vertex_bytes: &[u8] = bytemuck::cast_slice(&frame.vertices);
+        let index_bytes: &[u8] = bytemuck::cast_slice(&frame.indices);
+
+        // Real resize recovery (this module's own doc comment): retry
+        // exactly once against a freshly recreated swapchain if the
+        // current one is stale.
+        for attempt in 0..2 {
+            let device = &self.device;
+            let ring_buffer = &*self.ring_buffer;
+            let slot = self
+                .windows
+                .get(&window)
+                .expect("checked present above; only removed by close_window, not called here");
+            let pipelines = &slot.pipelines;
+            let swapchain = &slot.swapchain;
+            let full_window = ScissorRect {
+                x: 0,
+                y: 0,
+                width: slot.width,
+                height: slot.height,
+            };
+            let outcome: Result<(), RenderError> = py.detach(move || {
+                let vertex_offset = ring_buffer
+                    .write(vertex_bytes)
+                    .ok_or(RenderError::RingBufferStarved)?;
+                let index_offset = ring_buffer
+                    .write(index_bytes)
+                    .ok_or(RenderError::RingBufferStarved)?;
+                submit_frame(device, swapchain, |cmd_buffer| {
+                    execute_frame(
+                        frame,
+                        pipelines,
+                        BufferBinding {
+                            buffer: ring_buffer,
+                            offset: vertex_offset,
+                        },
+                        BufferBinding {
+                            buffer: ring_buffer,
+                            offset: index_offset,
+                        },
+                        &full_window,
+                        device,
+                        cmd_buffer,
+                    );
+                })?;
+                Ok(())
+            });
+
+            match outcome {
+                Ok(()) => return Ok(()),
+                Err(RenderError::Engine(EngineError::SwapchainOutOfDate)) if attempt == 0 => {
+                    let (width, height) = (slot.width, slot.height);
+                    let fresh =
+                        WindowSlot::create(&self.device, &self.connection, window, width, height)?;
+                    self.windows.insert(window, fresh);
+                }
+                Err(e) => return Err(render_err(e)),
+            }
+        }
+        Err(render_err(RenderError::Engine(
+            EngineError::SwapchainOutOfDate,
+        )))
     }
 }
