@@ -39,10 +39,12 @@
 mod canvas;
 mod error;
 mod font;
+mod gradient;
 mod input;
 mod renderer;
 mod shapes;
 mod text_atlas;
+mod texture;
 mod windowed_renderer;
 
 use pyo3::prelude::*;
@@ -69,6 +71,10 @@ fn tre_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<shapes::PyText>()?;
     m.add_class::<shapes::PyShapeRegistry>()?;
     m.add_class::<font::PyFont>()?;
+    m.add_class::<gradient::PyGradient>()?;
+    m.add_class::<gradient::PyGradientId>()?;
+    m.add_class::<texture::PyTexture>()?;
+    m.add_class::<texture::PyTextureFormat>()?;
     m.add_class::<canvas::PyCanvas>()?;
     m.add_class::<renderer::PyHeadlessRenderer>()?;
     m.add_class::<input::PyWindowId>()?;

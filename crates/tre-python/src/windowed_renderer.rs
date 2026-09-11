@@ -34,6 +34,7 @@ use crate::renderer::{
 };
 use crate::shapes::PyShapeRegistry;
 use crate::text_atlas::TextAtlas;
+use crate::texture::{PyTexture, PyTextureFormat};
 
 fn unknown_window_err(id: WindowId) -> PyErr {
     PyValueError::new_err(format!(
@@ -169,6 +170,30 @@ impl PyWindowedRenderer {
     #[getter]
     fn main_window(&self) -> PyWindowId {
         self.main_window.into()
+    }
+
+    /// Uploads `pixels` (tightly packed, `width * height` pixels in
+    /// `format`) as a new, real GPU texture and registers it in the
+    /// bindless array, returning a `Texture` usable as any shape's
+    /// `fill_color` (Phase 12 Step 12.4). Mirrors `RhiDevice::
+    /// create_texture` directly.
+    ///
+    /// # Errors
+    /// Raises `TreError` if `pixels`' length doesn't match `width *
+    /// height * bytes_per_pixel(format)`, `width`/`height` is zero, or
+    /// the bindless array is exhausted.
+    fn create_texture(
+        &self,
+        width: u32,
+        height: u32,
+        format: PyTextureFormat,
+        pixels: Vec<u8>,
+    ) -> PyResult<PyTexture> {
+        let texture = self
+            .device
+            .create_texture(width, height, format.into(), &pixels)
+            .map_err(engine_err)?;
+        PyTexture::new(texture)
     }
 
     /// Creates an additional top-level window sharing this renderer's

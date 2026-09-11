@@ -1,27 +1,29 @@
 //! Pythonic shape classes (IMPLEMENTATION.md Phase 10 Step 10.4 task 1/2)
 //! and the `ShapeRegistry` binding they insert into.
 //!
-//! **Scope of this first pass**: solid fill only (`FillStyle::Gradient`/
-//! `Texture` are real in `tre-engine` but not yet exposed to Python --
-//! a real, bounded follow-up, matching this project's own established
-//! precedent of shipping one fill kind before the next, e.g. Step
-//! 10.2.1/10.2.2). Every shape's `common.transform` beyond position
-//! (rotation, non-uniform scale) and `blend_mode`/`visibility` also stay
-//! at their Rust-side defaults for now -- `opacity` is the one
-//! `PrimitiveCommon` field exposed here, since it's the one a real caller
-//! reaches for immediately (fades) and costs nothing extra to wire.
+//! Every shape's `fill_color` accepts a real `int | GradientId | Texture`
+//! union (Phase 12 Step 12.4) -- `PyShapeRegistry::resolve_fill` resolves
+//! whichever was passed into the matching `FillStyle` variant at
+//! `insert_*` time. Every shape's `common.transform` beyond position
+//! (rotation, non-uniform scale) and `blend_mode`/`visibility` still stay
+//! at their Rust-side defaults -- `opacity` is the one `PrimitiveCommon`
+//! field exposed here, since it's the one a real caller reaches for
+//! immediately (fades) and costs nothing extra to wire.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use tre_engine::{
-    CornerRadii, FontId, FontRegistry, LineCap, LineJoin, Path, PathCommand, Polygon,
-    PrimitiveCommon, Rectangle, ShapeColor as Color, ShapeId, ShapePrimitive, ShapeRegistry,
-    Text as EngineText, Transform2D,
+    CornerRadii, FillStyle, FontId, FontRegistry, GradientError, LineCap, LineJoin, Path,
+    PathCommand, Polygon, PrimitiveCommon, Rectangle, RhiTexture, ShapeColor as Color, ShapeId,
+    ShapePrimitive, ShapeRegistry, Text as EngineText, Transform2D,
 };
 
 use crate::font::PyFont;
+use crate::gradient::{PyGradient, PyGradientId};
+use crate::texture::PyTexture;
 
 /// A real cap on `Polygon::sides`/`star_points`, found necessary by this
 /// project's own review process (REVIEW.md #196-198): `tre_engine`'s own
@@ -62,6 +64,15 @@ fn validate_non_negative(field: &str, value: f32) -> PyResult<()> {
     Ok(())
 }
 
+/// Maps a real `GradientError` (`create_gradient`'s own validation
+/// failure) to a Python `ValueError` -- a real caller mistake (bad
+/// stops, non-positive radius), not an engine-internal failure, so
+/// `ValueError` matches every other shape-field validation error in this
+/// module rather than `TreError`.
+fn gradient_err(e: GradientError) -> PyErr {
+    PyValueError::new_err(e.to_string())
+}
+
 fn common(x: f32, y: f32, opacity: f32) -> PrimitiveCommon {
     PrimitiveCommon {
         transform: Transform2D {
@@ -86,6 +97,12 @@ impl PyShapeId {
 }
 
 /// A corner-radius-free-by-default rectangle. Mirrors `tre_engine::Rectangle`.
+///
+/// `fill_color` accepts an `int` (solid RGBA8, via `tre.rgba8`), a
+/// [`crate::gradient::PyGradientId`] (from `registry.create_gradient`),
+/// or a [`PyTexture`] (from a renderer's `create_texture`) -- resolved
+/// into the matching real `FillStyle` variant at `insert_rectangle` time
+/// (Phase 12 Step 12.4).
 #[pyclass(name = "Rectangle")]
 #[derive(Clone)]
 pub struct PyRectangle {
@@ -98,7 +115,7 @@ pub struct PyRectangle {
     #[pyo3(get, set)]
     pub height: f32,
     #[pyo3(get, set)]
-    pub fill_color: u32,
+    pub fill_color: Py<PyAny>,
     #[pyo3(get, set)]
     pub border_color: u32,
     #[pyo3(get, set)]
@@ -114,7 +131,7 @@ pub struct PyRectangle {
 #[pymethods]
 impl PyRectangle {
     #[new]
-    fn new(x: f32, y: f32, width: f32, height: f32, fill_color: u32) -> Self {
+    fn new(x: f32, y: f32, width: f32, height: f32, fill_color: Py<PyAny>) -> Self {
         Self {
             x,
             y,
@@ -130,16 +147,16 @@ impl PyRectangle {
     }
 }
 
-impl From<&PyRectangle> for Rectangle {
-    fn from(r: &PyRectangle) -> Self {
-        Self {
-            common: common(r.x, r.y, r.opacity),
-            size: [r.width, r.height],
-            fill: tre_engine::FillStyle::Solid(r.fill_color as Color),
-            border_color: r.border_color as Color,
-            border_thickness: r.border_thickness,
-            corner_radius: CornerRadii::uniform(r.corner_radius),
-            corner_smoothing: r.corner_smoothing,
+impl PyRectangle {
+    fn to_engine(&self, fill: FillStyle) -> Rectangle {
+        Rectangle {
+            common: common(self.x, self.y, self.opacity),
+            size: [self.width, self.height],
+            fill,
+            border_color: self.border_color as Color,
+            border_thickness: self.border_thickness,
+            corner_radius: CornerRadii::uniform(self.corner_radius),
+            corner_smoothing: self.corner_smoothing,
         }
     }
 }
@@ -162,8 +179,10 @@ pub struct PyCircle {
     pub radius_x: f32,
     #[pyo3(get, set)]
     pub radius_y: f32,
+    /// See [`PyRectangle::fill_color`]'s own doc comment for the real
+    /// `int | GradientId | Texture` contract.
     #[pyo3(get, set)]
-    pub fill_color: u32,
+    pub fill_color: Py<PyAny>,
     #[pyo3(get, set)]
     pub border_color: u32,
     #[pyo3(get, set)]
@@ -178,7 +197,7 @@ pub struct PyCircle {
 #[pymethods]
 impl PyCircle {
     #[new]
-    fn new(x: f32, y: f32, radius: f32, fill_color: u32) -> Self {
+    fn new(x: f32, y: f32, radius: f32, fill_color: Py<PyAny>) -> Self {
         Self {
             x,
             y,
@@ -193,15 +212,15 @@ impl PyCircle {
     }
 }
 
-impl From<&PyCircle> for tre_engine::Circle {
-    fn from(c: &PyCircle) -> Self {
-        Self {
-            common: common(c.x, c.y, c.opacity),
-            radius: [c.radius_x, c.radius_y],
-            fill: tre_engine::FillStyle::Solid(c.fill_color as Color),
-            border_color: c.border_color as Color,
-            border_thickness: c.border_thickness,
-            arc_length: c.arc_length,
+impl PyCircle {
+    fn to_engine(&self, fill: FillStyle) -> tre_engine::Circle {
+        tre_engine::Circle {
+            common: common(self.x, self.y, self.opacity),
+            radius: [self.radius_x, self.radius_y],
+            fill,
+            border_color: self.border_color as Color,
+            border_thickness: self.border_thickness,
+            arc_length: self.arc_length,
         }
     }
 }
@@ -224,8 +243,10 @@ pub struct PyPolygon {
     /// `None`: a regular `sides`-gon. `Some(k)`: a `2*k`-vertex star.
     #[pyo3(get, set)]
     pub star_points: Option<u32>,
+    /// See [`PyRectangle::fill_color`]'s own doc comment for the real
+    /// `int | GradientId | Texture` contract.
     #[pyo3(get, set)]
-    pub fill_color: u32,
+    pub fill_color: Py<PyAny>,
     #[pyo3(get, set)]
     pub border_color: u32,
     #[pyo3(get, set)]
@@ -237,7 +258,7 @@ pub struct PyPolygon {
 #[pymethods]
 impl PyPolygon {
     #[new]
-    fn new(x: f32, y: f32, sides: u32, radius: f32, fill_color: u32) -> Self {
+    fn new(x: f32, y: f32, sides: u32, radius: f32, fill_color: Py<PyAny>) -> Self {
         Self {
             x,
             y,
@@ -253,17 +274,17 @@ impl PyPolygon {
     }
 }
 
-impl From<&PyPolygon> for Polygon {
-    fn from(p: &PyPolygon) -> Self {
-        Self {
-            common: common(p.x, p.y, p.opacity),
-            sides: p.sides,
-            radius: p.radius,
-            vertex_radius: p.vertex_radius,
-            star_points: p.star_points,
-            fill: tre_engine::FillStyle::Solid(p.fill_color as Color),
-            border_color: p.border_color as Color,
-            border_thickness: p.border_thickness,
+impl PyPolygon {
+    fn to_engine(&self, fill: FillStyle) -> Polygon {
+        Polygon {
+            common: common(self.x, self.y, self.opacity),
+            sides: self.sides,
+            radius: self.radius,
+            vertex_radius: self.vertex_radius,
+            star_points: self.star_points,
+            fill,
+            border_color: self.border_color as Color,
+            border_thickness: self.border_thickness,
         }
     }
 }
@@ -274,8 +295,10 @@ impl From<&PyPolygon> for Polygon {
 #[derive(Clone)]
 pub struct PyPath {
     commands: Vec<PathCommand>,
+    /// See [`PyRectangle::fill_color`]'s own doc comment for the real
+    /// `int | GradientId | Texture` contract.
     #[pyo3(get, set)]
-    pub fill_color: u32,
+    pub fill_color: Py<PyAny>,
     #[pyo3(get, set)]
     pub border_color: u32,
     #[pyo3(get, set)]
@@ -287,7 +310,7 @@ pub struct PyPath {
 #[pymethods]
 impl PyPath {
     #[new]
-    fn new(fill_color: u32) -> Self {
+    fn new(fill_color: Py<PyAny>) -> Self {
         Self {
             commands: Vec::new(),
             fill_color,
@@ -353,14 +376,14 @@ impl PyPath {
     }
 }
 
-impl From<&PyPath> for Path {
-    fn from(p: &PyPath) -> Self {
-        Self {
-            common: common(0.0, 0.0, p.opacity),
-            commands: p.commands.clone(),
-            fill: tre_engine::FillStyle::Solid(p.fill_color as Color),
-            border_color: p.border_color as Color,
-            border_thickness: p.border_thickness,
+impl PyPath {
+    fn to_engine(&self, fill: FillStyle) -> Path {
+        Path {
+            common: common(0.0, 0.0, self.opacity),
+            commands: self.commands.clone(),
+            fill,
+            border_color: self.border_color as Color,
+            border_thickness: self.border_thickness,
             stroke_line_cap: LineCap::Butt,
             stroke_line_join: LineJoin::Miter,
         }
@@ -430,6 +453,15 @@ pub struct PyShapeRegistry {
     /// bytes with `tre_engine::FontRegistry` exactly once, not once per
     /// `insert_text` call.
     font_ids: HashMap<u64, FontId>,
+    /// Keeps every `Texture` ever used as a shape's `fill_color` alive
+    /// for as long as this registry exists (Phase 12 Step 12.4) -- once
+    /// `insert_rectangle`/etc. resolves a `Texture` into a raw bindless
+    /// `u32` for `FillStyle::Texture`, nothing else keeps that texture's
+    /// own `Box<dyn RhiTexture>` alive; without this, it could be dropped
+    /// (freeing its real GPU resources) the moment the original Python
+    /// `Texture` object is garbage-collected, while a shape here still
+    /// references its now-dangling bindless index.
+    textures_kept_alive: Vec<Arc<Box<dyn RhiTexture>>>,
 }
 
 #[pymethods]
@@ -440,13 +472,33 @@ impl PyShapeRegistry {
             inner: ShapeRegistry::new(),
             fonts: FontRegistry::new(),
             font_ids: HashMap::new(),
+            textures_kept_alive: Vec::new(),
         }
+    }
+
+    /// Registers `gradient` on this registry, returning a real
+    /// `GradientId` usable as any shape's `fill_color` -- see
+    /// [`PyGradientId`]'s own doc comment for why the result is scoped to
+    /// *this* registry specifically.
+    ///
+    /// # Errors
+    /// Raises `ValueError` if `gradient`'s own stops are invalid (too
+    /// many, non-finite, out of `0.0..=1.0`, or out of order) or its
+    /// radial radius isn't positive -- `tre_engine::ShapeRegistry::
+    /// create_gradient`'s own real, existing validation.
+    fn create_gradient(&mut self, gradient: &PyGradient) -> PyResult<PyGradientId> {
+        self.inner
+            .create_gradient(gradient.def.clone())
+            .map(PyGradientId)
+            .map_err(gradient_err)
     }
 
     /// # Errors
     /// Raises `ValueError` if any of `rect`'s numeric fields is
-    /// non-finite, or if `width`/`height` is negative (REVIEW.md #202).
-    fn insert_rectangle(&mut self, rect: &PyRectangle) -> PyResult<PyShapeId> {
+    /// non-finite, if `width`/`height` is negative (REVIEW.md #202), or
+    /// if `rect.fill_color` is neither an `int`, a `GradientId`, nor a
+    /// `Texture`.
+    fn insert_rectangle(&mut self, rect: &PyRectangle, py: Python<'_>) -> PyResult<PyShapeId> {
         validate_finite("x", rect.x)?;
         validate_finite("y", rect.y)?;
         validate_non_negative("width", rect.width)?;
@@ -454,22 +506,23 @@ impl PyShapeRegistry {
         validate_non_negative("border_thickness", rect.border_thickness)?;
         validate_non_negative("corner_radius", rect.corner_radius)?;
         validate_finite("opacity", rect.opacity)?;
-        let mut rect = rect.clone();
+        let fill = self.resolve_fill(py, &rect.fill_color)?;
+        let mut rect = rect.to_engine(fill);
         // Documented 0.0..=1.0 contract (gpu_style.rs), never enforced
         // before this fix -- clamped, not rejected, since it's a
         // cosmetic parameter an animation can briefly overshoot.
         rect.corner_smoothing = rect.corner_smoothing.clamp(0.0, 1.0);
         Ok(PyShapeId(
-            self.inner
-                .insert(ShapePrimitive::Rectangle(Rectangle::from(&rect))),
+            self.inner.insert(ShapePrimitive::Rectangle(rect)),
         ))
     }
 
     /// # Errors
     /// Raises `ValueError` if any of `circle`'s numeric fields is
-    /// non-finite, or if `radius_x`/`radius_y` is negative
-    /// (REVIEW.md #202).
-    fn insert_circle(&mut self, circle: &PyCircle) -> PyResult<PyShapeId> {
+    /// non-finite, if `radius_x`/`radius_y` is negative (REVIEW.md #202),
+    /// or if `circle.fill_color` is neither an `int`, a `GradientId`, nor
+    /// a `Texture`.
+    fn insert_circle(&mut self, circle: &PyCircle, py: Python<'_>) -> PyResult<PyShapeId> {
         validate_finite("x", circle.x)?;
         validate_finite("y", circle.y)?;
         validate_non_negative("radius_x", circle.radius_x)?;
@@ -477,17 +530,20 @@ impl PyShapeRegistry {
         validate_non_negative("border_thickness", circle.border_thickness)?;
         validate_finite("arc_length", circle.arc_length)?;
         validate_finite("opacity", circle.opacity)?;
-        Ok(PyShapeId(self.inner.insert(ShapePrimitive::Circle(
-            tre_engine::Circle::from(circle),
-        ))))
+        let fill = self.resolve_fill(py, &circle.fill_color)?;
+        Ok(PyShapeId(
+            self.inner
+                .insert(ShapePrimitive::Circle(circle.to_engine(fill))),
+        ))
     }
 
     /// # Errors
     /// Raises `ValueError` if `polygon.sides` or `polygon.star_points`
     /// exceeds [`MAX_POLYGON_SIDES`], if any numeric field is
-    /// non-finite, or if `radius`/`vertex_radius` is negative
-    /// (REVIEW.md #202).
-    fn insert_polygon(&mut self, polygon: &PyPolygon) -> PyResult<PyShapeId> {
+    /// non-finite, if `radius`/`vertex_radius` is negative (REVIEW.md
+    /// #202), or if `polygon.fill_color` is neither an `int`, a
+    /// `GradientId`, nor a `Texture`.
+    fn insert_polygon(&mut self, polygon: &PyPolygon, py: Python<'_>) -> PyResult<PyShapeId> {
         if polygon.sides > MAX_POLYGON_SIDES
             || polygon.star_points.is_some_and(|p| p > MAX_POLYGON_SIDES)
         {
@@ -503,22 +559,26 @@ impl PyShapeRegistry {
         validate_non_negative("vertex_radius", polygon.vertex_radius)?;
         validate_non_negative("border_thickness", polygon.border_thickness)?;
         validate_finite("opacity", polygon.opacity)?;
+        let fill = self.resolve_fill(py, &polygon.fill_color)?;
         Ok(PyShapeId(
             self.inner
-                .insert(ShapePrimitive::Polygon(Polygon::from(polygon))),
+                .insert(ShapePrimitive::Polygon(polygon.to_engine(fill))),
         ))
     }
 
     /// # Errors
     /// Raises `ValueError` if `path.border_thickness`/`path.opacity` is
-    /// non-finite, or `border_thickness` is negative (REVIEW.md #202).
-    /// Path command coordinates are already validated at `move_to`/
-    /// `line_to`/`quad_to`/`cubic_to` call time.
-    fn insert_path(&mut self, path: &PyPath) -> PyResult<PyShapeId> {
+    /// non-finite, `border_thickness` is negative (REVIEW.md #202), or
+    /// `path.fill_color` is neither an `int`, a `GradientId`, nor a
+    /// `Texture`. Path command coordinates are already validated at
+    /// `move_to`/`line_to`/`quad_to`/`cubic_to` call time.
+    fn insert_path(&mut self, path: &PyPath, py: Python<'_>) -> PyResult<PyShapeId> {
         validate_non_negative("border_thickness", path.border_thickness)?;
         validate_finite("opacity", path.opacity)?;
+        let fill = self.resolve_fill(py, &path.fill_color)?;
         Ok(PyShapeId(
-            self.inner.insert(ShapePrimitive::Path(Path::from(path))),
+            self.inner
+                .insert(ShapePrimitive::Path(path.to_engine(fill))),
         ))
     }
 
@@ -566,6 +626,30 @@ impl PyShapeRegistry {
 }
 
 impl PyShapeRegistry {
+    /// Resolves a shape's own `fill_color` field (an `int`, a
+    /// [`PyGradientId`], or a [`PyTexture`] -- the real `int |
+    /// GradientId | Texture` union every `insert_*` method now accepts,
+    /// Phase 12 Step 12.4) into the matching real `FillStyle`. A
+    /// resolved `Texture`'s own underlying GPU resource is kept alive in
+    /// `textures_kept_alive` for as long as this registry exists.
+    fn resolve_fill(&mut self, py: Python<'_>, value: &Py<PyAny>) -> PyResult<FillStyle> {
+        let bound = value.bind(py);
+        if let Ok(color) = bound.extract::<u32>() {
+            return Ok(FillStyle::Solid(color));
+        }
+        if let Ok(gradient_id) = bound.extract::<PyGradientId>() {
+            return Ok(FillStyle::Gradient(gradient_id.0));
+        }
+        if let Ok(texture) = bound.extract::<PyTexture>() {
+            self.textures_kept_alive.push(texture.texture.clone());
+            return Ok(FillStyle::Texture(texture.bindless_index));
+        }
+        Err(PyValueError::new_err(
+            "fill_color must be an int (solid RGBA8, e.g. via tre.rgba8), a Gradient, or a \
+             Texture",
+        ))
+    }
+
     /// Resolves `font` (a Python-visible [`PyFont`]) into a real
     /// `FontId` scoped to this registry's own `FontRegistry`, loading
     /// its bytes into that table on first use and reusing the cached

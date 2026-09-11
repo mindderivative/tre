@@ -33,6 +33,7 @@ use tre_rhi_vulkan::{register_shape_pipelines, HeadlessSwapchain, VulkanDevice, 
 use crate::error::engine_err;
 use crate::shapes::PyShapeRegistry;
 use crate::text_atlas::TextAtlas;
+use crate::texture::{PyTexture, PyTextureFormat};
 
 pub(crate) fn setup_err<E: std::fmt::Display>(e: E) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
@@ -189,6 +190,30 @@ impl PyHeadlessRenderer {
     #[getter]
     fn height(&self) -> u32 {
         self.height
+    }
+
+    /// Uploads `pixels` (tightly packed, `width * height` pixels in
+    /// `format`) as a new, real GPU texture and registers it in the
+    /// bindless array, returning a [`PyTexture`] usable as any shape's
+    /// `fill_color` (Phase 12 Step 12.4). Mirrors `RhiDevice::
+    /// create_texture` directly.
+    ///
+    /// # Errors
+    /// Raises `TreError` if `pixels`' length doesn't match `width *
+    /// height * bytes_per_pixel(format)`, `width`/`height` is zero, or
+    /// the bindless array is exhausted.
+    fn create_texture(
+        &self,
+        width: u32,
+        height: u32,
+        format: PyTextureFormat,
+        pixels: Vec<u8>,
+    ) -> PyResult<PyTexture> {
+        let texture = self
+            .device
+            .create_texture(width, height, format.into(), &pixels)
+            .map_err(engine_err)?;
+        PyTexture::new(texture)
     }
 
     /// Flattens `registry`'s current shapes, renders them, and returns
