@@ -60,6 +60,51 @@ pub struct WindowIcon {
     pub height: u32,
 }
 
+/// A named cursor appearance for [`PlatformConnection::set_cursor`]
+/// (Phase 12 Step 12.7) -- the real, complete CSS3/`cursor-icon` set
+/// `winit` itself already exposes, bound here directly rather than
+/// re-inventing a smaller one: a real GUI framework needs resize
+/// handles, text carets, and drag-state cursors just as much as the
+/// default pointer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CursorIcon {
+    #[default]
+    Default,
+    ContextMenu,
+    Help,
+    Pointer,
+    Progress,
+    Wait,
+    Cell,
+    Crosshair,
+    Text,
+    VerticalText,
+    Alias,
+    Copy,
+    Move,
+    NoDrop,
+    NotAllowed,
+    Grab,
+    Grabbing,
+    EResize,
+    NResize,
+    NeResize,
+    NwResize,
+    SResize,
+    SeResize,
+    SwResize,
+    WResize,
+    EwResize,
+    NsResize,
+    NeswResize,
+    NwseResize,
+    ColResize,
+    RowResize,
+    AllScroll,
+    ZoomIn,
+    ZoomOut,
+}
+
 /// One shared display-server connection, owning every window created
 /// through it. Pick a backend once per process (Wayland if available,
 /// else X11) and create all of an application's windows from the same
@@ -254,6 +299,38 @@ impl PlatformConnection {
         match self {
             Self::Wayland(c) => c.set_icon(window, icon),
             Self::X11(c) => c.set_icon(window, icon),
+        }
+    }
+
+    /// Sets `window`'s mouse cursor appearance (Phase 12 Step 12.7).
+    ///
+    /// # Errors
+    /// Returns [`PlatformError::UnknownWindow`] if `window` was not created
+    /// by this connection.
+    pub fn set_cursor(&self, window: WindowId, icon: CursorIcon) -> Result<(), PlatformError> {
+        match self {
+            Self::Wayland(c) => c.set_cursor(window, icon),
+            Self::X11(c) => c.set_cursor(window, icon),
+        }
+    }
+
+    /// Enables or disables real IME composition for `window` (Phase 12
+    /// Step 12.7). A real, required platform opt-in, not a tre-specific
+    /// step: `winit` never emits `InputEvent::ImeEnabled`/`ImePreedit`/
+    /// `ImeCommit`/`ImeDisabled` for a window until this has been called
+    /// with `allowed: true` for it -- matching `Window::set_ime_allowed`'s
+    /// own documented contract. A real text-input caller enables this
+    /// only while an editable field actually has focus (composition
+    /// candidate windows are visually intrusive when shown over a
+    /// non-text-input UI), and disables it again when focus leaves.
+    ///
+    /// # Errors
+    /// Returns [`PlatformError::UnknownWindow`] if `window` was not created
+    /// by this connection.
+    pub fn set_ime_allowed(&self, window: WindowId, allowed: bool) -> Result<(), PlatformError> {
+        match self {
+            Self::Wayland(c) => c.set_ime_allowed(window, allowed),
+            Self::X11(c) => c.set_ime_allowed(window, allowed),
         }
     }
 }

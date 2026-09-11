@@ -210,6 +210,38 @@ fn main() {
                     let label = label_for(window, &slot_a, &slot_b);
                     eprintln!("[{label}] resized to {width}x{height}");
                 }
+                InputEvent::FileDropped { window, path } => {
+                    let label = label_for(window, &slot_a, &slot_b);
+                    eprintln!("[{label}] file dropped: {}", path.display());
+                }
+                InputEvent::FileHovered { window, path } => {
+                    let label = label_for(window, &slot_a, &slot_b);
+                    eprintln!("[{label}] file hovering: {}", path.display());
+                }
+                InputEvent::FileHoverCancelled { window } => {
+                    let label = label_for(window, &slot_a, &slot_b);
+                    eprintln!("[{label}] file hover cancelled");
+                }
+                InputEvent::ImeEnabled { window } => {
+                    let label = label_for(window, &slot_a, &slot_b);
+                    eprintln!("[{label}] IME enabled");
+                }
+                InputEvent::ImePreedit {
+                    window,
+                    text,
+                    cursor,
+                } => {
+                    let label = label_for(window, &slot_a, &slot_b);
+                    eprintln!("[{label}] IME preedit {text:?} cursor={cursor:?}");
+                }
+                InputEvent::ImeCommit { window, text } => {
+                    let label = label_for(window, &slot_a, &slot_b);
+                    eprintln!("[{label}] IME commit {text:?}");
+                }
+                InputEvent::ImeDisabled { window } => {
+                    let label = label_for(window, &slot_a, &slot_b);
+                    eprintln!("[{label}] IME disabled");
+                }
             }
         }
 

@@ -111,6 +111,37 @@ pub enum PyInputEvent {
         width: u32,
         height: u32,
     },
+    /// `path` is the dropped file's path, as a plain `str` (via
+    /// `to_string_lossy`) rather than PyO3's own native `PathBuf`
+    /// conversion -- simpler and more predictable for a Python caller
+    /// than round-tripping through `os.PathLike`, at the cost of lossy
+    /// display-only handling of a real but rare non-UTF-8 path.
+    FileDropped {
+        window: PyWindowId,
+        path: String,
+    },
+    FileHovered {
+        window: PyWindowId,
+        path: String,
+    },
+    FileHoverCancelled {
+        window: PyWindowId,
+    },
+    ImeEnabled {
+        window: PyWindowId,
+    },
+    ImePreedit {
+        window: PyWindowId,
+        text: String,
+        cursor: Option<(usize, usize)>,
+    },
+    ImeCommit {
+        window: PyWindowId,
+        text: String,
+    },
+    ImeDisabled {
+        window: PyWindowId,
+    },
 }
 
 impl From<InputEvent> for PyInputEvent {
@@ -150,6 +181,36 @@ impl From<InputEvent> for PyInputEvent {
                 window: window.into(),
                 width,
                 height,
+            },
+            InputEvent::FileDropped { window, path } => Self::FileDropped {
+                window: window.into(),
+                path: path.to_string_lossy().into_owned(),
+            },
+            InputEvent::FileHovered { window, path } => Self::FileHovered {
+                window: window.into(),
+                path: path.to_string_lossy().into_owned(),
+            },
+            InputEvent::FileHoverCancelled { window } => Self::FileHoverCancelled {
+                window: window.into(),
+            },
+            InputEvent::ImeEnabled { window } => Self::ImeEnabled {
+                window: window.into(),
+            },
+            InputEvent::ImePreedit {
+                window,
+                text,
+                cursor,
+            } => Self::ImePreedit {
+                window: window.into(),
+                text,
+                cursor,
+            },
+            InputEvent::ImeCommit { window, text } => Self::ImeCommit {
+                window: window.into(),
+                text,
+            },
+            InputEvent::ImeDisabled { window } => Self::ImeDisabled {
+                window: window.into(),
             },
         }
     }

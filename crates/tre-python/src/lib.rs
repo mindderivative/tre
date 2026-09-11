@@ -85,5 +85,6 @@ fn tre_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<input::PyElementState>()?;
     m.add_class::<input::PyInputEvent>()?;
     m.add_class::<windowed_renderer::PyWindowedRenderer>()?;
+    m.add_class::<windowed_renderer::PyCursorIcon>()?;
     Ok(())
 }

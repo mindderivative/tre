@@ -24,7 +24,7 @@ use raw_window_handle::{
 use tre_engine::{ElementState, InputEvent, InputEventQueue, MouseButton, WindowId};
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{StartCause, WindowEvent};
+use winit::event::{Ime, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopBuilder};
 use winit::platform::pump_events::EventLoopExtPumpEvents;
 use winit::platform::scancode::PhysicalKeyExtScancode;
@@ -32,7 +32,7 @@ use winit::platform::wayland::EventLoopBuilderExtWayland;
 use winit::platform::x11::EventLoopBuilderExtX11;
 use winit::window::{Icon, Window, WindowAttributes};
 
-use crate::{PlatformError, WindowIcon};
+use crate::{CursorIcon, PlatformError, WindowIcon};
 
 /// One connection's worth of queued events, sized generously for a
 /// per-frame drain of a handful of windows' worth of input (matches the
@@ -157,6 +157,27 @@ impl ApplicationHandler for Handler {
                     });
                 }
             }
+            WindowEvent::DroppedFile(path) => {
+                self.events.push(InputEvent::FileDropped { window, path });
+            }
+            WindowEvent::HoveredFile(path) => {
+                self.events.push(InputEvent::FileHovered { window, path });
+            }
+            WindowEvent::HoveredFileCancelled => {
+                self.events.push(InputEvent::FileHoverCancelled { window });
+            }
+            WindowEvent::Ime(ime) => {
+                self.events.push(match ime {
+                    Ime::Enabled => InputEvent::ImeEnabled { window },
+                    Ime::Preedit(text, cursor) => InputEvent::ImePreedit {
+                        window,
+                        text,
+                        cursor,
+                    },
+                    Ime::Commit(text) => InputEvent::ImeCommit { window, text },
+                    Ime::Disabled => InputEvent::ImeDisabled { window },
+                });
+            }
             _ => {}
         }
     }
@@ -175,6 +196,49 @@ fn map_element_state(state: winit::event::ElementState) -> ElementState {
 /// (`linux/input-event-codes.h`: 0x116/0x115) as the closest match to
 /// `MouseButton::Other`'s "raw platform button code" contract, since no
 /// current caller distinguishes these two buttons specially.
+/// `winit`'s own `cursor-icon` crate has a couple of variants
+/// (`DndAsk`/`AllResize`) this crate's own [`CursorIcon`] doesn't mirror
+/// -- real, but rare enough not to be worth the extra surface; they fall
+/// back to `Default` here rather than being unreachable.
+fn map_cursor_icon(icon: CursorIcon) -> winit::window::CursorIcon {
+    match icon {
+        CursorIcon::Default => winit::window::CursorIcon::Default,
+        CursorIcon::ContextMenu => winit::window::CursorIcon::ContextMenu,
+        CursorIcon::Help => winit::window::CursorIcon::Help,
+        CursorIcon::Pointer => winit::window::CursorIcon::Pointer,
+        CursorIcon::Progress => winit::window::CursorIcon::Progress,
+        CursorIcon::Wait => winit::window::CursorIcon::Wait,
+        CursorIcon::Cell => winit::window::CursorIcon::Cell,
+        CursorIcon::Crosshair => winit::window::CursorIcon::Crosshair,
+        CursorIcon::Text => winit::window::CursorIcon::Text,
+        CursorIcon::VerticalText => winit::window::CursorIcon::VerticalText,
+        CursorIcon::Alias => winit::window::CursorIcon::Alias,
+        CursorIcon::Copy => winit::window::CursorIcon::Copy,
+        CursorIcon::Move => winit::window::CursorIcon::Move,
+        CursorIcon::NoDrop => winit::window::CursorIcon::NoDrop,
+        CursorIcon::NotAllowed => winit::window::CursorIcon::NotAllowed,
+        CursorIcon::Grab => winit::window::CursorIcon::Grab,
+        CursorIcon::Grabbing => winit::window::CursorIcon::Grabbing,
+        CursorIcon::EResize => winit::window::CursorIcon::EResize,
+        CursorIcon::NResize => winit::window::CursorIcon::NResize,
+        CursorIcon::NeResize => winit::window::CursorIcon::NeResize,
+        CursorIcon::NwResize => winit::window::CursorIcon::NwResize,
+        CursorIcon::SResize => winit::window::CursorIcon::SResize,
+        CursorIcon::SeResize => winit::window::CursorIcon::SeResize,
+        CursorIcon::SwResize => winit::window::CursorIcon::SwResize,
+        CursorIcon::WResize => winit::window::CursorIcon::WResize,
+        CursorIcon::EwResize => winit::window::CursorIcon::EwResize,
+        CursorIcon::NsResize => winit::window::CursorIcon::NsResize,
+        CursorIcon::NeswResize => winit::window::CursorIcon::NeswResize,
+        CursorIcon::NwseResize => winit::window::CursorIcon::NwseResize,
+        CursorIcon::ColResize => winit::window::CursorIcon::ColResize,
+        CursorIcon::RowResize => winit::window::CursorIcon::RowResize,
+        CursorIcon::AllScroll => winit::window::CursorIcon::AllScroll,
+        CursorIcon::ZoomIn => winit::window::CursorIcon::ZoomIn,
+        CursorIcon::ZoomOut => winit::window::CursorIcon::ZoomOut,
+    }
+}
+
 fn map_mouse_button(button: winit::event::MouseButton) -> MouseButton {
     match button {
         winit::event::MouseButton::Left => MouseButton::Left,
@@ -336,6 +400,16 @@ impl WinitConnection {
             .transpose()
             .map_err(|e| PlatformError::Other(e.to_string()))?;
         win.set_window_icon(icon);
+        Ok(())
+    }
+
+    pub fn set_cursor(&self, window: WindowId, icon: CursorIcon) -> Result<(), PlatformError> {
+        self.window(window)?.set_cursor(map_cursor_icon(icon));
+        Ok(())
+    }
+
+    pub fn set_ime_allowed(&self, window: WindowId, allowed: bool) -> Result<(), PlatformError> {
+        self.window(window)?.set_ime_allowed(allowed);
         Ok(())
     }
 }

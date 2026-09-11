@@ -24,7 +24,7 @@ use tre_engine::{
     execute_frame, submit_frame, BufferBinding, EngineError, PipelineRegistry, RenderingCanvas,
     RhiDevice, RhiDynamicRingBuffer, ScissorRect, TextFlattenContext, WindowId,
 };
-use tre_platform::{PlatformConnection, WindowIcon};
+use tre_platform::{CursorIcon, PlatformConnection, WindowIcon};
 use tre_rhi_vulkan::{register_shape_pipelines, VulkanDevice, VulkanSwapchain};
 
 use crate::canvas::PyCanvas;
@@ -226,8 +226,9 @@ impl PyWindowedRenderer {
                 window,
                 width,
                 height,
-            } = *event
+            } = event
             {
+                let (window, width, height) = (*window, *width, *height);
                 if let Some(slot) = self.windows.get_mut(&window) {
                     slot.width = width;
                     slot.height = height;
@@ -479,6 +480,113 @@ impl PyWindowedRenderer {
             height,
         });
         self.connection.set_icon(window.0, icon).map_err(setup_err)
+    }
+
+    /// Sets `window`'s mouse cursor appearance (Phase 12 Step 12.7).
+    ///
+    /// # Errors
+    /// Raises `ValueError` if `window` is unknown to this renderer.
+    fn set_cursor(&self, window: PyWindowId, icon: PyCursorIcon) -> PyResult<()> {
+        self.connection
+            .set_cursor(window.0, icon.into())
+            .map_err(setup_err)
+    }
+
+    /// Enables or disables real IME composition for `window` -- required
+    /// before `poll_events()` will ever return `InputEvent.ImeEnabled`/
+    /// `ImePreedit`/`ImeCommit`/`ImeDisabled` for it (a real platform
+    /// requirement, not a tre choice). A real text-input caller enables
+    /// this only while an editable field has focus, and disables it again
+    /// when focus leaves -- see `tre_platform::PlatformConnection::
+    /// set_ime_allowed`'s own doc comment for why.
+    ///
+    /// # Errors
+    /// Raises `ValueError` if `window` is unknown to this renderer.
+    fn set_ime_allowed(&self, window: PyWindowId, allowed: bool) -> PyResult<()> {
+        self.connection
+            .set_ime_allowed(window.0, allowed)
+            .map_err(setup_err)
+    }
+}
+
+/// `tre_platform::CursorIcon`, bound directly.
+#[pyclass(name = "CursorIcon", eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PyCursorIcon {
+    Default,
+    ContextMenu,
+    Help,
+    Pointer,
+    Progress,
+    Wait,
+    Cell,
+    Crosshair,
+    Text,
+    VerticalText,
+    Alias,
+    Copy,
+    Move,
+    NoDrop,
+    NotAllowed,
+    Grab,
+    Grabbing,
+    EResize,
+    NResize,
+    NeResize,
+    NwResize,
+    SResize,
+    SeResize,
+    SwResize,
+    WResize,
+    EwResize,
+    NsResize,
+    NeswResize,
+    NwseResize,
+    ColResize,
+    RowResize,
+    AllScroll,
+    ZoomIn,
+    ZoomOut,
+}
+
+impl From<PyCursorIcon> for CursorIcon {
+    fn from(icon: PyCursorIcon) -> Self {
+        match icon {
+            PyCursorIcon::Default => Self::Default,
+            PyCursorIcon::ContextMenu => Self::ContextMenu,
+            PyCursorIcon::Help => Self::Help,
+            PyCursorIcon::Pointer => Self::Pointer,
+            PyCursorIcon::Progress => Self::Progress,
+            PyCursorIcon::Wait => Self::Wait,
+            PyCursorIcon::Cell => Self::Cell,
+            PyCursorIcon::Crosshair => Self::Crosshair,
+            PyCursorIcon::Text => Self::Text,
+            PyCursorIcon::VerticalText => Self::VerticalText,
+            PyCursorIcon::Alias => Self::Alias,
+            PyCursorIcon::Copy => Self::Copy,
+            PyCursorIcon::Move => Self::Move,
+            PyCursorIcon::NoDrop => Self::NoDrop,
+            PyCursorIcon::NotAllowed => Self::NotAllowed,
+            PyCursorIcon::Grab => Self::Grab,
+            PyCursorIcon::Grabbing => Self::Grabbing,
+            PyCursorIcon::EResize => Self::EResize,
+            PyCursorIcon::NResize => Self::NResize,
+            PyCursorIcon::NeResize => Self::NeResize,
+            PyCursorIcon::NwResize => Self::NwResize,
+            PyCursorIcon::SResize => Self::SResize,
+            PyCursorIcon::SeResize => Self::SeResize,
+            PyCursorIcon::SwResize => Self::SwResize,
+            PyCursorIcon::WResize => Self::WResize,
+            PyCursorIcon::EwResize => Self::EwResize,
+            PyCursorIcon::NsResize => Self::NsResize,
+            PyCursorIcon::NeswResize => Self::NeswResize,
+            PyCursorIcon::NwseResize => Self::NwseResize,
+            PyCursorIcon::ColResize => Self::ColResize,
+            PyCursorIcon::RowResize => Self::RowResize,
+            PyCursorIcon::AllScroll => Self::AllScroll,
+            PyCursorIcon::ZoomIn => Self::ZoomIn,
+            PyCursorIcon::ZoomOut => Self::ZoomOut,
+        }
     }
 }
 

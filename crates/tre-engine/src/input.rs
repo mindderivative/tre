@@ -46,7 +46,13 @@ pub enum ElementState {
 /// same window collapses to the single most recent position, so a slow
 /// consumer never falls behind on stale mouse positions the way it could
 /// on discrete clicks or key presses.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// Not `Copy` (Phase 12 Step 12.7): `FileDropped`/`FileHovered`'s own
+/// `PathBuf` and the `Ime` variants' own `String` payload rule it out --
+/// every real call site already took `InputEvent` by value (`push`,
+/// `poll_events`'s own `Vec<InputEvent>`), so dropping `Copy` needed no
+/// call-site changes, just a wider `Clone`-only contract.
+#[derive(Debug, Clone, PartialEq)]
 pub enum InputEvent {
     PointerMoved {
         window: WindowId,
@@ -74,6 +80,56 @@ pub enum InputEvent {
         window: WindowId,
         width: u32,
         height: u32,
+    },
+    /// A file was dropped onto `window` (Phase 12 Step 12.7). Real OS
+    /// drag-and-drop, not an application-level drag gesture between two
+    /// of this app's own shapes -- that stays a UI-framework concern, the
+    /// same boundary `KeyboardKey`'s own layout-translation note draws.
+    FileDropped {
+        window: WindowId,
+        path: std::path::PathBuf,
+    },
+    /// A file is being dragged over `window` but not yet dropped -- a
+    /// real caller uses this to show drop-target hover feedback.
+    FileHovered {
+        window: WindowId,
+        path: std::path::PathBuf,
+    },
+    /// The hovering drag in a prior `FileHovered` left `window` (or the
+    /// drag was cancelled) without a drop.
+    FileHoverCancelled {
+        window: WindowId,
+    },
+    /// The platform IME started composing input for `window` -- sent
+    /// once, before any `ImePreedit`. A caller must opt in first (real
+    /// platform requirement, not a tre choice: IME composition events
+    /// never fire until `PlatformConnection::set_ime_allowed(window,
+    /// true)` has been called for that window).
+    ImeEnabled {
+        window: WindowId,
+    },
+    /// The IME's current, not-yet-committed composition text (e.g. Pinyin
+    /// candidates before a Chinese character is chosen). `cursor` is the
+    /// composition's own byte-offset selection range within `text`, if
+    /// the platform reports one. A caller renders this as live preview
+    /// text at the input caret, replacing it entirely on the next
+    /// `ImePreedit` or `ImeCommit` -- it is not itself final text.
+    ImePreedit {
+        window: WindowId,
+        text: String,
+        cursor: Option<(usize, usize)>,
+    },
+    /// The IME finalized `text` -- this is real, final input a caller
+    /// inserts at the caret, exactly like a directly-typed
+    /// `KeyboardKey`-derived character.
+    ImeCommit {
+        window: WindowId,
+        text: String,
+    },
+    /// IME composition for `window` ended (focus left the input, or the
+    /// caller disabled it via `set_ime_allowed(window, false)`).
+    ImeDisabled {
+        window: WindowId,
     },
 }
 
