@@ -131,7 +131,7 @@ fn main() {
     }));
 
     let mut canvas = RenderingCanvas::new();
-    registry.flatten_into(&mut canvas, &device);
+    registry.flatten_into(&mut canvas, &device, None);
     let frame = canvas.flatten();
     assert_eq!(
         frame.commands.len(),

@@ -252,7 +252,7 @@ impl PyWindowedRenderer {
             let mut reg = registry.borrow_mut();
             let mut canvas = RenderingCanvas::new();
             reg.inner.mark_all_dirty();
-            reg.inner.flatten_into(&mut canvas, &self.device);
+            reg.inner.flatten_into(&mut canvas, &self.device, None);
             canvas.flatten()
         };
         let vertex_bytes: &[u8] = bytemuck::cast_slice(&frame.vertices);

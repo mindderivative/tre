@@ -6,8 +6,8 @@
 //! and MSDF rasterization, and is the only code in the engine ever
 //! allowed to touch the free-rectangle list").
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle, Thread};
 use std::time::Duration;
 
@@ -45,6 +45,8 @@ pub struct AtlasOwnerHandle {
     slots: Arc<SwmrSlotTable<AtlasKey>>,
     owner_thread: Thread,
     closed: Arc<AtomicBool>,
+    buffer: Arc<Mutex<Vec<u8>>>,
+    generation: Arc<AtomicU64>,
 }
 
 impl AtlasOwnerHandle {
@@ -110,16 +112,58 @@ impl AtlasOwnerHandle {
             .get_and_touch(key, current_frame)
             .map(crate::key::unpack_slot_value)
     }
+
+    /// A real, in-place snapshot of the shared atlas pixel buffer's
+    /// *current* contents (RGBA8, `width * height * 4` bytes) -- unlike
+    /// [`AtlasOwner::join`], this does not stop the background thread,
+    /// so a live renderer can call it repeatedly across many frames to
+    /// keep a GPU-side texture in sync as new glyphs resolve, not just
+    /// once at shutdown.
+    ///
+    /// Real, disclosed cost: this locks and clones the *entire* buffer
+    /// every call, since the owner thread's own writes are scattered,
+    /// small, per-glyph rect copies with no dirty-region tracking (a
+    /// real, deliberately deferred optimization -- see
+    /// [`generation`](Self::generation)'s own doc comment for the cheap
+    /// way to avoid calling this when nothing has actually changed).
+    ///
+    /// # Panics
+    /// Panics if the owner thread panicked while holding the lock (a
+    /// poisoned mutex) -- the same "a background-thread panic is a real
+    /// bug, not a normal runtime condition" precedent [`AtlasOwner::
+    /// join`]'s own `# Panics` section already documents.
+    #[must_use]
+    pub fn snapshot(&self) -> Vec<u8> {
+        self.buffer
+            .lock()
+            .expect("atlas owner thread panicked while holding the buffer lock")
+            .clone()
+    }
+
+    /// A monotonically increasing counter, bumped once by the owner
+    /// thread every time a real insertion actually writes pixels into
+    /// the shared buffer (Step 12.2's own need: a live renderer wants to
+    /// know "did the atlas change since I last uploaded it?" without
+    /// paying [`snapshot`](Self::snapshot)'s own full-buffer clone cost
+    /// just to find out "no"). Cheap: one atomic load.
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
 }
 
 /// Owns the background thread's [`JoinHandle`]; [`AtlasOwner::join`]
 /// signals shutdown and returns the finished shared atlas pixel buffer
 /// (RGBA8, `width * height * 4` bytes) for the caller to do with as it
 /// pleases -- e.g. a one-time GPU texture upload (Step 4.2.3's
-/// `TextureFormat::Rgba8Unorm`).
+/// `TextureFormat::Rgba8Unorm`). A caller that instead needs to keep a
+/// GPU texture live and in sync across many frames (Step 12.2) should
+/// use [`AtlasOwnerHandle::snapshot`]/[`AtlasOwnerHandle::generation`]
+/// instead of ever calling `join`, since `join` stops the background
+/// thread for good.
 pub struct AtlasOwner {
     handle: AtlasOwnerHandle,
-    join: JoinHandle<Vec<u8>>,
+    join: JoinHandle<()>,
 }
 
 impl AtlasOwner {
@@ -138,11 +182,31 @@ impl AtlasOwner {
         let queue = Arc::new(MpscRingBuffer::with_capacity(request_capacity));
         let slots = Arc::new(SwmrSlotTable::with_capacity(slot_capacity));
         let closed = Arc::new(AtomicBool::new(false));
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "atlas dimensions are far below usize::MAX on any real target"
+        )]
+        let buffer = Arc::new(Mutex::new(vec![
+            0u8;
+            (atlas_width as usize)
+                * (atlas_height as usize)
+                * 4
+        ]));
+        let generation = Arc::new(AtomicU64::new(0));
 
         let thread_queue = queue.clone();
         let thread_slots = slots.clone();
+        let thread_buffer = buffer.clone();
+        let thread_generation = generation.clone();
         let join = thread::spawn(move || {
-            run_owner_loop(atlas_width, atlas_height, &thread_queue, &thread_slots)
+            run_owner_loop(
+                atlas_width,
+                atlas_height,
+                &thread_queue,
+                &thread_slots,
+                &thread_buffer,
+                &thread_generation,
+            );
         });
         let owner_thread = join.thread().clone();
 
@@ -152,6 +216,8 @@ impl AtlasOwner {
                 slots,
                 owner_thread,
                 closed,
+                buffer,
+                generation,
             },
             join,
         }
@@ -170,7 +236,8 @@ impl AtlasOwner {
     ///
     /// # Panics
     ///
-    /// Panics if the background thread itself panicked.
+    /// Panics if the background thread itself panicked, or if the
+    /// buffer's own lock was poisoned by a panic while held.
     #[must_use]
     pub fn join(self) -> Vec<u8> {
         // Set before the Shutdown message is even pushed, so any
@@ -187,7 +254,14 @@ impl AtlasOwner {
             thread::sleep(Duration::from_millis(1));
         }
         self.handle.owner_thread.unpark();
-        self.join.join().expect("atlas owner thread panicked")
+        self.join.join().expect("atlas owner thread panicked");
+        std::mem::take(
+            &mut *self
+                .handle
+                .buffer
+                .lock()
+                .expect("atlas owner thread panicked while holding the buffer lock"),
+        )
     }
 }
 
@@ -196,29 +270,26 @@ fn run_owner_loop(
     atlas_height: u32,
     queue: &MpscRingBuffer<OwnerMessage>,
     slots: &SwmrSlotTable<AtlasKey>,
-) -> Vec<u8> {
+    buffer: &Mutex<Vec<u8>>,
+    generation: &AtomicU64,
+) {
     let mut packer = AtlasPacker::new(atlas_width, atlas_height);
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "atlas dimensions are far below usize::MAX on any real target"
-    )]
-    let mut buffer = vec![0u8; (atlas_width as usize) * (atlas_height as usize) * 4];
 
     loop {
         match queue.pop() {
             Some(OwnerMessage::Shutdown) => break,
             Some(OwnerMessage::Insert(request)) => {
-                process_insert(&mut packer, &mut buffer, atlas_width, slots, request);
+                process_insert(&mut packer, buffer, generation, atlas_width, slots, request);
             }
             None => thread::park_timeout(PARK_TIMEOUT),
         }
     }
-    buffer
 }
 
 fn process_insert(
     packer: &mut AtlasPacker,
-    buffer: &mut [u8],
+    buffer: &Mutex<Vec<u8>>,
+    generation: &AtomicU64,
     atlas_width: u32,
     slots: &SwmrSlotTable<AtlasKey>,
     request: AtlasInsertRequest,
@@ -246,7 +317,20 @@ fn process_insert(
         return;
     }
     let pixels = request.raster_source.rasterize();
-    copy_into_atlas(buffer, atlas_width, rect, &pixels);
+    {
+        let mut buffer = buffer
+            .lock()
+            .expect("atlas owner thread panicked while holding the buffer lock");
+        copy_into_atlas(&mut buffer, atlas_width, rect, &pixels);
+    }
+    // Released, not acquired with a stronger ordering: real consumers
+    // (`AtlasOwnerHandle::generation`) only ever use this to decide
+    // "should I call snapshot() again", where a snapshot a few
+    // nanoseconds stale (this write not yet globally visible) just means
+    // one extra harmless snapshot call next frame, not a correctness bug
+    // -- `snapshot`'s own `Mutex` lock is what actually guarantees a
+    // reader sees a consistent buffer, not this counter's ordering.
+    generation.fetch_add(1, Ordering::Release);
     let packed = pack_slot_value(rect, 0);
     // A full slot table is reported the same way a full packer is above
     // -- silently; the caller is responsible for sizing `slot_capacity`
@@ -365,6 +449,58 @@ mod tests {
             thread::yield_now();
         }
         panic!("key {key:?} never resolved");
+    }
+
+    #[test]
+    fn snapshot_and_generation_reflect_a_live_insert_without_stopping_the_owner_thread() {
+        // Step 12.2's own real need: a live windowed renderer must be
+        // able to refresh a GPU texture from the atlas's *current*
+        // contents while the background thread keeps running -- unlike
+        // `join()`, which stops it for good. `generation()` must be 0
+        // before anything is inserted, `snapshot()` must be all zeros
+        // (the buffer's real initial state), and after one real insert
+        // resolves, both must reflect it -- and the owner thread must
+        // still be alive and usable afterward (proven by inserting a
+        // second, distinct key and reading it back too).
+        let owner = AtlasOwner::spawn(16, 16, 8, 8);
+        let handle = owner.handle();
+
+        assert_eq!(
+            handle.generation(),
+            0,
+            "a fresh atlas has never been written to"
+        );
+        let initial = handle.snapshot();
+        assert_eq!(initial.len(), 16 * 16 * 4);
+        assert!(
+            initial.iter().all(|&b| b == 0),
+            "a fresh atlas's buffer must start all zeros"
+        );
+
+        let key = AtlasKey::from_glyph(7, 3);
+        let (rect, _generation) = insert_and_wait(&handle, key, 4, 4, 0);
+        assert!(
+            handle.generation() >= 1,
+            "a real insert must bump the generation counter"
+        );
+
+        let after_insert = handle.snapshot();
+        let bytes_per_row = 4 * 4;
+        let dest_start = ((rect.y as usize) * 16 + rect.x as usize) * 4;
+        assert_eq!(
+            &after_insert[dest_start..dest_start + bytes_per_row],
+            [10u8, 20, 30, 255].repeat(4).as_slice(),
+            "the live snapshot must show the real pixels the owner thread just wrote, without \
+             needing join() to stop it first"
+        );
+
+        // The owner thread must still be alive and correct after being
+        // snapshotted mid-flight -- not disturbed by snapshot()'s own
+        // lock.
+        let second = AtlasKey::from_glyph(7, 4);
+        insert_and_wait(&handle, second, 2, 2, 0);
+
+        let _ = owner.join();
     }
 
     #[test]

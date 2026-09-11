@@ -280,7 +280,7 @@ fn main() {
     // this demo's real steady-state capacity -- a real, expected one-
     // time warm-up cost, not a steady-state violation the guard below
     // exists to catch.
-    registry.flatten_into(&mut root, &device);
+    registry.flatten_into(&mut root, &device, None);
     assert!(
         root.stitch_into(&arena),
         "arena was sized exactly for this demo"
@@ -364,7 +364,7 @@ fn main() {
         }
 
         root.reset();
-        registry.flatten_into(&mut root, &device);
+        registry.flatten_into(&mut root, &device, None);
         assert!(
             root.stitch_into(&arena),
             "arena was sized exactly for this demo"

@@ -104,7 +104,7 @@ fn main() {
     }));
 
     let mut canvas = RenderingCanvas::new();
-    registry.flatten_into(&mut canvas, &device);
+    registry.flatten_into(&mut canvas, &device, None);
     let frame = canvas.flatten();
 
     let vertex_buffer = device

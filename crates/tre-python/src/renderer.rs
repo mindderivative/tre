@@ -223,7 +223,7 @@ impl PyHeadlessRenderer {
             // non-dirty) shape, producing an empty frame -- see
             // `mark_all_dirty`'s own doc comment (REVIEW.md #196).
             reg.inner.mark_all_dirty();
-            reg.inner.flatten_into(&mut canvas, &self.device);
+            reg.inner.flatten_into(&mut canvas, &self.device, None);
             canvas.flatten()
         };
 

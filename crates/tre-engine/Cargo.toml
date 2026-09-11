@@ -30,6 +30,13 @@ tre-memory = { path = "../tre-memory" }
 # resolved `skrifa::FontRef` directly, so this crate needs the same
 # type, not a re-export.
 skrifa = "=0.33.2"
+# Phase 12 Step 12.2: `FontRegistry::face` resolves a caller-loaded
+# font's bytes into a real `rustybuzz::Face` for `tre_text::shape_text`
+# to shape a `Text` primitive's own string against at flatten time --
+# real, non-test code now, not just this crate's own tests, so this
+# moved here from `[dev-dependencies]` below (which still pins the
+# identical version -- kept as one declaration, not duplicated).
+rustybuzz = "0.20.1"
 # Phase 10 Step 10.2 follow-up: real fill (and stroke) tessellation for
 # `Path`/`Polygon` shapes -- the industry-standard Rust 2D tessellation
 # library (`nical/lyon`), same real reasoning as `tre-svg`'s own adoption
@@ -43,11 +50,6 @@ skrifa = "=0.33.2"
 lyon = "=1.0.19"
 
 [dev-dependencies]
-# `Canvas::draw_text`'s own tests need a real shaped run: `tre_text::
-# shape_text` takes a `rustybuzz::Face` directly, so this crate's tests
-# build one -- pinned to the same version `tre-text`'s own Cargo.toml
-# uses. Dev-only: never part of the built library.
-rustybuzz = "0.20.1"
 # Phase 9 Step 9.2: TECHNICAL.md Section 9.2's own "cargo bench via
 # criterion, verifying the <=0.50ms CPU frame processing budget" gate,
 # never previously built (no criterion dependency, no benches/ anywhere

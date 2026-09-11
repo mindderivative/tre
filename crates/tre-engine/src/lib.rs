@@ -24,6 +24,9 @@ pub use shapes::{
 mod input;
 pub use input::{ElementState, FrameClock, InputEvent, InputEventQueue, MouseButton, WindowId};
 
+mod text;
+pub use text::{FontError, FontId, FontRegistry, Text, TextFlattenContext};
+
 mod canvas;
 #[cfg(test)]
 pub(crate) use canvas::{

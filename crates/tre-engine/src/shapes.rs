@@ -659,6 +659,7 @@ pub enum ShapePrimitive {
     Circle(Circle),
     Polygon(Polygon),
     Path(Path),
+    Text(crate::text::Text),
 }
 
 impl ShapePrimitive {
@@ -669,6 +670,7 @@ impl ShapePrimitive {
             Self::Circle(shape) => shape.common(),
             Self::Polygon(shape) => shape.common(),
             Self::Path(shape) => shape.common(),
+            Self::Text(shape) => shape.common(),
         }
     }
 
@@ -678,6 +680,7 @@ impl ShapePrimitive {
             Self::Circle(shape) => shape.common_mut(),
             Self::Polygon(shape) => shape.common_mut(),
             Self::Path(shape) => shape.common_mut(),
+            Self::Text(shape) => shape.common_mut(),
         }
     }
 }
@@ -965,16 +968,30 @@ impl ShapeRegistry {
     /// draw_styled_rectangle`'s own doc comment for why that can't be
     /// deferred to upload time the way plain vertex/index data is.
     ///
+    /// `text_context` (Phase 12 Step 12.2) is `None` for a registry that
+    /// never inserts a `ShapePrimitive::Text` -- every one of this
+    /// project's own 40+ pre-existing Rust examples passes `None` and
+    /// needs no other change. A registry that DOES insert `Text` shapes
+    /// must pass `Some` (see `# Panics` below).
+    ///
     /// # Panics
     /// Panics if a `FillStyle::Gradient` names a `GradientId` this
     /// registry never issued (via [`create_gradient`](Self::create_gradient))
     /// -- a real programmer error (a stale or foreign handle), not a
     /// normal runtime condition this registry validates against. Every
     /// `FillStyle` variant itself (`Solid`/`Gradient`/`Texture`) is fully
-    /// implemented for all four shape kinds (see this module's own
-    /// top-level doc comment) -- there is no remaining "not yet built"
-    /// rendering capability this method can hit.
-    pub fn flatten_into(&mut self, canvas: &mut RenderingCanvas, device: &dyn crate::RhiDevice) {
+    /// implemented for all four non-`Text` shape kinds (see this module's
+    /// own top-level doc comment). Also panics if this registry holds a
+    /// live `ShapePrimitive::Text` shape and `text_context` is `None`, or
+    /// if a `Text` shape's own `FontId` was never issued by
+    /// `text_context`'s `FontRegistry` -- see [`crate::text::flatten_text`]'s
+    /// own `# Panics` section for the latter.
+    pub fn flatten_into(
+        &mut self,
+        canvas: &mut RenderingCanvas,
+        device: &dyn crate::RhiDevice,
+        text_context: Option<&crate::text::TextFlattenContext<'_>>,
+    ) {
         for slot in &mut self.slots {
             let Some(slot) = slot else { continue };
             if !slot.layout_dirty && slot.active_animations.is_empty() {
@@ -1023,6 +1040,13 @@ impl ShapeRegistry {
                         &self.gradients,
                         &mut self.polygon_uv_scratch,
                     );
+                }
+                ShapePrimitive::Text(text) => {
+                    let context = text_context.expect(
+                        "a ShapePrimitive::Text was flattened but flatten_into's own \
+                         text_context argument was None -- see flatten_into's own doc comment",
+                    );
+                    crate::text::flatten_text(canvas, text, context);
                 }
             }
 
@@ -1079,6 +1103,17 @@ impl ShapeRegistry {
                 ShapePrimitive::Circle(circle) => hit_test_circle(local, circle),
                 ShapePrimitive::Polygon(polygon) => hit_test_polygon(local, polygon),
                 ShapePrimitive::Path(path) => hit_test_path(local, path),
+                // Phase 12 Step 12.2, a real disclosed scope boundary: a
+                // Text shape has no cached bounding box (its real extent
+                // is only known after shaping, which flatten_into does
+                // lazily, not at insert/mutate time), so it never
+                // reports a hit here. Real UI text is normally hit-
+                // tested via its containing control's own background
+                // shape (e.g. a Rectangle) anyway, not the glyph
+                // outlines directly -- a real "text bounding box" hit
+                // test, if ever needed standalone, is disclosed future
+                // work, not silently approximated here.
+                ShapePrimitive::Text(_) => false,
             };
             if hit {
                 return Some(ShapeId {
@@ -1915,7 +1950,7 @@ fn flatten_path_with_closed(commands: &[PathCommand]) -> Vec<(Vec<Vec2>, bool)> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{RhiBuffer, RhiDynamicRingBuffer};
+    use crate::{GlyphAtlasContext, RhiBuffer, RhiDynamicRingBuffer};
     use std::cell::Cell;
     use std::sync::Mutex;
 
@@ -2402,7 +2437,7 @@ mod tests {
             0xFFFF_FFFF,
         )));
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas, &device);
+        registry.flatten_into(&mut canvas, &device, None);
         let frame = canvas.flatten();
         assert_eq!(frame.vertices.len(), 4, "one rectangle emits 4 vertices");
         assert_eq!(frame.commands.len(), 1);
@@ -2421,10 +2456,10 @@ mod tests {
             0xFFFF_FFFF,
         )));
         let mut warm_up = RenderingCanvas::new();
-        registry.flatten_into(&mut warm_up, &device); // clears layout_dirty
+        registry.flatten_into(&mut warm_up, &device, None); // clears layout_dirty
 
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas, &device);
+        registry.flatten_into(&mut canvas, &device, None);
         let frame = canvas.flatten();
         assert!(
             frame.vertices.is_empty(),
@@ -2444,7 +2479,7 @@ mod tests {
         registry.insert(ShapePrimitive::Rectangle(collapsed));
 
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas, &device);
+        registry.flatten_into(&mut canvas, &device, None);
         let frame = canvas.flatten();
         assert!(
             frame.vertices.is_empty(),
@@ -2465,7 +2500,7 @@ mod tests {
         };
         registry.insert(ShapePrimitive::Rectangle(rect));
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas, &device);
+        registry.flatten_into(&mut canvas, &device, None);
         let frame = canvas.flatten();
 
         assert_eq!(frame.vertices.len(), 4);
@@ -2500,7 +2535,7 @@ mod tests {
             arc_length: 360.0,
         }));
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas, &device);
+        registry.flatten_into(&mut canvas, &device, None);
         let frame = canvas.flatten();
 
         assert_eq!(frame.vertices.len(), 4);
@@ -2529,7 +2564,7 @@ mod tests {
             0xFFFF_FFFF,
         )));
         let mut warm_up = RenderingCanvas::new();
-        registry.flatten_into(&mut warm_up, &device); // clears layout_dirty
+        registry.flatten_into(&mut warm_up, &device, None); // clears layout_dirty
 
         registry
             .get_mut(id)
@@ -2538,7 +2573,7 @@ mod tests {
             .push(AnimationId(1));
 
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas, &device);
+        registry.flatten_into(&mut canvas, &device, None);
         let frame = canvas.flatten();
         assert_eq!(
             frame.vertices.len(),
@@ -2636,7 +2671,7 @@ mod tests {
             border_thickness: 0.0,
         }));
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas, &device);
+        registry.flatten_into(&mut canvas, &device, None);
         let frame = canvas.flatten();
 
         assert_eq!(frame.commands.len(), 1);
@@ -3010,7 +3045,7 @@ mod tests {
             stroke_line_join: LineJoin::Bevel,
         }));
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas, &device);
+        registry.flatten_into(&mut canvas, &device, None);
         let frame = canvas.flatten();
 
         assert_eq!(frame.commands.len(), 1, "fill only, no border requested");
@@ -3049,7 +3084,7 @@ mod tests {
                 stroke_line_join: LineJoin::Round,
             }));
             let mut canvas = RenderingCanvas::new();
-            registry.flatten_into(&mut canvas, &device);
+            registry.flatten_into(&mut canvas, &device, None);
             canvas.flatten().vertices.len()
         };
 
@@ -3070,7 +3105,7 @@ mod tests {
             stroke_line_join: LineJoin::Round,
         }));
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas, &device);
+        registry.flatten_into(&mut canvas, &device, None);
         let frame = canvas.flatten();
 
         assert!(
@@ -3104,7 +3139,7 @@ mod tests {
                 border_thickness: 0.0,
             }));
             let mut canvas = RenderingCanvas::new();
-            registry.flatten_into(&mut canvas, &device);
+            registry.flatten_into(&mut canvas, &device, None);
             canvas.flatten().vertices.len()
         };
 
@@ -3121,7 +3156,7 @@ mod tests {
             border_thickness: 3.0,
         }));
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas, &device);
+        registry.flatten_into(&mut canvas, &device, None);
         let frame = canvas.flatten();
 
         assert!(
@@ -3362,7 +3397,7 @@ mod tests {
             corner_smoothing: 0.0,
         }));
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas, &device);
+        registry.flatten_into(&mut canvas, &device, None);
         let frame = canvas.flatten();
 
         assert_eq!(
@@ -3437,7 +3472,7 @@ mod tests {
             arc_length: 360.0,
         }));
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas, &device);
+        registry.flatten_into(&mut canvas, &device, None);
         let frame = canvas.flatten();
 
         assert_eq!(
@@ -3491,7 +3526,7 @@ mod tests {
             border_thickness: 0.0,
         }));
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas, &device);
+        registry.flatten_into(&mut canvas, &device, None);
         let frame = canvas.flatten();
 
         assert_eq!(
@@ -3542,7 +3577,7 @@ mod tests {
             border_thickness: 0.0,
         }));
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas, &device);
+        registry.flatten_into(&mut canvas, &device, None);
     }
 
     #[test]
@@ -3605,7 +3640,7 @@ mod tests {
             corner_smoothing: 0.0,
         }));
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas, &device);
+        registry.flatten_into(&mut canvas, &device, None);
         let frame = canvas.flatten();
 
         assert_eq!(
@@ -3637,7 +3672,7 @@ mod tests {
             arc_length: 360.0,
         }));
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas, &device);
+        registry.flatten_into(&mut canvas, &device, None);
         let frame = canvas.flatten();
 
         assert_eq!(
@@ -3669,7 +3704,7 @@ mod tests {
             border_thickness: 0.0,
         }));
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas, &device);
+        registry.flatten_into(&mut canvas, &device, None);
         let frame = canvas.flatten();
 
         assert_eq!(
@@ -3733,7 +3768,7 @@ mod tests {
             border_thickness: 0.0,
         }));
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas, &device);
+        registry.flatten_into(&mut canvas, &device, None);
         let frame = canvas.flatten();
 
         assert_eq!(
@@ -3765,7 +3800,7 @@ mod tests {
             border_thickness: 0.0,
         }));
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas, &device);
+        registry.flatten_into(&mut canvas, &device, None);
         let frame = canvas.flatten();
 
         assert_eq!(
@@ -3796,7 +3831,7 @@ mod tests {
             border_thickness: 0.0,
         }));
         let mut canvas = RenderingCanvas::new();
-        registry.flatten_into(&mut canvas, &device);
+        registry.flatten_into(&mut canvas, &device, None);
         let frame = canvas.flatten();
 
         assert_eq!(
@@ -3967,5 +4002,105 @@ mod tests {
                  Figma's real construction before adjusting this bound"
             );
         }
+    }
+
+    /// Phase 12 Step 12.2: a real, end-to-end proof that `ShapePrimitive::
+    /// Text` actually renders through `flatten_into`'s new dispatch --
+    /// not just that it compiles. A real system cascade font (the same
+    /// `tre_text::FontCascade::discover()` real fontconfig integration
+    /// `canvas_draw_text_demo.rs` already proves works) shapes and
+    /// renders "Hi" into a real `tre_atlas::AtlasOwner`. Mirrors
+    /// `canvas_draw_text_demo.rs`'s own two-frame contract: the first
+    /// `flatten_into` call is a real cache miss (every glyph freshly
+    /// requested, zero commands emitted -- `draw_text`'s own documented
+    /// "report, don't block" contract); after polling the real
+    /// background atlas thread to completion, a second call on the same,
+    /// re-dirtied registry renders real, non-empty geometry.
+    #[test]
+    fn flatten_into_renders_a_text_shape_via_the_real_font_and_atlas_pipeline() {
+        let device = FakeDevice::default();
+        let cascade =
+            tre_text::FontCascade::discover().expect("fontconfig cascade discovery failed");
+        let font_bytes =
+            std::fs::read(&cascade.entries[0]).expect("failed to read the primary cascade font");
+
+        let mut fonts = crate::FontRegistry::new();
+        let font_id = fonts
+            .load_bytes(font_bytes)
+            .expect("a real system cascade font must be a valid font");
+
+        let owner = tre_atlas::AtlasOwner::spawn(256, 256, 8, 8);
+        let handle = owner.handle();
+        let atlas_context = GlyphAtlasContext {
+            atlas: &handle,
+            texture_handle: 0, // never read on the cache-miss frame below.
+            dimensions: (256, 256),
+            current_frame: 0,
+        };
+        let text_context = crate::TextFlattenContext {
+            fonts: &fonts,
+            atlas: &atlas_context,
+        };
+
+        let mut registry = ShapeRegistry::new();
+        registry.insert(ShapePrimitive::Text(crate::Text::new(
+            "Hi",
+            font_id,
+            24.0,
+            0xFFFF_FFFF,
+        )));
+
+        let mut miss_canvas = RenderingCanvas::new();
+        registry.flatten_into(&mut miss_canvas, &device, Some(&text_context));
+        let miss_frame = miss_canvas.flatten();
+        assert!(
+            miss_frame.commands.is_empty(),
+            "every glyph of a brand-new Text shape must be a cache miss on its first flatten, \
+             got {} commands",
+            miss_frame.commands.len()
+        );
+
+        // Wait for every real glyph "Hi" actually uses to resolve on the
+        // real background atlas thread -- reshaping independently here
+        // (via the same FontRegistry, not a separate file read) rather
+        // than trusting flatten_text's own internal shaping.
+        let face = fonts
+            .face(font_id)
+            .expect("the same bytes load_bytes already validated must build a real Face");
+        let runs = tre_text::shape_text(&face, "Hi").expect("shaping \"Hi\" must succeed");
+        for run in &runs {
+            for glyph in &run.glyphs {
+                let key = tre_atlas::AtlasKey::from_glyph(font_id.0, glyph.glyph_id);
+                let mut resolved = false;
+                for _ in 0..500 {
+                    if handle.lookup(key, 0).is_some() {
+                        resolved = true;
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                assert!(
+                    resolved,
+                    "glyph id {} of \"Hi\" never resolved",
+                    glyph.glyph_id
+                );
+            }
+        }
+
+        registry.mark_all_dirty();
+        let mut hit_canvas = RenderingCanvas::new();
+        registry.flatten_into(&mut hit_canvas, &device, Some(&text_context));
+        let hit_frame = hit_canvas.flatten();
+        assert!(
+            !hit_frame.commands.is_empty(),
+            "a second flatten after every glyph resolved must render real geometry, got 0 \
+             commands"
+        );
+        assert!(
+            !hit_frame.vertices.is_empty(),
+            "a second flatten after every glyph resolved must produce real vertices"
+        );
+
+        let _ = owner.join();
     }
 }
