@@ -2993,6 +2993,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tre-animation"
+version = "0.1.0"
+dependencies = [
+ "tre-tween",
+]
+
+[[package]]
 name = "tre-atlas"
 version = "0.1.0"
 dependencies = [
@@ -3051,6 +3058,7 @@ dependencies = [
  "raw-window-handle",
  "rustybuzz",
  "skrifa",
+ "tre-animation",
  "tre-atlas",
  "tre-engine",
  "tre-platform",

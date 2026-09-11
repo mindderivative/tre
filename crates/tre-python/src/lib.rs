@@ -36,6 +36,7 @@
 //! than a demo.
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod animation;
 mod canvas;
 mod clock;
 mod error;
@@ -95,5 +96,6 @@ fn tre_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<tween::PyTween>()?;
     m.add_class::<tween::PyEasing>()?;
     m.add_class::<tween::PySpring>()?;
+    m.add_class::<animation::PyTimeline>()?;
     Ok(())
 }

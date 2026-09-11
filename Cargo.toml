@@ -15,6 +15,7 @@ members = [
     "crates/tre-a11y",
     "crates/tre-python",
     "crates/tre-tween",
+    "crates/tre-animation",
 ]
 
 [workspace.package]

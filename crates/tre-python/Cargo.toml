@@ -43,6 +43,11 @@ tre-svg = { path = "../tre-svg" }
 # Phase 13 Step 13.2: `tre.Tween`/`tre.Easing`/`tre.Spring` bind directly
 # to `tre-tween`'s own real, pure interpolation math.
 tre-tween = { path = "../tre-tween" }
+# Phase 13 Step 13.3: `tre.Timeline` binds to `tre-animation`'s own real
+# sequencer, mapping its opaque u64 targets to real Python objects +
+# attribute names (setattr) here, since `tre-animation` itself has no
+# PyO3 dependency.
+tre-animation = { path = "../tre-animation" }
 # `PyTween`'s own Vec2 instantiation constructs `glam::Vec2` values
 # directly -- pinned to the identical version `tre-tween` itself uses.
 glam = "0.29"
