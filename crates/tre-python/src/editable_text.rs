@@ -48,6 +48,14 @@ pub struct PyEditableText {
     pub px_size: f32,
     #[pyo3(get, set)]
     pub fill_color: u32,
+    /// `None` (the default) keeps this editor single-line, matching its
+    /// exact pre-Phase-15 behavior. `Some(width)` enables real multi-
+    /// line editing (Phase 15 Step 15.2): `\n` always breaks a line,
+    /// words greedily wrap to fit `width`; pass `float("inf")` for
+    /// hard-wrap-only. See `tre_engine::Text.wrap_width`'s own doc
+    /// comment for the exact algorithm.
+    #[pyo3(get, set)]
+    pub wrap_width: Option<f32>,
     /// A real byte offset into `text`, always a valid UTF-8 char
     /// boundary (every mutating method here maintains this invariant).
     #[pyo3(get)]
@@ -69,7 +77,16 @@ pub struct PyEditableText {
 #[pymethods]
 impl PyEditableText {
     #[new]
-    fn new(x: f32, y: f32, text: String, font: Py<PyFont>, px_size: f32, fill_color: u32) -> Self {
+    #[pyo3(signature = (x, y, text, font, px_size, fill_color, wrap_width = None))]
+    fn new(
+        x: f32,
+        y: f32,
+        text: String,
+        font: Py<PyFont>,
+        px_size: f32,
+        fill_color: u32,
+        wrap_width: Option<f32>,
+    ) -> Self {
         let caret = text.len();
         Self {
             x,
@@ -78,6 +95,7 @@ impl PyEditableText {
             font,
             px_size,
             fill_color,
+            wrap_width,
             caret,
             selection_anchor: None,
             preedit: String::new(),
@@ -283,9 +301,104 @@ impl PyEditableText {
                 scale_x: 1.0,
                 scale_y: 1.0,
                 rotation: 0.0,
-                wrap_width: None,
+                wrap_width: self.wrap_width,
             },
         )
+    }
+
+    /// The real number of visual lines `text` currently renders as --
+    /// always `>= 1`, even for an empty string (matching `wrap_lines`'
+    /// own "always at least one line" convention). `1` whenever
+    /// `wrap_width` is `None` and `text` has no `\n`.
+    ///
+    /// # Errors
+    /// Raises `TreError` if `text` fails to shape against `font`.
+    fn line_count(&self, py: Python<'_>) -> PyResult<usize> {
+        let (_runs, lines, _line_height, _units_per_em) = self.compute_layout(py)?;
+        Ok(lines.len())
+    }
+
+    /// Finds the real caret byte offset nearest to pixel position
+    /// `(x, y)` -- the 2-D counterpart to `hit_test`, aware of real
+    /// visual line breaks (both `\n` and word-wrap). `y` is relative to
+    /// this text's own top-left origin, the same local space `x`/`y`
+    /// (the shape's own position) already use.
+    ///
+    /// # Errors
+    /// Raises `TreError` if `text` fails to shape against `font`.
+    fn hit_test_2d(&self, py: Python<'_>, x: f32, y: f32) -> PyResult<usize> {
+        let (runs, lines, line_height, units_per_em) = self.compute_layout(py)?;
+        let positions =
+            tre_text::multiline_caret_positions(&lines, &runs, self.px_size, units_per_em);
+        Ok(tre_text::hit_test_2d(&positions, line_height, x, y))
+    }
+
+    /// Moves the caret up one real visual line, preserving the pixel x
+    /// position implied by its current line (real "sticky column"
+    /// behavior -- recomputed fresh from the current caret each call,
+    /// not tracked as separate persistent state). Clears any active
+    /// selection, matching `set_caret`'s own convention. A real no-op
+    /// (returns `false`) already on the first line.
+    ///
+    /// # Errors
+    /// Raises `TreError` if `text` fails to shape against `font`.
+    fn move_caret_up(&mut self, py: Python<'_>) -> PyResult<bool> {
+        self.move_caret_vertically(py, -1)
+    }
+
+    /// The same real sticky-column vertical movement as
+    /// [`move_caret_up`](Self::move_caret_up), one real visual line
+    /// down instead. A real no-op (returns `false`) already on the
+    /// last line.
+    ///
+    /// # Errors
+    /// Raises `TreError` if `text` fails to shape against `font`.
+    fn move_caret_down(&mut self, py: Python<'_>) -> PyResult<bool> {
+        self.move_caret_vertically(py, 1)
+    }
+
+    /// One real `(x, y, width, height)` rect per real visual line the
+    /// active selection spans -- an empty list when no selection is
+    /// active. Each rect is exactly one real `line_height` tall; `x`/
+    /// `y` are relative to this text's own top-left origin. Lets a
+    /// caller build one `Rectangle` per rect for real selection
+    /// highlighting (translucent fill), the same design the original
+    /// Phase 13 plan already called for -- no new primitive needed.
+    ///
+    /// # Errors
+    /// Raises `TreError` if `text` fails to shape against `font`.
+    fn selection_rects(&self, py: Python<'_>) -> PyResult<Vec<(f32, f32, f32, f32)>> {
+        let Some(anchor) = self.selection_anchor else {
+            return Ok(Vec::new());
+        };
+        let (start, end) = if anchor < self.caret {
+            (anchor, self.caret)
+        } else {
+            (self.caret, anchor)
+        };
+        let (runs, lines, line_height, units_per_em) = self.compute_layout(py)?;
+        let positions =
+            tre_text::multiline_caret_positions(&lines, &runs, self.px_size, units_per_em);
+
+        let mut rects = Vec::new();
+        for (line_index, line) in lines.iter().enumerate() {
+            if line.byte_range.end <= start || line.byte_range.start >= end {
+                continue;
+            }
+            let seg_start = start.max(line.byte_range.start);
+            let seg_end = end.min(line.byte_range.end);
+            let x0 = x_at_or_before(&positions, line_index, seg_start);
+            let x1 = x_at_or_before(&positions, line_index, seg_end);
+            if x1 > x0 {
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "line_index stays far below f32's exact-integer range for any real document"
+                )]
+                let y = line_index as f32 * line_height;
+                rects.push((x0, y, x1 - x0, line_height));
+            }
+        }
+        Ok(rects)
     }
 }
 
@@ -306,4 +419,127 @@ impl PyEditableText {
         };
         Some(&self.text[start..end])
     }
+
+    /// Reshapes and rewraps `text` against `font` fresh -- the same
+    /// "cheap, re-derive every time" precedent `hit_test` already
+    /// established -- returning everything the multi-line methods
+    /// below need: the real shaped runs, the real wrapped lines (per
+    /// `self.wrap_width`), the real measured `line_height`, and the
+    /// font's own `units_per_em` (needed again by
+    /// `multiline_caret_positions`, so returned rather than re-parsed).
+    ///
+    /// # Errors
+    /// Raises `TreError` if `text` fails to shape against `font` (the
+    /// same real, rare failure `tre_engine::Text`'s own rendering path
+    /// can hit).
+    fn compute_layout(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<(
+        Vec<tre_text::ShapedRun>,
+        Vec<tre_text::WrappedLine>,
+        f32,
+        u16,
+    )> {
+        let font = self.font.borrow(py);
+        let face_ref = skrifa::FontRef::new(&font.bytes)
+            .expect("Font bytes already validated real at PyFont construction time");
+        let rb_face = rustybuzz::Face::from_slice(&font.bytes, 0)
+            .expect("Font bytes already validated real at PyFont construction time");
+        let runs = tre_text::shape_text(&rb_face, &self.text)
+            .map_err(|e| TreError::new_err(e.to_string()))?;
+        let metrics = face_ref.metrics(
+            skrifa::instance::Size::unscaled(),
+            skrifa::instance::LocationRef::default(),
+        );
+        let scale = self.px_size / f32::from(metrics.units_per_em);
+        // Matches `tre_engine::text::flatten_text`'s own real, empirically-
+        // verified formula (Phase 15 Step 15.1's own README documents why
+        // `descent` is subtracted, not added: it's a signed OpenType
+        // value, negative below the baseline).
+        let line_height = (metrics.ascent - metrics.descent + metrics.leading) * scale;
+        let lines = tre_text::wrap_lines(
+            &self.text,
+            &runs,
+            self.px_size,
+            metrics.units_per_em,
+            self.wrap_width,
+        );
+        Ok((runs, lines, line_height, metrics.units_per_em))
+    }
+
+    /// Shared real implementation behind `move_caret_up`/
+    /// `move_caret_down` -- `direction` is `-1` (up) or `1` (down).
+    ///
+    /// Deliberately does NOT go through `hit_test_2d` (which resolves a
+    /// pixel `y` back to a line via `(y / line_height).round()`): the
+    /// target line is already known exactly here, and reconstructing a
+    /// `y` for it only to re-derive the same line by rounding is both
+    /// redundant and a real, found pitfall -- `round()` rounds half
+    /// away from zero, so a `y` placed exactly at a line's own vertical
+    /// midpoint (`(line + 0.5) * line_height`) rounds to the line
+    /// *below*, not the intended one, silently skipping a real line on
+    /// every other move. Searching the already-known target line's own
+    /// stops directly for the nearest `x` avoids that indirection
+    /// entirely.
+    ///
+    /// Also deliberately does NOT use `tre_text::line_of` for
+    /// `current_line` -- a second real, found pitfall: at a real
+    /// boundary byte (simultaneously "end of line N" and "start of
+    /// line N+1"), `line_of` always prefers the earlier line (N), which
+    /// is right for a plain "what line is my caret visually on" query
+    /// but wrong here: a caret sitting exactly at such a boundary
+    /// visually renders right before line N+1's own first glyph, on
+    /// line N+1's own row, not tucked invisibly at the end of line N's
+    /// row -- so this always prefers the LATER of any tied lines,
+    /// consistently for both `move_caret_up`/`move_caret_down`. An
+    /// initial version instead picked the tie-break based on the
+    /// CURRENT move's own direction (later for down, earlier for up),
+    /// which seemed reasonable in isolation but broke on a real,
+    /// concrete repro: `down, down, up` landed back one line short of
+    /// where it started, because the direction-based rule disagreed
+    /// with itself between the `down` that arrived at a boundary and
+    /// the following `up` that had to leave from it. A single, fixed
+    /// "always later" rule stays self-consistent across any real
+    /// sequence of moves; `line_of`'s own fallback is reused only for
+    /// the case where `self.caret` has no exact stop at all (e.g. it
+    /// sits inside a line's own consumed whitespace tail).
+    fn move_caret_vertically(&mut self, py: Python<'_>, direction: isize) -> PyResult<bool> {
+        let (runs, lines, _line_height, units_per_em) = self.compute_layout(py)?;
+        let positions =
+            tre_text::multiline_caret_positions(&lines, &runs, self.px_size, units_per_em);
+        let current_line = positions
+            .iter()
+            .filter(|p| p.byte_offset == self.caret)
+            .map(|p| p.line)
+            .max()
+            .unwrap_or_else(|| tre_text::line_of(&positions, self.caret));
+        let Some(target_line) = current_line.checked_add_signed(direction) else {
+            return Ok(false);
+        };
+        if target_line >= lines.len() {
+            return Ok(false);
+        }
+        let x = x_at_or_before(&positions, current_line, self.caret);
+        self.caret = positions
+            .iter()
+            .filter(|p| p.line == target_line)
+            .min_by(|a, b| (a.x - x).abs().total_cmp(&(b.x - x).abs()))
+            .map_or(self.caret, |p| p.byte_offset);
+        self.selection_anchor = None;
+        Ok(true)
+    }
+}
+
+/// The x position of the real caret stop on `line` at the latest
+/// `byte_offset` `<= at` -- exact when `at` lands exactly on a real
+/// stop; falls back to the nearest earlier one otherwise (e.g. `at`
+/// sits inside that line's own consumed trailing-whitespace tail, which
+/// has no stop of its own -- see `wrap_lines`' own doc comment).
+fn x_at_or_before(positions: &[tre_text::MultiLineCaretPosition], line: usize, at: usize) -> f32 {
+    positions
+        .iter()
+        .filter(|p| p.line == line && p.byte_offset <= at)
+        .max_by_key(|p| p.byte_offset)
+        .map_or(0.0, |p| p.x)
 }

@@ -132,9 +132,14 @@ pub fn multiline_caret_positions(
 }
 
 /// Finds the real 2-D caret stop nearest to pixel position `(x, y)` in
-/// `positions`, returning its `byte_offset`. First finds the nearest
-/// real line by `y` (`(y / line_height).round()`, clamped to a valid
-/// line index), then finds the nearest stop by `x` **within that line
+/// `positions`, returning its `byte_offset`. First finds the real line
+/// whose own `[n * line_height, (n+1) * line_height)` span contains `y`
+/// (`(y / line_height).floor()`, clamped to a valid line index -- a
+/// real, found correction: an earlier version used `.round()`, which
+/// finds the line whose *top* is nearest rather than the line whose
+/// *span* actually contains `y`, silently misattributing roughly the
+/// bottom half of every line's own real vertical extent to the line
+/// below it), then finds the nearest stop by `x` **within that line
 /// only** -- unlike a global nearest-any-stop search, which would be
 /// wrong once a real `y` is given (a stop on a distant line can easily
 /// have a closer raw `x` than the right line's own nearest stop).
@@ -163,7 +168,7 @@ pub fn hit_test_2d(
         reason = "line_count stays far below f32's exact-integer range for any real document"
     )]
     let target_line = (y / line_height)
-        .round()
+        .floor()
         .clamp(0.0, (line_count - 1) as f32) as usize;
     positions
         .iter()
@@ -375,6 +380,27 @@ mod tests {
             hit_test_2d(&positions, line_height, 5.0, 500.0),
             3,
             "a y far past the last line clamps to the last real line, not out of range"
+        );
+
+        // A real, found regression case: a genuine MID-line y (not
+        // sitting exactly on a line boundary) must resolve to the line
+        // whose own [n*line_height, (n+1)*line_height) span contains
+        // it, not the line whose *top* is merely nearest -- an earlier
+        // `.round()`-based version of `hit_test_2d` got this wrong for
+        // any y in roughly the bottom half of a line's own real
+        // vertical extent (e.g. y=10 with line_height=15 rounds to
+        // line 1, even though y=10 sits well inside line 0's own real
+        // [0,15) span), which every other test above happened not to
+        // catch since they all used boundary-exact y values.
+        assert_eq!(
+            hit_test_2d(&positions, line_height, 5.0, 10.0),
+            0,
+            "y=10.0 sits inside line 0's own real [0.0,15.0) span, not line 1's"
+        );
+        assert_eq!(
+            hit_test_2d(&positions, line_height, 5.0, 20.0),
+            3,
+            "y=20.0 sits inside line 1's own real [15.0,30.0) span"
         );
     }
 
