@@ -141,6 +141,16 @@ pub struct Text {
     pub font: FontId,
     pub px_size: f32,
     pub fill_color: Color,
+    /// `None` (the default from [`Text::new`]) keeps this shape on the
+    /// exact single-line rendering path every caller before Phase 15
+    /// Step 15.1 already relies on -- byte-identical, zero regression.
+    /// `Some(width)` enables real multi-line rendering (Phase 15 Step
+    /// 15.1): `\n` always breaks a line, and words greedily wrap to fit
+    /// `width` -- pass `f32::INFINITY` for hard-wrap-only (break only on
+    /// `\n`, no width limit). See [`tre_text::wrap_lines`]'s own doc
+    /// comment for the exact algorithm and its real, disclosed v1 scope
+    /// (LTR-only, whitespace-boundary wrapping, no hyphenation).
+    pub wrap_width: Option<f32>,
 }
 
 impl Text {
@@ -152,6 +162,7 @@ impl Text {
             font,
             px_size,
             fill_color: color,
+            wrap_width: None,
         }
     }
 }
@@ -217,20 +228,67 @@ pub(crate) fn flatten_text(
     );
     let scale = text.px_size / f32::from(metrics.units_per_em);
 
-    let mut pen = [0.0, metrics.ascent * scale];
-    for run in &runs {
+    let Some(wrap_width) = text.wrap_width else {
+        // The exact pre-Phase-15 single-line path -- untouched, so
+        // every existing caller's rendering stays byte-identical.
+        let mut pen = [0.0, metrics.ascent * scale];
+        for run in &runs {
+            canvas.draw_text(
+                run,
+                &font,
+                text.font.0,
+                pen,
+                text.px_size,
+                text.fill_color,
+                context.atlas,
+            );
+            for glyph in &run.glyphs {
+                pen[0] += glyph.x_advance as f32 * scale;
+                pen[1] += glyph.y_advance as f32 * scale;
+            }
+        }
+        return;
+    };
+
+    // Real multi-line rendering (Phase 15 Step 15.1): `\n` always
+    // breaks a line, and (since `wrap_width` is finite here for any
+    // real caller -- `f32::INFINITY` is the real "hard-wrap-only, no
+    // width limit" escape hatch) words greedily wrap to fit. See
+    // `tre_text::wrap_lines`'s own doc comment for the exact algorithm.
+    let lines = tre_text::wrap_lines(
+        &text.text,
+        &runs,
+        text.px_size,
+        metrics.units_per_em,
+        Some(wrap_width),
+    );
+    // `metrics.descent` is a real, signed OpenType value -- negative,
+    // extending below the baseline (confirmed empirically against a
+    // real system font before trusting it here: this machine's default
+    // cascade font reports `ascent=1069, descent=-293`, not a positive
+    // magnitude) -- so the real total em-box height subtracts it
+    // (equivalent to adding its real magnitude), not adds it.
+    let line_height = (metrics.ascent - metrics.descent + metrics.leading) * scale;
+    let flat_glyphs: Vec<tre_text::ShapedGlyph> = runs
+        .iter()
+        .flat_map(|run| run.glyphs.iter().copied())
+        .collect();
+    let mut pen_y = metrics.ascent * scale;
+    for line in &lines {
+        let line_run = tre_text::ShapedRun {
+            text_range: line.byte_range.clone(),
+            direction: rustybuzz::Direction::LeftToRight,
+            glyphs: flat_glyphs[line.start_glyph..line.end_glyph].to_vec(),
+        };
         canvas.draw_text(
-            run,
+            &line_run,
             &font,
             text.font.0,
-            pen,
+            [0.0, pen_y],
             text.px_size,
             text.fill_color,
             context.atlas,
         );
-        for glyph in &run.glyphs {
-            pen[0] += glyph.x_advance as f32 * scale;
-            pen[1] += glyph.y_advance as f32 * scale;
-        }
+        pen_y += line_height;
     }
 }

@@ -75,10 +75,12 @@ coverage -- the correct, real fix given the crate's build mode, not a
 workaround.
 
 **Real, disclosed scope limits**: single-line only, matching
-`tre_engine::Text`'s own current single-line scope (Step 12.2) -- a
-multi-line text *editor* (line wrapping, vertical caret movement) is
-real, separate future work, distinct from the multi-line text *label*
-rendering already supported. Caret/selection byte offsets are also
-LTR-only-correct, matching `tre_text::caret_positions`'s own disclosed
-limitation (`ShapedRun`s are in **visual**, not logical, order for
-bidi/RTL text).
+`tre_engine::Text`'s own single-line-only scope as of this step. Multi-
+line/word-wrap rendering and multi-line editing both shipped later, in
+Phase 15 Steps 15.1/15.2 -- this corrects an earlier, INACCURATE claim
+here that multi-line label rendering already existed at this step;
+direct reading of `flatten_text`'s own source when Phase 15 was planned
+confirmed it never had (a single straight pen line, no `\n` handling at
+all). Caret/selection byte offsets are also LTR-only-correct, matching
+`tre_text::caret_positions`'s own disclosed limitation (`ShapedRun`s are
+in **visual**, not logical, order for bidi/RTL text).

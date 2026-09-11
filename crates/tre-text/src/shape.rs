@@ -154,13 +154,29 @@ pub(crate) fn shape_run(face: &Face, text: &str, run: &TextRun) -> ShapedRun {
         buffer.set_script(script);
     }
     let glyph_buffer = shape(face, &[], buffer);
+    // A real, previously-latent bug, found and fixed here (Phase 15
+    // Step 15.1): `rustybuzz` reports `info.cluster` relative to
+    // whatever was pushed into THIS run's own fresh `UnicodeBuffer`
+    // above -- i.e. 0-based within `&text[run.text_range.clone()]` --
+    // not as an absolute offset into the ORIGINAL, full `text`. For
+    // `run.text_range.start == 0` (the first run of a single-paragraph
+    // string) these happen to coincide, which is why nothing caught
+    // this before: no caller before Step 15.1 ever shaped genuinely
+    // multi-paragraph text (`unicode_bidi::BidiInfo` treats `\n` as a
+    // real paragraph separator, so `segment_runs` already produces one
+    // run per `\n`-delimited segment) and relied on `cluster` being
+    // absolute across paragraph boundaries -- `caret_positions`/
+    // `multiline_caret_positions` both already assume it is.
+    let base = u32::try_from(run.text_range.start).expect(
+        "a real input string's own byte length already fits u32 well before this offset would overflow",
+    );
     let glyphs = glyph_buffer
         .glyph_infos()
         .iter()
         .zip(glyph_buffer.glyph_positions())
         .map(|(info, pos)| ShapedGlyph {
             glyph_id: info.glyph_id,
-            cluster: info.cluster,
+            cluster: info.cluster + base,
             x_advance: pos.x_advance,
             y_advance: pos.y_advance,
             x_offset: pos.x_offset,

@@ -12,13 +12,17 @@
 //!   already forwarded end to end since Step 12.7.
 //!
 //! **Real, disclosed scope limit**: single-line only, matching
-//! `tre_engine::Text`'s own current single-line scope (Step 12.2) --
+//! `tre_engine::Text`'s own single-line-only scope as of Step 12.2 --
 //! this covers the overwhelming majority of real GUI text input (form
-//! fields, search boxes); a multi-line text *editor* (line wrapping,
-//! vertical caret movement) is real, separate future work, distinct
-//! from the multi-line text *label* rendering already supported.
-//! Caret/selection byte offsets are also LTR-only-correct (matching
-//! `tre_text::caret_positions`'s own disclosed limitation).
+//! fields, search boxes). Multi-line/word-wrap *rendering* (`Text.
+//! wrap_width`) and multi-line *editing* both shipped later, in Phase
+//! 15 Steps 15.1/15.2 -- this correction replaces an earlier, INACCURATE
+//! claim here that multi-line label rendering already existed at this
+//! step; direct reading of `tre_engine::text::flatten_text` at the time
+//! Phase 15 was planned confirmed it never had (single straight pen
+//! line, no `\n` handling at all). Caret/selection byte offsets are
+//! also LTR-only-correct (matching `tre_text::caret_positions`'s own
+//! disclosed limitation).
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -279,6 +283,7 @@ impl PyEditableText {
                 scale_x: 1.0,
                 scale_y: 1.0,
                 rotation: 0.0,
+                wrap_width: None,
             },
         )
     }

@@ -574,12 +574,20 @@ pub struct PyText {
     /// Radians, matching `tre_engine::Transform2D::rotation`'s own convention.
     #[pyo3(get, set)]
     pub rotation: f32,
+    /// `None` (the default) renders exactly as before Phase 15 Step
+    /// 15.1 -- single line, no wrapping. `Some(width)` enables real
+    /// multi-line rendering: `\n` always breaks a line, words greedily
+    /// wrap to fit `width`; pass `float("inf")` for hard-wrap-only (no
+    /// width limit). See `tre_engine::Text.wrap_width`'s own doc
+    /// comment for the exact algorithm and its real, disclosed v1 scope.
+    #[pyo3(get, set)]
+    pub wrap_width: Option<f32>,
 }
 
 #[pymethods]
 impl PyText {
     #[new]
-    #[pyo3(signature = (x, y, text, font, px_size, fill_color, scale_x = 1.0, scale_y = 1.0, rotation = 0.0))]
+    #[pyo3(signature = (x, y, text, font, px_size, fill_color, scale_x = 1.0, scale_y = 1.0, rotation = 0.0, wrap_width = None))]
     #[allow(
         clippy::too_many_arguments,
         reason = "every trailing parameter has a real default; a \
@@ -595,6 +603,7 @@ impl PyText {
         scale_x: f32,
         scale_y: f32,
         rotation: f32,
+        wrap_width: Option<f32>,
     ) -> Self {
         Self {
             x,
@@ -607,6 +616,7 @@ impl PyText {
             scale_x,
             scale_y,
             rotation,
+            wrap_width,
         }
     }
 }
@@ -932,6 +942,7 @@ impl PyShapeRegistry {
             text.px_size,
             text.fill_color as Color,
         );
+        shape.wrap_width = text.wrap_width;
         shape.common = common(
             text.x,
             text.y,

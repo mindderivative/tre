@@ -17,8 +17,12 @@ mod msdf;
 mod outline;
 mod raster;
 mod shape;
+mod wrap;
 
-pub use caret::{caret_positions, hit_test, CaretPosition};
+pub use caret::{
+    caret_positions, hit_test, hit_test_2d, line_of, multiline_caret_positions, CaretPosition,
+    MultiLineCaretPosition,
+};
 pub use error::TextError;
 #[cfg(target_os = "linux")]
 pub use fallback::{covers, resolve_font_index, resolve_run, FontCascade};
@@ -26,3 +30,4 @@ pub use msdf::{generate_msdf, has_real_ink, MsdfBitmap};
 pub use outline::{glyph_outline, Contour, OutlineSegment};
 pub use raster::GlyphRasterSource;
 pub use shape::{segment_runs, shape_text, ShapedGlyph, ShapedRun, TextRun};
+pub use wrap::{wrap_lines, WrappedLine};
