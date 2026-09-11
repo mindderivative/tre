@@ -33,7 +33,10 @@ impl PyClipboard {
     /// # Errors
     /// Raises `RuntimeError` if the clipboard is empty, holds non-text
     /// content, or the platform clipboard service itself failed.
-    fn get_text(&mut self) -> PyResult<String> {
+    // `pub(crate)`, not private: `PyEditableText::paste` (Phase 14 Step
+    // 14.2) calls this directly as a plain Rust method, not through the
+    // Python-visible `#[pymethods]` dispatch.
+    pub(crate) fn get_text(&mut self) -> PyResult<String> {
         self.inner.get_text().map_err(setup_err)
     }
 
@@ -43,7 +46,9 @@ impl PyClipboard {
     /// # Errors
     /// Raises `RuntimeError` if the platform clipboard service rejected
     /// the write.
-    fn set_text(&mut self, text: &str) -> PyResult<()> {
+    // `pub(crate)` for the identical reason `get_text` is -- called
+    // directly by `PyEditableText::copy`/`cut`.
+    pub(crate) fn set_text(&mut self, text: &str) -> PyResult<()> {
         self.inner.set_text(text).map_err(setup_err)
     }
 }

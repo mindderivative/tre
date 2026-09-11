@@ -24,6 +24,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use skrifa::MetadataProvider;
 
+use crate::clipboard::PyClipboard;
 use crate::error::TreError;
 use crate::font::PyFont;
 use crate::input::PyInputEvent;
@@ -104,6 +105,53 @@ impl PyEditableText {
         } else {
             false
         }
+    }
+
+    /// Copies the active selection's own text to `clipboard`, leaving
+    /// `text` unchanged -- a real no-op (not an error) when no
+    /// selection is active, matching every real text field's own
+    /// standard "copy with nothing selected does nothing" behavior.
+    ///
+    /// # Errors
+    /// Raises whatever `clipboard.set_text` itself raises (a real
+    /// platform clipboard failure).
+    fn copy(&self, clipboard: &mut PyClipboard) -> PyResult<()> {
+        if let Some(selected) = self.selected_text() {
+            clipboard.set_text(selected)?;
+        }
+        Ok(())
+    }
+
+    /// Copies the active selection's own text to `clipboard`, then
+    /// deletes it from `text` -- a real no-op (not an error) when no
+    /// selection is active, matching `copy`'s own real "nothing
+    /// selected, nothing happens" behavior.
+    ///
+    /// # Errors
+    /// Raises whatever `clipboard.set_text` itself raises. If it fails,
+    /// `text` is left unchanged (the delete never runs) -- a real
+    /// caller never loses text to a clipboard write it can't observe
+    /// succeeded.
+    fn cut(&mut self, clipboard: &mut PyClipboard) -> PyResult<()> {
+        if let Some(selected) = self.selected_text() {
+            clipboard.set_text(selected)?;
+            self.delete_selection();
+        }
+        Ok(())
+    }
+
+    /// Reads `clipboard`'s current real text and inserts it at the
+    /// caret via `insert()` -- replacing the active selection first, if
+    /// any, the same real semantics `insert()` already has everywhere
+    /// else in this class.
+    ///
+    /// # Errors
+    /// Raises whatever `clipboard.get_text` itself raises (e.g. the
+    /// clipboard is empty or holds non-text content).
+    fn paste(&mut self, clipboard: &mut PyClipboard) -> PyResult<()> {
+        let text = clipboard.get_text()?;
+        self.insert(&text);
+        Ok(())
     }
 
     /// Deletes the active selection if any; otherwise deletes exactly
@@ -233,5 +281,24 @@ impl PyEditableText {
                 rotation: 0.0,
             },
         )
+    }
+}
+
+impl PyEditableText {
+    /// The active selection's own substring of `text`, if a selection
+    /// is active -- `None` (not an empty string) when it isn't, so
+    /// `copy`/`cut` can tell "no selection" apart from "an empty
+    /// selection" (the latter can't actually occur here, since
+    /// `set_selection`/click-drag never produces a zero-width range in
+    /// real use, but the `Option` keeps that distinction explicit
+    /// rather than relying on an empty-string convention).
+    fn selected_text(&self) -> Option<&str> {
+        let anchor = self.selection_anchor?;
+        let (start, end) = if anchor < self.caret {
+            (anchor, self.caret)
+        } else {
+            (self.caret, anchor)
+        };
+        Some(&self.text[start..end])
     }
 }
