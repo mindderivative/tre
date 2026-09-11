@@ -29,12 +29,14 @@
 
 mod flatten;
 mod morph;
+mod smil;
 mod tessellate;
 
 use tre_math::Affine2;
 
 pub use flatten::{flatten_cubic, flatten_quad};
 pub use morph::{morph, morph_into};
+pub use smil::{parse_smil, ParsedSmil, SmilAnimate, SmilAnimateTranslate};
 pub use tessellate::{tessellate_fill, FillRule};
 
 /// A single closed polygon contour: an ordered list of points with the
@@ -86,6 +88,13 @@ pub enum SvgError {
         from_points: usize,
         to_points: usize,
     },
+    /// [`smil::parse_smil`] (Phase 13 Step 13.7)'s own `roxmltree` parse
+    /// of the raw SVG source failed -- SMIL parsing reads the document's
+    /// real XML structure directly (`usvg` itself discards `<animate>`/
+    /// `<animateTransform>` entirely, see `smil`'s own module doc
+    /// comment), so it needs its own, separate malformed-XML rejection
+    /// distinct from [`Self::Parse`]'s `usvg`-specific one.
+    MalformedXml(String),
 }
 
 impl std::fmt::Display for SvgError {
@@ -104,6 +113,7 @@ impl std::fmt::Display for SvgError {
                 f,
                 "cannot morph: keyframes have different vertex counts ({from_points} vs {to_points})"
             ),
+            Self::MalformedXml(msg) => write!(f, "failed to parse SVG as XML for SMIL: {msg}"),
         }
     }
 }

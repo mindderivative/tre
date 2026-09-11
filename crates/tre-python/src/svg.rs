@@ -67,7 +67,8 @@ fn svg_err(e: tre_svg::SvgError) -> PyErr {
     match e {
         tre_svg::SvgError::TooLarge { .. }
         | tre_svg::SvgError::TooManyPoints { .. }
-        | tre_svg::SvgError::Parse(_) => PyValueError::new_err(e.to_string()),
+        | tre_svg::SvgError::Parse(_)
+        | tre_svg::SvgError::MalformedXml(_) => PyValueError::new_err(e.to_string()),
         tre_svg::SvgError::TessellationFailed | tre_svg::SvgError::TopologyMismatch { .. } => {
             TreError::new_err(e.to_string())
         }
@@ -240,4 +241,74 @@ impl PySvg {
         );
         shape
     }
+}
+
+/// One real `<animate>` directive extracted by [`parse_smil`]. Mirrors
+/// `tre_svg::SmilAnimate` -- see `tre_svg::smil`'s own module doc
+/// comment for the real, disclosed v1 scope (a single scalar attribute,
+/// `values` or `from`/`to`, no `begin`/`repeatCount`/`calcMode`).
+#[pyclass(name = "SmilAnimate", get_all)]
+#[derive(Clone)]
+pub struct PySmilAnimate {
+    pub attribute_name: String,
+    pub keyframes: Vec<f32>,
+    pub duration_seconds: f32,
+}
+
+/// One real `<animateTransform type="translate">` directive extracted
+/// by [`parse_smil`]. Mirrors `tre_svg::SmilAnimateTranslate` --
+/// `type="scale"`/`"rotate"` are a real, disclosed v1 gap (see
+/// `tre_svg::smil`'s own module doc comment), not extracted at all.
+#[pyclass(name = "SmilAnimateTranslate", get_all)]
+#[derive(Clone)]
+pub struct PySmilAnimateTranslate {
+    pub keyframes: Vec<(f32, f32)>,
+    pub duration_seconds: f32,
+}
+
+/// Every real SMIL animation directive [`parse_smil`] found in one
+/// document, in document order.
+#[pyclass(name = "ParsedSmil", get_all)]
+pub struct PyParsedSmil {
+    pub animates: Vec<PySmilAnimate>,
+    pub animate_translates: Vec<PySmilAnimateTranslate>,
+}
+
+/// Parses `data` (a real SVG document's own bytes) for real SMIL
+/// `<animate>`/`<animateTransform type="translate">` elements -- see
+/// `tre_svg::smil`'s own module doc comment for the real, disclosed v1
+/// scope. Returns the extracted keyframe data only; driving it
+/// frame-by-frame is a caller's own job, composing it with the already-
+/// real `tre.Tween`/`tre.Timeline` machinery (Phase 13 Steps 13.2/13.3)
+/// -- e.g. feeding an `animate_translates` entry's own keyframes into a
+/// `Tween((x0, y0), (x1, y1), duration, ...)` sampled each frame, then
+/// assigning the result onto a shape's own `x`/`y` fields.
+///
+/// # Errors
+/// Raises `ValueError` if `data` isn't valid UTF-8, or isn't well-formed
+/// XML.
+#[pyfunction]
+pub(crate) fn parse_smil(data: Vec<u8>) -> PyResult<PyParsedSmil> {
+    let text = String::from_utf8(data)
+        .map_err(|e| PyValueError::new_err(format!("SVG source is not valid UTF-8: {e}")))?;
+    let parsed = tre_svg::parse_smil(&text).map_err(svg_err)?;
+    Ok(PyParsedSmil {
+        animates: parsed
+            .animates
+            .into_iter()
+            .map(|a| PySmilAnimate {
+                attribute_name: a.attribute_name,
+                keyframes: a.keyframes,
+                duration_seconds: a.duration_seconds,
+            })
+            .collect(),
+        animate_translates: parsed
+            .animate_translates
+            .into_iter()
+            .map(|t| PySmilAnimateTranslate {
+                keyframes: t.keyframes.into_iter().map(|[x, y]| (x, y)).collect(),
+                duration_seconds: t.duration_seconds,
+            })
+            .collect(),
+    })
 }

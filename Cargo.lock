@@ -3105,6 +3105,7 @@ version = "0.1.0"
 dependencies = [
  "lyon",
  "proptest",
+ "roxmltree",
  "tre-engine",
  "tre-math",
  "usvg",

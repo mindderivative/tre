@@ -94,6 +94,10 @@ fn tre_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<windowed_renderer::PyCursorIcon>()?;
     m.add_class::<svg::PySvg>()?;
     m.add_class::<svg::PyFillRule>()?;
+    m.add_class::<svg::PySmilAnimate>()?;
+    m.add_class::<svg::PySmilAnimateTranslate>()?;
+    m.add_class::<svg::PyParsedSmil>()?;
+    m.add_function(pyo3::wrap_pyfunction!(svg::parse_smil, m)?)?;
     m.add_class::<clock::PyClock>()?;
     m.add_class::<tween::PyTween>()?;
     m.add_class::<tween::PyEasing>()?;

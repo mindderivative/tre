@@ -38,6 +38,13 @@ usvg = { version = "=0.45.1", default-features = false }
 # features needed: the base crate already re-exports `lyon_path`/
 # `lyon_geom`/`lyon_tessellation` as modules; `extra`/`debugger`/
 # `profiling`/`serialization` are opt-in features this crate doesn't use.
+# Phase 13 Step 13.7: real SMIL <animate>/<animateTransform> parsing --
+# `usvg` itself discards these elements entirely (a static-resolution
+# parser by design, confirmed by reading its own source), so SMIL needs
+# a separate, direct XML pass. Already a transitive dependency via
+# `usvg` itself (confirmed in Cargo.lock, version 0.20.0) -- pinned here
+# as a real, direct dependency now that this crate uses it itself.
+roxmltree = "0.20.0"
 lyon = "=1.0.19"
 tre-engine = { path = "../tre-engine" }
 # Reuses `Affine2::transform_point` (Phase 3 Step 3.1) to apply usvg's
