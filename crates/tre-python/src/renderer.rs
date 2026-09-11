@@ -33,7 +33,7 @@ use tre_rhi_vulkan::{register_shape_pipelines, HeadlessSwapchain, VulkanDevice, 
 use crate::error::engine_err;
 use crate::shapes::PyShapeRegistry;
 
-fn setup_err<E: std::fmt::Display>(e: E) -> PyErr {
+pub(crate) fn setup_err<E: std::fmt::Display>(e: E) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
 }
 
@@ -47,14 +47,14 @@ fn setup_err<E: std::fmt::Display>(e: E) -> PyErr {
 /// dynamically mid-frame (`RhiDynamicRingBuffer::write`'s own contract),
 /// so a caller with a genuinely larger scene has no way to raise this
 /// short of a future constructor parameter.
-const RING_BUFFER_CAPACITY: usize = 512 * 1024;
+pub(crate) const RING_BUFFER_CAPACITY: usize = 512 * 1024;
 
 /// The `py.detach`'d render closure's own error type -- kept local to
 /// this module rather than widening `tre_engine::EngineError` itself,
 /// since `RhiDynamicRingBuffer::write`'s `Option<u32>` starvation signal
 /// is deliberately not yet part of that enum (its own doc comment:
 /// real graceful-degradation policy is future work, REVIEW.md #142).
-enum RenderError {
+pub(crate) enum RenderError {
     Engine(EngineError),
     RingBufferStarved,
 }
@@ -65,7 +65,7 @@ impl From<EngineError> for RenderError {
     }
 }
 
-fn render_err(e: RenderError) -> PyErr {
+pub(crate) fn render_err(e: RenderError) -> PyErr {
     match e {
         RenderError::Engine(e) => engine_err(e),
         RenderError::RingBufferStarved => crate::error::TreError::new_err(format!(
@@ -89,7 +89,7 @@ fn render_err(e: RenderError) -> PyErr {
 /// Vulkan.
 const MAX_DIMENSION: u32 = 8192;
 
-fn validate_dimensions(width: u32, height: u32) -> PyResult<()> {
+pub(crate) fn validate_dimensions(width: u32, height: u32) -> PyResult<()> {
     if width == 0 || height == 0 {
         return Err(PyValueError::new_err(format!(
             "HeadlessRenderer width/height must be non-zero, got {width}x{height}"

@@ -16,8 +16,12 @@
 //! - [`renderer::PyHeadlessRenderer`] -- a real, headless GPU round trip
 //!   (`ShapeRegistry::flatten_into` -> upload -> `execute_frame` ->
 //!   readback) returning real pixel bytes, GIL released for the blocking
-//!   GPU work. A windowed renderer (real event-loop integration from
-//!   Python) is real, disclosed follow-up work.
+//!   GPU work.
+//! - [`windowed_renderer::PyWindowedRenderer`] plus [`input`]'s real
+//!   `WindowId`/`MouseButton`/`ElementState`/`InputEvent` bindings -- a
+//!   real on-screen renderer with real polled input events, following
+//!   the same proven window/surface/swapchain sequence
+//!   `tre-rhi-vulkan`'s own `multi_window.rs` example already uses.
 //! - [`canvas::PyCanvas`] -- `save()`/`restore()` only, as a context
 //!   manager; the other ~20 `RenderingCanvas` methods (direct
 //!   immediate-mode drawing, layers, text) are not yet exposed.
@@ -34,8 +38,10 @@
 
 mod canvas;
 mod error;
+mod input;
 mod renderer;
 mod shapes;
+mod windowed_renderer;
 
 use pyo3::prelude::*;
 
@@ -61,5 +67,10 @@ fn tre_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<shapes::PyShapeRegistry>()?;
     m.add_class::<canvas::PyCanvas>()?;
     m.add_class::<renderer::PyHeadlessRenderer>()?;
+    m.add_class::<input::PyWindowId>()?;
+    m.add_class::<input::PyMouseButton>()?;
+    m.add_class::<input::PyElementState>()?;
+    m.add_class::<input::PyInputEvent>()?;
+    m.add_class::<windowed_renderer::PyWindowedRenderer>()?;
     Ok(())
 }
