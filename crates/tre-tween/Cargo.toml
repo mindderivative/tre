@@ -1,0 +1,19 @@
+[package]
+name = "tre-tween"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# Phase 13 Step 13.2 (Q9): the project's math-library evaluation picked
+# `glam` for animation-domain vector math -- the de facto standard,
+# SIMD-backed Rust crate for real-time graphics (Bevy/wgpu ecosystem),
+# providing the Vec2/Vec3/Quat vocabulary tweening needs. Deliberately
+# additive: `tre-math`'s own `Affine2`/SIMD-batch functions stay exactly
+# as they are (already proven in `tre-engine`'s hot flatten path) --
+# this is a new dependency scoped to the new animation crates, not a
+# replacement.
+glam = "0.29"

@@ -3046,6 +3046,7 @@ name = "tre-python"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "glam 0.29.3",
  "pyo3",
  "raw-window-handle",
  "rustybuzz",
@@ -3056,6 +3057,7 @@ dependencies = [
  "tre-rhi-vulkan",
  "tre-svg",
  "tre-text",
+ "tre-tween",
 ]
 
 [[package]]
@@ -3113,6 +3115,13 @@ dependencies = [
  "tre-atlas",
  "unicode-bidi",
  "unicode-script",
+]
+
+[[package]]
+name = "tre-tween"
+version = "0.1.0"
+dependencies = [
+ "glam 0.29.3",
 ]
 
 [[package]]

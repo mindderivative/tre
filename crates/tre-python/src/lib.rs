@@ -47,6 +47,7 @@ mod shapes;
 mod svg;
 mod text_atlas;
 mod texture;
+mod tween;
 mod windowed_renderer;
 
 use pyo3::prelude::*;
@@ -91,5 +92,8 @@ fn tre_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<svg::PySvg>()?;
     m.add_class::<svg::PyFillRule>()?;
     m.add_class::<clock::PyClock>()?;
+    m.add_class::<tween::PyTween>()?;
+    m.add_class::<tween::PyEasing>()?;
+    m.add_class::<tween::PySpring>()?;
     Ok(())
 }

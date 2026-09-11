@@ -14,6 +14,7 @@ members = [
     "crates/tre-platform",
     "crates/tre-a11y",
     "crates/tre-python",
+    "crates/tre-tween",
 ]
 
 [workspace.package]

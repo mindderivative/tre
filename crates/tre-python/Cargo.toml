@@ -40,3 +40,9 @@ tre-atlas = { path = "../tre-atlas" }
 # crate is a leaf, so it can depend on `tre-svg` directly and hand
 # `tre-engine`'s new `Svg` primitive already-tessellated output.
 tre-svg = { path = "../tre-svg" }
+# Phase 13 Step 13.2: `tre.Tween`/`tre.Easing`/`tre.Spring` bind directly
+# to `tre-tween`'s own real, pure interpolation math.
+tre-tween = { path = "../tre-tween" }
+# `PyTween`'s own Vec2 instantiation constructs `glam::Vec2` values
+# directly -- pinned to the identical version `tre-tween` itself uses.
+glam = "0.29"
