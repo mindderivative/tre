@@ -3048,9 +3048,13 @@ dependencies = [
  "bytemuck",
  "pyo3",
  "raw-window-handle",
+ "rustybuzz",
+ "skrifa",
+ "tre-atlas",
  "tre-engine",
  "tre-platform",
  "tre-rhi-vulkan",
+ "tre-text",
 ]
 
 [[package]]

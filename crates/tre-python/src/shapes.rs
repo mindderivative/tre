@@ -11,12 +11,17 @@
 //! `PrimitiveCommon` field exposed here, since it's the one a real caller
 //! reaches for immediately (fades) and costs nothing extra to wire.
 
+use std::collections::HashMap;
+
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use tre_engine::{
-    CornerRadii, LineCap, LineJoin, Path, PathCommand, Polygon, PrimitiveCommon, Rectangle,
-    ShapeColor as Color, ShapeId, ShapePrimitive, ShapeRegistry, Transform2D,
+    CornerRadii, FontId, FontRegistry, LineCap, LineJoin, Path, PathCommand, Polygon,
+    PrimitiveCommon, Rectangle, ShapeColor as Color, ShapeId, ShapePrimitive, ShapeRegistry,
+    Text as EngineText, Transform2D,
 };
+
+use crate::font::PyFont;
 
 /// A real cap on `Polygon::sides`/`star_points`, found necessary by this
 /// project's own review process (REVIEW.md #196-198): `tre_engine`'s own
@@ -362,12 +367,69 @@ impl From<&PyPath> for Path {
     }
 }
 
+/// A single retained-mode text shape. Mirrors `tre_engine::Text` --
+/// `x`/`y` are the top-left of the text block, matching `Rectangle`'s/
+/// `Circle`'s own convention, NOT the text's baseline (`tre_engine::
+/// text::flatten_text` offsets the real baseline internally using the
+/// font's own scaled ascent, so a caller never has to reason about
+/// baseline metrics here).
+///
+/// **Solid fill only** -- see `tre_engine::Text`'s own doc comment for
+/// why: `RenderingCanvas::draw_text`'s real glyph-quad path takes a flat
+/// color, not a gradient/texture fill.
+#[pyclass(name = "Text")]
+#[derive(Clone)]
+pub struct PyText {
+    #[pyo3(get, set)]
+    pub x: f32,
+    #[pyo3(get, set)]
+    pub y: f32,
+    #[pyo3(get, set)]
+    pub text: String,
+    #[pyo3(get, set)]
+    pub font: Py<PyFont>,
+    #[pyo3(get, set)]
+    pub px_size: f32,
+    #[pyo3(get, set)]
+    pub fill_color: u32,
+    #[pyo3(get, set)]
+    pub opacity: f32,
+}
+
+#[pymethods]
+impl PyText {
+    #[new]
+    fn new(x: f32, y: f32, text: String, font: Py<PyFont>, px_size: f32, fill_color: u32) -> Self {
+        Self {
+            x,
+            y,
+            text,
+            font,
+            px_size,
+            fill_color,
+            opacity: 1.0,
+        }
+    }
+}
+
 /// The generational shape store (`tre_engine::ShapeRegistry`). Insert
 /// shapes, get back a stable [`PyShapeId`], then render via
 /// [`crate::renderer::PyHeadlessRenderer`].
 #[pyclass(name = "ShapeRegistry")]
 pub struct PyShapeRegistry {
     pub(crate) inner: ShapeRegistry,
+    /// This registry's own real font table (Phase 12 Step 12.3) --
+    /// owned here, not by the renderer, so a caller never has to reason
+    /// about which registry a `Font` is "scoped to": `insert_text`
+    /// resolves any `Font` into a real `FontId` in this table lazily,
+    /// the first time it's actually used.
+    fonts: FontRegistry,
+    /// Caches each distinct `Font` (by its own `uid`, not its bytes) to
+    /// the `FontId` this registry already resolved it to, so inserting
+    /// many `Text` shapes that share one `Font` registers that font's
+    /// bytes with `tre_engine::FontRegistry` exactly once, not once per
+    /// `insert_text` call.
+    font_ids: HashMap<u64, FontId>,
 }
 
 #[pymethods]
@@ -376,6 +438,8 @@ impl PyShapeRegistry {
     fn new() -> Self {
         Self {
             inner: ShapeRegistry::new(),
+            fonts: FontRegistry::new(),
+            font_ids: HashMap::new(),
         }
     }
 
@@ -458,6 +522,36 @@ impl PyShapeRegistry {
         ))
     }
 
+    /// # Errors
+    /// Raises `ValueError` if `text.x`/`text.y`/`text.opacity` is
+    /// non-finite, or `text.px_size` is non-finite or not `> 0`.
+    fn insert_text(&mut self, text: &PyText, py: Python<'_>) -> PyResult<PyShapeId> {
+        validate_finite("x", text.x)?;
+        validate_finite("y", text.y)?;
+        validate_finite("px_size", text.px_size)?;
+        if text.px_size <= 0.0 {
+            return Err(PyValueError::new_err(format!(
+                "px_size must be > 0, got {}",
+                text.px_size
+            )));
+        }
+        validate_finite("opacity", text.opacity)?;
+
+        let font_id = {
+            let font = text.font.borrow(py);
+            self.resolve_font(&font)
+        };
+
+        let mut shape = EngineText::new(
+            text.text.clone(),
+            font_id,
+            text.px_size,
+            text.fill_color as Color,
+        );
+        shape.common = common(text.x, text.y, text.opacity);
+        Ok(PyShapeId(self.inner.insert(ShapePrimitive::Text(shape))))
+    }
+
     fn remove(&mut self, id: &PyShapeId) -> bool {
         self.inner.remove(id.0)
     }
@@ -468,5 +562,36 @@ impl PyShapeRegistry {
 
     fn is_empty(&self) -> bool {
         self.inner.is_empty()
+    }
+}
+
+impl PyShapeRegistry {
+    /// Resolves `font` (a Python-visible [`PyFont`]) into a real
+    /// `FontId` scoped to this registry's own `FontRegistry`, loading
+    /// its bytes into that table on first use and reusing the cached
+    /// `FontId` on every later call with the same `Font` object.
+    fn resolve_font(&mut self, font: &PyFont) -> FontId {
+        if let Some(&id) = self.font_ids.get(&font.uid) {
+            return id;
+        }
+        let id = self
+            .fonts
+            .load_bytes((*font.bytes).clone())
+            .expect("PyFont::from_bytes already validated these exact bytes load successfully");
+        self.font_ids.insert(font.uid, id);
+        id
+    }
+
+    /// Splits this registry into simultaneous `&mut` access to the real
+    /// `tre_engine::ShapeRegistry` (for `flatten_into`) and `&` access to
+    /// this registry's own font table (for building a `TextFlattenContext`
+    /// to pass to it) -- a renderer's `render()` needs both at once, and
+    /// a plain `&self` accessor method for the font table alone would
+    /// borrow all of `self` for its return value's lifetime, blocking the
+    /// separate `&mut` borrow `flatten_into` itself needs (direct field
+    /// projection, as done here, is what lets the borrow checker see
+    /// these two borrows as disjoint).
+    pub(crate) fn inner_and_fonts(&mut self) -> (&mut ShapeRegistry, &FontRegistry) {
+        (&mut self.inner, &self.fonts)
     }
 }

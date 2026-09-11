@@ -22,7 +22,7 @@ use pyo3::prelude::*;
 use raw_window_handle::HasDisplayHandle;
 use tre_engine::{
     execute_frame, submit_frame, BufferBinding, EngineError, PipelineRegistry, RenderingCanvas,
-    RhiDevice, RhiDynamicRingBuffer, ScissorRect, WindowId,
+    RhiDevice, RhiDynamicRingBuffer, ScissorRect, TextFlattenContext, WindowId,
 };
 use tre_platform::{PlatformConnection, WindowIcon};
 use tre_rhi_vulkan::{register_shape_pipelines, VulkanDevice, VulkanSwapchain};
@@ -33,6 +33,7 @@ use crate::renderer::{
     render_err, setup_err, validate_dimensions, RenderError, RING_BUFFER_CAPACITY,
 };
 use crate::shapes::PyShapeRegistry;
+use crate::text_atlas::TextAtlas;
 
 fn unknown_window_err(id: WindowId) -> PyErr {
     PyValueError::new_err(format!(
@@ -106,7 +107,10 @@ pub struct PyWindowedRenderer {
     // before it. `windows`' own swapchains additionally hold surfaces
     // built against `connection`'s real OS windows, so `connection`
     // must outlive them too (declared after `windows`, before `device`).
+    // `text_atlas` (Phase 12 Step 12.3) joins `ring_buffer`/`windows` for
+    // the identical reason: its own GPU texture is built from `device`.
     ring_buffer: Box<dyn RhiDynamicRingBuffer>,
+    text_atlas: TextAtlas,
     windows: HashMap<WindowId, WindowSlot>,
     connection: PlatformConnection,
     device: VulkanDevice,
@@ -139,6 +143,7 @@ impl PyWindowedRenderer {
         register_shape_pipelines(&device, &mut pipelines, swapchain.format())
             .map_err(engine_err)?;
         let ring_buffer = device.create_dynamic_ring_buffer(RING_BUFFER_CAPACITY);
+        let text_atlas = TextAtlas::new(&device)?;
 
         let mut windows = HashMap::new();
         windows.insert(
@@ -153,6 +158,7 @@ impl PyWindowedRenderer {
 
         Ok(Self {
             ring_buffer,
+            text_atlas,
             windows,
             connection,
             device,
@@ -252,7 +258,13 @@ impl PyWindowedRenderer {
             let mut reg = registry.borrow_mut();
             let mut canvas = RenderingCanvas::new();
             reg.inner.mark_all_dirty();
-            reg.inner.flatten_into(&mut canvas, &self.device, None);
+            let atlas_context = self.text_atlas.context(&self.device)?;
+            let (inner, fonts) = reg.inner_and_fonts();
+            let text_context = TextFlattenContext {
+                fonts,
+                atlas: &atlas_context,
+            };
+            inner.flatten_into(&mut canvas, &self.device, Some(&text_context));
             canvas.flatten()
         };
         let vertex_bytes: &[u8] = bytemuck::cast_slice(&frame.vertices);

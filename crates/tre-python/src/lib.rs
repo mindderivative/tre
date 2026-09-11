@@ -38,9 +38,11 @@
 
 mod canvas;
 mod error;
+mod font;
 mod input;
 mod renderer;
 mod shapes;
+mod text_atlas;
 mod windowed_renderer;
 
 use pyo3::prelude::*;
@@ -64,7 +66,9 @@ fn tre_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<shapes::PyCircle>()?;
     m.add_class::<shapes::PyPolygon>()?;
     m.add_class::<shapes::PyPath>()?;
+    m.add_class::<shapes::PyText>()?;
     m.add_class::<shapes::PyShapeRegistry>()?;
+    m.add_class::<font::PyFont>()?;
     m.add_class::<canvas::PyCanvas>()?;
     m.add_class::<renderer::PyHeadlessRenderer>()?;
     m.add_class::<input::PyWindowId>()?;

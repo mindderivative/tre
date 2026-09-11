@@ -91,7 +91,14 @@ pub struct BufferBinding<'a> {
 /// TECHNICAL.md Section 9.1 bans dynamic type inspection in the per-frame
 /// path, but a backend re-interpreting a handle it produced itself
 /// moments earlier is not that.
-pub trait RhiTexture {
+///
+/// `Send + Sync` (Phase 12 Step 12.3): the same real, necessary fix
+/// already applied to [`RhiBuffer`]/[`RhiPipelineState`] at Phase 10 Step
+/// 10.4 -- a `tre-python` type holding a `Box<dyn RhiTexture>` (the new
+/// `TextAtlas`'s own live GPU atlas texture) needs to be `Send`/`Sync`
+/// itself for `Python::detach` to be usable at all; without this bound,
+/// it silently can't be.
+pub trait RhiTexture: Send + Sync {
     /// The image view -- what a shader binds/samples.
     fn raw_handle(&self) -> u64;
     /// The underlying image (distinct from its view), needed for layout

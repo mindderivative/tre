@@ -26,12 +26,13 @@ use pyo3::types::PyBytes;
 use raw_window_handle::HasDisplayHandle;
 use tre_engine::{
     execute_frame, submit_frame, BufferBinding, EngineError, PipelineRegistry, RenderingCanvas,
-    RhiDevice, RhiDynamicRingBuffer, ScissorRect,
+    RhiDevice, RhiDynamicRingBuffer, ScissorRect, TextFlattenContext,
 };
 use tre_rhi_vulkan::{register_shape_pipelines, HeadlessSwapchain, VulkanDevice, HEADLESS_FORMAT};
 
 use crate::error::engine_err;
 use crate::shapes::PyShapeRegistry;
+use crate::text_atlas::TextAtlas;
 
 pub(crate) fn setup_err<E: std::fmt::Display>(e: E) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
@@ -120,7 +121,10 @@ pub struct PyHeadlessRenderer {
     // segfaulted at Python interpreter shutdown. `ring_buffer` joins
     // `pipelines`/`swapchain` here for the identical reason (REVIEW.md
     // #203/#204): it too holds a live buffer built from `device`.
+    // `text_atlas` (Phase 12 Step 12.3) joins them for the identical
+    // reason again: its own GPU texture is built from `device` too.
     ring_buffer: Box<dyn RhiDynamicRingBuffer>,
+    text_atlas: TextAtlas,
     pipelines: PipelineRegistry,
     swapchain: HeadlessSwapchain,
     device: VulkanDevice,
@@ -164,12 +168,14 @@ impl PyHeadlessRenderer {
         let mut pipelines = PipelineRegistry::new();
         register_shape_pipelines(&device, &mut pipelines, HEADLESS_FORMAT).map_err(engine_err)?;
         let ring_buffer = device.create_dynamic_ring_buffer(RING_BUFFER_CAPACITY);
+        let text_atlas = TextAtlas::new(&device)?;
 
         Ok(Self {
             device,
             swapchain,
             pipelines,
             ring_buffer,
+            text_atlas,
             width,
             height,
         })
@@ -223,7 +229,13 @@ impl PyHeadlessRenderer {
             // non-dirty) shape, producing an empty frame -- see
             // `mark_all_dirty`'s own doc comment (REVIEW.md #196).
             reg.inner.mark_all_dirty();
-            reg.inner.flatten_into(&mut canvas, &self.device, None);
+            let atlas_context = self.text_atlas.context(&self.device)?;
+            let (inner, fonts) = reg.inner_and_fonts();
+            let text_context = TextFlattenContext {
+                fonts,
+                atlas: &atlas_context,
+            };
+            inner.flatten_into(&mut canvas, &self.device, Some(&text_context));
             canvas.flatten()
         };
 
