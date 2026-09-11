@@ -56,6 +56,14 @@ unicode-segmentation = "1.13.3"
 # Real UAX #24 Script-property lookups for splitting runs by script,
 # instead of a hand-rolled Unicode-block heuristic.
 unicode-script = "0.5.8"
+# Real UAX #14 line-breaking (Phase 15 Step 15.5) -- `wrap_lines`' own
+# v1 (Step 15.1) hand-rolled its own break opportunities from
+# whitespace/`\n` alone; this replaces that with the real, established
+# algorithm (hyphens, punctuation, CJK-ideograph boundaries, etc.),
+# rather than hand-implementing UAX #14's own real rule tables from
+# scratch. `#![no_std]`, pure Rust, no system dependency -- confirmed to
+# build cleanly in an isolated scratch crate before adding it here.
+unicode-linebreak = "0.1.5"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Real system font discovery for the fallback cascade (YesLogic-

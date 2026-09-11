@@ -1,4 +1,4 @@
-//! Real word-wrap line-breaking (Phase 15 Step 15.1) -- pure logic over
+//! Real line-breaking (Phase 15 Steps 15.1/15.5) -- pure logic over
 //! already-shaped glyph data, engine-side so it's testable without a
 //! real font or a Python binding, mirroring `caret.rs`'s own "testable
 //! in isolation" precedent. Reuses `caret_positions`'s exact pen-advance
@@ -6,15 +6,23 @@
 //! wrapped line's own measured width and its later rendered width never
 //! diverge.
 //!
+//! Break *opportunities* -- where a line is allowed or required to end
+//! -- come from `unicode-linebreak`'s real implementation of [UAX
+//! #14][uax14] (Step 15.5; Step 15.1's own v1 hand-rolled these from
+//! whitespace/`\n` alone). This covers real hyphen/punctuation/CJK-
+//! ideograph break points, not just spaces -- the same "use the real,
+//! established algorithm, don't hand-roll UAX rule tables" precedent
+//! `caret.rs`'s own bidi/script handling already follows via
+//! `unicode-bidi`/`unicode-script`.
+//!
+//! [uax14]: https://www.unicode.org/reports/tr14/
+//!
 //! **Real, disclosed v1 scope**: LTR/single-script text only (matching
 //! `caret.rs`'s own established scope -- glyph `cluster` byte offsets
-//! are only monotonic within one run for LTR text); whitespace-boundary
-//! word-wrap only, not full UAX #14 line-breaking (no hyphenation, no
-//! punctuation/CJK-ideograph break opportunities); a single word wider
-//! than `max_width` on its own still gets its own line rather than
-//! being split further; `\r` is treated as ordinary whitespace, not a
-//! second line-break character (a caller normalizing `\r\n` to `\n`
-//! first is a real, reasonable expectation left to the caller).
+//! are only monotonic within one run for LTR text); a single
+//! unbreakable token wider than `max_width` on its own still gets its
+//! own line rather than being split further (no hyphenation of an
+//! already-unbroken word); left-aligned only.
 //!
 //! **Trailing-whitespace convention** (matches how a real word processor
 //! renders a wrap point, not a byte-loss bug): whitespace immediately
@@ -28,6 +36,8 @@
 //! right after an explicit `\n`, is real content and IS rendered.
 
 use std::ops::Range;
+
+use unicode_linebreak::{linebreaks, BreakOpportunity};
 
 use crate::shape::ShapedRun;
 
@@ -47,70 +57,6 @@ pub struct WrappedLine {
     pub start_glyph: usize,
     pub end_glyph: usize,
     pub width: f32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TokenKind {
-    Word,
-    Whitespace,
-    Newline,
-}
-
-struct Token {
-    byte_range: Range<usize>,
-    kind: TokenKind,
-}
-
-/// Splits `text` into maximal word/whitespace runs, with every `\n` its
-/// own separate one-byte token (never merged with adjacent whitespace,
-/// since it carries a distinct "forced break" meaning).
-fn tokenize(text: &str) -> Vec<Token> {
-    let mut tokens = Vec::new();
-    let mut current_start = 0usize;
-    let mut current_kind: Option<TokenKind> = None;
-    for (i, ch) in text.char_indices() {
-        if ch == '\n' {
-            if let Some(kind) = current_kind.take() {
-                tokens.push(Token {
-                    byte_range: current_start..i,
-                    kind,
-                });
-            }
-            tokens.push(Token {
-                byte_range: i..i + ch.len_utf8(),
-                kind: TokenKind::Newline,
-            });
-            current_start = i + ch.len_utf8();
-            continue;
-        }
-        let kind = if ch.is_whitespace() {
-            TokenKind::Whitespace
-        } else {
-            TokenKind::Word
-        };
-        match current_kind {
-            None => {
-                current_kind = Some(kind);
-                current_start = i;
-            }
-            Some(running) if running != kind => {
-                tokens.push(Token {
-                    byte_range: current_start..i,
-                    kind: running,
-                });
-                current_kind = Some(kind);
-                current_start = i;
-            }
-            Some(_) => {}
-        }
-    }
-    if let Some(kind) = current_kind {
-        tokens.push(Token {
-            byte_range: current_start..text.len(),
-            kind,
-        });
-    }
-    tokens
 }
 
 struct FlatGlyph {
@@ -146,15 +92,33 @@ fn measure(glyphs: &[FlatGlyph], from: usize, byte_end: usize) -> (usize, f32) {
     (i, width)
 }
 
-/// Splits `text` into real visual lines: always breaks on `\n`, and
-/// (when `max_width` is `Some`) greedily word-wraps within each such
-/// segment to fit -- see the module doc comment for the exact algorithm
-/// and its real, disclosed scope limits. `None` degrades cleanly to
-/// hard-wrap-only, identical to passing `Some(f32::INFINITY)`.
+/// The real byte offset right after the last non-whitespace character
+/// in `text[start..end]`, or `start` itself if that whole range is
+/// whitespace -- used to exclude a line's own trailing whitespace from
+/// its measured width/glyph range without losing those bytes from its
+/// `byte_range` (see the module doc comment's "trailing-whitespace
+/// convention").
+fn trimmed_content_end(text: &str, start: usize, end: usize) -> usize {
+    start + text[start..end].trim_end().len()
+}
+
+/// Splits `text` into real visual lines: `\n` always hard-breaks, and
+/// (when `max_width` is `Some`) real UAX #14 break opportunities
+/// within each such segment are greedily filled to fit -- see the
+/// module doc comment for the exact algorithm and its real, disclosed
+/// scope limits. `None` degrades cleanly to hard-wrap-only, identical
+/// to passing `Some(f32::INFINITY)`.
 ///
 /// Always returns at least one line, even for a fully empty `text` --
 /// matching `caret_positions`'s own "always at least one real stop"
-/// convention.
+/// convention. A `text` that ends with a real `\n` gets one additional
+/// real, empty trailing line (matching every real text editor's own
+/// "pressing Enter at the end opens a new, real, currently-empty line
+/// the caret can sit on" behavior) -- `unicode-linebreak` itself
+/// reports only a single break at that shared position (the `\n`'s own
+/// mandatory break coincides exactly with its "end of text" break, so
+/// only one is ever emitted there), which on its own would otherwise
+/// silently collapse that real, expected extra line.
 #[must_use]
 pub fn wrap_lines(
     text: &str,
@@ -163,83 +127,79 @@ pub fn wrap_lines(
     units_per_em: u16,
     max_width: Option<f32>,
 ) -> Vec<WrappedLine> {
+    // `unicode_linebreak::linebreaks` yields nothing at all for an
+    // empty string (its "always at least one final break" guarantee
+    // only holds for non-empty input, confirmed against the real
+    // crate) -- handled directly here rather than relying on the main
+    // loop to produce it.
+    if text.is_empty() {
+        return vec![WrappedLine {
+            byte_range: 0..0,
+            start_glyph: 0,
+            end_glyph: 0,
+            width: 0.0,
+        }];
+    }
+
     let max_width = max_width.unwrap_or(f32::INFINITY);
     let glyphs = flatten_glyphs(runs, px_size, units_per_em);
-    let tokens = tokenize(text);
 
     let mut lines = Vec::new();
-
     let mut line_start_byte = 0usize;
     let mut line_start_glyph = 0usize;
-    let mut content_end_byte = 0usize;
-    let mut content_end_glyph = 0usize;
-    let mut line_width = 0.0_f32;
-    let mut line_has_word = false;
-    let mut pending_ws: Option<Range<usize>> = None;
+    // The most recent break point accepted as a real candidate for
+    // ending the CURRENT line: (byte offset to close at, glyph index
+    // right after its own trimmed content, that content's own width).
+    // `None` means the current line has no accepted candidate yet.
+    let mut candidate: Option<(usize, usize, f32)> = None;
 
-    for token in &tokens {
-        match token.kind {
-            TokenKind::Word => {
-                let (after_ws_glyph, ws_width) = match &pending_ws {
-                    Some(ws) => measure(&glyphs, content_end_glyph, ws.end),
-                    None => (content_end_glyph, 0.0),
-                };
-                let (after_word_glyph, word_width) =
-                    measure(&glyphs, after_ws_glyph, token.byte_range.end);
-                let candidate_width = line_width + ws_width + word_width;
+    for (break_byte, kind) in linebreaks(text) {
+        // Repeatedly close the line at the last accepted candidate
+        // while this break point's own content (measured from the
+        // CURRENT line start) doesn't fit -- almost always at most one
+        // real closure per break point, but a real, general fix, not
+        // limited to that common case.
+        loop {
+            let trimmed_end = trimmed_content_end(text, line_start_byte, break_byte);
+            let (end_glyph, width) = measure(&glyphs, line_start_glyph, trimmed_end);
+            if candidate.is_none() || width <= max_width {
+                candidate = Some((break_byte, end_glyph, width));
+                break;
+            }
+            let (prev_break_byte, prev_end_glyph, prev_width) = candidate.take().unwrap();
+            let (skip_glyph, _) = measure(&glyphs, prev_end_glyph, prev_break_byte);
+            lines.push(WrappedLine {
+                byte_range: line_start_byte..prev_break_byte,
+                start_glyph: line_start_glyph,
+                end_glyph: prev_end_glyph,
+                width: prev_width,
+            });
+            line_start_byte = prev_break_byte;
+            line_start_glyph = skip_glyph;
+        }
 
-                if !line_has_word || candidate_width <= max_width {
-                    line_width = candidate_width;
-                    content_end_byte = token.byte_range.end;
-                    content_end_glyph = after_word_glyph;
-                    line_has_word = true;
-                    pending_ws = None;
-                } else {
-                    let tail_end = pending_ws.as_ref().map_or(content_end_byte, |ws| ws.end);
-                    lines.push(WrappedLine {
-                        byte_range: line_start_byte..tail_end,
-                        start_glyph: line_start_glyph,
-                        end_glyph: content_end_glyph,
-                        width: line_width,
-                    });
-                    line_start_byte = tail_end;
-                    line_start_glyph = after_ws_glyph;
-                    content_end_byte = token.byte_range.end;
-                    content_end_glyph = after_word_glyph;
-                    line_width = word_width;
-                    line_has_word = true;
-                    pending_ws = None;
-                }
-            }
-            TokenKind::Whitespace => {
-                pending_ws = Some(token.byte_range.clone());
-            }
-            TokenKind::Newline => {
-                let tail_end = token.byte_range.end;
-                lines.push(WrappedLine {
-                    byte_range: line_start_byte..tail_end,
-                    start_glyph: line_start_glyph,
-                    end_glyph: content_end_glyph,
-                    width: line_width,
-                });
-                let (skip_end_glyph, _) = measure(&glyphs, content_end_glyph, tail_end);
-                line_start_byte = tail_end;
-                line_start_glyph = skip_end_glyph;
-                content_end_byte = tail_end;
-                content_end_glyph = skip_end_glyph;
-                line_width = 0.0;
-                line_has_word = false;
-                pending_ws = None;
-            }
+        if kind == BreakOpportunity::Mandatory {
+            let (final_break_byte, final_end_glyph, final_width) = candidate.take().unwrap();
+            let (skip_glyph, _) = measure(&glyphs, final_end_glyph, final_break_byte);
+            lines.push(WrappedLine {
+                byte_range: line_start_byte..final_break_byte,
+                start_glyph: line_start_glyph,
+                end_glyph: final_end_glyph,
+                width: final_width,
+            });
+            line_start_byte = final_break_byte;
+            line_start_glyph = skip_glyph;
         }
     }
 
-    lines.push(WrappedLine {
-        byte_range: line_start_byte..text.len(),
-        start_glyph: line_start_glyph,
-        end_glyph: content_end_glyph,
-        width: line_width,
-    });
+    if text.ends_with('\n') {
+        lines.push(WrappedLine {
+            byte_range: text.len()..text.len(),
+            start_glyph: glyphs.len(),
+            end_glyph: glyphs.len(),
+            width: 0.0,
+        });
+    }
 
     lines
 }
@@ -408,6 +368,22 @@ mod tests {
     }
 
     #[test]
+    fn two_consecutive_newlines_produce_three_real_lines() {
+        // Real editor expectation: pressing Enter twice from an empty
+        // document produces 3 real lines (two empty ones the newlines
+        // themselves close, plus the real trailing one the caret now
+        // sits on) -- proves the "ends_with('\\n')" fix composes
+        // correctly with multiple real, interior mandatory breaks, not
+        // just a single trailing one.
+        let text = "\n\n";
+        let lines = wrap_lines(text, &[], 10.0, 10, None);
+        assert_eq!(lines.len(), 3, "{lines:?}");
+        assert_eq!(lines[0].byte_range, 0..1);
+        assert_eq!(lines[1].byte_range, 1..2);
+        assert_eq!(lines[2].byte_range, 2..2);
+    }
+
+    #[test]
     fn a_newline_glyph_with_real_nonzero_advance_is_still_excluded_from_any_line() {
         // The opposite assumption from `synthetic_glyphs`: here `\n`
         // itself produces a real glyph with a nonzero advance (some
@@ -446,5 +422,46 @@ mod tests {
             "leading whitespace at doc start is real, typed content -- it must be measured, \
              unlike whitespace consumed at an automatic wrap point"
         );
+    }
+
+    #[test]
+    fn real_uax14_breaks_after_a_hyphen_not_just_whitespace() {
+        // "well-known" has a real UAX #14 break opportunity right
+        // after the hyphen -- something Step 15.1's own whitespace-
+        // only v1 could never do. 10 real chars, no spaces at all.
+        let text = "well-known";
+        let glyphs = synthetic_glyphs(text, 10);
+        let runs = vec![run(0..text.len(), glyphs)];
+        // "well-" is 5 chars = 50 wide; "known" is 5 chars = 50 wide.
+        // A width that fits "well-" but not "well-known" (100) proves
+        // the break is real and usable, not just tolerated.
+        let lines = wrap_lines(text, &runs, 10.0, 10, Some(60.0));
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(
+            &text[lines[0].byte_range.clone()],
+            "well-",
+            "breaks right after the hyphen"
+        );
+        assert_eq!(&text[lines[1].byte_range.clone()], "known");
+        assert_contiguous_and_complete(&lines, text);
+    }
+
+    #[test]
+    fn real_uax14_forbids_a_break_between_a_word_and_its_own_trailing_punctuation() {
+        // "hello!" -- UAX #14 forbids breaking between a word and an
+        // immediately-following exclamation mark (real LB13-class
+        // behavior), so this stays one unbreakable unit even under a
+        // width that would otherwise wrap after "hello".
+        let text = "hello! world";
+        let glyphs = synthetic_glyphs(text, 10);
+        let runs = vec![run(0..text.len(), glyphs)];
+        let lines = wrap_lines(text, &runs, 10.0, 10, Some(50.0));
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(
+            &text[lines[0].byte_range.clone()],
+            "hello! ",
+            "the '!' must stay attached to 'hello', not start its own line"
+        );
+        assert_eq!(&text[lines[1].byte_range.clone()], "world");
     }
 }
