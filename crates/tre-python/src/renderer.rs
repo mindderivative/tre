@@ -318,21 +318,15 @@ impl PyHeadlessRenderer {
         registry: &Bound<'_, PyShapeRegistry>,
     ) -> PyResult<Py<PyBytes>> {
         let mut reg = registry.borrow_mut();
-        self.scratch_canvas.reset();
-        Self::flatten_registry_into(
+        render_single_registry(
             &self.device,
             &mut self.text_atlas,
             &mut self.scratch_canvas,
+            &mut self.frame_arena,
+            &mut self.flattened,
             &mut reg,
         )?;
         drop(reg);
-        if !self.scratch_canvas.stitch_into(&self.frame_arena) {
-            return Err(crate::error::TreError::new_err(
-                "render()'s scene exceeded this renderer's own fixed FrameArena capacity -- \
-                 reduce the shape count, or split it across multiple render() calls",
-            ));
-        }
-        self.frame_arena.flatten_into(&mut self.flattened);
         self.submit_and_read_bgra(py)
     }
 
@@ -358,7 +352,7 @@ impl PyHeadlessRenderer {
     ) -> PyResult<()> {
         let mut reg = registry.borrow_mut();
         let mut canvas = canvas.borrow_mut();
-        Self::flatten_registry_into(
+        flatten_registry_into(
             &self.device,
             &mut self.text_atlas,
             &mut canvas.inner,
@@ -385,16 +379,12 @@ impl PyHeadlessRenderer {
     ) -> PyResult<Py<PyBytes>> {
         {
             let mut canvas = canvas.borrow_mut();
-            if !canvas.inner.stitch_into(&self.frame_arena) {
-                return Err(crate::error::TreError::new_err(
-                    "render_canvas()'s scene exceeded this renderer's own fixed FrameArena \
-                     capacity -- reduce the shape count, or split it across multiple \
-                     render_canvas() calls",
-                ));
-            }
-            canvas.inner.reset();
+            render_canvas_shared(
+                &mut canvas.inner,
+                &mut self.frame_arena,
+                &mut self.flattened,
+            )?;
         }
-        self.frame_arena.flatten_into(&mut self.flattened);
         self.submit_and_read_bgra(py)
     }
 
@@ -436,103 +426,201 @@ impl PyHeadlessRenderer {
         py: Python<'_>,
         registries: Vec<Py<PyShapeRegistry>>,
     ) -> PyResult<Py<PyBytes>> {
-        let root = RenderingCanvas::new();
-        if registries.len() > root.max_sub_canvases() {
-            return Err(PyValueError::new_err(format!(
-                "render_parallel got {} registries, more than this machine's own concurrency cap \
-                 of {} (available_parallelism() - 1)",
-                registries.len(),
-                root.max_sub_canvases()
-            )));
-        }
-
-        let atlas_context = self.text_atlas.context(&self.device)?;
-
-        // `try_borrow_mut`, not `borrow_mut` -- the latter panics on a
-        // bad borrow (e.g. the same registry object passed twice in
-        // `registries`, or already borrowed elsewhere), a real caller
-        // mistake this should report cleanly, not crash on.
-        let mut guards: Vec<PyRefMut<'_, PyShapeRegistry>> = registries
-            .iter()
-            .map(|r| r.bind(py).try_borrow_mut().map_err(PyErr::from))
-            .collect::<PyResult<_>>()?;
-        // `PyRefMut` itself is `!Send` (it carries a `Python<'py>` GIL
-        // token internally), so it cannot cross into the `py.detach`
-        // closure below at all -- not even just captured, unused. Each
-        // guard stays right here, keeping its own borrow-flag set (and
-        // therefore keeping any *other* concurrent Python-side access to
-        // the same registry correctly rejected) for this whole method's
-        // duration; only a plain `&mut PyShapeRegistry` re-borrowed out
-        // of it -- ordinary Rust data with no GIL ties -- actually moves
-        // into a worker thread.
-        let mut registry_refs: Vec<&mut PyShapeRegistry> =
-            guards.iter_mut().map(|g| &mut **g).collect();
-        let mut sub_canvases: Vec<_> = registry_refs
-            .iter()
-            .map(|_| root.create_sub_canvas())
-            .collect();
-
-        let device = &self.device;
-        let atlas_context = &atlas_context;
-        py.detach(|| {
-            std::thread::scope(|scope| {
-                for (registry, sub_canvas) in registry_refs.iter_mut().zip(sub_canvases.iter_mut())
-                {
-                    let registry: &mut PyShapeRegistry = registry;
-                    scope.spawn(move || {
-                        registry.inner.mark_all_dirty();
-                        let (inner, fonts) = registry.inner_and_fonts();
-                        let text_context = TextFlattenContext {
-                            fonts,
-                            atlas: atlas_context,
-                        };
-                        inner.flatten_into(sub_canvas, device, Some(&text_context));
-                    });
-                }
-            });
-        });
-
-        for sub_canvas in &sub_canvases {
-            if !sub_canvas.stitch_into(&self.frame_arena) {
-                return Err(crate::error::TreError::new_err(
-                    "render_parallel's combined scene exceeded its own fixed FrameArena capacity \
-                     -- reduce the total shape count across all registries, or split it across \
-                     multiple render_parallel() calls",
-                ));
-            }
-        }
-        self.frame_arena.flatten_into(&mut self.flattened);
-
+        render_parallel_shared(
+            py,
+            &self.device,
+            &mut self.text_atlas,
+            &mut self.frame_arena,
+            &mut self.flattened,
+            registries,
+        )?;
         self.submit_and_read_bgra(py)
     }
 }
 
-impl PyHeadlessRenderer {
-    /// Shared by `render`/`flatten_into` (the public pymethod)/`render`'s
-    /// own `Self::flatten_registry_into` call: flattens `registry`'s
-    /// current shapes into `canvas` using this renderer's device/atlas.
-    /// A plain associated function, not a method, specifically so a
-    /// caller can pass `&mut self.scratch_canvas` (a field of `self`)
-    /// alongside `&self.device`/`&mut self.text_atlas` (other fields of
-    /// the same `self`) as independent, disjoint borrows -- taking
-    /// `&mut self` as the receiver here would make that impossible.
-    fn flatten_registry_into(
-        device: &VulkanDevice,
-        text_atlas: &mut TextAtlas,
-        canvas: &mut RenderingCanvas,
-        registry: &mut PyShapeRegistry,
-    ) -> PyResult<()> {
-        registry.inner.mark_all_dirty();
-        let atlas_context = text_atlas.context(device)?;
-        let (inner, fonts) = registry.inner_and_fonts();
-        let text_context = TextFlattenContext {
-            fonts,
-            atlas: &atlas_context,
-        };
-        inner.flatten_into(canvas, device, Some(&text_context));
-        Ok(())
+/// Flattens `registry`'s current shapes into `canvas` using `device`/
+/// `text_atlas` -- shared by `PyHeadlessRenderer`/`PyWindowedRenderer`'s
+/// own `render`/`flatten_into`/`render_single_registry` (Architecture
+/// review finding: this exact sequence was duplicated verbatim between
+/// the two renderer types with no shared helper). A plain free function,
+/// not a method, specifically so a caller can pass `&mut self.
+/// scratch_canvas` (a field of `self`) alongside `&self.device`/`&mut
+/// self.text_atlas` (other fields of the same `self`) as independent,
+/// disjoint borrows -- taking `&mut self` as the receiver here would
+/// make that impossible.
+pub(crate) fn flatten_registry_into(
+    device: &VulkanDevice,
+    text_atlas: &mut TextAtlas,
+    canvas: &mut RenderingCanvas,
+    registry: &mut PyShapeRegistry,
+) -> PyResult<()> {
+    registry.inner.mark_all_dirty();
+    let atlas_context = text_atlas.context(device)?;
+    let (inner, fonts) = registry.inner_and_fonts();
+    let text_context = TextFlattenContext {
+        fonts,
+        atlas: &atlas_context,
+    };
+    inner.flatten_into(canvas, device, Some(&text_context));
+    Ok(())
+}
+
+/// Shared by `PyHeadlessRenderer`/`PyWindowedRenderer::render` (the
+/// single-registry convenience wrapper): resets `scratch_canvas`,
+/// flattens `registry` into it, stitches it into `frame_arena`, and
+/// drains that into `flattened` -- the exact
+/// `reset()`/`stitch_into()`/`flatten_into()` sequence both renderer
+/// types otherwise duplicated verbatim (Architecture review finding,
+/// the same sequence REVIEW.md finding #210 introduced to close the
+/// "fresh canvas every frame" Performance finding).
+pub(crate) fn render_single_registry(
+    device: &VulkanDevice,
+    text_atlas: &mut TextAtlas,
+    scratch_canvas: &mut RenderingCanvas,
+    frame_arena: &mut FrameArena,
+    flattened: &mut FlattenedFrame,
+    registry: &mut PyShapeRegistry,
+) -> PyResult<()> {
+    scratch_canvas.reset();
+    flatten_registry_into(device, text_atlas, scratch_canvas, registry)?;
+    if !scratch_canvas.stitch_into(frame_arena) {
+        return Err(crate::error::TreError::new_err(
+            "render()'s scene exceeded this renderer's own fixed FrameArena capacity -- reduce \
+             the shape count, or split it across multiple render() calls",
+        ));
+    }
+    frame_arena.flatten_into(flattened);
+    Ok(())
+}
+
+/// Shared by `PyHeadlessRenderer`/`PyWindowedRenderer::render_canvas`:
+/// stitches an already-assembled `canvas` into `frame_arena`, resets
+/// `canvas` in place (so the same Python `Canvas` can be reused next
+/// frame), and drains `frame_arena` into `flattened` -- the exact
+/// sequence both renderer types otherwise duplicated verbatim
+/// (Architecture review finding).
+pub(crate) fn render_canvas_shared(
+    canvas: &mut RenderingCanvas,
+    frame_arena: &mut FrameArena,
+    flattened: &mut FlattenedFrame,
+) -> PyResult<()> {
+    if !canvas.stitch_into(frame_arena) {
+        return Err(crate::error::TreError::new_err(
+            "render_canvas()'s scene exceeded this renderer's own fixed FrameArena capacity -- \
+             reduce the shape count, or split it across multiple render_canvas() calls",
+        ));
+    }
+    canvas.reset();
+    frame_arena.flatten_into(flattened);
+    Ok(())
+}
+
+/// Shared by `PyHeadlessRenderer`/`PyWindowedRenderer::render_parallel`
+/// (Architecture review finding: this whole real-parallelism sequence
+/// was duplicated verbatim between the two renderer types): validates
+/// `registries.len()` against this machine's own concurrency cap, then
+/// flattens each registry into its own real `SubCanvas` on its own real
+/// OS thread (the GIL released for the whole span, so this is true
+/// parallelism, not GIL-serialized cooperative scheduling), stitches
+/// every one into `frame_arena`, and drains that into `flattened`.
+///
+/// The real concurrency-safety story, verified before building this (not
+/// assumed): `SubCanvas::stitch_into`'s own `ScatterArena` reservations
+/// are lock-free; the real per-shape GPU style-buffer writes (`RhiDevice
+/// ::shape_style_buffer`) are mutex-protected in the real Vulkan backend
+/// (`VulkanRingBuffer::write`); and the shared text atlas's own request/
+/// lookup path is lock-free by design (Phase 4) -- none of `ShapeRegistry
+/// ::flatten_into`'s own real work needs any *new* synchronization to run
+/// concurrently across registries. The one genuinely serialized step is
+/// the text atlas's own texture-refresh check (`TextAtlas::context`),
+/// done once up front, before any worker thread starts -- every thread
+/// shares that one already-resolved `GlyphAtlasContext` read-only.
+///
+/// Each registry's own current state is always flattened in full
+/// (`mark_all_dirty`), matching `render`'s own single-registry
+/// convenience wrapper.
+///
+/// # Errors
+/// Raises `ValueError` if `registries.len()` exceeds this machine's own
+/// concurrency cap (`available_parallelism() - 1`), `TreError` if the
+/// combined scene exceeds the fixed `FrameArena` capacity (see
+/// [`RENDER_ARENA_VERTEX_CAPACITY`]'s own doc comment) or any other real,
+/// recoverable engine failure.
+pub(crate) fn render_parallel_shared(
+    py: Python<'_>,
+    device: &VulkanDevice,
+    text_atlas: &mut TextAtlas,
+    frame_arena: &mut FrameArena,
+    flattened: &mut FlattenedFrame,
+    registries: Vec<Py<PyShapeRegistry>>,
+) -> PyResult<()> {
+    let root = RenderingCanvas::new();
+    if registries.len() > root.max_sub_canvases() {
+        return Err(PyValueError::new_err(format!(
+            "render_parallel got {} registries, more than this machine's own concurrency cap of \
+             {} (available_parallelism() - 1)",
+            registries.len(),
+            root.max_sub_canvases()
+        )));
     }
 
+    let atlas_context = text_atlas.context(device)?;
+
+    // `try_borrow_mut`, not `borrow_mut` -- the latter panics on a bad
+    // borrow (e.g. the same registry object passed twice in
+    // `registries`, or already borrowed elsewhere), a real caller
+    // mistake this should report cleanly, not crash on.
+    let mut guards: Vec<PyRefMut<'_, PyShapeRegistry>> = registries
+        .iter()
+        .map(|r| r.bind(py).try_borrow_mut().map_err(PyErr::from))
+        .collect::<PyResult<_>>()?;
+    // `PyRefMut` itself is `!Send` (it carries a `Python<'py>` GIL token
+    // internally), so it cannot cross into the `py.detach` closure below
+    // at all -- not even just captured, unused. Each guard stays right
+    // here, keeping its own borrow-flag set (and therefore keeping any
+    // *other* concurrent Python-side access to the same registry
+    // correctly rejected) for this whole call's duration; only a plain
+    // `&mut PyShapeRegistry` re-borrowed out of it -- ordinary Rust data
+    // with no GIL ties -- actually moves into a worker thread.
+    let mut registry_refs: Vec<&mut PyShapeRegistry> =
+        guards.iter_mut().map(|g| &mut **g).collect();
+    let mut sub_canvases: Vec<_> = registry_refs
+        .iter()
+        .map(|_| root.create_sub_canvas())
+        .collect();
+
+    let atlas_context = &atlas_context;
+    py.detach(|| {
+        std::thread::scope(|scope| {
+            for (registry, sub_canvas) in registry_refs.iter_mut().zip(sub_canvases.iter_mut()) {
+                let registry: &mut PyShapeRegistry = registry;
+                scope.spawn(move || {
+                    registry.inner.mark_all_dirty();
+                    let (inner, fonts) = registry.inner_and_fonts();
+                    let text_context = TextFlattenContext {
+                        fonts,
+                        atlas: atlas_context,
+                    };
+                    inner.flatten_into(sub_canvas, device, Some(&text_context));
+                });
+            }
+        });
+    });
+
+    for sub_canvas in &sub_canvases {
+        if !sub_canvas.stitch_into(frame_arena) {
+            return Err(crate::error::TreError::new_err(
+                "render_parallel's combined scene exceeded its own fixed FrameArena capacity -- \
+                 reduce the total shape count across all registries, or split it across \
+                 multiple render_parallel() calls",
+            ));
+        }
+    }
+    frame_arena.flatten_into(flattened);
+    Ok(())
+}
+
+impl PyHeadlessRenderer {
     /// Releases the GIL for the real GPU round trip (upload, submit,
     /// present, readback) -- IMPLEMENTATION.md Step 10.4 task 3 -- so
     /// other Python threads keep running while this one blocks on the

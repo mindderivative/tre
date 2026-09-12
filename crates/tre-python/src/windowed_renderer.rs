@@ -22,8 +22,7 @@ use pyo3::prelude::*;
 use raw_window_handle::HasDisplayHandle;
 use tre_engine::{
     execute_frame, submit_frame, BufferBinding, EngineError, FlattenedFrame, FrameArena,
-    PipelineRegistry, RenderingCanvas, RhiDevice, RhiDynamicRingBuffer, ScissorRect,
-    TextFlattenContext, WindowId,
+    PipelineRegistry, RenderingCanvas, RhiDevice, RhiDynamicRingBuffer, ScissorRect, WindowId,
 };
 use tre_platform::{CursorIcon, PlatformConnection, WindowIcon};
 use tre_rhi_vulkan::{register_shape_pipelines, VulkanDevice, VulkanSwapchain};
@@ -32,9 +31,10 @@ use crate::canvas::PyCanvas;
 use crate::error::engine_err;
 use crate::input::{PyInputEvent, PyWindowId};
 use crate::renderer::{
-    render_err, setup_err, validate_dimensions, RenderError, RENDER_ARENA_ACCESSIBILITY_CAPACITY,
-    RENDER_ARENA_COMMAND_CAPACITY, RENDER_ARENA_INDEX_CAPACITY, RENDER_ARENA_VERTEX_CAPACITY,
-    RING_BUFFER_CAPACITY,
+    flatten_registry_into, render_canvas_shared, render_err, render_parallel_shared,
+    render_single_registry, setup_err, validate_dimensions, RenderError,
+    RENDER_ARENA_ACCESSIBILITY_CAPACITY, RENDER_ARENA_COMMAND_CAPACITY,
+    RENDER_ARENA_INDEX_CAPACITY, RENDER_ARENA_VERTEX_CAPACITY, RING_BUFFER_CAPACITY,
 };
 use crate::shapes::PyShapeRegistry;
 use crate::text_atlas::TextAtlas;
@@ -298,21 +298,15 @@ impl PyWindowedRenderer {
         registry: &Bound<'_, PyShapeRegistry>,
     ) -> PyResult<()> {
         let mut reg = registry.borrow_mut();
-        self.scratch_canvas.reset();
-        Self::flatten_registry_into(
+        render_single_registry(
             &self.device,
             &mut self.text_atlas,
             &mut self.scratch_canvas,
+            &mut self.frame_arena,
+            &mut self.flattened,
             &mut reg,
         )?;
         drop(reg);
-        if !self.scratch_canvas.stitch_into(&self.frame_arena) {
-            return Err(crate::error::TreError::new_err(
-                "render()'s scene exceeded this renderer's own fixed FrameArena capacity -- \
-                 reduce the shape count, or split it across multiple render() calls",
-            ));
-        }
-        self.frame_arena.flatten_into(&mut self.flattened);
         self.submit_frame_to_window(py, window.0)
     }
 
@@ -333,7 +327,7 @@ impl PyWindowedRenderer {
     ) -> PyResult<()> {
         let mut reg = registry.borrow_mut();
         let mut canvas = canvas.borrow_mut();
-        Self::flatten_registry_into(
+        flatten_registry_into(
             &self.device,
             &mut self.text_atlas,
             &mut canvas.inner,
@@ -360,16 +354,12 @@ impl PyWindowedRenderer {
     ) -> PyResult<()> {
         {
             let mut canvas = canvas.borrow_mut();
-            if !canvas.inner.stitch_into(&self.frame_arena) {
-                return Err(crate::error::TreError::new_err(
-                    "render_canvas()'s scene exceeded this renderer's own fixed FrameArena \
-                     capacity -- reduce the shape count, or split it across multiple \
-                     render_canvas() calls",
-                ));
-            }
-            canvas.inner.reset();
+            render_canvas_shared(
+                &mut canvas.inner,
+                &mut self.frame_arena,
+                &mut self.flattened,
+            )?;
         }
-        self.frame_arena.flatten_into(&mut self.flattened);
         self.submit_frame_to_window(py, window.0)
     }
 
@@ -392,60 +382,14 @@ impl PyWindowedRenderer {
         window: PyWindowId,
         registries: Vec<Py<PyShapeRegistry>>,
     ) -> PyResult<()> {
-        let root = RenderingCanvas::new();
-        if registries.len() > root.max_sub_canvases() {
-            return Err(PyValueError::new_err(format!(
-                "render_parallel got {} registries, more than this machine's own concurrency cap \
-                 of {} (available_parallelism() - 1)",
-                registries.len(),
-                root.max_sub_canvases()
-            )));
-        }
-
-        let atlas_context = self.text_atlas.context(&self.device)?;
-
-        let mut guards: Vec<PyRefMut<'_, PyShapeRegistry>> = registries
-            .iter()
-            .map(|r| r.bind(py).try_borrow_mut().map_err(PyErr::from))
-            .collect::<PyResult<_>>()?;
-        let mut registry_refs: Vec<&mut PyShapeRegistry> =
-            guards.iter_mut().map(|g| &mut **g).collect();
-        let mut sub_canvases: Vec<_> = registry_refs
-            .iter()
-            .map(|_| root.create_sub_canvas())
-            .collect();
-
-        let device = &self.device;
-        let atlas_context = &atlas_context;
-        py.detach(|| {
-            std::thread::scope(|scope| {
-                for (registry, sub_canvas) in registry_refs.iter_mut().zip(sub_canvases.iter_mut())
-                {
-                    let registry: &mut PyShapeRegistry = registry;
-                    scope.spawn(move || {
-                        registry.inner.mark_all_dirty();
-                        let (inner, fonts) = registry.inner_and_fonts();
-                        let text_context = TextFlattenContext {
-                            fonts,
-                            atlas: atlas_context,
-                        };
-                        inner.flatten_into(sub_canvas, device, Some(&text_context));
-                    });
-                }
-            });
-        });
-
-        for sub_canvas in &sub_canvases {
-            if !sub_canvas.stitch_into(&self.frame_arena) {
-                return Err(crate::error::TreError::new_err(
-                    "render_parallel's combined scene exceeded its own fixed FrameArena capacity \
-                     -- reduce the total shape count across all registries, or split it across \
-                     multiple render_parallel() calls",
-                ));
-            }
-        }
-        self.frame_arena.flatten_into(&mut self.flattened);
-
+        render_parallel_shared(
+            py,
+            &self.device,
+            &mut self.text_atlas,
+            &mut self.frame_arena,
+            &mut self.flattened,
+            registries,
+        )?;
         self.submit_frame_to_window(py, window.0)
     }
 
@@ -619,28 +563,6 @@ impl From<PyCursorIcon> for CursorIcon {
 }
 
 impl PyWindowedRenderer {
-    /// Shared by `render`/`flatten_into` (the public pymethod): flattens
-    /// `registry`'s current shapes into `canvas` using this renderer's
-    /// device/atlas. A plain associated function, not a method, for the
-    /// identical reason `PyHeadlessRenderer::flatten_registry_into` is
-    /// one -- see its doc comment.
-    fn flatten_registry_into(
-        device: &VulkanDevice,
-        text_atlas: &mut TextAtlas,
-        canvas: &mut RenderingCanvas,
-        registry: &mut PyShapeRegistry,
-    ) -> PyResult<()> {
-        registry.inner.mark_all_dirty();
-        let atlas_context = text_atlas.context(device)?;
-        let (inner, fonts) = registry.inner_and_fonts();
-        let text_context = TextFlattenContext {
-            fonts,
-            atlas: &atlas_context,
-        };
-        inner.flatten_into(canvas, device, Some(&text_context));
-        Ok(())
-    }
-
     /// Submits `self.flattened` to `window`'s own swapchain, with the
     /// same real resize-recovery retry (this module's own doc comment)
     /// every submission path shares. Factored out so `render_canvas`/
