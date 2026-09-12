@@ -23,7 +23,7 @@ This section is a **reference**: exact signatures, real documented bugs and thei
 | `tre-atlas` | The shared dynamic texture atlas: bin-packing plus real multi-thread concurrency | [Text, SVG & Atlas](text-svg-atlas.md) |
 | `tre-tween` | Easing curves, generic interpolation, a real damped spring | [Animation](animation.md) |
 | `tre-animation` | The real animation sequencer (`Timeline`) built on `tre-tween` | [Animation](animation.md) |
-| `tre-ffi` | The engine's planned C-ABI surface | Placeholder -- see [Errors & FFI](errors-and-ffi.md) |
+| `tre-ffi` | The engine's C-ABI surface for every language other than Python -- opaque handles, error codes, a real headless-rendering first slice | [Errors & FFI](errors-and-ffi.md) |
 | `tre-python` | PyO3 bindings over everything above | [Python API](../python-api/index.md) (its own section) |
 
 ## Conventions that hold across the whole engine
