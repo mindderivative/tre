@@ -35,6 +35,10 @@ use crate::texture::PyTexture;
 /// UI would ever draw.
 const MAX_POLYGON_SIDES: u32 = 4096;
 
+/// A resolved `Texture` fill's own shared GPU-resource handle -- see
+/// `PyShapeRegistry::textures_kept_alive`'s own doc comment.
+type ResolvedTexture = Arc<Box<dyn RhiTexture>>;
+
 /// Rejects a non-finite (`NaN`/`+-inf`) coordinate before it can cross
 /// into `tre_engine`'s flatten path -- found necessary by this project's
 /// own review process (REVIEW.md #202): none of `Rectangle`/`Circle`/
@@ -758,15 +762,21 @@ pub struct PyShapeRegistry {
     /// bytes with `tre_engine::FontRegistry` exactly once, not once per
     /// `insert_text` call.
     font_ids: HashMap<u64, FontId>,
-    /// Keeps every `Texture` ever used as a shape's `fill_color` alive
-    /// for as long as this registry exists (Phase 12 Step 12.4) -- once
-    /// `insert_rectangle`/etc. resolves a `Texture` into a raw bindless
-    /// `u32` for `FillStyle::Texture`, nothing else keeps that texture's
-    /// own `Box<dyn RhiTexture>` alive; without this, it could be dropped
-    /// (freeing its real GPU resources) the moment the original Python
-    /// `Texture` object is garbage-collected, while a shape here still
-    /// references its now-dangling bindless index.
-    textures_kept_alive: Vec<Arc<Box<dyn RhiTexture>>>,
+    /// Keeps each shape's resolved `Texture` alive for exactly as long as
+    /// that shape exists (Phase 12 Step 12.4, REVIEW.md finding: this was
+    /// originally an ever-growing `Vec`, pruned only when the whole
+    /// registry dropped) -- once `insert_rectangle`/etc. resolves a
+    /// `Texture` into a raw bindless `u32` for `FillStyle::Texture`,
+    /// nothing else keeps that texture's own `Box<dyn RhiTexture>` alive;
+    /// without this, it could be dropped (freeing its real GPU resources)
+    /// the moment the original Python `Texture` object is
+    /// garbage-collected, while a shape here still references its now-
+    /// dangling bindless index. Keyed by `ShapeId` so `remove()` can drop
+    /// exactly the entry (if any) that shape owned -- if that was the
+    /// last strong reference (the Python `Texture` object already
+    /// garbage-collected too), the real GPU resource is freed right then,
+    /// not merely marked eligible for some future sweep.
+    textures_kept_alive: HashMap<ShapeId, ResolvedTexture>,
 }
 
 #[pymethods]
@@ -777,7 +787,7 @@ impl PyShapeRegistry {
             inner: ShapeRegistry::new(),
             fonts: FontRegistry::new(),
             font_ids: HashMap::new(),
-            textures_kept_alive: Vec::new(),
+            textures_kept_alive: HashMap::new(),
         }
     }
 
@@ -814,15 +824,17 @@ impl PyShapeRegistry {
         validate_finite("scale_x", rect.scale_x)?;
         validate_finite("scale_y", rect.scale_y)?;
         validate_finite("rotation", rect.rotation)?;
-        let fill = self.resolve_fill(py, &rect.fill_color)?;
+        let (fill, texture) = self.resolve_fill(py, &rect.fill_color)?;
         let mut rect = rect.to_engine(fill);
         // Documented 0.0..=1.0 contract (gpu_style.rs), never enforced
         // before this fix -- clamped, not rejected, since it's a
         // cosmetic parameter an animation can briefly overshoot.
         rect.corner_smoothing = rect.corner_smoothing.clamp(0.0, 1.0);
-        Ok(PyShapeId(
-            self.inner.insert(ShapePrimitive::Rectangle(rect)),
-        ))
+        let id = self.inner.insert(ShapePrimitive::Rectangle(rect));
+        if let Some(texture) = texture {
+            self.textures_kept_alive.insert(id, texture);
+        }
+        Ok(PyShapeId(id))
     }
 
     /// # Errors
@@ -841,11 +853,14 @@ impl PyShapeRegistry {
         validate_finite("scale_x", circle.scale_x)?;
         validate_finite("scale_y", circle.scale_y)?;
         validate_finite("rotation", circle.rotation)?;
-        let fill = self.resolve_fill(py, &circle.fill_color)?;
-        Ok(PyShapeId(
-            self.inner
-                .insert(ShapePrimitive::Circle(circle.to_engine(fill))),
-        ))
+        let (fill, texture) = self.resolve_fill(py, &circle.fill_color)?;
+        let id = self
+            .inner
+            .insert(ShapePrimitive::Circle(circle.to_engine(fill)));
+        if let Some(texture) = texture {
+            self.textures_kept_alive.insert(id, texture);
+        }
+        Ok(PyShapeId(id))
     }
 
     /// # Errors
@@ -873,11 +888,14 @@ impl PyShapeRegistry {
         validate_finite("scale_x", polygon.scale_x)?;
         validate_finite("scale_y", polygon.scale_y)?;
         validate_finite("rotation", polygon.rotation)?;
-        let fill = self.resolve_fill(py, &polygon.fill_color)?;
-        Ok(PyShapeId(
-            self.inner
-                .insert(ShapePrimitive::Polygon(polygon.to_engine(fill))),
-        ))
+        let (fill, texture) = self.resolve_fill(py, &polygon.fill_color)?;
+        let id = self
+            .inner
+            .insert(ShapePrimitive::Polygon(polygon.to_engine(fill)));
+        if let Some(texture) = texture {
+            self.textures_kept_alive.insert(id, texture);
+        }
+        Ok(PyShapeId(id))
     }
 
     /// # Errors
@@ -892,11 +910,14 @@ impl PyShapeRegistry {
         validate_finite("scale_x", path.scale_x)?;
         validate_finite("scale_y", path.scale_y)?;
         validate_finite("rotation", path.rotation)?;
-        let fill = self.resolve_fill(py, &path.fill_color)?;
-        Ok(PyShapeId(
-            self.inner
-                .insert(ShapePrimitive::Path(path.to_engine(fill))),
-        ))
+        let (fill, texture) = self.resolve_fill(py, &path.fill_color)?;
+        let id = self
+            .inner
+            .insert(ShapePrimitive::Path(path.to_engine(fill)));
+        if let Some(texture) = texture {
+            self.textures_kept_alive.insert(id, texture);
+        }
+        Ok(PyShapeId(id))
     }
 
     /// # Errors
@@ -982,6 +1003,13 @@ impl PyShapeRegistry {
     }
 
     fn remove(&mut self, id: &PyShapeId) -> bool {
+        // Drop this shape's own texture reference (if it had one) before
+        // the shape itself -- if that was the last strong `Arc` (the
+        // Python `Texture` object already garbage-collected too), the
+        // real GPU resource is released right here, not kept alive
+        // indefinitely by this registry (see `textures_kept_alive`'s own
+        // doc comment).
+        self.textures_kept_alive.remove(&id.0);
         self.inner.remove(id.0)
     }
 
@@ -998,20 +1026,28 @@ impl PyShapeRegistry {
     /// Resolves a shape's own `fill_color` field (an `int`, a
     /// [`PyGradientId`], or a [`PyTexture`] -- the real `int |
     /// GradientId | Texture` union every `insert_*` method now accepts,
-    /// Phase 12 Step 12.4) into the matching real `FillStyle`. A
-    /// resolved `Texture`'s own underlying GPU resource is kept alive in
-    /// `textures_kept_alive` for as long as this registry exists.
-    fn resolve_fill(&mut self, py: Python<'_>, value: &Py<PyAny>) -> PyResult<FillStyle> {
+    /// Phase 12 Step 12.4) into the matching real `FillStyle`, plus the
+    /// resolved `Texture`'s own `Arc` clone (`Some` only for a `Texture`
+    /// fill) for the caller to associate with the shape's own id in
+    /// `textures_kept_alive` once that id exists -- this method itself
+    /// runs before `self.inner.insert` produces one.
+    fn resolve_fill(
+        &mut self,
+        py: Python<'_>,
+        value: &Py<PyAny>,
+    ) -> PyResult<(FillStyle, Option<ResolvedTexture>)> {
         let bound = value.bind(py);
         if let Ok(color) = bound.extract::<u32>() {
-            return Ok(FillStyle::Solid(color));
+            return Ok((FillStyle::Solid(color), None));
         }
         if let Ok(gradient_id) = bound.extract::<PyGradientId>() {
-            return Ok(FillStyle::Gradient(gradient_id.0));
+            return Ok((FillStyle::Gradient(gradient_id.0), None));
         }
         if let Ok(texture) = bound.extract::<PyTexture>() {
-            self.textures_kept_alive.push(texture.texture.clone());
-            return Ok(FillStyle::Texture(texture.bindless_index));
+            return Ok((
+                FillStyle::Texture(texture.bindless_index),
+                Some(texture.texture.clone()),
+            ));
         }
         Err(PyValueError::new_err(
             "fill_color must be an int (solid RGBA8, e.g. via tre.rgba8), a Gradient, or a \
