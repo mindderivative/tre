@@ -18,20 +18,72 @@
 //! -- `libtre_ffi.so` is already a fully self-contained shared object
 //! with every one of those dependencies linked in.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Cargo places a crate's own `staticlib`/`cdylib` output directly in
-/// `target/<profile>/` (unlike the hashed `rlib`s under `target/
-/// <profile>/deps/`, where a `cargo test` binary itself lives) -- so
-/// this test's own binary path, two directories up, is where
-/// `libtre_ffi.so` sits, since both are produced by the same `cargo
-/// test` invocation.
+/// `target/<profile>/`. Locating that directory reliably from inside a
+/// plain `#[test]` (Cargo gives a `build.rs` its own `OUT_DIR`, but no
+/// equivalent exists for an ordinary test binary) needs more than one
+/// strategy -- a real, found difference between two real environments:
+/// walking up two directories from this test binary's own
+/// `current_exe()` (`target/<profile>/deps/<binary>` -> `target/
+/// <profile>/`) works locally, but produced a *wrong* directory on
+/// GitHub Actions' own runner (confirmed by an actual CI round-trip:
+/// `libtre_ffi.a` was reported missing there even though the build had
+/// genuinely produced it), so this now also tries the workspace's own
+/// fixed, `CARGO_MANIFEST_DIR`-relative location
+/// (`<workspace_root>/target/<profile>`) and a bounded upward walk from
+/// `current_exe()` looking for `target/` itself, rather than assuming
+/// one exact directory depth.
 fn target_profile_dir() -> PathBuf {
-    let exe = std::env::current_exe().expect("a running test binary has its own path");
-    exe.parent()
-        .and_then(std::path::Path::parent)
-        .expect("test binaries live two directories under target/<profile>/")
-        .to_path_buf()
+    let has_artifacts = |dir: &Path| dir.join("libtre_ffi.so").is_file();
+
+    // Strategy 1: <workspace_root>/target/{debug,release} --
+    // `tre-ffi` lives at `<workspace_root>/crates/tre-ffi`, a fixed,
+    // known relationship independent of how Cargo laid out this test
+    // binary's own path.
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf);
+    if let Some(root) = &workspace_root {
+        for profile in ["debug", "release"] {
+            let dir = root.join("target").join(profile);
+            if has_artifacts(&dir) {
+                return dir;
+            }
+        }
+    }
+
+    // Strategy 2: walk up from this test binary's own path looking for
+    // a `target/{debug,release}` directory that actually holds the
+    // built artifacts -- doesn't assume an exact depth.
+    if let Ok(exe) = std::env::current_exe() {
+        for ancestor in exe.ancestors() {
+            for profile in ["debug", "release"] {
+                let dir = ancestor.join("target").join(profile);
+                if has_artifacts(&dir) {
+                    return dir;
+                }
+            }
+            // The ancestor itself might already BE target/<profile>/deps
+            // or target/<profile> -- check those forms directly too.
+            if has_artifacts(ancestor) {
+                return ancestor.to_path_buf();
+            }
+        }
+    }
+
+    panic!(
+        "could not locate tre-ffi's own built libtre_ffi.so under any of: {}, or by walking up \
+         from {} -- run `cargo build -p tre-ffi` first",
+        workspace_root.map_or_else(
+            || "<unknown workspace root>".to_string(),
+            |root| format!("{}/target/{{debug,release}}", root.display())
+        ),
+        std::env::current_exe()
+            .map_or_else(|_| "<unknown>".to_string(), |p| p.display().to_string())
+    );
 }
 
 #[test]
