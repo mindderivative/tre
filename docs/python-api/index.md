@@ -3,8 +3,10 @@
 `tre-python` binds `tre-engine` (the Rust rendering engine) directly to Python via PyO3 -- there is no intermediate C-ABI layer, no opaque-handle marshalling. Every class below is a thin wrapper over a real Rust type; every method call crosses into real engine code.
 
 ```python
-import tre
+import tre_python as tre
 ```
+
+The compiled extension's real module name is `tre_python` -- every real caller and demo in this repository imports it aliased as `tre`, and every example on this site does the same.
 
 This section is the complete API reference: every public class, method, and function `tre` exposes, with parameter types, return types, and the exceptions each call can raise. For task-oriented guides (setting up a tray icon, wiring accessibility, handling window chrome quirks per platform) see **Platform Integration**, which links back into this reference rather than repeating it.
 
