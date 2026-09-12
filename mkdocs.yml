@@ -27,3 +27,15 @@ nav:
   - Accessibility & Focus: python-api/accessibility-and-focus.md
   - Desktop Integration: python-api/desktop-integration.md
 - Platform Integration: platform-integration.md
+- Rust API:
+  - Overview: rust-api/index.md
+  - Math & Memory: rust-api/math-and-memory.md
+  - Canvas & Intermediate Representation: rust-api/canvas-and-ir.md
+  - Shapes: rust-api/shapes.md
+  - RHI Trait & Backends: rust-api/rhi-and-backends.md
+  - Input & Focus: rust-api/input-and-focus.md
+  - Accessibility: rust-api/accessibility.md
+  - Text, SVG & Atlas: rust-api/text-svg-atlas.md
+  - Animation: rust-api/animation.md
+  - Platform: rust-api/platform.md
+  - Errors & FFI: rust-api/errors-and-ffi.md
