@@ -59,5 +59,5 @@ pub(crate) fn ffi_guard<T>(default: T, f: impl FnOnce() -> T + std::panic::Unwin
 /// doc comment above).
 #[unsafe(no_mangle)]
 pub extern "C" fn tre_rgba8(r: u8, g: u8, b: u8, a: u8) -> u32 {
-    tre_engine::rgba8(r, g, b, a)
+    ffi_guard(0, move || tre_engine::rgba8(r, g, b, a))
 }

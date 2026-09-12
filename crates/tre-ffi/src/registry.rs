@@ -125,8 +125,10 @@ pub extern "C" fn tre_shape_registry_new() -> TreShapeRegistry {
 /// owns its own boxed `ShapeId` value independently of the registry.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tre_shape_registry_free(registry: TreShapeRegistry) {
-    // SAFETY: forwarded from this function's own `# Safety` contract.
-    unsafe { handle::from_raw::<ShapeRegistry>(registry.0) }
+    ffi_guard((), move || {
+        // SAFETY: forwarded from this function's own `# Safety` contract.
+        unsafe { handle::from_raw::<ShapeRegistry>(registry.0) }
+    });
 }
 
 /// The number of shapes currently live in `registry`, or `0` if
@@ -137,8 +139,10 @@ pub unsafe extern "C" fn tre_shape_registry_free(registry: TreShapeRegistry) {
 /// returned.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tre_shape_registry_len(registry: TreShapeRegistry) -> usize {
-    // SAFETY: forwarded from this function's own `# Safety` contract.
-    unsafe { handle::as_ref::<ShapeRegistry>(registry.0) }.map_or(0, ShapeRegistry::len)
+    ffi_guard(0, move || {
+        // SAFETY: forwarded from this function's own `# Safety` contract.
+        unsafe { handle::as_ref::<ShapeRegistry>(registry.0) }.map_or(0, ShapeRegistry::len)
+    })
 }
 
 fn insert(registry: *mut c_void, shape: ShapePrimitive, out_id: *mut TreShapeId) -> TreErrorCode {
@@ -276,22 +280,24 @@ pub unsafe extern "C" fn tre_shape_registry_insert_path(
     rgba: u32,
     out_id: *mut TreShapeId,
 ) -> TreErrorCode {
-    if commands.is_null() && count > 0 {
-        write_null_id(out_id);
-        return TreErrorCode::InvalidArgument;
-    }
-    // SAFETY: caller's contract guarantees `commands` is valid for
-    // `count` reads whenever it's non-null; `count == 0` makes the slice
-    // empty regardless of `commands`' own value.
-    let commands = if count == 0 {
-        &[][..]
-    } else {
-        unsafe { std::slice::from_raw_parts(commands, count) }
-    };
-    let path_commands: Vec<PathCommand> = commands.iter().map(to_path_command).collect();
-    let mut path = Path::new(path_commands, rgba);
-    path.common.transform.position = [x, y];
-    insert(registry.0, ShapePrimitive::Path(path), out_id)
+    ffi_guard(TreErrorCode::PanicCaught, move || {
+        if commands.is_null() && count > 0 {
+            write_null_id(out_id);
+            return TreErrorCode::InvalidArgument;
+        }
+        // SAFETY: caller's contract guarantees `commands` is valid for
+        // `count` reads whenever it's non-null; `count == 0` makes the
+        // slice empty regardless of `commands`' own value.
+        let commands = if count == 0 {
+            &[][..]
+        } else {
+            unsafe { std::slice::from_raw_parts(commands, count) }
+        };
+        let path_commands: Vec<PathCommand> = commands.iter().map(to_path_command).collect();
+        let mut path = Path::new(path_commands, rgba);
+        path.common.transform.position = [x, y];
+        insert(registry.0, ShapePrimitive::Path(path), out_id)
+    })
 }
 
 /// Removes `id`'s shape from `registry`, freeing `id` itself in the same
@@ -336,6 +342,8 @@ pub unsafe extern "C" fn tre_shape_registry_remove(
 /// [`tre_shape_registry_remove`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tre_shape_id_free(id: TreShapeId) {
-    // SAFETY: forwarded from this function's own `# Safety` contract.
-    unsafe { handle::from_raw::<ShapeId>(id.0) }
+    ffi_guard((), move || {
+        // SAFETY: forwarded from this function's own `# Safety` contract.
+        unsafe { handle::from_raw::<ShapeId>(id.0) }
+    });
 }

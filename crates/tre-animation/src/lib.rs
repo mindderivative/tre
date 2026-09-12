@@ -11,6 +11,12 @@
 //! Python object + attribute name and applies the sampled value via
 //! `setattr`, keeping this crate reusable by any future caller, not
 //! just `tre-python`'s specific shape classes.
+//!
+//! Pure sequencing logic with no FFI/concurrency surface of its own --
+//! carries `#![forbid(unsafe_code)]` like every other crate in the
+//! workspace outside TECHNICAL.md Section 9.1's closed `unsafe`-permitted
+//! set (`tre-memory`, the RHI backends, `tre-ffi`, `tre-python`).
+#![forbid(unsafe_code)]
 
 use tre_tween::{Easing, Tween};
 

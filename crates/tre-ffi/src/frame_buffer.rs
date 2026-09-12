@@ -9,6 +9,8 @@
 
 use std::os::raw::c_uchar;
 
+use crate::ffi_guard;
+
 /// Freed by [`tre_frame_buffer_free`], never by the caller's own
 /// allocator (TECHNICAL.md Section 9.4.1's "memory ownership" rule:
 /// Rust's allocator and the host language's allocator are never assumed
@@ -68,13 +70,15 @@ impl TreFrameBuffer {
 /// every `tre_*_free` function in this crate carries).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tre_frame_buffer_free(buffer: TreFrameBuffer) {
-    if buffer.data.is_null() {
-        return;
-    }
-    // SAFETY: `buffer.data`/`buffer.len`/`buffer.capacity` were produced
-    // together by `TreFrameBuffer::from_vec`'s own
-    // `ManuallyDrop<Vec<u8>>`, and the caller's contract (this function's
-    // own `# Safety` section) guarantees this runs at most once per
-    // value.
-    drop(unsafe { Vec::from_raw_parts(buffer.data.cast_mut(), buffer.len, buffer.capacity) });
+    ffi_guard((), move || {
+        if buffer.data.is_null() {
+            return;
+        }
+        // SAFETY: `buffer.data`/`buffer.len`/`buffer.capacity` were produced
+        // together by `TreFrameBuffer::from_vec`'s own
+        // `ManuallyDrop<Vec<u8>>`, and the caller's contract (this function's
+        // own `# Safety` section) guarantees this runs at most once per
+        // value.
+        drop(unsafe { Vec::from_raw_parts(buffer.data.cast_mut(), buffer.len, buffer.capacity) });
+    });
 }

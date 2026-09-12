@@ -3112,6 +3112,10 @@ fn create_blur_shader_module(device: &ash::Device, spv_bytes: &[u8]) -> vk::Shad
     let mut cursor = std::io::Cursor::new(spv_bytes);
     let code = ash::util::read_spv(&mut cursor).expect("invalid SPIR-V bytecode");
     let info = vk::ShaderModuleCreateInfo::default().code(&code);
+    // SAFETY: `device` is the caller's own still-valid logical device;
+    // `info` (and the `code` word buffer it borrows, just parsed as real
+    // SPIR-V by `read_spv` above) is a local borrowed only for the
+    // duration of this call.
     unsafe { device.create_shader_module(&info, None) }
         .expect("failed to create blur shader module")
 }
@@ -3221,11 +3225,21 @@ fn create_blur_pipeline(
         .layout(layout)
         .push_next(&mut rendering_info);
 
+    // SAFETY: `device` is the caller's own still-valid logical device;
+    // `vertex_module`/`fragment_module` were both just created above from
+    // this same device and are still valid; `create_info` (and every
+    // create-info it chains -- `stages`/`vertex_input`/`rendering_info`/
+    // etc.) is a local borrowed only for the duration of this call.
     let pipeline = unsafe {
         device.create_graphics_pipelines(vk::PipelineCache::null(), &[create_info], None)
     }
     .expect("failed to create blur graphics pipeline")[0];
 
+    // SAFETY: `device` is still the same valid logical device; both
+    // modules were created from it above and are safe to destroy now --
+    // `create_graphics_pipelines` just consumed their contents into
+    // `pipeline`, and the Vulkan spec explicitly permits destroying a
+    // shader module immediately after it's been baked into a pipeline.
     unsafe {
         device.destroy_shader_module(vertex_module, None);
         device.destroy_shader_module(fragment_module, None);
@@ -3247,6 +3261,9 @@ fn create_blur_resources(
         .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
         .descriptor_count(1)
         .stage_flags(vk::ShaderStageFlags::FRAGMENT)];
+    // SAFETY: `device` is the caller's own still-valid logical device;
+    // the create-info (and the `descriptor_set_layout_bindings` slice it
+    // borrows) is a local valid only for the duration of this call.
     let descriptor_set_layout = unsafe {
         device.create_descriptor_set_layout(
             &vk::DescriptorSetLayoutCreateInfo::default().bindings(&descriptor_set_layout_bindings),
@@ -3259,6 +3276,9 @@ fn create_blur_resources(
     let pool_sizes = [vk::DescriptorPoolSize::default()
         .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
         .descriptor_count(HOP_COUNT)];
+    // SAFETY: `device` is still the same valid logical device; the
+    // create-info (and the `pool_sizes` slice it borrows) is a local
+    // valid only for the duration of this call.
     let descriptor_pool = unsafe {
         device.create_descriptor_pool(
             &vk::DescriptorPoolCreateInfo::default()
@@ -3269,6 +3289,10 @@ fn create_blur_resources(
     }
     .expect("failed to create blur descriptor pool");
     let set_layouts = vec![descriptor_set_layout; HOP_COUNT as usize];
+    // SAFETY: `device` is still valid; `descriptor_pool` was just created
+    // above from this same device and is still valid; `set_layouts`
+    // (every entry a copy of the `descriptor_set_layout` also created
+    // above and still valid) is a local borrowed only for this call.
     let allocated_sets = unsafe {
         device.allocate_descriptor_sets(
             &vk::DescriptorSetAllocateInfo::default()
@@ -3281,6 +3305,8 @@ fn create_blur_resources(
         .try_into()
         .expect("allocate_descriptor_sets returned HOP_COUNT sets");
 
+    // SAFETY: `device` is still the same valid logical device; the
+    // create-info is a local valid only for the duration of this call.
     let sampler = unsafe {
         device.create_sampler(
             &vk::SamplerCreateInfo::default()
@@ -3295,6 +3321,10 @@ fn create_blur_resources(
     }
     .expect("failed to create blur sampler");
 
+    // SAFETY: `device` is still valid; `descriptor_set_layout` was
+    // created above from this same device and is still valid; the
+    // create-info (and the push-constant-range slice it borrows) is a
+    // local valid only for the duration of this call.
     let pipeline_layout = unsafe {
         device.create_pipeline_layout(
             &vk::PipelineLayoutCreateInfo::default()
@@ -4182,6 +4212,11 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
                 .image_view(view)
                 .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                 .sampler(blur.sampler);
+            // SAFETY: `raw_device` is valid for this whole method's
+            // duration; `blur.sampler`/`blur.descriptor_sets` were
+            // created once in `create_blur_resources` and remain valid
+            // for the process's lifetime; `image_info` is a local
+            // borrowed only for this call.
             unsafe {
                 raw_device.update_descriptor_sets(
                     &[vk::WriteDescriptorSet::default()
@@ -4200,6 +4235,13 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
         // height` instead.
         let draw_hop = |pipeline: vk::Pipeline, set_index: usize, dest_size: (u32, u32)| {
             let push_constants: [f32; 2] = [dest_size.0 as f32, dest_size.1 as f32];
+            // SAFETY: `raw_device`/`raw_cmd_buffer` are valid for this
+            // whole method's duration and `raw_cmd_buffer` is currently
+            // in a recording state; `pipeline` (caller-supplied) and
+            // every `blur.*` handle referenced below were created once
+            // in `create_blur_resources` and remain valid for the
+            // process's lifetime; `push_constants` is a local borrowed
+            // only for its own call.
             unsafe {
                 raw_device.cmd_bind_pipeline(
                     raw_cmd_buffer,

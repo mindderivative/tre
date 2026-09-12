@@ -14,6 +14,12 @@
 //! Q9) for its `Vec2` lerp -- additive to, not a replacement of,
 //! `tre-math`'s own `Affine2`/SIMD-batch functions already proven in
 //! `tre-engine`'s hot flatten path.
+//!
+//! Pure, stateless math with no FFI/concurrency surface of its own --
+//! carries `#![forbid(unsafe_code)]` like every other crate in the
+//! workspace outside TECHNICAL.md Section 9.1's closed `unsafe`-permitted
+//! set (`tre-memory`, the RHI backends, `tre-ffi`, `tre-python`).
+#![forbid(unsafe_code)]
 
 pub mod easing;
 pub mod spring;

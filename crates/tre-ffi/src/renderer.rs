@@ -163,8 +163,10 @@ pub unsafe extern "C" fn tre_headless_renderer_new(
 /// [`tre_headless_renderer_new`] wrote that has not already been freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tre_headless_renderer_free(renderer: TreHeadlessRenderer) {
-    // SAFETY: forwarded from this function's own `# Safety` contract.
-    unsafe { handle::from_raw::<Renderer>(renderer.0) }
+    ffi_guard((), move || {
+        // SAFETY: forwarded from this function's own `# Safety` contract.
+        unsafe { handle::from_raw::<Renderer>(renderer.0) }
+    });
 }
 
 /// Renders every shape currently in `registry` and writes the resulting
