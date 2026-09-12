@@ -95,6 +95,16 @@ pub enum SvgError {
     /// comment), so it needs its own, separate malformed-XML rejection
     /// distinct from [`Self::Parse`]'s `usvg`-specific one.
     MalformedXml(String),
+    /// [`smil::parse_smil`]'s own total extracted keyframe count --
+    /// summed across every `<animate>`/`<animateTransform>` element's own
+    /// `keyframes`, and checked incrementally while walking the parsed
+    /// tree (the same "check as you go, not just after fully resolving a
+    /// pathological document first" shape as [`Self::TooManyPoints`]) --
+    /// exceeded the caller-supplied ceiling. Security review finding: SMIL
+    /// parsing previously had no ceiling of any kind (byte size or output
+    /// size) before this crate's own hardening pass gave `parse_svg` its
+    /// matching `TooLarge`/`TooManyPoints` pair.
+    TooManyKeyframes { count: usize, max: usize },
 }
 
 impl std::fmt::Display for SvgError {
@@ -114,6 +124,10 @@ impl std::fmt::Display for SvgError {
                 "cannot morph: keyframes have different vertex counts ({from_points} vs {to_points})"
             ),
             Self::MalformedXml(msg) => write!(f, "failed to parse SVG as XML for SMIL: {msg}"),
+            Self::TooManyKeyframes { count, max } => write!(
+                f,
+                "SMIL parsing extracted {count} keyframes, exceeding the {max}-keyframe limit"
+            ),
         }
     }
 }

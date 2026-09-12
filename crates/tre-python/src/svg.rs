@@ -37,6 +37,12 @@ const DEFAULT_MAX_BYTES: usize = 10_000_000;
 /// bounds a real, otherwise-unbounded blowup from deeply nested
 /// `<use>`/`<g>` references `usvg`'s own hardening limits don't catch).
 const DEFAULT_MAX_POINTS: usize = 1_000_000;
+/// Comfortably above any real hand-authored document's own animation
+/// keyframe count (`tre_svg::parse_smil`'s own `max_keyframes` contract,
+/// Security review finding: SMIL parsing previously had no ceiling of
+/// any kind before this crate's own hardening pass gave it one matching
+/// `parse_svg`'s `max_bytes`/`max_points` pair).
+const DEFAULT_MAX_KEYFRAMES: usize = 100_000;
 
 /// `tre_svg::tessellate::FillRule`, bound directly -- `NonZero` (the
 /// SVG/CSS default) and `EvenOdd` (`fill-rule="evenodd"`), both real and
@@ -68,7 +74,8 @@ fn svg_err(e: tre_svg::SvgError) -> PyErr {
         tre_svg::SvgError::TooLarge { .. }
         | tre_svg::SvgError::TooManyPoints { .. }
         | tre_svg::SvgError::Parse(_)
-        | tre_svg::SvgError::MalformedXml(_) => PyValueError::new_err(e.to_string()),
+        | tre_svg::SvgError::MalformedXml(_)
+        | tre_svg::SvgError::TooManyKeyframes { .. } => PyValueError::new_err(e.to_string()),
         tre_svg::SvgError::TessellationFailed | tre_svg::SvgError::TopologyMismatch { .. } => {
             TreError::new_err(e.to_string())
         }
@@ -285,13 +292,34 @@ pub struct PyParsedSmil {
 /// assigning the result onto a shape's own `x`/`y` fields.
 ///
 /// # Errors
-/// Raises `ValueError` if `data` isn't valid UTF-8, or isn't well-formed
-/// XML.
+/// Raises `ValueError` if `data` isn't valid UTF-8, exceeds `max_bytes`,
+/// isn't well-formed XML, or resolves to more than `max_keyframes` total
+/// animation keyframes (`tre_svg::parse_smil`'s own hardening -- see its
+/// doc comment for why this crate's own `max_bytes` check already
+/// happens first, before `data` is even parsed as XML).
 #[pyfunction]
-pub(crate) fn parse_smil(data: Vec<u8>) -> PyResult<PyParsedSmil> {
+#[pyo3(signature = (data, max_bytes = DEFAULT_MAX_BYTES, max_keyframes = DEFAULT_MAX_KEYFRAMES))]
+pub(crate) fn parse_smil(
+    data: Vec<u8>,
+    max_bytes: usize,
+    max_keyframes: usize,
+) -> PyResult<PyParsedSmil> {
+    // Checked on the raw bytes, before the UTF-8 validation below --
+    // `tre_svg::parse_smil`'s own `max_bytes` check runs on `text.len()`
+    // (identical to `data.len()`, since UTF-8 validation never changes
+    // byte count), but that check can't happen until *after* validation
+    // has already spent real time walking an oversized buffer. This
+    // mirrors `PySvg::parse`'s own `data` (`&[u8]`, no conversion needed)
+    // rejecting an oversized buffer before any real work at all.
+    if data.len() > max_bytes {
+        return Err(svg_err(tre_svg::SvgError::TooLarge {
+            size: data.len(),
+            max: max_bytes,
+        }));
+    }
     let text = String::from_utf8(data)
         .map_err(|e| PyValueError::new_err(format!("SVG source is not valid UTF-8: {e}")))?;
-    let parsed = tre_svg::parse_smil(&text).map_err(svg_err)?;
+    let parsed = tre_svg::parse_smil(&text, max_bytes, max_keyframes).map_err(svg_err)?;
     Ok(PyParsedSmil {
         animates: parsed
             .animates
