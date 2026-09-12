@@ -1,18 +1,25 @@
 //! The second half of Step 5.3.3's capstone (see `canvas_accessibility_demo`'s
 //! own top-level doc comment for the full "why a separate binary"
-//! account, REVIEW.md finding #126). This binary is **genuinely
-//! Vulkan/X11-free** -- it imports only `tre_engine` (for the
-//! `AccessibilityNode` types, no heavier than plain structs), `tre_a11y`,
-//! and `zbus`, none of which pull in `ash`/`x11rb`/`raw-window-handle`.
-//! It reads the tagged nodes `canvas_accessibility_demo` wrote out,
-//! publishes them via a real `tre_a11y::A11yBridge` (the real AT-SPI2
-//! registration happens in *this* process, deliberately, since
-//! `accesskit_unix`'s own background thread could not complete it
-//! inside a process that also links real Vulkan/X11 libraries), and
-//! then acts as its own second, independent AT-SPI2 client -- exactly
-//! `tre-a11y`'s own round-trip test's proven-reliable shape, extended
-//! to externally-supplied, real-render-derived data instead of one
-//! synthetic literal.
+//! account, REVIEW.md finding #126, corrected). This binary is
+//! **genuinely Vulkan/X11-free** -- it imports only `tre_engine` (for
+//! the `AccessibilityNode` types, no heavier than plain structs),
+//! `tre_a11y`, and `zbus`, none of which pull in `ash`/`x11rb`/
+//! `raw-window-handle`. It reads the tagged nodes
+//! `canvas_accessibility_demo` wrote out, publishes them via a real
+//! `tre_a11y::A11yBridge`, and then acts as its own second, independent
+//! AT-SPI2 client -- exactly `tre-a11y`'s own round-trip test's
+//! proven-reliable shape, extended to externally-supplied,
+//! real-render-derived data instead of one synthetic literal. This
+//! split is kept because it matches real AT-SPI2 deployment practice (a
+//! real screen reader is always a separate process from the app it
+//! inspects) -- **not**, as an earlier version of this comment claimed,
+//! because `accesskit_unix`'s registration cannot complete inside a
+//! process that also links Vulkan/X11: REVIEW.md finding #126's own
+//! later investigation directly disproved that (this exact, genuinely
+//! Vulkan-free binary hit the identical CI failure), and
+//! `IMPLEMENTATION.md`'s Step 5.3.3 entry has the real, corrected root
+//! cause (`ensure_accessibility_enabled`'s own wrong-bus bug, fixed
+//! below).
 
 use std::{thread, time::Duration};
 
@@ -22,23 +29,20 @@ use zbus::{
     zvariant::OwnedObjectPath,
 };
 
-/// Real, upstream-confirmed root cause (REVIEW.md finding #126's final
-/// account, after nine real CI pushes and two disproven hypotheses):
-/// `org.a11y.Status.IsEnabled` is not a simple flag an application can
-/// set -- reading `at-spi-bus-launcher.c`'s own real source
-/// (`on_event_listener_registered`) shows it flips true only when
-/// `at-spi2-registryd` emits a real `EventListenerRegistered` D-Bus
-/// signal, which only happens when some real client calls
-/// `org.a11y.atspi.Registry.RegisterEvent`. A real desktop session
-/// already has some component that has done this at some point (a
-/// screen reader, an accessibility-aware background service); a fresh
-/// CI container has nothing that ever does, so `IsEnabled` never flips
-/// and `accesskit_unix`'s own adapter -- which only activates upon
-/// observing that transition -- waits forever, regardless of timeout
-/// length. This is exactly what a real assistive technology does on
-/// startup, so registering here is not a workaround -- it is this
-/// binary honestly playing the AT role it already occupies by querying
-/// the tree at all.
+/// Calling `org.a11y.atspi.Registry.RegisterEvent` on the a11y bus
+/// (`bus`) makes `org.a11y.Status.IsEnabled` flip true, matching what a
+/// real assistive technology does on startup -- but the real,
+/// previously-unfixed bug this function had (REVIEW.md finding #126's
+/// final, corrected account; `IMPLEMENTATION.md`'s own Step 5.3.3 entry)
+/// was querying that property against the WRONG bus. `at-spi-bus-
+/// launcher` owns `org.a11y.Bus`/`IsEnabled` on the real SESSION bus
+/// (`g_bus_own_name(G_BUS_TYPE_SESSION, ...)`, confirmed by reading its
+/// own source), not the a11y bus `bus` itself connects to -- every
+/// `get_property` call against `bus` therefore failed outright (the
+/// destination doesn't exist there), and `.unwrap_or(false)` silently
+/// turned that failure into the same `false` a real "not enabled yet"
+/// reading would produce. Fixed by building the `status` proxy on a
+/// real, separate session-bus connection instead.
 fn ensure_accessibility_enabled(bus: &Connection) {
     let registry = Proxy::new(
         bus,
@@ -47,8 +51,14 @@ fn ensure_accessibility_enabled(bus: &Connection) {
         "org.a11y.atspi.Registry",
     )
     .expect("failed to build registry event proxy");
-    let status = Proxy::new(bus, "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Status")
-        .expect("failed to build status proxy");
+    let session_bus = Connection::session().expect("failed to connect to the D-Bus session bus");
+    let status = Proxy::new(
+        &session_bus,
+        "org.a11y.Bus",
+        "/org/a11y/bus",
+        "org.a11y.Status",
+    )
+    .expect("failed to build status proxy");
 
     // Real evidence (2026-09-08): calling RegisterEvent exactly once,
     // then passively waiting, left IsEnabled false for the full 30s in

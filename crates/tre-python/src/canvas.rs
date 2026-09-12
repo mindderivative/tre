@@ -15,7 +15,8 @@
 
 use pyo3::prelude::*;
 use tre_engine::{
-    AccessibilityNodeId, AccessibilityRole, LayerDesc, RenderingCanvas, ScissorRect, TextureFormat,
+    AccessibilityNode, AccessibilityNodeId, AccessibilityRole, LayerDesc, RenderingCanvas,
+    ScissorRect, TextureFormat,
 };
 
 /// Computes the `(x, y, width, height)` a real drop-shadow's own
@@ -62,6 +63,52 @@ impl From<PyAccessibilityRole> for AccessibilityRole {
             PyAccessibilityRole::Button => Self::Button,
             PyAccessibilityRole::TextLabel => Self::TextLabel,
             PyAccessibilityRole::Image => Self::Image,
+        }
+    }
+}
+
+impl From<AccessibilityRole> for PyAccessibilityRole {
+    fn from(role: AccessibilityRole) -> Self {
+        match role {
+            AccessibilityRole::Generic => Self::Generic,
+            AccessibilityRole::Button => Self::Button,
+            AccessibilityRole::TextLabel => Self::TextLabel,
+            AccessibilityRole::Image => Self::Image,
+        }
+    }
+}
+
+/// One real tagged accessibility node, as returned by
+/// `Canvas.accessibility_nodes()` (Phase 18 Step 18.3) -- a plain data
+/// mirror of `tre_engine::AccessibilityNode`, real world-space bounds
+/// already resolved by `tag_accessibility_node`. Pass a list of these
+/// straight to `A11yBridge.publish(...)` once per rendered frame.
+#[pyclass(name = "AccessibilityNode")]
+#[derive(Clone, Copy)]
+pub struct PyAccessibilityNode {
+    #[pyo3(get)]
+    pub node_id: u64,
+    #[pyo3(get)]
+    pub x: f32,
+    #[pyo3(get)]
+    pub y: f32,
+    #[pyo3(get)]
+    pub width: f32,
+    #[pyo3(get)]
+    pub height: f32,
+    #[pyo3(get)]
+    pub role: PyAccessibilityRole,
+}
+
+impl From<AccessibilityNode> for PyAccessibilityNode {
+    fn from(node: AccessibilityNode) -> Self {
+        Self {
+            node_id: node.node_id.0,
+            x: node.x,
+            y: node.y,
+            width: node.width,
+            height: node.height,
+            role: node.role.into(),
         }
     }
 }
@@ -173,6 +220,18 @@ impl PyCanvas {
             height,
             role.into(),
         );
+    }
+
+    /// Every node tagged so far this frame via `tag_accessibility_node`
+    /// (Phase 18 Step 18.3) -- pass this straight to
+    /// `A11yBridge.publish(...)` once per rendered frame.
+    fn accessibility_nodes(&self) -> Vec<PyAccessibilityNode> {
+        self.inner
+            .accessibility_nodes()
+            .iter()
+            .copied()
+            .map(PyAccessibilityNode::from)
+            .collect()
     }
 }
 

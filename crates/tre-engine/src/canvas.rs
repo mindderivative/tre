@@ -1659,6 +1659,17 @@ impl RenderingCanvas {
         });
     }
 
+    /// Every node tagged so far this frame via `tag_accessibility_node`
+    /// (Phase 18 Step 18.3) -- a real caller publishes this to a real
+    /// `tre_a11y::A11yBridge` once per rendered frame. A plain read-only
+    /// getter over the field `tag_accessibility_node` already populates;
+    /// nothing outside this crate's own internal `FlattenedFrame` path
+    /// read it before this.
+    #[must_use]
+    pub fn accessibility_nodes(&self) -> &[AccessibilityNode] {
+        &self.accessibility_nodes
+    }
+
     /// Real sort/flatten stage (ARCHITECTURE.md Section 4.2, Step
     /// 5.1.3): every non-`DrawGeometry` command (`PushScissor`/
     /// `PopScissor`/`PushLayer`/`PopLayer`) is a hard barrier -- sorting

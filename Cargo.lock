@@ -4094,6 +4094,7 @@ dependencies = [
  "raw-window-handle",
  "rustybuzz",
  "skrifa",
+ "tre-a11y",
  "tre-animation",
  "tre-atlas",
  "tre-engine",

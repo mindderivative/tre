@@ -19,23 +19,23 @@
 //! already-closed ground.
 //!
 //! **This binary renders and tags only -- it never touches
-//! `tre_a11y`/AT-SPI2 itself.** A real, extensive CI-only investigation
-//! (REVIEW.md finding #126, seven real pushes) isolated the actual
-//! cause of a repeated CI failure: `accesskit_unix`'s own background
-//! thread, which does the real AT-SPI2 registration, cannot complete
-//! that registration inside a process that also links real Vulkan/X11
-//! shared libraries (`ash`/`x11rb`, pulled in by this demo's own real
-//! GPU rendering) -- confirmed by the fact that `tre-a11y`'s own
-//! round-trip test (zero Vulkan/X11 code) succeeds reliably in the
-//! exact same CI job this demo's own accessibility work kept failing
-//! in. The fix is a real two-process split, not a workaround: this
-//! binary writes its tagged `AccessibilityNode`s out to a plain text
-//! file (`TRE_CANVAS_ACCESSIBILITY_NODES_PATH`, one line per node) for
-//! `canvas_accessibility_verify` -- a separate, genuinely Vulkan-free
-//! binary -- to publish and verify against the real bus. This also
-//! matches real AT-SPI2 practice more closely than a self-verifying
-//! single process ever did: a real screen reader is always a separate
-//! process from the application it inspects.
+//! `tre_a11y`/AT-SPI2 itself.** An earlier account of why (REVIEW.md
+//! finding #126, seven real pushes in) blamed `accesskit_unix`'s own
+//! background registration thread being unable to complete inside a
+//! process that also links real Vulkan/X11 shared libraries -- that
+//! theory was directly disproved by the same finding's own later pushes
+//! (a genuinely Vulkan-free binary hit the identical CI failure) and the
+//! real, final root cause turned out to be an unrelated wrong-bus D-Bus
+//! query bug in `ensure_accessibility_enabled` (`IMPLEMENTATION.md`'s
+//! Step 5.3.3 entry has the full, corrected account; fixed in
+//! `canvas_accessibility_verify.rs`). The two-process split itself is
+//! kept anyway, for a real, independent reason: this binary writes its
+//! tagged `AccessibilityNode`s out to a plain text file
+//! (`TRE_CANVAS_ACCESSIBILITY_NODES_PATH`, one line per node) for
+//! `canvas_accessibility_verify` -- a separate binary -- to publish and
+//! verify against the real bus, matching real AT-SPI2 deployment
+//! practice: a real screen reader is always a separate process from the
+//! application it inspects.
 
 use ash::vk;
 use tre_engine::{rgba8, submit_frame, AccessibilityNodeId, AccessibilityRole, RenderingCanvas};

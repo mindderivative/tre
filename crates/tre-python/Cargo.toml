@@ -57,3 +57,13 @@ tre-animation = { path = "../tre-animation" }
 # `PyTween`'s own Vec2 instantiation constructs `glam::Vec2` values
 # directly -- pinned to the identical version `tre-tween` itself uses.
 glam = "0.29"
+# Phase 18 Step 18.3: `tre.A11yBridge` binds `tre-a11y`'s own real
+# AT-SPI2 bridge directly -- confirmed via an isolated single-process
+# feasibility check (Vulkan-linked render + real A11yBridge::connect/
+# publish in one process, independently verified over a real live
+# AT-SPI2 bus by a genuinely separate process) that no process split is
+# needed, unlike this crate's own earlier `canvas_accessibility_demo`/
+# `canvas_accessibility_verify` split, which existed for an unrelated
+# reason (matching real AT-SPI2 deployment practice), not a genuine
+# same-process limitation.
+tre-a11y = { path = "../tre-a11y" }

@@ -26,19 +26,24 @@ fn a11y_bus() -> Option<Connection> {
         .ok()
 }
 
-/// Real, upstream-confirmed mechanism (REVIEW.md finding #126's final
-/// account): `org.a11y.Status.IsEnabled` flips true only when
-/// `at-spi2-registryd` emits a real `EventListenerRegistered` signal,
-/// which only happens when some real client calls
-/// `org.a11y.atspi.Registry.RegisterEvent` (confirmed by reading
-/// `at-spi-bus-launcher.c`'s own real source). Neither `accesskit_unix`
-/// nor `accesskit_atspi_common` ever call this themselves. A real
-/// desktop session usually already has some component that has done
-/// this at some point; this makes it true unconditionally rather than
-/// relying on that ambient state, matching what a real assistive
-/// technology does on startup anyway. Returns `false` (not a panic) so
-/// the caller can skip gracefully, matching this test's own established
-/// convention for an environment that doesn't cooperate.
+/// Calling `org.a11y.atspi.Registry.RegisterEvent` on the a11y bus
+/// (`bus`) makes `org.a11y.Status.IsEnabled` flip true, matching what a
+/// real assistive technology does on startup -- but the real,
+/// previously-unfixed bug this function had (REVIEW.md finding #126's
+/// final, corrected account; `IMPLEMENTATION.md`'s own Step 5.3.3 entry)
+/// was querying that property against the WRONG bus. `at-spi-bus-
+/// launcher` owns `org.a11y.Bus`/`IsEnabled` on the real SESSION bus
+/// (`g_bus_own_name(G_BUS_TYPE_SESSION, ...)`, confirmed by reading its
+/// own source), not the a11y bus `bus` itself connects to -- every
+/// `get_property` call against `bus` therefore failed outright (the
+/// destination doesn't exist there), and `.unwrap_or(false)` silently
+/// turned that failure into the same `false` a real "not enabled yet"
+/// reading would produce, fully explaining why nothing done to the
+/// actual `IsEnabled` mechanism ever had any visible effect. Fixed by
+/// building the `status` proxy on a real, separate session-bus
+/// connection instead. Returns `false` (not a panic) so the caller can
+/// skip gracefully, matching this test's own established convention for
+/// an environment that doesn't cooperate.
 fn ensure_accessibility_enabled(bus: &Connection) -> bool {
     let Ok(registry) = Proxy::new(
         bus,
@@ -48,7 +53,15 @@ fn ensure_accessibility_enabled(bus: &Connection) -> bool {
     ) else {
         return false;
     };
-    let Ok(status) = Proxy::new(bus, "org.a11y.Bus", "/org/a11y/bus", "org.a11y.Status") else {
+    let Ok(session_bus) = Connection::session() else {
+        return false;
+    };
+    let Ok(status) = Proxy::new(
+        &session_bus,
+        "org.a11y.Bus",
+        "/org/a11y/bus",
+        "org.a11y.Status",
+    ) else {
         return false;
     };
 

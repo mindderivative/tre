@@ -36,6 +36,7 @@
 //! than a demo.
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod a11y;
 mod animation;
 mod canvas;
 mod clipboard;
@@ -90,6 +91,8 @@ fn tre_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<canvas::PyClipGuard>()?;
     m.add_class::<canvas::PyLayerGuard>()?;
     m.add_class::<canvas::PyAccessibilityRole>()?;
+    m.add_class::<canvas::PyAccessibilityNode>()?;
+    a11y::register(m)?;
     m.add_class::<renderer::PyHeadlessRenderer>()?;
     m.add_class::<input::PyWindowId>()?;
     m.add_class::<input::PyMouseButton>()?;
