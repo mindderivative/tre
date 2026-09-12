@@ -54,21 +54,27 @@ pub(crate) fn setup_err<E: std::fmt::Display>(e: E) -> PyErr {
 /// short of a future constructor parameter.
 pub(crate) const RING_BUFFER_CAPACITY: usize = 512 * 1024;
 
-/// `render_parallel`'s own `FrameArena` element capacities (Phase 12
-/// Step 12.6) -- comfortably above `RING_BUFFER_CAPACITY`'s own real
-/// per-frame scale (that constant is a *byte* budget for vertices+
-/// indices combined; these are per-kind *element* counts, since
-/// `FrameArena`'s three `ScatterArena`s are typed, not raw bytes). Not
-/// tunable yet, the same real, disclosed scope boundary
+/// Every render path's shared `FrameArena` element capacities: `render`/
+/// `render_canvas` (Phase 9 Step 9.2's own zero-allocation-reuse
+/// convention, REVIEW.md finding #134/the Performance review's "render()
+/// allocates a fresh canvas every frame" finding) and `render_parallel`
+/// (Phase 12 Step 12.6) all stitch through one arena sized identically --
+/// comfortably above `RING_BUFFER_CAPACITY`'s own real per-frame scale
+/// (that constant is a *byte* budget for vertices+indices combined;
+/// these are per-kind *element* counts, since `FrameArena`'s three
+/// `ScatterArena`s are typed, not raw bytes), and in particular no
+/// smaller than what a single registry's own worst case needs even
+/// though `render`/`render_canvas` never combine more than one scene at
+/// once. Not tunable yet, the same real, disclosed scope boundary
 /// `RING_BUFFER_CAPACITY`'s own doc comment already establishes:
-/// `SubCanvas::stitch_into` reports `false` (mapped to a clean
-/// `TreError`) rather than growing mid-frame, so a caller whose combined
-/// parallel scene is genuinely larger has no way to raise this short of
-/// a future constructor parameter.
-pub(crate) const PARALLEL_ARENA_VERTEX_CAPACITY: usize = 65536;
-pub(crate) const PARALLEL_ARENA_INDEX_CAPACITY: usize = 131072;
-pub(crate) const PARALLEL_ARENA_COMMAND_CAPACITY: usize = 8192;
-pub(crate) const PARALLEL_ARENA_ACCESSIBILITY_CAPACITY: usize = 1024;
+/// `RenderingCanvas`/`SubCanvas::stitch_into` reports `false` (mapped to
+/// a clean `TreError`) rather than growing mid-frame, so a caller whose
+/// scene is genuinely larger has no way to raise this short of a future
+/// constructor parameter.
+pub(crate) const RENDER_ARENA_VERTEX_CAPACITY: usize = 65536;
+pub(crate) const RENDER_ARENA_INDEX_CAPACITY: usize = 131072;
+pub(crate) const RENDER_ARENA_COMMAND_CAPACITY: usize = 8192;
+pub(crate) const RENDER_ARENA_ACCESSIBILITY_CAPACITY: usize = 1024;
 
 /// The `py.detach`'d render closure's own error type -- kept local to
 /// this module rather than widening `tre_engine::EngineError` itself,
@@ -154,6 +160,16 @@ pub struct PyHeadlessRenderer {
     /// `create_custom_shader` registers a freshly-compiled pipeline
     /// under, starting from `tre_engine::CUSTOM_PIPELINE_ID_BASE`.
     next_custom_pipeline_id: u16,
+    /// `render`'s own persistent scratch canvas, and `render`/
+    /// `render_canvas`/`render_parallel`'s shared persistent stitch
+    /// target/output buffer (the Performance review's "render()
+    /// allocates a fresh canvas every frame" finding): built once here,
+    /// reset/stitched/drained in place every call, never replaced with a
+    /// fresh instance. Hold no GPU handles of their own, so their
+    /// position in this struct has no teardown-order implication.
+    scratch_canvas: RenderingCanvas,
+    frame_arena: FrameArena,
+    flattened: FlattenedFrame,
 }
 
 #[pymethods]
@@ -203,6 +219,14 @@ impl PyHeadlessRenderer {
             width,
             height,
             next_custom_pipeline_id: tre_engine::CUSTOM_PIPELINE_ID_BASE,
+            scratch_canvas: RenderingCanvas::new(),
+            frame_arena: FrameArena::with_capacity(
+                RENDER_ARENA_VERTEX_CAPACITY,
+                RENDER_ARENA_INDEX_CAPACITY,
+                RENDER_ARENA_COMMAND_CAPACITY,
+                RENDER_ARENA_ACCESSIBILITY_CAPACITY,
+            ),
+            flattened: FlattenedFrame::default(),
         })
     }
 
@@ -293,18 +317,23 @@ impl PyHeadlessRenderer {
         py: Python<'_>,
         registry: &Bound<'_, PyShapeRegistry>,
     ) -> PyResult<Py<PyBytes>> {
-        let canvas = Bound::new(
-            py,
-            PyCanvas {
-                inner: RenderingCanvas::new(),
-            },
+        let mut reg = registry.borrow_mut();
+        self.scratch_canvas.reset();
+        Self::flatten_registry_into(
+            &self.device,
+            &mut self.text_atlas,
+            &mut self.scratch_canvas,
+            &mut reg,
         )?;
-        self.flatten_into(&canvas, registry)?;
-        let frame = {
-            let mut canvas = canvas.borrow_mut();
-            std::mem::replace(&mut canvas.inner, RenderingCanvas::new()).flatten()
-        };
-        self.submit_and_read_bgra(py, &frame)
+        drop(reg);
+        if !self.scratch_canvas.stitch_into(&self.frame_arena) {
+            return Err(crate::error::TreError::new_err(
+                "render()'s scene exceeded this renderer's own fixed FrameArena capacity -- \
+                 reduce the shape count, or split it across multiple render() calls",
+            ));
+        }
+        self.frame_arena.flatten_into(&mut self.flattened);
+        self.submit_and_read_bgra(py)
     }
 
     /// Flattens `registry`'s current shapes into `canvas` -- the real
@@ -329,15 +358,12 @@ impl PyHeadlessRenderer {
     ) -> PyResult<()> {
         let mut reg = registry.borrow_mut();
         let mut canvas = canvas.borrow_mut();
-        reg.inner.mark_all_dirty();
-        let atlas_context = self.text_atlas.context(&self.device)?;
-        let (inner, fonts) = reg.inner_and_fonts();
-        let text_context = TextFlattenContext {
-            fonts,
-            atlas: &atlas_context,
-        };
-        inner.flatten_into(&mut canvas.inner, &self.device, Some(&text_context));
-        Ok(())
+        Self::flatten_registry_into(
+            &self.device,
+            &mut self.text_atlas,
+            &mut canvas.inner,
+            &mut reg,
+        )
     }
 
     /// Renders an already-assembled [`PyCanvas`] (built via one or more
@@ -357,11 +383,19 @@ impl PyHeadlessRenderer {
         py: Python<'_>,
         canvas: &Bound<'_, PyCanvas>,
     ) -> PyResult<Py<PyBytes>> {
-        let frame = {
+        {
             let mut canvas = canvas.borrow_mut();
-            std::mem::replace(&mut canvas.inner, RenderingCanvas::new()).flatten()
-        };
-        self.submit_and_read_bgra(py, &frame)
+            if !canvas.inner.stitch_into(&self.frame_arena) {
+                return Err(crate::error::TreError::new_err(
+                    "render_canvas()'s scene exceeded this renderer's own fixed FrameArena \
+                     capacity -- reduce the shape count, or split it across multiple \
+                     render_canvas() calls",
+                ));
+            }
+            canvas.inner.reset();
+        }
+        self.frame_arena.flatten_into(&mut self.flattened);
+        self.submit_and_read_bgra(py)
     }
 
     /// Renders `registries` in real, genuine parallel (Phase 12 Step
@@ -458,14 +492,8 @@ impl PyHeadlessRenderer {
             });
         });
 
-        let mut arena = FrameArena::with_capacity(
-            PARALLEL_ARENA_VERTEX_CAPACITY,
-            PARALLEL_ARENA_INDEX_CAPACITY,
-            PARALLEL_ARENA_COMMAND_CAPACITY,
-            PARALLEL_ARENA_ACCESSIBILITY_CAPACITY,
-        );
         for sub_canvas in &sub_canvases {
-            if !sub_canvas.stitch_into(&arena) {
+            if !sub_canvas.stitch_into(&self.frame_arena) {
                 return Err(crate::error::TreError::new_err(
                     "render_parallel's combined scene exceeded its own fixed FrameArena capacity \
                      -- reduce the total shape count across all registries, or split it across \
@@ -473,27 +501,51 @@ impl PyHeadlessRenderer {
                 ));
             }
         }
-        let mut frame = FlattenedFrame::default();
-        arena.flatten_into(&mut frame);
+        self.frame_arena.flatten_into(&mut self.flattened);
 
-        self.submit_and_read_bgra(py, &frame)
+        self.submit_and_read_bgra(py)
     }
 }
 
 impl PyHeadlessRenderer {
+    /// Shared by `render`/`flatten_into` (the public pymethod)/`render`'s
+    /// own `Self::flatten_registry_into` call: flattens `registry`'s
+    /// current shapes into `canvas` using this renderer's device/atlas.
+    /// A plain associated function, not a method, specifically so a
+    /// caller can pass `&mut self.scratch_canvas` (a field of `self`)
+    /// alongside `&self.device`/`&mut self.text_atlas` (other fields of
+    /// the same `self`) as independent, disjoint borrows -- taking
+    /// `&mut self` as the receiver here would make that impossible.
+    fn flatten_registry_into(
+        device: &VulkanDevice,
+        text_atlas: &mut TextAtlas,
+        canvas: &mut RenderingCanvas,
+        registry: &mut PyShapeRegistry,
+    ) -> PyResult<()> {
+        registry.inner.mark_all_dirty();
+        let atlas_context = text_atlas.context(device)?;
+        let (inner, fonts) = registry.inner_and_fonts();
+        let text_context = TextFlattenContext {
+            fonts,
+            atlas: &atlas_context,
+        };
+        inner.flatten_into(canvas, device, Some(&text_context));
+        Ok(())
+    }
+
     /// Releases the GIL for the real GPU round trip (upload, submit,
     /// present, readback) -- IMPLEMENTATION.md Step 10.4 task 3 -- so
     /// other Python threads keep running while this one blocks on the
-    /// GPU fence. Shared by `render`/`render_canvas`, the only two real
-    /// differences between them being how `frame` itself gets built.
-    fn submit_and_read_bgra(
-        &mut self,
-        py: Python<'_>,
-        frame: &tre_engine::FlattenedFrame,
-    ) -> PyResult<Py<PyBytes>> {
+    /// GPU fence. Shared by `render`/`render_canvas`/`render_parallel`,
+    /// which differ only in how `self.flattened` itself gets built
+    /// before calling this. Reads `self.flattened` directly rather than
+    /// taking it as a parameter -- `frame: &FlattenedFrame` derived from
+    /// `&self.flattened` at a call site would conflict with this
+    /// method's own `&mut self` receiver.
+    fn submit_and_read_bgra(&mut self, py: Python<'_>) -> PyResult<Py<PyBytes>> {
         let bgra: Result<Vec<u8>, RenderError> = py.detach(|| {
-            let vertex_bytes: &[u8] = bytemuck::cast_slice(&frame.vertices);
-            let index_bytes: &[u8] = bytemuck::cast_slice(&frame.indices);
+            let vertex_bytes: &[u8] = bytemuck::cast_slice(&self.flattened.vertices);
+            let index_bytes: &[u8] = bytemuck::cast_slice(&self.flattened.indices);
             // `&*self.ring_buffer` (not `&self.ring_buffer`) -- `write`
             // is a `RhiDynamicRingBuffer` trait method, and `ring_buffer`
             // is a `Box<dyn RhiDynamicRingBuffer>`; `BufferBinding.buffer`
@@ -514,7 +566,7 @@ impl PyHeadlessRenderer {
             };
             submit_frame(&self.device, &self.swapchain, |cmd_buffer| {
                 execute_frame(
-                    frame,
+                    &self.flattened,
                     &self.pipelines,
                     BufferBinding {
                         buffer: &*self.ring_buffer,

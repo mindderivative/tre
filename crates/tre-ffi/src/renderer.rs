@@ -17,8 +17,8 @@ use std::os::raw::c_void;
 
 use raw_window_handle::HasDisplayHandle;
 use tre_engine::{
-    execute_frame, submit_frame, BufferBinding, PipelineRegistry, RenderingCanvas, RhiDevice,
-    RhiDynamicRingBuffer, ScissorRect, ShapeRegistry,
+    execute_frame, submit_frame, BufferBinding, FlattenedFrame, FrameArena, PipelineRegistry,
+    RenderingCanvas, RhiDevice, RhiDynamicRingBuffer, ScissorRect, ShapeRegistry,
 };
 use tre_platform::PlatformConnection;
 use tre_rhi_vulkan::{register_shape_pipelines, HeadlessSwapchain, VulkanDevice, HEADLESS_FORMAT};
@@ -34,6 +34,22 @@ use crate::handle;
 /// slice's own solid-fill-only shape set.
 const RING_BUFFER_CAPACITY: usize = 512 * 1024;
 
+/// `Renderer::arena`'s own fixed element capacities (REVIEW.md's own
+/// zero-allocation-reuse convention, `RenderingCanvas::reset`/
+/// `FrameArena::flatten_into`): comfortably above what this crate's own
+/// bounded first slice (Rectangle/Circle/Polygon/Path, solid fill only,
+/// no Text/accessibility) needs, same order of magnitude as
+/// `tre-python`'s own equivalent constants
+/// (`crates/tre-python/src/renderer.rs`). Not tunable yet, the same
+/// real, disclosed scope boundary `RING_BUFFER_CAPACITY` already has:
+/// `RenderingCanvas::stitch_into` reports `false` (mapped to
+/// `TreErrorCode::TransientPoolBudgetExceeded`) rather than growing
+/// mid-frame, so a caller whose scene is genuinely larger has no way to
+/// raise this short of a future constructor parameter.
+const ARENA_VERTEX_CAPACITY: usize = 65536;
+const ARENA_INDEX_CAPACITY: usize = 131072;
+const ARENA_COMMAND_CAPACITY: usize = 8192;
+
 /// Field declaration order is real teardown order here (Rust drops
 /// struct fields top-to-bottom, the OPPOSITE of local variables' own
 /// reverse-declaration-order drop). `pipelines`/`swapchain`/
@@ -44,6 +60,18 @@ const RING_BUFFER_CAPACITY: usize = 512 * 1024;
 /// declared first) before being fixed there. Copied here deliberately
 /// rather than rediscovering the same bug independently.
 struct Renderer {
+    /// Built once and reused every `render()` call (REVIEW.md's own
+    /// zero-allocation-reuse convention, `shape_registry_zero_alloc_
+    /// demo.rs`'s proven `reset()`/`stitch_into`/`flatten_into` sequence
+    /// applied here with a worker count of zero): `canvas` records each
+    /// frame's shapes, `stitch_into`s into `arena`, which `flatten_into`s
+    /// into `flattened` -- none of the three are ever replaced with a
+    /// fresh instance, only reset/drained in place. Hold no GPU handles
+    /// of their own, so their position relative to `device` below has no
+    /// teardown-order implication.
+    canvas: RenderingCanvas,
+    arena: FrameArena,
+    flattened: FlattenedFrame,
     ring_buffer: Box<dyn RhiDynamicRingBuffer>,
     pipelines: PipelineRegistry,
     swapchain: HeadlessSwapchain,
@@ -102,6 +130,14 @@ fn build_renderer(width: u32, height: u32) -> Result<Renderer, TreErrorCode> {
     let ring_buffer = device.create_dynamic_ring_buffer(RING_BUFFER_CAPACITY);
 
     Ok(Renderer {
+        canvas: RenderingCanvas::new(),
+        arena: FrameArena::with_capacity(
+            ARENA_VERTEX_CAPACITY,
+            ARENA_INDEX_CAPACITY,
+            ARENA_COMMAND_CAPACITY,
+            0,
+        ),
+        flattened: FlattenedFrame::default(),
         ring_buffer,
         pipelines,
         swapchain,
@@ -221,12 +257,15 @@ fn render(
         .ok_or(TreErrorCode::InvalidArgument)?;
 
     registry.mark_all_dirty();
-    let mut canvas = RenderingCanvas::new();
-    registry.flatten_into(&mut canvas, &renderer.device, None);
-    let frame = canvas.flatten();
+    renderer.canvas.reset();
+    registry.flatten_into(&mut renderer.canvas, &renderer.device, None);
+    if !renderer.canvas.stitch_into(&renderer.arena) {
+        return Err(TreErrorCode::TransientPoolBudgetExceeded);
+    }
+    renderer.arena.flatten_into(&mut renderer.flattened);
 
-    let vertex_bytes: &[u8] = bytemuck::cast_slice(&frame.vertices);
-    let index_bytes: &[u8] = bytemuck::cast_slice(&frame.indices);
+    let vertex_bytes: &[u8] = bytemuck::cast_slice(&renderer.flattened.vertices);
+    let index_bytes: &[u8] = bytemuck::cast_slice(&renderer.flattened.indices);
     let vertex_offset = renderer
         .ring_buffer
         .write(vertex_bytes)
@@ -244,7 +283,7 @@ fn render(
 
     submit_frame(&renderer.device, &renderer.swapchain, |cmd_buffer| {
         execute_frame(
-            &frame,
+            &renderer.flattened,
             &renderer.pipelines,
             BufferBinding {
                 buffer: &*renderer.ring_buffer,
