@@ -6,10 +6,10 @@ This site is the curated, developer-facing documentation for the project -- dist
 
 ## Where to start
 
-- **Getting Started** -- install `tre-python` and render your first frame.
-- **Architecture** -- how the engine is put together: the Canvas API, the IR, the RHI, the sort/batch pipeline.
-- **Python API** -- the full `tre` module reference.
-- **Platform Integration** -- windowing, input, clipboard, tray, accessibility, focus.
+- **[Getting Started](getting-started.md)** -- install `tre-python` and render your first frame.
+- **[Architecture](architecture.md)** -- how the engine is put together: the Canvas API, the IR, the RHI, the sort/batch pipeline.
+- **[Python API](python-api/index.md)** -- the full `tre` module reference.
+- **[Platform Integration](platform-integration.md)** -- windowing, input, clipboard, tray, accessibility, focus.
 
 ## Project links
 

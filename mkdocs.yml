@@ -15,5 +15,15 @@ nav:
 - Home: index.md
 - Getting Started: getting-started.md
 - Architecture: architecture.md
-- Python API: python-api.md
+- Python API:
+  - Overview: python-api/index.md
+  - Canvas & Shapes: python-api/canvas-and-shapes.md
+  - Fonts, Gradients & Textures: python-api/fonts-gradients-textures.md
+  - SVG: python-api/svg.md
+  - Text Editing: python-api/text-editing.md
+  - Animation: python-api/animation.md
+  - Rendering: python-api/rendering.md
+  - Input Events: python-api/input-events.md
+  - Accessibility & Focus: python-api/accessibility-and-focus.md
+  - Desktop Integration: python-api/desktop-integration.md
 - Platform Integration: platform-integration.md
