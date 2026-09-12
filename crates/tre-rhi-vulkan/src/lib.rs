@@ -379,30 +379,51 @@ unsafe extern "system" fn vulkan_debug_callback(
 /// validation-layer/driver version-skew false positive, not a real bug
 /// in this engine's own Vulkan usage, before being added here.
 ///
-/// Observed on GitHub Actions' `ubuntu-latest` runner (CI's own
-/// software-Vulkan `vulkan-validation`/`accessibility-validation`
-/// jobs): `VUID-VkDeviceCreateInfo-pNext-pNext` (MessageID
-/// `0x901f59ec`), "pCreateInfo->pNext chain includes a structure with
-/// unknown VkStructureType (1000232000)... based on the Valid Usage
-/// documentation for version 275 of the Vulkan header." `1000232000`
-/// is a real, legitimate `pNext` struct a newer `mesa-vulkan-drivers`
-/// build reports that Ubuntu's own separately-versioned
-/// `vulkan-validationlayers` package (pinned to an older Vulkan header
-/// revision) doesn't yet recognize -- the two apt packages drift out
-/// of lockstep as Ubuntu ships updates to each on its own schedule,
-/// not a defect in the `pNext` chain this engine itself constructs.
-/// The validation layer's own message says as much directly ("It is
-/// possible that you are using a struct from ... an extension that was
-/// added to a later version of the Vulkan header").
+/// Root cause, confirmed via a real `WARNING`-severity message this
+/// same validation layer emits right alongside the two `ERROR`s below,
+/// on GitHub Actions' `ubuntu-latest` runner (CI's own software-Vulkan
+/// `vulkan-validation`/`accessibility-validation` jobs): `vkCreateDevice
+/// (): pCreateInfo->ppEnabledExtensionNames[3] VK_KHR_dynamic_rendering
+/// _local_read is not supported by this layer.` Ubuntu's
+/// `vulkan-validationlayers` apt package (pinned to an older Vulkan
+/// header revision -- "version 275" per the error text below) and its
+/// separately-versioned `mesa-vulkan-drivers` package drift out of
+/// lockstep as Ubuntu updates each on its own schedule, so the
+/// validation layer here genuinely does not know about
+/// `VK_KHR_dynamic_rendering_local_read` (Step 10.2.3's real,
+/// legitimate, hardware-gated extension -- see REVIEW.md finding
+/// #170), or the layout token that extension's own dependency chain
+/// defines: `1000232000` (`VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_
+/// OPTIMAL_EXT`). Not a defect in this engine's own Vulkan usage.
 ///
-/// Matched on the exact VUID string, not a broad "ignore anything that
-/// looks like this" heuristic: a real, different `pNext` misuse this
-/// engine actually introduced would still abort immediately, since it
-/// would not carry this specific, already-diagnosed VUID.
+/// This one root cause surfaces as at least two different `ERROR`-
+/// severity VUIDs in practice, both actually observed on this runner --
+/// matching on either exact VUID string alone (the first fix attempt,
+/// before the second was found by actually re-running CI after
+/// deploying it) under-covers the real problem:
+///
+/// - `VUID-VkDeviceCreateInfo-pNext-pNext`: "pCreateInfo->pNext chain
+///   includes a structure with unknown VkStructureType (1000232000)...
+///   It is possible that you are using a struct from a private
+///   extension or an extension that was added to a later version of
+///   the Vulkan header."
+/// - `VUID-VkImageMemoryBarrier-newLayout-parameter`: "newLayout
+///   (1000232000) does not fall within the begin..end range of the
+///   core VkImageLayout enumeration tokens and is not an extension
+///   added token."
+///
+/// Matched on the shared numeric token (`1000232000`) plus either
+/// self-diagnostic phrase the validation layer itself uses for "I don't
+/// recognize this value," not a broad "ignore anything that looks like
+/// this" heuristic: a real, different Vulkan misuse this engine
+/// actually introduced would not happen to cite this exact, specific
+/// enum/struct-type integer, so it would still abort immediately.
 #[cfg(debug_assertions)]
 fn is_known_false_positive(message: &str) -> bool {
-    message.contains("VUID-VkDeviceCreateInfo-pNext-pNext")
-        && message.contains("unknown VkStructureType")
+    message.contains("(1000232000)")
+        && (message.contains("unknown VkStructureType")
+            || message.contains("does not fall within the begin..end range")
+            || message.contains("extension that was added to a later version of the Vulkan header"))
 }
 
 /// Checks whether both `VK_LAYER_KHRONOS_validation` and
