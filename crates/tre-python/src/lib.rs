@@ -45,6 +45,7 @@ mod custom_shader;
 mod editable_text;
 mod error;
 mod file_dialog;
+mod focus;
 mod font;
 mod gradient;
 mod input;
@@ -93,6 +94,7 @@ fn tre_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<canvas::PyAccessibilityRole>()?;
     m.add_class::<canvas::PyAccessibilityNode>()?;
     a11y::register(m)?;
+    focus::register(m)?;
     m.add_class::<renderer::PyHeadlessRenderer>()?;
     m.add_class::<input::PyWindowId>()?;
     m.add_class::<input::PyMouseButton>()?;

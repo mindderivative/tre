@@ -122,6 +122,13 @@ pub enum PyInputEvent {
         width: u32,
         height: u32,
     },
+    /// Real, OS-level window focus (alt-tab, clicking another app) --
+    /// distinct from in-app *widget* focus (`tre.FocusManager`, Phase 19
+    /// Step 19.2). Mirrors `tre_engine::InputEvent::WindowFocused` 1:1.
+    WindowFocused {
+        window: PyWindowId,
+        focused: bool,
+    },
     /// `path` is the dropped file's path, as a plain `str` (via
     /// `to_string_lossy`) rather than PyO3's own native `PathBuf`
     /// conversion -- simpler and more predictable for a Python caller
@@ -192,6 +199,10 @@ impl From<InputEvent> for PyInputEvent {
                 window: window.into(),
                 width,
                 height,
+            },
+            InputEvent::WindowFocused { window, focused } => Self::WindowFocused {
+                window: window.into(),
+                focused,
             },
             InputEvent::FileDropped { window, path } => Self::FileDropped {
                 window: window.into(),

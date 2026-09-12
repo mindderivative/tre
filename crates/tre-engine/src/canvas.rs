@@ -10,9 +10,9 @@
 
 use crate::{
     rgba8, style_index_param, texture_format_to_u16, AccessibilityNode, AccessibilityNodeId,
-    AccessibilityRole, CommandType, FlattenedFrame, GpuEllipseStyle, GpuRectStyle, LayerDesc,
-    PipelineKind, RhiDevice, ScissorRect, StyleFill, UiDrawCommand, UiVertex, FULL_WINDOW_CLIP,
-    NO_TEXTURE, PIPELINE_MSDF_TEXT,
+    AccessibilityRole, CommandType, FlattenedFrame, FocusableNode, GpuEllipseStyle, GpuRectStyle,
+    LayerDesc, PipelineKind, RhiDevice, ScissorRect, StyleFill, UiDrawCommand, UiVertex,
+    FULL_WINDOW_CLIP, NO_TEXTURE, PIPELINE_MSDF_TEXT,
 };
 
 /// DESIGN.md Section 7.2's `Canvas::begin_overlay(OverlayLayerPriority)`
@@ -54,6 +54,42 @@ struct CanvasState {
     /// local alpha 0.5 inside a parent already at effective 0.5 renders
     /// at effective 0.25).
     alpha: f32,
+}
+
+/// Transforms the four corners of the local rect `(x, y, width, height)`
+/// by `state.transform` and returns the real axis-aligned bounding box
+/// of those transformed corners, as `(x, y, width, height)` -- shared by
+/// `tag_accessibility_node` and `tag_focusable` (Phase 19 Step 19.2:
+/// factored out of `tag_accessibility_node`'s own original inline logic
+/// rather than duplicated). All four corners are transformed, not just
+/// the top-left, because the active transform can rotate -- a naive
+/// reuse of the local width/height at a transformed origin would be
+/// wrong the moment rotation is involved.
+fn transform_bounds(
+    state: &CanvasState,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+) -> (f32, f32, f32, f32) {
+    let corners = [
+        [x, y],
+        [x + width, y],
+        [x + width, y + height],
+        [x, y + height],
+    ]
+    .map(|corner| state.transform.transform_point(corner));
+
+    let mut min = corners[0];
+    let mut max = corners[0];
+    for corner in &corners[1..] {
+        min[0] = min[0].min(corner[0]);
+        min[1] = min[1].min(corner[1]);
+        max[0] = max[0].max(corner[0]);
+        max[1] = max[1].max(corner[1]);
+    }
+
+    (min[0], min[1], max[0] - min[0], max[1] - min[1])
 }
 
 /// Phase 0 stub: records `Canvas::draw_rounded_rect` calls into a plain
@@ -156,6 +192,17 @@ pub struct RenderingCanvas {
     /// framework already owns the real hierarchy and this only reports
     /// each node's rendered spatial position back.
     accessibility_nodes: Vec<AccessibilityNode>,
+    /// Every node tagged this frame via `tag_focusable` (Phase 19 Step
+    /// 19.2) -- same "flat list, not a tree" shape as
+    /// `accessibility_nodes`, and deliberately NOT threaded through
+    /// `flatten`/`FrameArena`/`SubCanvas` merging the way that field is:
+    /// that plumbing exists for multi-threaded recording, and no real
+    /// caller records focusable nodes off the main thread today. Read
+    /// directly off the root `RenderingCanvas` via `focusable_nodes()`,
+    /// before `render_canvas()`/`flatten()` consumes it -- the same
+    /// "read before render" ordering rule Step 18.3 already established
+    /// for `accessibility_nodes()`.
+    focusable_nodes: Vec<FocusableNode>,
 }
 
 /// A worker thread's independently-recordable sub-canvas
@@ -295,6 +342,7 @@ impl RenderingCanvas {
         self.indices.clear();
         self.commands.clear();
         self.accessibility_nodes.clear();
+        self.focusable_nodes.clear();
         self.layer_stack.clear();
         self.clip_stack.clear();
         self.overlay_stack.clear();
@@ -1632,29 +1680,14 @@ impl RenderingCanvas {
             .state_stack
             .last()
             .expect("state_stack must always have at least one entry");
-        let corners = [
-            [x, y],
-            [x + width, y],
-            [x + width, y + height],
-            [x, y + height],
-        ]
-        .map(|corner| state.transform.transform_point(corner));
-
-        let mut min = corners[0];
-        let mut max = corners[0];
-        for corner in &corners[1..] {
-            min[0] = min[0].min(corner[0]);
-            min[1] = min[1].min(corner[1]);
-            max[0] = max[0].max(corner[0]);
-            max[1] = max[1].max(corner[1]);
-        }
+        let (x, y, width, height) = transform_bounds(&state, x, y, width, height);
 
         self.accessibility_nodes.push(AccessibilityNode {
             node_id,
-            x: min[0],
-            y: min[1],
-            width: max[0] - min[0],
-            height: max[1] - min[1],
+            x,
+            y,
+            width,
+            height,
             role,
         });
     }
@@ -1668,6 +1701,55 @@ impl RenderingCanvas {
     #[must_use]
     pub fn accessibility_nodes(&self) -> &[AccessibilityNode] {
         &self.accessibility_nodes
+    }
+
+    /// Tags a real, transform-correct focusable widget at
+    /// `(x, y, width, height)` (this canvas's own local space,
+    /// transformed by whatever `save()`/`clip()`/`layer()` scope is
+    /// currently active), for `FocusManager::focus_next`/
+    /// `focus_previous` (Phase 19 Step 19.2) to traverse in Tab order.
+    /// `node_id` is the same caller-assigned, stable identifier
+    /// `tag_accessibility_node` already uses for this widget tree --
+    /// deliberately not a second, parallel id system. `tab_index`
+    /// follows the HTML `tabindex` convention; see
+    /// `tre_engine::focus`'s own module doc for the full rule.
+    ///
+    /// # Panics
+    /// Never in practice -- see `save()`'s own `# Panics` section for
+    /// why `state_stack` is never empty.
+    pub fn tag_focusable(
+        &mut self,
+        node_id: AccessibilityNodeId,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        tab_index: Option<i32>,
+    ) {
+        let state = *self
+            .state_stack
+            .last()
+            .expect("state_stack must always have at least one entry");
+        let (x, y, width, height) = transform_bounds(&state, x, y, width, height);
+
+        self.focusable_nodes.push(FocusableNode {
+            node_id,
+            x,
+            y,
+            width,
+            height,
+            tab_index,
+        });
+    }
+
+    /// Every node tagged so far this frame via `tag_focusable` (Phase 19
+    /// Step 19.2) -- a real caller passes this to `FocusManager::
+    /// focus_next`/`focus_previous`, read before `render_canvas()`
+    /// consumes the canvas (same ordering rule `accessibility_nodes()`
+    /// already established).
+    #[must_use]
+    pub fn focusable_nodes(&self) -> &[FocusableNode] {
+        &self.focusable_nodes
     }
 
     /// Real sort/flatten stage (ARCHITECTURE.md Section 4.2, Step

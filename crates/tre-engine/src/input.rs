@@ -81,6 +81,18 @@ pub enum InputEvent {
         width: u32,
         height: u32,
     },
+    /// The OS gave or took window focus for `window` (winit's own
+    /// `WindowEvent::Focused(bool)`) -- real, OS-level window focus
+    /// (alt-tab, clicking another app), distinct from in-app *widget*
+    /// focus (`FocusManager`, IMPLEMENTATION.md Phase 19 Step 19.2):
+    /// this fires even for an app with no concept of a focused widget
+    /// at all. DESIGN.md Section 5's own architecture diagram names
+    /// this signal directly ("...Multi-Window Mouse, Touch, Keyboard,
+    /// Focus, Resize").
+    WindowFocused {
+        window: WindowId,
+        focused: bool,
+    },
     /// A file was dropped onto `window` (Phase 12 Step 12.7). Real OS
     /// drag-and-drop, not an application-level drag gesture between two
     /// of this app's own shapes -- that stays a UI-framework concern, the
@@ -259,5 +271,62 @@ impl FrameClock {
 impl Default for FrameClock {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_focused_round_trips_through_the_queue_unmodified() {
+        let mut queue = InputEventQueue::with_capacity(8);
+        let window = WindowId(0);
+        queue.push(InputEvent::WindowFocused {
+            window,
+            focused: true,
+        });
+
+        let drained = queue.drain();
+        assert_eq!(
+            drained,
+            vec![InputEvent::WindowFocused {
+                window,
+                focused: true
+            }]
+        );
+    }
+
+    #[test]
+    fn window_focused_is_not_coalesced_like_pointer_moved() {
+        // Only `PointerMoved` coalesces (per `InputEventQueue::push`'s own
+        // doc comment) -- two consecutive `WindowFocused` events for the
+        // same window must both survive the queue, unlike two consecutive
+        // `PointerMoved`s for the same window (which collapse to one).
+        let mut queue = InputEventQueue::with_capacity(8);
+        let window = WindowId(0);
+        queue.push(InputEvent::WindowFocused {
+            window,
+            focused: false,
+        });
+        queue.push(InputEvent::WindowFocused {
+            window,
+            focused: true,
+        });
+
+        let drained = queue.drain();
+        assert_eq!(
+            drained,
+            vec![
+                InputEvent::WindowFocused {
+                    window,
+                    focused: false
+                },
+                InputEvent::WindowFocused {
+                    window,
+                    focused: true
+                },
+            ]
+        );
     }
 }

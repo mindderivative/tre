@@ -210,6 +210,10 @@ fn main() {
                     let label = label_for(window, &slot_a, &slot_b);
                     eprintln!("[{label}] resized to {width}x{height}");
                 }
+                InputEvent::WindowFocused { window, focused } => {
+                    let label = label_for(window, &slot_a, &slot_b);
+                    eprintln!("[{label}] window focused: {focused}");
+                }
                 InputEvent::FileDropped { window, path } => {
                     let label = label_for(window, &slot_a, &slot_b);
                     eprintln!("[{label}] file dropped: {}", path.display());

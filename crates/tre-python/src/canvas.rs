@@ -233,6 +233,44 @@ impl PyCanvas {
             .map(PyAccessibilityNode::from)
             .collect()
     }
+
+    /// Tags a real, transform-correct focusable widget at
+    /// `(x, y, width, height)` (this canvas's own local space,
+    /// transformed by whatever `save()`/`clip()`/`layer()` scope is
+    /// currently active), for `FocusManager.focus_next`/
+    /// `focus_previous` (Phase 19 Step 19.2/19.3) to traverse in Tab
+    /// order. `node_id` is the same caller-assigned, stable identifier
+    /// `tag_accessibility_node` already uses for this widget tree.
+    /// `tab_index` follows the HTML `tabindex` convention: `None`/`0`
+    /// is natural/geometry order, a positive value is visited earlier,
+    /// a negative value is excluded from sequential Tab navigation but
+    /// remains directly settable via `FocusManager.set_focus`.
+    #[pyo3(signature = (node_id, x, y, width, height, tab_index=None))]
+    fn tag_focusable(
+        &mut self,
+        node_id: u64,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        tab_index: Option<i32>,
+    ) {
+        self.inner
+            .tag_focusable(AccessibilityNodeId(node_id), x, y, width, height, tab_index);
+    }
+
+    /// Every node tagged so far this frame via `tag_focusable` (Phase 19
+    /// Step 19.2/19.3) -- pass this to `FocusManager.focus_next`/
+    /// `focus_previous`, read before `render_canvas()` consumes the
+    /// canvas (same ordering rule `accessibility_nodes()` established).
+    fn focusable_nodes(&self) -> Vec<crate::focus::PyFocusableNode> {
+        self.inner
+            .focusable_nodes()
+            .iter()
+            .copied()
+            .map(crate::focus::PyFocusableNode::from)
+            .collect()
+    }
 }
 
 /// [`PyCanvas::clip`]'s own returned context manager -- `__exit__` pops

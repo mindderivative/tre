@@ -35,6 +35,9 @@ pub(crate) use canvas::{
 };
 pub use canvas::{FrameArena, GlyphAtlasContext, OverlayLayerPriority, RenderingCanvas, SubCanvas};
 
+mod focus;
+pub use focus::{FocusManager, FocusableNode};
+
 mod rhi;
 pub use rhi::{
     execute_frame, submit_frame, AcquiredImage, BufferBinding, PipelineRegistry, RhiBuffer,
@@ -2334,6 +2337,42 @@ mod tests {
         let frame = canvas.flatten();
         assert_eq!(frame.accessibility_nodes.len(), 1);
         let node = frame.accessibility_nodes[0];
+        for (actual, expected, label) in [
+            (node.x, -4.0, "x"),
+            (node.y, 0.0, "y"),
+            (node.width, 4.0, "width"),
+            (node.height, 10.0, "height"),
+        ] {
+            assert!(
+                (actual - expected).abs() < EPSILON,
+                "{label}: expected the real bounding box of all four rotated corners \
+                 (~{expected}), got {actual} -- not the naive untransformed rect"
+            );
+        }
+    }
+
+    #[test]
+    fn tag_focusable_under_rotation_matches_tag_accessibility_nodes_own_bounding_box() {
+        // Same rotation/rect as `tag_accessibility_node_under_rotation_
+        // reports_the_real_axis_aligned_bounding_box` above -- proves
+        // `transform_bounds` (factored out of `tag_accessibility_node`'s
+        // own original inline logic, Phase 19 Step 19.2) is behavior-
+        // preserving for `tag_focusable` too. `focusable_nodes()` is read
+        // directly off the canvas, not via `flatten()`: `focusable_nodes`
+        // is deliberately not threaded through `FrameArena`/`SubCanvas`
+        // merging the way `accessibility_nodes` is.
+        const EPSILON: f32 = 1e-4;
+        let mut canvas = RenderingCanvas::new();
+        canvas.transform(&tre_math::Affine2::from_rotation(
+            std::f32::consts::FRAC_PI_2,
+        ));
+        canvas.tag_focusable(AccessibilityNodeId(7), 0.0, 0.0, 10.0, 4.0, None);
+
+        let nodes = canvas.focusable_nodes();
+        assert_eq!(nodes.len(), 1);
+        let node = nodes[0];
+        assert_eq!(node.node_id, AccessibilityNodeId(7));
+        assert_eq!(node.tab_index, None);
         for (actual, expected, label) in [
             (node.x, -4.0, "x"),
             (node.y, 0.0, "y"),

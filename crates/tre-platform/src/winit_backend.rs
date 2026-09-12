@@ -125,6 +125,10 @@ impl ApplicationHandler for Handler {
                     height: size.height,
                 });
             }
+            WindowEvent::Focused(focused) => {
+                self.events
+                    .push(InputEvent::WindowFocused { window, focused });
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 self.events.push(InputEvent::PointerMoved {
                     window,
