@@ -220,57 +220,34 @@ pub struct GradientStop {
 /// 2.6): this is caller-input validation, checked entirely on the CPU
 /// before any GPU call, the same category `tre_svg::SvgError` already
 /// occupies for that crate's own untrusted-input checks.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
 pub enum GradientError {
     /// `stops` was empty -- a gradient needs at least one color.
+    #[error("a gradient needs at least one color stop")]
     NoStops,
     /// More than [`crate::gpu_style::GRADIENT_MAX_STOPS`] stops were
     /// given; rejected outright rather than silently truncated.
+    #[error("gradient has {count} stops, exceeding the maximum of {max}")]
     TooManyStops { count: usize, max: usize },
     /// A stop's own `position` was outside `0.0..=1.0`.
+    #[error("gradient stop {index} has position {position}, outside 0.0..=1.0")]
     StopPositionOutOfRange { index: usize, position: f32 },
     /// Stops were not given in non-decreasing `position` order -- the
     /// shader's own interpolation walks them assuming this, and silently
     /// reordering them would produce a real, wrong, non-obvious visual
     /// result rather than a loud rejection.
+    #[error(
+        "gradient stop {index} is out of order -- stops must be given in ascending position \
+         order"
+    )]
     StopsNotAscending { index: usize },
     /// [`GradientKind::Radial`]'s own `radius` was not a real, positive
     /// number -- a non-positive radius has no real geometric meaning and
     /// would divide by zero / produce `NaN` in the shader's own `t =
     /// distance / radius` evaluation.
+    #[error("radial gradient radius {0} must be a positive number")]
     NonPositiveRadius(f32),
 }
-
-impl std::fmt::Display for GradientError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NoStops => write!(f, "a gradient needs at least one color stop"),
-            Self::TooManyStops { count, max } => {
-                write!(
-                    f,
-                    "gradient has {count} stops, exceeding the maximum of {max}"
-                )
-            }
-            Self::StopPositionOutOfRange { index, position } => write!(
-                f,
-                "gradient stop {index} has position {position}, outside 0.0..=1.0"
-            ),
-            Self::StopsNotAscending { index } => write!(
-                f,
-                "gradient stop {index} is out of order -- stops must be given in ascending \
-                 position order"
-            ),
-            Self::NonPositiveRadius(radius) => {
-                write!(
-                    f,
-                    "radial gradient radius {radius} must be a positive number"
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for GradientError {}
 
 fn validate_gradient(def: &GradientDef) -> Result<(), GradientError> {
     if def.stops.is_empty() {

@@ -36,28 +36,19 @@ pub use tray::{
 };
 pub use tre_engine::{ElementState, InputEvent, MouseButton, WindowId};
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum PlatformError {
+    #[error("failed to connect to the display server")]
     ConnectionFailed,
+    #[error("required protocol/extension missing: {0}")]
     ProtocolMissing(&'static str),
     /// `window` does not identify a window created by this connection (it
     /// was never created here, or has already been closed and removed).
+    #[error("window was not created by this connection")]
     UnknownWindow,
+    #[error("{0}")]
     Other(String),
 }
-
-impl std::fmt::Display for PlatformError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ConnectionFailed => write!(f, "failed to connect to the display server"),
-            Self::ProtocolMissing(name) => write!(f, "required protocol/extension missing: {name}"),
-            Self::UnknownWindow => write!(f, "window was not created by this connection"),
-            Self::Other(msg) => write!(f, "{msg}"),
-        }
-    }
-}
-
-impl std::error::Error for PlatformError {}
 
 /// RGBA8 pixel data for [`PlatformConnection::set_icon`]. `rgba.len()` must
 /// equal `width * height * 4`; a mismatch surfaces as

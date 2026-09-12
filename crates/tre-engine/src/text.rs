@@ -26,25 +26,11 @@ pub struct FontId(pub u32);
 /// failure to the first `Text` shape that references this `FontId`, at
 /// flatten time, where recovering cleanly is much harder (deep inside a
 /// `ShapeRegistry::flatten_into` call, not a caller-facing constructor).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum FontError {
+    #[error("font bytes are not a valid font (rejected by skrifa or rustybuzz)")]
     InvalidFont,
 }
-
-impl std::fmt::Display for FontError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InvalidFont => {
-                write!(
-                    f,
-                    "font bytes are not a valid font (rejected by skrifa or rustybuzz)"
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for FontError {}
 
 /// Owns real, caller-supplied font bytes and assigns each one a stable
 /// [`FontId`] -- append-only, no generational reuse, the same real,

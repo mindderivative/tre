@@ -11,6 +11,12 @@ unsafe_op_in_unsafe_fn = "deny"
 all = "warn"
 
 [dependencies]
+# Review finding: `TextError` hand-wrote a match-per-variant `Display`
+# impl plus an empty `Error` impl -- pure boilerplate a derive removes
+# with no behavior change. Same version pin as every other crate adopting
+# this in the same pass (`tre-engine`'s own Cargo.toml comment has the
+# full `cargo add --dry-run` rationale).
+thiserror = "2.0.20"
 # IMPLEMENTATION.md Step 5.1.2: `GlyphRasterSource` implements this
 # crate's `RasterSource` trait object (`tre-atlas/src/raster.rs`) --
 # the dependency points `tre-text -> tre-atlas`, the direction

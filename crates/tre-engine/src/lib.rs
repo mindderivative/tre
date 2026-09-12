@@ -47,27 +47,32 @@ pub use rhi::{
 /// Recoverable engine failure (DESIGN.md Section 2.6). Every fallible
 /// engine operation returns `Result<T, EngineError>`; panics are reserved
 /// for programmer errors, never for these expected failure modes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EngineError {
     /// GPU device removal, driver TDR, or an out-of-date swapchain
     /// (DESIGN.md Section 2.6, "Device loss / swapchain acquire failure").
+    #[error("GPU device lost (removal, driver TDR, or a stale swapchain)")]
     DeviceLost,
     /// The swapchain no longer matches the window (e.g. after a resize)
     /// and must be recreated before rendering can continue.
+    #[error("swapchain is out of date and must be recreated")]
     SwapchainOutOfDate,
     /// A graphics pipeline failed to create (DESIGN.md Section 2.6,
     /// "Shader compilation / pipeline creation failure").
+    #[error("graphics pipeline creation failed")]
     PipelineCreationFailed,
     /// `RhiDevice::create_texture`'s `pixels` slice length doesn't match
     /// what `width`/`height`/`format` implies, or `width`/`height` is zero
     /// (Phase 2 Code Review finding #66) -- caught before any GPU call, so
     /// no out-of-bounds read into `pixels` or its staging buffer can occur.
+    #[error("texture pixel data doesn't match width/height/format")]
     InvalidTextureData,
     /// The RHI's persistent bindless texture array (IMPLEMENTATION.md
     /// Step 2.1) has no free slots left (Phase 2 Code Review finding #67;
     /// DESIGN.md Section 2.6's "atlas exhaustion beyond LRU capacity"
     /// failure class). Recoverable in principle -- a caller can release
     /// textures and retry -- even though no eviction policy exists yet.
+    #[error("bindless texture array has no free slots left")]
     BindlessArrayExhausted,
     /// `RhiDevice::acquire_transient_target` would need to cold-allocate a
     /// genuinely novel size while the transient pool's already-idle free
@@ -78,6 +83,7 @@ pub enum EngineError {
     /// to never go idle, so admission needs its own check). Recoverable:
     /// a caller can release outstanding textures, wait for the GC thread
     /// to catch up, and retry.
+    #[error("transient render target pool's VRAM budget exceeded")]
     TransientPoolBudgetExceeded,
     /// Real GLSL fragment-shader source (Phase 13 Step 13.8: custom
     /// shader API) failed to compile to SPIR-V via `shaderc` -- carries
@@ -85,35 +91,9 @@ pub enum EngineError {
     /// GLSL error) rather than the generic [`Self::PipelineCreationFailed`],
     /// since a caller authoring their own shader source genuinely needs
     /// to see *why* it failed, not just that it did.
+    #[error("shader compilation failed: {0}")]
     ShaderCompilationFailed(String),
 }
-
-impl std::fmt::Display for EngineError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::DeviceLost => write!(
-                f,
-                "GPU device lost (removal, driver TDR, or a stale swapchain)"
-            ),
-            Self::SwapchainOutOfDate => write!(f, "swapchain is out of date and must be recreated"),
-            Self::PipelineCreationFailed => write!(f, "graphics pipeline creation failed"),
-            Self::InvalidTextureData => {
-                write!(f, "texture pixel data doesn't match width/height/format")
-            }
-            Self::BindlessArrayExhausted => {
-                write!(f, "bindless texture array has no free slots left")
-            }
-            Self::TransientPoolBudgetExceeded => {
-                write!(f, "transient render target pool's VRAM budget exceeded")
-            }
-            Self::ShaderCompilationFailed(diagnostic) => {
-                write!(f, "shader compilation failed: {diagnostic}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for EngineError {}
 
 /// A clip rectangle in the coordinate space `Canvas::push_clip`/scissor
 /// operations use. Referenced but never defined by ARCHITECTURE.md's

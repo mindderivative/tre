@@ -16,6 +16,13 @@ all = "warn"
 pedantic = "warn"
 
 [dependencies]
+# Review finding: `EngineError`/`GradientError`/`FontError` each hand-wrote
+# a match-per-variant `Display` impl plus an empty `Error` impl, pure
+# boilerplate a derive removes with no behavior change. Pinned to the
+# newest version `cargo add --dry-run` resolved against this workspace's
+# `rust-version = 1.75` (2.0.20), the same technique used to pin every
+# other version-sensitive dependency in this workspace.
+thiserror = "2.0.20"
 bytemuck = { version = "1.25.2", features = ["derive"] }
 # IMPLEMENTATION.md Step 5.1.2: `Canvas::draw_text` is this crate's
 # first wiring into the text/atlas stack -- `tre-text` for shaped-glyph

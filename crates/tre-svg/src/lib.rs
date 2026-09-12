@@ -51,10 +51,11 @@ pub struct Polygon {
 /// Everything that can go wrong turning untrusted SVG input into
 /// triangles -- every case is a `Result`, never a panic or an unbounded
 /// loop (IMPLEMENTATION.md Step 3.3 task 4).
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum SvgError {
     /// The raw input exceeded the caller-supplied byte-size ceiling,
     /// checked before `usvg` ever sees the data.
+    #[error("SVG source is {size} bytes, exceeding the {max}-byte limit")]
     TooLarge { size: usize, max: usize },
     /// The total resolved path point count, summed across every path in
     /// the document and checked incrementally while walking the parsed
@@ -64,12 +65,14 @@ pub enum SvgError {
     /// `planning/archive/PLAN_PHASE3_STEP3_3_1.md` for why a
     /// depth/element-count-bounded document can still resolve to an
     /// unbounded number of points.
+    #[error("SVG resolves to {count} path points, exceeding the {max}-point limit")]
     TooManyPoints { count: usize, max: usize },
     /// `usvg` itself rejected the document: malformed XML, or one of
     /// `usvg`'s own built-in hardening limits (a 1024-deep nesting/`<use>`
     /// -chain cap, a 1,000,000-element cap, `<use>` reference cycle
     /// detection -- verified by reading `usvg`'s source, not assumed from
     /// its reputation).
+    #[error("failed to parse SVG: {0}")]
     Parse(String),
     /// [`tessellate_fill`]'s own lyon `FillTessellator` reported an
     /// internal failure -- rare in practice (Phase 10 Step 10.2
@@ -78,12 +81,14 @@ pub enum SvgError {
     /// ear-clipping algorithm it replaced, which rejected such input
     /// outright via the now-retired `NotSimplePolygon` variant this one
     /// replaces).
+    #[error("lyon's fill tessellator reported an internal failure")]
     TessellationFailed,
     /// [`morph`]'s two keyframe `Polygon`s have different vertex counts --
     /// IMPLEMENTATION.md Step 3.3 task 2's "topological equivalence"
     /// requirement, for already-flattened polygons, means equal vertex
     /// counts. Not automatically resampled to match; see
     /// `planning/archive/PLAN_PHASE3_STEP3_3_2.md` for why.
+    #[error("cannot morph: keyframes have different vertex counts ({from_points} vs {to_points})")]
     TopologyMismatch {
         from_points: usize,
         to_points: usize,
@@ -94,6 +99,7 @@ pub enum SvgError {
     /// `<animateTransform>` entirely, see `smil`'s own module doc
     /// comment), so it needs its own, separate malformed-XML rejection
     /// distinct from [`Self::Parse`]'s `usvg`-specific one.
+    #[error("failed to parse SVG as XML for SMIL: {0}")]
     MalformedXml(String),
     /// [`smil::parse_smil`]'s own total extracted keyframe count --
     /// summed across every `<animate>`/`<animateTransform>` element's own
@@ -104,35 +110,9 @@ pub enum SvgError {
     /// parsing previously had no ceiling of any kind (byte size or output
     /// size) before this crate's own hardening pass gave `parse_svg` its
     /// matching `TooLarge`/`TooManyPoints` pair.
+    #[error("SMIL parsing extracted {count} keyframes, exceeding the {max}-keyframe limit")]
     TooManyKeyframes { count: usize, max: usize },
 }
-
-impl std::fmt::Display for SvgError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::TooLarge { size, max } => {
-                write!(f, "SVG source is {size} bytes, exceeding the {max}-byte limit")
-            }
-            Self::TooManyPoints { count, max } => write!(
-                f,
-                "SVG resolves to {count} path points, exceeding the {max}-point limit"
-            ),
-            Self::Parse(msg) => write!(f, "failed to parse SVG: {msg}"),
-            Self::TessellationFailed => write!(f, "lyon's fill tessellator reported an internal failure"),
-            Self::TopologyMismatch { from_points, to_points } => write!(
-                f,
-                "cannot morph: keyframes have different vertex counts ({from_points} vs {to_points})"
-            ),
-            Self::MalformedXml(msg) => write!(f, "failed to parse SVG as XML for SMIL: {msg}"),
-            Self::TooManyKeyframes { count, max } => write!(
-                f,
-                "SMIL parsing extracted {count} keyframes, exceeding the {max}-keyframe limit"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for SvgError {}
 
 /// Converts `usvg`'s own 2D affine transform into this workspace's
 /// canonical [`Affine2`] (`tre-math`, Phase 3 Step 3.1) -- the first real
