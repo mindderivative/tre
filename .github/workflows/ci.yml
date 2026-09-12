@@ -122,14 +122,28 @@ jobs:
       # provide a reachable bus, so this is real coverage, not a new
       # single point of CI failure.
       # See the clippy job's own comment above for why libgtk-3-dev/
-      # libayatana-appindicator3-dev are needed here too.
+      # libayatana-appindicator3-dev are needed here too. libxkbcommon-
+      # x11-0 is a second, separate, previously undisclosed gap: winit's
+      # own X11 backend dlopen()s libxkbcommon-x11.so.0 at runtime (not
+      # link time), confirmed present since Phase 11 Step 11.1's winit
+      # migration (2026-09-10) -- one day before the tray-icon build
+      # break above, so every job that actually RUNS a compiled binary
+      # touching a window (this one included, plus vulkan-validation/
+      # accessibility-validation below) has been panicking with "Library
+      # libxkbcommon-x11.so could not be loaded" since that commit,
+      # confirmed by reading that same day's own CI run log directly.
+      # xvfb-run wraps `cargo test` here for the identical reason
+      # vulkan-validation/accessibility-validation already wrap their
+      # own example runs: tre-platform's own real clipboard/tray unit
+      # tests (Phase 14) need a real X11 display and a real GTK init to
+      # succeed, and this job never provided one.
       - run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libwayland-dev libxcb1-dev glslc libfontconfig1-dev \
             fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
             dbus-user-session at-spi2-core \
-            libgtk-3-dev libayatana-appindicator3-dev
+            libgtk-3-dev libayatana-appindicator3-dev xvfb libxkbcommon-x11-0
       # Real finding from this workflow's own first two live runs (Step
       # 5.3.3's own CI follow-up, 2026-09-08): a freshly D-Bus-activated
       # at-spi2-registryd on this runner consistently takes ~10.05s
@@ -140,7 +154,7 @@ jobs:
       # never the real bottleneck. tre-a11y's own round-trip test now
       # polls for 30s instead of 10s -- real, evidence-based margin over
       # both observed worst cases, not a blind guess.
-      - run: dbus-run-session -- cargo test --workspace
+      - run: xvfb-run -a dbus-run-session -- cargo test --workspace
       # Phase 4 Step 4.2.2: no GPU/Vulkan involved at all -- MSDF
       # generation is pure CPU, so this runs as a plain example here
       # rather than in the vulkan-validation job below.
@@ -196,13 +210,17 @@ jobs:
       # See the clippy job's own comment above for why libgtk-3-dev/
       # libayatana-appindicator3-dev are needed here too -- every
       # example below depends on tre-platform for its window/surface.
+      # libxkbcommon-x11-0 is a separate, previously undisclosed gap of
+      # its own -- see the test job's own comment for the full account
+      # (present since Phase 11 Step 11.1's winit migration, a day
+      # before the tray-icon gap above).
       - name: Install a software Vulkan ICD, validation layers, a virtual display, libwayland-dev, and real fonts
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libvulkan1 mesa-vulkan-drivers vulkan-validationlayers xvfb libwayland-dev libxcb1-dev glslc \
             libfontconfig1-dev fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
-            libgtk-3-dev libayatana-appindicator3-dev
+            libgtk-3-dev libayatana-appindicator3-dev libxkbcommon-x11-0
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example walking_skeleton
         env:
           TRE_WALKING_SKELETON_FRAMES: 10
@@ -343,14 +361,15 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: rustup show
       # See the clippy job's own comment above for why libgtk-3-dev/
-      # libayatana-appindicator3-dev are needed here too.
+      # libayatana-appindicator3-dev are needed here too, and the test
+      # job's own comment for libxkbcommon-x11-0.
       - run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libvulkan1 mesa-vulkan-drivers vulkan-validationlayers xvfb libwayland-dev libxcb1-dev glslc \
             libfontconfig1-dev fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
             dbus dbus-user-session at-spi2-core dconf-cli \
-            libgtk-3-dev libayatana-appindicator3-dev
+            libgtk-3-dev libayatana-appindicator3-dev libxkbcommon-x11-0
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_accessibility_demo
       - name: Enable accessibility via the real toolkit-accessibility GSettings key
         run: |
