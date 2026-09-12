@@ -131,6 +131,39 @@ impl TrayIcon {
             .set_tooltip(tooltip)
             .map_err(|e| PlatformError::Other(format!("failed to set tray tooltip: {e}")))
     }
+
+    /// Changes the tray icon's own image after creation (GUI-readiness
+    /// recommendation #11's own "dynamic tray icon" follow-up -- e.g.
+    /// reflecting an unread-count badge). `rgba` must be exactly
+    /// `width * height * 4` bytes, the same real contract [`TrayIcon::
+    /// new`] already enforces.
+    ///
+    /// # Errors
+    /// Returns [`PlatformError::Other`] if `rgba` doesn't match
+    /// `width * height * 4`, or the platform tray backend rejects the
+    /// update.
+    pub fn set_icon(&self, rgba: Vec<u8>, width: u32, height: u32) -> Result<(), PlatformError> {
+        let icon = tray_icon::Icon::from_rgba(rgba, width, height)
+            .map_err(|e| PlatformError::Other(format!("invalid tray icon image data: {e}")))?;
+        self.inner
+            .set_icon(Some(icon))
+            .map_err(|e| PlatformError::Other(format!("failed to set tray icon: {e}")))
+    }
+
+    /// **Linux only** (a real no-op elsewhere, matching `tray-icon`'s
+    /// own `set_temp_dir_path`): redirects the on-disk directory this
+    /// machine's real GTK/`appindicator` backend writes each new icon
+    /// image to as a temporary PNG file (`AppIndicator` has no in-memory
+    /// icon API -- it reads icons from real files on disk). Exists so
+    /// [`set_icon`](Self::set_icon)'s own real, on-this-machine effect
+    /// can be verified automatically (reading the written PNG back and
+    /// comparing pixels), not just "the call didn't raise" -- the
+    /// default location (`$XDG_RUNTIME_DIR/tray-icon` or
+    /// `/tmp/tray-icon`) works fine for a real caller that doesn't need
+    /// this.
+    pub fn set_temp_dir_path(&self, path: Option<&std::path::Path>) {
+        self.inner.set_temp_dir_path(path);
+    }
 }
 
 /// One real tray/menu event, drained by [`poll_events`].

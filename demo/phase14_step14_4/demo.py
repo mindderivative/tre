@@ -64,7 +64,13 @@ def check_tray_icon_creation_consumes_the_menu() -> None:
         print("re-using a Menu already attached to a TrayIcon raises ValueError -- OK")
 
     tray.set_tooltip("updated tooltip")
-    print("set_tooltip() after creation succeeded -- OK")
+    print(
+        "set_tooltip() after creation did not raise -- OK "
+        "(a real, disclosed no-op on this machine's Linux/GTK backend: tray-icon 0.19.3's own "
+        "platform_impl/gtk/mod.rs::set_tooltip discards the argument and always returns Ok, "
+        "found while investigating Phase 17 Step 17.1 -- this call proves only that it doesn't "
+        "raise, not that the tooltip actually changes)"
+    )
 
 
 def check_malformed_icon_data_raises() -> None:

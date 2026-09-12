@@ -90,10 +90,21 @@ through verification (does clicking a menu item produce the expected
 `TrayEvent.MenuItemClick` from `tray_poll_events()`?) is real, separate
 manual verification a human running this demo must perform.
 
-**Not yet done**: predefined system menu items (`Copy`/`Cut`/`Paste`/
-`SelectAll`, `libxdo`-gated) are not exposed -- a real caller builds a
-menu with `Clipboard` (Step 14.1)-backed items instead, matching this
-project's own "smallest real slice" precedent. Tray icon image updates
-after creation (`set_icon`, distinct from `set_tooltip`) are also not
-yet exposed -- real, separate future work if a caller needs a dynamic
-tray icon (e.g. reflecting unread-count state).
+**A real, previously-undisclosed bug found while investigating Phase 17
+Step 17.1**: `set_tooltip` is a genuine no-op on this machine's real
+Linux/GTK backend -- `tray-icon` 0.19.3's own `platform_impl/gtk/mod.rs`
+implements it as `pub fn set_tooltip<S>(&mut self, _tooltip: Option<S>)
+-> Result<()> { Ok(()) }`, silently discarding the argument and always
+returning success. This demo's own `check_tray_icon_creation_consumes_
+the_menu` originally treated `tray.set_tooltip(...)` returning `Ok` as
+proof it "succeeded" -- never a valid inference on Linux. Corrected to
+assert only what's real (the call doesn't raise) and disclose the
+no-op directly.
+
+**Not yet done, as of this step**: predefined system menu items
+(`Copy`/`Cut`/`Paste`/`SelectAll`, `libxdo`-gated) are not exposed -- a
+real caller builds a menu with `Clipboard` (Step 14.1)-backed items
+instead, matching this project's own "smallest real slice" precedent.
+Tray icon image updates after creation (`set_icon`, distinct from
+`set_tooltip`) are also not yet exposed. Both addressed in Phase 17
+Step 17.1.

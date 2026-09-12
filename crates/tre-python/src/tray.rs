@@ -125,6 +125,26 @@ impl PyTrayIcon {
     fn set_tooltip(&self, tooltip: Option<&str>) -> PyResult<()> {
         self.inner.set_tooltip(tooltip).map_err(setup_err)
     }
+
+    /// Changes the tray icon's own image after creation. `rgba` must be
+    /// exactly `width * height * 4` bytes, the same real contract the
+    /// constructor already enforces.
+    ///
+    /// # Errors
+    /// Raises `RuntimeError` if `rgba` doesn't match `width * height *
+    /// 4`, or the platform tray backend rejects the update.
+    fn set_icon(&self, rgba: Vec<u8>, width: u32, height: u32) -> PyResult<()> {
+        self.inner.set_icon(rgba, width, height).map_err(setup_err)
+    }
+
+    /// **Linux only** (a real no-op elsewhere): redirects where this
+    /// machine's real GTK/`appindicator` backend writes each new icon
+    /// image as a temporary PNG file. `None` reverts to the real
+    /// default location (`$XDG_RUNTIME_DIR/tray-icon` or
+    /// `/tmp/tray-icon`).
+    fn set_temp_dir_path(&self, path: Option<&str>) {
+        self.inner.set_temp_dir_path(path.map(std::path::Path::new));
+    }
 }
 
 /// `tre_platform::tray::TrayEvent` -- a real tray-icon/menu event
