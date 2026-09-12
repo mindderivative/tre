@@ -43,11 +43,38 @@ jobs:
       # ("DejaVu Sans", "Noto Sans", "Noto Color Emoji") resolve
       # deterministically on this hosted runner, not just on a developer's
       # own already-font-rich machine.
+      #
+      # Phase 14 Step 14.4 added `tray-icon`/`gtk` as a direct
+      # `tre-platform` dependency (tray icon + native menu) -- since
+      # `tre-platform` is itself a dependency of nearly every crate/
+      # example in the workspace, this silently broke every job in this
+      # file that builds or runs anything touching it (clippy/build/
+      # test/vulkan-validation/accessibility-validation), starting with
+      # that commit, for the identical reason this comment block's own
+      # note above describes for libwayland-dev/glslc: the crates that
+      # needed `libgtk-3-dev`/`libayatana-appindicator3-dev` were added
+      # without updating this workflow's own package list, and nobody
+      # checked the resulting CI runs -- confirmed by reading back
+      # several pushes' worth of run logs, all failing at the identical
+      # `glib-sys`/`libappindicator-sys` build-script pkg-config error
+      # (`Package glib-2.0 was not found`), not the accessibility-
+      # validation job's own already-disclosed, unrelated finding below.
+      # `libgtk-3-dev` alone provides glib-2.0.pc transitively (plus
+      # cairo/pango/gdk-pixbuf/atk, `gdk-sys`'s/`pango-sys`'s/etc. own
+      # real requirements); `libappindicator-sys` 0.9.0 probes
+      # `ayatana-appindicator3-0.1` first, which `libayatana-
+      # appindicator3-dev` provides on Ubuntu 24.04 (the legacy
+      # `libappindicator3-dev` package this crate's own fallback name
+      # expects is not present in this runner's repos). `libdbus-1-dev`
+      # is NOT needed: `tre-a11y` binds AT-SPI2 via `zbus`, a pure-Rust
+      # D-Bus implementation with no system `libdbus` link requirement
+      # at all -- confirmed via Cargo.lock, not assumed.
       - run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libwayland-dev libxcb1-dev glslc libfontconfig1-dev \
-            fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji
+            fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
+            libgtk-3-dev libayatana-appindicator3-dev
       # TECHNICAL.md Section 9.2: clippy with -D warnings is the hard gate;
       # clippy::pedantic on tre-engine/tre-math is enabled in their own
       # Cargo.toml [lints.clippy], so this one command covers both.
@@ -60,11 +87,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - run: rustup show
+      # See the clippy job's own comment above for why libgtk-3-dev/
+      # libayatana-appindicator3-dev are needed here too (Phase 14 Step
+      # 14.4's tray-icon dependency, silently missing from this workflow
+      # since that commit).
       - run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libwayland-dev libxcb1-dev glslc libfontconfig1-dev \
-            fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji
+            fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
+            libgtk-3-dev libayatana-appindicator3-dev
       - run: cargo build --workspace --all-targets
 
   test:
@@ -89,12 +121,15 @@ jobs:
       # gracefully (not a failure) if this environment ever doesn't
       # provide a reachable bus, so this is real coverage, not a new
       # single point of CI failure.
+      # See the clippy job's own comment above for why libgtk-3-dev/
+      # libayatana-appindicator3-dev are needed here too.
       - run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libwayland-dev libxcb1-dev glslc libfontconfig1-dev \
             fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
-            dbus-user-session at-spi2-core
+            dbus-user-session at-spi2-core \
+            libgtk-3-dev libayatana-appindicator3-dev
       # Real finding from this workflow's own first two live runs (Step
       # 5.3.3's own CI follow-up, 2026-09-08): a freshly D-Bus-activated
       # at-spi2-registryd on this runner consistently takes ~10.05s
@@ -158,12 +193,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - run: rustup show
+      # See the clippy job's own comment above for why libgtk-3-dev/
+      # libayatana-appindicator3-dev are needed here too -- every
+      # example below depends on tre-platform for its window/surface.
       - name: Install a software Vulkan ICD, validation layers, a virtual display, libwayland-dev, and real fonts
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libvulkan1 mesa-vulkan-drivers vulkan-validationlayers xvfb libwayland-dev libxcb1-dev glslc \
-            libfontconfig1-dev fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji
+            libfontconfig1-dev fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
+            libgtk-3-dev libayatana-appindicator3-dev
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example walking_skeleton
         env:
           TRE_WALKING_SKELETON_FRAMES: 10
@@ -303,12 +342,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - run: rustup show
+      # See the clippy job's own comment above for why libgtk-3-dev/
+      # libayatana-appindicator3-dev are needed here too.
       - run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libvulkan1 mesa-vulkan-drivers vulkan-validationlayers xvfb libwayland-dev libxcb1-dev glslc \
             libfontconfig1-dev fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
-            dbus dbus-user-session at-spi2-core dconf-cli
+            dbus dbus-user-session at-spi2-core dconf-cli \
+            libgtk-3-dev libayatana-appindicator3-dev
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_accessibility_demo
       - name: Enable accessibility via the real toolkit-accessibility GSettings key
         run: |
