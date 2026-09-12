@@ -2099,7 +2099,7 @@ fn flatten_path_with_closed(commands: &[PathCommand]) -> Vec<(Vec<Vec2>, bool)> 
 mod tests {
     use super::*;
     use crate::{GlyphAtlasContext, RhiBuffer, RhiDynamicRingBuffer};
-    use std::cell::Cell;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
 
     /// Phase 10 Step 10.2.4: independent Rust references for `sdf_
@@ -2392,11 +2392,13 @@ mod tests {
     #[derive(Default)]
     struct FakeDevice {
         style_buffer: FakeStyleBuffer,
-        /// Phase 10 Step 10.2.3: `false` by default, matching real
-        /// hardware that lacks `VK_KHR_dynamic_rendering_local_read` --
-        /// tests exercising the "supported" branch set this via
-        /// `Cell::set` before calling `flatten_into`.
-        local_read_blend_supported: Cell<bool>,
+        /// `AtomicBool`, not `Cell<bool>` (Architecture review: RHI
+        /// trait-object generalization, REVIEW.md finding #216, added
+        /// `Send + Sync` to `RhiDevice`) -- `false` by default, matching
+        /// real hardware that lacks `VK_KHR_dynamic_rendering_local_
+        /// read`; tests exercising the "supported" branch set this
+        /// before calling `flatten_into`.
+        local_read_blend_supported: AtomicBool,
     }
 
     #[derive(Default)]
@@ -2430,7 +2432,7 @@ mod tests {
             &self.style_buffer
         }
         fn local_read_blend_supported(&self) -> bool {
-            self.local_read_blend_supported.get()
+            self.local_read_blend_supported.load(Ordering::Relaxed)
         }
         fn acquire_transient_target(
             &self,
@@ -2474,6 +2476,13 @@ mod tests {
             _swapchain: &dyn crate::RhiSwapchain,
             _image: crate::AcquiredImage,
         ) -> Result<(), crate::EngineError> {
+            unimplemented!("not exercised by any shapes.rs test")
+        }
+        fn create_custom_pipeline(
+            &self,
+            _fragment_source: &str,
+            _color_format: crate::TextureFormat,
+        ) -> Result<Box<dyn crate::RhiPipelineState>, crate::EngineError> {
             unimplemented!("not exercised by any shapes.rs test")
         }
     }
@@ -3920,7 +3929,9 @@ mod tests {
     #[test]
     fn flatten_into_falls_back_to_normal_blending_on_unsupported_hardware() {
         let device = FakeDevice::default();
-        device.local_read_blend_supported.set(false);
+        device
+            .local_read_blend_supported
+            .store(false, Ordering::Relaxed);
         let mut registry = ShapeRegistry::new();
         registry.insert(ShapePrimitive::Polygon(Polygon {
             common: {
@@ -3953,7 +3964,9 @@ mod tests {
     #[test]
     fn flatten_into_routes_a_non_normal_blend_mode_through_flatcolorblend_when_supported() {
         let device = FakeDevice::default();
-        device.local_read_blend_supported.set(true);
+        device
+            .local_read_blend_supported
+            .store(true, Ordering::Relaxed);
         let mut registry = ShapeRegistry::new();
         registry.insert(ShapePrimitive::Polygon(Polygon {
             common: {
@@ -3989,7 +4002,9 @@ mod tests {
     #[test]
     fn flatten_into_uses_flatcolor_for_a_normal_blend_mode_even_when_local_read_is_supported() {
         let device = FakeDevice::default();
-        device.local_read_blend_supported.set(true);
+        device
+            .local_read_blend_supported
+            .store(true, Ordering::Relaxed);
         let mut registry = ShapeRegistry::new();
         registry.insert(ShapePrimitive::Polygon(Polygon {
             common: PrimitiveCommon::new(), // blend_mode defaults to Normal

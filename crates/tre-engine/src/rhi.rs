@@ -238,7 +238,14 @@ impl Default for PipelineRegistry {
 /// minimum needed to make `RhiDevice::begin_frame`/`submit_and_present`
 /// actually implementable without `Any`-downcasting (TECHNICAL.md Section
 /// 9.1's per-frame-loop ban).
-pub trait RhiSwapchain {
+///
+/// `Send + Sync` (Architecture review: RHI trait-object generalization,
+/// REVIEW.md finding #216) -- the same real, necessary reason already
+/// applied to `RhiBuffer`/`RhiTexture`/`RhiPipelineState`: `tre-python`'s
+/// renderer types hold their own swapchain behind `Box<dyn RhiSwapchain>`
+/// across a `Python::detach` call, which requires the boxed trait object
+/// itself to be `Send`.
+pub trait RhiSwapchain: Send + Sync {
     fn extent(&self) -> (u32, u32);
 
     /// Opaque handle (e.g. a Vulkan `vk::ImageView` reinterpreted via
@@ -295,6 +302,22 @@ pub trait RhiSwapchain {
     /// matches the window, or [`EngineError::DeviceLost`] on any other
     /// presentation failure.
     fn present(&self, image: AcquiredImage) -> Result<(), EngineError>;
+
+    /// Reads this swapchain's own most recently presented frame back as
+    /// tightly packed `BGRA8` host memory (Architecture review: RHI
+    /// trait-object generalization, REVIEW.md finding #216) -- lets a
+    /// caller like `tre-python`'s `HeadlessRenderer` store its swapchain
+    /// behind `Box<dyn RhiSwapchain>` instead of the concrete headless
+    /// type, closing the one capability that previously forced it to
+    /// stay concrete.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::PixelReadbackUnsupported`] on a swapchain
+    /// with no CPU-visible staging buffer to read back from (a real
+    /// windowed swapchain presents straight to the window surface and
+    /// has none) -- only a headless swapchain, built with exactly this
+    /// use in mind, supports it.
+    fn read_pixels_bgra8(&self) -> Result<Vec<u8>, EngineError>;
 }
 
 /// The Render Hardware Interface device trait (ARCHITECTURE.md Section 6).
@@ -306,7 +329,15 @@ pub trait RhiSwapchain {
 /// error," which is impossible with a bare, infallible return type. This
 /// is exactly the kind of interface mismatch Phase 0 exists to catch
 /// while it's still cheap to change (IMPLEMENTATION.md Phase 0 rationale).
-pub trait RhiDevice {
+///
+/// `Send + Sync` (Architecture review: RHI trait-object generalization,
+/// REVIEW.md finding #216) -- the same real, necessary reason already
+/// applied to `RhiBuffer`/`RhiTexture`/`RhiPipelineState`, now extended
+/// to the device itself: `tre-python`'s renderer types hold their own
+/// device behind `Box<dyn RhiDevice>` across a `Python::detach` call
+/// (needs `Send`), and `render_parallel`'s own worker threads each take
+/// a shared `&dyn RhiDevice` reference concurrently (needs `Sync`).
+pub trait RhiDevice: Send + Sync {
     // Resource Management
     /// `capacity` is the ring buffer's TOTAL size in bytes (TECHNICAL.md
     /// Section 3.1's $16\text{-}32\text{MB}$), divided evenly across the
@@ -443,6 +474,38 @@ pub trait RhiDevice {
         swapchain: &dyn RhiSwapchain,
         image: AcquiredImage,
     ) -> Result<(), EngineError>;
+
+    /// Compiles `fragment_source` (real GLSL) at runtime and pairs it
+    /// with this device's own fixed vertex-shader/bindless-descriptor
+    /// contract into a real pipeline (Phase 13 Step 13.8's custom shader
+    /// API) -- moved onto this trait from a `VulkanDevice`-only inherent
+    /// method (Architecture review: RHI trait-object generalization,
+    /// REVIEW.md finding #216) so `tre-python`'s renderer can call it
+    /// through `Box<dyn RhiDevice>` instead of needing the concrete
+    /// backend type. `color_format` names the render target's format
+    /// using this crate's own backend-agnostic [`TextureFormat`], not a
+    /// raw backend format code.
+    ///
+    /// **Real, disclosed v1 scope** (unchanged from the inherent method
+    /// this replaces): `fragment_source` must declare `layout(location =
+    /// 0) in vec4 frag_color;`, `layout(location = 1) in vec2 frag_uv;`,
+    /// optionally `layout(location = 2) in vec3 frag_params;`,
+    /// `layout(location = 0) out vec4 out_color;`, and the identical
+    /// 12-byte `PushConstants { vec2 screen_size; uint texture_index; }`
+    /// block every other real pipeline in this workspace already shares
+    /// -- no custom vertex shader, no arbitrary vertex attributes, no
+    /// descriptor sets beyond the engine's own shared bindless set.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::ShaderCompilationFailed`] with the
+    /// backend's own real compiler diagnostic if `fragment_source` fails
+    /// to compile. Returns [`EngineError::PipelineCreationFailed`] if the
+    /// (successfully compiled) shader still fails real pipeline creation.
+    fn create_custom_pipeline(
+        &self,
+        fragment_source: &str,
+        color_format: TextureFormat,
+    ) -> Result<Box<dyn RhiPipelineState>, EngineError>;
 }
 
 /// The Render Hardware Interface command-buffer trait (ARCHITECTURE.md

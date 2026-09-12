@@ -19,6 +19,7 @@ typedef enum TreErrorCode {
     TRE_ERROR_CODE_BINDLESS_ARRAY_EXHAUSTED,
     TRE_ERROR_CODE_TRANSIENT_POOL_BUDGET_EXCEEDED,
     TRE_ERROR_CODE_SHADER_COMPILATION_FAILED,
+    TRE_ERROR_CODE_PIXEL_READBACK_UNSUPPORTED,
     /**
      * FFI-only: a shape-registry insert call was given a non-finite or
      * negative dimension. `tre_engine::shapes::ShapeRegistry::insert`

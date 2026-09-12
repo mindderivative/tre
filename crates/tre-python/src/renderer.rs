@@ -26,8 +26,8 @@ use pyo3::types::PyBytes;
 use raw_window_handle::HasDisplayHandle;
 use tre_engine::{
     execute_frame, submit_frame, BufferBinding, EngineError, FlattenedFrame, FrameArena,
-    PipelineRegistry, RenderingCanvas, RhiDevice, RhiDynamicRingBuffer, ScissorRect,
-    TextFlattenContext,
+    PipelineRegistry, RenderingCanvas, RhiDevice, RhiDynamicRingBuffer, RhiSwapchain, ScissorRect,
+    TextFlattenContext, TextureFormat,
 };
 use tre_rhi_vulkan::{register_shape_pipelines, HeadlessSwapchain, VulkanDevice, HEADLESS_FORMAT};
 
@@ -152,8 +152,15 @@ pub struct PyHeadlessRenderer {
     ring_buffer: Box<dyn RhiDynamicRingBuffer>,
     text_atlas: TextAtlas,
     pipelines: PipelineRegistry,
-    swapchain: HeadlessSwapchain,
-    device: VulkanDevice,
+    // `Box<dyn RhiSwapchain>`/`Box<dyn RhiDevice>` (Architecture review:
+    // RHI trait-object generalization, REVIEW.md finding #216) -- were
+    // concrete `HeadlessSwapchain`/`VulkanDevice` before; every real use
+    // below (`flatten_registry_into`, `execute_frame`/`submit_frame`,
+    // `create_custom_pipeline`, `read_pixels_bgra8`, `create_texture`)
+    // already went through `&dyn RhiDevice`/`&dyn RhiSwapchain`, so only
+    // the field type itself needed to change.
+    swapchain: Box<dyn RhiSwapchain>,
+    device: Box<dyn RhiDevice>,
     width: u32,
     height: u32,
     /// Phase 13 Step 13.8 (custom shader API): the next id
@@ -211,8 +218,8 @@ impl PyHeadlessRenderer {
         let text_atlas = TextAtlas::new(&device)?;
 
         Ok(Self {
-            device,
-            swapchain,
+            device: Box::new(device),
+            swapchain: Box::new(swapchain),
             pipelines,
             ring_buffer,
             text_atlas,
@@ -253,11 +260,11 @@ impl PyHeadlessRenderer {
     fn create_custom_shader(&mut self, fragment_source: &str) -> PyResult<PyCustomShaderId> {
         let pipeline = self
             .device
-            .create_custom_pipeline(fragment_source, HEADLESS_FORMAT)
+            .create_custom_pipeline(fragment_source, TextureFormat::Bgra8Srgb)
             .map_err(custom_shader_err)?;
         let id = self.next_custom_pipeline_id;
         self.next_custom_pipeline_id += 1;
-        self.pipelines.register(id, Box::new(pipeline));
+        self.pipelines.register(id, pipeline);
         Ok(PyCustomShaderId(id))
     }
 
@@ -319,7 +326,7 @@ impl PyHeadlessRenderer {
     ) -> PyResult<Py<PyBytes>> {
         let mut reg = registry.borrow_mut();
         render_single_registry(
-            &self.device,
+            &*self.device,
             &mut self.text_atlas,
             &mut self.scratch_canvas,
             &mut self.frame_arena,
@@ -353,7 +360,7 @@ impl PyHeadlessRenderer {
         let mut reg = registry.borrow_mut();
         let mut canvas = canvas.borrow_mut();
         flatten_registry_into(
-            &self.device,
+            &*self.device,
             &mut self.text_atlas,
             &mut canvas.inner,
             &mut reg,
@@ -428,7 +435,7 @@ impl PyHeadlessRenderer {
     ) -> PyResult<Py<PyBytes>> {
         render_parallel_shared(
             py,
-            &self.device,
+            &*self.device,
             &mut self.text_atlas,
             &mut self.frame_arena,
             &mut self.flattened,
@@ -449,7 +456,7 @@ impl PyHeadlessRenderer {
 /// disjoint borrows -- taking `&mut self` as the receiver here would
 /// make that impossible.
 pub(crate) fn flatten_registry_into(
-    device: &VulkanDevice,
+    device: &dyn RhiDevice,
     text_atlas: &mut TextAtlas,
     canvas: &mut RenderingCanvas,
     registry: &mut PyShapeRegistry,
@@ -474,7 +481,7 @@ pub(crate) fn flatten_registry_into(
 /// the same sequence REVIEW.md finding #210 introduced to close the
 /// "fresh canvas every frame" Performance finding).
 pub(crate) fn render_single_registry(
-    device: &VulkanDevice,
+    device: &dyn RhiDevice,
     text_atlas: &mut TextAtlas,
     scratch_canvas: &mut RenderingCanvas,
     frame_arena: &mut FrameArena,
@@ -548,7 +555,7 @@ pub(crate) fn render_canvas_shared(
 /// recoverable engine failure.
 pub(crate) fn render_parallel_shared(
     py: Python<'_>,
-    device: &VulkanDevice,
+    device: &dyn RhiDevice,
     text_atlas: &mut TextAtlas,
     frame_arena: &mut FrameArena,
     flattened: &mut FlattenedFrame,
@@ -652,7 +659,7 @@ impl PyHeadlessRenderer {
                 width: self.width,
                 height: self.height,
             };
-            submit_frame(&self.device, &self.swapchain, |cmd_buffer| {
+            submit_frame(&*self.device, &*self.swapchain, |cmd_buffer| {
                 execute_frame(
                     &self.flattened,
                     &self.pipelines,
@@ -665,7 +672,7 @@ impl PyHeadlessRenderer {
                         offset: index_offset,
                     },
                     &full_window,
-                    &self.device,
+                    &*self.device,
                     cmd_buffer,
                 );
             })?;

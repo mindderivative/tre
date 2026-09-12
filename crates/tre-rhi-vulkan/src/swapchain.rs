@@ -367,6 +367,14 @@ impl RhiSwapchain for VulkanSwapchain {
             Err(_) => Err(EngineError::DeviceLost),
         }
     }
+
+    /// A real windowed swapchain presents straight to the window surface
+    /// and was never given a CPU-visible staging buffer -- only
+    /// `HeadlessSwapchain` was built with readback in mind (Architecture
+    /// review: RHI trait-object generalization, REVIEW.md finding #216).
+    fn read_pixels_bgra8(&self) -> Result<Vec<u8>, EngineError> {
+        Err(EngineError::PixelReadbackUnsupported)
+    }
 }
 
 impl Drop for VulkanSwapchain {

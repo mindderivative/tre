@@ -22,7 +22,8 @@ use pyo3::prelude::*;
 use raw_window_handle::HasDisplayHandle;
 use tre_engine::{
     execute_frame, submit_frame, BufferBinding, EngineError, FlattenedFrame, FrameArena,
-    PipelineRegistry, RenderingCanvas, RhiDevice, RhiDynamicRingBuffer, ScissorRect, WindowId,
+    PipelineRegistry, RenderingCanvas, RhiDevice, RhiDynamicRingBuffer, RhiSwapchain, ScissorRect,
+    WindowId,
 };
 use tre_platform::{CursorIcon, PlatformConnection, WindowIcon};
 use tre_rhi_vulkan::{register_shape_pipelines, VulkanDevice, VulkanSwapchain};
@@ -49,13 +50,30 @@ fn unknown_window_err(id: WindowId) -> PyErr {
 }
 
 struct WindowSlot {
-    swapchain: VulkanSwapchain,
+    // `Box<dyn RhiSwapchain>` (Architecture review: RHI trait-object
+    // generalization, REVIEW.md finding #216) -- was a concrete
+    // `VulkanSwapchain`; every real use of it below (`submit_frame`/
+    // `execute_frame`) already went through `&dyn RhiSwapchain`. Built
+    // as a concrete `VulkanSwapchain` inside `WindowSlot::create` (below)
+    // since `register_shape_pipelines`/`.format()` still need the
+    // concrete type at construction time, then boxed for storage.
+    swapchain: Box<dyn RhiSwapchain>,
     pipelines: PipelineRegistry,
     width: u32,
     height: u32,
 }
 
 impl WindowSlot {
+    // `device` stays a concrete `&VulkanDevice`, not `&dyn RhiDevice`
+    // (unlike `PyHeadlessRenderer`'s fully generalized field) -- real,
+    // disclosed boundary: `register_shape_pipelines` (below) needs a
+    // concrete backend device to compile this window's own shape
+    // pipelines against, and unlike `PyHeadlessRenderer` (which does
+    // this exactly once, before its own device field is boxed), this
+    // renderer calls it again every time a new window is created
+    // (`create_window`) or an existing one's swapchain is recreated on
+    // resize -- an ongoing, not one-time, concrete-device need. See
+    // `PyWindowedRenderer::device`'s own field doc comment.
     fn create(
         device: &VulkanDevice,
         connection: &PlatformConnection,
@@ -76,7 +94,7 @@ impl WindowSlot {
         let mut pipelines = PipelineRegistry::new();
         register_shape_pipelines(device, &mut pipelines, swapchain.format()).map_err(engine_err)?;
         Ok(Self {
-            swapchain,
+            swapchain: Box::new(swapchain),
             pipelines,
             width,
             height,
@@ -118,6 +136,23 @@ pub struct PyWindowedRenderer {
     text_atlas: TextAtlas,
     windows: HashMap<WindowId, WindowSlot>,
     connection: PlatformConnection,
+    // Stays a concrete `VulkanDevice`, not `Box<dyn RhiDevice>` (unlike
+    // `PyHeadlessRenderer::device`, Architecture review: RHI trait-object
+    // generalization, REVIEW.md finding #216) -- a real, disclosed
+    // boundary, not an oversight. Every *rendering* use of this field
+    // already goes through `&dyn RhiDevice` (`submit_frame`/
+    // `execute_frame`, `flatten_registry_into`, `create_dynamic_ring_
+    // buffer`, `TextAtlas::new`), but `create_window`/resize recovery
+    // repeatedly call `device.create_surface(..)` (raw platform-handle
+    // surface construction) and `register_shape_pipelines` (compiling
+    // this crate's own built-in shape pipelines) throughout this
+    // renderer's whole lifetime, not just once at construction --
+    // neither is part of the `RhiDevice` trait, and neither reasonably
+    // belongs there: both are backend-selection/window-surface
+    // bootstrapping, the same category `VulkanDevice::new` itself
+    // already occupies, not steady-state per-frame rendering. Only
+    // `WindowSlot::swapchain` (per-window, built once, used many times
+    // purely through the trait) generalizes cleanly here.
     device: VulkanDevice,
     main_window: WindowId,
     /// `render`'s own persistent scratch canvas, and `render`/
@@ -164,7 +199,7 @@ impl PyWindowedRenderer {
         windows.insert(
             main_window,
             WindowSlot {
-                swapchain,
+                swapchain: Box::new(swapchain),
                 pipelines,
                 width,
                 height,
@@ -590,7 +625,7 @@ impl PyWindowedRenderer {
                 .get(&window)
                 .expect("checked present above; only removed by close_window, not called here");
             let pipelines = &slot.pipelines;
-            let swapchain = &slot.swapchain;
+            let swapchain = &*slot.swapchain;
             let full_window = ScissorRect {
                 x: 0,
                 y: 0,

@@ -93,6 +93,20 @@ pub enum EngineError {
     /// to see *why* it failed, not just that it did.
     #[error("shader compilation failed: {0}")]
     ShaderCompilationFailed(String),
+    /// [`crate::RhiSwapchain::read_pixels_bgra8`] was called on a
+    /// swapchain that has no CPU-visible staging buffer to read back
+    /// from -- a real windowed swapchain presents straight to the
+    /// window surface and was never given one, unlike a headless
+    /// swapchain's own manually allocated staging buffer (Architecture
+    /// review: RHI trait-object generalization, REVIEW.md finding
+    /// #216). Not a recoverable-in-the-usual-sense failure (retrying
+    /// changes nothing), but modeled as one anyway rather than a panic,
+    /// matching this enum's own "every fallible RHI operation returns a
+    /// `Result`" convention -- a caller passing the wrong swapchain kind
+    /// to a readback call is a real, if unusual, programmer mistake this
+    /// should report cleanly.
+    #[error("this swapchain has no CPU-visible readback path (not a headless swapchain)")]
+    PixelReadbackUnsupported,
 }
 
 /// A clip rectangle in the coordinate space `Canvas::push_clip`/scissor
@@ -465,7 +479,7 @@ pub struct AccessibilityNode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::{Cell, RefCell};
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::sync::Mutex;
 
     #[test]
@@ -2766,8 +2780,16 @@ mod tests {
 
     #[derive(Default)]
     struct FakeDevice {
-        calls: RefCell<Vec<RecordedCall>>,
-        next_bindless_index: Cell<u32>,
+        // `Mutex`/`Atomic*`, not `RefCell`/`Cell` (Architecture review:
+        // RHI trait-object generalization, REVIEW.md finding #216, added
+        // `Send + Sync` to `RhiDevice`) -- the same real fix already
+        // applied to `FakeStyleBuffer` above when `RhiBuffer` gained the
+        // identical bound at Phase 10 Step 10.4: this fake is never
+        // actually touched from more than one thread, but the trait
+        // bound applies to the type regardless of how a given test uses
+        // it.
+        calls: Mutex<Vec<RecordedCall>>,
+        next_bindless_index: AtomicU32,
         /// REVIEW.md finding #152's own regression test: when `Some`,
         /// `acquire_transient_target` returns a texture of *this* size
         /// instead of whatever was actually requested -- simulating
@@ -2775,15 +2797,15 @@ mod tests {
         /// "oversized borrow" fallback, which this fake would otherwise
         /// have no way to reproduce (it always echoes the requested size
         /// back by default, unlike the real transient pool).
-        oversized_borrow: Cell<Option<(u32, u32)>>,
+        oversized_borrow: Mutex<Option<(u32, u32)>>,
         /// Phase 10 Step 10.2: backs `shape_style_buffer()` for
         /// `draw_styled_rectangle`/`draw_ellipse` tests.
         style_buffer: FakeStyleBuffer,
         /// Phase 10 Step 10.2.3: `false` by default (`Default`'s own
         /// zero value), matching real hardware that lacks
         /// `VK_KHR_dynamic_rendering_local_read` -- tests that need the
-        /// "supported" branch set this via `Cell::set` before use.
-        local_read_blend_supported: Cell<bool>,
+        /// "supported" branch set this before use.
+        local_read_blend_supported: AtomicBool,
     }
 
     impl RhiDevice for FakeDevice {
@@ -2796,7 +2818,7 @@ mod tests {
         }
 
         fn local_read_blend_supported(&self) -> bool {
-            self.local_read_blend_supported.get()
+            self.local_read_blend_supported.load(Ordering::Relaxed)
         }
 
         fn acquire_transient_target(
@@ -2806,10 +2828,14 @@ mod tests {
             format: TextureFormat,
         ) -> Result<Box<dyn RhiTexture>, EngineError> {
             self.calls
-                .borrow_mut()
+                .lock()
+                .unwrap()
                 .push(RecordedCall::AcquireTransientTarget(width, height));
-            let (returned_width, returned_height) =
-                self.oversized_borrow.get().unwrap_or((width, height));
+            let (returned_width, returned_height) = self
+                .oversized_borrow
+                .lock()
+                .unwrap()
+                .unwrap_or((width, height));
             Ok(Box::new(FakeTexture {
                 raw_handle: 777,
                 width: returned_width,
@@ -2820,7 +2846,8 @@ mod tests {
 
         fn release_transient_target(&self, texture: Box<dyn RhiTexture>) {
             self.calls
-                .borrow_mut()
+                .lock()
+                .unwrap()
                 .push(RecordedCall::ReleaseTransientTarget(texture.raw_handle()));
         }
 
@@ -2836,16 +2863,17 @@ mod tests {
 
         fn register_bindless(&self, texture: &dyn RhiTexture) -> Result<u32, EngineError> {
             self.calls
-                .borrow_mut()
+                .lock()
+                .unwrap()
                 .push(RecordedCall::RegisterBindless(texture.raw_handle()));
-            let index = self.next_bindless_index.get();
-            self.next_bindless_index.set(index + 1);
+            let index = self.next_bindless_index.fetch_add(1, Ordering::Relaxed);
             Ok(index)
         }
 
         fn deregister_bindless(&self, bindless_index: u32) {
             self.calls
-                .borrow_mut()
+                .lock()
+                .unwrap()
                 .push(RecordedCall::DeregisterBindless(bindless_index));
         }
 
@@ -2862,6 +2890,14 @@ mod tests {
             _swapchain: &dyn RhiSwapchain,
             _image: AcquiredImage,
         ) -> Result<(), EngineError> {
+            unimplemented!("not exercised by any execute_frame test")
+        }
+
+        fn create_custom_pipeline(
+            &self,
+            _fragment_source: &str,
+            _color_format: TextureFormat,
+        ) -> Result<Box<dyn RhiPipelineState>, EngineError> {
             unimplemented!("not exercised by any execute_frame test")
         }
     }
@@ -3329,7 +3365,7 @@ mod tests {
         );
 
         assert_eq!(
-            device.calls.into_inner(),
+            device.calls.into_inner().unwrap(),
             vec![
                 RecordedCall::AcquireTransientTarget(64, 48),
                 RecordedCall::RegisterBindless(777),
@@ -3400,7 +3436,7 @@ mod tests {
 
         let mut cmd_buffer = FakeCommandBuffer::default();
         let device = FakeDevice::default();
-        device.oversized_borrow.set(Some((200, 150)));
+        *device.oversized_borrow.lock().unwrap() = Some((200, 150));
         execute_frame(
             &frame,
             &registry,
@@ -3418,7 +3454,7 @@ mod tests {
         );
 
         assert_eq!(
-            device.calls.into_inner()[0],
+            device.calls.into_inner().unwrap()[0],
             RecordedCall::AcquireTransientTarget(50, 40),
             "PushLayer must still request the LayerDesc's own real size from the pool, \
              regardless of what it's handed back"
@@ -3495,7 +3531,7 @@ mod tests {
             cmd_buffer.calls
         );
         assert_eq!(
-            device.calls.into_inner(),
+            device.calls.into_inner().unwrap(),
             vec![
                 RecordedCall::AcquireTransientTarget(64, 48),
                 RecordedCall::ReleaseTransientTarget(777),

@@ -431,6 +431,16 @@ impl RhiSwapchain for HeadlessSwapchain {
         }
         Ok(())
     }
+
+    /// Delegates to the inherent [`HeadlessSwapchain::read_pixels_bgra8`]
+    /// (Architecture review: RHI trait-object generalization, REVIEW.md
+    /// finding #216) -- kept as a real inherent method too, unchanged,
+    /// since ~30 existing `tre-rhi-vulkan` examples already call it
+    /// directly on a concrete `HeadlessSwapchain` value and have no
+    /// reason to go through the trait.
+    fn read_pixels_bgra8(&self) -> Result<Vec<u8>, EngineError> {
+        self.read_pixels_bgra8()
+    }
 }
 
 impl Drop for HeadlessSwapchain {

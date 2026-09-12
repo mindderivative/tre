@@ -25,6 +25,7 @@ pub enum TreErrorCode {
     BindlessArrayExhausted,
     TransientPoolBudgetExceeded,
     ShaderCompilationFailed,
+    PixelReadbackUnsupported,
     /// FFI-only: a shape-registry insert call was given a non-finite or
     /// negative dimension. `tre_engine::shapes::ShapeRegistry::insert`
     /// itself never fails (it always succeeds), so this crate's own
@@ -47,6 +48,7 @@ impl From<EngineError> for TreErrorCode {
             EngineError::BindlessArrayExhausted => Self::BindlessArrayExhausted,
             EngineError::TransientPoolBudgetExceeded => Self::TransientPoolBudgetExceeded,
             EngineError::ShaderCompilationFailed(_) => Self::ShaderCompilationFailed,
+            EngineError::PixelReadbackUnsupported => Self::PixelReadbackUnsupported,
         }
     }
 }
