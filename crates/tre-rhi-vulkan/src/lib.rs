@@ -307,6 +307,25 @@ pub struct VulkanDevice {
     /// an unused `Option`) in a shipped binary.
     #[cfg(debug_assertions)]
     debug_utils: Option<(ash::ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
+    /// Backing storage for `debug_utils`'s messenger's own `pUserData` --
+    /// see `DebugCallbackState`'s doc comment. Always allocated in a debug
+    /// build (even when `debug_utils` ends up `None`, i.e. validation
+    /// wasn't available -- cheap, and keeps this field's type simple), but
+    /// only ever actually pointed to by Vulkan when `debug_utils` is
+    /// `Some`. Kept alive here for exactly as long as `debug_utils` itself
+    /// would need it, since Vulkan holds the raw pointer into this box for
+    /// the messenger's whole lifetime, not just for the `vkCreateDevice`
+    /// call that first needed it. Never read after `new` returns -- it
+    /// exists purely so `vulkan_debug_callback` has somewhere to report
+    /// back to during that one call.
+    #[cfg(debug_assertions)]
+    #[allow(
+        dead_code,
+        reason = "never read back -- kept solely so its heap allocation (and the raw pointer \
+                  Vulkan holds into it) stays alive for exactly as long as `debug_utils`'s \
+                  messenger does, matching that field's own lifetime discipline"
+    )]
+    debug_callback_state: Box<DebugCallbackState>,
     /// Phase 10 Step 10.2.3: `true` only when this physical device
     /// actually advertises `VK_KHR_dynamic_rendering_local_read`
     /// (queried once in `new`, mirroring `debug_validation_available`'s
@@ -335,6 +354,27 @@ struct BlendReadResources {
     descriptor_set: vk::DescriptorSet,
 }
 
+/// Per-`VulkanDevice::new` state threaded through `vulkan_debug_callback`
+/// via `VkDebugUtilsMessengerCreateInfoEXT::pUserData` -- deliberately not
+/// a global/static flag, since a global would race across concurrent
+/// `VulkanDevice::new()` calls in the same process (`cargo test` runs test
+/// threads in parallel, and more than one test creates a `VulkanDevice`).
+/// Boxed by `new` and kept alive on `VulkanDevice::debug_callback_state`
+/// for as long as the messenger itself exists, since Vulkan holds the raw
+/// pointer for the messenger's whole lifetime, not just for the one call
+/// that first needed it.
+#[cfg(debug_assertions)]
+struct DebugCallbackState {
+    /// Set the moment this callback sees the validation layer's own
+    /// self-diagnostic for not recognizing
+    /// `VK_KHR_dynamic_rendering_local_read` (see
+    /// `is_local_read_rejected_by_layer`'s doc comment) -- checked once,
+    /// immediately after `create_device` returns, to decide whether the
+    /// rest of `new` may actually use the extension it just speculatively
+    /// requested.
+    local_read_rejected: AtomicBool,
+}
+
 /// `VK_EXT_debug_utils` messenger callback (IMPLEMENTATION.md Step 2.4).
 /// Called BY the Vulkan loader/driver (non-Rust code) -- an
 /// `extern "system" fn`, not a Rust closure, so it must never let a panic
@@ -358,7 +398,7 @@ unsafe extern "system" fn vulkan_debug_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
     message_type: vk::DebugUtilsMessageTypeFlagsEXT,
     callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
-    _user_data: *mut std::ffi::c_void,
+    user_data: *mut std::ffi::c_void,
 ) -> vk::Bool32 {
     // SAFETY: `callback_data` is supplied by the Vulkan loader for the
     // duration of this call only, per `VK_EXT_debug_utils`'s contract,
@@ -366,6 +406,18 @@ unsafe extern "system" fn vulkan_debug_callback(
     // this callback fires.
     let message = unsafe { CStr::from_ptr((*callback_data).p_message) }.to_string_lossy();
     eprintln!("[Vulkan {message_severity:?} {message_type:?}] {message}");
+
+    if is_local_read_rejected_by_layer(&message) {
+        // SAFETY: `user_data`, when non-null, is the `DebugCallbackState`
+        // this same `VulkanDevice::new` boxed and registered as
+        // `pUserData` when it created this messenger; it is kept alive on
+        // `VulkanDevice::debug_callback_state` for the messenger's whole
+        // lifetime, which is exactly when this callback can fire.
+        if let Some(state) = unsafe { user_data.cast::<DebugCallbackState>().as_ref() } {
+            state.local_read_rejected.store(true, Ordering::Relaxed);
+        }
+    }
+
     if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR)
         && !is_known_false_positive(&message)
     {
@@ -374,56 +426,53 @@ unsafe extern "system" fn vulkan_debug_callback(
     vk::FALSE
 }
 
-/// A real, narrowly-scoped exception to `vulkan_debug_callback`'s own
-/// "abort on any ERROR-severity message" policy -- confirmed a genuine
-/// validation-layer/driver version-skew false positive, not a real bug
-/// in this engine's own Vulkan usage, before being added here.
-///
-/// Root cause, confirmed via a real `WARNING`-severity message this
-/// same validation layer emits right alongside the two `ERROR`s below,
-/// on GitHub Actions' `ubuntu-latest` runner (CI's own software-Vulkan
-/// `vulkan-validation`/`accessibility-validation` jobs): `vkCreateDevice
-/// (): pCreateInfo->ppEnabledExtensionNames[3] VK_KHR_dynamic_rendering
-/// _local_read is not supported by this layer.` Ubuntu's
+/// Detects the validation layer's own two self-diagnostics for not
+/// recognizing `VK_KHR_dynamic_rendering_local_read` (Step 10.2.3's real,
+/// legitimate, hardware-gated extension -- see REVIEW.md finding #170),
+/// confirmed on GitHub Actions' `ubuntu-latest` runner where Ubuntu's
 /// `vulkan-validationlayers` apt package (pinned to an older Vulkan
-/// header revision -- "version 275" per the error text below) and its
-/// separately-versioned `mesa-vulkan-drivers` package drift out of
-/// lockstep as Ubuntu updates each on its own schedule, so the
-/// validation layer here genuinely does not know about
-/// `VK_KHR_dynamic_rendering_local_read` (Step 10.2.3's real,
-/// legitimate, hardware-gated extension -- see REVIEW.md finding
-/// #170), or the layout token that extension's own dependency chain
-/// defines: `1000232000` (`VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_
-/// OPTIMAL_EXT`). Not a defect in this engine's own Vulkan usage.
+/// header revision) and its separately-versioned `mesa-vulkan-drivers`
+/// package drift out of lockstep as Ubuntu updates each on its own
+/// schedule. Both diagnostics fire during the very same `vkCreateDevice`
+/// call that speculatively chains in the extension's feature struct:
 ///
-/// This one root cause surfaces as at least two different `ERROR`-
-/// severity VUIDs in practice, both actually observed on this runner --
-/// matching on either exact VUID string alone (the first fix attempt,
-/// before the second was found by actually re-running CI after
-/// deploying it) under-covers the real problem:
+/// - The layer's own plain-language `WARNING`: "vkCreateDevice():
+///   pCreateInfo->ppEnabledExtensionNames[3] VK_KHR_dynamic_rendering
+///   _local_read is not supported by this layer."
+/// - The resulting `ERROR` (`VUID-VkDeviceCreateInfo-pNext-pNext`):
+///   "pCreateInfo->pNext chain includes a structure with unknown
+///   VkStructureType (1000232000)... It is possible that you are using a
+///   struct from a private extension or an extension that was added to a
+///   later version of the Vulkan header."
 ///
-/// - `VUID-VkDeviceCreateInfo-pNext-pNext`: "pCreateInfo->pNext chain
-///   includes a structure with unknown VkStructureType (1000232000)...
-///   It is possible that you are using a struct from a private
-///   extension or an extension that was added to a later version of
-///   the Vulkan header."
-/// - `VUID-VkImageMemoryBarrier-newLayout-parameter`: "newLayout
-///   (1000232000) does not fall within the begin..end range of the
-///   core VkImageLayout enumeration tokens and is not an extension
-///   added token."
-///
-/// Matched on the shared numeric token (`1000232000`) plus either
-/// self-diagnostic phrase the validation layer itself uses for "I don't
-/// recognize this value," not a broad "ignore anything that looks like
-/// this" heuristic: a real, different Vulkan misuse this engine
-/// actually introduced would not happen to cite this exact, specific
-/// enum/struct-type integer, so it would still abort immediately.
+/// Either one, alone, is a reliable, real signal straight from the layer
+/// that it cannot validate this extension -- used by `VulkanDevice::new`
+/// to disable the extension for the rest of the process instead of using
+/// it and then chasing each new downstream VUID this same root cause
+/// produces once the extension is actually exercised (REVIEW.md finding
+/// #208's own multi-round history of that approach).
+#[cfg(debug_assertions)]
+fn is_local_read_rejected_by_layer(message: &str) -> bool {
+    (message.contains("VK_KHR_dynamic_rendering_local_read")
+        && message.contains("not supported by this layer"))
+        || (message.contains("(1000232000)") && message.contains("unknown VkStructureType"))
+}
+
+/// A real, narrowly-scoped exception to `vulkan_debug_callback`'s own
+/// "abort on any ERROR-severity message" policy, covering exactly the one
+/// `ERROR` `is_local_read_rejected_by_layer` also reacts to. This ERROR is
+/// unavoidable: the validation layer only ever reveals it doesn't
+/// recognize `VK_KHR_dynamic_rendering_local_read` by complaining once,
+/// during the same `vkCreateDevice` call that speculatively requests it
+/// -- so this one call's own false-positive must survive long enough for
+/// `new` to read `DebugCallbackState::local_read_rejected` and stop using
+/// the extension afterward. No other exception is needed: once the
+/// extension is never actually exercised again, none of the further
+/// downstream VUIDs this same root cause used to cascade into (REVIEW.md
+/// finding #208's earlier iterations) can fire at all.
 #[cfg(debug_assertions)]
 fn is_known_false_positive(message: &str) -> bool {
-    message.contains("(1000232000)")
-        && (message.contains("unknown VkStructureType")
-            || message.contains("does not fall within the begin..end range")
-            || message.contains("extension that was added to a later version of the Vulkan header"))
+    message.contains("(1000232000)") && message.contains("unknown VkStructureType")
 }
 
 /// Checks whether both `VK_LAYER_KHRONOS_validation` and
@@ -514,6 +563,15 @@ impl VulkanDevice {
         let instance = unsafe { entry.create_instance(&instance_create_info, None) }
             .map_err(|_| EngineError::DeviceLost)?;
 
+        // Boxed (not stack-local) since Vulkan keeps this raw pointer alive
+        // for the whole messenger lifetime below, not just for this
+        // function call -- the `Box` itself is threaded out and stored on
+        // `Self.debug_callback_state` so its heap address stays valid for
+        // exactly as long as `debug_utils`'s messenger does.
+        #[cfg(debug_assertions)]
+        let debug_callback_state = Box::new(DebugCallbackState {
+            local_read_rejected: AtomicBool::new(false),
+        });
         #[cfg(debug_assertions)]
         let debug_utils = validation_requested
             .then(|| {
@@ -528,12 +586,20 @@ impl VulkanDevice {
                             | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
                             | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
                     )
-                    .pfn_user_callback(Some(vulkan_debug_callback));
+                    .pfn_user_callback(Some(vulkan_debug_callback))
+                    .user_data(
+                        (debug_callback_state.as_ref() as *const DebugCallbackState)
+                            .cast_mut()
+                            .cast(),
+                    );
                 // SAFETY: `debug_utils_loader` was just created from this
                 // valid `instance`/`entry`; `messenger_info` (and the
                 // `'static` callback function it references) is a local
                 // borrowed only for the duration of this call, which is all
-                // `create_debug_utils_messenger` requires.
+                // `create_debug_utils_messenger` requires. Its `user_data`
+                // points into `debug_callback_state`, which outlives this
+                // call (stored on `Self` right alongside the messenger
+                // this creates).
                 unsafe { debug_utils_loader.create_debug_utils_messenger(&messenger_info, None) }
                     .ok()
                     .map(|messenger| (debug_utils_loader, messenger))
@@ -618,7 +684,14 @@ impl VulkanDevice {
         // instance's own enumeration and is still valid; `None` queries
         // every extension the base driver implementation exposes
         // (rather than a specific layer's own).
-        let local_read_supported =
+        #[allow(
+            unused_mut,
+            reason = "only downgraded below inside the #[cfg(debug_assertions)] block right \
+                      after `create_device` -- a release build never mutates this, a real, \
+                      cfg-dependent asymmetry matching `enabled_layers`'s own identical pattern \
+                      above"
+        )]
+        let mut local_read_supported =
             unsafe { instance.enumerate_device_extension_properties(physical_device) }
                 .unwrap_or_default()
                 .iter()
@@ -708,6 +781,25 @@ impl VulkanDevice {
         // call.
         let device = unsafe { instance.create_device(physical_device, &device_create_info, None) }
             .map_err(|_| EngineError::DeviceLost)?;
+
+        // `vulkan_debug_callback` -- via `debug_callback_state`, only wired
+        // up when `debug_utils` actually created a messenger above -- would
+        // already have recorded a rejection synchronously during the
+        // `create_device` call just above, if this validation layer
+        // doesn't recognize `VK_KHR_dynamic_rendering_local_read`. Checked
+        // here, before anything below reads `local_read_supported`, so the
+        // rest of `new` never actually exercises an extension the device
+        // was created with but the active validation layer can't validate
+        // -- see `is_local_read_rejected_by_layer`'s doc comment for why
+        // this beats chasing each further downstream VUID that extension's
+        // real use would otherwise cascade into under this layer.
+        #[cfg(debug_assertions)]
+        if debug_callback_state
+            .local_read_rejected
+            .load(Ordering::Relaxed)
+        {
+            local_read_supported = false;
+        }
 
         // SAFETY: `device` was just successfully created above, and
         // `queue_family_index`/index `0` are exactly the family and single
@@ -1063,6 +1155,8 @@ impl VulkanDevice {
                 shape_style_buffer: Some(shape_style_buffer),
                 #[cfg(debug_assertions)]
                 debug_utils,
+                #[cfg(debug_assertions)]
+                debug_callback_state,
                 local_read_supported,
                 blend_read,
             },
