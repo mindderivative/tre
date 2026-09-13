@@ -176,24 +176,46 @@ pub fn run(out: Option<std::path::PathBuf>) {
     'outer: loop {
         let elapsed = f64::from(clock.elapsed());
 
+        // Coalesce every `Resized` event this one `poll_events()` batch
+        // drains down to just the *last* (i.e. current) size, instead of
+        // rebuilding the swapchain once per queued event -- pyCopper's
+        // own `LESSONS_LEARNED.md` names this exact anti-pattern
+        // ("`rendercanvas`'s `_on_size_change` fires one full synchronous
+        // render per event with no coalescing -- a genuine backlog, not
+        // a metaphor"). A fast drag can queue several resize events
+        // between two polls of this loop (which only polls once per
+        // rendered frame); rebuilding the entire surface/swapchain/
+        // pipeline set for each stale intermediate size, only to
+        // immediately discard it for the next one, is pure waste this
+        // coalescing removes for free -- the final rebuild below is
+        // against the one size that's actually still current.
+        let mut close_requested = false;
+        let mut latest_resize: Option<(u32, u32)> = None;
         for event in connection.poll_events() {
             match event {
-                InputEvent::CloseRequested { window: w } if w == window => break 'outer,
+                InputEvent::CloseRequested { window: w } if w == window => close_requested = true,
                 InputEvent::Resized {
                     window: w,
                     width,
                     height,
-                } if w == window
-                    && surface
-                        .as_ref()
-                        .is_some_and(|s| s.width != width || s.height != height) =>
-                {
-                    let rebuild_ms =
-                        rebuild_surface(&mut surface, &device, &connection, window, width, height);
-                    log.write_resize_event(elapsed, width, height, rebuild_ms)
-                        .expect("failed to write telemetry log");
+                } if w == window => {
+                    latest_resize = Some((width, height));
                 }
                 _ => {}
+            }
+        }
+        if close_requested {
+            break 'outer;
+        }
+        if let Some((width, height)) = latest_resize {
+            if surface
+                .as_ref()
+                .is_some_and(|s| s.width != width || s.height != height)
+            {
+                let rebuild_ms =
+                    rebuild_surface(&mut surface, &device, &connection, window, width, height);
+                log.write_resize_event(elapsed, width, height, rebuild_ms)
+                    .expect("failed to write telemetry log");
             }
         }
 
