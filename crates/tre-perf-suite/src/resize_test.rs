@@ -31,6 +31,26 @@
 //! working around it, and it means `pipelines` never needs
 //! re-registering on resize either -- a swapchain's color format is a
 //! property of the surface, which this path never touches.
+//!
+//! **#235 (separate symptom): "the window slowly trails then jumps to
+//! the cursor" during an active drag.** Split acquire/present timing
+//! isolated this to `vkAcquireNextImageKHR` itself blocking for
+//! hundreds of milliseconds per frame while dragging -- never present,
+//! never CPU-side work. Increasing the swapchain image count (the
+//! cheapest candidate remedy) was tried and measured to make no
+//! difference.
+//!
+//! **Fixed via pyCopper's own proven remedy for the identical
+//! symptom:** during a drag, the swapchain is resized to the requested
+//! size rounded up to the nearest `DRAG_COARSE_STEP` pixels rather than
+//! the exact live size, so most of a drag's own resize events land in
+//! the same coarse bucket and need no swapchain recreation at all; once
+//! the drag goes quiet for `DRAG_SETTLE_MS`, one final resize snaps to
+//! the exact size. This deliberately, temporarily re-introduces finding
+//! #234's own squash/stretch for the duration of the drag only -- the
+//! coarse swapchain's content gets stretched by the compositor to fill
+//! the real, currently-larger-or-smaller window -- an accepted,
+//! disclosed tradeoff, not an oversight.
 
 use std::time::Instant;
 
@@ -169,6 +189,30 @@ pub fn run(out: Option<std::path::PathBuf>) {
     // vs. CPU recording vs. GPU submit/present) rather than "the loop".
     const STALL_THRESHOLD_MS: f32 = 8.0;
 
+    // REVIEW.md finding #235, Option 2 (the project owner's own explicit
+    // choice, after Option 1 -- more swapchain images -- was tried and
+    // measured to make no difference): during an active drag, resize the
+    // swapchain to a *coarse* size (the requested size rounded up to the
+    // nearest `DRAG_COARSE_STEP` pixels) instead of the exact live size
+    // on every event, so a burst of same-coarse-bucket resize events
+    // needs zero swapchain recreation at all. This is pyCopper's own
+    // proven fix for the identical symptom (`LESSONS_LEARNED.md`:
+    // "the swapchain is pinned to a coarse size during a drag"). The
+    // real, disclosed tradeoff already flagged when this option was
+    // first floated (finding #231's writeup): the rendered content is
+    // placed relative to the swapchain's own extent (finding #233), so
+    // while the swapchain sits at a coarse size that doesn't match the
+    // window's real size, the compositor visibly stretches that buffer
+    // to fit -- a deliberately accepted, temporary re-introduction of
+    // finding #234's own squash/stretch, scoped to just the drag itself.
+    // Once no new `Resized` event has arrived for `DRAG_SETTLE_MS`, one
+    // final resize snaps the swapchain to the exact last-requested size,
+    // so the window is always pixel-accurate at rest.
+    const DRAG_COARSE_STEP: u32 = 64;
+    const DRAG_SETTLE_MS: f64 = 150.0;
+    let mut pending_exact_size: Option<(u32, u32)> = None;
+    let mut last_resize_event_at: Option<Instant> = None;
+
     'outer: loop {
         let elapsed = f64::from(clock.elapsed());
 
@@ -200,10 +244,31 @@ pub fn run(out: Option<std::path::PathBuf>) {
             break 'outer;
         }
         if let Some((width, height)) = latest_resize {
-            if surface.width != width || surface.height != height {
-                let rebuild_ms = surface.resize(&device, width, height);
-                log.write_resize_event(elapsed, width, height, rebuild_ms)
+            pending_exact_size = Some((width, height));
+            last_resize_event_at = Some(Instant::now());
+            let coarse_width = width.div_ceil(DRAG_COARSE_STEP) * DRAG_COARSE_STEP;
+            let coarse_height = height.div_ceil(DRAG_COARSE_STEP) * DRAG_COARSE_STEP;
+            if surface.width != coarse_width || surface.height != coarse_height {
+                let rebuild_ms = surface.resize(&device, coarse_width, coarse_height);
+                log.write_resize_event(elapsed, coarse_width, coarse_height, rebuild_ms)
                     .expect("failed to write telemetry log");
+            }
+        }
+        // Drag has gone quiet: snap to the real, exact size now that
+        // there's no more back-to-back resize traffic to coalesce
+        // against. Independent of whether *this* iteration saw a resize
+        // event -- the settle deadline can expire on any later frame.
+        if let (Some((exact_width, exact_height)), Some(last_event)) =
+            (pending_exact_size, last_resize_event_at)
+        {
+            if last_event.elapsed().as_secs_f64() * 1000.0 >= DRAG_SETTLE_MS
+                && (surface.width != exact_width || surface.height != exact_height)
+            {
+                let rebuild_ms = surface.resize(&device, exact_width, exact_height);
+                log.write_resize_event(elapsed, exact_width, exact_height, rebuild_ms)
+                    .expect("failed to write telemetry log");
+                pending_exact_size = None;
+                last_resize_event_at = None;
             }
         }
 
