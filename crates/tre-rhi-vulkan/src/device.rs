@@ -1870,6 +1870,7 @@ impl VulkanDevice {
         &self,
         swapchain: &dyn RhiSwapchain,
         timeout_ns: u64,
+        logical_size: Option<(u32, u32)>,
     ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
         // SAFETY: `self.device` is valid and `self.frame_sync.fence` was
         // created signaled in `new`; under the single-frame-in-flight
@@ -1931,6 +1932,16 @@ impl VulkanDevice {
         let target_view = vk::ImageView::from_raw(image.target_view_handle);
         let target_image = vk::Image::from_raw(image.target_image_handle);
         let (width, height) = swapchain.extent();
+        // REVIEW.md finding #235: `ndc_width`/`ndc_height` (below) are
+        // what `VulkanCommandBuffer::width`/`height` -- and therefore
+        // `draw_indexed`'s `screen_size` push constant -- get set to;
+        // `width`/`height` themselves stay the swapchain's own real
+        // extent for everything else in this function (viewport,
+        // scissor, render area, `swapchain_width`/`swapchain_height`).
+        // `logical_size` is only ever `Some` while a caller is
+        // deliberately holding the swapchain at a coarser size than the
+        // real window during an active resize drag.
+        let (ndc_width, ndc_height) = logical_size.unwrap_or((width, height));
 
         // Phase 10 Step 10.2.3: when this device supports it, the
         // swapchain's color attachment lives in `RENDERING_LOCAL_READ_KHR`
@@ -2137,8 +2148,8 @@ impl VulkanDevice {
             Box::new(VulkanCommandBuffer {
                 device: self.device.clone(),
                 command_buffer,
-                width,
-                height,
+                width: ndc_width,
+                height: ndc_height,
                 pipeline_layout: None,
                 blur_resources: Arc::clone(&self.blur_resources),
                 instance: self.instance.clone(),
@@ -2397,7 +2408,7 @@ impl RhiDevice for VulkanDevice {
         &self,
         swapchain: &dyn RhiSwapchain,
     ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
-        self.begin_frame_impl(swapchain, u64::MAX)
+        self.begin_frame_impl(swapchain, u64::MAX, None)
     }
 
     /// REVIEW.md finding #235, Option 3: see `Self::begin_frame_impl`'s
@@ -2409,7 +2420,15 @@ impl RhiDevice for VulkanDevice {
         swapchain: &dyn RhiSwapchain,
         timeout_ns: u64,
     ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
-        self.begin_frame_impl(swapchain, timeout_ns)
+        self.begin_frame_impl(swapchain, timeout_ns, None)
+    }
+
+    fn begin_frame_with_logical_size(
+        &self,
+        swapchain: &dyn RhiSwapchain,
+        logical_size: (u32, u32),
+    ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
+        self.begin_frame_impl(swapchain, u64::MAX, Some(logical_size))
     }
 
     fn submit_and_present(

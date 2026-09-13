@@ -46,12 +46,27 @@
 //! the nearest `DRAG_COARSE_STEP` pixels rather than the exact live
 //! size, so most of a drag's own resize events land in the same coarse
 //! bucket and need no swapchain recreation at all; once the drag goes
-//! quiet for `DRAG_SETTLE_MS`, one final resize snaps to the exact
-//! size. This deliberately, temporarily re-introduces finding #234's
-//! own squash/stretch for the duration of the drag only -- the coarse
-//! swapchain's content gets stretched by the compositor to fill the
-//! real, currently-larger-or-smaller window -- an accepted, disclosed
-//! tradeoff, not an oversight.
+//! quiet for `SETTLE_FRAMES` frames, one final resize snaps to the
+//! exact size.
+//!
+//! **Revised after a live test showed real, visible squash/stretch
+//! during a drag.** The first version of this fix left content
+//! projected against the swapchain's own (coarse) extent, so there was
+//! nothing to counteract the compositor's own scale-to-fit -- real,
+//! visible distortion, not merely disclosed-and-accepted. Researching
+//! pyCopper's *actual source* (`pycopper/src/pycopper/runtime/
+//! engine.py`, not just its lessons file) found the real mechanism:
+//! content is always projected using the true, exact window size, even
+//! while the swapchain buffer itself sits at a coarser size -- the
+//! compositor's scale-to-fit of the oversized buffer down to the real
+//! window exactly cancels the resulting pre-stretch. This module now
+//! does the identical thing via the new [`tre_engine::
+//! submit_frame_with_logical_size`], and `DRAG_COARSE_STEP`/
+//! `SETTLE_FRAMES` were changed to match pyCopper's own validated
+//! production values (256px, a 3-frame settle countdown) exactly,
+//! rather than this module's own earlier, untested 64px/wall-clock
+//! guesses -- safe to be far coarser now that the projection fix makes
+//! the mismatch invisible rather than merely smaller.
 //!
 //! **Option 3, `ResizeStrategy::Timeout`, added to let the project
 //! owner compare it against Option 2 before deciding between them:**
@@ -95,6 +110,54 @@ const INITIAL_HEIGHT: u32 = 600;
 const FIXED_SHAPE_COUNT: usize = 500;
 const RING_BUFFER_CAPACITY: usize = 4 * 1024 * 1024;
 const SAMPLE_INTERVAL_S: f64 = 0.25;
+
+/// REVIEW.md finding #235, Option 2: while a drag is active, the
+/// swapchain targets `width`/`height` each rounded up to this many
+/// pixels instead of the exact live size, so a burst of same-bucket
+/// resize events needs no swapchain recreation at all. 256, matching
+/// pyCopper's own validated production value (`Settings.resize_bucket`)
+/// exactly -- ported into `crates/tre-python/src/windowed_renderer.rs`
+/// at the identical value; kept in sync here deliberately.
+const DRAG_COARSE_STEP: u32 = 256;
+/// REVIEW.md finding #235, Option 2: frames the swapchain stays pinned
+/// to a coarse size after the last real size change -- matching
+/// pyCopper's own `SETTLE_FRAMES` exactly (a resize draws synchronously
+/// per compositor configure, so this is naturally a handful of frames
+/// after a drag stops, not a wall-clock delay tied to any particular
+/// frame rate).
+const SETTLE_FRAMES: u8 = 3;
+
+/// The size to configure the swapchain at, and the new settle countdown
+/// -- a direct Rust port of pyCopper's own `surface_size_for`
+/// (`pycopper/src/pycopper/runtime/engine.py`), kept identical to the
+/// copy in `crates/tre-python/src/windowed_renderer.rs` deliberately
+/// (both are small enough that sharing a crate for this alone isn't
+/// warranted, matching this workspace's own established precedent for
+/// small, independently-duplicated glue code, e.g. every example's own
+/// copy of the window/device bootstrap sequence).
+fn coarse_target_for(
+    size: (u32, u32),
+    previous: (u32, u32),
+    settle: u8,
+    bucket: u32,
+) -> ((u32, u32), u8) {
+    let settle = if size != previous {
+        SETTLE_FRAMES
+    } else {
+        settle.saturating_sub(1)
+    };
+    if settle > 0 {
+        (
+            (
+                size.0.div_ceil(bucket) * bucket,
+                size.1.div_ceil(bucket) * bucket,
+            ),
+            settle,
+        )
+    } else {
+        (size, settle)
+    }
+}
 
 /// The part of the render target a resize touches -- built once, at
 /// window-open time; a resize after that only ever calls [`Surface::
@@ -214,29 +277,16 @@ pub fn run(out: Option<std::path::PathBuf>, strategy: ResizeStrategy) {
     // vs. CPU recording vs. GPU submit/present) rather than "the loop".
     const STALL_THRESHOLD_MS: f32 = 8.0;
 
-    // REVIEW.md finding #235, Option 2 (the project owner's own explicit
-    // choice, after Option 1 -- more swapchain images -- was tried and
-    // measured to make no difference): during an active drag, resize the
-    // swapchain to a *coarse* size (the requested size rounded up to the
-    // nearest `DRAG_COARSE_STEP` pixels) instead of the exact live size
-    // on every event, so a burst of same-coarse-bucket resize events
-    // needs zero swapchain recreation at all. This is pyCopper's own
-    // proven fix for the identical symptom (`LESSONS_LEARNED.md`:
-    // "the swapchain is pinned to a coarse size during a drag"). The
-    // real, disclosed tradeoff already flagged when this option was
-    // first floated (finding #231's writeup): the rendered content is
-    // placed relative to the swapchain's own extent (finding #233), so
-    // while the swapchain sits at a coarse size that doesn't match the
-    // window's real size, the compositor visibly stretches that buffer
-    // to fit -- a deliberately accepted, temporary re-introduction of
-    // finding #234's own squash/stretch, scoped to just the drag itself.
-    // Once no new `Resized` event has arrived for `DRAG_SETTLE_MS`, one
-    // final resize snaps the swapchain to the exact last-requested size,
-    // so the window is always pixel-accurate at rest.
-    const DRAG_COARSE_STEP: u32 = 64;
-    const DRAG_SETTLE_MS: f64 = 150.0;
-    let mut pending_exact_size: Option<(u32, u32)> = None;
-    let mut last_resize_event_at: Option<Instant> = None;
+    // REVIEW.md finding #235, Option 2: `real_size` is the true, exact
+    // requested window size (updated whenever a `Resized` event
+    // arrives), tracked separately from `surface.width`/`surface.height`
+    // (the swapchain's own actual, possibly-coarse configured size) --
+    // `coarse_target_for`'s state (`previous_size`/`settle`) decides
+    // when the two should differ, and `real_size` is what content gets
+    // projected against either way (this module's own header comment).
+    let mut real_size: (u32, u32) = (INITIAL_WIDTH, INITIAL_HEIGHT);
+    let mut previous_size: (u32, u32) = (INITIAL_WIDTH, INITIAL_HEIGHT);
+    let mut settle: u8 = 0;
 
     // REVIEW.md finding #235, Option 3: only `ResizeStrategy::Timeout`
     // bounds the acquire wait -- `Coarse` passes `u64::MAX`, which
@@ -281,48 +331,37 @@ pub fn run(out: Option<std::path::PathBuf>, strategy: ResizeStrategy) {
         if close_requested {
             break 'outer;
         }
+        if let Some((width, height)) = latest_resize {
+            real_size = (width, height);
+        }
         match strategy {
             ResizeStrategy::Coarse => {
-                if let Some((width, height)) = latest_resize {
-                    pending_exact_size = Some((width, height));
-                    last_resize_event_at = Some(Instant::now());
-                    let coarse_width = width.div_ceil(DRAG_COARSE_STEP) * DRAG_COARSE_STEP;
-                    let coarse_height = height.div_ceil(DRAG_COARSE_STEP) * DRAG_COARSE_STEP;
-                    if surface.width != coarse_width || surface.height != coarse_height {
-                        let rebuild_ms = surface.resize(&device, coarse_width, coarse_height);
-                        log.write_resize_event(elapsed, coarse_width, coarse_height, rebuild_ms)
-                            .expect("failed to write telemetry log");
-                    }
-                }
-                // Drag has gone quiet: snap to the real, exact size now
-                // that there's no more back-to-back resize traffic to
-                // coalesce against. Independent of whether *this*
-                // iteration saw a resize event -- the settle deadline can
-                // expire on any later frame.
-                if let (Some((exact_width, exact_height)), Some(last_event)) =
-                    (pending_exact_size, last_resize_event_at)
-                {
-                    if last_event.elapsed().as_secs_f64() * 1000.0 >= DRAG_SETTLE_MS
-                        && (surface.width != exact_width || surface.height != exact_height)
-                    {
-                        let rebuild_ms = surface.resize(&device, exact_width, exact_height);
-                        log.write_resize_event(elapsed, exact_width, exact_height, rebuild_ms)
-                            .expect("failed to write telemetry log");
-                        pending_exact_size = None;
-                        last_resize_event_at = None;
-                    }
+                // REVIEW.md finding #235, Option 2's real fix:
+                // `coarse_target_for` decides whether the swapchain
+                // should sit at a coarse bucket (still settling) or the
+                // exact `real_size` (settled) -- content is projected
+                // against `real_size` either way (see the `begin_frame_
+                // with_logical_size` call below), so this coarse/exact
+                // choice only ever affects how often the swapchain
+                // itself gets rebuilt, never what gets drawn.
+                let (target, new_settle) =
+                    coarse_target_for(real_size, previous_size, settle, DRAG_COARSE_STEP);
+                previous_size = real_size;
+                settle = new_settle;
+                if surface.width != target.0 || surface.height != target.1 {
+                    let rebuild_ms = surface.resize(&device, target.0, target.1);
+                    log.write_resize_event(elapsed, target.0, target.1, rebuild_ms)
+                        .expect("failed to write telemetry log");
                 }
             }
             ResizeStrategy::Timeout => {
                 // No coarse bucketing: always resize to the exact live
                 // size, isolating Option 3's own bounded-acquire effect
                 // for a fair comparison against Option 2 above.
-                if let Some((width, height)) = latest_resize {
-                    if surface.width != width || surface.height != height {
-                        let rebuild_ms = surface.resize(&device, width, height);
-                        log.write_resize_event(elapsed, width, height, rebuild_ms)
-                            .expect("failed to write telemetry log");
-                    }
+                if surface.width != real_size.0 || surface.height != real_size.1 {
+                    let rebuild_ms = surface.resize(&device, real_size.0, real_size.1);
+                    log.write_resize_event(elapsed, real_size.0, real_size.1, rebuild_ms)
+                        .expect("failed to write telemetry log");
                 }
             }
         }
@@ -357,7 +396,20 @@ pub fn run(out: Option<std::path::PathBuf>, strategy: ResizeStrategy) {
         // with "ring buffer write failed". Recording only after a
         // successful acquire means a skipped frame writes nothing.
         let acquire_start = Instant::now();
-        let begin_result = device.begin_frame_with_timeout(&surface.swapchain, acquire_timeout_ns);
+        let begin_result = match strategy {
+            // REVIEW.md finding #235, Option 2's real fix: project
+            // content against `real_size` (the true, exact window size)
+            // even when `surface`'s own swapchain sits at a coarser
+            // size -- see this module's own header comment for why that
+            // cancels the compositor's own scale-to-fit instead of
+            // compounding it.
+            ResizeStrategy::Coarse => {
+                device.begin_frame_with_logical_size(&surface.swapchain, real_size)
+            }
+            ResizeStrategy::Timeout => {
+                device.begin_frame_with_timeout(&surface.swapchain, acquire_timeout_ns)
+            }
+        };
         #[allow(
             clippy::cast_possible_truncation,
             reason = "a real per-frame stage duration never approaches f32's precision limits"
@@ -445,14 +497,22 @@ pub fn run(out: Option<std::path::PathBuf>, strategy: ResizeStrategy) {
             let rebuild_ms = surface.resize(&device, width, height);
             log.write_resize_event(elapsed, width, height, rebuild_ms)
                 .expect("failed to write telemetry log");
-            // Deliberately unbounded, unlike the primary acquire above:
-            // this runs immediately after `surface.resize` just built a
-            // fresh, correctly-sized swapchain, which is not the
-            // stale-vs-live-size mismatch findings #235's own bounded
-            // acquire (Option 3) targets -- and this whole arm is
-            // already a rare race-condition fallback, not the hot path.
+            // Deliberately unbounded (no acquire timeout), unlike the
+            // primary acquire above: this runs immediately after
+            // `surface.resize` just built a fresh, correctly-sized
+            // swapchain, which is not the stale-vs-live-size mismatch
+            // findings #235's own bounded acquire (Option 3) targets --
+            // and this whole arm is already a rare race-condition
+            // fallback, not the hot path. Still uses `real_size` for the
+            // projection (Option 2), for the identical reason the
+            // primary acquire above does.
             let acquire_start2 = Instant::now();
-            let begin_result2 = device.begin_frame(&surface.swapchain);
+            let begin_result2 = match strategy {
+                ResizeStrategy::Coarse => {
+                    device.begin_frame_with_logical_size(&surface.swapchain, real_size)
+                }
+                ResizeStrategy::Timeout => device.begin_frame(&surface.swapchain),
+            };
             #[allow(
                 clippy::cast_possible_truncation,
                 reason = "a real per-frame stage duration never approaches f32's precision limits"

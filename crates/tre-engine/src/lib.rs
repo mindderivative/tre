@@ -40,8 +40,9 @@ pub use focus::{FocusManager, FocusableNode};
 
 mod rhi;
 pub use rhi::{
-    execute_frame, submit_frame, AcquiredImage, BufferBinding, PipelineRegistry, RhiBuffer,
-    RhiCommandBuffer, RhiDevice, RhiDynamicRingBuffer, RhiPipelineState, RhiSwapchain, RhiTexture,
+    execute_frame, submit_frame, submit_frame_with_logical_size, AcquiredImage, BufferBinding,
+    PipelineRegistry, RhiBuffer, RhiCommandBuffer, RhiDevice, RhiDynamicRingBuffer,
+    RhiPipelineState, RhiSwapchain, RhiTexture,
 };
 
 /// Recoverable engine failure (DESIGN.md Section 2.6). Every fallible

@@ -14,6 +14,36 @@
 //! `SwapchainOutOfDate`, recreates that window's swapchain at its last-
 //! known size, and retries once, rather than propagating a fatal error a
 //! real GUI framework cannot recover a whole running application from.
+//!
+//! REVIEW.md finding #235, Option 2, ported here from `tre-perf-suite`'s
+//! own `resize_test.rs` after the project owner directly compared it
+//! against Option 3 and chose it ("Option 2 is the way I want to go"):
+//! `submit_frame_to_window`'s proactive resize (finding #234) targets a
+//! coarse, `DRAG_COARSE_STEP`-rounded size while `coarse_target_for`'s
+//! own settle countdown is still running, and the exact real size once
+//! it has expired -- see that function's own doc comment for the full
+//! account.
+//!
+//! **Revised after a live test showed real, visible squash/stretch
+//! during a drag** (the project owner: "the shapes begin to squash,
+//! then jump suddenly to the right size") -- researching how pyCopper's
+//! own `LESSONS_LEARNED.md`-cited fix actually avoids this (its own
+//! source, `pycopper/src/pycopper/runtime/engine.py`, not just the
+//! summary) found the real mechanism: content is projected using the
+//! REAL window size even while the swapchain buffer itself is held at a
+//! coarser size, so Wayland's own compositor-side scale-to-fit (the
+//! same mechanism finding #234 fixed as a bug when unintentional)
+//! exactly cancels the resulting pre-stretch. `submit_frame_to_window`
+//! now does the identical thing via the new
+//! [`tre_engine::submit_frame_with_logical_size`] -- see that
+//! function's own doc comment for the geometry argument in full. The
+//! settle policy (`coarse_target_for`) also now matches pyCopper's own
+//! validated state machine exactly (a `SETTLE_FRAMES`-frame countdown
+//! after the last real size change, not a wall-clock timer), and
+//! `DRAG_COARSE_STEP` was raised from an untested 64px guess to
+//! pyCopper's own production value (256px) -- safe to be far coarser
+//! now that the projection fix makes the coarse/exact mismatch
+//! invisible rather than merely "smaller."
 
 use std::collections::HashMap;
 
@@ -21,9 +51,9 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use raw_window_handle::HasDisplayHandle;
 use tre_engine::{
-    execute_frame, submit_frame, BufferBinding, EngineError, FlattenedFrame, FrameArena,
-    PipelineRegistry, RenderingCanvas, RhiDevice, RhiDynamicRingBuffer, RhiSwapchain, ScissorRect,
-    WindowId,
+    execute_frame, submit_frame_with_logical_size, BufferBinding, EngineError, FlattenedFrame,
+    FrameArena, PipelineRegistry, RenderingCanvas, RhiDevice, RhiDynamicRingBuffer, RhiSwapchain,
+    ScissorRect, WindowId,
 };
 use tre_platform::{CursorIcon, PlatformConnection, WindowIcon};
 use tre_rhi_vulkan::{register_shape_pipelines, VulkanDevice, VulkanSwapchain};
@@ -64,6 +94,62 @@ struct WindowSlot {
     pipelines: PipelineRegistry,
     width: u32,
     height: u32,
+    /// REVIEW.md finding #235, Option 2: `width`/`height` as of the
+    /// previous `submit_frame_to_window` call, and the settle countdown
+    /// -- `coarse_target_for`'s own two state variables, persisted here
+    /// per-window between calls (mirroring pyCopper's own `Engine.
+    /// _last_size`/`_settle` fields).
+    previous_size: (u32, u32),
+    settle: u8,
+}
+
+/// REVIEW.md finding #235, Option 2: while a drag is active, the
+/// swapchain targets `width`/`height` each rounded up to this many
+/// pixels instead of the exact live size, so a burst of same-bucket
+/// resize events needs no swapchain recreation at all. 256, matching
+/// pyCopper's own validated production value (`Settings.resize_bucket`)
+/// exactly, not this project's own earlier, untested 64px guess -- safe
+/// to be this coarse because `coarse_target_for`'s caller now also
+/// applies pyCopper's other real half of the fix (`submit_frame_with_
+/// logical_size`), which makes the coarse/exact mismatch invisible
+/// rather than merely small.
+const DRAG_COARSE_STEP: u32 = 256;
+/// REVIEW.md finding #235, Option 2: frames the swapchain stays pinned
+/// to a coarse size after the last real size change -- matching
+/// pyCopper's own `SETTLE_FRAMES` exactly, and for the identical reason
+/// stated in its own doc comment: a resize draws synchronously per
+/// compositor configure, so this is naturally a handful of frames after
+/// a drag stops, not a wall-clock delay tied to any particular frame
+/// rate.
+const SETTLE_FRAMES: u8 = 3;
+
+/// The size to configure the swapchain at, and the new settle countdown
+/// -- a direct Rust port of pyCopper's own `surface_size_for`
+/// (`pycopper/src/pycopper/runtime/engine.py`), factored out exactly as
+/// it is there so the policy is a plain, testable decision about
+/// integers with no window/GPU state of its own.
+fn coarse_target_for(
+    size: (u32, u32),
+    previous: (u32, u32),
+    settle: u8,
+    bucket: u32,
+) -> ((u32, u32), u8) {
+    let settle = if size != previous {
+        SETTLE_FRAMES
+    } else {
+        settle.saturating_sub(1)
+    };
+    if settle > 0 {
+        (
+            (
+                size.0.div_ceil(bucket) * bucket,
+                size.1.div_ceil(bucket) * bucket,
+            ),
+            settle,
+        )
+    } else {
+        (size, settle)
+    }
 }
 
 impl WindowSlot {
@@ -100,6 +186,8 @@ impl WindowSlot {
             pipelines,
             width,
             height,
+            previous_size: (width, height),
+            settle: 0,
         })
     }
 
@@ -234,6 +322,8 @@ impl PyWindowedRenderer {
                 pipelines,
                 width,
                 height,
+                previous_size: (width, height),
+                settle: 0,
             },
         );
 
@@ -661,15 +751,43 @@ impl PyWindowedRenderer {
         // presented is a genuinely wrong size the whole time. Checking
         // and resizing here closes that window entirely: by the time
         // `submit_frame` below ever runs, the swapchain's own real
-        // extent already matches `slot.width`/`slot.height`.
+        // extent already matches this check's own target size.
+        //
+        // REVIEW.md finding #235, Option 2: that target is `slot.width`/
+        // `slot.height` exactly once `coarse_target_for`'s own settle
+        // countdown (pyCopper's `SETTLE_FRAMES` state machine, ported
+        // verbatim) has expired -- while it's still running, each is
+        // rounded up to the nearest `DRAG_COARSE_STEP` pixels instead, so
+        // a burst of same-bucket resize events during one continuous
+        // drag needs no swapchain recreation at all (ported from
+        // `tre-perf-suite/src/resize_test.rs` after the project owner
+        // directly compared this against a bounded-timeout-acquire
+        // alternative and chose this one). Content is still placed
+        // pixel-exactly either way -- see `submit_frame_with_logical_
+        // size`'s own doc comment below for why a coarse swapchain no
+        // longer means visible squash/stretch, unlike this function's
+        // own first version of this fix.
+        let (target_width, target_height) = if let Some(slot) = self.windows.get_mut(&window) {
+            let current_size = (slot.width, slot.height);
+            let (target, settle) = coarse_target_for(
+                current_size,
+                slot.previous_size,
+                slot.settle,
+                DRAG_COARSE_STEP,
+            );
+            slot.previous_size = current_size;
+            slot.settle = settle;
+            target
+        } else {
+            unreachable!("checked present above")
+        };
         if let Some(slot) = self.windows.get(&window) {
             let (actual_width, actual_height) = slot.swapchain.extent();
-            if actual_width != slot.width || actual_height != slot.height {
-                let (width, height) = (slot.width, slot.height);
+            if actual_width != target_width || actual_height != target_height {
                 self.windows
                     .get_mut(&window)
                     .expect("checked present above")
-                    .resize(&self.device, width, height)
+                    .resize(&self.device, target_width, target_height)
                     .map_err(engine_err)?;
             }
         }
@@ -691,12 +809,29 @@ impl PyWindowedRenderer {
             let pipelines = &slot.pipelines;
             let swapchain = &slot.swapchain;
             let clip_stack = &mut self.clip_stack;
+            // The swapchain's own real (possibly coarse, mid-drag)
+            // extent -- the scissor must always match whatever the
+            // swapchain was actually just resized to above, never the
+            // window's exact logical size (REVIEW.md finding #235).
+            let (window_width, window_height) = swapchain.extent();
             let full_window = ScissorRect {
                 x: 0,
                 y: 0,
-                width: slot.width,
-                height: slot.height,
+                width: window_width,
+                height: window_height,
             };
+            // REVIEW.md finding #235, Option 2's real fix: content is
+            // still projected using the window's true logical size
+            // (`slot.width`/`slot.height`) even when the swapchain
+            // buffer above is a coarser size -- pyCopper's own
+            // mechanism (`engine.py`'s `_upload`/`_pin_surface`) for why
+            // this produces pixel-exact geometry with no visible
+            // squash/stretch: the compositor's own scale-to-fit of the
+            // oversized buffer down to the real window exactly cancels
+            // the pre-stretch this causes. See
+            // `tre_engine::submit_frame_with_logical_size`'s own doc
+            // comment for the full mechanism.
+            let logical_size = (slot.width, slot.height);
             let outcome: Result<(), RenderError> = py.detach(move || {
                 let vertex_offset = ring_buffer
                     .write(vertex_bytes)
@@ -704,7 +839,7 @@ impl PyWindowedRenderer {
                 let index_offset = ring_buffer
                     .write(index_bytes)
                     .ok_or(RenderError::RingBufferStarved)?;
-                submit_frame(device, swapchain, |cmd_buffer| {
+                submit_frame_with_logical_size(device, swapchain, logical_size, |cmd_buffer| {
                     execute_frame(
                         frame,
                         pipelines,

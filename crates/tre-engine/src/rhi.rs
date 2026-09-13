@@ -512,6 +512,38 @@ pub trait RhiDevice: Send + Sync {
         self.begin_frame(swapchain)
     }
 
+    /// Identical to [`Self::begin_frame`] except the returned command
+    /// buffer's pixel-to-NDC projection uses `logical_size` instead of
+    /// `swapchain.extent()` -- the GPU viewport/scissor/render area still
+    /// cover the swapchain's own real, full extent unchanged (REVIEW.md
+    /// finding #235). This is the real fix pyCopper's own
+    /// `LESSONS_LEARNED.md` describes for resize trailing: while a
+    /// swapchain is deliberately held at a coarser size than the real
+    /// window during an active drag (avoiding a `VkSwapchainKHR` rebuild
+    /// on every pixel), content is still placed as if the render target
+    /// were `logical_size` -- pre-stretched across the oversized buffer
+    /// -- so that Wayland's own compositor-side scale-to-fit (the same
+    /// mechanism finding #234 fixed as a bug when it was unintentional)
+    /// exactly cancels that pre-stretch. Net effect: pixel-exact
+    /// geometry with no visible squash/distortion, at the cost of one
+    /// compositor-side resample (a real, disclosed softening, most
+    /// visible in text) -- pyCopper's own test suite documents the
+    /// identical tradeoff. Default implementation ignores `logical_size`
+    /// and defers to [`Self::begin_frame`]'s own behavior (NDC always
+    /// matches the swapchain's real extent), for any backend that hasn't
+    /// implemented this.
+    ///
+    /// # Errors
+    /// Same as [`Self::begin_frame`].
+    fn begin_frame_with_logical_size(
+        &self,
+        swapchain: &dyn RhiSwapchain,
+        logical_size: (u32, u32),
+    ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
+        let _ = logical_size;
+        self.begin_frame(swapchain)
+    }
+
     /// # Errors
     /// Returns [`EngineError::DeviceLost`] or
     /// [`EngineError::SwapchainOutOfDate`] under the same conditions as
@@ -1008,6 +1040,28 @@ where
     F: FnOnce(&mut dyn RhiCommandBuffer),
 {
     let (mut cmd_buffer, image) = device.begin_frame(swapchain)?;
+    record(&mut *cmd_buffer);
+    device.submit_and_present(cmd_buffer, swapchain, image)
+}
+
+/// Identical to [`submit_frame`] except it begins the frame via
+/// [`RhiDevice::begin_frame_with_logical_size`] instead of
+/// [`RhiDevice::begin_frame`] -- REVIEW.md finding #235's real fix for a
+/// swapchain deliberately held at a coarser size than the real window
+/// during an active resize drag.
+///
+/// # Errors
+/// Same as [`submit_frame`].
+pub fn submit_frame_with_logical_size<F>(
+    device: &dyn RhiDevice,
+    swapchain: &dyn RhiSwapchain,
+    logical_size: (u32, u32),
+    record: F,
+) -> Result<(), EngineError>
+where
+    F: FnOnce(&mut dyn RhiCommandBuffer),
+{
+    let (mut cmd_buffer, image) = device.begin_frame_with_logical_size(swapchain, logical_size)?;
     record(&mut *cmd_buffer);
     device.submit_and_present(cmd_buffer, swapchain, image)
 }
