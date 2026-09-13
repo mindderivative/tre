@@ -127,9 +127,14 @@ pub enum EngineError {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(C)]
 pub struct ScissorRect {
+    /// Left edge, in pixels -- may be negative (a clip rect can extend
+    /// off-screen to the left).
     pub x: i32,
+    /// Top edge, in pixels -- may be negative, for the same reason as `x`.
     pub y: i32,
+    /// Width, in pixels.
     pub width: u32,
+    /// Height, in pixels.
     pub height: u32,
 }
 
@@ -175,10 +180,21 @@ pub const fn rgba8(r: u8, g: u8, b: u8, a: u8) -> u32 {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandType {
+    /// Draw indexed geometry using `UiDrawCommand`'s own
+    /// `pipeline_state_id`/`texture_handle`/`element_count`/`vertex_offset`.
     DrawGeometry,
+    /// Push `clip_bounds` onto the active clip stack and set it as the
+    /// current GPU scissor.
     PushScissor,
+    /// Pop the active clip stack, restoring whatever scissor was active
+    /// before the matching `PushScissor`.
     PopScissor,
+    /// Begin rendering into an offscreen layer sized to `clip_bounds`,
+    /// decoding the requested texture format from `pipeline_state_id`.
     PushLayer,
+    /// End the active offscreen layer and composite it back, optionally
+    /// blurred (`texture_handle` carries the blur flag here, not a real
+    /// texture reference).
     PopLayer,
 }
 
@@ -187,12 +203,26 @@ pub enum CommandType {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct UiDrawCommand {
-    pub kind: CommandType, // `type` is a reserved keyword in Rust
-    pub sort_key: u64,     // 64-bit Radix Sort Key
+    /// `type` is a reserved keyword in Rust, hence `kind`.
+    pub kind: CommandType,
+    /// 64-bit radix sort key (ARCHITECTURE.md Section 4.1) determining
+    /// this command's paint order.
+    pub sort_key: u64,
+    /// Which registered pipeline this command draws with (`DrawGeometry`/
+    /// `PopLayer`), or, for `PushLayer`, the offscreen layer's own
+    /// requested `TextureFormat` packed into a `u16`.
     pub pipeline_state_id: u16,
-    pub texture_handle: u32, // Bindless array index or atlas handle
-    pub element_count: u32,  // Index count
-    pub vertex_offset: u32,  // Offset into the dynamic ring buffer
+    /// Bindless array index or atlas handle for `DrawGeometry`; for
+    /// `PopLayer`, doubles as the popped layer's own blur flag (`0`/`1`,
+    /// never a real texture reference there).
+    pub texture_handle: u32,
+    /// Index count for `DrawGeometry`'s draw call.
+    pub element_count: u32,
+    /// Byte offset into the dynamic ring buffer this command's own
+    /// vertex/index data was written at.
+    pub vertex_offset: u32,
+    /// For `PushScissor`/`PushLayer`: the clip rectangle/layer size this
+    /// command establishes. Unused by the other three variants.
     pub clip_bounds: ScissorRect,
 }
 
@@ -441,9 +471,14 @@ pub fn shadow_layer_bounds(
 /// starting value to construct once, before its own loop begins.
 #[derive(Default)]
 pub struct FlattenedFrame {
+    /// This frame's flattened vertex buffer, in draw order.
     pub vertices: Vec<UiVertex>,
+    /// This frame's flattened index buffer, in draw order.
     pub indices: Vec<u32>,
+    /// The IR draw command stream, already sorted by paint order.
     pub commands: Vec<UiDrawCommand>,
+    /// Every tagged node's rendered spatial position this frame, for a
+    /// real OS accessibility bridge to consume.
     pub accessibility_nodes: Vec<AccessibilityNode>,
 }
 
@@ -464,9 +499,14 @@ pub struct AccessibilityNodeId(pub u64);
 /// bridge reveals which additional roles it actually needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccessibilityRole {
+    /// No more specific role applies -- maps to a generic container on a
+    /// real OS accessibility bridge.
     Generic,
+    /// An actionable, clickable control.
     Button,
+    /// Non-interactive, read-only text content.
     TextLabel,
+    /// A rendered image/graphic.
     Image,
 }
 
@@ -480,11 +520,17 @@ pub enum AccessibilityRole {
 /// bridge (Step 5.3.2) will ultimately need.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AccessibilityNode {
+    /// The caller-assigned stable key this position was tagged under.
     pub node_id: AccessibilityNodeId,
+    /// World-space bounding-box left edge, in pixels.
     pub x: f32,
+    /// World-space bounding-box top edge, in pixels.
     pub y: f32,
+    /// World-space bounding-box width, in pixels.
     pub width: f32,
+    /// World-space bounding-box height, in pixels.
     pub height: f32,
+    /// What kind of element this node represents.
     pub role: AccessibilityRole,
 }
 

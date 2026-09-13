@@ -29,9 +29,13 @@ pub use raster::{AtlasInsertRequest, RasterSource};
 /// A placed or free rectangle within an atlas, in atlas pixel coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PackedRect {
+    /// Left edge, in atlas pixel coordinates.
     pub x: u32,
+    /// Top edge, in atlas pixel coordinates.
     pub y: u32,
+    /// Width, in atlas pixels.
     pub width: u32,
+    /// Height, in atlas pixels.
     pub height: u32,
 }
 

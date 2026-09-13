@@ -116,11 +116,18 @@ fn build_swapchain(
             hdr_candidate.format, hdr_candidate.color_space
         );
     }
+    // REVIEW.md finding #54: `formats[0]` panicked if a driver ever
+    // returned an empty format list -- vanishingly unlikely on any real
+    // hardware/driver, but a genuine, recoverable device-level failure
+    // per this crate's own convention (every other surface/device query
+    // failure on this same call path already maps to `DeviceLost`), not
+    // a programmer-error condition worth an unconditional panic.
     let surface_format = formats
         .iter()
         .find(|f| f.format == vk::Format::B8G8R8A8_SRGB)
+        .or(formats.first())
         .copied()
-        .unwrap_or(formats[0]);
+        .ok_or(EngineError::DeviceLost)?;
 
     let image_count =
         (capabilities.min_image_count + 1).min(if capabilities.max_image_count == 0 {

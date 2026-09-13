@@ -180,6 +180,22 @@ impl InputEventQueue {
     /// A full underlying queue silently drops the event rather than
     /// blocking or panicking (DESIGN.md Section 2.6): input events are a
     /// UI convenience, never something worth stalling a render frame for.
+    ///
+    /// REVIEW.md finding #54: this drop-on-full behavior is uniform
+    /// across every `InputEvent` variant, not just the `PointerMoved`
+    /// coalescing this doc comment otherwise describes -- a large enough
+    /// burst of *distinct*, non-coalescing events (keyboard input, mouse
+    /// buttons, focus changes, IME, ...) within a single polling cycle
+    /// could in principle drop something as consequential as
+    /// `CloseRequested`, not merely a stale pointer position. Accepted
+    /// as-is rather than restructured: reaching this queue's 256-event
+    /// capacity between two consecutive `drain` calls needs roughly 256
+    /// distinct real input events within one frame, far beyond anything
+    /// real human/OS-generated input produces at one drain per frame --
+    /// and any fix (an unbounded queue, or a separate side-channel
+    /// reserved for control events) would be a materially different
+    /// design for a risk this documentation-only disclosure judges
+    /// disproportionate to build speculatively.
     pub fn push(&mut self, event: InputEvent) {
         if let InputEvent::PointerMoved { window, .. } = event {
             let coalesces = matches!(

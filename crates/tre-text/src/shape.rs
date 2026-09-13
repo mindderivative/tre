@@ -17,13 +17,21 @@ use crate::TextError;
 /// atlas/rasterization work is what maps these to a concrete pixel size.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ShapedGlyph {
+    /// The font's own glyph index -- not a Unicode codepoint.
     pub glyph_id: u32,
     /// Byte offset into the original input string this glyph's grapheme
     /// cluster starts at -- `rustybuzz`'s own cluster value, unchanged.
     pub cluster: u32,
+    /// Horizontal distance to advance the pen after this glyph.
     pub x_advance: i32,
+    /// Vertical distance to advance the pen after this glyph (0 for
+    /// horizontal text).
     pub y_advance: i32,
+    /// Horizontal offset to apply to this glyph's own drawn position,
+    /// relative to the pen (kerning/mark positioning).
     pub x_offset: i32,
+    /// Vertical offset to apply to this glyph's own drawn position,
+    /// relative to the pen.
     pub y_offset: i32,
 }
 
@@ -35,7 +43,10 @@ pub struct ShapedGlyph {
 pub struct ShapedRun {
     /// Byte range into the original input string this run covers.
     pub text_range: Range<usize>,
+    /// This run's own uniform writing direction (LTR or RTL).
     pub direction: Direction,
+    /// This run's shaped glyphs, already in visual (left-to-right
+    /// drawing) order.
     pub glyphs: Vec<ShapedGlyph>,
 }
 
