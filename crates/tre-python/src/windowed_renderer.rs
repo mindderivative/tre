@@ -673,6 +673,21 @@ impl PyWindowedRenderer {
                 Ok(()) => return Ok(()),
                 Err(RenderError::Engine(EngineError::SwapchainOutOfDate)) if attempt == 0 => {
                     let (width, height) = (slot.width, slot.height);
+                    // REVIEW.md finding #230: drop the stale `WindowSlot`
+                    // (and its `VkSurfaceKHR`) BEFORE requesting a new
+                    // one -- Wayland's `wp_fifo_manager_v1` protocol
+                    // rejects a second fifo surface on the same
+                    // `wl_surface` while the first is still bound.
+                    // `WindowSlot::create` below calls `device.
+                    // create_surface`, which would otherwise run while
+                    // the entry this `remove` drops is still alive (a
+                    // plain `self.windows.insert(window, fresh)` after
+                    // constructing `fresh` only replaces, and therefore
+                    // only drops the old value, *after* `fresh` already
+                    // exists) -- the exact bug `tre-perf-suite`'s own
+                    // identical resize path hit on a real interactive
+                    // resize before this fix.
+                    self.windows.remove(&window);
                     let fresh =
                         WindowSlot::create(&self.device, &self.connection, window, width, height)?;
                     self.windows.insert(window, fresh);
