@@ -122,7 +122,11 @@ fn main() {
         height: SWAPCHAIN_HEIGHT,
     };
 
-    let run_frame = |canvas: RenderingCanvas| {
+    // REVIEW.md finding #222: `execute_frame`'s clip-stack scratch is now
+    // caller-owned -- declared once, outside `run_frame`, and reused
+    // across both of its calls below rather than reallocated per call.
+    let mut clip_stack: Vec<ScissorRect> = Vec::new();
+    let mut run_frame = |canvas: RenderingCanvas| {
         let frame = canvas.flatten();
         let vertex_buffer = device
             .upload_buffer(
@@ -151,6 +155,7 @@ fn main() {
                 &full_window,
                 &device,
                 cmd_buffer,
+                &mut clip_stack,
             );
         })
         .expect("submit_frame failed");

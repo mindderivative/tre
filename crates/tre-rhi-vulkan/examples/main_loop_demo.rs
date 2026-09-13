@@ -399,6 +399,10 @@ fn main() {
     let mut recorded_dt: Vec<f32> = Vec::with_capacity(frame_limit as usize);
 
     let mut frame_count: u64 = 0;
+    // REVIEW.md finding #222: `execute_frame`'s clip-stack scratch is now
+    // caller-owned -- declared once here, outside the frame loop, and
+    // reused every frame rather than reallocated each call.
+    let mut clip_stack: Vec<ScissorRect> = Vec::new();
     'render_loop: while frame_count < frame_limit {
         // --- Stage: Drain Events ---
         for event in renderer.connection.poll_events() {
@@ -542,6 +546,7 @@ fn main() {
             &full_window,
             &renderer.device,
             &mut *cmd_buffer,
+            &mut clip_stack,
         );
         renderer
             .device

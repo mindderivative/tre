@@ -83,6 +83,11 @@ struct Renderer {
     canvas: RenderingCanvas,
     arena: FrameArena,
     flattened: FlattenedFrame,
+    /// REVIEW.md finding #222: `execute_frame`'s own clip-stack scratch is
+    /// now caller-owned -- reused every `render()` call, cleared rather
+    /// than reallocated, matching `canvas`/`arena`/`flattened`'s own
+    /// zero-allocation-reuse convention just above.
+    clip_stack: Vec<ScissorRect>,
     ring_buffer: Box<dyn RhiDynamicRingBuffer>,
     pipelines: PipelineRegistry,
     swapchain: HeadlessSwapchain,
@@ -149,6 +154,7 @@ fn build_renderer(width: u32, height: u32) -> Result<Renderer, TreErrorCode> {
             0,
         ),
         flattened: FlattenedFrame::default(),
+        clip_stack: Vec::new(),
         ring_buffer,
         pipelines,
         swapchain,
@@ -315,6 +321,7 @@ fn render(
             &full_window,
             &renderer.device,
             cmd_buffer,
+            &mut renderer.clip_stack,
         );
     })
     .map_err(TreErrorCode::from)?;

@@ -242,6 +242,11 @@ fn main() {
         width: CANVAS_WIDTH,
         height: CANVAS_HEIGHT,
     };
+    // REVIEW.md finding #222: `execute_frame`'s clip-stack scratch is now
+    // caller-owned -- a fresh `Vec` here is fine for this one-shot demo
+    // (rendered once), matching every real per-frame call site's shared
+    // fix elsewhere in this pass.
+    let mut clip_stack: Vec<ScissorRect> = Vec::new();
     submit_frame(&device, &swapchain, |cmd_buffer| {
         execute_frame(
             &frame,
@@ -257,6 +262,7 @@ fn main() {
             &full_window,
             &device,
             cmd_buffer,
+            &mut clip_stack,
         );
     })
     .expect("submit_frame failed");

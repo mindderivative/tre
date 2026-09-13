@@ -724,6 +724,14 @@ pub trait RhiCommandBuffer {
 /// offset the caller's own packing already produced (IMPLEMENTATION.md
 /// Phase 8 Step 8.1.2).
 ///
+/// `clip_stack` is caller-owned scratch, cleared (not reallocated) at the
+/// top of every call -- REVIEW.md finding #222: a fresh `Vec` here on
+/// every rendered frame that clips anything was the last remaining
+/// per-frame heap allocation in this function. Pass the same `Vec` back
+/// in on every frame from the same render loop so its capacity is
+/// actually reused; a brand-new empty `Vec` per call defeats the point
+/// (though it's still correct either way, just not zero-allocation).
+///
 /// # Panics
 /// Panics if a `DrawGeometry` or `PopLayer` command's
 /// `pipeline_state_id` was never registered in `registry`; if a
@@ -750,6 +758,16 @@ pub trait RhiCommandBuffer {
 /// `pop_layer`/`restore`/`PipelineRegistry::register`-style precedent
 /// for invalid caller state, not `EngineError`'s own device/resource
 /// failure modes).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "8 parameters, one over the lint's default threshold, after REVIEW.md finding \
+              #222 added `clip_stack` -- every existing parameter is already load-bearing (see \
+              this doc comment's own account of each one), and bundling them into a struct \
+              would only formalize an already-obvious grouping without reducing real call-site \
+              complexity, matching this crate's own precedent for allowing this lint where a \
+              function's real arity reflects genuine caller-supplied inputs, not accidental \
+              sprawl"
+)]
 pub fn execute_frame(
     frame: &FlattenedFrame,
     registry: &PipelineRegistry,
@@ -758,6 +776,7 @@ pub fn execute_frame(
     full_window: &ScissorRect,
     device: &dyn RhiDevice,
     cmd_buffer: &mut dyn RhiCommandBuffer,
+    clip_stack: &mut Vec<ScissorRect>,
 ) {
     // REVIEW.md finding #135: bound once, here, rather than inside the
     // loop below -- `vertex_buffer`/`index_buffer` are this whole call's
@@ -770,7 +789,13 @@ pub fn execute_frame(
     cmd_buffer.bind_vertex_buffer(vertex_buffer.buffer, vertex_buffer.offset);
     cmd_buffer.bind_index_buffer(index_buffer.buffer, index_buffer.offset);
 
-    let mut clip_stack: Vec<ScissorRect> = Vec::new();
+    // REVIEW.md finding #222: `clip_stack` is now caller-owned, persistent
+    // scratch reused across frames (cleared, not reallocated) -- matching
+    // this crate's own zero-allocation-reuse convention elsewhere
+    // (`FrameArena`'s scratch fields, `ShapeRegistry::polygon_points_
+    // scratch`) instead of a fresh `Vec` on every one of ~30 call sites'
+    // own per-frame call.
+    clip_stack.clear();
     // The layer's own requested (logical) width/height ride alongside
     // the texture itself -- REVIEW.md finding #152: `PopLayer`'s own
     // `apply_layer_blur` call (Step 7.2.2) needs the *requested* size,

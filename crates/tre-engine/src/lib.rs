@@ -3047,6 +3047,7 @@ mod tests {
 
         let mut cmd_buffer = FakeCommandBuffer::default();
         let device = FakeDevice::default();
+        let mut clip_stack: Vec<ScissorRect> = Vec::new();
         execute_frame(
             &frame,
             &registry,
@@ -3061,6 +3062,7 @@ mod tests {
             &full_window,
             &device,
             &mut cmd_buffer,
+            &mut clip_stack,
         );
 
         assert_eq!(
@@ -3124,6 +3126,7 @@ mod tests {
 
         let mut cmd_buffer = FakeCommandBuffer::default();
         let device = FakeDevice::default();
+        let mut clip_stack: Vec<ScissorRect> = Vec::new();
         execute_frame(
             &frame,
             &registry,
@@ -3138,6 +3141,7 @@ mod tests {
             &full_window,
             &device,
             &mut cmd_buffer,
+            &mut clip_stack,
         );
 
         assert!(
@@ -3200,6 +3204,7 @@ mod tests {
 
         let mut cmd_buffer = FakeCommandBuffer::default();
         let device = FakeDevice::default();
+        let mut clip_stack: Vec<ScissorRect> = Vec::new();
         execute_frame(
             &frame,
             &registry,
@@ -3214,6 +3219,7 @@ mod tests {
             &full_window,
             &device,
             &mut cmd_buffer,
+            &mut clip_stack,
         );
 
         assert_eq!(
@@ -3256,6 +3262,7 @@ mod tests {
         };
         let mut cmd_buffer = FakeCommandBuffer::default();
         let device = FakeDevice::default();
+        let mut clip_stack: Vec<ScissorRect> = Vec::new();
 
         execute_frame(
             &frame,
@@ -3271,6 +3278,7 @@ mod tests {
             &full_window,
             &device,
             &mut cmd_buffer,
+            &mut clip_stack,
         );
     }
 
@@ -3293,6 +3301,7 @@ mod tests {
         };
         let mut cmd_buffer = FakeCommandBuffer::default();
         let device = FakeDevice::default();
+        let mut clip_stack: Vec<ScissorRect> = Vec::new();
 
         execute_frame(
             &frame,
@@ -3308,6 +3317,7 @@ mod tests {
             &full_window,
             &device,
             &mut cmd_buffer,
+            &mut clip_stack,
         );
 
         // Finding #135: the vertex/index buffer bind is unconditional and
@@ -3425,6 +3435,7 @@ mod tests {
 
         let mut cmd_buffer = FakeCommandBuffer::default();
         let device = FakeDevice::default();
+        let mut clip_stack: Vec<ScissorRect> = Vec::new();
         execute_frame(
             &frame,
             &registry,
@@ -3439,6 +3450,7 @@ mod tests {
             &full_window,
             &device,
             &mut cmd_buffer,
+            &mut clip_stack,
         );
 
         assert_eq!(
@@ -3513,6 +3525,7 @@ mod tests {
 
         let mut cmd_buffer = FakeCommandBuffer::default();
         let device = FakeDevice::default();
+        let mut clip_stack: Vec<ScissorRect> = Vec::new();
         *device.oversized_borrow.lock().unwrap() = Some((200, 150));
         execute_frame(
             &frame,
@@ -3528,6 +3541,7 @@ mod tests {
             &full_window,
             &device,
             &mut cmd_buffer,
+            &mut clip_stack,
         );
 
         assert_eq!(
@@ -3583,6 +3597,7 @@ mod tests {
 
         let mut cmd_buffer = FakeCommandBuffer::default();
         let device = FakeDevice::default();
+        let mut clip_stack: Vec<ScissorRect> = Vec::new();
         execute_frame(
             &frame,
             &registry,
@@ -3597,6 +3612,7 @@ mod tests {
             &full_window,
             &device,
             &mut cmd_buffer,
+            &mut clip_stack,
         );
 
         assert!(
@@ -3661,6 +3677,7 @@ mod tests {
         };
         let mut cmd_buffer = FakeCommandBuffer::default();
         let device = FakeDevice::default();
+        let mut clip_stack: Vec<ScissorRect> = Vec::new();
 
         execute_frame(
             &frame,
@@ -3676,6 +3693,7 @@ mod tests {
             &full_window,
             &device,
             &mut cmd_buffer,
+            &mut clip_stack,
         );
     }
 
@@ -3699,6 +3717,7 @@ mod tests {
         };
         let mut cmd_buffer = FakeCommandBuffer::default();
         let device = FakeDevice::default();
+        let mut clip_stack: Vec<ScissorRect> = Vec::new();
 
         execute_frame(
             &frame,
@@ -3714,6 +3733,7 @@ mod tests {
             &full_window,
             &device,
             &mut cmd_buffer,
+            &mut clip_stack,
         );
     }
 }

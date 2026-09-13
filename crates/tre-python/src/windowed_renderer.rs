@@ -165,6 +165,13 @@ pub struct PyWindowedRenderer {
     scratch_canvas: RenderingCanvas,
     frame_arena: FrameArena,
     flattened: FlattenedFrame,
+    /// REVIEW.md finding #222: `execute_frame`'s own clip-stack scratch is
+    /// now caller-owned -- reused every `submit_frame_to_window` call,
+    /// cleared rather than reallocated, matching `scratch_canvas`/
+    /// `frame_arena`/`flattened`'s own zero-allocation-reuse convention
+    /// just above. Shared across every window rather than per-`WindowSlot`
+    /// since only one window submits at a time through this method.
+    clip_stack: Vec<ScissorRect>,
 }
 
 #[pymethods]
@@ -221,6 +228,7 @@ impl PyWindowedRenderer {
                 RENDER_ARENA_ACCESSIBILITY_CAPACITY,
             ),
             flattened: FlattenedFrame::default(),
+            clip_stack: Vec::new(),
         })
     }
 
@@ -626,6 +634,7 @@ impl PyWindowedRenderer {
                 .expect("checked present above; only removed by close_window, not called here");
             let pipelines = &slot.pipelines;
             let swapchain = &*slot.swapchain;
+            let clip_stack = &mut self.clip_stack;
             let full_window = ScissorRect {
                 x: 0,
                 y: 0,
@@ -654,6 +663,7 @@ impl PyWindowedRenderer {
                         &full_window,
                         device,
                         cmd_buffer,
+                        clip_stack,
                     );
                 })?;
                 Ok(())

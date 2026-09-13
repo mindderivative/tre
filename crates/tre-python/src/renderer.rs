@@ -177,6 +177,12 @@ pub struct PyHeadlessRenderer {
     scratch_canvas: RenderingCanvas,
     frame_arena: FrameArena,
     flattened: FlattenedFrame,
+    /// REVIEW.md finding #222: `execute_frame`'s own clip-stack scratch is
+    /// now caller-owned -- reused every `submit_and_read_bgra` call,
+    /// cleared rather than reallocated, matching `scratch_canvas`/
+    /// `frame_arena`/`flattened`'s own zero-allocation-reuse convention
+    /// just above.
+    clip_stack: Vec<ScissorRect>,
 }
 
 #[pymethods]
@@ -234,6 +240,7 @@ impl PyHeadlessRenderer {
                 RENDER_ARENA_ACCESSIBILITY_CAPACITY,
             ),
             flattened: FlattenedFrame::default(),
+            clip_stack: Vec::new(),
         })
     }
 
@@ -674,6 +681,7 @@ impl PyHeadlessRenderer {
                     &full_window,
                     &*self.device,
                     cmd_buffer,
+                    &mut self.clip_stack,
                 );
             })?;
             Ok(self.swapchain.read_pixels_bgra8()?)

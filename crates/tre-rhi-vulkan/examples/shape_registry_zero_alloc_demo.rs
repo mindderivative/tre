@@ -315,6 +315,10 @@ fn main() {
         height: CANVAS_HEIGHT,
     };
 
+    // REVIEW.md finding #222: `execute_frame`'s clip-stack scratch is now
+    // caller-owned -- declared once here, outside the frame loop, and
+    // reused every frame rather than reallocated each call.
+    let mut clip_stack: Vec<ScissorRect> = Vec::new();
     for frame in 0..FRAME_COUNT {
         #[allow(
             clippy::cast_precision_loss,
@@ -417,6 +421,7 @@ fn main() {
                 &full_window,
                 &device,
                 cmd_buffer,
+                &mut clip_stack,
             );
         })
         .expect("submit_frame failed");

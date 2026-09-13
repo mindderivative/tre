@@ -94,7 +94,11 @@ fn main() {
         height: CANVAS_HEIGHT,
     };
 
-    let render = |frame: &tre_engine::FlattenedFrame| -> Vec<u8> {
+    // REVIEW.md finding #222: `execute_frame`'s clip-stack scratch is now
+    // caller-owned -- declared once, outside `render`, and reused across
+    // both of its calls below rather than reallocated per call.
+    let mut clip_stack: Vec<ScissorRect> = Vec::new();
+    let mut render = |frame: &tre_engine::FlattenedFrame| -> Vec<u8> {
         let vertex_buffer = device
             .upload_buffer(
                 bytemuck::cast_slice(&frame.vertices),
@@ -122,6 +126,7 @@ fn main() {
                 &full_window,
                 &device,
                 cmd_buffer,
+                &mut clip_stack,
             );
         })
         .expect("submit_frame failed");
