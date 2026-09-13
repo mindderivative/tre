@@ -1865,250 +1865,19 @@ impl VulkanDevice {
         }
         Ok(bindless_index)
     }
-}
 
-impl RhiDevice for VulkanDevice {
-    fn create_dynamic_ring_buffer(&self, capacity: usize) -> Box<dyn RhiDynamicRingBuffer> {
-        Box::new(
-            VulkanRingBuffer::new(
-                &self.device,
-                self.physical_device,
-                &self.instance,
-                self.frame_sync.clone(),
-                capacity,
-            )
-            .expect("failed to create dynamic ring buffer"),
-        )
-    }
-
-    /// Phase 10 Step 10.2: the bindless binding-2 storage buffer
-    /// `GpuShapeStyle` records are bump-allocated into (see
-    /// `shape_style_buffer`'s own field doc comment). Reuses the exact
-    /// same `RhiDynamicRingBuffer::write` bump-allocate contract the
-    /// vertex/index ring buffer already implements -- a style record is
-    /// written once per styled shape per frame, never re-read after
-    /// upload, the same lifecycle.
-    ///
-    /// # Panics
-    /// Never in practice -- `shape_style_buffer` is `Some` from the moment
-    /// `VulkanDevice::new` returns until `Drop` takes it, and nothing
-    /// outside `Drop` ever calls `.take()`.
-    fn shape_style_buffer(&self) -> &dyn RhiDynamicRingBuffer {
-        self.shape_style_buffer
-            .as_ref()
-            .expect("shape_style_buffer is Some for the entire lifetime of a live VulkanDevice")
-    }
-
-    fn local_read_blend_supported(&self) -> bool {
-        self.local_read_supported
-    }
-
-    fn acquire_transient_target(
-        &self,
-        width: u32,
-        height: u32,
-        format: TextureFormat,
-    ) -> Result<Box<dyn RhiTexture>, EngineError> {
-        // Phase 2 Code Review finding #73: clamped before rounding up, so
-        // this is unconditionally safe regardless of `width`/`height`
-        // (see `release_transient_target`'s matching clamp for why).
-        let bucket = (
-            width.min(1 << 30).next_power_of_two(),
-            height.min(1 << 30).next_power_of_two(),
-            format,
-        );
-        let mut pool = self.transient_pool.lock().expect("transient pool poisoned");
-
-        if let Some(texture) = pool.free.get_mut(&bucket).and_then(Vec::pop) {
-            pool.stats.hits += 1;
-            // IMPLEMENTATION.md Step 2.3: leaving the free list means this
-            // texture is in active use again, not idle -- it no longer
-            // counts toward the GC trigger. `saturating_sub` (Phase 2
-            // Step 2.3 Code Review finding #79): a bare `-=` would panic
-            // on underflow in debug builds -- poisoning `transient_pool`'s
-            // mutex and cascading into every future caller on this same
-            // lock -- or silently wrap to near-`u64::MAX` in release. A
-            // future accounting bug here should degrade to a
-            // bounded-but-wrong value, not either of those.
-            pool.total_free_bytes = pool.total_free_bytes.saturating_sub(texture.size_bytes);
-            return Ok(Box::new(texture));
-        }
-
-        // Genuine miss: DESIGN.md Section 2.6 forbids a dynamic RHI
-        // allocation inside the render tick, so borrow the next-larger
-        // already-pooled bucket for this frame (any texture at least as
-        // large as requested is usable -- the caller renders into a
-        // sub-rect if it's bigger) and queue the exactly-right bucket to
-        // be grown in at the start of the next frame.
-        pool.stats.misses += 1;
-        if !pool.pending_growth.contains(&bucket) {
-            pool.pending_growth.push(bucket);
-        }
-        if let Some(((_, _, _), texture)) = pool
-            .free
-            .iter_mut()
-            .filter(|((w, h, f), textures)| {
-                *f == format && *w >= bucket.0 && *h >= bucket.1 && !textures.is_empty()
-            })
-            .min_by_key(|((w, h, _), _)| u64::from(*w) * u64::from(*h))
-            .map(|(key, textures)| (*key, textures.pop().expect("checked non-empty above")))
-        {
-            // IMPLEMENTATION.md Step 2.3: same accounting as the exact-hit
-            // path above -- this texture is leaving the free list too.
-            // `saturating_sub`: see the exact-hit path's comment above.
-            pool.total_free_bytes = pool.total_free_bytes.saturating_sub(texture.size_bytes);
-            return Ok(Box::new(texture));
-        }
-
-        // No existing bucket at all (even oversized) is free -- this is
-        // the very first request of this size/format combination this
-        // process has ever seen. Allocating here is the one case Phase 2
-        // Step 1 accepts a synchronous allocation for (there is nothing
-        // smaller to borrow), matching Phase 0/1's "walking skeleton
-        // first" precedent: a cold-start allocation is unavoidable
-        // somewhere, and DESIGN.md Section 2.6's own wording ("a first-
-        // ever window size... isn't already resident in the pool") is
-        // explicit that this exact case can occur.
-        //
-        // Phase 2 Step 2.3 Code Review finding #80: unlike the two hit
-        // paths above, this one requests genuinely NEW GPU memory, not a
-        // reuse of already-idle bytes -- so it's the one place that needs
-        // an admission check against the budget the generational GC
-        // (Step 2.3) only ever reclaims *into*, never gates *out of*.
-        // Known limitation, stated plainly: this compares against
-        // `total_free_bytes` (idle bytes only), not total bytes including
-        // whatever's currently checked out, so it catches "many distinct
-        // sizes cycling through mostly-idle" but not "many sizes
-        // permanently checked out simultaneously" -- a real, if imperfect,
-        // gate using the accounting this step already maintains, not a
-        // claim of exact enforcement.
-        if pool.total_free_bytes >= DYNAMIC_VRAM_BUDGET_BYTES {
-            return Err(EngineError::TransientPoolBudgetExceeded);
-        }
-        drop(pool);
-        Ok(Box::new(
-            VulkanTexture::new(self, width, height, format)
-                .expect("failed to create transient render target"),
-        ))
-    }
-
-    fn release_transient_target(&self, texture: Box<dyn RhiTexture>) {
-        // Phase 2 Code Review finding #70: this function's raw-handle
-        // reconstruction below assumes `texture` came from
-        // `acquire_transient_target`, which never assigns a bindless
-        // index. Nothing in the `RhiTexture`/`RhiDevice` trait boundary
-        // actually prevents a caller from passing a `create_texture`-
-        // sourced (bindless) texture here instead -- if that happened, the
-        // naive reconstruction would silently strand its bindless slot
-        // (never returned to `BindlessRegistry`'s free list) and pool a
-        // `SAMPLED | TRANSFER_DST` image as if it were a `COLOR_ATTACHMENT`
-        // render target. Detect that misuse and let `texture` drop
-        // normally instead -- its own `Drop` (`impl Drop for
-        // VulkanTexture`) correctly destroys its GPU resources AND
-        // releases its bindless slot, which is exactly the right behavior
-        // for a texture that was never meant to be pooled.
-        if texture.bindless_index().is_some() {
-            debug_assert!(
-                false,
-                "release_transient_target called with a bindless (create_texture) texture; \
-                 dropping it instead of pooling it"
-            );
-            return;
-        }
-
-        let (width, height) = texture.dimensions();
-        let format = texture.format();
-        let bucket = (
-            // Phase 2 Code Review finding #73: `next_power_of_two` panics
-            // (debug) or silently wraps to 0 (release) for inputs above
-            // `2^31 - 1`. Clamping first is a no-op for every realistic
-            // texture request and makes the call unconditionally safe.
-            width.min(1 << 30).next_power_of_two(),
-            height.min(1 << 30).next_power_of_two(),
-            format,
-        );
-        // Captured before `texture` is forgotten below: `size_bytes()`
-        // (IMPLEMENTATION.md Step 2.3) round-trips the allocation size
-        // `VulkanTexture::new` already computed, so check-in doesn't need
-        // to re-query `vkGetImageMemoryRequirements`.
-        let size_bytes = texture.size_bytes();
-        // Reconstructs a `VulkanTexture` from `texture`'s opaque handles
-        // rather than downcasting -- `texture` is a `Box<dyn RhiTexture>`
-        // this same `VulkanDevice` produced moments ago via
-        // `acquire_transient_target`/`VulkanTexture::new`, so every handle
-        // it exposes is one of this device's own live Vulkan objects.
-        let reclaimed = VulkanTexture {
-            view: vk::ImageView::from_raw(texture.raw_handle()),
-            image: vk::Image::from_raw(texture.image_handle()),
-            memory: vk::DeviceMemory::from_raw(texture.memory_handle()),
-            width,
-            height,
-            format,
-            device: self.device.clone(),
-            // Transient render targets never enter the bindless array
-            // (IMPLEMENTATION.md Step 2.1's scope decision) -- confirmed
-            // above (the misuse guard already returned otherwise), so
-            // there is nothing to reconstruct here.
-            bindless_index: None,
-            bindless_registry: None,
-            // IMPLEMENTATION.md Step 2.3: "used" right now, at the moment
-            // of check-in -- what the GC thread's staleness check measures
-            // age from.
-            last_used_frame: self.frame_sync.total_frame_count.load(Ordering::Acquire),
-            size_bytes,
-        };
-        // `texture` (the original box) must not also run its `Drop` and
-        // destroy these same handles out from under `reclaimed`.
-        std::mem::forget(texture);
-
-        let mut pool = self.transient_pool.lock().expect("transient pool poisoned");
-        pool.total_free_bytes += size_bytes;
-        pool.free.entry(bucket).or_default().push(reclaimed);
-    }
-
-    fn create_texture(
-        &self,
-        width: u32,
-        height: u32,
-        format: TextureFormat,
-        pixels: &[u8],
-    ) -> Result<Box<dyn RhiTexture>, EngineError> {
-        Ok(Box::new(VulkanTexture::from_pixels(
-            self, width, height, format, pixels,
-        )?))
-    }
-
-    fn register_bindless(&self, texture: &dyn RhiTexture) -> Result<u32, EngineError> {
-        // SAFETY: reconstructing a `vk::ImageView` from `texture`'s own
-        // opaque `raw_handle()` -- the same opaque-handle pattern this
-        // codebase uses everywhere a trait object needs to hand a
-        // concrete Vulkan object to backend-specific code, not a
-        // downcast. `RhiTexture`'s own contract guarantees this handle is
-        // a live view this same device created.
-        let view = vk::ImageView::from_raw(texture.raw_handle());
-        self.allocate_bindless_slot(view)
-    }
-
-    fn deregister_bindless(&self, bindless_index: u32) {
-        self.bindless_registry
-            .lock()
-            .expect("bindless registry poisoned")
-            .release(bindless_index);
-    }
-
-    fn begin_frame(
+    pub(crate) fn begin_frame_impl(
         &self,
         swapchain: &dyn RhiSwapchain,
+        timeout_ns: u64,
     ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
         // SAFETY: `self.device` is valid and `self.frame_sync.fence` was
         // created signaled in `new`; under the single-frame-in-flight
-        // model it is only ever waited on and reset here, once per frame.
+        // model it is only ever waited on here and reset (below, after a
+        // successful acquire) once per real frame.
         unsafe {
             self.device
                 .wait_for_fences(&[self.frame_sync.fence], true, u64::MAX)
-                .map_err(|_| EngineError::DeviceLost)?;
-            self.device
-                .reset_fences(&[self.frame_sync.fence])
                 .map_err(|_| EngineError::DeviceLost)?;
         }
 
@@ -2123,7 +1892,22 @@ impl RhiDevice for VulkanDevice {
         // resources happens here, once per frame, not mid-frame.
         self.drain_deferred_release_queue();
 
-        let image = swapchain.acquire_next_image()?;
+        let image = swapchain.acquire_next_image_with_timeout(timeout_ns)?;
+
+        // REVIEW.md finding #235, Option 3: the fence is reset only now,
+        // after a successful acquire, not immediately after the wait
+        // above. If `acquire_next_image_with_timeout` returns
+        // `Err(EngineError::AcquireTimedOut)` (or any other error)
+        // before reaching here, the fence is left exactly as the wait
+        // above found it (signaled), so the *next* call's own
+        // `wait_for_fences` above returns immediately instead of
+        // blocking forever waiting for a submit that this skipped frame
+        // never made.
+        unsafe {
+            self.device
+                .reset_fences(&[self.frame_sync.fence])
+                .map_err(|_| EngineError::DeviceLost)?;
+        }
 
         // Reuse the one persistent command buffer (allocated once in
         // `new`) rather than allocate-then-free every frame: the fence
@@ -2377,6 +2161,255 @@ impl RhiDevice for VulkanDevice {
             }),
             image,
         ))
+    }
+}
+
+impl RhiDevice for VulkanDevice {
+    fn create_dynamic_ring_buffer(&self, capacity: usize) -> Box<dyn RhiDynamicRingBuffer> {
+        Box::new(
+            VulkanRingBuffer::new(
+                &self.device,
+                self.physical_device,
+                &self.instance,
+                self.frame_sync.clone(),
+                capacity,
+            )
+            .expect("failed to create dynamic ring buffer"),
+        )
+    }
+
+    /// Phase 10 Step 10.2: the bindless binding-2 storage buffer
+    /// `GpuShapeStyle` records are bump-allocated into (see
+    /// `shape_style_buffer`'s own field doc comment). Reuses the exact
+    /// same `RhiDynamicRingBuffer::write` bump-allocate contract the
+    /// vertex/index ring buffer already implements -- a style record is
+    /// written once per styled shape per frame, never re-read after
+    /// upload, the same lifecycle.
+    ///
+    /// # Panics
+    /// Never in practice -- `shape_style_buffer` is `Some` from the moment
+    /// `VulkanDevice::new` returns until `Drop` takes it, and nothing
+    /// outside `Drop` ever calls `.take()`.
+    fn shape_style_buffer(&self) -> &dyn RhiDynamicRingBuffer {
+        self.shape_style_buffer
+            .as_ref()
+            .expect("shape_style_buffer is Some for the entire lifetime of a live VulkanDevice")
+    }
+
+    fn local_read_blend_supported(&self) -> bool {
+        self.local_read_supported
+    }
+
+    fn acquire_transient_target(
+        &self,
+        width: u32,
+        height: u32,
+        format: TextureFormat,
+    ) -> Result<Box<dyn RhiTexture>, EngineError> {
+        // Phase 2 Code Review finding #73: clamped before rounding up, so
+        // this is unconditionally safe regardless of `width`/`height`
+        // (see `release_transient_target`'s matching clamp for why).
+        let bucket = (
+            width.min(1 << 30).next_power_of_two(),
+            height.min(1 << 30).next_power_of_two(),
+            format,
+        );
+        let mut pool = self.transient_pool.lock().expect("transient pool poisoned");
+
+        if let Some(texture) = pool.free.get_mut(&bucket).and_then(Vec::pop) {
+            pool.stats.hits += 1;
+            // IMPLEMENTATION.md Step 2.3: leaving the free list means this
+            // texture is in active use again, not idle -- it no longer
+            // counts toward the GC trigger. `saturating_sub` (Phase 2
+            // Step 2.3 Code Review finding #79): a bare `-=` would panic
+            // on underflow in debug builds -- poisoning `transient_pool`'s
+            // mutex and cascading into every future caller on this same
+            // lock -- or silently wrap to near-`u64::MAX` in release. A
+            // future accounting bug here should degrade to a
+            // bounded-but-wrong value, not either of those.
+            pool.total_free_bytes = pool.total_free_bytes.saturating_sub(texture.size_bytes);
+            return Ok(Box::new(texture));
+        }
+
+        // Genuine miss: DESIGN.md Section 2.6 forbids a dynamic RHI
+        // allocation inside the render tick, so borrow the next-larger
+        // already-pooled bucket for this frame (any texture at least as
+        // large as requested is usable -- the caller renders into a
+        // sub-rect if it's bigger) and queue the exactly-right bucket to
+        // be grown in at the start of the next frame.
+        pool.stats.misses += 1;
+        if !pool.pending_growth.contains(&bucket) {
+            pool.pending_growth.push(bucket);
+        }
+        if let Some(((_, _, _), texture)) = pool
+            .free
+            .iter_mut()
+            .filter(|((w, h, f), textures)| {
+                *f == format && *w >= bucket.0 && *h >= bucket.1 && !textures.is_empty()
+            })
+            .min_by_key(|((w, h, _), _)| u64::from(*w) * u64::from(*h))
+            .map(|(key, textures)| (*key, textures.pop().expect("checked non-empty above")))
+        {
+            // IMPLEMENTATION.md Step 2.3: same accounting as the exact-hit
+            // path above -- this texture is leaving the free list too.
+            // `saturating_sub`: see the exact-hit path's comment above.
+            pool.total_free_bytes = pool.total_free_bytes.saturating_sub(texture.size_bytes);
+            return Ok(Box::new(texture));
+        }
+
+        // No existing bucket at all (even oversized) is free -- this is
+        // the very first request of this size/format combination this
+        // process has ever seen. Allocating here is the one case Phase 2
+        // Step 1 accepts a synchronous allocation for (there is nothing
+        // smaller to borrow), matching Phase 0/1's "walking skeleton
+        // first" precedent: a cold-start allocation is unavoidable
+        // somewhere, and DESIGN.md Section 2.6's own wording ("a first-
+        // ever window size... isn't already resident in the pool") is
+        // explicit that this exact case can occur.
+        //
+        // Phase 2 Step 2.3 Code Review finding #80: unlike the two hit
+        // paths above, this one requests genuinely NEW GPU memory, not a
+        // reuse of already-idle bytes -- so it's the one place that needs
+        // an admission check against the budget the generational GC
+        // (Step 2.3) only ever reclaims *into*, never gates *out of*.
+        // Known limitation, stated plainly: this compares against
+        // `total_free_bytes` (idle bytes only), not total bytes including
+        // whatever's currently checked out, so it catches "many distinct
+        // sizes cycling through mostly-idle" but not "many sizes
+        // permanently checked out simultaneously" -- a real, if imperfect,
+        // gate using the accounting this step already maintains, not a
+        // claim of exact enforcement.
+        if pool.total_free_bytes >= DYNAMIC_VRAM_BUDGET_BYTES {
+            return Err(EngineError::TransientPoolBudgetExceeded);
+        }
+        drop(pool);
+        Ok(Box::new(
+            VulkanTexture::new(self, width, height, format)
+                .expect("failed to create transient render target"),
+        ))
+    }
+
+    fn release_transient_target(&self, texture: Box<dyn RhiTexture>) {
+        // Phase 2 Code Review finding #70: this function's raw-handle
+        // reconstruction below assumes `texture` came from
+        // `acquire_transient_target`, which never assigns a bindless
+        // index. Nothing in the `RhiTexture`/`RhiDevice` trait boundary
+        // actually prevents a caller from passing a `create_texture`-
+        // sourced (bindless) texture here instead -- if that happened, the
+        // naive reconstruction would silently strand its bindless slot
+        // (never returned to `BindlessRegistry`'s free list) and pool a
+        // `SAMPLED | TRANSFER_DST` image as if it were a `COLOR_ATTACHMENT`
+        // render target. Detect that misuse and let `texture` drop
+        // normally instead -- its own `Drop` (`impl Drop for
+        // VulkanTexture`) correctly destroys its GPU resources AND
+        // releases its bindless slot, which is exactly the right behavior
+        // for a texture that was never meant to be pooled.
+        if texture.bindless_index().is_some() {
+            debug_assert!(
+                false,
+                "release_transient_target called with a bindless (create_texture) texture; \
+                 dropping it instead of pooling it"
+            );
+            return;
+        }
+
+        let (width, height) = texture.dimensions();
+        let format = texture.format();
+        let bucket = (
+            // Phase 2 Code Review finding #73: `next_power_of_two` panics
+            // (debug) or silently wraps to 0 (release) for inputs above
+            // `2^31 - 1`. Clamping first is a no-op for every realistic
+            // texture request and makes the call unconditionally safe.
+            width.min(1 << 30).next_power_of_two(),
+            height.min(1 << 30).next_power_of_two(),
+            format,
+        );
+        // Captured before `texture` is forgotten below: `size_bytes()`
+        // (IMPLEMENTATION.md Step 2.3) round-trips the allocation size
+        // `VulkanTexture::new` already computed, so check-in doesn't need
+        // to re-query `vkGetImageMemoryRequirements`.
+        let size_bytes = texture.size_bytes();
+        // Reconstructs a `VulkanTexture` from `texture`'s opaque handles
+        // rather than downcasting -- `texture` is a `Box<dyn RhiTexture>`
+        // this same `VulkanDevice` produced moments ago via
+        // `acquire_transient_target`/`VulkanTexture::new`, so every handle
+        // it exposes is one of this device's own live Vulkan objects.
+        let reclaimed = VulkanTexture {
+            view: vk::ImageView::from_raw(texture.raw_handle()),
+            image: vk::Image::from_raw(texture.image_handle()),
+            memory: vk::DeviceMemory::from_raw(texture.memory_handle()),
+            width,
+            height,
+            format,
+            device: self.device.clone(),
+            // Transient render targets never enter the bindless array
+            // (IMPLEMENTATION.md Step 2.1's scope decision) -- confirmed
+            // above (the misuse guard already returned otherwise), so
+            // there is nothing to reconstruct here.
+            bindless_index: None,
+            bindless_registry: None,
+            // IMPLEMENTATION.md Step 2.3: "used" right now, at the moment
+            // of check-in -- what the GC thread's staleness check measures
+            // age from.
+            last_used_frame: self.frame_sync.total_frame_count.load(Ordering::Acquire),
+            size_bytes,
+        };
+        // `texture` (the original box) must not also run its `Drop` and
+        // destroy these same handles out from under `reclaimed`.
+        std::mem::forget(texture);
+
+        let mut pool = self.transient_pool.lock().expect("transient pool poisoned");
+        pool.total_free_bytes += size_bytes;
+        pool.free.entry(bucket).or_default().push(reclaimed);
+    }
+
+    fn create_texture(
+        &self,
+        width: u32,
+        height: u32,
+        format: TextureFormat,
+        pixels: &[u8],
+    ) -> Result<Box<dyn RhiTexture>, EngineError> {
+        Ok(Box::new(VulkanTexture::from_pixels(
+            self, width, height, format, pixels,
+        )?))
+    }
+
+    fn register_bindless(&self, texture: &dyn RhiTexture) -> Result<u32, EngineError> {
+        // SAFETY: reconstructing a `vk::ImageView` from `texture`'s own
+        // opaque `raw_handle()` -- the same opaque-handle pattern this
+        // codebase uses everywhere a trait object needs to hand a
+        // concrete Vulkan object to backend-specific code, not a
+        // downcast. `RhiTexture`'s own contract guarantees this handle is
+        // a live view this same device created.
+        let view = vk::ImageView::from_raw(texture.raw_handle());
+        self.allocate_bindless_slot(view)
+    }
+
+    fn deregister_bindless(&self, bindless_index: u32) {
+        self.bindless_registry
+            .lock()
+            .expect("bindless registry poisoned")
+            .release(bindless_index);
+    }
+
+    fn begin_frame(
+        &self,
+        swapchain: &dyn RhiSwapchain,
+    ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
+        self.begin_frame_impl(swapchain, u64::MAX)
+    }
+
+    /// REVIEW.md finding #235, Option 3: see `Self::begin_frame_impl`'s
+    /// own doc comment (on the inherent method backing both this and
+    /// plain `begin_frame`) for the real fence-reset-ordering hazard a
+    /// bounded acquire must avoid.
+    fn begin_frame_with_timeout(
+        &self,
+        swapchain: &dyn RhiSwapchain,
+        timeout_ns: u64,
+    ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
+        self.begin_frame_impl(swapchain, timeout_ns)
     }
 
     fn submit_and_present(

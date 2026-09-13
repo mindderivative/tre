@@ -181,6 +181,23 @@ impl TelemetryLog {
              \"height\":{height},\"rebuild_ms\":{rebuild_ms:.3}}}"
         )
     }
+
+    /// REVIEW.md finding #235, Option 3: logged whenever `resize_test.rs`'s
+    /// bounded `RhiDevice::begin_frame_with_timeout` call times out and
+    /// the caller skips that tick's render entirely rather than blocking
+    /// the whole loop -- distinct from [`Self::write_frame_stall`], since
+    /// a skipped frame renders nothing (there is no `record_ms`/
+    /// `present_ms` to report) rather than merely running long.
+    pub fn write_acquire_skip(&mut self, elapsed_s: f64, timeout_ms: f32) -> std::io::Result<()> {
+        println!(
+            "[{elapsed_s:>6.1}s] SKIP      --- acquire exceeded {timeout_ms:.1}ms timeout, frame \
+             dropped ---"
+        );
+        writeln!(
+            self.file,
+            "{{\"kind\":\"acquire_skip\",\"elapsed_s\":{elapsed_s:.3},\"timeout_ms\":{timeout_ms:.3}}}"
+        )
+    }
 }
 
 /// `perf_results/<profile>_<workload>_<unix-timestamp>.jsonl` at the

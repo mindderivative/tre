@@ -293,6 +293,27 @@ pub trait RhiSwapchain: Send + Sync {
     /// [`EngineError::DeviceLost`] on any other acquisition failure.
     fn acquire_next_image(&self) -> Result<AcquiredImage, EngineError>;
 
+    /// Identical to [`Self::acquire_next_image`] except the wait for the
+    /// next available image is bounded by `timeout_ns` nanoseconds
+    /// instead of blocking indefinitely (REVIEW.md finding #235, Option
+    /// 3: under Wayland, a live resize drag can make the real, unbounded
+    /// wait here block for hundreds of milliseconds to seconds on a
+    /// single frame). Default implementation ignores `timeout_ns` and
+    /// defers to [`Self::acquire_next_image`]'s own unbounded wait, for
+    /// any backend that hasn't implemented a real bounded acquire.
+    ///
+    /// # Errors
+    /// Same as [`Self::acquire_next_image`], plus
+    /// [`EngineError::AcquireTimedOut`] if no image became available
+    /// within `timeout_ns`.
+    fn acquire_next_image_with_timeout(
+        &self,
+        timeout_ns: u64,
+    ) -> Result<AcquiredImage, EngineError> {
+        let _ = timeout_ns;
+        self.acquire_next_image()
+    }
+
     /// Waits on `image.render_finished_semaphore_handle` before showing
     /// the image (DESIGN.md Section 2.6 -- surfaces failures rather than
     /// stalling or panicking).
@@ -463,6 +484,33 @@ pub trait RhiDevice: Send + Sync {
         &self,
         swapchain: &dyn RhiSwapchain,
     ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError>;
+
+    /// Identical to [`Self::begin_frame`] except the underlying
+    /// `RhiSwapchain::acquire_next_image_with_timeout` call is bounded by
+    /// `timeout_ns` instead of blocking indefinitely (REVIEW.md finding
+    /// #235, Option 3) -- lets a caller skip rendering this tick and try
+    /// again next iteration rather than freezing the whole render loop
+    /// when a resize makes acquire slow. Default implementation ignores
+    /// `timeout_ns` and defers to [`Self::begin_frame`]'s own unbounded
+    /// wait, for any backend that hasn't implemented a real bounded
+    /// acquire (this trait's own fence-wait/reset bookkeeping around the
+    /// acquire call, not just the acquire call itself, must be
+    /// timeout-aware for this to be safe -- see `VulkanDevice`'s own
+    /// override for why resetting the frame fence before a *successful*
+    /// acquire would otherwise deadlock the following frame's own wait).
+    ///
+    /// # Errors
+    /// Same as [`Self::begin_frame`], plus
+    /// [`EngineError::AcquireTimedOut`] if no image became available
+    /// within `timeout_ns`.
+    fn begin_frame_with_timeout(
+        &self,
+        swapchain: &dyn RhiSwapchain,
+        timeout_ns: u64,
+    ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
+        let _ = timeout_ns;
+        self.begin_frame(swapchain)
+    }
 
     /// # Errors
     /// Returns [`EngineError::DeviceLost`] or

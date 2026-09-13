@@ -41,6 +41,7 @@ mod telemetry;
 mod workload;
 
 use ramp_test::RampConfig;
+use resize_test::ResizeStrategy;
 use workload::Workload;
 
 const USAGE: &str = "\
@@ -48,19 +49,22 @@ tre-perf-suite -- Phase 20 rendering engine performance test suite
 
 USAGE:
     tre-perf-suite --profile ramp [--workload shapes|textures|shaders|all] [--duration SECS] [--tier-seconds SECS] [--out PATH]
-    tre-perf-suite --profile resize [--out PATH]
+    tre-perf-suite --profile resize [--resize-strategy coarse|timeout] [--out PATH]
 
 OPTIONS:
-    --profile <ramp|resize>   Required. Which test to run.
-    --workload <name>         ramp only. One of shapes/textures/shaders/all. Default: all.
-    --duration <secs>         ramp only. Total seconds per workload. Default: 30.
-    --tier-seconds <secs>     ramp only. Seconds between each doubling of primitive count. Default: 2.
-    --out <path>              Structured JSON-Lines log path. Default: perf_results/<profile>_<workload>_<unix-ts>.jsonl
-    --help                    Print this message.";
+    --profile <ramp|resize>        Required. Which test to run.
+    --workload <name>              ramp only. One of shapes/textures/shaders/all. Default: all.
+    --duration <secs>              ramp only. Total seconds per workload. Default: 30.
+    --tier-seconds <secs>          ramp only. Seconds between each doubling of primitive count. Default: 2.
+    --resize-strategy <name>       resize only. REVIEW.md finding #235: 'coarse' (Option 2, default) pins
+                                    the swapchain to a coarse size during a drag; 'timeout' (Option 3) resizes
+                                    exactly but bounds the acquire wait, skipping a frame's render on timeout.
+    --out <path>                   Structured JSON-Lines log path. Default: perf_results/<profile>_<workload>_<unix-ts>.jsonl
+    --help                         Print this message.";
 
 enum Command {
     Ramp(RampConfig),
-    Resize(Option<std::path::PathBuf>),
+    Resize(Option<std::path::PathBuf>, ResizeStrategy),
 }
 
 fn parse_args(args: &[String]) -> Result<Command, String> {
@@ -68,6 +72,7 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
     let mut workload: Option<String> = None;
     let mut duration_s: f64 = 30.0;
     let mut tier_seconds: f64 = 2.0;
+    let mut resize_strategy: Option<String> = None;
     let mut out: Option<std::path::PathBuf> = None;
 
     let mut i = 0;
@@ -109,6 +114,14 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
                     format!("--tier-seconds expects a number of seconds, got {value:?}")
                 })?;
             }
+            "--resize-strategy" => {
+                i += 1;
+                resize_strategy = Some(
+                    args.get(i)
+                        .cloned()
+                        .ok_or_else(|| "--resize-strategy requires a value".to_string())?,
+                );
+            }
             "--out" => {
                 i += 1;
                 let value = args
@@ -141,7 +154,18 @@ fn parse_args(args: &[String]) -> Result<Command, String> {
                 out,
             }))
         }
-        Some("resize") => Ok(Command::Resize(out)),
+        Some("resize") => {
+            let strategy = match resize_strategy.as_deref().unwrap_or("coarse") {
+                "coarse" => ResizeStrategy::Coarse,
+                "timeout" => ResizeStrategy::Timeout,
+                other => {
+                    return Err(format!(
+                        "unrecognized --resize-strategy: {other} (expected coarse or timeout)"
+                    ))
+                }
+            };
+            Ok(Command::Resize(out, strategy))
+        }
         Some(other) => Err(format!(
             "unrecognized --profile: {other} (expected ramp or resize)"
         )),
@@ -153,7 +177,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match parse_args(&args) {
         Ok(Command::Ramp(config)) => ramp_test::run(config),
-        Ok(Command::Resize(out)) => resize_test::run(out),
+        Ok(Command::Resize(out, strategy)) => resize_test::run(out, strategy),
         Err(message) => {
             if !message.is_empty() {
                 eprintln!("error: {message}\n");

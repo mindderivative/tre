@@ -34,6 +34,13 @@ typedef enum TreErrorCode {
      * 9.4.1's "FFI safety" rule).
      */
     TRE_ERROR_CODE_PANIC_CAUGHT,
+    /**
+     * Mirrors [`EngineError::AcquireTimedOut`] (REVIEW.md finding #235,
+     * Option 3). Appended last, after the two FFI-only variants above,
+     * so adding it doesn't shift any existing variant's numeric
+     * discriminant.
+     */
+    TRE_ERROR_CODE_ACQUIRE_TIMED_OUT,
 } TreErrorCode;
 
 typedef enum TrePathCommandKind {

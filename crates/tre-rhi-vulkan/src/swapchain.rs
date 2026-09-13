@@ -446,6 +446,19 @@ impl RhiSwapchain for VulkanSwapchain {
     }
 
     fn acquire_next_image(&self) -> Result<AcquiredImage, EngineError> {
+        self.acquire_next_image_with_timeout(u64::MAX)
+    }
+
+    /// REVIEW.md finding #235, Option 3: `timeout_ns` is passed straight
+    /// through to `vkAcquireNextImageKHR`'s own `timeout` parameter,
+    /// which per spec cannot itself return `VK_TIMEOUT` when called with
+    /// `u64::MAX` (as [`Self::acquire_next_image`] does) -- so this real
+    /// override is exercised by both the bounded and unbounded paths
+    /// without duplicating the acquire call itself.
+    fn acquire_next_image_with_timeout(
+        &self,
+        timeout_ns: u64,
+    ) -> Result<AcquiredImage, EngineError> {
         // SAFETY: `self.swapchain` is valid, and `self.image_available_semaphore`
         // is not currently pending a wait -- under the single-frame-in-flight
         // model, `VulkanDevice::begin_frame`'s fence wait ensures the prior
@@ -454,17 +467,15 @@ impl RhiSwapchain for VulkanSwapchain {
         let (index, _suboptimal) = unsafe {
             self.swapchain_loader.acquire_next_image(
                 self.swapchain,
-                u64::MAX,
+                timeout_ns,
                 self.image_available_semaphore,
                 vk::Fence::null(),
             )
         }
-        .map_err(|e| {
-            if e == vk::Result::ERROR_OUT_OF_DATE_KHR {
-                EngineError::SwapchainOutOfDate
-            } else {
-                EngineError::DeviceLost
-            }
+        .map_err(|e| match e {
+            vk::Result::ERROR_OUT_OF_DATE_KHR => EngineError::SwapchainOutOfDate,
+            vk::Result::TIMEOUT => EngineError::AcquireTimedOut,
+            _ => EngineError::DeviceLost,
         })?;
 
         Ok(AcquiredImage {

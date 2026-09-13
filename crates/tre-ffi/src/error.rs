@@ -36,6 +36,11 @@ pub enum TreErrorCode {
     /// before it could cross the C-ABI boundary (TECHNICAL.md Section
     /// 9.4.1's "FFI safety" rule).
     PanicCaught,
+    /// Mirrors [`EngineError::AcquireTimedOut`] (REVIEW.md finding #235,
+    /// Option 3). Appended last, after the two FFI-only variants above,
+    /// so adding it doesn't shift any existing variant's numeric
+    /// discriminant.
+    AcquireTimedOut,
 }
 
 impl From<EngineError> for TreErrorCode {
@@ -49,6 +54,7 @@ impl From<EngineError> for TreErrorCode {
             EngineError::TransientPoolBudgetExceeded => Self::TransientPoolBudgetExceeded,
             EngineError::ShaderCompilationFailed(_) => Self::ShaderCompilationFailed,
             EngineError::PixelReadbackUnsupported => Self::PixelReadbackUnsupported,
+            EngineError::AcquireTimedOut => Self::AcquireTimedOut,
         }
     }
 }

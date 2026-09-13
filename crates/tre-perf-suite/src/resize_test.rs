@@ -40,17 +40,28 @@
 //! cheapest candidate remedy) was tried and measured to make no
 //! difference.
 //!
-//! **Fixed via pyCopper's own proven remedy for the identical
-//! symptom:** during a drag, the swapchain is resized to the requested
-//! size rounded up to the nearest `DRAG_COARSE_STEP` pixels rather than
-//! the exact live size, so most of a drag's own resize events land in
-//! the same coarse bucket and need no swapchain recreation at all; once
-//! the drag goes quiet for `DRAG_SETTLE_MS`, one final resize snaps to
-//! the exact size. This deliberately, temporarily re-introduces finding
-//! #234's own squash/stretch for the duration of the drag only -- the
-//! coarse swapchain's content gets stretched by the compositor to fill
-//! the real, currently-larger-or-smaller window -- an accepted,
-//! disclosed tradeoff, not an oversight.
+//! **Option 2, shipped as the default `ResizeStrategy::Coarse`, via
+//! pyCopper's own proven remedy for the identical symptom:** during a
+//! drag, the swapchain is resized to the requested size rounded up to
+//! the nearest `DRAG_COARSE_STEP` pixels rather than the exact live
+//! size, so most of a drag's own resize events land in the same coarse
+//! bucket and need no swapchain recreation at all; once the drag goes
+//! quiet for `DRAG_SETTLE_MS`, one final resize snaps to the exact
+//! size. This deliberately, temporarily re-introduces finding #234's
+//! own squash/stretch for the duration of the drag only -- the coarse
+//! swapchain's content gets stretched by the compositor to fill the
+//! real, currently-larger-or-smaller window -- an accepted, disclosed
+//! tradeoff, not an oversight.
+//!
+//! **Option 3, `ResizeStrategy::Timeout`, added to let the project
+//! owner compare it against Option 2 before deciding between them:**
+//! resizes to the exact live size on every event (no coarse bucketing),
+//! and instead bounds the per-frame `vkAcquireNextImageKHR` wait itself
+//! via the new [`tre_engine::RhiDevice::begin_frame_with_timeout`] --
+//! when it times out, this loop skips that tick's render entirely
+//! (logged as a dedicated `acquire_skip` record) instead of blocking.
+//! Never squashes/stretches (the swapchain always matches the real
+//! size), but can visibly drop frames during a drag instead.
 
 use std::time::Instant;
 
@@ -64,6 +75,20 @@ use tre_rhi_vulkan::{register_shape_pipelines, VulkanDevice, VulkanSwapchain};
 
 use crate::telemetry::{self, CpuMemSampler, Sample, TelemetryLog};
 use crate::workload::{populate, Workload, WorkloadResources};
+
+/// REVIEW.md finding #235: the project owner's own choice of resize-stall
+/// remedy for `run` to apply, selectable via `--resize-strategy` so
+/// Option 2 and Option 3 can be compared directly against each other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResizeStrategy {
+    /// Option 2 (this module's own default): coarse-bucketed swapchain
+    /// resizing during a drag, settling to the exact size at rest.
+    Coarse,
+    /// Option 3: exact-size resizing always, with a bounded
+    /// `vkAcquireNextImageKHR` wait that skips a frame's render on
+    /// timeout instead of blocking.
+    Timeout,
+}
 
 const INITIAL_WIDTH: u32 = 800;
 const INITIAL_HEIGHT: u32 = 600;
@@ -129,7 +154,7 @@ impl Surface {
     }
 }
 
-pub fn run(out: Option<std::path::PathBuf>) {
+pub fn run(out: Option<std::path::PathBuf>, strategy: ResizeStrategy) {
     let mut connection = PlatformConnection::new().expect("failed to connect to display server");
     let window = connection
         .create_window(
@@ -213,6 +238,19 @@ pub fn run(out: Option<std::path::PathBuf>) {
     let mut pending_exact_size: Option<(u32, u32)> = None;
     let mut last_resize_event_at: Option<Instant> = None;
 
+    // REVIEW.md finding #235, Option 3: only `ResizeStrategy::Timeout`
+    // bounds the acquire wait -- `Coarse` passes `u64::MAX`, which
+    // `RhiDevice::begin_frame_with_timeout` treats identically to plain
+    // `begin_frame`'s own unbounded wait (a real Vulkan implementation
+    // never returns `VK_TIMEOUT` for a `u64::MAX` timeout), so this one
+    // constant cleanly covers both strategies without branching the
+    // acquire call itself.
+    const ACQUIRE_TIMEOUT_MS: f32 = 20.0;
+    let acquire_timeout_ns: u64 = match strategy {
+        ResizeStrategy::Coarse => u64::MAX,
+        ResizeStrategy::Timeout => 20_000_000,
+    };
+
     'outer: loop {
         let elapsed = f64::from(clock.elapsed());
 
@@ -243,33 +281,100 @@ pub fn run(out: Option<std::path::PathBuf>) {
         if close_requested {
             break 'outer;
         }
-        if let Some((width, height)) = latest_resize {
-            pending_exact_size = Some((width, height));
-            last_resize_event_at = Some(Instant::now());
-            let coarse_width = width.div_ceil(DRAG_COARSE_STEP) * DRAG_COARSE_STEP;
-            let coarse_height = height.div_ceil(DRAG_COARSE_STEP) * DRAG_COARSE_STEP;
-            if surface.width != coarse_width || surface.height != coarse_height {
-                let rebuild_ms = surface.resize(&device, coarse_width, coarse_height);
-                log.write_resize_event(elapsed, coarse_width, coarse_height, rebuild_ms)
-                    .expect("failed to write telemetry log");
+        match strategy {
+            ResizeStrategy::Coarse => {
+                if let Some((width, height)) = latest_resize {
+                    pending_exact_size = Some((width, height));
+                    last_resize_event_at = Some(Instant::now());
+                    let coarse_width = width.div_ceil(DRAG_COARSE_STEP) * DRAG_COARSE_STEP;
+                    let coarse_height = height.div_ceil(DRAG_COARSE_STEP) * DRAG_COARSE_STEP;
+                    if surface.width != coarse_width || surface.height != coarse_height {
+                        let rebuild_ms = surface.resize(&device, coarse_width, coarse_height);
+                        log.write_resize_event(elapsed, coarse_width, coarse_height, rebuild_ms)
+                            .expect("failed to write telemetry log");
+                    }
+                }
+                // Drag has gone quiet: snap to the real, exact size now
+                // that there's no more back-to-back resize traffic to
+                // coalesce against. Independent of whether *this*
+                // iteration saw a resize event -- the settle deadline can
+                // expire on any later frame.
+                if let (Some((exact_width, exact_height)), Some(last_event)) =
+                    (pending_exact_size, last_resize_event_at)
+                {
+                    if last_event.elapsed().as_secs_f64() * 1000.0 >= DRAG_SETTLE_MS
+                        && (surface.width != exact_width || surface.height != exact_height)
+                    {
+                        let rebuild_ms = surface.resize(&device, exact_width, exact_height);
+                        log.write_resize_event(elapsed, exact_width, exact_height, rebuild_ms)
+                            .expect("failed to write telemetry log");
+                        pending_exact_size = None;
+                        last_resize_event_at = None;
+                    }
+                }
+            }
+            ResizeStrategy::Timeout => {
+                // No coarse bucketing: always resize to the exact live
+                // size, isolating Option 3's own bounded-acquire effect
+                // for a fair comparison against Option 2 above.
+                if let Some((width, height)) = latest_resize {
+                    if surface.width != width || surface.height != height {
+                        let rebuild_ms = surface.resize(&device, width, height);
+                        log.write_resize_event(elapsed, width, height, rebuild_ms)
+                            .expect("failed to write telemetry log");
+                    }
+                }
             }
         }
-        // Drag has gone quiet: snap to the real, exact size now that
-        // there's no more back-to-back resize traffic to coalesce
-        // against. Independent of whether *this* iteration saw a resize
-        // event -- the settle deadline can expire on any later frame.
-        if let (Some((exact_width, exact_height)), Some(last_event)) =
-            (pending_exact_size, last_resize_event_at)
-        {
-            if last_event.elapsed().as_secs_f64() * 1000.0 >= DRAG_SETTLE_MS
-                && (surface.width != exact_width || surface.height != exact_height)
-            {
-                let rebuild_ms = surface.resize(&device, exact_width, exact_height);
-                log.write_resize_event(elapsed, exact_width, exact_height, rebuild_ms)
-                    .expect("failed to write telemetry log");
-                pending_exact_size = None;
-                last_resize_event_at = None;
-            }
+
+        // Diagnostic-only, split out of `submit_frame`'s own single
+        // acquire+record+present sequence (REVIEW.md finding #235): the
+        // first pass of this instrumentation proved the entire "trails
+        // then jumps" stall lives somewhere inside `submit_frame` as a
+        // whole (poll/record were always ~0ms while a stall was
+        // happening); this second pass separately times `begin_frame`
+        // (the `vkAcquireNextImageKHR` wait) from `submit_and_present`
+        // (the `vkQueuePresentKHR` call) to find out which specific
+        // Vulkan call is actually blocking.
+        //
+        // Real resize recovery, matching `windowed_renderer.rs`'s own
+        // identical retry-once-against-a-freshly-resized-swapchain
+        // fallback: a resize can invalidate the swapchain before this
+        // loop's own `InputEvent::Resized` handling above catches up
+        // (or via any other `SwapchainOutOfDate` cause, e.g. a
+        // minimize/restore), and this is the belt-and-suspenders path
+        // for exactly that race, not the primary mechanism.
+        //
+        // Acquire runs BEFORE the CPU-side recording/ring-buffer-write
+        // block below, not after -- a real bug found running Option 3
+        // for the first time (REVIEW.md finding #235): with recording
+        // done unconditionally first, every timed-out-and-skipped frame
+        // still wrote a fresh vertex/index copy into the ring buffer's
+        // current frame-in-flight segment without `submit_and_present`
+        // ever running to advance `frame_sync.frame_index` and free it
+        // up -- a sustained run of skips (exactly what a real, heavy
+        // resize-drag stall produces) exhausts that segment and panics
+        // with "ring buffer write failed". Recording only after a
+        // successful acquire means a skipped frame writes nothing.
+        let acquire_start = Instant::now();
+        let begin_result = device.begin_frame_with_timeout(&surface.swapchain, acquire_timeout_ns);
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "a real per-frame stage duration never approaches f32's precision limits"
+        )]
+        let mut acquire_ms = acquire_start.elapsed().as_secs_f64() as f32 * 1000.0;
+        if matches!(begin_result, Err(EngineError::AcquireTimedOut)) {
+            // REVIEW.md finding #235, Option 3: skip this tick's render
+            // entirely rather than retrying or blocking -- safe to bail
+            // out here with no cleanup because `VulkanDevice::
+            // begin_frame_impl` only resets the frame fence *after* a
+            // successful acquire, so a timed-out acquire leaves it
+            // exactly as the next iteration's own `wait_for_fences`
+            // expects to find it, and (per the reordering above) no
+            // ring-buffer write has happened yet this iteration either.
+            log.write_acquire_skip(elapsed, ACQUIRE_TIMEOUT_MS)
+                .expect("failed to write telemetry log");
+            continue 'outer;
         }
 
         let record_start = Instant::now();
@@ -299,30 +404,6 @@ pub fn run(out: Option<std::path::PathBuf>) {
             height: surface.height,
         };
 
-        // Diagnostic-only, split out of `submit_frame`'s own single
-        // acquire+record+present sequence (REVIEW.md finding #235): the
-        // first pass of this instrumentation proved the entire "trails
-        // then jumps" stall lives somewhere inside `submit_frame` as a
-        // whole (poll/record were always ~0ms while a stall was
-        // happening); this second pass separately times `begin_frame`
-        // (the `vkAcquireNextImageKHR` wait) from `submit_and_present`
-        // (the `vkQueuePresentKHR` call) to find out which specific
-        // Vulkan call is actually blocking.
-        //
-        // Real resize recovery, matching `windowed_renderer.rs`'s own
-        // identical retry-once-against-a-freshly-resized-swapchain
-        // fallback: a resize can invalidate the swapchain before this
-        // loop's own `InputEvent::Resized` handling above catches up
-        // (or via any other `SwapchainOutOfDate` cause, e.g. a
-        // minimize/restore), and this is the belt-and-suspenders path
-        // for exactly that race, not the primary mechanism.
-        let acquire_start = Instant::now();
-        let begin_result = device.begin_frame(&surface.swapchain);
-        #[allow(
-            clippy::cast_possible_truncation,
-            reason = "a real per-frame stage duration never approaches f32's precision limits"
-        )]
-        let mut acquire_ms = acquire_start.elapsed().as_secs_f64() as f32 * 1000.0;
         let mut present_ms;
         let mut attempt_result = match begin_result {
             Ok((mut cmd_buffer, image)) => {
@@ -364,6 +445,12 @@ pub fn run(out: Option<std::path::PathBuf>) {
             let rebuild_ms = surface.resize(&device, width, height);
             log.write_resize_event(elapsed, width, height, rebuild_ms)
                 .expect("failed to write telemetry log");
+            // Deliberately unbounded, unlike the primary acquire above:
+            // this runs immediately after `surface.resize` just built a
+            // fresh, correctly-sized swapchain, which is not the
+            // stale-vs-live-size mismatch findings #235's own bounded
+            // acquire (Option 3) targets -- and this whole arm is
+            // already a rare race-condition fallback, not the hot path.
             let acquire_start2 = Instant::now();
             let begin_result2 = device.begin_frame(&surface.swapchain);
             #[allow(

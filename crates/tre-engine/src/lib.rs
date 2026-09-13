@@ -107,6 +107,17 @@ pub enum EngineError {
     /// should report cleanly.
     #[error("this swapchain has no CPU-visible readback path (not a headless swapchain)")]
     PixelReadbackUnsupported,
+    /// [`crate::RhiSwapchain::acquire_next_image_with_timeout`]/
+    /// [`crate::RhiDevice::begin_frame_with_timeout`]'s bounded wait for
+    /// the next swapchain image elapsed before one became available
+    /// (REVIEW.md finding #235, Option 3) -- recoverable by the caller
+    /// simply skipping this tick's render and trying again next
+    /// iteration, unlike [`Self::DeviceLost`]/[`Self::SwapchainOutOfDate`]
+    /// which both require real recovery action first. Never returned by
+    /// the plain, unbounded [`crate::RhiSwapchain::acquire_next_image`]/
+    /// [`crate::RhiDevice::begin_frame`].
+    #[error("timed out waiting for the next swapchain image")]
+    AcquireTimedOut,
 }
 
 /// A clip rectangle in the coordinate space `Canvas::push_clip`/scissor
