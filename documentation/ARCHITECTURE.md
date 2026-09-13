@@ -841,6 +841,21 @@ pub struct ShapeRegistry {
   gap `main_loop_demo.rs`'s own Step 9.2 already disclosed for RHI
   submission and `std::thread::scope`, not something this step's own
   bounded scope attempted to redesign.
+* **No viewport/frustum culling or virtualization (REVIEW.md finding
+  #236, flagged 2026-09-13, not fixed).** `flatten_into`'s only two skip
+  conditions are the dirty/animating check and explicit `Visibility::
+  Hidden`/`Collapsed` -- neither depends on a shape's actual on-screen
+  position. A shape whose bounding box lies entirely outside the current
+  viewport still gets fully tessellated (CPU-side vertex/index
+  generation, plus a real vertex-shader invocation) every dirty frame;
+  only the GPU's own scissor/viewport spares it real fragment-shading
+  cost. Immaterial at the scales this codebase has measured so far (a
+  500-1000-shape scene's own CPU flattening cost is already sub-1ms,
+  REVIEW.md finding #235's own instrumentation), so not chased as part
+  of any specific investigation -- but a real, disclosed gap that would
+  matter for a much larger scene (thousands of shapes, many off-screen),
+  left open for a future, dedicated pass rather than fixed speculatively
+  here.
 * **Implementation status, itemized against real rendering support
   (revised 2026-09-09, Step 10.2; updated again same-day for the
   lyon-migration follow-up):**
