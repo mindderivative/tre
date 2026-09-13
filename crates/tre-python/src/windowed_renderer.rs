@@ -22,7 +22,8 @@ use pyo3::prelude::*;
 use raw_window_handle::HasDisplayHandle;
 use tre_engine::{
     execute_frame, submit_frame, BufferBinding, EngineError, FlattenedFrame, FrameArena,
-    PipelineRegistry, RenderingCanvas, RhiDevice, RhiDynamicRingBuffer, ScissorRect, WindowId,
+    PipelineRegistry, RenderingCanvas, RhiDevice, RhiDynamicRingBuffer, RhiSwapchain, ScissorRect,
+    WindowId,
 };
 use tre_platform::{CursorIcon, PlatformConnection, WindowIcon};
 use tre_rhi_vulkan::{register_shape_pipelines, VulkanDevice, VulkanSwapchain};
@@ -639,6 +640,38 @@ impl PyWindowedRenderer {
     fn submit_frame_to_window(&mut self, py: Python<'_>, window: WindowId) -> PyResult<()> {
         if !self.windows.contains_key(&window) {
             return Err(unknown_window_err(window));
+        }
+
+        // REVIEW.md finding #234: resize the swapchain proactively, here,
+        // BEFORE ever attempting to submit a frame against it -- `poll_
+        // events` already updates `slot.width`/`slot.height` the instant
+        // a real `Resized` event arrives, but until this check existed,
+        // nothing made the *swapchain itself* catch up until a real
+        // `SwapchainOutOfDate` error eventually surfaced from `vkAcquire
+        // NextImage`/`vkQueuePresent` -- purely reactive, matching this
+        // module's own original doc comment ("a subsequent render() call
+        // recreates that window's swapchain automatically if needed").
+        // Wayland does not report that error promptly: instead of
+        // erroring, it silently stretches the still-stale-sized
+        // swapchain image to fit the window's already-resized real
+        // surface bounds, which is real, visible squash/stretch during a
+        // live resize -- not a transient one-frame glitch, and not
+        // something the existing pixel-space coordinate math (finding
+        // #233) has any way to prevent, since the GPU image being
+        // presented is a genuinely wrong size the whole time. Checking
+        // and resizing here closes that window entirely: by the time
+        // `submit_frame` below ever runs, the swapchain's own real
+        // extent already matches `slot.width`/`slot.height`.
+        if let Some(slot) = self.windows.get(&window) {
+            let (actual_width, actual_height) = slot.swapchain.extent();
+            if actual_width != slot.width || actual_height != slot.height {
+                let (width, height) = (slot.width, slot.height);
+                self.windows
+                    .get_mut(&window)
+                    .expect("checked present above")
+                    .resize(&self.device, width, height)
+                    .map_err(engine_err)?;
+            }
         }
 
         let frame = &self.flattened;
