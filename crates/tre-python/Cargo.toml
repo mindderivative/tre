@@ -16,6 +16,17 @@ bytemuck = "1.25.2"
 # "py-clone": `PyText`'s own `#[derive(Clone)]` needs `Py<PyFont>: Clone`
 # (Phase 12 Step 12.3), which PyO3 0.27 gates behind this feature --
 # found via a real compile error, not assumed up front.
+#
+# REVIEW.md finding #246: NOT bumped to the newer 0.29.x/0.30.x series
+# despite one existing -- 0.27.2 is already the newest version this
+# workspace's own `rust-version = 1.75` MSRV can resolve. Confirmed
+# directly, not assumed: 0.27.2 itself requires Rust 1.74; every
+# release from 0.28.2 onward (0.28.0/0.28.1 were never published)
+# requires Rust 1.83, an 8-point MSRV jump this workspace has not
+# adopted. Bumping this pin would require raising `rust-version` for
+# the entire workspace first -- a materially larger, separate decision
+# than a routine dependency update, left to the project owner's own
+# explicit direction rather than done as a side effect of this one.
 pyo3 = { version = "0.27.2", features = ["extension-module", "py-clone"] }
 raw-window-handle = "0.6.2"
 tre-engine = { path = "../tre-engine" }
@@ -56,7 +67,7 @@ tre-tween = { path = "../tre-tween" }
 tre-animation = { path = "../tre-animation" }
 # `PyTween`'s own Vec2 instantiation constructs `glam::Vec2` values
 # directly -- pinned to the identical version `tre-tween` itself uses.
-glam = "0.29"
+glam = "0.33.7"
 # Phase 18 Step 18.3: `tre.A11yBridge` binds `tre-a11y`'s own real
 # AT-SPI2 bridge directly -- confirmed via an isolated single-process
 # feasibility check (Vulkan-linked render + real A11yBridge::connect/
