@@ -93,12 +93,28 @@ fn main() {
     unsafe {
         surface_loader.destroy_surface(surface, None);
     }
-    assert!(
-        device.local_read_blend_supported(),
-        "this demo's own Path shape exercises a real non-Normal BlendMode -- it requires a \
-         device that actually supports VK_KHR_dynamic_rendering_local_read (this project's own \
-         real dev GPU does; see documentation/REVIEW.md)"
-    );
+    // REVIEW.md finding #226: the identical CI gap finding #223 fixed for
+    // blend_mode_demo.rs -- this demo's own non-Normal-BlendMode Polygon
+    // needs the same capability, and its hard assert! here was masked
+    // (never actually reached) in every prior CI run only because
+    // blend_mode_demo's own identical assert! failed first and aborted
+    // the whole vulkan-validation job before this step ever ran. Fixing
+    // that one unmasked this pre-existing, real gap here too. Same fix,
+    // same reasoning: skip gracefully (exit 0) rather than fail the job
+    // on a real environment-capability gap, not a code defect -- this
+    // demo's real proof (zero allocation across a mixed Rectangle/
+    // gradient-Circle/textured-Polygon/blend-Polygon/bordered-arc-Circle
+    // scene) still runs in full on any device that does support the
+    // extension, including this project's own real dev GPU.
+    if !device.local_read_blend_supported() {
+        eprintln!(
+            "shape_registry_zero_alloc_demo: this device doesn't support \
+             VK_KHR_dynamic_rendering_local_read (expected on a software Vulkan implementation \
+             with no real GPU -- this project's own real dev GPU does support it, see \
+             documentation/REVIEW.md) -- skipping"
+        );
+        return;
+    }
     let swapchain = HeadlessSwapchain::new(&device, CANVAS_WIDTH, CANVAS_HEIGHT)
         .expect("failed to create HeadlessSwapchain");
 
