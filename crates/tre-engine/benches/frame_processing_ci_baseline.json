@@ -1,0 +1,9 @@
+{
+  "_comment": "REVIEW.md finding #227: this baseline is CI-hardware-specific, not a portable performance target. Do not compare it against local dev-machine `cargo bench` output -- this project's own dev machine measures this exact benchmark roughly 2x faster than GitHub Actions' hosted runner for the identical code. Read by .github/workflows/ci.yml's 'Check frame_processing bench against its CI baseline' step; nothing else consumes this file.",
+  "benchmark": "record_and_flatten_10k_nodes",
+  "baseline_ns": 892300,
+  "tolerance_pct": 20,
+  "established": "2026-09-13",
+  "established_from": "mean of 5 back-to-back CI runs on GitHub Actions' hosted ubuntu-latest runner, same commit (d5463b1), zero code changes between runs -- run 34731056338 rerun via `gh run rerun --job`. Raw samples (ns): 906800, 905131, 865489, 892782, 891399 -- mean 892300, stdev ~14800 (1.7% coefficient of variation), full range 41300 (4.6% of the mean).",
+  "tolerance_rationale": "20% is roughly 4x the observed 5-run coefficient of variation (1.7%) and roughly 4x the observed full range as a fraction of the mean (4.6%) -- comfortable margin above real run-to-run scatter on this specific runner, while still catching a genuine regression (this benchmark's own pre-#224-fix code measured ~796000ns average historically, and a post-#210/#224 measurement over 796000*1.2=~955200ns would still fail even the old code's own ballpark, so the tolerance is not so wide it would silently pass a real regression back to the old code's own performance class)."
+}
