@@ -22,8 +22,7 @@ use pyo3::prelude::*;
 use raw_window_handle::HasDisplayHandle;
 use tre_engine::{
     execute_frame, submit_frame, BufferBinding, EngineError, FlattenedFrame, FrameArena,
-    PipelineRegistry, RenderingCanvas, RhiDevice, RhiDynamicRingBuffer, RhiSwapchain, ScissorRect,
-    WindowId,
+    PipelineRegistry, RenderingCanvas, RhiDevice, RhiDynamicRingBuffer, ScissorRect, WindowId,
 };
 use tre_platform::{CursorIcon, PlatformConnection, WindowIcon};
 use tre_rhi_vulkan::{register_shape_pipelines, VulkanDevice, VulkanSwapchain};
@@ -50,14 +49,17 @@ fn unknown_window_err(id: WindowId) -> PyErr {
 }
 
 struct WindowSlot {
-    // `Box<dyn RhiSwapchain>` (Architecture review: RHI trait-object
-    // generalization, REVIEW.md finding #216) -- was a concrete
-    // `VulkanSwapchain`; every real use of it below (`submit_frame`/
-    // `execute_frame`) already went through `&dyn RhiSwapchain`. Built
-    // as a concrete `VulkanSwapchain` inside `WindowSlot::create` (below)
-    // since `register_shape_pipelines`/`.format()` still need the
-    // concrete type at construction time, then boxed for storage.
-    swapchain: Box<dyn RhiSwapchain>,
+    // REVIEW.md finding #232: back to a concrete `VulkanSwapchain`
+    // (finding #216 had generalized this to `Box<dyn RhiSwapchain>`,
+    // reasoning "every real use of it already went through `&dyn
+    // RhiSwapchain`") -- that premise no longer holds now that resize
+    // uses `VulkanSwapchain::recreate` directly, a Vulkan-specific
+    // capability with no `RhiSwapchain` trait equivalent (and none
+    // planned: it would need the same low-level `ash` handles
+    // `RhiDevice`'s own higher-level trait deliberately doesn't expose).
+    // The same "ongoing concrete-device need" reasoning this struct's
+    // own `device` field docs already state applies identically here.
+    swapchain: VulkanSwapchain,
     pipelines: PipelineRegistry,
     width: u32,
     height: u32,
@@ -71,9 +73,8 @@ impl WindowSlot {
     // pipelines against, and unlike `PyHeadlessRenderer` (which does
     // this exactly once, before its own device field is boxed), this
     // renderer calls it again every time a new window is created
-    // (`create_window`) or an existing one's swapchain is recreated on
-    // resize -- an ongoing, not one-time, concrete-device need. See
-    // `PyWindowedRenderer::device`'s own field doc comment.
+    // (`create_window`) -- an ongoing, not one-time, concrete-device
+    // need. See `PyWindowedRenderer::device`'s own field doc comment.
     fn create(
         device: &VulkanDevice,
         connection: &PlatformConnection,
@@ -94,11 +95,33 @@ impl WindowSlot {
         let mut pipelines = PipelineRegistry::new();
         register_shape_pipelines(device, &mut pipelines, swapchain.format()).map_err(engine_err)?;
         Ok(Self {
-            swapchain: Box::new(swapchain),
+            swapchain,
             pipelines,
             width,
             height,
         })
+    }
+
+    /// Resizes in place: recreates only `self.swapchain`'s own
+    /// `VkSwapchainKHR` and dependent resources (via `VulkanSwapchain::
+    /// recreate`, reusing the same `VkSurfaceKHR` this slot was created
+    /// with) and updates `width`/`height` -- `self.pipelines` is
+    /// deliberately untouched, since a swapchain's color format is a
+    /// property of the surface, which this never touches. Replaces the
+    /// previous "drop this whole `WindowSlot`, build a brand-new one
+    /// with a brand-new surface" resize path (REVIEW.md finding #230),
+    /// which is what caused that finding's own real Wayland
+    /// `wp_fifo_manager_v1` crash in the first place.
+    fn resize(
+        &mut self,
+        device: &VulkanDevice,
+        width: u32,
+        height: u32,
+    ) -> Result<(), EngineError> {
+        self.swapchain.recreate(device, width, height)?;
+        self.width = width;
+        self.height = height;
+        Ok(())
     }
 }
 
@@ -206,7 +229,7 @@ impl PyWindowedRenderer {
         windows.insert(
             main_window,
             WindowSlot {
-                swapchain: Box::new(swapchain),
+                swapchain,
                 pipelines,
                 width,
                 height,
@@ -633,7 +656,7 @@ impl PyWindowedRenderer {
                 .get(&window)
                 .expect("checked present above; only removed by close_window, not called here");
             let pipelines = &slot.pipelines;
-            let swapchain = &*slot.swapchain;
+            let swapchain = &slot.swapchain;
             let clip_stack = &mut self.clip_stack;
             let full_window = ScissorRect {
                 x: 0,
@@ -673,24 +696,27 @@ impl PyWindowedRenderer {
                 Ok(()) => return Ok(()),
                 Err(RenderError::Engine(EngineError::SwapchainOutOfDate)) if attempt == 0 => {
                     let (width, height) = (slot.width, slot.height);
-                    // REVIEW.md finding #230: drop the stale `WindowSlot`
-                    // (and its `VkSurfaceKHR`) BEFORE requesting a new
-                    // one -- Wayland's `wp_fifo_manager_v1` protocol
-                    // rejects a second fifo surface on the same
-                    // `wl_surface` while the first is still bound.
-                    // `WindowSlot::create` below calls `device.
-                    // create_surface`, which would otherwise run while
-                    // the entry this `remove` drops is still alive (a
-                    // plain `self.windows.insert(window, fresh)` after
-                    // constructing `fresh` only replaces, and therefore
-                    // only drops the old value, *after* `fresh` already
-                    // exists) -- the exact bug `tre-perf-suite`'s own
-                    // identical resize path hit on a real interactive
-                    // resize before this fix.
-                    self.windows.remove(&window);
-                    let fresh =
-                        WindowSlot::create(&self.device, &self.connection, window, width, height)?;
-                    self.windows.insert(window, fresh);
+                    // REVIEW.md finding #232: resize in place via
+                    // `WindowSlot::resize` (which only recreates the
+                    // swapchain, reusing the same `VkSurfaceKHR`)
+                    // instead of tearing down and rebuilding the whole
+                    // `WindowSlot` with a brand-new surface -- closes
+                    // finding #230's own Wayland `wp_fifo_manager_v1`
+                    // crash at its real root (the surface is never
+                    // recreated at all) rather than working around it,
+                    // and skips the redundant shape-pipeline
+                    // re-registration finding #232 also found this path
+                    // was doing on every single resize for no reason (a
+                    // swapchain's color format never changes across a
+                    // resize of the same surface).
+                    self.windows
+                        .get_mut(&window)
+                        .expect(
+                            "checked present above; only removed by close_window, not called \
+                             here",
+                        )
+                        .resize(&self.device, width, height)
+                        .map_err(engine_err)?;
                 }
                 Err(e) => return Err(render_err(e)),
             }

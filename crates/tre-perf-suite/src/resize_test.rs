@@ -5,34 +5,32 @@
 //! length per the spec, not automated/scaled over time the way the
 //! Time-Ramp test is.
 //!
-//! Swapchain-plus-pipeline reconstruction on resize mirrors
-//! `crates/tre-python/src/windowed_renderer.rs`'s own `WindowSlot::
-//! create`-on-`SwapchainOutOfDate` sequence -- the workspace's only
-//! existing precedent for rebuilding a live swapchain -- both
-//! proactively (on `InputEvent::Resized`) and reactively (catching
-//! `EngineError::SwapchainOutOfDate` as a fallback, the same belt-and-
-//! suspenders `windowed_renderer.rs` itself uses).
+//! # History: two real bugs found via actual interactive runs
 //!
-//! # A real bug found via the first actual interactive run
+//! **#230 (`DeviceLost`):** the project owner's own first real resize
+//! crashed after a Wayland compositor error (`wp_fifo_manager_v1:
+//! Attempted to create a second fifo surface for the wl_surface`). Root
+//! cause: the original resize path tore down and rebuilt the whole
+//! `Surface` -- including a brand-new `VulkanDevice::create_surface`
+//! call -- on every resize, and the *new* surface's fifo-surface request
+//! could reach the compositor while the *old* one (still bound to the
+//! same `wl_surface`) had not yet been dropped.
 //!
-//! The project owner's own first real resize crashed with `DeviceLost`
-//! after a Wayland compositor error (`wp_fifo_manager_v1: Attempted to
-//! create a second fifo surface for the wl_surface`). Root cause: the
-//! obvious `surface = Surface::create(...)` reassignment constructs the
-//! *new* `Surface` (which requests a brand-new `VkSurfaceKHR`/fifo
-//! surface from the compositor) while the *old* `Surface` -- still bound
-//! to the same underlying `wl_surface` -- has not been dropped yet, since
-//! Rust only drops a variable's old value after the assignment's right-
-//! hand side is fully evaluated. Wayland's `wp_fifo_manager_v1` protocol
-//! allows only one fifo surface per `wl_surface` at a time, so the
-//! second request is rejected, corrupting the surface and surfacing as
-//! `DeviceLost` on the following `VulkanSwapchain::new`. Fixed by making
-//! `surface` an `Option<Surface>` and [`rebuild_surface`] explicitly
-//! setting it to `None` (running the old `Surface`'s `Drop`, which does
-//! destroy its own `VkSurfaceKHR`) *before* constructing the replacement
-//! -- `windowed_renderer.rs`'s own identical `HashMap::insert`-based
-//! resize path has this same latent ordering issue, not fixed here since
-//! it's shared, unrelated code outside this crate's own scope.
+//! **#231 (redundant rebuilds):** even after #230's fix, every `Resized`
+//! event drained from one `poll_events()` batch triggered its own full
+//! rebuild, even when a later event in the same batch immediately
+//! superseded it -- coalesced to act on only the batch's last size.
+//!
+//! **#232 (this fix): the real, root-level fix for both.** Recreating
+//! the surface at all was never necessary -- only the `VkSwapchainKHR`
+//! actually needs to change size. `Surface` now builds its surface
+//! *once* and calls the new [`tre_rhi_vulkan::VulkanSwapchain::recreate`]
+//! in place on every resize, which reuses the same `VkSurfaceKHR`
+//! unconditionally. This closes #230 at its real cause (the surface is
+//! never recreated, so the Wayland conflict can't occur) rather than
+//! working around it, and it means `pipelines` never needs
+//! re-registering on resize either -- a swapchain's color format is a
+//! property of the surface, which this path never touches.
 
 use std::time::Instant;
 
@@ -53,10 +51,9 @@ const FIXED_SHAPE_COUNT: usize = 500;
 const RING_BUFFER_CAPACITY: usize = 4 * 1024 * 1024;
 const SAMPLE_INTERVAL_S: f64 = 0.25;
 
-/// The part of the render target that a resize actually replaces --
-/// mirrors `windowed_renderer.rs`'s own `WindowSlot` exactly (a fresh
-/// surface + swapchain + freshly-recompiled shape pipelines against the
-/// new swapchain format/extent).
+/// The part of the render target a resize touches -- built once, at
+/// window-open time; a resize after that only ever calls [`Surface::
+/// resize`], never rebuilds this whole struct.
 struct Surface {
     swapchain: VulkanSwapchain,
     pipelines: PipelineRegistry,
@@ -89,31 +86,27 @@ impl Surface {
             height,
         }
     }
-}
 
-/// Replaces `*surface` with a freshly built one at `width`x`height`,
-/// returning the rebuild's own wall-clock duration in milliseconds.
-/// Explicitly drops the old `Surface` (`*surface = None`) before
-/// constructing the new one -- see this module's own header comment for
-/// why that ordering is load-bearing, not stylistic.
-fn rebuild_surface(
-    surface: &mut Option<Surface>,
-    device: &VulkanDevice,
-    connection: &PlatformConnection,
-    window: WindowId,
-    width: u32,
-    height: u32,
-) -> f32 {
-    let rebuild_start = Instant::now();
-    *surface = None;
-    *surface = Some(Surface::create(device, connection, window, width, height));
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "a real swapchain rebuild's own wall-clock duration never approaches f32's \
-                  precision limits"
-    )]
-    let rebuild_ms = rebuild_start.elapsed().as_secs_f64() as f32 * 1000.0;
-    rebuild_ms
+    /// Resizes in place: recreates only `self.swapchain`'s own
+    /// `VkSwapchainKHR` and dependent resources (via `VulkanSwapchain::
+    /// recreate`, reusing the same `VkSurfaceKHR` this `Surface` was
+    /// created with) and updates `width`/`height` -- `self.pipelines` is
+    /// deliberately untouched; see this module's own header comment.
+    fn resize(&mut self, device: &VulkanDevice, width: u32, height: u32) -> f32 {
+        let rebuild_start = Instant::now();
+        self.swapchain
+            .recreate(device, width, height)
+            .expect("failed to recreate VulkanSwapchain");
+        self.width = width;
+        self.height = height;
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "a real swapchain rebuild's own wall-clock duration never approaches f32's \
+                      precision limits"
+        )]
+        let rebuild_ms = rebuild_start.elapsed().as_secs_f64() as f32 * 1000.0;
+        rebuild_ms
+    }
 }
 
 pub fn run(out: Option<std::path::PathBuf>) {
@@ -138,13 +131,7 @@ pub fn run(out: Option<std::path::PathBuf>) {
         probe_surface_loader.destroy_surface(probe_surface, None);
     }
 
-    let mut surface = Some(Surface::create(
-        &device,
-        &connection,
-        window,
-        INITIAL_WIDTH,
-        INITIAL_HEIGHT,
-    ));
+    let mut surface = Surface::create(&device, &connection, window, INITIAL_WIDTH, INITIAL_HEIGHT);
     let ring_buffer = device.create_dynamic_ring_buffer(RING_BUFFER_CAPACITY);
     let resources = WorkloadResources::build(&device);
 
@@ -178,17 +165,7 @@ pub fn run(out: Option<std::path::PathBuf>) {
 
         // Coalesce every `Resized` event this one `poll_events()` batch
         // drains down to just the *last* (i.e. current) size, instead of
-        // rebuilding the swapchain once per queued event -- pyCopper's
-        // own `LESSONS_LEARNED.md` names this exact anti-pattern
-        // ("`rendercanvas`'s `_on_size_change` fires one full synchronous
-        // render per event with no coalescing -- a genuine backlog, not
-        // a metaphor"). A fast drag can queue several resize events
-        // between two polls of this loop (which only polls once per
-        // rendered frame); rebuilding the entire surface/swapchain/
-        // pipeline set for each stale intermediate size, only to
-        // immediately discard it for the next one, is pure waste this
-        // coalescing removes for free -- the final rebuild below is
-        // against the one size that's actually still current.
+        // resizing once per queued event (REVIEW.md finding #231).
         let mut close_requested = false;
         let mut latest_resize: Option<(u32, u32)> = None;
         for event in connection.poll_events() {
@@ -208,12 +185,8 @@ pub fn run(out: Option<std::path::PathBuf>) {
             break 'outer;
         }
         if let Some((width, height)) = latest_resize {
-            if surface
-                .as_ref()
-                .is_some_and(|s| s.width != width || s.height != height)
-            {
-                let rebuild_ms =
-                    rebuild_surface(&mut surface, &device, &connection, window, width, height);
+            if surface.width != width || surface.height != height {
+                let rebuild_ms = surface.resize(&device, width, height);
                 log.write_resize_event(elapsed, width, height, rebuild_ms)
                     .expect("failed to write telemetry log");
             }
@@ -233,27 +206,24 @@ pub fn run(out: Option<std::path::PathBuf>) {
             .write(index_bytes)
             .expect("ring buffer write failed for indices");
 
-        let s = surface
-            .as_ref()
-            .expect("surface is always Some between rebuilds");
         let full_window = ScissorRect {
             x: 0,
             y: 0,
-            width: s.width,
-            height: s.height,
+            width: surface.width,
+            height: surface.height,
         };
 
         // Real resize recovery, matching `windowed_renderer.rs`'s own
-        // identical retry-once-against-a-freshly-recreated-swapchain
+        // identical retry-once-against-a-freshly-resized-swapchain
         // fallback: a resize can invalidate the swapchain before this
         // loop's own `InputEvent::Resized` handling above catches up
         // (or via any other `SwapchainOutOfDate` cause, e.g. a
         // minimize/restore), and this is the belt-and-suspenders path
         // for exactly that race, not the primary mechanism.
-        let mut attempt_result = submit_frame(&device, &s.swapchain, |cmd_buffer| {
+        let mut attempt_result = submit_frame(&device, &surface.swapchain, |cmd_buffer| {
             execute_frame(
                 &flattened,
-                &s.pipelines,
+                &surface.pipelines,
                 BufferBinding {
                     buffer: &*ring_buffer,
                     offset: vertex_offset,
@@ -269,18 +239,14 @@ pub fn run(out: Option<std::path::PathBuf>) {
             );
         });
         if matches!(attempt_result, Err(EngineError::SwapchainOutOfDate)) {
-            let (width, height) = (s.width, s.height);
-            let rebuild_ms =
-                rebuild_surface(&mut surface, &device, &connection, window, width, height);
+            let (width, height) = (surface.width, surface.height);
+            let rebuild_ms = surface.resize(&device, width, height);
             log.write_resize_event(elapsed, width, height, rebuild_ms)
                 .expect("failed to write telemetry log");
-            let s = surface
-                .as_ref()
-                .expect("just rebuilt above, always Some immediately after");
-            attempt_result = submit_frame(&device, &s.swapchain, |cmd_buffer| {
+            attempt_result = submit_frame(&device, &surface.swapchain, |cmd_buffer| {
                 execute_frame(
                     &flattened,
-                    &s.pipelines,
+                    &surface.pipelines,
                     BufferBinding {
                         buffer: &*ring_buffer,
                         offset: vertex_offset,
