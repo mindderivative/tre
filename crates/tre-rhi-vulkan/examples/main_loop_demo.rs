@@ -280,7 +280,9 @@ fn main() {
         .bindless_index()
         .expect("shared atlas texture has no bindless index");
 
-    let ring_buffer = device.create_dynamic_ring_buffer(RING_BUFFER_CAPACITY);
+    let ring_buffer = device
+        .create_dynamic_ring_buffer(RING_BUFFER_CAPACITY)
+        .expect("failed to create dynamic ring buffer");
 
     // --- Phase 9 Step 9.2: every per-frame structure built exactly
     // once, here, before the loop -- reset()/flatten_into() every frame

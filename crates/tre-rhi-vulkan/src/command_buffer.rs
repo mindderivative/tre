@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use ash::vk;
 use ash::vk::Handle;
 use tre_engine::{
-    RhiBuffer, RhiCommandBuffer, RhiDevice, RhiPipelineState, RhiTexture, ScissorRect,
+    EngineError, RhiBuffer, RhiCommandBuffer, RhiDevice, RhiPipelineState, RhiTexture, ScissorRect,
     TextureFormat,
 };
 
@@ -683,7 +683,7 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
         source: &dyn RhiTexture,
         width: u32,
         height: u32,
-    ) -> Box<dyn RhiTexture> {
+    ) -> Result<Box<dyn RhiTexture>, EngineError> {
         // Lazy, once-per-process setup (IMPLEMENTATION.md Step 7.2.2) --
         // see `BlurResources`'s own doc comment for the full design.
         let blur = {
@@ -780,19 +780,38 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
         };
 
         // L0 (`source`) -> L1: downsample to half size. Set 0 reads L0.
+        // REVIEW.md finding #189: every `acquire_transient_target` call in
+        // this chain now propagates a real `Err` (pool exhaustion under
+        // real VRAM pressure is a genuine, recoverable condition, not a
+        // programmer-error panic) instead of `.expect()`-ing it. Nothing
+        // has been acquired yet at this first hop, so there is nothing to
+        // release on failure.
         point_at(0, vk::ImageView::from_raw(source.raw_handle()));
-        let l1 = device
-            .acquire_transient_target(half_size.0, half_size.1, TextureFormat::Rgba16Float)
-            .expect("apply_layer_blur: failed to acquire L1");
+        let l1 = device.acquire_transient_target(
+            half_size.0,
+            half_size.1,
+            TextureFormat::Rgba16Float,
+        )?;
         self.begin_render_to_texture_no_end(&*l1, half_size.0, half_size.1);
         draw_hop(blur.downsample_pipeline, 0, half_size);
         self.end_render_to_texture(&*l1);
 
         // L1 -> L2: downsample to quarter size. Set 1 reads L1.
         point_at(1, vk::ImageView::from_raw(l1.raw_handle()));
-        let l2 = device
-            .acquire_transient_target(quarter_size.0, quarter_size.1, TextureFormat::Rgba16Float)
-            .expect("apply_layer_blur: failed to acquire L2");
+        let l2 = match device.acquire_transient_target(
+            quarter_size.0,
+            quarter_size.1,
+            TextureFormat::Rgba16Float,
+        ) {
+            Ok(target) => target,
+            // `l1` is still held (not yet released) at this point -- must
+            // go back to the pool before propagating, or this failure
+            // path leaks it.
+            Err(e) => {
+                device.release_transient_target(l1);
+                return Err(e);
+            }
+        };
         self.begin_render_to_texture_no_end(&*l2, quarter_size.0, quarter_size.1);
         draw_hop(blur.downsample_pipeline, 1, quarter_size);
         self.end_render_to_texture(&*l2);
@@ -800,9 +819,17 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
 
         // L2 -> U1: upsample back to half size. Set 2 reads L2.
         point_at(2, vk::ImageView::from_raw(l2.raw_handle()));
-        let u1 = device
-            .acquire_transient_target(half_size.0, half_size.1, TextureFormat::Rgba16Float)
-            .expect("apply_layer_blur: failed to acquire U1");
+        let u1 = match device.acquire_transient_target(
+            half_size.0,
+            half_size.1,
+            TextureFormat::Rgba16Float,
+        ) {
+            Ok(target) => target,
+            Err(e) => {
+                device.release_transient_target(l2);
+                return Err(e);
+            }
+        };
         self.begin_render_to_texture_no_end(&*u1, half_size.0, half_size.1);
         draw_hop(blur.upsample_pipeline, 2, half_size);
         self.end_render_to_texture(&*u1);
@@ -811,15 +838,19 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
         // U1 -> U0: upsample back to full size -- the real result. Set 3
         // reads U1.
         point_at(3, vk::ImageView::from_raw(u1.raw_handle()));
-        let u0 = device
-            .acquire_transient_target(width, height, TextureFormat::Rgba16Float)
-            .expect("apply_layer_blur: failed to acquire U0");
+        let u0 = match device.acquire_transient_target(width, height, TextureFormat::Rgba16Float) {
+            Ok(target) => target,
+            Err(e) => {
+                device.release_transient_target(u1);
+                return Err(e);
+            }
+        };
         self.begin_render_to_texture_no_end(&*u0, width, height);
         draw_hop(blur.upsample_pipeline, 3, (width, height));
         self.end_render_to_texture(&*u0);
         device.release_transient_target(u1);
 
-        u0
+        Ok(u0)
     }
 
     fn raw_handle(&self) -> u64 {

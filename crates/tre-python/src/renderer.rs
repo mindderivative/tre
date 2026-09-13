@@ -220,7 +220,9 @@ impl PyHeadlessRenderer {
         let swapchain = HeadlessSwapchain::new(&device, width, height).map_err(engine_err)?;
         let mut pipelines = PipelineRegistry::new();
         register_shape_pipelines(&device, &mut pipelines, HEADLESS_FORMAT).map_err(engine_err)?;
-        let ring_buffer = device.create_dynamic_ring_buffer(RING_BUFFER_CAPACITY);
+        let ring_buffer = device
+            .create_dynamic_ring_buffer(RING_BUFFER_CAPACITY)
+            .map_err(engine_err)?;
         let text_atlas = TextAtlas::new(&device)?;
 
         Ok(Self {

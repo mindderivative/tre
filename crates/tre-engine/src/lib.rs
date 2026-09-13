@@ -2764,7 +2764,7 @@ mod tests {
             source: &dyn RhiTexture,
             width: u32,
             height: u32,
-        ) -> Box<dyn RhiTexture> {
+        ) -> Result<Box<dyn RhiTexture>, EngineError> {
             self.calls.push(RecordedCall::ApplyLayerBlur(
                 source.raw_handle(),
                 width,
@@ -2773,12 +2773,12 @@ mod tests {
             // A distinct raw_handle (888) from every other fake texture in
             // this test module -- lets a test assert the *blurred*
             // texture, not the original, is what gets composited.
-            Box::new(FakeTexture {
+            Ok(Box::new(FakeTexture {
                 raw_handle: 888,
                 width,
                 height,
                 format: TextureFormat::Rgba16Float,
-            })
+            }))
         }
 
         fn raw_handle(&self) -> u64 {
@@ -2898,7 +2898,10 @@ mod tests {
     }
 
     impl RhiDevice for FakeDevice {
-        fn create_dynamic_ring_buffer(&self, _capacity: usize) -> Box<dyn RhiDynamicRingBuffer> {
+        fn create_dynamic_ring_buffer(
+            &self,
+            _capacity: usize,
+        ) -> Result<Box<dyn RhiDynamicRingBuffer>, EngineError> {
             unimplemented!("not exercised by any execute_frame test")
         }
 

@@ -2435,7 +2435,10 @@ mod tests {
     }
 
     impl crate::RhiDevice for FakeDevice {
-        fn create_dynamic_ring_buffer(&self, _capacity: usize) -> Box<dyn RhiDynamicRingBuffer> {
+        fn create_dynamic_ring_buffer(
+            &self,
+            _capacity: usize,
+        ) -> Result<Box<dyn RhiDynamicRingBuffer>, crate::EngineError> {
             unimplemented!("not exercised by any shapes.rs test")
         }
         fn shape_style_buffer(&self) -> &dyn RhiDynamicRingBuffer {

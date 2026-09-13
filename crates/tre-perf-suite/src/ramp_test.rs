@@ -67,7 +67,9 @@ pub fn run(config: RampConfig) {
     let mut pipelines = PipelineRegistry::new();
     register_shape_pipelines(&device, &mut pipelines, swapchain.format())
         .expect("failed to register shape pipelines");
-    let ring_buffer = device.create_dynamic_ring_buffer(RING_BUFFER_CAPACITY);
+    let ring_buffer = device
+        .create_dynamic_ring_buffer(RING_BUFFER_CAPACITY)
+        .expect("failed to create dynamic ring buffer");
     let resources = WorkloadResources::build(&device);
 
     let full_window = ScissorRect {

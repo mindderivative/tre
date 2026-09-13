@@ -355,7 +355,9 @@ impl PyWindowedRenderer {
         let mut pipelines = PipelineRegistry::new();
         register_shape_pipelines(&device, &mut pipelines, swapchain.format())
             .map_err(engine_err)?;
-        let ring_buffer = device.create_dynamic_ring_buffer(RING_BUFFER_CAPACITY);
+        let ring_buffer = device
+            .create_dynamic_ring_buffer(RING_BUFFER_CAPACITY)
+            .map_err(engine_err)?;
         let text_atlas = TextAtlas::new(&device)?;
 
         let mut windows = HashMap::new();

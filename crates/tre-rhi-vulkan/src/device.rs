@@ -2216,17 +2216,17 @@ impl VulkanDevice {
 }
 
 impl RhiDevice for VulkanDevice {
-    fn create_dynamic_ring_buffer(&self, capacity: usize) -> Box<dyn RhiDynamicRingBuffer> {
-        Box::new(
-            VulkanRingBuffer::new(
-                &self.device,
-                self.physical_device,
-                &self.instance,
-                self.frame_sync.clone(),
-                capacity,
-            )
-            .expect("failed to create dynamic ring buffer"),
-        )
+    fn create_dynamic_ring_buffer(
+        &self,
+        capacity: usize,
+    ) -> Result<Box<dyn RhiDynamicRingBuffer>, EngineError> {
+        Ok(Box::new(VulkanRingBuffer::new(
+            &self.device,
+            self.physical_device,
+            &self.instance,
+            self.frame_sync.clone(),
+            capacity,
+        )?))
     }
 
     /// Phase 10 Step 10.2: the bindless binding-2 storage buffer

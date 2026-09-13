@@ -363,7 +363,16 @@ pub trait RhiDevice: Send + Sync {
     /// `capacity` is the ring buffer's TOTAL size in bytes (TECHNICAL.md
     /// Section 3.1's $16\text{-}32\text{MB}$), divided evenly across the
     /// 3 frame-in-flight segments -- not the per-segment size.
-    fn create_dynamic_ring_buffer(&self, capacity: usize) -> Box<dyn RhiDynamicRingBuffer>;
+    ///
+    /// # Errors
+    /// Returns [`EngineError::DeviceLost`] if the backing GPU buffer/
+    /// memory allocation fails (REVIEW.md finding #189: previously an
+    /// internal `.expect()`, panicking on a real, recoverable
+    /// out-of-memory condition instead of letting a caller handle it).
+    fn create_dynamic_ring_buffer(
+        &self,
+        capacity: usize,
+    ) -> Result<Box<dyn RhiDynamicRingBuffer>, EngineError>;
     /// Phase 10 Step 10.2: the backend's one persistent shape-style
     /// storage buffer -- bound once, at device construction, to the
     /// bindless descriptor set's binding 1 (see
@@ -760,13 +769,23 @@ pub trait RhiCommandBuffer {
     /// same way once done. `source` itself is untouched (still owned by
     /// the caller, still sampling-ready) -- this does not consume or
     /// release it.
+    ///
+    /// # Errors
+    /// Returns [`EngineError::TransientPoolBudgetExceeded`] (or another
+    /// `acquire_transient_target` failure) if any of this method's own
+    /// internal hops cannot acquire a transient target (REVIEW.md finding
+    /// #189: previously an internal `.expect()` per hop, panicking on a
+    /// real, recoverable pool-exhaustion condition instead of letting a
+    /// caller handle it). Any hop already acquired before a later one
+    /// fails is released back to the pool before returning `Err` -- this
+    /// method never leaks a transient target on a failure path.
     fn apply_layer_blur(
         &mut self,
         device: &dyn RhiDevice,
         source: &dyn RhiTexture,
         width: u32,
         height: u32,
-    ) -> Box<dyn RhiTexture>;
+    ) -> Result<Box<dyn RhiTexture>, EngineError>;
 
     fn raw_handle(&self) -> u64;
 }
@@ -991,8 +1010,21 @@ pub fn execute_frame(
                 // the popped `LayerDesc`'s own `blur` flag here, never a
                 // real bindless index (Step 7.2.2).
                 let composited_texture = if command.texture_handle != 0 {
-                    let blurred =
-                        cmd_buffer.apply_layer_blur(device, &*texture, layer_width, layer_height);
+                    // REVIEW.md finding #189 widened this to `Result`, but
+                    // `execute_frame` itself still has no `Result` return
+                    // type to propagate it through -- the same, already-
+                    // disclosed gap finding #141 records above (`execute_
+                    // frame` becoming fallible end-to-end is its own,
+                    // separate, deliberately out-of-scope future work).
+                    // This `.expect()` is therefore an explicit, visible
+                    // call-site decision now, not a panic hidden inside
+                    // the trait impl itself -- any *other* caller of
+                    // `RhiCommandBuffer::apply_layer_blur` directly (not
+                    // through `execute_frame`) gets the real `Result` and
+                    // can choose to handle it.
+                    let blurred = cmd_buffer
+                        .apply_layer_blur(device, &*texture, layer_width, layer_height)
+                        .expect("execute_frame: apply_layer_blur failed (see finding #141)");
                     device.release_transient_target(texture);
                     // REVIEW.md finding #153: `apply_layer_blur`'s own
                     // internal hops rebind the command buffer's vertex/

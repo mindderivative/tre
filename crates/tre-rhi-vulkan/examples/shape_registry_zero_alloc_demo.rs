@@ -289,7 +289,9 @@ fn main() {
     let mut root = RenderingCanvas::new();
     let mut arena = FrameArena::with_capacity(256, 512, 32, 0);
     let mut flattened = FlattenedFrame::default();
-    let ring_buffer = device.create_dynamic_ring_buffer(RING_BUFFER_CAPACITY);
+    let ring_buffer = device
+        .create_dynamic_ring_buffer(RING_BUFFER_CAPACITY)
+        .expect("failed to create dynamic ring buffer");
 
     // --- One unguarded warm-up pass: every shape starts with `layout_
     // dirty == true` (freshly inserted), so this first flatten_into call

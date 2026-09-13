@@ -287,7 +287,9 @@ pub fn run(out: Option<std::path::PathBuf>, strategy: ResizeStrategy) {
     }
 
     let mut surface = Surface::create(&device, &connection, window, INITIAL_WIDTH, INITIAL_HEIGHT);
-    let ring_buffer = device.create_dynamic_ring_buffer(RING_BUFFER_CAPACITY);
+    let ring_buffer = device
+        .create_dynamic_ring_buffer(RING_BUFFER_CAPACITY)
+        .expect("failed to create dynamic ring buffer");
     let resources = WorkloadResources::build(&device);
 
     let mut registry = ShapeRegistry::new();

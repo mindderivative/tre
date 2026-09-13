@@ -43,7 +43,9 @@ fn main() {
     // 3MB total / 3 segments = 1MB per segment, small enough to reason
     // about by hand while still exercising the same code path a real
     // 16-32MB buffer would.
-    let ring_buffer = device.create_dynamic_ring_buffer(3 * 1024 * 1024);
+    let ring_buffer = device
+        .create_dynamic_ring_buffer(3 * 1024 * 1024)
+        .expect("failed to create dynamic ring buffer");
     const SEGMENT_SIZE: u32 = 1024 * 1024;
 
     eprintln!("--- dynamic ring buffer: writing across 7 frames (2 full rotations + 1) ---");
