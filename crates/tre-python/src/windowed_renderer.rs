@@ -194,23 +194,36 @@ impl WindowSlot {
     /// Resizes in place: recreates only `self.swapchain`'s own
     /// `VkSwapchainKHR` and dependent resources (via `VulkanSwapchain::
     /// recreate`, reusing the same `VkSurfaceKHR` this slot was created
-    /// with) and updates `width`/`height` -- `self.pipelines` is
-    /// deliberately untouched, since a swapchain's color format is a
-    /// property of the surface, which this never touches. Replaces the
-    /// previous "drop this whole `WindowSlot`, build a brand-new one
-    /// with a brand-new surface" resize path (REVIEW.md finding #230),
-    /// which is what caused that finding's own real Wayland
-    /// `wp_fifo_manager_v1` crash in the first place.
+    /// with) -- `self.pipelines` is deliberately untouched, since a
+    /// swapchain's color format is a property of the surface, which this
+    /// never touches. Replaces the previous "drop this whole
+    /// `WindowSlot`, build a brand-new one with a brand-new surface"
+    /// resize path (REVIEW.md finding #230), which is what caused that
+    /// finding's own real Wayland `wp_fifo_manager_v1` crash in the
+    /// first place.
+    ///
+    /// Deliberately does NOT touch `self.width`/`self.height` (REVIEW.md
+    /// finding #235, found via a live test after the first version of
+    /// this doc comment's own claim -- "and updates `width`/`height`" --
+    /// turned out to be a real bug, not a description): those two fields
+    /// are `poll_events`'s own exclusive domain, the true, exact window
+    /// size `submit_frame_to_window` projects content against via
+    /// `submit_frame_with_logical_size`. `width`/`height` here are only
+    /// ever the swapchain's own *target* size, which during an active
+    /// drag is deliberately a coarser value than the real window
+    /// (`coarse_target_for`) -- if this method overwrote `self.width`/
+    /// `self.height` with that coarser value, the very next frame would
+    /// project content against the coarse size too, silently defeating
+    /// the projection fix and reproducing the visible squash/stretch it
+    /// exists to prevent. `self.swapchain.extent()` is the real, current
+    /// swapchain size when that's what's actually needed.
     fn resize(
         &mut self,
         device: &VulkanDevice,
         width: u32,
         height: u32,
     ) -> Result<(), EngineError> {
-        self.swapchain.recreate(device, width, height)?;
-        self.width = width;
-        self.height = height;
-        Ok(())
+        self.swapchain.recreate(device, width, height)
     }
 }
 
