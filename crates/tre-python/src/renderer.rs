@@ -684,7 +684,8 @@ impl PyHeadlessRenderer {
                     &*self.device,
                     cmd_buffer,
                     &mut self.clip_stack,
-                );
+                )
+                .expect("execute_frame failed");
             })?;
             Ok(self.swapchain.read_pixels_bgra8()?)
         });

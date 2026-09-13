@@ -324,7 +324,8 @@ fn render(
             &renderer.device,
             cmd_buffer,
             &mut renderer.clip_stack,
-        );
+        )
+        .expect("execute_frame failed");
     })
     .map_err(TreErrorCode::from)?;
 

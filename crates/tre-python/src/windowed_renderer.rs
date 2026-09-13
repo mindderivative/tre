@@ -907,7 +907,8 @@ impl PyWindowedRenderer {
                         device,
                         cmd_buffer,
                         clip_stack,
-                    );
+                    )
+                    .expect("execute_frame failed");
                 })?;
                 Ok(())
             });

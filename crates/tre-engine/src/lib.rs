@@ -3078,7 +3078,8 @@ mod tests {
             &device,
             &mut cmd_buffer,
             &mut clip_stack,
-        );
+        )
+        .unwrap();
 
         assert_eq!(
             cmd_buffer.calls,
@@ -3157,7 +3158,8 @@ mod tests {
             &device,
             &mut cmd_buffer,
             &mut clip_stack,
-        );
+        )
+        .unwrap();
 
         assert!(
             cmd_buffer
@@ -3235,7 +3237,8 @@ mod tests {
             &device,
             &mut cmd_buffer,
             &mut clip_stack,
-        );
+        )
+        .unwrap();
 
         assert_eq!(
             cmd_buffer.calls,
@@ -3294,7 +3297,8 @@ mod tests {
             &device,
             &mut cmd_buffer,
             &mut clip_stack,
-        );
+        )
+        .unwrap();
     }
 
     #[test]
@@ -3333,7 +3337,8 @@ mod tests {
             &device,
             &mut cmd_buffer,
             &mut clip_stack,
-        );
+        )
+        .unwrap();
 
         // Finding #135: the vertex/index buffer bind is unconditional and
         // happens once up front, regardless of whether `frame` has any
@@ -3466,7 +3471,8 @@ mod tests {
             &device,
             &mut cmd_buffer,
             &mut clip_stack,
-        );
+        )
+        .unwrap();
 
         assert_eq!(
             device.calls.into_inner().unwrap(),
@@ -3557,7 +3563,8 @@ mod tests {
             &device,
             &mut cmd_buffer,
             &mut clip_stack,
-        );
+        )
+        .unwrap();
 
         assert_eq!(
             device.calls.into_inner().unwrap()[0],
@@ -3628,7 +3635,8 @@ mod tests {
             &device,
             &mut cmd_buffer,
             &mut clip_stack,
-        );
+        )
+        .unwrap();
 
         assert!(
             cmd_buffer
@@ -3709,7 +3717,8 @@ mod tests {
             &device,
             &mut cmd_buffer,
             &mut clip_stack,
-        );
+        )
+        .unwrap();
     }
 
     #[test]
@@ -3749,6 +3758,7 @@ mod tests {
             &device,
             &mut cmd_buffer,
             &mut clip_stack,
-        );
+        )
+        .unwrap();
     }
 }

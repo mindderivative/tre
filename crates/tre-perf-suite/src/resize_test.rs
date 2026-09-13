@@ -540,7 +540,8 @@ pub fn run(out: Option<std::path::PathBuf>, strategy: ResizeStrategy) {
                     &device,
                     &mut *cmd_buffer,
                     &mut clip_stack,
-                );
+                )
+                .expect("execute_frame failed");
                 // REVIEW.md finding #235's further pursuit: crop the
                 // (possibly coarser) swapchain buffer down to the true,
                 // exact `real_size` before presenting -- via the patched
@@ -615,7 +616,8 @@ pub fn run(out: Option<std::path::PathBuf>, strategy: ResizeStrategy) {
                         &device,
                         &mut *cmd_buffer,
                         &mut clip_stack,
-                    );
+                    )
+                    .expect("execute_frame failed");
                     // Same crop as the primary attempt above -- this is
                     // just its rare SwapchainOutOfDate-recovery fallback,
                     // not a different rendering path.

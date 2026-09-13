@@ -549,7 +549,8 @@ fn main() {
             &renderer.device,
             &mut *cmd_buffer,
             &mut clip_stack,
-        );
+        )
+        .expect("execute_frame failed");
         renderer
             .device
             .submit_and_present(cmd_buffer, &renderer.swapchain, image)

@@ -207,7 +207,8 @@ fn main() {
             &device,
             cmd_buffer,
             &mut clip_stack,
-        );
+        )
+        .expect("execute_frame failed");
     })
     .expect("submit_frame failed");
 

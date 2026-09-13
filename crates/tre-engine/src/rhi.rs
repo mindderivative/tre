@@ -864,32 +864,37 @@ pub trait RhiCommandBuffer {
 /// actually reused; a brand-new empty `Vec` per call defeats the point
 /// (though it's still correct either way, just not zero-allocation).
 ///
+/// # Errors
+/// Returns whatever `device.acquire_transient_target`/`register_
+/// bindless`/`cmd_buffer.apply_layer_blur` themselves return (REVIEW.md
+/// finding #141, fixed: this function previously had no `Result` return
+/// type at all and `.expect()`-ed all three, panicking on exactly the
+/// failures `EngineError::TransientPoolBudgetExceeded`'s own doc comment
+/// calls "recoverable: a caller can release outstanding textures, wait
+/// for the GC thread to catch up, and retry" -- a real, undisclosed gap,
+/// not a documented limit, as finding #141's own writeup first
+/// established before this fix closed it for real). Any transient
+/// target already acquired before a later failure is released back to
+/// the pool first -- a `PushLayer`'s own texture if `apply_layer_blur`
+/// or `register_bindless` fails after it, or the just-blurred
+/// replacement if only `register_bindless` fails -- so this function
+/// never leaks one on a failure path.
+///
 /// # Panics
 /// Panics if a `DrawGeometry` or `PopLayer` command's
 /// `pipeline_state_id` was never registered in `registry`; if a
 /// `PushLayer` is encountered while another is already active (true
 /// nested layers are real, separate future work -- no real scene needs
 /// them yet, matching `RhiCommandBuffer::resume_swapchain_rendering`'s
-/// own single-level scope); if a `PopLayer` is encountered with no
-/// active `PushLayer`; or if `device.acquire_transient_target`/
-/// `register_bindless` return `Err` (this function has no `Result`
-/// return type to propagate a genuinely mid-frame-recoverable failure
-/// through, even though `EngineError::TransientPoolBudgetExceeded`'s own
-/// doc comment calls that specific failure "recoverable" -- REVIEW.md
-/// finding #141: this is a real, undisclosed gap, not yet the honest,
-/// documented limit an earlier draft of this comment incorrectly cited
-/// IMPLEMENTATION.md's Step 6.4.2 write-up as already covering. The real
-/// fix is giving this function a `Result<(), EngineError>` return type
-/// and propagating both `Err`s instead of `.expect()`-ing them, updating
-/// every real call site -- substantial enough to be its own future work,
-/// not attempted opportunistically inside this review). For this
-/// function's real callers, every pipeline
-/// `Canvas` can emit is always registered before a frame is rendered, so
-/// an unresolved id is a static setup bug, not a transient,
-/// recoverable-mid-frame condition (matching this crate's established
-/// `pop_layer`/`restore`/`PipelineRegistry::register`-style precedent
-/// for invalid caller state, not `EngineError`'s own device/resource
-/// failure modes).
+/// own single-level scope); or if a `PopLayer` is encountered with no
+/// active `PushLayer`. Every pipeline a `Canvas` can emit is always
+/// registered before a frame is rendered, so an unresolved id is a
+/// static setup bug, not a transient, recoverable-mid-frame condition
+/// (matching this crate's established `pop_layer`/`restore`/
+/// `PipelineRegistry::register`-style precedent for invalid caller
+/// state, not `EngineError`'s own device/resource failure modes) --
+/// unlike the three failures above, none of these three is a real,
+/// recoverable condition an `Err` return would let a caller act on.
 #[allow(
     clippy::too_many_arguments,
     reason = "8 parameters, one over the lint's default threshold, after REVIEW.md finding \
@@ -900,6 +905,17 @@ pub trait RhiCommandBuffer {
               function's real arity reflects genuine caller-supplied inputs, not accidental \
               sprawl"
 )]
+#[allow(
+    clippy::too_many_lines,
+    reason = "REVIEW.md finding #141: widening this function to `Result<(), EngineError>` \
+              added an explicit `match`/release-before-`Err` cleanup block at each of its two \
+              `PopLayer` failure points (mirroring finding #189/#240's identical discipline \
+              inside `apply_layer_blur` itself), pushing this over the lint's default line \
+              threshold by a handful of lines -- splitting `PopLayer`'s own handling into a \
+              separate function would only relocate this same logic, not reduce it, and this \
+              function's real complexity already comes from `CommandType`'s four variants, not \
+              accidental sprawl"
+)]
 pub fn execute_frame(
     frame: &FlattenedFrame,
     registry: &PipelineRegistry,
@@ -909,7 +925,7 @@ pub fn execute_frame(
     device: &dyn RhiDevice,
     cmd_buffer: &mut dyn RhiCommandBuffer,
     clip_stack: &mut Vec<ScissorRect>,
-) {
+) -> Result<(), EngineError> {
     // REVIEW.md finding #135: bound once, here, rather than inside the
     // loop below -- `vertex_buffer`/`index_buffer` are this whole call's
     // own parameters, invariant for every command in `frame`, and a
@@ -976,13 +992,11 @@ pub fn execute_frame(
                     "execute_frame: nested PushLayer is not supported yet"
                 );
                 let format = u16_to_texture_format(command.pipeline_state_id);
-                let texture = device
-                    .acquire_transient_target(
-                        command.clip_bounds.width,
-                        command.clip_bounds.height,
-                        format,
-                    )
-                    .expect("execute_frame: acquire_transient_target failed for PushLayer");
+                let texture = device.acquire_transient_target(
+                    command.clip_bounds.width,
+                    command.clip_bounds.height,
+                    format,
+                )?;
                 // REVIEW.md finding #152: pass the *requested* size, not
                 // whatever `texture` itself reports -- `acquire_transient_
                 // target`'s oversized-borrow fallback can return something
@@ -1010,21 +1024,25 @@ pub fn execute_frame(
                 // the popped `LayerDesc`'s own `blur` flag here, never a
                 // real bindless index (Step 7.2.2).
                 let composited_texture = if command.texture_handle != 0 {
-                    // REVIEW.md finding #189 widened this to `Result`, but
-                    // `execute_frame` itself still has no `Result` return
-                    // type to propagate it through -- the same, already-
-                    // disclosed gap finding #141 records above (`execute_
-                    // frame` becoming fallible end-to-end is its own,
-                    // separate, deliberately out-of-scope future work).
-                    // This `.expect()` is therefore an explicit, visible
-                    // call-site decision now, not a panic hidden inside
-                    // the trait impl itself -- any *other* caller of
-                    // `RhiCommandBuffer::apply_layer_blur` directly (not
-                    // through `execute_frame`) gets the real `Result` and
-                    // can choose to handle it.
-                    let blurred = cmd_buffer
-                        .apply_layer_blur(device, &*texture, layer_width, layer_height)
-                        .expect("execute_frame: apply_layer_blur failed (see finding #141)");
+                    // REVIEW.md finding #141: propagates now instead of
+                    // `.expect()`-ing -- `texture` is still held (not yet
+                    // released) at this point, so a failure here releases
+                    // it back to the pool before returning `Err`, the same
+                    // "don't leak on the newly-reachable failure path"
+                    // discipline finding #189/#240 already applied inside
+                    // `apply_layer_blur`'s own internal hops.
+                    let blurred = match cmd_buffer.apply_layer_blur(
+                        device,
+                        &*texture,
+                        layer_width,
+                        layer_height,
+                    ) {
+                        Ok(blurred) => blurred,
+                        Err(e) => {
+                            device.release_transient_target(texture);
+                            return Err(e);
+                        }
+                    };
                     device.release_transient_target(texture);
                     // REVIEW.md finding #153: `apply_layer_blur`'s own
                     // internal hops rebind the command buffer's vertex/
@@ -1046,9 +1064,18 @@ pub fn execute_frame(
                 } else {
                     texture
                 };
-                let bindless_index = device
-                    .register_bindless(&*composited_texture)
-                    .expect("execute_frame: register_bindless failed for PopLayer");
+                // `composited_texture` (either the just-blurred texture or
+                // the original layer's own, if no blur was requested) is
+                // still held at this point -- release it back to the pool
+                // before propagating, for the identical leak-avoidance
+                // reason as the `apply_layer_blur` failure path above.
+                let bindless_index = match device.register_bindless(&*composited_texture) {
+                    Ok(index) => index,
+                    Err(e) => {
+                        device.release_transient_target(composited_texture);
+                        return Err(e);
+                    }
+                };
                 cmd_buffer.resume_swapchain_rendering();
                 let restored = clip_stack.last().copied().unwrap_or(*full_window);
                 cmd_buffer.set_scissor(&restored);
@@ -1068,6 +1095,7 @@ pub fn execute_frame(
             }
         }
     }
+    Ok(())
 }
 
 /// Wraps the "begin a frame, record into it, submit and present" sandwich
