@@ -117,6 +117,15 @@ pub struct RenderingCanvas {
     pub(crate) vertices: Vec<UiVertex>,
     indices: Vec<u32>,
     pub(crate) commands: Vec<UiDrawCommand>,
+    /// Persistent, reused scratch storage for [`Self::flatten_into`]'s
+    /// own sort/segment/merge pass only -- `flatten`/`flatten_unbatched`
+    /// (the consuming, single-shot path) never touch these. Mirrors
+    /// [`FrameArena`]'s own identically-named fields exactly (Phase 9
+    /// Step 9.2, REVIEW.md finding #134); both start empty and grow to
+    /// this session's steady-state size across their first few calls,
+    /// then never reallocate again.
+    sort_scratch: Vec<UiDrawCommand>,
+    counts: Vec<u32>,
     /// `push_layer`/`pop_layer`'s stack of in-flight `LayerDesc`s
     /// (IMPLEMENTATION.md Step 2.2 task 5, extended Step 6.4.2): pushed/
     /// popped on each call, asserted empty at `flatten()`. Was a bare
@@ -1852,6 +1861,76 @@ impl RenderingCanvas {
             ..
         } = self;
         segment_and_flatten(vertices, &indices, commands, accessibility_nodes, false)
+    }
+
+    /// The non-consuming, zero-allocation-in-steady-state sibling of
+    /// [`Self::flatten`], for exactly one canvas's own data (REVIEW.md
+    /// finding #224). [`Self::stitch_into`]/[`FrameArena::flatten_into`]
+    /// exist to *combine* multiple canvases' worth of data into one
+    /// shared sort -- a lone canvas has nothing to combine, so copying
+    /// its own already-correct vertices/commands/indices through that
+    /// intermediate arena first is pure overhead with no benefit. This
+    /// method sorts/batches directly out of `self`'s own buffers
+    /// instead: `vertices`/`accessibility_nodes` are swapped (not
+    /// copied) into `out`'s own `Vec`s -- valid since neither is
+    /// transformed by sorting/batching, only passed through -- and
+    /// `commands`/`indices` are fed straight into the same
+    /// `sort_and_batch_into` core `FrameArena::flatten_into` shares,
+    /// using this canvas's own `sort_scratch`/`counts` fields as the
+    /// reused scratch buffers.
+    ///
+    /// A real caller building exactly one `RenderingCanvas` and one
+    /// [`FlattenedFrame`] once, before its own render loop begins, and
+    /// calling `reset()` then this every frame reaches true zero-
+    /// allocation steady state without ever touching [`FrameArena`] at
+    /// all -- reserve that type for when there really are multiple
+    /// canvases (or `SubCanvas`es) to merge into one frame.
+    ///
+    /// Like [`Self::stitch_into`], does not itself clear or reset
+    /// `self` -- `self.vertices`/`self.accessibility_nodes` hold
+    /// whatever `out` held on entry after the swap (stale data from an
+    /// earlier frame, not this call's own input), and `self.commands`
+    /// is left sorted-in-place; call `reset()` before recording the
+    /// next frame, exactly as the established `reset()`-then-record-
+    /// then-flatten sequence already requires everywhere else in this
+    /// workspace.
+    ///
+    /// # Panics
+    /// Same balance-assertion panics as [`Self::flatten`].
+    pub fn flatten_into(&mut self, out: &mut FlattenedFrame) {
+        debug_assert_eq!(
+            self.layer_stack.len(),
+            0,
+            "push_layer/pop_layer calls are unbalanced at frame boundary"
+        );
+        debug_assert_eq!(
+            self.state_stack.len(),
+            1,
+            "save/restore calls are unbalanced at frame boundary"
+        );
+        debug_assert!(
+            self.clip_stack.is_empty(),
+            "push_clip/pop_clip calls are unbalanced at frame boundary"
+        );
+        debug_assert!(
+            self.overlay_stack.is_empty(),
+            "begin_overlay/end_overlay calls are unbalanced at frame boundary"
+        );
+
+        std::mem::swap(&mut self.vertices, &mut out.vertices);
+        std::mem::swap(&mut self.accessibility_nodes, &mut out.accessibility_nodes);
+
+        out.commands.clear();
+        out.indices.clear();
+        sort_and_batch_into(
+            &mut self.commands,
+            &self.indices,
+            &mut self.sort_scratch,
+            &mut self.counts,
+            &mut out.commands,
+            &mut out.indices,
+            true,
+        );
     }
 
     /// Merges this canvas's locally-recorded data into `arena` (Step

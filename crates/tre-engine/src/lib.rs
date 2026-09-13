@@ -2201,6 +2201,83 @@ mod tests {
     }
 
     #[test]
+    fn canvas_flatten_into_produces_the_same_result_as_flatten_across_repeated_reused_frames() {
+        // REVIEW.md finding #224: RenderingCanvas::flatten_into is the
+        // reusable, non-consuming, no-FrameArena-needed sibling of
+        // flatten() for exactly one canvas -- feeding it the same real
+        // scene across several simulated "frames," reused via
+        // reset()/flatten_into() throughout, must produce identical
+        // output to a lone, fresh flatten() call every single time.
+        let mut out = FlattenedFrame::default();
+        let mut canvas = RenderingCanvas::new();
+
+        for round in 0..3 {
+            canvas.reset();
+            canvas.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+            canvas.draw_rounded_rect(20.0, 20.0, 10.0, 10.0, 0.0, 0xAABB_CCDD);
+            canvas.flatten_into(&mut out);
+
+            let mut expected = RenderingCanvas::new();
+            expected.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+            expected.draw_rounded_rect(20.0, 20.0, 10.0, 10.0, 0.0, 0xAABB_CCDD);
+            let expected = expected.flatten();
+
+            assert_eq!(out.vertices.len(), expected.vertices.len(), "round {round}");
+            assert_eq!(out.indices, expected.indices, "round {round}");
+            assert_eq!(out.commands.len(), expected.commands.len(), "round {round}");
+            assert_eq!(
+                out.accessibility_nodes.len(),
+                expected.accessibility_nodes.len(),
+                "round {round}"
+            );
+        }
+    }
+
+    #[test]
+    fn canvas_flatten_into_reuses_its_own_scratch_buffers_across_calls_without_reallocating() {
+        // The whole point of flatten_into over flatten(): once every
+        // internal buffer has grown to this session's steady-state size,
+        // a later call at the same or smaller scene size must not
+        // reallocate out's own commands/indices Vecs (vertices/
+        // accessibility_nodes are swapped, not grown-and-copied, so
+        // their own pointer identity legitimately changes call to call
+        // -- only commands/indices are ever pushed into in place here).
+        let mut out = FlattenedFrame::default();
+        let mut canvas = RenderingCanvas::new();
+        canvas.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        canvas.flatten_into(&mut out);
+
+        let indices_ptr = out.indices.as_ptr();
+        let commands_ptr = out.commands.as_ptr();
+
+        canvas.reset();
+        canvas.draw_rounded_rect(0.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
+        canvas.flatten_into(&mut out);
+
+        assert_eq!(
+            out.indices.as_ptr(),
+            indices_ptr,
+            "out.indices must reuse its existing backing allocation on a same-size second frame"
+        );
+        assert_eq!(
+            out.commands.as_ptr(),
+            commands_ptr,
+            "out.commands must reuse its existing backing allocation on a same-size second frame"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "save/restore calls are unbalanced")]
+    fn canvas_flatten_into_still_enforces_the_balance_assertion() {
+        // The balance-assertion gate must hold on flatten_into's own
+        // path too, not just the original consuming flatten().
+        let mut out = FlattenedFrame::default();
+        let mut canvas = RenderingCanvas::new();
+        canvas.save();
+        canvas.flatten_into(&mut out);
+    }
+
+    #[test]
     #[allow(
         clippy::float_cmp,
         reason = "exact arithmetic on literal f32s (whole-number x offsets, no rounding), same \
