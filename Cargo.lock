@@ -4212,6 +4212,17 @@ name = "tre-memory"
 version = "0.1.0"
 
 [[package]]
+name = "tre-perf-suite"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "raw-window-handle",
+ "tre-engine",
+ "tre-platform",
+ "tre-rhi-vulkan",
+]
+
+[[package]]
 name = "tre-platform"
 version = "0.1.0"
 dependencies = [

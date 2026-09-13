@@ -1,100 +1,95 @@
-# Plan: Phase 10 Step 10.4 — Direct PyO3 Python Bindings (`tre-python`), First Slice
+# Plan: Phase 20 — Rendering Engine Performance & Optimization Test Suite
 
-**Status: Complete (2026-09-10).** See `documentation/IMPLEMENTATION.md`'s
-own "Implementation status (Phase 10 Step 10.4, 2026-09-10)" write-up for
-the full technical account, `documentation/REVIEW.md`'s "Phase 10 Step
-10.4 Implementation" section (findings #190-195), and
-`demo/phase10_step10_4/README.md` for the verification summary. This file
-records the plan as it was actually executed (this step ran via direct
-instruction, not `EnterPlanMode`/`ExitPlanMode`), archived here now that
-the work is done, per this project's own "one active plan, archived once
-real work begins" convention (see `documentation/PLAN.md`'s own git
-history for prior steps' plans, each superseded in place the same way).
+**Status: Complete (2026-09-13).** See `documentation/IMPLEMENTATION.md`'s
+own "Phase 20: Rendering Engine Performance & Optimization Test Suite"
+section for the full technical account and
+`documentation/REVIEW.md`'s finding #229 for the one real bug found and
+fixed while building it. This file records the plan as designed via
+`EnterPlanMode`/`ExitPlanMode` and approved by the project owner,
+archived here now that the work is done, per this project's own "one
+active plan, archived once real work begins" convention (see this
+file's own git history for prior phases' plans, each superseded in
+place the same way).
 
 ## User request (verbatim)
 
-> Start 10.4 we will work on 10.3 after.
+> # Test Suite Specification: Rendering Engine Performance & Optimization
+>
+> ## Objective
+>
+> To design and implement a manually triggered suite of performance and
+> optimization tests. These tests will profile the rendering engine
+> under simulated production environments to identify performance
+> limits, resource bottlenecks, and architectural thresholds.
+>
+> ## Execution Environment & Requirements
+>
+> - **Production Fidelity**: All tests must run using the engine's
+>   production configuration, optimizations, and compilation flags.
+> - **Native Integration**: Each test must initialize and render within
+>   a standard, native OS window, mirroring real-world application
+>   deployment.
+> - **Execution Trigger**: Tests will be initiated manually via a
+>   command-line interface or test runner.
+>
+> ## Telemetry & Telemetry Output
+>
+> The testing suite must collect performance metrics — including
+> Frames Per Second (FPS), CPU utilization, GPU utilization, and memory
+> thresholds — and output them to two targets: live console output, and
+> a persistent structured log file (CSV or JSON).
+>
+> ## Test Profiles
+>
+> 1. **Time-Ramp Stress Tests**: 30 seconds per test, geometric scaling
+>    of rendered primitives (`1 -> 2 -> 4 -> 8 -> ... N`) at fixed
+>    intervals, to identify breaking points/degradation curves for
+>    discrete rendering features (shape rendering, textures, shaders).
+> 2. **Interaction-Driven Tests**: event-driven, variable length —
+>    primary scenario is native window resizing, tracking swapchain
+>    recreation/buffer reallocation/viewport scaling under manual
+>    stress.
 
-Mid-turn: > Work with pySilver project for this if you need
+Three architecture decisions were confirmed directly with the project
+owner via `AskUserQuestion` before finalizing this plan:
+- New dedicated crate (`crates/tre-perf-suite`), not another
+  `tre-rhi-vulkan` example — real CLI argument parsing is needed, which
+  no existing example does.
+- GPU utilization via Linux/AMDGPU sysfs `gpu_busy_percent`, not Vulkan
+  timestamp queries or skipping it — matches this project's real dev
+  GPU and its own established precedent for disclosed, platform-
+  specific implementations.
+- All three workload kinds (shapes/textures/shaders) in this first
+  pass, not a narrower slice.
 
-Scope confirmed via `AskUserQuestion`: **"Generic PyO3 wrapper (original
-plan)"** — bind `tre-engine`'s existing `Canvas`/`ShapeRegistry` API
-directly, not an attempt to match the separate `pySilver` project's own
-incompatible single-instanced-draw-call rendering contract.
+## Design (as executed)
 
-## Context
+New binary-only crate `crates/tre-perf-suite`
+(`main.rs`/`telemetry.rs`/`workload.rs`/`ramp_test.rs`/`resize_test.rs`),
+depending only on `tre-engine`/`tre-platform`/`tre-rhi-vulkan`/
+`raw-window-handle`/`bytemuck` (all already used identically elsewhere
+in the workspace). Hand-rolled CLI parsing (no `clap`), hand-formatted
+JSON-Lines telemetry (no `serde_json`). Window/device/swapchain/pipeline
+construction mirrors `main_loop_demo.rs`/`windowed_renderer.rs`'s own
+proven sequence. `shapes`/`textures` workloads mirror
+`shape_registry_zero_alloc_demo.rs`/`texture_fill_demo.rs`; `shaders`
+was re-scoped during implementation from the originally-planned MSDF
+`Text` rendering (no Rust-side `Text`-via-`ShapeRegistry` precedent
+exists anywhere in the workspace) to `FillStyle::Gradient`
+(`gradient_fill_demo.rs`'s own proven pipeline) — a disclosed
+substitution, not a silent one. Full design rationale, the real
+ring-buffer-sizing bug found and fixed via the first actual GPU run,
+and the complete verification account all live in
+`documentation/IMPLEMENTATION.md`'s Phase 20 section.
 
-IMPLEMENTATION.md's own pre-existing Step 10.4 plan (written 2026-09-09,
-before this session) already specified: a new `tre-python` crate binding
-`tre-engine` directly via PyO3 (not through `tre-ffi`'s C-ABI), four
-tasks (shape/registry bindings, Pythonic ergonomics, GIL release around
-blocking GPU calls, a CI job), and the rationale for bypassing `tre-ffi`
-(avoiding a double marshalling round trip for a first-party, high-frequency
-boundary). This step executes that existing plan's first real slice.
+## Real, disclosed remaining scope
 
-Before writing any binding code, investigated the project's own real
-Python UI framework, `pySilver` (`/home/phil/pyDev/projects/pysilver`), per
-the user's mid-turn direction. Found its actual rendering contract (one
-instanced draw call per frame over a flat 144-byte-per-instance `numpy`
-array, 7 primitive kinds, its own WGSL SDF shader) is architecturally
-incompatible with `tre-engine`'s multi-pipeline `Canvas`/`ShapeRegistry`
-design, and that `pySilver`'s own `ARCHITECTURE.md` has zero TRE-integration
-detail despite its README's stated migration intent. Surfaced this via
-`AskUserQuestion` rather than guessing; the project owner's answer (above)
-is this step's definitive scope.
-
-## Tasks (against IMPLEMENTATION.md's own pre-existing four-task plan)
-
-1. Shape/registry bindings: `Rectangle`/`Circle`/`Polygon`/`Path` +
-   `ShapeRegistry`, `#[pyclass]`/`#[pymethods]` directly over `tre-engine`
-   types. **Done for solid fill only** — `Gradient`/`Texture` fill deferred.
-2. Pythonic ergonomics: `TreError` exception mapping, `Canvas.save()`/
-   `restore()` context manager, buffer-protocol-adjacent frame readback.
-   **Partially done** — exceptions and `Canvas` save/restore are real;
-   zero-copy buffer protocol deliberately not built (would need `unsafe`
-   FFI code expanding TECHNICAL.md Section 9.1's closed set beyond the one
-   call this step already needed to add `tre-python` to it for); a real
-   `bytes` copy is returned instead.
-3. Release the GIL around blocking GPU calls. **Done** — required a real,
-   necessary upstream fix: `RhiPipelineState: Send + Sync` in `tre-engine`
-   (REVIEW.md #192), without which `Python::detach` (PyO3 0.27's
-   `allow_threads` replacement) could not be used at all.
-4. Wire a CI job for the Python-binding test suite. **Not done** — a real
-   local demo (`demo/phase10_step10_4/demo.py`) is this pass's own
-   correctness-oracle proof instead, matching every prior phase's own
-   "real demo before CI automation" sequencing.
-
-## Real defects found and fixed while building and actually running this
-## (not merely compiling it) — full detail in REVIEW.md #190-194
-
-- A real, release-build-only `unused_mut` warning in `tre-rhi-vulkan`,
-  previously undetected because this session's own verification had only
-  ever run in debug mode until `maturin develop --release` forced a real
-  release build for the first time.
-- `EngineError` was the only error type in the workspace missing
-  `Display`/`Error` impls, needed for `TreError`'s own message text.
-- `RhiPipelineState` lacked `Send + Sync` (see task 3 above).
-- A real segfault at Python interpreter shutdown: `PyHeadlessRenderer`'s
-  struct fields were declared in the wrong order (Rust drops struct fields
-  in *declaration* order, the opposite of local variables, which every RHI
-  *example*'s own `main()` gets the safe order from for free) — `device`
-  was destroyed before `swapchain`/`pipelines` still held live handles
-  against it. Fixed by reordering fields so `device` drops last.
-- `Circle`'s `x`/`y` mean bounding-box top-left (matching `Rectangle`),
-  not center — undocumented on `PyCircle`, and this step's own demo script
-  got it wrong on first use before being corrected and documented.
-
-## Verification plan — executed exactly as planned
-
-`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D
-warnings`, `cargo build --workspace --all-targets`, `cargo test --workspace`
-all clean, in both debug and `--release` profiles. `demo/phase10_step10_4/
-demo.py`, run against real GPU hardware via `maturin develop --release`,
-builds a `ShapeRegistry` with a red `Rectangle`, a green `Circle`, and a
-blue `Polygon`, renders via `HeadlessRenderer`, and asserts exact expected
-BGRA8 bytes at each shape's own center pixel — exits 0, no crash, after the
-struct-field-ordering fix.
-
-## Deferred (explicit user instruction: "we will work on 10.3 after")
-
-Phase 10 Step 10.3 (the `tre-ffi` C-ABI crate) — not started this step.
+This sandbox has no `xdotool`/`wmctrl` (confirmed absent, the identical
+gap Phase 19 Step 19.4 already disclosed) to synthesize a real window
+resize unattended, so `resize_test.rs`'s own `InputEvent::Resized` ->
+swapchain-rebuild -> `resize_event` logging path was verified only up
+to what an unattended environment can exercise (window opens, renders
+continuously, telemetry flows without error) — the actual resize-and-
+rebuild path itself needs a human physically resizing the window during
+a real run, matching this project's own established "a human still
+needs to look at some real UI results" disclosure discipline.

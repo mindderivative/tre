@@ -1,0 +1,34 @@
+[package]
+name = "tre-perf-suite"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+# Phase 20: a manually run, windowed performance/optimization test suite --
+# never a library, never a CI-gated build target (TECHNICAL.md Section
+# 9.2's own `frame_processing` criterion benchmark already owns the CI-
+# gated case). CLI argument parsing is hand-rolled (`std::env::args()`)
+# rather than adding `clap`: the flag surface (`--profile`/`--workload`/
+# `--duration`/`--tier-seconds`/`--out`) is small enough that a new
+# dependency isn't warranted, matching this workspace's own "justify every
+# dependency explicitly in writing" standard. Telemetry log records are
+# hand-formatted JSON Lines for the identical reason -- the record shape
+# is flat and fully controlled, so no `serde`/`serde_json` is needed
+# either.
+[[bin]]
+name = "tre-perf-suite"
+path = "src/main.rs"
+
+[dependencies]
+tre-engine = { path = "../tre-engine" }
+tre-platform = { path = "../tre-platform" }
+tre-rhi-vulkan = { path = "../tre-rhi-vulkan" }
+raw-window-handle = "0.6.2"
+# Casting `UiVertex`/`u32` index slices to bytes for the ring-buffer write
+# -- the same real call site's own approach every existing renderer
+# (tre-ffi, tre-python, every windowed example) already uses; matching it
+# here means this crate never needs `unsafe` at all.
+bytemuck = "1.25.2"
