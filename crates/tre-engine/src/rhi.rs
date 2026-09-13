@@ -341,6 +341,35 @@ pub trait RhiSwapchain: Send + Sync {
     fn read_pixels_bgra8(&self) -> Result<Vec<u8>, EngineError>;
 }
 
+/// Configures [`RhiDevice::begin_frame_with_options`]'s own bounded-
+/// acquire and viewport-crop axes -- two independent, freely composable
+/// knobs (`/review-project` Architecture finding, 2026-09-13:
+/// `VulkanDevice::begin_frame_impl` already treated these as orthogonal
+/// internal parameters; this type just exposes that same composability
+/// on the public trait, where four separate, mutually-exclusive methods
+/// previously forced a caller to choose one axis at a time).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BeginFrameOptions {
+    /// `None` (the default) waits indefinitely for an image, matching
+    /// plain [`RhiDevice::begin_frame`]. `Some(timeout_ns)` bounds the
+    /// wait instead (REVIEW.md finding #235, Option 3) -- lets a caller
+    /// skip rendering this tick and try again next iteration rather than
+    /// freezing the whole render loop when a resize makes acquire slow.
+    /// Returns [`EngineError::AcquireTimedOut`] if no image becomes
+    /// available within it.
+    pub timeout_ns: Option<u64>,
+    /// `None` (the default) renders across the swapchain's own full
+    /// extent, unchanged. `Some((width, height))` confines the GPU
+    /// viewport/scissor/render area to that size instead, rendering 1:1,
+    /// undistorted, into just that sub-rectangle of a possibly-larger
+    /// buffer (REVIEW.md finding #238's shipped resize-drag fix) --
+    /// pair with a real compositor-side viewport source crop of the
+    /// identical size (`tre_platform::PlatformConnection::
+    /// set_viewport_source_crop`) for the two to compose into content
+    /// that fills the real window with zero resample anywhere.
+    pub crop_size: Option<(u32, u32)>,
+}
+
 /// The Render Hardware Interface device trait (ARCHITECTURE.md Section 6).
 ///
 /// `begin_frame`/`submit_and_present` return `Result<_, EngineError>`,
@@ -494,33 +523,6 @@ pub trait RhiDevice: Send + Sync {
         swapchain: &dyn RhiSwapchain,
     ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError>;
 
-    /// Identical to [`Self::begin_frame`] except the underlying
-    /// `RhiSwapchain::acquire_next_image_with_timeout` call is bounded by
-    /// `timeout_ns` instead of blocking indefinitely (REVIEW.md finding
-    /// #235, Option 3) -- lets a caller skip rendering this tick and try
-    /// again next iteration rather than freezing the whole render loop
-    /// when a resize makes acquire slow. Default implementation ignores
-    /// `timeout_ns` and defers to [`Self::begin_frame`]'s own unbounded
-    /// wait, for any backend that hasn't implemented a real bounded
-    /// acquire (this trait's own fence-wait/reset bookkeeping around the
-    /// acquire call, not just the acquire call itself, must be
-    /// timeout-aware for this to be safe -- see `VulkanDevice`'s own
-    /// override for why resetting the frame fence before a *successful*
-    /// acquire would otherwise deadlock the following frame's own wait).
-    ///
-    /// # Errors
-    /// Same as [`Self::begin_frame`], plus
-    /// [`EngineError::AcquireTimedOut`] if no image became available
-    /// within `timeout_ns`.
-    fn begin_frame_with_timeout(
-        &self,
-        swapchain: &dyn RhiSwapchain,
-        timeout_ns: u64,
-    ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
-        let _ = timeout_ns;
-        self.begin_frame(swapchain)
-    }
-
     /// Identical to [`Self::begin_frame`] except the returned command
     /// buffer's pixel-to-NDC projection uses `logical_size` instead of
     /// `swapchain.extent()` -- the GPU viewport/scissor/render area still
@@ -553,36 +555,36 @@ pub trait RhiDevice: Send + Sync {
         self.begin_frame(swapchain)
     }
 
-    /// Identical to [`Self::begin_frame`] except the GPU viewport,
-    /// scissor, and render area are ALL confined to `crop_size` -- a
-    /// genuinely different tradeoff from
-    /// [`Self::begin_frame_with_logical_size`], not a variant of it: that
-    /// method stretches NDC across the swapchain's own full (possibly
-    /// oversized) extent so a compositor-side scale-to-fit cancels the
-    /// stretch back down; this method instead renders 1:1, undistorted,
-    /// into just the `crop_size` sub-rectangle of a possibly-larger
-    /// buffer, leaving the rest of that buffer's contents untouched and
-    /// unused. On its own this crops the *visible* window to `crop_size`
-    /// -- it must be paired with a real compositor-side viewport source
-    /// crop of the identical `crop_size` (REVIEW.md finding #235's
-    /// further pursuit, via `tre_platform::PlatformConnection::
-    /// set_viewport_source_crop`) for the two to compose into content
-    /// that fills the real window with zero resample anywhere. Calling
-    /// both this and `begin_frame_with_logical_size` for the same frame
-    /// makes no sense -- they express mutually exclusive strategies for
-    /// what to do with an oversized buffer during a resize drag, never
-    /// both at once. Default implementation ignores `crop_size` and
-    /// defers to [`Self::begin_frame`]'s own behavior, for any backend
-    /// that hasn't implemented this.
+    /// Identical to [`Self::begin_frame`] except governed by `options`,
+    /// whose two fields are independent, freely composable axes -- not
+    /// alternatives forcing a choice, the way this trait's own previous
+    /// surface (`begin_frame_with_timeout`/`begin_frame_with_viewport_crop`,
+    /// REVIEW.md findings #235/#238) required (`/review-project`
+    /// Architecture finding, 2026-09-13: `VulkanDevice::begin_frame_impl`
+    /// already treated the timeout and the crop as orthogonal internal
+    /// parameters; only the public trait forced a caller to pick one
+    /// method or the other, which is why the bounded-acquire path ended
+    /// up with no real caller left once viewport-crop shipped -- neither
+    /// `resize_test.rs`'s own `Coarse`/`Timeout` A/B-test strategies nor
+    /// any other real caller had a way to ask for both at once even
+    /// though nothing about the underlying mechanism prevented it).
+    /// `BeginFrameOptions::default()` behaves identically to plain
+    /// [`Self::begin_frame`] (unbounded wait, full-extent viewport) --
+    /// see that type's own field docs for what each one does. Default
+    /// implementation ignores `options` and defers to
+    /// [`Self::begin_frame`], for any backend that hasn't implemented
+    /// this.
     ///
     /// # Errors
-    /// Same as [`Self::begin_frame`].
-    fn begin_frame_with_viewport_crop(
+    /// Same as [`Self::begin_frame`], plus
+    /// [`EngineError::AcquireTimedOut`] if `options.timeout_ns` is `Some`
+    /// and no image became available within it.
+    fn begin_frame_with_options(
         &self,
         swapchain: &dyn RhiSwapchain,
-        crop_size: (u32, u32),
+        options: BeginFrameOptions,
     ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
-        let _ = crop_size;
+        let _ = options;
         self.begin_frame(swapchain)
     }
 
@@ -1160,12 +1162,12 @@ where
 }
 
 /// Identical to [`submit_frame`] except it begins the frame via
-/// [`RhiDevice::begin_frame_with_viewport_crop`] instead of
-/// [`RhiDevice::begin_frame`] -- see that method's own doc comment for
-/// why this is a different tradeoff from [`submit_frame_with_logical_size`],
-/// not a drop-in replacement for the same call site. The caller is
-/// responsible for pairing this with a matching compositor-side viewport
-/// source crop of the identical `crop_size` (e.g.
+/// [`RhiDevice::begin_frame_with_options`] with `crop_size` set --
+/// see that method's own doc comment for why this is a different
+/// tradeoff from [`submit_frame_with_logical_size`], not a drop-in
+/// replacement for the same call site. The caller is responsible for
+/// pairing this with a matching compositor-side viewport source crop of
+/// the identical `crop_size` (e.g.
 /// `tre_platform::PlatformConnection::set_viewport_source_crop`) --
 /// without it, this alone just renders into a corner of the buffer that
 /// the compositor still scales/resamples like any other content.
@@ -1181,7 +1183,13 @@ pub fn submit_frame_with_viewport_crop<F>(
 where
     F: FnOnce(&mut dyn RhiCommandBuffer),
 {
-    let (mut cmd_buffer, image) = device.begin_frame_with_viewport_crop(swapchain, crop_size)?;
+    let (mut cmd_buffer, image) = device.begin_frame_with_options(
+        swapchain,
+        BeginFrameOptions {
+            crop_size: Some(crop_size),
+            ..Default::default()
+        },
+    )?;
     record(&mut *cmd_buffer);
     device.submit_and_present(cmd_buffer, swapchain, image)
 }

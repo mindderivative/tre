@@ -116,8 +116,8 @@ use std::time::Instant;
 
 use raw_window_handle::HasDisplayHandle;
 use tre_engine::{
-    execute_frame, BufferBinding, EngineError, FlattenedFrame, FrameClock, InputEvent,
-    PipelineRegistry, RenderingCanvas, RhiDevice, ScissorRect, ShapeRegistry, WindowId,
+    execute_frame, BeginFrameOptions, BufferBinding, EngineError, FlattenedFrame, FrameClock,
+    InputEvent, PipelineRegistry, RenderingCanvas, RhiDevice, ScissorRect, ShapeRegistry, WindowId,
 };
 use tre_platform::PlatformConnection;
 use tre_rhi_vulkan::{register_shape_pipelines, VulkanDevice, VulkanSwapchain};
@@ -457,15 +457,29 @@ pub fn run(out: Option<std::path::PathBuf>, strategy: ResizeStrategy) {
             // content across the FULL oversized buffer for a compositor
             // resample to cancel back down) -- the two are mutually
             // exclusive render paths for the same underlying mismatch, not
-            // stackable (see `RhiDevice::begin_frame_with_viewport_crop`'s
-            // own doc comment for why combining them double-transforms
-            // and reads as worse jitter, not better).
-            ResizeStrategy::Coarse => {
-                device.begin_frame_with_viewport_crop(&surface.swapchain, real_size)
-            }
-            ResizeStrategy::Timeout => {
-                device.begin_frame_with_timeout(&surface.swapchain, acquire_timeout_ns)
-            }
+            // stackable (see `BeginFrameOptions`'s own doc comment for why
+            // combining them double-transforms and reads as worse jitter,
+            // not better). `/review-project` Architecture finding
+            // (2026-09-13): both strategies now go through the same
+            // unified `begin_frame_with_options` entry point -- `Coarse`
+            // sets only `crop_size`, `Timeout` sets only `timeout_ns`,
+            // deliberately kept as separate, single-axis calls here since
+            // this harness's whole point is comparing the two strategies
+            // in isolation, not combining them.
+            ResizeStrategy::Coarse => device.begin_frame_with_options(
+                &surface.swapchain,
+                BeginFrameOptions {
+                    crop_size: Some(real_size),
+                    ..Default::default()
+                },
+            ),
+            ResizeStrategy::Timeout => device.begin_frame_with_options(
+                &surface.swapchain,
+                BeginFrameOptions {
+                    timeout_ns: Some(acquire_timeout_ns),
+                    ..Default::default()
+                },
+            ),
         };
         #[allow(
             clippy::cast_possible_truncation,
@@ -587,9 +601,13 @@ pub fn run(out: Option<std::path::PathBuf>, strategy: ResizeStrategy) {
             // above does.
             let acquire_start2 = Instant::now();
             let begin_result2 = match strategy {
-                ResizeStrategy::Coarse => {
-                    device.begin_frame_with_viewport_crop(&surface.swapchain, real_size)
-                }
+                ResizeStrategy::Coarse => device.begin_frame_with_options(
+                    &surface.swapchain,
+                    BeginFrameOptions {
+                        crop_size: Some(real_size),
+                        ..Default::default()
+                    },
+                ),
                 ResizeStrategy::Timeout => device.begin_frame(&surface.swapchain),
             };
             #[allow(

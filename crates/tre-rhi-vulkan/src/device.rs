@@ -18,8 +18,8 @@ use std::thread::JoinHandle;
 use ash::vk;
 use ash::vk::Handle;
 use tre_engine::{
-    AcquiredImage, EngineError, RhiCommandBuffer, RhiDevice, RhiDynamicRingBuffer,
-    RhiPipelineState, RhiSwapchain, RhiTexture, TextureFormat, UiVertex,
+    AcquiredImage, BeginFrameOptions, EngineError, RhiCommandBuffer, RhiDevice,
+    RhiDynamicRingBuffer, RhiPipelineState, RhiSwapchain, RhiTexture, TextureFormat, UiVertex,
 };
 
 use crate::blur::BlurResources;
@@ -2451,18 +2451,6 @@ impl RhiDevice for VulkanDevice {
         self.begin_frame_impl(swapchain, u64::MAX, None, None)
     }
 
-    /// REVIEW.md finding #235, Option 3: see `Self::begin_frame_impl`'s
-    /// own doc comment (on the inherent method backing both this and
-    /// plain `begin_frame`) for the real fence-reset-ordering hazard a
-    /// bounded acquire must avoid.
-    fn begin_frame_with_timeout(
-        &self,
-        swapchain: &dyn RhiSwapchain,
-        timeout_ns: u64,
-    ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
-        self.begin_frame_impl(swapchain, timeout_ns, None, None)
-    }
-
     fn begin_frame_with_logical_size(
         &self,
         swapchain: &dyn RhiSwapchain,
@@ -2471,12 +2459,27 @@ impl RhiDevice for VulkanDevice {
         self.begin_frame_impl(swapchain, u64::MAX, Some(logical_size), None)
     }
 
-    fn begin_frame_with_viewport_crop(
+    /// `/review-project` Architecture finding (2026-09-13): replaces the
+    /// former separate `begin_frame_with_timeout`/`begin_frame_with_
+    /// viewport_crop` trait methods -- see `Self::begin_frame_impl`'s own
+    /// doc comment for the real fence-reset-ordering hazard a bounded
+    /// acquire must avoid, and `BeginFrameOptions`'s own field docs for
+    /// what each option does. `options.timeout_ns.unwrap_or(u64::MAX)`
+    /// and `options.crop_size` map directly onto `begin_frame_impl`'s own
+    /// already-orthogonal parameters -- this method adds no new
+    /// mechanism, only a single, composable entry point onto one that
+    /// already existed.
+    fn begin_frame_with_options(
         &self,
         swapchain: &dyn RhiSwapchain,
-        crop_size: (u32, u32),
+        options: BeginFrameOptions,
     ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
-        self.begin_frame_impl(swapchain, u64::MAX, None, Some(crop_size))
+        self.begin_frame_impl(
+            swapchain,
+            options.timeout_ns.unwrap_or(u64::MAX),
+            None,
+            options.crop_size,
+        )
     }
 
     fn submit_and_present(
