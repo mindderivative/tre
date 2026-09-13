@@ -5,18 +5,30 @@
 `tre-engine`'s one shared error type for recoverable engine failures. Every fallible engine operation returns `Result<T, EngineError>`; panics are reserved for programmer errors (a stale handle, an unbalanced `save`/`restore`, an unregistered pipeline id), never for these expected failure modes.
 
 ```rust
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EngineError {
+    #[error("GPU device lost (removal, driver TDR, or a stale swapchain)")]
     DeviceLost,
+    #[error("swapchain is out of date and must be recreated")]
     SwapchainOutOfDate,
+    #[error("graphics pipeline creation failed")]
     PipelineCreationFailed,
+    #[error("texture pixel data doesn't match width/height/format")]
     InvalidTextureData,
+    #[error("bindless texture array has no free slots left")]
     BindlessArrayExhausted,
+    #[error("transient render target pool's VRAM budget exceeded")]
     TransientPoolBudgetExceeded,
+    #[error("shader compilation failed: {0}")]
     ShaderCompilationFailed(String),
+    #[error("this swapchain has no CPU-visible readback path (not a headless swapchain)")]
+    PixelReadbackUnsupported,
+    #[error("timed out waiting for the next swapchain image")]
+    AcquireTimedOut,
 }
-// impl std::fmt::Display, impl std::error::Error
 ```
+
+`Display`/`std::error::Error` come from [`thiserror`](https://docs.rs/thiserror) via the per-variant `#[error("...")]` messages above, rather than a hand-written impl.
 
 | Variant | Raised by | Meaning |
 |---|---|---|
@@ -27,6 +39,8 @@ pub enum EngineError {
 | `BindlessArrayExhausted` | `RhiDevice::create_texture`/`register_bindless` | The persistent bindless texture array has no free slots left. Recoverable in principle (a caller can release textures and retry), though no eviction policy exists yet. |
 | `TransientPoolBudgetExceeded` | `RhiDevice::acquire_transient_target` | A genuinely novel size would need cold-allocating while the transient pool's idle free bytes are already at or past the dynamic-VRAM budget. A reuse of an already-pooled size never fails this way. |
 | `ShaderCompilationFailed(String)` | custom shader compilation | Real GLSL fragment-shader source failed to compile to SPIR-V via `shaderc` -- carries `shaderc`'s own real compiler diagnostic (line numbers, the exact GLSL error), since a caller authoring their own shader source genuinely needs to see *why* it failed. |
+| `PixelReadbackUnsupported` | `RhiSwapchain::read_pixels_bgra8` | Called on a swapchain with no CPU-visible staging buffer -- a real windowed swapchain presents straight to the surface and was never given one, unlike a headless swapchain's own manually allocated staging buffer (Architecture review: RHI trait-object generalization, REVIEW.md finding #216). |
+| `AcquireTimedOut` | `RhiSwapchain::acquire_next_image_with_timeout`/`RhiDevice::begin_frame_with_options` | The bounded wait for the next swapchain image elapsed before one became available (REVIEW.md finding #235). Recoverable by simply skipping this tick's render and retrying next iteration; never returned by the plain, unbounded `acquire_next_image`/`begin_frame`. |
 
 `InvalidTextureData` and `BindlessArrayExhausted` both replaced what used to be unconditional panics -- both are real caller-triggerable conditions (malformed pixel data, a genuinely exhausted bindless array), not programmer errors.
 
@@ -61,12 +75,14 @@ pub enum TreErrorCode {
     DeviceLost, SwapchainOutOfDate, PipelineCreationFailed,
     InvalidTextureData, BindlessArrayExhausted, TransientPoolBudgetExceeded,
     ShaderCompilationFailed,
+    PixelReadbackUnsupported,
     InvalidArgument,  // FFI-only: this crate's own insert-time validation failed
     PanicCaught,      // FFI-only: an unwinding panic was caught at the boundary
+    AcquireTimedOut,  // appended last, after the two FFI-only variants, so it doesn't shift their discriminants
 }
 ```
 
-A 1:1 shadow of `EngineError` (see above) plus two FFI-only additions: `InvalidArgument` (`tre_engine::ShapeRegistry::insert` itself never fails, so this crate validates dimensions before calling it -- mirroring `tre-python`'s own established validation-at-insert-time convention) and `PanicCaught` (what every exported function's shared `ffi_guard` helper converts an unwinding Rust panic into, per TECHNICAL.md Section 9.4.1's "no panic may cross the boundary" rule).
+A 1:1 shadow of `EngineError` (see above) plus two genuinely FFI-only additions: `InvalidArgument` (`tre_engine::ShapeRegistry::insert` itself never fails, so this crate validates dimensions before calling it -- mirroring `tre-python`'s own established validation-at-insert-time convention) and `PanicCaught` (what every exported function's shared `ffi_guard` helper converts an unwinding Rust panic into, per TECHNICAL.md Section 9.4.1's "no panic may cross the boundary" rule). `AcquireTimedOut` is appended last (not alongside the other `EngineError`-mirrored variants) specifically so adding it didn't shift the two FFI-only variants' numeric discriminants.
 
 The real, C-facing surface this slice exposes (as a caller including `tre_ffi.h` sees it -- opaque `void*`-shaped handles, plain C declarations):
 

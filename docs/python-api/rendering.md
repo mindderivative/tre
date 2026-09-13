@@ -24,6 +24,8 @@ frame: bytes = renderer.render(registry)  # tightly-packed BGRA8 bytes, width*he
 
 `render`/`render_canvas`/`render_parallel` all take `&mut self` on the Rust side -- calling one from two threads concurrently (rather than the documented single-threaded-per-instance use) raises a clean error rather than corrupting GPU state.
 
+All three now render against one persistent, reused `FrameArena` rather than allocating a fresh one per call (a real per-frame-allocation fix) -- as a result, `render`/`render_canvas` share `render_parallel`'s same fixed capacity ceiling and can raise `TreError` on overflow for a single very large scene, where previously only `render_parallel` had such a ceiling.
+
 ## `WindowedRenderer`
 
 **Must stay on its constructing thread** (see the [Overview](index.md)'s thread-affinity note) -- it owns a real platform connection.

@@ -10,6 +10,16 @@ This page covers how the desktop-integration features fit together and what's sp
 
 Multi-monitor support is partial: `renderer.scale_factor` type per-window DPI queries work (backed by winit), but there's no monitor-enumeration API yet -- no way to list connected monitors or ask which one a window is on.
 
+## Window resizing on Wayland
+
+Live window resizing needed real, disclosed engineering to avoid squash/stretch and trailing artifacts (REVIEW.md findings #230-#245), and the mechanism is Wayland-specific -- X11 needs none of it.
+
+Rebuilding a Vulkan swapchain on every single resize event during an active drag is too expensive to do every pixel, so `WindowedRenderer` instead holds the swapchain at a coarser size while a drag is in progress: each dimension rounds **up** to the next 256px bucket for a short settle window (3 frames) after the last resize event, then snaps to the exact size once the drag settles. Rounding up only (never to nearest) keeps the compositor's scale direction one-way rather than flip-flopping mid-drag.
+
+Rendering itself always targets the window's true logical size, not the (possibly larger) swapchain extent -- the viewport, scissor, and render area are all sized to the real window, via [`RhiDevice::begin_frame_with_options`](rust-api/rhi-and-backends.md#rhidevice)'s `crop_size`. To stop the compositor from visibly stretching that sub-rectangle up to the full (coarser) buffer, `tre-platform`'s [`set_viewport_source_crop`](rust-api/platform.md#platformconnection) crops the window's existing `wp_viewporter` source rectangle down to the true logical size before every present. Net effect: content renders 1:1 at the real window size with zero resample, even mid-drag, at the cost of one swapchain rebuild only when a drag actually settles rather than on every event.
+
+This entire mechanism is a real no-op on X11 and on any Wayland compositor that never advertised `wp_viewporter` -- `set_viewport_source_crop` simply does nothing, and resizing falls back to whatever the swapchain's own natural extent is.
+
 ## Clipboard
 
 [`tre.Clipboard`](python-api/desktop-integration.md#clipboard) wraps `arboard`, which talks to whatever clipboard mechanism the current session provides (X11 selections, or Wayland's `wl_data_device` protocol) -- no platform-specific code on your side. The real, disclosed scope limit is content type, not platform: plain UTF-8 text only, verified round-tripping accented Latin, CJK, and emoji correctly. Images and rich text are not supported.

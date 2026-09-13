@@ -84,6 +84,7 @@ pub enum SvgError {
     TessellationFailed,
     TopologyMismatch { from_points: usize, to_points: usize },
     MalformedXml(String),
+    TooManyKeyframes { count: usize, max: usize },
 }
 
 pub fn parse_svg(source: &[u8], max_bytes: usize, max_points: usize) -> Result<Vec<Polygon>, SvgError>;
@@ -120,10 +121,12 @@ pub struct SmilAnimate { pub attribute_name: String, pub keyframes: Vec<f32>, pu
 pub struct SmilAnimateTranslate { pub keyframes: Vec<[f32; 2]>, pub duration_seconds: f32 }
 pub struct ParsedSmil { pub animates: Vec<SmilAnimate>, pub animate_translates: Vec<SmilAnimateTranslate> }
 
-pub fn parse_smil(svg_source: &str) -> Result<ParsedSmil, SvgError>;
+pub fn parse_smil(svg_source: &str, max_bytes: usize, max_keyframes: usize) -> Result<ParsedSmil, SvgError>;
 ```
 
 `usvg` is a static-resolution parser by design (confirmed by reading its own source) -- it does not process SMIL `<animate>`/`<animateTransform>` elements at all, so real SMIL support needs a separate direct XML pass via `roxmltree`. **Real, disclosed v1 scope**: `<animate>` (a single scalar attribute) and `<animateTransform type="translate">` only, each with `values="a;b;c"` or `from`/`to`, plus `dur`. `begin`, `repeatCount`, `calcMode`, `type="scale"/"rotate"`, and `<animateMotion>` are disclosed gaps, not attempted. A malformed individual element is silently skipped rather than rejecting the whole document. This module only *extracts* keyframes -- a caller drives them through `tre-animation`'s own `Timeline`/`Tween` (see [Animation](animation.md)).
+
+`parse_smil` takes the same two-budget hardening shape as `parse_svg` above: `max_bytes` is checked against the raw input length before `roxmltree::Document::parse` ever runs (`SvgError::TooLarge`), and `max_keyframes` bounds the *total* keyframe count summed across every `<animate>`/`<animateTransform>` element in the document, checked incrementally element-by-element while walking the tree rather than only after the whole document resolves (`SvgError::TooManyKeyframes`). Fuzz-tested (`proptest`) against malformed and adversarial documents, matching `parse_svg`'s own convention.
 
 ## `tre-text`
 

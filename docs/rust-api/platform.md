@@ -41,6 +41,7 @@ One shared display-server connection, owning every window created through it. Pi
 | `set_icon` | `pub fn set_icon(&self, window: WindowId, icon: Option<WindowIcon>) -> Result<(), PlatformError>` | `None` clears it. |
 | `set_cursor` | `pub fn set_cursor(&self, window: WindowId, icon: CursorIcon) -> Result<(), PlatformError>` | |
 | `set_ime_allowed` | `pub fn set_ime_allowed(&self, window: WindowId, allowed: bool) -> Result<(), PlatformError>` | Required before winit emits any IME event. |
+| `set_viewport_source_crop` | `pub fn set_viewport_source_crop(&self, window: WindowId, width: u32, height: u32) -> Result<(), PlatformError>` | Crops the window's `wp_viewporter` source rectangle to `(width, height)`. See caveats below. |
 
 Every method taking a `WindowId` this connection didn't create returns `PlatformError::UnknownWindow`.
 
@@ -52,6 +53,7 @@ Every method taking a `WindowId` this connection didn't create returns `Platform
 - **Wayland has no way to query minimized state at all** -- `is_minimized` always returns `None` there.
 - **`set_icon` is a no-op on Wayland** (no client-side icon protocol; icons come from desktop-file `app_id` metadata); works on X11 subject to the window manager's own icon-size conventions.
 - **IME events require explicit opt-in** via `set_ime_allowed(window, true)` -- winit never emits `ImeEnabled`/`ImePreedit`/`ImeCommit`/`ImeDisabled` otherwise.
+- **`set_viewport_source_crop` is Wayland-specific and a real no-op on X11** or on a compositor that never advertised `wp_viewporter` -- forwards to a small patch against winit itself (`WindowExtWayland::set_viewport_source_crop`, see the workspace root `Cargo.toml`'s `[patch.crates-io]` entry). `tre-python`'s windowed renderer is the one real caller, using it to crop a coarser-than-logical-size swapchain back down to the true window size during an active resize drag (see [Platform Integration](../platform-integration.md#window-resizing-on-wayland)).
 
 ## `Clipboard`
 

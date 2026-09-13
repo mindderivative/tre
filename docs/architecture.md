@@ -11,16 +11,17 @@ TRE is a pipeline: a retained-mode drawing API records commands into a compact i
 | `tre-memory` | Ring arenas, the transient GPU pool, atlas lock-free concurrency primitives | permitted |
 | `tre-text` | Font shaping (`skrifa`/`rustybuzz`), caret hit-testing, line-breaking | forbidden |
 | `tre-atlas` | Guillotine bin-packing and the multi-window-safe atlas concurrency model | forbidden |
-| `tre-svg` | SVG parsing/tessellation, vertex-morph interpolation | -- |
+| `tre-svg` | SVG parsing/tessellation, vertex-morph interpolation | forbidden |
 | `tre-tween` / `tre-animation` | Easing curves, the spring integrator, and the timeline sequencer | forbidden |
-| `tre-a11y` | The Linux AT-SPI2 accessibility bridge | -- |
+| `tre-a11y` | The Linux AT-SPI2 accessibility bridge | forbidden |
 | `tre-rhi-vulkan` | The Vulkan 1.2+ backend | permitted |
 | `tre-rhi-dx12` / `tre-rhi-metal` | DirectX 12 (Windows) / Metal (macOS) backends -- scaffolded, not yet implemented | permitted |
 | `tre-platform` | Native windowing and input, via `winit`; clipboard, file dialogs, tray | forbidden |
 | `tre-ffi` | The engine's entire public surface as a stable, panic-safe `extern "C"` boundary, for every language *other* than Python | permitted |
 | `tre-python` | Direct PyO3 bindings to `tre-engine`'s native Rust API -- bypasses `tre-ffi` entirely | permitted (one call) |
+| `tre-perf-suite` | Phase 20: a manually-triggered, never-CI-gated on-screen performance tool -- a ramp test (geometric doubling of primitive count per workload, tracking degradation curves) and a resize test (swapchain-rebuild cost under live window resizing), streaming FPS/CPU/memory/GPU telemetry to console and a JSON-Lines log | permitted |
 
-`unsafe` is confined to exactly four crates (`tre-memory`'s concurrency primitives, the RHI backends' raw graphics API FFI, `tre-ffi`'s handle/pointer conversion, and one specific teardown call in `tre-python`) -- every other crate, including `tre-engine` itself, carries `#![forbid(unsafe_code)]`. `tre-python` binds directly to `tre-engine`, never through `tre-ffi`: two independent build outputs, chosen specifically to avoid a double marshalling round-trip through a C-compatible shadow representation on every high-frequency call (e.g. a shape's own per-frame property mutation).
+`unsafe` is confined to a small set of crates -- `tre-memory`'s concurrency primitives, the RHI backends' raw graphics API FFI, `tre-ffi`'s handle/pointer conversion, one specific teardown call in `tre-python`, and one `SAFETY`-commented surface-cleanup call in `tre-perf-suite`'s resize test -- every other crate, including `tre-engine` itself, carries `#![forbid(unsafe_code)]`. `tre-python` binds directly to `tre-engine`, never through `tre-ffi`: two independent build outputs, chosen specifically to avoid a double marshalling round-trip through a C-compatible shadow representation on every high-frequency call (e.g. a shape's own per-frame property mutation).
 
 ## The pipeline, end to end
 

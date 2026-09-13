@@ -47,10 +47,14 @@ frame = tre.Svg.morph(keyframe_a, keyframe_b, tween.sample(elapsed))
 SVG's own `<animate>`/`<animateTransform>` elements are discarded by the parser `Svg.parse` uses -- `tre.parse_smil` is a separate pass that extracts them directly, for you to drive through `tre.Tween`/`tre.Timeline` yourself.
 
 ```python
-tre.parse_smil(data: bytes) -> ParsedSmil
+tre.parse_smil(
+    data: bytes,
+    max_bytes: int = 10_000_000,
+    max_keyframes: int = 100_000,
+) -> ParsedSmil
 ```
 
-Raises `ValueError` if `data` isn't valid UTF-8 or well-formed XML.
+Raises `ValueError` if `data` exceeds `max_bytes` (checked before UTF-8 validation), resolves to more than `max_keyframes` keyframes summed across every `<animate>`/`<animateTransform>` element, isn't valid UTF-8, or isn't well-formed XML.
 
 `ParsedSmil` fields (read-only): `animates: list[SmilAnimate]`, `animate_translates: list[SmilAnimateTranslate]`.
 
