@@ -128,22 +128,19 @@ const SETTLE_FRAMES: u8 = 3;
 /// (`pycopper/src/pycopper/runtime/engine.py`), factored out exactly as
 /// it is there so the policy is a plain, testable decision about
 /// integers with no window/GPU state of its own.
-/// Rounds `value` to the *nearest* multiple of `bucket`, not always up --
-/// `coarse_target_for`'s own worst-case mismatch (and therefore the
-/// compositor's resample magnitude while a coarse resize is in effect)
-/// is `bucket - 1` when always rounding up, but only `bucket / 2` when
-/// rounding to nearest, at the identical rebuild frequency (the same
-/// bucket boundaries still get crossed at the same rate for a
-/// monotonically growing/shrinking drag). Verified via `tre-perf-suite`'s
-/// own resize test first (this workspace's own established order) --
-/// the project owner directly confirmed less blur, no regression.
-/// Clamped to never round below one whole `bucket` -- a real window is
-/// never legitimately smaller than that in practice, and a zero-size
-/// swapchain is a real crash, not a graceful degradation.
-fn round_to_nearest_bucket(value: u32, bucket: u32) -> u32 {
-    (((value + bucket / 2) / bucket) * bucket).max(bucket)
-}
-
+///
+/// Always rounds UP, deliberately, not to the nearest multiple --
+/// tried rounding to nearest (REVIEW.md finding #235) to shrink the
+/// worst-case mismatch, and the project owner caught a real perceptual
+/// regression it introduced: rounding to nearest means the coarse
+/// buffer is sometimes larger and sometimes smaller than the real
+/// window depending which side of a bucket's own midpoint the live
+/// size falls on, so the compositor's own scale direction flips between
+/// shrink and stretch partway through a single continuous drag --
+/// "the shapes are jittering up and down." Always rounding up keeps the
+/// buffer >= the real size for the bucket's entire span, so the
+/// compositor only ever shrinks, never both -- one consistent direction
+/// beats a smaller but direction-flipping mismatch.
 fn coarse_target_for(
     size: (u32, u32),
     previous: (u32, u32),
@@ -158,8 +155,8 @@ fn coarse_target_for(
     if settle > 0 {
         (
             (
-                round_to_nearest_bucket(size.0, bucket),
-                round_to_nearest_bucket(size.1, bucket),
+                size.0.div_ceil(bucket) * bucket,
+                size.1.div_ceil(bucket) * bucket,
             ),
             settle,
         )
