@@ -36,8 +36,8 @@ use std::time::Instant;
 
 use raw_window_handle::HasDisplayHandle;
 use tre_engine::{
-    execute_frame, submit_frame, BufferBinding, EngineError, FlattenedFrame, FrameClock,
-    InputEvent, PipelineRegistry, RenderingCanvas, RhiDevice, ScissorRect, ShapeRegistry, WindowId,
+    execute_frame, BufferBinding, EngineError, FlattenedFrame, FrameClock, InputEvent,
+    PipelineRegistry, RenderingCanvas, RhiDevice, ScissorRect, ShapeRegistry, WindowId,
 };
 use tre_platform::PlatformConnection;
 use tre_rhi_vulkan::{register_shape_pipelines, VulkanDevice, VulkanSwapchain};
@@ -160,9 +160,19 @@ pub fn run(out: Option<std::path::PathBuf>) {
     let mut cpu_mem = CpuMemSampler::new();
     let mut next_sample_at = 0.0;
 
+    // Diagnostic-only, added to chase the "window slowly trails then
+    // jumps to the cursor" lag the project owner reported during a live
+    // resize drag -- REVIEW.md finding #235's own investigation. Any
+    // single stage over this threshold is well beyond a 60Hz frame
+    // budget (16.7ms) and gets logged with a per-stage breakdown so the
+    // stall shows up as belonging to one specific layer (event-polling
+    // vs. CPU recording vs. GPU submit/present) rather than "the loop".
+    const STALL_THRESHOLD_MS: f32 = 8.0;
+
     'outer: loop {
         let elapsed = f64::from(clock.elapsed());
 
+        let poll_start = Instant::now();
         // Coalesce every `Resized` event this one `poll_events()` batch
         // drains down to just the *last* (i.e. current) size, instead of
         // resizing once per queued event (REVIEW.md finding #231).
@@ -181,6 +191,11 @@ pub fn run(out: Option<std::path::PathBuf>) {
                 _ => {}
             }
         }
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "a real per-frame stage duration never approaches f32's precision limits"
+        )]
+        let poll_ms = poll_start.elapsed().as_secs_f64() as f32 * 1000.0;
         if close_requested {
             break 'outer;
         }
@@ -192,6 +207,7 @@ pub fn run(out: Option<std::path::PathBuf>) {
             }
         }
 
+        let record_start = Instant::now();
         registry.mark_all_dirty();
         canvas.reset();
         registry.flatten_into(&mut canvas, &device, None);
@@ -205,6 +221,11 @@ pub fn run(out: Option<std::path::PathBuf>) {
         let index_offset = ring_buffer
             .write(index_bytes)
             .expect("ring buffer write failed for indices");
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "a real per-frame stage duration never approaches f32's precision limits"
+        )]
+        let record_ms = record_start.elapsed().as_secs_f64() as f32 * 1000.0;
 
         let full_window = ScissorRect {
             x: 0,
@@ -213,6 +234,16 @@ pub fn run(out: Option<std::path::PathBuf>) {
             height: surface.height,
         };
 
+        // Diagnostic-only, split out of `submit_frame`'s own single
+        // acquire+record+present sequence (REVIEW.md finding #235): the
+        // first pass of this instrumentation proved the entire "trails
+        // then jumps" stall lives somewhere inside `submit_frame` as a
+        // whole (poll/record were always ~0ms while a stall was
+        // happening); this second pass separately times `begin_frame`
+        // (the `vkAcquireNextImageKHR` wait) from `submit_and_present`
+        // (the `vkQueuePresentKHR` call) to find out which specific
+        // Vulkan call is actually blocking.
+        //
         // Real resize recovery, matching `windowed_renderer.rs`'s own
         // identical retry-once-against-a-freshly-resized-swapchain
         // fallback: a resize can invalidate the swapchain before this
@@ -220,30 +251,16 @@ pub fn run(out: Option<std::path::PathBuf>) {
         // (or via any other `SwapchainOutOfDate` cause, e.g. a
         // minimize/restore), and this is the belt-and-suspenders path
         // for exactly that race, not the primary mechanism.
-        let mut attempt_result = submit_frame(&device, &surface.swapchain, |cmd_buffer| {
-            execute_frame(
-                &flattened,
-                &surface.pipelines,
-                BufferBinding {
-                    buffer: &*ring_buffer,
-                    offset: vertex_offset,
-                },
-                BufferBinding {
-                    buffer: &*ring_buffer,
-                    offset: index_offset,
-                },
-                &full_window,
-                &device,
-                cmd_buffer,
-                &mut clip_stack,
-            );
-        });
-        if matches!(attempt_result, Err(EngineError::SwapchainOutOfDate)) {
-            let (width, height) = (surface.width, surface.height);
-            let rebuild_ms = surface.resize(&device, width, height);
-            log.write_resize_event(elapsed, width, height, rebuild_ms)
-                .expect("failed to write telemetry log");
-            attempt_result = submit_frame(&device, &surface.swapchain, |cmd_buffer| {
+        let acquire_start = Instant::now();
+        let begin_result = device.begin_frame(&surface.swapchain);
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "a real per-frame stage duration never approaches f32's precision limits"
+        )]
+        let mut acquire_ms = acquire_start.elapsed().as_secs_f64() as f32 * 1000.0;
+        let mut present_ms;
+        let mut attempt_result = match begin_result {
+            Ok((mut cmd_buffer, image)) => {
                 execute_frame(
                     &flattened,
                     &surface.pipelines,
@@ -257,12 +274,82 @@ pub fn run(out: Option<std::path::PathBuf>) {
                     },
                     &full_window,
                     &device,
-                    cmd_buffer,
+                    &mut *cmd_buffer,
                     &mut clip_stack,
                 );
-            });
+                let present_start = Instant::now();
+                let result = device.submit_and_present(cmd_buffer, &surface.swapchain, image);
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "a real per-frame stage duration never approaches f32's precision \
+                              limits"
+                )]
+                {
+                    present_ms = present_start.elapsed().as_secs_f64() as f32 * 1000.0;
+                }
+                result
+            }
+            Err(e) => {
+                present_ms = 0.0;
+                Err(e)
+            }
+        };
+        if matches!(attempt_result, Err(EngineError::SwapchainOutOfDate)) {
+            let (width, height) = (surface.width, surface.height);
+            let rebuild_ms = surface.resize(&device, width, height);
+            log.write_resize_event(elapsed, width, height, rebuild_ms)
+                .expect("failed to write telemetry log");
+            let acquire_start2 = Instant::now();
+            let begin_result2 = device.begin_frame(&surface.swapchain);
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "a real per-frame stage duration never approaches f32's precision limits"
+            )]
+            {
+                acquire_ms += acquire_start2.elapsed().as_secs_f64() as f32 * 1000.0;
+            }
+            attempt_result = match begin_result2 {
+                Ok((mut cmd_buffer, image)) => {
+                    execute_frame(
+                        &flattened,
+                        &surface.pipelines,
+                        BufferBinding {
+                            buffer: &*ring_buffer,
+                            offset: vertex_offset,
+                        },
+                        BufferBinding {
+                            buffer: &*ring_buffer,
+                            offset: index_offset,
+                        },
+                        &full_window,
+                        &device,
+                        &mut *cmd_buffer,
+                        &mut clip_stack,
+                    );
+                    let present_start2 = Instant::now();
+                    let result = device.submit_and_present(cmd_buffer, &surface.swapchain, image);
+                    #[allow(
+                        clippy::cast_possible_truncation,
+                        reason = "a real per-frame stage duration never approaches f32's \
+                                  precision limits"
+                    )]
+                    {
+                        present_ms += present_start2.elapsed().as_secs_f64() as f32 * 1000.0;
+                    }
+                    result
+                }
+                Err(e) => Err(e),
+            };
         }
         attempt_result.expect("submit_frame failed even after one resize-recovery retry");
+        if poll_ms > STALL_THRESHOLD_MS
+            || record_ms > STALL_THRESHOLD_MS
+            || acquire_ms > STALL_THRESHOLD_MS
+            || present_ms > STALL_THRESHOLD_MS
+        {
+            log.write_frame_stall(elapsed, poll_ms, record_ms, acquire_ms, present_ms)
+                .expect("failed to write telemetry log");
+        }
 
         let dt = clock.tick();
         let (cpu_pct, mem_rss_kb) = cpu_mem.sample();

@@ -124,6 +124,41 @@ impl TelemetryLog {
         )
     }
 
+    /// Diagnostic-only: logs a per-stage timing breakdown for one frame
+    /// whenever any stage took long enough to look like the real cause of
+    /// the "window slowly trails then jumps to the cursor" lag reported
+    /// during a live resize drag -- `resize_test.rs`'s own caller decides
+    /// the threshold. Distinguishes four stages so a stall shows up as
+    /// belonging to one specific layer/call instead of "the loop as a
+    /// whole": `poll_ms` (draining OS/`winit` events -- a stall here
+    /// points at the platform layer, e.g. Wayland pausing frame callbacks
+    /// during an active resize gesture), `record_ms` (pure CPU-side
+    /// canvas recording/flattening, no GPU calls), `acquire_ms`
+    /// (`RhiDevice::begin_frame`'s own `vkAcquireNextImageKHR` wait), and
+    /// `present_ms` (`RhiDevice::submit_and_present`'s own
+    /// `vkQueuePresentKHR` call) -- the first instrumentation pass
+    /// (finding #235) proved the whole stall lives inside one of these
+    /// last two; this second pass separates them to find out which.
+    pub fn write_frame_stall(
+        &mut self,
+        elapsed_s: f64,
+        poll_ms: f32,
+        record_ms: f32,
+        acquire_ms: f32,
+        present_ms: f32,
+    ) -> std::io::Result<()> {
+        println!(
+            "[{elapsed_s:>6.1}s] STALL     --- poll={poll_ms:.1}ms record={record_ms:.1}ms \
+             acquire={acquire_ms:.1}ms present={present_ms:.1}ms ---"
+        );
+        writeln!(
+            self.file,
+            "{{\"kind\":\"frame_stall\",\"elapsed_s\":{elapsed_s:.3},\"poll_ms\":{poll_ms:.3},\
+             \"record_ms\":{record_ms:.3},\"acquire_ms\":{acquire_ms:.3},\
+             \"present_ms\":{present_ms:.3}}}"
+        )
+    }
+
     /// The Interaction-Driven resize test's own dedicated record: how
     /// long the real swapchain-plus-pipeline reconstruction itself took,
     /// separate from the regular per-frame `Sample`s around it -- so the
