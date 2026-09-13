@@ -210,6 +210,34 @@ impl WindowSlot {
             .map_err(engine_err)?;
         let swapchain = VulkanSwapchain::new(device, surface_loader, surface, width, height)
             .map_err(engine_err)?;
+        Self::from_swapchain(device, swapchain, width, height)
+    }
+
+    /// Shared construction core once a swapchain already exists --
+    /// `/review-project` Architecture finding (2026-09-13, REVIEW.md
+    /// finding #243): `create` (above -- every window after the first,
+    /// obtaining its own surface via `device.create_surface`) and
+    /// `PyWindowedRenderer::new` (the very first window, whose surface
+    /// comes bundled out of `VulkanDevice::new` itself instead, a real
+    /// Vulkan-bootstrapping requirement, not an artifact of duplication)
+    /// previously repeated this pipeline-registration/struct-assembly
+    /// sequence verbatim in two places -- the exact "a fix applied to
+    /// one copy silently leaves its sibling unfixed" class of bug this
+    /// project has already been bitten by twice (REVIEW.md findings
+    /// #196, #213). Takes an already-built `VulkanSwapchain` rather than
+    /// `(surface_loader, surface)` deliberately: both real call sites
+    /// already have one in hand by this point, and expressing the shared
+    /// step this way needs no new `ash`/`vk`-typed parameter here --
+    /// `tre-python` has had no direct `ash` dependency since finding
+    /// #203/#204 removed it, and reintroducing one just to share this
+    /// code would be a real regression against that decision, not a
+    /// mechanical extraction.
+    fn from_swapchain(
+        device: &VulkanDevice,
+        swapchain: VulkanSwapchain,
+        width: u32,
+        height: u32,
+    ) -> PyResult<Self> {
         let mut pipelines = PipelineRegistry::new();
         register_shape_pipelines(device, &mut pipelines, swapchain.format()).map_err(engine_err)?;
         Ok(Self {
@@ -352,26 +380,14 @@ impl PyWindowedRenderer {
             VulkanDevice::new(display_handle, window_handle).map_err(engine_err)?;
         let swapchain = VulkanSwapchain::new(&device, surface_loader, surface, width, height)
             .map_err(engine_err)?;
-        let mut pipelines = PipelineRegistry::new();
-        register_shape_pipelines(&device, &mut pipelines, swapchain.format())
-            .map_err(engine_err)?;
+        let main_slot = WindowSlot::from_swapchain(&device, swapchain, width, height)?;
         let ring_buffer = device
             .create_dynamic_ring_buffer(RING_BUFFER_CAPACITY)
             .map_err(engine_err)?;
         let text_atlas = TextAtlas::new(&device)?;
 
         let mut windows = HashMap::new();
-        windows.insert(
-            main_window,
-            WindowSlot {
-                swapchain,
-                pipelines,
-                width,
-                height,
-                previous_size: (width, height),
-                settle: 0,
-            },
-        );
+        windows.insert(main_window, main_slot);
 
         Ok(Self {
             ring_buffer,
