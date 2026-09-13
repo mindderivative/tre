@@ -181,6 +181,74 @@ impl Primitive for Text {
 /// foreign `FontId`) -- the same real-programmer-error contract
 /// `flatten_into`'s own `FillStyle::Gradient` handling already
 /// establishes for a stale `GradientId`.
+/// [`flatten_text`]'s own per-shape shaping cache (REVIEW.md finding
+/// #225): without this, `ShapeRegistry::flatten_into`'s shape-kind-
+/// agnostic dirty check ("any active animation re-flattens everything")
+/// forced a full bidi + `rustybuzz` re-shape of `text.text` every single
+/// frame a `Text` shape had *any* active animation, even one animating a
+/// property (opacity, position, scale, ...) that never touches the
+/// shaped output at all -- the exact defect this struct's own module doc
+/// comment names retained-mode `Text` as existing to eliminate,
+/// reappearing through the generic animation path. Keyed by exactly the
+/// fields that actually affect shaping; every other field on [`Text`]
+/// (`fill_color`, `common.transform`/`opacity`/...) can change freely
+/// without invalidating this cache.
+#[derive(Debug, Clone)]
+pub(crate) struct TextShapeCache {
+    text: String,
+    font: FontId,
+    px_size: f32,
+    wrap_width: Option<f32>,
+    runs: Vec<tre_text::ShapedRun>,
+}
+
+impl TextShapeCache {
+    #[allow(
+        clippy::float_cmp,
+        reason = "exact equality is the correct semantics here, not a margin-of-error bug: \
+                   px_size/wrap_width are caller-set values compared against their own \
+                   previous value, and ANY change (even a tiny one) must invalidate the cache \
+                   -- rounding two genuinely different sizes into 'close enough, reuse the old \
+                   shaping' would silently render the wrong glyph metrics"
+    )]
+    fn is_valid_for(&self, text: &Text) -> bool {
+        self.text == text.text
+            && self.font == text.font
+            && self.px_size == text.px_size
+            && self.wrap_width == text.wrap_width
+    }
+}
+
+/// Resolves `text`'s own shaped runs, reusing `cache` when nothing that
+/// affects shaping has changed since the last call, and re-shaping (then
+/// updating `cache` in place) otherwise. Returns `None` exactly when
+/// `tre_text::shape_text` itself would (a real shaping failure),
+/// matching [`flatten_text`]'s own established "report, don't block"
+/// contract for unshapeable input.
+fn resolve_shaped_runs<'a>(
+    cache: &'a mut Option<TextShapeCache>,
+    face: &rustybuzz::Face<'_>,
+    text: &Text,
+) -> Option<&'a [tre_text::ShapedRun]> {
+    let is_valid = cache.as_ref().is_some_and(|c| c.is_valid_for(text));
+    if !is_valid {
+        let runs = tre_text::shape_text(face, &text.text).ok()?;
+        *cache = Some(TextShapeCache {
+            text: text.text.clone(),
+            font: text.font,
+            px_size: text.px_size,
+            wrap_width: text.wrap_width,
+            runs,
+        });
+    }
+    Some(
+        &cache
+            .as_ref()
+            .expect("just set above if it wasn't already valid")
+            .runs,
+    )
+}
+
 #[allow(
     clippy::cast_precision_loss,
     reason = "unitsPerEm/ascent and every glyph's own advance stay far below f32's exact-integer \
@@ -191,6 +259,7 @@ pub(crate) fn flatten_text(
     canvas: &mut crate::RenderingCanvas,
     text: &Text,
     context: &TextFlattenContext<'_>,
+    shape_cache: &mut Option<TextShapeCache>,
 ) {
     let font = context.fonts.font_ref(text.font).unwrap_or_else(|| {
         panic!(
@@ -203,7 +272,7 @@ pub(crate) fn flatten_text(
         "FontRegistry::load_bytes already validated these same bytes build a real rustybuzz::Face",
     );
 
-    let Ok(runs) = tre_text::shape_text(&face, &text.text) else {
+    let Some(runs) = resolve_shaped_runs(shape_cache, &face, text) else {
         return;
     };
 
@@ -218,7 +287,7 @@ pub(crate) fn flatten_text(
         // The exact pre-Phase-15 single-line path -- untouched, so
         // every existing caller's rendering stays byte-identical.
         let mut pen = [0.0, metrics.ascent * scale];
-        for run in &runs {
+        for run in runs {
             canvas.draw_text(
                 run,
                 &font,
@@ -243,7 +312,7 @@ pub(crate) fn flatten_text(
     // `tre_text::wrap_lines`'s own doc comment for the exact algorithm.
     let lines = tre_text::wrap_lines(
         &text.text,
-        &runs,
+        runs,
         text.px_size,
         metrics.units_per_em,
         Some(wrap_width),
@@ -276,5 +345,131 @@ pub(crate) fn flatten_text(
             context.atlas,
         );
         pen_y += line_height;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The same real system cascade font `crate::shapes`'s own
+    /// `flatten_into_renders_a_text_shape_via_the_real_font_and_atlas_
+    /// pipeline` test already discovers -- a real `rustybuzz::Face`, not
+    /// a hand-built fake, since `resolve_shaped_runs`'s whole job is
+    /// deciding whether to call the real `tre_text::shape_text` again.
+    fn cascade_font_bytes() -> Vec<u8> {
+        let cascade =
+            tre_text::FontCascade::discover().expect("fontconfig cascade discovery failed");
+        std::fs::read(&cascade.entries[0]).expect("failed to read the primary cascade font")
+    }
+
+    #[test]
+    fn resolve_shaped_runs_reuses_the_cached_runs_when_nothing_shaping_relevant_changed() {
+        let bytes = cascade_font_bytes();
+        let face =
+            rustybuzz::Face::from_slice(&bytes, 0).expect("real font bytes build a real Face");
+        let text = Text::new("Hello", FontId(0), 24.0, 0xFFFF_FFFF);
+
+        let mut cache = None;
+        assert!(resolve_shaped_runs(&mut cache, &face, &text).is_some());
+        let first_ptr = cache.as_ref().unwrap().runs.as_ptr();
+
+        // A second call against the *identical* Text value -- exactly
+        // what flatten_into's own generic "any active animation
+        // re-flattens everything" dirty check produces every frame for
+        // a Text shape animating a cosmetic property (opacity,
+        // position, ...) that never touches shaping -- must reuse the
+        // same cached Vec, not allocate a fresh one via a real re-shape.
+        assert!(resolve_shaped_runs(&mut cache, &face, &text).is_some());
+        let second_ptr = cache.as_ref().unwrap().runs.as_ptr();
+        assert_eq!(
+            first_ptr, second_ptr,
+            "an unchanged Text must reuse its cached shaped runs, not re-shape"
+        );
+    }
+
+    #[test]
+    fn resolve_shaped_runs_reshapes_when_the_text_content_changes() {
+        let bytes = cascade_font_bytes();
+        let face =
+            rustybuzz::Face::from_slice(&bytes, 0).expect("real font bytes build a real Face");
+
+        let mut cache = None;
+        resolve_shaped_runs(
+            &mut cache,
+            &face,
+            &Text::new("Hi", FontId(0), 24.0, 0xFFFF_FFFF),
+        );
+        let short_glyph_count: usize = cache
+            .as_ref()
+            .unwrap()
+            .runs
+            .iter()
+            .map(|r| r.glyphs.len())
+            .sum();
+
+        resolve_shaped_runs(
+            &mut cache,
+            &face,
+            &Text::new("Hello there, world", FontId(0), 24.0, 0xFFFF_FFFF),
+        );
+        let longer_glyph_count: usize = cache
+            .as_ref()
+            .unwrap()
+            .runs
+            .iter()
+            .map(|r| r.glyphs.len())
+            .sum();
+
+        assert!(
+            longer_glyph_count > short_glyph_count,
+            "a genuinely different string must be re-shaped, not served from the old string's \
+             stale cache (short: {short_glyph_count} glyphs, longer: {longer_glyph_count})"
+        );
+        assert_eq!(cache.as_ref().unwrap().text, "Hello there, world");
+    }
+
+    #[test]
+    fn text_shape_cache_is_valid_for_checks_every_shaping_relevant_field_and_only_those() {
+        let cache = TextShapeCache {
+            text: "Hi".to_string(),
+            font: FontId(0),
+            px_size: 24.0,
+            wrap_width: None,
+            runs: Vec::new(),
+        };
+
+        assert!(cache.is_valid_for(&Text::new("Hi", FontId(0), 24.0, 0xFFFF_FFFF)));
+        assert!(
+            !cache.is_valid_for(&Text::new("Bye", FontId(0), 24.0, 0xFFFF_FFFF)),
+            "a different text string must invalidate the cache"
+        );
+        assert!(
+            !cache.is_valid_for(&Text::new("Hi", FontId(1), 24.0, 0xFFFF_FFFF)),
+            "a different font must invalidate the cache"
+        );
+        assert!(
+            !cache.is_valid_for(&Text::new("Hi", FontId(0), 30.0, 0xFFFF_FFFF)),
+            "a different px_size must invalidate the cache"
+        );
+        let mut wrapped = Text::new("Hi", FontId(0), 24.0, 0xFFFF_FFFF);
+        wrapped.wrap_width = Some(100.0);
+        assert!(
+            !cache.is_valid_for(&wrapped),
+            "a different wrap_width must invalidate the cache"
+        );
+
+        // The whole point of this fix: fill_color and every field under
+        // `common` (opacity, position, scale, rotation, ...) must NOT
+        // invalidate the cache -- these are exactly the cosmetic
+        // properties a real animation would touch every frame.
+        let mut cosmetic_change = Text::new("Hi", FontId(0), 24.0, 0x0000_00FF);
+        cosmetic_change.common.opacity = 0.3;
+        cosmetic_change.common.transform.position = [50.0, 80.0];
+        cosmetic_change.common.transform.rotation = 1.2;
+        assert!(
+            cache.is_valid_for(&cosmetic_change),
+            "fill_color/opacity/position/rotation must never invalidate the shaping cache"
+        );
     }
 }

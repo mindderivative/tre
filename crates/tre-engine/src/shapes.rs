@@ -831,6 +831,15 @@ pub struct ShapeSlot {
     /// A shape-local clip rect, in the same coordinate space
     /// `Canvas::push_clip`'s existing `ScissorRect` uses.
     pub clip_bounds: Option<ScissorRect>,
+    /// `flatten_into`'s own per-slot text-shaping cache (REVIEW.md
+    /// finding #225) -- `None` for every non-`Text` shape, and for a
+    /// `Text` shape not yet flattened even once. Not reset on any
+    /// mutation: `crate::text::TextShapeCache::is_valid_for` compares
+    /// against the shape's own current fields on every `flatten_into`
+    /// call, so a stale cache (from a direct field rewrite via
+    /// `get_mut`, not just an animation) is detected and re-shaped
+    /// correctly regardless of how the shape changed.
+    text_shape_cache: Option<crate::text::TextShapeCache>,
 }
 
 /// The retained-mode shape store -- a hand-built generational slot
@@ -888,6 +897,7 @@ impl ShapeRegistry {
             active_animations: Vec::new(),
             layout_dirty: true,
             clip_bounds: None,
+            text_shape_cache: None,
         };
         self.live_count += 1;
         if let Some(index) = self.free_list.pop() {
@@ -1162,7 +1172,7 @@ impl ShapeRegistry {
                         "a ShapePrimitive::Text was flattened but flatten_into's own \
                          text_context argument was None -- see flatten_into's own doc comment",
                     );
-                    crate::text::flatten_text(canvas, text, context);
+                    crate::text::flatten_text(canvas, text, context, &mut slot.text_shape_cache);
                 }
                 ShapePrimitive::Svg(svg) => {
                     canvas.draw_flat_polygon(&svg.positions, &svg.triangles, svg.fill_color);
