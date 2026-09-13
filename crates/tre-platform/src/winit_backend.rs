@@ -28,7 +28,7 @@ use winit::event::{Ime, StartCause, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopBuilder};
 use winit::platform::pump_events::EventLoopExtPumpEvents;
 use winit::platform::scancode::PhysicalKeyExtScancode;
-use winit::platform::wayland::EventLoopBuilderExtWayland;
+use winit::platform::wayland::{EventLoopBuilderExtWayland, WindowExtWayland};
 use winit::platform::x11::EventLoopBuilderExtX11;
 use winit::window::{Icon, Window, WindowAttributes};
 
@@ -414,6 +414,25 @@ impl WinitConnection {
 
     pub fn set_ime_allowed(&self, window: WindowId, allowed: bool) -> Result<(), PlatformError> {
         self.window(window)?.set_ime_allowed(allowed);
+        Ok(())
+    }
+
+    /// REVIEW.md finding #235's own further pursuit: crops `window`'s
+    /// already-existing `wp_viewport` (the one winit itself unconditionally
+    /// creates on Wayland, never a second one -- see the patched winit
+    /// fork's own doc comments) to `width`x`height`, instead of letting a
+    /// physically larger swapchain buffer be resampled to fit the window's
+    /// real size. A no-op on X11 (`WindowExtWayland::set_viewport_source_crop`
+    /// degrades to nothing there, matching this trait's own existing
+    /// `xdg_toplevel` pattern) and a no-op if the compositor never
+    /// advertised `wp_viewporter` at all.
+    pub fn set_viewport_source_crop(
+        &self,
+        window: WindowId,
+        width: u32,
+        height: u32,
+    ) -> Result<(), PlatformError> {
+        self.window(window)?.set_viewport_source_crop(width, height);
         Ok(())
     }
 }

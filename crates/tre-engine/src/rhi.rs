@@ -544,6 +544,39 @@ pub trait RhiDevice: Send + Sync {
         self.begin_frame(swapchain)
     }
 
+    /// Identical to [`Self::begin_frame`] except the GPU viewport,
+    /// scissor, and render area are ALL confined to `crop_size` -- a
+    /// genuinely different tradeoff from
+    /// [`Self::begin_frame_with_logical_size`], not a variant of it: that
+    /// method stretches NDC across the swapchain's own full (possibly
+    /// oversized) extent so a compositor-side scale-to-fit cancels the
+    /// stretch back down; this method instead renders 1:1, undistorted,
+    /// into just the `crop_size` sub-rectangle of a possibly-larger
+    /// buffer, leaving the rest of that buffer's contents untouched and
+    /// unused. On its own this crops the *visible* window to `crop_size`
+    /// -- it must be paired with a real compositor-side viewport source
+    /// crop of the identical `crop_size` (REVIEW.md finding #235's
+    /// further pursuit, via `tre_platform::PlatformConnection::
+    /// set_viewport_source_crop`) for the two to compose into content
+    /// that fills the real window with zero resample anywhere. Calling
+    /// both this and `begin_frame_with_logical_size` for the same frame
+    /// makes no sense -- they express mutually exclusive strategies for
+    /// what to do with an oversized buffer during a resize drag, never
+    /// both at once. Default implementation ignores `crop_size` and
+    /// defers to [`Self::begin_frame`]'s own behavior, for any backend
+    /// that hasn't implemented this.
+    ///
+    /// # Errors
+    /// Same as [`Self::begin_frame`].
+    fn begin_frame_with_viewport_crop(
+        &self,
+        swapchain: &dyn RhiSwapchain,
+        crop_size: (u32, u32),
+    ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
+        let _ = crop_size;
+        self.begin_frame(swapchain)
+    }
+
     /// # Errors
     /// Returns [`EngineError::DeviceLost`] or
     /// [`EngineError::SwapchainOutOfDate`] under the same conditions as
@@ -1062,6 +1095,33 @@ where
     F: FnOnce(&mut dyn RhiCommandBuffer),
 {
     let (mut cmd_buffer, image) = device.begin_frame_with_logical_size(swapchain, logical_size)?;
+    record(&mut *cmd_buffer);
+    device.submit_and_present(cmd_buffer, swapchain, image)
+}
+
+/// Identical to [`submit_frame`] except it begins the frame via
+/// [`RhiDevice::begin_frame_with_viewport_crop`] instead of
+/// [`RhiDevice::begin_frame`] -- see that method's own doc comment for
+/// why this is a different tradeoff from [`submit_frame_with_logical_size`],
+/// not a drop-in replacement for the same call site. The caller is
+/// responsible for pairing this with a matching compositor-side viewport
+/// source crop of the identical `crop_size` (e.g.
+/// `tre_platform::PlatformConnection::set_viewport_source_crop`) --
+/// without it, this alone just renders into a corner of the buffer that
+/// the compositor still scales/resamples like any other content.
+///
+/// # Errors
+/// Same as [`submit_frame`].
+pub fn submit_frame_with_viewport_crop<F>(
+    device: &dyn RhiDevice,
+    swapchain: &dyn RhiSwapchain,
+    crop_size: (u32, u32),
+    record: F,
+) -> Result<(), EngineError>
+where
+    F: FnOnce(&mut dyn RhiCommandBuffer),
+{
+    let (mut cmd_buffer, image) = device.begin_frame_with_viewport_crop(swapchain, crop_size)?;
     record(&mut *cmd_buffer);
     device.submit_and_present(cmd_buffer, swapchain, image)
 }

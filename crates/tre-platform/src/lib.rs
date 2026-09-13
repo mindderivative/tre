@@ -333,6 +333,35 @@ impl PlatformConnection {
             Self::X11(c) => c.set_ime_allowed(window, allowed),
         }
     }
+
+    /// Crops `window`'s already-existing `wp_viewport` (REVIEW.md finding
+    /// #235's own further pursuit, via a small patch to `winit` itself --
+    /// see the workspace root `Cargo.toml`'s own `[patch.crates-io]` entry)
+    /// to `width`x`height`, showing only that exact, unscaled sub-rectangle
+    /// of a physically larger swapchain buffer instead of letting the
+    /// compositor resample the whole buffer to fit the window's real size.
+    /// Layers on top of the already-shipped oversized-swapchain +
+    /// logical-size-projection fix; removing this call falls straight back
+    /// to that fix's own already-good behavior.
+    ///
+    /// # Platform-specific
+    /// A no-op on X11, and a no-op on Wayland if the compositor never
+    /// advertised `wp_viewporter` at all -- neither is an error.
+    ///
+    /// # Errors
+    /// Returns [`PlatformError::UnknownWindow`] if `window` was not created
+    /// by this connection.
+    pub fn set_viewport_source_crop(
+        &self,
+        window: WindowId,
+        width: u32,
+        height: u32,
+    ) -> Result<(), PlatformError> {
+        match self {
+            Self::Wayland(c) => c.set_viewport_source_crop(window, width, height),
+            Self::X11(c) => c.set_viewport_source_crop(window, width, height),
+        }
+    }
 }
 
 impl HasDisplayHandle for PlatformConnection {

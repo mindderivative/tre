@@ -77,6 +77,40 @@
 //! (logged as a dedicated `acquire_skip` record) instead of blocking.
 //! Never squashes/stretches (the swapchain always matches the real
 //! size), but can visibly drop frames during a drag instead.
+//!
+//! **Further pursuit of #235: eliminating the compositor-resample blur
+//! itself, not just capping it.** Option 2's stretch-then-let-the-
+//! compositor-resample-back-down trick (above) has one residual,
+//! precisely-understood cost: the resample itself is visibly soft during
+//! an active drag. A first attempt to remove it by creating an
+//! independent `wp_viewport` and calling `set_source` on it directly
+//! crashed on the very first real drag (`wp_viewporter#63: error 0: the
+//! specified surface already has a viewport`) -- `winit` already owns
+//! exactly one `wp_viewport` per window, unconditionally, with no public
+//! API to reach it. Fixed at the real root: a small, surgical patch to
+//! `winit` itself (forked at the exact `v0.30.13` tag this workspace
+//! already resolves, pinned via the workspace root `Cargo.toml`'s
+//! `[patch.crates-io]`) adds `WindowExtWayland::set_viewport_source_crop`,
+//! delegating to the viewport `winit` already owns and already calls
+//! `set_destination` on every resize -- never a second one.
+//!
+//! That patch alone was not sufficient, though: `ResizeStrategy::Coarse`
+//! initially kept calling `begin_frame_with_logical_size` (the stretch-
+//! across-the-full-buffer trick) while ALSO cropping via the patched
+//! `winit` -- and a live drag test showed *worse* jitter, not better.
+//! The two are mutually exclusive strategies, not stackable: stretching
+//! content to fill the whole oversized buffer, then cropping only its
+//! top-left `real_size` corner unscaled, shows a continuously-zooming
+//! fraction of the stretched scene, not the correctly-scaled whole
+//! scene. The real fix replaces `begin_frame_with_logical_size` with the
+//! new [`tre_engine::RhiDevice::begin_frame_with_viewport_crop`], which
+//! confines the GPU viewport/scissor/render area to `real_size` itself --
+//! rendering 1:1, undistorted, into just that sub-rectangle of the
+//! (possibly larger) buffer -- paired with a
+//! `tre_platform::PlatformConnection::set_viewport_source_crop` call of
+//! the identical size so the compositor presents exactly that
+//! sub-rectangle with no scaling at all. Net effect, if this holds up
+//! under a real live drag test: zero resample, not just a smaller one.
 
 use std::time::Instant;
 
@@ -410,14 +444,22 @@ pub fn run(out: Option<std::path::PathBuf>, strategy: ResizeStrategy) {
         // successful acquire means a skipped frame writes nothing.
         let acquire_start = Instant::now();
         let begin_result = match strategy {
-            // REVIEW.md finding #235, Option 2's real fix: project
-            // content against `real_size` (the true, exact window size)
-            // even when `surface`'s own swapchain sits at a coarser
-            // size -- see this module's own header comment for why that
-            // cancels the compositor's own scale-to-fit instead of
-            // compounding it.
+            // REVIEW.md finding #235's further pursuit: render 1:1,
+            // undistorted, into just the `real_size` sub-rectangle of
+            // `surface`'s own (possibly coarser) swapchain buffer --
+            // paired with this same loop's own `connection.
+            // set_viewport_source_crop(window, real_size...)` call below,
+            // which tells the compositor to present exactly that
+            // sub-rectangle unscaled. Replaces the original Option 2 fix
+            // (`begin_frame_with_logical_size`, which instead stretched
+            // content across the FULL oversized buffer for a compositor
+            // resample to cancel back down) -- the two are mutually
+            // exclusive render paths for the same underlying mismatch, not
+            // stackable (see `RhiDevice::begin_frame_with_viewport_crop`'s
+            // own doc comment for why combining them double-transforms
+            // and reads as worse jitter, not better).
             ResizeStrategy::Coarse => {
-                device.begin_frame_with_logical_size(&surface.swapchain, real_size)
+                device.begin_frame_with_viewport_crop(&surface.swapchain, real_size)
             }
             ResizeStrategy::Timeout => {
                 device.begin_frame_with_timeout(&surface.swapchain, acquire_timeout_ns)
@@ -462,11 +504,20 @@ pub fn run(out: Option<std::path::PathBuf>, strategy: ResizeStrategy) {
         )]
         let record_ms = record_start.elapsed().as_secs_f64() as f32 * 1000.0;
 
+        // `real_size`, not `surface.width`/`surface.height`: under
+        // `Coarse`, the GPU render area/viewport/scissor are now confined
+        // to `real_size` (see `begin_frame_with_viewport_crop` above), not
+        // the swapchain's own possibly-larger physical extent -- a clip
+        // rect wider than that would ask for a scissor outside the actual
+        // render area, which dynamic rendering does not allow. Under
+        // `Timeout`, `surface` is always kept exactly at `real_size`
+        // anyway (rebuilt to the exact live size every frame), so this is
+        // a no-op simplification there, not a behavior change.
         let full_window = ScissorRect {
             x: 0,
             y: 0,
-            width: surface.width,
-            height: surface.height,
+            width: real_size.0,
+            height: real_size.1,
         };
 
         let mut present_ms;
@@ -488,6 +539,18 @@ pub fn run(out: Option<std::path::PathBuf>, strategy: ResizeStrategy) {
                     &mut *cmd_buffer,
                     &mut clip_stack,
                 );
+                // REVIEW.md finding #235's further pursuit: crop the
+                // (possibly coarser) swapchain buffer down to the true,
+                // exact `real_size` before presenting -- via the patched
+                // `winit` fork's `wp_viewport.set_source` (see
+                // `tre_platform::PlatformConnection::set_viewport_source_crop`'s
+                // own doc comment). Only meaningful under `Coarse` (the
+                // only strategy whose swapchain can sit at a size other
+                // than `real_size` at all); skipped under `Timeout` for
+                // clarity, since it would always be a no-op there.
+                if matches!(strategy, ResizeStrategy::Coarse) {
+                    let _ = connection.set_viewport_source_crop(window, real_size.0, real_size.1);
+                }
                 let present_start = Instant::now();
                 let result = device.submit_and_present(cmd_buffer, &surface.swapchain, image);
                 #[allow(
@@ -517,12 +580,12 @@ pub fn run(out: Option<std::path::PathBuf>, strategy: ResizeStrategy) {
             // findings #235's own bounded acquire (Option 3) targets --
             // and this whole arm is already a rare race-condition
             // fallback, not the hot path. Still uses `real_size` for the
-            // projection (Option 2), for the identical reason the
-            // primary acquire above does.
+            // viewport crop, for the identical reason the primary acquire
+            // above does.
             let acquire_start2 = Instant::now();
             let begin_result2 = match strategy {
                 ResizeStrategy::Coarse => {
-                    device.begin_frame_with_logical_size(&surface.swapchain, real_size)
+                    device.begin_frame_with_viewport_crop(&surface.swapchain, real_size)
                 }
                 ResizeStrategy::Timeout => device.begin_frame(&surface.swapchain),
             };
@@ -551,6 +614,13 @@ pub fn run(out: Option<std::path::PathBuf>, strategy: ResizeStrategy) {
                         &mut *cmd_buffer,
                         &mut clip_stack,
                     );
+                    // Same crop as the primary attempt above -- this is
+                    // just its rare SwapchainOutOfDate-recovery fallback,
+                    // not a different rendering path.
+                    if matches!(strategy, ResizeStrategy::Coarse) {
+                        let _ =
+                            connection.set_viewport_source_crop(window, real_size.0, real_size.1);
+                    }
                     let present_start2 = Instant::now();
                     let result = device.submit_and_present(cmd_buffer, &surface.swapchain, image);
                     #[allow(

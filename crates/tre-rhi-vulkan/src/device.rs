@@ -1871,6 +1871,7 @@ impl VulkanDevice {
         swapchain: &dyn RhiSwapchain,
         timeout_ns: u64,
         logical_size: Option<(u32, u32)>,
+        viewport_crop: Option<(u32, u32)>,
     ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
         // SAFETY: `self.device` is valid and `self.frame_sync.fence` was
         // created signaled in `new`; under the single-frame-in-flight
@@ -1932,16 +1933,49 @@ impl VulkanDevice {
         let target_view = vk::ImageView::from_raw(image.target_view_handle);
         let target_image = vk::Image::from_raw(image.target_image_handle);
         let (width, height) = swapchain.extent();
-        // REVIEW.md finding #235: `ndc_width`/`ndc_height` (below) are
-        // what `VulkanCommandBuffer::width`/`height` -- and therefore
-        // `draw_indexed`'s `screen_size` push constant -- get set to;
-        // `width`/`height` themselves stay the swapchain's own real
-        // extent for everything else in this function (viewport,
-        // scissor, render area, `swapchain_width`/`swapchain_height`).
-        // `logical_size` is only ever `Some` while a caller is
-        // deliberately holding the swapchain at a coarser size than the
-        // real window during an active resize drag.
-        let (ndc_width, ndc_height) = logical_size.unwrap_or((width, height));
+        // REVIEW.md finding #235: `ndc_width`/`ndc_height` are what
+        // `VulkanCommandBuffer::width`/`height` -- and therefore
+        // `draw_indexed`'s `screen_size` push constant -- get set to.
+        // `render_width`/`render_height` are the GPU viewport/scissor/
+        // render area extent. `swapchain_width`/`swapchain_height`
+        // (assigned into the returned `VulkanCommandBuffer` further below)
+        // always stay the swapchain's own real, physical extent
+        // regardless of either mode -- unrelated to this choice, they
+        // exist only so a render-to-texture layer can restore the main
+        // swapchain's own true dimensions after popping.
+        //
+        // `logical_size`/`viewport_crop` are only ever `Some` while a
+        // caller is deliberately holding the swapchain at a coarser size
+        // than the real window during an active resize drag -- and are
+        // mutually exclusive strategies for what to do with that mismatch
+        // (see `RhiDevice::begin_frame_with_viewport_crop`'s own doc
+        // comment): `logical_size`'s `Stretched` mode below renders across
+        // the FULL buffer so a compositor-side scale-to-fit cancels the
+        // stretch; `viewport_crop`'s `Cropped` mode instead renders 1:1
+        // into just that sub-rectangle, for a caller pairing it with a
+        // real compositor-side viewport source crop of the identical
+        // size -- zero resample, instead of one. `viewport_crop` is
+        // checked first and, if present, takes priority (a caller should
+        // never pass both `Some` for the same frame; this ordering just
+        // makes the precedence explicit rather than leaving it
+        // unspecified).
+        let (render_width, render_height, ndc_width, ndc_height) =
+            if let Some((crop_width, crop_height)) = viewport_crop {
+                // Clamped defensively to the buffer's own real extent --
+                // a caller's `real_size` and this swapchain's own extent
+                // are expected to already agree (the coarse-bucket resize
+                // always rounds up to at least cover it), but an
+                // out-of-bounds render area/viewport is a Vulkan validation
+                // error, not just a visual glitch, so this is cheap
+                // insurance against a transient one-frame race between the
+                // two, not a mechanism this design otherwise relies on.
+                let crop_width = crop_width.min(width);
+                let crop_height = crop_height.min(height);
+                (crop_width, crop_height, crop_width, crop_height)
+            } else {
+                let (logical_width, logical_height) = logical_size.unwrap_or((width, height));
+                (width, height, logical_width, logical_height)
+            };
 
         // Phase 10 Step 10.2.3: when this device supports it, the
         // swapchain's color attachment lives in `RENDERING_LOCAL_READ_KHR`
@@ -2072,7 +2106,10 @@ impl VulkanDevice {
         let rendering_info = vk::RenderingInfo::default()
             .render_area(vk::Rect2D {
                 offset: vk::Offset2D::default(),
-                extent: vk::Extent2D { width, height },
+                extent: vk::Extent2D {
+                    width: render_width,
+                    height: render_height,
+                },
             })
             .layer_count(1)
             .color_attachments(&color_attachments)
@@ -2081,8 +2118,8 @@ impl VulkanDevice {
         // SAFETY: `command_buffer` is still recording, and `target_view`
         // (via `color_attachment`/`rendering_info`) is the same acquired
         // image the barrier above just transitioned to
-        // `COLOR_ATTACHMENT_OPTIMAL`; `width`/`height` match the
-        // swapchain's own reported extent.
+        // `COLOR_ATTACHMENT_OPTIMAL`; `render_width`/`render_height` never
+        // exceed the swapchain's own reported extent (clamped above).
         unsafe {
             self.dynamic_rendering
                 .cmd_begin_rendering(command_buffer, &rendering_info);
@@ -2092,8 +2129,8 @@ impl VulkanDevice {
                 &[vk::Viewport {
                     x: 0.0,
                     y: 0.0,
-                    width: width as f32,
-                    height: height as f32,
+                    width: render_width as f32,
+                    height: render_height as f32,
                     min_depth: 0.0,
                     max_depth: 1.0,
                 }],
@@ -2103,7 +2140,10 @@ impl VulkanDevice {
                 0,
                 &[vk::Rect2D {
                     offset: vk::Offset2D::default(),
-                    extent: vk::Extent2D { width, height },
+                    extent: vk::Extent2D {
+                        width: render_width,
+                        height: render_height,
+                    },
                 }],
             );
         }
@@ -2408,7 +2448,7 @@ impl RhiDevice for VulkanDevice {
         &self,
         swapchain: &dyn RhiSwapchain,
     ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
-        self.begin_frame_impl(swapchain, u64::MAX, None)
+        self.begin_frame_impl(swapchain, u64::MAX, None, None)
     }
 
     /// REVIEW.md finding #235, Option 3: see `Self::begin_frame_impl`'s
@@ -2420,7 +2460,7 @@ impl RhiDevice for VulkanDevice {
         swapchain: &dyn RhiSwapchain,
         timeout_ns: u64,
     ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
-        self.begin_frame_impl(swapchain, timeout_ns, None)
+        self.begin_frame_impl(swapchain, timeout_ns, None, None)
     }
 
     fn begin_frame_with_logical_size(
@@ -2428,7 +2468,15 @@ impl RhiDevice for VulkanDevice {
         swapchain: &dyn RhiSwapchain,
         logical_size: (u32, u32),
     ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
-        self.begin_frame_impl(swapchain, u64::MAX, Some(logical_size))
+        self.begin_frame_impl(swapchain, u64::MAX, Some(logical_size), None)
+    }
+
+    fn begin_frame_with_viewport_crop(
+        &self,
+        swapchain: &dyn RhiSwapchain,
+        crop_size: (u32, u32),
+    ) -> Result<(Box<dyn RhiCommandBuffer>, AcquiredImage), EngineError> {
+        self.begin_frame_impl(swapchain, u64::MAX, None, Some(crop_size))
     }
 
     fn submit_and_present(

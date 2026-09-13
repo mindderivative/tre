@@ -32,3 +32,17 @@ unsafe_op_in_unsafe_fn = "deny"
 
 [workspace.lints.clippy]
 all = "warn"
+
+# REVIEW.md finding #235: a small, surgical patch to `winit`, forked from
+# the exact `v0.30.13` tag this workspace already resolved (no unrelated
+# upstream changes), adding `WindowExtWayland::set_viewport_source_crop`
+# -- crops the `wp_viewport` `winit` already owns and manages for every
+# Wayland window (never creates a second one, which is what crashed the
+# first, reverted attempt at this: `winit` binds exactly one `wp_viewport`
+# per window, unconditionally, with no public API to reach it otherwise).
+# Pinned to an exact commit `rev`, not a moving `branch`, matching this
+# workspace's own established exact-version-pinning precedent elsewhere
+# (`rustc-hash = "=2.1.1"`, `skrifa = "=0.33.2"`) for the identical
+# reproducibility reason.
+[patch.crates-io]
+winit = { git = "https://github.com/mindderivative/winit", rev = "1c2028620ceebb2aa5d132e6a69b57bfbb6d61af" }
