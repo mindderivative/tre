@@ -7,7 +7,9 @@
 //! allocator. Split out of `lib.rs` as one of its ten separable concerns
 //! (Architecture review finding).
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
+
+use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -212,7 +214,13 @@ impl BindlessRegistry {
 pub(crate) struct TransientPool {
     /// Checked-in (available) textures, bucketed by power-of-two
     /// `(width, height)` plus format.
-    pub(crate) free: HashMap<(u32, u32, TextureFormat), Vec<VulkanTexture>>,
+    // `FxHashMap`, not `std::collections::HashMap` (Performance review,
+    // 2026-09-13, REVIEW.md finding #218) -- TECHNICAL.md Section 3.2
+    // already documents this pool as using `FxHashMap`/`ahash` in place
+    // of default SipHash, since these keys are internal, engine-
+    // generated values with no untrusted input reaching them; the actual
+    // implementation never matched that documented decision until now.
+    pub(crate) free: FxHashMap<(u32, u32, TextureFormat), Vec<VulkanTexture>>,
     /// Exact buckets a miss needs grown at the start of the next frame
     /// (deduplicated -- see the `contains` check at the push site).
     pub(crate) pending_growth: Vec<(u32, u32, TextureFormat)>,

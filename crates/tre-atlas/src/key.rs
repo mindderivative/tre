@@ -111,7 +111,7 @@ pub fn pack_slot_value(rect: PackedRect, generation: u16) -> u64 {
 
 /// The inverse of [`pack_slot_value`].
 #[must_use]
-pub fn unpack_slot_value(value: u64) -> (PackedRect, u16) {
+pub const fn unpack_slot_value(value: u64) -> (PackedRect, u16) {
     #[allow(
         clippy::cast_possible_truncation,
         reason = "each field is masked down to COORD_BITS (12) bits first, well within u32"

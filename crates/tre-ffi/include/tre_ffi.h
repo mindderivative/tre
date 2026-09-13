@@ -161,8 +161,8 @@ uintptr_t tre_shape_registry_len(TreShapeRegistry registry);
  * id to `*out_id`.
  *
  * # Errors
- * Returns [`TreErrorCode::InvalidArgument`] if `width`/`height` is
- * non-finite or negative, or `registry` is null.
+ * Returns [`TreErrorCode::InvalidArgument`] if `x`/`y` is non-finite, or
+ * `width`/`height` is non-finite or negative, or `registry` is null.
  *
  * # Safety
  * `registry` must be a still-live value [`tre_shape_registry_new`]
@@ -186,8 +186,9 @@ enum TreErrorCode tre_shape_registry_insert_rectangle(TreShapeRegistry registry,
  * `radius_x == radius_y` is a circle; otherwise an ellipse.
  *
  * # Errors
- * Returns [`TreErrorCode::InvalidArgument`] if `radius_x`/`radius_y` is
- * non-finite or negative, or `registry` is null.
+ * Returns [`TreErrorCode::InvalidArgument`] if `x`/`y` is non-finite, or
+ * `radius_x`/`radius_y` is non-finite or negative, or `registry` is
+ * null.
  *
  * # Safety
  * Same contract as [`tre_shape_registry_insert_rectangle`].
@@ -206,8 +207,9 @@ enum TreErrorCode tre_shape_registry_insert_circle(TreShapeRegistry registry,
  * shape's id to `*out_id`.
  *
  * # Errors
- * Returns [`TreErrorCode::InvalidArgument`] if `radius` is non-finite
- * or negative, `sides` is less than 3, or `registry` is null.
+ * Returns [`TreErrorCode::InvalidArgument`] if `x`/`y` is non-finite,
+ * `radius` is non-finite or negative, `sides` is less than 3 or greater
+ * than [`MAX_POLYGON_SIDES`], or `registry` is null.
  *
  * # Safety
  * Same contract as [`tre_shape_registry_insert_rectangle`].
@@ -226,8 +228,9 @@ enum TreErrorCode tre_shape_registry_insert_polygon(TreShapeRegistry registry,
  * shape's id to `*out_id`.
  *
  * # Errors
- * Returns [`TreErrorCode::InvalidArgument`] if `commands` is null while
- * `count` is non-zero, or `registry` is null.
+ * Returns [`TreErrorCode::InvalidArgument`] if `x`/`y` is non-finite,
+ * any command in `commands` has a non-finite coordinate, `commands` is
+ * null while `count` is non-zero, or `registry` is null.
  *
  * # Safety
  * Same contract as [`tre_shape_registry_insert_rectangle`], plus:
@@ -276,14 +279,15 @@ void tre_shape_id_free(TreShapeId id);
  * pixels. Writes the new renderer's handle to `*out`.
  *
  * # Errors
- * Returns a real `TreErrorCode` (never panics across the boundary) if
- * the display-server connection, the probe window, or the underlying
- * Vulkan device/swapchain/pipeline setup fails -- see
- * `docs/getting-started.md`'s own disclosed caveat, inherited unchanged
- * here: this cannot render even headlessly in a true no-display
- * environment (a bare container with no compositor at all needs a
- * software Vulkan implementation plus a virtual display, the same way
- * this project's own CI does it).
+ * Returns [`TreErrorCode::InvalidArgument`] if `width`/`height` is zero
+ * or exceeds [`MAX_DIMENSION`]. Returns a real `TreErrorCode` (never
+ * panics across the boundary) if the display-server connection, the
+ * probe window, or the underlying Vulkan device/swapchain/pipeline
+ * setup fails -- see `docs/getting-started.md`'s own disclosed caveat,
+ * inherited unchanged here: this cannot render even headlessly in a
+ * true no-display environment (a bare container with no compositor at
+ * all needs a software Vulkan implementation plus a virtual display,
+ * the same way this project's own CI does it).
  *
  * # Safety
  * `out` must be valid for one write of a [`TreHeadlessRenderer`].

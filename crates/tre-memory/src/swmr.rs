@@ -52,7 +52,7 @@ const TOMBSTONE_KEY: u64 = u64::MAX - 1;
 /// non-debug-only check -- not merely a `debug_assert`, since silently
 /// miscomparing against a sentinel would corrupt an unrelated key's
 /// entry in a release build with no diagnostic at all).
-fn is_reserved(key_u64: u64) -> bool {
+const fn is_reserved(key_u64: u64) -> bool {
     key_u64 == EMPTY_KEY || key_u64 == TOMBSTONE_KEY
 }
 

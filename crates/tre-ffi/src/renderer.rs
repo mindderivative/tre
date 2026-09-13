@@ -50,6 +50,17 @@ const ARENA_VERTEX_CAPACITY: usize = 65536;
 const ARENA_INDEX_CAPACITY: usize = 131072;
 const ARENA_COMMAND_CAPACITY: usize = 8192;
 
+/// Architecture/Security review (2026-09-13, REVIEW.md finding #218):
+/// real Vulkan hardware rejects `width`/`height == 0`
+/// (`VUID-VkImageCreateInfo-extent-00944`) -- undefined behavior on a
+/// release build with no validation layer, not a clean error -- and an
+/// unbounded caller-supplied dimension has no other bound before
+/// reaching a real GPU image allocation inside `HeadlessSwapchain::new`.
+/// Matches `tre-python`'s own identical `MAX_DIMENSION`
+/// (`crates/tre-python/src/renderer.rs`, REVIEW.md finding #197) exactly
+/// -- this crate's own equivalent constructor never got the same check.
+const MAX_DIMENSION: u32 = 8192;
+
 /// Field declaration order is real teardown order here (Rust drops
 /// struct fields top-to-bottom, the OPPOSITE of local variables' own
 /// reverse-declaration-order drop). `pipelines`/`swapchain`/
@@ -151,14 +162,15 @@ fn build_renderer(width: u32, height: u32) -> Result<Renderer, TreErrorCode> {
 /// pixels. Writes the new renderer's handle to `*out`.
 ///
 /// # Errors
-/// Returns a real `TreErrorCode` (never panics across the boundary) if
-/// the display-server connection, the probe window, or the underlying
-/// Vulkan device/swapchain/pipeline setup fails -- see
-/// `docs/getting-started.md`'s own disclosed caveat, inherited unchanged
-/// here: this cannot render even headlessly in a true no-display
-/// environment (a bare container with no compositor at all needs a
-/// software Vulkan implementation plus a virtual display, the same way
-/// this project's own CI does it).
+/// Returns [`TreErrorCode::InvalidArgument`] if `width`/`height` is zero
+/// or exceeds [`MAX_DIMENSION`]. Returns a real `TreErrorCode` (never
+/// panics across the boundary) if the display-server connection, the
+/// probe window, or the underlying Vulkan device/swapchain/pipeline
+/// setup fails -- see `docs/getting-started.md`'s own disclosed caveat,
+/// inherited unchanged here: this cannot render even headlessly in a
+/// true no-display environment (a bare container with no compositor at
+/// all needs a software Vulkan implementation plus a virtual display,
+/// the same way this project's own CI does it).
 ///
 /// # Safety
 /// `out` must be valid for one write of a [`TreHeadlessRenderer`].
@@ -170,6 +182,13 @@ pub unsafe extern "C" fn tre_headless_renderer_new(
 ) -> TreErrorCode {
     ffi_guard(TreErrorCode::PanicCaught, move || {
         if out.is_null() {
+            return TreErrorCode::InvalidArgument;
+        }
+        if width == 0 || height == 0 || width > MAX_DIMENSION || height > MAX_DIMENSION {
+            // SAFETY: caller's contract guarantees `out` is valid for one
+            // write of a `TreHeadlessRenderer`, matching the identical
+            // write on the `build_renderer` error path below.
+            unsafe { out.write(TreHeadlessRenderer::null()) };
             return TreErrorCode::InvalidArgument;
         }
         match build_renderer(width, height) {

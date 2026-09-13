@@ -91,6 +91,51 @@ fn dimension_is_valid(value: f32) -> bool {
     value.is_finite() && value >= 0.0
 }
 
+/// Architecture/Security review (2026-09-13, REVIEW.md finding #218):
+/// `tre-python`'s own `insert_polygon` rejects `sides` above this same
+/// cap (`crates/tre-python/src/shapes.rs`'s own `MAX_POLYGON_SIDES`) --
+/// `sides` otherwise reaches `generate_polygon_points_into`
+/// (`tre_engine::shapes`), which allocates `Vec<[f32; 2]>` of exactly
+/// `sides` elements with no cap of its own. Without this, a caller
+/// passing `sides` near `u32::MAX` drives a multi-gigabyte allocation
+/// (a real crash/DoS, not just a slow render) through this crate's own
+/// C-ABI -- the identical bug class REVIEW.md findings #196-198 already
+/// fixed for `tre-python`'s equivalent entry point, never mirrored here
+/// until now.
+const MAX_POLYGON_SIDES: u32 = 4096;
+
+/// Every field a [`TrePathCommand`] of `kind` actually reads (per
+/// [`to_path_command`]'s own match) is finite -- a non-finite point
+/// reaching `lyon`'s tessellator (via `tre_engine::Path`'s own flatten
+/// path) is a real panic/hang surface, not just a wrong render, the same
+/// reasoning `tre-python`'s `PyPath::move_to`/`line_to`/`quad_to`/
+/// `cubic_to` already apply per-command at construction time (REVIEW.md
+/// finding #202). This crate's own `insert_path` takes the whole command
+/// list in one call rather than incremental builder calls, so validation
+/// happens here instead, over every command in the array.
+fn command_is_finite(command: &TrePathCommand) -> bool {
+    match command.kind {
+        TrePathCommandKind::MoveTo | TrePathCommandKind::LineTo => {
+            command.x0.is_finite() && command.y0.is_finite()
+        }
+        TrePathCommandKind::QuadraticTo => {
+            command.x0.is_finite()
+                && command.y0.is_finite()
+                && command.x1.is_finite()
+                && command.y1.is_finite()
+        }
+        TrePathCommandKind::CubicTo => {
+            command.x0.is_finite()
+                && command.y0.is_finite()
+                && command.x1.is_finite()
+                && command.y1.is_finite()
+                && command.x2.is_finite()
+                && command.y2.is_finite()
+        }
+        TrePathCommandKind::Close => true,
+    }
+}
+
 /// Leaves `*out_id` at [`TreShapeId::null`] on a validation failure, so a
 /// caller that reads `*out_id` unconditionally (ignoring the returned
 /// [`TreErrorCode`]) still gets a well-defined null handle rather than
@@ -171,8 +216,8 @@ fn insert(registry: *mut c_void, shape: ShapePrimitive, out_id: *mut TreShapeId)
 /// id to `*out_id`.
 ///
 /// # Errors
-/// Returns [`TreErrorCode::InvalidArgument`] if `width`/`height` is
-/// non-finite or negative, or `registry` is null.
+/// Returns [`TreErrorCode::InvalidArgument`] if `x`/`y` is non-finite, or
+/// `width`/`height` is non-finite or negative, or `registry` is null.
 ///
 /// # Safety
 /// `registry` must be a still-live value [`tre_shape_registry_new`]
@@ -188,13 +233,19 @@ pub unsafe extern "C" fn tre_shape_registry_insert_rectangle(
     rgba: u32,
     out_id: *mut TreShapeId,
 ) -> TreErrorCode {
-    if !dimension_is_valid(width) || !dimension_is_valid(height) {
-        write_null_id(out_id);
-        return TreErrorCode::InvalidArgument;
-    }
-    let mut rectangle = Rectangle::new([width, height], rgba);
-    rectangle.common.transform.position = [x, y];
-    insert(registry.0, ShapePrimitive::Rectangle(rectangle), out_id)
+    ffi_guard(TreErrorCode::PanicCaught, move || {
+        if !x.is_finite()
+            || !y.is_finite()
+            || !dimension_is_valid(width)
+            || !dimension_is_valid(height)
+        {
+            write_null_id(out_id);
+            return TreErrorCode::InvalidArgument;
+        }
+        let mut rectangle = Rectangle::new([width, height], rgba);
+        rectangle.common.transform.position = [x, y];
+        insert(registry.0, ShapePrimitive::Rectangle(rectangle), out_id)
+    })
 }
 
 /// Inserts a solid-filled, borderless, full (non-partial-arc) circle or
@@ -205,8 +256,9 @@ pub unsafe extern "C" fn tre_shape_registry_insert_rectangle(
 /// `radius_x == radius_y` is a circle; otherwise an ellipse.
 ///
 /// # Errors
-/// Returns [`TreErrorCode::InvalidArgument`] if `radius_x`/`radius_y` is
-/// non-finite or negative, or `registry` is null.
+/// Returns [`TreErrorCode::InvalidArgument`] if `x`/`y` is non-finite, or
+/// `radius_x`/`radius_y` is non-finite or negative, or `registry` is
+/// null.
 ///
 /// # Safety
 /// Same contract as [`tre_shape_registry_insert_rectangle`].
@@ -220,13 +272,19 @@ pub unsafe extern "C" fn tre_shape_registry_insert_circle(
     rgba: u32,
     out_id: *mut TreShapeId,
 ) -> TreErrorCode {
-    if !dimension_is_valid(radius_x) || !dimension_is_valid(radius_y) {
-        write_null_id(out_id);
-        return TreErrorCode::InvalidArgument;
-    }
-    let mut circle = Circle::new([radius_x, radius_y], rgba);
-    circle.common.transform.position = [x, y];
-    insert(registry.0, ShapePrimitive::Circle(circle), out_id)
+    ffi_guard(TreErrorCode::PanicCaught, move || {
+        if !x.is_finite()
+            || !y.is_finite()
+            || !dimension_is_valid(radius_x)
+            || !dimension_is_valid(radius_y)
+        {
+            write_null_id(out_id);
+            return TreErrorCode::InvalidArgument;
+        }
+        let mut circle = Circle::new([radius_x, radius_y], rgba);
+        circle.common.transform.position = [x, y];
+        insert(registry.0, ShapePrimitive::Circle(circle), out_id)
+    })
 }
 
 /// Inserts a solid-filled, borderless regular `sides`-gon (not a star)
@@ -234,8 +292,9 @@ pub unsafe extern "C" fn tre_shape_registry_insert_circle(
 /// shape's id to `*out_id`.
 ///
 /// # Errors
-/// Returns [`TreErrorCode::InvalidArgument`] if `radius` is non-finite
-/// or negative, `sides` is less than 3, or `registry` is null.
+/// Returns [`TreErrorCode::InvalidArgument`] if `x`/`y` is non-finite,
+/// `radius` is non-finite or negative, `sides` is less than 3 or greater
+/// than [`MAX_POLYGON_SIDES`], or `registry` is null.
 ///
 /// # Safety
 /// Same contract as [`tre_shape_registry_insert_rectangle`].
@@ -249,13 +308,19 @@ pub unsafe extern "C" fn tre_shape_registry_insert_polygon(
     rgba: u32,
     out_id: *mut TreShapeId,
 ) -> TreErrorCode {
-    if !dimension_is_valid(radius) || sides < 3 {
-        write_null_id(out_id);
-        return TreErrorCode::InvalidArgument;
-    }
-    let mut polygon = Polygon::new(sides, radius, rgba);
-    polygon.common.transform.position = [x, y];
-    insert(registry.0, ShapePrimitive::Polygon(polygon), out_id)
+    ffi_guard(TreErrorCode::PanicCaught, move || {
+        if !x.is_finite()
+            || !y.is_finite()
+            || !dimension_is_valid(radius)
+            || !(3..=MAX_POLYGON_SIDES).contains(&sides)
+        {
+            write_null_id(out_id);
+            return TreErrorCode::InvalidArgument;
+        }
+        let mut polygon = Polygon::new(sides, radius, rgba);
+        polygon.common.transform.position = [x, y];
+        insert(registry.0, ShapePrimitive::Polygon(polygon), out_id)
+    })
 }
 
 /// Inserts a solid-filled, borderless path built from `commands`
@@ -263,8 +328,9 @@ pub unsafe extern "C" fn tre_shape_registry_insert_polygon(
 /// shape's id to `*out_id`.
 ///
 /// # Errors
-/// Returns [`TreErrorCode::InvalidArgument`] if `commands` is null while
-/// `count` is non-zero, or `registry` is null.
+/// Returns [`TreErrorCode::InvalidArgument`] if `x`/`y` is non-finite,
+/// any command in `commands` has a non-finite coordinate, `commands` is
+/// null while `count` is non-zero, or `registry` is null.
 ///
 /// # Safety
 /// Same contract as [`tre_shape_registry_insert_rectangle`], plus:
@@ -281,7 +347,7 @@ pub unsafe extern "C" fn tre_shape_registry_insert_path(
     out_id: *mut TreShapeId,
 ) -> TreErrorCode {
     ffi_guard(TreErrorCode::PanicCaught, move || {
-        if commands.is_null() && count > 0 {
+        if !x.is_finite() || !y.is_finite() || (commands.is_null() && count > 0) {
             write_null_id(out_id);
             return TreErrorCode::InvalidArgument;
         }
@@ -293,6 +359,10 @@ pub unsafe extern "C" fn tre_shape_registry_insert_path(
         } else {
             unsafe { std::slice::from_raw_parts(commands, count) }
         };
+        if !commands.iter().all(command_is_finite) {
+            write_null_id(out_id);
+            return TreErrorCode::InvalidArgument;
+        }
         let path_commands: Vec<PathCommand> = commands.iter().map(to_path_command).collect();
         let mut path = Path::new(path_commands, rgba);
         path.common.transform.position = [x, y];

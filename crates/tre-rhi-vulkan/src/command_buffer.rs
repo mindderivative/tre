@@ -688,15 +688,14 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
         // see `BlurResources`'s own doc comment for the full design.
         let blur = {
             let mut guard = self.blur_resources.lock().expect("blur resources poisoned");
-            if guard.is_none() {
-                *guard = Some(create_blur_resources(
+            *guard.get_or_insert_with(|| {
+                create_blur_resources(
                     &self.instance,
                     self.physical_device,
                     &self.device,
                     self.stencil_format,
-                ));
-            }
-            guard.expect("just initialized above if it was None")
+                )
+            })
         };
 
         let half_size = ((width / 2).max(1), (height / 2).max(1));

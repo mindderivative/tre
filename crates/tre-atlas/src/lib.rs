@@ -46,7 +46,7 @@ impl PackedRect {
     /// other, since a correct guillotine split never hands out the same
     /// free space twice.
     #[must_use]
-    pub fn overlaps(&self, other: &PackedRect) -> bool {
+    pub const fn overlaps(&self, other: &PackedRect) -> bool {
         self.x < other.x + other.width
             && other.x < self.x + self.width
             && self.y < other.y + other.height
