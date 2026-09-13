@@ -71,6 +71,7 @@ fn build_swapchain(
     surface: vk::SurfaceKHR,
     width: u32,
     height: u32,
+    old_swapchain: vk::SwapchainKHR,
 ) -> Result<BuiltSwapchain, EngineError> {
     // SAFETY: `device.physical_device` and `surface` were both
     // selected/created during `VulkanDevice::new` (or, for additional
@@ -167,7 +168,18 @@ fn build_swapchain(
                 .pre_transform(capabilities.current_transform)
                 .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
                 .present_mode(vk::PresentModeKHR::FIFO)
-                .clipped(true),
+                .clipped(true)
+                // REVIEW.md finding #235: on a resize, `old_swapchain` is
+                // the swapchain this one replaces (still valid, not yet
+                // destroyed -- see `VulkanSwapchain::recreate`'s own doc
+                // comment for why that ordering is load-bearing), giving
+                // the driver/compositor the chance to treat this as a
+                // continuation of the same surface rather than an
+                // unrelated cold start. `VulkanSwapchain::new` (a
+                // genuinely first swapchain) passes `vk::SwapchainKHR::
+                // null()`, the spec's own documented value for "no
+                // predecessor."
+                .old_swapchain(old_swapchain),
             None,
         )
     }
@@ -307,7 +319,14 @@ impl VulkanSwapchain {
         width: u32,
         height: u32,
     ) -> Result<Self, EngineError> {
-        let built = build_swapchain(device, &surface_loader, surface, width, height)?;
+        let built = build_swapchain(
+            device,
+            &surface_loader,
+            surface,
+            width,
+            height,
+            vk::SwapchainKHR::null(),
+        )?;
         Ok(Self {
             surface_loader,
             surface,
@@ -357,21 +376,36 @@ impl VulkanSwapchain {
     /// so the format -- and therefore every pipeline compiled against it
     /// -- cannot change across a resize.
     ///
-    /// Waits for the device to go idle first, then destroys every old
-    /// dependent resource before building the new ones -- simpler than
-    /// juggling `VkSwapchainCreateInfoKHR::oldSwapchain`'s own retire-
-    /// but-still-must-destroy semantics for a case (a resize on this
-    /// project's own fully-synchronous, single-frame-in-flight render
-    /// loop) that has no in-flight work needing the smoother handoff
-    /// `oldSwapchain` exists for in the first place.
+    /// Waits for the device to go idle first, then builds the new
+    /// swapchain BEFORE destroying this one's own old dependent
+    /// resources -- passing the still-live old `VkSwapchainKHR` as the
+    /// new one's own `oldSwapchain` (REVIEW.md finding #235). Reversed
+    /// from this method's own original design (which destroyed
+    /// everything first, reasoning that this project's fully-
+    /// synchronous, single-frame-in-flight render loop has no in-flight
+    /// work needing `oldSwapchain`'s usual smoother-handoff purpose) once
+    /// a real Wayland protocol trace (`WAYLAND_DEBUG=1`, correlated
+    /// directly against this crate's own acquire-timing instrumentation)
+    /// showed the actual resize-triggered stall: the compositor
+    /// importing a batch of brand-new DMA-BUF-backed buffers from
+    /// scratch on every resize (`zwp_linux_buffer_params_v1.
+    /// create_immed` for a fresh set of buffers, immediately followed by
+    /// a 300-450ms gap with nothing on the wire before the compositor's
+    /// next response). `oldSwapchain` exists precisely to tell the
+    /// driver/compositor this is a continuation of the same surface, not
+    /// an unrelated cold start -- giving Mesa's own WSI implementation
+    /// the chance to avoid (or cheapen) that cold import, which the
+    /// prior "destroy everything, then build fresh with no history"
+    /// approach could never give it the opportunity to do.
     ///
     /// # Errors
     /// Returns [`EngineError::DeviceLost`] under the same conditions
     /// [`VulkanSwapchain::new`] does. On error, this swapchain's own
-    /// prior resources have already been destroyed and not replaced --
-    /// every real caller already treats a failed resize as fatal (the
-    /// same way a failed `new` already is), so this is not a new,
-    /// silently-swallowed risk.
+    /// prior resources are untouched (unlike this method's own previous
+    /// design, since they are now destroyed only after the new ones
+    /// build successfully) -- every real caller already treats a failed
+    /// resize as fatal (the same way a failed `new` already is), so this
+    /// is a strictly safer failure mode than before, not a new risk.
     pub fn recreate(
         &mut self,
         device: &VulkanDevice,
@@ -387,12 +421,27 @@ impl VulkanSwapchain {
         unsafe {
             let _ = self.device.device_wait_idle();
         }
-        // SAFETY: destroying every one of this swapchain's own current
-        // resources -- `device_wait_idle` above guarantees nothing on
-        // the GPU still references any of them -- in the same child-
-        // before-parent order `Drop` already uses. `self.surface` is
-        // deliberately NOT destroyed here -- reusing it unchanged is
-        // this method's entire point.
+
+        let old_swapchain = self.swapchain;
+        let built = build_swapchain(
+            device,
+            &self.surface_loader,
+            self.surface,
+            width,
+            height,
+            old_swapchain,
+        )?;
+
+        // SAFETY: destroying every one of this swapchain's own now-
+        // retired resources -- `device_wait_idle` above guarantees
+        // nothing on the GPU still references any of them, and `built`
+        // above has already replaced every one of them -- in the same
+        // child-before-parent order `Drop` already uses. `self.surface`
+        // is deliberately NOT destroyed here -- reusing it unchanged is
+        // this method's entire point. `old_swapchain` is destroyed via
+        // `self.swapchain_loader` (still the OLD loader at this point --
+        // overwritten by `built.swapchain_loader` only below), matching
+        // the loader it was created through.
         unsafe {
             self.device
                 .destroy_semaphore(self.image_available_semaphore, None);
@@ -406,11 +455,9 @@ impl VulkanSwapchain {
                 .destroy_image_view(self.stencil_image_view, None);
             self.device.destroy_image(self.stencil_image, None);
             self.device.free_memory(self.stencil_image_memory, None);
-            self.swapchain_loader
-                .destroy_swapchain(self.swapchain, None);
+            self.swapchain_loader.destroy_swapchain(old_swapchain, None);
         }
 
-        let built = build_swapchain(device, &self.surface_loader, self.surface, width, height)?;
         self.swapchain_loader = built.swapchain_loader;
         self.swapchain = built.swapchain;
         self.images = built.images;
