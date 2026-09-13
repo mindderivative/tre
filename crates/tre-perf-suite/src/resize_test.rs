@@ -12,13 +12,34 @@
 //! proactively (on `InputEvent::Resized`) and reactively (catching
 //! `EngineError::SwapchainOutOfDate` as a fallback, the same belt-and-
 //! suspenders `windowed_renderer.rs` itself uses).
+//!
+//! # A real bug found via the first actual interactive run
+//!
+//! The project owner's own first real resize crashed with `DeviceLost`
+//! after a Wayland compositor error (`wp_fifo_manager_v1: Attempted to
+//! create a second fifo surface for the wl_surface`). Root cause: the
+//! obvious `surface = Surface::create(...)` reassignment constructs the
+//! *new* `Surface` (which requests a brand-new `VkSurfaceKHR`/fifo
+//! surface from the compositor) while the *old* `Surface` -- still bound
+//! to the same underlying `wl_surface` -- has not been dropped yet, since
+//! Rust only drops a variable's old value after the assignment's right-
+//! hand side is fully evaluated. Wayland's `wp_fifo_manager_v1` protocol
+//! allows only one fifo surface per `wl_surface` at a time, so the
+//! second request is rejected, corrupting the surface and surfacing as
+//! `DeviceLost` on the following `VulkanSwapchain::new`. Fixed by making
+//! `surface` an `Option<Surface>` and [`rebuild_surface`] explicitly
+//! setting it to `None` (running the old `Surface`'s `Drop`, which does
+//! destroy its own `VkSurfaceKHR`) *before* constructing the replacement
+//! -- `windowed_renderer.rs`'s own identical `HashMap::insert`-based
+//! resize path has this same latent ordering issue, not fixed here since
+//! it's shared, unrelated code outside this crate's own scope.
 
 use std::time::Instant;
 
 use raw_window_handle::HasDisplayHandle;
 use tre_engine::{
     execute_frame, submit_frame, BufferBinding, EngineError, FlattenedFrame, FrameClock,
-    InputEvent, PipelineRegistry, RenderingCanvas, RhiDevice, ScissorRect, ShapeRegistry,
+    InputEvent, PipelineRegistry, RenderingCanvas, RhiDevice, ScissorRect, ShapeRegistry, WindowId,
 };
 use tre_platform::PlatformConnection;
 use tre_rhi_vulkan::{register_shape_pipelines, VulkanDevice, VulkanSwapchain};
@@ -47,7 +68,7 @@ impl Surface {
     fn create(
         device: &VulkanDevice,
         connection: &PlatformConnection,
-        window: tre_engine::WindowId,
+        window: WindowId,
         width: u32,
         height: u32,
     ) -> Self {
@@ -68,6 +89,31 @@ impl Surface {
             height,
         }
     }
+}
+
+/// Replaces `*surface` with a freshly built one at `width`x`height`,
+/// returning the rebuild's own wall-clock duration in milliseconds.
+/// Explicitly drops the old `Surface` (`*surface = None`) before
+/// constructing the new one -- see this module's own header comment for
+/// why that ordering is load-bearing, not stylistic.
+fn rebuild_surface(
+    surface: &mut Option<Surface>,
+    device: &VulkanDevice,
+    connection: &PlatformConnection,
+    window: WindowId,
+    width: u32,
+    height: u32,
+) -> f32 {
+    let rebuild_start = Instant::now();
+    *surface = None;
+    *surface = Some(Surface::create(device, connection, window, width, height));
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a real swapchain rebuild's own wall-clock duration never approaches f32's \
+                  precision limits"
+    )]
+    let rebuild_ms = rebuild_start.elapsed().as_secs_f64() as f32 * 1000.0;
+    rebuild_ms
 }
 
 pub fn run(out: Option<std::path::PathBuf>) {
@@ -92,7 +138,13 @@ pub fn run(out: Option<std::path::PathBuf>) {
         probe_surface_loader.destroy_surface(probe_surface, None);
     }
 
-    let mut surface = Surface::create(&device, &connection, window, INITIAL_WIDTH, INITIAL_HEIGHT);
+    let mut surface = Some(Surface::create(
+        &device,
+        &connection,
+        window,
+        INITIAL_WIDTH,
+        INITIAL_HEIGHT,
+    ));
     let ring_buffer = device.create_dynamic_ring_buffer(RING_BUFFER_CAPACITY);
     let resources = WorkloadResources::build(&device);
 
@@ -131,15 +183,13 @@ pub fn run(out: Option<std::path::PathBuf>) {
                     window: w,
                     width,
                     height,
-                } if w == window && (width != surface.width || height != surface.height) => {
-                    let rebuild_start = Instant::now();
-                    surface = Surface::create(&device, &connection, window, width, height);
-                    #[allow(
-                        clippy::cast_possible_truncation,
-                        reason = "a real swapchain rebuild's own wall-clock duration never \
-                                  approaches f32's precision limits"
-                    )]
-                    let rebuild_ms = rebuild_start.elapsed().as_secs_f64() as f32 * 1000.0;
+                } if w == window
+                    && surface
+                        .as_ref()
+                        .is_some_and(|s| s.width != width || s.height != height) =>
+                {
+                    let rebuild_ms =
+                        rebuild_surface(&mut surface, &device, &connection, window, width, height);
                     log.write_resize_event(elapsed, width, height, rebuild_ms)
                         .expect("failed to write telemetry log");
                 }
@@ -160,11 +210,15 @@ pub fn run(out: Option<std::path::PathBuf>) {
         let index_offset = ring_buffer
             .write(index_bytes)
             .expect("ring buffer write failed for indices");
+
+        let s = surface
+            .as_ref()
+            .expect("surface is always Some between rebuilds");
         let full_window = ScissorRect {
             x: 0,
             y: 0,
-            width: surface.width,
-            height: surface.height,
+            width: s.width,
+            height: s.height,
         };
 
         // Real resize recovery, matching `windowed_renderer.rs`'s own
@@ -174,10 +228,10 @@ pub fn run(out: Option<std::path::PathBuf>) {
         // (or via any other `SwapchainOutOfDate` cause, e.g. a
         // minimize/restore), and this is the belt-and-suspenders path
         // for exactly that race, not the primary mechanism.
-        let mut attempt_result = submit_frame(&device, &surface.swapchain, |cmd_buffer| {
+        let mut attempt_result = submit_frame(&device, &s.swapchain, |cmd_buffer| {
             execute_frame(
                 &flattened,
-                &surface.pipelines,
+                &s.pipelines,
                 BufferBinding {
                     buffer: &*ring_buffer,
                     offset: vertex_offset,
@@ -193,20 +247,18 @@ pub fn run(out: Option<std::path::PathBuf>) {
             );
         });
         if matches!(attempt_result, Err(EngineError::SwapchainOutOfDate)) {
-            let rebuild_start = Instant::now();
-            surface = Surface::create(&device, &connection, window, surface.width, surface.height);
-            #[allow(
-                clippy::cast_possible_truncation,
-                reason = "a real swapchain rebuild's own wall-clock duration never approaches \
-                          f32's precision limits"
-            )]
-            let rebuild_ms = rebuild_start.elapsed().as_secs_f64() as f32 * 1000.0;
-            log.write_resize_event(elapsed, surface.width, surface.height, rebuild_ms)
+            let (width, height) = (s.width, s.height);
+            let rebuild_ms =
+                rebuild_surface(&mut surface, &device, &connection, window, width, height);
+            log.write_resize_event(elapsed, width, height, rebuild_ms)
                 .expect("failed to write telemetry log");
-            attempt_result = submit_frame(&device, &surface.swapchain, |cmd_buffer| {
+            let s = surface
+                .as_ref()
+                .expect("just rebuilt above, always Some immediately after");
+            attempt_result = submit_frame(&device, &s.swapchain, |cmd_buffer| {
                 execute_frame(
                     &flattened,
-                    &surface.pipelines,
+                    &s.pipelines,
                     BufferBinding {
                         buffer: &*ring_buffer,
                         offset: vertex_offset,
