@@ -200,6 +200,34 @@ pub(crate) struct TextShapeCache {
     px_size: f32,
     wrap_width: Option<f32>,
     runs: Vec<tre_text::ShapedRun>,
+    /// The wrapped-lines pass's own output, cached alongside `runs` for
+    /// the identical reason (`/review-project` Performance finding,
+    /// dated 2026-09-13): before this field existed, `flatten_text`
+    /// called `tre_text::wrap_lines` unconditionally on every call, even
+    /// on a cache *hit* -- so an animated, wrapped `Text` shape (opacity/
+    /// position changing every frame, forcing a re-flatten) still paid a
+    /// full UAX #14 line-break pass plus two real per-call heap
+    /// allocations (`flatten_glyphs` inside `wrap_lines`, and this
+    /// module's own `flat_glyphs`) every single frame -- exactly the
+    /// waste class this cache exists to eliminate, reappearing one step
+    /// after the shaping it already covers. `None` whenever `wrap_width`
+    /// is `None` (the single-line path never calls `wrap_lines` at all)
+    /// or not yet computed for the current `runs`; always reset to
+    /// `None` on a fresh `TextShapeCache` (`resolve_shaped_runs`'s own
+    /// re-shape path constructs a brand-new value here, never mutates an
+    /// existing one in place), so it can never outlive the `runs` it was
+    /// computed from.
+    wrapped: Option<WrappedLinesCache>,
+}
+
+/// `TextShapeCache::wrapped`'s own payload -- the wrapped lines
+/// themselves plus the flat, concatenated glyph list `flatten_text`'s
+/// per-line rendering loop slices into, so neither needs recomputing
+/// on a cache hit.
+#[derive(Debug, Clone)]
+struct WrappedLinesCache {
+    lines: Vec<tre_text::WrappedLine>,
+    flat_glyphs: Vec<tre_text::ShapedGlyph>,
 }
 
 impl TextShapeCache {
@@ -239,6 +267,7 @@ fn resolve_shaped_runs<'a>(
             px_size: text.px_size,
             wrap_width: text.wrap_width,
             runs,
+            wrapped: None,
         });
     }
     Some(
@@ -247,6 +276,56 @@ fn resolve_shaped_runs<'a>(
             .expect("just set above if it wasn't already valid")
             .runs,
     )
+}
+
+/// Resolves `text`'s own wrapped lines (and their flat, concatenated
+/// glyph list), reusing `cache.wrapped` when already populated and
+/// computing (then storing) it otherwise. Mirrors [`resolve_shaped_runs`]'s
+/// own caching discipline one layer up the pipeline -- see
+/// `TextShapeCache::wrapped`'s own doc comment for why this exists
+/// (`/review-project` Performance finding, 2026-09-13).
+///
+/// # Panics
+/// Panics if `cache` is `None` -- callers must call
+/// [`resolve_shaped_runs`] first to ensure it is populated; this
+/// function only ever adds to an already-`Some` cache, never creates
+/// one from scratch (it has no `rustybuzz::Face` to shape with).
+fn resolve_wrapped_lines<'a>(
+    cache: &'a mut Option<TextShapeCache>,
+    text: &Text,
+    wrap_width: f32,
+    units_per_em: u16,
+) -> &'a WrappedLinesCache {
+    let needs_wrap = cache
+        .as_ref()
+        .expect("caller must ensure Some via resolve_shaped_runs first")
+        .wrapped
+        .is_none();
+    if needs_wrap {
+        let cache_ref = cache.as_ref().expect("just checked Some above");
+        let lines = tre_text::wrap_lines(
+            &text.text,
+            &cache_ref.runs,
+            text.px_size,
+            units_per_em,
+            Some(wrap_width),
+        );
+        let flat_glyphs: Vec<tre_text::ShapedGlyph> = cache_ref
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().copied())
+            .collect();
+        // `cache_ref`'s last use is right above -- ends its borrow of
+        // `*cache` here, freeing it for the mutable access below.
+        cache.as_mut().expect("just checked Some above").wrapped =
+            Some(WrappedLinesCache { lines, flat_glyphs });
+    }
+    cache
+        .as_ref()
+        .expect("checked Some above")
+        .wrapped
+        .as_ref()
+        .expect("just populated above if it wasn't already")
 }
 
 #[allow(
@@ -272,9 +351,9 @@ pub(crate) fn flatten_text(
         "FontRegistry::load_bytes already validated these same bytes build a real rustybuzz::Face",
     );
 
-    let Some(runs) = resolve_shaped_runs(shape_cache, &face, text) else {
+    if resolve_shaped_runs(shape_cache, &face, text).is_none() {
         return;
-    };
+    }
 
     let metrics = skrifa::MetadataProvider::metrics(
         &font,
@@ -286,8 +365,11 @@ pub(crate) fn flatten_text(
     let Some(wrap_width) = text.wrap_width else {
         // The exact pre-Phase-15 single-line path -- untouched, so
         // every existing caller's rendering stays byte-identical.
+        let cache = shape_cache
+            .as_ref()
+            .expect("resolve_shaped_runs above already ensured Some");
         let mut pen = [0.0, metrics.ascent * scale];
-        for run in runs {
+        for run in &cache.runs {
             canvas.draw_text(
                 run,
                 &font,
@@ -310,13 +392,14 @@ pub(crate) fn flatten_text(
     // real caller -- `f32::INFINITY` is the real "hard-wrap-only, no
     // width limit" escape hatch) words greedily wrap to fit. See
     // `tre_text::wrap_lines`'s own doc comment for the exact algorithm.
-    let lines = tre_text::wrap_lines(
-        &text.text,
-        runs,
-        text.px_size,
-        metrics.units_per_em,
-        Some(wrap_width),
-    );
+    // `resolve_wrapped_lines` caches this pass's own output the same
+    // way `resolve_shaped_runs` already caches shaping itself, so an
+    // animated-but-otherwise-unchanged wrapped `Text` shape pays this
+    // cost once, not every frame (`/review-project` Performance
+    // finding, 2026-09-13 -- previously ran unconditionally here, even
+    // on a shaping-cache hit).
+    let wrapped = resolve_wrapped_lines(shape_cache, text, wrap_width, metrics.units_per_em);
+
     // `metrics.descent` is a real, signed OpenType value -- negative,
     // extending below the baseline (confirmed empirically against a
     // real system font before trusting it here: this machine's default
@@ -324,16 +407,12 @@ pub(crate) fn flatten_text(
     // magnitude) -- so the real total em-box height subtracts it
     // (equivalent to adding its real magnitude), not adds it.
     let line_height = (metrics.ascent - metrics.descent + metrics.leading) * scale;
-    let flat_glyphs: Vec<tre_text::ShapedGlyph> = runs
-        .iter()
-        .flat_map(|run| run.glyphs.iter().copied())
-        .collect();
     let mut pen_y = metrics.ascent * scale;
-    for line in &lines {
+    for line in &wrapped.lines {
         let line_run = tre_text::ShapedRun {
             text_range: line.byte_range.clone(),
             direction: rustybuzz::Direction::LeftToRight,
-            glyphs: flat_glyphs[line.start_glyph..line.end_glyph].to_vec(),
+            glyphs: wrapped.flat_glyphs[line.start_glyph..line.end_glyph].to_vec(),
         };
         canvas.draw_text(
             &line_run,
@@ -437,6 +516,7 @@ mod tests {
             px_size: 24.0,
             wrap_width: None,
             runs: Vec::new(),
+            wrapped: None,
         };
 
         assert!(cache.is_valid_for(&Text::new("Hi", FontId(0), 24.0, 0xFFFF_FFFF)));
@@ -470,6 +550,77 @@ mod tests {
         assert!(
             cache.is_valid_for(&cosmetic_change),
             "fill_color/opacity/position/rotation must never invalidate the shaping cache"
+        );
+    }
+
+    #[test]
+    fn resolve_wrapped_lines_reuses_the_cached_lines_when_nothing_wrap_relevant_changed() {
+        let bytes = cascade_font_bytes();
+        let face =
+            rustybuzz::Face::from_slice(&bytes, 0).expect("real font bytes build a real Face");
+        let mut text = Text::new("Hello there, world", FontId(0), 24.0, 0xFFFF_FFFF);
+        text.wrap_width = Some(40.0);
+
+        let mut cache = None;
+        resolve_shaped_runs(&mut cache, &face, &text);
+        let metrics_units_per_em = 1000; // exact value is irrelevant to this test's own assertion
+        let first = resolve_wrapped_lines(
+            &mut cache,
+            &text,
+            text.wrap_width.unwrap(),
+            metrics_units_per_em,
+        );
+        let first_ptr = first.lines.as_ptr();
+
+        // A second call against the identical `Text` -- exactly what a
+        // cosmetic-only animation on a wrapped `Text` shape produces
+        // every frame -- must reuse the cached wrap output, not
+        // recompute `wrap_lines` again.
+        let second = resolve_wrapped_lines(
+            &mut cache,
+            &text,
+            text.wrap_width.unwrap(),
+            metrics_units_per_em,
+        );
+        let second_ptr = second.lines.as_ptr();
+        assert_eq!(
+            first_ptr, second_ptr,
+            "an unchanged Text must reuse its cached wrapped lines, not re-wrap"
+        );
+    }
+
+    #[test]
+    fn resolve_wrapped_lines_rewraps_when_the_text_content_changes() {
+        let bytes = cascade_font_bytes();
+        let face =
+            rustybuzz::Face::from_slice(&bytes, 0).expect("real font bytes build a real Face");
+        let units_per_em = 1000;
+
+        let mut cache = None;
+        let mut short = Text::new("Hi", FontId(0), 24.0, 0xFFFF_FFFF);
+        short.wrap_width = Some(40.0);
+        resolve_shaped_runs(&mut cache, &face, &short);
+        let short_line_count = resolve_wrapped_lines(&mut cache, &short, 40.0, units_per_em)
+            .lines
+            .len();
+
+        let mut longer = Text::new(
+            "Hello there, this is a much longer sentence that will wrap across several lines",
+            FontId(0),
+            24.0,
+            0xFFFF_FFFF,
+        );
+        longer.wrap_width = Some(40.0);
+        resolve_shaped_runs(&mut cache, &face, &longer);
+        let longer_line_count = resolve_wrapped_lines(&mut cache, &longer, 40.0, units_per_em)
+            .lines
+            .len();
+
+        assert!(
+            longer_line_count > short_line_count,
+            "a genuinely different, longer string must re-wrap into more lines, not reuse the \
+             short string's stale wrap cache (short: {short_line_count} lines, longer: \
+             {longer_line_count} lines)"
         );
     }
 }
