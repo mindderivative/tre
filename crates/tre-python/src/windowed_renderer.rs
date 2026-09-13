@@ -44,6 +44,24 @@
 //! pyCopper's own production value (256px) -- safe to be far coarser
 //! now that the projection fix makes the coarse/exact mismatch
 //! invisible rather than merely "smaller."
+//!
+//! REVIEW.md finding #238, ported here from `tre-perf-suite`'s own
+//! `resize_test.rs` after a real live-drag comparison confirmed it there
+//! ("it looked correct, no jitter this time"): the compositor-side
+//! resample from the paragraph above is gone entirely now, not just
+//! disclosed-and-accepted. `submit_frame_to_window` calls
+//! [`tre_engine::submit_frame_with_viewport_crop`] instead of
+//! `submit_frame_with_logical_size`, paired with a
+//! `tre_platform::PlatformConnection::set_viewport_source_crop` call of
+//! the identical size (via a small, additive patch to `winit` itself --
+//! see the workspace root `Cargo.toml`'s own `[patch.crates-io]` entry).
+//! Content now renders 1:1, undistorted, into just the window's own
+//! logical-size sub-rectangle of a possibly-coarser swapchain buffer,
+//! and the compositor presents exactly that sub-rectangle unscaled --
+//! zero resample, rather than one that exactly cancels a deliberate
+//! pre-stretch. `full_window`'s own root `ScissorRect` uses that same
+//! logical size now too, not the swapchain's own (possibly larger)
+//! extent, since the GPU render area itself is confined to it.
 
 use std::collections::HashMap;
 
@@ -51,7 +69,7 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use raw_window_handle::HasDisplayHandle;
 use tre_engine::{
-    execute_frame, submit_frame_with_logical_size, BufferBinding, EngineError, FlattenedFrame,
+    execute_frame, submit_frame_with_viewport_crop, BufferBinding, EngineError, FlattenedFrame,
     FrameArena, PipelineRegistry, RenderingCanvas, RhiDevice, RhiDynamicRingBuffer, RhiSwapchain,
     ScissorRect, WindowId,
 };
@@ -835,29 +853,35 @@ impl PyWindowedRenderer {
             let pipelines = &slot.pipelines;
             let swapchain = &slot.swapchain;
             let clip_stack = &mut self.clip_stack;
-            // The swapchain's own real (possibly coarse, mid-drag)
-            // extent -- the scissor must always match whatever the
-            // swapchain was actually just resized to above, never the
-            // window's exact logical size (REVIEW.md finding #235).
-            let (window_width, window_height) = swapchain.extent();
+            // REVIEW.md finding #238: the window's own true logical size,
+            // not the swapchain's own (possibly larger) extent -- the GPU
+            // render area/viewport/scissor are now confined to exactly
+            // this size (see `begin_frame_with_viewport_crop`'s own doc
+            // comment), so a wider clip rect here would ask for a scissor
+            // outside the actual render area, which dynamic rendering
+            // does not allow.
+            let logical_size = (slot.width, slot.height);
             let full_window = ScissorRect {
                 x: 0,
                 y: 0,
-                width: window_width,
-                height: window_height,
+                width: logical_size.0,
+                height: logical_size.1,
             };
-            // REVIEW.md finding #235, Option 2's real fix: content is
-            // still projected using the window's true logical size
-            // (`slot.width`/`slot.height`) even when the swapchain
-            // buffer above is a coarser size -- pyCopper's own
-            // mechanism (`engine.py`'s `_upload`/`_pin_surface`) for why
-            // this produces pixel-exact geometry with no visible
-            // squash/stretch: the compositor's own scale-to-fit of the
-            // oversized buffer down to the real window exactly cancels
-            // the pre-stretch this causes. See
-            // `tre_engine::submit_frame_with_logical_size`'s own doc
-            // comment for the full mechanism.
-            let logical_size = (slot.width, slot.height);
+            // REVIEW.md finding #238: crop the compositor's own output to
+            // this identical size, unscaled -- paired with the render
+            // path above, this presents exactly the 1:1, undistorted
+            // sub-rectangle just rendered, with zero resample anywhere
+            // (replacing finding #235's own stretch-then-let-the-
+            // compositor-resample-back-down mechanism, which this method
+            // used until a real live-drag test confirmed the crop
+            // eliminates the residual blur that mechanism could only
+            // ever cap). A no-op on X11, or if the compositor never
+            // advertised `wp_viewporter` at all -- see
+            // `tre_platform::PlatformConnection::set_viewport_source_crop`'s
+            // own doc comment.
+            let _ =
+                self.connection
+                    .set_viewport_source_crop(window, logical_size.0, logical_size.1);
             let outcome: Result<(), RenderError> = py.detach(move || {
                 let vertex_offset = ring_buffer
                     .write(vertex_bytes)
@@ -865,7 +889,7 @@ impl PyWindowedRenderer {
                 let index_offset = ring_buffer
                     .write(index_bytes)
                     .ok_or(RenderError::RingBufferStarved)?;
-                submit_frame_with_logical_size(device, swapchain, logical_size, |cmd_buffer| {
+                submit_frame_with_viewport_crop(device, swapchain, logical_size, |cmd_buffer| {
                     execute_frame(
                         frame,
                         pipelines,
