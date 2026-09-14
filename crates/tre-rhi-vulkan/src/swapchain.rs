@@ -38,7 +38,7 @@ pub struct VulkanSwapchain {
     render_finished_semaphores: Vec<vk::Semaphore>,
     device: ash::Device,
     present_queue: vk::Queue,
-    /// See `RhiSwapchain::supports_local_read_input_attachment`'s own doc
+    /// See `RhiSwapchain::supports_framebuffer_fetch`'s own doc
     /// comment -- queried once above, against this real surface's own
     /// `VkSurfaceCapabilitiesKHR::supportedUsageFlags`.
     supports_local_read_input_attachment: bool,
@@ -144,7 +144,7 @@ fn build_swapchain(
     // usage flags are platform/driver-defined -- `vkCreateSwapchainKHR`
     // requires `imageUsage` be a subset of `capabilities.
     // supportedUsageFlags`, so this is queried for real, not assumed.
-    // See `RhiSwapchain::supports_local_read_input_attachment`'s own
+    // See `RhiSwapchain::supports_framebuffer_fetch`'s own
     // doc comment for how `VulkanDevice::begin_frame` uses this.
     let supports_local_read_input_attachment = capabilities
         .supported_usage_flags
@@ -495,7 +495,7 @@ impl RhiSwapchain for VulkanSwapchain {
         self.stencil_image.as_raw()
     }
 
-    fn supports_local_read_input_attachment(&self) -> bool {
+    fn supports_framebuffer_fetch(&self) -> bool {
         self.supports_local_read_input_attachment
     }
 

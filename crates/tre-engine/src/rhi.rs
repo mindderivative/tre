@@ -266,7 +266,7 @@ pub trait RhiSwapchain: Send + Sync {
     /// Phase 10 Step 10.2.3: `true` only when THIS swapchain's own color
     /// image(s) were created with `VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT` --
     /// a real, disclosed, per-swapchain capability query, distinct from
-    /// `RhiDevice::local_read_blend_supported()`'s own device-wide query.
+    /// `RhiDevice::framebuffer_fetch_blend_supported()`'s own device-wide query.
     /// A headless swapchain's single persistent image always declares
     /// this flag (a core, always-safe-to-declare usage on a manually
     /// allocated image), but a real windowed swapchain's images come
@@ -277,7 +277,7 @@ pub trait RhiSwapchain: Send + Sync {
     /// platform's presentable surface is not spec-guaranteed to support
     /// it, so `VulkanSwapchain::new` queries it for real rather than
     /// assuming. `VulkanDevice::begin_frame` requires BOTH this AND
-    /// `local_read_blend_supported()` before choosing `RENDERING_LOCAL_
+    /// `framebuffer_fetch_blend_supported()` before choosing `RENDERING_LOCAL_
     /// READ_KHR` for the active color attachment -- so a
     /// `PipelineKind::FlatColorBlend` draw against a window whose
     /// surface doesn't support this fails closed to ordinary
@@ -292,7 +292,7 @@ pub trait RhiSwapchain: Send + Sync {
     /// addition already use, so a backend without this capability
     /// compiles without an explicit override and degrades to the same
     /// `Normal`-blend fallback path a device lacking the extension takes.
-    fn supports_local_read_input_attachment(&self) -> bool {
+    fn supports_framebuffer_fetch(&self) -> bool {
         false
     }
 
@@ -440,7 +440,7 @@ pub trait RhiDevice: Send + Sync {
     /// attachment`'s own identical rationale: a backend that never
     /// overrides this is treated exactly like a device without the
     /// capability, and `FlatColorBlend` is never selected for it.
-    fn local_read_blend_supported(&self) -> bool {
+    fn framebuffer_fetch_blend_supported(&self) -> bool {
         false
     }
     /// # Errors
@@ -676,17 +676,17 @@ pub trait RhiCommandBuffer {
     /// only once per frame: each such draw must see whatever the very
     /// latest framebuffer state is, including ordinary draws that ran
     /// since the last blend-mode draw). A real, disclosed no-op on a
-    /// device where `RhiDevice::local_read_blend_supported` is `false`
+    /// device where `RhiDevice::framebuffer_fetch_blend_supported` is `false`
     /// -- never called in that case, since `FlatColorBlend` itself is
     /// never selected without that capability.
     ///
     /// Defaults to a no-op (`/review-project` Architecture finding #247,
     /// 2026-09-13): by this method's own contract above it is never
-    /// called on a device whose `local_read_blend_supported` is `false`,
+    /// called on a device whose `framebuffer_fetch_blend_supported` is `false`,
     /// and that is exactly the default for any backend that doesn't
     /// override both -- so an unoverridden no-op here can never be
     /// reached with real work to do.
-    fn insert_blend_read_barrier(&mut self) {}
+    fn insert_framebuffer_fetch_barrier(&mut self) {}
 
     // Offscreen render targets (IMPLEMENTATION.md Phase 6 Step 6.4.1) --
     // real render-to-texture, the RHI capability real `PushLayer`/
@@ -994,7 +994,7 @@ pub fn execute_frame(
                 // latest framebuffer state is, including ordinary draws
                 // that ran since the last blend-mode draw.
                 if command.pipeline_state_id == PipelineKind::FlatColorBlend as u16 {
-                    cmd_buffer.insert_blend_read_barrier();
+                    cmd_buffer.insert_framebuffer_fetch_barrier();
                 }
                 cmd_buffer.draw_indexed(command.element_count, command.vertex_offset, 0);
             }

@@ -106,7 +106,7 @@ fn main() {
     // gradient-Circle/textured-Polygon/blend-Polygon/bordered-arc-Circle
     // scene) still runs in full on any device that does support the
     // extension, including this project's own real dev GPU.
-    if !device.local_read_blend_supported() {
+    if !device.framebuffer_fetch_blend_supported() {
         eprintln!(
             "shape_registry_zero_alloc_demo: this device doesn't support \
              VK_KHR_dynamic_rendering_local_read (expected on a software Vulkan implementation \

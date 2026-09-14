@@ -90,7 +90,7 @@ impl Default for Transform2D {
 /// TECHNICAL.md Section 3.4/DESIGN.md Section 6.2's own "Visual Filter
 /// Pipeline" concept, concretized as the enum a shape's `blend_mode`
 /// field holds. **Real for `Polygon`/`Path` solid fill** (Phase 10 Step
-/// 10.2.3), gated behind `RhiDevice::local_read_blend_supported` --
+/// 10.2.3), gated behind `RhiDevice::framebuffer_fetch_blend_supported` --
 /// falls back to `Normal` on hardware without it, never a silent wrong
 /// render. `Rectangle`/`Circle` and non-solid fills don't read this
 /// field yet; see this module's own top-level doc comment.
@@ -1720,7 +1720,7 @@ fn draw_polygon_fill(
 ) {
     match fill {
         FillStyle::Solid(color) => {
-            if blend_mode == BlendMode::Normal || !device.local_read_blend_supported() {
+            if blend_mode == BlendMode::Normal || !device.framebuffer_fetch_blend_supported() {
                 // Either the common case (Normal), or a real, disclosed
                 // fail-closed degradation: this hardware never got the
                 // capability query to pass, so FlatColorBlend's own
@@ -2412,7 +2412,7 @@ mod tests {
         /// real hardware that lacks `VK_KHR_dynamic_rendering_local_
         /// read`; tests exercising the "supported" branch set this
         /// before calling `flatten_into`.
-        local_read_blend_supported: AtomicBool,
+        framebuffer_fetch_blend_supported: AtomicBool,
     }
 
     #[derive(Default)]
@@ -2448,8 +2448,9 @@ mod tests {
         fn shape_style_buffer(&self) -> &dyn RhiDynamicRingBuffer {
             &self.style_buffer
         }
-        fn local_read_blend_supported(&self) -> bool {
-            self.local_read_blend_supported.load(Ordering::Relaxed)
+        fn framebuffer_fetch_blend_supported(&self) -> bool {
+            self.framebuffer_fetch_blend_supported
+                .load(Ordering::Relaxed)
         }
         fn acquire_transient_target(
             &self,
@@ -3947,7 +3948,7 @@ mod tests {
     fn flatten_into_falls_back_to_normal_blending_on_unsupported_hardware() {
         let device = FakeDevice::default();
         device
-            .local_read_blend_supported
+            .framebuffer_fetch_blend_supported
             .store(false, Ordering::Relaxed);
         let mut registry = ShapeRegistry::new();
         registry.insert(ShapePrimitive::Polygon(Polygon {
@@ -3982,7 +3983,7 @@ mod tests {
     fn flatten_into_routes_a_non_normal_blend_mode_through_flatcolorblend_when_supported() {
         let device = FakeDevice::default();
         device
-            .local_read_blend_supported
+            .framebuffer_fetch_blend_supported
             .store(true, Ordering::Relaxed);
         let mut registry = ShapeRegistry::new();
         registry.insert(ShapePrimitive::Polygon(Polygon {
@@ -4020,7 +4021,7 @@ mod tests {
     fn flatten_into_uses_flatcolor_for_a_normal_blend_mode_even_when_local_read_is_supported() {
         let device = FakeDevice::default();
         device
-            .local_read_blend_supported
+            .framebuffer_fetch_blend_supported
             .store(true, Ordering::Relaxed);
         let mut registry = ShapeRegistry::new();
         registry.insert(ShapePrimitive::Polygon(Polygon {

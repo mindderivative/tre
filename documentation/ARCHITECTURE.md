@@ -941,9 +941,9 @@ pub struct ShapeRegistry {
     (`Multiply`/`Screen`/`Overlay`/`SoftLight`/`ColorDodge`) itself, and
     writes the fully-composited result directly with hardware blending
     disabled. Gated behind a real, disclosed device-level capability
-    query (`RhiDevice::local_read_blend_supported`) AND, for a windowed
+    query (`RhiDevice::framebuffer_fetch_blend_supported`) AND, for a windowed
     swapchain specifically, a real per-swapchain capability query
-    (`RhiSwapchain::supports_local_read_input_attachment`, since a
+    (`RhiSwapchain::supports_framebuffer_fetch`, since a
     presentable surface's supported usage flags aren't spec-guaranteed
     to include `INPUT_ATTACHMENT` the way a manually allocated headless
     image's always safely can) -- unsupported hardware falls back to

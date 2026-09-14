@@ -1298,7 +1298,7 @@ impl VulkanDevice {
         let blend_read = self
             .blend_read
             .as_ref()
-            .expect("create_blend_pipeline_layout requires local_read_blend_supported()");
+            .expect("create_blend_pipeline_layout requires framebuffer_fetch_blend_supported()");
         let set_layouts = [
             self.bindless_descriptor_set_layout,
             blend_read.descriptor_set_layout,
@@ -1339,7 +1339,7 @@ impl VulkanDevice {
     /// pipeline_layout` for the extra input-attachment set.
     ///
     /// # Panics
-    /// Panics if `local_read_blend_supported()` is `false` -- callers
+    /// Panics if `framebuffer_fetch_blend_supported()` is `false` -- callers
     /// must check that capability before ever calling this.
     pub fn create_blend_mode_pipeline(
         &self,
@@ -1349,7 +1349,7 @@ impl VulkanDevice {
     ) -> Result<VulkanPipelineState, EngineError> {
         assert!(
             self.local_read_supported,
-            "create_blend_mode_pipeline requires local_read_blend_supported()"
+            "create_blend_mode_pipeline requires framebuffer_fetch_blend_supported()"
         );
 
         let vertex_module = self.create_shader_module(vertex_spv)?;
@@ -1993,18 +1993,17 @@ impl VulkanDevice {
         // `COLOR_ATTACHMENT_OPTIMAL` and never gets its own input-
         // attachment descriptor written -- `PipelineKind::FlatColorBlend`
         // is only correct against the swapchain target set up here, not
-        // while a `PushLayer` is active (see `insert_blend_read_barrier`'s
+        // while a `PushLayer` is active (see `insert_framebuffer_fetch_barrier`'s
         // own doc comment).
         //
-        // Also requires `swapchain.supports_local_read_input_attachment()`
+        // Also requires `swapchain.supports_framebuffer_fetch()`
         // -- a real windowed swapchain's images might not support
         // `INPUT_ATTACHMENT` usage even when the device extension itself
         // is present (see that method's own doc comment); every real GPU
         // demo in this codebase uses `HeadlessSwapchain`, which always
         // returns `true` here, so this can only ever fail closed for a
         // windowed surface, never change behavior for an existing demo.
-        let local_read_active =
-            self.local_read_supported && swapchain.supports_local_read_input_attachment();
+        let local_read_active = self.local_read_supported && swapchain.supports_framebuffer_fetch();
         let color_attachment_layout = if local_read_active {
             vk::ImageLayout::RENDERING_LOCAL_READ_KHR
         } else {
@@ -2247,7 +2246,7 @@ impl RhiDevice for VulkanDevice {
             .expect("shape_style_buffer is Some for the entire lifetime of a live VulkanDevice")
     }
 
-    fn local_read_blend_supported(&self) -> bool {
+    fn framebuffer_fetch_blend_supported(&self) -> bool {
         self.local_read_supported
     }
 
@@ -2495,12 +2494,11 @@ impl RhiDevice for VulkanDevice {
         // image into -- `RENDERING_LOCAL_READ_KHR` when this device AND
         // this swapchain both support it, `COLOR_ATTACHMENT_OPTIMAL`
         // otherwise (see `begin_frame`'s own `local_read_active`).
-        let old_layout =
-            if self.local_read_supported && swapchain.supports_local_read_input_attachment() {
-                vk::ImageLayout::RENDERING_LOCAL_READ_KHR
-            } else {
-                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
-            };
+        let old_layout = if self.local_read_supported && swapchain.supports_framebuffer_fetch() {
+            vk::ImageLayout::RENDERING_LOCAL_READ_KHR
+        } else {
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+        };
         let barrier = vk::ImageMemoryBarrier::default()
             .old_layout(old_layout)
             .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)

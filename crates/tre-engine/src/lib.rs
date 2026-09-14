@@ -301,7 +301,7 @@ pub enum PipelineKind {
     /// Mesa's own release notes, REVIEW.md's own account of this
     /// finding has the full story), computes the requested blend formula
     /// itself, and writes the already-composited result with hardware
-    /// blending DISABLED. `RhiDevice::local_read_blend_supported` is the
+    /// blending DISABLED. `RhiDevice::framebuffer_fetch_blend_supported` is the
     /// real, disclosed capability gate this pipeline is only ever
     /// selected behind -- unsupported hardware falls back to plain
     /// `FlatColor` (`Normal` blending), never a silent wrong render.
@@ -2764,7 +2764,7 @@ mod tests {
             ));
         }
 
-        fn insert_blend_read_barrier(&mut self) {
+        fn insert_framebuffer_fetch_barrier(&mut self) {
             self.calls.push(RecordedCall::InsertBlendReadBarrier);
         }
 
@@ -2939,7 +2939,7 @@ mod tests {
         /// zero value), matching real hardware that lacks
         /// `VK_KHR_dynamic_rendering_local_read` -- tests that need the
         /// "supported" branch set this before use.
-        local_read_blend_supported: AtomicBool,
+        framebuffer_fetch_blend_supported: AtomicBool,
     }
 
     impl RhiDevice for FakeDevice {
@@ -2954,8 +2954,9 @@ mod tests {
             &self.style_buffer
         }
 
-        fn local_read_blend_supported(&self) -> bool {
-            self.local_read_blend_supported.load(Ordering::Relaxed)
+        fn framebuffer_fetch_blend_supported(&self) -> bool {
+            self.framebuffer_fetch_blend_supported
+                .load(Ordering::Relaxed)
         }
 
         fn acquire_transient_target(

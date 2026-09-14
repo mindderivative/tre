@@ -71,7 +71,7 @@ pub enum PipelineKind {
 }
 ```
 
-Real, type-safe names for `UiDrawCommand::pipeline_state_id`'s `Canvas`-emittable values. `FlatColorBlend` is notable: it's the pipeline behind non-`Normal` `BlendMode` fills, reading the destination pixel a *preceding* draw already wrote via `VK_KHR_dynamic_rendering_local_read` (a real framebuffer read, not hardware blend-op selection -- `VK_EXT_blend_operation_advanced`, the original plan, turned out not to be implemented by this project's own real dev GPU driver). `RhiDevice::local_read_blend_supported()` is the real, disclosed capability gate this pipeline is only ever selected behind; unsupported hardware falls back to plain `FlatColor` (`Normal` blending) rather than a silent wrong render.
+Real, type-safe names for `UiDrawCommand::pipeline_state_id`'s `Canvas`-emittable values. `FlatColorBlend` is notable: it's the pipeline behind non-`Normal` `BlendMode` fills, reading the destination pixel a *preceding* draw already wrote via `VK_KHR_dynamic_rendering_local_read` (a real framebuffer read, not hardware blend-op selection -- `VK_EXT_blend_operation_advanced`, the original plan, turned out not to be implemented by this project's own real dev GPU driver). `RhiDevice::framebuffer_fetch_blend_supported()` is the real, disclosed capability gate this pipeline is only ever selected behind; unsupported hardware falls back to plain `FlatColor` (`Normal` blending) rather than a silent wrong render.
 
 ### `TextureFormat` / `LayerDesc`
 

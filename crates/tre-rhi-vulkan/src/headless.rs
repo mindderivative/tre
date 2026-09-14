@@ -13,7 +13,7 @@ use tre_engine::{AcquiredImage, EngineError, RhiSwapchain};
 use crate::VulkanDevice;
 
 /// The zero-window `RhiSwapchain` implementation -- see this module's own
-/// top-level doc comment. `supports_local_read_input_attachment()` always
+/// top-level doc comment. `supports_framebuffer_fetch()` always
 /// returns `true` (a manually allocated image, not a presentable surface,
 /// so nothing to query), and `present` synchronously waits on
 /// `readback_fence` before returning, so [`HeadlessSwapchain::
@@ -85,7 +85,7 @@ impl HeadlessSwapchain {
                         // when a `PipelineKind::FlatColorBlend` draw
                         // reads back a pixel a preceding draw already
                         // wrote -- unused, at no cost, on a device
-                        // without `local_read_blend_supported()`.
+                        // without `framebuffer_fetch_blend_supported()`.
                         vk::ImageUsageFlags::COLOR_ATTACHMENT
                             | vk::ImageUsageFlags::TRANSFER_SRC
                             | vk::ImageUsageFlags::INPUT_ATTACHMENT,
@@ -290,7 +290,7 @@ impl RhiSwapchain for HeadlessSwapchain {
         self.stencil_image.as_raw()
     }
 
-    fn supports_local_read_input_attachment(&self) -> bool {
+    fn supports_framebuffer_fetch(&self) -> bool {
         // `HeadlessSwapchain::new`'s single persistent color image always
         // declares `INPUT_ATTACHMENT_BIT` (a manually allocated image, not
         // a presentable surface, so nothing to query -- always safe).

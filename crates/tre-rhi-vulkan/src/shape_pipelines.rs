@@ -65,7 +65,7 @@ const FLAT_COLOR_BLEND_FRAG: &[u8] = spv!("flat_color_blend.frag.spv");
 /// about to render into).
 ///
 /// `PipelineKind::FlatColorBlend` is only registered when
-/// `device.local_read_blend_supported()` is true -- matches this
+/// `device.framebuffer_fetch_blend_supported()` is true -- matches this
 /// project's own established fail-closed degradation elsewhere
 /// (`ShapeRegistry`'s own `draw_polygon_fill` dispatch): a caller only
 /// ever selects a non-`Normal` `BlendMode` when it means to, so skipping
@@ -128,7 +128,7 @@ pub fn register_shape_pipelines(
             color_format,
         )?),
     );
-    if device.local_read_blend_supported() {
+    if device.framebuffer_fetch_blend_supported() {
         registry.register(
             PipelineKind::FlatColorBlend as u16,
             Box::new(device.create_blend_mode_pipeline(

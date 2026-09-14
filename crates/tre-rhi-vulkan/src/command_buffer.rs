@@ -105,10 +105,10 @@ pub struct VulkanCommandBuffer {
     pub(crate) swapchain_color_layout: vk::ImageLayout,
     /// `VulkanDevice::blend_read`'s descriptor set, copied in at
     /// construction (`VulkanDevice::begin_frame`) for the same reason
-    /// `bindless_descriptor_set` above is -- `insert_blend_read_barrier`
+    /// `bindless_descriptor_set` above is -- `insert_framebuffer_fetch_barrier`
     /// needs to bind it directly, with no way back to a `VulkanDevice`
     /// through this struct's `RhiCommandBuffer` trait methods. `None`
-    /// when `local_read_blend_supported()` is `false`.
+    /// when `framebuffer_fetch_blend_supported()` is `false`.
     pub(crate) blend_input_descriptor_set: Option<vk::DescriptorSet>,
 }
 
@@ -300,21 +300,21 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
     ///
     /// # Panics
     /// Panics if called with no pipeline yet bound, or on a device
-    /// without `local_read_blend_supported()` -- both are caller
+    /// without `framebuffer_fetch_blend_supported()` -- both are caller
     /// contract violations: `execute_frame` only calls this immediately
     /// after `set_pipeline` for a `FlatColorBlend` draw, and `shapes.rs`
     /// never dispatches to that pipeline kind unless the capability was
     /// already checked.
-    fn insert_blend_read_barrier(&mut self) {
+    fn insert_framebuffer_fetch_barrier(&mut self) {
         let barrier = vk::MemoryBarrier::default()
             .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
             .dst_access_mask(vk::AccessFlags::INPUT_ATTACHMENT_READ);
-        let descriptor_set = self
-            .blend_input_descriptor_set
-            .expect("insert_blend_read_barrier requires local_read_blend_supported()");
+        let descriptor_set = self.blend_input_descriptor_set.expect(
+            "insert_framebuffer_fetch_barrier requires framebuffer_fetch_blend_supported()",
+        );
         let layout = self
             .pipeline_layout
-            .expect("set_pipeline must be called before insert_blend_read_barrier");
+            .expect("set_pipeline must be called before insert_framebuffer_fetch_barrier");
         // SAFETY: `self.command_buffer` is recording; `descriptor_set`
         // was allocated by this same device in `VulkanDevice::new` and
         // rewritten fresh this frame in `begin_frame`; `layout` is the

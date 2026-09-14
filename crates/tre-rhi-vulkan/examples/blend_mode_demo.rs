@@ -170,7 +170,7 @@ fn main() {
     // when this environment doesn't provide X" pattern) rather than
     // either loosening this demo's own real assertion or leaving CI red
     // on a gap that was never actually about this project's own code.
-    if !device.local_read_blend_supported() {
+    if !device.framebuffer_fetch_blend_supported() {
         eprintln!(
             "blend_mode_demo: this device doesn't support VK_KHR_dynamic_rendering_local_read \
              (expected on a software Vulkan implementation with no real GPU -- this project's \
