@@ -55,10 +55,13 @@ nalgebra = "=0.34.2"
 rustybuzz.workspace = true
 # Google Fonts' `fontations` project -- pure-Rust metadata reading and
 # glyph outline extraction, replacing FreeType's `FT_Outline_Decompose`.
-# Pinned to 0.33.2 (0.46.2 needs rustc 1.85, confirmed via `cargo add
-# --dry-run`, the same technique used to pin `usvg`/`wide` in Phase 3;
-# REVIEW.md finding #248 has since raised `rust-version` to 1.88, so
-# this ceiling no longer binds -- not re-evaluated as part of that).
+# Pinned exactly (one shared `[workspace.dependencies]` entry): 0.33.2
+# was the newest version the then-declared 1.75 floor allowed; REVIEW.md
+# finding #251 (2026-09-13) bumped it to 0.47.0 -- the newest release,
+# MSRV 1.85 -- once finding #248 raised the floor to 1.88. Zero source
+# changes: this crate's `FontRef`/`MetadataProvider`/`OutlinePen`/
+# `outline_glyphs().get().draw()` surface was stable across the jump,
+# and every pixel-asserting text demo re-rendered identically.
 skrifa.workspace = true
 # Paragraph-level bidi embedding levels (UAX #9) -- rustybuzz shapes one
 # direction-and-script-uniform run at a time; segmenting a mixed-direction

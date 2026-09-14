@@ -37,8 +37,9 @@ tre-atlas = { path = "../tre-atlas" }
 tre-text = { path = "../tre-text" }
 tre-math = { path = "../tre-math" }
 tre-memory = { path = "../tre-memory" }
-# Pinned to the exact same version `tre-text` uses (its own Cargo.toml
-# comment: 0.46.2 needs a newer rustc) -- `draw_text` takes a caller-
+# Pinned to the exact same version `tre-text` uses (one shared
+# `[workspace.dependencies]` entry since finding #247, so the two cannot
+# drift; 0.47.0 since finding #251) -- `draw_text` takes a caller-
 # resolved `skrifa::FontRef` directly, so this crate needs the same
 # type, not a re-export.
 skrifa.workspace = true
