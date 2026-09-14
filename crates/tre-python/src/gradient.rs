@@ -12,7 +12,7 @@ use tre_engine::{GradientDef, GradientKind, GradientStop};
 /// A real, evaluatable linear-or-radial gradient definition. Not itself
 /// usable as a fill -- pass to `registry.create_gradient(...)` first to
 /// get back a real [`PyGradientId`] scoped to that registry.
-#[pyclass(name = "Gradient", frozen)]
+#[pyclass(name = "Gradient", frozen, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyGradient {
     pub(crate) def: GradientDef,
@@ -64,7 +64,7 @@ impl PyGradient {
 /// panics at that registry's own `flatten_into` time with a clear
 /// message (the engine's own existing, documented contract for this
 /// exact mistake -- not re-validated here).
-#[pyclass(name = "GradientId", frozen)]
+#[pyclass(name = "GradientId", frozen, from_py_object)]
 #[derive(Clone, Copy)]
 pub struct PyGradientId(pub tre_engine::GradientId);
 

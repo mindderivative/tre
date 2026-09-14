@@ -18,18 +18,21 @@ bytemuck.workspace = true
 # (Phase 12 Step 12.3), which PyO3 0.27 gates behind this feature --
 # found via a real compile error, not assumed up front.
 #
-# REVIEW.md finding #246: NOT bumped to the newer 0.29.x/0.30.x series
-# despite one existing -- 0.27.2 is already the newest version this
-# workspace's own `rust-version = 1.75` MSRV can resolve. Confirmed
-# directly, not assumed: 0.27.2 itself requires Rust 1.74; every
-# release from 0.28.2 onward (0.28.0/0.28.1 were never published)
-# requires Rust 1.83, an 8-point MSRV jump this workspace had not
-# adopted at the time. REVIEW.md finding #248 (2026-09-13) has since
-# raised `rust-version` to 1.88 at the project owner's direction, so
-# the 0.28.2+/0.29.x series is now in reach -- this pin was deliberately
-# NOT bumped as part of that MSRV correction (a PyO3 major-series jump
-# is its own real migration), left for a separate, explicit decision.
-pyo3 = { version = "0.27.2", features = ["extension-module", "py-clone"] }
+# REVIEW.md finding #246 held this at 0.27.2, the newest version the
+# then-declared `rust-version = 1.75` could resolve (0.28.2 onward needs
+# 1.83). Finding #248 raised the floor to 1.88, and finding #253
+# (2026-09-13) then bumped this to 0.29.2, the newest published release,
+# at the project owner's direction. The one migration item across the
+# two minor series: PyO3 0.29 deprecates the *automatic* `FromPyObject`
+# impl that every `Clone` `#[pyclass]` used to get, making it opt-in.
+# Each of this crate's 25 affected classes now says which it is --
+# `from_py_object` on the 14 that Python actually passes by value into a
+# Rust signature (ids, enums, event/node records, found by letting the
+# compiler enumerate them, not by guessing), `skip_from_py_object` on the
+# 11 that are only ever constructed here and handed back (shapes,
+# gradients, SMIL records). No Python-visible behavior changed; all 30
+# `demo/*/demo.py` scripts re-ran clean against the rebuilt extension.
+pyo3 = { version = "0.29.2", features = ["extension-module", "py-clone"] }
 raw-window-handle.workspace = true
 tre-engine = { path = "../tre-engine" }
 tre-platform = { path = "../tre-platform" }

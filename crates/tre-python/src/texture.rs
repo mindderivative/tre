@@ -16,7 +16,7 @@ use tre_engine::RhiTexture;
 use crate::error::TreError;
 
 /// `tre_engine::TextureFormat`, bound directly.
-#[pyclass(name = "TextureFormat", eq)]
+#[pyclass(name = "TextureFormat", eq, from_py_object)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PyTextureFormat {
     Bgra8Srgb,
@@ -41,7 +41,7 @@ impl From<PyTextureFormat> for tre_engine::TextureFormat {
 /// real GPU texture survives for as long as any shape -- or this
 /// `Texture` object itself -- still needs it, independent of whichever
 /// Python object happens to be garbage-collected first.
-#[pyclass(name = "Texture", frozen)]
+#[pyclass(name = "Texture", frozen, from_py_object)]
 #[derive(Clone)]
 pub struct PyTexture {
     pub(crate) texture: Arc<Box<dyn RhiTexture>>,

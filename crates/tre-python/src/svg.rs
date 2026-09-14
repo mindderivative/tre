@@ -47,7 +47,7 @@ const DEFAULT_MAX_KEYFRAMES: usize = 100_000;
 /// `tre_svg::tessellate::FillRule`, bound directly -- `NonZero` (the
 /// SVG/CSS default) and `EvenOdd` (`fill-rule="evenodd"`), both real and
 /// correctly handled by `tre-svg`'s own real `lyon`-based tessellator.
-#[pyclass(name = "FillRule", eq)]
+#[pyclass(name = "FillRule", eq, from_py_object)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum PyFillRule {
     #[default]
@@ -256,7 +256,7 @@ impl PySvg {
 /// `tre_svg::SmilAnimate` -- see `tre_svg::smil`'s own module doc
 /// comment for the real, disclosed v1 scope (a single scalar attribute,
 /// `values` or `from`/`to`, no `begin`/`repeatCount`/`calcMode`).
-#[pyclass(name = "SmilAnimate", get_all)]
+#[pyclass(name = "SmilAnimate", get_all, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PySmilAnimate {
     pub attribute_name: String,
@@ -268,7 +268,7 @@ pub struct PySmilAnimate {
 /// by [`parse_smil`]. Mirrors `tre_svg::SmilAnimateTranslate` --
 /// `type="scale"`/`"rotate"` are a real, disclosed v1 gap (see
 /// `tre_svg::smil`'s own module doc comment), not extracted at all.
-#[pyclass(name = "SmilAnimateTranslate", get_all)]
+#[pyclass(name = "SmilAnimateTranslate", get_all, skip_from_py_object)]
 #[derive(Clone)]
 pub struct PySmilAnimateTranslate {
     pub keyframes: Vec<(f32, f32)>,

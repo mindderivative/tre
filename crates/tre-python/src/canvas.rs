@@ -47,7 +47,7 @@ pub fn shadow_layer_bounds(
 }
 
 /// `tre_engine::AccessibilityRole`, bound directly.
-#[pyclass(name = "AccessibilityRole", eq)]
+#[pyclass(name = "AccessibilityRole", eq, from_py_object)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PyAccessibilityRole {
     Generic,
@@ -83,7 +83,7 @@ impl From<AccessibilityRole> for PyAccessibilityRole {
 /// mirror of `tre_engine::AccessibilityNode`, real world-space bounds
 /// already resolved by `tag_accessibility_node`. Pass a list of these
 /// straight to `A11yBridge.publish(...)` once per rendered frame.
-#[pyclass(name = "AccessibilityNode")]
+#[pyclass(name = "AccessibilityNode", from_py_object)]
 #[derive(Clone, Copy)]
 pub struct PyAccessibilityNode {
     #[pyo3(get)]

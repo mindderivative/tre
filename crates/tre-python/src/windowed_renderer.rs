@@ -701,7 +701,7 @@ impl PyWindowedRenderer {
 }
 
 /// `tre_platform::CursorIcon`, bound directly.
-#[pyclass(name = "CursorIcon", eq)]
+#[pyclass(name = "CursorIcon", eq, from_py_object)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PyCursorIcon {
     Default,

@@ -41,6 +41,7 @@ and every real bug found along the way, see
   `zbus` dev-dependency 4.4 to 5.19 with it (finding #252). `A11yBridge::
   connect` keeps its signature, but its `app_name` is no longer forwarded:
   `accesskit_unix` now derives the application name from the executable.
+- `pyo3` 0.27.2 to 0.29.2 (finding #253). No Python-visible behavior change.
 
 ### Fixed
 - `ARCHITECTURE.md` Section 6 annotated for finding #244's collapse of

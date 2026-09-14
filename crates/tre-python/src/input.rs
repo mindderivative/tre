@@ -16,7 +16,7 @@ use tre_engine::{ElementState, InputEvent, MouseButton, WindowId};
 /// Opaque per-window identifier (`tre_engine::WindowId`). `frozen` +
 /// `eq` + `hash` since a real UI framework's own event-routing code
 /// needs to use this as a dict key.
-#[pyclass(name = "WindowId", frozen, eq, hash)]
+#[pyclass(name = "WindowId", frozen, eq, hash, from_py_object)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PyWindowId(pub WindowId);
 
@@ -51,7 +51,7 @@ impl From<WindowId> for PyWindowId {
 /// in the same `#[pyclass]` enum is a compile error ("Unit variant is
 /// not yet supported in a complex enum"), found via a real build of
 /// this module.
-#[pyclass(name = "MouseButton", eq)]
+#[pyclass(name = "MouseButton", eq, from_py_object)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PyMouseButton {
     Left(),
@@ -74,7 +74,7 @@ impl From<MouseButton> for PyMouseButton {
 }
 
 /// `tre_engine::ElementState`.
-#[pyclass(name = "ElementState", eq, eq_int)]
+#[pyclass(name = "ElementState", eq, eq_int, from_py_object)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PyElementState {
     Pressed,
@@ -96,7 +96,7 @@ impl From<ElementState> for PyElementState {
 /// exactly as `tre_engine::InputEvent`'s own doc comment already
 /// contracts -- layout-aware translation is left to the Python UI
 /// framework, matching the Rust engine's own documented scope boundary.
-#[pyclass(name = "InputEvent")]
+#[pyclass(name = "InputEvent", from_py_object)]
 #[derive(Clone)]
 pub enum PyInputEvent {
     PointerMoved {

@@ -19,7 +19,7 @@ use tre_tween::{Easing, Spring, Tween};
 
 /// Mirrors `tre_tween::Easing` -- see its own doc comment for what each
 /// curve does; every variant here dispatches straight through.
-#[pyclass(name = "Easing", eq)]
+#[pyclass(name = "Easing", eq, from_py_object)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum PyEasing {
     #[default]

@@ -102,7 +102,7 @@ pub(crate) fn common(
 }
 
 /// A stable handle to a shape already inserted into a [`PyShapeRegistry`].
-#[pyclass(name = "ShapeId", frozen)]
+#[pyclass(name = "ShapeId", frozen, skip_from_py_object)]
 #[derive(Clone, Copy)]
 pub struct PyShapeId(pub ShapeId);
 
@@ -120,7 +120,7 @@ impl PyShapeId {
 /// or a [`PyTexture`] (from a renderer's `create_texture`) -- resolved
 /// into the matching real `FillStyle` variant at `insert_rectangle` time
 /// (Phase 12 Step 12.4).
-#[pyclass(name = "Rectangle")]
+#[pyclass(name = "Rectangle", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyRectangle {
     #[pyo3(get, set)]
@@ -223,7 +223,7 @@ impl PyRectangle {
 /// `flatten_circle` doc comment) -- NOT the circle's center. For a
 /// circle centered at `(cx, cy)` with `radius`, pass
 /// `x=cx-radius, y=cy-radius`.
-#[pyclass(name = "Circle")]
+#[pyclass(name = "Circle", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyCircle {
     #[pyo3(get, set)]
@@ -317,7 +317,7 @@ impl PyCircle {
 }
 
 /// A regular polygon or, with `star_points` set, a star. Mirrors `tre_engine::Polygon`.
-#[pyclass(name = "Polygon")]
+#[pyclass(name = "Polygon", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyPolygon {
     #[pyo3(get, set)]
@@ -419,7 +419,7 @@ impl PyPolygon {
 
 /// A path built from `move_to`/`line_to`/`quad_to`/`cubic_to`/`close` calls,
 /// the same shape HTML5 Canvas's own path API uses. Mirrors `tre_engine::Path`.
-#[pyclass(name = "Path")]
+#[pyclass(name = "Path", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyPath {
     commands: Vec<PathCommand>,
@@ -554,7 +554,7 @@ impl PyPath {
 /// **Solid fill only** -- see `tre_engine::Text`'s own doc comment for
 /// why: `RenderingCanvas::draw_text`'s real glyph-quad path takes a flat
 /// color, not a gradient/texture fill.
-#[pyclass(name = "Text")]
+#[pyclass(name = "Text", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyText {
     #[pyo3(get, set)]
@@ -648,7 +648,7 @@ impl PyText {
 /// interpretation" precedent `fill_color`'s own doc comment above
 /// already sets. Default `0.0` each, matching every pre-existing
 /// `CustomShaded` caller's actual behavior before this field existed.
-#[pyclass(name = "CustomShaded")]
+#[pyclass(name = "CustomShaded", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyCustomShaded {
     #[pyo3(get, set)]

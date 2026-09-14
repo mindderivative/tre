@@ -154,7 +154,7 @@ impl PyTrayIcon {
 /// comment in `input.rs` explains the same real constraint): mixing a
 /// true unit variant with a data-carrying one in the same `#[pyclass]`
 /// enum is a compile error.
-#[pyclass(name = "TrayEvent", eq)]
+#[pyclass(name = "TrayEvent", eq, skip_from_py_object)]
 #[derive(Clone, PartialEq, Eq)]
 pub enum PyTrayEvent {
     IconClick(),

@@ -15,7 +15,7 @@ use crate::error::engine_err;
 /// shape through it -- using it against a DIFFERENT renderer than the
 /// one that created it is a real, disclosed caller error (that
 /// renderer's own `PipelineRegistry` never registered this id).
-#[pyclass(name = "CustomShaderId", frozen)]
+#[pyclass(name = "CustomShaderId", frozen, from_py_object)]
 #[derive(Clone, Copy)]
 pub struct PyCustomShaderId(pub u16);
 

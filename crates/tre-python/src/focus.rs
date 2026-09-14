@@ -9,7 +9,7 @@ use tre_engine::{AccessibilityNodeId, FocusManager, FocusableNode};
 /// A plain data mirror of `tre_engine::FocusableNode`, as returned by
 /// `Canvas.focusable_nodes()`. Pass a list of these to
 /// `FocusManager.focus_next`/`focus_previous`.
-#[pyclass(name = "FocusableNode")]
+#[pyclass(name = "FocusableNode", from_py_object)]
 #[derive(Clone, Copy)]
 pub struct PyFocusableNode {
     #[pyo3(get)]
