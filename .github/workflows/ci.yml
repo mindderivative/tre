@@ -334,8 +334,25 @@ jobs:
       # (`demo/phase17_step17_1` reads back the PNGs `TrayIcon.set_icon`
       # writes); everything else is the standard library plus `tre_python`.
       - run: python -m pip install --upgrade pip maturin pillow
-      - name: Build the tre_python wheel (release, no abi3 -- tied to this exact Python minor)
-        run: maturin build --release -m crates/tre-python/Cargo.toml -o dist -i python
+      # `--auditwheel skip --compatibility linux`: build a plain linux-tagged
+      # wheel that links the system libraries directly, NOT a repaired
+      # manylinux wheel. REVIEW.md finding #254: the first three real runs
+      # failed because maturin's default auditwheel repair VENDORED the
+      # GUI/X stack into `tre_python.libs/` with mangled sonames
+      # (libgdk-3, libgtk-3, libxkbcommon, ...), so the demo process ended
+      # up with TWO copies of each -- the bundled one the extension links
+      # and the system one winit's `xkbcommon-dl` dlopens and GTK's own
+      # init uses. That duplication is what produced winit's `XKBNotFound`
+      # (two libxkbcommon) and the tray demos' `GdkDisplayManager` double-
+      # registration segfault (two libgdk-3), proven from a run's LD_DEBUG
+      # trace. This wheel is built and run on the same runner, so a
+      # portable, self-contained manylinux wheel buys nothing and actively
+      # breaks it; linking the system libs (exactly what the Rust example
+      # jobs do, and what a local `maturin develop` does) is correct here.
+      # `-i python`: the venv interpreter from the step above, not the
+      # toolcache one.
+      - name: Build the tre_python wheel (linux tag, system libs, no vendoring)
+        run: maturin build --release -m crates/tre-python/Cargo.toml -o dist -i python --auditwheel skip --compatibility linux
       - run: python -m pip install dist/*.whl
       # `demo/phase18_step18_3` spawns this exact debug example binary as
       # its independent AT-SPI2 client (its own error message names this
