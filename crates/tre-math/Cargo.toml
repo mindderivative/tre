@@ -3,6 +3,7 @@ name = "tre-math"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 
 # Cannot combine `[lints] workspace = true` with additional overrides
 # (Cargo rejects it), so the workspace-level lints are restated here

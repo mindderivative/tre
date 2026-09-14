@@ -23,6 +23,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
+license = "MIT OR Apache-2.0"
 
 # TECHNICAL.md Section 9.1: `unsafe_op_in_unsafe_fn` is opt-in (warn-by-default
 # only from edition 2024) but the project wants it as a hard error on this

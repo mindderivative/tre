@@ -1,14 +1,27 @@
 # Tesserae Render Engine (TRE)
 
 [![CI](https://github.com/mindderivative/tre/actions/workflows/ci.yml/badge.svg)](https://github.com/mindderivative/tre/actions/workflows/ci.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 A low-overhead, hardware-accelerated 2D rendering engine designed as a bridge between high-level UI frameworks and low-level graphics APIs (Vulkan, DirectX 12, Metal, WebGPU).
 
 ## Status
 
-**19 phases shipped and merged to `main`** (`documentation/IMPLEMENTATION.md`'s own phased plan, Phase 0's walking skeleton through Phase 19's focus/keyboard-navigation system), plus Phase 10 Step 10.3's real first slice of the `tre-ffi` C-ABI crate. A real Vulkan 1.2+ backend renders headless and windowed, multi-window, multi-threaded scenes with real vector shapes, dynamic MSDF typography, animated SVG, gradients/textures, non-`Normal` blend modes, real shadows (both Dual-Kawase-blur- and SDF-based), a full multi-line text editor with clipboard/IME, native window chrome/clipboard/file-dialogs/system tray, and a real Linux AT-SPI2 accessibility bridge with in-app widget focus/Tab order — all exercised by `tre-python`, the project's real, privileged Python binding, and now also by `tre-ffi`'s own real (if intentionally narrower) C-ABI first slice for every other language. DirectX 12/Metal backends and Windows/macOS windowing remain real, disclosed placeholders.
+**v0.1.0 — early alpha.** 20 phases shipped and merged to `main` (`documentation/IMPLEMENTATION.md`'s own phased plan, Phase 0's walking skeleton through Phase 20's performance test suite), plus Phase 10 Step 10.3's real first slice of the `tre-ffi` C-ABI crate. A real Vulkan 1.2+ backend renders headless and windowed, multi-window, multi-threaded scenes with real vector shapes, dynamic MSDF typography, animated SVG, gradients/textures, non-`Normal` blend modes, real shadows (both Dual-Kawase-blur- and SDF-based), a full multi-line text editor with clipboard/IME, native window chrome/clipboard/file-dialogs/system tray, and a real Linux AT-SPI2 accessibility bridge with in-app widget focus/Tab order — all exercised by `tre-python`, the project's real, privileged Python binding, and now also by `tre-ffi`'s own real (if intentionally narrower) C-ABI first slice for every other language.
 
-See `documentation/IMPLEMENTATION.md` for the full phase-by-phase build history, `documentation/REVIEW.md` for every real bug found and fixed along the way, and the [MkDocs site](docs/) (`mkdocs serve` from the repo root) for the complete Python and Rust API reference.
+See [CHANGELOG.md](CHANGELOG.md) for what's in this release, `documentation/IMPLEMENTATION.md` for the full phase-by-phase build history, `documentation/REVIEW.md` for every real bug found and fixed along the way, and the docs site (published at https://mindderivative.github.io/tre/, or run locally with `mkdocs serve` from the repo root) for the complete Python and Rust API reference.
+
+## Platform support
+
+This release runs on **Linux with a Vulkan 1.2+ GPU only**. The engine's design targets DirectX 12, Metal, and Windows/macOS windowing as well, but those are real, disclosed placeholders today, not yet implemented:
+
+| Component | Status |
+|---|---|
+| Vulkan 1.2+ backend | Real, complete — the one fully implemented RHI backend |
+| Linux windowing (`winit`) | Real, complete |
+| DirectX 12 backend | Placeholder — not implemented |
+| Metal 2.4+ backend | Placeholder — not implemented |
+| Windows / macOS windowing | Placeholder — not implemented |
 
 ## Overview
 
@@ -68,3 +81,9 @@ See TECHNICAL.md Section 9.1 for the full `unsafe` policy this table reflects.
 - **Vulkan 1.2+ is the one real, complete RHI backend** (real GLSL shaders compiled to SPIR-V via `shaderc`/`glslc`); DirectX 12 and Metal 2.4+ remain real, disclosed placeholders, not yet implemented.
 - **MSDF typography**, analytical SDF rounded rectangles, and native animated SVG rendering.
 - **Explicit, tested failure modes** for device loss, atlas exhaustion, malformed input, and resource starvation — no undocumented happy-path-only assumptions.
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in this project shall be dual licensed as above, without any additional terms or conditions.

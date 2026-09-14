@@ -1,5 +1,6 @@
 site_name: TRE — Tesserae Render Engine
 site_description: A GPU-accelerated 2D rendering engine backend, exposed to Python via PyO3 -- vector paths, dynamic typography, SVG, animation, and native desktop integration.
+site_url: https://mindderivative.github.io/tre/
 repo_url: https://github.com/mindderivative/tre
 repo_name: mindderivative/tre
 theme:
