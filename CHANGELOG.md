@@ -54,6 +54,10 @@ and every real bug found along the way, see
 - `pyo3` 0.27.2 to 0.29.2 (finding #253). No Python-visible behavior change.
 
 ### Fixed
+- Textures no longer risk a use-after-free at interpreter shutdown: a
+  `Texture` (or a `ShapeRegistry` holding one) now keeps its device alive,
+  so its GPU image is always freed before the device is destroyed
+  regardless of Python GC order (finding #258).
 - `ARCHITECTURE.md` Section 6 annotated for finding #244's collapse of
   `begin_frame_with_timeout`/`begin_frame_with_viewport_crop` into
   `begin_frame_with_options`; three stale "only C ABI boundary is Vulkan"

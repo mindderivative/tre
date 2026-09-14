@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use pyo3::prelude::*;
-use tre_engine::RhiTexture;
+use tre_engine::{RhiDevice, RhiTexture};
 
 use crate::error::TreError;
 
@@ -41,20 +41,46 @@ impl From<PyTextureFormat> for tre_engine::TextureFormat {
 /// real GPU texture survives for as long as any shape -- or this
 /// `Texture` object itself -- still needs it, independent of whichever
 /// Python object happens to be garbage-collected first.
+/// A GPU texture bundled with a keep-alive reference to the device that
+/// owns it. The device reference is what makes teardown across the Python
+/// boundary safe (REVIEW.md finding #258): a `VulkanTexture`'s `Drop`
+/// frees its GPU image through a *cloned* `ash::Device` handle, which
+/// becomes dangling the moment the real `VulkanDevice` is destroyed, and
+/// Python finalizes the renderer and any handed-out textures (or a
+/// registry still holding one) in an unspecified order at interpreter
+/// shutdown. Holding an `Arc<dyn RhiDevice>` here guarantees the device
+/// object -- and therefore its `vkDestroyDevice` in `Drop` -- cannot run
+/// until every texture that references it is gone. Field order is load-
+/// bearing: `texture` is declared before `_device`, so the image is freed
+/// (device still alive) before this `Arc` is released. On a real GPU the
+/// wrong order merely leaks or silently misbehaves; on a software driver
+/// (lavapipe, CI) it corrupts the C heap -- which is how this surfaced.
+pub(crate) struct SharedTexture {
+    // Held only to keep the GPU texture alive until this value drops (its
+    // `Drop` frees the image); never read after construction, hence the
+    // leading underscore. Declared before `_device` so the image is freed
+    // while the device is still alive -- see this struct's doc comment.
+    pub(crate) _texture: Box<dyn RhiTexture>,
+    pub(crate) _device: Arc<dyn RhiDevice>,
+}
+
 #[pyclass(name = "Texture", frozen, from_py_object)]
 #[derive(Clone)]
 pub struct PyTexture {
-    pub(crate) texture: Arc<Box<dyn RhiTexture>>,
+    pub(crate) texture: Arc<SharedTexture>,
     pub(crate) bindless_index: u32,
 }
 
 impl PyTexture {
-    pub(crate) fn new(texture: Box<dyn RhiTexture>) -> PyResult<Self> {
+    pub(crate) fn new(texture: Box<dyn RhiTexture>, device: Arc<dyn RhiDevice>) -> PyResult<Self> {
         let bindless_index = texture
             .bindless_index()
             .ok_or_else(|| TreError::new_err("newly created texture has no bindless index"))?;
         Ok(Self {
-            texture: Arc::new(texture),
+            texture: Arc::new(SharedTexture {
+                _texture: texture,
+                _device: device,
+            }),
             bindless_index,
         })
     }

@@ -20,6 +20,8 @@
 //! environment (a bare CI container with no compositor at all, for
 //! example).
 
+use std::sync::Arc;
+
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -177,7 +179,7 @@ pub struct PyHeadlessRenderer {
     // already went through `&dyn RhiDevice`/`&dyn RhiSwapchain`, so only
     // the field type itself needed to change.
     swapchain: Box<dyn RhiSwapchain>,
-    device: Box<dyn RhiDevice>,
+    device: Arc<dyn RhiDevice>,
     width: u32,
     height: u32,
     /// Phase 13 Step 13.8 (custom shader API): the next id
@@ -243,7 +245,7 @@ impl PyHeadlessRenderer {
         let text_atlas = TextAtlas::new(&device)?;
 
         Ok(Self {
-            device: Box::new(device),
+            device: Arc::new(device),
             swapchain: Box::new(swapchain),
             pipelines,
             ring_buffer,
@@ -337,7 +339,7 @@ impl PyHeadlessRenderer {
             .device
             .create_texture(width, height, format.into(), &pixels)
             .map_err(engine_err)?;
-        PyTexture::new(texture)
+        PyTexture::new(texture, Arc::clone(&self.device))
     }
 
     /// Flattens `registry`'s current shapes, renders them, and returns

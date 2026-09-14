@@ -64,6 +64,7 @@
 //! extent, since the GPU render area itself is confined to it.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -337,7 +338,13 @@ pub struct PyWindowedRenderer {
     // already occupies, not steady-state per-frame rendering. Only
     // `WindowSlot::swapchain` (per-window, built once, used many times
     // purely through the trait) generalizes cleanly here.
-    device: VulkanDevice,
+    // An `Arc<VulkanDevice>` (was a bare `VulkanDevice`): every `PyTexture`
+    // this renderer hands out keeps a clone (coerced to `Arc<dyn
+    // RhiDevice>`) so the device outlives the texture's own GPU-image Drop
+    // regardless of Python GC order at interpreter shutdown (REVIEW.md
+    // finding #258). `&*self.device` still coerces to `&VulkanDevice` for
+    // every `WindowSlot`/swapchain call, so those sites are unchanged.
+    device: Arc<VulkanDevice>,
     main_window: WindowId,
     /// `render`'s own persistent scratch canvas, and `render`/
     /// `render_canvas`/`render_parallel`'s shared persistent stitch
@@ -394,7 +401,7 @@ impl PyWindowedRenderer {
             text_atlas,
             windows,
             connection,
-            device,
+            device: Arc::new(device),
             main_window,
             scratch_canvas: RenderingCanvas::new(),
             frame_arena: FrameArena::with_capacity(
@@ -434,7 +441,8 @@ impl PyWindowedRenderer {
             .device
             .create_texture(width, height, format.into(), &pixels)
             .map_err(engine_err)?;
-        PyTexture::new(texture)
+        let device: Arc<dyn RhiDevice> = self.device.clone();
+        PyTexture::new(texture, device)
     }
 
     /// Creates an additional top-level window sharing this renderer's
@@ -518,7 +526,7 @@ impl PyWindowedRenderer {
     ) -> PyResult<()> {
         let mut reg = registry.borrow_mut();
         render_single_registry(
-            &self.device,
+            &*self.device,
             &mut self.text_atlas,
             &mut self.scratch_canvas,
             &mut self.frame_arena,
@@ -547,7 +555,7 @@ impl PyWindowedRenderer {
         let mut reg = registry.borrow_mut();
         let mut canvas = canvas.borrow_mut();
         flatten_registry_into(
-            &self.device,
+            &*self.device,
             &mut self.text_atlas,
             &mut canvas.inner,
             &mut reg,
@@ -603,7 +611,7 @@ impl PyWindowedRenderer {
     ) -> PyResult<()> {
         render_parallel_shared(
             py,
-            &self.device,
+            &*self.device,
             &mut self.text_atlas,
             &mut self.frame_arena,
             &mut self.flattened,
@@ -862,7 +870,7 @@ impl PyWindowedRenderer {
         // exactly once against a freshly recreated swapchain if the
         // current one is stale.
         for attempt in 0..2 {
-            let device = &self.device;
+            let device = &*self.device;
             let ring_buffer = &*self.ring_buffer;
             let slot = self
                 .windows

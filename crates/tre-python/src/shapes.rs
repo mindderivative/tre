@@ -16,14 +16,14 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use tre_engine::{
     CornerRadii, CustomShaded, FillStyle, FontId, FontRegistry, GradientError, LineCap, LineJoin,
-    Path, PathCommand, Polygon, PrimitiveCommon, Rectangle, RhiTexture, ShapeColor as Color,
-    ShapeId, ShapePrimitive, ShapeRegistry, Text as EngineText, Transform2D,
+    Path, PathCommand, Polygon, PrimitiveCommon, Rectangle, ShapeColor as Color, ShapeId,
+    ShapePrimitive, ShapeRegistry, Text as EngineText, Transform2D,
 };
 
 use crate::custom_shader::PyCustomShaderId;
 use crate::font::PyFont;
 use crate::gradient::{PyGradient, PyGradientId};
-use crate::texture::PyTexture;
+use crate::texture::{PyTexture, SharedTexture};
 
 /// A real cap on `Polygon::sides`/`star_points`, found necessary by this
 /// project's own review process (REVIEW.md #196-198): `tre_engine`'s own
@@ -37,7 +37,7 @@ const MAX_POLYGON_SIDES: u32 = 4096;
 
 /// A resolved `Texture` fill's own shared GPU-resource handle -- see
 /// `PyShapeRegistry::textures_kept_alive`'s own doc comment.
-type ResolvedTexture = Arc<Box<dyn RhiTexture>>;
+type ResolvedTexture = Arc<SharedTexture>;
 
 /// Rejects a non-finite (`NaN`/`+-inf`) coordinate before it can cross
 /// into `tre_engine`'s flatten path -- found necessary by this project's
