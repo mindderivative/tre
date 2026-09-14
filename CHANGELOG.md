@@ -58,6 +58,11 @@ and every real bug found along the way, see
   `Texture` (or a `ShapeRegistry` holding one) now keeps its device alive,
   so its GPU image is always freed before the device is destroyed
   regardless of Python GC order (finding #258).
+- At the RHI level, `vkDestroyDevice`/`vkDestroyInstance` are now
+  refcount-ordered via a shared `DeviceOwner`, so any `VulkanTexture` that
+  outlives its `VulkanDevice` (over the C ABI or any binding) frees its
+  image before the device is destroyed -- no teardown use-after-free
+  (finding #259).
 - `ARCHITECTURE.md` Section 6 annotated for finding #244's collapse of
   `begin_frame_with_timeout`/`begin_frame_with_viewport_crop` into
   `begin_frame_with_options`; three stale "only C ABI boundary is Vulkan"

@@ -601,6 +601,11 @@ jobs:
       # fixed regardless of framebuffer size. See this example's own
       # header doc comment and REVIEW.md finding #233.
       - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example resize_invariance_demo
+      # REVIEW.md finding #259: proves a handed-out texture can outlive its
+      # VulkanDevice without a teardown use-after-free (the root cause of the
+      # python job's phase12_step12_4 heap corruption). Runs on the same
+      # software driver, where the bug reproduced.
+      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example texture_teardown_check
 
   accessibility-validation:
     name: accessibility-validation

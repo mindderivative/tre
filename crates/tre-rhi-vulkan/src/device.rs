@@ -82,8 +82,70 @@ pub(crate) struct FrameSync {
 /// frame in flight, `begin_frame` fully waits before recording) -- see
 /// `frame_sync`'s doc comment for the real, once-broken-then-fixed reason
 /// it still tracks a rotating index despite that.
-pub struct VulkanDevice {
+/// Shared, refcounted owner of the raw Vulkan objects whose destruction
+/// must be deferred until every value referencing the device is gone:
+/// the logical `VkDevice`, the `VkInstance` (its parent), the ash
+/// loader (which owns `libvulkan`), and (debug builds only) the
+/// validation messenger. Its `Drop`
+/// performs `vkDestroyDevice` then, in spec-required child-before-parent
+/// order, the messenger and `vkDestroyInstance`. `VulkanDevice` and every
+/// handed-out `VulkanTexture` hold an `Arc<DeviceOwner>`, so the device
+/// outlives any texture whose own `Drop` frees a GPU image through a
+/// cloned `ash::Device` handle -- a use-after-free at teardown otherwise,
+/// visible as C-heap corruption on a software driver (REVIEW.md finding
+/// #259). Device-level *children* (pools, samplers, fences, buffers) are
+/// still destroyed eagerly in `VulkanDevice::drop`, which runs while this
+/// owner keeps the device alive; only the device/instance themselves wait
+/// for the last `Arc` here.
+pub(crate) struct DeviceOwner {
+    pub(crate) device: ash::Device,
+    pub(crate) instance: ash::Instance,
+    /// The ash loader (it owns the dlopen'd `libvulkan`). Declared AFTER
+    /// `device`/`instance` so it drops -- and only then possibly unloads
+    /// the library -- after this struct's `Drop` has finished calling
+    /// `destroy_device`/`destroy_instance` through function pointers that
+    /// live inside that library (REVIEW.md finding #259: unloading it
+    /// first dangles those pointers and segfaults the destroy calls).
     pub(crate) entry: ash::Entry,
+    #[cfg(debug_assertions)]
+    debug_utils: Option<(ash::ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
+    #[cfg(debug_assertions)]
+    #[allow(
+        dead_code,
+        reason = "keeps the messenger's pUserData heap backing alive for the messenger's whole                   life; never read back"
+    )]
+    _debug_callback_state: Box<DebugCallbackState>,
+}
+
+impl Drop for DeviceOwner {
+    fn drop(&mut self) {
+        // SAFETY: this runs only when the last `Arc<DeviceOwner>` (the
+        // `VulkanDevice` and every `VulkanTexture` sharing it) is gone, so
+        // no code holds a live `VkDevice`/`VkInstance` handle afterward.
+        // `VulkanDevice::drop` already destroyed every device-level child
+        // (it ran first, while this owner kept the device alive), so only
+        // the device, then the messenger (an instance child), then the
+        // instance remain -- destroyed here in that order.
+        unsafe {
+            self.device.destroy_device(None);
+        }
+        #[cfg(debug_assertions)]
+        if let Some((debug_utils_loader, messenger)) = self.debug_utils.take() {
+            // SAFETY: the messenger belongs to `instance`, still valid here
+            // (destroyed just below), and nothing references it afterward.
+            unsafe {
+                debug_utils_loader.destroy_debug_utils_messenger(messenger, None);
+            }
+        }
+        // SAFETY: the device (the instance's only remaining child created
+        // by this crate) was destroyed above, so the instance may now go.
+        unsafe {
+            self.instance.destroy_instance(None);
+        }
+    }
+}
+
+pub struct VulkanDevice {
     /// The real Vulkan instance this device was created against.
     pub instance: ash::Instance,
     /// The physical device (GPU) `new` selected.
@@ -97,6 +159,11 @@ pub struct VulkanDevice {
     /// The real logical device every other Vulkan call in this crate is
     /// issued against.
     pub device: ash::Device,
+    /// Shared owner of the raw `VkDevice`/`VkInstance` (see [`DeviceOwner`]).
+    /// `instance`/`device` above are cheap clones this crate calls through;
+    /// this is the field that actually owns their teardown, deferred until
+    /// the last `VulkanDevice`/`VulkanTexture` sharing it drops.
+    pub(crate) owner: Arc<DeviceOwner>,
     /// The graphics+present-capable queue family index `new` selected;
     /// `graphics_queue()` is the actual `VkQueue` handle from this family.
     pub queue_family_index: u32,
@@ -194,34 +261,6 @@ pub struct VulkanDevice {
     /// the engine's first genuine OS thread. `Option` only so `Drop` can
     /// `.take()` it to call `.join()`, which consumes the handle.
     pub(crate) gc_thread: Option<JoinHandle<()>>,
-    /// `VK_EXT_debug_utils` messenger (TECHNICAL.md Section 9.2,
-    /// IMPLEMENTATION.md Step 2.4), `None` if the validation
-    /// layer/extension weren't both available at instance-creation time.
-    /// The field itself doesn't exist in release builds -- compiled out
-    /// entirely, matching TECHNICAL.md Section 3.4's zero-allocation
-    /// guard's own release-build behavior, so there is no cost (not even
-    /// an unused `Option`) in a shipped binary.
-    #[cfg(debug_assertions)]
-    pub(crate) debug_utils: Option<(ash::ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
-    /// Backing storage for `debug_utils`'s messenger's own `pUserData` --
-    /// see `DebugCallbackState`'s doc comment. Always allocated in a debug
-    /// build (even when `debug_utils` ends up `None`, i.e. validation
-    /// wasn't available -- cheap, and keeps this field's type simple), but
-    /// only ever actually pointed to by Vulkan when `debug_utils` is
-    /// `Some`. Kept alive here for exactly as long as `debug_utils` itself
-    /// would need it, since Vulkan holds the raw pointer into this box for
-    /// the messenger's whole lifetime, not just for the `vkCreateDevice`
-    /// call that first needed it. Never read after `new` returns -- it
-    /// exists purely so `vulkan_debug_callback` has somewhere to report
-    /// back to during that one call.
-    #[cfg(debug_assertions)]
-    #[allow(
-        dead_code,
-        reason = "never read back -- kept solely so its heap allocation (and the raw pointer \
-                  Vulkan holds into it) stays alive for exactly as long as `debug_utils`'s \
-                  messenger does, matching that field's own lifetime discipline"
-    )]
-    debug_callback_state: Box<DebugCallbackState>,
     /// Phase 10 Step 10.2.3: `true` only when this physical device
     /// actually advertises `VK_KHR_dynamic_rendering_local_read`
     /// (queried once in `new`, mirroring `debug_validation_available`'s
@@ -1023,13 +1062,23 @@ impl VulkanDevice {
             move || gc_thread_loop(transient_pool, frame_sync, deferred_release, gc_running)
         });
 
+        let owner = Arc::new(DeviceOwner {
+            device: device.clone(),
+            instance: instance.clone(),
+            entry,
+            #[cfg(debug_assertions)]
+            debug_utils,
+            #[cfg(debug_assertions)]
+            _debug_callback_state: debug_callback_state,
+        });
+
         Ok((
             Self {
-                entry,
                 instance,
                 physical_device,
                 stencil_format,
                 device,
+                owner,
                 queue_family_index,
                 graphics_queue,
                 command_pool,
@@ -1049,10 +1098,6 @@ impl VulkanDevice {
                 bindless_registry: Arc::new(Mutex::new(BindlessRegistry::new(bindless_capacity))),
                 bindless_capacity,
                 shape_style_buffer: Some(shape_style_buffer),
-                #[cfg(debug_assertions)]
-                debug_utils,
-                #[cfg(debug_assertions)]
-                debug_callback_state,
                 local_read_supported,
                 blend_read,
             },
@@ -1093,9 +1138,13 @@ impl VulkanDevice {
         display_handle: raw_window_handle::RawDisplayHandle,
         window_handle: raw_window_handle::RawWindowHandle,
     ) -> Result<(ash::khr::surface::Instance, vk::SurfaceKHR), EngineError> {
-        let surface_loader = ash::khr::surface::Instance::new(&self.entry, &self.instance);
-        let surface =
-            Self::create_surface_raw(&self.entry, &self.instance, display_handle, window_handle)?;
+        let surface_loader = ash::khr::surface::Instance::new(&self.owner.entry, &self.instance);
+        let surface = Self::create_surface_raw(
+            &self.owner.entry,
+            &self.instance,
+            display_handle,
+            window_handle,
+        )?;
         Ok((surface_loader, surface))
     }
 
@@ -1798,27 +1847,13 @@ impl Drop for VulkanDevice {
             if let Ok(pool) = self.upload_command_pool.lock() {
                 self.device.destroy_command_pool(*pool, None);
             }
-            self.device.destroy_device(None);
         }
-        // Destroyed after the device but before the instance: the
-        // messenger is a child of the INSTANCE (created via an
-        // `ash::ext::debug_utils::Instance` loader), not the device, so it
-        // must not outlive `destroy_instance` below.
-        #[cfg(debug_assertions)]
-        if let Some((debug_utils_loader, messenger)) = self.debug_utils.take() {
-            // SAFETY: `messenger` was created from `debug_utils_loader` on
-            // this same `self.instance`, both still valid at this point;
-            // `self` is being dropped, so nothing else can reference
-            // `messenger` afterward.
-            unsafe {
-                debug_utils_loader.destroy_debug_utils_messenger(messenger, None);
-            }
-        }
-        // SAFETY: `self.instance` is valid and every child object
-        // (device, messenger) has been destroyed above.
-        unsafe {
-            self.instance.destroy_instance(None);
-        }
+        // The `VkDevice`, debug messenger, and `VkInstance` are NOT
+        // destroyed here: `self.owner` (an `Arc<DeviceOwner>`) does that in
+        // its own `Drop`, deferred until the last `VulkanDevice`/
+        // `VulkanTexture` sharing it is gone (REVIEW.md finding #259).
+        // Every destroy above is a device *child*, safe because this owner
+        // keeps the device alive until `self.owner` finally drops.
     }
 }
 
@@ -2392,6 +2427,7 @@ impl RhiDevice for VulkanDevice {
             height,
             format,
             device: self.device.clone(),
+            _owner: Arc::clone(&self.owner),
             // Transient render targets never enter the bindless array
             // (IMPLEMENTATION.md Step 2.1's scope decision) -- confirmed
             // above (the misuse guard already returned otherwise), so

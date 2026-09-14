@@ -13,6 +13,7 @@ use ash::vk;
 use ash::vk::Handle;
 use tre_engine::{EngineError, RhiTexture, TextureFormat};
 
+use crate::device::DeviceOwner;
 use crate::transient_pool::BindlessRegistry;
 use crate::{bytes_per_pixel, texture_format_to_vk, VulkanDevice};
 
@@ -27,6 +28,15 @@ pub struct VulkanTexture {
     pub(crate) height: u32,
     pub(crate) format: TextureFormat,
     pub(crate) device: ash::Device,
+    /// Keep-alive for the owning device (REVIEW.md finding #259). This
+    /// texture's `Drop` frees its GPU image through the cloned `device`
+    /// handle above, which dangles the instant the real `VkDevice` is
+    /// destroyed. A handed-out texture (bindless, from `create_texture`)
+    /// can outlive the `VulkanDevice` at teardown, so holding the device's
+    /// `Arc<DeviceOwner>` defers `vkDestroyDevice` until this texture is
+    /// gone too. Never read.
+    #[allow(dead_code, reason = "keep-alive only; see doc comment")]
+    pub(crate) _owner: Arc<DeviceOwner>,
     /// This texture's slot in the bindless array (IMPLEMENTATION.md
     /// Step 2.1), if it has one. `None` for a transient render target
     /// (`VulkanTexture::new`) -- only `VulkanTexture::from_pixels`
@@ -232,6 +242,7 @@ impl VulkanTexture {
             height,
             format,
             device: device.device.clone(),
+            _owner: Arc::clone(&device.owner),
             bindless_index: None,
             bindless_registry: None,
             // IMPLEMENTATION.md Step 2.3: a freshly cold-allocated texture
@@ -581,6 +592,7 @@ impl VulkanTexture {
             height,
             format,
             device: device.device.clone(),
+            _owner: Arc::clone(&device.owner),
             bindless_index: Some(bindless_index),
             bindless_registry: Some(Arc::clone(&device.bindless_registry)),
             // IMPLEMENTATION.md Step 2.3: unread for a bindless texture
