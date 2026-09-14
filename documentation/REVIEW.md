@@ -3724,3 +3724,11 @@ At the project owner's own explicit direction ("Raise rust-version to 1.85 and a
 **Full verification clean**: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings` (1.98.0), `cargo +1.88.0 check --workspace --all-targets --locked`, `cargo build --workspace --all-targets --release`, and `cargo test --workspace` (387/387, unchanged from #247) all passed; two headless Vulkan examples re-run live as above.
 
 **Status: fixed.** The MSRV is 1.88, true by construction, verified with the real toolchain, and enforced on every commit. Finding #247's item (a) is closed; the dependency bumps it unlocks remain open, unrequested, and each its own decision. If a lower floor is wanted, the two real options and their exact costs are recorded above (1.87: two lockfile walk-backs and one patch-pin change; 1.85: an MSDF-generator downgrade).
+
+## Finding #249 Fixed (Explicit Go-Ahead): `rustc-hash` Bumped to 2.1.3
+
+At the project owner's own explicit direction ("Bump pyo3, usvg, skrifa, accesskit, and rustc-hash"), the first of five dependency bumps finding #248's MSRV correction unlocked, taken in rising order of risk and each committed on its own so the history stays bisectable.
+
+`tre-rhi-vulkan/Cargo.toml`'s `rustc-hash = "=2.1.1"` becomes `"=2.1.3"` (the newest published version; its declared MSRV is 1.77, well under the workspace's 1.88). The exact `=` pin style is kept -- the reason that pin exists (finding #218's own account: a bare range let plain `cargo build` silently resolve past the MSRV of the day) is about reproducibility, not about the specific version. No API change between 2.1.1 and 2.1.3 touches `FxHashMap`'s public surface, and `TransientPool::free` is the crate's only use. `Cargo.lock` moved exactly one package. Verified: `tre-rhi-vulkan` builds and its ten tests pass; `cargo +1.88.0 check --workspace --all-targets --locked` stays clean, so the bump raised nothing above the declared floor.
+
+**Status: fixed.**

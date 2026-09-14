@@ -33,6 +33,9 @@ and every real bug found along the way, see
   `[workspace.dependencies]` table and inherited by member crates
   (finding #247). Resolved versions are unchanged.
 
+### Dependencies
+- `rustc-hash` 2.1.1 to 2.1.3 (finding #249).
+
 ### Fixed
 - `ARCHITECTURE.md` Section 6 annotated for finding #244's collapse of
   `begin_frame_with_timeout`/`begin_frame_with_viewport_crop` into
