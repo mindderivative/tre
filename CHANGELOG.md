@@ -20,6 +20,11 @@ and every real bug found along the way, see
   `draw_text` delegates to (finding #247).
 
 ### Changed
+- The three framebuffer-fetch RHI trait methods are renamed from their
+  Vulkan-extension names to vendor-neutral ones
+  (`supports_framebuffer_fetch`, `framebuffer_fetch_blend_supported`,
+  `insert_framebuffer_fetch_barrier`; finding #255).
+- Every GitHub Action in CI is pinned to a commit SHA (finding #256).
 - **Minimum supported Rust version is now 1.88** (was declared 1.75, which
   was never true; finding #248). The floor is enforced on every commit by
   a new `msrv` CI job that builds at exactly the declared version with the

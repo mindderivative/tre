@@ -8,12 +8,20 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# REVIEW.md finding #256 (2026-09-14): every third-party action is pinned
+# to a full commit SHA (the exact release it resolved to at pin time is
+# noted after each) rather than a floating major tag -- the same exact-
+# pinning discipline this workspace applies to `winit`'s fork `rev` and
+# its `=`-pinned crates. A moving tag can be repointed by whoever controls
+# the action's repository; `docs.yml` in particular runs with
+# `id-token: write` and `pages: write`. Bump deliberately, by editing the
+# SHA and the version note together.
 jobs:
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - run: rustup show # installs the toolchain pinned in rust-toolchain.toml
       - run: cargo fmt --all -- --check
 
@@ -21,8 +29,8 @@ jobs:
     name: clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: rustup show
       # Two dependencies neither hosted runner image provides by default:
       # tre-platform's wayland-client dependency uses the "system" feature
@@ -96,8 +104,8 @@ jobs:
     name: msrv (rust-version in Cargo.toml)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Read the declared floor from Cargo.toml
         id: msrv
         run: |
@@ -118,8 +126,8 @@ jobs:
     name: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: rustup show
       # See the clippy job's own comment above for why libgtk-3-dev/
       # libayatana-appindicator3-dev are needed here too (Phase 14 Step
@@ -137,8 +145,8 @@ jobs:
     name: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: rustup show
       # Phase 5 Step 5.3.2: `tre-a11y`'s round-trip test proves a real
       # AT-SPI2/D-Bus query against what it published, so it needs a
@@ -281,8 +289,8 @@ jobs:
     name: python (tre_python wheel + every demo)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: rustup show
       # Same list as `accessibility-validation` minus the validation
       # layer (see the job comment above); `libxkbcommon-x11-0` for the
@@ -344,13 +352,45 @@ jobs:
       # where the loader resolves xkbcommon/GTK/GObject, what the extension
       # actually links, and whether the Xvfb display has the XKEYBOARD
       # extension winit's X11 backend requires.
-      - name: Environment evidence for the demos
+      # Read-only evidence printed BEFORE the demos, made decisive after the
+      # first two real runs both died with winit's `XKBNotFound` (an X11
+      # xkb-extension setup failure at winit x11/mod.rs:282) inside the
+      # Python process, while the neighbouring Rust example jobs take the
+      # identical winit path on the same runner and pass -- so the cause is
+      # something in THIS process, not the packages (both jobs install the
+      # same libxcb-xkb1/libxkbcommon-x11-0). The first evidence step
+      # inspected `tre_python.__file__` (the package `__init__.py`, not the
+      # compiled `.so`), so it proved nothing; this resolves the real
+      # extension module, `ldd`s it, and -- the decisive part -- reproduces
+      # winit's own two dlopens (`libxkbcommon.so.0`, `libxkbcommon-x11.so.0`)
+      # from inside this exact interpreter, then runs one GPU demo under
+      # `LD_DEBUG=libs` grepping for how xkbcommon-x11 resolves. Whichever
+      # way the next run fails, its log names the cause instead of a theory.
+      - name: Environment evidence for the demos (xkb dlopen probe)
         run: |
           echo "python: $(command -v python) ($(python --version))"
           echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-<unset>}"
           ldconfig -p | grep -E 'libxkbcommon|libgdk-3|libgtk-3|libgobject-2' || true
-          python -c 'import tre_python, os; print("extension:", tre_python.__file__)'
-          ldd "$(python -c 'import tre_python; print(tre_python.__file__)')" | grep -E 'xkb|gdk|gtk|gobject|glib|vulkan|fontconfig' || true
+          so=$(python - <<'PY'
+          import importlib.util
+          print(importlib.util.find_spec("tre_python.tre_python").origin)
+          PY
+          )
+          echo "extension .so: $so"
+          ldd "$so" | grep -E 'xkb|gdk|gtk|gobject|glib|vulkan|fontconfig' || true
+          echo "--- ctypes dlopen of the two libs winit's xkbcommon-dl loads, in THIS interpreter ---"
+          python - <<'PY'
+          import ctypes
+          for name in ("libxkbcommon.so.0", "libxkbcommon-x11.so.0"):
+              try:
+                  h = ctypes.CDLL(name)
+                  print(f"dlopen OK: {name} -> {h._name}")
+              except OSError as e:
+                  print(f"dlopen FAILED: {name}: {e}")
+          PY
+          echo "--- one GPU demo under LD_DEBUG=libs, xkbcommon resolution only (non-fatal) ---"
+          dbus-run-session -- xvfb-run -a env LD_DEBUG=libs timeout 120 python demo/phase10_step10_4/demo.py 2>&1 \
+            | grep -iE 'xkbcommon|XKBNotFound|calling init|find library' | head -30 || true
           xvfb-run -a sh -c 'xdpyinfo | grep -iE "vendor string|XKEYBOARD|version number"' || true
       # One step, every demo, each under its own timeout and its own
       # fresh session bus + virtual display, with a per-demo PASS/FAIL
@@ -415,8 +455,8 @@ jobs:
     # installed, so every example genuinely exercises that gate instead of
     # only ever being checked manually by a human running it locally.
     steps:
-      - uses: actions/checkout@v4
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: rustup show
       # See the clippy job's own comment above for why libgtk-3-dev/
       # libayatana-appindicator3-dev are needed here too -- every
@@ -574,8 +614,8 @@ jobs:
     # independently (`dconf`, `dbus-send`) inside a session shaped
     # exactly like the verify step's own, before trying anything else.
     steps:
-      - uses: actions/checkout@v4
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: rustup show
       # See the clippy job's own comment above for why libgtk-3-dev/
       # libayatana-appindicator3-dev are needed here too, and the test
