@@ -260,6 +260,89 @@ jobs:
               sys.exit(1)
           PY
 
+  # REVIEW.md finding #254 (2026-09-13, at the project owner's direction):
+  # the first job anywhere in CI that builds or runs the `tre_python`
+  # extension. Until this job existed, every Python-facing change was
+  # verified only by a human running `maturin develop` and the
+  # `demo/*/demo.py` scripts locally -- findings #249-#253's five
+  # dependency bumps included (30 demos, all local). This job builds the
+  # real wheel the way `docs/getting-started.md` tells a user to (maturin,
+  # from `crates/tre-python/Cargo.toml` directly -- there is no pyproject),
+  # installs it into the runner's own Python, and runs every demo script
+  # as its own self-asserting end-to-end test, on the same software Vulkan
+  # ICD + Xvfb + fonts recipe the `vulkan-validation` job already proved
+  # on these runners, inside a throwaway D-Bus session (the accessibility
+  # demo needs a real AT-SPI2 bus, the same one `accessibility-validation`
+  # uses) with the `toolkit-accessibility` key set the way that job found
+  # actually works. Not `vulkan-validationlayers`: the wheel is a
+  # `--release` build, which never requests the validation layer (only
+  # debug builds do), so installing it here would just be dead weight.
+  python:
+    name: python (tre_python wheel + every demo)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: rustup show
+      # Same list as `accessibility-validation` minus the validation
+      # layer (see the job comment above); `libxkbcommon-x11-0` for the
+      # windowed demos (see the `test` job's own account of that gap).
+      - name: Install a software Vulkan ICD, a virtual display, D-Bus + AT-SPI2, and real fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libvulkan1 mesa-vulkan-drivers xvfb libwayland-dev libxcb1-dev glslc \
+            libfontconfig1-dev fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
+            dbus dbus-user-session at-spi2-core dconf-cli \
+            libgtk-3-dev libayatana-appindicator3-dev libxkbcommon-x11-0
+      # `pillow` is the one third-party import across all 30 demos
+      # (`demo/phase17_step17_1` reads back the PNGs `TrayIcon.set_icon`
+      # writes); everything else is the standard library plus `tre_python`.
+      - run: python -m pip install --upgrade pip maturin pillow
+      - name: Build the tre_python wheel (release, no abi3 -- tied to this exact Python minor)
+        run: maturin build --release -m crates/tre-python/Cargo.toml -o dist
+      - run: python -m pip install dist/*.whl
+      # `demo/phase18_step18_3` spawns this exact debug example binary as
+      # its independent AT-SPI2 client (its own error message names this
+      # command); building it up front keeps the demo's runtime clean.
+      - run: cargo build -p tre-rhi-vulkan --example canvas_accessibility_single_process_check_verify
+      # `accessibility-validation`'s own hard-won recipe (REVIEW.md
+      # finding #126): `org.a11y.Status.IsEnabled` is read once, at
+      # `at-spi-bus-launcher` startup, straight from this GSettings key.
+      - name: Enable accessibility via the toolkit-accessibility GSettings key
+        run: dbus-run-session -- dconf write /org/gnome/desktop/interface/toolkit-accessibility true
+      # One step, every demo, each under its own timeout and its own
+      # fresh session bus + virtual display, with a per-demo PASS/FAIL
+      # line and a final summary -- so a single failing demo is named in
+      # the log rather than hiding a dozen others behind a fail-fast.
+      # Skipped, with the reason stated where it is skipped:
+      #   phase14_step14_3 -- its check 3 asserts a native "Open File"
+      #   dialog is STILL blocking after a real two-second wait, which is
+      #   only true when a live XDG desktop portal is present to show
+      #   one; with no portal the call returns immediately and the
+      #   assertion's own premise is gone, not the code under test.
+      - name: Run every demo/*/demo.py against the installed wheel
+        run: |
+          set -u
+          skip="phase14_step14_3"
+          pass=0; fail=0; skipped=0; failed_names=""
+          for script in demo/*/demo.py; do
+            name=$(basename "$(dirname "$script")")
+            case " $skip " in *" $name "*) echo "SKIP $name (needs a live XDG desktop portal)"; skipped=$((skipped+1)); continue;; esac
+            echo "::group::$name"
+            if dbus-run-session -- xvfb-run -a timeout 600 python "$script"; then
+              echo "PASS $name"; pass=$((pass+1))
+            else
+              echo "FAIL $name (exit $?)"; fail=$((fail+1)); failed_names="$failed_names $name"
+            fi
+            echo "::endgroup::"
+          done
+          echo "=== python demos: pass=$pass fail=$fail skipped=$skipped ==="
+          if [ "$fail" -ne 0 ]; then echo "failed:$failed_names"; exit 1; fi
+
   vulkan-validation:
     name: vulkan-validation
     runs-on: ubuntu-latest

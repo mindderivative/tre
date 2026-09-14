@@ -50,6 +50,9 @@ and every real bug found along the way, see
   claims corrected (finding #247).
 
 ### Tests
+- A `python` CI job now builds the real `tre_python` wheel with maturin and
+  runs every `demo/*/demo.py` on every commit (finding #254). Before this,
+  nothing in CI built or ran the extension.
 - `tre-rhi-vulkan` gains its first ten unit tests, covering its GPU-free
   helpers and the validation-layer message predicates (finding #247).
 
