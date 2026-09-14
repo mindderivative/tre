@@ -92,7 +92,7 @@ impl TextAtlas {
     /// own doc comment).
     pub(crate) fn context(&mut self, device: &dyn RhiDevice) -> PyResult<GlyphAtlasContext<'_>> {
         self.frame_counter += 1;
-        if self.frame_counter % REFRESH_INTERVAL_FRAMES == 0 {
+        if self.frame_counter.is_multiple_of(REFRESH_INTERVAL_FRAMES) {
             let current_generation = self.handle.generation();
             if current_generation != self.uploaded_generation {
                 let snapshot = self.handle.snapshot();

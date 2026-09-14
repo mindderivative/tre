@@ -1895,7 +1895,9 @@ fn tessellate_fill(contours: &[Vec<Vec2>]) -> (Vec<Vec2>, Vec<[u32; 3]>) {
     }
     let triangles = geometry
         .indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| [c[0], c[1], c[2]])
         .collect();
     (geometry.vertices, triangles)
@@ -1939,7 +1941,9 @@ fn tessellate_stroke(
     }
     let triangles = geometry
         .indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|c| [c[0], c[1], c[2]])
         .collect();
     (geometry.vertices, triangles)
@@ -2301,8 +2305,8 @@ mod tests {
                 0.0
             };
             let center = [
-                co * y1p + (p0[0] + p1[0]) / 2.0,
-                -co * x1p + (p0[1] + p1[1]) / 2.0,
+                co * y1p + p0[0].midpoint(p1[0]),
+                -co * x1p + p0[1].midpoint(p1[1]),
             ];
             let theta1 = (p0[1] - center[1]).atan2(p0[0] - center[0]);
             let theta2 = (p1[1] - center[1]).atan2(p1[0] - center[0]);

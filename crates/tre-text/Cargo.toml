@@ -31,9 +31,14 @@ tre-atlas = { path = "../tre-atlas" }
 # failure-prone algorithm. Pulls in `nalgebra`/`image`/`num-traits` as
 # its own internal, asset-generation-time-only dependencies -- the same
 # category as `usvg` pulling in `kurbo`, distinct from this workspace's
-# own `tre-math` hot-path primitives. Pinned to 0.8.0, confirmed
-# compatible with this workspace's `rust-version = 1.75` via `cargo add
-# --dry-run`.
+# own `tre-math` hot-path primitives. Pinned to 0.8.0. (Correction,
+# REVIEW.md finding #248, 2026-09-13: this comment originally claimed
+# 0.8.0 was "confirmed compatible with `rust-version = 1.75`" -- it
+# never was. fdsm 0.8.0 requires `nalgebra ^0.34.1`, every release of
+# which declares MSRV 1.87, and the exact `image`/`nalgebra` pins below
+# declare 1.88/1.87 themselves. Together with the `icu_*` crates, these
+# are what set the workspace's real, now-declared floor of 1.88; a
+# lower floor would mean downgrading the MSDF generator itself.)
 fdsm = "=0.8.0"
 image = { version = "=0.25.10", default-features = false }
 nalgebra = "=0.34.2"
@@ -51,7 +56,9 @@ rustybuzz.workspace = true
 # Google Fonts' `fontations` project -- pure-Rust metadata reading and
 # glyph outline extraction, replacing FreeType's `FT_Outline_Decompose`.
 # Pinned to 0.33.2 (0.46.2 needs rustc 1.85, confirmed via `cargo add
-# --dry-run`, the same technique used to pin `usvg`/`wide` in Phase 3).
+# --dry-run`, the same technique used to pin `usvg`/`wide` in Phase 3;
+# REVIEW.md finding #248 has since raised `rust-version` to 1.88, so
+# this ceiling no longer binds -- not re-evaluated as part of that).
 skrifa.workspace = true
 # Paragraph-level bidi embedding levels (UAX #9) -- rustybuzz shapes one
 # direction-and-script-uniform run at a time; segmenting a mixed-direction

@@ -80,6 +80,40 @@ jobs:
       # Cargo.toml [lints.clippy], so this one command covers both.
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
+  # REVIEW.md finding #248: the one job that does NOT run `rustup show`.
+  # Every other job installs `rust-toolchain.toml`'s pinned development
+  # toolchain (1.98.0 today), which is exactly how the workspace's declared
+  # `rust-version` went unverified -- and false -- for weeks (finding #247:
+  # `1.75` failed on the first lint `reason` attribute; the lockfile itself
+  # needed 1.88). This job reads the floor straight out of `Cargo.toml`,
+  # installs that toolchain explicitly, and checks every target against
+  # the committed `Cargo.lock` (`--locked`: a dependency whose own MSRV
+  # exceeds the floor fails here, rather than being silently re-resolved).
+  # `cargo check`, not `build`: the goal is "compiles at the floor," and
+  # `check` still runs every `build.rs` (glslc, shaderc, fontconfig), so
+  # the same system packages the other jobs need are needed here too.
+  msrv:
+    name: msrv (rust-version in Cargo.toml)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: Read the declared floor from Cargo.toml
+        id: msrv
+        run: |
+          msrv=$(sed -nE 's/^rust-version = "([0-9.]+)"$/\1/p' Cargo.toml)
+          test -n "$msrv" || { echo "no rust-version in Cargo.toml"; exit 1; }
+          echo "version=$msrv" >> "$GITHUB_OUTPUT"
+          echo "declared rust-version: $msrv"
+      - run: rustup toolchain install "${{ steps.msrv.outputs.version }}" --profile minimal --no-self-update
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwayland-dev libxcb1-dev glslc libfontconfig1-dev \
+            fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
+            libgtk-3-dev libayatana-appindicator3-dev
+      - run: cargo +${{ steps.msrv.outputs.version }} check --workspace --all-targets --locked
+
   build:
     name: build
     runs-on: ubuntu-latest

@@ -14,9 +14,12 @@ workspace = true
 # the same "depend on a vetted crate for a complex wire format" reasoning
 # `tre-text` already applies to `fdsm` for MSDF and `tre-math` to `wide`
 # for SIMD. Both pinned to the newest version this workspace's
-# `rust-version = 1.75` can resolve (accesskit_unix 0.23.0/accesskit
-# 0.25.0 need rustc 1.85, confirmed via `cargo add --dry-run`, the same
-# technique `tre-svg` already used to pin `usvg`). `accesskit_unix`'s
+# `rust-version = 1.75` could resolve at the time (accesskit_unix 0.23.0/
+# accesskit 0.25.0 need rustc 1.85, confirmed via `cargo add --dry-run`,
+# the same technique `tre-svg` already used to pin `usvg`). REVIEW.md
+# finding #248 (2026-09-13) raised `rust-version` to 1.88, so that
+# ceiling no longer applies -- both pins are now bumpable, a separate
+# decision from the MSRV correction, not re-evaluated as part of it. `accesskit_unix`'s
 # default `async-io` feature (not `tokio`) matches this workspace's own
 # fully synchronous design -- nothing else here uses an async runtime.
 [dependencies]

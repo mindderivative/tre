@@ -131,7 +131,9 @@ mod tests {
 
     fn triangle_area(vertices: &[tre_engine::UiVertex], indices: &[u32]) -> f32 {
         indices
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|tri| {
                 let [a, b, c] = [
                     vertices[tri[0] as usize].position,

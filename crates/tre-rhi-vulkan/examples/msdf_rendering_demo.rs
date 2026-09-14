@@ -90,7 +90,9 @@ fn main() {
     // channel is unused by `msdf.frag`, which only ever reads `.rgb`.
     let rgba_pixels: Vec<u8> = bitmap
         .pixels
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .flat_map(|rgb| [rgb[0], rgb[1], rgb[2], 255])
         .collect();
     let texture = device
@@ -253,7 +255,7 @@ fn main() {
     eprintln!("deep-interior and deep-hole pixels: OK (exact white / exact background)");
 
     let mut rgba_out = bgra.clone();
-    for px in rgba_out.chunks_exact_mut(4) {
+    for px in rgba_out.as_chunks_mut::<4>().0 {
         px.swap(0, 2);
     }
     let out_path = std::env::var("TRE_MSDF_RENDERING_OUTPUT")

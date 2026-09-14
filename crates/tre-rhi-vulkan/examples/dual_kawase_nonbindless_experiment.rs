@@ -534,7 +534,7 @@ fn main() {
     );
 
     let mut rgba = bgra.clone();
-    for px in rgba.chunks_exact_mut(4) {
+    for px in rgba.as_chunks_mut::<4>().0 {
         px.swap(0, 2);
     }
     let out_path = std::env::var("TRE_NONBINDLESS_EXPERIMENT_OUTPUT")

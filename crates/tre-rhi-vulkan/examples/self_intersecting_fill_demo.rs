@@ -142,7 +142,7 @@ fn main() {
 
         if matches!(fill_rule, tre_svg::FillRule::NonZero) {
             let mut rgba = bgra.clone();
-            for px in rgba.chunks_exact_mut(4) {
+            for px in rgba.as_chunks_mut::<4>().0 {
                 px.swap(0, 2);
             }
             let out_path = std::env::var("TRE_SELF_INTERSECTING_FILL_OUTPUT")

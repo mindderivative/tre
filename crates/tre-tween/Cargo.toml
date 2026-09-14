@@ -19,9 +19,10 @@ workspace = true
 # replacement.
 #
 # REVIEW.md finding #246: bumped from `0.29` to `0.33.7` -- the newest
-# version this workspace's own `rust-version = 1.75` MSRV can resolve,
-# confirmed via `cargo add glam@0.33 --dry-run` (glam's own MSRV is
-# 1.68.2, well under 1.75, so no conflict at any version up to latest).
+# version this workspace's own MSRV can resolve, confirmed via `cargo
+# add glam@0.33 --dry-run` (glam's own MSRV is 1.68.2, well under both
+# the 1.75 declared at the time and the 1.88 REVIEW.md finding #248
+# raised it to, so no conflict at any version up to latest).
 # Full workspace build/test clean afterward with no API changes needed
 # on this crate's own real usage (`Vec2`/`Vec3`/`Quat` construction and
 # basic arithmetic).

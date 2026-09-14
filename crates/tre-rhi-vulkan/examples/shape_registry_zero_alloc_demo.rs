@@ -445,7 +445,7 @@ fn main() {
         .read_pixels_bgra8()
         .expect("failed to read back pixels");
     let mut rgba = bgra;
-    for px in rgba.chunks_exact_mut(4) {
+    for px in rgba.as_chunks_mut::<4>().0 {
         px.swap(0, 2);
     }
     let out_path = std::env::var("TRE_SHAPE_REGISTRY_ZERO_ALLOC_OUTPUT")

@@ -33,7 +33,9 @@ const CANVAS_HEIGHT: u32 = 100;
 const GLYPH_SCREEN_HEIGHT: f32 = 60.0;
 
 fn pad_rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {
-    rgb.chunks_exact(3)
+    rgb.as_chunks::<3>()
+        .0
+        .iter()
         .flat_map(|c| [c[0], c[1], c[2], 255])
         .collect()
 }
@@ -344,7 +346,7 @@ fn main() {
     );
 
     let mut rgba_out = bgra.clone();
-    for px in rgba_out.chunks_exact_mut(4) {
+    for px in rgba_out.as_chunks_mut::<4>().0 {
         px.swap(0, 2);
     }
     let out_path = std::env::var("TRE_ATLAS_CONCURRENCY_OUTPUT")

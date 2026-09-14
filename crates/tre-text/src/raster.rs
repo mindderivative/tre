@@ -52,7 +52,14 @@ impl RasterSource for GlyphRasterSource {
 /// match `TextureFormat::Rgba8Unorm`'s upload layout exactly -- padding
 /// in a fully-opaque alpha byte per pixel is the only conversion needed.
 fn pad_rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {
-    rgb.chunks_exact(3)
-        .flat_map(|c| [c[0], c[1], c[2], 255])
+    // `as_chunks` (stable since Rust 1.88, the workspace's declared floor
+    // as of REVIEW.md finding #248) hands back `[u8; 3]` arrays, so the
+    // closure destructures instead of indexing -- no bounds checks, no
+    // possible panic. Any trailing remainder is dropped exactly as
+    // `chunks_exact(3)` dropped it before.
+    rgb.as_chunks::<3>()
+        .0
+        .iter()
+        .flat_map(|&[r, g, b]| [r, g, b, 255])
         .collect()
 }

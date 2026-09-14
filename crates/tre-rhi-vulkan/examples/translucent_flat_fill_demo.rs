@@ -235,7 +235,7 @@ fn main() {
     eprintln!("fix has real effect: OK (measurably different from the old, broken output)");
 
     let mut rgba = bgra.clone();
-    for px in rgba.chunks_exact_mut(4) {
+    for px in rgba.as_chunks_mut::<4>().0 {
         px.swap(0, 2);
     }
     let out_path = std::env::var("TRE_TRANSLUCENT_FLAT_FILL_OUTPUT")

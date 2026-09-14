@@ -557,7 +557,7 @@ fn main() {
             .expect("submit_and_present failed");
 
         frame_count += 1;
-        if frame_count % 30 == 0 {
+        if frame_count.is_multiple_of(30) {
             eprintln!("frame {frame_count} presented (x = {x:.2})");
         }
     }

@@ -303,8 +303,10 @@ mod gpu_style_tests {
         let bytes = bytemuck::bytes_of(&style);
         assert_eq!(bytes.len(), 40);
         let words: Vec<u32> = bytes
-            .chunks_exact(4)
-            .map(|c| u32::from_ne_bytes(c.try_into().expect("4-byte chunk")))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&c| u32::from_ne_bytes(c))
             .collect();
         assert_eq!(f32::from_bits(words[0]), 1.0);
         assert_eq!(f32::from_bits(words[1]), 2.0);
@@ -337,8 +339,10 @@ mod gpu_style_tests {
         let bytes = bytemuck::bytes_of(&style);
         assert_eq!(bytes.len(), 28);
         let words: Vec<u32> = bytes
-            .chunks_exact(4)
-            .map(|c| u32::from_ne_bytes(c.try_into().expect("4-byte chunk")))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&c| u32::from_ne_bytes(c))
             .collect();
         assert_eq!(words[0], 0x1122_3344);
         assert_eq!(f32::from_bits(words[1]), 2.5);
@@ -373,8 +377,10 @@ mod gpu_style_tests {
         let bytes = bytemuck::bytes_of(&style);
         assert_eq!(bytes.len(), (GRADIENT_STYLE_WORDS as usize) * 4);
         let words: Vec<u32> = bytes
-            .chunks_exact(4)
-            .map(|c| u32::from_ne_bytes(c.try_into().expect("4-byte chunk")))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&c| u32::from_ne_bytes(c))
             .collect();
         assert_eq!(words[0], 0);
         assert_eq!(f32::from_bits(words[1]), 10.0);

@@ -23,11 +23,12 @@ bytemuck.workspace = true
 # workspace's own `rust-version = 1.75` MSRV can resolve. Confirmed
 # directly, not assumed: 0.27.2 itself requires Rust 1.74; every
 # release from 0.28.2 onward (0.28.0/0.28.1 were never published)
-# requires Rust 1.83, an 8-point MSRV jump this workspace has not
-# adopted. Bumping this pin would require raising `rust-version` for
-# the entire workspace first -- a materially larger, separate decision
-# than a routine dependency update, left to the project owner's own
-# explicit direction rather than done as a side effect of this one.
+# requires Rust 1.83, an 8-point MSRV jump this workspace had not
+# adopted at the time. REVIEW.md finding #248 (2026-09-13) has since
+# raised `rust-version` to 1.88 at the project owner's direction, so
+# the 0.28.2+/0.29.x series is now in reach -- this pin was deliberately
+# NOT bumped as part of that MSRV correction (a PyO3 major-series jump
+# is its own real migration), left for a separate, explicit decision.
 pyo3 = { version = "0.27.2", features = ["extension-module", "py-clone"] }
 raw-window-handle.workspace = true
 tre-engine = { path = "../tre-engine" }

@@ -161,7 +161,9 @@ impl PySvg {
             tre_svg::tessellate_fill(&contours, fill_rule.into(), 0xFFFF_FFFF).map_err(svg_err)?;
         let positions = vertices.iter().map(|v| v.position).collect();
         let triangles = flat_indices
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|c| [c[0], c[1], c[2]])
             .collect();
         Ok(Self {

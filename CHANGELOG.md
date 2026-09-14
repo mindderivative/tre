@@ -20,6 +20,10 @@ and every real bug found along the way, see
   `draw_text` delegates to (finding #247).
 
 ### Changed
+- **Minimum supported Rust version is now 1.88** (was declared 1.75, which
+  was never true; finding #248). The floor is enforced on every commit by
+  a new `msrv` CI job that builds at exactly the declared version with the
+  locked dependency set. Resolved dependency versions are unchanged.
 - `RhiSwapchain::supports_local_read_input_attachment`,
   `RhiDevice::local_read_blend_supported`, and
   `RhiCommandBuffer::insert_blend_read_barrier` now have default bodies

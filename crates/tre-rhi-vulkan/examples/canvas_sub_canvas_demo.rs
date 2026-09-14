@@ -464,7 +464,7 @@ fn main() {
     eprintln!("text glyph (drawn on a worker thread) rendered real, non-background pixels -- OK");
 
     let mut rgba_out = bgra.clone();
-    for px in rgba_out.chunks_exact_mut(4) {
+    for px in rgba_out.as_chunks_mut::<4>().0 {
         px.swap(0, 2);
     }
     let out_path = std::env::var("TRE_CANVAS_SUB_CANVAS_OUTPUT")

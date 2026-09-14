@@ -23,6 +23,10 @@ pedantic = "warn"
 # newest version `cargo add --dry-run` resolved against this workspace's
 # `rust-version = 1.75` (2.0.20), the same technique used to pin every
 # other version-sensitive dependency in this workspace.
+# (REVIEW.md finding #248, 2026-09-13: `rust-version` is now 1.88 -- the
+# 1.75 figure cited above was never true, see finding #247 -- and this
+# pin has NOT been re-evaluated against the new floor; it may now be
+# bumpable, a separate decision from the MSRV correction itself.)
 thiserror.workspace = true
 bytemuck = { workspace = true, features = ["derive"] }
 # IMPLEMENTATION.md Step 5.1.2: `Canvas::draw_text` is this crate's

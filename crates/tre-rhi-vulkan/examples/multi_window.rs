@@ -179,7 +179,7 @@ fn main() {
         }
 
         frame_count += 1;
-        if frame_count % 60 == 0 {
+        if frame_count.is_multiple_of(60) {
             eprintln!(
                 "frame {frame_count}: window A {}, window B {}",
                 if slot_a.open { "open" } else { "closed" },

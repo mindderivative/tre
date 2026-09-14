@@ -90,7 +90,7 @@ fn main() {
 
     // HEADLESS_FORMAT is B8G8R8A8; the `png` crate wants RGBA8.
     let mut rgba = bgra;
-    for px in rgba.chunks_exact_mut(4) {
+    for px in rgba.as_chunks_mut::<4>().0 {
         px.swap(0, 2);
     }
 

@@ -235,7 +235,7 @@ fn main() {
     eprintln!("hexagon: fill and border both rendered correctly -- OK");
 
     let mut rgba_out = bgra.clone();
-    for px in rgba_out.chunks_exact_mut(4) {
+    for px in rgba_out.as_chunks_mut::<4>().0 {
         px.swap(0, 2);
     }
     let out_path = std::env::var("TRE_PATH_AND_POLYGON_OUTPUT")

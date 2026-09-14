@@ -22,7 +22,20 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+# REVIEW.md finding #248 (2026-09-13): raised from "1.75" at the project
+# owner's direction, after finding #247 proved the old figure false
+# (`cargo +1.75.0 check` fails on the first `reason = "..."` lint
+# attribute, stable only since 1.81). 1.88 is the real floor of the
+# resolved `Cargo.lock` as it stands -- `image 0.25.10` and the `icu_*`
+# 2.3 crates each declare `rust-version = 1.88`, and `fdsm 0.8.0`'s own
+# `nalgebra ^0.34.1` requirement (MSRV 1.87) rules out anything lower
+# without downgrading the MSDF generator itself. Verified empirically,
+# not inferred: `cargo +1.88.0 check --workspace --all-targets --locked`
+# passes. The `msrv` job in `.github/workflows/ci.yml` reads this exact
+# value and rebuilds at it on every commit, so the `rust-toolchain.toml`
+# pin (the *development* toolchain, a different thing) can never again
+# hide a violation the way it hid this one for weeks.
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 
 # REVIEW.md finding #247 (Modernizer lens, 2026-09-13): every external

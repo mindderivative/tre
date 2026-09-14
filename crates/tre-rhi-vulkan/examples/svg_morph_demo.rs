@@ -152,7 +152,7 @@ fn main() {
 
         if (t - 0.5).abs() < f32::EPSILON {
             let mut rgba = bgra.clone();
-            for px in rgba.chunks_exact_mut(4) {
+            for px in rgba.as_chunks_mut::<4>().0 {
                 px.swap(0, 2);
             }
             let out_path = std::env::var("TRE_SVG_MORPH_OUTPUT")
