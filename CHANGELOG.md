@@ -53,6 +53,10 @@ and every real bug found along the way, see
 - A `python` CI job now builds the real `tre_python` wheel with maturin and
   runs every `demo/*/demo.py` on every commit (finding #254). Before this,
   nothing in CI built or ran the extension.
+- The SDF soft-shadow demo's spread assertion now expects the small,
+  driver-dependent undershoot an 8-bit sRGB framebuffer imposes on a
+  smoothstep tail, instead of a fixed 3-pixel band it already sat on
+  (finding #254); the focus demo runs under a minimal window manager in CI.
 - `tre-rhi-vulkan` gains its first ten unit tests, covering its GPU-free
   helpers and the validation-layer message predicates (finding #247).
 

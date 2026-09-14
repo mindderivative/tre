@@ -94,10 +94,25 @@ def check_blur_softness_is_continuously_tunable(renderer, shader_id) -> None:
         f"not a fixed number of discrete steps: got {spreads}"
     )
     for blur_px, spread in zip(blur_values[1:], spreads[1:]):
-        assert abs(spread - blur_px) <= 3, (
-            f"measured spread ({spread}px) should track the real requested blur_px ({blur_px}) "
-            f"reasonably closely (the shader's own smoothstep falloff reaches exactly zero at "
-            f"d == sigma, i.e. at blur_px pixels past the edge)"
+        # The shader's smoothstep falloff reaches exactly zero at
+        # d == sigma (blur_px past the edge), but the last stretch of
+        # that tail is invisible in an 8-bit sRGB framebuffer: alpha is
+        # ~3u^2 for u = (sigma - d) / (2 sigma), and a darkening of one
+        # sRGB step (1/255) at a light background needs ~0.009 linear,
+        # i.e. u ~ 0.054, so the final ~0.11 * sigma of the tail
+        # quantizes to background -- before rasterization's own pixel-
+        # center rounding takes up to one more pixel. So the measured
+        # spread must UNDERSHOOT blur_px by roughly a tenth to a quarter,
+        # never overshoot it, and the exact undershoot legitimately
+        # differs per driver (REVIEW.md finding #254: measured
+        # [0, 6, 13] on RADV, [0, 6, 12] on lavapipe -- the old
+        # `abs(spread - blur_px) <= 3` bound sat exactly on RADV's
+        # boundary and failed lavapipe by one pixel).
+        undershoot = blur_px - spread
+        assert 0 <= undershoot <= 0.25 * blur_px + 1, (
+            f"measured spread ({spread}px) should fall a little short of the requested "
+            f"blur_px ({blur_px}) -- the invisible sRGB-quantized tail of the smoothstep -- "
+            f"but never overshoot it or lose more than a quarter: undershoot={undershoot}px"
         )
     print(f"real, continuously tunable SDF soft edge: spreads strictly increase {spreads} -- OK")
 

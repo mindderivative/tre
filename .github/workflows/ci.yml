@@ -296,8 +296,17 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libvulkan1 mesa-vulkan-drivers xvfb libwayland-dev libxcb1-dev glslc \
             libfontconfig1-dev fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
-            dbus dbus-user-session at-spi2-core dconf-cli \
+            dbus dbus-user-session at-spi2-core dconf-cli openbox \
             libgtk-3-dev libayatana-appindicator3-dev libxkbcommon-x11-0
+      # `openbox`: a bare Xvfb has no window manager, and on X11 a newly
+      # mapped window only ever receives keyboard focus from one (winit's
+      # own `focus_window` is a `_NET_ACTIVE_WINDOW` request to the WM,
+      # too). `demo/phase19_step19_4` asserts a real
+      # `WindowFocused(focused=True)` event on creation, so that ONE demo
+      # runs with a minimal WM started inside its own Xvfb (`focusNew` is
+      # openbox's default). Scoped to that demo, not applied to every
+      # windowed one: a WM also decorates, places, and may resize windows,
+      # which the other demos never asked for and were not rehearsed with.
       # `pillow` is the one third-party import across all 30 demos
       # (`demo/phase17_step17_1` reads back the PNGs `TrayIcon.set_icon`
       # writes); everything else is the standard library plus `tre_python`.
@@ -328,12 +337,24 @@ jobs:
         run: |
           set -u
           skip="phase14_step14_3"
+          needs_wm="phase19_step19_4"
+          # $1 = demo script, $2 = "wm" to start openbox inside the demo's
+          # own Xvfb first. The inner `sh -c` receives the script path as
+          # a positional argument ($1 there), never via string splicing.
+          run_demo() {
+            if [ "$2" = wm ]; then
+              dbus-run-session -- xvfb-run -a sh -c 'openbox --sm-disable >/dev/null 2>&1 & sleep 1; exec timeout 600 python "$1"' sh "$1"
+            else
+              dbus-run-session -- xvfb-run -a timeout 600 python "$1"
+            fi
+          }
           pass=0; fail=0; skipped=0; failed_names=""
           for script in demo/*/demo.py; do
             name=$(basename "$(dirname "$script")")
             case " $skip " in *" $name "*) echo "SKIP $name (needs a live XDG desktop portal)"; skipped=$((skipped+1)); continue;; esac
+            wm=""; case " $needs_wm " in *" $name "*) wm=wm;; esac
             echo "::group::$name"
-            if dbus-run-session -- xvfb-run -a timeout 600 python "$script"; then
+            if run_demo "$script" "$wm"; then
               echo "PASS $name"; pass=$((pass+1))
             else
               echo "FAIL $name (exit $?)"; fail=$((fail+1)); failed_names="$failed_names $name"
