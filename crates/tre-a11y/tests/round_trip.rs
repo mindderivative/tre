@@ -12,9 +12,24 @@ use std::{thread, time::Duration};
 
 use tre_engine::{AccessibilityNode, AccessibilityNodeId, AccessibilityRole};
 use zbus::{
-    blocking::{Connection, ConnectionBuilder, Proxy},
+    blocking::{connection::Builder as ConnectionBuilder, Connection, Proxy},
     zvariant::OwnedObjectPath,
 };
+
+/// Recovers the application-side node id from an `accesskit_unix` object
+/// path. The real path scheme, read from `accesskit_unix` 0.23's own
+/// `atspi/object_id.rs` and `accesskit_consumer` 0.39's `FullNodeId`
+/// (REVIEW.md finding #252), is
+/// `/org/a11y/atspi/accessible/{adapter}/{(node_id << 64) | tree_index}`
+/// -- one `u128` whose high 64 bits are the node id this crate
+/// published and whose low 64 bits index the tree within the adapter (0
+/// for the one root tree this bridge publishes). Before 0.23 the last
+/// segment was the bare node id, which is what this test used to assert
+/// against directly.
+fn node_id_from_atspi_path(path: &str) -> Option<u64> {
+    let full: u128 = path.rsplit('/').next()?.parse().ok()?;
+    u64::try_from(full >> 64).ok()
+}
 
 fn a11y_bus() -> Option<Connection> {
     let session = Connection::session().ok()?;
@@ -219,10 +234,11 @@ fn published_node_is_queryable_over_a_real_atspi2_round_trip() {
             "exactly one tagged node was published"
         );
         let (child_bus, child_path) = &tagged_children[0];
-        assert!(
-            child_path.as_str().ends_with("/123"),
-            "the published node's real AccessibilityNodeId(123) must appear in its own \
-             AT-SPI2 object path, got {child_path}"
+        assert_eq!(
+            node_id_from_atspi_path(child_path.as_str()),
+            Some(123),
+            "the published node's real AccessibilityNodeId(123) must be recoverable from its \
+             own AT-SPI2 object path, got {child_path}"
         );
 
         let component = Proxy::new(

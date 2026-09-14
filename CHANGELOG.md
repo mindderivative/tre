@@ -37,6 +37,10 @@ and every real bug found along the way, see
 - `rustc-hash` 2.1.1 to 2.1.3 (finding #249).
 - `usvg` 0.45.1 to 0.48.1 (finding #250).
 - `skrifa` 0.33.2 to 0.47.0 (finding #251).
+- `accesskit` 0.17.1 to 0.25.0 and `accesskit_unix` 0.13.1 to 0.23.0; the
+  `zbus` dev-dependency 4.4 to 5.19 with it (finding #252). `A11yBridge::
+  connect` keeps its signature, but its `app_name` is no longer forwarded:
+  `accesskit_unix` now derives the application name from the executable.
 
 ### Fixed
 - `ARCHITECTURE.md` Section 6 annotated for finding #244's collapse of

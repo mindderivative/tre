@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use accesskit::{
     ActionHandler, ActionRequest, ActivationHandler, DeactivationHandler, Node, NodeId, Rect, Role,
-    Tree, TreeUpdate,
+    TreeId, TreeInfo, TreeUpdate,
 };
 use tre_engine::{AccessibilityNode, AccessibilityNodeId, AccessibilityRole};
 
@@ -82,7 +82,7 @@ fn to_accesskit_node(node: &AccessibilityNode) -> Node {
 /// performance nicety, not a correctness requirement, and per-node
 /// diffing is explicitly out of scope for this sub-step
 /// (PLAN_PHASE5_STEP5_3_2.md).
-fn build_tree_update(tree: &Tree, nodes: &[AccessibilityNode]) -> TreeUpdate {
+fn build_tree_update(tree: &TreeInfo, nodes: &[AccessibilityNode]) -> TreeUpdate {
     let mut root = Node::new(Role::Window);
     if let Some(bounds) = union_bounds(nodes) {
         root.set_bounds(bounds);
@@ -100,6 +100,11 @@ fn build_tree_update(tree: &Tree, nodes: &[AccessibilityNode]) -> TreeUpdate {
     TreeUpdate {
         nodes: entries,
         tree: Some(tree.clone()),
+        // accesskit 0.25 (REVIEW.md finding #252) identifies each tree
+        // an adapter hosts; this bridge publishes exactly one, the
+        // application's own root tree, which is what `TreeId::ROOT` (the
+        // nil UUID) is reserved for.
+        tree_id: TreeId::ROOT,
         // No real focus tracking this sub-step (a disclosed
         // simplification, PLAN_PHASE5_STEP5_3_2.md) -- the root itself
         // is reported focused, matching `TreeUpdate::focus`'s own
@@ -111,7 +116,7 @@ fn build_tree_update(tree: &Tree, nodes: &[AccessibilityNode]) -> TreeUpdate {
 
 struct SharedState {
     nodes: Mutex<Vec<AccessibilityNode>>,
-    tree: Tree,
+    tree: TreeInfo,
 }
 
 struct Handler(Arc<SharedState>);
@@ -154,17 +159,26 @@ impl A11yBridge {
     /// a permanently-inactive adapter when no AT-SPI2 registry is
     /// reachable, with `publish` becoming a real no-op rather than an
     /// error in that case.
+    ///
+    /// `app_name` is accepted for API stability (`tre-python`'s own
+    /// `A11yBridge` constructor passes it straight through) but is no
+    /// longer forwarded anywhere: since accesskit 0.25 (REVIEW.md finding
+    /// #252) the application name is not a field of the core tree
+    /// description at all -- `accesskit_unix` derives it itself, from the
+    /// running executable's file name (`std::env::current_exe`, read from
+    /// its own source, not assumed), once per process. Only
+    /// `toolkit_name`/`toolkit_version` still reach the AT-SPI2 bus.
     #[must_use]
     pub fn connect(
         app_name: impl Into<String>,
         toolkit_name: impl Into<String>,
         toolkit_version: impl Into<String>,
     ) -> Self {
+        let _accepted_but_unforwarded: String = app_name.into();
         let state = Arc::new(SharedState {
             nodes: Mutex::new(Vec::new()),
-            tree: Tree {
+            tree: TreeInfo {
                 root: ROOT_ID,
-                app_name: Some(app_name.into()),
                 toolkit_name: Some(toolkit_name.into()),
                 toolkit_version: Some(toolkit_version.into()),
             },

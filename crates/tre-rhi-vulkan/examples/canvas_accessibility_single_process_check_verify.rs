@@ -18,7 +18,7 @@
 use std::time::Duration;
 
 use zbus::{
-    blocking::{Connection, ConnectionBuilder, Proxy},
+    blocking::{connection::Builder as ConnectionBuilder, Connection, Proxy},
     zvariant::OwnedObjectPath,
 };
 

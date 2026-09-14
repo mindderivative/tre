@@ -13,18 +13,19 @@ workspace = true
 # rather than hand-rolling the AT-SPI2 D-Bus wire protocol ourselves --
 # the same "depend on a vetted crate for a complex wire format" reasoning
 # `tre-text` already applies to `fdsm` for MSDF and `tre-math` to `wide`
-# for SIMD. Both pinned to the newest version this workspace's
-# `rust-version = 1.75` could resolve at the time (accesskit_unix 0.23.0/
-# accesskit 0.25.0 need rustc 1.85, confirmed via `cargo add --dry-run`,
-# the same technique `tre-svg` already used to pin `usvg`). REVIEW.md
-# finding #248 (2026-09-13) raised `rust-version` to 1.88, so that
-# ceiling no longer applies -- both pins are now bumpable, a separate
-# decision from the MSRV correction, not re-evaluated as part of it. `accesskit_unix`'s
+# for SIMD. Both pinned exactly: 0.17.1/0.13.1 were the newest versions
+# the then-declared `rust-version = 1.75` could resolve; REVIEW.md
+# finding #252 (2026-09-13) bumped them to 0.25.0/0.23.0 -- the newest
+# releases, MSRV 1.85 -- once finding #248 raised the floor to 1.88. Two
+# real API changes came with that jump (`Tree` became `TreeInfo` and
+# lost its `app_name`; `TreeUpdate` gained a `tree_id`), both handled in
+# `src/lib.rs`, and `accesskit_unix` moved from `zbus` 4 to 5, which is
+# why the dev-dependency below moved with it. `accesskit_unix`'s
 # default `async-io` feature (not `tokio`) matches this workspace's own
 # fully synchronous design -- nothing else here uses an async runtime.
 [dependencies]
-accesskit = "=0.17.1"
-accesskit_unix = "=0.13.1"
+accesskit = "=0.25.0"
+accesskit_unix = "=0.23.0"
 tre-engine = { path = "../tre-engine" }
 
 [dev-dependencies]
@@ -33,5 +34,12 @@ tre-engine = { path = "../tre-engine" }
 # `blocking` API matches this workspace's fully synchronous design (no
 # async runtime elsewhere), same as `accesskit_unix`'s own choice above.
 # Only a dev-dependency: nothing in the crate's own public API touches
-# D-Bus directly, `accesskit_unix` already owns that.
-zbus = { version = "4.4.0", default-features = false, features = ["blocking"] }
+# D-Bus directly, `accesskit_unix` already owns that. zbus 5 since
+# finding #252: `accesskit_unix` 0.23 depends on `zbus ^5.5`, and staying
+# on 4.4 would have left this workspace with two zbus majors whose
+# feature sets no longer unify (4.4's `async-io` backend was only ever
+# enabled here transitively, by the old `accesskit_unix`; on its own it
+# failed to build at all). `blocking-api` is the feature that gates
+# `zbus::blocking` in 5.x; `async-io` is the required I/O backend
+# (`tokio` is the only alternative, and nothing here runs a runtime).
+zbus = { version = "5.19.0", default-features = false, features = ["async-io", "blocking-api"] }

@@ -25,7 +25,7 @@ use std::{thread, time::Duration};
 
 use tre_engine::{AccessibilityNode, AccessibilityNodeId, AccessibilityRole};
 use zbus::{
-    blocking::{Connection, ConnectionBuilder, Proxy},
+    blocking::{connection::Builder as ConnectionBuilder, Connection, Proxy},
     zvariant::OwnedObjectPath,
 };
 
@@ -167,16 +167,28 @@ fn poll_children(
     }
 }
 
-/// Finds the tagged child whose own AT-SPI2 object path ends in
-/// `/{node_id}` -- the real path scheme `accesskit_unix` uses.
+/// Recovers the application-side node id from an `accesskit_unix` object
+/// path. The real scheme (read from `accesskit_unix` 0.23's own
+/// `atspi/object_id.rs` and `accesskit_consumer` 0.39's `FullNodeId`,
+/// REVIEW.md finding #252) is
+/// `/org/a11y/atspi/accessible/{adapter}/{(node_id << 64) | tree_index}`:
+/// one `u128` whose high 64 bits are the node id we published and whose
+/// low 64 bits index the tree within the adapter. Before 0.23 the last
+/// segment was the bare node id.
+fn node_id_from_atspi_path(path: &str) -> Option<u64> {
+    let full: u128 = path.rsplit('/').next()?.parse().ok()?;
+    u64::try_from(full >> 64).ok()
+}
+
+/// Finds the tagged child whose own AT-SPI2 object path encodes
+/// `node_id` -- see `node_id_from_atspi_path` for the real scheme.
 fn find_child_by_node_id(
     children: &[(String, OwnedObjectPath)],
     node_id: AccessibilityNodeId,
 ) -> &(String, OwnedObjectPath) {
-    let suffix = format!("/{}", node_id.0);
     children
         .iter()
-        .find(|(_, path)| path.as_str().ends_with(&suffix))
+        .find(|(_, path)| node_id_from_atspi_path(path.as_str()) == Some(node_id.0))
         .unwrap_or_else(|| {
             panic!(
                 "no tagged child with node id {} found among {children:?}",
