@@ -341,9 +341,19 @@ jobs:
           # $1 = demo script, $2 = "wm" to start openbox inside the demo's
           # own Xvfb first. The inner `sh -c` receives the script path as
           # a positional argument ($1 there), never via string splicing.
+          # openbox signals readiness itself (`--startup CMD` runs CMD once
+          # it is up) rather than the demo trusting a fixed sleep: on a
+          # loaded runner, after 28 software-rendered demos, a 1 s sleep
+          # was observed to lose the race once -- the window mapped before
+          # the WM existed, so nothing ever granted it focus.
           run_demo() {
             if [ "$2" = wm ]; then
-              dbus-run-session -- xvfb-run -a sh -c 'openbox --sm-disable >/dev/null 2>&1 & sleep 1; exec timeout 600 python "$1"' sh "$1"
+              dbus-run-session -- xvfb-run -a sh -c '
+                ready=$(mktemp -u)
+                openbox --sm-disable --startup "touch $ready" >/dev/null 2>&1 &
+                for _ in $(seq 100); do [ -e "$ready" ] && break; sleep 0.1; done
+                [ -e "$ready" ] || echo "warning: openbox never signalled readiness within 10 s"
+                exec timeout 600 python "$1"' sh "$1"
             else
               dbus-run-session -- xvfb-run -a timeout 600 python "$1"
             fi

@@ -116,8 +116,18 @@ def main() -> None:
     # confirms the window-LOSES-focus half by alt-tabbing away and back
     # during a manual run of this same demo -- matching Phase 17's own
     # "a human still needs to look at some real UI results" disclosure.
+    # Polls for up to five seconds but stops the moment focus arrives:
+    # under a window manager the gain is near-instant, but on a loaded
+    # CI runner (REVIEW.md finding #254: this demo runs last, after 28
+    # software-rendered ones, under an openbox started inside its own
+    # Xvfb) the old fixed one-second window (60 x 1/60 s) was observed
+    # to close before the WM's FocusIn arrived, once in a full run and
+    # never in isolation. A longer ceiling with an early exit changes
+    # nothing about what is asserted -- a real WindowFocused(True) --
+    # only how long a slow machine is given to deliver it.
     seen_window_focused: list[bool] = []
-    for _ in range(60):
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline and True not in seen_window_focused:
         for event in renderer.poll_events():
             if isinstance(event, tre.InputEvent.WindowFocused):
                 seen_window_focused.append(event.focused)
