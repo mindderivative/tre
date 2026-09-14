@@ -74,6 +74,12 @@ and every real bug found along the way, see
   claims corrected (finding #247).
 
 ### Tests
+- 42 of `tre-rhi-vulkan`'s Vulkan-exercising examples are now
+  `cargo test`-runnable `[[test]] harness = false` targets under `tests/`,
+  gracefully skipping when no Vulkan-capable environment is reachable
+  (finding #261). CI's `vulkan-validation` job runs them via one
+  `cargo test -p tre-rhi-vulkan` invocation instead of 42 separate
+  `cargo run --example` steps.
 - A `python` CI job now builds the real `tre_python` wheel with maturin and
   runs every `demo/*/demo.py` on every commit (finding #254). Before this,
   nothing in CI built or ran the extension.

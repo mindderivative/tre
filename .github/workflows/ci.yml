@@ -497,115 +497,24 @@ jobs:
             libvulkan1 mesa-vulkan-drivers vulkan-validationlayers xvfb libwayland-dev libxcb1-dev glslc \
             libfontconfig1-dev fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
             libgtk-3-dev libayatana-appindicator3-dev libxkbcommon-x11-0
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example walking_skeleton
+      # REVIEW.md finding #261 (2026-09-14): these 42 examples were promoted
+      # into `tre-rhi-vulkan/tests/*.rs` as `[[test]] harness = false`
+      # targets (each an unchanged, self-contained `fn main()` -- required
+      # because `VulkanDevice::new` needs a `winit` `EventLoop`, which
+      # winit permits building only on a process's real main thread, never
+      # inside a libtest worker thread), so this one `cargo test` command
+      # replaces the 42 individual `cargo run --example` steps this job
+      # used to list here (each with its own explanatory comment recording
+      # why that Vulkan feature/behavior is gated in CI -- unchanged and
+      # still present, now in each promoted file's own top-of-file doc
+      # comment under `tests/`, not lost). Each gracefully skips (exit 0)
+      # if no display server or Vulkan-capable device is reachable, so
+      # this also runs cleanly on a contributor machine with no GPU.
+      - run: xvfb-run -a cargo test -p tre-rhi-vulkan
         env:
           TRE_WALKING_SKELETON_FRAMES: 10
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example multi_window
-        env:
           TRE_MULTI_WINDOW_FRAMES: 10
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example headless
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example input_demo
-        env:
           TRE_INPUT_DEMO_FRAMES: 10
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example memory_pools_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example bindless_textures_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example gc_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example sdf_rounded_rect_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example svg_tessellation_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example svg_morph_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example self_intersecting_fill_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example text_shaping_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example atlas_packing_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example msdf_rendering_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example atlas_concurrency_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example atlas_eviction_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_state_stack_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_draw_text_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_batch_flattening_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_sub_canvas_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example render_to_texture_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_layer_composite_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example layer_oversize_regression_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example layer_blur_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example canvas_combined_scene_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example linear_color_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example main_loop_demo
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example dual_kawase_nonbindless_experiment
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example dual_kawase_blur_demo
-      # Phase 9 Step 9.1: real GPU proof that flatten()'s batching merge
-      # step is pixel-equivalent to the same scene left unbatched.
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example batching_equivalence_demo
-      # Phase 10 Step 10.1: real GPU proof that ShapeRegistry's retained-
-      # mode flattening pass is pixel-equivalent to the same scene drawn
-      # directly through today's immediate-mode draw_rounded_rect.
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example shape_registry_demo
-      # Phase 10 Step 10.2: real GPU proof of full shape rendering support
-      # -- a non-uniform-corner bordered Rectangle and a bordered partial-
-      # arc Circle, both through ShapeRegistry, with real pixel-level
-      # correctness assertions (sharp vs. rounded corners, border vs.
-      # fill, the arc sweep's own excluded wedge).
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example shape_full_rendering_demo
-      # Phase 10 Step 10.2 follow-up: real GPU proof of lyon-backed Path
-      # fill (a compound shape with a real hole) and Path/Polygon
-      # border/stroke rendering, both through ShapeRegistry.
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example path_and_polygon_demo
-      # REVIEW.md finding #164: real GPU proof that walking_skeleton.frag
-      # (PipelineKind::FlatColor, Polygon/Path fill and stroke's own
-      # shader) now premultiplies its output by alpha -- a translucent
-      # flat fill's blended color must match a real, independent
-      # premultiplied-alpha reference, not the old, unfixed math.
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example translucent_flat_fill_demo
-      # Phase 10 Step 10.2.1: real GPU proof of gradient fill (linear +
-      # radial) for Rectangle/Circle (the per-vertex style-buffer path)
-      # and Polygon (the separate GradientFill pipeline), each probed
-      # pixel checked against an independent Rust reference of the exact
-      # gradient math.
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example gradient_fill_demo
-      # Phase 10 Step 10.2.2: real GPU proof of texture fill for all four
-      # shape kinds -- Rectangle/Circle sampling a bindless texture
-      # directly inside their own SDF shaders, Polygon/Path reusing the
-      # existing TexturedQuad pipeline with real bounding-box-normalized
-      # UVs, each probed against a known four-quadrant flag texture.
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example texture_fill_demo
-      # Phase 10 Step 10.2.3: real GPU proof of non-Normal BlendMode
-      # rendering (Multiply/Screen/Overlay/SoftLight/ColorDodge) for
-      # Polygon/Path solid fill, via VK_KHR_dynamic_rendering_local_read
-      # (VK_EXT_blend_operation_advanced, this step's original plan, is
-      # not implemented by RADV -- see documentation/REVIEW.md) -- a real
-      # subpassLoad framebuffer read against a real input-attachment
-      # descriptor, each swatch's own center pixel checked against an
-      # independent Rust reference of the exact W3C blend formula.
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example blend_mode_demo
-      # Phase 10 Step 10.2.4: real GPU proof of the exact ellipse SDF
-      # (Inigo Quilez's Newton-Raphson refinement, replacing the old
-      # "scaled circle" approximation) -- the first real render of a
-      # genuinely non-circular ellipse, its border/fill transition
-      # checked at several angles against an independent CPU reference.
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example ellipse_sdf_fidelity_demo
-      # Phase 10 Step 10.2.5: real GPU proof of rounded stroke caps at a
-      # partial arc's own two cut angles (a real circle-SDF union at
-      # each cut, radius border_thickness/2) -- pixels a few degrees
-      # past each cut confirmed border-colored (the rounding) while
-      # pixels further past stay correctly excluded (the rounding is
-      # bounded, not a removed cutoff).
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example arc_rounded_cap_demo
-      # Phase 10 Step 10.2.6: real, self-checking proof that
-      # ShapeRegistry/RenderingCanvas-driven rendering is genuinely
-      # zero-allocation in steady state (tre_memory::RenderTickGuard/
-      # DebugAllocGuard) -- 120 frames of a real, mutating, mixed scene
-      # covering every new fill/blend feature from Steps 10.2.1-10.2.5.
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example shape_registry_zero_alloc_demo
-      # A real user-stated requirement, GPU-verified: resizing a window
-      # must never squash/stretch already-placed content -- an
-      # absolutely-positioned shape's own pixel position/size must stay
-      # fixed regardless of framebuffer size. See this example's own
-      # header doc comment and REVIEW.md finding #233.
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example resize_invariance_demo
-      # REVIEW.md finding #259: proves a handed-out texture can outlive its
-      # VulkanDevice without a teardown use-after-free (the root cause of the
-      # python job's phase12_step12_4 heap corruption). Runs on the same
-      # software driver, where the bug reproduced.
-      - run: xvfb-run -a cargo run -p tre-rhi-vulkan --example texture_teardown_check
 
   accessibility-validation:
     name: accessibility-validation

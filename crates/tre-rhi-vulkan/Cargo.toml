@@ -65,3 +65,184 @@ tre-text = { path = "../tre-text" }
 tre-a11y = { path = "../tre-a11y" }
 zbus = { version = "5.19.0", default-features = false, features = ["async-io", "blocking-api"] }
 # implementation begins; TECHNICAL.md Section 2.1, IMPLEMENTATION.md Step 2.1.
+
+# REVIEW.md finding #261: these examples-turned-tests each build a real
+# VulkanDevice (via a probe window) and assert exact pixel/behavior
+# correctness, so `cargo test -p tre-rhi-vulkan` runs them as real CI
+# gates instead of needing ~40 separate `cargo run --example` invocations.
+# `harness = false`: each is a self-contained `fn main()` (unchanged from
+# its example form) rather than a `#[test]`-per-function libtest binary --
+# required because `VulkanDevice::new` needs a `winit` `EventLoop`, which
+# winit permits constructing only on a process's real main thread (never
+# inside a libtest worker thread, and only once per process, ever). Each
+# gracefully skips (exits 0, printing why) if no display server or
+# Vulkan-capable device is reachable, matching `tre-a11y/tests/round_trip.
+# rs`'s own graceful-skip convention -- so `cargo test` still passes on a
+# contributor machine with no GPU.
+[[test]]
+name = "headless"
+harness = false
+
+[[test]]
+name = "walking_skeleton"
+harness = false
+
+[[test]]
+name = "multi_window"
+harness = false
+
+[[test]]
+name = "input_demo"
+harness = false
+
+[[test]]
+name = "memory_pools_demo"
+harness = false
+
+[[test]]
+name = "bindless_textures_demo"
+harness = false
+
+[[test]]
+name = "gc_demo"
+harness = false
+
+[[test]]
+name = "sdf_rounded_rect_demo"
+harness = false
+
+[[test]]
+name = "svg_tessellation_demo"
+harness = false
+
+[[test]]
+name = "svg_morph_demo"
+harness = false
+
+[[test]]
+name = "self_intersecting_fill_demo"
+harness = false
+
+[[test]]
+name = "text_shaping_demo"
+harness = false
+
+[[test]]
+name = "atlas_packing_demo"
+harness = false
+
+[[test]]
+name = "msdf_rendering_demo"
+harness = false
+
+[[test]]
+name = "atlas_concurrency_demo"
+harness = false
+
+[[test]]
+name = "atlas_eviction_demo"
+harness = false
+
+[[test]]
+name = "canvas_state_stack_demo"
+harness = false
+
+[[test]]
+name = "canvas_draw_text_demo"
+harness = false
+
+[[test]]
+name = "canvas_batch_flattening_demo"
+harness = false
+
+[[test]]
+name = "canvas_sub_canvas_demo"
+harness = false
+
+[[test]]
+name = "render_to_texture_demo"
+harness = false
+
+[[test]]
+name = "canvas_layer_composite_demo"
+harness = false
+
+[[test]]
+name = "layer_oversize_regression_demo"
+harness = false
+
+[[test]]
+name = "layer_blur_demo"
+harness = false
+
+[[test]]
+name = "canvas_combined_scene_demo"
+harness = false
+
+[[test]]
+name = "linear_color_demo"
+harness = false
+
+[[test]]
+name = "main_loop_demo"
+harness = false
+
+[[test]]
+name = "dual_kawase_nonbindless_experiment"
+harness = false
+
+[[test]]
+name = "dual_kawase_blur_demo"
+harness = false
+
+[[test]]
+name = "batching_equivalence_demo"
+harness = false
+
+[[test]]
+name = "shape_registry_demo"
+harness = false
+
+[[test]]
+name = "shape_full_rendering_demo"
+harness = false
+
+[[test]]
+name = "path_and_polygon_demo"
+harness = false
+
+[[test]]
+name = "translucent_flat_fill_demo"
+harness = false
+
+[[test]]
+name = "gradient_fill_demo"
+harness = false
+
+[[test]]
+name = "texture_fill_demo"
+harness = false
+
+[[test]]
+name = "blend_mode_demo"
+harness = false
+
+[[test]]
+name = "ellipse_sdf_fidelity_demo"
+harness = false
+
+[[test]]
+name = "arc_rounded_cap_demo"
+harness = false
+
+[[test]]
+name = "shape_registry_zero_alloc_demo"
+harness = false
+
+[[test]]
+name = "resize_invariance_demo"
+harness = false
+
+[[test]]
+name = "texture_teardown_check"
+harness = false
