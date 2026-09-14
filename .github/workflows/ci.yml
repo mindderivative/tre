@@ -283,21 +283,36 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       - run: rustup show
       # Same list as `accessibility-validation` minus the validation
       # layer (see the job comment above); `libxkbcommon-x11-0` for the
       # windowed demos (see the `test` job's own account of that gap).
-      - name: Install a software Vulkan ICD, a virtual display, D-Bus + AT-SPI2, and real fonts
+      # The runner's OWN Python (Ubuntu 24.04 ships 3.12), in a venv --
+      # NOT `actions/setup-python`. The first real run of this job (REVIEW.md
+      # finding #254) used the toolcache Python, which exports
+      # `LD_LIBRARY_PATH=/opt/hostedtoolcache/Python/.../lib` into every
+      # later step, and inside that process every Vulkan demo died with
+      # winit's `XKBNotFound` (libxkbcommon failed to dlopen) and both tray
+      # demos segfaulted after GLib reported `GdkDisplayManager` already
+      # registered (two GTK/GObject copies in one process) -- while the
+      # neighbouring Rust example jobs, same packages, same Xvfb, no
+      # foreign library path, pass. A wheel built against the distro's own
+      # Python is also what `docs/getting-started.md` actually tells a Linux
+      # user to build.
+      - name: Install a software Vulkan ICD, a virtual display, D-Bus + AT-SPI2, real fonts, and the system Python
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libvulkan1 mesa-vulkan-drivers xvfb libwayland-dev libxcb1-dev glslc \
+            libvulkan1 mesa-vulkan-drivers xvfb x11-utils libwayland-dev libxcb1-dev glslc \
             libfontconfig1-dev fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji \
             dbus dbus-user-session at-spi2-core dconf-cli openbox \
-            libgtk-3-dev libayatana-appindicator3-dev libxkbcommon-x11-0
+            libgtk-3-dev libayatana-appindicator3-dev libxkbcommon-x11-0 \
+            python3 python3-venv python3-dev
+      - name: Create a venv on the system Python and put it first on PATH for every later step
+        run: |
+          python3 -m venv .ci-venv
+          echo "$PWD/.ci-venv/bin" >> "$GITHUB_PATH"
+          .ci-venv/bin/python --version
       # `openbox`: a bare Xvfb has no window manager, and on X11 a newly
       # mapped window only ever receives keyboard focus from one (winit's
       # own `focus_window` is a `_NET_ACTIVE_WINDOW` request to the WM,
@@ -312,7 +327,7 @@ jobs:
       # writes); everything else is the standard library plus `tre_python`.
       - run: python -m pip install --upgrade pip maturin pillow
       - name: Build the tre_python wheel (release, no abi3 -- tied to this exact Python minor)
-        run: maturin build --release -m crates/tre-python/Cargo.toml -o dist
+        run: maturin build --release -m crates/tre-python/Cargo.toml -o dist -i python
       - run: python -m pip install dist/*.whl
       # `demo/phase18_step18_3` spawns this exact debug example binary as
       # its independent AT-SPI2 client (its own error message names this
@@ -323,6 +338,20 @@ jobs:
       # `at-spi-bus-launcher` startup, straight from this GSettings key.
       - name: Enable accessibility via the toolkit-accessibility GSettings key
         run: dbus-run-session -- dconf write /org/gnome/desktop/interface/toolkit-accessibility true
+      # Cheap, read-only evidence printed BEFORE the demos run, so a failure
+      # in the next step can be diagnosed from this log instead of from a
+      # theory: which interpreter, any inherited library-path override,
+      # where the loader resolves xkbcommon/GTK/GObject, what the extension
+      # actually links, and whether the Xvfb display has the XKEYBOARD
+      # extension winit's X11 backend requires.
+      - name: Environment evidence for the demos
+        run: |
+          echo "python: $(command -v python) ($(python --version))"
+          echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-<unset>}"
+          ldconfig -p | grep -E 'libxkbcommon|libgdk-3|libgtk-3|libgobject-2' || true
+          python -c 'import tre_python, os; print("extension:", tre_python.__file__)'
+          ldd "$(python -c 'import tre_python; print(tre_python.__file__)')" | grep -E 'xkb|gdk|gtk|gobject|glib|vulkan|fontconfig' || true
+          xvfb-run -a sh -c 'xdpyinfo | grep -iE "vendor string|XKEYBOARD|version number"' || true
       # One step, every demo, each under its own timeout and its own
       # fresh session bus + virtual display, with a per-demo PASS/FAIL
       # line and a final summary -- so a single failing demo is named in
