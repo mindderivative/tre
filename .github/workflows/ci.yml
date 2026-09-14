@@ -420,6 +420,14 @@ jobs:
       #   one; with no portal the call returns immediately and the
       #   assertion's own premise is gone, not the code under test.
       - name: Run every demo/*/demo.py against the installed wheel
+        env:
+          # Python dumps a C-level traceback on a fatal signal, and Rust a
+          # backtrace on panic -- so a native crash (REVIEW.md finding #257:
+          # phase12_step12_4 segfaulted before any output on the runner's
+          # older lavapipe) names its frame in the log instead of just
+          # "Segmentation fault".
+          PYTHONFAULTHANDLER: "1"
+          RUST_BACKTRACE: "1"
         run: |
           set -u
           skip="phase14_step14_3"

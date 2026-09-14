@@ -20,7 +20,12 @@ import tre_python as tre
 
 WIDTH, HEIGHT = 400, 400
 SEGMENTS_PER_PATH = 400
-REGISTRY_COUNT = 8
+# Sized to this machine's own parallel-render cap (REVIEW.md finding
+# #257: CI's 4-core runner caps at available_parallelism()-1 == 3, so the
+# old hard-coded 8 overshot it and `render_parallel` correctly rejected
+# the batch). `min(8, ...)` keeps the original scene on a big machine
+# while staying within the cap everywhere.
+REGISTRY_COUNT = min(8, tre.max_parallel_registries())
 
 
 def build_wavy_loop_registry(seed: int) -> "tre.ShapeRegistry":

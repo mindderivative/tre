@@ -19,6 +19,11 @@ and every real bug found along the way, see
   every frame; `RenderingCanvas` gains a slice-taking `draw_glyphs` that
   `draw_text` delegates to (finding #247).
 
+### Added
+- `tre.max_parallel_registries()` returns this machine's `render_parallel`
+  concurrency cap, so callers can size a batch without catching a
+  `ValueError` (finding #257).
+
 ### Changed
 - The three framebuffer-fetch RHI trait methods are renamed from their
   Vulkan-extension names to vendor-neutral ones

@@ -71,10 +71,24 @@ fn rgba8(r: u8, g: u8, b: u8, a: u8) -> u32 {
     u32::from_le_bytes([r, g, b, a])
 }
 
+/// `tre.max_parallel_registries() -> int` -- the largest number of
+/// registries `HeadlessRenderer.render_parallel` / `WindowedRenderer.
+/// render_parallel` accept on THIS machine: its own concurrency cap
+/// (`std::thread::available_parallelism() - 1`, the exact value those
+/// methods check a batch against). A caller fanning work across
+/// registries sizes its batch to this instead of catching a `ValueError`
+/// after overshooting (REVIEW.md finding #257) -- the single source of
+/// truth is the engine, not a Python-side guess at the core count.
+#[pyfunction]
+fn max_parallel_registries() -> usize {
+    tre_engine::RenderingCanvas::new().max_sub_canvases()
+}
+
 #[pymodule]
 fn tre_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TreError", m.py().get_type::<error::TreError>())?;
     m.add_function(pyo3::wrap_pyfunction!(rgba8, m)?)?;
+    m.add_function(pyo3::wrap_pyfunction!(max_parallel_registries, m)?)?;
     m.add_function(pyo3::wrap_pyfunction!(canvas::shadow_layer_bounds, m)?)?;
     m.add_class::<shapes::PyShapeId>()?;
     m.add_class::<shapes::PyRectangle>()?;
