@@ -43,7 +43,36 @@ Start with [DESIGN.md](documentation/DESIGN.md) for the *why*, [ARCHITECTURE.md]
 
 ## Building
 
-Requires the Rust toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (installed automatically by `rustup` on first use).
+Requires the Rust toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml) (installed automatically by `rustup` on first use), plus the system libraries below.
+
+### System dependencies (Linux)
+
+TRE links several system libraries beyond the Rust toolchain. These are the same packages this repository's own CI installs on every push (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)) — listed here so a fresh clone doesn't have to reverse-engineer that workflow just to get a first build working.
+
+**To build** (`cargo build`/`clippy`/`fmt`):
+
+```bash
+sudo apt-get install -y --no-install-recommends \
+  libwayland-dev libxcb1-dev glslc libfontconfig1-dev \
+  libgtk-3-dev libayatana-appindicator3-dev
+```
+
+- `libwayland-dev` / `libxcb1-dev`: `tre-platform`'s real Wayland/X11 windowing backends (via `winit`).
+- `glslc`: compiles `tre-rhi-vulkan`'s shaders to SPIR-V at build time.
+- `libfontconfig1-dev`: `tre-text`'s `fontconfig` crate links the system library.
+- `libgtk-3-dev` / `libayatana-appindicator3-dev`: `tre-platform`'s native system tray/menu integration.
+
+**To run** (a real Vulkan device, plus real font fallback for text rendering):
+
+```bash
+sudo apt-get install -y --no-install-recommends \
+  libvulkan1 mesa-vulkan-drivers vulkan-validationlayers \
+  fonts-dejavu-core fonts-noto-core fonts-noto-color-emoji
+```
+
+- `libvulkan1` plus `mesa-vulkan-drivers` (or your GPU vendor's proprietary Vulkan driver): a real Vulkan 1.2+ device is required — there is no software-rendering fallback.
+- `vulkan-validationlayers`: debug builds request `VK_LAYER_KHRONOS_validation` automatically.
+- The `fonts-*` packages give `tre-text`'s font-fallback cascade real, deterministic lookups (`"DejaVu Sans"`/`"Noto Sans"`/`"Noto Color Emoji"`); without them, text still renders, just against whatever fonts happen to already be installed.
 
 ```bash
 cargo build --workspace
