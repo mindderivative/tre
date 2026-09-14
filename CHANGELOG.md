@@ -10,6 +10,11 @@ and every real bug found along the way, see
 ## [Unreleased]
 
 ### Security
+- The Vulkan device now requests `robustBufferAccess` and (where the
+  driver advertises `VK_EXT_image_robustness`) `robustImageAccess`, so a
+  caller-supplied custom shader's out-of-range buffer and bindless-texture
+  accesses return defined zeros instead of undefined behavior (finding
+  #260).
 - `HeadlessRenderer.create_custom_shader` now rejects GLSL source over
   1 MiB with `ValueError` before it reaches `shaderc`, and runs the compile
   with the GIL released (REVIEW.md finding #247).

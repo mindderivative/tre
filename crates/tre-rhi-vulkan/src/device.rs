@@ -645,6 +645,50 @@ impl VulkanDevice {
             device_extension_names.push(ash::khr::dynamic_rendering_local_read::NAME.as_ptr());
         }
 
+        // REVIEW.md finding #260: harden the custom-shader path
+        // (`create_custom_pipeline`) so a caller-supplied fragment shader
+        // that indexes the shared bindless resources out of range gets a
+        // DEFINED result (zeroed reads) instead of undefined behavior.
+        // `robustBufferAccess` (core, requested via `enabled_features`
+        // below) defines out-of-bounds buffer accesses (storage/uniform/
+        // texel buffers, vertex fetch); `VK_EXT_image_robustness`'s
+        // `robustImageAccess` defines out-of-bounds SAMPLED-IMAGE accesses,
+        // which is exactly the bindless texture-array case the security
+        // review flagged. Image robustness is only enabled when this device
+        // advertises the extension (like `local_read` above -- requesting a
+        // feature for an unadvertised extension is invalid); a device
+        // lacking it keeps buffer robustness only, and the residual
+        // image-array exposure is noted in REVIEW.md.
+        #[cfg_attr(
+            not(debug_assertions),
+            allow(
+                unused_mut,
+                reason = "mirrors local_read_supported's own cfg-dependent mutability above"
+            )
+        )]
+        let image_robustness_supported =
+            unsafe { instance.enumerate_device_extension_properties(physical_device) }
+                .unwrap_or_default()
+                .iter()
+                .any(|ext| {
+                    // SAFETY: `ext.extension_name` is a fixed-size buffer the
+                    // Vulkan implementation NUL-terminates.
+                    (unsafe { CStr::from_ptr(ext.extension_name.as_ptr()) })
+                        == ash::ext::image_robustness::NAME
+                });
+        if image_robustness_supported {
+            device_extension_names.push(ash::ext::image_robustness::NAME.as_ptr());
+        }
+
+        // SAFETY: `physical_device` was selected from this instance's own
+        // enumeration and remains valid; this is a plain feature query.
+        let supported_features = unsafe { instance.get_physical_device_features(physical_device) };
+        let robust_buffer_access_supported = supported_features.robust_buffer_access == vk::TRUE;
+        let enabled_features = vk::PhysicalDeviceFeatures::default()
+            .robust_buffer_access(robust_buffer_access_supported);
+        let mut image_robustness_feature =
+            vk::PhysicalDeviceImageRobustnessFeatures::default().robust_image_access(true);
+
         let mut dynamic_rendering_feature =
             vk::PhysicalDeviceDynamicRenderingFeatures::default().dynamic_rendering(true);
 
@@ -702,11 +746,15 @@ impl VulkanDevice {
         let mut device_create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_create_infos)
             .enabled_extension_names(&device_extension_names)
+            .enabled_features(&enabled_features)
             .push_next(&mut dynamic_rendering_feature)
             .push_next(&mut descriptor_indexing_feature)
             .push_next(&mut separate_depth_stencil_layouts_feature);
         if local_read_supported {
             device_create_info = device_create_info.push_next(&mut local_read_feature);
+        }
+        if image_robustness_supported {
+            device_create_info = device_create_info.push_next(&mut image_robustness_feature);
         }
 
         // SAFETY: `physical_device` was chosen above from this instance's
