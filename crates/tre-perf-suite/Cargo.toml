@@ -27,9 +27,9 @@ path = "src/main.rs"
 tre-engine = { path = "../tre-engine" }
 tre-platform = { path = "../tre-platform" }
 tre-rhi-vulkan = { path = "../tre-rhi-vulkan" }
-raw-window-handle = "0.6.2"
+raw-window-handle.workspace = true
 # Casting `UiVertex`/`u32` index slices to bytes for the ring-buffer write
 # -- the same real call site's own approach every existing renderer
 # (tre-ffi, tre-python, every windowed example) already uses; matching it
 # here means this crate never needs `unsafe` at all.
-bytemuck = "1.25.2"
+bytemuck.workspace = true

@@ -285,7 +285,16 @@ pub trait RhiSwapchain: Send + Sync {
     /// unavailable, exactly as if the device itself lacked the
     /// extension) rather than hitting a validation error or driver-
     /// defined behavior.
-    fn supports_local_read_input_attachment(&self) -> bool;
+    ///
+    /// Defaults to `false` (`/review-project` Architecture finding #247,
+    /// 2026-09-13): the same default-delegating pattern
+    /// `acquire_next_image_with_timeout` and every `begin_frame_with_*`
+    /// addition already use, so a backend without this capability
+    /// compiles without an explicit override and degrades to the same
+    /// `Normal`-blend fallback path a device lacking the extension takes.
+    fn supports_local_read_input_attachment(&self) -> bool {
+        false
+    }
 
     /// # Errors
     /// Returns [`EngineError::SwapchainOutOfDate`] if the surface no longer
@@ -425,7 +434,15 @@ pub trait RhiDevice: Send + Sync {
     /// created. See `PipelineKind::FlatColorBlend`'s own doc comment for
     /// why the originally-planned `VK_EXT_blend_operation_advanced` path
     /// was abandoned instead of gated the same way.
-    fn local_read_blend_supported(&self) -> bool;
+    ///
+    /// Defaults to `false` (`/review-project` Architecture finding #247,
+    /// 2026-09-13) -- see `RhiSwapchain::supports_local_read_input_
+    /// attachment`'s own identical rationale: a backend that never
+    /// overrides this is treated exactly like a device without the
+    /// capability, and `FlatColorBlend` is never selected for it.
+    fn local_read_blend_supported(&self) -> bool {
+        false
+    }
     /// # Errors
     /// Returns [`EngineError::TransientPoolBudgetExceeded`] if a genuinely
     /// novel size would need cold-allocating while the pool's idle free
@@ -662,7 +679,14 @@ pub trait RhiCommandBuffer {
     /// device where `RhiDevice::local_read_blend_supported` is `false`
     /// -- never called in that case, since `FlatColorBlend` itself is
     /// never selected without that capability.
-    fn insert_blend_read_barrier(&mut self);
+    ///
+    /// Defaults to a no-op (`/review-project` Architecture finding #247,
+    /// 2026-09-13): by this method's own contract above it is never
+    /// called on a device whose `local_read_blend_supported` is `false`,
+    /// and that is exactly the default for any backend that doesn't
+    /// override both -- so an unoverridden no-op here can never be
+    /// reached with real work to do.
+    fn insert_blend_read_barrier(&mut self) {}
 
     // Offscreen render targets (IMPLEMENTATION.md Phase 6 Step 6.4.1) --
     // real render-to-texture, the RHI capability real `PushLayer`/

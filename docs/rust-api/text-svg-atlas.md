@@ -130,7 +130,7 @@ pub fn parse_smil(svg_source: &str, max_bytes: usize, max_keyframes: usize) -> R
 
 ## `tre-text`
 
-Dynamic typography: bidi + script run segmentation and shaping via [`rustybuzz`](https://docs.rs/rustybuzz) (a HarfBuzz binding), glyph outline extraction via [`skrifa`](https://docs.rs/skrifa), Linux-only `fontconfig`-driven font fallback, and MSDF rasterization via [`fdsm`](https://docs.rs/fdsm) -- a real pure-Rust reimplementation of `msdfgen`'s own published algorithm. A deliberate all-pure-Rust font stack, so this workspace's only C ABI boundary stays Vulkan.
+Dynamic typography: bidi + script run segmentation and shaping via [`rustybuzz`](https://docs.rs/rustybuzz) (a HarfBuzz binding), glyph outline extraction via [`skrifa`](https://docs.rs/skrifa), Linux-only `fontconfig`-driven font fallback, and MSDF rasterization via [`fdsm`](https://docs.rs/fdsm) -- a real pure-Rust reimplementation of `msdfgen`'s own published algorithm. A deliberate all-pure-Rust font stack for the shaping and rasterization work itself; the one system C library this crate does bind is `libfontconfig`, for Linux font-fallback discovery only.
 
 ### Shaping
 

@@ -340,8 +340,18 @@ Built as a deliberate all-pure-Rust font stack, not the literal
 rationale. `rustybuzz` (a complete, faithful port of HarfBuzz's own
 shaping algorithm) replaces HarfBuzz for task 1; `skrifa` (Google Fonts'
 `fontations` project) replaces FreeType for task 3's outline extraction.
-Neither introduces a C library dependency, so this workspace's only
-remaining C ABI boundary is Vulkan itself. A new `tre-text` crate holds
+Neither introduces a C library dependency for shaping or outline
+extraction themselves. (Correction, `/review-project` Architecture
+finding #247, 2026-09-13: this sentence originally went on to claim
+"so this workspace's only remaining C ABI boundary is Vulkan itself,"
+which was already false when written -- the `fontconfig` crate this
+same step adds for font-fallback discovery wraps the system
+`libfontconfig` -- and grew further out of date as later phases added
+`libshaderc` (`tre-rhi-vulkan`, Step 13.8's runtime GLSL compilation),
+GTK 3 + `libayatana-appindicator` (`tre-platform`'s tray icon), and the
+Wayland/XCB client libraries `winit` binds (`tre-platform`, Step 11.1).
+CI's own `apt-get` list in `.github/workflows/ci.yml` is the accurate,
+maintained inventory of every system C library this workspace links.) A new `tre-text` crate holds
 all three tasks, `#![forbid(unsafe_code)]` like every other non-RHI crate.
 
 Task 1 (shaping) is real bidi + script run segmentation

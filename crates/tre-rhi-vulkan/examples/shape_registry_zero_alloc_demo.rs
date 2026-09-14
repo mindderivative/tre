@@ -444,7 +444,7 @@ fn main() {
     let bgra = swapchain
         .read_pixels_bgra8()
         .expect("failed to read back pixels");
-    let mut rgba = bgra.clone();
+    let mut rgba = bgra;
     for px in rgba.chunks_exact_mut(4) {
         px.swap(0, 2);
     }

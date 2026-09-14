@@ -158,7 +158,7 @@ fn main() {
     );
     eprintln!("rectangle interior rendered real, non-background content -- OK");
 
-    let mut rgba_out = direct_pixels.clone();
+    let mut rgba_out = direct_pixels;
     for px in rgba_out.chunks_exact_mut(4) {
         px.swap(0, 2);
     }

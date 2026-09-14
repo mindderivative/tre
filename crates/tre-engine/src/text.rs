@@ -408,14 +408,16 @@ pub(crate) fn flatten_text(
     // (equivalent to adding its real magnitude), not adds it.
     let line_height = (metrics.ascent - metrics.descent + metrics.leading) * scale;
     let mut pen_y = metrics.ascent * scale;
+    // Each line's glyphs are a contiguous sub-range of the cached
+    // `flat_glyphs`, so they go to the canvas as a borrowed slice --
+    // not copied into a throwaway owned `ShapedRun` first, which was one
+    // fresh heap `Vec` per visual line, every frame, even on a full
+    // wrap-cache hit (`/review-project` Performance finding #247,
+    // 2026-09-13: the residual allocation the wrap cache above left
+    // behind, one step downstream of what it fixed).
     for line in &wrapped.lines {
-        let line_run = tre_text::ShapedRun {
-            text_range: line.byte_range.clone(),
-            direction: rustybuzz::Direction::LeftToRight,
-            glyphs: wrapped.flat_glyphs[line.start_glyph..line.end_glyph].to_vec(),
-        };
-        canvas.draw_text(
-            &line_run,
+        canvas.draw_glyphs(
+            &wrapped.flat_glyphs[line.start_glyph..line.end_glyph],
             &font,
             text.font.0,
             [0.0, pen_y],

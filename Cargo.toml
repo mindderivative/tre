@@ -25,6 +25,29 @@ edition = "2021"
 rust-version = "1.75"
 license = "MIT OR Apache-2.0"
 
+# REVIEW.md finding #247 (Modernizer lens, 2026-09-13): every external
+# dependency shared by two or more member crates is declared exactly once
+# here and inherited via `dep.workspace = true` in each member -- the
+# same `field.workspace = true` idiom `[workspace.package]` above already
+# uses for `version`/`edition`/`rust-version`/`license`. Before this
+# table existed, these five were repeated as literal version strings in
+# up to five separate manifests each (22 lines total); all happened to be
+# identical, but nothing enforced it -- one `cargo add` or hand edit in a
+# single crate could silently make two crates disagree on what version of
+# `skrifa`/`rustybuzz` counts as "the" font stack (exactly the failure
+# `tre-python/Cargo.toml`'s own comment on those two pins warns about).
+# Versions and pin styles are carried over unchanged; each member crate's
+# own inline rationale for *why* a given version (MSRV ceilings confirmed
+# via `cargo add --dry-run`, exact `=` pins) stays where it was, next to
+# the crate that first established it. Per-crate `features` still
+# compose on top (`tre-engine`'s `bytemuck` `derive`).
+[workspace.dependencies]
+bytemuck = "1.25.2"
+raw-window-handle = "0.6.2"
+thiserror = "2.0.20"
+skrifa = "=0.33.2"
+rustybuzz = "0.20.1"
+
 # TECHNICAL.md Section 9.1: `unsafe_op_in_unsafe_fn` is opt-in (warn-by-default
 # only from edition 2024) but the project wants it as a hard error on this
 # edition-2021 workspace.

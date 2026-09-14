@@ -2640,3 +2640,72 @@ impl RhiDevice for VulkanDevice {
         Ok(Box::new(pipeline))
     }
 }
+
+// `/review-project` Architecture finding #247 (2026-09-13): the two
+// string predicates below decide whether the validation-layer callback
+// aborts the process -- they gate whether CI ever catches a real Vulkan
+// error -- and were added as REVIEW.md finding #208's own root-cause fix
+// without a single test. They are pure functions of the message text,
+// so they need no device. Gated on `debug_assertions` exactly as the
+// functions themselves are.
+#[cfg(all(test, debug_assertions))]
+mod tests {
+    use super::*;
+
+    const LAYER_REJECTS_EXTENSION: &str =
+        "Validation Error: [ VUID-vkCreateDevice-ppEnabledExtensionNames-01387 ] \
+         extension VK_KHR_dynamic_rendering_local_read is not supported by this layer";
+    const UNKNOWN_STRUCT_TYPE: &str = "Validation Error: vkCreateDevice(): pCreateInfo->pNext \
+         contains an unknown VkStructureType (1000232000)";
+
+    #[test]
+    fn is_local_read_rejected_by_layer_matches_both_disclosed_forms_of_the_rejection() {
+        assert!(is_local_read_rejected_by_layer(LAYER_REJECTS_EXTENSION));
+        assert!(is_local_read_rejected_by_layer(UNKNOWN_STRUCT_TYPE));
+    }
+
+    #[test]
+    fn is_local_read_rejected_by_layer_needs_both_halves_of_each_form() {
+        // Half of each pattern alone must not match -- a genuine, unrelated
+        // error that merely mentions the extension name or the enum value
+        // must still abort.
+        assert!(!is_local_read_rejected_by_layer(
+            "VK_KHR_dynamic_rendering_local_read enabled successfully"
+        ));
+        assert!(!is_local_read_rejected_by_layer(
+            "feature X is not supported by this layer"
+        ));
+        assert!(!is_local_read_rejected_by_layer("(1000232000)"));
+        assert!(!is_local_read_rejected_by_layer("unknown VkStructureType"));
+        assert!(!is_local_read_rejected_by_layer(""));
+    }
+
+    #[test]
+    fn is_known_false_positive_covers_exactly_the_one_unknown_struct_type_message() {
+        assert!(is_known_false_positive(UNKNOWN_STRUCT_TYPE));
+        // Narrower than `is_local_read_rejected_by_layer` by design: the
+        // "not supported by this layer" form is NOT a survivable
+        // false-positive, only the pNext enum complaint is.
+        assert!(!is_known_false_positive(LAYER_REJECTS_EXTENSION));
+        assert!(!is_known_false_positive(
+            "Validation Error: [ VUID-VkImageCreateInfo-extent-00944 ] extent.width must be > 0"
+        ));
+    }
+
+    #[test]
+    fn every_known_false_positive_is_also_a_layer_rejection() {
+        // The invariant `vulkan_debug_callback` relies on: the one message
+        // allowed to survive is a subset of the ones that switch the
+        // extension off, never something that would leave it enabled.
+        for message in [
+            UNKNOWN_STRUCT_TYPE,
+            LAYER_REJECTS_EXTENSION,
+            "",
+            "unrelated",
+        ] {
+            if is_known_false_positive(message) {
+                assert!(is_local_read_rejected_by_layer(message));
+            }
+        }
+    }
+}

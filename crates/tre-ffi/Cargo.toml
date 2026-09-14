@@ -21,9 +21,8 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 tre-engine = { path = "../tre-engine" }
 tre-platform = { path = "../tre-platform" }
 tre-rhi-vulkan = { path = "../tre-rhi-vulkan" }
-raw-window-handle = "0.6.2"
-bytemuck = "1.25.2"
-
+raw-window-handle.workspace = true
+bytemuck.workspace = true
 # Generates include/tre_ffi.h from this crate's own `extern "C"` items at
 # every build (build.rs) -- IMPLEMENTATION.md Phase 10 Step 10.3 task 4's
 # own "auditable in a single place" rationale depends on the header never

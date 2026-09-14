@@ -1916,14 +1916,13 @@ mod tests {
         canvas.draw_rounded_rect(50.0, 0.0, 10.0, 10.0, 0.0, 0xFFFF_FFFF);
         let frame = canvas.flatten();
 
-        let draws: Vec<_> = frame
+        let draws = frame
             .commands
             .iter()
             .filter(|c| c.kind == CommandType::DrawGeometry)
-            .collect();
+            .count();
         assert_eq!(
-            draws.len(),
-            2,
+            draws, 2,
             "an intervening push_clip/pop_clip pair must remain a hard barrier even when its \
              net clip effect matches what was already active"
         );

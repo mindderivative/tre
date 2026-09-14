@@ -198,7 +198,6 @@ fn main() {
     };
 
     let scan: Vec<(u32, f32)> = scan_range
-        .clone()
         .map(|x| (x, fill_fraction(pixel_at(x, center_y))))
         .collect();
 

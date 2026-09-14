@@ -214,7 +214,7 @@ fn main() {
     }
     eprintln!("all four rects rendered real, non-background content -- OK");
 
-    let mut rgba_out = batched_pixels.clone();
+    let mut rgba_out = batched_pixels;
     for px in rgba_out.chunks_exact_mut(4) {
         px.swap(0, 2);
     }

@@ -23,8 +23,8 @@ pedantic = "warn"
 # newest version `cargo add --dry-run` resolved against this workspace's
 # `rust-version = 1.75` (2.0.20), the same technique used to pin every
 # other version-sensitive dependency in this workspace.
-thiserror = "2.0.20"
-bytemuck = { version = "1.25.2", features = ["derive"] }
+thiserror.workspace = true
+bytemuck = { workspace = true, features = ["derive"] }
 # IMPLEMENTATION.md Step 5.1.2: `Canvas::draw_text` is this crate's
 # first wiring into the text/atlas stack -- `tre-text` for shaped-glyph
 # data and glyph outline extraction, `tre-atlas` for the shared dynamic
@@ -37,14 +37,14 @@ tre-memory = { path = "../tre-memory" }
 # comment: 0.46.2 needs a newer rustc) -- `draw_text` takes a caller-
 # resolved `skrifa::FontRef` directly, so this crate needs the same
 # type, not a re-export.
-skrifa = "=0.33.2"
+skrifa.workspace = true
 # Phase 12 Step 12.2: `FontRegistry::face` resolves a caller-loaded
 # font's bytes into a real `rustybuzz::Face` for `tre_text::shape_text`
 # to shape a `Text` primitive's own string against at flatten time --
 # real, non-test code now, not just this crate's own tests, so this
 # moved here from `[dev-dependencies]` below (which still pins the
 # identical version -- kept as one declaration, not duplicated).
-rustybuzz = "0.20.1"
+rustybuzz.workspace = true
 # Phase 10 Step 10.2 follow-up: real fill (and stroke) tessellation for
 # `Path`/`Polygon` shapes -- the industry-standard Rust 2D tessellation
 # library (`nical/lyon`), same real reasoning as `tre-svg`'s own adoption

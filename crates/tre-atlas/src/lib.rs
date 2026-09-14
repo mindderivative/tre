@@ -232,9 +232,8 @@ fn split_leftover(
 
     let larger_piece = |first: Option<PackedRect>, second: Option<PackedRect>| -> u64 {
         first
-            .map(PackedRect::area)
-            .unwrap_or(0)
-            .max(second.map(PackedRect::area).unwrap_or(0))
+            .map_or(0, PackedRect::area)
+            .max(second.map_or(0, PackedRect::area))
     };
 
     if larger_piece(a_right, a_below) >= larger_piece(b_right, b_below) {

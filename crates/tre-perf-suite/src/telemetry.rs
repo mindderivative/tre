@@ -205,8 +205,7 @@ impl TelemetryLog {
 pub fn default_log_path(profile: &str, workload: &str) -> PathBuf {
     let unix_ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
     PathBuf::from("perf_results").join(format!("{profile}_{workload}_{unix_ts}.jsonl"))
 }
 
@@ -228,6 +227,7 @@ pub struct CpuMemSampler {
 }
 
 impl CpuMemSampler {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             clk_tck: 100,

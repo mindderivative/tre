@@ -17,7 +17,7 @@ all = "warn"
 # with no behavior change. Same version pin as every other crate adopting
 # this in the same pass (`tre-engine`'s own Cargo.toml comment has the
 # full `cargo add --dry-run` rationale).
-thiserror = "2.0.20"
+thiserror.workspace = true
 # IMPLEMENTATION.md Step 5.1.2: `GlyphRasterSource` implements this
 # crate's `RasterSource` trait object (`tre-atlas/src/raster.rs`) --
 # the dependency points `tre-text -> tre-atlas`, the direction
@@ -39,17 +39,20 @@ image = { version = "=0.25.10", default-features = false }
 nalgebra = "=0.34.2"
 # PLAN_PHASE4_STEP4_1.md: an all-pure-Rust font stack, a deliberate
 # departure from IMPLEMENTATION.md's literal "HarfBuzz"/"FreeType"
-# wording, so this workspace's only C ABI boundary stays Vulkan.
+# wording -- shaping and outline extraction link no C library. (The
+# `fontconfig` crate further down does wrap the system `libfontconfig`,
+# so this crate is not C-free in total; REVIEW.md finding #247 corrected
+# the earlier "only C ABI boundary stays Vulkan" wording here.)
 # rustybuzz is a complete, faithful port of HarfBuzz's own shaping
 # algorithm (not a from-scratch reimplementation) -- the same crate
 # tre-svg's own Cargo.toml comment already anticipated as usvg's disabled
 # `text` dependency.
-rustybuzz = "0.20.1"
+rustybuzz.workspace = true
 # Google Fonts' `fontations` project -- pure-Rust metadata reading and
 # glyph outline extraction, replacing FreeType's `FT_Outline_Decompose`.
 # Pinned to 0.33.2 (0.46.2 needs rustc 1.85, confirmed via `cargo add
 # --dry-run`, the same technique used to pin `usvg`/`wide` in Phase 3).
-skrifa = "=0.33.2"
+skrifa.workspace = true
 # Paragraph-level bidi embedding levels (UAX #9) -- rustybuzz shapes one
 # direction-and-script-uniform run at a time; segmenting a mixed-direction
 # string into runs is the caller's job, not rustybuzz's own.

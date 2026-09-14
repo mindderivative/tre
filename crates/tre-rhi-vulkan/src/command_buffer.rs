@@ -174,8 +174,12 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
         // buffer handle the `RhiBuffer` trait contract guarantees was
         // created by this device and is still alive.
         unsafe {
-            self.device
-                .cmd_bind_vertex_buffers(self.command_buffer, 0, &[raw], &[offset as u64]);
+            self.device.cmd_bind_vertex_buffers(
+                self.command_buffer,
+                0,
+                &[raw],
+                &[u64::from(offset)],
+            );
         }
     }
 
@@ -189,7 +193,7 @@ impl RhiCommandBuffer for VulkanCommandBuffer {
             self.device.cmd_bind_index_buffer(
                 self.command_buffer,
                 raw,
-                offset as u64,
+                u64::from(offset),
                 vk::IndexType::UINT32,
             );
         }

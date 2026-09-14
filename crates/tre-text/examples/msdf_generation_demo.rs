@@ -92,7 +92,7 @@ fn main() {
     // Also confirm the raw MSDF buffer round-trips into a real
     // `image::RgbImage` cleanly (the exact type `fdsm::render::render_msdf`
     // below, and Step 4.2.3's eventual texture upload, both need).
-    let msdf_image = RgbImage::from_raw(bitmap.width, bitmap.height, bitmap.pixels.clone())
+    let msdf_image = RgbImage::from_raw(bitmap.width, bitmap.height, bitmap.pixels)
         .expect("MsdfBitmap's own width/height/pixels must be internally consistent");
 
     let preview_size = SIZE * PREVIEW_SCALE;

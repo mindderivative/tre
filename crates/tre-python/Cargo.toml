@@ -13,7 +13,7 @@ name = "tre_python"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-bytemuck = "1.25.2"
+bytemuck.workspace = true
 # "py-clone": `PyText`'s own `#[derive(Clone)]` needs `Py<PyFont>: Clone`
 # (Phase 12 Step 12.3), which PyO3 0.27 gates behind this feature --
 # found via a real compile error, not assumed up front.
@@ -29,7 +29,7 @@ bytemuck = "1.25.2"
 # than a routine dependency update, left to the project owner's own
 # explicit direction rather than done as a side effect of this one.
 pyo3 = { version = "0.27.2", features = ["extension-module", "py-clone"] }
-raw-window-handle = "0.6.2"
+raw-window-handle.workspace = true
 tre-engine = { path = "../tre-engine" }
 tre-platform = { path = "../tre-platform" }
 tre-rhi-vulkan = { path = "../tre-rhi-vulkan" }
@@ -40,8 +40,8 @@ tre-rhi-vulkan = { path = "../tre-rhi-vulkan" }
 # here would mean this crate and `tre-engine` disagree on what counts as
 # a valid font.
 tre-text = { path = "../tre-text" }
-skrifa = "=0.33.2"
-rustybuzz = "0.20.1"
+skrifa.workspace = true
+rustybuzz.workspace = true
 # `TextAtlas` (Phase 12 Step 12.3) owns a real `AtlasOwner` background
 # thread directly, the same real atlas primitive `tre-engine`'s own
 # `Text` primitive renders through.

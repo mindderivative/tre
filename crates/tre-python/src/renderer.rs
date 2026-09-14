@@ -116,6 +116,23 @@ pub(crate) fn render_err(e: RenderError) -> PyErr {
 /// Vulkan.
 const MAX_DIMENSION: u32 = 8192;
 
+/// Upper bound on a caller-supplied custom fragment shader's GLSL source
+/// length, in bytes (`/review-project` Security finding #247,
+/// 2026-09-13). `create_custom_shader` hands `fragment_source` straight
+/// to `shaderc`'s C++ `glslang` front end, a recursive-descent parser
+/// with no input-size or nesting limit of its own -- an adversarially
+/// large or deeply-nested string is a real crash vector there (a C++
+/// stack overflow, which no Rust `catch_unwind`/PyO3 panic hook can
+/// intercept), not a clean compile error. This is the same class of
+/// unbounded-caller-input problem `MAX_DIMENSION` above and
+/// `tre-svg`'s own byte caps already close. 1 MiB is far above any real
+/// fragment shader (`SDF_SHADOW_SHADER_SOURCE`, this crate's own largest
+/// built-in, is under 4 KiB) while still ruling out the megabyte-scale
+/// inputs that make the parser's own worst cases reachable. A size cap
+/// bounds, but cannot fully eliminate, deep-nesting cost inside the
+/// budget -- disclosed, not hidden.
+const MAX_CUSTOM_SHADER_SOURCE_BYTES: usize = 1024 * 1024;
+
 pub(crate) fn validate_dimensions(width: u32, height: u32) -> PyResult<()> {
     if width == 0 || height == 0 {
         return Err(PyValueError::new_err(format!(
@@ -262,14 +279,31 @@ impl PyHeadlessRenderer {
     /// `frag_color`/`frag_uv`/push-constant interface `bindless_textured
     /// .frag` itself declares).
     ///
+    /// The compile itself runs with the GIL released (`py.detach`, the
+    /// same discipline `render`'s own GPU round trip already follows), so
+    /// a slow or large shader compile can never stall unrelated Python
+    /// threads in the host process.
+    ///
     /// # Errors
-    /// Raises `ValueError` with `shaderc`'s own real compiler diagnostic
-    /// if `fragment_source` fails to compile. Raises `TreError` if the
-    /// (successfully compiled) shader still fails real pipeline creation.
-    fn create_custom_shader(&mut self, fragment_source: &str) -> PyResult<PyCustomShaderId> {
-        let pipeline = self
-            .device
-            .create_custom_pipeline(fragment_source, TextureFormat::Bgra8Srgb)
+    /// Raises `ValueError` if `fragment_source` exceeds
+    /// [`MAX_CUSTOM_SHADER_SOURCE_BYTES`] (rejected before `shaderc`
+    /// ever sees it), or with `shaderc`'s own real compiler diagnostic if
+    /// it fails to compile. Raises `TreError` if the (successfully
+    /// compiled) shader still fails real pipeline creation.
+    fn create_custom_shader(
+        &mut self,
+        py: Python<'_>,
+        fragment_source: &str,
+    ) -> PyResult<PyCustomShaderId> {
+        if fragment_source.len() > MAX_CUSTOM_SHADER_SOURCE_BYTES {
+            return Err(PyValueError::new_err(format!(
+                "custom shader source must be <= {MAX_CUSTOM_SHADER_SOURCE_BYTES} bytes, got {}",
+                fragment_source.len()
+            )));
+        }
+        let device: &dyn RhiDevice = &*self.device;
+        let pipeline = py
+            .detach(|| device.create_custom_pipeline(fragment_source, TextureFormat::Bgra8Srgb))
             .map_err(custom_shader_err)?;
         let id = self.next_custom_pipeline_id;
         self.next_custom_pipeline_id += 1;

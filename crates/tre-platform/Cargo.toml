@@ -20,8 +20,8 @@ workspace = true
 # with no behavior change. Same version pin as every other crate adopting
 # this in the same pass (`tre-engine`'s own Cargo.toml comment has the
 # full `cargo add --dry-run` rationale).
-thiserror = "2.0.20"
-raw-window-handle = "0.6.2"
+thiserror.workspace = true
+raw-window-handle.workspace = true
 tre-engine = { path = "../tre-engine" }
 winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen"] }
 # Real system clipboard access (GUI-readiness recommendation #4) -- the

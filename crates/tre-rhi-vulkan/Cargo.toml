@@ -24,8 +24,8 @@ ash = "0.38.0"
 # newer rustc, not because the pin actually enforced 1.75).
 rustc-hash = "=2.1.1"
 ash-window = "0.13.0"
-bytemuck = "1.25.2"
-raw-window-handle = "0.6.2"
+bytemuck.workspace = true
+raw-window-handle.workspace = true
 tre-engine = { version = "0.1.0", path = "../tre-engine" }
 # Phase 13 Step 13.8: real GLSL fragment-shader compilation at runtime,
 # for the custom shader API -- Rust bindings to the identical real
@@ -40,8 +40,8 @@ shaderc = "0.8.3"
 
 [dev-dependencies]
 png = "0.18.1"
-rustybuzz = "0.20.1"
-skrifa = "=0.33.2"
+rustybuzz.workspace = true
+skrifa.workspace = true
 tre-atlas = { path = "../tre-atlas" }
 tre-math = { path = "../tre-math" }
 # Phase 9 Step 9.2: main_loop_demo.rs's own #[global_allocator] opt-in

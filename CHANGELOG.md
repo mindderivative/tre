@@ -7,6 +7,38 @@ and every real bug found along the way, see
 [documentation/IMPLEMENTATION.md](documentation/IMPLEMENTATION.md) and
 [documentation/REVIEW.md](documentation/REVIEW.md).
 
+## [Unreleased]
+
+### Security
+- `HeadlessRenderer.create_custom_shader` now rejects GLSL source over
+  1 MiB with `ValueError` before it reaches `shaderc`, and runs the compile
+  with the GIL released (REVIEW.md finding #247).
+
+### Performance
+- Wrapped `Text` shapes no longer allocate one `Vec` per visual line on
+  every frame; `RenderingCanvas` gains a slice-taking `draw_glyphs` that
+  `draw_text` delegates to (finding #247).
+
+### Changed
+- `RhiSwapchain::supports_local_read_input_attachment`,
+  `RhiDevice::local_read_blend_supported`, and
+  `RhiCommandBuffer::insert_blend_read_barrier` now have default bodies
+  (`false`/`false`/no-op), so a backend without the capability compiles
+  without overriding them (finding #247).
+- Shared external dependencies are declared once in the root
+  `[workspace.dependencies]` table and inherited by member crates
+  (finding #247). Resolved versions are unchanged.
+
+### Fixed
+- `ARCHITECTURE.md` Section 6 annotated for finding #244's collapse of
+  `begin_frame_with_timeout`/`begin_frame_with_viewport_crop` into
+  `begin_frame_with_options`; three stale "only C ABI boundary is Vulkan"
+  claims corrected (finding #247).
+
+### Tests
+- `tre-rhi-vulkan` gains its first ten unit tests, covering its GPU-free
+  helpers and the validation-layer message predicates (finding #247).
+
 ## [0.1.0] - 2026-09-13
 
 **First public release — early alpha.**

@@ -141,3 +141,48 @@ fn bytes_per_pixel(format: TextureFormat) -> u64 {
         TextureFormat::Rgba16Float => 8,
     }
 }
+
+// `/review-project` Architecture finding #247 (2026-09-13): this crate had
+// zero `#[test]` functions -- its entire correctness gate was the ~40
+// device-requiring `examples/` CI runs. These cover the crate's own
+// device-free pure helpers, so they run in the plain `cargo test` job and
+// on a contributor machine with no GPU at all.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn align_up_rounds_to_the_next_multiple_and_leaves_aligned_values_alone() {
+        assert_eq!(align_up(0, RING_BUFFER_ALIGNMENT), 0);
+        assert_eq!(align_up(1, RING_BUFFER_ALIGNMENT), RING_BUFFER_ALIGNMENT);
+        assert_eq!(align_up(255, 256), 256);
+        assert_eq!(align_up(256, 256), 256);
+        assert_eq!(align_up(257, 256), 512);
+        assert_eq!(align_up(1000, 64), 1024);
+    }
+
+    #[test]
+    fn texture_format_to_vk_maps_every_variant_to_the_matching_vulkan_format() {
+        assert_eq!(
+            texture_format_to_vk(TextureFormat::Bgra8Srgb),
+            vk::Format::B8G8R8A8_SRGB
+        );
+        assert_eq!(
+            texture_format_to_vk(TextureFormat::Rgba16Float),
+            vk::Format::R16G16B16A16_SFLOAT
+        );
+        assert_eq!(
+            texture_format_to_vk(TextureFormat::Rgba8Unorm),
+            vk::Format::R8G8B8A8_UNORM
+        );
+    }
+
+    #[test]
+    fn bytes_per_pixel_matches_each_format_s_tightly_packed_texel_size() {
+        // The exact values `VulkanTexture::from_pixels` validates an
+        // uploaded buffer's length against (Phase 2 Code Review #66).
+        assert_eq!(bytes_per_pixel(TextureFormat::Bgra8Srgb), 4);
+        assert_eq!(bytes_per_pixel(TextureFormat::Rgba8Unorm), 4);
+        assert_eq!(bytes_per_pixel(TextureFormat::Rgba16Float), 8);
+    }
+}

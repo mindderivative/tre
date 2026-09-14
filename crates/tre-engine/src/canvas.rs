@@ -1491,6 +1491,52 @@ impl RenderingCanvas {
         rgba: u32,
         atlas_context: &GlyphAtlasContext<'_>,
     ) {
+        self.draw_glyphs(
+            &shaped.glyphs,
+            font,
+            font_id,
+            origin,
+            px_size,
+            rgba,
+            atlas_context,
+        );
+    }
+
+    /// `draw_text`'s real body, taking the shaped glyphs as a bare slice
+    /// rather than a whole `tre_text::ShapedRun`. `draw_text` only ever
+    /// reads a run's `glyphs` (never its `text_range`/`direction`), so
+    /// this is the primitive both entry points share -- and the one a
+    /// caller already holding a contiguous glyph buffer should call
+    /// directly, without first copying a sub-range of it into a
+    /// throwaway owned run (`/review-project` Performance finding #247,
+    /// 2026-09-13: `flatten_text`'s multi-line loop was doing exactly
+    /// that, one fresh `Vec` per visual line, every frame, even on a
+    /// full wrap-cache hit). Identical semantics to `draw_text` in every
+    /// other respect -- see its doc comment for the full contract.
+    ///
+    /// # Panics
+    /// Never in practice -- see `save()`'s own `# Panics` section for why
+    /// `state_stack` is never empty.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "unitsPerEm and every glyph's own advance/offset stay far below f32's exact-\
+                   integer range for any real font/text"
+    )]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the same load-bearing parameter list as draw_text, whose body this is; \
+                   see that method's own reason"
+    )]
+    pub fn draw_glyphs(
+        &mut self,
+        glyphs: &[tre_text::ShapedGlyph],
+        font: &skrifa::FontRef,
+        font_id: u32,
+        origin: [f32; 2],
+        px_size: f32,
+        rgba: u32,
+        atlas_context: &GlyphAtlasContext<'_>,
+    ) {
         let units_per_em = skrifa::MetadataProvider::metrics(
             font,
             skrifa::instance::Size::unscaled(),
@@ -1507,7 +1553,7 @@ impl RenderingCanvas {
         let clip_bounds = self.clip_stack.last().copied().unwrap_or(FULL_WINDOW_CLIP);
 
         let mut pen = origin;
-        for glyph in &shaped.glyphs {
+        for glyph in glyphs {
             let key = tre_atlas::AtlasKey::from_glyph(font_id, glyph.glyph_id);
             let glyph_origin = [
                 pen[0] + glyph.x_offset as f32 * scale,

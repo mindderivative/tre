@@ -233,3 +233,52 @@ pub(crate) struct TransientPool {
     /// interval is independent of how often the pool itself changes.
     pub(crate) total_free_bytes: u64,
 }
+
+// `/review-project` Architecture finding #247 (2026-09-13): `BindlessRegistry`
+// is a pure index allocator with no Vulkan dependency, yet had no test --
+// its exhaustion behavior is what `RhiDevice::create_texture`'s documented
+// "bindless array is exhausted" error path depends on.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bindless_registry_hands_out_sequential_indices_up_to_capacity_then_none() {
+        let mut registry = BindlessRegistry::new(3);
+        assert_eq!(registry.allocate(), Some(0));
+        assert_eq!(registry.allocate(), Some(1));
+        assert_eq!(registry.allocate(), Some(2));
+        assert_eq!(registry.allocate(), None, "capacity is a hard ceiling");
+        assert_eq!(
+            registry.allocate(),
+            None,
+            "and stays exhausted, not wrapping"
+        );
+    }
+
+    #[test]
+    fn bindless_registry_reuses_released_indices_before_bumping_next() {
+        let mut registry = BindlessRegistry::new(2);
+        let first = registry.allocate().expect("first slot");
+        let second = registry.allocate().expect("second slot");
+        assert_eq!(registry.allocate(), None);
+        registry.release(first);
+        assert_eq!(
+            registry.allocate(),
+            Some(first),
+            "a released slot is the next one out"
+        );
+        assert_eq!(registry.allocate(), None);
+        registry.release(second);
+        registry.release(first);
+        // LIFO reuse: the most recently released index comes back first.
+        assert_eq!(registry.allocate(), Some(first));
+        assert_eq!(registry.allocate(), Some(second));
+    }
+
+    #[test]
+    fn bindless_registry_with_zero_capacity_never_allocates() {
+        let mut registry = BindlessRegistry::new(0);
+        assert_eq!(registry.allocate(), None);
+    }
+}
