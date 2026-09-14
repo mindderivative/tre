@@ -35,6 +35,7 @@ and every real bug found along the way, see
 
 ### Dependencies
 - `rustc-hash` 2.1.1 to 2.1.3 (finding #249).
+- `usvg` 0.45.1 to 0.48.1 (finding #250).
 
 ### Fixed
 - `ARCHITECTURE.md` Section 6 annotated for finding #244's collapse of
