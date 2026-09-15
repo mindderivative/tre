@@ -51,6 +51,10 @@ engine-platform = { path = "../engine-platform" }
 # engine-render's own lib.rs never imports engine-spec.
 engine-spec = { path = "../engine-spec" }
 pollster = "1.0.1"
+# Test-only, for docking.rs's DockZone.panels: SmallVec<[NodeId; 4]> --
+# already resolved at the same version transitively (engine-core's own
+# InteractionState/DockZone use it), zero new dependency-graph cost.
+smallvec = "1"
 # Test-only: builds taffy::Style values directly for the layout_tree/
 # rect_window tests. engine-render's own lib.rs never names taffy --
 # it only ever sees the already-computed taffy::Layout via engine-core's

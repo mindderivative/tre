@@ -104,6 +104,41 @@ impl Tree {
         self.nodes[child].parent = Some(parent);
     }
 
+    /// The inverse of `add_child`: detaches `child` from `parent`
+    /// *without* deleting it (unlike `Tree::remove`, which deletes the
+    /// whole subtree) -- `child` stays alive, parentless, ready for
+    /// `add_child` elsewhere later. §14 step 15's own real need: docking
+    /// (§11.4) tabbed grouping switches which panel is currently
+    /// attached to a zone, without discarding the panels that aren't
+    /// showing right now. `taffy::TaffyTree::remove_child` exists for
+    /// exactly this -- verified directly in its own doc comment ("not
+    /// removed from the tree entirely, simply no longer attached to its
+    /// previous parent") before using it.
+    pub fn detach(&mut self, parent: NodeId, child: NodeId) {
+        let parent_taffy = *self
+            .taffy_nodes
+            .get(parent)
+            .expect("detach: parent NodeId not found in this Tree");
+        let child_taffy = *self
+            .taffy_nodes
+            .get(child)
+            .expect("detach: child NodeId not found in this Tree");
+        self.taffy
+            .remove_child(parent_taffy, child_taffy)
+            .expect("detach: taffy rejected removing this parent/child pair");
+
+        self.nodes[parent].children.retain(|&c| c != child);
+        self.nodes[child].parent = None;
+        // A detached node is no longer reachable from any root, the
+        // same "can't stay meaningfully focused" reasoning `remove`
+        // already applies -- if it's reattached later, its own
+        // eventual re-focus is whatever caller reattached it decides,
+        // not a stale pointer surviving from before.
+        if self.focused == Some(child) {
+            self.focused = None;
+        }
+    }
+
     pub fn get(&self, id: NodeId) -> Option<&Node> {
         self.nodes.get(id)
     }
@@ -293,6 +328,37 @@ impl Tree {
     /// correctly by this step's own test in the meantime.
     pub fn overlay_meta(&self, id: NodeId) -> Option<&OverlayMeta> {
         self.overlays.get(&id)
+    }
+
+    /// §14 step 15 (§11.4): "tabbed grouping... a plain index switch."
+    /// Ensures exactly `zone.panels[zone.active_tab]` is attached as a
+    /// child of `container`, detaching (via `Tree::detach` -- not
+    /// deleting) any other panel in `zone.panels` currently attached.
+    /// A detached panel isn't in anyone's `children` list, so
+    /// `build_tree_scene`'s existing recursive walk already excludes it
+    /// from paint with zero changes needed there, the same "reuse what
+    /// already exists, prove it doesn't need touching" pattern step 13's
+    /// overlay proof established for append-order.
+    pub fn apply_active_tab(&mut self, container: NodeId, zone: &crate::dock::DockZone) {
+        let active = zone.panels.get(zone.active_tab).copied();
+
+        for &panel in &zone.panels {
+            if Some(panel) != active
+                && self
+                    .get(container)
+                    .is_some_and(|c| c.children.contains(&panel))
+            {
+                self.detach(container, panel);
+            }
+        }
+
+        if let Some(active) = active
+            && self
+                .get(container)
+                .is_some_and(|c| !c.children.contains(&active))
+        {
+            self.add_child(container, active);
+        }
     }
 
     /// §14 step 15 (§11.5): moves a `NodeKind::Splitter` to `position`
@@ -877,6 +943,88 @@ mod tests {
 
         assert_eq!(tree.get(parent).unwrap().children, vec![child]);
         assert_eq!(tree.get(child).unwrap().parent, Some(parent));
+    }
+
+    #[test]
+    fn detach_removes_attachment_without_deleting_the_node() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let parent = tree.insert(k, s, p);
+        let (k, s, p) = leaf(10.0, 10.0);
+        let child = tree.insert(k, s, p);
+        tree.add_child(parent, child);
+
+        tree.detach(parent, child);
+
+        assert_eq!(
+            tree.get(parent).unwrap().children,
+            Vec::<NodeId>::new(),
+            "the parent must no longer list the detached child"
+        );
+        assert_eq!(
+            tree.get(child).unwrap().parent,
+            None,
+            "the detached child must no longer point back at its old parent"
+        );
+        assert!(
+            tree.get(child).is_some(),
+            "unlike remove(), the child node itself must still exist"
+        );
+
+        // A detached, reparented node must still work with every
+        // ordinary Tree operation -- proving it's a real, live node,
+        // not a half-removed one.
+        let (k, s, p) = leaf(10.0, 10.0);
+        let new_parent = tree.insert(k, s, p);
+        tree.add_child(new_parent, child);
+        assert_eq!(tree.get(child).unwrap().parent, Some(new_parent));
+    }
+
+    #[test]
+    fn apply_active_tab_attaches_exactly_one_panel_at_a_time() {
+        use crate::dock::DockZone;
+
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(100.0, 100.0);
+        let container = tree.insert(k, s, p);
+
+        let (k, s, p) = leaf(50.0, 50.0);
+        let tab_a = tree.insert(k, s, p);
+        let (k, s, p) = leaf(50.0, 50.0);
+        let tab_b = tree.insert(k, s, p);
+        let (k, s, p) = leaf(50.0, 50.0);
+        let tab_c = tree.insert(k, s, p);
+
+        let mut zone = DockZone::new(100.0);
+        zone.panels = smallvec::smallvec![tab_a, tab_b, tab_c];
+        zone.active_tab = 0;
+
+        tree.apply_active_tab(container, &zone);
+        assert_eq!(
+            tree.get(container).unwrap().children,
+            vec![tab_a],
+            "only the active tab should be attached"
+        );
+
+        zone.active_tab = 2;
+        tree.apply_active_tab(container, &zone);
+        assert_eq!(
+            tree.get(container).unwrap().children,
+            vec![tab_c],
+            "switching tabs must detach the old one and attach the new one"
+        );
+        assert!(
+            tree.get(tab_a).is_some(),
+            "a detached (not removed) tab must still exist, ready to be switched back to"
+        );
+
+        zone.active_tab = 0;
+        tree.apply_active_tab(container, &zone);
+        assert_eq!(
+            tree.get(container).unwrap().children,
+            vec![tab_a],
+            "switching back to a previously-detached tab must reattach the same node"
+        );
     }
 
     /// Three fixed-size children in a row, via `FlexDirection::Row` with
