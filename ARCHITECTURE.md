@@ -42,6 +42,8 @@ A running log of resolved architectural questions, kept in one canonical place r
 | Container transform | In scope for v1 (§7.6) — implemented as `engine-md3` choreographing existing `ActiveAnimation`s across two nodes; no navigation/router subsystem added | User's explicit choice, opposite of the recommended default (defer, no nav model exists); resolved by keeping the framework itself navigation-agnostic — it exposes the transition choreography, not "what screens exist" |
 | `animate()` dispatch | Single generic, string-keyed method — no per-property typed methods (§8) | Typed methods would push toward one Python class per `NodeKind` variant to cover component-specific properties, multiplying the FFI surface by MD3's component count — the same growth cost §7 already chose to pay once, not again |
 | Callback cyclic-GC support | Implemented now via one centralized `PyApp` (`#[pyclass(gc)]`) owning both callback maps, not deferred (§8) | This project's own target — long-running apps with dynamically created/destroyed widgets — is exactly the profile where an uncollected reference cycle accumulates during normal operation |
+| `Tree` ownership | `Rc<RefCell<Tree>>` + `#[pyclass(unsendable)]`, not `Arc<Mutex<>>` (§9) | Matches actual v1 scope (single main thread only); asyncio bridging is optional/future and its threading shape is undecided — revisit this first if that work is ever built |
+| Callback exception policy | Caught, logged via `tracing`, non-fatal — the render loop always survives a bad callback (§9) | Matches every mainstream main-thread-owned GUI toolkit (Tkinter, Qt, GTK); a broken handler shouldn't take down a shipped app for its end user |
 
 **Secondary-OS CI trigger (proposed, adjust as needed):** add minimal build + smoke-test CI for Windows and macOS no later than build-order step 6 (§13, wiring `accesskit`) — the first point where real platform-specific behavior (UIA vs. NSAccessibility vs. AT-SPI) becomes load-bearing, and a natural forcing function to confirm the deferred OSes still build before investing further past it.
 
@@ -335,10 +337,10 @@ The choreography, concretely:
 ## 8. Python/Rust FFI Boundary (`engine-py`)
 
 ```rust
-#[pyclass]
+#[pyclass(unsendable)]
 pub struct PyNode {
     handle: NodeId,
-    tree: Arc<Mutex<Tree>>,
+    tree: Rc<RefCell<Tree>>, // main-thread-only (§9) — not Arc<Mutex<>>; PyO3 panics if ever touched from another thread
 }
 
 #[pymethods]
@@ -352,21 +354,21 @@ impl PyNode {
 /// click handlers and animation on_complete handles (§5) alike — lives in
 /// `Tree`'s own maps, not scattered across individual `PyNode`s, so exactly
 /// one type needs to implement PyO3's cyclic-GC protocol.
-#[pyclass(gc)]
+#[pyclass(gc, unsendable)]
 pub struct PyApp {
-    tree: Arc<Mutex<Tree>>, // same Tree every PyNode shares; owns on_click/on_complete maps
+    tree: Rc<RefCell<Tree>>, // same Tree every PyNode shares; owns on_click/on_complete maps
 }
 
 #[pymethods]
 impl PyApp {
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
-        let tree = self.tree.lock().unwrap();
+        let tree = self.tree.borrow();
         for cb in tree.on_click.values() { visit.call(cb)?; }
         for cb in tree.on_complete.values() { visit.call(cb)?; }
         Ok(())
     }
     fn __clear__(&mut self) {
-        let mut tree = self.tree.lock().unwrap();
+        let mut tree = self.tree.borrow_mut();
         tree.on_click.clear();
         tree.on_complete.clear();
     }
@@ -419,10 +421,16 @@ impl From<EngineError> for PyErr {
 
 - **winit owns the main thread**, unconditionally. This is a hard platform requirement on macOS and the simplest correct choice everywhere else.
 - Python never drives the loop. It's reached only via `Python::with_gil` from inside a Rust-side callback invocation (pointer event → registered click handler; animation completion → registered callback).
-- `Python::allow_threads` wraps layout/paint/render so per-frame Rust work never serializes behind the GIL.
-- If the framework needs asyncio-native app code, bridge via `pyo3-async-runtimes` — keep this strictly separate from the render loop; asyncio drives app logic, winit/engine-core drives rendering, they meet only at the callback boundary.
+- `Python::allow_threads` wraps layout/paint/render so per-frame Rust work never serializes behind the GIL. **This is currently a no-op-cost safety habit, not a live requirement:** with `Tree` as `Rc<RefCell<>>` (below) there is, for now, no second thread ever contending for the GIL during a frame. Keep the wrapping anyway — it costs nothing today and is the one thing that won't need revisiting if a future GIL-holding thread (see the asyncio note below) is ever added.
+- If the framework needs asyncio-native app code, bridge via `pyo3-async-runtimes` — keep this strictly separate from the render loop; asyncio drives app logic, winit/engine-core drives rendering, they meet only at the callback boundary. **Deferred, not designed:** this is explicitly optional/future (§3) and its exact threading shape (an interleaved event loop cooperatively stepped from inside winit's own loop, vs. a genuinely separate executor thread) is undecided — see the `Tree` ownership decision below for why that undecided shape doesn't block anything today.
+
+**`Tree` is `Rc<RefCell<Tree>>`, not `Arc<Mutex<Tree>>` — single-threaded by construction, not by convention.** `PyNode` and `PyApp` (§8) are both `#[pyclass(unsendable)]`: PyO3 enforces main-thread-only access at runtime, panicking immediately if the object is ever touched from a second thread, rather than this being an unenforced assumption. This matches what v1 actually needs — asyncio bridging is optional/future and its threading shape isn't even decided yet (above) — and avoids paying a real, permanent per-frame lock-acquisition cost (§6's frame budget) plus a genuine two-lock-ordering deadlock hazard (GIL vs. a `Tree` mutex, acquired in opposite orders by the render thread and a hypothetical callback-invoking async thread) for a capability that isn't confirmed to ship. **If/when the asyncio bridge is actually built, revisit this decision first** — depending on the threading shape chosen then, `Tree` may need to migrate to `Arc<Mutex<>>` at that point, as a scoped, well-understood follow-up rather than something paid for speculatively now.
+
+**Unhandled exceptions from a callback are caught, logged, and non-fatal.** A `Python::with_gil` call to `on_click`/`on_complete` wraps the call so a raised Python exception is caught, its full traceback logged via `tracing::error!` (§3), and the render loop continues — the callback's effects are simply incomplete, not the whole application. This matches how Tkinter/Qt/GTK all treat a callback exception: one broken handler shouldn't take the whole window down for an end user of a shipped app, even though it means a bug can degrade a running app silently until someone reads the log.
 
 > **Review note (from the TRE archive):** worth stating explicitly rather than leaving implicit — since callbacks run on winit's main thread, a slow Python click handler (or `on_complete` handler) will visibly stall the whole render loop; there's no isolation between "app logic taking a while" and "frames drop." Most main-thread GUI toolkits (Tkinter, PyQt without explicit threading) accept exactly this constraint, so it's likely fine as a stated, deliberate limitation — just make it a stated one, so framework users know not to do slow work in a click handler, rather than an implicit trap they discover by hitting it.
+>
+> **Decision recorded:** accepted as stated above, with no mitigation beyond documentation — matches every mainstream main-thread-owned GUI toolkit's own accepted trade-off.
 
 ---
 
