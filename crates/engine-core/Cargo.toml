@@ -7,5 +7,10 @@ description = "Pure-Rust node tree, Animated<T> animation core, and the generic 
 [dependencies]
 accesskit = "0.25.0"
 peniko = "0.6.1"
+# §7.3's own struct sketch names `SmallVec<[RippleState; 4]>` for a
+# node's ripple collection. Already resolved at 1.16.1 transitively
+# (checked in Cargo.lock) -- this adds no new version to the dependency
+# graph, only a direct edge to what was already there.
+smallvec = "1"
 slotmap = "1.1.1"
 taffy = "0.14.0"

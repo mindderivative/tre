@@ -10,11 +10,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 |---|---|---|
 | M1 — TRE v1 (archived reference) | `██████████` 100% | ✅ Archived `archived-2026-09-14` |
 | M2 — v2 Architecture (`ARCHITECTURE.md`) | `██████████` 100% | ✅ 16 sections + ADR-001, locked |
-| M3 — v2 Implementation | `██████⬜⬜⬜⬜` 61% | 🚧 In progress — Phases 1-4 of 7 complete, Phase 5 in progress (step 8 of 4 done) |
+| M3 — v2 Implementation | `██████⬜⬜⬜⬜` 64% | 🚧 In progress — Phases 1-4 of 7 complete, Phase 5 in progress (steps 8-9 of 4 done) |
 
-**Just closed:** M3 Phase 5 step 8 (§14 step 8) — the MD3 shadow spike. `engine_render::build_shadow_scene`, a standalone blurred rounded rect via `vello_hybrid` 0.2.0's real `Scene::fill_blurred_rounded_rect(rect, radius, std_dev, invert)` (verified directly in its vendored source first, not assumed). The actual proof (`shadow_spike.rs`, headless render+readback): four points along one edge's falloff line show a real Gaussian blur — ~255 alpha deep inside, ~127 (half-coverage) exactly at the raw edge, a smaller-but-nonzero value 10px past it, ~0 past the 25px kernel spread — not a hard-edged jump a broken or stubbed blur would produce. Corrected an assumption recorded in memory after step 7 ("first step to touch `engine-md3` for real"): re-reading §4's crate-boundary rule and §15's own "confine all Vello calls to `engine-render`" mitigation text shows the spike has to live in `engine-render` (`engine-md3` depends only on `engine-core`, never `vello_hybrid`) — same crate step 1's original rect spike lived in, same reason. `engine-md3` stays an empty skeleton; MD3 elevation-level presets on top of this primitive are steps 9/11's job, not this one's. See `PLAN.md`/`LOG.md`.
+**Just closed:** M3 Phase 5 step 9 (§14 step 9) — ripple/state-layer via `Scene::push_layer` + animated alpha (§7.3). Real `engine_core::interaction::{InteractionState, RippleState}` matching §7.3's own struct sketch (`SmallVec<[RippleState; 4]>`, already resolved transitively at `1.16.1` — zero new dependency cost), `Node::interaction: Option<InteractionState>`, `Tree::interaction_mut`/`tick_all` wired together. Checked directly first that §7.3's dispatch story (hover from hit-testing, ripples from real press events) has nothing to attach to yet — no `InputEvent`/`AppHandler`/hit-testing exists anywhere in this codebase, only forward-reference comments — so this step proves the animation/rendering mechanisms standalone, same scope narrowing step 7 applied to keyboard dispatch. Also deliberately skipped building a completion-queue for ripple pruning despite §7.3's own text framing it that way: that queue doesn't exist as real code (still just an unused `on_complete` field from step 2), and nothing about ripple pruning needs to be Python-visible — pruning checks each `RippleState`'s own `Animated::tick` result directly via `SmallVec::retain` instead. `engine_render::build_ripple_scene` verified `vello_hybrid` 0.2.0's real `Scene::push_layer(clip_path, blend_mode, opacity, mask, filter)` directly in source, then proved both mechanisms it's built on with two headless pixel-readback tests: one isolates opacity blending (a sampled point shows a real blend, not fully one color or the other), the other isolates the clip (the *same* fixed point reads pure background under a small-radius ripple and real blended color under a large one, proving the clip genuinely scales with radius rather than painting the whole layer). See `PLAN.md`/`LOG.md`.
 
-**Up next:** M3 Phase 5 step 9 (§14 step 9) — ripple/state-layer via `Scene::push_layer` + animated alpha (§7.3): the first real `Node`-side `InteractionState`/`RippleState` implementation (currently just sketched in ARCHITECTURE.md, not yet code).
+**Up next:** M3 Phase 5 step 10 (§14 step 10) — the shape morph module (§7.4), the one MD3 component with no library to lean on: "equalize point count, then lerp" plus the correspondence/alignment search the architecture's own review note names as the harder, easy-to-skip half.
 
 **Known gaps:**
 - ~~§14 didn't sequence `engine-spec`/YAML-view work.~~ **Fixed.**
@@ -78,7 +78,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ## Milestone 3 — v2 Implementation
 
-**Status: 🚧 In progress.** Phases 1–4 complete, Phase 5 in progress (step 8 of 4 done); this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
+**Status: 🚧 In progress.** Phases 1–4 complete, Phase 5 in progress (steps 8-9 of 4 done); this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
 
 ### Phase 1 — Workspace Scaffold ✅
 - Step: Cargo workspace + six crate skeletons (`engine-core`, `engine-md3`, `engine-render`, `engine-platform`, `engine-spec`, `engine-py`) per §12 — ✅
@@ -99,7 +99,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ### Phase 5 — MD3 Foundational Spikes (§14 steps 8–11) 🚧
 - Step 8: Shadow spike (`fill_blurred_rounded_rect`) — ✅ (verified `vello_hybrid` 0.2.0's real API directly in source; `build_shadow_scene` + a headless four-point falloff test proving a real Gaussian blur, not a hard edge — see `PLAN.md`/`LOG.md`)
-- Step 9: Ripple/state-layer — ⬜
+- Step 9: Ripple/state-layer — ✅ (`InteractionState`/`RippleState` in `engine-core`, real `Tree::interaction_mut`/`tick_all` wiring; `engine_render::build_ripple_scene` proves `push_layer`'s clip + opacity both genuinely work via two headless pixel-readback tests — see `PLAN.md`/`LOG.md`)
 - Step 10: Shape morph module — ⬜
 - Step 11: `material-colors` dynamic theme — ⬜
 

@@ -3,9 +3,11 @@
 //! Deliberately narrower than ARCHITECTURE.md §5's full struct shapes, for
 //! this build-order step (§14 step 3, "layout of multiple static nodes"):
 //!
-//! - `Node` omits `access: AccessNodeData` (AccessKit wiring is step 7)
-//!   and `interaction: Option<InteractionState>` (ripple/state-layer is
-//!   §7.3, step 9) -- neither has anything to feed yet.
+//! - `Node` originally omitted `access: AccessNodeData` (AccessKit
+//!   wiring, step 7) and `interaction: Option<InteractionState>`
+//!   (ripple/state-layer, §7.3, step 9); both fields have since landed
+//!   at their own steps, per Design Principle 5's "add it when its own
+//!   step needs it" discipline.
 //! - `PaintProperties` omits `transform: Animated<kurbo::Affine>` (needs
 //!   a non-trivial `Interpolate` impl -- matrix decomposition -- no step
 //!   before its own real use needs) and `shape: Animated<ShapeKey>` (the
@@ -129,9 +131,11 @@ pub struct Node {
     pub paint: PaintProperties,
     /// §14 step 7: `AccessNodeData::default()` (`Role::Unknown`, no
     /// label/actions) unless a caller opts a node in via
-    /// `Tree::set_access`. `interaction: Option<InteractionState>`
-    /// (§7.3, ripple/state-layer) is still omitted -- that step hasn't
-    /// landed yet, same "add the field when its own step needs it"
-    /// discipline already applied to this struct twice.
+    /// `Tree::set_access`.
     pub access: crate::access::AccessNodeData,
+    /// §14 step 9 (§7.3): `None` until a caller opts a node into
+    /// pointer interaction via `Tree::interaction_mut` -- most nodes
+    /// (plain rects, text, containers) never touch this and pay nothing
+    /// for it.
+    pub interaction: Option<crate::interaction::InteractionState>,
 }

@@ -17,6 +17,7 @@ use slotmap::{Key, SecondaryMap, SlotMap};
 use taffy::prelude::{AvailableSpace, Layout, Size, Style, TaffyTree};
 
 use crate::access::AccessNodeData;
+use crate::interaction::InteractionState;
 use crate::node::{Node, NodeId, NodeKind, PaintProperties};
 
 pub struct Tree {
@@ -65,6 +66,7 @@ impl Tree {
             layout_style,
             paint,
             access: AccessNodeData::default(),
+            interaction: None,
         });
         self.taffy_nodes.insert(id, taffy_node);
         id
@@ -129,14 +131,20 @@ impl Tree {
     }
 
     /// The central tick's per-`Tree` entry point (§5): ticks every
-    /// node's `PaintProperties` and returns `true` if any is still
-    /// mid-animation. A naive whole-tree walk, not the "active set
-    /// only" scoped version §5 describes -- see `PaintProperties::tick`
-    /// for why that scoping is deliberately deferred past this step.
+    /// node's `PaintProperties` and (§14 step 9) its `InteractionState`
+    /// if it has one, returning `true` if any is still mid-animation. A
+    /// naive whole-tree walk, not the "active set only" scoped version
+    /// §5 describes -- see `PaintProperties::tick` for why that scoping
+    /// is deliberately deferred past this step.
     pub fn tick_all(&mut self, now: Instant) -> bool {
         let mut any_active = false;
         for node in self.nodes.values_mut() {
             if node.paint.tick(now) {
+                any_active = true;
+            }
+            if let Some(interaction) = &mut node.interaction
+                && interaction.tick(now)
+            {
                 any_active = true;
             }
         }
@@ -151,6 +159,15 @@ impl Tree {
         if let Some(node) = self.nodes.get_mut(id) {
             node.access = access;
         }
+    }
+
+    /// Opts one node into interaction state (ripple/hover/focus, §7.3),
+    /// lazily creating it on first use -- mirrors `set_access`'s "every
+    /// node defaults to nothing until a caller opts in" shape. Returns
+    /// `None` only if `id` doesn't exist in this `Tree`.
+    pub fn interaction_mut(&mut self, id: NodeId) -> Option<&mut InteractionState> {
+        let node = self.nodes.get_mut(id)?;
+        Some(node.interaction.get_or_insert_with(InteractionState::new))
     }
 
     pub fn focused(&self) -> Option<NodeId> {
@@ -351,6 +368,57 @@ mod tests {
         let still_active = tree.tick_all(start + Duration::from_secs(2));
         assert!(!still_active);
         assert_eq!(tree.get(id).unwrap().paint.opacity.current, 0.0);
+    }
+
+    /// Proves `interaction_mut`/`tick_all` actually compose (§14 step
+    /// 9) -- not just that `InteractionState::tick` works in isolation
+    /// (already covered in `interaction.rs`'s own tests), but that
+    /// `Tree::tick_all` genuinely reaches a node's interaction state
+    /// during its whole-tree walk, the same claim
+    /// `tick_all_reports_active_and_advances_every_node` proves for
+    /// `PaintProperties`.
+    #[test]
+    fn tick_all_also_advances_a_nodes_interaction_state() {
+        use std::time::Duration;
+
+        let mut tree = Tree::new();
+        let (kind, style, paint) = leaf(10.0, 10.0);
+        let id = tree.insert(kind, style, paint);
+        let start = Instant::now();
+
+        tree.interaction_mut(id).unwrap().spawn_ripple(
+            peniko::kurbo::Point::new(5.0, 5.0),
+            50.0,
+            1.0,
+            Duration::from_millis(200),
+            start,
+        );
+
+        let still_active = tree.tick_all(start + Duration::from_millis(100));
+        assert!(
+            still_active,
+            "a mid-flight ripple should keep tick_all reporting active"
+        );
+        let radius = tree.get(id).unwrap().interaction.as_ref().unwrap().ripples[0]
+            .radius
+            .current;
+        assert!(
+            (radius - 25.0).abs() < 0.01,
+            "ripple radius should be ~halfway to 50.0, got {radius}"
+        );
+
+        let still_active = tree.tick_all(start + Duration::from_secs(1));
+        assert!(!still_active);
+        assert!(
+            tree.get(id)
+                .unwrap()
+                .interaction
+                .as_ref()
+                .unwrap()
+                .ripples
+                .is_empty(),
+            "the finished ripple should have been pruned by tick_all"
+        );
     }
 
     #[test]

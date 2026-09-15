@@ -25,7 +25,7 @@ mod text;
 
 use engine_core::{NodeId, NodeKind, Tree};
 use peniko::Color;
-use peniko::kurbo::{Affine, RoundedRect, Shape};
+use peniko::kurbo::{Affine, Circle, Point, Rect, RoundedRect, Shape};
 use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene, TextureBindings};
 
 pub use text::{TextPlacement, TextRenderer};
@@ -105,6 +105,44 @@ pub fn build_shadow_scene(
     scene.set_transform(Affine::IDENTITY);
     scene.set_paint(color);
     scene.fill_blurred_rounded_rect(&rect, corner_radius, std_dev, false);
+    scene
+}
+
+/// §14 build-order step 9: standalone spike proving `vello_hybrid`
+/// 0.2.0's real `Scene::push_layer(clip_path, blend_mode, opacity,
+/// mask, filter)` genuinely does both things §7.3's ripple model needs
+/// from it -- clips a fill to an arbitrary path (here, a growing
+/// circle) *and* applies an opacity multiplier to everything painted
+/// inside the layer -- not just that the call compiles. One ripple over
+/// one solid "button" background; no `Tree`, no `InteractionState`
+/// wiring, no MD3 ripple-color token (see this step's own `LOG.md` for
+/// why: real dispatch and a real color scheme don't exist yet).
+pub fn build_ripple_scene(
+    width: u16,
+    height: u16,
+    base_color: Color,
+    ripple_color: Color,
+    origin: Point,
+    radius: f64,
+    opacity: f64,
+) -> Scene {
+    let mut scene = Scene::new(width, height);
+    let bounds = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
+    scene.set_transform(Affine::IDENTITY);
+
+    // The "button" background the ripple plays over.
+    scene.set_paint(base_color);
+    scene.fill_path(&bounds.to_path(0.1));
+
+    // The ripple itself: push_layer's `clip_path` is what actually
+    // confines the fill below to the circle -- the fill call itself
+    // still covers the whole `bounds` rect, same as the background did.
+    let circle = Circle::new(origin, radius).to_path(0.1);
+    scene.push_layer(Some(&circle), None, Some(opacity as f32), None, None);
+    scene.set_paint(ripple_color);
+    scene.fill_path(&bounds.to_path(0.1));
+    scene.pop_layer();
+
     scene
 }
 
