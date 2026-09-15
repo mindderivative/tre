@@ -56,6 +56,10 @@ A running log of resolved architectural questions, kept in one canonical place r
 | Reconciliation identity | A view file's `WidgetSpec.id` (author-assigned, stable) is a second identifier alongside `NodeId`, used only for hot-reload diffing (§16.1, §16.4) | `NodeId`'s generational index (§5) is a runtime handle with no meaning across a reload — conflating the two would break reconciliation the first time a slot got recycled |
 | ViewModel/View wiring | The `ViewModel` holds the `View` reference and drives wiring (`View._attach(viewmodel)`); the `View` itself never knows who handles its events or supplies its bound values (§16.2) | User's explicit design: the View stays passive and reusable: handlers/bindings are just names until a ViewModel resolves them, matching the dependency-inversion shape already used for `AppHandler` (§4) |
 | Reactive binding scope | A bound expression re-evaluates only on the `Signal`s it actually read last time (dependency tracking via a recording evaluation), not on every `Signal` the `ViewModel` exposes (§16.2) | Matches pyCopper's own proven "invalidates exactly the affected subtree" reactivity model rather than a coarser whole-view refresh |
+| Attach validation | `_attach()` resolves and smoke-checks every handler/binding eagerly, failing at startup on a mismatch — never discovered lazily on first use (§16.2) | Matches `WidgetSpec`'s `deny_unknown_fields` posture and LESSONS_LEARNED §5's point about unenforced claims becoming fiction |
+| Attach scope & cardinality | `_attach` targets any node (not only a `View`'s root), and one `ViewModel` instance may attach to nodes across multiple `View`s (§16.2) | Needed for §11.2's content-swap and §11.4's per-panel docking to each own a small `ViewModel`; free for the multi-view case since a `Signal`'s subscriber list was never view-scoped |
+| View composition | An `include:` directive splices one view file into another at load time, under the same validation/confinement/cycle-detection guards as any other `WidgetSpec` (§16.6) | User's explicit ask, matching pyCopper's own proven `spec/include.py` pattern — keeps real app view files small |
+| Two-way bindings | Sugar over an existing one-way binding plus an auto-generated handler on the widget's natural edit event; explicit YAML opt-in, plain `Signal` references only (§16.7) | Reuses both existing mechanisms rather than adding a third; reversibility rules out binding a computed expression two-way |
 
 **Secondary-OS CI trigger (proposed, adjust as needed):** add minimal build + smoke-test CI for Windows and macOS no later than build-order step 6 (§14, wiring `accesskit`) — the first point where real platform-specific behavior (UIA vs. NSAccessibility vs. AT-SPI) becomes load-bearing, and a natural forcing function to confirm the deferred OSes still build before investing further past it.
 
@@ -794,6 +798,8 @@ pub struct WidgetSpec {
 
 `deny_unknown_fields` makes a typo'd YAML key a load-time error with a line number, not a silently-ignored style — the same reasoning behind `EngineError`'s design (§8): fail loudly at the boundary, not silently past it. `id` is deliberately a second identifier alongside `NodeId` — `NodeId`'s generational index (§5) is a *runtime* handle with no meaning across a reload, while `id` is what reconciliation (§16.4) matches against.
 
+A `children` entry may be an `include:` directive instead of an inline widget — see §16.6 for composition.
+
 ### 16.2 Binding expressions, and the ViewModel/View relationship
 
 `{{ clicks }}`-style expressions parse against a small, whitelisted grammar (attribute access, indexing, comparison, arithmetic, boolean logic, zero-arg method calls like `clicks.get()`) — deliberately not a path to arbitrary code execution, the same posture as `engine-py`'s existing dispatch discipline (§8's `EngineError` on an unknown property, not a panic or a silent coercion). `engine-spec` can't evaluate an expression against a Python `ViewModel` object itself — it has no `pyo3` dependency — so it defines a generic `BindingResolver` trait; `engine-py` implements it (it alone has GIL access). This is the same dependency-inversion shape already used twice in this document (`AppHandler`, §4; the queue-drain completion mechanism, §5) — a pattern repeating for the same reason each time: a lower crate needs a capability only `engine-py` can provide, without depending on `engine-py` itself.
@@ -809,7 +815,7 @@ class ViewModel:
 class CounterViewModel(ViewModel):
     clicks = Signal(0)
 
-    def bump(self, event) -> None:
+    def bump(self, event: Event) -> None:
         self.clicks.update(lambda n: n + 1)
 
 view = View("counter.yaml")
@@ -821,6 +827,12 @@ app.run()
 
 - **Handlers, resolved by name.** For a node whose `WidgetSpec.handlers` names `"on_click": "bump"`, `_attach` does `getattr(viewmodel, "bump")` and registers it through the existing per-event-kind machinery (`set_on_click`, §8, generalizing to whatever named events a `NodeKind` exposes) — the app author writes a same-named method once; nothing calls `set_on_click` by hand.
 - **Bindings, resolved and then tracked.** For a node whose `WidgetSpec.bindings` names `"text": "{{ clicks.get() }}"`, `_attach` evaluates the expression against `viewmodel` through `BindingResolver` *once* to get the initial value (applied via `animate(property, value, duration_ms=0)`, reusing §8's existing FFI call), and records which `Signal`s the evaluation actually read — a plain dependency-tracking record, the same technique reactive UI runtimes generally use (evaluate once inside a recording scope, subscribe to whatever was read, no explicit dependency list for the app author to maintain). Writing to any of those `Signal`s later re-runs the same expression and re-applies the result, automatically. This is what "the view can also be updated from a function" means concretely — the bound expression can be a `Signal` read, a computed method call, or any combination the grammar allows, and re-evaluates on exactly the state it actually touched, not on every `Signal` in the `ViewModel`.
+
+**`Event` is a small, typed struct, not a bare dict.** `source: NodeId`, `kind: EventKind` (an enum: `Click`, `Change`, `Focus`, ...), and `data: EventData` (kind-specific — a pointer position for `Click`, the new value for `Change`) — the same "no ad hoc `PyObject` shapes crossing the boundary" discipline as everything else in §8.
+
+**Validated eagerly, at `_attach()`, not discovered on first use.** Every `handlers` name must resolve to a real, callable attribute on the `viewmodel`, and every `bindings` expression must evaluate successfully against it, *before* `_attach()` returns — matching `WidgetSpec`'s own `deny_unknown_fields` posture (§16.1) and LESSONS_LEARNED.md §5's point about unenforced claims. A typo'd handler name (`"bmup"` instead of `"bump"`) fails at startup with a clear error naming the node and the missing attribute, not silently the first time some user clicks that one button in production.
+
+**`_attach` targets a node, not necessarily a whole `View`, and a `ViewModel` may attach more than once.** `some_node._attach(viewmodel)` wires only that node's subtree — the natural hook for §11.2's content-swap (a new page brings its own `ViewModel`) and §11.4's docking (each panel owns its own) without forcing one sprawling `ViewModel` per window. A single `ViewModel` *instance* may also be attached to nodes in entirely separate `View`s (a shared "app settings" object visible in both a main window and a preferences dialog, §11.1) — this needs no new mechanism, since a `Signal`'s subscriber list was never scoped to one `View` in the first place; it already fans out to however many bindings, anywhere, read it.
 
 This supersedes needing to call §8's `bind()` once per property by hand for anything declared in a view file — `bind()` still exists as the lower-level primitive for a pure-imperative app with no YAML view at all, and it's exactly what `_attach` uses internally per binding, just driven automatically from the file's own declarations instead of one manual call per property.
 
@@ -843,6 +855,39 @@ Editing a view file while the app runs re-parses it, diffs the new `WidgetSpec` 
 ### 16.5 What stays imperative
 
 Not everything belongs in a view file. Virtualized list rows (§11.7) and dynamically-created dock panels (§11.4) are inherently runtime-driven — their count and content aren't known at load time — and stay exactly what they are today: ordinary `PyNode.add_child()`/`animate()` calls. YAML views describe an app's static shape; the imperative API remains how an app describes what it can't know in advance.
+
+### 16.6 Composition — including one view file inside another
+
+```yaml
+# parts/confirm_dialog.yaml
+id: confirm
+kind: Dialog
+style: {corner_radius: 28}
+children: [...]
+```
+
+```yaml
+# main.yaml
+children:
+  - include: parts/confirm_dialog.yaml
+```
+
+An `include:` entry is expanded during loading, before validation — the included file's `WidgetSpec` tree splices in at that point as ordinary children, indistinguishable from inline ones once loaded; reconciliation (§16.4) and `_attach` (§16.2, scoped to that subtree) both see a normal tree, with no separate "included" concept persisting at runtime. This is what keeps a real app's view files small: a dock panel, a dialog, a repeated card layout each get their own file, included wherever they're used, each optionally with its own `ViewModel` attached to its own subtree.
+
+Included files are exactly as untrusted as the view that reaches them, so the same guards apply as everywhere else user-supplied structure enters the engine (§8's validation discipline, generalized): confinement to the view directory (no `../` escaping it), cycle detection (a file cannot transitively include itself), a depth limit, and parsing through the same `deny_unknown_fields` model as every other `WidgetSpec` — an included fragment is not a lower-trust shortcut around any of §16.1's validation.
+
+### 16.7 Two-way bindings
+
+Built as sugar over the two mechanisms already designed, not a third one. A binding is two-way only when explicitly marked, and only for a plain `Signal` reference — never a computed expression, since there's no way to reverse `{{ f"{first} {last}" }}` back into two `Signal`s:
+
+```yaml
+- kind: TextField
+  bindings: {text: "{{ username }}", two_way: true}
+```
+
+`_attach` (§16.2) wires the usual one-way direction (writing `username` updates the field's displayed text) *and* registers the `TextField`'s own natural "user edited this" event — the same `Change` `EventKind` a plain `handlers: {on_change: ...}` would receive — to write the new value back into the `Signal`, automatically. No new dispatch path: a two-way binding is exactly a one-way binding plus an auto-generated handler, for the small set of `NodeKind`s that have a natural edit event (`TextField`'s text, `Slider`'s value, `Checkbox`'s checked state — not, say, a `Rect`'s color).
+
+**This composes for free with one `ViewModel` attached to many `View`s (§16.2):** a `Signal`'s subscriber list already fans out across however many bindings reference it, anywhere, so a two-way-bound field in a settings dialog and the same field's read-only display in a profile header both update correctly off one write — the cardinality was never the hard part. The genuine constraints are the ones above: reversibility (plain reference only) and explicit opt-in (most bindings are one-way on purpose, and should stay that way by default).
 
 ---
 
