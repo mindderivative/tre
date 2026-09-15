@@ -40,6 +40,8 @@ A running log of resolved architectural questions, kept in one canonical place r
 | Dynamic color source | Third-party MCU-port crate, gated on passing Material Color Utilities' own published reference test vectors before pinning (§7.1) | HCT/tonal-palette/contrast math is a large, easy-to-get-subtly-wrong subsystem — reimplementing it is bigger and riskier than it looks, unlike shape morphing's one missing step |
 | Live theme switching | Supported at runtime via `winit`'s `ThemeChanged` event, forwarded through the existing `AppHandler`/`InputEvent` inversion (§4, §7.1) | A rare, discrete, whole-tree-repaint event — matches modern desktop UX expectations at negligible design cost given the event-dispatch path already exists |
 | Container transform | In scope for v1 (§7.6) — implemented as `engine-md3` choreographing existing `ActiveAnimation`s across two nodes; no navigation/router subsystem added | User's explicit choice, opposite of the recommended default (defer, no nav model exists); resolved by keeping the framework itself navigation-agnostic — it exposes the transition choreography, not "what screens exist" |
+| `animate()` dispatch | Single generic, string-keyed method — no per-property typed methods (§8) | Typed methods would push toward one Python class per `NodeKind` variant to cover component-specific properties, multiplying the FFI surface by MD3's component count — the same growth cost §7 already chose to pay once, not again |
+| Callback cyclic-GC support | Implemented now via one centralized `PyApp` (`#[pyclass(gc)]`) owning both callback maps, not deferred (§8) | This project's own target — long-running apps with dynamically created/destroyed widgets — is exactly the profile where an uncollected reference cycle accumulates during normal operation |
 
 **Secondary-OS CI trigger (proposed, adjust as needed):** add minimal build + smoke-test CI for Windows and macOS no later than build-order step 6 (§13, wiring `accesskit`) — the first point where real platform-specific behavior (UIA vs. NSAccessibility vs. AT-SPI) becomes load-bearing, and a natural forcing function to confirm the deferred OSes still build before investing further past it.
 
@@ -342,8 +344,32 @@ pub struct PyNode {
 #[pymethods]
 impl PyNode {
     fn animate(&self, py: Python, property: &str, to: PyObject, duration_ms: u64, curve: &str) -> PyResult<()> { /* registers an ActiveAnimation, returns immediately */ }
-    fn add_child(&self, child: &PyNode) -> PyResult<()> { /* tree mutation */ }
-    fn set_on_click(&self, callback: PyObject) -> PyResult<()> { /* stored, invoked via Python::with_gil on the matching winit pointer event */ }
+    fn add_child(&self, child: &PyNode) -> PyResult<()> { /* tree mutation; rejects a child that is an ancestor of self with a PyValueError, not a silent cycle */ }
+    fn set_on_click(&self, callback: PyObject) -> PyResult<()> { /* stored in the shared Tree's callback map (below), invoked via Python::with_gil on the matching winit pointer event */ }
+}
+
+/// The one `#[pyclass(gc)]` in this crate. Every stored Python callback —
+/// click handlers and animation on_complete handles (§5) alike — lives in
+/// `Tree`'s own maps, not scattered across individual `PyNode`s, so exactly
+/// one type needs to implement PyO3's cyclic-GC protocol.
+#[pyclass(gc)]
+pub struct PyApp {
+    tree: Arc<Mutex<Tree>>, // same Tree every PyNode shares; owns on_click/on_complete maps
+}
+
+#[pymethods]
+impl PyApp {
+    fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        let tree = self.tree.lock().unwrap();
+        for cb in tree.on_click.values() { visit.call(cb)?; }
+        for cb in tree.on_complete.values() { visit.call(cb)?; }
+        Ok(())
+    }
+    fn __clear__(&mut self) {
+        let mut tree = self.tree.lock().unwrap();
+        tree.on_click.clear();
+        tree.on_complete.clear();
+    }
 }
 ```
 
@@ -353,12 +379,39 @@ Design rules for this crate specifically:
 - `animate()` registers work and returns; it never blocks waiting for the animation to finish.
 - Callback invocation (`on_click`, animation `on_complete`) is the *only* place `Python::with_gil` is taken from inside the render/event loop.
 - No Vello/kurbo/peniko/taffy/accesskit type crosses this boundary — translate to plain Python-friendly types (floats, strings, tuples, small dataclasses) at the edge.
+- Errors funnel through one `EngineError` (via `thiserror`, §3) with a single `From<EngineError> for PyErr`, not ad hoc `PyErr::new_err` scattered per call site:
+
+```rust
+#[derive(thiserror::Error, Debug)]
+pub enum EngineError {
+    #[error("{kind} has no property '{property}'")]
+    UnknownProperty { kind: &'static str, property: String },
+    #[error("property '{property}' expects {expected}, got {actual}")]
+    TypeMismatch { property: String, expected: &'static str, actual: String },
+    #[error("cannot add a node as a child of its own descendant")]
+    CycleRejected,
+}
+
+impl From<EngineError> for PyErr {
+    fn from(e: EngineError) -> PyErr {
+        match e {
+            EngineError::UnknownProperty { .. } => PyValueError::new_err(e.to_string()),
+            EngineError::TypeMismatch { .. } => PyTypeError::new_err(e.to_string()),
+            EngineError::CycleRejected => PyValueError::new_err(e.to_string()),
+        }
+    }
+}
+```
 
 > **Review note (from the TRE archive):** `animate(property: &str, to: PyObject, ...)` needs an explicit type-dispatch design, not just a signature. Something has to map `property`'s string value to the correct `Animated<T>` field, downcast `to` into that field's concrete type, and — critically — surface a clear `PyTypeError`/`PyValueError` (e.g. "opacity expects a float, got a str") when a caller gets it wrong, rather than panicking across the FFI boundary or silently coercing. This is exactly the class of "caller-supplied input reaching native code" surface TRE's own security review process treated seriously (see the archive's finding on custom-shader input hardening) — worth designing the validation and error path deliberately here too.
 >
 > **Sharpened by the §1/§5 node-model decision:** the dispatch is now concretely two-level — try `property` against `PaintProperties`' own field names first (universal, always present), then against the node's `NodeKind` payload's field names if it has one (e.g. `"thumb_position"` only resolves on a `Slider`). A property name that matches neither should name the node's actual kind in the error ("Checkbox has no property 'thumb_position'"), not just say "unknown property."
 >
-> **Review note (from the TRE archive):** storing a long-lived `PyObject` callback in a Rust struct (`set_on_click`) is a risk class TRE never had to deal with — it never held Python callbacks across frames the way a click-handler system fundamentally requires. If a stored closure ever captures the widget it's attached to (a very natural pattern — "on_click: lambda: self.set_state(...)"), that's a reference cycle CPython's own GC can't see through unless the `#[pyclass]` participates in Python's cyclic GC via `__traverse__`/`__clear__` (PyO3's `#[pyclass(gc)]` support). Decide whether nodes holding callbacks need this now, rather than diagnosing a slow memory leak later.
+> **Decision recorded:** `animate()` stays the single generic, string-keyed entry point — no per-property typed methods. Adding one typed method (or one wrapper Python class) per animatable property would, for `NodeKind`-specific properties, effectively require a Python class per MD3 component to be fully realized — multiplying the FFI surface by the component count, exactly the growth cost §7's closed-`NodeKind` decision already chose to accept once rather than pay again here. `EngineError` above is the concrete error path this note asked for.
+>
+> **Review note (from the TRE archive):** storing a long-lived `PyObject` callback in a Rust struct (`set_on_click`) is a risk class TRE never had to deal with — it never held Python callbacks across frames the way a click-handler system fundamentally requires. If a stored closure ever captures the widget it's attached to (a very natural pattern — "on_click: lambda: self.set_state(...)"), that's a reference cycle CPython's own GC can't see through unless the `#[pyclass]` participates in Python's cyclic GC via `__traverse__`/`__clear__` (PyO3's `#[pyclass(gc)]` support).
+>
+> **Decision recorded:** implemented now, not deferred — `PyApp` above. This project's own target (long-running desktop apps with dynamically created/destroyed widgets — dialogs, list items) is exactly the profile where an uncollected cycle accumulates during normal operation, not just at process exit, unlike a short-lived script where it wouldn't matter.
 
 ---
 
