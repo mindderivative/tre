@@ -1,119 +1,111 @@
-# Log: M3 Phase 2, Step 3 — Taffy Layout + Frame-Time CI Benchmark (§14 step 3)
+# Log: M3 Phase 2, Step 4 — `parley` Typography Spike (§14 step 4)
 
-Corresponds to `PLAN.md` / `BUILD_TRACKER.md` M3 Phase 2, step 3 of 4.
+Corresponds to `PLAN.md` / `BUILD_TRACKER.md` M3 Phase 2, step 4 of 4 (closes Phase 2).
 
 ## What happened
 
-**Decided `slotmap` for `NodeId` rather than hand-rolling a generational
-struct:** while adding `taffy` to `engine-core`, its build output showed
-it pulls in `slotmap 1.1.1` transitively. `slotmap::new_key_type!`
-generates exactly the `{ index, generation }` shape §5's own `NodeId`
-doc comment describes, with checked `get`/`remove` built in — adopting it
-costs zero new entries in the dependency graph (confirmed via
-`cargo add slotmap --dry-run` resolving to the identical 1.1.1) and no
-correctness gap versus hand-rolling the same thing.
+**Traced the real shaping-to-drawing path before writing anything,** since
+`vello_hybrid`'s own "text" feature depends on `glifo` (a low-level
+glyph-atlas/rasterizer), not `parley` -- confirmed directly in
+`vello_hybrid`'s own `Cargo.toml` and its internal glyph test
+(`scene.rs`). The real pipeline is: `parley` shapes text into a `Layout`
+of positioned glyph runs; for each run, `glifo::Glyph { id, x, y }` values
+plus a `peniko::FontData` and font size get handed to
+`Scene::glyph_run(&mut resources, &font).font_size(..).fill_glyphs(..)`.
+Added `parley` (0.11.1) and `glifo` (0.3.0, already resolved at this
+exact version transitively via `vello_hybrid` -- confirmed zero new
+dependency-graph entries) to `engine-render`. `Cargo.lock`'s kurbo/peniko
+counts stayed at 1 after adding `parley` -- the Linebender-family
+version-coupling risk (§3) hasn't bitten here, unlike wgpu in step 1.
 
-**Implemented §5's data model in `engine-core/src/node.rs`, deliberately
-narrower than the full spec** (documented inline, same discipline as
-`MotionCurve::Linear`-only in step 2): `Node` omits `access`/
-`interaction` (AccessKit is step 7, ripple is §7.3/step 9); `PaintProperties`
-omits `transform`/`shape` (both need `Interpolate` impls nothing needs
-yet); `NodeKind` carries only `Rect`/`Container`.
+**Vendored three fonts** (`crates/engine-render/assets/fonts/`: Roboto
+Regular/Medium, Noto Sans Arabic Regular) rather than relying on system
+font discovery, so the typography spike is hermetic -- the same
+headless-CI-safe discipline this codebase already applies to GPU/display
+absence. `TextRenderer` registers them directly via `fontique::Collection`
+with `system_fonts: false`.
 
-**`Tree` (`src/tree.rs`) wraps two parallel structures — a
-`SlotMap<NodeId, Node>` and a `taffy::TaffyTree<()>`, linked by a
-`SecondaryMap<NodeId, taffy::NodeId>`** — rather than implementing
-taffy's custom-tree traits to compute directly against this crate's own
-arena. Simpler, and provably correct by construction: `insert` is the
-only place either structure is created, so they can't diverge. Four unit
-tests, including a deterministic 3-child row layout (fixed 100px
-children, no gap) asserting exact x-positions (0, 100, 200) — a
-hand-computable answer, not just "did it not panic."
+**`engine-core::node`: added `NodeKind::Text(TextState)`** -- `content`,
+`font_family`, `font_weight`, `font_size`, deliberately no `Animated`
+fields (documented: no MD3 component in scope yet animates a text
+property). `engine-render::text::TextRenderer` shapes via `parley`'s
+`RangedBuilder`, breaks lines to the node's taffy box width, and draws
+every `GlyphRun` through `glifo`. `build_tree_scene` now threads
+`&mut Resources`/`&mut TextRenderer` through its recursive paint walk;
+`FrameRenderer::resources_mut()` was added because glyph atlasing happens
+during scene *construction* (inside `Scene::glyph_run`), before
+`FrameRenderer::render` is ever called -- both need the same `Resources`
+instance, which previously only `render()` could see.
 
-**`engine-render::build_tree_scene` composes layout and paint for the
-first time:** walks a `Tree` from a root, accumulating each ancestor's
-`taffy::Layout::location` (parent-relative) into an absolute position,
-painting every `NodeKind::Rect`. Proved with a headless integration test
-(`tests/layout_tree.rs`): two same-size children side by side in a row,
-distinct colors, sampling one pixel inside each child's own laid-out box
-— if layout were ignored, the second color would simply overwrite the
-first everywhere. Both pixels landed correctly.
+**Two real, non-obvious findings, both fixed, not worked around:**
 
-**Added the frame-time CI benchmark §6 has promised since M2**
-(`tests/frame_budget.rs`): 300 nodes in a taffy flex-wrap grid, every
-node with a genuinely active color animation, timing the real per-frame
-sequence (`tick_all` → `compute_layout` → `build_tree_scene` → encode →
-submit) across 30 iterations after 3 warm-up iterations (vello_hybrid
-compiles GPU pipelines lazily on first use — a real one-time cost that
-would otherwise dominate iteration 0). Median in release: **0.58ms** —
-comfortably inside both the 16.6ms (60Hz) enforced target and the 8.3ms
-(120Hz) stretch goal.
+1. *Font weight is not selectable by family name alone.* First attempt
+   used `font_family: "Roboto Medium"` for the Headline role, matching
+   how `fc-list` names it -- and it drew nothing. Checked Roboto-Medium's
+   actual name table directly (`fontTools`): its *typographic* family
+   (OpenType name ID 16) is `"Roboto"`, same as the Regular face; only
+   the legacy name (ID 1) says `"Roboto Medium"`. `fontique` (correctly)
+   prefers the typographic name, so both files register under one family
+   `"Roboto"` with two weight variants -- weight has to be selected via
+   `StyleProperty::FontWeight(FontWeight::new(500.0))`, not a second
+   family string. Added `font_weight: f32` to `TextState`.
 
-**Real finding, handled, not just noted:** the same benchmark measured
-**~36ms median in a debug build** — over 60x slower, and well past the
-16.6ms budget. This is expected (no inlining, no vectorization, bounds
-checks everywhere in unoptimized Rust) and not a regression to chase:
-nobody ships a debug build, and §6's budget is a claim about real
-runtime performance. Shrinking the node count until debug mode happened
-to pass would have produced a number meaning nothing — the same mistake
-as a benchmark tuned to its own outcome. Instead the test is `#[ignore]`d
-from the default `cargo test --workspace` run and documented to run
-explicitly with `--release`; this is the command CI's frame-budget job
-is expected to run.
+2. *RTL positioning needs an explicit alignment pass.* The Arabic string
+   initially rendered with all its ink flush against the *left* edge of
+   its box, not the right -- `Layout::break_all_lines` alone doesn't
+   apply paragraph-direction-aware positioning; that's a separate
+   `Layout::align(Alignment::Start, ..)` call, where `Alignment::Start`
+   is direction-aware (left for LTR, right for RTL). Added that call to
+   `TextRenderer::draw`, unconditionally (correct for LTR text too, it
+   was simply always missing).
 
-**Extended the real windowed demo** (`tests/rect_window.rs`, step 1/2's
-single hand-ticked rect) to a real `Tree` of 4 rects laid out in a row by
-`taffy` (with padding and inter-item gap), each with its own
-`PaintProperties` animating color on a staggered duration (600ms to
-1200ms) — genuinely demonstrating several independent `Animated<T>`
-instances advancing through one `Tree::tick_all` call, not one value
-copy-pasted four times.
+**`tests/text_layout.rs`** (headless, render-to-texture-then-readback,
+same discipline as `layout_tree.rs`/`animated_rect.rs`, calibrated for
+text's anti-aliased edges: "ink exists somewhere in this node's box"
+rather than an exact pixel match) proves: Body (Roboto Regular, 16px) and
+Headline (Roboto Medium, 32px) each draw real ink in their own laid-out
+box, and the Arabic string's ink sits near the right edge of its box
+while the leftmost 40px stays untouched -- the actual geometric proof of
+BiDi positioning, not just "a glyph rendered somewhere."
+
+**Extended the windowed demo** (`tests/rect_window.rs`) with a text block
+below the step 3 animated-rects row: the same Body/Headline/Arabic
+content, live. Ran for real -- 60 frames, no panic, no missing-font
+fallback failures.
 
 ## Verification
 
 ```
 $ cargo test --workspace
     ...
-running 10 tests (engine-core)
-test animation::tests::... (6 tests) ... ok
-test tree::tests::insert_creates_a_parentless_node ... ok
-test tree::tests::add_child_links_both_structures ... ok
-test tree::tests::tick_all_reports_active_and_advances_every_node ... ok
-test tree::tests::compute_layout_positions_row_children_left_to_right ... ok
-test result: ok. 10 passed; 0 failed
-
-     Running unittests src/lib.rs (engine_render)
-test tests::rect_scene_renders_expected_pixels ... ok
-
-     Running tests/animated_rect.rs (engine_render)
-test animated_color_and_opacity_render_the_interpolated_value_mid_flight ... ok
+     Running tests/text_layout.rs (engine_render)
+test type_roles_and_rtl_string_render_real_ink ... ok
 
      Running tests/frame_budget.rs (engine_render)
-test frame_pipeline_fits_the_16_6ms_budget ... ignored, perf benchmark -- \
-    meaningless in a debug build, run with: cargo test -p engine-render \
-    --test frame_budget --release -- --ignored --nocapture
-
-     Running tests/layout_tree.rs (engine_render)
-test two_row_children_paint_at_their_own_laid_out_positions ... ok
+test frame_pipeline_fits_the_16_6ms_budget ... ignored, perf benchmark -- ...
 
      Running tests/rect_window.rs (harness = false)
-engine-render §14 step 3: first frame presented, 420x120, 4 laid-out rects animating independently
-engine-render §14 step 3: animation ran for 0.21s across 60 frames
-engine-render §14 step 3: exited cleanly after 60 frames
+engine-render §14 step 4: first frame presented, 420x280, 4 laid-out rects animating independently, plus a Body/Headline/Arabic text block
+engine-render §14 step 4: animation ran for 0.84s across 60 frames
+engine-render §14 step 4: exited cleanly after 60 frames
+    ... (all other crates/tests green)
 
 $ cargo test -p engine-render --test frame_budget --release -- --ignored --nocapture
-engine-render §14 step 3 frame budget: 300 nodes, median 0.580ms, max 0.986ms \
-    (60Hz target 16.6ms, 120Hz stretch 8.3ms)
+engine-render §14 step 3 frame budget: 300 nodes, median 0.396ms, max 0.429ms ...
 test frame_pipeline_fits_the_16_6ms_budget ... ok
 
-$ cargo clippy --workspace --all-targets   # clean
+$ cargo clippy --workspace --all-targets   # clean (one too_many_arguments
+                                            # warning on TextRenderer::draw,
+                                            # fixed by bundling x/y/max_width/
+                                            # color into a TextPlacement struct)
 $ cargo fmt --check                        # clean
 ```
 
 ## Next
 
-`BUILD_TRACKER.md` M3 Phase 2 updated (step 3 of 4 done). Next: step 4,
-wiring `parley` for text — a real typography spike per §14's own text
-("don't stop at one static label... at least two type roles... plus one
-non-trivial string"). This is also the first step nothing before it has
-touched at all: no font/text code exists anywhere in the v2 tree yet.
+`BUILD_TRACKER.md` updated: Phase 2 (§14 steps 1-4) is now fully ✅, M3
+at 29%. Next: Phase 3 (§14 step 5) -- `engine-spec` parses one static
+`view.yaml`. Also, per explicit user request this same session: set up
+real CI (this repo has a GitHub remote, `mindderivative/tre`, but no
+`.github/workflows/` yet) and run the whole existing test history through
+it.

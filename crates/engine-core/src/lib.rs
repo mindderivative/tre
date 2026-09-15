@@ -12,5 +12,5 @@ mod node;
 mod tree;
 
 pub use animation::{ActiveAnimation, Animated, CompletionHandle, Interpolate, MotionCurve};
-pub use node::{Node, NodeId, NodeKind, PaintProperties};
+pub use node::{Node, NodeId, NodeKind, PaintProperties, TextState};
 pub use tree::Tree;

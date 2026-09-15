@@ -6,6 +6,12 @@ description = "Vello Scene building and GPU rendering. Depends on engine-core (t
 
 [dependencies]
 engine-core = { path = "../engine-core" }
+# vello_hybrid's own low-level glyph type (Scene::glyph_run's `fill_glyphs`
+# takes an iterator of these). Already resolved at exactly this version
+# transitively via vello_hybrid's own "text" feature -- naming it directly
+# adds nothing new to the dependency graph, just lets text.rs construct
+# `glifo::Glyph { id, x, y }` values from parley's shaped output.
+glifo = "0.3.0"
 # Must track peniko's own kurbo requirement exactly (currently "0.13.1",
 # checked directly in peniko 0.6.1's Cargo.toml) -- vello_hybrid's
 # Scene::fill_path(&BezPath) takes peniko::kurbo's BezPath, not an
@@ -14,6 +20,13 @@ engine-core = { path = "../engine-core" }
 # Cargo treats "kurbo 0.13.1" and "kurbo 0.13.2" as compatible semver and
 # won't warn. Re-verify against peniko's Cargo.toml before bumping either.
 kurbo = "0.13.1"
+# The shaping half of §14 step 4's typography spike (glifo above is the
+# drawing half). Confirmed no kurbo/peniko drift when this was added --
+# `grep -c 'name = "kurbo"' Cargo.lock` and the same for peniko both stay
+# at 1 -- so the Linebender-family version-coupling risk (§3, already hit
+# for real with wgpu in step 1) hasn't bitten here, at least not yet;
+# re-check the same way before ever bumping parley independently.
+parley = "0.11.1"
 peniko = "0.6.1"
 raw-window-handle = "0.6.2"
 # Pinned to exactly what vello_hybrid 0.2.0 itself requires (its own

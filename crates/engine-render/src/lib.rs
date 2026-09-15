@@ -10,6 +10,10 @@
 //! layout and paint for the first time -- `build_rect_scene` above still
 //! exists unchanged as step 1/2's single-static-rect proof.
 //!
+//! §14 build-order step 4 adds `NodeKind::Text` handling to that same
+//! walk, via the `text` module's `TextRenderer` (`parley` shaping fed
+//! into `vello_hybrid`'s low-level glyph API).
+//!
 //! Depends on `engine-core` for `Tree`/`NodeId`/`NodeKind`/
 //! `PaintProperties` and, for windowing, on nothing at all -- this crate
 //! never touches `winit`. Window/surface creation is the caller's job
@@ -17,10 +21,14 @@
 //! over a `wgpu::Device`/`Queue`/`TextureView` the caller already has,
 //! matching §4's crate-boundary rule.
 
+mod text;
+
 use engine_core::{NodeId, NodeKind, Tree};
 use peniko::Color;
 use peniko::kurbo::{Affine, RoundedRect, Shape};
 use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene, TextureBindings};
+
+pub use text::{TextPlacement, TextRenderer};
 
 /// MD3 seed-adjacent purple (#6750A4) -- an arbitrary but deliberate
 /// starting color, not vello_hybrid's own default, so a wrong pixel in a
@@ -68,21 +76,41 @@ pub fn build_rect_scene(width: u16, height: u16, color: Color, opacity: f64) -> 
 }
 
 /// Walks `tree` from `root` (which must already have a computed layout --
-/// call `Tree::compute_layout` first) and paints every `NodeKind::Rect`
-/// at its absolute on-screen position: `taffy::Layout::location` is
-/// parent-relative, so this accumulates each ancestor's offset on the
-/// way down rather than trusting a child's location alone. `Container`
-/// nodes paint nothing themselves but still recurse into their children
-/// -- they exist purely to give `taffy` something to lay children out
-/// against.
-pub fn build_tree_scene(tree: &Tree, root: NodeId, width: u16, height: u16) -> Scene {
+/// call `Tree::compute_layout` first) and paints every `NodeKind::Rect`/
+/// `NodeKind::Text` at its absolute on-screen position:
+/// `taffy::Layout::location` is parent-relative, so this accumulates each
+/// ancestor's offset on the way down rather than trusting a child's
+/// location alone. `Container` nodes paint nothing themselves but still
+/// recurse into their children -- they exist purely to give `taffy`
+/// something to lay children out against.
+///
+/// `resources`/`text` are threaded through for `NodeKind::Text` nodes:
+/// glyph atlasing (`resources`) and font/shaping state (`text`) both
+/// need to persist across frames, so they're the caller's, not built
+/// fresh per call -- see `TextRenderer`'s own doc comment for why.
+pub fn build_tree_scene(
+    tree: &Tree,
+    root: NodeId,
+    width: u16,
+    height: u16,
+    resources: &mut Resources,
+    text: &mut TextRenderer,
+) -> Scene {
     let mut scene = Scene::new(width, height);
     scene.set_transform(Affine::IDENTITY);
-    paint_node(tree, root, 0.0, 0.0, &mut scene);
+    paint_node(tree, root, 0.0, 0.0, &mut scene, resources, text);
     scene
 }
 
-fn paint_node(tree: &Tree, id: NodeId, offset_x: f64, offset_y: f64, scene: &mut Scene) {
+fn paint_node(
+    tree: &Tree,
+    id: NodeId,
+    offset_x: f64,
+    offset_y: f64,
+    scene: &mut Scene,
+    resources: &mut Resources,
+    text: &mut TextRenderer,
+) {
     let node = tree
         .get(id)
         .expect("build_tree_scene: NodeId not found in this Tree");
@@ -92,16 +120,33 @@ fn paint_node(tree: &Tree, id: NodeId, offset_x: f64, offset_y: f64, scene: &mut
     let w = f64::from(layout.size.width);
     let h = f64::from(layout.size.height);
 
-    if node.kind == NodeKind::Rect {
-        let radius = node.paint.corner_radius.current;
-        let color = with_opacity(node.paint.background.current, node.paint.opacity.current);
-        let rect = RoundedRect::new(x, y, x + w, y + h, radius);
-        scene.set_paint(color);
-        scene.fill_path(&rect.to_path(0.1));
+    match &node.kind {
+        NodeKind::Rect => {
+            let radius = node.paint.corner_radius.current;
+            let color = with_opacity(node.paint.background.current, node.paint.opacity.current);
+            let rect = RoundedRect::new(x, y, x + w, y + h, radius);
+            scene.set_paint(color);
+            scene.fill_path(&rect.to_path(0.1));
+        }
+        NodeKind::Text(state) => {
+            let color = with_opacity(node.paint.background.current, node.paint.opacity.current);
+            text.draw(
+                scene,
+                resources,
+                state,
+                TextPlacement {
+                    x,
+                    y,
+                    max_width: w as f32,
+                    color,
+                },
+            );
+        }
+        NodeKind::Container => {}
     }
 
     for &child in &node.children {
-        paint_node(tree, child, x, y, scene);
+        paint_node(tree, child, x, y, scene, resources, text);
     }
 }
 
@@ -147,6 +192,20 @@ impl FrameRenderer {
                 &TextureBindings::new(),
             )
             .expect("vello_hybrid render failed");
+    }
+
+    /// The same `Resources` `render` uses internally, exposed for
+    /// `build_tree_scene` to pass to `Scene::glyph_run` (§14 step 4):
+    /// glyph atlasing happens during scene *construction*, before
+    /// `render` is ever called, so whoever builds a text-containing
+    /// `Scene` needs the identical `Resources` instance `render` will
+    /// later draw with -- not a second, disconnected one. This is a
+    /// narrower hole in the "callers only see one object" bundling this
+    /// struct's own doc comment promises than it looks: callers still
+    /// only ever hold a `FrameRenderer`, they just borrow through it for
+    /// this one call.
+    pub fn resources_mut(&mut self) -> &mut Resources {
+        &mut self.resources
     }
 }
 

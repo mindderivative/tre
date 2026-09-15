@@ -14,7 +14,7 @@
 //! prove.
 
 use engine_core::{NodeKind, PaintProperties, Tree};
-use engine_render::{FrameRenderer, build_tree_scene};
+use engine_render::{FrameRenderer, TextRenderer, build_tree_scene};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, FlexDirection, Size, Style, length};
 use vello_hybrid::{RenderSize, RenderTargetConfig};
@@ -114,7 +114,6 @@ fn two_row_children_paint_at_their_own_laid_out_positions() {
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let scene = build_tree_scene(&tree, root, width, height);
         let mut frame_renderer = FrameRenderer::new(
             &device,
             &RenderTargetConfig {
@@ -122,6 +121,15 @@ fn two_row_children_paint_at_their_own_laid_out_positions() {
                 width: u32::from(width),
                 height: u32::from(height),
             },
+        );
+        let mut text_renderer = TextRenderer::new();
+        let scene = build_tree_scene(
+            &tree,
+            root,
+            width,
+            height,
+            frame_renderer.resources_mut(),
+            &mut text_renderer,
         );
         let render_size = RenderSize {
             width: u32::from(width),

@@ -10,17 +10,18 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 |---|---|---|
 | M1 — TRE v1 (archived reference) | `██████████` 100% | ✅ Archived `archived-2026-09-14` |
 | M2 — v2 Architecture (`ARCHITECTURE.md`) | `██████████` 100% | ✅ 16 sections + ADR-001, locked |
-| M3 — v2 Implementation | `██▓⬜⬜⬜⬜⬜⬜⬜` 25% | 🚧 In progress — Phase 1 of 7 complete, Phase 2 underway (3 of 4 steps) |
+| M3 — v2 Implementation | `███⬜⬜⬜⬜⬜⬜⬜` 29% | 🚧 In progress — Phase 1 & 2 of 7 complete, Phase 3 next |
 
-**Just closed:** M3 Phase 2 step 3 (§14 step 3 — `taffy` layout + the frame-time CI benchmark) — §5's `NodeId`/`Node`/`NodeKind`/`PaintProperties`/`Tree` implemented in `engine-core` (`NodeId` via `slotmap::new_key_type!`, costing no new dependency since `taffy` already pulls in the identical `slotmap` version transitively), wired to a real `taffy::TaffyTree` for layout. `engine-render::build_tree_scene` composes layout and paint for the first time, proven by a headless test sampling a pixel inside each of two differently-colored, differently-positioned children's own laid-out box. The frame-time CI benchmark §6 has promised since M2 is real: 300 animated nodes, median **0.58ms** in release — comfortably inside the 16.6ms/8.3ms target. A real finding surfaced and was handled, not just noted: the identical benchmark measures ~36ms in a debug build (60x slower, unoptimized codegen) — expected, not a regression, so the test is `#[ignore]`d from the default suite and run explicitly with `--release`. The windowed demo now shows 4 real laid-out rects animating independently. See `PLAN.md`/`LOG.md`.
+**Just closed:** M3 Phase 2 step 4 (§14 step 4 — the `parley` typography spike, closing out Phase 2) — `NodeKind::Text(TextState)` added to `engine-core`; `engine-render`'s new `text` module (`TextRenderer`) shapes text with `parley` and feeds `vello_hybrid`'s low-level `Scene::glyph_run`/`glifo::Glyph` API. Two real MD3-ish type roles (Roboto Regular 16px "Body", Roboto Medium 32px "Headline") plus one non-Latin, right-to-left string (Arabic, via a vendored Noto Sans Arabic) render through the real `Tree`/`build_tree_scene` pipeline, proven by a headless pixel-readback test. Two real, non-obvious findings surfaced and were fixed, not worked around: (1) distinct static weights of the same family (Roboto Regular vs. Medium) commonly share one *typographic* family name in their own font tables — weight has to be selected via `StyleProperty::FontWeight`, not a second family-name string, confirmed directly against Roboto's name table; (2) `parley` line-breaking alone doesn't position an RTL paragraph against the right edge of its box — an explicit `Layout::align(Alignment::Start, ..)` pass is required, `Alignment::Start` being direction-aware (left for LTR, right for RTL). Fonts (`Roboto-Regular/Medium.ttf`, `NotoSansArabic-Regular.ttf`) are vendored under `crates/engine-render/assets/fonts/` and registered directly (system font discovery off) so the test is hermetic. The windowed demo now shows the 4 animated rects plus this live text block. See `PLAN.md`/`LOG.md`.
 
-**Up next:** M3 Phase 2, step 4 — wiring `parley` for text, a real typography spike (at least two type roles, one non-trivial string, per §14's own text). First step to touch text/font code at all.
+**Up next:** M3 Phase 3 (§14 step 5) — `engine-spec` parses one static `view.yaml` (no bindings/handlers yet), `WidgetSpec` → `NodeKind`, `deny_unknown_fields` validation, rendered through Phase 2's now-complete pipeline. First step to touch declarative authoring at all.
 
 **Known gaps:**
 - ~~§14 didn't sequence `engine-spec`/YAML-view work.~~ **Fixed.**
 - ~~No `PLAN.md`/`LOG.md` existed yet for M3.~~ **Fixed** — both now exist, one per phase/step, archived to `planning/archive/` on completion, matching TRE v1's own convention exactly (verified directly against `archive/crates/tre-rhi-vulkan`, not assumed).
-- Everything in `ARCHITECTURE.md` citing "verify at implementation time" has started resolving, not finished: steps 1–3 confirmed `vello_hybrid`/`wgpu`/`kurbo`/`peniko`/`winit`/`taffy`/`slotmap` are all real and compile together (with real version-coupling/perf findings along the way, each handled, not just logged). `accesskit`, `parley`, and `material-colors` remain unverified until their own build-order steps land.
+- Everything in `ARCHITECTURE.md` citing "verify at implementation time" has started resolving, not finished: steps 1–4 confirmed `vello_hybrid`/`wgpu`/`kurbo`/`peniko`/`winit`/`taffy`/`slotmap`/`parley`/`glifo`/`fontique` are all real and compile together (with real version-coupling/perf/API findings along the way, each handled, not just logged). `accesskit` and `material-colors` remain unverified until their own build-order steps land.
 - `Tree::tick_all` is a naive whole-tree walk, not §5's "walks only the active animation set" scoped version — deliberately deferred; real dirty-tracking is §6's own design surface, revisit if the frame-time benchmark (now real and CI-enforced) ever shows it's the cost.
+- No CI actually runs any of this yet (no `.github/workflows/`) -- every "clean"/"green" claim so far is from local `cargo test`/`clippy`/`fmt` runs, not an enforced pipeline. Being addressed next, directly after this update, per explicit user request.
 
 ---
 
@@ -75,17 +76,17 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ## Milestone 3 — v2 Implementation
 
-**Status: 🚧 In progress.** Phase 1 complete, Phase 2 underway; this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
+**Status: 🚧 In progress.** Phases 1–2 complete, Phase 3 next; this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
 
 ### Phase 1 — Workspace Scaffold ✅
 - Step: Cargo workspace + six crate skeletons (`engine-core`, `engine-md3`, `engine-render`, `engine-platform`, `engine-spec`, `engine-py`) per §12 — ✅
 - Step: Wire the dependency edges §4 specifies (no cross-boundary violations from day one) — ✅ (found and fixed one real gap first: `engine-render → engine-core` was missing from the diagram)
 
-### Phase 2 — Render Core Spike (§14 steps 1–4) 🚧
+### Phase 2 — Render Core Spike (§14 steps 1–4) ✅
 - Step 1: Static rounded rect through `vello_hybrid`, real window via `engine-platform` — ✅ (found and fixed two real Linebender-family version conflicts — a `wgpu` 29-vs-30 clash that would not have compiled, and an unguaranteed `kurbo` coupling documented for the future; headless pixel-readback test + a real windowed run, both passing)
 - Step 2: `Animated<T>` + central tick — ✅ (validated standalone in `engine-core` — 6 unit tests — then proven to actually drive rendering via a headless mid-flight pixel-readback test in `engine-render`, and shown live over 60 real windowed frames)
 - Step 3: `taffy` layout + frame-time CI benchmark (§6 target: 16.6ms/8.3ms) — ✅ (`Node`/`NodeKind`/`PaintProperties`/`Tree` implemented in `engine-core`, `NodeId` via `slotmap` at zero new dependency cost; `engine-render::build_tree_scene` proven to paint at real taffy-computed positions via a headless test; the frame-time benchmark is real and CI-enforced — 0.58ms median in release for 300 nodes, comfortably under the 16.6ms/8.3ms target — `#[ignore]`d from the default debug-mode suite since debug codegen alone measures ~36ms, run explicitly with `--release`)
-- Step 4: `parley` text spike (real type scale, non-trivial string) — ⬜
+- Step 4: `parley` text spike (real type scale, non-trivial string) — ✅ (`NodeKind::Text(TextState)` + `engine-render`'s `TextRenderer` shape real text via `parley` into `vello_hybrid`'s glyph API; two Roboto weights and a vendored, hermetic Arabic RTL string all render through the real `Tree` pipeline, proven by a headless test asserting ink lands in the right box *and*, for the RTL string, on the right edge of its box, not the left — found and fixed two real gaps along the way: weight needs `StyleProperty::FontWeight`, not a second family name, and RTL needs an explicit `Layout::align` pass)
 
 ### Phase 3 — Declarative Authoring, minimal (§14 step 5) ⬜
 - Step 5: `engine-spec` parses one static `view.yaml` (no bindings/handlers), `WidgetSpec` → `NodeKind`, `deny_unknown_fields` validation, renders through Phase 2's pipeline — ⬜

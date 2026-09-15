@@ -10,13 +10,21 @@
 //!   a non-trivial `Interpolate` impl -- matrix decomposition -- no step
 //!   before its own real use needs) and `shape: Animated<ShapeKey>` (the
 //!   §7.4 shape-correspondence-then-lerp technique, same reasoning).
-//! - `NodeKind` carries only `Rect`/`Container`, the two kinds this step's
-//!   layout demo actually needs; `Text`/`Image`/`Slider`/`Checkbox`/
-//!   `Canvas` land with their own build-order steps.
+//! - `NodeKind` carried only `Rect`/`Container` through step 3;
+//!   `Text(TextState)` is added at step 4 (§14 step 4, the typography
+//!   spike). `Image`/`Slider`/`Checkbox`/`Canvas` still land with their
+//!   own later build-order steps.
 //!
 //! Each omission is additive to restore later, per Design Principle 5 and
 //! the same "don't build ahead of need" discipline already applied to
 //! `MotionCurve` (step 2, `Linear`-only) and here again to `NodeKind`.
+//! `TextState` itself is narrower than a real future MD3 text component
+//! will need: no `Animated` fields (no MD3 component in scope yet
+//! animates a text property -- cursor blink, reveal-on-scroll, etc. --
+//! so none is manufactured here ahead of a step that needs one), no
+//! wrapping/overflow policy (this step measures `parley`'s own
+//! line-breaking against a fixed box width, it doesn't design a CSS-like
+//! overflow model).
 
 use std::time::Instant;
 
@@ -42,12 +50,38 @@ slotmap::new_key_type! {
 }
 
 /// Component-specific animatable state lives here, per kind -- §1 Locked
-/// Decisions ("common core + per-kind payload"). Both variants below
-/// carry no payload beyond `PaintProperties`, so neither needs one yet.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Decisions ("common core + per-kind payload"). `Rect`/`Container`
+/// carry no payload beyond `PaintProperties`; `Text` carries `TextState`
+/// (§14 step 4).
+#[derive(Clone, Debug, PartialEq)]
 pub enum NodeKind {
     Rect,
     Container,
+    Text(TextState),
+}
+
+/// A text node's content and shaping inputs -- everything `parley` needs
+/// to shape a run, and nothing about how it got styled (that's
+/// `engine_md3`'s future job, not this crate's -- `engine-core` stays
+/// MD3-agnostic per §1 Locked Decisions). `font_family` names an
+/// already-registered family (by exact name, matching the font's own
+/// name table) rather than carrying a weight/style axis: this step's two type
+/// roles are two distinct font files (Roboto Regular vs. Medium), not
+/// one variable font interpolated at draw time.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextState {
+    pub content: String,
+    pub font_family: String,
+    /// OpenType weight class (100.0..=950.0, matching CSS `font-weight`'s
+    /// numeric range; 400.0 is normal). A real, non-obvious finding from
+    /// wiring this up: distinct static weights of the same type family
+    /// (e.g. Roboto Regular vs. Medium) commonly register under the
+    /// *same* family name -- their typographic family name (OpenType
+    /// name ID 16) is shared, only the subfamily (ID 17) differs -- so
+    /// weight cannot be selected by family name alone. Confirmed
+    /// directly against Roboto's own name table, not assumed.
+    pub font_weight: f32,
+    pub font_size: f32,
 }
 
 /// Universal paint state every node has, regardless of `NodeKind`.
