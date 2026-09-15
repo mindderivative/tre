@@ -36,6 +36,10 @@ A running log of resolved architectural questions, kept in one canonical place r
 | `NodeId` identity | Generational index (slot index + generation), not a plain integer (§5) | A stale `PyNode` handle held past node removal (§8) fails a checked comparison instead of silently addressing the wrong node — the generational-index answer to TRE's finding #259 (a dangling raw handle across a GC-controlled boundary) |
 | Layout dirty-scoping | Rely on Taffy's own incremental cache; no hand-rolled `dirty_layout`/`dirty_paint` flag system (§6) | `PaintProperties`/`NodeKind` payloads share no fields with `taffy::Style`, so a paint-only animation structurally can't mark Taffy dirty — the skip is automatic, not manually classified per property |
 | Frame budget | 16.6ms (60Hz) target, 8.3ms (120Hz) stretch goal, enforced by a CI benchmark added no later than build-order step 3 (§6, §13) | A stated-but-unenforced number is exactly TRE's MSRV mistake (LESSONS_LEARNED.md §5) restated in a new form |
+| Ripple concurrency | Bounded list of concurrent ripples per node (`interaction: Option<InteractionState>`, §5, §7.3), not one scalar pair | Matches MD3's real overlapping-ripple behavior under rapid taps; reuses §5's completion-queue mechanism per-ripple |
+| Dynamic color source | Third-party MCU-port crate, gated on passing Material Color Utilities' own published reference test vectors before pinning (§7.1) | HCT/tonal-palette/contrast math is a large, easy-to-get-subtly-wrong subsystem — reimplementing it is bigger and riskier than it looks, unlike shape morphing's one missing step |
+| Live theme switching | Supported at runtime via `winit`'s `ThemeChanged` event, forwarded through the existing `AppHandler`/`InputEvent` inversion (§4, §7.1) | A rare, discrete, whole-tree-repaint event — matches modern desktop UX expectations at negligible design cost given the event-dispatch path already exists |
+| Container transform | In scope for v1 (§7.6) — implemented as `engine-md3` choreographing existing `ActiveAnimation`s across two nodes; no navigation/router subsystem added | User's explicit choice, opposite of the recommended default (defer, no nav model exists); resolved by keeping the framework itself navigation-agnostic — it exposes the transition choreography, not "what screens exist" |
 
 **Secondary-OS CI trigger (proposed, adjust as needed):** add minimal build + smoke-test CI for Windows and macOS no later than build-order step 6 (§13, wiring `accesskit`) — the first point where real platform-specific behavior (UIA vs. NSAccessibility vs. AT-SPI) becomes load-bearing, and a natural forcing function to confirm the deferred OSes still build before investing further past it.
 
@@ -158,6 +162,7 @@ pub struct Node {
     pub layout_style: taffy::Style,
     pub paint: PaintProperties,       // universal — every node has these
     pub access: AccessNodeData,       // feeds AccessKit TreeUpdate directly
+    pub interaction: Option<InteractionState>, // ripple/state-layer, only on interactive nodes — see §7.3
 }
 
 pub struct PaintProperties {
@@ -269,7 +274,11 @@ Accessibility tree construction happens in the same pass as paint, from the same
 ## 7. Material Design 3 Subsystem (`engine-md3`)
 
 ### 7.1 Dynamic color
-Use `material-colors` (or compare current MCU-port crates — several exist, verify maintenance status before pinning): HCT color space, tonal palette generation, scheme generation from a seed color. Generates a full light/dark scheme; `engine-md3` maps scheme roles (primary, on-primary, surface, etc.) onto `peniko::Color` values consumed by `PaintProperties`.
+Use `material-colors` (or compare current MCU-port crates — several exist): HCT color space, tonal palette generation, scheme generation from a seed color. Generates a full light/dark scheme; `engine-md3` maps scheme roles (primary, on-primary, surface, etc.) onto `peniko::Color` values consumed by `PaintProperties`.
+
+**Acceptance gate, not just "verify maintenance status":** whichever crate is chosen must pass Material Color Utilities' own published reference test vectors (HCT round-trip conversions, tonal palette values, contrast ratios) before it's pinned — not just "compiles and the colors look plausible." HCT color-space conversion, tonal-palette generation, and dynamic-scheme contrast math are a large, easy-to-get-subtly-wrong subsystem; porting it in-house was considered and rejected here as a bigger, riskier undertaking than it looks (unlike shape morphing's one missing correspondence step, §7.4 — there, no reference implementation exists to lean on at all; here, one does, so use it and hold the dependency to its standard rather than re-deriving the standard from scratch).
+
+**Live theme switching is in scope.** `winit` emits a `ThemeChanged` event when the OS light/dark preference changes at runtime; `engine-platform` forwards it through the same `AppHandler`/`InputEvent` inversion already wired for every other input event (§4) rather than requiring an app restart. The one thing this needs that per-frame animation doesn't: regenerating a scheme and repainting **every** themed node is a whole-tree paint-dirty event, not a scoped one — acceptable because a theme change is a rare, discrete event, not a per-frame cost (§6's frame budget concerns the steady-state animation path, not this).
 
 ### 7.2 Elevation / shadows
 `vello_hybrid`'s `Scene::fill_blurred_rounded_rect` (with `invert` for inset shadows) and `FilterPrimitive::DropShadowOnly` cover MD3 elevation shadows directly.
@@ -277,7 +286,25 @@ Use `material-colors` (or compare current MCU-port crates — several exist, ver
 **Flag:** early-stage per Vello's own release notes — no API stability guarantee yet, uneven feature parity across the `vello` / `vello_cpu` / `vello_hybrid` variants. **Spike this standalone** (render one elevated rounded rect through the exact pinned `vello_hybrid` version) before building MD3 components against it.
 
 ### 7.3 State layers / ripple
-No new dependency. `Scene::push_layer(clip_path, ...)` with an `Animated<f64>` radius and `Animated<f64>` opacity, using the same central tick as everything else.
+No new dependency. `Scene::push_layer(clip_path, ...)` with a per-ripple `Animated<f64>` radius and `Animated<f64>` opacity, using the same central tick as everything else.
+
+Ripple state lives on `Node` itself (`interaction: Option<InteractionState>`, §5) — not folded into `PaintProperties` or a `NodeKind` payload, since ripple applies across many otherwise-unrelated `NodeKind` variants (buttons, chips, FABs, list items, icon buttons, ...) rather than belonging to any one of them:
+
+```rust
+pub struct InteractionState {
+    pub ripples: SmallVec<[RippleState; 4]>, // small bound — MD3 doesn't expect many concurrent ripples
+}
+
+pub struct RippleState {
+    pub origin: kurbo::Point,   // press location, clip-path center
+    pub radius: Animated<f64>,
+    pub opacity: Animated<f64>,
+}
+```
+
+Each press pushes a new `RippleState`; each animates independently through the same central tick, and a finished ripple is removed from the `SmallVec` via the same completion-queue mechanism §5 already defines for `on_complete` — reused per-ripple rather than per-property. This is what lets rapid taps produce MD3's real overlapping-ripple look instead of one ripple snapping/restarting per node.
+
+> **Review note (decision recorded):** the original draft modeled ripple as exactly one `Animated<f64>` radius + one `Animated<f64>` opacity, which only supports a single ripple per node at a time. Real MD3 shows overlapping ripples under rapid taps; resolved above with a small bounded collection per node instead of a single scalar pair.
 
 ### 7.4 Shape morphing
 No turnkey crate exists for this. Technique: equalize point/segment counts between the start and end `kurbo::BezPath`s (insert zero-length or subdivided segments into whichever has fewer), then linearly interpolate corresponding point positions per frame — the standard approach used by shape-morphing tools generally, ported onto `kurbo` primitives. Build as a small internal module in `engine-md3`. **No library to lean on here — budget real implementation time.**
@@ -286,6 +313,20 @@ No turnkey crate exists for this. Technique: equalize point/segment counts betwe
 
 ### 7.5 Motion tokens
 MD3 named easing curves (Standard, Emphasized, etc.) are cubic-bezier control points — evaluate with `kurbo`'s curve math or a direct implementation. Durations and curves live as a static data table in `engine-md3`, not as a separate tweening dependency.
+
+### 7.6 Container transform
+
+MD3's container-transform pattern (a FAB expanding into a bottom sheet, a card expanding into a detail view) is in scope for v1 — but it is **not a new core mechanism**. It's `engine-md3` choreographing several `ActiveAnimation`s already defined in §5 across two participating nodes, with correlated timing. No navigation/router/screen-stack subsystem needs to exist anywhere in this framework for it to work, and none is being added here.
+
+The choreography, concretely:
+
+1. **Capture.** Just before the transition starts, read the trigger node's *computed* layout (resolved position + size from Taffy's last layout pass — not its `taffy::Style` input) and current `PaintProperties` (`corner_radius`, `background`, `transform`). This is the transition's `from` state. It requires one small, genuinely new addition to the Node API: `engine-core` must expose computed layout output per node as a queryable value (e.g. `Node::computed_layout() -> taffy::Layout`), not just consume it internally during the paint pass (§6) as it does today.
+2. **Insert the destination container.** A new node — the expanded surface — is added to the tree (e.g. as a top-level child of the root, above everything else in paint order) with `PaintProperties` initialized to *exactly* the trigger's captured bounds/corner_radius/background. Nothing visually changes yet.
+3. **Drive one synchronized animation set.** The destination's `transform`, `corner_radius`, `background`, and `elevation` each get an `ActiveAnimation` toward their real target values, all sharing one `start: Instant` and one MD3 motion curve/duration (§7.5, typically "Emphasized"). This is the same `Animated<T>` + central tick mechanism as any other property animation on any other node — the tick system still never special-cases this.
+4. **Content cross-fade.** The trigger's own content (icon/label) gets an `Animated<f64>` opacity animation toward `0.0` starting immediately; the destination's real content gets an `Animated<f64>` opacity animation toward `1.0` with a *staggered* `start: Instant` (set to "now + N ms," not "now"). `ActiveAnimation<T>` (§5) already carries a `start: Instant` field for exactly this — no new struct field, just `engine-md3` choosing to construct one with a future start time.
+5. **Teardown.** On completion (via §5's queue-drain mechanism), the trigger node is hidden or removed and the destination container becomes the persistent subtree going forward — an ordinary tree mutation, not special-cased machinery.
+
+**What this deliberately does *not* require:** a navigation/router/screen-stack subsystem. "Showing a new screen" in this tree model is already just "add or reveal a subtree" — whatever pattern the Python app author uses for that (a single persistent root that swaps its child, an app-level stack the app itself manages) is orthogonal to container-transform, which only ever cares about two nodes' bounds and paint state at one point in time. `engine-md3` exposes the choreography above as a single helper function; it does not own *what screens exist* or *how you got there* — keeping this addition scoped to what §7.4's morphing module and §5's animation core already make possible, not a new navigation architecture bolted on to justify it.
 
 ---
 
