@@ -7,3 +7,20 @@ description = "YAML view/stylesheet parsing, reconciliation, and the BindingReso
 [dependencies]
 engine-core = { path = "../engine-core" }
 engine-md3 = { path = "../engine-md3" }
+# Color parsing only right now (peniko::color::parse_color) -- §14 step 5
+# is deliberately literal-value-only (`background: "#6750A4"`), not MD3
+# token names (`background: surface`), since real token resolution needs
+# engine-md3's color-scheme machinery, which doesn't exist until step 11
+# (material-colors). Already pinned at the exact version engine-core/
+# engine-render use.
+peniko = "0.6.1"
+serde = { version = "1.0.229", features = ["derive"] }
+# serde_yaml itself is archived/deprecated (its own README states no
+# plans to track YAML 1.2) -- serde_yaml_ng is a maintained, drop-in-API
+# continuation fork. Checked directly (`cargo add serde_yaml_ng --dry-run`)
+# before adding either, not assumed.
+serde_yaml_ng = "0.10.0"
+# For building taffy::Style values directly from a parsed StyleSpec --
+# already pinned at the exact version engine-core/engine-render use.
+taffy = "0.14.0"
+thiserror = "2.0.20"

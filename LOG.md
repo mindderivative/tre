@@ -1,111 +1,87 @@
-# Log: M3 Phase 2, Step 4 — `parley` Typography Spike (§14 step 4)
+# Log: M3 Phase 3 — `engine-spec` Minimal (§14 step 5)
 
-Corresponds to `PLAN.md` / `BUILD_TRACKER.md` M3 Phase 2, step 4 of 4 (closes Phase 2).
+Corresponds to `PLAN.md` / `BUILD_TRACKER.md` M3 Phase 3, the sole step of that phase.
 
 ## What happened
 
-**Traced the real shaping-to-drawing path before writing anything,** since
-`vello_hybrid`'s own "text" feature depends on `glifo` (a low-level
-glyph-atlas/rasterizer), not `parley` -- confirmed directly in
-`vello_hybrid`'s own `Cargo.toml` and its internal glyph test
-(`scene.rs`). The real pipeline is: `parley` shapes text into a `Layout`
-of positioned glyph runs; for each run, `glifo::Glyph { id, x, y }` values
-plus a `peniko::FontData` and font size get handed to
-`Scene::glyph_run(&mut resources, &font).font_size(..).fill_glyphs(..)`.
-Added `parley` (0.11.1) and `glifo` (0.3.0, already resolved at this
-exact version transitively via `vello_hybrid` -- confirmed zero new
-dependency-graph entries) to `engine-render`. `Cargo.lock`'s kurbo/peniko
-counts stayed at 1 after adding `parley` -- the Linebender-family
-version-coupling risk (§3) hasn't bitten here, unlike wgpu in step 1.
+**`engine-spec::spec`** implements §16.1's `WidgetSpec` sketch, narrowed
+to this step's own stated scope: `id`/`kind`/`style`/`children`, no
+`bindings`/`handlers` at all (not stubbed -- nothing can resolve them
+without `BindingResolver`, step 12). `StyleSpec` is literal-value-only
+(`background: "#6750A4"`), deferring MD3 token names to step 11.
+`background` is parsed via `peniko::color::parse_color` (already
+supports hex and CSS named colors) rather than hand-rolling a parser.
 
-**Vendored three fonts** (`crates/engine-render/assets/fonts/`: Roboto
-Regular/Medium, Noto Sans Arabic Regular) rather than relying on system
-font discovery, so the typography spike is hermetic -- the same
-headless-CI-safe discipline this codebase already applies to GPU/display
-absence. `TextRenderer` registers them directly via `fontique::Collection`
-with `system_fonts: false`.
+**Real finding: `serde_yaml_ng` doesn't support serde's classic
+external-tagging shape for data-carrying enum variants.** First attempt
+modeled `NodeKindSpec::Text(TextSpec)` as a real Rust enum with data,
+expecting `kind: {Text: {content: ..., ...}}` to parse (the same
+single-key-map convention `serde_json` supports). It didn't: checked
+`serde_yaml_ng`'s own `deserialize_enum` directly and found it only
+accepts a bare scalar (unit variants) or YAML's native `!Tag` syntax for
+a data-carrying variant -- never a plain mapping. Rather than asking
+every `view.yaml` author to write `kind: !Text {...}` (an obscure YAML
+convention with no reason to expect anyone to know it), restructured to
+a flatter shape that sidesteps the issue entirely and reads more
+naturally besides: `NodeKindSpec` is unit-only (`Rect`/`Container`/
+`Text`), and `Text`'s own fields (`content`/`font_family`/`font_weight`/
+`font_size`) live in a sibling `WidgetSpec::text: Option<TextSpec>`,
+validated as required at build time when `kind: Text`.
 
-**`engine-core::node`: added `NodeKind::Text(TextState)`** -- `content`,
-`font_family`, `font_weight`, `font_size`, deliberately no `Animated`
-fields (documented: no MD3 component in scope yet animates a text
-property). `engine-render::text::TextRenderer` shapes via `parley`'s
-`RangedBuilder`, breaks lines to the node's taffy box width, and draws
-every `GlyphRun` through `glifo`. `build_tree_scene` now threads
-`&mut Resources`/`&mut TextRenderer` through its recursive paint walk;
-`FrameRenderer::resources_mut()` was added because glyph atlasing happens
-during scene *construction* (inside `Scene::glyph_run`), before
-`FrameRenderer::render` is ever called -- both need the same `Resources`
-instance, which previously only `render()` could see.
+**`engine-spec::build`** maps `WidgetSpec` -> `engine_core::Tree`:
+`taffy::Style` from `StyleSpec`'s layout fields, `NodeKind`/
+`PaintProperties` per kind. `background` is required (a clear
+`SpecError::MissingField`, not a silent default) for `Rect`/`Text` --
+an invisible, colorless shape being a real spec mistake worth failing
+loudly on, matching this project's "fail loudly at the boundary"
+discipline (§8's `EngineError`, `deny_unknown_fields` itself). A
+`Container` without `background` defaults to fully transparent, matching
+every hand-built `Container` this codebase has produced so far.
 
-**Two real, non-obvious findings, both fixed, not worked around:**
+**Unit tests** (6, in `spec.rs`/`build.rs`): parsing a real nested tree
+correctly, `deny_unknown_fields` rejecting a typo'd key with a clear
+message, a deterministic layout-position test (exact taffy x-coordinates
+from a real built `Tree`, same discipline as step 3's own row-layout
+test), `MissingField` and `InvalidColor` error paths each naming the
+actual offending widget `id`.
 
-1. *Font weight is not selectable by family name alone.* First attempt
-   used `font_family: "Roboto Medium"` for the Headline role, matching
-   how `fc-list` names it -- and it drew nothing. Checked Roboto-Medium's
-   actual name table directly (`fontTools`): its *typographic* family
-   (OpenType name ID 16) is `"Roboto"`, same as the Regular face; only
-   the legacy name (ID 1) says `"Roboto Medium"`. `fontique` (correctly)
-   prefers the typographic name, so both files register under one family
-   `"Roboto"` with two weight variants -- weight has to be selected via
-   `StyleProperty::FontWeight(FontWeight::new(500.0))`, not a second
-   family string. Added `font_weight: f32` to `TextState`.
-
-2. *RTL positioning needs an explicit alignment pass.* The Arabic string
-   initially rendered with all its ink flush against the *left* edge of
-   its box, not the right -- `Layout::break_all_lines` alone doesn't
-   apply paragraph-direction-aware positioning; that's a separate
-   `Layout::align(Alignment::Start, ..)` call, where `Alignment::Start`
-   is direction-aware (left for LTR, right for RTL). Added that call to
-   `TextRenderer::draw`, unconditionally (correct for LTR text too, it
-   was simply always missing).
-
-**`tests/text_layout.rs`** (headless, render-to-texture-then-readback,
-same discipline as `layout_tree.rs`/`animated_rect.rs`, calibrated for
-text's anti-aliased edges: "ink exists somewhere in this node's box"
-rather than an exact pixel match) proves: Body (Roboto Regular, 16px) and
-Headline (Roboto Medium, 32px) each draw real ink in their own laid-out
-box, and the Arabic string's ink sits near the right edge of its box
-while the leftmost 40px stays untouched -- the actual geometric proof of
-BiDi positioning, not just "a glyph rendered somewhere."
-
-**Extended the windowed demo** (`tests/rect_window.rs`) with a text block
-below the step 3 animated-rects row: the same Body/Headline/Arabic
-content, live. Ran for real -- 60 frames, no panic, no missing-font
-fallback failures.
+**A real, standalone `view.yaml`** (`crates/engine-spec/examples/
+view.yaml`, not just an inline Rust string) -- a `Container` row with a
+`#6750A4` `Rect` swatch and a "tre v2" `Text` label -- proven to render
+through the real Phase 2 pipeline by a new `engine-render` integration
+test (`tests/spec_view.rs`, `engine-spec` added as a dev-dependency):
+parses the file, builds a `Tree`, computes layout, renders headlessly,
+and reads back pixels -- the swatch's center pixel matches the YAML's
+declared color exactly, and the label draws real ink in its own box.
+Passed on the first real attempt once the enum-shape finding above was
+fixed.
 
 ## Verification
 
 ```
 $ cargo test --workspace
     ...
-     Running tests/text_layout.rs (engine_render)
-test type_roles_and_rtl_string_render_real_ink ... ok
+running 6 tests (engine-spec)
+test spec::tests::parses_a_nested_widget_tree ... ok
+test spec::tests::unknown_field_is_a_load_time_error_not_silently_ignored ... ok
+test build::tests::load_view_builds_a_real_tree_matching_the_spec ... ok
+test build::tests::rect_without_background_is_a_clear_error_not_a_default ... ok
+test build::tests::invalid_color_names_the_offending_widget_and_value ... ok
+test build::tests::container_without_background_defaults_to_transparent ... ok
+test result: ok. 6 passed; 0 failed
 
-     Running tests/frame_budget.rs (engine_render)
-test frame_pipeline_fits_the_16_6ms_budget ... ignored, perf benchmark -- ...
+     Running tests/spec_view.rs (engine_render)
+test a_real_view_yaml_renders_through_the_real_pipeline ... ok
+    ... (every other crate/test green, frame_budget still ignored as expected)
 
-     Running tests/rect_window.rs (harness = false)
-engine-render §14 step 4: first frame presented, 420x280, 4 laid-out rects animating independently, plus a Body/Headline/Arabic text block
-engine-render §14 step 4: animation ran for 0.84s across 60 frames
-engine-render §14 step 4: exited cleanly after 60 frames
-    ... (all other crates/tests green)
-
-$ cargo test -p engine-render --test frame_budget --release -- --ignored --nocapture
-engine-render §14 step 3 frame budget: 300 nodes, median 0.396ms, max 0.429ms ...
-test frame_pipeline_fits_the_16_6ms_budget ... ok
-
-$ cargo clippy --workspace --all-targets   # clean (one too_many_arguments
-                                            # warning on TextRenderer::draw,
-                                            # fixed by bundling x/y/max_width/
-                                            # color into a TextPlacement struct)
-$ cargo fmt --check                        # clean
+$ cargo clippy --workspace --all-targets -- -D warnings   # clean
+$ cargo fmt --check                                        # clean
 ```
 
 ## Next
 
-`BUILD_TRACKER.md` updated: Phase 2 (§14 steps 1-4) is now fully ✅, M3
-at 29%. Next: Phase 3 (§14 step 5) -- `engine-spec` parses one static
-`view.yaml`. Also, per explicit user request this same session: set up
-real CI (this repo has a GitHub remote, `mindderivative/tre`, but no
-`.github/workflows/` yet) and run the whole existing test history through
-it.
+`BUILD_TRACKER.md` updated: Phase 3 (§14 step 5) done, M3 to 43% (3 of 7
+phases). Next: M3 Phase 4 (§14 steps 6-7) -- wire `engine-py` (node
+creation + one property setter, driving step 2's animation from a `.py`
+script), then `accesskit` (confirm one button is correctly exposed to a
+screen reader). First step to touch `pyo3` at all.

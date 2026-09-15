@@ -1,49 +1,45 @@
-# Plan: M3 Phase 2, Step 4 — `parley` Typography Spike (§14 step 4)
+# Plan: M3 Phase 3 — `engine-spec` Minimal (§14 step 5)
 
-Corresponds to `BUILD_TRACKER.md` M3 Phase 2, step 4 of 4 (closes Phase 2).
+Corresponds to `BUILD_TRACKER.md` M3 Phase 3, the sole step of that phase.
 
 ## Goal
 
-Per §14 step 4: "Wire `parley` for text -- don't stop at one static
-label. Render a small sample of MD3's real type scale (at least two
-type roles, e.g. Body and Headline, at their real weights/sizes) plus
-one non-trivial string (mixed-direction or a non-Latin script...) to
-get real signal on `parley`'s current line-breaking/BiDi/font-fallback
-behavior before component work depends on it." Wire `NodeKind::Text`
-into the real `Tree`/`build_tree_scene` pipeline step 3 built, using
-`parley` for shaping and `vello_hybrid`'s low-level glyph API for
-drawing.
+Per §14 step 5: "**`engine-spec`, minimal:** parse one static `view.yaml`
+(no `bindings:`/`handlers:` yet) — `WidgetSpec` → `NodeKind` mapping,
+`deny_unknown_fields` validation — and build a `Tree` from it, rendered
+through the pipeline steps 1–4 already proved. Zero `pyo3` involvement at
+this point; this de-risks parsing/validation/mapping in isolation, per
+Design Principle 5, before anything depends on it working."
 
 ## Scope
 
 In scope:
-- `engine-core::node`: `NodeKind::Text(TextState)`, `TextState { content,
-  font_family, font_weight, font_size }` -- no `Animated` fields (no MD3
-  component in scope yet animates a text property), no wrapping/overflow
-  policy beyond `parley`'s own line-breaking against a fixed box width.
-- `engine-render::text::TextRenderer`: owns `parley::FontContext` +
-  `LayoutContext` across frames, with the three vendored fonts
-  registered directly (system font discovery off, for a hermetic test).
-- Vendored fonts under `crates/engine-render/assets/fonts/`: Roboto
-  Regular + Medium (MD3's own default typeface, two real weights) and
-  Noto Sans Arabic Regular (the non-Latin/RTL string).
-- `build_tree_scene` extended to handle `NodeKind::Text` via
-  `TextRenderer`; `FrameRenderer::resources_mut()` added since glyph
-  atlasing happens during scene construction, not inside `render()`.
-- A headless integration test (`tests/text_layout.rs`) proving each type
-  role draws real ink in its own box, and the RTL string's ink sits on
-  the right edge of its box, not the left.
-- Extending the windowed demo with a live Body/Headline/Arabic text
-  block below the step 3 animated-rects row.
+- `engine-spec::spec`: `WidgetSpec`/`NodeKindSpec`/`TextSpec`/
+  `FlexDirectionSpec`/`StyleSpec`, matching §16.1's `WidgetSpec` sketch
+  minus `bindings`/`handlers` (deferred to step 12, needs
+  `BindingResolver`/`engine-py`). `StyleSpec` is literal-value-only
+  (`background: "#6750A4"`), not MD3 token names (needs step 11's
+  `material-colors`). `deny_unknown_fields` throughout.
+- `engine-spec::build`: `WidgetSpec` → `engine_core::Tree`, via
+  `taffy::Style`/`NodeKind`/`PaintProperties` construction.
+  `background` required (a clear `SpecError`, not a silent default) for
+  `Rect`/`Text`; optional (defaults transparent) for `Container`.
+- Unit tests: parsing correctness, `deny_unknown_fields` rejecting a
+  typo'd key, a deterministic-layout build test (exact taffy positions,
+  same discipline as step 3's own), `MissingField`/`InvalidColor` error
+  paths.
+- A real, standalone `view.yaml` fixture
+  (`crates/engine-spec/examples/view.yaml`) and an `engine-render`
+  integration test proving it renders through the real Phase 2 pipeline
+  (headless pixel-readback: the swatch's exact declared color, real ink
+  in the label's box).
 
-Out of scope: `engine_md3`'s formal MD3 type-scale token table (this
-step uses representative real values, not a designed token system);
-text wrapping/overflow UX beyond `parley`'s own line-breaking; any
-`Animated` text property (no component needs one yet).
+Out of scope: `bindings:`/`handlers:`, `BindingResolver`, MD3 token
+resolution, the stylesheet cascade (§16.3), reconciliation/hot-reload
+(§16.4), `include:` composition (§16.6), any `pyo3` involvement.
 
 ## Verification
 
-`cargo test --workspace` (all green, `frame_budget` still reports
-`ignored`), `cargo clippy --workspace --all-targets` and `cargo fmt
---check` clean, and the real windowed demo showing the animated rects
-plus a live, legible text block including the Arabic string.
+`cargo test --workspace` (all green), `cargo clippy --workspace
+--all-targets -- -D warnings` and `cargo fmt --check` clean (matching
+CI's own exact commands, now that CI is real and verified).

@@ -1,0 +1,15 @@
+# §14 step 5's own "one static view.yaml" -- a real, standalone file,
+# not just a Rust string literal. Loaded by crates/engine-render/tests/
+# spec_view.rs to prove a view this shape actually renders through the
+# real Phase 2 pipeline (steps 1-4), not just that it parses.
+id: card
+kind: Container
+style: {flex_direction: Row, padding: 16, gap: 12, width: 300, height: 100}
+children:
+  - id: swatch
+    kind: Rect
+    style: {width: 80, height: 68, background: "#6750A4", corner_radius: 12}
+  - id: label
+    kind: Text
+    text: {content: "tre v2", font_family: Roboto, font_size: 20}
+    style: {width: 160, height: 30, background: white}

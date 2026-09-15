@@ -43,6 +43,12 @@ wgpu = "29.0.3"
 
 [dev-dependencies]
 engine-platform = { path = "../engine-platform" }
+# Test-only, proving §14 step 5's own claim ("rendered through the
+# pipeline steps 1-4 already proved"): a real view.yaml, parsed by
+# engine-spec, built into a Tree, and rendered through this crate's own
+# build_tree_scene/FrameRenderer -- no new real dependency edge, since
+# engine-render's own lib.rs never imports engine-spec.
+engine-spec = { path = "../engine-spec" }
 pollster = "1.0.1"
 # Test-only: builds taffy::Style values directly for the layout_tree/
 # rect_window tests. engine-render's own lib.rs never names taffy --
