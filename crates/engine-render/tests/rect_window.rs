@@ -12,6 +12,8 @@
 //! `wgpu::Surface` backed by a real OS window, frame after frame, not
 //! just once.
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -347,7 +349,8 @@ impl GpuState {
 }
 
 fn main() {
-    let mut gpu: Option<GpuState> = None;
+    let gpu: Rc<RefCell<Option<GpuState>>> = Rc::new(RefCell::new(None));
+    let gpu_for_access = gpu.clone();
 
     let result = run_windowed(
         WindowConfig {
@@ -362,7 +365,8 @@ fn main() {
             max_frames: Some(60),
         },
         move |window, frame| {
-            let state = gpu.get_or_insert_with(|| GpuState::new(window.clone()));
+            let mut gpu_ref = gpu.borrow_mut();
+            let state = gpu_ref.get_or_insert_with(|| GpuState::new(window.clone()));
             state.render_frame();
             if frame == 0 {
                 eprintln!(
@@ -380,6 +384,25 @@ fn main() {
                     state.animation_start.elapsed().as_secs_f64()
                 );
             }
+        },
+        // §14 step 7: every window reports a real accessibility tree,
+        // not just the one built specifically to prove button exposure
+        // (`tests/access_button.rs`) -- this demo's rects/text nodes
+        // never call `Tree::set_access`, so they report as `Role::
+        // Unknown` (still a valid tree, just not an interesting one).
+        // Empty until `GpuState` exists (the very first `resumed`/
+        // `InitialTreeRequested` can race ahead of the first redraw).
+        move || {
+            gpu_for_access
+                .borrow()
+                .as_ref()
+                .map(|state| state.tree.build_access_update(state.root))
+                .unwrap_or_else(|| accesskit::TreeUpdate {
+                    nodes: Vec::new(),
+                    tree: None,
+                    tree_id: accesskit::TreeId::ROOT,
+                    focus: accesskit::NodeId(0),
+                })
         },
     );
 

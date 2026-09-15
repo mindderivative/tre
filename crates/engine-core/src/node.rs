@@ -127,4 +127,11 @@ pub struct Node {
     pub kind: NodeKind,
     pub layout_style: Style,
     pub paint: PaintProperties,
+    /// §14 step 7: `AccessNodeData::default()` (`Role::Unknown`, no
+    /// label/actions) unless a caller opts a node in via
+    /// `Tree::set_access`. `interaction: Option<InteractionState>`
+    /// (§7.3, ripple/state-layer) is still omitted -- that step hasn't
+    /// landed yet, same "add the field when its own step needs it"
+    /// discipline already applied to this struct twice.
+    pub access: crate::access::AccessNodeData,
 }

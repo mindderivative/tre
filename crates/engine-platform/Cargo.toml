@@ -5,5 +5,21 @@ edition.workspace = true
 description = "winit EventLoop/ApplicationHandler and the accesskit_winit adapter. The only crate depending on winit. See ARCHITECTURE.md §4, §9."
 
 [dependencies]
+accesskit = "0.25.0"
+accesskit_winit = "0.34.0"
 engine-core = { path = "../engine-core" }
 winit = "0.30.13"
+
+[dev-dependencies]
+peniko = "0.6.1"
+taffy = "0.14.0"
+
+# Lives in tests/, not examples/, matching TRE v1's own precedent
+# (archive/crates/tre-rhi-vulkan) exactly, same as engine-render's own
+# rect_window.rs: winit permits constructing an EventLoop only on a
+# process's real main thread and only once per process -- a plain
+# #[test] fn runs on a worker thread and would panic. harness = false
+# gives it its own process with a real main thread instead.
+[[test]]
+name = "access_button"
+harness = false

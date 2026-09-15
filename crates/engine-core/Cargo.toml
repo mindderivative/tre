@@ -5,6 +5,7 @@ edition.workspace = true
 description = "Pure-Rust node tree, Animated<T> animation core, and the generic AppHandler/InputEvent/BindingResolver interfaces other crates build on. No pyo3, no winit, MD3-agnostic. See ARCHITECTURE.md §4-§5."
 
 [dependencies]
+accesskit = "0.25.0"
 peniko = "0.6.1"
 slotmap = "1.1.1"
 taffy = "0.14.0"

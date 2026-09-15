@@ -126,6 +126,7 @@ impl App {
     #[pyo3(signature = (max_frames=None))]
     fn run(&self, max_frames: Option<u32>) -> PyResult<()> {
         let tree = self.tree.clone();
+        let tree_for_access = self.tree.clone();
         let root = self.root;
         let width = self.width;
         let height = self.height;
@@ -247,6 +248,16 @@ impl App {
                 state.queue.submit([encoder.finish()]);
                 output.present();
             },
+            // §14 step 7: every window this framework opens reports a
+            // real accessibility tree -- built fresh each time it's
+            // requested from this app's own `Tree`, the same
+            // `AccessNodeData` an app author (Python, for now just this
+            // struct's own `add_rect`) attaches via `Node`/`Tree`
+            // directly. No Python-facing accessibility API exists yet
+            // (`add_rect` doesn't expose a `role`/`label` parameter) --
+            // additive whenever a later step needs one from Python
+            // specifically.
+            move || tree_for_access.borrow().build_access_update(root),
         );
 
         match result {

@@ -1,9 +1,22 @@
-# CI for tre v2. Linux-only for now, deliberately: ARCHITECTURE.md §6's
-# own "Secondary-OS CI trigger" names build-order step 7 (wiring
-# `accesskit`) as the point to add minimal Windows/macOS build+smoke
-# jobs, not before -- that's the first step where real platform-specific
-# behavior (UIA vs. NSAccessibility vs. AT-SPI) becomes load-bearing.
-# Revisit this file at that step, not sooner.
+# CI for tre v2. The main `test` job is Linux-only, deliberately; §14
+# step 7 (this one, wiring `accesskit`) is ARCHITECTURE.md §6's own named
+# trigger for adding *minimal* Windows/macOS build+smoke jobs (below),
+# since this is the first step where real platform-specific behavior
+# (UIA vs. NSAccessibility vs. AT-SPI) becomes load-bearing.
+#
+# Windows/macOS jobs are deliberately narrower than Linux's: `cargo
+# build --workspace --all-targets` is the real, blocking proof (every
+# platform-specific accesskit backend -- `accesskit_windows`/
+# `accesskit_macos`, pulled in transitively by `accesskit_winit` per
+# platform -- at least compiles). `cargo test --workspace` runs too, but
+# `continue-on-error: true`: unlike Linux, where `mesa-vulkan-drivers`
+# was verified directly to give `wgpu::Instance::request_adapter` a real
+# (if software) adapter on a bare runner, this session has no way to
+# verify GitHub's Windows/macOS hosted runners have an equivalent
+# software GPU adapter (WARP on Windows is likely present; macOS's VM
+# Metal support is genuinely unverified from here) -- reporting the
+# result without blocking on it is the honest choice until someone
+# checks a real run's log.
 #
 # Headless GPU note: `wgpu::Instance::request_adapter` needs *some*
 # adapter to succeed, and GitHub's hosted runners have no real GPU. The
@@ -130,3 +143,51 @@ jobs:
 
       - name: Run the real .py animation script
         run: python examples/animate_rect.py
+
+  # §14 step 7's own trigger (see file header comment) -- minimal,
+  # compile-focused, not the full Linux job's breadth (no Python/maturin,
+  # no clippy/fmt, no frame-time benchmark: those stay Linux-only checks,
+  # not per-platform ones).
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned toolchain (rust-toolchain.toml)
+        run: rustup show
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - name: Build workspace
+        run: cargo build --workspace --all-targets
+      - name: Test workspace (informational -- see file header comment)
+        continue-on-error: true
+        run: cargo test --workspace
+
+  test-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned toolchain (rust-toolchain.toml)
+        run: rustup show
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - name: Build workspace
+        run: cargo build --workspace --all-targets
+      - name: Test workspace (informational -- see file header comment)
+        continue-on-error: true
+        run: cargo test --workspace

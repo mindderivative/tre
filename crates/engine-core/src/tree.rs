@@ -13,15 +13,20 @@
 
 use std::time::Instant;
 
-use slotmap::{SecondaryMap, SlotMap};
+use slotmap::{Key, SecondaryMap, SlotMap};
 use taffy::prelude::{AvailableSpace, Layout, Size, Style, TaffyTree};
 
+use crate::access::AccessNodeData;
 use crate::node::{Node, NodeId, NodeKind, PaintProperties};
 
 pub struct Tree {
     nodes: SlotMap<NodeId, Node>,
     taffy_nodes: SecondaryMap<NodeId, taffy::NodeId>,
     taffy: TaffyTree<()>,
+    /// §14 step 7: which node `TreeUpdate.focus` reports. Plain data --
+    /// see `access.rs`'s module doc comment for why the actual Tab/
+    /// Shift-Tab traversal logic isn't wired up yet.
+    focused: Option<NodeId>,
 }
 
 impl Default for Tree {
@@ -36,6 +41,7 @@ impl Tree {
             nodes: SlotMap::with_key(),
             taffy_nodes: SecondaryMap::new(),
             taffy: TaffyTree::new(),
+            focused: None,
         }
     }
 
@@ -58,6 +64,7 @@ impl Tree {
             kind,
             layout_style,
             paint,
+            access: AccessNodeData::default(),
         });
         self.taffy_nodes.insert(id, taffy_node);
         id
@@ -135,6 +142,100 @@ impl Tree {
         }
         any_active
     }
+
+    /// Opts one node into accessibility -- every node defaults to
+    /// `AccessNodeData::default()` (`Role::Unknown`, no label/actions,
+    /// effectively invisible to a screen reader) until a caller sets
+    /// something real here (§14 step 7).
+    pub fn set_access(&mut self, id: NodeId, access: AccessNodeData) {
+        if let Some(node) = self.nodes.get_mut(id) {
+            node.access = access;
+        }
+    }
+
+    pub fn focused(&self) -> Option<NodeId> {
+        self.focused
+    }
+
+    pub fn set_focused(&mut self, id: Option<NodeId>) {
+        self.focused = id;
+    }
+
+    /// Builds a fresh `accesskit::TreeUpdate` from the current `Node`
+    /// tree (§10: "built fresh... every frame, not maintained as a
+    /// separate parallel structure that can drift out of sync"). `root`
+    /// must already have a computed layout (`compute_layout`) -- bounds
+    /// come from the same taffy `Layout` `engine-render` paints from,
+    /// accumulated the same way `build_tree_scene`'s own walk does, so
+    /// the accessible tree's geometry can never disagree with what's
+    /// actually on screen.
+    pub fn build_access_update(&self, root: NodeId) -> accesskit::TreeUpdate {
+        let mut nodes = Vec::new();
+        self.collect_access_nodes(root, 0.0, 0.0, &mut nodes);
+        let root_id = to_access_id(root);
+        let focus = self.focused.map(to_access_id).unwrap_or(root_id);
+        accesskit::TreeUpdate {
+            nodes,
+            tree: Some(accesskit::TreeInfo::new(root_id)),
+            tree_id: accesskit::TreeId::ROOT,
+            focus,
+        }
+    }
+
+    fn collect_access_nodes(
+        &self,
+        id: NodeId,
+        offset_x: f64,
+        offset_y: f64,
+        out: &mut Vec<(accesskit::NodeId, accesskit::Node)>,
+    ) {
+        let node = self
+            .nodes
+            .get(id)
+            .expect("build_access_update: NodeId not found in this Tree");
+        let layout = self.layout(id);
+        let x = offset_x + f64::from(layout.location.x);
+        let y = offset_y + f64::from(layout.location.y);
+        let w = f64::from(layout.size.width);
+        let h = f64::from(layout.size.height);
+
+        let mut access_node = accesskit::Node::new(node.access.role);
+        if let Some(label) = &node.access.label {
+            access_node.set_label(label.clone());
+        }
+        if let Some(description) = &node.access.description {
+            access_node.set_description(description.clone());
+        }
+        for &action in &node.access.actions {
+            access_node.add_action(action);
+        }
+        if node.access.states.disabled {
+            access_node.set_disabled();
+        }
+        access_node.set_bounds(accesskit::Rect {
+            x0: x,
+            y0: y,
+            x1: x + w,
+            y1: y + h,
+        });
+        let children: Vec<accesskit::NodeId> =
+            node.children.iter().copied().map(to_access_id).collect();
+        access_node.set_children(children);
+
+        out.push((to_access_id(id), access_node));
+
+        for &child in &node.children {
+            self.collect_access_nodes(child, x, y, out);
+        }
+    }
+}
+
+/// A stable, deterministic mapping from this crate's own generational
+/// `NodeId` (a `slotmap` key, opaque by design) to accesskit's
+/// `NodeId(u64)` -- `KeyData::as_ffi` is `slotmap`'s own purpose-built
+/// conversion for exactly this "hand a key to a foreign API" case.
+fn to_access_id(id: NodeId) -> accesskit::NodeId {
+    accesskit::NodeId(id.data().as_ffi())
 }
 
 #[cfg(test)]
@@ -250,5 +351,54 @@ mod tests {
         let still_active = tree.tick_all(start + Duration::from_secs(2));
         assert!(!still_active);
         assert_eq!(tree.get(id).unwrap().paint.opacity.current, 0.0);
+    }
+
+    #[test]
+    fn build_access_update_exposes_a_button_with_the_right_role_label_and_bounds() {
+        use crate::access::AccessNodeData;
+        use crate::access::{Action, Role};
+
+        let mut tree = Tree::new();
+        let (kind, style, paint) = leaf(120.0, 40.0);
+        let button = tree.insert(kind, style, paint);
+        tree.set_access(
+            button,
+            AccessNodeData::new(Role::Button)
+                .with_label("Save")
+                .with_action(Action::Click),
+        );
+        tree.compute_layout(
+            button,
+            Size {
+                width: AvailableSpace::Definite(120.0),
+                height: AvailableSpace::Definite(40.0),
+            },
+        );
+
+        let update = tree.build_access_update(button);
+        assert_eq!(
+            update.nodes.len(),
+            1,
+            "expected exactly the one button node"
+        );
+        let (id, node) = &update.nodes[0];
+        assert_eq!(*id, to_access_id(button));
+        assert_eq!(node.role(), Role::Button);
+        assert_eq!(node.label(), Some("Save"));
+        assert!(
+            node.supports_action(Action::Click),
+            "expected the button's Click action to be reported"
+        );
+        let bounds = node.bounds().expect("a laid-out node must report bounds");
+        assert_eq!(
+            (bounds.x0, bounds.y0, bounds.x1, bounds.y1),
+            (0.0, 0.0, 120.0, 40.0)
+        );
+
+        // `focus` must be a valid value even though nothing was
+        // explicitly focused -- §10: "if no specific node has keyboard
+        // focus, this must be set to the root."
+        assert_eq!(update.focus, to_access_id(button));
+        assert_eq!(update.tree_id, accesskit::TreeId::ROOT);
     }
 }

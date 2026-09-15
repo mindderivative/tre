@@ -42,6 +42,7 @@ vello_hybrid = { version = "0.2.0", features = ["wgpu", "wgpu_default", "text"] 
 wgpu = "29.0.3"
 
 [dev-dependencies]
+accesskit = "0.25.0"
 engine-platform = { path = "../engine-platform" }
 # Test-only, proving §14 step 5's own claim ("rendered through the
 # pipeline steps 1-4 already proved"): a real view.yaml, parsed by
