@@ -10,11 +10,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 |---|---|---|
 | M1 — TRE v1 (archived reference) | `██████████` 100% | ✅ Archived `archived-2026-09-14` |
 | M2 — v2 Architecture (`ARCHITECTURE.md`) | `██████████` 100% | ✅ 16 sections + ADR-001, locked |
-| M3 — v2 Implementation | `███████⬜⬜⬜` 68% | 🚧 In progress — Phases 1-4 of 7 complete, Phase 5 in progress (steps 8-10 of 4 done) |
+| M3 — v2 Implementation | `███████⬜⬜⬜` 71% | 🚧 In progress — Phases 1-5 of 7 complete, Phase 6 next |
 
-**Just closed:** M3 Phase 5 step 10 (§14 step 10) — the shape morph module (§7.4), `engine-md3`'s first real content (an empty skeleton since M3 Phase 1 — steps 8/9 both landed in `engine-render` instead, since `vello_hybrid` calls are confined there per §15). `engine_md3::shape_morph::ShapeKey` implements `engine_core::Interpolate` directly, per §5's own type sketch — slots into the *existing* `Animated<T>` machinery from step 2 with zero changes to it. Read §7.4's review note as a literal spec: "equalize count, then lerp" alone was explicitly flagged as producing self-intersecting/wildly-rotating morphs, since naive per-index pairing assumes point *N* on one shape corresponds to point *N* on the other; the real fix — search every rotational offset and both winding directions, keep whichever minimizes total point-travel distance, then lerp — is what `best_aligned` implements. Two tests construct the literal failure case the review note describes (a square's corners listed starting from a different corner, and the same square wound the opposite direction) and prove the alignment search finds the zero-cost match — the unmoved square, to within `1e-9` — rather than collapsing to a single point the way naive index-0 pairing would. Deliberately scoped to vertex positions (drops curve control handles, single closed subpath) rather than full curve-type correspondence, matching §7.4's own "budget real implementation time," not more. See `PLAN.md`/`LOG.md`.
+**Just closed:** M3 Phase 5 step 11 (§14 step 11), closing Phase 5 — wired `material-colors` for a full dynamic color theme (§7.1). Treated the section's own acceptance gate ("must pass Material Color Utilities' own published reference test vectors... not just compiles and looks plausible") as a real gate: read `material-colors` 0.4.2's own source directly first (its HCT tests assert Google's own published CAM16 reference values for red/green/blue/black/white; its tonal-palette tests assert exact published hex values), then **actually ran its test suite** on the exact pinned version — `cargo test --lib` inside the vendored source, 129 passed, 0 failed — the real acceptance-gate evidence, not just source-reading. `engine_md3::color::ColorScheme` maps all 49 real MD3 scheme roles (including the newer `*_fixed`/`surface_container_*` tiers) onto `peniko::Color`; `DynamicTheme::from_seed` builds a real `ThemeBuilder` scheme. Tests isolate the `Argb`/`peniko::Color` channel conversions first (three distinct channel values, so a swap can't hide behind a round-trip using the same bug twice), then cross-check `from_seed`'s full output field-by-field against `material-colors`' own native output for the identical seed. Deliberately deferred live theme switching (`winit`'s `ThemeChanged` → `AppHandler`/`InputEvent`) — that dispatch still doesn't exist anywhere in this codebase, the same finding steps 7 and 9 already made. See `PLAN.md`/`LOG.md`.
 
-**Up next:** M3 Phase 5 step 11 (§14 step 11) — wire `material-colors` for a full dynamic color theme (§7.1): the step that finally gives `engine-md3` a real color source, an HCT-based scheme generated from a seed color, verified against Material Color Utilities' own published reference test vectors before it's pinned (§7.1's own "acceptance gate, not just verify maintenance status").
+**Up next:** M3 Phase 6 (§14 step 12) — `engine-spec`, full: `BindingResolver` + the `ViewModel`/`View._attach()` model (§16.2), the stylesheet cascade with real MD3 token resolution (§16.3, now that step 11 gives it an actual color scheme to resolve `background: primary`-style tokens against), and reconciliation/hot-reload (§16.4).
 
 **Known gaps:**
 - ~~§14 didn't sequence `engine-spec`/YAML-view work.~~ **Fixed.**
@@ -78,7 +78,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ## Milestone 3 — v2 Implementation
 
-**Status: 🚧 In progress.** Phases 1–4 complete, Phase 5 in progress (steps 8-10 of 4 done); this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
+**Status: 🚧 In progress.** Phases 1–5 complete, Phase 6 next; this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
 
 ### Phase 1 — Workspace Scaffold ✅
 - Step: Cargo workspace + six crate skeletons (`engine-core`, `engine-md3`, `engine-render`, `engine-platform`, `engine-spec`, `engine-py`) per §12 — ✅
@@ -97,11 +97,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 - Step 6: `engine-py` node creation + one property setter — ✅ (`App`/`Node` minimal slice; real pyo3 0.29.2 API verified directly, not assumed — `with_gil`/`allow_threads` are now `attach`/`detach`; `maturin develop` + `import tre` + a 6-test pytest suite + a real `.py` script driving a 60-frame windowed render loop, all run for real; CI extended per §13's own decision to start Python CI at this step)
 - Step 7: `accesskit` wiring, one button verified with a screen reader — ✅ (real `accesskit_winit::Adapter` wiring via `with_event_loop_proxy` in `engine-platform`; `Tree::build_access_update` in `engine-core`; the button's exposure verified directly against the real AT-SPI bus — exact role, label, action, and bounds match, not just "it compiled")
 
-### Phase 5 — MD3 Foundational Spikes (§14 steps 8–11) 🚧
+### Phase 5 — MD3 Foundational Spikes (§14 steps 8–11) ✅
 - Step 8: Shadow spike (`fill_blurred_rounded_rect`) — ✅ (verified `vello_hybrid` 0.2.0's real API directly in source; `build_shadow_scene` + a headless four-point falloff test proving a real Gaussian blur, not a hard edge — see `PLAN.md`/`LOG.md`)
 - Step 9: Ripple/state-layer — ✅ (`InteractionState`/`RippleState` in `engine-core`, real `Tree::interaction_mut`/`tick_all` wiring; `engine_render::build_ripple_scene` proves `push_layer`'s clip + opacity both genuinely work via two headless pixel-readback tests — see `PLAN.md`/`LOG.md`)
 - Step 10: Shape morph module — ✅ (`engine_md3::shape_morph::ShapeKey` implements `engine_core::Interpolate` — correspondence/alignment search plus equalize-then-lerp, matching §7.4's review note exactly; two tests prove a real square-rotated-to-a-different-corner and a reversed-winding square both morph to themselves, not a collapsed point — see `PLAN.md`/`LOG.md`)
-- Step 11: `material-colors` dynamic theme — ⬜
+- Step 11: `material-colors` dynamic theme — ✅ (real §7.1 acceptance-gate evidence: the vendored crate's own test suite run directly, 129/129 passing; `engine_md3::color::{ColorScheme, DynamicTheme}` maps all 49 real MD3 roles onto `peniko::Color`, cross-checked field-by-field against `material-colors`' own native output — see `PLAN.md`/`LOG.md`)
 
 ### Phase 6 — Declarative Authoring, full (§14 step 12) ⬜
 - Step 12: `BindingResolver` + `ViewModel`/`View._attach()` (§16.2), stylesheet cascade with real MD3 tokens (§16.3, now that Phase 5 gives it a real color scheme), reconciliation/hot-reload (§16.4) — ⬜

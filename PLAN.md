@@ -1,75 +1,82 @@
-# Plan: M3 Phase 5, Step 10 — Shape Morph Module (§14 step 10)
+# Plan: M3 Phase 5, Step 11 — Wire `material-colors` (§14 step 11, §7.1)
 
-Corresponds to `BUILD_TRACKER.md` M3 Phase 5, step 10 of 4 (steps 8-11).
+Corresponds to `BUILD_TRACKER.md` M3 Phase 5, step 11 of 4 (steps 8-11) -- closes Phase 5.
 
 ## Goal
 
-Per §14 step 10: "Shape morph module (§7.4) — the one component with no
-library to lean on." §7.4's own text: equalize point/segment counts
-between two `kurbo::BezPath`s, then linearly interpolate corresponding
-point positions. Its own review note is explicit that this is only half
-the real technique: naive per-index pairing assumes point *N* on one
-shape visually corresponds to point *N* on the other, which is usually
-false and produces self-intersecting or wildly-rotating mid-morph
-geometry. The missing, harder half is a correspondence/alignment search
-— try every rotational offset (and winding-direction flip) between the
-two point sets, keep whichever minimizes total point-travel distance —
-*before* lerping.
+Per §14 step 11: "Wire `material-colors` for a full dynamic color
+theme." §7.1: HCT color space, tonal palette generation, scheme
+generation from a seed color, a full light/dark scheme; `engine-md3`
+maps scheme roles (primary, on-primary, surface, etc.) onto
+`peniko::Color` values.
 
-§5's own type sketch names the integration point directly: `ShapeKey`
-is a value type implementing `engine_core::Interpolate` (§5: "`ShapeKey`
-(whose impl is the correspondence-then-lerp technique in §7.4)"),
-meaning it plugs into the *existing* `Animated<T>` machinery from step 2
-with zero changes to that machinery — the same pattern `f64`/
-`peniko::Color` already use, not a parallel animation mechanism.
+**§7.1's own acceptance gate, taken literally, not as a "compiles and
+looks plausible" checkbox:** "whichever crate is chosen must pass
+Material Color Utilities' own published reference test vectors (HCT
+round-trip conversions, tonal palette values, contrast ratios) before
+it's pinned."
+
+## Verifying the gate before pinning
+
+Resolved `material-colors 0.4.2` via `cargo add --dry-run` first (not
+assumed). Fetched its real source and inspected its own test suite
+directly rather than trusting its README:
+- `src/hct/mod.rs`'s CAM16 tests assert the exact published reference
+  values for RED/GREEN/BLUE/BLACK/WHITE (e.g. `cam.j = 46.445, cam.chroma
+  = 113.357, cam.hue = 27.408` for red) -- these are Google's own MCU
+  reference constants, recognizable directly (the same numbers appear
+  in every MCU port's own test suite), not something this crate made up.
+- `src/palette/core.rs`'s `CorePalette::of(0xff0000ff)` tone tests assert
+  exact published tonal-palette hex values (tone 100 = `0xffffffff`,
+  tone 95 = `0xfff1efff`, tone 90 = `0xffe0e0ff`, ...).
+- `src/contrast.rs` and `dynamic_color::tests::test_contrast_pairs`
+  cover contrast-ratio math.
+
+Then **ran the crate's own test suite for real**, on the exact pinned
+version and this project's own toolchain, rather than trusting that
+source inspection alone: `cargo test --lib` inside the vendored
+`material-colors-0.4.2` source directory -- **129 passed, 0 failed**.
+This is the actual acceptance-gate evidence: not "the crate claims to
+port MCU," but "the exact pinned version's own port of MCU's reference
+vectors passes, checked directly, right now."
 
 ## Scope
 
-This is `engine-md3`'s first real content (an empty skeleton crate
-since M3 Phase 1). In scope:
+In scope:
+- `engine-md3::color` (or similarly named module): `ColorScheme` --
+  every role field from `material_colors::scheme::Scheme` (49 fields:
+  primary/on_primary/..., surface tiers, the newer `*_fixed` roles,
+  outline, inverse_*, shadow, scrim), each mapped to a `peniko::Color`.
+  Mapped as a complete, mechanical 1:1 field conversion, not an
+  arbitrarily truncated subset -- omitting some roles for "don't build
+  ahead of need" would just mean a real future caller hits an
+  inexplicably-missing field for no principled reason, since there's no
+  extra logic or judgment call per field to defer.
+- `DynamicTheme::from_seed(seed: peniko::Color) -> DynamicTheme { light:
+  ColorScheme, dark: ColorScheme }`: builds a real `material_colors::
+  theme::ThemeBuilder::with_source(...).build()` from the seed and maps
+  both schemes.
+- Real, non-tautological tests: the `peniko::Color <-> material_colors::
+  color::Argb` channel conversions verified in isolation first (so a
+  channel-order bug can't hide inside a round-trip test that would still
+  pass with a consistent bug on both sides), then the full `from_seed`
+  pipeline cross-checked against `material-colors`' own native `Theme`
+  output for the identical seed -- proving the role mapping is correct
+  field-by-field, not just "produces *some* plausible-looking colors."
 
-- `engine-md3::shape_morph::ShapeKey`: extracts a closed `BezPath`'s own
-  vertex sequence (`from_path`), rebuilds a straight-edged closed
-  `BezPath` from it (`to_path`), and implements `engine_core::
-  Interpolate` — the equalize-then-align-then-lerp pipeline runs fresh
-  inside `interpolate()` itself, so a caller drives it exactly like any
-  other `Animated<T>` (`Animated::new(ShapeKey::from_path(a))`,
-  `.animate_to(ShapeKey::from_path(b), duration, curve, now)`) with no
-  separate setup step to remember.
-- Real unit tests proving the two mechanisms independently: the
-  correspondence search actually finds a zero-cost alignment when one
-  exists (two point lists describing the *same* physical square, one
-  rotated to start at a different corner, one wound the opposite
-  direction) rather than defaulting to naive index pairing -- and edge
-  subdivision (`equalize_point_counts`) genuinely splits the longest
-  edge, not an arbitrary or zero-length one.
-
-Deliberately scoped to a path's own vertices (each `PathEl`'s endpoint),
-not full curve-type-aware control-point morphing — a curved segment's
-control handles are dropped, and morph output is always straight edges
-between interpolated vertices. MD3's own shapes are close enough to
-polygons (rounded corners aside) for this to be the correct v1 scope;
-true bezier-segment-type correspondence is a substantially larger
-problem than "budget real implementation time" asks for, and nothing in
-§14's build order calls for it. Also assumes one closed subpath per
-shape — every MD3 shape is a single contour, and no planned component
-needs a shape with a hole.
-
-Out of scope (deferred, not a gap): wiring `ShapeKey`/`Animated<
-ShapeKey>` into `PaintProperties`/`NodeKind` — `engine-core::node.rs`'s
-own comment has deferred `shape: Animated<ShapeKey>` since step 3
-("needs a non-trivial `Interpolate` impl... land[s] whenever a later
-step first animates a transform or a shape morph"); that step is real
-component work (a FAB morphing into an extended FAB, say) which doesn't
-exist yet. This step builds and proves the `ShapeKey`/`Interpolate`
-machinery `engine-core` can already consume unchanged, the same
-"prove the primitive, defer `Tree`-level wiring" shape steps 8/9 both
-used.
+Out of scope (deferred, not a gap): wiring `winit`'s `ThemeChanged`
+event through `AppHandler`/`InputEvent` for live theme switching. That
+dispatch mechanism still doesn't exist anywhere in this codebase --
+checked directly, same finding as steps 7 and 9 -- so there's nothing
+to wire live switching *to* yet. This step builds and proves the real
+`DynamicTheme::from_seed` mechanism `engine-platform` will call once
+that dispatch exists, matching the identical scope narrowing already
+applied twice this phase. Also out of scope: consuming `ColorScheme` in
+`PaintProperties`/a real MD3 component (`engine-spec`'s token resolution,
+§16.3, is a later step that explicitly waits on this one).
 
 ## Verification
 
-`cargo test -p engine-md3` passes with real geometric proofs (a
-same-shape-different-start-vertex pair morphs to itself, not a
-collapsed degenerate shape), not just "doesn't panic". `cargo test
---workspace`, `cargo clippy --workspace --all-targets -- -D warnings`,
-`cargo fmt --check` all clean.
+`cargo test -p engine-md3` passes, including the cross-checked
+role-mapping test. `cargo test --workspace`, `cargo clippy --workspace
+--all-targets -- -D warnings`, `cargo fmt --check` all clean.

@@ -1,82 +1,85 @@
-# Log: M3 Phase 5, Step 10 — Shape Morph Module (§14 step 10)
+# Log: M3 Phase 5, Step 11 — Wire `material-colors` (§14 step 11, §7.1)
 
-Corresponds to `PLAN.md` / `BUILD_TRACKER.md` M3 Phase 5, step 10 of 4 (steps 8-11).
+Corresponds to `PLAN.md` / `BUILD_TRACKER.md` M3 Phase 5, step 11 of 4 (steps 8-11) -- closes Phase 5.
 
 ## What happened
 
-**`engine-md3`'s first real content.** Confirmed directly first that
-this is the correct crate: `engine-md3` has been an empty skeleton
-since M3 Phase 1, and steps 8/9 (shadow, ripple) both landed in
-`engine-render` instead, because those needed `vello_hybrid`, which
-§15's Risk Register confines to `engine-render` by name. Shape morphing
-only needs `kurbo::BezPath` geometry -- no GPU calls -- so this is the
-first step whose mechanism genuinely belongs in `engine-md3`. Added
-`peniko` as a direct dependency (matching every other crate's "go
-through `peniko::kurbo`, not `kurbo` directly" convention; already
-resolved at 0.6.1 elsewhere, zero new dependency-graph cost) and
-corrected `engine-md3/src/lib.rs`'s stale doc comment, which still said
-real content started "at step 8" from before that scope decision was
-made.
+**Treated §7.1's acceptance gate as a real gate to pass, not a checkbox
+to note.** Its own text: "whichever crate is chosen must pass Material
+Color Utilities' own published reference test vectors... before it's
+pinned -- not just 'compiles and the colors look plausible.'" Resolved
+`material-colors 0.4.2` via `cargo add --dry-run` first (not assumed),
+then fetched its real source and read its own test files directly
+before writing a line of this project's code: `src/hct/mod.rs`'s CAM16
+tests assert the exact published reference values for red/green/blue/
+black/white (e.g. red: `j=46.445, chroma=113.357, hue=27.408`) --
+recognizable directly as Google's own MCU reference constants, the same
+numbers every MCU port's own test suite carries, not values this crate
+invented. `src/palette/core.rs`'s `CorePalette::of` tests assert exact
+published tonal-palette hex values. `src/contrast.rs` and
+`dynamic_color::tests::test_contrast_pairs` cover contrast-ratio math.
 
-**Read §7.4's review note as a literal spec, not commentary**: "equalize
-count, then lerp" alone was explicitly flagged as producing
-self-intersecting or wildly-rotating morphs, because naive per-index
-pairing assumes point *N* on one shape corresponds to point *N* on the
-other. The fix it names -- try every rotational offset and both winding
-directions, keep whichever minimizes total point-travel distance, then
-lerp -- is exactly what `engine_md3::shape_morph::best_aligned`
-implements, not a simplified approximation of it.
+**Then actually ran it**, rather than trusting source-reading alone:
+`cargo test --lib` inside the vendored `material-colors-0.4.2` source
+directory, on this exact pinned version and this project's own
+toolchain (1.98.0) -- **129 passed, 0 failed**. This is the real
+acceptance-gate evidence this step's own `color.rs` module doc comment
+cites, matching the project's "verify the real thing, not the claim
+about the thing" discipline applied consistently since `pyo3`/
+`accesskit` API verification.
 
-**`ShapeKey` implements `engine_core::Interpolate` directly** -- §5's
-own type sketch names this integration point (`pub shape:
-Animated<ShapeKey>`, "`ShapeKey` (whose impl is the correspondence-
-then-lerp technique in §7.4)"), meaning the *existing* `Animated<T>`
-machinery from step 2 needed zero changes: `ShapeKey` slots in exactly
-like `f64`/`peniko::Color` already do. The whole equalize-then-align-
-then-lerp pipeline runs fresh inside `interpolate()` on every call
-(a real, explicit choice, not an oversight) rather than being cached
-once per animation -- the same "naive until profiling says otherwise"
-call this project has made consistently since `Tree::tick_all`'s own
-whole-tree walk, and cheap in absolute terms at the vertex counts an
-MD3 shape actually has.
+**`engine_md3::color::ColorScheme`**: every one of `material_colors::
+scheme::Scheme`'s 49 role fields (primary/on_primary/..., the newer
+`*_fixed` roles, all five `surface_container_*` elevation tiers,
+outline, inverse_*, shadow, scrim), each mapped onto a `peniko::Color`
+via `Argb <-> peniko::Color` conversions using `AlphaColor::to_rgba8`/
+`Color::from_rgba8` (verified directly in the `color` crate's own
+source: `peniko::Color` is `AlphaColor<Srgb>`, whose inherent
+`to_rgba8()` gives `Rgba8{r,g,b,a}` directly). Generated the field list
+and the mechanical `From` impl body with a small throwaway script
+rather than hand-typing 49 lines twice, specifically to eliminate the
+transcription-typo risk that many similarly-named fields (`primary` vs
+`primary_container` vs `primary_fixed` vs `primary_fixed_dim`) invites.
 
-**Deliberately scoped to vertex positions, not full curve-type
-correspondence**: `ShapeKey::from_path` extracts each `PathEl` segment's
-endpoint (dropping bezier control handles), and `to_path` rebuilds a
-straight-edged polygon from the interpolated points. True curve-to-
-curve morphing (matching which segments are curves vs. lines between
-two arbitrary shapes) is a substantially larger problem than "budget
-real implementation time" (§7.4's own phrasing) asks for, and nothing
-in §14's build order calls for it -- MD3's own shapes are close enough
-to polygons for this to be the correct v1 scope. Also assumes one
-closed subpath per shape, matching every real MD3 shape.
+**`DynamicTheme::from_seed`**: one seed `peniko::Color` in, a real
+`material_colors::theme::ThemeBuilder::with_source(...).build()` call,
+both light and dark schemes mapped out. Uses the library's default
+`TonalSpot` variant -- MD3's own default; variant selection isn't
+asked for by §7.1's scope.
 
-**The actual proof, not just "doesn't panic"**: two tests construct the
-literal failure case §7.4's review note describes -- a square's four
-corners listed starting from a different corner (`[C,D,A,B]` vs.
-`[A,B,C,D]`), and the same square wound the opposite direction. Naive
-index-0 pairing between either pair would lerp opposite corners at
-`t=0.5` (e.g. `midpoint(A,C)` and `midpoint(C,A)` both landing on the
-square's own center), collapsing all four points onto one spot -- an
-unambiguous, easy-to-detect failure signature. Both tests instead assert
-the midpoint output is the *unmoved* square to within `1e-9`, proving
-the alignment search actually found the zero-cost rotation/reversal
-rather than defaulting to naive pairing. A third test proves
-`equalize_point_counts`/`subdivide_longest_edge` pick the genuinely
-longest edge of an asymmetric shape, not an arbitrary one; a fourth
-proves `t=0.0`/`t=1.0` snap exactly to the equalized/aligned endpoints
-with no drift.
+**Real, non-tautological tests, not a round-trip that could hide a
+channel-swap bug.** `color_to_argb`/`argb_to_color` are each tested in
+isolation first, with three distinct channel values (`0x12,0x34,0x56`)
+so a swapped-channel bug can't hide behind a round-trip test using the
+same (buggy) conversion on both ends. Only once those are independently
+proven correct does the actual "wire material-colors" claim get tested:
+`DynamicTheme::from_seed`'s output cross-checked field-by-field against
+`material-colors`' own native `ThemeBuilder` output for the identical
+seed -- several roles across both light and dark, including a
+`*_fixed` role and a `surface_container_*` tier, so the check isn't
+only exercising whichever handful of fields a smaller test might have
+picked. A final assertion that light and dark actually differ rules out
+a bug that fed the same scheme into both output fields.
+
+**Deliberately did not wire live theme switching** (§7.1's own "live
+theme switching is in scope" text) -- that dispatch routes through
+`AppHandler`/`InputEvent` (§4), checked directly and still absent
+anywhere in this codebase, the same finding steps 7 and 9 already made
+for keyboard and pointer dispatch respectively. This module builds and
+proves the real mechanism that dispatch will call once it exists.
 
 ## Verification
 
 ```
+$ (cd ~/.cargo/registry/src/*/material-colors-0.4.2 && cargo test --lib)
+test result: ok. 129 passed; 0 failed; 0 ignored   # the actual §7.1 acceptance gate
+
 $ cargo test -p engine-md3 -- --nocapture
-running 5 tests
-test shape_morph::tests::same_shape_with_opposite_winding_morphs_to_itself ... ok
-test shape_morph::tests::subdivide_longest_edge_splits_the_actual_longest_edge ... ok
-test shape_morph::tests::from_path_and_to_path_round_trip_a_triangle ... ok
-test shape_morph::tests::same_shape_started_at_a_different_corner_morphs_to_itself_not_a_collapsed_point ... ok
-test shape_morph::tests::interpolate_at_t_zero_and_one_returns_the_equalized_endpoints_exactly ... ok
+running 8 tests
+test color::tests::argb_to_color_maps_channels_in_the_right_order ... ok
+test color::tests::color_to_argb_maps_channels_in_the_right_order ... ok
+test color::tests::from_seed_matches_material_colors_own_native_output_role_by_role ... ok
+test shape_morph::tests::... (5 tests, unchanged from step 10) ... ok
 
 $ cargo test --workspace             # all green
 $ cargo clippy --workspace --all-targets -- -D warnings   # clean
@@ -85,10 +88,11 @@ $ cargo fmt --check                  # clean
 
 ## Next
 
-`BUILD_TRACKER.md` updated: Phase 5 step 10 done (3 of 4 steps in this
-phase). Next: step 11 -- wire `material-colors` for a full dynamic
-color theme (§7.1), the step that finally gives `engine-md3` a real
-color source: an HCT-based scheme generated from a seed color, verified
-against Material Color Utilities' own published reference test vectors
-(§7.1's own "acceptance gate, not just verify maintenance status")
-before it's pinned.
+`BUILD_TRACKER.md` updated: Phase 5 (steps 8-11) fully done -- M3 now
+5 of 7 phases complete. Next: Phase 6 (§14 step 12) -- `engine-spec`,
+full: `BindingResolver` + the `ViewModel`/`View._attach()` model
+(§16.2), the stylesheet cascade with real MD3 token resolution (§16.3,
+now that this step gives it an actual color scheme to resolve
+`background: primary`-style tokens against instead of a stub), and
+reconciliation/hot-reload (§16.4). Deliberately sequenced after both
+`engine-py` (step 6) and this step, since it needs both.

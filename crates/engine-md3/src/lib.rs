@@ -11,6 +11,8 @@
 //! the first step whose mechanism (`kurbo::BezPath` geometry, no GPU
 //! calls) actually belongs in this crate rather than `engine-render`.
 
+mod color;
 mod shape_morph;
 
+pub use color::{ColorScheme, DynamicTheme};
 pub use shape_morph::ShapeKey;
