@@ -12,14 +12,14 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M2 — v2 Architecture (`ARCHITECTURE.md`) | `██████████` 100% | ✅ 16 sections + ADR-001, locked |
 | M3 — v2 Implementation | `⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜` 0% | ⬜ Not started — zero code written |
 
-**Just closed:** Interaction-state model (hover/focus mechanically Rust-owned, selection ViewModel-owned via a new Design Principle 6) plus its accessibility-state auto-derivation, closing out the last open design thread in `ARCHITECTURE.md` (commit `fdf7a38`).
+**Just closed:** §14's Suggested Build Order now sequences `engine-spec`/§16 work — a minimal parse-only spike at step 5 and the full `BindingResolver`/`ViewModel`-attach/stylesheet/hot-reload story at step 12, both at their actual dependency-driven positions rather than bolted on at the end. Fixes the build-order gap this tracker flagged. (commit `0b162c9`)
 
-**Up next:** Nothing is blocking M3 Phase 1 (workspace scaffold) — the recommendation on the table is to stop refining the design and start `engine-render`'s step-1 spike, since the remaining real unknowns (Vello's actual current API, Taffy's real caching behavior, `parley` text shaping) can only be resolved by writing code.
+**Up next:** Nothing is blocking M3 Phase 1 (workspace scaffold) — the recommendation on the table is to stop refining the design and start with §14 step 1 (`engine-render`'s static-rect spike), since the remaining real unknowns (Vello's actual current API, Taffy's real caching behavior, `parley` text shaping) can only be resolved by writing code.
 
 **Known gaps:**
-- §14's Suggested Build Order was written before §16 (Declarative Authoring) existed. Steps 11–13 sequence the §11 desktop-shell features but **no build-order step sequences `engine-spec`/YAML-view work at all** — this needs a decision (fold into an existing step, or add a new one) before M3 reaches that point.
-- Everything in `ARCHITECTURE.md` citing "verify at implementation time" (accesskit's real current API, Vello/Linebender family version compatibility, `material-colors`' test-vector conformance) is unverified by construction — it's a pre-implementation document, not yet checked against real crate versions.
-- No `PLAN.md`/`LOG.md` exists yet for M3 — the project's own phase/step convention (per-step plan + log + demo) hasn't been started for the v2 rebuild.
+- ~~§14 didn't sequence `engine-spec`/YAML-view work.~~ **Fixed** — see Just Closed.
+- Everything in `ARCHITECTURE.md` citing "verify at implementation time" (accesskit's real current API, Vello/Linebender family version compatibility, `material-colors`' test-vector conformance) is unverified by construction. Not a documentation defect — this is the expected state of a pre-implementation design doc, and resolves naturally as each build-order step runs, not by editing the document further.
+- No `PLAN.md`/`LOG.md` exists yet for M3 — the project's own phase/step convention (per-step plan + log + demo) hasn't been started. Same as above: this isn't something to fix in place, it starts existing the moment M3 Phase 1 actually kicks off.
 
 ---
 
@@ -74,7 +74,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ## Milestone 3 — v2 Implementation
 
-**Status: ⬜ Not started.** Nothing below has code behind it yet; this mirrors §14's Suggested Build Order plus the one gap noted above.
+**Status: ⬜ Not started.** Nothing below has code behind it yet; this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
 
 ### Phase 1 — Workspace Scaffold ⬜
 - Step: Cargo workspace + six crate skeletons (`engine-core`, `engine-md3`, `engine-render`, `engine-platform`, `engine-spec`, `engine-py`) per §12 — ⬜
@@ -86,23 +86,23 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 - Step 3: `taffy` layout + frame-time CI benchmark (§6 target: 16.6ms/8.3ms) — ⬜
 - Step 4: `parley` text spike (real type scale, non-trivial string) — ⬜
 
-### Phase 3 — Python Bindings & Accessibility (§14 steps 5–6) ⬜
-- Step 5: `engine-py` node creation + one property setter — ⬜
-- Step 6: `accesskit` wiring, one button verified with a screen reader — ⬜
+### Phase 3 — Declarative Authoring, minimal (§14 step 5) ⬜
+- Step 5: `engine-spec` parses one static `view.yaml` (no bindings/handlers), `WidgetSpec` → `NodeKind`, `deny_unknown_fields` validation, renders through Phase 2's pipeline — ⬜
 
-### Phase 4 — MD3 Foundational Spikes (§14 steps 7–10) ⬜
-- Step 7: Shadow spike (`fill_blurred_rounded_rect`) — ⬜
-- Step 8: Ripple/state-layer — ⬜
-- Step 9: Shape morph module — ⬜
-- Step 10: `material-colors` dynamic theme — ⬜
+### Phase 4 — Python Bindings & Accessibility (§14 steps 6–7) ⬜
+- Step 6: `engine-py` node creation + one property setter — ⬜
+- Step 7: `accesskit` wiring, one button verified with a screen reader — ⬜
 
-### Phase 5 — Desktop Shell Build-out (§14 steps 11–13) ⬜
-- Step 11: Overlay mechanism (one dropdown menu) — ⬜
-- Step 12: Multi-window (second `PyWindow`) — ⬜
-- Step 13: Docking + virtualization — ⬜
+### Phase 5 — MD3 Foundational Spikes (§14 steps 8–11) ⬜
+- Step 8: Shadow spike (`fill_blurred_rounded_rect`) — ⬜
+- Step 9: Ripple/state-layer — ⬜
+- Step 10: Shape morph module — ⬜
+- Step 11: `material-colors` dynamic theme — ⬜
 
-### Phase 6 — Declarative Authoring (§16) ⬜ *(unsequenced — see Known Gaps)*
-- Step: `engine-spec` — `WidgetSpec` parsing, `deny_unknown_fields` validation — ⬜
-- Step: Stylesheet cascade — ⬜
-- Step: `BindingResolver` + ViewModel/View attach — ⬜
-- Step: Reconciliation/hot-reload — ⬜
+### Phase 6 — Declarative Authoring, full (§14 step 12) ⬜
+- Step 12: `BindingResolver` + `ViewModel`/`View._attach()` (§16.2), stylesheet cascade with real MD3 tokens (§16.3, now that Phase 5 gives it a real color scheme), reconciliation/hot-reload (§16.4) — ⬜
+
+### Phase 7 — Desktop Shell Build-out (§14 steps 13–15) ⬜
+- Step 13: Overlay mechanism (one dropdown menu) — ⬜
+- Step 14: Multi-window (second `PyWindow`) — ⬜
+- Step 15: Docking + virtualization — ⬜
