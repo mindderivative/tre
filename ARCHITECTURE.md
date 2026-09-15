@@ -60,6 +60,8 @@ A running log of resolved architectural questions, kept in one canonical place r
 | Attach scope & cardinality | `_attach` targets any node (not only a `View`'s root), and one `ViewModel` instance may attach to nodes across multiple `View`s (§16.2) | Needed for §11.2's content-swap and §11.4's per-panel docking to each own a small `ViewModel`; free for the multi-view case since a `Signal`'s subscriber list was never view-scoped |
 | View composition | An `include:` directive splices one view file into another at load time, under the same validation/confinement/cycle-detection guards as any other `WidgetSpec` (§16.6) | User's explicit ask, matching pyCopper's own proven `spec/include.py` pattern — keeps real app view files small |
 | Two-way bindings | Sugar over an existing one-way binding plus an auto-generated handler on the widget's natural edit event; explicit YAML opt-in, plain `Signal` references only (§16.7) | Reuses both existing mechanisms rather than adding a third; reversibility rules out binding a computed expression two-way |
+| Interaction-state ownership | Mechanical states (hover, focus, press) are detected and animated entirely in `engine-core`/`engine-md3`, zero app involvement required; meaning-dependent states (selected, checked, expanded) are ViewModel-owned via the ordinary binding/handler path (§2 Principle 6, §7.3) | The engine can determine a geometric fact on its own; it can never determine what an app's data means |
+| Accessibility state derivation | Well-known `NodeKind`-payload fields (`checked`, `selected`, ...) derive their `AccessStates` flag automatically (§7.3, §10) | One property write keeps both the visual and the accessibility tree correct — nothing to remember to update twice |
 
 **Secondary-OS CI trigger (proposed, adjust as needed):** add minimal build + smoke-test CI for Windows and macOS no later than build-order step 6 (§14, wiring `accesskit`) — the first point where real platform-specific behavior (UIA vs. NSAccessibility vs. AT-SPI) becomes load-bearing, and a natural forcing function to confirm the deferred OSes still build before investing further past it.
 
@@ -72,6 +74,7 @@ A running log of resolved architectural questions, kept in one canonical place r
 3. **The PyO3 boundary is the only stability contract.** Internal crates (`engine-core`, `engine-render`, `engine-md3`) can churn freely. `engine-py`'s public surface is what you version and document for framework users.
 4. **No dependency leaks across the boundary.** Vello, kurbo, peniko, taffy, accesskit types never appear in Python-facing signatures. Python sees Python types.
 5. **De-risk the unknowns before building on them.** Vello's shadow/blur support and shape morphing have no prior art in this exact combination — spike them standalone before writing MD3 components against them.
+6. **Rust detects and animates; the app decides what things mean.** An interaction state whose *fact* is purely geometric or positional — hover, focus, press — is detected and rendered entirely in `engine-core`/`engine-md3` (§7.3, §10), with zero app-author involvement required for the default MD3 visual, because the engine can determine it with no knowledge of what the app's data means. A state whose fact depends on that meaning — selected, checked, expanded — is ViewModel-owned, set through the same binding/handler path as any other property (§16.2): the engine never guesses at app semantics, it only ever renders whatever state it's told, through animation machinery it already owns either way.
 
 ---
 
@@ -316,7 +319,7 @@ Use `material-colors` (or compare current MCU-port crates — several exist): HC
 
 **Flag:** early-stage per Vello's own release notes — no API stability guarantee yet, uneven feature parity across the `vello` / `vello_cpu` / `vello_hybrid` variants. **Spike this standalone** (render one elevated rounded rect through the exact pinned `vello_hybrid` version) before building MD3 components against it.
 
-### 7.3 State layers / ripple
+### 7.3 State layers: hover, press, focus
 No new dependency. `Scene::push_layer(clip_path, ...)` with a per-ripple `Animated<f64>` radius and `Animated<f64>` opacity, using the same central tick as everything else.
 
 Ripple state lives on `Node` itself (`interaction: Option<InteractionState>`, §5) — not folded into `PaintProperties` or a `NodeKind` payload, since ripple applies across many otherwise-unrelated `NodeKind` variants (buttons, chips, FABs, list items, icon buttons, ...) rather than belonging to any one of them:
@@ -324,6 +327,8 @@ Ripple state lives on `Node` itself (`interaction: Option<InteractionState>`, §
 ```rust
 pub struct InteractionState {
     pub ripples: SmallVec<[RippleState; 4]>, // small bound — MD3 doesn't expect many concurrent ripples
+    pub hover_opacity: Animated<f64>,        // MD3 hover state-layer — mechanical, detected entirely in engine-core
+    pub focus_ring: Animated<f64>,           // visibility of the focus indicator — mechanical, driven by §10's focus model
 }
 
 pub struct RippleState {
@@ -336,6 +341,12 @@ pub struct RippleState {
 Each press pushes a new `RippleState`; each animates independently through the same central tick, and a finished ripple is removed from the `SmallVec` via the same completion-queue mechanism §5 already defines for `on_complete` — reused per-ripple rather than per-property. This is what lets rapid taps produce MD3's real overlapping-ripple look instead of one ripple snapping/restarting per node.
 
 > **Review note (decision recorded):** the original draft modeled ripple as exactly one `Animated<f64>` radius + one `Animated<f64>` opacity, which only supports a single ripple per node at a time. Real MD3 shows overlapping ripples under rapid taps; resolved above with a small bounded collection per node instead of a single scalar pair.
+
+**Hover needs no new dispatch mechanism — it falls out of hit-testing (§11.10), run every pointer-move.** If the topmost hit node differs from the previously-hovered one, the old node's `hover_opacity` animates toward `0.0` and the new one's toward its MD3 hover value, entirely inside `engine-core` — a `Node`'s presence in `InteractionState` and its `Animated<T>` machinery already exist for ripple; hover is the same mechanism, keyed off a different, equally mechanical fact (Design Principle 6, §2). The engine also fires an optional `HoverEnter`/`HoverExit` `EventKind` (§16.2) through the ordinary handler path for the rare case an app wants to react to hovering itself (a delayed tooltip, say) — the default MD3 visual never depends on anything handling it.
+
+**Focus ring visibility follows §10's `focused: Option<NodeId>` the same way** — when a node becomes the focused node, its `focus_ring` animates in; when focus moves elsewhere, it animates out. This is the missing visual half of §10's focus model, which specified the mechanical tracking and accessibility dispatch but not the on-screen indicator.
+
+**Selection, checked-state, and similar are deliberately not here.** `selected`/`checked`/`expanded` depend on what the app's data means, not on anything geometric the engine can determine on its own (Design Principle 6) — they're ordinary `NodeKind`-payload fields the ViewModel sets through the usual binding/handler path (§16.2), animated through the same `Animated<T>` mechanism once set. The one thing the engine still owns automatically: a well-known field name on a `NodeKind` payload (a `TabState.selected`, a `CheckboxState.checked`) derives its corresponding `AccessStates` flag (§10) directly — the app sets one property and the accessibility tree stays correct for free, rather than needing to separately remember to update accessibility metadata by hand.
 
 ### 7.4 Shape morphing
 No turnkey crate exists for this. Technique: equalize point/segment counts between the start and end `kurbo::BezPath`s (insert zero-length or subdivided segments into whichever has fewer), then linearly interpolate corresponding point positions per frame — the standard approach used by shape-morphing tools generally, ported onto `kurbo` primitives. Build as a small internal module in `engine-md3`. **No library to lean on here — budget real implementation time.**
@@ -525,6 +536,8 @@ pub struct AccessNodeData {
     pub actions: Vec<accesskit::Action>, // which AT-SPI/UIA/NSAccessibility actions this node responds to
 }
 ```
+
+`disabled` aside, most of `AccessStates`' flags (`selected`, `checked`, `expanded`) are never set directly — they're derived automatically from the corresponding well-known `NodeKind`-payload field (`CheckboxState.checked`, a `TabState.selected`, §7.3) the app already sets through the ordinary binding path (§16.2). One property write keeps both the visual and the accessibility tree correct; nothing needs updating twice.
 
 **A minimal keyboard focus model lives in `engine-core`, not left unspecified.** `Tree` tracks `focused: Option<NodeId>`; Tab/Shift-Tab moves focus in tree order (the same order the `TreeUpdate` already walks); `Enter`/`Space` on the focused node dispatches `accesskit::Action::Default`, and platform-driven focus requests (a screen reader focusing a node directly) dispatch `accesskit::Action::Focus` — both routed through the same `AppHandler`/`InputEvent` inversion already wired for pointer events (§4), so keyboard input isn't a second, parallel dispatch mechanism. **Explicitly out of this minimal model:** component-specific keyboard semantics — arrow keys moving between options in a radio group, a slider's arrow-key increments — are deferred to per-component design in `engine-md3`, exactly when each such component is actually built, the same way `NodeKind` payloads already are (§7). Keyboard operability (WCAG 2.1's baseline requirement, not a nice-to-have) ships from day one; the component-specific *extent* of it grows incrementally with the component catalog.
 
