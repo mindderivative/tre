@@ -1,0 +1,8 @@
+[package]
+name = "engine-platform"
+version.workspace = true
+edition.workspace = true
+description = "winit EventLoop/ApplicationHandler and the accesskit_winit adapter. The only crate depending on winit. See ARCHITECTURE.md §4, §9."
+
+[dependencies]
+engine-core = { path = "../engine-core" }

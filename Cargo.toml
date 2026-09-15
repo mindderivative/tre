@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/engine-core",
+    "crates/engine-md3",
+    "crates/engine-render",
+    "crates/engine-platform",
+    "crates/engine-spec",
+    "crates/engine-py",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# No `rust-version` yet, deliberately -- see PLAN.md M3 Phase 1. Claiming
+# an MSRV floor before any real dependency exists to derive it from is
+# exactly the mistake LESSONS_LEARNED.md §5 documents (TRE v1's `1.75`
+# that was quietly false). Set this once a real dependency's own
+# `rust-version` gives something to actually check against, then add the
+# enforcing `msrv` CI job in the same commit -- not before.

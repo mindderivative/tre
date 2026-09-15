@@ -1,0 +1,13 @@
+# The *development* toolchain, not the MSRV -- see the comment on
+# `rust-version` (currently unset) in the root Cargo.toml. Pinned to the
+# toolchain actually installed when this scaffold was created
+# (2026-09-15); bump deliberately, not silently, when the team decides to
+# -- matching TRE v1's own precedent (archive/rust-toolchain.toml).
+#
+# `components` is explicit, not left to the ambient rustup profile:
+# GitHub's hosted runners default rustup to the "minimal" profile
+# (rustc/cargo/std only), so auto-installing this pin without this list
+# would silently skip rustfmt/clippy there.
+[toolchain]
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]

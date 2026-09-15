@@ -1,0 +1,9 @@
+[package]
+name = "engine-spec"
+version.workspace = true
+edition.workspace = true
+description = "YAML view/stylesheet parsing, reconciliation, and the BindingResolver trait. Depends on engine-core and engine-md3; no pyo3, no winit. See ARCHITECTURE.md §4, §16."
+
+[dependencies]
+engine-core = { path = "../engine-core" }
+engine-md3 = { path = "../engine-md3" }

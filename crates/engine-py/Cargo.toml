@@ -1,0 +1,12 @@
+[package]
+name = "engine-py"
+version.workspace = true
+edition.workspace = true
+description = "PyO3 bindings -- the only crate depending on pyo3, and the only stability contract for framework users. See ARCHITECTURE.md §4, §8."
+
+[dependencies]
+engine-core = { path = "../engine-core" }
+engine-md3 = { path = "../engine-md3" }
+engine-render = { path = "../engine-render" }
+engine-platform = { path = "../engine-platform" }
+engine-spec = { path = "../engine-spec" }

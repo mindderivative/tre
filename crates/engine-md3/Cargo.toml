@@ -1,0 +1,8 @@
+[package]
+name = "engine-md3"
+version.workspace = true
+edition.workspace = true
+description = "Material Design 3 theming: color scheme, shadow/ripple helpers, shape morph, motion-curve presets. Depends on engine-core, never the reverse. See ARCHITECTURE.md §4, §7."
+
+[dependencies]
+engine-core = { path = "../engine-core" }

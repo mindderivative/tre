@@ -10,16 +10,16 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 |---|---|---|
 | M1 — TRE v1 (archived reference) | `██████████` 100% | ✅ Archived `archived-2026-09-14` |
 | M2 — v2 Architecture (`ARCHITECTURE.md`) | `██████████` 100% | ✅ 16 sections + ADR-001, locked |
-| M3 — v2 Implementation | `⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜` 0% | ⬜ Not started — zero code written |
+| M3 — v2 Implementation | `██⬜⬜⬜⬜⬜⬜⬜⬜` 14% | 🚧 In progress — Phase 1 of 7 complete |
 
-**Just closed:** §14's Suggested Build Order now sequences `engine-spec`/§16 work — a minimal parse-only spike at step 5 and the full `BindingResolver`/`ViewModel`-attach/stylesheet/hot-reload story at step 12, both at their actual dependency-driven positions rather than bolted on at the end. Fixes the build-order gap this tracker flagged. (commit `0b162c9`)
+**Just closed:** M3 Phase 1 (Workspace Scaffold) — the Cargo workspace, `rust-toolchain.toml`, and all six crate skeletons, wired with exactly §4's local dependency edges (plus one real gap `PLAN.md` found and fixed first: `engine-render → engine-core` was missing from the diagram entirely). `cargo check --workspace` and `cargo clippy --workspace` both clean. First real code in the v2 rebuild. See `PLAN.md`/`LOG.md`.
 
-**Up next:** Nothing is blocking M3 Phase 1 (workspace scaffold) — the recommendation on the table is to stop refining the design and start with §14 step 1 (`engine-render`'s static-rect spike), since the remaining real unknowns (Vello's actual current API, Taffy's real caching behavior, `parley` text shaping) can only be resolved by writing code.
+**Up next:** M3 Phase 2 — Render Core Spike (§14 steps 1–4): a static rounded rect through `vello_hybrid` into a real window, then `Animated<T>`, `taffy` layout, and a `parley` text spike. First contact with the actual pinned dependency versions.
 
 **Known gaps:**
-- ~~§14 didn't sequence `engine-spec`/YAML-view work.~~ **Fixed** — see Just Closed.
-- Everything in `ARCHITECTURE.md` citing "verify at implementation time" (accesskit's real current API, Vello/Linebender family version compatibility, `material-colors`' test-vector conformance) is unverified by construction. Not a documentation defect — this is the expected state of a pre-implementation design doc, and resolves naturally as each build-order step runs, not by editing the document further.
-- No `PLAN.md`/`LOG.md` exists yet for M3 — the project's own phase/step convention (per-step plan + log + demo) hasn't been started. Same as above: this isn't something to fix in place, it starts existing the moment M3 Phase 1 actually kicks off.
+- ~~§14 didn't sequence `engine-spec`/YAML-view work.~~ **Fixed.**
+- ~~No `PLAN.md`/`LOG.md` existed yet for M3.~~ **Fixed** — both now exist, one per phase/step going forward, matching TRE v1's own convention.
+- Everything in `ARCHITECTURE.md` citing "verify at implementation time" (accesskit's real current API, Vello/Linebender family version compatibility, `material-colors`' test-vector conformance) is still unverified — resolves incrementally, crate by crate, as each build-order step actually pins its dependency. Phase 1 touched zero external crates, so this hasn't started yet; Phase 2 is where it begins.
 
 ---
 
@@ -74,11 +74,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ## Milestone 3 — v2 Implementation
 
-**Status: ⬜ Not started.** Nothing below has code behind it yet; this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
+**Status: 🚧 In progress.** Phase 1 complete; this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
 
-### Phase 1 — Workspace Scaffold ⬜
-- Step: Cargo workspace + six crate skeletons (`engine-core`, `engine-md3`, `engine-render`, `engine-platform`, `engine-spec`, `engine-py`) per §12 — ⬜
-- Step: Wire the dependency edges §4 specifies (no cross-boundary violations from day one) — ⬜
+### Phase 1 — Workspace Scaffold ✅
+- Step: Cargo workspace + six crate skeletons (`engine-core`, `engine-md3`, `engine-render`, `engine-platform`, `engine-spec`, `engine-py`) per §12 — ✅
+- Step: Wire the dependency edges §4 specifies (no cross-boundary violations from day one) — ✅ (found and fixed one real gap first: `engine-render → engine-core` was missing from the diagram)
 
 ### Phase 2 — Render Core Spike (§14 steps 1–4) ⬜
 - Step 1: Static rounded rect through `vello_hybrid`, real window via `engine-platform` — ⬜
