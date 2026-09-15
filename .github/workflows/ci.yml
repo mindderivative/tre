@@ -17,6 +17,16 @@
 # actually-optional hardware/display absence (TRE v1 finding #261) --
 # if lavapipe is missing, they should fail loudly, not skip silently.
 #
+# `libfontconfig1-dev`: `parley`'s `fontique` backend links against
+# fontconfig's `pkg-config` file on Linux at *compile* time regardless of
+# whether it's used at runtime -- `TextRenderer` disables system font
+# discovery (`CollectionOptions { system_fonts: false, .. }`), but that's
+# a runtime choice, not a conditional compile, so the crate still needs
+# to build. Found by a real first CI run failing on this exact package
+# (`yeslogic-fontconfig-sys`'s build script), not by guessing ahead of
+# time -- this machine's own dev environment already had it installed,
+# which is exactly the kind of gap a bare CI runner exists to catch.
+#
 # `tests/rect_window.rs` (a real winit window) needs a real display and
 # doesn't get one here -- no Xvfb is installed. This is fine, not a gap:
 # `engine-platform::run_windowed` returns `Err` when `EventLoop::new()`
@@ -48,7 +58,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev \
             libxi-dev libxcursor-dev libxinerama-dev libudev-dev \
-            pkg-config mesa-vulkan-drivers libgl1-mesa-dri
+            libfontconfig1-dev pkg-config mesa-vulkan-drivers libgl1-mesa-dri
 
       # rustup on the runner reads rust-toolchain.toml automatically on
       # the first `cargo`/`rustc` invocation below -- no explicit
