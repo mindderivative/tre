@@ -218,7 +218,13 @@ fn paint_node(
                 },
             );
         }
-        NodeKind::Container => {}
+        // A `VirtualList` container paints nothing itself, same as
+        // `Container` -- it exists purely to give `taffy` something to
+        // lay its (windowed) children out against; the recursive walk
+        // below already only ever sees `VirtualListState::materialized`'s
+        // small real subset, never `item_count`, with zero changes
+        // needed here (§14 step 15, §11.7).
+        NodeKind::Container | NodeKind::VirtualList(_) => {}
     }
 
     for &child in &node.children {

@@ -71,6 +71,53 @@ pub enum NodeKind {
     /// own grip/handle) -- `SplitterState` is purely the mechanism's
     /// own animatable position, not appearance.
     Splitter(SplitterState),
+    /// §14 step 15 (§11.7): a windowed logical list -- only the small
+    /// visible-window subset in `VirtualListState::materialized` are
+    /// ever real `Node`s, regardless of `item_count`.
+    VirtualList(VirtualListState),
+}
+
+/// §11.7's own struct sketch, unchanged in shape (`item_count`,
+/// `item_extent`, `materialized`). `materialized`'s values are exactly
+/// this node's own `children` (§5) with "which logical index" attached
+/// on top -- not a second, separately-tracked child set; `Tree::
+/// set_virtual_list_window` is what keeps the two in lockstep, the same
+/// "engine-core carries inert state, a `Tree` method is what makes it do
+/// anything" shape every other `NodeKind` payload already uses.
+pub struct VirtualListState {
+    pub item_count: usize,
+    pub item_extent: ItemExtent,
+    pub materialized: std::collections::BTreeMap<usize, NodeId>,
+}
+
+impl VirtualListState {
+    pub fn new(item_count: usize, item_extent: ItemExtent) -> Self {
+        Self {
+            item_count,
+            item_extent,
+            materialized: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
+/// §11.7's own text: "fixed, or a size-hint callback for variable-height
+/// items." Only `Fixed` is built here -- no consumer needs the
+/// callback-based variant yet (the same "additive when its own step
+/// needs it" discipline this module's own doc comment already applies
+/// to `set_on_click`), and a per-item Rust/Python size-hint callback
+/// raises the exact same real PyObject-callback-storage/GC design
+/// question `set_on_click` is itself still deferred over -- not
+/// reintroduced here ahead of a real consumer.
+pub enum ItemExtent {
+    Fixed(f64),
+}
+
+impl ItemExtent {
+    pub(crate) fn value(&self) -> f64 {
+        match self {
+            ItemExtent::Fixed(v) => *v,
+        }
+    }
 }
 
 /// §11.5's own struct sketch, unchanged: `position` is 0.0..=1.0 along

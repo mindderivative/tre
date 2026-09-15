@@ -21,6 +21,12 @@ pub enum EngineError {
         expected: &'static str,
         actual: String,
     },
+    /// §14 step 15 (§11.7): `Window.set_virtual_list_window` was called
+    /// on a `Node` that either isn't a `VirtualList` at all, or is one
+    /// this particular `Window` didn't create (so it has no recorded
+    /// materializer callback for it).
+    #[error("this Node is not a VirtualList added via Window.add_virtual_list on this Window")]
+    NotAVirtualList,
 }
 
 impl From<EngineError> for PyErr {
@@ -28,6 +34,7 @@ impl From<EngineError> for PyErr {
         match e {
             EngineError::UnknownProperty { .. } => PyValueError::new_err(e.to_string()),
             EngineError::TypeMismatch { .. } => PyTypeError::new_err(e.to_string()),
+            EngineError::NotAVirtualList => PyValueError::new_err(e.to_string()),
         }
     }
 }

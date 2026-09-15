@@ -22,6 +22,8 @@ use taffy::prelude::{
 use crate::access::AccessNodeData;
 use crate::animation::MotionCurve;
 use crate::interaction::InteractionState;
+#[cfg(test)]
+use crate::node::{ItemExtent, VirtualListState};
 use crate::node::{Node, NodeId, NodeKind, PaintProperties};
 use crate::overlay::OverlayMeta;
 
@@ -456,6 +458,90 @@ impl Tree {
             .position
             .animate_to(position, Duration::ZERO, MotionCurve::Linear, now);
         state.position.tick(now);
+    }
+
+    /// §14 step 15 (§11.7): materializes/recycles a `NodeKind::
+    /// VirtualList`'s real children to match exactly `visible` (the
+    /// caller's own already-overscanned logical-index range) -- the
+    /// concrete mechanism behind §11.7's own claim that a 100,000-row
+    /// list never needs 100,000 real `Node`s.
+    ///
+    /// An index newly entering `visible` is built by calling
+    /// `materialize(index)` for its `(NodeKind, Style, PaintProperties)`,
+    /// then inserted and absolutely positioned by this method itself --
+    /// `top: index * item_extent`, vertical-list only (the common list/
+    /// data-grid case; a horizontal virtual list would need the same
+    /// treatment along the other axis, not built since nothing here
+    /// needs it yet). `Position::Absolute` here resolves against `list`
+    /// itself, `list` being the item's own direct parent -- verified
+    /// directly in `taffy`'s own `compute/flexbox.rs` at step 15 Stage A
+    /// (no separate "positioned ancestor" walk needed, matching
+    /// `open_overlay`'s own precedent). An index leaving `visible` is
+    /// dropped via `Tree::remove` -- its real generational `NodeId`
+    /// invalidation (`SlotMap`'s own behavior, §5) is what makes a stray
+    /// reference to a scrolled-away item fail safely rather than
+    /// silently reading whatever a reused slot now holds; nothing extra
+    /// is needed for "recycling" beyond this ordinary remove+insert, per
+    /// §11.7's own text.
+    ///
+    /// Panics if `list` isn't a `NodeKind::VirtualList`, the same
+    /// "internal bookkeeping bug, not a runtime condition" reasoning
+    /// `set_splitter_position` already uses for a malformed call.
+    pub fn set_virtual_list_window(
+        &mut self,
+        list: NodeId,
+        visible: std::ops::Range<usize>,
+        mut materialize: impl FnMut(usize) -> (NodeKind, Style, PaintProperties),
+    ) {
+        let item_extent = match &self
+            .nodes
+            .get(list)
+            .expect("set_virtual_list_window: NodeId not found in this Tree")
+            .kind
+        {
+            NodeKind::VirtualList(state) => state.item_extent.value(),
+            _ => panic!("set_virtual_list_window: {list:?} is not a NodeKind::VirtualList"),
+        };
+
+        let currently_materialized: Vec<(usize, NodeId)> = match &self.nodes[list].kind {
+            NodeKind::VirtualList(state) => {
+                state.materialized.iter().map(|(&i, &id)| (i, id)).collect()
+            }
+            _ => unreachable!("checked at the top of this function"),
+        };
+
+        for (idx, id) in &currently_materialized {
+            if !visible.contains(idx) {
+                self.remove(*id);
+            }
+        }
+        if let NodeKind::VirtualList(state) = &mut self.nodes[list].kind {
+            state.materialized.retain(|idx, _| visible.contains(idx));
+        }
+
+        let already_materialized: std::collections::BTreeSet<usize> = match &self.nodes[list].kind {
+            NodeKind::VirtualList(state) => state.materialized.keys().copied().collect(),
+            _ => unreachable!("checked at the top of this function"),
+        };
+
+        for idx in visible.clone() {
+            if already_materialized.contains(&idx) {
+                continue;
+            }
+            let (kind, mut style, paint) = materialize(idx);
+            style.position = Position::Absolute;
+            style.inset = TaffyRect {
+                left: length(0.0),
+                top: length((idx as f64 * item_extent) as f32),
+                right: auto(),
+                bottom: auto(),
+            };
+            let id = self.insert(kind, style, paint);
+            self.add_child(list, id);
+            if let NodeKind::VirtualList(state) = &mut self.nodes[list].kind {
+                state.materialized.insert(idx, id);
+            }
+        }
     }
 
     /// The central tick's per-`Tree` entry point (§5): ticks every
@@ -1025,6 +1111,129 @@ mod tests {
             vec![tab_a],
             "switching back to a previously-detached tab must reattach the same node"
         );
+    }
+
+    fn virtual_list_materializer(idx: usize) -> (NodeKind, Style, PaintProperties) {
+        (
+            NodeKind::Rect,
+            Style {
+                size: Size {
+                    width: length(200.0),
+                    height: length(20.0),
+                },
+                ..Default::default()
+            },
+            // Encode the logical index into the color so a rendering
+            // test elsewhere could tell items apart -- not exercised by
+            // these engine-core unit tests, which only check `NodeId`/
+            // position bookkeeping, not paint.
+            PaintProperties::new(
+                Color::from_rgba8((idx % 256) as u8, 0, 0, 255),
+                0.0,
+                0.0,
+                1.0,
+            ),
+        )
+    }
+
+    #[test]
+    fn set_virtual_list_window_only_ever_materializes_the_requested_range() {
+        // §11.7's own claim: a 100,000-row list never needs 100,000 real
+        // `Node`s -- this is the concrete, provable version of that,
+        // not just an architectural assertion.
+        let mut tree = Tree::new();
+        let list = tree.insert(
+            NodeKind::VirtualList(VirtualListState::new(100_000, ItemExtent::Fixed(20.0))),
+            Style::default(),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+
+        tree.set_virtual_list_window(list, 0..5, virtual_list_materializer);
+
+        let NodeKind::VirtualList(state) = &tree.get(list).unwrap().kind else {
+            panic!("expected a VirtualList");
+        };
+        assert_eq!(
+            state.materialized.keys().copied().collect::<Vec<_>>(),
+            vec![0, 1, 2, 3, 4],
+            "only the requested window should be materialized, not item_count"
+        );
+        assert_eq!(
+            tree.get(list).unwrap().children.len(),
+            5,
+            "materialized nodes must be real children of the list, not tracked separately"
+        );
+
+        tree.compute_layout(
+            list,
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(400.0),
+            },
+        );
+        for idx in 0..5 {
+            let id = state_materialized_id(&tree, list, idx);
+            let (_, y) = tree.absolute_position(id);
+            assert_eq!(
+                y,
+                idx as f64 * 20.0,
+                "item {idx} must be positioned at its own logical offset, index * item_extent"
+            );
+        }
+    }
+
+    fn state_materialized_id(tree: &Tree, list: NodeId, idx: usize) -> NodeId {
+        let NodeKind::VirtualList(state) = &tree.get(list).unwrap().kind else {
+            panic!("expected a VirtualList");
+        };
+        *state
+            .materialized
+            .get(&idx)
+            .unwrap_or_else(|| panic!("index {idx} expected to be materialized"))
+    }
+
+    #[test]
+    fn set_virtual_list_window_recycles_scrolled_out_indices_and_invalidates_their_old_node_ids() {
+        let mut tree = Tree::new();
+        let list = tree.insert(
+            NodeKind::VirtualList(VirtualListState::new(100_000, ItemExtent::Fixed(20.0))),
+            Style::default(),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+
+        tree.set_virtual_list_window(list, 0..5, virtual_list_materializer);
+        let scrolled_away_ids: Vec<NodeId> = (0..3)
+            .map(|idx| state_materialized_id(&tree, list, idx))
+            .collect();
+
+        // Scroll down: 0..5 -> 3..8. Indices 0,1,2 leave the window,
+        // indices 5,6,7 newly enter it.
+        tree.set_virtual_list_window(list, 3..8, virtual_list_materializer);
+
+        let NodeKind::VirtualList(state) = &tree.get(list).unwrap().kind else {
+            panic!("expected a VirtualList");
+        };
+        assert_eq!(
+            state.materialized.keys().copied().collect::<Vec<_>>(),
+            vec![3, 4, 5, 6, 7],
+            "the window must shift to exactly the newly-visible range"
+        );
+        assert_eq!(
+            tree.get(list).unwrap().children.len(),
+            5,
+            "still only 5 real children after scrolling, never growing with item_count"
+        );
+
+        // The real generational-safety claim (§5, §11.7): a stray
+        // reference to a scrolled-away item's old `NodeId` must fail
+        // safely, not silently resolve to whatever a reused slot now
+        // holds.
+        for old_id in scrolled_away_ids {
+            assert!(
+                tree.get(old_id).is_none(),
+                "a scrolled-away item's old NodeId must no longer resolve to anything"
+            );
+        }
     }
 
     /// Three fixed-size children in a row, via `FlexDirection::Row` with

@@ -1,98 +1,60 @@
-# Log: M3 Phase 7, Step 14 — Multi-Window (§14 step 14, §11.1)
+# Log: M3 Phase 7, Step 15 — Docking + Virtualization (§14 step 15) — M3's final step
 
-Corresponds to `PLAN.md` / `BUILD_TRACKER.md` M3 Phase 7, step 14 of 3 (steps 13-15).
+Corresponds to `PLAN.md`/`BUILD_TRACKER.md` M3 Phase 7, step 15 of 3 (steps 13-15). Three separately-committed, separately-verified stages, matching step 12's own precedent for a step this large: A — Splitters (§11.5, `f4057c1`), B — Docking (§11.4, `8751f31`), C — Virtualization (§11.7, this commit). Closes Phase 7 and M3 entirely.
 
 ## What happened
 
-**Checked what §11.1's own text actually assumes before touching
-anything.** Its "routing an event to the right `Tree` before
-translating it into `InputEvent`... is a lookup" phrasing presumes real
-pointer/keyboard `InputEvent`/`AppHandler` dispatch already exists —
-checked directly, it still doesn't, anywhere in this codebase, the same
-finding as steps 7/9/11/12/13. What genuinely does exist and get
-dispatched per-window today is `winit`'s own window-level events
-(`RedrawRequested`, `CloseRequested`) and `accesskit_winit`'s own events
-(which already carry a real `window_id`, confirmed directly in its
-source) — this step's real, provable claim is routing *those*
-correctly via `WindowId`, not input dispatch.
+**Splitters (§11.5) aren't a separately-numbered build-order step, but docking's own text names them as a hard prerequisite** ("docking is a *consumer* of splitters, not a second resize mechanism") — nothing in this codebase had `NodeKind::Splitter` before this step, so Stage A built it first. `NodeKind::Splitter(SplitterState { position: Animated<f64> })` matches §11.5's own struct sketch; `NodeKind` dropped its `Clone`/`Debug`/`PartialEq` derives (`Animated<f64>` implements none of them, the same reason `PaintProperties` never derived them either — checked directly that nothing in the codebase relied on those traits for `NodeKind` before removing them). `Tree::set_splitter_position(id, position, now)` finds the splitter's two flanking siblings in its parent's own `children` order, resizes both from `position` (0.0..=1.0) against their combined current extent along whichever axis matches the parent's `flex_direction`, applied via step 13's own `set_layout_style`. A drag is a 1:1, instant mouse-follow, not an eased transition, so this sets `position` via an instant (`Duration::ZERO`) `animate_to` and ticks it immediately — the same "an instant application needs an explicit tick to materialize" fix step 12 found for bindings. Proof: a headless pixel-readback test drags a real splitter between two colored panes and confirms the rendered boundary genuinely moved — a sample point that was blue before the drag is red after, and the shrunk pane still shows its own color at its own far edge. Passed on the first run.
 
-**`engine-platform`**: `run_windowed_multi` replaces the single-window
-`MultiWindowApp`'s implicit "there is exactly one window" assumption
-with a real `HashMap<WindowId, PerWindow>`. Windows are opened only via
-a `WindowOpener` handle (wrapping the existing `EventLoopProxy`), which
-a `setup` closure uses once, before the blocking loop starts — the
-identical "only thin, `Send` data crosses into `winit`'s own callback
-world" pattern the crate already used for `accesskit`, now reused for
-window-open requests too. Each window-open request carries a
-caller-assigned `token: u64` so `on_window_created(WindowId, token,
-Arc<Window>)` lets the caller correlate the real, only-now-known
-`WindowId` with whatever it originally asked for. `on_frame`/
-`build_access_update` dropped their `&Arc<Window>` parameter entirely —
-now that GPU/render state is built once, eagerly, at `on_window_created`
-time (not lazily on first frame, as the old single-window code did),
-neither callback needs the window handle again.
+**Docking (§11.4)**: `engine_core::{DockLayout, DockZone}` match §11.4's own struct sketch exactly (`zones: [Option<DockZone>; 5]`, `panels: SmallVec<[NodeId; 4]>`, `active_tab: usize`, `size: Animated<f64>`) — deliberately POD, no derives, so an app can serialize/restore it. `Tree::detach(parent, child)` is the new primitive underneath tabbed grouping: mirrors `add_child` but calls `taffy::TaffyTree::remove_child` (verified directly in its own doc comment: "not removed from the tree entirely, simply no longer attached") — chosen over `Display::None` specifically because a detached node isn't in anyone's `children` list, so `build_tree_scene`'s existing recursive walk already excludes it from paint with zero changes, the same "reuse what's already there, prove it doesn't need touching" pattern step 13's overlay proof established. `Tree::apply_active_tab(container, zone)` ensures exactly `zone.panels[zone.active_tab]` is attached, detaching every other currently-attached panel. Resizing between zones reuses Stage A's `set_splitter_position` verbatim — zero docking-specific resize code exists anywhere in this codebase, proven by code structure (the docking test's own resize step calls it directly), not just asserted in a doc comment.
 
-**The original `run_windowed` is now a thin wrapper** over
-`run_windowed_multi` — it stashes the one `Arc<Window>` from
-`on_window_created` and hands it back to the caller's old-style
-`on_frame` closure every redraw, so its two existing callers
-(`rect_window.rs`, `access_button.rs`) needed zero source changes.
-Confirmed by building both unchanged: they compiled immediately.
+Found and fixed a real bug via the docking pixel-readback test, not assumed correct: the first run failed with an "uncovered" region rendering unexpectedly rather than the expected tab color, root-caused to a test-construction bug (the tab rects had a fixed explicit width that didn't grow when their parent zone container was resized by the shared splitter mechanism) — fixed by giving the tab rects `flex_grow: 1.0` + `width: auto()` instead of a fixed width, confirmed against `taffy::Style`'s own real fields directly in its source first.
 
-**`engine-py`**: `PyWindow` split back out of `App`, at exactly the
-step every earlier module doc comment (going back to step 6) predicted
-— `App::new`/`App::add_rect`'s old body moved to `window.rs` verbatim,
-renamed `Window` on the Python side (matching `Node`'s own "renamed to
-match what Python sees" precedent). `App` is now a thin collector:
-`add_window(Py<PyWindow>)` registers, `run(max_frames)` extracts each
-window's plain Rust data once (while the GIL is already held) into a
-`Vec<WindowSetup>`, then drives them all through
-`run_windowed_multi` — the `winit` closures below that point never
-touch a Python object again, matching the same "only thin data crosses
-the boundary" discipline `engine-platform` already established.
-`App.run()` with no registered windows now raises a clear `RuntimeError`
-naming `add_window`, rather than silently doing nothing.
+**Virtualization (§11.7)**: `NodeKind::VirtualList(VirtualListState { item_count, item_extent, materialized: BTreeMap<usize, NodeId> })` matches §11.7's own struct sketch. Only `ItemExtent::Fixed(f64)` is built — the size-hint-callback variant for variable-height items raises the exact same real PyObject-callback-storage/GC design question `set_on_click` is itself still deferred over, and nothing consumes it yet, so it's not manufactured ahead of a step that needs it (the same "additive when its own step needs it" discipline this codebase has used throughout).
 
-**Every borrow-checker assumption behind this design (disjoint field
-destructuring so `windows`/`on_frame`/`build_access_update` can all be
-mutably accessed within the same `window_event`/`user_event` match)
-compiled correctly on the first real build** — verified for real, not
-assumed from reasoning about the borrow checker in the abstract.
+`Tree::set_virtual_list_window(list, visible_range, materialize)` is the concrete mechanism behind §11.7's own claim that a 100,000-row list never needs 100,000 real `Node`s: an index newly entering `visible_range` is built by calling `materialize(index)`, then absolutely positioned at `top: index * item_extent` (vertical-list only — the common list/data-grid case, not built for horizontal since nothing here needs it yet) — `Position::Absolute` here resolves against `list` itself, `list` being the item's own direct parent, the same real taffy fact confirmed in Stage A and already reused by `open_overlay`. An index leaving `visible_range` is dropped via `Tree::remove` — ordinary remove+insert is all "recycling" needs, per §11.7's own text; `slotmap`'s real generational `NodeId` invalidation is what makes a stray reference to a scrolled-away item fail safely, not silently read whatever a reused slot now holds.
 
-**The actual proof, at two levels.** `crates/engine-platform/tests/
-multi_window.rs` (new, `harness = false`, matching `access_button.rs`'s
-precedent) opens two windows directly through `run_windowed_multi` with
-no `pyo3` involved at all, and asserts the two real `WindowId`s are
-genuinely distinct and each window's frame counter reached exactly its
-own `max_frames` independently — this ran and passed on the first try.
-`examples/two_windows.py` proves the same mechanism end to end through
-the real Python API most app authors will actually use: two `Window`s
-with distinct sizes/titles/content/animations, one `App.run()` driving
-both — it also ran and exited cleanly on the first try.
+Two new `engine-core` unit tests prove this directly: one confirms a 100,000-item list only ever materializes the requested window (never `item_count` real nodes) and that each materialized item lands at its own correct logical position after `compute_layout`; the other proves the generational-safety claim concretely — after scrolling the window, a scrolled-away item's *old* `NodeId` no longer resolves to anything in the `Tree` at all, even though new nodes now exist. Both passed on the first run.
+
+A new `engine-render` pixel-readback test (`virtual_list.rs`) proves the *rendered* claim: materialized items paint at their own real logical y-position, an index outside the requested window is never painted at all, and — the test's central claim — scrolling the window genuinely stops painting a recycled-out item (not just removes its bookkeeping) while leaving an item that stayed in the window completely undisturbed. This surfaced a genuinely new, more precise pipeline fact than Stage B's own finding: a region no `fill_path` call ever touches at all renders as fully transparent (`[0,0,0,0]`, wgpu's own zero-initialized texture clear state) — Stage B's "uncovered = opaque black" finding was a *different*, narrower case (a real `Rect` fill using a zero-alpha color, where `with_opacity` discards the color's own alpha and substitutes `PaintProperties.opacity.current` instead — confirmed directly in `engine-render/src/lib.rs`'s own `with_opacity`, not the render target's default state). The `tre-v2-gui-framework` memory entry has been corrected accordingly so this doesn't propagate as a wrong "fact" into later steps.
+
+**The FFI shape (§8, §11.7's own "genuinely different callback pattern" from `on_click`/`on_complete`)**: `Window.add_virtual_list(item_count, item_extent, materialize)` stores the Python `materialize` callable in a new `PyWindow.materializers: HashMap<NodeId, Py<PyAny>>` field, keyed by the list's own `NodeId`; `Window.set_virtual_list_window(list, start, end)` is the real "materialize item N" entry point, calling the stored callback via `Py<PyAny>::call1` once per newly-visible index and extracting an `(r, g, b, a)` tuple, matching `add_rect`'s own existing background-tuple convention. A materializer's exception propagates as a genuine `PyErr`, caught via an error-slot the closure writes into (since `Tree::set_virtual_list_window`'s own closure signature is deliberately infallible — `engine-core` stays `pyo3`-agnostic per §4) rather than panicking; not transactional (an index materialized earlier in the same call before a later one raises stays in the tree), which is acceptable for this step's own scope.
+
+This is the first place in this codebase that actually stores a long-lived `PyObject` callback — §8's own review note flagged this as a new risk class ("if a closure captures the widget it's attached to, that's a reference cycle CPython's GC can't see... decide this now") back at the architecture-design stage, and `node.rs`'s own module doc comment explicitly deferred it for `set_on_click` "until something actually stores one." This is that something: `PyWindow` now implements `__traverse__`/`__clear__`. Verified directly against pyo3 0.29.2's own real API before implementing (not assumed from training data, which describes an older `#[pyclass(gc)]` flag): no such flag exists in this version at all — a `#[pyclass]` simply implementing `__traverse__`/`__clear__` in its `#[pymethods]` is what opts a class into cyclic GC support (confirmed directly in pyo3's own `tests/test_gc.rs`).
+
+Proved for real, not just implemented per the doc comment: a new pytest constructs a genuine reference cycle (`window` → `materializers` → a bound-method materializer → `__self__` → a `Holder` → `holder.window` → `window`) and confirms `gc.collect()` actually reclaims it. Building this test surfaced a real, non-obvious CPython semantics fact along the way: a first attempt used a plain nested-function closure over an enclosing function's own local variable, which failed immediately (the object died the instant `del` ran, *before* any `gc.collect()`) — because a closure over an enclosing scope's local shares one cell with that local; there's only ever one reference, not two, so `del` on the local clears the shared cell for every closure over it immediately. This makes a plain nested closure structurally unable to demonstrate a cycle surviving past its own defining scope's `del` statements. Switched to a bound method (`holder.materialize`) instead — `__self__` is a real, independent strong reference living on the method object itself, which is also the more realistic shape a materializer "reading other state off the window" would actually take in practice.
+
+**The Risk Register's own named acceptance gate** (§15: "Spike this against a real large dataset at build-order step 15... if per-call GIL overhead dominates, batch the callback"): a `skipif`-gated pytest (`TRE_RUN_BENCHMARK=1 pytest tests/test_virtual_list_benchmark.py -v -s`) scrolls a 100,000-row `VirtualList` one row at a time — the worst case for this callback, exactly one `materialize` call per Python-level call, never amortized — after a 1,000-row warm-up excluded from the timed measurement (the same "exclude one-time costs from the steady-state number" discipline `frame_budget.rs` already established for GPU pipeline compilation). **Measured, not assumed: ~3.0us per call** across 99,000 timed calls, comfortably inside the enforced 200us/call ceiling (itself a two-order-of-magnitude margin) and utterly negligible against the 16.6ms/60Hz frame budget. Per-call GIL overhead does not dominate at this scale — batching the callback is not needed.
 
 ## Verification
 
 ```
-$ cargo test -p engine-platform --test multi_window
-engine-platform §14 step 14: window 0 created as WindowId(...)
-engine-platform §14 step 14: window 1 created as WindowId(...)
-engine-platform §14 step 14: both windows opened with distinct WindowIds,
-  ticked independently, and both exited cleanly at their own max_frames
-
-$ cargo test --workspace             # all green, incl. unchanged rect_window.rs/access_button.rs
+$ cargo test -p engine-core           # 25 passed (was 23 before this step's Stage C)
+$ cargo test -p engine-render --test splitter_drag    # 1 passed
+$ cargo test -p engine-render --test docking          # 1 passed
+$ cargo test -p engine-render --test virtual_list     # 1 passed
+$ cargo test --workspace              # all green
 $ cargo clippy --workspace --all-targets -- -D warnings    # clean
-$ cargo fmt --check                  # clean
+$ cargo fmt --check                   # clean
 
-$ maturin develop && python -m pytest tests/ -v
-14 passed (13 pre-existing/updated + 1 new App-requires-a-window test)
+$ maturin develop
+$ python -m pytest tests/ -v
+20 passed, 1 skipped (the skipif-gated benchmark)
 
-$ python examples/animate_rect.py    # exited cleanly after 60 frames (Window/App split, unchanged behavior)
-$ python examples/two_windows.py     # exited cleanly after 60 frames, both windows
+$ TRE_RUN_BENCHMARK=1 python -m pytest tests/test_virtual_list_benchmark.py -v -s
+engine-py §14 step 15 Stage C: 99000 scroll-by-one calls (each: 1 recycle + 1 real
+  materialize callback across the GIL) in 0.3014s -- 3.044us/call
+  (enforced ceiling: 200.0us/call)
+1 passed
 ```
+
+## Known scope narrowing (stated, not silent)
+
+- **Real drag-to-rearrange docking and real splitter-drag input** need pointer dispatch (§11.10), which — checked directly, the same finding at every interaction-dependent step this whole project (7, 9, 11, 12, 13, 14, 15) — still doesn't exist anywhere in this codebase. `Tree::set_splitter_position`/`Tree::apply_active_tab` are exposed as direct, programmatic APIs instead, matching every other step's own precedent (`Tree::spawn_ripple`, `Tree::open_overlay`, etc.) for proving the mechanism ahead of real dispatch.
+- **No real scrollable viewport** (clipping, an actual scroll offset/transform) exists yet for `VirtualList` — §11.8 (culling) and §11.9 (pan/zoom) aren't built. This step's own scope is the materialize/recycle mechanism and its FFI shape, not a finished scrollable list widget; `Window.add_virtual_list`'s box height is left `auto()` rather than manufacturing a viewport concept ahead of a step that needs one.
+- **`ItemExtent::Fixed` only** — the variable-height size-hint-callback variant §11.7's own text mentions isn't built; no consumer needs it yet, and it raises the same real PyObject-callback-storage/GC design question this step just resolved for the fixed case.
+- **`set_virtual_list_window` isn't transactional** — if a materializer raises partway through a window update, indices materialized earlier in the same call before the failure stay in the tree. Acceptable for this step's own scope (proving the callback mechanism and measuring its real GIL overhead); a general rollback guarantee wasn't built.
 
 ## Next
 
-`BUILD_TRACKER.md` updated: Phase 7 step 14 done (2 of 3 steps in this
-phase). Next: step 15, M3's final step — docking (§11.4) + virtualization
-(§11.7), sequenced last since both build on the overlay mechanism (step
-13) and the accepted multi-window model (this step).
+M3 is now **100% complete** — all 15 of §14's Suggested Build Order steps are done, verified, and shipped. `BUILD_TRACKER.md` updated at all three levels: Top Metrics (M3 → 100%, ✅), Phase 7's own heading (🚧 → ✅), and step 15's own list item (⬜ → ✅). No M4 is yet planned or sequenced in `ARCHITECTURE.md`; the most consistently recurring gap across every interaction-dependent step in M3 — real pointer/keyboard `InputEvent`/`AppHandler` dispatch and hit-testing (§11.10) — is the natural starting point for whatever comes next, not yet scoped as its own milestone.
