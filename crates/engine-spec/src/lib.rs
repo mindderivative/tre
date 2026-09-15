@@ -9,8 +9,12 @@
 
 mod build;
 mod cascade;
+mod reconcile;
 mod spec;
+mod watch;
 
 pub use build::{SpecError, build_tree, load_styled_view, load_view};
 pub use cascade::{StyleRule, Stylesheet, parse_stylesheet, resolve_style};
+pub use reconcile::Reconciler;
 pub use spec::{FlexDirectionSpec, NodeKindSpec, StyleSpec, TextSpec, WidgetSpec, parse_view};
+pub use watch::ViewWatcher;

@@ -78,7 +78,7 @@ pub enum NodeKindSpec {
 /// Mirrors `engine_core::TextState` exactly (§14 step 4) -- no new
 /// fields invented here, since this crate's job is mapping to that
 /// struct, not extending it.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TextSpec {
     pub content: String,
@@ -95,7 +95,7 @@ fn default_font_weight() -> f32 {
 /// Row/Column only -- `taffy::style::FlexDirection` also has
 /// `RowReverse`/`ColumnReverse`, not exposed here since nothing in this
 /// step's own scope needs them; additive to add later.
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 pub enum FlexDirectionSpec {
     Row,
     Column,
@@ -106,7 +106,7 @@ pub enum FlexDirectionSpec {
 /// `Container` typically sets `flex_direction`/`padding`/`gap` and no
 /// `background`; a `Rect` typically sets `background`/`corner_radius`
 /// and no `flex_direction`.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StyleSpec {
     pub width: Option<f32>,

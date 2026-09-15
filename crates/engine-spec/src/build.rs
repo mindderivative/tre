@@ -83,6 +83,40 @@ pub fn build_tree(
     Ok(id)
 }
 
+/// §16.4's own text: "a change that only touches styling patches
+/// `PaintProperties`/`layout_style` directly." Recomputes `spec`'s kind/
+/// paint/layout the same way `build_tree` does for a brand-new node,
+/// then overwrites an *existing* node's fields in place -- `id` itself,
+/// `parent`, `children`, `access`, and `interaction` are left
+/// completely untouched, which is what lets focus and any in-flight
+/// `ActiveAnimation` on those untouched fields survive a reload
+/// (§16.4's own claim). Called only for a node `engine_spec::reconcile`
+/// has already determined actually changed; an unchanged node is never
+/// patched at all, so its `PaintProperties` (mid-animation or not) is
+/// never touched in the first place.
+pub(crate) fn patch_node(
+    tree: &mut Tree,
+    id: NodeId,
+    spec: &WidgetSpec,
+    sheet: Option<&Stylesheet>,
+    scheme: Option<&ColorScheme>,
+) -> Result<(), SpecError> {
+    let resolved_style = match sheet {
+        Some(sheet) => resolve_style(spec, sheet),
+        None => spec.style.clone(),
+    };
+    let new_layout_style = layout_style(&resolved_style);
+    let (kind, paint) = node_kind_and_paint(spec, &resolved_style, scheme)?;
+
+    let node = tree
+        .get_mut(id)
+        .expect("patch_node: NodeId must already exist in this Tree");
+    node.kind = kind;
+    node.paint = paint;
+    node.layout_style = new_layout_style;
+    Ok(())
+}
+
 fn layout_style(style: &StyleSpec) -> Style {
     Style {
         display: taffy::Display::Flex,

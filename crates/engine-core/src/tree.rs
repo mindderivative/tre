@@ -102,6 +102,51 @@ impl Tree {
         self.nodes.get_mut(id)
     }
 
+    /// Recursively removes `id` and its whole subtree (§14 step 12,
+    /// §16.4's own reconciliation need: a widget whose `id` disappeared
+    /// from a reloaded view must actually leave the tree, not just its
+    /// root node). Detaches `id` from its parent's `children` list
+    /// first, if it has one -- an orphaned root removal (the subtree's
+    /// own top node had no parent) is also valid, matching `insert`'s
+    /// own "a parentless node is fine" contract.
+    ///
+    /// `taffy::TaffyTree::remove` only detaches a single node and
+    /// orphans its children (checked directly in its own doc comment
+    /// and source) -- it does not recurse, so this method walks the
+    /// subtree itself and calls it once per node, deepest first,
+    /// rather than relying on it for more than one node at a time.
+    ///
+    /// Returns `true` if `id` was present and removed, `false` if it
+    /// wasn't in this `Tree` at all (a no-op, not an error -- matching
+    /// `set_access`'s own "id not found is a silent no-op" contract).
+    pub fn remove(&mut self, id: NodeId) -> bool {
+        let Some(node) = self.nodes.get(id) else {
+            return false;
+        };
+        let children: Vec<NodeId> = node.children.clone();
+        let parent = node.parent;
+
+        for child in children {
+            self.remove(child);
+        }
+
+        if let Some(parent) = parent
+            && let Some(parent_node) = self.nodes.get_mut(parent)
+        {
+            parent_node.children.retain(|&c| c != id);
+        }
+
+        if let Some(taffy_node) = self.taffy_nodes.remove(id) {
+            let _ = self.taffy.remove(taffy_node);
+        }
+        self.nodes.remove(id);
+        if self.focused == Some(id) {
+            self.focused = None;
+        }
+
+        true
+    }
+
     /// Computes layout for `root`'s whole subtree. §5's `layout_style`
     /// lives on `Node`, not duplicated here -- `insert`/`add_child` are
     /// this module's only two places a `taffy::NodeId` is minted or
@@ -285,6 +330,59 @@ mod tests {
         assert_eq!(node.id, id);
         assert_eq!(node.parent, None);
         assert!(node.children.is_empty());
+    }
+
+    #[test]
+    fn remove_drops_a_whole_subtree_and_detaches_from_its_parent() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let root = tree.insert(k, s, p);
+        let (k, s, p) = leaf(10.0, 10.0);
+        let child = tree.insert(k, s, p);
+        tree.add_child(root, child);
+        let (k, s, p) = leaf(5.0, 5.0);
+        let grandchild = tree.insert(k, s, p);
+        tree.add_child(child, grandchild);
+
+        // A sibling that must survive the removal, to prove this isn't
+        // just clearing the whole tree.
+        let (k, s, p) = leaf(10.0, 10.0);
+        let sibling = tree.insert(k, s, p);
+        tree.add_child(root, sibling);
+
+        let removed = tree.remove(child);
+        assert!(removed, "remove must report true for a real, present id");
+
+        assert!(
+            tree.get(child).is_none(),
+            "the removed node itself must be gone"
+        );
+        assert!(
+            tree.get(grandchild).is_none(),
+            "the whole subtree must be gone, not just its root"
+        );
+        assert!(
+            tree.get(sibling).is_some(),
+            "an unrelated sibling must survive"
+        );
+        assert_eq!(
+            tree.get(root).unwrap().children,
+            vec![sibling],
+            "the parent's own children list must no longer mention the removed node"
+        );
+    }
+
+    #[test]
+    fn remove_of_an_unknown_id_is_a_harmless_no_op() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let real = tree.insert(k, s, p);
+        tree.remove(real); // consume the only real id so it's now stale
+
+        assert!(
+            !tree.remove(real),
+            "removing an already-removed id must report false, not panic"
+        );
     }
 
     #[test]
