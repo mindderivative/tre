@@ -55,11 +55,35 @@ slotmap::new_key_type! {
 /// Decisions ("common core + per-kind payload"). `Rect`/`Container`
 /// carry no payload beyond `PaintProperties`; `Text` carries `TextState`
 /// (§14 step 4).
-#[derive(Clone, Debug, PartialEq)]
+/// No longer derives `Clone`/`Debug`/`PartialEq` now that `Splitter`
+/// carries an `Animated<f64>` -- `Animated<T>` implements none of those
+/// (same reason `PaintProperties`, also full of `Animated` fields,
+/// never derived them either); nothing in this codebase actually
+/// cloned, printed, or compared a `NodeKind` value directly (checked
+/// directly, not assumed), so this costs nothing real.
 pub enum NodeKind {
     Rect,
     Container,
     Text(TextState),
+    /// §14 step 15 (§11.5): a draggable divider between two sibling
+    /// regions. Carries no paint of its own beyond `PaintProperties`
+    /// (a real splitter typically just wants a `background` for its
+    /// own grip/handle) -- `SplitterState` is purely the mechanism's
+    /// own animatable position, not appearance.
+    Splitter(SplitterState),
+}
+
+/// §11.5's own struct sketch, unchanged: `position` is 0.0..=1.0 along
+/// the split axis (not an absolute size -- "implementation detail" per
+/// the architecture's own text, and a fraction is what lets the same
+/// splitter keep working correctly if its parent is later resized).
+/// `Tree::set_splitter_position` is what actually moves the two
+/// flanking siblings this value nominally describes; the field alone
+/// is inert data, matching every other `NodeKind` payload's own
+/// "engine-core carries the state, a `Tree` method is what makes it do
+/// anything" shape.
+pub struct SplitterState {
+    pub position: Animated<f64>,
 }
 
 /// A text node's content and shaping inputs -- everything `parley` needs

@@ -12,7 +12,7 @@
 //! that.
 
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use slotmap::{Key, SecondaryMap, SlotMap};
 use taffy::prelude::{
@@ -20,6 +20,7 @@ use taffy::prelude::{
 };
 
 use crate::access::AccessNodeData;
+use crate::animation::MotionCurve;
 use crate::interaction::InteractionState;
 use crate::node::{Node, NodeId, NodeKind, PaintProperties};
 use crate::overlay::OverlayMeta;
@@ -292,6 +293,103 @@ impl Tree {
     /// correctly by this step's own test in the meantime.
     pub fn overlay_meta(&self, id: NodeId) -> Option<&OverlayMeta> {
         self.overlays.get(&id)
+    }
+
+    /// §14 step 15 (§11.5): moves a `NodeKind::Splitter` to `position`
+    /// (0.0..=1.0 along its parent's own flex axis), resizing its two
+    /// flanking siblings to match. A drag is a 1:1, instant mouse-follow,
+    /// not a smoothly-eased transition -- so despite `SplitterState.
+    /// position` being an `Animated<f64>`, this sets it via an instant
+    /// (`Duration::ZERO`) `animate_to` and ticks it immediately, the
+    /// same "an instant application needs an explicit tick to actually
+    /// materialize" fix step 12 already found for bindings
+    /// (`Animated::animate_to` alone never eagerly writes `current`).
+    ///
+    /// The splitter must be a direct child of some parent, sitting
+    /// exactly between its two flanking siblings in that parent's own
+    /// `children` order (`[..., left, splitter, right, ...]`) -- panics
+    /// otherwise, the same "internal bookkeeping bug, not a runtime
+    /// condition" reasoning `add_child` already uses for a malformed
+    /// tree. Resizes along whichever axis matches the parent's own
+    /// `flex_direction` (row -> width, column -> height), proportioning
+    /// the two siblings' *current* combined extent by `position`.
+    pub fn set_splitter_position(&mut self, id: NodeId, position: f64, now: Instant) {
+        // Everything read here first, as owned values, before any
+        // `&mut self` call below -- avoids holding a borrow of
+        // `self.nodes` across `set_layout_style`'s own `&mut self`.
+        let (parent, siblings) = {
+            let node = self
+                .nodes
+                .get(id)
+                .expect("set_splitter_position: NodeId not found in this Tree");
+            assert!(
+                matches!(node.kind, NodeKind::Splitter(_)),
+                "set_splitter_position: {id:?} is not a NodeKind::Splitter"
+            );
+            let parent = node
+                .parent
+                .expect("set_splitter_position: a splitter must have a parent");
+            let siblings = self
+                .nodes
+                .get(parent)
+                .expect("set_splitter_position: parent NodeId not found in this Tree")
+                .children
+                .clone();
+            (parent, siblings)
+        };
+
+        let index = siblings.iter().position(|&c| c == id).expect(
+            "set_splitter_position: splitter isn't actually a child of its own recorded parent",
+        );
+        assert!(
+            index > 0 && index + 1 < siblings.len(),
+            "set_splitter_position: a splitter must sit between two real siblings, not at either end of its parent's children"
+        );
+        let left = siblings[index - 1];
+        let right = siblings[index + 1];
+
+        let is_row = matches!(
+            self.nodes[parent].layout_style.flex_direction,
+            taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
+        );
+
+        let (left_w, left_h) = {
+            let l = self.layout(left);
+            (f64::from(l.size.width), f64::from(l.size.height))
+        };
+        let (right_w, right_h) = {
+            let r = self.layout(right);
+            (f64::from(r.size.width), f64::from(r.size.height))
+        };
+
+        let position = position.clamp(0.0, 1.0);
+        let total = if is_row {
+            left_w + right_w
+        } else {
+            left_h + right_h
+        };
+        let left_extent = total * position;
+        let right_extent = total - left_extent;
+
+        let mut left_style = self.nodes[left].layout_style.clone();
+        let mut right_style = self.nodes[right].layout_style.clone();
+        if is_row {
+            left_style.size.width = length(left_extent as f32);
+            right_style.size.width = length(right_extent as f32);
+        } else {
+            left_style.size.height = length(left_extent as f32);
+            right_style.size.height = length(right_extent as f32);
+        }
+        self.set_layout_style(left, left_style);
+        self.set_layout_style(right, right_style);
+
+        let NodeKind::Splitter(state) = &mut self.nodes[id].kind else {
+            unreachable!("checked at the top of this function")
+        };
+        state
+            .position
+            .animate_to(position, Duration::ZERO, MotionCurve::Linear, now);
+        state.position.tick(now);
     }
 
     /// The central tick's per-`Tree` entry point (§5): ticks every
@@ -688,6 +786,82 @@ mod tests {
         assert!(
             !tree.close_overlay(menu),
             "closing an already-closed overlay must report false"
+        );
+    }
+
+    #[test]
+    fn set_splitter_position_resizes_both_flanking_siblings() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            display: taffy::Display::Flex,
+            flex_direction: FlexDirection::Row,
+            size: Size {
+                width: length(210.0),
+                height: length(50.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let (k, s, p) = leaf(100.0, 50.0);
+        let left = tree.insert(k, s, p);
+        tree.add_child(root, left);
+
+        let splitter = tree.insert(
+            NodeKind::Splitter(crate::node::SplitterState {
+                position: crate::animation::Animated::new(0.5),
+            }),
+            Style {
+                size: Size {
+                    width: length(10.0),
+                    height: length(50.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(root, splitter);
+
+        let (k, s, p) = leaf(100.0, 50.0);
+        let right = tree.insert(k, s, p);
+        tree.add_child(root, right);
+
+        let available = Size {
+            width: AvailableSpace::Definite(210.0),
+            height: AvailableSpace::Definite(50.0),
+        };
+        tree.compute_layout(root, available);
+        assert_eq!(tree.layout(left).size.width, 100.0);
+        assert_eq!(tree.layout(right).size.width, 100.0);
+
+        let now = Instant::now();
+        tree.set_splitter_position(splitter, 0.75, now);
+        tree.compute_layout(root, available);
+
+        assert_eq!(
+            tree.layout(left).size.width,
+            150.0,
+            "the left pane should now hold 75% of the 200px the two panes share"
+        );
+        assert_eq!(
+            tree.layout(right).size.width,
+            50.0,
+            "the right pane should hold the remaining 25%"
+        );
+        assert_eq!(
+            tree.layout(right).location.x,
+            160.0,
+            "the right pane must actually have moved -- 150 (left) + 10 (splitter)"
+        );
+
+        let NodeKind::Splitter(state) = &tree.get(splitter).unwrap().kind else {
+            panic!("expected a Splitter node");
+        };
+        assert_eq!(
+            state.position.current, 0.75,
+            "the splitter's own position must reflect the new value immediately, \
+             not just the two siblings' sizes"
         );
     }
 

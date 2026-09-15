@@ -116,6 +116,7 @@ fn kind_name(kind: &NodeKind) -> &'static str {
         NodeKind::Rect => "Rect",
         NodeKind::Container => "Container",
         NodeKind::Text(_) => "Text",
+        NodeKind::Splitter(_) => "Splitter",
     }
 }
 

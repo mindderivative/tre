@@ -192,7 +192,12 @@ fn paint_node(
     let h = f64::from(layout.size.height);
 
     match &node.kind {
-        NodeKind::Rect => {
+        NodeKind::Rect | NodeKind::Splitter(_) => {
+            // A splitter's own visible grip/handle paints exactly like
+            // a Rect -- `SplitterState` carries only the mechanism's
+            // animatable position (§11.5), no separate appearance data,
+            // since the universal `PaintProperties` every node already
+            // has is all a divider's own background/corner-radius needs.
             let radius = node.paint.corner_radius.current;
             let color = with_opacity(node.paint.background.current, node.paint.opacity.current);
             let rect = RoundedRect::new(x, y, x + w, y + h, radius);

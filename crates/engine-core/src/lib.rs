@@ -21,6 +21,6 @@ mod tree;
 pub use access::{AccessNodeData, AccessStates, Action, Role};
 pub use animation::{ActiveAnimation, Animated, CompletionHandle, Interpolate, MotionCurve};
 pub use interaction::{InteractionState, RippleState};
-pub use node::{Node, NodeId, NodeKind, PaintProperties, TextState};
+pub use node::{Node, NodeId, NodeKind, PaintProperties, SplitterState, TextState};
 pub use overlay::OverlayMeta;
 pub use tree::Tree;
