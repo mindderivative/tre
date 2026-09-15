@@ -44,6 +44,8 @@ A running log of resolved architectural questions, kept in one canonical place r
 | Callback cyclic-GC support | Implemented now via one centralized `PyApp` (`#[pyclass(gc)]`) owning both callback maps, not deferred (§8) | This project's own target — long-running apps with dynamically created/destroyed widgets — is exactly the profile where an uncollected reference cycle accumulates during normal operation |
 | `Tree` ownership | `Rc<RefCell<Tree>>` + `#[pyclass(unsendable)]`, not `Arc<Mutex<>>` (§9) | Matches actual v1 scope (single main thread only); asyncio bridging is optional/future and its threading shape is undecided — revisit this first if that work is ever built |
 | Callback exception policy | Caught, logged via `tracing`, non-fatal — the render loop always survives a bad callback (§9) | Matches every mainstream main-thread-owned GUI toolkit (Tkinter, Qt, GTK); a broken handler shouldn't take down a shipped app for its end user |
+| `accesskit::TreeUpdate` builder | Lives in `engine-core` (new direct dependency on plain `accesskit`), not `engine-render` (§4, §10) | `accesskit` is small and OS-agnostic like `taffy`/`parley`; keeps a11y-semantic interpretation with the crate that already owns `AccessNodeData`'s meaning |
+| Keyboard focus model | Minimal model specified now in `engine-core` (Tab-order focus + `Action::Default`/`Action::Focus`); component-specific arrow-key nav deferred per-component (§10) | Keyboard operability is WCAG 2.1's baseline requirement, not a nice-to-have — an explicit, written scope decision rather than a silent gap (LESSONS_LEARNED §7) |
 
 **Secondary-OS CI trigger (proposed, adjust as needed):** add minimal build + smoke-test CI for Windows and macOS no later than build-order step 6 (§13, wiring `accesskit`) — the first point where real platform-specific behavior (UIA vs. NSAccessibility vs. AT-SPI) becomes load-bearing, and a natural forcing function to confirm the deferred OSes still build before investing further past it.
 
@@ -103,11 +105,12 @@ graph TD
     subgraph FFI["engine-py — the only stability contract"]
         C[PyO3 bindings]
     end
-    subgraph Core["engine-core — pure Rust, no pyo3, MD3-agnostic"]
+    subgraph Core["engine-core — pure Rust, no pyo3, no winit, MD3-agnostic"]
         D[Node Tree + Animated&lt;T&gt; + central tick]
         E[Taffy Layout]
         F[Parley Text Shaping]
         N[Generic InputEvent enum + AppHandler trait]
+        O[accesskit TreeUpdate builder — §10]
     end
     subgraph MD3["engine-md3 — MD3 theming"]
         G[Color scheme / shadow &amp; ripple helpers / shape morph / motion-curve presets]
@@ -129,9 +132,10 @@ graph TD
     L --> K
     D --> E
     D --> F
+    D --> O
 ```
 
-**Crate boundary rule:** `engine-core` has zero knowledge of Python, PyO3, `winit`, or `engine-md3` — it's testable and reusable standalone, and defines the generic types (`MotionCurve`, a generic interpolation trait, the `InputEvent` enum, the `AppHandler` trait) that other crates build on. `engine-py` is the only crate that imports `pyo3`. `engine-md3` depends on `engine-core` (§1 Locked Decisions: "keep `engine-core` MD3-agnostic") to supply *named presets* of those generic types (e.g. `engine_md3::motion::STANDARD: engine_core::MotionCurve`) — it never feeds data back into `engine-core`, so there's no cycle. `engine-render` depends only on `raw-window-handle` (a tiny interface crate `winit::Window` already implements), not on `engine-platform` or `winit` directly, so it stays renderable/testable against any window-handle-shaped value with zero windowing dependency; its own dev-only examples (§13 step 1) pull in `engine-platform` purely to get a real window to render into. `engine-platform` owns the actual `winit::EventLoop`/`ApplicationHandler` and the `accesskit_winit` adapter — a dedicated crate, not folded into `engine-render`, matching TRE's own `tre-platform` precedent (§1 Locked Decisions).
+**Crate boundary rule:** `engine-core` has zero knowledge of Python, PyO3, `winit`, or `engine-md3` — it's testable and reusable standalone, and defines the generic types (`MotionCurve`, a generic interpolation trait, the `InputEvent` enum, the `AppHandler` trait) that other crates build on. It does directly depend on the plain `accesskit` crate (not `accesskit_winit`) — unlike `winit`/`pyo3`, `accesskit` itself is small, portable, OS-agnostic data types (`Node`, `TreeUpdate`, `Role`, `Action`), architecturally the same class of dependency as `taffy`/`parley`, both already here — so `Tree::build_access_update() -> accesskit::TreeUpdate` (§10) lives alongside the tree it's built from, not in a crate with no other reason to know accessibility semantics. `engine-py` is the only crate that imports `pyo3`. `engine-md3` depends on `engine-core` (§1 Locked Decisions: "keep `engine-core` MD3-agnostic") to supply *named presets* of those generic types (e.g. `engine_md3::motion::STANDARD: engine_core::MotionCurve`) — it never feeds data back into `engine-core`, so there's no cycle. `engine-render` depends only on `raw-window-handle` (a tiny interface crate `winit::Window` already implements), not on `engine-platform` or `winit` directly, so it stays renderable/testable against any window-handle-shaped value with zero windowing dependency; its own dev-only examples (§13 step 1) pull in `engine-platform` purely to get a real window to render into. `engine-platform` owns the actual `winit::EventLoop`/`ApplicationHandler` and the `accesskit_winit` adapter — a dedicated crate, not folded into `engine-render`, matching TRE's own `tre-platform` precedent (§1 Locked Decisions); since `engine-platform` already depends on `engine-core` (the diagram's `K --> D` edge), it pulls a fresh `accesskit::TreeUpdate` from `engine-core` each frame and hands it to its own `accesskit_winit` adapter — a plain value read through an existing dependency edge, not a new inversion.
 
 **Runtime event dispatch is a dependency *inversion*, not a direct call.** `engine-core` can't call into `engine-py` (that would require depending on it, which would create the exact cycle the crate boundary rule forbids). Instead, `engine-core` defines a generic `AppHandler` trait; `engine-platform`'s `run()` entry point is generic over it, translating raw `winit` events into `engine-core`'s own `InputEvent` enum and calling the trait's methods — `engine-platform` never knows a concrete implementation exists. `engine-py` is the crate that actually *implements* `AppHandler` (it alone has GIL access and the Python callback map) and calls `engine_platform::run(my_handler)` from inside its own `app.run()`. So the compile-time dependency graph reads `engine-py → engine-platform`, while the runtime call direction for input events reads `engine-platform → (the AppHandler impl engine-py supplied)` — the same shape of solution as the `on_complete` callback-queue mechanism already noted in §5.
 
@@ -436,7 +440,21 @@ impl From<EngineError> for PyErr {
 
 ## 10. Accessibility
 
-`accesskit` + `accesskit_winit`, wired directly (no Masonry intermediary). `AccessNodeData` on each `Node` is the source of truth; the `TreeUpdate` sent to AccessKit is built from the same tree walk as paint, every frame, not maintained as a separate parallel structure that can drift out of sync.
+`accesskit` + `accesskit_winit`, wired directly (no Masonry intermediary). `AccessNodeData` on each `Node` is the source of truth; the `TreeUpdate` sent to AccessKit is built fresh from the current `Node` tree every frame, not maintained as a separate parallel structure that can drift out of sync.
+
+**`engine-core` builds the `TreeUpdate`, not `engine-render` (§4).** `accesskit` (the plain data crate — `Node`, `TreeUpdate`, `Role`, `Action` — not `accesskit_winit`, which stays in `engine-platform`) is a small, OS-agnostic dependency, architecturally the same class as `taffy`/`parley`, both already core dependencies. `Tree` exposes `build_access_update(&self) -> accesskit::TreeUpdate`; `engine-platform` — which already depends on `engine-core` (§4) — calls it once per frame and feeds the result to its own `accesskit_winit` adapter. This keeps a11y-semantic interpretation (what a `Role`/state actually means) with the crate that already owns `AccessNodeData`'s meaning, rather than teaching `engine-render` — whose only other job is GPU rendering — a second domain it has no other reason to know.
+
+```rust
+pub struct AccessNodeData {
+    pub role: accesskit::Role,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    pub states: AccessStates,       // checked, expanded, disabled, selected, ... — plain bitflags-style data
+    pub actions: Vec<accesskit::Action>, // which AT-SPI/UIA/NSAccessibility actions this node responds to
+}
+```
+
+**A minimal keyboard focus model lives in `engine-core`, not left unspecified.** `Tree` tracks `focused: Option<NodeId>`; Tab/Shift-Tab moves focus in tree order (the same order the `TreeUpdate` already walks); `Enter`/`Space` on the focused node dispatches `accesskit::Action::Default`, and platform-driven focus requests (a screen reader focusing a node directly) dispatch `accesskit::Action::Focus` — both routed through the same `AppHandler`/`InputEvent` inversion already wired for pointer events (§4), so keyboard input isn't a second, parallel dispatch mechanism. **Explicitly out of this minimal model:** component-specific keyboard semantics — arrow keys moving between options in a radio group, a slider's arrow-key increments — are deferred to per-component design in `engine-md3`, exactly when each such component is actually built, the same way `NodeKind` payloads already are (§7). Keyboard operability (WCAG 2.1's baseline requirement, not a nice-to-have) ships from day one; the component-specific *extent* of it grows incrementally with the component catalog.
 
 > **Review note (from the TRE archive), first-hand:** `accesskit` had real breaking changes across the version range I worked through directly on TRE this session (0.17→0.25): `Tree` became a deprecated alias for `TreeInfo` and lost its `app_name` field entirely (the Linux adapter now derives the app name from the running executable instead); `TreeUpdate` gained a new required `tree_id` field; and the AT-SPI2 object-path encoding changed shape (a node's id moved from being the literal last path segment to being packed into the high 64 bits of a 128-bit value alongside a tree index) — none of which I could have predicted from documentation alone; each was found by reading the new version's actual source. Pin an exact `accesskit`/`accesskit_winit` version early, and re-verify the real current API against the pinned version's own source at implementation time rather than assuming this document's description still matches whatever version ends up resolved.
 
@@ -448,7 +466,7 @@ impl From<EngineError> for PyErr {
 project-root/
 ├── Cargo.toml                    # workspace root
 ├── crates/
-│   ├── engine-core/               # Node tree, Animated<T>, layout/text wiring, InputEvent/AppHandler — no pyo3, no winit, no engine-md3
+│   ├── engine-core/               # Node tree, Animated<T>, layout/text wiring, InputEvent/AppHandler, accesskit TreeUpdate building, focus model (§10) — no pyo3, no winit, no engine-md3
 │   ├── engine-md3/                  # MD3 theming: color scheme, shadow/ripple helpers, shape morph, motion-curve presets — depends on engine-core (§1, §4)
 │   ├── engine-render/              # vello_hybrid + wgpu + kurbo + peniko + parley wiring, scene building — no winit dependency (§4)
 │   ├── engine-platform/              # winit EventLoop/ApplicationHandler + accesskit_winit adapter — the only crate depending on winit (§1, §4)
