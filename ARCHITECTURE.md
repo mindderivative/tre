@@ -54,6 +54,8 @@ A running log of resolved architectural questions, kept in one canonical place r
 | MVVM data binding | A pure-Python `bind()` helper built on the existing `animate()` FFI call, not a new Rust binding subsystem (§8) | Smaller than it looks — reuses an already-locked mutation path; GC-safe for free since the binding closure never leaves Python's own object graph |
 | Declarative authoring | Add both YAML view files and a YAML stylesheet cascade, via a new `engine-spec` crate — not stylesheets alone, and not adopted wholesale from `pyCopper` (§16) | User's explicit request; design borrowed from a mature sibling project's already-proven precedence/reconciliation/safe-expression choices, reimplemented against `engine-core`'s own types rather than pulled in as a dependency |
 | Reconciliation identity | A view file's `WidgetSpec.id` (author-assigned, stable) is a second identifier alongside `NodeId`, used only for hot-reload diffing (§16.1, §16.4) | `NodeId`'s generational index (§5) is a runtime handle with no meaning across a reload — conflating the two would break reconciliation the first time a slot got recycled |
+| ViewModel/View wiring | The `ViewModel` holds the `View` reference and drives wiring (`View._attach(viewmodel)`); the `View` itself never knows who handles its events or supplies its bound values (§16.2) | User's explicit design: the View stays passive and reusable: handlers/bindings are just names until a ViewModel resolves them, matching the dependency-inversion shape already used for `AppHandler` (§4) |
+| Reactive binding scope | A bound expression re-evaluates only on the `Signal`s it actually read last time (dependency tracking via a recording evaluation), not on every `Signal` the `ViewModel` exposes (§16.2) | Matches pyCopper's own proven "invalidates exactly the affected subtree" reactivity model rather than a coarser whole-view refresh |
 
 **Secondary-OS CI trigger (proposed, adjust as needed):** add minimal build + smoke-test CI for Windows and macOS no later than build-order step 6 (§14, wiring `accesskit`) — the first point where real platform-specific behavior (UIA vs. NSAccessibility vs. AT-SPI) becomes load-bearing, and a natural forcing function to confirm the deferred OSes still build before investing further past it.
 
@@ -483,6 +485,8 @@ A `ViewModel` author declares state with `is_visible = Bindable()` instead of a 
 
 **GC, resolved for free, not by extension:** the binding closure above is a plain Python object living in `view_model.__bindings__` — an ordinary Python `dict` on an ordinary Python object, already inside CPython's own cyclic-GC graph with no Rust-side involvement. The only place a genuine cycle can hide is exactly the one §8 already solved: a stored callback (`on_click`, `on_complete`) capturing a `ViewModel` that itself holds a binding back to that same node. `PyWindow`'s existing `__traverse__`/`__clear__` (above) already accounts for that half of the graph; the binding's own half needs no new GC protocol, since it never leaves Python's object graph in the first place.
 
+**This is the primitive, not the whole story.** An app with a YAML view (§16) doesn't call `bind()` by hand at all — `View._attach(viewmodel)` (§16.2) walks every `handlers:`/`bindings:` declaration in the file and calls exactly this machinery once per binding, automatically, driven by names in the file rather than manual per-property wiring. `bind()` itself stays the right tool for a purely imperative app (no YAML view) that still wants MVVM-shaped code.
+
 ---
 
 ## 9. Threading & Event Loop Model
@@ -790,11 +794,35 @@ pub struct WidgetSpec {
 
 `deny_unknown_fields` makes a typo'd YAML key a load-time error with a line number, not a silently-ignored style — the same reasoning behind `EngineError`'s design (§8): fail loudly at the boundary, not silently past it. `id` is deliberately a second identifier alongside `NodeId` — `NodeId`'s generational index (§5) is a *runtime* handle with no meaning across a reload, while `id` is what reconciliation (§16.4) matches against.
 
-### 16.2 Binding expressions
+### 16.2 Binding expressions, and the ViewModel/View relationship
 
-`{{ clicks }}`-style expressions parse against a small, whitelisted grammar (attribute access, indexing, comparison, arithmetic, boolean logic) — deliberately not a path to arbitrary code execution, the same posture as `engine-py`'s existing dispatch discipline (§8's `EngineError` on an unknown property, not a panic or a silent coercion). `engine-spec` can't evaluate an expression against a Python `ViewModel` object itself — it has no `pyo3` dependency — so it defines a generic `BindingResolver` trait; `engine-py` implements it (it alone has GIL access) and supplies the concrete resolver when loading a view. This is the same dependency-inversion shape already used twice in this document (`AppHandler`, §4; the queue-drain completion mechanism, §5) — a pattern repeating for the same reason each time: a lower crate needs a capability only `engine-py` can provide, without depending on `engine-py` itself.
+`{{ clicks }}`-style expressions parse against a small, whitelisted grammar (attribute access, indexing, comparison, arithmetic, boolean logic, zero-arg method calls like `clicks.get()`) — deliberately not a path to arbitrary code execution, the same posture as `engine-py`'s existing dispatch discipline (§8's `EngineError` on an unknown property, not a panic or a silent coercion). `engine-spec` can't evaluate an expression against a Python `ViewModel` object itself — it has no `pyo3` dependency — so it defines a generic `BindingResolver` trait; `engine-py` implements it (it alone has GIL access). This is the same dependency-inversion shape already used twice in this document (`AppHandler`, §4; the queue-drain completion mechanism, §5) — a pattern repeating for the same reason each time: a lower crate needs a capability only `engine-py` can provide, without depending on `engine-py` itself.
 
-Reactive re-evaluation (a bound expression updating when its underlying state changes) extends the existing pure-Python MVVM layer (§8) rather than adding a new engine-core mechanism — `Signal`, a small observable-value wrapper an app exposes to a view, is the reactive counterpart to `Bindable`, living in the same framework-provided Python package, not in `engine-py`'s Rust surface.
+**The View knows nothing about who listens to it or who updates it — the ViewModel is what knows.** A loaded `View` just carries the `handlers`/`bindings` names parsed from its `WidgetSpec` (§16.1) as inert declarations — `{on_click: "bump"}`, `{text: "{{ clicks }}"}`. Nothing resolves them until a `ViewModel` is constructed *with* that `View`:
+
+```python
+class ViewModel:
+    def __init__(self, view: View):
+        self._view = view
+        view._attach(self)   # walks every declared handler/binding and wires it — see below
+
+class CounterViewModel(ViewModel):
+    clicks = Signal(0)
+
+    def bump(self, event) -> None:
+        self.clicks.update(lambda n: n + 1)
+
+view = View("counter.yaml")
+vm = CounterViewModel(view)   # one call wires every handler and binding in the file
+app.run()
+```
+
+`View._attach(viewmodel)` (engine-py) is the one place the inversion resolves, per node:
+
+- **Handlers, resolved by name.** For a node whose `WidgetSpec.handlers` names `"on_click": "bump"`, `_attach` does `getattr(viewmodel, "bump")` and registers it through the existing per-event-kind machinery (`set_on_click`, §8, generalizing to whatever named events a `NodeKind` exposes) — the app author writes a same-named method once; nothing calls `set_on_click` by hand.
+- **Bindings, resolved and then tracked.** For a node whose `WidgetSpec.bindings` names `"text": "{{ clicks.get() }}"`, `_attach` evaluates the expression against `viewmodel` through `BindingResolver` *once* to get the initial value (applied via `animate(property, value, duration_ms=0)`, reusing §8's existing FFI call), and records which `Signal`s the evaluation actually read — a plain dependency-tracking record, the same technique reactive UI runtimes generally use (evaluate once inside a recording scope, subscribe to whatever was read, no explicit dependency list for the app author to maintain). Writing to any of those `Signal`s later re-runs the same expression and re-applies the result, automatically. This is what "the view can also be updated from a function" means concretely — the bound expression can be a `Signal` read, a computed method call, or any combination the grammar allows, and re-evaluates on exactly the state it actually touched, not on every `Signal` in the `ViewModel`.
+
+This supersedes needing to call §8's `bind()` once per property by hand for anything declared in a view file — `bind()` still exists as the lower-level primitive for a pure-imperative app with no YAML view at all, and it's exactly what `_attach` uses internally per binding, just driven automatically from the file's own declarations instead of one manual call per property.
 
 ### 16.3 Stylesheet cascade
 
@@ -810,7 +838,7 @@ styles:
 
 ### 16.4 Reconciliation & hot-reload
 
-Editing a view file while the app runs re-parses it, diffs the new `WidgetSpec` tree against the previous one — matched by `id` plus `NodeKind` variant, the same keyed-diffing idea React popularized — and patches the persistent `Tree` (§5) in place rather than rebuilding it. An unchanged node keeps its real `NodeId`, so its focus, scroll offset, and any in-flight `ActiveAnimation` (§5) survive a reload; only nodes whose `WidgetSpec` actually changed get real mutations. `engine-spec` owns file-watching directly (a `notify`-crate watcher, no `pyo3` needed to detect a file change) and triggers reconciliation on the main thread between frames — a change that only touches styling patches `PaintProperties`/`layout_style` directly; a change that adds a new binding or handler calls back into the `BindingResolver` (§16.2) to resolve it against Python state.
+Editing a view file while the app runs re-parses it, diffs the new `WidgetSpec` tree against the previous one — matched by `id` plus `NodeKind` variant, the same keyed-diffing idea React popularized — and patches the persistent `Tree` (§5) in place rather than rebuilding it. An unchanged node keeps its real `NodeId`, so its focus, scroll offset, and any in-flight `ActiveAnimation` (§5) survive a reload; only nodes whose `WidgetSpec` actually changed get real mutations. `engine-spec` owns file-watching directly (a `notify`-crate watcher, no `pyo3` needed to detect a file change) and triggers reconciliation on the main thread between frames — a change that only touches styling patches `PaintProperties`/`layout_style` directly; a change that adds a new binding or handler calls back into the `BindingResolver` (§16.2) to resolve it against whichever `ViewModel` is already attached to this `View`.
 
 ### 16.5 What stays imperative
 
