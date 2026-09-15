@@ -35,7 +35,7 @@ A running log of resolved architectural questions, kept in one canonical place r
 | `NodeKind` scope | Closed enum, one variant per MD3 component (§5) | Multi-design-language support is out of scope (§1) — a generic/extensible mechanism would be the same never-exercised abstraction LESSONS_LEARNED.md §1 warns against (TRE's stub RHI backends) |
 | `NodeId` identity | Generational index (slot index + generation), not a plain integer (§5) | A stale `PyNode` handle held past node removal (§8) fails a checked comparison instead of silently addressing the wrong node — the generational-index answer to TRE's finding #259 (a dangling raw handle across a GC-controlled boundary) |
 | Layout dirty-scoping | Rely on Taffy's own incremental cache; no hand-rolled `dirty_layout`/`dirty_paint` flag system (§6) | `PaintProperties`/`NodeKind` payloads share no fields with `taffy::Style`, so a paint-only animation structurally can't mark Taffy dirty — the skip is automatic, not manually classified per property |
-| Frame budget | 16.6ms (60Hz) target, 8.3ms (120Hz) stretch goal, enforced by a CI benchmark added no later than build-order step 3 (§6, §13) | A stated-but-unenforced number is exactly TRE's MSRV mistake (LESSONS_LEARNED.md §5) restated in a new form |
+| Frame budget | 16.6ms (60Hz) target, 8.3ms (120Hz) stretch goal, enforced by a CI benchmark added no later than build-order step 3 (§6, §14) | A stated-but-unenforced number is exactly TRE's MSRV mistake (LESSONS_LEARNED.md §5) restated in a new form |
 | Ripple concurrency | Bounded list of concurrent ripples per node (`interaction: Option<InteractionState>`, §5, §7.3), not one scalar pair | Matches MD3's real overlapping-ripple behavior under rapid taps; reuses §5's completion-queue mechanism per-ripple |
 | Dynamic color source | Third-party MCU-port crate, gated on passing Material Color Utilities' own published reference test vectors before pinning (§7.1) | HCT/tonal-palette/contrast math is a large, easy-to-get-subtly-wrong subsystem — reimplementing it is bigger and riskier than it looks, unlike shape morphing's one missing step |
 | Live theme switching | Supported at runtime via `winit`'s `ThemeChanged` event, forwarded through the existing `AppHandler`/`InputEvent` inversion (§4, §7.1) | A rare, discrete, whole-tree-repaint event — matches modern desktop UX expectations at negligible design cost given the event-dispatch path already exists |
@@ -46,8 +46,14 @@ A running log of resolved architectural questions, kept in one canonical place r
 | Callback exception policy | Caught, logged via `tracing`, non-fatal — the render loop always survives a bad callback (§9) | Matches every mainstream main-thread-owned GUI toolkit (Tkinter, Qt, GTK); a broken handler shouldn't take down a shipped app for its end user |
 | `accesskit::TreeUpdate` builder | Lives in `engine-core` (new direct dependency on plain `accesskit`), not `engine-render` (§4, §10) | `accesskit` is small and OS-agnostic like `taffy`/`parley`; keeps a11y-semantic interpretation with the crate that already owns `AccessNodeData`'s meaning |
 | Keyboard focus model | Minimal model specified now in `engine-core` (Tab-order focus + `Action::Default`/`Action::Focus`); component-specific arrow-key nav deferred per-component (§10) | Keyboard operability is WCAG 2.1's baseline requirement, not a nice-to-have — an explicit, written scope decision rather than a silent gap (LESSONS_LEARNED §7) |
+| Multiple windows | One `Tree` per OS window, not a shared multi-root tree (§11.1) | Zero changes needed to the already-locked Node/`NodeId`/`Tree` model; cross-window node transfer is an accepted gap, not a blocker |
+| App shell / navigation | Optional `AppShell` composition (named regions + one content region) within a single `Tree`; content swap, not a multi-screen router (§11.2) | Matches the single-page-app model requested; reverses §7.6's "no navigation model" only as far as this one persistent-shell case, not a general router |
+| Menus, popups, dialogs | Custom-rendered overlay layer — one mechanism for menu bars, dropdowns, context menus, tooltips, and dialogs (§11.3) | Reinforces §3's zero-GTK decision rather than reopening it; reuses container-transform's existing "insert above root" trick (§7.6) |
+| Docking | In scope for v1 — a fixed 5-zone (`Left`/`Right`/`Top`/`Bottom`/`Center`) model, not arbitrary nested splits (§11.4) | User's explicit choice, opposite the recommended default (defer); scoped to the fixed-zone case specifically to keep a large, MD3-precedent-free feature shippable |
+| Virtualization | Framework-level `NodeKind::VirtualList`, not an app-level responsibility (§11.7) | Matches §1's own goal (Python needs everything without extra Rust work) for one of the most common, non-optional desktop patterns |
+| MVVM data binding | A pure-Python `bind()` helper built on the existing `animate()` FFI call, not a new Rust binding subsystem (§8) | Smaller than it looks — reuses an already-locked mutation path; GC-safe for free since the binding closure never leaves Python's own object graph |
 
-**Secondary-OS CI trigger (proposed, adjust as needed):** add minimal build + smoke-test CI for Windows and macOS no later than build-order step 6 (§13, wiring `accesskit`) — the first point where real platform-specific behavior (UIA vs. NSAccessibility vs. AT-SPI) becomes load-bearing, and a natural forcing function to confirm the deferred OSes still build before investing further past it.
+**Secondary-OS CI trigger (proposed, adjust as needed):** add minimal build + smoke-test CI for Windows and macOS no later than build-order step 6 (§14, wiring `accesskit`) — the first point where real platform-specific behavior (UIA vs. NSAccessibility vs. AT-SPI) becomes load-bearing, and a natural forcing function to confirm the deferred OSes still build before investing further past it.
 
 ---
 
@@ -135,7 +141,7 @@ graph TD
     D --> O
 ```
 
-**Crate boundary rule:** `engine-core` has zero knowledge of Python, PyO3, `winit`, or `engine-md3` — it's testable and reusable standalone, and defines the generic types (`MotionCurve`, a generic interpolation trait, the `InputEvent` enum, the `AppHandler` trait) that other crates build on. It does directly depend on the plain `accesskit` crate (not `accesskit_winit`) — unlike `winit`/`pyo3`, `accesskit` itself is small, portable, OS-agnostic data types (`Node`, `TreeUpdate`, `Role`, `Action`), architecturally the same class of dependency as `taffy`/`parley`, both already here — so `Tree::build_access_update() -> accesskit::TreeUpdate` (§10) lives alongside the tree it's built from, not in a crate with no other reason to know accessibility semantics. `engine-py` is the only crate that imports `pyo3`. `engine-md3` depends on `engine-core` (§1 Locked Decisions: "keep `engine-core` MD3-agnostic") to supply *named presets* of those generic types (e.g. `engine_md3::motion::STANDARD: engine_core::MotionCurve`) — it never feeds data back into `engine-core`, so there's no cycle. `engine-render` depends only on `raw-window-handle` (a tiny interface crate `winit::Window` already implements), not on `engine-platform` or `winit` directly, so it stays renderable/testable against any window-handle-shaped value with zero windowing dependency; its own dev-only examples (§13 step 1) pull in `engine-platform` purely to get a real window to render into. `engine-platform` owns the actual `winit::EventLoop`/`ApplicationHandler` and the `accesskit_winit` adapter — a dedicated crate, not folded into `engine-render`, matching TRE's own `tre-platform` precedent (§1 Locked Decisions); since `engine-platform` already depends on `engine-core` (the diagram's `K --> D` edge), it pulls a fresh `accesskit::TreeUpdate` from `engine-core` each frame and hands it to its own `accesskit_winit` adapter — a plain value read through an existing dependency edge, not a new inversion.
+**Crate boundary rule:** `engine-core` has zero knowledge of Python, PyO3, `winit`, or `engine-md3` — it's testable and reusable standalone, and defines the generic types (`MotionCurve`, a generic interpolation trait, the `InputEvent` enum, the `AppHandler` trait) that other crates build on. It does directly depend on the plain `accesskit` crate (not `accesskit_winit`) — unlike `winit`/`pyo3`, `accesskit` itself is small, portable, OS-agnostic data types (`Node`, `TreeUpdate`, `Role`, `Action`), architecturally the same class of dependency as `taffy`/`parley`, both already here — so `Tree::build_access_update() -> accesskit::TreeUpdate` (§10) lives alongside the tree it's built from, not in a crate with no other reason to know accessibility semantics. `engine-py` is the only crate that imports `pyo3`. `engine-md3` depends on `engine-core` (§1 Locked Decisions: "keep `engine-core` MD3-agnostic") to supply *named presets* of those generic types (e.g. `engine_md3::motion::STANDARD: engine_core::MotionCurve`) — it never feeds data back into `engine-core`, so there's no cycle. `engine-render` depends only on `raw-window-handle` (a tiny interface crate `winit::Window` already implements), not on `engine-platform` or `winit` directly, so it stays renderable/testable against any window-handle-shaped value with zero windowing dependency; its own dev-only examples (§14 step 1) pull in `engine-platform` purely to get a real window to render into. `engine-platform` owns the actual `winit::EventLoop`/`ApplicationHandler` and the `accesskit_winit` adapter — a dedicated crate, not folded into `engine-render`, matching TRE's own `tre-platform` precedent (§1 Locked Decisions); since `engine-platform` already depends on `engine-core` (the diagram's `K --> D` edge), it pulls a fresh `accesskit::TreeUpdate` from `engine-core` each frame and hands it to its own `accesskit_winit` adapter — a plain value read through an existing dependency edge, not a new inversion.
 
 **Runtime event dispatch is a dependency *inversion*, not a direct call.** `engine-core` can't call into `engine-py` (that would require depending on it, which would create the exact cycle the crate boundary rule forbids). Instead, `engine-core` defines a generic `AppHandler` trait; `engine-platform`'s `run()` entry point is generic over it, translating raw `winit` events into `engine-core`'s own `InputEvent` enum and calling the trait's methods — `engine-platform` never knows a concrete implementation exists. `engine-py` is the crate that actually *implements* `AppHandler` (it alone has GIL access and the Python callback map) and calls `engine_platform::run(my_handler)` from inside its own `app.run()`. So the compile-time dependency graph reads `engine-py → engine-platform`, while the runtime call direction for input events reads `engine-platform → (the AppHandler impl engine-py supplied)` — the same shape of solution as the `on_complete` callback-queue mechanism already noted in §5.
 
@@ -265,13 +271,13 @@ flowchart TD
 
 Accessibility tree construction happens in the same pass as paint, from the same node tree — not bolted on afterward.
 
-**Layout dirty-scoping: lean on Taffy's own cache, don't reinvent it.** `PaintProperties` and every `NodeKind` payload (§5) share no fields with `taffy::Style` — they're structurally disjoint types. That means an `animate()` call touching only paint state (a ripple radius, an opacity fade, an elevation change) never has any reason to call `mark_dirty()` on Taffy's tree at all, and a call that *does* change `layout_style` is the only thing that ever does. `compute_layout()` runs unconditionally every frame, but Taffy's own internal caching makes that a cheap no-op for every subtree nothing marked dirty — no parallel `dirty_layout`/`dirty_paint` bookkeeping to build, keep in sync, or mis-classify a property against as MD3's component catalog grows. The same reasoning applies to `parley`: text-shaping is only re-run for a node whose actual text content, font, size, or available width changed, never for a purely visual animation — whether that needs an explicit shaped-run cache or falls out of the same "only touch what changed" discipline is left to the typography spike (§13 step 4) to determine from real measurements, not decided here in the abstract.
+**Layout dirty-scoping: lean on Taffy's own cache, don't reinvent it.** `PaintProperties` and every `NodeKind` payload (§5) share no fields with `taffy::Style` — they're structurally disjoint types. That means an `animate()` call touching only paint state (a ripple radius, an opacity fade, an elevation change) never has any reason to call `mark_dirty()` on Taffy's tree at all, and a call that *does* change `layout_style` is the only thing that ever does. `compute_layout()` runs unconditionally every frame, but Taffy's own internal caching makes that a cheap no-op for every subtree nothing marked dirty — no parallel `dirty_layout`/`dirty_paint` bookkeeping to build, keep in sync, or mis-classify a property against as MD3's component catalog grows. The same reasoning applies to `parley`: text-shaping is only re-run for a node whose actual text content, font, size, or available width changed, never for a purely visual animation — whether that needs an explicit shaped-run cache or falls out of the same "only touch what changed" discipline is left to the typography spike (§14 step 4) to determine from real measurements, not decided here in the abstract.
 
 **Paint is a full scene re-encode, not a hand-rolled patch — and that's expected, not a gap.** `vello_hybrid`'s `Scene` is a command-recording API rebuilt by walking the tree each frame, the same way Vello's own reference consumers (Xilem, Masonry) work — there's no supported way to patch a persisted partial scene, so this pipeline doesn't attempt one. The actual per-frame cost lever isn't "skip re-encoding," it's "skip the *expensive host-side inputs* to encoding" (unchanged layout, unchanged shaped text) — which is exactly what the layout- and text-caching above already do.
 
 **AccessKit updates scope to the dirty set for free.** `accesskit::TreeUpdate` is itself a partial-update API — a `Vec` of just the nodes that changed, not a mandatory full-tree snapshot every frame. The paint pass only needs to emit `accesskit::Node` entries for nodes in the same dirty set already computed for paint, not the whole tree.
 
-**Frame budget: a stated target, paired with an enforcing trigger.** Steady state should comfortably fit inside a 60 Hz frame (16.6 ms), with 120 Hz (8.3 ms) as a stretch goal — not TRE's sub-millisecond, hand-tuned-Vulkan, zero-allocation target, since `vello_hybrid`/`wgpu`'s GPU-side compute model doesn't offer the same hand-tuning surface and this project's stated priority (§1) is Python-framework completeness over raw frame-time supremacy. Per LESSONS_LEARNED.md §5 ("any claim of the form 'we require X' needs a CI job that actually tests it, added in the same commit that makes the claim"), this number is fiction until it's mechanically checked: add a frame-time benchmark to CI no later than build-order step 3 (§13, once `taffy` layout is wired and a real, if minimal, render+layout+tick pipeline exists to measure) — the same discipline TRE's MSRV claim skipped for most of that project's life.
+**Frame budget: a stated target, paired with an enforcing trigger.** Steady state should comfortably fit inside a 60 Hz frame (16.6 ms), with 120 Hz (8.3 ms) as a stretch goal — not TRE's sub-millisecond, hand-tuned-Vulkan, zero-allocation target, since `vello_hybrid`/`wgpu`'s GPU-side compute model doesn't offer the same hand-tuning surface and this project's stated priority (§1) is Python-framework completeness over raw frame-time supremacy. Per LESSONS_LEARNED.md §5 ("any claim of the form 'we require X' needs a CI job that actually tests it, added in the same commit that makes the claim"), this number is fiction until it's mechanically checked: add a frame-time benchmark to CI no later than build-order step 3 (§14, once `taffy` layout is wired and a real, if minimal, render+layout+tick pipeline exists to measure) — the same discipline TRE's MSRV claim skipped for most of that project's life.
 
 > **Review note (from the TRE archive):** no performance budget or re-layout scoping was stated in the original draft of this section. "Dirty-subtree marking" was named as a pipeline step, but the diagram still showed one monolithic Taffy layout pass and one scene-build pass per frame with no stated scoping mechanism. TRE's most expensive-to-retrofit engineering discipline was exactly this — a mechanically-enforced, near-zero-allocation, sub-millisecond frame budget — and it was far cheaper to have designed in from the start than to bolt on after the fact.
 >
@@ -334,7 +340,7 @@ The choreography, concretely:
 4. **Content cross-fade.** The trigger's own content (icon/label) gets an `Animated<f64>` opacity animation toward `0.0` starting immediately; the destination's real content gets an `Animated<f64>` opacity animation toward `1.0` with a *staggered* `start: Instant` (set to "now + N ms," not "now"). `ActiveAnimation<T>` (§5) already carries a `start: Instant` field for exactly this — no new struct field, just `engine-md3` choosing to construct one with a future start time.
 5. **Teardown.** On completion (via §5's queue-drain mechanism), the trigger node is hidden or removed and the destination container becomes the persistent subtree going forward — an ordinary tree mutation, not special-cased machinery.
 
-**What this deliberately does *not* require:** a navigation/router/screen-stack subsystem. "Showing a new screen" in this tree model is already just "add or reveal a subtree" — whatever pattern the Python app author uses for that (a single persistent root that swaps its child, an app-level stack the app itself manages) is orthogonal to container-transform, which only ever cares about two nodes' bounds and paint state at one point in time. `engine-md3` exposes the choreography above as a single helper function; it does not own *what screens exist* or *how you got there* — keeping this addition scoped to what §7.4's morphing module and §5's animation core already make possible, not a new navigation architecture bolted on to justify it.
+**What this deliberately does *not* require:** a navigation/router/screen-stack subsystem. "Showing a new screen" in this tree model is already just "add or reveal a subtree" — whatever pattern the Python app author uses for that (a single persistent root that swaps its child, an app-level stack the app itself manages) is orthogonal to container-transform, which only ever cares about two nodes' bounds and paint state at one point in time. `engine-md3` exposes the choreography above as a single helper function; it does not own *what screens exist* or *how you got there* — keeping this addition scoped to what §7.4's morphing module and §5's animation core already make possible, not a new navigation architecture bolted on to justify it. (§11.2's `AppShell` later names the "single persistent root that swaps its child" pattern explicitly, as a reusable composition — it still isn't a router, and this section's reasoning is why one was never needed.)
 
 ---
 
@@ -419,6 +425,32 @@ impl From<EngineError> for PyErr {
 >
 > **Decision recorded:** implemented now, not deferred — `PyApp` above. This project's own target (long-running desktop apps with dynamically created/destroyed widgets — dialogs, list items) is exactly the profile where an uncollected cycle accumulates during normal operation, not just at process exit, unlike a short-lived script where it wouldn't matter.
 
+### MVVM data binding
+
+A `bind(view_model, attr, node, property)` helper — smaller than a full binding subsystem, because it's pure-Python wiring onto the `animate()` path that already exists, not a new Rust mutation mechanism:
+
+```python
+# shipped in the framework's own Python package, not engine-py's Rust surface
+class Bindable:
+    def __set_name__(self, owner, name):
+        self._name = f"_bindable_{name}"
+    def __get__(self, obj, objtype=None):
+        return getattr(obj, self._name, None)
+    def __set__(self, obj, value):
+        setattr(obj, self._name, value)
+        for callback in obj.__bindings__.get(self._name, []):
+            callback(value)
+
+def bind(view_model, attr: str, node: PyNode, property: str, duration_ms: int = 0, curve: str = "linear"):
+    view_model.__bindings__.setdefault(f"_bindable_{attr}", []).append(
+        lambda value: node.animate(property, value, duration_ms, curve)
+    )
+```
+
+A `ViewModel` author declares state with `is_visible = Bindable()` instead of a plain attribute; every write goes through `Bindable.__set__`, which fans out to every `node.animate(...)` call registered against it — the existing FFI call, unmodified. **"Commands"** (a ViewModel method invoked by user interaction) need no new mechanism at all: `set_on_click(view_model.on_save)` already works today, since a bound Python method is just another callable. Default is an instant snap (`duration_ms=0`); a caller passes a real duration/curve to animate a bound update instead.
+
+**GC, resolved for free, not by extension:** the binding closure above is a plain Python object living in `view_model.__bindings__` — an ordinary Python `dict` on an ordinary Python object, already inside CPython's own cyclic-GC graph with no Rust-side involvement. The only place a genuine cycle can hide is exactly the one §8 already solved: a stored callback (`on_click`, `on_complete`) capturing a `ViewModel` that itself holds a binding back to that same node. `PyApp`'s existing `__traverse__`/`__clear__` (above) already accounts for that half of the graph; the binding's own half needs no new GC protocol, since it never leaves Python's object graph in the first place.
+
 ---
 
 ## 9. Threading & Event Loop Model
@@ -460,14 +492,125 @@ pub struct AccessNodeData {
 
 ---
 
-## 11. Project Structure
+## 11. Desktop Shell & Workspace
+
+Material Design 3 is a mobile/web-first design language — it has no concept of a menu bar, docking, splitters, or multiple windows. This section covers what a real desktop app needs that MD3 doesn't specify, resolved against everything already locked in §1–§10 rather than as a bolted-on afterthought.
+
+### 11.1 Multiple windows
+
+One `Tree` per OS window (§5, §9) — each `winit::Window` owns an independent node arena, root, and `focused: Option<NodeId>` state; `engine-platform` manages a `HashMap<WindowId, Tree>` and dispatches each window's events to its own tree, unchanged from the single-window model already designed. A window closing just drops its `Tree`. **Accepted gap:** there's no cross-window node transfer — a `NodeId` is only meaningful within the generational slotmap (§5) of the `Tree` that issued it. "Detach this panel into its own window" (a common docking feature, §11.4) therefore means *recreating* the panel's subtree in a new `Tree`, not moving existing `Node`s across the boundary — a real, if narrow, limitation to revisit only if a docking UX specifically needs true node migration rather than teardown-and-rebuild.
+
+### 11.2 App shell & single-page navigation
+
+One `Tree` may optionally be composed as an **`AppShell`** — a persistent root layout with named regions (menu bar, toolbar, dock zones, status bar, and exactly one **content** region) — rather than every app hand-composing shell layout from scratch. "Navigating" within a shell means replacing the content region's subtree, optionally choreographed through container-transform (§7.6); it is not a general multi-screen router and does not require one, matching the single-page-app model this framework targets. `AppShell` is a composition convenience, not mandatory: a secondary window opened per §11.1 can be a bare content tree with no shell regions at all (a tool palette, an about box) — only windows that want the standard chrome use it.
+
+```rust
+pub struct AppShell {
+    pub menu_bar: Option<NodeId>,
+    pub toolbar: Option<NodeId>,
+    pub dock: DockLayout,           // §11.4 — may be empty
+    pub status_bar: Option<NodeId>,
+    pub content: NodeId,            // exactly one — the swappable region
+}
+```
+
+Each present region is a completely ordinary node subtree (a flex `Container` for a toolbar, ordinary MD3 components inside) positioned by the shell's own root `taffy::Style` (a standard header/content/footer column — flexbox already does this natively, no new layout mechanism needed). Only `content`'s designation as *the* swap target, and the region names themselves, are new.
+
+### 11.3 Menus, popups & dialogs — one overlay mechanism, not three
+
+`§3`'s "native menus deferred" decision (avoiding `muda`'s GTK-on-Linux dependency) stands — reinforced, not reopened. Menu bars, dropdown menus, context menus, tooltips, and MD3 dialogs are all the same missing primitive: a node rendered above normal paint order, positioned relative to a trigger, dismissed on outside-click or Escape. This is the identical "insert a node above the root, outside normal paint order" trick container-transform's destination container already uses (§7.6) — not a second mechanism:
+
+```rust
+pub struct Overlay {
+    pub root: NodeId,               // the popup's own subtree
+    pub anchor: NodeId,             // the trigger this is positioned relative to
+    pub dismiss_on_outside_click: bool,
+    pub dismiss_on_escape: bool,
+}
+```
+
+`Tree` holds a small `Vec<Overlay>` (rendered last, after the main content, in the paint pass — §6), each one an ordinary subtree using every existing mechanism (`Animated<T>` for enter/exit fades, the focus model for Tab-navigating menu items, `AccessNodeData` for role `MenuItem`/`Dialog`). A menu bar (File/Edit/View/Help) is `NodeKind::MenuBar` containing `NodeKind::MenuItem`s, where activating one opens an `Overlay` holding a `NodeKind::Menu` dropdown; a dialog is an `Overlay` whose root is an MD3 scrim + centered surface, exactly matching MD3's own dialog spec (which is already an overlay pattern, not a new-window pattern). Keyboard mnemonics (Alt+F for File) extend the minimal focus model (§10) with a letter-keyed jump table scoped to whichever menu/overlay is currently open, rather than a second input-dispatch path.
+
+**Accepted platform-fit compromise:** on macOS, users expect the OS-level global menu bar; an in-window custom-rendered one is unconventional there specifically, even though it's normal on Linux and Windows. Revisit only if that specific platform gap becomes a real, reported problem — not preemptively, since building a *third* menu representation (native on macOS, custom elsewhere) now would be exactly the kind of speculative, unexercised complexity §1's own "no second design language" reasoning already argues against building.
+
+### 11.4 Docking
+
+In scope for v1 — a deliberate choice to build real, load-bearing new architecture here despite no MD3 precedent to draw from, because IDE-style rearrangeable workspaces are a stated requirement, not an optional nicety.
+
+```rust
+pub struct DockLayout {
+    pub zones: [Option<DockZone>; 5],   // Left, Right, Top, Bottom, Center — a fixed, non-nested set for v1
+}
+
+pub struct DockZone {
+    pub panels: SmallVec<[NodeId; 4]>,  // tabbed together when more than one
+    pub active_tab: usize,
+    pub size: Animated<f64>,            // this zone's extent along its splitter axis
+}
+```
+
+- **Drag-to-rearrange** reuses the overlay mechanism (§11.3) for drop-zone indicators (translucent highlight regions shown over candidate `DockZone`s while dragging a panel's header) and the same pointer-event dispatch already wired for everything else (§9) — not a new input-handling path.
+- **Resizing** between zones is exactly one `NodeKind::Splitter` (§11.5) per zone boundary — docking is a *consumer* of splitters, not a second resize mechanism.
+- **Tabbed grouping** (`panels` + `active_tab`) is a plain index switch, no different from any other single-active-child UI pattern.
+- **Persisted layout:** `DockLayout` is deliberately POD-shaped (indices and small numbers, no live node references beyond `NodeId`s already stable within one `Tree`'s session) so an app can serialize/restore it — a real requirement for "remember my window layout" UX — without engine-py needing a bespoke serialization format.
+- **Deliberately bounded scope:** exactly five fixed zones (`Left`/`Right`/`Top`/`Bottom`/`Center`), no arbitrary recursive splits. A fully general nested-splits docking model (arbitrary trees of horizontal/vertical splits, the way some professional IDEs work) is explicitly *not* what's being built — this fixed-zone model covers the common case at a fraction of the complexity, and is the right scope to ship rather than the largest thing docking could theoretically be.
+
+### 11.5 Splitters
+
+`NodeKind::Splitter` — a draggable divider between two sibling regions:
+
+```rust
+pub struct SplitterState {
+    pub position: Animated<f64>,   // 0.0..=1.0 along the split axis, or an absolute size — implementation detail
+}
+```
+
+On drag, a splitter mutates its two adjacent siblings' `layout_style` (flex-basis or absolute size, respecting each side's own min/max constraints from `taffy::Style`) — an ordinary layout-affecting mutation through the same path any other `layout_style` change takes (§6's Taffy dirty-scoping applies unchanged). Used both standalone (any resizable-pane layout) and by docking (§11.4) for zone resizing — one mechanism, two call sites.
+
+### 11.6 Toolbars & status bars
+
+No new mechanism. Both are ordinary flex `Container`s (a fixed-height row of icon buttons; a fixed-height row of status text/indicators) placed in `AppShell`'s named regions (§11.2) — standard header/footer flexbox, which Taffy already does natively.
+
+### 11.7 Virtualization
+
+A framework-level `NodeKind::VirtualList` — the alternative (requiring 100,000 real `Node`s for a 100,000-row list) would fail §6's frame budget on layout/paint tree-walk cost alone, with zero animations even running:
+
+```rust
+pub struct VirtualListState {
+    pub item_count: usize,             // the logical count — most items never become real Nodes
+    pub item_extent: ItemExtent,       // fixed, or a size-hint callback for variable-height items
+    pub materialized: BTreeMap<usize, NodeId>, // only the visible window (+ small overscan)
+}
+```
+
+Only `materialized`'s small windowed set are real `Node`s at any time; scrolling recycles `NodeId` slots (via §5's generational index — an old slot's generation increments on reuse, so any stray reference to a scrolled-away item's `NodeId` fails safely) rather than allocating fresh nodes per item. `taffy::Style` for the scroll container uses `item_count × item_extent` as its estimated content size, so scrollbar sizing is correct without every item existing. **New FFI shape (§8):** unlike `on_click`/`on_complete`'s event-driven callbacks, this needs an ad hoc "materialize item N" callback invoked during layout/scroll — a genuinely different callback pattern, and (like every other stored `PyObject`, §8) one more entry in `PyApp`'s `__traverse__`.
+
+### 11.8 Culling
+
+The paint pass (§6) skips Vello scene-encoding entirely for any subtree whose computed layout bounds — transformed into viewport space (§11.9) — don't intersect the current visible/clip region. This is unconditional, not a v1-vs-later decision: painting fully off-screen content was always wasted work, and it composes directly with virtualization (§11.7) rather than duplicating it — virtualization avoids *creating* off-screen items at all; culling skips painting whatever's off-screen for any other reason (scrolled slightly past the overscan buffer, clipped by a parent `Container`, off-screen in a pan/zoom canvas).
+
+### 11.9 Transform composition & pan/zoom
+
+**Previously unstated, now explicit:** `PaintProperties.transform` (§5) composes down the tree — a node's effective transform is its parent's effective transform composed with its own, exactly like nested `<g transform>` in SVG or any standard 2D scene graph. `kurbo::Affine` is a composable matrix specifically so this falls out of ordinary matrix multiplication during the paint walk, not a special case. A pannable/zoomable canvas is therefore not a new mechanism: animate a `Container`'s own `transform` (pan offset × zoom scale) and every descendant inherits it for free.
+
+### 11.10 Hit-testing
+
+**Also previously unstated:** pointer-to-node resolution walks the tree in reverse paint order (topmost first, respecting overlays, §11.3), transforming the pointer position into each candidate's local space via the inverse of its composed transform (§11.9), then testing containment against its computed layout bounds. `NodeKind::Canvas` may additionally supply a custom hit-test callback (a closer test than its bounding rect allows — a bezier curve within N pixels of the point, a specific plotted data point) that overrides the default rect test for that node only; nodes with no custom hit-test use the rect default. Without this, custom-drawn content (§11.11) would only ever be clickable across its whole bounding box, which is wrong for exactly the nodes that need precise hit-testing most.
+
+### 11.11 Node graphs & charts
+
+No new framework mechanism — both compose entirely from what's already specified: `NodeKind::Canvas` for custom-drawn content, pan/zoom via transform composition (§11.9), `kurbo` path drawing for links/chart geometry, and custom hit-testing (§11.10) for clicking a curved link or a specific data point. Large datasets (a graph with thousands of nodes, a chart with dense series) can reuse virtualization/culling (§11.7/§11.8) for which items get real draw calls at all — full level-of-detail/decimation logic beyond that is an application or library concern, not something this framework needs to own.
+
+---
+
+## 12. Project Structure
 
 ```
 project-root/
 ├── Cargo.toml                    # workspace root
 ├── crates/
-│   ├── engine-core/               # Node tree, Animated<T>, layout/text wiring, InputEvent/AppHandler, accesskit TreeUpdate building, focus model (§10) — no pyo3, no winit, no engine-md3
-│   ├── engine-md3/                  # MD3 theming: color scheme, shadow/ripple helpers, shape morph, motion-curve presets — depends on engine-core (§1, §4)
+│   ├── engine-core/               # Node tree, Animated<T>, layout/text wiring, InputEvent/AppHandler, accesskit TreeUpdate building, focus model (§10), AppShell/Overlay/DockLayout + Splitter/VirtualList NodeKinds (§11) — no pyo3, no winit, no engine-md3
+│   ├── engine-md3/                  # MD3 theming: color scheme, shadow/ripple helpers, shape morph, motion-curve presets, MD3-styled defaults for shell/dock/menu components (§11) — depends on engine-core (§1, §4)
 │   ├── engine-render/              # vello_hybrid + wgpu + kurbo + peniko + parley wiring, scene building — no winit dependency (§4)
 │   ├── engine-platform/              # winit EventLoop/ApplicationHandler + accesskit_winit adapter — the only crate depending on winit (§1, §4)
 │   └── engine-py/                    # PyO3 bindings — the ONLY crate depending on pyo3
@@ -478,7 +621,7 @@ project-root/
 │       └── widgets/
 ├── pyproject.toml                 # maturin build config
 └── examples/
-    └── standalone_render/          # cargo-run examples that bypass Python entirely — see §13
+    └── standalone_render/          # cargo-run examples that bypass Python entirely — see §14
 ```
 
 > **Review note (from the TRE archive):** design `standalone_render`'s examples as `cargo test`-runnable from day one, not as `cargo run --example` binaries you fold into CI later. TRE didn't do this until its very last finding (#261), after ~40 examples had accumulated with no `cargo test` coverage at all. One real constraint to design around: if any of these build a real `winit` event loop (likely, for anything exercising `engine-render` against a real window/surface), a plain `#[test]` function won't work — `winit` permits constructing an `EventLoop` only on a process's actual main thread and only once per process, ever, and `cargo test` runs each `#[test]` body on a worker thread. The fix that worked for TRE: register these as `[[test]]` targets in `Cargo.toml` with `harness = false`, so each gets its own process with a real main thread, and have each gracefully exit 0 (not panic) when no display/GPU is reachable, so `cargo test` still passes on a contributor machine with no display server.
@@ -502,7 +645,7 @@ features = ["pyo3/extension-module"]
 
 ---
 
-## 12. Environment Setup
+## 13. Environment Setup
 
 ### Prerequisites
 
@@ -540,7 +683,7 @@ python -c "import yourframework; print(yourframework.__version__)"
 |---|---|
 | `cargo check -p engine-core` | Fast iteration on tree/animation/layout logic — no Python rebuild |
 | `cargo test -p engine-core` | Unit tests for animation/layout, independent of FFI |
-| `cargo run -p engine-render --example smoke` | Standalone Rust rendering, bypasses Python entirely — first milestone, see §13 |
+| `cargo run -p engine-render --example smoke` | Standalone Rust rendering, bypasses Python entirely — first milestone, see §14 |
 | `maturin develop` | Rebuild + reinstall the Python extension after touching `engine-py` |
 
 ### Packaging (later, not needed for early development)
@@ -555,7 +698,7 @@ Cross-platform wheel builds: `maturin-action` in GitHub Actions, matrixed across
 
 ---
 
-## 13. Suggested Build Order
+## 14. Suggested Build Order
 
 De-risk unknowns before building on them, per Design Principle 5.
 
@@ -572,17 +715,17 @@ De-risk unknowns before building on them, per Design Principle 5.
 
 ---
 
-## 14. Risk Register
+## 15. Risk Register
 
 | Risk | Detail | Mitigation |
 |---|---|---|
 | Vello API churn | Pre-1.0; `vello`/`vello_cpu`/`vello_hybrid` split still settling, no stability guarantees | Pin exact versions; confine all Vello calls to `engine-render` |
-| Shadow/blur feature parity | `fill_blurred_rounded_rect`/`DropShadowOnly` early-stage, uneven across variants | Standalone spike (§13 step 7) before MD3 components depend on it |
+| Shadow/blur feature parity | `fill_blurred_rounded_rect`/`DropShadowOnly` early-stage, uneven across variants | Standalone spike (§14 step 7) before MD3 components depend on it |
 | `vello_svg` gaps | No text, clipping, masking, filters, patterns, group opacity | Pre-rasterize affected icons or patch upstream; don't assume full SVG fidelity |
 | Shape morphing | No existing crate | In-house module against `kurbo::BezPath`; budget real time |
 | GIL / event loop conflict | Two possible "loop owners" (winit, Python) | winit owns the main thread unconditionally; Python reached only via callback |
-| No prior art | No existing project pairs this exact combination (hand-rolled retained tree + Vello + PyO3, MD3-targeted) | De-risk via the spike order in §13 before deeper investment |
-| `maturin` wheel packaging *(from TRE archive)* | Default `--auditwheel repair` vendors system libraries (GTK, xkbcommon, etc.) into the wheel with mangled sonames — caused TRE a real duplicate-library segfault on Linux, undetectable via `maturin develop` alone | Decide manylinux-portable vs. system-linked wheels deliberately (§12); test the actual built wheel end-to-end under CI's real conditions before trusting it |
+| No prior art | No existing project pairs this exact combination (hand-rolled retained tree + Vello + PyO3, MD3-targeted) | De-risk via the spike order in §14 before deeper investment |
+| `maturin` wheel packaging *(from TRE archive)* | Default `--auditwheel repair` vendors system libraries (GTK, xkbcommon, etc.) into the wheel with mangled sonames — caused TRE a real duplicate-library segfault on Linux, undetectable via `maturin develop` alone | Decide manylinux-portable vs. system-linked wheels deliberately (§13); test the actual built wheel end-to-end under CI's real conditions before trusting it |
 | `accesskit` API churn *(from TRE archive)* | Real breaking changes hit directly this session (0.17→0.25): `Tree`→`TreeInfo` losing `app_name`, a new required `TreeUpdate.tree_id`, a changed AT-SPI object-path encoding | Pin an exact version early; re-verify the real current API against the pinned source at implementation time, not against this document |
 
 ---
