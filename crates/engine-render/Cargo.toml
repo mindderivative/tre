@@ -6,3 +6,41 @@ description = "Vello Scene building and GPU rendering. Depends on engine-core (t
 
 [dependencies]
 engine-core = { path = "../engine-core" }
+# Must track peniko's own kurbo requirement exactly (currently "0.13.1",
+# checked directly in peniko 0.6.1's Cargo.toml) -- vello_hybrid's
+# Scene::fill_path(&BezPath) takes peniko::kurbo's BezPath, not an
+# independently-resolved one. They happen to match right now; nothing
+# stops a future `cargo update` from drifting them apart silently, since
+# Cargo treats "kurbo 0.13.1" and "kurbo 0.13.2" as compatible semver and
+# won't warn. Re-verify against peniko's Cargo.toml before bumping either.
+kurbo = "0.13.1"
+peniko = "0.6.1"
+raw-window-handle = "0.6.2"
+# Pinned to exactly what vello_hybrid 0.2.0 itself requires (its own
+# Cargo.toml: `wgpu = "29.0.3"`), not the latest wgpu (30.0.1) -- adding
+# wgpu independently resolved two incompatible major versions into the
+# same dependency graph, which would have failed to compile the moment a
+# wgpu::Device created here was passed into a vello_hybrid function
+# expecting its own wgpu 29.x type. This is the concrete, no-longer-
+# hypothetical form of the Linebender-family version-coupling risk
+# ARCHITECTURE.md §3 already flagged -- found by trying to actually build
+# this, not by review.
+vello_hybrid = { version = "0.2.0", features = ["wgpu", "wgpu_default", "text"] }
+wgpu = "29.0.3"
+
+[dev-dependencies]
+engine-platform = { path = "../engine-platform" }
+pollster = "1.0.1"
+winit = "0.30.13"
+
+# Lives in tests/, not examples/, matching TRE v1's own precedent
+# (archive/crates/tre-rhi-vulkan) exactly: winit permits constructing an
+# EventLoop only on a process's real main thread, and only once per
+# process -- a plain #[test] fn runs on a worker thread and would panic.
+# harness = false gives it its own process with a real main thread
+# instead (§12's already-decided design, TRE v1 finding #261's own
+# precedent). Run directly with `cargo test --test rect_window --
+# --nocapture` to see it, the same way TRE v1's own demos worked.
+[[test]]
+name = "rect_window"
+harness = false

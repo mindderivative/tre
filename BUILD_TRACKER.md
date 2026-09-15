@@ -10,16 +10,16 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 |---|---|---|
 | M1 — TRE v1 (archived reference) | `██████████` 100% | ✅ Archived `archived-2026-09-14` |
 | M2 — v2 Architecture (`ARCHITECTURE.md`) | `██████████` 100% | ✅ 16 sections + ADR-001, locked |
-| M3 — v2 Implementation | `██⬜⬜⬜⬜⬜⬜⬜⬜` 14% | 🚧 In progress — Phase 1 of 7 complete |
+| M3 — v2 Implementation | `██⬜⬜⬜⬜⬜⬜⬜⬜` 14% | 🚧 In progress — Phase 1 of 7 complete, Phase 2 underway (1 of 4 steps) |
 
-**Just closed:** M3 Phase 1 (Workspace Scaffold) — the Cargo workspace, `rust-toolchain.toml`, and all six crate skeletons, wired with exactly §4's local dependency edges (plus one real gap `PLAN.md` found and fixed first: `engine-render → engine-core` was missing from the diagram entirely). `cargo check --workspace` and `cargo clippy --workspace` both clean. First real code in the v2 rebuild. See `PLAN.md`/`LOG.md`.
+**Just closed:** M3 Phase 2 step 1 (§14 step 1 — Render Core Spike) — a real static rounded rect rendered through `vello_hybrid` and presented into a real window via `engine-platform`, verified two ways: a headless pixel-readback test (exact fill color, exact position) and a real windowed run (`cargo test`, 60 frames presented, clean exit). Found and fixed two real Linebender-family version conflicts along the way — a `wgpu` 29-vs-30 clash that would not have compiled, and a `kurbo` coupling that currently matches by coincidence, now documented so a future bump doesn't silently break it. First contact with real external dependencies in the v2 rebuild. See `PLAN.md`/`LOG.md`.
 
-**Up next:** M3 Phase 2 — Render Core Spike (§14 steps 1–4): a static rounded rect through `vello_hybrid` into a real window, then `Animated<T>`, `taffy` layout, and a `parley` text spike. First contact with the actual pinned dependency versions.
+**Up next:** M3 Phase 2, step 2 — `Animated<T>` + the central tick, animating this same rect's color/elevation. Steps 3 (`taffy` layout) and 4 (`parley` text) follow after.
 
 **Known gaps:**
 - ~~§14 didn't sequence `engine-spec`/YAML-view work.~~ **Fixed.**
-- ~~No `PLAN.md`/`LOG.md` existed yet for M3.~~ **Fixed** — both now exist, one per phase/step going forward, matching TRE v1's own convention.
-- Everything in `ARCHITECTURE.md` citing "verify at implementation time" (accesskit's real current API, Vello/Linebender family version compatibility, `material-colors`' test-vector conformance) is still unverified — resolves incrementally, crate by crate, as each build-order step actually pins its dependency. Phase 1 touched zero external crates, so this hasn't started yet; Phase 2 is where it begins.
+- ~~No `PLAN.md`/`LOG.md` existed yet for M3.~~ **Fixed** — both now exist, one per phase/step, archived to `planning/archive/` on completion, matching TRE v1's own convention exactly (verified directly against `archive/crates/tre-rhi-vulkan`, not assumed).
+- Everything in `ARCHITECTURE.md` citing "verify at implementation time" has started resolving, not finished: step 1 confirmed `vello_hybrid`/`wgpu`/`kurbo`/`peniko`/`winit` are all real and compile together (with two real version-coupling fixes along the way). `accesskit`, `taffy`, `parley`, and `material-colors` remain unverified until their own build-order steps land.
 
 ---
 
@@ -74,14 +74,14 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ## Milestone 3 — v2 Implementation
 
-**Status: 🚧 In progress.** Phase 1 complete; this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
+**Status: 🚧 In progress.** Phase 1 complete, Phase 2 underway; this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
 
 ### Phase 1 — Workspace Scaffold ✅
 - Step: Cargo workspace + six crate skeletons (`engine-core`, `engine-md3`, `engine-render`, `engine-platform`, `engine-spec`, `engine-py`) per §12 — ✅
 - Step: Wire the dependency edges §4 specifies (no cross-boundary violations from day one) — ✅ (found and fixed one real gap first: `engine-render → engine-core` was missing from the diagram)
 
-### Phase 2 — Render Core Spike (§14 steps 1–4) ⬜
-- Step 1: Static rounded rect through `vello_hybrid`, real window via `engine-platform` — ⬜
+### Phase 2 — Render Core Spike (§14 steps 1–4) 🚧
+- Step 1: Static rounded rect through `vello_hybrid`, real window via `engine-platform` — ✅ (found and fixed two real Linebender-family version conflicts — a `wgpu` 29-vs-30 clash that would not have compiled, and an unguaranteed `kurbo` coupling documented for the future; headless pixel-readback test + a real windowed run, both passing)
 - Step 2: `Animated<T>` + central tick — ⬜
 - Step 3: `taffy` layout + frame-time CI benchmark (§6 target: 16.6ms/8.3ms) — ⬜
 - Step 4: `parley` text spike (real type scale, non-trivial string) — ⬜

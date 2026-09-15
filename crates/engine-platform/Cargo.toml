@@ -6,3 +6,4 @@ description = "winit EventLoop/ApplicationHandler and the accesskit_winit adapte
 
 [dependencies]
 engine-core = { path = "../engine-core" }
+winit = "0.30.13"
