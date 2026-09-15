@@ -10,11 +10,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 |---|---|---|
 | M1 — TRE v1 (archived reference) | `██████████` 100% | ✅ Archived `archived-2026-09-14` |
 | M2 — v2 Architecture (`ARCHITECTURE.md`) | `██████████` 100% | ✅ 16 sections + ADR-001, locked |
-| M3 — v2 Implementation | `██████⬜⬜⬜⬜` 57% | 🚧 In progress — Phases 1-4 of 7 complete, Phase 5 next |
+| M3 — v2 Implementation | `██████⬜⬜⬜⬜` 61% | 🚧 In progress — Phases 1-4 of 7 complete, Phase 5 in progress (step 8 of 4 done) |
 
-**Just closed:** M3 Phase 4 step 7 (§14 step 7), closing Phase 4 — real `accesskit` wiring. `engine-core::access` (`AccessNodeData`/`AccessStates`, `Node::access`, `Tree::build_access_update` — bounds from the same taffy `Layout` `engine-render` paints from, so the two can't disagree); `engine-platform`'s real `accesskit_winit::Adapter` wiring via `with_event_loop_proxy` (not `with_direct_handlers` — both require `Send`, same `Rc<RefCell<Tree>>` conflict `engine-py` hit last step); `run_windowed` now takes a required second `build_access_update` closure, every window accessible from the start. Verified accesskit's real current API directly first (resolved `0.25.0`/`0.34.0`, exactly the range ARCHITECTURE.md's own review note covers) and found `TreeInfo` replaces `Tree`, plus a correction to §10's own text: `Action::Default` doesn't exist in this version, the real equivalent is `Action::Click`. The actual "confirm one button is correctly exposed" proof (`access_button.rs`) was verified externally against this process's real AT-SPI registration on the session's dedicated AT-SPI D-Bus — `GetRole` = `43`, confirmed directly against `atspi-common`'s own source (`43 => Button`), `Name` = `"Save"`, one `click` action, bounds exactly `(0, 0, 120, 40)` matching the real taffy layout. Windows/macOS CI added per §6's own "no later than step 7" trigger. See `PLAN.md`/`LOG.md`.
+**Just closed:** M3 Phase 5 step 8 (§14 step 8) — the MD3 shadow spike. `engine_render::build_shadow_scene`, a standalone blurred rounded rect via `vello_hybrid` 0.2.0's real `Scene::fill_blurred_rounded_rect(rect, radius, std_dev, invert)` (verified directly in its vendored source first, not assumed). The actual proof (`shadow_spike.rs`, headless render+readback): four points along one edge's falloff line show a real Gaussian blur — ~255 alpha deep inside, ~127 (half-coverage) exactly at the raw edge, a smaller-but-nonzero value 10px past it, ~0 past the 25px kernel spread — not a hard-edged jump a broken or stubbed blur would produce. Corrected an assumption recorded in memory after step 7 ("first step to touch `engine-md3` for real"): re-reading §4's crate-boundary rule and §15's own "confine all Vello calls to `engine-render`" mitigation text shows the spike has to live in `engine-render` (`engine-md3` depends only on `engine-core`, never `vello_hybrid`) — same crate step 1's original rect spike lived in, same reason. `engine-md3` stays an empty skeleton; MD3 elevation-level presets on top of this primitive are steps 9/11's job, not this one's. See `PLAN.md`/`LOG.md`.
 
-**Up next:** M3 Phase 5 (§14 step 8) — MD3 shadow spike via `fill_blurred_rounded_rect`, standalone, against the exact pinned Vello version (§7.2 risk). First step to touch `engine-md3` for real — it's been an empty skeleton crate since M3 Phase 1.
+**Up next:** M3 Phase 5 step 9 (§14 step 9) — ripple/state-layer via `Scene::push_layer` + animated alpha (§7.3): the first real `Node`-side `InteractionState`/`RippleState` implementation (currently just sketched in ARCHITECTURE.md, not yet code).
 
 **Known gaps:**
 - ~~§14 didn't sequence `engine-spec`/YAML-view work.~~ **Fixed.**
@@ -78,7 +78,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ## Milestone 3 — v2 Implementation
 
-**Status: 🚧 In progress.** Phases 1–4 complete, Phase 5 next; this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
+**Status: 🚧 In progress.** Phases 1–4 complete, Phase 5 in progress (step 8 of 4 done); this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
 
 ### Phase 1 — Workspace Scaffold ✅
 - Step: Cargo workspace + six crate skeletons (`engine-core`, `engine-md3`, `engine-render`, `engine-platform`, `engine-spec`, `engine-py`) per §12 — ✅
@@ -97,8 +97,8 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 - Step 6: `engine-py` node creation + one property setter — ✅ (`App`/`Node` minimal slice; real pyo3 0.29.2 API verified directly, not assumed — `with_gil`/`allow_threads` are now `attach`/`detach`; `maturin develop` + `import tre` + a 6-test pytest suite + a real `.py` script driving a 60-frame windowed render loop, all run for real; CI extended per §13's own decision to start Python CI at this step)
 - Step 7: `accesskit` wiring, one button verified with a screen reader — ✅ (real `accesskit_winit::Adapter` wiring via `with_event_loop_proxy` in `engine-platform`; `Tree::build_access_update` in `engine-core`; the button's exposure verified directly against the real AT-SPI bus — exact role, label, action, and bounds match, not just "it compiled")
 
-### Phase 5 — MD3 Foundational Spikes (§14 steps 8–11) ⬜
-- Step 8: Shadow spike (`fill_blurred_rounded_rect`) — ⬜
+### Phase 5 — MD3 Foundational Spikes (§14 steps 8–11) 🚧
+- Step 8: Shadow spike (`fill_blurred_rounded_rect`) — ✅ (verified `vello_hybrid` 0.2.0's real API directly in source; `build_shadow_scene` + a headless four-point falloff test proving a real Gaussian blur, not a hard edge — see `PLAN.md`/`LOG.md`)
 - Step 9: Ripple/state-layer — ⬜
 - Step 10: Shape morph module — ⬜
 - Step 11: `material-colors` dynamic theme — ⬜

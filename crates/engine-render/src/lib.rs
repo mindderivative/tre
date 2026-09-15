@@ -75,6 +75,39 @@ pub fn build_rect_scene(width: u16, height: u16, color: Color, opacity: f64) -> 
     scene
 }
 
+/// §14 build-order step 8: standalone spike proving `vello_hybrid`
+/// 0.2.0's `Scene::fill_blurred_rounded_rect` actually produces a real
+/// Gaussian-blurred shadow, not just that the call compiles -- the
+/// exact risk named in §7.2/§15 ("early-stage per Vello's own release
+/// notes, no API stability guarantee yet, uneven parity across the
+/// `vello`/`vello_cpu`/`vello_hybrid` variants"). One rect, no `Tree`,
+/// no layout, no MD3 elevation tokens -- those are deliberately later
+/// steps (9, 11) that would otherwise sit on an unverified foundation.
+///
+/// `std_dev` is the Gaussian blur's standard deviation in pixels (not a
+/// blur "radius" in the CSS `box-shadow` sense); `corner_radius` is the
+/// rect's own rounded-corner radius, independent of the blur.
+pub fn build_shadow_scene(
+    width: u16,
+    height: u16,
+    color: Color,
+    corner_radius: f32,
+    std_dev: f32,
+) -> Scene {
+    let mut scene = Scene::new(width, height);
+    let margin = 60.0;
+    let rect = peniko::kurbo::Rect::new(
+        margin,
+        margin,
+        f64::from(width) - margin,
+        f64::from(height) - margin,
+    );
+    scene.set_transform(Affine::IDENTITY);
+    scene.set_paint(color);
+    scene.fill_blurred_rounded_rect(&rect, corner_radius, std_dev, false);
+    scene
+}
+
 /// Walks `tree` from `root` (which must already have a computed layout --
 /// call `Tree::compute_layout` first) and paints every `NodeKind::Rect`/
 /// `NodeKind::Text` at its absolute on-screen position:
