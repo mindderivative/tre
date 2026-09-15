@@ -34,14 +34,14 @@ A running log of resolved architectural questions, kept in one canonical place r
 | Animation completion callbacks | Queue-drain: `tick()` pushes finished `CompletionHandle`s to a plain `Vec`; `engine-py` drains it once per frame and resolves against its own `PyObject` map (§5) | Keeps `tick()` a pure, reentrancy-free state-mutation pass; `ActiveAnimation<T>` stays a plain data struct with no `Send`-closure coupling to one downstream consumer |
 | `NodeKind` scope | Closed enum, one variant per MD3 component (§5) | Multi-design-language support is out of scope (§1) — a generic/extensible mechanism would be the same never-exercised abstraction LESSONS_LEARNED.md §1 warns against (TRE's stub RHI backends) |
 | `NodeId` identity | Generational index (slot index + generation), not a plain integer (§5) | A stale `PyNode` handle held past node removal (§8) fails a checked comparison instead of silently addressing the wrong node — the generational-index answer to TRE's finding #259 (a dangling raw handle across a GC-controlled boundary) |
-| Layout dirty-scoping | Rely on Taffy's own incremental cache; no hand-rolled `dirty_layout`/`dirty_paint` flag system (§6) | `PaintProperties`/`NodeKind` payloads share no fields with `taffy::Style`, so a paint-only animation structurally can't mark Taffy dirty — the skip is automatic, not manually classified per property |
+| Layout dirty-scoping | Rely on Taffy's own incremental cache; no hand-rolled `dirty_layout`/`dirty_paint` flag system. Named exception: `Splitter`/`DockZone` explicitly `mark_dirty()` (§6, §11.5) | `PaintProperties`/most `NodeKind` payloads share no fields with `taffy::Style`, so a paint-only animation structurally can't mark Taffy dirty — automatic, not manually classified, for every component except the two that are genuinely layout-affecting by nature |
 | Frame budget | 16.6ms (60Hz) target, 8.3ms (120Hz) stretch goal, enforced by a CI benchmark added no later than build-order step 3 (§6, §14) | A stated-but-unenforced number is exactly TRE's MSRV mistake (LESSONS_LEARNED.md §5) restated in a new form |
 | Ripple concurrency | Bounded list of concurrent ripples per node (`interaction: Option<InteractionState>`, §5, §7.3), not one scalar pair | Matches MD3's real overlapping-ripple behavior under rapid taps; reuses §5's completion-queue mechanism per-ripple |
 | Dynamic color source | Third-party MCU-port crate, gated on passing Material Color Utilities' own published reference test vectors before pinning (§7.1) | HCT/tonal-palette/contrast math is a large, easy-to-get-subtly-wrong subsystem — reimplementing it is bigger and riskier than it looks, unlike shape morphing's one missing step |
 | Live theme switching | Supported at runtime via `winit`'s `ThemeChanged` event, forwarded through the existing `AppHandler`/`InputEvent` inversion (§4, §7.1) | A rare, discrete, whole-tree-repaint event — matches modern desktop UX expectations at negligible design cost given the event-dispatch path already exists |
 | Container transform | In scope for v1 (§7.6) — implemented as `engine-md3` choreographing existing `ActiveAnimation`s across two nodes; no navigation/router subsystem added | User's explicit choice, opposite of the recommended default (defer, no nav model exists); resolved by keeping the framework itself navigation-agnostic — it exposes the transition choreography, not "what screens exist" |
 | `animate()` dispatch | Single generic, string-keyed method — no per-property typed methods (§8) | Typed methods would push toward one Python class per `NodeKind` variant to cover component-specific properties, multiplying the FFI surface by MD3's component count — the same growth cost §7 already chose to pay once, not again |
-| Callback cyclic-GC support | Implemented now via one centralized `PyApp` (`#[pyclass(gc)]`) owning both callback maps, not deferred (§8) | This project's own target — long-running apps with dynamically created/destroyed widgets — is exactly the profile where an uncollected reference cycle accumulates during normal operation |
+| Callback cyclic-GC support | Implemented now via one `PyWindow` (`#[pyclass(gc)]`) per OS window, each owning that window's callback maps, not deferred (§8, §11.1) | This project's own target — long-running apps with dynamically created/destroyed widgets — is exactly the profile where an uncollected reference cycle accumulates during normal operation |
 | `Tree` ownership | `Rc<RefCell<Tree>>` + `#[pyclass(unsendable)]`, not `Arc<Mutex<>>` (§9) | Matches actual v1 scope (single main thread only); asyncio bridging is optional/future and its threading shape is undecided — revisit this first if that work is ever built |
 | Callback exception policy | Caught, logged via `tracing`, non-fatal — the render loop always survives a bad callback (§9) | Matches every mainstream main-thread-owned GUI toolkit (Tkinter, Qt, GTK); a broken handler shouldn't take down a shipped app for its end user |
 | `accesskit::TreeUpdate` builder | Lives in `engine-core` (new direct dependency on plain `accesskit`), not `engine-render` (§4, §10) | `accesskit` is small and OS-agnostic like `taffy`/`parley`; keeps a11y-semantic interpretation with the crate that already owns `AccessNodeData`'s meaning |
@@ -271,7 +271,9 @@ flowchart TD
 
 Accessibility tree construction happens in the same pass as paint, from the same node tree — not bolted on afterward.
 
-**Layout dirty-scoping: lean on Taffy's own cache, don't reinvent it.** `PaintProperties` and every `NodeKind` payload (§5) share no fields with `taffy::Style` — they're structurally disjoint types. That means an `animate()` call touching only paint state (a ripple radius, an opacity fade, an elevation change) never has any reason to call `mark_dirty()` on Taffy's tree at all, and a call that *does* change `layout_style` is the only thing that ever does. `compute_layout()` runs unconditionally every frame, but Taffy's own internal caching makes that a cheap no-op for every subtree nothing marked dirty — no parallel `dirty_layout`/`dirty_paint` bookkeeping to build, keep in sync, or mis-classify a property against as MD3's component catalog grows. The same reasoning applies to `parley`: text-shaping is only re-run for a node whose actual text content, font, size, or available width changed, never for a purely visual animation — whether that needs an explicit shaped-run cache or falls out of the same "only touch what changed" discipline is left to the typography spike (§14 step 4) to determine from real measurements, not decided here in the abstract.
+**Layout dirty-scoping: lean on Taffy's own cache, don't reinvent it.** `PaintProperties` and *most* `NodeKind` payloads (§5) share no fields with `taffy::Style` — they're structurally disjoint types. That means an `animate()` call touching only paint state (a ripple radius, an opacity fade, an elevation change) never has any reason to call `mark_dirty()` on Taffy's tree at all, and a call that *does* change `layout_style` is the only thing that ever does. `compute_layout()` runs unconditionally every frame, but Taffy's own internal caching makes that a cheap no-op for every subtree nothing marked dirty — no parallel `dirty_layout`/`dirty_paint` bookkeeping to build, keep in sync, or mis-classify a property against as MD3's component catalog grows. The same reasoning applies to `parley`: text-shaping is only re-run for a node whose actual text content, font, size, or available width changed, never for a purely visual animation — whether that needs an explicit shaped-run cache or falls out of the same "only touch what changed" discipline is left to the typography spike (§14 step 4) to determine from real measurements, not decided here in the abstract.
+
+**Named exception:** `Splitter`/`DockZone` (§11.4, §11.5) are the one deliberate case where an `Animated<f64>` genuinely *is* layout-affecting — a splitter drag has to change actual allocated space, not just paint. Their tick handler calls `taffy.mark_dirty()` on the affected siblings directly, unlike every other `NodeKind` payload so far. This doesn't break the mechanism above — Taffy's cache still scopes the recompute to just those two siblings, not the whole tree — it just means "paint-only by construction" was true for every component that existed before §11, not a universal property of `Animated<T>` itself.
 
 **Paint is a full scene re-encode, not a hand-rolled patch — and that's expected, not a gap.** `vello_hybrid`'s `Scene` is a command-recording API rebuilt by walking the tree each frame, the same way Vello's own reference consumers (Xilem, Masonry) work — there's no supported way to patch a persisted partial scene, so this pipeline doesn't attempt one. The actual per-frame cost lever isn't "skip re-encoding," it's "skip the *expensive host-side inputs* to encoding" (unchanged layout, unchanged shaped text) — which is exactly what the layout- and text-caching above already do.
 
@@ -360,30 +362,51 @@ impl PyNode {
     fn set_on_click(&self, callback: PyObject) -> PyResult<()> { /* stored in the shared Tree's callback map (below), invoked via Python::with_gil on the matching winit pointer event */ }
 }
 
-/// The one `#[pyclass(gc)]` in this crate. Every stored Python callback —
-/// click handlers and animation on_complete handles (§5) alike — lives in
-/// `Tree`'s own maps, not scattered across individual `PyNode`s, so exactly
-/// one type needs to implement PyO3's cyclic-GC protocol.
+/// One `#[pyclass(gc)]` per OS window (§11.1), not a single process-wide
+/// instance — each window owns an independent `Tree`, so each needs its
+/// own callback-map traversal. Every stored Python callback — click
+/// handlers, animation on_complete handles (§5), and virtualized-list
+/// materializers (§11.7) alike — lives in `Tree`'s own maps, not scattered
+/// across individual `PyNode`s, so exactly one type per window needs to
+/// implement PyO3's cyclic-GC protocol.
 #[pyclass(gc, unsendable)]
-pub struct PyApp {
-    tree: Rc<RefCell<Tree>>, // same Tree every PyNode shares; owns on_click/on_complete maps
+pub struct PyWindow {
+    tree: Rc<RefCell<Tree>>, // this window's own Tree; every PyNode created in it shares this handle
 }
 
 #[pymethods]
-impl PyApp {
+impl PyWindow {
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         let tree = self.tree.borrow();
         for cb in tree.on_click.values() { visit.call(cb)?; }
         for cb in tree.on_complete.values() { visit.call(cb)?; }
+        for cb in tree.materializers.values() { visit.call(cb)?; }
         Ok(())
     }
     fn __clear__(&mut self) {
         let mut tree = self.tree.borrow_mut();
         tree.on_click.clear();
         tree.on_complete.clear();
+        tree.materializers.clear();
     }
 }
+
+/// The single process-wide entry point (`app.run()`, Design Principle 1,
+/// §2) — this is what owns the `winit::EventLoop`, not any per-window
+/// state. `PyApp` creates `PyWindow`s (§11.1: one per OS window) but holds
+/// no `Tree` of its own and needs no GC participation itself, since it
+/// never stores a Python callback directly.
+#[pyclass(unsendable)]
+pub struct PyApp;
+
+#[pymethods]
+impl PyApp {
+    fn create_window(&self, py: Python) -> PyResult<PyWindow> { /* opens a new winit::Window via engine-platform, returns its PyWindow */ }
+    fn run(&self, py: Python) -> PyResult<()> { /* the one blocking call — Design Principle 1 */ }
+}
 ```
+
+> **Consistency-pass finding:** the original `PyApp` (a single struct holding one `Tree` directly) predates §11.1's multi-window decision and became wrong once that landed — a single `Tree` field can't represent "one independent `Tree` per OS window." Split above into `PyWindow` (one per window, owns that window's `Tree` and is the `#[pyclass(gc)]`) and `PyApp` (the actual `app.run()` singleton, owns no `Tree`, needs no GC participation). `PyNode`'s shape is unaffected — it already only ever held a `Tree` handle, never cared how many other `Tree`s existed elsewhere.
 
 Design rules for this crate specifically:
 
@@ -423,7 +446,7 @@ impl From<EngineError> for PyErr {
 >
 > **Review note (from the TRE archive):** storing a long-lived `PyObject` callback in a Rust struct (`set_on_click`) is a risk class TRE never had to deal with — it never held Python callbacks across frames the way a click-handler system fundamentally requires. If a stored closure ever captures the widget it's attached to (a very natural pattern — "on_click: lambda: self.set_state(...)"), that's a reference cycle CPython's own GC can't see through unless the `#[pyclass]` participates in Python's cyclic GC via `__traverse__`/`__clear__` (PyO3's `#[pyclass(gc)]` support).
 >
-> **Decision recorded:** implemented now, not deferred — `PyApp` above. This project's own target (long-running desktop apps with dynamically created/destroyed widgets — dialogs, list items) is exactly the profile where an uncollected cycle accumulates during normal operation, not just at process exit, unlike a short-lived script where it wouldn't matter.
+> **Decision recorded:** implemented now, not deferred — `PyWindow` above. This project's own target (long-running desktop apps with dynamically created/destroyed widgets — dialogs, list items) is exactly the profile where an uncollected cycle accumulates during normal operation, not just at process exit, unlike a short-lived script where it wouldn't matter.
 
 ### MVVM data binding
 
@@ -449,7 +472,7 @@ def bind(view_model, attr: str, node: PyNode, property: str, duration_ms: int = 
 
 A `ViewModel` author declares state with `is_visible = Bindable()` instead of a plain attribute; every write goes through `Bindable.__set__`, which fans out to every `node.animate(...)` call registered against it — the existing FFI call, unmodified. **"Commands"** (a ViewModel method invoked by user interaction) need no new mechanism at all: `set_on_click(view_model.on_save)` already works today, since a bound Python method is just another callable. Default is an instant snap (`duration_ms=0`); a caller passes a real duration/curve to animate a bound update instead.
 
-**GC, resolved for free, not by extension:** the binding closure above is a plain Python object living in `view_model.__bindings__` — an ordinary Python `dict` on an ordinary Python object, already inside CPython's own cyclic-GC graph with no Rust-side involvement. The only place a genuine cycle can hide is exactly the one §8 already solved: a stored callback (`on_click`, `on_complete`) capturing a `ViewModel` that itself holds a binding back to that same node. `PyApp`'s existing `__traverse__`/`__clear__` (above) already accounts for that half of the graph; the binding's own half needs no new GC protocol, since it never leaves Python's object graph in the first place.
+**GC, resolved for free, not by extension:** the binding closure above is a plain Python object living in `view_model.__bindings__` — an ordinary Python `dict` on an ordinary Python object, already inside CPython's own cyclic-GC graph with no Rust-side involvement. The only place a genuine cycle can hide is exactly the one §8 already solved: a stored callback (`on_click`, `on_complete`) capturing a `ViewModel` that itself holds a binding back to that same node. `PyWindow`'s existing `__traverse__`/`__clear__` (above) already accounts for that half of the graph; the binding's own half needs no new GC protocol, since it never leaves Python's object graph in the first place.
 
 ---
 
@@ -460,7 +483,7 @@ A `ViewModel` author declares state with `is_visible = Bindable()` instead of a 
 - `Python::allow_threads` wraps layout/paint/render so per-frame Rust work never serializes behind the GIL. **This is currently a no-op-cost safety habit, not a live requirement:** with `Tree` as `Rc<RefCell<>>` (below) there is, for now, no second thread ever contending for the GIL during a frame. Keep the wrapping anyway — it costs nothing today and is the one thing that won't need revisiting if a future GIL-holding thread (see the asyncio note below) is ever added.
 - If the framework needs asyncio-native app code, bridge via `pyo3-async-runtimes` — keep this strictly separate from the render loop; asyncio drives app logic, winit/engine-core drives rendering, they meet only at the callback boundary. **Deferred, not designed:** this is explicitly optional/future (§3) and its exact threading shape (an interleaved event loop cooperatively stepped from inside winit's own loop, vs. a genuinely separate executor thread) is undecided — see the `Tree` ownership decision below for why that undecided shape doesn't block anything today.
 
-**`Tree` is `Rc<RefCell<Tree>>`, not `Arc<Mutex<Tree>>` — single-threaded by construction, not by convention.** `PyNode` and `PyApp` (§8) are both `#[pyclass(unsendable)]`: PyO3 enforces main-thread-only access at runtime, panicking immediately if the object is ever touched from a second thread, rather than this being an unenforced assumption. This matches what v1 actually needs — asyncio bridging is optional/future and its threading shape isn't even decided yet (above) — and avoids paying a real, permanent per-frame lock-acquisition cost (§6's frame budget) plus a genuine two-lock-ordering deadlock hazard (GIL vs. a `Tree` mutex, acquired in opposite orders by the render thread and a hypothetical callback-invoking async thread) for a capability that isn't confirmed to ship. **If/when the asyncio bridge is actually built, revisit this decision first** — depending on the threading shape chosen then, `Tree` may need to migrate to `Arc<Mutex<>>` at that point, as a scoped, well-understood follow-up rather than something paid for speculatively now.
+**`Tree` is `Rc<RefCell<Tree>>`, not `Arc<Mutex<Tree>>` — single-threaded by construction, not by convention.** `PyNode`, `PyWindow`, and `PyApp` (§8) are all `#[pyclass(unsendable)]`: PyO3 enforces main-thread-only access at runtime, panicking immediately if the object is ever touched from a second thread, rather than this being an unenforced assumption. This matches what v1 actually needs — asyncio bridging is optional/future and its threading shape isn't even decided yet (above) — and avoids paying a real, permanent per-frame lock-acquisition cost (§6's frame budget) plus a genuine two-lock-ordering deadlock hazard (GIL vs. a `Tree` mutex, acquired in opposite orders by the render thread and a hypothetical callback-invoking async thread) for a capability that isn't confirmed to ship. **If/when the asyncio bridge is actually built, revisit this decision first** — depending on the threading shape chosen then, `Tree` may need to migrate to `Arc<Mutex<>>` at that point, as a scoped, well-understood follow-up rather than something paid for speculatively now.
 
 **Unhandled exceptions from a callback are caught, logged, and non-fatal.** A `Python::with_gil` call to `on_click`/`on_complete` wraps the call so a raised Python exception is caught, its full traceback logged via `tracing::error!` (§3), and the render loop continues — the callback's effects are simply incomplete, not the whole application. This matches how Tkinter/Qt/GTK all treat a callback exception: one broken handler shouldn't take the whole window down for an end user of a shipped app, even though it means a bug can degrade a running app silently until someone reads the log.
 
@@ -498,11 +521,11 @@ Material Design 3 is a mobile/web-first design language — it has no concept of
 
 ### 11.1 Multiple windows
 
-One `Tree` per OS window (§5, §9) — each `winit::Window` owns an independent node arena, root, and `focused: Option<NodeId>` state; `engine-platform` manages a `HashMap<WindowId, Tree>` and dispatches each window's events to its own tree, unchanged from the single-window model already designed. A window closing just drops its `Tree`. **Accepted gap:** there's no cross-window node transfer — a `NodeId` is only meaningful within the generational slotmap (§5) of the `Tree` that issued it. "Detach this panel into its own window" (a common docking feature, §11.4) therefore means *recreating* the panel's subtree in a new `Tree`, not moving existing `Node`s across the boundary — a real, if narrow, limitation to revisit only if a docking UX specifically needs true node migration rather than teardown-and-rebuild.
+One `Tree` per OS window (§5, §9) — each `winit::Window` owns an independent node arena, root, and `focused: Option<NodeId>` state; `engine-platform` manages a `HashMap<WindowId, Tree>` and dispatches each window's events to its own tree, unchanged from the single-window model already designed. `winit` already tags every event with the `WindowId` it belongs to, so routing an event to the right `Tree` before translating it into `engine-core`'s `InputEvent` (§4) is a lookup, not new dispatch machinery — `InputEvent` itself stays window-agnostic, since by the time it reaches `AppHandler` it's already scoped to the correct `Tree`. A window closing just drops its `Tree`. **Accepted gap:** there's no cross-window node transfer — a `NodeId` is only meaningful within the generational slotmap (§5) of the `Tree` that issued it. "Detach this panel into its own window" (a common docking feature, §11.4) therefore means *recreating* the panel's subtree in a new `Tree`, not moving existing `Node`s across the boundary — a real, if narrow, limitation to revisit only if a docking UX specifically needs true node migration rather than teardown-and-rebuild.
 
 ### 11.2 App shell & single-page navigation
 
-One `Tree` may optionally be composed as an **`AppShell`** — a persistent root layout with named regions (menu bar, toolbar, dock zones, status bar, and exactly one **content** region) — rather than every app hand-composing shell layout from scratch. "Navigating" within a shell means replacing the content region's subtree, optionally choreographed through container-transform (§7.6); it is not a general multi-screen router and does not require one, matching the single-page-app model this framework targets. `AppShell` is a composition convenience, not mandatory: a secondary window opened per §11.1 can be a bare content tree with no shell regions at all (a tool palette, an about box) — only windows that want the standard chrome use it.
+One `Tree` may optionally be composed as an **`AppShell`** — a persistent root layout with named regions (menu bar, toolbar, dock zones, status bar, and exactly one **content** region) — rather than every app hand-composing shell layout from scratch. `content`'s `NodeId` is stable — it names one `Container` node that never changes identity — so "navigating" means replacing *that node's children*, an ordinary, already-supported tree mutation (§5, §8's `add_child`/removal), optionally choreographed through container-transform (§7.6); it is not a general multi-screen router and does not require one, matching the single-page-app model this framework targets. `AppShell` is a composition convenience, not mandatory: a secondary window opened per §11.1 can be a bare content tree with no shell regions at all (a tool palette, an about box) — only windows that want the standard chrome use it.
 
 ```rust
 pub struct AppShell {
@@ -518,18 +541,17 @@ Each present region is a completely ordinary node subtree (a flex `Container` fo
 
 ### 11.3 Menus, popups & dialogs — one overlay mechanism, not three
 
-`§3`'s "native menus deferred" decision (avoiding `muda`'s GTK-on-Linux dependency) stands — reinforced, not reopened. Menu bars, dropdown menus, context menus, tooltips, and MD3 dialogs are all the same missing primitive: a node rendered above normal paint order, positioned relative to a trigger, dismissed on outside-click or Escape. This is the identical "insert a node above the root, outside normal paint order" trick container-transform's destination container already uses (§7.6) — not a second mechanism:
+`§3`'s "native menus deferred" decision (avoiding `muda`'s GTK-on-Linux dependency) stands — reinforced, not reopened. Menu bars, dropdown menus, context menus, tooltips, and MD3 dialogs are all the same missing primitive: a node rendered above normal paint order, positioned relative to a trigger, dismissed on outside-click or Escape. This is the identical "insert a node above the root, outside normal paint order" trick container-transform's destination container already uses (§7.6) — not a second mechanism, and deliberately **tree-resident, not a parallel structure**: an overlay's root is an ordinary child of `Tree`'s root, using Taffy's existing `Position::Absolute` (positioned relative to its anchor's computed bounds, not flex-flowed alongside normal siblings — no new layout mechanism), and *appended* to the root's `children` (opening an overlay pushes it onto the end of the list). **Also previously unstated, now explicit:** paint (§6) draws a node's children in `children`-list order, so an appended overlay paints on top with no separate z-order concept needed — the same convention hit-testing's reverse-order walk (§11.10) relies on. Because it's a real tree node, paint (§6), hit-testing (§11.10), the focus model (§10), and `build_access_update()` (§10) all already walk it with zero special-casing — none of those four subsystems need to learn about a separate "overlay" concept at all. Only its anchor/dismissal *behavior* needs new bookkeeping:
 
 ```rust
-pub struct Overlay {
-    pub root: NodeId,               // the popup's own subtree
-    pub anchor: NodeId,             // the trigger this is positioned relative to
+pub struct OverlayMeta {
+    pub anchor: NodeId,             // positions the overlay's root relative to this node's computed bounds
     pub dismiss_on_outside_click: bool,
     pub dismiss_on_escape: bool,
 }
 ```
 
-`Tree` holds a small `Vec<Overlay>` (rendered last, after the main content, in the paint pass — §6), each one an ordinary subtree using every existing mechanism (`Animated<T>` for enter/exit fades, the focus model for Tab-navigating menu items, `AccessNodeData` for role `MenuItem`/`Dialog`). A menu bar (File/Edit/View/Help) is `NodeKind::MenuBar` containing `NodeKind::MenuItem`s, where activating one opens an `Overlay` holding a `NodeKind::Menu` dropdown; a dialog is an `Overlay` whose root is an MD3 scrim + centered surface, exactly matching MD3's own dialog spec (which is already an overlay pattern, not a new-window pattern). Keyboard mnemonics (Alt+F for File) extend the minimal focus model (§10) with a letter-keyed jump table scoped to whichever menu/overlay is currently open, rather than a second input-dispatch path.
+`Tree` holds a small `HashMap<NodeId, OverlayMeta>` (keyed by the overlay root's own `NodeId`) purely for this metadata — not the node itself, which already lives in the ordinary tree. Each overlay is an ordinary subtree using every existing mechanism (`Animated<T>` for enter/exit fades, the focus model for Tab-navigating menu items, `AccessNodeData` for role `MenuItem`/`Dialog`). A menu bar (File/Edit/View/Help) is `NodeKind::MenuBar` containing `NodeKind::MenuItem`s, where activating one adds a `NodeKind::Menu` dropdown as a root child with an `OverlayMeta` entry; a dialog is the same pattern with a root whose content is an MD3 scrim + centered surface, exactly matching MD3's own dialog spec (which is already an overlay pattern, not a new-window pattern). Keyboard mnemonics (Alt+F for File) extend the minimal focus model (§10) with a letter-keyed jump table scoped to whichever overlay is currently open, rather than a second input-dispatch path.
 
 **Accepted platform-fit compromise:** on macOS, users expect the OS-level global menu bar; an in-window custom-rendered one is unconventional there specifically, even though it's normal on Linux and Windows. Revisit only if that specific platform gap becomes a real, reported problem — not preemptively, since building a *third* menu representation (native on macOS, custom elsewhere) now would be exactly the kind of speculative, unexercised complexity §1's own "no second design language" reasoning already argues against building.
 
@@ -545,7 +567,7 @@ pub struct DockLayout {
 pub struct DockZone {
     pub panels: SmallVec<[NodeId; 4]>,  // tabbed together when more than one
     pub active_tab: usize,
-    pub size: Animated<f64>,            // this zone's extent along its splitter axis
+    pub size: Animated<f64>,            // this zone's extent — layout-affecting, same §6 named exception as Splitter.position (§11.5)
 }
 ```
 
@@ -565,7 +587,7 @@ pub struct SplitterState {
 }
 ```
 
-On drag, a splitter mutates its two adjacent siblings' `layout_style` (flex-basis or absolute size, respecting each side's own min/max constraints from `taffy::Style`) — an ordinary layout-affecting mutation through the same path any other `layout_style` change takes (§6's Taffy dirty-scoping applies unchanged). Used both standalone (any resizable-pane layout) and by docking (§11.4) for zone resizing — one mechanism, two call sites.
+On drag, `position`'s tick handler mutates its two adjacent siblings' `layout_style` (flex-basis or absolute size, respecting each side's own min/max constraints from `taffy::Style`) directly — this is §6's named exception: a genuinely layout-affecting `Animated<T>`, not a paint-only one, so it explicitly calls `mark_dirty()` on those two siblings rather than relying on the structural-disjointness trick every other component uses. Taffy's cache still scopes the resulting recompute to just those two siblings, not the whole tree. Used both standalone (any resizable-pane layout) and by docking (§11.4) for zone resizing — one mechanism, two call sites.
 
 ### 11.6 Toolbars & status bars
 
@@ -583,7 +605,7 @@ pub struct VirtualListState {
 }
 ```
 
-Only `materialized`'s small windowed set are real `Node`s at any time; scrolling recycles `NodeId` slots (via §5's generational index — an old slot's generation increments on reuse, so any stray reference to a scrolled-away item's `NodeId` fails safely) rather than allocating fresh nodes per item. `taffy::Style` for the scroll container uses `item_count × item_extent` as its estimated content size, so scrollbar sizing is correct without every item existing. **New FFI shape (§8):** unlike `on_click`/`on_complete`'s event-driven callbacks, this needs an ad hoc "materialize item N" callback invoked during layout/scroll — a genuinely different callback pattern, and (like every other stored `PyObject`, §8) one more entry in `PyApp`'s `__traverse__`.
+`materialized`'s values are exactly the `VirtualList` node's own `children` (§5) — the map just adds "which logical index" on top of the ordinary parent/children relationship, not a second, separately-tracked child set. Only this small windowed subset are real `Node`s at any time; scrolling recycles `NodeId` slots (via §5's generational index — an old slot's generation increments on reuse, so any stray reference to a scrolled-away item's `NodeId` fails safely) rather than allocating fresh nodes per item. `taffy::Style` for the scroll container uses `item_count × item_extent` as its estimated content size, so scrollbar sizing is correct without every item existing. **New FFI shape (§8):** unlike `on_click`/`on_complete`'s event-driven callbacks, this needs an ad hoc "materialize item N" callback invoked during layout/scroll — a genuinely different callback pattern, stored in `Tree.materializers` alongside `on_click`/`on_complete` and (like every other stored `PyObject`, §8) traversed by that window's `PyWindow::__traverse__`.
 
 ### 11.8 Culling
 
@@ -595,7 +617,7 @@ The paint pass (§6) skips Vello scene-encoding entirely for any subtree whose c
 
 ### 11.10 Hit-testing
 
-**Also previously unstated:** pointer-to-node resolution walks the tree in reverse paint order (topmost first, respecting overlays, §11.3), transforming the pointer position into each candidate's local space via the inverse of its composed transform (§11.9), then testing containment against its computed layout bounds. `NodeKind::Canvas` may additionally supply a custom hit-test callback (a closer test than its bounding rect allows — a bezier curve within N pixels of the point, a specific plotted data point) that overrides the default rect test for that node only; nodes with no custom hit-test use the rect default. Without this, custom-drawn content (§11.11) would only ever be clickable across its whole bounding box, which is wrong for exactly the nodes that need precise hit-testing most.
+**Also previously unstated:** pointer-to-node resolution walks the tree in reverse paint order (topmost first — this naturally reaches overlays, §11.3, before normal content, with no special-casing needed since they're ordinary trailing root children), transforming the pointer position into each candidate's local space via the inverse of its composed transform (§11.9), then testing containment against its computed layout bounds. `NodeKind::Canvas` may additionally supply a custom hit-test callback (a closer test than its bounding rect allows — a bezier curve within N pixels of the point, a specific plotted data point) that overrides the default rect test for that node only; nodes with no custom hit-test use the rect default. Without this, custom-drawn content (§11.11) would only ever be clickable across its whole bounding box, which is wrong for exactly the nodes that need precise hit-testing most.
 
 ### 11.11 Node graphs & charts
 
