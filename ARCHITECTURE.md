@@ -52,6 +52,8 @@ A running log of resolved architectural questions, kept in one canonical place r
 | Docking | In scope for v1 — a fixed 5-zone (`Left`/`Right`/`Top`/`Bottom`/`Center`) model, not arbitrary nested splits (§11.4) | User's explicit choice, opposite the recommended default (defer); scoped to the fixed-zone case specifically to keep a large, MD3-precedent-free feature shippable |
 | Virtualization | Framework-level `NodeKind::VirtualList`, not an app-level responsibility (§11.7) | Matches §1's own goal (Python needs everything without extra Rust work) for one of the most common, non-optional desktop patterns |
 | MVVM data binding | A pure-Python `bind()` helper built on the existing `animate()` FFI call, not a new Rust binding subsystem (§8) | Smaller than it looks — reuses an already-locked mutation path; GC-safe for free since the binding closure never leaves Python's own object graph |
+| Declarative authoring | Add both YAML view files and a YAML stylesheet cascade, via a new `engine-spec` crate — not stylesheets alone, and not adopted wholesale from `pyCopper` (§16) | User's explicit request; design borrowed from a mature sibling project's already-proven precedence/reconciliation/safe-expression choices, reimplemented against `engine-core`'s own types rather than pulled in as a dependency |
+| Reconciliation identity | A view file's `WidgetSpec.id` (author-assigned, stable) is a second identifier alongside `NodeId`, used only for hot-reload diffing (§16.1, §16.4) | `NodeId`'s generational index (§5) is a runtime handle with no meaning across a reload — conflating the two would break reconciliation the first time a slot got recycled |
 
 **Secondary-OS CI trigger (proposed, adjust as needed):** add minimal build + smoke-test CI for Windows and macOS no later than build-order step 6 (§14, wiring `accesskit`) — the first point where real platform-specific behavior (UIA vs. NSAccessibility vs. AT-SPI) becomes load-bearing, and a natural forcing function to confirm the deferred OSes still build before investing further past it.
 
@@ -121,6 +123,10 @@ graph TD
     subgraph MD3["engine-md3 — MD3 theming"]
         G[Color scheme / shadow &amp; ripple helpers / shape morph / motion-curve presets]
     end
+    subgraph Spec["engine-spec — YAML views &amp; stylesheets, §16"]
+        M[WidgetSpec parsing + reconciliation]
+        P[Generic BindingResolver trait]
+    end
     subgraph Render["engine-render — rendering only, no winit/engine-platform dependency"]
         H[Vello Scene Builder]
         I[vello_hybrid + wgpu]
@@ -133,7 +139,10 @@ graph TD
     C --> G
     C --> H
     C --> K
+    C --> M
     G --> D
+    M --> D
+    M --> G
     K --> D
     L --> K
     D --> E
@@ -141,7 +150,7 @@ graph TD
     D --> O
 ```
 
-**Crate boundary rule:** `engine-core` has zero knowledge of Python, PyO3, `winit`, or `engine-md3` — it's testable and reusable standalone, and defines the generic types (`MotionCurve`, a generic interpolation trait, the `InputEvent` enum, the `AppHandler` trait) that other crates build on. It does directly depend on the plain `accesskit` crate (not `accesskit_winit`) — unlike `winit`/`pyo3`, `accesskit` itself is small, portable, OS-agnostic data types (`Node`, `TreeUpdate`, `Role`, `Action`), architecturally the same class of dependency as `taffy`/`parley`, both already here — so `Tree::build_access_update() -> accesskit::TreeUpdate` (§10) lives alongside the tree it's built from, not in a crate with no other reason to know accessibility semantics. `engine-py` is the only crate that imports `pyo3`. `engine-md3` depends on `engine-core` (§1 Locked Decisions: "keep `engine-core` MD3-agnostic") to supply *named presets* of those generic types (e.g. `engine_md3::motion::STANDARD: engine_core::MotionCurve`) — it never feeds data back into `engine-core`, so there's no cycle. `engine-render` depends only on `raw-window-handle` (a tiny interface crate `winit::Window` already implements), not on `engine-platform` or `winit` directly, so it stays renderable/testable against any window-handle-shaped value with zero windowing dependency; its own dev-only examples (§14 step 1) pull in `engine-platform` purely to get a real window to render into. `engine-platform` owns the actual `winit::EventLoop`/`ApplicationHandler` and the `accesskit_winit` adapter — a dedicated crate, not folded into `engine-render`, matching TRE's own `tre-platform` precedent (§1 Locked Decisions); since `engine-platform` already depends on `engine-core` (the diagram's `K --> D` edge), it pulls a fresh `accesskit::TreeUpdate` from `engine-core` each frame and hands it to its own `accesskit_winit` adapter — a plain value read through an existing dependency edge, not a new inversion.
+**Crate boundary rule:** `engine-core` has zero knowledge of Python, PyO3, `winit`, or `engine-md3` — it's testable and reusable standalone, and defines the generic types (`MotionCurve`, a generic interpolation trait, the `InputEvent` enum, the `AppHandler` trait) that other crates build on. It does directly depend on the plain `accesskit` crate (not `accesskit_winit`) — unlike `winit`/`pyo3`, `accesskit` itself is small, portable, OS-agnostic data types (`Node`, `TreeUpdate`, `Role`, `Action`), architecturally the same class of dependency as `taffy`/`parley`, both already here — so `Tree::build_access_update() -> accesskit::TreeUpdate` (§10) lives alongside the tree it's built from, not in a crate with no other reason to know accessibility semantics. `engine-py` is the only crate that imports `pyo3`. `engine-md3` depends on `engine-core` (§1 Locked Decisions: "keep `engine-core` MD3-agnostic") to supply *named presets* of those generic types (e.g. `engine_md3::motion::STANDARD: engine_core::MotionCurve`) — it never feeds data back into `engine-core`, so there's no cycle. `engine-render` depends only on `raw-window-handle` (a tiny interface crate `winit::Window` already implements), not on `engine-platform` or `winit` directly, so it stays renderable/testable against any window-handle-shaped value with zero windowing dependency; its own dev-only examples (§14 step 1) pull in `engine-platform` purely to get a real window to render into. `engine-platform` owns the actual `winit::EventLoop`/`ApplicationHandler` and the `accesskit_winit` adapter — a dedicated crate, not folded into `engine-render`, matching TRE's own `tre-platform` precedent (§1 Locked Decisions); since `engine-platform` already depends on `engine-core` (the diagram's `K --> D` edge), it pulls a fresh `accesskit::TreeUpdate` from `engine-core` each frame and hands it to its own `accesskit_winit` adapter — a plain value read through an existing dependency edge, not a new inversion. `engine-spec` (§16) depends on both `engine-core` and `engine-md3` — the former for `NodeKind`/`PaintProperties`, the latter to resolve MD3 token names in a stylesheet against the active color scheme — but, like every crate here except `engine-py`, has no `pyo3` dependency; it defines its own generic `BindingResolver` trait (§16.2) for the one capability only `engine-py` can supply, the same inversion shape as `AppHandler`.
 
 **Runtime event dispatch is a dependency *inversion*, not a direct call.** `engine-core` can't call into `engine-py` (that would require depending on it, which would create the exact cycle the crate boundary rule forbids). Instead, `engine-core` defines a generic `AppHandler` trait; `engine-platform`'s `run()` entry point is generic over it, translating raw `winit` events into `engine-core`'s own `InputEvent` enum and calling the trait's methods — `engine-platform` never knows a concrete implementation exists. `engine-py` is the crate that actually *implements* `AppHandler` (it alone has GIL access and the Python callback map) and calls `engine_platform::run(my_handler)` from inside its own `app.run()`. So the compile-time dependency graph reads `engine-py → engine-platform`, while the runtime call direction for input events reads `engine-platform → (the AppHandler impl engine-py supplied)` — the same shape of solution as the `on_complete` callback-queue mechanism already noted in §5.
 
@@ -635,6 +644,7 @@ project-root/
 │   ├── engine-md3/                  # MD3 theming: color scheme, shadow/ripple helpers, shape morph, motion-curve presets, MD3-styled defaults for shell/dock/menu components (§11) — depends on engine-core (§1, §4)
 │   ├── engine-render/              # vello_hybrid + wgpu + kurbo + peniko + parley wiring, scene building — no winit dependency (§4)
 │   ├── engine-platform/              # winit EventLoop/ApplicationHandler + accesskit_winit adapter — the only crate depending on winit (§1, §4)
+│   ├── engine-spec/                  # YAML view/stylesheet parsing, reconciliation, BindingResolver trait (§16) — depends on engine-core + engine-md3, no pyo3, no winit
 │   └── engine-py/                    # PyO3 bindings — the ONLY crate depending on pyo3
 │       └── src/lib.rs
 ├── python/
@@ -754,6 +764,57 @@ De-risk unknowns before building on them, per Design Principle 5.
 | `accesskit` API churn *(from TRE archive)* | Real breaking changes hit directly this session (0.17→0.25): `Tree`→`TreeInfo` losing `app_name`, a new required `TreeUpdate.tree_id`, a changed AT-SPI object-path encoding | Pin an exact version early; re-verify the real current API against the pinned source at implementation time, not against this document |
 | Docking scope creep | The single largest net-new v1 subsystem (§11.4), with no MD3 spec and no prior-art project to check against | Fixed 5-zone model, explicitly not arbitrary nested splits (§11.4) — a scope boundary stated once, not discovered by drifting past it during implementation |
 | Virtualization FFI shape | §11.7's "materialize item N" callback is a genuinely new callback pattern (ad hoc, invoked during layout/scroll) — untested against real PyO3/GIL overhead at the row counts (100k+) that motivate it | Spike this against a real large dataset at build-order step 13 before any data-grid-shaped component depends on it; if per-call GIL overhead dominates, batch the callback (materialize a range, not one index at a time) |
+
+---
+
+## 16. Declarative Authoring: YAML Views & Stylesheets
+
+A convenience layer, not a second rendering path: a YAML view compiles down to exactly the same `Tree`/`PaintProperties`/`layout_style`/`animate()` primitives (§5, §6, §8) an app author would otherwise call imperatively through `PyNode`. Both stay available, and an app can mix them — a mostly-static shell declared in YAML, with runtime-dynamic content (virtualized list rows, §11.7; docked panels created on demand, §11.4) still constructed imperatively, since neither makes sense declared statically. The design borrows directly from a sibling Python project (`pyCopper`, a mature, independently-built framework doing this in pure Python) — its stylesheet precedence, its "children are structure, not styling," and its safe-expression-not-`eval` stance are proven decisions, credited rather than reinvented from nothing, but reimplemented from scratch against `engine-core`'s own Rust types, not its Pydantic/four-tree machinery.
+
+### 16.1 A new crate: `engine-spec`
+
+Depends on `engine-core` (for `NodeKind`/`PaintProperties`/`layout_style`) and `engine-md3` (to resolve MD3 token names like `background: surface` against the active color scheme, §7.1) — no `pyo3`, no `winit`, matching every other non-`engine-py` crate's boundary discipline (§4).
+
+```rust
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WidgetSpec {
+    pub id: String,                    // author-assigned, stable — distinct from the runtime NodeId (§5)
+    pub kind: NodeKindSpec,             // maps to a NodeKind variant (§5, §7)
+    pub style: StyleSpec,
+    pub bindings: HashMap<String, Expression>,
+    pub handlers: HashMap<String, String>,
+    pub children: Vec<WidgetSpec>,      // structure, not styling — never nested under `style`
+}
+```
+
+`deny_unknown_fields` makes a typo'd YAML key a load-time error with a line number, not a silently-ignored style — the same reasoning behind `EngineError`'s design (§8): fail loudly at the boundary, not silently past it. `id` is deliberately a second identifier alongside `NodeId` — `NodeId`'s generational index (§5) is a *runtime* handle with no meaning across a reload, while `id` is what reconciliation (§16.4) matches against.
+
+### 16.2 Binding expressions
+
+`{{ clicks }}`-style expressions parse against a small, whitelisted grammar (attribute access, indexing, comparison, arithmetic, boolean logic) — deliberately not a path to arbitrary code execution, the same posture as `engine-py`'s existing dispatch discipline (§8's `EngineError` on an unknown property, not a panic or a silent coercion). `engine-spec` can't evaluate an expression against a Python `ViewModel` object itself — it has no `pyo3` dependency — so it defines a generic `BindingResolver` trait; `engine-py` implements it (it alone has GIL access) and supplies the concrete resolver when loading a view. This is the same dependency-inversion shape already used twice in this document (`AppHandler`, §4; the queue-drain completion mechanism, §5) — a pattern repeating for the same reason each time: a lower crate needs a capability only `engine-py` can provide, without depending on `engine-py` itself.
+
+Reactive re-evaluation (a bound expression updating when its underlying state changes) extends the existing pure-Python MVVM layer (§8) rather than adding a new engine-core mechanism — `Signal`, a small observable-value wrapper an app exposes to a view, is the reactive counterpart to `Bindable`, living in the same framework-provided Python package, not in `engine-py`'s Rust surface.
+
+### 16.3 Stylesheet cascade
+
+Precedence, borrowed directly from pyCopper's own (already-tested) ordering: baseline (no selector) → `kind:` → `classes:` (more classes beat fewer) → `id:` → the node's own inline `style:`. Resolved once, when a view is loaded or reconciled (§16.4) — never per frame, which costs nothing extra against §6's frame budget since it happens entirely outside the render loop. Selectors are structured fields, not CSS-like strings: a bare `#id` string would need quoting in YAML (`#` opens a comment), so `id: submit-btn` is a field on a selector object, not syntax to parse.
+
+```yaml
+styles:
+  - kind: Button
+    style: {corner_radius: 20, height: 40}
+  - classes: [primary]
+    style: {background: primary, color: on_primary}   # MD3 token names, resolved via engine-md3
+```
+
+### 16.4 Reconciliation & hot-reload
+
+Editing a view file while the app runs re-parses it, diffs the new `WidgetSpec` tree against the previous one — matched by `id` plus `NodeKind` variant, the same keyed-diffing idea React popularized — and patches the persistent `Tree` (§5) in place rather than rebuilding it. An unchanged node keeps its real `NodeId`, so its focus, scroll offset, and any in-flight `ActiveAnimation` (§5) survive a reload; only nodes whose `WidgetSpec` actually changed get real mutations. `engine-spec` owns file-watching directly (a `notify`-crate watcher, no `pyo3` needed to detect a file change) and triggers reconciliation on the main thread between frames — a change that only touches styling patches `PaintProperties`/`layout_style` directly; a change that adds a new binding or handler calls back into the `BindingResolver` (§16.2) to resolve it against Python state.
+
+### 16.5 What stays imperative
+
+Not everything belongs in a view file. Virtualized list rows (§11.7) and dynamically-created dock panels (§11.4) are inherently runtime-driven — their count and content aren't known at load time — and stay exactly what they are today: ordinary `PyNode.add_child()`/`animate()` calls. YAML views describe an app's static shape; the imperative API remains how an app describes what it can't know in advance.
 
 ---
 
