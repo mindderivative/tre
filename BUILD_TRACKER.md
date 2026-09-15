@@ -10,11 +10,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 |---|---|---|
 | M1 — TRE v1 (archived reference) | `██████████` 100% | ✅ Archived `archived-2026-09-14` |
 | M2 — v2 Architecture (`ARCHITECTURE.md`) | `██████████` 100% | ✅ 16 sections + ADR-001, locked |
-| M3 — v2 Implementation | `█████████⬜` 90% | 🚧 In progress — Phases 1-6 of 7 complete, Phase 7 in progress (step 13 of 3 done) |
+| M3 — v2 Implementation | `█████████⬜` 95% | 🚧 In progress — Phases 1-6 of 7 complete, Phase 7 in progress (steps 13-14 of 3 done) |
 
-**Just closed:** M3 Phase 7 step 13 (§14 step 13) — the overlay mechanism (§11.3). Checked directly first that real pointer/keyboard dispatch and hit-testing still don't exist anywhere in this codebase (the same finding steps 7/9/11/12 already made), so this step proves the real, load-bearing mechanism only — tree residency, `Position::Absolute` placement, append-order-is-paint-order — deferring dismiss-on-outside-click/Escape and real menu components to whenever pointer/keyboard dispatch lands. `Tree::absolute_position` is a genuinely new capability (a node's root-relative position, previously only ever computed inline during a full-tree walk); `Tree::open_overlay`/`close_overlay` position an overlay relative to its anchor's real accumulated bounds and append/remove it via step 12's own `Tree::remove`. The actual falsifiable claim — an appended overlay paints on top of whatever it overlaps, with zero special-casing in `build_tree_scene` — was proven with a headless pixel-readback test: a dropdown menu opened against a real anchor overlaps a full-canvas background panel painted first, and the overlap pixel shows the menu's own color; the test passed on its first real run, meaning the existing paint walk needed no changes at all. See `PLAN.md`/`LOG.md`.
+**Just closed:** M3 Phase 7 step 14 (§14 step 14) — multi-window (§11.1). Checked directly first that §11.1's own text presumes real pointer/keyboard `InputEvent` dispatch that still doesn't exist anywhere in this codebase (same finding as steps 7/9/11/12/13); what genuinely does dispatch per-window already is `winit`'s own window-level events plus `accesskit_winit`'s (which already carries a real `window_id`), so this step proves routing *those* correctly via a real `HashMap<WindowId, _>`. `engine_platform::run_windowed_multi` manages any number of windows, opened via a `WindowOpener` handle before the blocking loop starts; the original single-window `run_windowed` is now a thin wrapper over it, kept byte-for-byte source-compatible for its two existing callers (confirmed by building both unchanged). `PyWindow` split back out of `App` in `engine-py`, exactly as predicted since step 6 — `App` is now a thin collector (`add_window`/`run`) driving one or more `Window`s together. Proof at two levels: a real `harness = false` test opens two windows directly and confirms genuinely distinct `WindowId`s plus independent per-window frame counts (passed on the first run); `examples/two_windows.py` proves the same end-to-end through the real Python API. See `PLAN.md`/`LOG.md`.
 
-**Up next:** M3 Phase 7 step 14 (§14 step 14) — multi-window (§11.1): a second `PyWindow` opened from a running app, proving `WindowId`-routed event dispatch before docking's "detach into its own window" pattern needs it.
+**Up next:** M3 Phase 7 step 15 (§14 step 15), M3's final step — docking (§11.4) + virtualization (§11.7), sequenced last since both build on the overlay mechanism (step 13) and the accepted multi-window model (this step).
 
 **Known gaps:**
 - ~~§14 didn't sequence `engine-spec`/YAML-view work.~~ **Fixed.**
@@ -78,7 +78,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ## Milestone 3 — v2 Implementation
 
-**Status: 🚧 In progress.** Phases 1–6 complete, Phase 7 in progress (step 13 of 3 done, M3's final phase); this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
+**Status: 🚧 In progress.** Phases 1–6 complete, Phase 7 in progress (steps 13-14 of 3 done, M3's final phase); this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
 
 ### Phase 1 — Workspace Scaffold ✅
 - Step: Cargo workspace + six crate skeletons (`engine-core`, `engine-md3`, `engine-render`, `engine-platform`, `engine-spec`, `engine-py`) per §12 — ✅
@@ -108,5 +108,5 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ### Phase 7 — Desktop Shell Build-out (§14 steps 13–15) 🚧
 - Step 13: Overlay mechanism (one dropdown menu) — ✅ (`Tree::open_overlay`/`close_overlay`, real `Position::Absolute` placement relative to an anchor's accumulated absolute bounds, `OverlayMeta` bookkeeping; a headless pixel-readback test proves append-order-is-paint-order for real — an overlapping overlay paints on top of a full-canvas background with zero special-casing in `build_tree_scene` — see `PLAN.md`/`LOG.md`)
-- Step 14: Multi-window (second `PyWindow`) — ⬜
+- Step 14: Multi-window (second `PyWindow`) — ✅ (`engine_platform::run_windowed_multi` manages a real `HashMap<WindowId, PerWindow>`; `PyWindow` split back out of `App` exactly as predicted since step 6; a `harness = false` test opens two windows directly and confirms genuinely distinct `WindowId`s plus independent per-window frame counts, and `examples/two_windows.py` proves the same end-to-end through the real Python API — see `PLAN.md`/`LOG.md`)
 - Step 15: Docking + virtualization — ⬜

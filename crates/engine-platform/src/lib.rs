@@ -27,7 +27,36 @@
 //! `PlatformEvent` crossing threads; the actual `Tree`-touching
 //! `build_access_update` call always happens back on the main thread,
 //! inside `user_event`/`window_event`, same as everything else here.
+//!
+//! §14 step 14 (§11.1) adds real multi-window support:
+//! [`run_windowed_multi`] manages any number of simultaneously open
+//! windows, each with its own `accesskit_winit::Adapter` and frame
+//! counter, keyed by `winit`'s own `WindowId` -- `accesskit_winit::
+//! Event` already carries a real `window_id` (confirmed directly in its
+//! source), so routing *that* to the right window is a genuine `HashMap`
+//! lookup, not new dispatch machinery, matching §11.1's own claim for
+//! exactly the two kinds of event this crate has ever dispatched
+//! (window-level `winit` events, `accesskit` events) -- real pointer/
+//! keyboard `InputEvent` dispatch still doesn't exist anywhere in this
+//! codebase, so that part of §11.1's text ("unchanged from the single-
+//! window model already designed") stays aspirational until a later
+//! step builds it. [`run_windowed`] (the original single-window
+//! signature) is now a thin wrapper over [`run_windowed_multi`], kept
+//! byte-for-byte source-compatible for its two existing callers
+//! (`rect_window.rs`, `access_button.rs`) rather than churning them for
+//! a capability neither test needs.
+//!
+//! Windows are only ever opened up front, via the `setup` closure,
+//! before the blocking event loop starts -- not dynamically mid-session
+//! from a live external call. Nothing needs that yet (Python's own
+//! single call stack can't interleave with the blocking loop without a
+//! callback hook this step doesn't build), and `WindowOpener` staying
+//! usable only inside `setup` is a real, stated scope limit, not an
+//! oversight.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use winit::application::ApplicationHandler;
@@ -47,12 +76,23 @@ pub struct WindowConfig {
     pub max_frames: Option<u32>,
 }
 
+/// One window-open request, tagged with a caller-assigned `token` so
+/// [`run_windowed_multi`]'s `on_window_created` callback can correlate
+/// the real `WindowId` it's handed back with whatever the caller
+/// originally asked for (e.g. `engine-py`'s `App` uses this to know
+/// which registered `PyWindow` a newly created OS window belongs to).
+pub struct WindowRequest {
+    pub config: WindowConfig,
+    pub token: u64,
+}
+
 /// The winit user-event type this crate's `EventLoop` is built with --
-/// exists purely to carry `accesskit_winit::Event` across the proxy
-/// boundary (see the module doc comment for why `with_event_loop_proxy`,
-/// not the direct-handler API).
+/// exists purely to carry `accesskit_winit::Event` and window-open
+/// requests across the proxy boundary (see the module doc comment for
+/// why `with_event_loop_proxy`, not the direct-handler API).
 enum PlatformEvent {
     AccessKit(accesskit_winit::Event),
+    OpenWindow(WindowRequest),
 }
 
 impl From<accesskit_winit::Event> for PlatformEvent {
@@ -61,136 +101,231 @@ impl From<accesskit_winit::Event> for PlatformEvent {
     }
 }
 
-/// Runs a minimal winit event loop, calling `on_frame` once per redraw
-/// with the live window and the current 0-based frame index, and
-/// `build_access_update` once per redraw (plus once immediately when the
-/// platform's accessibility layer first requests a tree) to keep the
-/// exposed accessibility tree in sync -- §10: "built fresh... every
-/// frame, not maintained as a separate parallel structure that can
-/// drift out of sync." Exits after `config.max_frames` redraws, or when
-/// the window is closed.
+/// A handle for requesting new windows, valid only inside the `setup`
+/// closure `run_windowed_multi` calls once, before the event loop
+/// starts running -- see the module doc comment for why this doesn't
+/// (yet) support opening a window later, mid-session.
+pub struct WindowOpener {
+    proxy: EventLoopProxy<PlatformEvent>,
+}
+
+impl WindowOpener {
+    pub fn open_window(&self, request: WindowRequest) {
+        let _ = self.proxy.send_event(PlatformEvent::OpenWindow(request));
+    }
+}
+
+/// Runs a `winit` event loop managing any number of windows.
 ///
-/// Hands back `Arc<Window>`, not `&Window`: a caller building a
-/// `wgpu::Surface` needs to create it once and keep it alive across every
-/// subsequent frame, which an owned, cloneable handle supports and a
-/// borrow scoped to one callback invocation cannot.
+/// `setup` is called once, synchronously, before the loop starts --
+/// its only job is to request the initial window(s) via the given
+/// [`WindowOpener`]. For each window actually created, `on_window_created`
+/// fires exactly once with its real `WindowId`, the `token` from
+/// whichever `WindowRequest` produced it, and an owned `Arc<Window>` --
+/// the caller's one chance to build (and stash, keyed by `WindowId`) any
+/// per-window GPU/render state. `on_frame` then fires once per redraw
+/// with just the `WindowId` and 0-based frame index (the caller already
+/// has everything else from `on_window_created`); `build_access_update`
+/// fires per window the same way, keeping each window's own exposed
+/// accessibility tree in sync (§10). Exits once every window has closed
+/// or reached its own `max_frames`.
 ///
-/// Returns `Err` rather than panicking if no display is reachable (e.g. a
-/// CI runner with no X11/Wayland socket) -- this is an expected, non-
-/// exceptional condition in that environment, not a bug, and every
-/// `[[test]] harness = false` target built on this is expected to exit 0
-/// on it rather than fail the suite (TRE v1's own convention, finding
-/// #261: "gracefully exit 0, not panic, when no display/GPU is
-/// reachable").
-pub fn run_windowed<F, A>(
-    config: WindowConfig,
+/// Returns `Err` rather than panicking if no display is reachable --
+/// see [`run_windowed`]'s own doc comment for why that's expected, not
+/// exceptional, on some CI runners.
+pub fn run_windowed_multi<C, F, A, S>(
+    on_window_created: C,
     on_frame: F,
     build_access_update: A,
+    setup: S,
 ) -> Result<(), winit::error::EventLoopError>
 where
-    F: FnMut(&Arc<Window>, u32),
-    A: FnMut() -> accesskit::TreeUpdate,
+    C: FnMut(WindowId, u64, Arc<Window>),
+    F: FnMut(WindowId, u32),
+    A: FnMut(WindowId) -> accesskit::TreeUpdate,
+    S: FnOnce(&WindowOpener),
 {
     let event_loop = EventLoop::<PlatformEvent>::with_user_event().build()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let proxy = event_loop.create_proxy();
 
-    let mut app = App {
-        config,
-        window: None,
-        access_adapter: None,
+    setup(&WindowOpener {
+        proxy: proxy.clone(),
+    });
+
+    let mut app = MultiWindowApp {
+        windows: HashMap::new(),
         proxy,
-        frame: 0,
+        on_window_created,
         on_frame,
         build_access_update,
     };
     event_loop.run_app(&mut app)
 }
 
-struct App<F, A> {
+/// The original single-window entry point, kept source-compatible for
+/// its two existing callers -- a thin wrapper over
+/// [`run_windowed_multi`] that stashes the one `Arc<Window>` it gets
+/// from `on_window_created` and hands it back to `on_frame` every
+/// redraw, matching this function's own pre-step-14 signature exactly.
+pub fn run_windowed<F, A>(
     config: WindowConfig,
-    window: Option<Arc<Window>>,
-    access_adapter: Option<accesskit_winit::Adapter>,
-    proxy: EventLoopProxy<PlatformEvent>,
-    frame: u32,
-    on_frame: F,
-    build_access_update: A,
-}
-
-impl<F, A> ApplicationHandler<PlatformEvent> for App<F, A>
+    mut on_frame: F,
+    mut build_access_update: A,
+) -> Result<(), winit::error::EventLoopError>
 where
     F: FnMut(&Arc<Window>, u32),
     A: FnMut() -> accesskit::TreeUpdate,
 {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // accesskit_winit's own hard requirement: the adapter must be
-        // created before the window is ever shown, which means creating
-        // the window invisible first.
-        let attrs = WindowAttributes::default()
-            .with_title(self.config.title.clone())
-            .with_inner_size(winit::dpi::LogicalSize::new(
-                self.config.width,
-                self.config.height,
-            ))
-            .with_visible(false);
-        let window = event_loop
-            .create_window(attrs)
-            .expect("failed to create window");
-        let adapter = accesskit_winit::Adapter::with_event_loop_proxy(
-            event_loop,
-            &window,
-            self.proxy.clone(),
-        );
-        window.set_visible(true);
-        window.request_redraw();
-        self.access_adapter = Some(adapter);
-        self.window = Some(Arc::new(window));
+    let window: Rc<RefCell<Option<Arc<Window>>>> = Rc::new(RefCell::new(None));
+    let window_for_created = window.clone();
+
+    run_windowed_multi(
+        move |_id, _token, created| {
+            *window_for_created.borrow_mut() = Some(created);
+        },
+        move |_id, frame| {
+            let window = window
+                .borrow()
+                .clone()
+                .expect("on_window_created always fires before on_frame for the same window");
+            on_frame(&window, frame);
+        },
+        move |_id| build_access_update(),
+        |opener| {
+            opener.open_window(WindowRequest { config, token: 0 });
+        },
+    )
+}
+
+struct PerWindow {
+    window: Arc<Window>,
+    access_adapter: accesskit_winit::Adapter,
+    frame: u32,
+    max_frames: Option<u32>,
+}
+
+struct MultiWindowApp<C, F, A> {
+    windows: HashMap<WindowId, PerWindow>,
+    proxy: EventLoopProxy<PlatformEvent>,
+    on_window_created: C,
+    on_frame: F,
+    build_access_update: A,
+}
+
+impl<C, F, A> ApplicationHandler<PlatformEvent> for MultiWindowApp<C, F, A>
+where
+    C: FnMut(WindowId, u64, Arc<Window>),
+    F: FnMut(WindowId, u32),
+    A: FnMut(WindowId) -> accesskit::TreeUpdate,
+{
+    fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
+        // Windows are created lazily, in `user_event`, as `OpenWindow`
+        // requests arrive -- not eagerly here. `setup`'s own
+        // `open_window` calls (sent before the loop starts) are queued
+        // on the proxy and delivered as the very first `user_event`
+        // calls once the loop is actually running.
     }
 
-    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: PlatformEvent) {
-        let PlatformEvent::AccessKit(event) = event;
-        // `ActionRequested`/`AccessibilityDeactivated` have no
-        // interactive dispatch wired yet -- §14 step 7's own minimal
-        // scope (see this module's doc comment); only the initial-tree
-        // request is handled, so a screen reader gets a real tree as
-        // soon as it asks, not just on the next redraw.
-        if matches!(
-            event.window_event,
-            accesskit_winit::WindowEvent::InitialTreeRequested
-        ) && let Some(adapter) = &mut self.access_adapter
-        {
-            adapter.update_if_active(&mut self.build_access_update);
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: PlatformEvent) {
+        match event {
+            PlatformEvent::OpenWindow(request) => {
+                // accesskit_winit's own hard requirement: the adapter
+                // must be created before the window is ever shown,
+                // which means creating the window invisible first.
+                let attrs = WindowAttributes::default()
+                    .with_title(request.config.title.clone())
+                    .with_inner_size(winit::dpi::LogicalSize::new(
+                        request.config.width,
+                        request.config.height,
+                    ))
+                    .with_visible(false);
+                let window = event_loop
+                    .create_window(attrs)
+                    .expect("failed to create window");
+                let adapter = accesskit_winit::Adapter::with_event_loop_proxy(
+                    event_loop,
+                    &window,
+                    self.proxy.clone(),
+                );
+                window.set_visible(true);
+                window.request_redraw();
+                let id = window.id();
+                let window = Arc::new(window);
+
+                (self.on_window_created)(id, request.token, window.clone());
+                self.windows.insert(
+                    id,
+                    PerWindow {
+                        window,
+                        access_adapter: adapter,
+                        frame: 0,
+                        max_frames: request.config.max_frames,
+                    },
+                );
+            }
+            PlatformEvent::AccessKit(event) => {
+                // `ActionRequested`/`AccessibilityDeactivated` have no
+                // interactive dispatch wired yet -- §14 step 7's own
+                // minimal scope (see this module's doc comment); only
+                // the initial-tree request is handled.
+                if matches!(
+                    event.window_event,
+                    accesskit_winit::WindowEvent::InitialTreeRequested
+                ) {
+                    let Self {
+                        windows,
+                        build_access_update,
+                        ..
+                    } = self;
+                    if let Some(win) = windows.get_mut(&event.window_id) {
+                        win.access_adapter
+                            .update_if_active(|| build_access_update(event.window_id));
+                    }
+                }
+            }
         }
     }
 
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
+        window_id: WindowId,
         event: WindowEvent,
     ) {
-        if let (Some(window), Some(adapter)) = (&self.window, &mut self.access_adapter) {
-            adapter.process_event(window, &event);
-        }
+        let Self {
+            windows,
+            on_frame,
+            build_access_update,
+            ..
+        } = self;
+        let Some(win) = windows.get_mut(&window_id) else {
+            return;
+        };
+        win.access_adapter.process_event(&win.window, &event);
 
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::RedrawRequested => {
-                let Some(window) = self.window.clone() else {
-                    return;
-                };
-                (self.on_frame)(&window, self.frame);
-                if let Some(adapter) = &mut self.access_adapter {
-                    adapter.update_if_active(&mut self.build_access_update);
-                }
-                self.frame += 1;
-                if let Some(max) = self.config.max_frames
-                    && self.frame >= max
-                {
+            WindowEvent::CloseRequested => {
+                windows.remove(&window_id);
+                if windows.is_empty() {
                     event_loop.exit();
+                }
+            }
+            WindowEvent::RedrawRequested => {
+                on_frame(window_id, win.frame);
+                win.access_adapter
+                    .update_if_active(|| build_access_update(window_id));
+                win.frame += 1;
+                if let Some(max) = win.max_frames
+                    && win.frame >= max
+                {
+                    windows.remove(&window_id);
+                    if windows.is_empty() {
+                        event_loop.exit();
+                    }
                     return;
                 }
-                window.request_redraw();
+                win.window.request_redraw();
             }
             _ => {}
         }

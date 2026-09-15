@@ -23,3 +23,7 @@ taffy = "0.14.0"
 [[test]]
 name = "access_button"
 harness = false
+
+[[test]]
+name = "multi_window"
+harness = false

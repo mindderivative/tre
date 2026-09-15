@@ -1,6 +1,19 @@
 """tre v2 -- Python-facing declarative/imperative GUI framework.
 
-§14 step 12 adds the real §16.2 MVVM surface: `View` (loads a
+§14 step 14 (§11.1) splits `Window` back out of `App`, at exactly the
+step every earlier module doc comment (Rust-side) predicted: `App`
+collects one or more `Window`s and drives them all together in one
+blocking `App.run()` call; each `Window` owns its own node tree and
+size:
+
+    win1 = Window(width=400, height=200, title="Main")
+    win2 = Window(width=300, height=150, title="Panel")
+    app = App()
+    app.add_window(win1)
+    app.add_window(win2)
+    app.run()
+
+§14 step 12 added the real §16.2 MVVM surface: `View` (loads a
 `view.yaml`, `engine-py`'s Rust side), and `Signal`/`ViewModel` (pure
 Python -- no reason for these to be Rust, since they never touch the
 `Tree` directly; `View._attach` is the actual crossing point).
@@ -15,7 +28,7 @@ plain `signal.get()` in ordinary Python code costs one cheap call and
 nothing else.
 """
 
-from tre._core import App, Node, View, _record_read
+from tre._core import App, Node, View, Window, _record_read
 
 
 class Signal:
@@ -82,4 +95,4 @@ class ViewModel:
         view._attach(self)
 
 
-__all__ = ["App", "Node", "View", "Signal", "ViewModel"]
+__all__ = ["App", "Node", "View", "Window", "Signal", "ViewModel"]
