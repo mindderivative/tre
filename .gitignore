@@ -2,3 +2,4 @@
 **/*.rs.bk
 /.venv/
 /site/
+/tools/build-tracker-artifact.generated.html
