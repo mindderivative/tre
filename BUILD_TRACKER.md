@@ -12,14 +12,14 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M2 — v2 Architecture (`ARCHITECTURE.md`) | `██████████` 100% | ✅ 16 sections + ADR-001, locked |
 | M3 — v2 Implementation | `██⬜⬜⬜⬜⬜⬜⬜⬜` 14% | 🚧 In progress — Phase 1 of 7 complete, Phase 2 underway (1 of 4 steps) |
 
-**Just closed:** M3 Phase 2 step 1 (§14 step 1 — Render Core Spike) — a real static rounded rect rendered through `vello_hybrid` and presented into a real window via `engine-platform`, verified two ways: a headless pixel-readback test (exact fill color, exact position) and a real windowed run (`cargo test`, 60 frames presented, clean exit). Found and fixed two real Linebender-family version conflicts along the way — a `wgpu` 29-vs-30 clash that would not have compiled, and a `kurbo` coupling that currently matches by coincidence, now documented so a future bump doesn't silently break it. First contact with real external dependencies in the v2 rebuild. See `PLAN.md`/`LOG.md`.
+**Just closed:** M3 Phase 2 step 2 (§14 step 2 — `Animated<T>` + central tick) — §5's animation core (`Interpolate`, `Animated<T>`, `ActiveAnimation<T>`, `MotionCurve`) implemented in `engine-core` and validated standalone (6 unit tests), then proven to actually drive real rendering: a headless mid-flight pixel-readback test confirms `tick()`'s output is exactly what `engine-render` painted, and the real windowed demo now animates the rect's color and opacity live over 60 frames. A frame-pacing observation surfaced along the way (this environment doesn't vsync-throttle `ControlFlow::Poll`, so 60 frames complete in ~0.19s, not ~1s) — noted for §6's later frame-budget work, not a defect here. See `PLAN.md`/`LOG.md`.
 
-**Up next:** M3 Phase 2, step 2 — `Animated<T>` + the central tick, animating this same rect's color/elevation. Steps 3 (`taffy` layout) and 4 (`parley` text) follow after.
+**Up next:** M3 Phase 2, step 3 — wiring `taffy` for layout of multiple static nodes, plus the frame-time CI benchmark (§6 target: 16.6ms/8.3ms). This is also where `Node`/`Tree` first appear, so `Animated<T>` moves from "ticked by hand" to living inside `PaintProperties`.
 
 **Known gaps:**
 - ~~§14 didn't sequence `engine-spec`/YAML-view work.~~ **Fixed.**
 - ~~No `PLAN.md`/`LOG.md` existed yet for M3.~~ **Fixed** — both now exist, one per phase/step, archived to `planning/archive/` on completion, matching TRE v1's own convention exactly (verified directly against `archive/crates/tre-rhi-vulkan`, not assumed).
-- Everything in `ARCHITECTURE.md` citing "verify at implementation time" has started resolving, not finished: step 1 confirmed `vello_hybrid`/`wgpu`/`kurbo`/`peniko`/`winit` are all real and compile together (with two real version-coupling fixes along the way). `accesskit`, `taffy`, `parley`, and `material-colors` remain unverified until their own build-order steps land.
+- Everything in `ARCHITECTURE.md` citing "verify at implementation time" has started resolving, not finished: steps 1–2 confirmed `vello_hybrid`/`wgpu`/`kurbo`/`peniko`/`winit` are all real and compile together (with two real version-coupling fixes along the way). `accesskit`, `taffy`, `parley`, and `material-colors` remain unverified until their own build-order steps land.
 
 ---
 
@@ -82,7 +82,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ### Phase 2 — Render Core Spike (§14 steps 1–4) 🚧
 - Step 1: Static rounded rect through `vello_hybrid`, real window via `engine-platform` — ✅ (found and fixed two real Linebender-family version conflicts — a `wgpu` 29-vs-30 clash that would not have compiled, and an unguaranteed `kurbo` coupling documented for the future; headless pixel-readback test + a real windowed run, both passing)
-- Step 2: `Animated<T>` + central tick — ⬜
+- Step 2: `Animated<T>` + central tick — ✅ (validated standalone in `engine-core` — 6 unit tests — then proven to actually drive rendering via a headless mid-flight pixel-readback test in `engine-render`, and shown live over 60 real windowed frames)
 - Step 3: `taffy` layout + frame-time CI benchmark (§6 target: 16.6ms/8.3ms) — ⬜
 - Step 4: `parley` text spike (real type scale, non-trivial string) — ⬜
 

@@ -1,44 +1,50 @@
-# Log: M3 Phase 2, Step 1 — Render Core Spike (§14 step 1)
+# Log: M3 Phase 2, Step 2 — Animated&lt;T&gt; + Central Tick (§14 step 2)
 
-Corresponds to `PLAN.md` / `BUILD_TRACKER.md` M3 Phase 2. First contact with real external dependencies in the v2 rebuild — everything in M3 Phase 1 was local-path-only.
+Corresponds to `PLAN.md` / `BUILD_TRACKER.md` M3 Phase 2, step 2 of 4.
 
 ## What happened
 
-**Verified `vello_hybrid` is real before writing anything against it.** `cargo add --dry-run` confirmed `vello_hybrid 0.2.0` is a real, published crate with `wgpu`/`wgpu_default`/`text` features (not default-on) — the core architectural bet `ARCHITECTURE.md` §1 makes actually holds. Read its own `examples/render_to_file.rs` reference example directly rather than guessing the `Scene`/`Renderer` API shape from documentation memory.
+**Implemented §5's animation core in `engine-core/src/animation.rs`, validated standalone first:** `Interpolate` (linear `f64`; `peniko::Color` via `AlphaColor::lerp_rect` — checked the real `color` crate source rather than hand-rolling a per-channel lerp, since `lerp_rect` is specifically the correct method for a rectangular color space like `Srgb`, as opposed to `lerp`'s hue-based interpolation for polar spaces), `MotionCurve` (deliberately just `Linear` for now — real MD3 cubic-bezier curves are §7.5's own scope, not manufactured ahead of a step that actually needs one), `ActiveAnimation<T>`, and `Animated<T>` with `animate_to`/`tick`. Six unit tests, all passing on the first real attempt: linear interpolation at t=0/0.5/1, color channel lerping verified against exact expected float values, a no-op tick with nothing active, mid-flight-then-snap-on-completion, a zero-duration animation (verified it doesn't divide by zero), and interrupting a running animation (verified `from` captures the *current* value, not the old target).
 
-**Found two real, concrete instances of the Linebender-family version-coupling risk §3 already flagged in the abstract — both found by trying to actually build, not by review:**
+**Then proved it actually drives real rendering, not just that the math is correct in isolation:** `engine-render/tests/animated_rect.rs` creates an `Animated<Color>` and a separate `Animated<f64>` (opacity), starts both animating, ticks them to the halfway point, renders through the real `vello_hybrid` pipeline, reads back the pixel, and asserts the rendered color is strictly *between* the start and end values (not equal to either) and the alpha reflects a partial, non-zero, non-full opacity. This is the actual claim this step exists to prove -- that `engine-core`'s `tick()` output is what `engine-render` painted, not two independently-correct halves that happen to compile together.
 
-1. `vello_hybrid 0.2.0` requires `wgpu = "29.0.3"`. Adding the latest `wgpu` (`30.0.1`) independently resolved **two different major versions of wgpu into the same dependency graph** — Cargo allowed it silently; it would have failed to compile the moment a `wgpu::Device` created in `engine-render`'s own code was passed into a `vello_hybrid` function expecting its own, incompatible `wgpu` 29.x type. Fixed by pinning `engine-render`'s own `wgpu` to exactly `29.0.3`, confirmed by `grep -c 'name = "wgpu"' Cargo.lock` dropping from 2 to 1.
-2. Four different `kurbo` versions are in the dependency graph from unrelated transitive deps. `peniko 0.6.1` (already a dependency) happens to pin the same `kurbo = "0.13.1"` I'd have added directly — no active conflict *right now* — but this is coincidence, not a guarantee: nothing stops a future independent `cargo update` of either from drifting them apart silently, since Cargo treats compatible-semver bumps as fine and won't warn. Documented this explicitly in `Cargo.toml` with instructions to re-verify against `peniko`'s own `Cargo.toml` before bumping either, rather than leaving the coincidence unexamined.
+**Extended the real windowed demo** (`tests/rect_window.rs`, from step 1) to animate the rect's color (purple to teal) and opacity (100% to 40%) across its 60 presented frames, using the same `Animated<T>` mechanism, ticked each frame against real `Instant::now()`.
 
-**Implemented and verified the actual step 1 scope:**
-- `engine-render::build_rect_scene` / `FrameRenderer` — a static rounded rect, `peniko::Color::from_rgba8`, `kurbo::RoundedRect::to_path`, wrapped `vello_hybrid::Renderer`.
-- `engine-platform::run_windowed` — minimal `winit` `ApplicationHandler`, hands back `Arc<Window>` (not `&Window`) specifically because a caller building a `wgpu::Surface` needs to keep it alive across every subsequent frame callback, which a borrow scoped to one call cannot support.
-- `crates/engine-render/tests/rect_window.rs` — a real, working windowed run: opens an actual OS window (verified against this environment's real Wayland display and AMD GPU, not just Lavapipe), creates a real `wgpu::Surface`, presents 60 real frames, exits 0. Lives in `tests/`, not `examples/`, matching `archive/crates/tre-rhi-vulkan`'s own precedent exactly (checked directly, not assumed) — `[[test]] harness = false` gives it a real, single main thread, which `winit::EventLoop::new()` requires and a plain `#[test]` fn (run on a worker thread) cannot provide.
-- A headless pixel-readback unit test in `engine-render/src/lib.rs`: renders to an offscreen texture, reads it back, asserts the fill color landed exactly at the rect's center and the background is untouched at a corner outside it. Real correctness verification, not just "it didn't panic."
-- Graceful exit-0 on "no display"/"no GPU" (`run_windowed` returns `Result` instead of panicking on `EventLoop::new()` failure; the adapter-request failure path in the test calls `std::process::exit(0)` directly) — applied from this step's first commit, per TRE v1's own established convention (LESSONS_LEARNED.md, finding #261), not retrofitted after the fact.
-
-**Structural fix along the way:** the same-file-serves-two-target-kinds approach (`[[example]]` + `[[test]]` both pointing at `examples/rect.rs`) produced a real Cargo warning ("found to be present in multiple build targets"). Checked `archive/crates/tre-rhi-vulkan/Cargo.toml` directly rather than guessing around the warning — TRE v1 never dual-registered a single file; demos meant for `cargo test` lived in `tests/`, separate from `examples/`. Moved `rect.rs` to `tests/rect_window.rs` to match exactly; the warning is gone.
+**Found something worth knowing, not worth fixing here:** the windowed demo's own diagnostic (`animation_start.elapsed()` at the final frame) showed the 60 frames completed in ~0.19s, not the ~1s the animation duration assumed -- this environment's surface isn't vsync-throttling in `ControlFlow::Poll` mode (frames present as fast as the GPU can produce them, ~300+ fps for a single small rect). The animation math itself is still exercised correctly every frame regardless of pacing (proven separately, rigorously, by the headless test above); this is a frame-pacing observation relevant to §6's later frame-budget work, not a defect in what step 2 needed to prove.
 
 ## Verification
 
 ```
 $ cargo test --workspace
     ...
+     Running unittests src/lib.rs (engine_core-...)
+running 6 tests
+test animation::tests::color_interpolate_lerps_each_channel ... ok
+test animation::tests::f64_interpolate_is_linear ... ok
+test animation::tests::interrupting_a_running_animation_starts_from_current_not_old_target ... ok
+test animation::tests::tick_advances_partway_then_snaps_on_completion ... ok
+test animation::tests::tick_with_no_active_animation_is_a_no_op ... ok
+test animation::tests::zero_duration_animation_snaps_immediately_no_panic ... ok
+
      Running unittests src/lib.rs (engine_render-...)
 running 1 test
 test tests::rect_scene_renders_expected_pixels ... ok
 
-     Running tests/rect_window.rs (rect_window-...)
-engine-render §14 step 1: first frame presented, 400x400
-engine-render §14 step 1: exited cleanly after 60 frames
+     Running tests/animated_rect.rs (engine_render)
+running 1 test
+test animated_color_and_opacity_render_the_interpolated_value_mid_flight ... ok
+
+     Running tests/rect_window.rs (harness = false)
+engine-render §14 step 1/2: first frame presented, 400x400, animating 100%->40% opacity
+engine-render §14 step 2: animation ran for 0.19s across 60 frames
+engine-render §14 step 1/2: exited cleanly after 60 frames
     ...
 test result: ok. (all crates, 0 failures)
 
-$ cargo clippy --workspace --all-targets   # clean, one collapsible-if fixed along the way
+$ cargo clippy --workspace --all-targets   # clean
 $ cargo fmt --check                        # clean
 ```
 
 ## Next
 
-`BUILD_TRACKER.md` M3 Phase 2 partially updated (step 1 of 4 done — the phase itself stays 🚧 until steps 2–4 land). Next: step 2, `Animated<T>` + the central tick, animating this same rect's color/elevation.
+`BUILD_TRACKER.md` M3 Phase 2 updated (step 2 of 4 done). Next: step 3, wiring `taffy` for layout of multiple static nodes, plus the frame-time CI benchmark (§6 Locked Decisions target: 16.6ms/8.3ms) -- the first point a real render+layout+tick pipeline exists to measure against that stated target. This is also where `Node`/`Tree` first appear, so `Animated<T>` moves from "ticked by hand" (this step) to actually being a field inside `PaintProperties`.

@@ -15,11 +15,36 @@ use peniko::Color;
 use peniko::kurbo::{Affine, RoundedRect, Shape};
 use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene, TextureBindings};
 
-/// Builds the one static scene this step exists to prove: a single
-/// rounded rectangle, centered with a fixed margin, filled with a solid
-/// color. Nothing here reads a `Node` yet -- that starts at step 3
-/// (`taffy` layout of multiple *dynamic* nodes).
-pub fn build_rect_scene(width: u16, height: u16) -> Scene {
+/// MD3 seed-adjacent purple (#6750A4) -- an arbitrary but deliberate
+/// starting color, not vello_hybrid's own default, so a wrong pixel in a
+/// readback test can't be confused with "the renderer drew nothing and
+/// left its own default."
+pub const INITIAL_COLOR: Color = Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF);
+
+/// Returns `color` with its alpha channel replaced by `opacity`
+/// (0.0..=1.0), independent of whatever alpha `color` already carried --
+/// this is how step 2's demo composes an `Animated<Color>` and a
+/// separate `Animated<f64>` opacity into one paint value each frame,
+/// rather than conflating "which color" and "how visible" into a single
+/// animated type.
+pub fn with_opacity(color: Color, opacity: f64) -> Color {
+    Color {
+        components: [
+            color.components[0],
+            color.components[1],
+            color.components[2],
+            opacity as f32,
+        ],
+        cs: std::marker::PhantomData,
+    }
+}
+
+/// Builds the one rounded rectangle this step exists to prove -- centered
+/// with a fixed margin, filled with `color` at `opacity`. Both are the
+/// caller's live, already-ticked `Animated<T>::current` values (§14 step
+/// 2); nothing here reads a `Node` yet -- that starts at step 3 (`taffy`
+/// layout of multiple *dynamic* nodes).
+pub fn build_rect_scene(width: u16, height: u16, color: Color, opacity: f64) -> Scene {
     let mut scene = Scene::new(width, height);
     let margin = 40.0;
     let rect = RoundedRect::new(
@@ -30,11 +55,7 @@ pub fn build_rect_scene(width: u16, height: u16) -> Scene {
         24.0,
     );
     scene.set_transform(Affine::IDENTITY);
-    // MD3 seed-adjacent purple (#6750A4) -- an arbitrary but deliberate
-    // choice, not vello_hybrid's default, so a wrong color in a pixel
-    // readback test can't be confused with "the renderer just didn't
-    // draw anything and left its own default."
-    scene.set_paint(Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF));
+    scene.set_paint(with_opacity(color, opacity));
     scene.fill_path(&rect.to_path(0.1));
     scene
 }
@@ -138,7 +159,7 @@ mod tests {
             });
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-            let scene = build_rect_scene(width, height);
+            let scene = build_rect_scene(width, height, INITIAL_COLOR, 1.0);
             let mut frame_renderer = FrameRenderer::new(
                 &device,
                 &RenderTargetConfig {

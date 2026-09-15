@@ -1,19 +1,29 @@
-//! §14 build-order step 1: one static rounded rect through `vello_hybrid`,
+//! §14 build-order steps 1 and 2: a rounded rect through `vello_hybrid`,
 //! presented into a real window opened via `engine-platform` (a
 //! dev-dependency of this example only -- `engine-render` the library
-//! never depends on `winit`). No layout, no text, no Python.
+//! never depends on `winit`), animating its color and opacity via
+//! `engine-core`'s `Animated<T>`. No layout, no text, no Python.
 //!
-//! `engine-render`'s own headless test (`src/lib.rs`) already proves the
-//! rendering math is correct via pixel readback; this example proves the
-//! other half -- that the same pipeline actually presents to a real
-//! `wgpu::Surface` backed by a real OS window.
+//! `engine-render`'s own headless tests (`src/lib.rs`,
+//! `tests/animated_rect.rs`) already prove the rendering and animation
+//! math are correct via pixel readback; this test proves the remaining
+//! half -- that the same pipeline actually presents to a real
+//! `wgpu::Surface` backed by a real OS window, frame after frame, not
+//! just once.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
+use engine_core::{Animated, MotionCurve};
 use engine_platform::{WindowConfig, run_windowed};
-use engine_render::{FrameRenderer, build_rect_scene};
+use engine_render::{FrameRenderer, INITIAL_COLOR, build_rect_scene};
+use peniko::Color;
 use vello_hybrid::{RenderSize, RenderTargetConfig};
 use winit::window::Window;
+
+/// MD3-ish teal (#03DAC6) -- deliberately distinct from `INITIAL_COLOR`
+/// so the animation is visually obvious, not a near-identical shade.
+const TARGET_COLOR: Color = Color::from_rgba8(0x03, 0xDA, 0xC6, 0xFF);
 
 /// Everything that depends on having a real window, created lazily on
 /// the first frame callback (the window doesn't exist before `resumed`
@@ -25,6 +35,9 @@ struct GpuState {
     frame_renderer: FrameRenderer,
     width: u16,
     height: u16,
+    color: Animated<Color>,
+    opacity: Animated<f64>,
+    animation_start: Instant,
 }
 
 impl GpuState {
@@ -70,6 +83,28 @@ impl GpuState {
             },
         );
 
+        let animation_start = Instant::now();
+        let mut color = Animated::new(INITIAL_COLOR);
+        let mut opacity = Animated::new(1.0_f64);
+        // §14 step 2: "animate that rect's color/elevation" -- color and
+        // a separate f64 (standing in for elevation until real shadow
+        // rendering exists at step 8/§7.2) each animate once, over the
+        // window's ~1-second lifetime, so the 60 presented frames are
+        // visibly different from each other, not a static image
+        // repeated 60 times.
+        color.animate_to(
+            TARGET_COLOR,
+            Duration::from_secs(1),
+            MotionCurve::Linear,
+            animation_start,
+        );
+        opacity.animate_to(
+            0.4,
+            Duration::from_secs(1),
+            MotionCurve::Linear,
+            animation_start,
+        );
+
         Self {
             surface,
             device,
@@ -77,10 +112,17 @@ impl GpuState {
             frame_renderer,
             width,
             height,
+            color,
+            opacity,
+            animation_start,
         }
     }
 
     fn render_frame(&mut self) {
+        let now = Instant::now();
+        self.color.tick(now);
+        self.opacity.tick(now);
+
         let output = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
@@ -93,7 +135,12 @@ impl GpuState {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let scene = build_rect_scene(self.width, self.height);
+        let scene = build_rect_scene(
+            self.width,
+            self.height,
+            self.color.current,
+            self.opacity.current,
+        );
         let render_size = RenderSize {
             width: u32::from(self.width),
             height: u32::from(self.height),
@@ -120,7 +167,7 @@ fn main() {
 
     let result = run_windowed(
         WindowConfig {
-            title: "tre v2 -- §14 step 1 spike".to_string(),
+            title: "tre v2 -- §14 step 1/2 spike".to_string(),
             width: 400,
             height: 400,
             // Auto-exits after ~1 second at 60Hz -- headless-CI-safe by
@@ -135,20 +182,30 @@ fn main() {
             state.render_frame();
             if frame == 0 {
                 eprintln!(
-                    "engine-render §14 step 1: first frame presented, {}x{}",
-                    state.width, state.height
+                    "engine-render §14 step 1/2: first frame presented, {}x{}, animating {:.0}%->{:.0}% opacity",
+                    state.width, state.height, 100.0, 40.0
+                );
+            }
+            if frame == 59 {
+                // Confirms actual frame pacing was close to the intended
+                // ~1-second animation, not e.g. 60 frames dumped in 10ms
+                // because vsync/redraw scheduling was silently broken --
+                // `animation_start`'s whole reason to exist as a field.
+                eprintln!(
+                    "engine-render §14 step 2: animation ran for {:.2}s across 60 frames",
+                    state.animation_start.elapsed().as_secs_f64()
                 );
             }
         },
     );
 
     match result {
-        Ok(()) => eprintln!("engine-render §14 step 1: exited cleanly after 60 frames"),
+        Ok(()) => eprintln!("engine-render §14 step 1/2: exited cleanly after 60 frames"),
         Err(err) => {
             // No display reachable is expected, non-exceptional on some
             // CI runners -- exit 0, don't fail the suite (see GpuState::new's
             // matching handling of "no GPU available").
-            eprintln!("engine-render §14 step 1: no display available ({err}), exiting 0");
+            eprintln!("engine-render §14 step 1/2: no display available ({err}), exiting 0");
         }
     }
 }
