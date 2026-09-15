@@ -6,3 +6,5 @@ description = "Pure-Rust node tree, Animated<T> animation core, and the generic 
 
 [dependencies]
 peniko = "0.6.1"
+slotmap = "1.1.1"
+taffy = "0.14.0"

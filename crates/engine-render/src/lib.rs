@@ -4,13 +4,20 @@
 //! No layout, no text, no Python -- proving the render pipeline itself
 //! exists before anything is built on top of it (Design Principle 5).
 //!
-//! Depends on `engine-core` (to eventually walk `Node`/`PaintProperties`
-//! for painting, per §6) and, for windowing, on nothing at all -- this
-//! crate never touches `winit`. Window/surface creation is the caller's
-//! job (an example, or later `engine-py`); everything here is
-//! parameterized over a `wgpu::Device`/`Queue`/`TextureView` the caller
-//! already has, matching §4's crate-boundary rule.
+//! §14 build-order step 3 adds `build_tree_scene`: walks a real
+//! `engine_core::Tree` (after `compute_layout` has run) and paints every
+//! `NodeKind::Rect` at its taffy-computed absolute position, composing
+//! layout and paint for the first time -- `build_rect_scene` above still
+//! exists unchanged as step 1/2's single-static-rect proof.
+//!
+//! Depends on `engine-core` for `Tree`/`NodeId`/`NodeKind`/
+//! `PaintProperties` and, for windowing, on nothing at all -- this crate
+//! never touches `winit`. Window/surface creation is the caller's job
+//! (an example, or later `engine-py`); everything here is parameterized
+//! over a `wgpu::Device`/`Queue`/`TextureView` the caller already has,
+//! matching §4's crate-boundary rule.
 
+use engine_core::{NodeId, NodeKind, Tree};
 use peniko::Color;
 use peniko::kurbo::{Affine, RoundedRect, Shape};
 use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene, TextureBindings};
@@ -58,6 +65,44 @@ pub fn build_rect_scene(width: u16, height: u16, color: Color, opacity: f64) -> 
     scene.set_paint(with_opacity(color, opacity));
     scene.fill_path(&rect.to_path(0.1));
     scene
+}
+
+/// Walks `tree` from `root` (which must already have a computed layout --
+/// call `Tree::compute_layout` first) and paints every `NodeKind::Rect`
+/// at its absolute on-screen position: `taffy::Layout::location` is
+/// parent-relative, so this accumulates each ancestor's offset on the
+/// way down rather than trusting a child's location alone. `Container`
+/// nodes paint nothing themselves but still recurse into their children
+/// -- they exist purely to give `taffy` something to lay children out
+/// against.
+pub fn build_tree_scene(tree: &Tree, root: NodeId, width: u16, height: u16) -> Scene {
+    let mut scene = Scene::new(width, height);
+    scene.set_transform(Affine::IDENTITY);
+    paint_node(tree, root, 0.0, 0.0, &mut scene);
+    scene
+}
+
+fn paint_node(tree: &Tree, id: NodeId, offset_x: f64, offset_y: f64, scene: &mut Scene) {
+    let node = tree
+        .get(id)
+        .expect("build_tree_scene: NodeId not found in this Tree");
+    let layout = tree.layout(id);
+    let x = offset_x + f64::from(layout.location.x);
+    let y = offset_y + f64::from(layout.location.y);
+    let w = f64::from(layout.size.width);
+    let h = f64::from(layout.size.height);
+
+    if node.kind == NodeKind::Rect {
+        let radius = node.paint.corner_radius.current;
+        let color = with_opacity(node.paint.background.current, node.paint.opacity.current);
+        let rect = RoundedRect::new(x, y, x + w, y + h, radius);
+        scene.set_paint(color);
+        scene.fill_path(&rect.to_path(0.1));
+    }
+
+    for &child in &node.children {
+        paint_node(tree, child, x, y, scene);
+    }
 }
 
 /// Thin wrapper around `vello_hybrid::Renderer` -- it needs a mutable

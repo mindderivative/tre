@@ -31,6 +31,11 @@ wgpu = "29.0.3"
 [dev-dependencies]
 engine-platform = { path = "../engine-platform" }
 pollster = "1.0.1"
+# Test-only: builds taffy::Style values directly for the layout_tree/
+# rect_window tests. engine-render's own lib.rs never names taffy --
+# it only ever sees the already-computed taffy::Layout via engine-core's
+# Tree::layout, matching §4's crate-boundary rule.
+taffy = "0.14.0"
 winit = "0.30.13"
 
 # Lives in tests/, not examples/, matching TRE v1's own precedent

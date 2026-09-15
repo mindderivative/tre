@@ -10,16 +10,17 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 |---|---|---|
 | M1 — TRE v1 (archived reference) | `██████████` 100% | ✅ Archived `archived-2026-09-14` |
 | M2 — v2 Architecture (`ARCHITECTURE.md`) | `██████████` 100% | ✅ 16 sections + ADR-001, locked |
-| M3 — v2 Implementation | `██⬜⬜⬜⬜⬜⬜⬜⬜` 14% | 🚧 In progress — Phase 1 of 7 complete, Phase 2 underway (1 of 4 steps) |
+| M3 — v2 Implementation | `██▓⬜⬜⬜⬜⬜⬜⬜` 25% | 🚧 In progress — Phase 1 of 7 complete, Phase 2 underway (3 of 4 steps) |
 
-**Just closed:** M3 Phase 2 step 2 (§14 step 2 — `Animated<T>` + central tick) — §5's animation core (`Interpolate`, `Animated<T>`, `ActiveAnimation<T>`, `MotionCurve`) implemented in `engine-core` and validated standalone (6 unit tests), then proven to actually drive real rendering: a headless mid-flight pixel-readback test confirms `tick()`'s output is exactly what `engine-render` painted, and the real windowed demo now animates the rect's color and opacity live over 60 frames. A frame-pacing observation surfaced along the way (this environment doesn't vsync-throttle `ControlFlow::Poll`, so 60 frames complete in ~0.19s, not ~1s) — noted for §6's later frame-budget work, not a defect here. See `PLAN.md`/`LOG.md`.
+**Just closed:** M3 Phase 2 step 3 (§14 step 3 — `taffy` layout + the frame-time CI benchmark) — §5's `NodeId`/`Node`/`NodeKind`/`PaintProperties`/`Tree` implemented in `engine-core` (`NodeId` via `slotmap::new_key_type!`, costing no new dependency since `taffy` already pulls in the identical `slotmap` version transitively), wired to a real `taffy::TaffyTree` for layout. `engine-render::build_tree_scene` composes layout and paint for the first time, proven by a headless test sampling a pixel inside each of two differently-colored, differently-positioned children's own laid-out box. The frame-time CI benchmark §6 has promised since M2 is real: 300 animated nodes, median **0.58ms** in release — comfortably inside the 16.6ms/8.3ms target. A real finding surfaced and was handled, not just noted: the identical benchmark measures ~36ms in a debug build (60x slower, unoptimized codegen) — expected, not a regression, so the test is `#[ignore]`d from the default suite and run explicitly with `--release`. The windowed demo now shows 4 real laid-out rects animating independently. See `PLAN.md`/`LOG.md`.
 
-**Up next:** M3 Phase 2, step 3 — wiring `taffy` for layout of multiple static nodes, plus the frame-time CI benchmark (§6 target: 16.6ms/8.3ms). This is also where `Node`/`Tree` first appear, so `Animated<T>` moves from "ticked by hand" to living inside `PaintProperties`.
+**Up next:** M3 Phase 2, step 4 — wiring `parley` for text, a real typography spike (at least two type roles, one non-trivial string, per §14's own text). First step to touch text/font code at all.
 
 **Known gaps:**
 - ~~§14 didn't sequence `engine-spec`/YAML-view work.~~ **Fixed.**
 - ~~No `PLAN.md`/`LOG.md` existed yet for M3.~~ **Fixed** — both now exist, one per phase/step, archived to `planning/archive/` on completion, matching TRE v1's own convention exactly (verified directly against `archive/crates/tre-rhi-vulkan`, not assumed).
-- Everything in `ARCHITECTURE.md` citing "verify at implementation time" has started resolving, not finished: steps 1–2 confirmed `vello_hybrid`/`wgpu`/`kurbo`/`peniko`/`winit` are all real and compile together (with two real version-coupling fixes along the way). `accesskit`, `taffy`, `parley`, and `material-colors` remain unverified until their own build-order steps land.
+- Everything in `ARCHITECTURE.md` citing "verify at implementation time" has started resolving, not finished: steps 1–3 confirmed `vello_hybrid`/`wgpu`/`kurbo`/`peniko`/`winit`/`taffy`/`slotmap` are all real and compile together (with real version-coupling/perf findings along the way, each handled, not just logged). `accesskit`, `parley`, and `material-colors` remain unverified until their own build-order steps land.
+- `Tree::tick_all` is a naive whole-tree walk, not §5's "walks only the active animation set" scoped version — deliberately deferred; real dirty-tracking is §6's own design surface, revisit if the frame-time benchmark (now real and CI-enforced) ever shows it's the cost.
 
 ---
 
