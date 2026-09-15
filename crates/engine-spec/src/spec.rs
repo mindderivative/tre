@@ -47,6 +47,11 @@ pub struct WidgetSpec {
     /// struct shape, not step-5-specific.
     pub id: String,
     pub kind: NodeKindSpec,
+    /// This widget's own applied classes -- §16.3's `classes:` selector
+    /// matches against these, not against anything on the stylesheet
+    /// side alone.
+    #[serde(default)]
+    pub classes: Vec<String>,
     #[serde(default)]
     pub style: StyleSpec,
     /// Required (and validated as such at tree-build time, not here)

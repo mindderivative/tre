@@ -6,9 +6,11 @@
 //! one built imperatively.
 
 use engine_core::{NodeId, NodeKind, PaintProperties, TextState, Tree};
+use engine_md3::ColorScheme;
 use peniko::Color;
 use taffy::prelude::{Rect as TaffyRect, Size, Style, auto, length, zero};
 
+use crate::cascade::{Stylesheet, resolve_style};
 use crate::spec::{FlexDirectionSpec, NodeKindSpec, StyleSpec, WidgetSpec, parse_view};
 
 #[derive(Debug, thiserror::Error)]
@@ -31,24 +33,50 @@ pub enum SpecError {
 }
 
 /// Parses `yaml` and builds it into `tree`, returning the new subtree's
-/// root `NodeId`. The one-call convenience most callers want; `parse_view`
-/// and `build_tree` (below) stay separately callable for anyone who
-/// needs the intermediate `WidgetSpec` (a future reconciliation pass,
-/// §16.4, diffs two of these before touching the `Tree` at all).
+/// root `NodeId`. No stylesheet, no MD3 token resolution -- §14 step 5's
+/// original literal-values-only behavior, kept exactly as-is for its one
+/// existing caller (`engine-render/tests/spec_view.rs`). `load_styled_view`
+/// below is the step-12 entry point that resolves both.
 pub fn load_view(tree: &mut Tree, yaml: &str) -> Result<NodeId, SpecError> {
     let spec = parse_view(yaml)?;
-    build_tree(tree, &spec)
+    build_tree(tree, &spec, None, None)
+}
+
+/// The full §16.3 path: parses `yaml`, resolves every widget's style
+/// through `sheet`'s cascade, and resolves any MD3 token name
+/// (`background: primary`) against `scheme` -- falling back to literal
+/// color parsing (`background: "#6750A4"`) for anything that isn't a
+/// recognized role name.
+pub fn load_styled_view(
+    tree: &mut Tree,
+    yaml: &str,
+    sheet: &Stylesheet,
+    scheme: &ColorScheme,
+) -> Result<NodeId, SpecError> {
+    let spec = parse_view(yaml)?;
+    build_tree(tree, &spec, Some(sheet), Some(scheme))
 }
 
 /// Recursively inserts `spec` and its `children` into `tree`, wiring
-/// each parent/child edge with `Tree::add_child` as it goes.
-pub fn build_tree(tree: &mut Tree, spec: &WidgetSpec) -> Result<NodeId, SpecError> {
-    let layout_style = layout_style(&spec.style);
-    let (kind, paint) = node_kind_and_paint(spec)?;
+/// each parent/child edge with `Tree::add_child` as it goes. `sheet`/
+/// `scheme` are `None` for the plain literal-values-only path
+/// (`load_view`), `Some` for the full styled path (`load_styled_view`).
+pub fn build_tree(
+    tree: &mut Tree,
+    spec: &WidgetSpec,
+    sheet: Option<&Stylesheet>,
+    scheme: Option<&ColorScheme>,
+) -> Result<NodeId, SpecError> {
+    let resolved_style = match sheet {
+        Some(sheet) => resolve_style(spec, sheet),
+        None => spec.style.clone(),
+    };
+    let layout_style = layout_style(&resolved_style);
+    let (kind, paint) = node_kind_and_paint(spec, &resolved_style, scheme)?;
     let id = tree.insert(kind, layout_style, paint);
 
     for child_spec in &spec.children {
-        let child_id = build_tree(tree, child_spec)?;
+        let child_id = build_tree(tree, child_spec, sheet, scheme)?;
         tree.add_child(id, child_id);
     }
 
@@ -80,20 +108,24 @@ fn layout_style(style: &StyleSpec) -> Style {
     }
 }
 
-fn node_kind_and_paint(spec: &WidgetSpec) -> Result<(NodeKind, PaintProperties), SpecError> {
-    let corner_radius = f64::from(spec.style.corner_radius.unwrap_or(0.0));
-    let opacity = f64::from(spec.style.opacity.unwrap_or(1.0));
+fn node_kind_and_paint(
+    spec: &WidgetSpec,
+    style: &StyleSpec,
+    scheme: Option<&ColorScheme>,
+) -> Result<(NodeKind, PaintProperties), SpecError> {
+    let corner_radius = f64::from(style.corner_radius.unwrap_or(0.0));
+    let opacity = f64::from(style.opacity.unwrap_or(1.0));
 
     match &spec.kind {
         NodeKindSpec::Rect => {
-            let background = required_background(spec, "Rect")?;
+            let background = required_background(spec, style, scheme, "Rect")?;
             Ok((
                 NodeKind::Rect,
                 PaintProperties::new(background, corner_radius, 0.0, opacity),
             ))
         }
         NodeKindSpec::Text => {
-            let background = required_background(spec, "Text")?;
+            let background = required_background(spec, style, scheme, "Text")?;
             let text_spec = spec.text.as_ref().ok_or_else(|| SpecError::MissingField {
                 id: spec.id.clone(),
                 kind: "Text",
@@ -116,8 +148,8 @@ fn node_kind_and_paint(spec: &WidgetSpec) -> Result<(NodeKind, PaintProperties),
             // transparent rather than erroring, matching every
             // Container this codebase has built by hand so far
             // (rect_window.rs, layout_tree.rs).
-            let background = match &spec.style.background {
-                Some(raw) => parse_background(spec, raw)?,
+            let background = match &style.background {
+                Some(raw) => resolve_color(spec, raw, scheme)?,
                 None => Color::from_rgba8(0, 0, 0, 0),
             };
             Ok((
@@ -128,9 +160,14 @@ fn node_kind_and_paint(spec: &WidgetSpec) -> Result<(NodeKind, PaintProperties),
     }
 }
 
-fn required_background(spec: &WidgetSpec, kind: &'static str) -> Result<Color, SpecError> {
-    match &spec.style.background {
-        Some(raw) => parse_background(spec, raw),
+fn required_background(
+    spec: &WidgetSpec,
+    style: &StyleSpec,
+    scheme: Option<&ColorScheme>,
+    kind: &'static str,
+) -> Result<Color, SpecError> {
+    match &style.background {
+        Some(raw) => resolve_color(spec, raw, scheme),
         None => Err(SpecError::MissingField {
             id: spec.id.clone(),
             kind,
@@ -139,7 +176,25 @@ fn required_background(spec: &WidgetSpec, kind: &'static str) -> Result<Color, S
     }
 }
 
-fn parse_background(spec: &WidgetSpec, raw: &str) -> Result<Color, SpecError> {
+/// Resolves one `style.background`-shaped string, per §16.1: `engine-md3`
+/// resolves MD3 token names (`background: surface`) against the active
+/// color scheme (§7.1); anything that isn't a recognized role name
+/// falls back to literal color parsing (`background: "#6750A4"`) --
+/// tried in that order so a token name always wins over a same-named
+/// coincidental CSS color, and a literal color still works with no
+/// scheme at all (§14 step 5's original path, still exercised by
+/// `load_view`).
+fn resolve_color(
+    spec: &WidgetSpec,
+    raw: &str,
+    scheme: Option<&ColorScheme>,
+) -> Result<Color, SpecError> {
+    if let Some(scheme) = scheme
+        && let Some(color) = scheme.role(raw)
+    {
+        return Ok(color);
+    }
+
     peniko::color::parse_color(raw)
         .map(|dynamic| dynamic.to_alpha_color::<peniko::color::Srgb>())
         .map_err(|source| SpecError::InvalidColor {
@@ -251,5 +306,65 @@ kind: Container
         let root = load_view(&mut tree, yaml).expect("a bare Container must build");
         let node = tree.get(root).unwrap();
         assert_eq!(node.paint.background.current, Color::from_rgba8(0, 0, 0, 0));
+    }
+
+    /// The actual §16.3 end-to-end claim: an MD3 token name in a real
+    /// `view.yaml`, resolved through a real `DynamicTheme`, must produce
+    /// the exact same color that theme's own `ColorScheme.primary` field
+    /// holds -- not merely "some color came out."
+    #[test]
+    fn load_styled_view_resolves_an_md3_token_name_to_the_real_scheme_color() {
+        let theme = engine_md3::DynamicTheme::from_seed(Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF));
+        let sheet = crate::cascade::parse_stylesheet("styles: []\n").unwrap();
+        let yaml = r#"
+id: swatch
+kind: Rect
+style: {width: 10, height: 10, background: primary}
+"#;
+        let mut tree = Tree::new();
+        let root = load_styled_view(&mut tree, yaml, &sheet, &theme.light)
+            .expect("a token-named background must resolve against the given scheme");
+        let node = tree.get(root).unwrap();
+        assert_eq!(node.paint.background.current, theme.light.primary);
+    }
+
+    /// A literal hex color must still work even when a real scheme is
+    /// active -- token resolution is tried first (per `resolve_color`'s
+    /// own doc comment) but must fall through cleanly, not treat every
+    /// styled load as token-only.
+    #[test]
+    fn load_styled_view_still_accepts_literal_colors_alongside_a_scheme() {
+        let theme = engine_md3::DynamicTheme::from_seed(Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF));
+        let sheet = crate::cascade::parse_stylesheet("styles: []\n").unwrap();
+        let yaml = r##"
+id: swatch
+kind: Rect
+style: {width: 10, height: 10, background: "#112233"}
+"##;
+        let mut tree = Tree::new();
+        let root = load_styled_view(&mut tree, yaml, &sheet, &theme.light)
+            .expect("a literal color must still parse with a scheme active");
+        let node = tree.get(root).unwrap();
+        assert_eq!(
+            node.paint.background.current,
+            Color::from_rgba8(0x11, 0x22, 0x33, 0xFF)
+        );
+    }
+
+    /// Without a scheme at all (`load_view`), a token name is just an
+    /// arbitrary string that isn't a valid CSS color -- it must fail
+    /// loudly, the same "fail at the boundary" discipline as every other
+    /// `InvalidColor` case, not silently resolve to black or transparent.
+    #[test]
+    fn md3_token_name_without_a_scheme_is_a_clear_error_not_a_silent_default() {
+        let yaml = r#"
+id: swatch
+kind: Rect
+style: {width: 10, height: 10, background: primary}
+"#;
+        let mut tree = Tree::new();
+        let err = load_view(&mut tree, yaml)
+            .expect_err("a token name with no scheme to resolve it against must fail");
+        assert!(matches!(err, SpecError::InvalidColor { .. }));
     }
 }

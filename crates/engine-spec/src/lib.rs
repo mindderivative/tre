@@ -8,7 +8,9 @@
 //! actually depends on it working.
 
 mod build;
+mod cascade;
 mod spec;
 
-pub use build::{SpecError, build_tree, load_view};
+pub use build::{SpecError, build_tree, load_styled_view, load_view};
+pub use cascade::{StyleRule, Stylesheet, parse_stylesheet, resolve_style};
 pub use spec::{FlexDirectionSpec, NodeKindSpec, StyleSpec, TextSpec, WidgetSpec, parse_view};

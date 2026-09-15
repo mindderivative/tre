@@ -108,6 +108,70 @@ pub struct ColorScheme {
     pub scrim: Color,
 }
 
+impl ColorScheme {
+    /// Looks up a role by its MD3 token name (e.g. `"primary"`,
+    /// `"on_primary_container"`) -- §16.1's own stated reason
+    /// `engine-spec` depends on this crate: "to resolve MD3 token names
+    /// like `background: surface` against the active color scheme."
+    /// Centralized here, not duplicated as a second field list in
+    /// `engine-spec`, since this crate is the one that owns what a
+    /// valid role name is.
+    pub fn role(&self, name: &str) -> Option<Color> {
+        match name {
+            "primary" => Some(self.primary),
+            "on_primary" => Some(self.on_primary),
+            "primary_container" => Some(self.primary_container),
+            "on_primary_container" => Some(self.on_primary_container),
+            "inverse_primary" => Some(self.inverse_primary),
+            "primary_fixed" => Some(self.primary_fixed),
+            "primary_fixed_dim" => Some(self.primary_fixed_dim),
+            "on_primary_fixed" => Some(self.on_primary_fixed),
+            "on_primary_fixed_variant" => Some(self.on_primary_fixed_variant),
+            "secondary" => Some(self.secondary),
+            "on_secondary" => Some(self.on_secondary),
+            "secondary_container" => Some(self.secondary_container),
+            "on_secondary_container" => Some(self.on_secondary_container),
+            "secondary_fixed" => Some(self.secondary_fixed),
+            "secondary_fixed_dim" => Some(self.secondary_fixed_dim),
+            "on_secondary_fixed" => Some(self.on_secondary_fixed),
+            "on_secondary_fixed_variant" => Some(self.on_secondary_fixed_variant),
+            "tertiary" => Some(self.tertiary),
+            "on_tertiary" => Some(self.on_tertiary),
+            "tertiary_container" => Some(self.tertiary_container),
+            "on_tertiary_container" => Some(self.on_tertiary_container),
+            "tertiary_fixed" => Some(self.tertiary_fixed),
+            "tertiary_fixed_dim" => Some(self.tertiary_fixed_dim),
+            "on_tertiary_fixed" => Some(self.on_tertiary_fixed),
+            "on_tertiary_fixed_variant" => Some(self.on_tertiary_fixed_variant),
+            "error" => Some(self.error),
+            "on_error" => Some(self.on_error),
+            "error_container" => Some(self.error_container),
+            "on_error_container" => Some(self.on_error_container),
+            "surface_dim" => Some(self.surface_dim),
+            "surface" => Some(self.surface),
+            "surface_tint" => Some(self.surface_tint),
+            "surface_bright" => Some(self.surface_bright),
+            "surface_container_lowest" => Some(self.surface_container_lowest),
+            "surface_container_low" => Some(self.surface_container_low),
+            "surface_container" => Some(self.surface_container),
+            "surface_container_high" => Some(self.surface_container_high),
+            "surface_container_highest" => Some(self.surface_container_highest),
+            "on_surface" => Some(self.on_surface),
+            "on_surface_variant" => Some(self.on_surface_variant),
+            "outline" => Some(self.outline),
+            "outline_variant" => Some(self.outline_variant),
+            "inverse_surface" => Some(self.inverse_surface),
+            "inverse_on_surface" => Some(self.inverse_on_surface),
+            "surface_variant" => Some(self.surface_variant),
+            "background" => Some(self.background),
+            "on_background" => Some(self.on_background),
+            "shadow" => Some(self.shadow),
+            "scrim" => Some(self.scrim),
+            _ => None,
+        }
+    }
+}
+
 impl From<&material_colors::scheme::Scheme> for ColorScheme {
     fn from(scheme: &material_colors::scheme::Scheme) -> Self {
         Self {
@@ -268,5 +332,24 @@ mod tests {
         // same scheme into both fields would still pass every equality
         // check above.
         assert_ne!(actual.light.surface, actual.dark.surface);
+    }
+
+    #[test]
+    fn role_resolves_known_names_and_rejects_unknown_ones() {
+        let theme = DynamicTheme::from_seed(Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF));
+        assert_eq!(theme.light.role("primary"), Some(theme.light.primary));
+        assert_eq!(
+            theme.light.role("on_primary_container"),
+            Some(theme.light.on_primary_container)
+        );
+        assert_eq!(
+            theme.light.role("surface_container_high"),
+            Some(theme.light.surface_container_high)
+        );
+        assert_eq!(
+            theme.light.role("not_a_real_role"),
+            None,
+            "an unrecognized token name must not silently resolve to some color"
+        );
     }
 }
