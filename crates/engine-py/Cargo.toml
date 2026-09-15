@@ -4,9 +4,36 @@ version.workspace = true
 edition.workspace = true
 description = "PyO3 bindings -- the only crate depending on pyo3, and the only stability contract for framework users. See ARCHITECTURE.md §4, §8."
 
+[lib]
+# "rlib" (Cargo's default, needed for `cargo test -p engine-py` and for
+# other crates in this workspace to depend on it as a normal Rust lib)
+# plus "cdylib" (what maturin actually loads as the Python extension
+# module) -- without "rlib" here, `cargo test`/`cargo build --workspace`
+# would fail to link this crate as an ordinary dependency.
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 engine-core = { path = "../engine-core" }
 engine-md3 = { path = "../engine-md3" }
 engine-render = { path = "../engine-render" }
 engine-platform = { path = "../engine-platform" }
 engine-spec = { path = "../engine-spec" }
+# "extension-module" is deliberately NOT enabled here -- see
+# pyproject.toml's own comment. `cargo build`/`cargo test` build this
+# crate without it (linkable standalone); maturin's actual wheel build
+# passes `--features pyo3/extension-module` itself.
+pyo3 = { version = "0.29.2", features = ["macros"] }
+thiserror = "2.0.20"
+# `App::run` builds and drives its own GPU/window state directly (§8's
+# PyApp.run(), Design Principle 1's one blocking call) -- Rust doesn't
+# re-export a dependency's own dependencies, so every crate named here
+# is already a real dependency of engine-core/engine-render/
+# engine-platform too; pinned at the exact same versions (confirmed via
+# `grep -c 'name = "X"' Cargo.lock` staying at 1 for each after adding
+# these -- no Linebender-family drift, §3).
+peniko = "0.6.1"
+taffy = "0.14.0"
+wgpu = "29.0.3"
+pollster = "1.0.1"
+winit = "0.30.13"
+vello_hybrid = { version = "0.2.0", features = ["wgpu", "wgpu_default", "text"] }

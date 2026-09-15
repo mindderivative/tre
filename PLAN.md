@@ -1,45 +1,47 @@
-# Plan: M3 Phase 3 — `engine-spec` Minimal (§14 step 5)
+# Plan: M3 Phase 4, Step 6 — Wire `engine-py` Minimal (§14 step 6)
 
-Corresponds to `BUILD_TRACKER.md` M3 Phase 3, the sole step of that phase.
+Corresponds to `BUILD_TRACKER.md` M3 Phase 4, step 6 of 2 (steps 6-7).
 
 ## Goal
 
-Per §14 step 5: "**`engine-spec`, minimal:** parse one static `view.yaml`
-(no `bindings:`/`handlers:` yet) — `WidgetSpec` → `NodeKind` mapping,
-`deny_unknown_fields` validation — and build a `Tree` from it, rendered
-through the pipeline steps 1–4 already proved. Zero `pyo3` involvement at
-this point; this de-risks parsing/validation/mapping in isolation, per
-Design Principle 5, before anything depends on it working."
+Per §14 step 6: "Wire `engine-py`: expose node creation + one property
+setter to Python; drive step 2's animation from a `.py` script."
 
 ## Scope
 
 In scope:
-- `engine-spec::spec`: `WidgetSpec`/`NodeKindSpec`/`TextSpec`/
-  `FlexDirectionSpec`/`StyleSpec`, matching §16.1's `WidgetSpec` sketch
-  minus `bindings`/`handlers` (deferred to step 12, needs
-  `BindingResolver`/`engine-py`). `StyleSpec` is literal-value-only
-  (`background: "#6750A4"`), not MD3 token names (needs step 11's
-  `material-colors`). `deny_unknown_fields` throughout.
-- `engine-spec::build`: `WidgetSpec` → `engine_core::Tree`, via
-  `taffy::Style`/`NodeKind`/`PaintProperties` construction.
-  `background` required (a clear `SpecError`, not a silent default) for
-  `Rect`/`Text`; optional (defaults transparent) for `Container`.
-- Unit tests: parsing correctness, `deny_unknown_fields` rejecting a
-  typo'd key, a deterministic-layout build test (exact taffy positions,
-  same discipline as step 3's own), `MissingField`/`InvalidColor` error
-  paths.
-- A real, standalone `view.yaml` fixture
-  (`crates/engine-spec/examples/view.yaml`) and an `engine-render`
-  integration test proving it renders through the real Phase 2 pipeline
-  (headless pixel-readback: the swatch's exact declared color, real ink
-  in the label's box).
+- `engine-py::App`: `new(width, height)`, `add_rect(background, width,
+  height) -> Node` (node creation), `run(max_frames=None)` (the one
+  blocking call, Design Principle 1 -- opens a real window, ticks/
+  lays-out/renders every frame via the exact same `engine-render`
+  pipeline every prior step's Rust demo already used).
+- `engine-py::Node`: `animate(property, to, duration_ms=0)` -- the one
+  property setter, two-level dispatch per §8's review note
+  (`PaintProperties` fields first: `opacity`/`corner_radius`/
+  `elevation`/`background`; `NodeKind` payload fields second, currently
+  always empty since `TextState` has no `Animated` fields yet).
+- `engine-py::EngineError` (§8's exact design, minus `CycleRejected` --
+  no `add_child` yet) + `From<EngineError> for PyErr`.
+- `pyproject.toml` + `python/tre/__init__.py`, matching §12's exact
+  sketch. A real `examples/animate_rect.py` driving step 2's animation
+  from Python, and `tests/test_engine_py.py` (pytest) covering node
+  creation, all four animatable properties, and both `EngineError` paths.
+- CI: per §13's "Decision recorded" (primary-OS CI starts at step 6,
+  not deferred) -- `maturin develop` + `import tre` + the pytest suite +
+  the real demo script, added to the existing CI job.
 
-Out of scope: `bindings:`/`handlers:`, `BindingResolver`, MD3 token
-resolution, the stylesheet cascade (§16.3), reconciliation/hot-reload
-(§16.4), `include:` composition (§16.6), any `pyo3` involvement.
+Out of scope (each additive at its own later build-order step): `PyWindow`
+(multi-window is step 14), `set_on_click`/`#[pyclass(gc)]` (nothing
+stores a Python callback yet), `add_child` (no tree mutation from Python
+beyond `add_rect` yet), `Python::detach` around the render loop (real
+finding: requires `Send`, `Rc<RefCell<Tree>>` is deliberately `!Send`,
+§9 -- revisit only if a second thread ever contends for the GIL),
+`BindingResolver`/MVVM (step 12), `accesskit` (step 7, next).
 
 ## Verification
 
-`cargo test --workspace` (all green), `cargo clippy --workspace
---all-targets -- -D warnings` and `cargo fmt --check` clean (matching
-CI's own exact commands, now that CI is real and verified).
+`cargo test --workspace`, `cargo clippy --workspace --all-targets --
+-D warnings`, `cargo fmt --check` all clean. `maturin develop` +
+`python -c "import tre"` + `pytest tests/` + `python
+examples/animate_rect.py` all succeed for real, locally, against the
+compiled extension -- not just "compiles."

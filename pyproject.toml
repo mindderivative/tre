@@ -1,0 +1,20 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "tre"
+version = "0.1.0"
+requires-python = ">=3.9"
+
+[tool.maturin]
+module-name = "tre._core"
+python-source = "python"
+manifest-path = "crates/engine-py/Cargo.toml"
+# maturin passes this straight to `cargo build --features ...` -- NOT a
+# default Cargo feature on engine-py's own pyo3 dependency (that would
+# break `cargo test -p engine-py`/`cargo build --workspace`, since an
+# extension-module build assumes it's dlopen'd by a live Python
+# interpreter, not linked standalone). See ARCHITECTURE.md §12's own
+# pyproject.toml sketch -- this mirrors it exactly.
+features = ["pyo3/extension-module"]

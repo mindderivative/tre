@@ -36,6 +36,15 @@
 # proof for that test's pipeline is the headless tests above; this test
 # only additionally proves "presents to a real OS window," which a
 # developer verifies locally (see its own module doc comment).
+#
+# Python smoke test (§14 step 6): ARCHITECTURE.md §13's own "Decision
+# recorded" -- primary-OS CI for the Python bindings starts as soon as
+# `engine-py` exists (this step), not deferred until the API stabilizes.
+# `maturin develop` + `import tre` + the real pytest suite +
+# `examples/animate_rect.py` (which opens a real window when one's
+# reachable, or exits 0 gracefully here via the same finding #261
+# convention `App.run()` now implements -- fixed in this same step after
+# it was first found raising instead of exiting cleanly).
 name: CI
 
 on:
@@ -102,3 +111,22 @@ jobs:
       - name: Frame-time benchmark (release, informational -- software-rendered, not real-GPU)
         continue-on-error: true
         run: cargo test -p engine-render --test frame_budget --release -- --ignored --nocapture
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install maturin + pytest
+        run: pip install "maturin>=1.7,<2.0" pytest
+
+      - name: Build and install the tre extension (maturin develop)
+        run: maturin develop
+
+      - name: Import smoke test
+        run: python -c "import tre; print(tre.App, tre.Node)"
+
+      - name: Python FFI test suite
+        run: python -m pytest tests/ -v
+
+      - name: Run the real .py animation script
+        run: python examples/animate_rect.py
