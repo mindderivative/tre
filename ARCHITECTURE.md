@@ -1,0 +1,462 @@
+# GUI Framework Architecture
+
+**Python-facing declarative/imperative GUI framework, Rust-native rendering backend.**
+
+Status: pre-implementation design document. This is the reference for engineering decisions made so far — update it as decisions change, don't let it drift from the actual code.
+
+---
+
+## 1. Vision & Scope
+
+- Application authors write **Python**. They never touch Rust, WGPU, or Vello directly.
+- The rendering, layout, animation, and accessibility engine is **Rust-native**, exposed through a thin, deliberately stable PyO3 boundary.
+- Target: desktop apps (Windows/macOS/Linux) with a full **Material Design 3** visual language — dynamic color, elevation shadows, state layers/ripple, shape morphing, and MD3 motion (tweening/easing).
+- **Explicitly out of scope: mobile (iOS/Android), web (WASM/browser), and bindings for any language other than Python.** `engine-py` (PyO3) is the only planned binding layer — there is no general C ABI crate (unlike TRE's `tre-ffi`, which existed for zero actual consumers) and none is planned. This is a deliberate scope narrowing versus TRE: every hour spent on binding-layer work goes toward the one binding that ships, not toward a hypothetical second consumer.
+- Explicitly **not** built on Masonry. Same underlying libraries Masonry itself uses (`vello_hybrid`, `taffy`, `parley`, `accesskit`), but a purpose-built retained tree designed around a uniform, centrally-ticked animation system — see [ADR-001](#adr-001-hand-rolled-vs-masonry) for the reasoning.
+
+### Locked Decisions
+
+A running log of resolved architectural questions, kept in one canonical place rather than scattered across sections — a direct application of `archive/LESSONS_LEARNED.md` §6 ("separate the audit trail from the live worklist"). Add a row here each time a genuinely open question gets settled, in whichever section we're discussing.
+
+| Decision | Choice | Why |
+|---|---|---|
+| Scope | Desktop only (Windows/macOS/Linux); no mobile, no web; Python is the only binding language | Deliberate narrowing vs. TRE — see the scope bullet above |
+| Python packaging | Per-version wheels, no `abi3` | Full PyO3 API access; matches TRE's own precedent. Accepted trade-off: a larger OS × Python-version CI/packaging matrix than `abi3` would need |
+| GPU backend selection | Pinned per OS, not `wgpu`'s automatic detection — `Backends::VULKAN` on Linux, `Backends::DX12` on Windows, `Backends::METAL` on macOS | Deterministic: the backend exercised in CI is the exact one every user gets on that OS, so a driver/validation issue found once stays found and fixed |
+| Platform rollout order | Primary OS first (**Linux**, confirmed), Windows/macOS CI added later | Faster early iteration. Accepted trade-off is the same pattern that left TRE's Python bindings uncovered for three-quarters of that project — mitigated below with a concrete trigger instead of an open-ended "later" |
+| Node data model | Common `PaintProperties` core + per-`NodeKind` payload structs, unified via a shared `AnimatedNodeState` trait (§5) | Avoids one ever-growing "god struct" as MD3's real component catalog (dozens of components, many with unique animatable state) gets built out |
+| App entry point | Single blocking `app.run()`; no non-blocking/embeddable mode planned (§2) | Matches Design Principle 1 exactly and every major desktop GUI toolkit (Qt, GTK, Tkinter) |
+| Linux display protocol | Both Wayland and X11 (`winit` `x11`+`wayland`+`wayland-dlopen` features), Wayland primary (§3) | Broadest real-world Linux desktop compatibility; matches TRE's own precedent |
+| MD3 icon pipeline | MD3's own icon set embedded as `kurbo::BezPath` data at build time; `usvg`+`vello_svg` reserved for user-supplied custom SVG only (§3) | Sidesteps `vello_svg`'s documented gaps for the framework's own default, most-used icon set |
+| System tray / native menus | Deferred past v1 — `tray-icon`/`muda` not included (§3) | Both require GTK on Linux with no portal alternative; v1 carries zero GTK dependency, avoiding the exact dependency class behind TRE's wheel-vendoring segfault |
+| `engine-core` / `engine-md3` coupling | Keep `engine-core` MD3-agnostic — it defines generic types (`MotionCurve`, a generic interpolation trait); `engine-md3` depends on it, not the reverse (§4) | Provably one-directional dependency graph, `engine-core` stays testable in total isolation, even though no second design language is currently planned |
+| Windowing crate | A dedicated `engine-platform` crate owns `winit`/`accesskit_winit`; `engine-render` depends only on `raw-window-handle` (§4) | Matches TRE's own `tre-platform` precedent; keeps `engine-render` renderable/testable with zero windowing dependency, and keeps accessibility's platform-adapter wiring out of the rendering crate |
+| Animation completion callbacks | Queue-drain: `tick()` pushes finished `CompletionHandle`s to a plain `Vec`; `engine-py` drains it once per frame and resolves against its own `PyObject` map (§5) | Keeps `tick()` a pure, reentrancy-free state-mutation pass; `ActiveAnimation<T>` stays a plain data struct with no `Send`-closure coupling to one downstream consumer |
+| `NodeKind` scope | Closed enum, one variant per MD3 component (§5) | Multi-design-language support is out of scope (§1) — a generic/extensible mechanism would be the same never-exercised abstraction LESSONS_LEARNED.md §1 warns against (TRE's stub RHI backends) |
+| `NodeId` identity | Generational index (slot index + generation), not a plain integer (§5) | A stale `PyNode` handle held past node removal (§8) fails a checked comparison instead of silently addressing the wrong node — the generational-index answer to TRE's finding #259 (a dangling raw handle across a GC-controlled boundary) |
+
+**Secondary-OS CI trigger (proposed, adjust as needed):** add minimal build + smoke-test CI for Windows and macOS no later than build-order step 6 (§13, wiring `accesskit`) — the first point where real platform-specific behavior (UIA vs. NSAccessibility vs. AT-SPI) becomes load-bearing, and a natural forcing function to confirm the deferred OSes still build before investing further past it.
+
+---
+
+## 2. Design Principles
+
+1. **Rust owns every frame. Python owns intent.** Python never runs during layout, paint, or animation interpolation. It triggers state changes and registers callbacks; Rust computes and renders. Concretely: the framework's Python entry point is a single blocking call (`app.run()`) that hands control to `winit`'s event loop and does not return until the app exits — the only Python code that runs after that point is inside a registered callback. No non-blocking/embeddable mode is planned (§1 Locked Decisions).
+2. **One node type, uniformly animatable.** No per-widget-type animation boilerplate. Every animatable property anywhere in the tree — universal (`PaintProperties`, common to every node) or component-specific (a Slider's thumb position, a Checkbox's check-progress) — is the same `Animated<T>` primitive, ticked by one central system. This is a *mechanism* guarantee, not a single-struct guarantee: component-specific state lives in per-`NodeKind` payloads (§5), not bolted onto one ever-growing shared struct (§1 Locked Decisions).
+3. **The PyO3 boundary is the only stability contract.** Internal crates (`engine-core`, `engine-render`, `engine-md3`) can churn freely. `engine-py`'s public surface is what you version and document for framework users.
+4. **No dependency leaks across the boundary.** Vello, kurbo, peniko, taffy, accesskit types never appear in Python-facing signatures. Python sees Python types.
+5. **De-risk the unknowns before building on them.** Vello's shadow/blur support and shape morphing have no prior art in this exact combination — spike them standalone before writing MD3 components against them.
+
+---
+
+## 3. Technology Stack
+
+| Layer | Crate | Role |
+|---|---|---|
+| Windowing / input / IME | `winit` (`x11` + `wayland` + `wayland-dlopen` features) | Event loop (owns the main thread), window/surface handles — both Linux display protocols supported, Wayland primary (§1 Locked Decisions) |
+| GPU | `wgpu` | Device/surface management |
+| 2D scene + rasterization | `vello_hybrid` | CPU preprocess, GPU raster of paths/gradients/images/text/shadows |
+| 2D geometry | `kurbo` | `BezPath`, `Affine`, `Point`, `Rect` — Vello's native geometry vocabulary |
+| Brush / color / blend | `peniko` | `Color`, `Brush`, `BlendMode`, `Fill` |
+| Text shaping/layout | `parley` | Shaping, line-breaking, BiDi → glyph runs into a `Scene` |
+| Layout | `taffy` | Flexbox/Grid; leaf sizing for text comes from Parley |
+| Accessibility | `accesskit` + `accesskit_winit` | Cross-platform a11y tree (UIA / NSAccessibility / AT-SPI) |
+| MD3 icon set | embedded `kurbo::BezPath` data, generated at build time | Material Symbols pre-converted from source SVG once, at build time (a small internal tool, itself likely using `usvg` — just never at runtime); sidesteps `vello_svg`'s gaps entirely for the framework's own default icons (§1 Locked Decisions) |
+| Custom/user SVG import | `usvg` + `vello_svg` | SVG → `Scene`, for user-supplied assets only, never MD3's own icon set (gaps: text, clipping, masking, filters, patterns — verify per-asset; now scoped to this optional path, not the default experience) |
+| Raster assets | `image` | PNG/JPEG/etc. decode |
+| MD3 dynamic color | `material-colors` (or equivalent MCU port — compare current maintenance state before pinning) | HCT color space, tonal palettes, scheme generation from a seed color |
+| Clipboard | `arboard` | No GTK dependency on Linux |
+| File dialogs | `rfd` (`xdg-portal` feature, not the GTK backend) | Matches TRE's own precedent — avoids GTK on Linux entirely |
+| Python bindings | `pyo3` | Rust ⇄ Python FFI |
+| Build/packaging | `maturin` | Builds the extension module as an installable wheel |
+| Async bridge (optional) | `pyo3-async-runtimes` | Only if the Python framework needs asyncio-native app code; keep conceptually separate from the winit/render loop |
+| Errors | `thiserror` | Typed errors at crate boundaries |
+| Logging | `tracing` | Structured logs, correlate with frame timing |
+
+**Deferred past v1:** system tray icons and native application menus (`tray-icon`, `muda`) — both need GTK on Linux with no portal-based alternative, and v1 deliberately carries zero GTK dependency (§1 Locked Decisions). Revisit once the packaging story is proven end-to-end.
+
+> **Review note (from the TRE archive):** `vello_hybrid`, `parley`, `kurbo`, and `peniko` are the same young, co-evolving Linebender project, not four independently-versioned dependencies — a `vello_hybrid` API bump is likely to force compatible bumps in the others at the same time (or vice versa). Pin this family as one set with one shared compatibility note, not four separate per-crate pins, or you'll hit a period where no combination of individually-latest versions actually compiles together.
+>
+> **Review note (from the TRE archive):** `peniko::BlendMode` is likely a ready-made, portable answer to the exact problem TRE spent real effort solving via a Vulkan extension (`VK_KHR_dynamic_rendering_local_read`) and then debugging real validation-layer false positives around for multiple review cycles. Worth confirming early that it covers every MD3 blend mode you need (Multiply/Screen/Overlay/etc.) — if it does, this is a place where the new stack is strictly better than the old one, not just different.
+
+---
+
+## 4. System Architecture
+
+Every edge below means the same thing — **compile-time "depends on."** Runtime call/data direction (which is not always the same as the dependency arrow — see the `AppHandler` note below) is spelled out in prose, not folded into the diagram; conflating the two was exactly what made the previous version of this diagram contradict §5's own code (it drew `engine-core → engine-md3` while `engine-core`'s `ActiveAnimation<T>` held an `engine-md3` type, an actual dependency in the opposite direction).
+
+```mermaid
+graph TD
+    subgraph Python["Python Layer — App Authors"]
+        A[App code]
+    end
+    subgraph FFI["engine-py — the only stability contract"]
+        C[PyO3 bindings]
+    end
+    subgraph Core["engine-core — pure Rust, no pyo3, MD3-agnostic"]
+        D[Node Tree + Animated&lt;T&gt; + central tick]
+        E[Taffy Layout]
+        F[Parley Text Shaping]
+        N[Generic InputEvent enum + AppHandler trait]
+    end
+    subgraph MD3["engine-md3 — MD3 theming"]
+        G[Color scheme / shadow &amp; ripple helpers / shape morph / motion-curve presets]
+    end
+    subgraph Render["engine-render — rendering only, no winit/engine-platform dependency"]
+        H[Vello Scene Builder]
+        I[vello_hybrid + wgpu]
+    end
+    subgraph Platform["engine-platform — windowing + accessibility adapter"]
+        K[winit EventLoop / ApplicationHandler]
+        L[accesskit_winit adapter]
+    end
+    C --> D
+    C --> G
+    C --> H
+    C --> K
+    G --> D
+    K --> D
+    L --> K
+    D --> E
+    D --> F
+```
+
+**Crate boundary rule:** `engine-core` has zero knowledge of Python, PyO3, `winit`, or `engine-md3` — it's testable and reusable standalone, and defines the generic types (`MotionCurve`, a generic interpolation trait, the `InputEvent` enum, the `AppHandler` trait) that other crates build on. `engine-py` is the only crate that imports `pyo3`. `engine-md3` depends on `engine-core` (§1 Locked Decisions: "keep `engine-core` MD3-agnostic") to supply *named presets* of those generic types (e.g. `engine_md3::motion::STANDARD: engine_core::MotionCurve`) — it never feeds data back into `engine-core`, so there's no cycle. `engine-render` depends only on `raw-window-handle` (a tiny interface crate `winit::Window` already implements), not on `engine-platform` or `winit` directly, so it stays renderable/testable against any window-handle-shaped value with zero windowing dependency; its own dev-only examples (§13 step 1) pull in `engine-platform` purely to get a real window to render into. `engine-platform` owns the actual `winit::EventLoop`/`ApplicationHandler` and the `accesskit_winit` adapter — a dedicated crate, not folded into `engine-render`, matching TRE's own `tre-platform` precedent (§1 Locked Decisions).
+
+**Runtime event dispatch is a dependency *inversion*, not a direct call.** `engine-core` can't call into `engine-py` (that would require depending on it, which would create the exact cycle the crate boundary rule forbids). Instead, `engine-core` defines a generic `AppHandler` trait; `engine-platform`'s `run()` entry point is generic over it, translating raw `winit` events into `engine-core`'s own `InputEvent` enum and calling the trait's methods — `engine-platform` never knows a concrete implementation exists. `engine-py` is the crate that actually *implements* `AppHandler` (it alone has GIL access and the Python callback map) and calls `engine_platform::run(my_handler)` from inside its own `app.run()`. So the compile-time dependency graph reads `engine-py → engine-platform`, while the runtime call direction for input events reads `engine-platform → (the AppHandler impl engine-py supplied)` — the same shape of solution as the `on_complete` callback-queue mechanism already noted in §5.
+
+---
+
+## 5. Core Data Model
+
+Every visual property is wrapped in the same generic animation primitive — no per-widget-type animation code.
+
+```rust
+/// A generational index, not a plain integer. `index` names a slot that
+/// gets reused after removal; `generation` increments every time a slot is
+/// reused. A `PyNode` (§8) that outlives its node's removal fails a checked
+/// generation comparison on the next call — `None`/a `PyResult` error —
+/// instead of silently resolving to whatever now occupies that slot. This
+/// is the generational-index answer to TRE's finding #259 (a cloned raw
+/// device handle in `Drop` that dangled after real teardown, invisible on
+/// the real GPU driver, only caught by the software rasterizer): the same
+/// bug class, moved from GPU handles to tree nodes, made structurally
+/// unreachable instead of merely fixed after the fact (§1 Locked Decisions).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NodeId {
+    index: u32,
+    generation: u32,
+}
+
+pub struct Node {
+    pub id: NodeId,
+    pub parent: Option<NodeId>,
+    pub children: Vec<NodeId>,
+    pub kind: NodeKind,               // carries any component-specific animatable state
+    pub layout_style: taffy::Style,
+    pub paint: PaintProperties,       // universal — every node has these
+    pub access: AccessNodeData,       // feeds AccessKit TreeUpdate directly
+}
+
+pub struct PaintProperties {
+    pub background: Animated<peniko::Color>,
+    pub corner_radius: Animated<f64>,
+    pub elevation: Animated<f64>,     // drives fill_blurred_rounded_rect
+    pub opacity: Animated<f64>,
+    pub transform: Animated<kurbo::Affine>,
+    pub shape: Animated<ShapeKey>,    // morph target — see §7.4
+}
+
+/// Component-specific animatable state lives HERE, per kind, not bolted
+/// onto `PaintProperties` — §1 Locked Decisions ("common core + per-kind
+/// payload"). Variants with no component-specific animatable state beyond
+/// `PaintProperties` (Rect, Container, Canvas) carry no payload at all.
+pub enum NodeKind {
+    Rect,
+    Text(TextState),
+    Image(ImageState),
+    Container,
+    Canvas,
+    Slider(SliderState),
+    Checkbox(CheckboxState),
+    // ... one variant per MD3 component that needs its own animatable state
+}
+
+pub struct SliderState {
+    pub thumb_position: Animated<f64>,   // 0.0..=1.0 along the track
+}
+
+pub struct CheckboxState {
+    pub check_progress: Animated<f64>,   // 0.0..=1.0, drives the checkmark draw
+}
+
+/// Implemented by `PaintProperties` and by every `NodeKind` payload — the
+/// one interface the central tick needs, so the tick system itself never
+/// matches on a specific component. Returns `true` if any owned
+/// `Animated<T>` is still active (this node stays dirty for another frame).
+pub trait AnimatedNodeState {
+    fn tick(&mut self, now: Instant) -> bool;
+}
+
+/// Implemented by every type an `Animated<T>` can wrap — `f64`, `peniko::
+/// Color`, `kurbo::Affine`, `ShapeKey` (whose impl is the correspondence-
+/// then-lerp technique in §7.4). Ordinary types get ordinary linear
+/// interpolation; `ShapeKey` is the one non-trivial impl.
+pub trait Interpolate {
+    fn interpolate(&self, other: &Self, t: f64) -> Self;
+}
+
+pub struct Animated<T: Interpolate> {
+    pub current: T,
+    pub active: Option<ActiveAnimation<T>>,
+}
+
+pub struct ActiveAnimation<T> {
+    pub from: T,
+    pub to: T,
+    pub start: Instant,
+    pub duration: Duration,
+    pub curve: MotionCurve,           // MD3 named curve, see §7.5
+    pub on_complete: Option<CompletionHandle>, // opaque handle, drained by engine-py — never invoked directly, see below
+}
+```
+
+**Central tick, not per-widget:** one system runs once per frame, walks only the *active* animation set (not the whole tree), and for each dirty node calls `node.paint.tick(now)` and — if `NodeKind` carries a payload — `node.kind.tick(now)`, both through the same `AnimatedNodeState` trait, so the tick system itself never matches on a specific component. Either call advancing `current` and returning `true` keeps the node dirty for repaint next frame. This is what replaces per-widget animation boilerplate you'd get bolting a tweening system onto an existing widget-trait framework — the uniformity is in the *mechanism* (`Animated<T>` + `AnimatedNodeState`), not in one single struct shape.
+
+**NodeKind stays a closed, MD3-enumerating enum — a deliberate, accepted coupling, not an oversight.** Multi-design-language support is explicitly out of scope (§1); a generic/extensible alternative (a primitive-only core enum plus a named animatable-scalar bag that `engine-md3` interprets) would be exactly the kind of abstraction LESSONS_LEARNED.md §1 warns against — real, maintained machinery built to decouple from a second consumer (a second design language) that current scope says will never arrive, the same shape of mistake as TRE's `tre-rhi-dx12`/`tre-rhi-metal` stubs. "`engine-core` is MD3-agnostic" (§1 Locked Decisions) means it has no dependency on the `engine-md3` crate and no MD3 color/theming/motion logic — not that it may never name a component. Every new MD3 component still costs a `NodeKind` edit in `engine-core`; that's the accepted trade-off, stated here explicitly so it reads as a decision, not a contradiction of the crate-boundary rule in §4.
+
+**Completion delivery: queue-drain, not a direct callback.** The central tick never invokes anything — when an `ActiveAnimation` finishes, `tick()` only pushes its `CompletionHandle` onto a plain `Vec<CompletionHandle>` that the tick system owns and clears every frame. `engine-py` drains that vector once per frame, immediately after calling `tick()`, and resolves each handle against its own `HashMap<CompletionHandle, PyObject>` under the GIL. This keeps `tick()` a pure state-mutation pass with no reentrancy risk — nothing a Python callback does, including registering a brand-new animation, can happen while `tick()` is still mid-iteration over the active set — and keeps `ActiveAnimation<T>` a plain `Clone`/`Debug` data struct rather than one carrying a `Send`-closure bound purely to serve `engine-py`.
+
+> **Review note (from the TRE archive):** the completion-callback wiring wasn't specified in the original draft of this section. `engine-core` has zero pyo3 dependency by design, and the central tick — which is what actually notices an animation has finished — lives there. But `on_complete: Option<CompletionHandle>` needs to reach an actual Python callback, which only `engine-py` knows how to invoke. This is exactly the class of boundary-crossing plumbing that turned out subtle in TRE's own AccessKit `ActionHandler`/`ActivationHandler` wiring — worth designing explicitly now rather than discovering the gap mid-implementation.
+>
+> **Decision recorded:** queue-drain, as described above — chosen specifically to avoid the reentrancy hazard of invoking an arbitrary Python callback synchronously from inside the tick loop.
+
+---
+
+## 6. Per-Frame Pipeline
+
+```mermaid
+flowchart TD
+    EV[winit event: input / resize / animation-frame tick] --> APP[State mutation: PyO3 call or Rust-internal animation tick]
+    APP --> TREE[Dirty-subtree marking]
+    TREE --> LAYOUT[Taffy layout pass]
+    LAYOUT --> TEXT[Parley: shape + measure text nodes]
+    TEXT --> PAINT[Paint pass: build vello::Scene]
+    PAINT --> A11Y[AccessKit TreeUpdate, built from the same tree]
+    A11Y --> ADAPTER[accesskit_winit to platform adapter]
+    PAINT --> RENDER[vello_hybrid renders Scene]
+    RENDER --> PRESENT[wgpu surface present]
+```
+
+Accessibility tree construction happens in the same pass as paint, from the same node tree — not bolted on afterward.
+
+> **Review note (from the TRE archive):** no performance budget or re-layout scoping is stated anywhere in this document. "Dirty-subtree marking" is named as a pipeline step, but the diagram still shows one monolithic Taffy layout pass and one scene-build pass per frame. Concretely: does animating a single ripple's radius (a paint-only property, no layout change) trigger a full-tree Taffy layout every frame just because *some* node in the tree is dirty, or is the Taffy/paint work actually scoped to the dirty subtree? TRE's most expensive-to-retrofit engineering discipline was exactly this — a mechanically-enforced, near-zero-allocation, sub-millisecond frame budget — and it was far cheaper to have designed in from the start than to bolt on after the fact. Worth stating an explicit target (even a rough one) and deciding the dirty-subtree scoping mechanism before building past the spike stage.
+
+---
+
+## 7. Material Design 3 Subsystem (`engine-md3`)
+
+### 7.1 Dynamic color
+Use `material-colors` (or compare current MCU-port crates — several exist, verify maintenance status before pinning): HCT color space, tonal palette generation, scheme generation from a seed color. Generates a full light/dark scheme; `engine-md3` maps scheme roles (primary, on-primary, surface, etc.) onto `peniko::Color` values consumed by `PaintProperties`.
+
+### 7.2 Elevation / shadows
+`vello_hybrid`'s `Scene::fill_blurred_rounded_rect` (with `invert` for inset shadows) and `FilterPrimitive::DropShadowOnly` cover MD3 elevation shadows directly.
+
+**Flag:** early-stage per Vello's own release notes — no API stability guarantee yet, uneven feature parity across the `vello` / `vello_cpu` / `vello_hybrid` variants. **Spike this standalone** (render one elevated rounded rect through the exact pinned `vello_hybrid` version) before building MD3 components against it.
+
+### 7.3 State layers / ripple
+No new dependency. `Scene::push_layer(clip_path, ...)` with an `Animated<f64>` radius and `Animated<f64>` opacity, using the same central tick as everything else.
+
+### 7.4 Shape morphing
+No turnkey crate exists for this. Technique: equalize point/segment counts between the start and end `kurbo::BezPath`s (insert zero-length or subdivided segments into whichever has fewer), then linearly interpolate corresponding point positions per frame — the standard approach used by shape-morphing tools generally, ported onto `kurbo` primitives. Build as a small internal module in `engine-md3`. **No library to lean on here — budget real implementation time.**
+
+> **Review note (from the TRE archive):** "equalize count, then lerp" is only half the standard technique, and the missing half is the half that actually determines whether the morph looks good. Naive per-index interpolation assumes point *N* on the start path visually corresponds to point *N* on the end path — for two arbitrary shapes (a circle morphing into a star, a FAB morphing into an extended FAB with a different point count and rotation) that assumption is usually false, and the result is self-intersecting or wildly-rotating geometry mid-morph rather than a clean transition. Real shape-morphing tools add a correspondence/alignment search first: try several starting-point offsets (and possibly winding-direction flips) between the two point sets and pick the one that minimizes total point-travel distance, *then* lerp. Budget real implementation time for that search step specifically, not just the interpolation loop — it's the harder half.
+
+### 7.5 Motion tokens
+MD3 named easing curves (Standard, Emphasized, etc.) are cubic-bezier control points — evaluate with `kurbo`'s curve math or a direct implementation. Durations and curves live as a static data table in `engine-md3`, not as a separate tweening dependency.
+
+---
+
+## 8. Python/Rust FFI Boundary (`engine-py`)
+
+```rust
+#[pyclass]
+pub struct PyNode {
+    handle: NodeId,
+    tree: Arc<Mutex<Tree>>,
+}
+
+#[pymethods]
+impl PyNode {
+    fn animate(&self, py: Python, property: &str, to: PyObject, duration_ms: u64, curve: &str) -> PyResult<()> { /* registers an ActiveAnimation, returns immediately */ }
+    fn add_child(&self, child: &PyNode) -> PyResult<()> { /* tree mutation */ }
+    fn set_on_click(&self, callback: PyObject) -> PyResult<()> { /* stored, invoked via Python::with_gil on the matching winit pointer event */ }
+}
+```
+
+Design rules for this crate specifically:
+
+- Every setter/mutator is a direct, synchronous call — no async surface at this layer.
+- `animate()` registers work and returns; it never blocks waiting for the animation to finish.
+- Callback invocation (`on_click`, animation `on_complete`) is the *only* place `Python::with_gil` is taken from inside the render/event loop.
+- No Vello/kurbo/peniko/taffy/accesskit type crosses this boundary — translate to plain Python-friendly types (floats, strings, tuples, small dataclasses) at the edge.
+
+> **Review note (from the TRE archive):** `animate(property: &str, to: PyObject, ...)` needs an explicit type-dispatch design, not just a signature. Something has to map `property`'s string value to the correct `Animated<T>` field, downcast `to` into that field's concrete type, and — critically — surface a clear `PyTypeError`/`PyValueError` (e.g. "opacity expects a float, got a str") when a caller gets it wrong, rather than panicking across the FFI boundary or silently coercing. This is exactly the class of "caller-supplied input reaching native code" surface TRE's own security review process treated seriously (see the archive's finding on custom-shader input hardening) — worth designing the validation and error path deliberately here too.
+>
+> **Sharpened by the §1/§5 node-model decision:** the dispatch is now concretely two-level — try `property` against `PaintProperties`' own field names first (universal, always present), then against the node's `NodeKind` payload's field names if it has one (e.g. `"thumb_position"` only resolves on a `Slider`). A property name that matches neither should name the node's actual kind in the error ("Checkbox has no property 'thumb_position'"), not just say "unknown property."
+>
+> **Review note (from the TRE archive):** storing a long-lived `PyObject` callback in a Rust struct (`set_on_click`) is a risk class TRE never had to deal with — it never held Python callbacks across frames the way a click-handler system fundamentally requires. If a stored closure ever captures the widget it's attached to (a very natural pattern — "on_click: lambda: self.set_state(...)"), that's a reference cycle CPython's own GC can't see through unless the `#[pyclass]` participates in Python's cyclic GC via `__traverse__`/`__clear__` (PyO3's `#[pyclass(gc)]` support). Decide whether nodes holding callbacks need this now, rather than diagnosing a slow memory leak later.
+
+---
+
+## 9. Threading & Event Loop Model
+
+- **winit owns the main thread**, unconditionally. This is a hard platform requirement on macOS and the simplest correct choice everywhere else.
+- Python never drives the loop. It's reached only via `Python::with_gil` from inside a Rust-side callback invocation (pointer event → registered click handler; animation completion → registered callback).
+- `Python::allow_threads` wraps layout/paint/render so per-frame Rust work never serializes behind the GIL.
+- If the framework needs asyncio-native app code, bridge via `pyo3-async-runtimes` — keep this strictly separate from the render loop; asyncio drives app logic, winit/engine-core drives rendering, they meet only at the callback boundary.
+
+> **Review note (from the TRE archive):** worth stating explicitly rather than leaving implicit — since callbacks run on winit's main thread, a slow Python click handler (or `on_complete` handler) will visibly stall the whole render loop; there's no isolation between "app logic taking a while" and "frames drop." Most main-thread GUI toolkits (Tkinter, PyQt without explicit threading) accept exactly this constraint, so it's likely fine as a stated, deliberate limitation — just make it a stated one, so framework users know not to do slow work in a click handler, rather than an implicit trap they discover by hitting it.
+
+---
+
+## 10. Accessibility
+
+`accesskit` + `accesskit_winit`, wired directly (no Masonry intermediary). `AccessNodeData` on each `Node` is the source of truth; the `TreeUpdate` sent to AccessKit is built from the same tree walk as paint, every frame, not maintained as a separate parallel structure that can drift out of sync.
+
+> **Review note (from the TRE archive), first-hand:** `accesskit` had real breaking changes across the version range I worked through directly on TRE this session (0.17→0.25): `Tree` became a deprecated alias for `TreeInfo` and lost its `app_name` field entirely (the Linux adapter now derives the app name from the running executable instead); `TreeUpdate` gained a new required `tree_id` field; and the AT-SPI2 object-path encoding changed shape (a node's id moved from being the literal last path segment to being packed into the high 64 bits of a 128-bit value alongside a tree index) — none of which I could have predicted from documentation alone; each was found by reading the new version's actual source. Pin an exact `accesskit`/`accesskit_winit` version early, and re-verify the real current API against the pinned version's own source at implementation time rather than assuming this document's description still matches whatever version ends up resolved.
+
+---
+
+## 11. Project Structure
+
+```
+project-root/
+├── Cargo.toml                    # workspace root
+├── crates/
+│   ├── engine-core/               # Node tree, Animated<T>, layout/text wiring, InputEvent/AppHandler — no pyo3, no winit, no engine-md3
+│   ├── engine-md3/                  # MD3 theming: color scheme, shadow/ripple helpers, shape morph, motion-curve presets — depends on engine-core (§1, §4)
+│   ├── engine-render/              # vello_hybrid + wgpu + kurbo + peniko + parley wiring, scene building — no winit dependency (§4)
+│   ├── engine-platform/              # winit EventLoop/ApplicationHandler + accesskit_winit adapter — the only crate depending on winit (§1, §4)
+│   └── engine-py/                    # PyO3 bindings — the ONLY crate depending on pyo3
+│       └── src/lib.rs
+├── python/
+│   └── <package_name>/
+│       ├── __init__.py
+│       └── widgets/
+├── pyproject.toml                 # maturin build config
+└── examples/
+    └── standalone_render/          # cargo-run examples that bypass Python entirely — see §13
+```
+
+> **Review note (from the TRE archive):** design `standalone_render`'s examples as `cargo test`-runnable from day one, not as `cargo run --example` binaries you fold into CI later. TRE didn't do this until its very last finding (#261), after ~40 examples had accumulated with no `cargo test` coverage at all. One real constraint to design around: if any of these build a real `winit` event loop (likely, for anything exercising `engine-render` against a real window/surface), a plain `#[test]` function won't work — `winit` permits constructing an `EventLoop` only on a process's actual main thread and only once per process, ever, and `cargo test` runs each `#[test]` body on a worker thread. The fix that worked for TRE: register these as `[[test]]` targets in `Cargo.toml` with `harness = false`, so each gets its own process with a real main thread, and have each gracefully exit 0 (not panic) when no display/GPU is reachable, so `cargo test` still passes on a contributor machine with no display server.
+
+`pyproject.toml`:
+
+```toml
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "yourframework"
+requires-python = ">=3.9"
+
+[tool.maturin]
+module-name = "yourframework._core"
+python-source = "python"
+features = ["pyo3/extension-module"]
+```
+
+---
+
+## 12. Environment Setup
+
+### Prerequisites
+
+| Tool | Notes |
+|---|---|
+| Rust (via `rustup`) | Stable channel. Verify MSRV against current Vello/Parley requirements at setup time — several of these crates bump MSRV on minor releases, don't assume a fixed number stays current. |
+| Python | 3.9+ (match your framework's minimum supported version) |
+| `maturin` | `pip install maturin` |
+| Linux only | `libxkbcommon-dev`, Wayland or X11 dev headers, a Vulkan loader/driver |
+| macOS only | Xcode command line tools (Metal available by default) |
+| Windows only | MSVC build tools (DX12 available by default) |
+
+### Bootstrap
+
+```bash
+# 1. Rust toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup default stable
+
+# 2. Python environment
+python -m venv .venv
+source .venv/bin/activate        # .venv\Scripts\activate on Windows
+pip install maturin
+
+# 3. Build the extension and install it into the venv (editable/dev mode)
+maturin develop
+
+# 4. Smoke test
+python -c "import yourframework; print(yourframework.__version__)"
+```
+
+### Dev loop
+
+| Command | Use |
+|---|---|
+| `cargo check -p engine-core` | Fast iteration on tree/animation/layout logic — no Python rebuild |
+| `cargo test -p engine-core` | Unit tests for animation/layout, independent of FFI |
+| `cargo run -p engine-render --example smoke` | Standalone Rust rendering, bypasses Python entirely — first milestone, see §13 |
+| `maturin develop` | Rebuild + reinstall the Python extension after touching `engine-py` |
+
+### Packaging (later, not needed for early development)
+
+Cross-platform wheel builds: `maturin-action` in GitHub Actions, matrixed across Linux/macOS/Windows × supported Python versions. Don't set this up until the API surface has stabilized past the spike stage.
+
+> **Review note (from the TRE archive):** the "later" framing here is worth pushing back on for one specific piece — not the full packaging matrix, but a bare CI smoke test. TRE ran with **zero** CI coverage of its Python bindings for roughly three-quarters of the project's life; the first real run, added very late, found three genuine, previously-undetected bugs in a single pass (a packaging default silently duplicating system libraries — see the next note — a demo hardcoding a core count the CI runner didn't have, and a real GPU-resource teardown use-after-free). A minimal job — `maturin develop` succeeds, `python -c "import yourframework"` succeeds — costs almost nothing and should exist as soon as `engine-py` exists (build-order step 5), not deferred until the API stabilizes. Save the full cross-platform release matrix for later; don't save *all* CI for later.
+>
+> **Decision recorded (§1 Locked Decisions):** primary-OS CI starts at step 5 as recommended above. Windows/macOS CI is deliberately deferred rather than run from day one — but with a named trigger (no later than step 6) rather than an open-ended "later," specifically to avoid repeating the TRE pattern this note describes.
+>
+> **Review note (from the TRE archive), concrete and costly:** `maturin`'s default wheel build (`--auditwheel repair`, implied by not passing `--auditwheel skip`) **vendors system libraries into the wheel**, renaming their sonames in the process. TRE's real production bug: on the CI runner, the built wheel bundled its own copies of `libgdk-3`/`libgtk-3`/`libxkbcommon` alongside the system copies that `winit` (via `xkbcommon-dl`) and GTK dlopen at runtime — two copies of each in one process — which broke `winit`'s X11 keyboard-extension setup (`XKBNotFound`) and made GLib abort with a double type-registration segfault. It never showed up locally (a plain `maturin develop` doesn't repair the wheel) and took a full `LD_DEBUG=libs` trace under CI's exact conditions to diagnose. This project links the identical class of libraries on Linux (`winit`, `accesskit_winit`, `tray-icon`, `rfd`/`arboard`), so the same failure mode is live here. Decide deliberately: a manylinux-repaired portable wheel (test the *exact* built artifact end-to-end, not just `maturin develop`, before trusting it) or a system-linked wheel for known targets (`--auditwheel skip --compatibility linux`, correct on the CI/target distro, not portable to arbitrary end-user Linux systems). Don't let the default silently decide this for you.
+
+---
+
+## 13. Suggested Build Order
+
+De-risk unknowns before building on them, per Design Principle 5.
+
+1. `engine-render`: one static rounded rect through `vello_hybrid`, presented into a real window `engine-render`'s own example opens via `engine-platform` (a dev-dependency of the example only — `engine-render` the library still takes a generic window-handle parameter, per §4). No layout, no text, no Python.
+2. Add `Animated<T>` + the central tick; animate that rect's color/elevation. Validates the animation core in isolation.
+3. Wire `taffy` for layout of multiple static nodes.
+4. Wire `parley` for text — don't stop at one static label. Render a small sample of MD3's real type scale (at least two type roles, e.g. Body and Headline, at their real weights/sizes) plus one non-trivial string (mixed-direction or a non-Latin script, if the framework needs to support one) to get real signal on `parley`'s current line-breaking/BiDi/font-fallback behavior before component work depends on it. Treat this as a lightweight spike, not just plumbing verification — `parley` is the same young Linebender family already flagged as a risk in §3, and text is the single most universally-visible thing the framework renders.
+5. Wire `engine-py`: expose node creation + one property setter to Python; drive step 2's animation from a `.py` script.
+6. Wire `accesskit`: confirm one button is correctly exposed to a screen reader.
+7. **Spike:** MD3 shadow via `fill_blurred_rounded_rect`, standalone, against the exact pinned Vello version (§7.2 risk).
+8. Ripple/state-layer via `push_layer` + animated alpha.
+9. Shape morph module (§7.4) — the one component with no library to lean on.
+10. Wire `material-colors` for a full dynamic color theme.
+
+---
+
+## 14. Risk Register
+
+| Risk | Detail | Mitigation |
+|---|---|---|
+| Vello API churn | Pre-1.0; `vello`/`vello_cpu`/`vello_hybrid` split still settling, no stability guarantees | Pin exact versions; confine all Vello calls to `engine-render` |
+| Shadow/blur feature parity | `fill_blurred_rounded_rect`/`DropShadowOnly` early-stage, uneven across variants | Standalone spike (§13 step 7) before MD3 components depend on it |
+| `vello_svg` gaps | No text, clipping, masking, filters, patterns, group opacity | Pre-rasterize affected icons or patch upstream; don't assume full SVG fidelity |
+| Shape morphing | No existing crate | In-house module against `kurbo::BezPath`; budget real time |
+| GIL / event loop conflict | Two possible "loop owners" (winit, Python) | winit owns the main thread unconditionally; Python reached only via callback |
+| No prior art | No existing project pairs this exact combination (hand-rolled retained tree + Vello + PyO3, MD3-targeted) | De-risk via the spike order in §13 before deeper investment |
+| `maturin` wheel packaging *(from TRE archive)* | Default `--auditwheel repair` vendors system libraries (GTK, xkbcommon, etc.) into the wheel with mangled sonames — caused TRE a real duplicate-library segfault on Linux, undetectable via `maturin develop` alone | Decide manylinux-portable vs. system-linked wheels deliberately (§12); test the actual built wheel end-to-end under CI's real conditions before trusting it |
+| `accesskit` API churn *(from TRE archive)* | Real breaking changes hit directly this session (0.17→0.25): `Tree`→`TreeInfo` losing `app_name`, a new required `TreeUpdate.tree_id`, a changed AT-SPI object-path encoding | Pin an exact version early; re-verify the real current API against the pinned source at implementation time, not against this document |
+
+---
+
+## ADR-001: Hand-rolled vs. Masonry
+
+**Decision:** hand-roll the tree/animation substrate on top of `vello_hybrid` + `taffy` + `parley` + `accesskit` directly. Do not depend on Masonry.
+
+**Why:** Masonry's value is centralizing focus/pointer/lifecycle/accessibility plumbing across independently-implemented Rust widget types — valuable if using its defaults. Every MD3 component here needs fully custom paint code regardless of the tree substrate, so that value doesn't apply. What actually matters — a uniform, centrally-ticked animation system across every widget, driven cleanly from Python — doesn't fit Masonry's per-widget-trait model without retrofitting, and is architecturally cleaner to bake into a purpose-built node type from the start. Masonry's focus/pointer/AccessKit *patterns* are still worth studying; the crate itself isn't adopted.
