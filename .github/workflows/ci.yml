@@ -1,0 +1,94 @@
+# CI for tre v2. Linux-only for now, deliberately: ARCHITECTURE.md §6's
+# own "Secondary-OS CI trigger" names build-order step 7 (wiring
+# `accesskit`) as the point to add minimal Windows/macOS build+smoke
+# jobs, not before -- that's the first step where real platform-specific
+# behavior (UIA vs. NSAccessibility vs. AT-SPI) becomes load-bearing.
+# Revisit this file at that step, not sooner.
+#
+# Headless GPU note: `wgpu::Instance::request_adapter` needs *some*
+# adapter to succeed, and GitHub's hosted runners have no real GPU. The
+# `mesa-vulkan-drivers` package below installs Mesa's software Vulkan
+# implementation (lavapipe), which is enough for every headless
+# pixel-readback test in this workspace (`rect_scene_renders_expected_pixels`,
+# `animated_color_and_opacity_render_the_interpolated_value_mid_flight`,
+# `layout_tree`, `text_layout`) to get a real adapter and render
+# correctly -- just not at real-GPU speed. Those tests use `.expect(...)`
+# on `request_adapter`, not the graceful-exit pattern reserved for
+# actually-optional hardware/display absence (TRE v1 finding #261) --
+# if lavapipe is missing, they should fail loudly, not skip silently.
+#
+# `tests/rect_window.rs` (a real winit window) needs a real display and
+# doesn't get one here -- no Xvfb is installed. This is fine, not a gap:
+# `engine-platform::run_windowed` returns `Err` when `EventLoop::new()`
+# can't reach a display, and the test's own `main()` already treats that
+# as an expected, non-exceptional exit (the same finding #261 convention),
+# so it exits 0 having exercised none of its GPU/render code. The real
+# proof for that test's pipeline is the headless tests above; this test
+# only additionally proves "presents to a real OS window," which a
+# developer verifies locally (see its own module doc comment).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # winit's X11+Wayland build deps, plus Mesa's software Vulkan ICD
+      # for headless wgpu (see the file header comment above).
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev \
+            libxi-dev libxcursor-dev libxinerama-dev libudev-dev \
+            pkg-config mesa-vulkan-drivers libgl1-mesa-dri
+
+      # rustup on the runner reads rust-toolchain.toml automatically on
+      # the first `cargo`/`rustc` invocation below -- no explicit
+      # toolchain-install action needed. `rustup show` here just forces
+      # that install to happen up front, with its own visible log output,
+      # rather than silently inside the first real build step.
+      - name: Install pinned toolchain (rust-toolchain.toml)
+        run: rustup show
+
+      - name: Cache cargo registry and build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build workspace
+        run: cargo build --workspace --all-targets
+
+      - name: Test workspace
+        run: cargo test --workspace
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Format check
+        run: cargo fmt --check
+
+      # Informational, not blocking: the 16.6ms/8.3ms budget (§6 Locked
+      # Decisions) is a claim about real-GPU steady-state performance.
+      # lavapipe's software rasterizer is not that -- a runner-to-runner
+      # timing swing here reflects noisy-neighbor CPU scheduling on
+      # shared CI hardware, not a real regression, so this can't be a
+      # hard merge gate until real GPU runners are available. It still
+      # runs every push so a wildly-off number is visible, just not
+      # merge-blocking.
+      - name: Frame-time benchmark (release, informational -- software-rendered, not real-GPU)
+        continue-on-error: true
+        run: cargo test -p engine-render --test frame_budget --release -- --ignored --nocapture
