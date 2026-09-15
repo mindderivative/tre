@@ -10,11 +10,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 |---|---|---|
 | M1 — TRE v1 (archived reference) | `██████████` 100% | ✅ Archived `archived-2026-09-14` |
 | M2 — v2 Architecture (`ARCHITECTURE.md`) | `██████████` 100% | ✅ 16 sections + ADR-001, locked |
-| M3 — v2 Implementation | `███████⬜⬜⬜` 71% | 🚧 In progress — Phases 1-5 of 7 complete, Phase 6 next |
+| M3 — v2 Implementation | `████████⬜⬜` 86% | 🚧 In progress — Phases 1-6 of 7 complete, Phase 7 next (final phase) |
 
-**Just closed:** M3 Phase 5 step 11 (§14 step 11), closing Phase 5 — wired `material-colors` for a full dynamic color theme (§7.1). Treated the section's own acceptance gate ("must pass Material Color Utilities' own published reference test vectors... not just compiles and looks plausible") as a real gate: read `material-colors` 0.4.2's own source directly first (its HCT tests assert Google's own published CAM16 reference values for red/green/blue/black/white; its tonal-palette tests assert exact published hex values), then **actually ran its test suite** on the exact pinned version — `cargo test --lib` inside the vendored source, 129 passed, 0 failed — the real acceptance-gate evidence, not just source-reading. `engine_md3::color::ColorScheme` maps all 49 real MD3 scheme roles (including the newer `*_fixed`/`surface_container_*` tiers) onto `peniko::Color`; `DynamicTheme::from_seed` builds a real `ThemeBuilder` scheme. Tests isolate the `Argb`/`peniko::Color` channel conversions first (three distinct channel values, so a swap can't hide behind a round-trip using the same bug twice), then cross-check `from_seed`'s full output field-by-field against `material-colors`' own native output for the identical seed. Deliberately deferred live theme switching (`winit`'s `ThemeChanged` → `AppHandler`/`InputEvent`) — that dispatch still doesn't exist anywhere in this codebase, the same finding steps 7 and 9 already made. See `PLAN.md`/`LOG.md`.
+**Just closed:** M3 Phase 6 step 12 (§14 step 12), closing Phase 6 — `engine-spec`, full: the largest bundled build-order step so far (§16.2 + §16.3 + §16.4 together), split into three separately-committed, independently-verified stages. **Stage A** (§16.3): the stylesheet cascade (baseline → kind → classes → id → inline, per-field merge) plus `engine_md3::ColorScheme::role()` for MD3 token resolution — a real end-to-end test resolves `background: primary` to the exact color a live `DynamicTheme` holds. **Stage B** (§16.4): `Tree::remove` (real recursive subtree removal — `taffy`'s own `remove` only detaches one node, confirmed directly), `Reconciler`'s keyed diff matched by id+kind (patch in place / insert / remove), and a real `notify`-backed `ViewWatcher` verified against an actual file write — found and fixed a real ordering bug where the old id→NodeId mapping was overwritten before the stale node was removed, causing the cleanup pass to delete the wrong node. **Stage C** (§16.2): a hand-written recursive-descent parser for the whitelisted binding grammar, the `BindingResolver` trait (same inversion shape as `AppHandler`) tested with a fake resolver, `engine-py`'s real `PyViewModelResolver` and `View`/`_attach()`, and a real Python `Signal`/`ViewModel` with genuine dependency tracking — a binding re-evaluates automatically only when the exact `Signal` it read changes. Found and fixed a real gap along the way: `animate(..., duration_ms=0)` only registers a zero-duration animation, never eagerly applying it, so a `View` with no running render loop would never observably apply a binding — fixed by ticking immediately after registering. 7 new end-to-end pytest tests, all passing via a real `maturin develop` build. See `PLAN.md`/`LOG.md`.
 
-**Up next:** M3 Phase 6 (§14 step 12) — `engine-spec`, full: `BindingResolver` + the `ViewModel`/`View._attach()` model (§16.2), the stylesheet cascade with real MD3 token resolution (§16.3, now that step 11 gives it an actual color scheme to resolve `background: primary`-style tokens against), and reconciliation/hot-reload (§16.4).
+**Up next:** M3 Phase 7 (§14 steps 13-15), M3's final phase — overlay mechanism (one dropdown menu, §11.3), multi-window (a second `PyWindow`, §11.1), then docking (§11.4) + virtualization (§11.7), sequenced last since both build on the overlay mechanism and the accepted multi-window model.
 
 **Known gaps:**
 - ~~§14 didn't sequence `engine-spec`/YAML-view work.~~ **Fixed.**
@@ -78,7 +78,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ## Milestone 3 — v2 Implementation
 
-**Status: 🚧 In progress.** Phases 1–5 complete, Phase 6 next; this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
+**Status: 🚧 In progress.** Phases 1–6 complete, Phase 7 next (M3's final phase); this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
 
 ### Phase 1 — Workspace Scaffold ✅
 - Step: Cargo workspace + six crate skeletons (`engine-core`, `engine-md3`, `engine-render`, `engine-platform`, `engine-spec`, `engine-py`) per §12 — ✅
@@ -103,8 +103,8 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 - Step 10: Shape morph module — ✅ (`engine_md3::shape_morph::ShapeKey` implements `engine_core::Interpolate` — correspondence/alignment search plus equalize-then-lerp, matching §7.4's review note exactly; two tests prove a real square-rotated-to-a-different-corner and a reversed-winding square both morph to themselves, not a collapsed point — see `PLAN.md`/`LOG.md`)
 - Step 11: `material-colors` dynamic theme — ✅ (real §7.1 acceptance-gate evidence: the vendored crate's own test suite run directly, 129/129 passing; `engine_md3::color::{ColorScheme, DynamicTheme}` maps all 49 real MD3 roles onto `peniko::Color`, cross-checked field-by-field against `material-colors`' own native output — see `PLAN.md`/`LOG.md`)
 
-### Phase 6 — Declarative Authoring, full (§14 step 12) ⬜
-- Step 12: `BindingResolver` + `ViewModel`/`View._attach()` (§16.2), stylesheet cascade with real MD3 tokens (§16.3, now that Phase 5 gives it a real color scheme), reconciliation/hot-reload (§16.4) — ⬜
+### Phase 6 — Declarative Authoring, full (§14 step 12) ✅
+- Step 12: `BindingResolver` + `ViewModel`/`View._attach()` (§16.2), stylesheet cascade with real MD3 tokens (§16.3), reconciliation/hot-reload (§16.4) — ✅ (three stages, each independently verified: A — cascade + MD3 token resolution; B — `Tree::remove` + keyed-diff `Reconciler` + real `notify` file watcher; C — whitelisted binding-expression parser + `BindingResolver` + `engine-py`'s real `View`/`Signal`/`ViewModel` with genuine dependency tracking, proven end-to-end via 7 new pytest tests — see `PLAN.md`/`LOG.md`)
 
 ### Phase 7 — Desktop Shell Build-out (§14 steps 13–15) ⬜
 - Step 13: Overlay mechanism (one dropdown menu) — ⬜

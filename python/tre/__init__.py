@@ -1,12 +1,85 @@
 """tre v2 -- Python-facing declarative/imperative GUI framework.
 
-§14 step 6: this package currently re-exports only what `engine-py`'s
-`#[pymodule]` (`tre._core`) exposes -- `App`/`Node`, minimal node
-creation and one property setter (`Node.animate`). The rest of the
-public Python surface (a real `ViewModel`/`Bindable`/`bind()`, §8's own
-MVVM sketch) lands at step 12, once `BindingResolver` exists.
+§14 step 12 adds the real §16.2 MVVM surface: `View` (loads a
+`view.yaml`, `engine-py`'s Rust side), and `Signal`/`ViewModel` (pure
+Python -- no reason for these to be Rust, since they never touch the
+`Tree` directly; `View._attach` is the actual crossing point).
+
+`Signal` implements the "evaluate once inside a recording scope,
+subscribe to whatever was read" dependency tracking `View._attach`
+relies on: `Signal.get()` calls `_core._record_read(self)`, a small
+Rust-side function that -- only while a binding evaluation is actually
+in progress -- appends `self` to that evaluation's dependency list.
+Outside of an active `_attach()` call, `_record_read` is a no-op, so a
+plain `signal.get()` in ordinary Python code costs one cheap call and
+nothing else.
 """
 
-from tre._core import App, Node
+from tre._core import App, Node, View, _record_read
 
-__all__ = ["App", "Node"]
+
+class Signal:
+    """A minimal reactive value cell (§16.2). `.get()` records a
+    dependency when read during a binding's evaluation; `.set()`/
+    `.update()` notify every binding subscribed through that read.
+    """
+
+    def __init__(self, value):
+        self._value = value
+        self._subscribers = []
+
+    def get(self):
+        _record_read(self)
+        return self._value
+
+    def set(self, value):
+        self._value = value
+        self._notify()
+
+    def update(self, fn):
+        """Sets this signal's value to `fn(current_value)`, then
+        notifies -- the idiomatic "read, transform, write" update, e.g.
+        `clicks.update(lambda n: n + 1)`.
+        """
+        self._value = fn(self._value)
+        self._notify()
+
+    def _subscribe(self, callback):
+        """Called from Rust (`View._attach`) -- registers a binding's
+        own re-evaluation trigger. Not part of `Signal`'s own public
+        API; an app author never calls this directly.
+        """
+        self._subscribers.append(callback)
+
+    def _notify(self):
+        for callback in self._subscribers:
+            callback()
+
+
+class ViewModel:
+    """§16.2: "the ViewModel is what knows" who listens to a `View` and
+    who updates it. Constructing one wires every declared handler and
+    binding in the given `view` in a single call:
+
+        view = View("counter.yaml")
+
+        class CounterViewModel(ViewModel):
+            def __init__(self, view):
+                self.clicks = Signal(0)
+                super().__init__(view)  # must run after clicks exists --
+                                         # _attach evaluates every binding
+                                         # immediately, so it needs to see
+                                         # the real attributes it names.
+
+            def bump(self, event):
+                self.clicks.update(lambda n: n + 1)
+
+        vm = CounterViewModel(view)
+    """
+
+    def __init__(self, view):
+        self._view = view
+        view._attach(self)
+
+
+__all__ = ["App", "Node", "View", "Signal", "ViewModel"]

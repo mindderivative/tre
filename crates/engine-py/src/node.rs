@@ -36,7 +36,12 @@ impl Node {
     /// falls through to `UnknownProperty`, which is the honest, correct
     /// behavior today, not a gap.
     #[pyo3(signature = (property, to, duration_ms=0))]
-    fn animate(&self, property: &str, to: Bound<'_, PyAny>, duration_ms: u64) -> PyResult<()> {
+    pub(crate) fn animate(
+        &self,
+        property: &str,
+        to: Bound<'_, PyAny>,
+        duration_ms: u64,
+    ) -> PyResult<()> {
         let duration = Duration::from_millis(duration_ms);
         let now = Instant::now();
         let mut tree = self.tree.borrow_mut();
@@ -79,6 +84,30 @@ impl Node {
             }
         }
         Ok(())
+    }
+
+    /// Reads a numeric property's current (possibly still-animating)
+    /// value -- `animate()`'s missing counterpart, added at §14 step 12
+    /// once something (a binding's own applied value, §16.2) actually
+    /// needed to be observed from Python rather than only ever written.
+    /// `background` isn't included: it isn't a single `f64`, and
+    /// nothing yet needs to read it back.
+    fn get(&self, property: &str) -> PyResult<f64> {
+        let tree = self.tree.borrow();
+        let node = tree.get(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        let kind = kind_name(&node.kind);
+        match property {
+            "opacity" => Ok(node.paint.opacity.current),
+            "corner_radius" => Ok(node.paint.corner_radius.current),
+            "elevation" => Ok(node.paint.elevation.current),
+            _ => Err(EngineError::UnknownProperty {
+                kind,
+                property: property.to_string(),
+            }
+            .into()),
+        }
     }
 }
 

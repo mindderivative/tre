@@ -1,12 +1,15 @@
-//! `WidgetSpec` and friends (ARCHITECTURE.md §16.1), narrowed to §14 step
-//! 5's own stated scope: "parse one static `view.yaml` (no `bindings:`/
-//! `handlers:` yet)". The full §16.1 struct also carries `bindings:
-//! HashMap<String, Expression>` and `handlers: HashMap<String, String>`
-//! -- both omitted here entirely, not stubbed, since nothing resolves
-//! them without `BindingResolver` (§16.2), which doesn't exist until
-//! step 12 and needs `engine-py`'s GIL access this crate deliberately
-//! never has. Adding them back is a additive change to this struct, not
-//! a redesign, when step 12 actually needs them.
+//! `WidgetSpec` and friends (ARCHITECTURE.md §16.1). `bindings`/
+//! `handlers` were originally omitted entirely here at §14 step 5
+//! ("parse one static `view.yaml` (no `bindings:`/`handlers:` yet)"),
+//! since nothing could resolve them without `BindingResolver` (§16.2).
+//! Added back at step 12, additively, now that `engine-spec::binding`
+//! defines that trait and `engine-py`'s `View._attach()` implements the
+//! resolution side. `bindings`/`handlers` values stay raw `String`s
+//! here (a `"{{ ... }}"` expression, a plain method name) -- parsing a
+//! binding into an `Expression` happens lazily, in `engine-py`, only
+//! for the bindings a `View._attach()` call actually walks; a widget
+//! tree that's never attached to a `ViewModel` pays nothing beyond
+//! carrying the raw strings.
 //!
 //! `StyleSpec` is similarly narrower than §16.3's eventual stylesheet
 //! model: literal values only (`background: "#6750A4"`), not MD3 token
@@ -30,6 +33,8 @@
 //! reason to ask a view author to know it. The flatter `kind: Text` +
 //! `text: {...}` shape sidesteps the whole issue and reads more like
 //! the declarative UI YAML this section is modeled on (§16, pyCopper).
+
+use std::collections::HashMap;
 
 use serde::Deserialize;
 
@@ -58,6 +63,15 @@ pub struct WidgetSpec {
     /// when `kind: Text`; ignored for every other kind.
     #[serde(default)]
     pub text: Option<TextSpec>,
+    /// `property name -> "{{ expression }}"` (§16.2). Raw strings --
+    /// see this module's own doc comment for why parsing is deferred to
+    /// whoever actually attaches a `ViewModel`.
+    #[serde(default)]
+    pub bindings: HashMap<String, String>,
+    /// `event name -> ViewModel method name` (§16.2), e.g. `{on_click:
+    /// "bump"}`.
+    #[serde(default)]
+    pub handlers: HashMap<String, String>,
     #[serde(default)]
     pub children: Vec<WidgetSpec>,
 }

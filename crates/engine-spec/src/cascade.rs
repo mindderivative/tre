@@ -138,6 +138,8 @@ mod tests {
             classes: classes.iter().map(|s| s.to_string()).collect(),
             style: StyleSpec::default(),
             text: None,
+            bindings: std::collections::HashMap::new(),
+            handlers: std::collections::HashMap::new(),
             children: Vec::new(),
         }
     }

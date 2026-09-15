@@ -8,22 +8,28 @@
 //! for what's deliberately deferred and why.
 
 mod app;
+mod binding;
 mod error;
 mod node;
+mod view;
 
 use pyo3::prelude::*;
 
 pub use app::App;
 pub use error::EngineError;
 pub use node::Node;
+pub use view::View;
 
 /// The compiled extension module Python actually imports, as
 /// `tre._core` (`pyproject.toml`'s `module-name`) -- `python/tre/
-/// __init__.py` re-exports `App`/`Node` from here as the public `tre`
-/// package surface.
+/// __init__.py` re-exports `App`/`Node`/`View` from here, plus its own
+/// pure-Python `Signal`/`ViewModel` (§16.2), as the public `tre` package
+/// surface.
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<App>()?;
     m.add_class::<Node>()?;
+    m.add_class::<View>()?;
+    m.add_function(wrap_pyfunction!(view::_record_read, m)?)?;
     Ok(())
 }
