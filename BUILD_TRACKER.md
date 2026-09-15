@@ -10,11 +10,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 |---|---|---|
 | M1 — TRE v1 (archived reference) | `██████████` 100% | ✅ Archived `archived-2026-09-14` |
 | M2 — v2 Architecture (`ARCHITECTURE.md`) | `██████████` 100% | ✅ 16 sections + ADR-001, locked |
-| M3 — v2 Implementation | `██████⬜⬜⬜⬜` 64% | 🚧 In progress — Phases 1-4 of 7 complete, Phase 5 in progress (steps 8-9 of 4 done) |
+| M3 — v2 Implementation | `███████⬜⬜⬜` 68% | 🚧 In progress — Phases 1-4 of 7 complete, Phase 5 in progress (steps 8-10 of 4 done) |
 
-**Just closed:** M3 Phase 5 step 9 (§14 step 9) — ripple/state-layer via `Scene::push_layer` + animated alpha (§7.3). Real `engine_core::interaction::{InteractionState, RippleState}` matching §7.3's own struct sketch (`SmallVec<[RippleState; 4]>`, already resolved transitively at `1.16.1` — zero new dependency cost), `Node::interaction: Option<InteractionState>`, `Tree::interaction_mut`/`tick_all` wired together. Checked directly first that §7.3's dispatch story (hover from hit-testing, ripples from real press events) has nothing to attach to yet — no `InputEvent`/`AppHandler`/hit-testing exists anywhere in this codebase, only forward-reference comments — so this step proves the animation/rendering mechanisms standalone, same scope narrowing step 7 applied to keyboard dispatch. Also deliberately skipped building a completion-queue for ripple pruning despite §7.3's own text framing it that way: that queue doesn't exist as real code (still just an unused `on_complete` field from step 2), and nothing about ripple pruning needs to be Python-visible — pruning checks each `RippleState`'s own `Animated::tick` result directly via `SmallVec::retain` instead. `engine_render::build_ripple_scene` verified `vello_hybrid` 0.2.0's real `Scene::push_layer(clip_path, blend_mode, opacity, mask, filter)` directly in source, then proved both mechanisms it's built on with two headless pixel-readback tests: one isolates opacity blending (a sampled point shows a real blend, not fully one color or the other), the other isolates the clip (the *same* fixed point reads pure background under a small-radius ripple and real blended color under a large one, proving the clip genuinely scales with radius rather than painting the whole layer). See `PLAN.md`/`LOG.md`.
+**Just closed:** M3 Phase 5 step 10 (§14 step 10) — the shape morph module (§7.4), `engine-md3`'s first real content (an empty skeleton since M3 Phase 1 — steps 8/9 both landed in `engine-render` instead, since `vello_hybrid` calls are confined there per §15). `engine_md3::shape_morph::ShapeKey` implements `engine_core::Interpolate` directly, per §5's own type sketch — slots into the *existing* `Animated<T>` machinery from step 2 with zero changes to it. Read §7.4's review note as a literal spec: "equalize count, then lerp" alone was explicitly flagged as producing self-intersecting/wildly-rotating morphs, since naive per-index pairing assumes point *N* on one shape corresponds to point *N* on the other; the real fix — search every rotational offset and both winding directions, keep whichever minimizes total point-travel distance, then lerp — is what `best_aligned` implements. Two tests construct the literal failure case the review note describes (a square's corners listed starting from a different corner, and the same square wound the opposite direction) and prove the alignment search finds the zero-cost match — the unmoved square, to within `1e-9` — rather than collapsing to a single point the way naive index-0 pairing would. Deliberately scoped to vertex positions (drops curve control handles, single closed subpath) rather than full curve-type correspondence, matching §7.4's own "budget real implementation time," not more. See `PLAN.md`/`LOG.md`.
 
-**Up next:** M3 Phase 5 step 10 (§14 step 10) — the shape morph module (§7.4), the one MD3 component with no library to lean on: "equalize point count, then lerp" plus the correspondence/alignment search the architecture's own review note names as the harder, easy-to-skip half.
+**Up next:** M3 Phase 5 step 11 (§14 step 11) — wire `material-colors` for a full dynamic color theme (§7.1): the step that finally gives `engine-md3` a real color source, an HCT-based scheme generated from a seed color, verified against Material Color Utilities' own published reference test vectors before it's pinned (§7.1's own "acceptance gate, not just verify maintenance status").
 
 **Known gaps:**
 - ~~§14 didn't sequence `engine-spec`/YAML-view work.~~ **Fixed.**
@@ -78,7 +78,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ## Milestone 3 — v2 Implementation
 
-**Status: 🚧 In progress.** Phases 1–4 complete, Phase 5 in progress (steps 8-9 of 4 done); this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
+**Status: 🚧 In progress.** Phases 1–4 complete, Phase 5 in progress (steps 8-10 of 4 done); this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
 
 ### Phase 1 — Workspace Scaffold ✅
 - Step: Cargo workspace + six crate skeletons (`engine-core`, `engine-md3`, `engine-render`, `engine-platform`, `engine-spec`, `engine-py`) per §12 — ✅
@@ -100,7 +100,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 ### Phase 5 — MD3 Foundational Spikes (§14 steps 8–11) 🚧
 - Step 8: Shadow spike (`fill_blurred_rounded_rect`) — ✅ (verified `vello_hybrid` 0.2.0's real API directly in source; `build_shadow_scene` + a headless four-point falloff test proving a real Gaussian blur, not a hard edge — see `PLAN.md`/`LOG.md`)
 - Step 9: Ripple/state-layer — ✅ (`InteractionState`/`RippleState` in `engine-core`, real `Tree::interaction_mut`/`tick_all` wiring; `engine_render::build_ripple_scene` proves `push_layer`'s clip + opacity both genuinely work via two headless pixel-readback tests — see `PLAN.md`/`LOG.md`)
-- Step 10: Shape morph module — ⬜
+- Step 10: Shape morph module — ✅ (`engine_md3::shape_morph::ShapeKey` implements `engine_core::Interpolate` — correspondence/alignment search plus equalize-then-lerp, matching §7.4's review note exactly; two tests prove a real square-rotated-to-a-different-corner and a reversed-winding square both morph to themselves, not a collapsed point — see `PLAN.md`/`LOG.md`)
 - Step 11: `material-colors` dynamic theme — ⬜
 
 ### Phase 6 — Declarative Authoring, full (§14 step 12) ⬜

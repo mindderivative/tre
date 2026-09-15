@@ -1,111 +1,94 @@
-# Log: M3 Phase 5, Step 9 — Ripple/State-Layer via `push_layer` (§14 step 9)
+# Log: M3 Phase 5, Step 10 — Shape Morph Module (§14 step 10)
 
-Corresponds to `PLAN.md` / `BUILD_TRACKER.md` M3 Phase 5, step 9 of 4 (steps 8-11).
+Corresponds to `PLAN.md` / `BUILD_TRACKER.md` M3 Phase 5, step 10 of 4 (steps 8-11).
 
 ## What happened
 
-**Checked whether §7.3's own dispatch story ("hover falls out of
-hit-testing, run every pointer-move"; ripples "spawned from real press
-events") had anything to attach to before writing code.** Grepped the
-whole workspace for `InputEvent`/`AppHandler`/`hit_test` first: none of
-it exists anywhere yet, only forward-reference comments in
-`engine-core`'s and `engine-platform`'s own module docs ("lands once...",
-"No `AppHandler`/`InputEvent` dispatch yet"). This is the same situation
-step 7 hit with keyboard Tab/Enter dispatch ("no interactive component
-exists yet to dispatch to") -- so this step applies the identical scope
-narrowing: build and prove the animation/rendering mechanisms
-standalone, defer wiring them to a real dispatch source until one
-exists.
+**`engine-md3`'s first real content.** Confirmed directly first that
+this is the correct crate: `engine-md3` has been an empty skeleton
+since M3 Phase 1, and steps 8/9 (shadow, ripple) both landed in
+`engine-render` instead, because those needed `vello_hybrid`, which
+§15's Risk Register confines to `engine-render` by name. Shape morphing
+only needs `kurbo::BezPath` geometry -- no GPU calls -- so this is the
+first step whose mechanism genuinely belongs in `engine-md3`. Added
+`peniko` as a direct dependency (matching every other crate's "go
+through `peniko::kurbo`, not `kurbo` directly" convention; already
+resolved at 0.6.1 elsewhere, zero new dependency-graph cost) and
+corrected `engine-md3/src/lib.rs`'s stale doc comment, which still said
+real content started "at step 8" from before that scope decision was
+made.
 
-**`engine_core::interaction`**: `RippleState { origin, radius:
-Animated<f64>, opacity: Animated<f64> }` and `InteractionState {
-ripples: SmallVec<[RippleState; 4]>, hover_opacity, focus_ring }`,
-matching §7.3's own struct sketch exactly. `smallvec` added as a direct
-dependency -- already resolved at `1.16.1` transitively (checked in
-`Cargo.lock` first), so this is a zero-cost addition to the dependency
-graph, the same "reuse what's already there" move as `slotmap` at step
-3. `Node` gained `interaction: Option<InteractionState>` (the `Option`
-was always the plan, per §7.3's own text and this crate's own
-"add the field when its own step needs it" comments going back to step
-3). `Tree::interaction_mut` lazily opts a node in, mirroring
-`set_access`'s "nothing until a caller opts in" shape; `Tree::tick_all`
-now also ticks a node's interaction state if it has one.
+**Read §7.4's review note as a literal spec, not commentary**: "equalize
+count, then lerp" alone was explicitly flagged as producing
+self-intersecting or wildly-rotating morphs, because naive per-index
+pairing assumes point *N* on one shape corresponds to point *N* on the
+other. The fix it names -- try every rotational offset and both winding
+directions, keep whichever minimizes total point-travel distance, then
+lerp -- is exactly what `engine_md3::shape_morph::best_aligned`
+implements, not a simplified approximation of it.
 
-**Deliberately did not build a completion-queue for ripple pruning**,
-despite §7.3's own text framing removal as reusing "the same
-completion-queue mechanism §5 already defines for `on_complete`".
-Checked directly: that queue doesn't exist as real code anywhere --
-`CompletionHandle`/`on_complete` are still just an unused struct field
-from step 2, with no drain mechanism (`engine-py`'s future job, for
-handing a finished animation to a *Python-visible* callback). Nothing
-about ripple pruning needs to be Python-visible, so `InteractionState::
-tick` prunes finished ripples directly via `SmallVec::retain` checking
-each `RippleState`'s own `Animated::tick` return value -- the same
-underlying fact the queue would ultimately be built from, without
-manufacturing unused machinery ahead of a caller that needs it
-(exactly the class of premature abstraction LESSONS_LEARNED.md §1 warns
-against).
+**`ShapeKey` implements `engine_core::Interpolate` directly** -- §5's
+own type sketch names this integration point (`pub shape:
+Animated<ShapeKey>`, "`ShapeKey` (whose impl is the correspondence-
+then-lerp technique in §7.4)"), meaning the *existing* `Animated<T>`
+machinery from step 2 needed zero changes: `ShapeKey` slots in exactly
+like `f64`/`peniko::Color` already do. The whole equalize-then-align-
+then-lerp pipeline runs fresh inside `interpolate()` on every call
+(a real, explicit choice, not an oversight) rather than being cached
+once per animation -- the same "naive until profiling says otherwise"
+call this project has made consistently since `Tree::tick_all`'s own
+whole-tree walk, and cheap in absolute terms at the vertex counts an
+MD3 shape actually has.
 
-**Verified `vello_hybrid` 0.2.0's real `Scene::push_layer` signature
-directly in source** before writing the render spike: `push_layer(
-clip_path: Option<&BezPath>, blend_mode: Option<BlendMode>, opacity:
-Option<f32>, mask: Option<Mask>, filter: Option<Filter>)` -- confirmed
-its doc comment ("Panics if `mask` is provided") and that `clip_path`
-and `opacity` compose in one call (no need to nest two separate
-`push_layer` calls for clip + opacity).
+**Deliberately scoped to vertex positions, not full curve-type
+correspondence**: `ShapeKey::from_path` extracts each `PathEl` segment's
+endpoint (dropping bezier control handles), and `to_path` rebuilds a
+straight-edged polygon from the interpolated points. True curve-to-
+curve morphing (matching which segments are curves vs. lines between
+two arbitrary shapes) is a substantially larger problem than "budget
+real implementation time" (§7.4's own phrasing) asks for, and nothing
+in §14's build order calls for it -- MD3's own shapes are close enough
+to polygons for this to be the correct v1 scope. Also assumes one
+closed subpath per shape, matching every real MD3 shape.
 
-**`engine_render::build_ripple_scene`**: one ripple over one solid
-"button" background -- a base fill, then `push_layer(Some(&circle),
-None, Some(opacity), None, None)`, a second fill covering the same
-bounds, then `pop_layer()`. Deliberately as narrow as `build_shadow_
-scene` (step 8): parameterized over origin/radius/opacity/colors, no
-`Tree`, no `InteractionState` wiring, no MD3 ripple-color token (real
-MD3 ripple color is a theme-role lookup that doesn't exist as code
-until step 11's `material-colors` wiring). Wiring ripples into
-`build_tree_scene`'s actual per-node paint pass is deferred to whenever
-both a real color source (step 11) and a real press source (§4/§11.10,
-still unscheduled) exist -- inventing either ahead of that need was
-the exact premature-abstraction trap this project keeps deliberately
-avoiding.
-
-**The actual proof** (`crates/engine-render/tests/ripple_spike.rs`, two
-tests, same headless render+readback discipline as `shadow_spike.rs`):
-one test isolates opacity blending (sampled dead center, inside any
-nonzero radius, so only opacity is under test) and shows the red
-channel strictly between the base and ripple colors -- not fully one or
-the other. The second isolates the clip: the *same* fixed point, 50px
-from the ripple's origin, reads pure base color under a 20px-radius
-ripple and a real blended color under a 100px-radius one -- since the
-exact same `fill_path` call runs in both renders, only `push_layer`'s
-own `clip_path` argument can explain the difference. This is the
-falsifiable claim the spike exists to make: a `push_layer` that ignored
-`clip_path` (or a broken build) would either blend everywhere regardless
-of radius, or nowhere at all -- either failure mode fails one of the
-two tests.
+**The actual proof, not just "doesn't panic"**: two tests construct the
+literal failure case §7.4's review note describes -- a square's four
+corners listed starting from a different corner (`[C,D,A,B]` vs.
+`[A,B,C,D]`), and the same square wound the opposite direction. Naive
+index-0 pairing between either pair would lerp opposite corners at
+`t=0.5` (e.g. `midpoint(A,C)` and `midpoint(C,A)` both landing on the
+square's own center), collapsing all four points onto one spot -- an
+unambiguous, easy-to-detect failure signature. Both tests instead assert
+the midpoint output is the *unmoved* square to within `1e-9`, proving
+the alignment search actually found the zero-cost rotation/reversal
+rather than defaulting to naive pairing. A third test proves
+`equalize_point_counts`/`subdivide_longest_edge` pick the genuinely
+longest edge of an asymmetric shape, not an arbitrary one; a fourth
+proves `t=0.0`/`t=1.0` snap exactly to the equalized/aligned endpoints
+with no drift.
 
 ## Verification
 
 ```
-$ cargo test -p engine-core          # 15 passed, incl. 3 new
-                                       # interaction unit tests + 1 new
-                                       # Tree::interaction_mut/tick_all
-                                       # composition test
-$ cargo test -p engine-render --test ripple_spike -- --nocapture
-test ripple_opacity_genuinely_blends_the_ripple_color_into_the_background ... ok
-test ripple_clip_confines_the_blend_to_the_circles_own_radius ... ok
+$ cargo test -p engine-md3 -- --nocapture
+running 5 tests
+test shape_morph::tests::same_shape_with_opposite_winding_morphs_to_itself ... ok
+test shape_morph::tests::subdivide_longest_edge_splits_the_actual_longest_edge ... ok
+test shape_morph::tests::from_path_and_to_path_round_trip_a_triangle ... ok
+test shape_morph::tests::same_shape_started_at_a_different_corner_morphs_to_itself_not_a_collapsed_point ... ok
+test shape_morph::tests::interpolate_at_t_zero_and_one_returns_the_equalized_endpoints_exactly ... ok
 
 $ cargo test --workspace             # all green
-$ cargo clippy --workspace --all-targets -- -D warnings
-                                       # one real finding, fixed: a
-                                       # collapsible-if in tick_all,
-                                       # rewritten as a let-chain
-$ cargo fmt --check                   # clean
+$ cargo clippy --workspace --all-targets -- -D warnings   # clean
+$ cargo fmt --check                  # clean
 ```
 
 ## Next
 
-`BUILD_TRACKER.md` updated: Phase 5 step 9 done (2 of 4 steps in this
-phase). Next: step 10 -- the shape morph module (§7.4), the one MD3
-component with no library to lean on ("equalize point count, then lerp"
-plus the correspondence/alignment search the architecture's own review
-note flags as the harder, easy-to-skip half).
+`BUILD_TRACKER.md` updated: Phase 5 step 10 done (3 of 4 steps in this
+phase). Next: step 11 -- wire `material-colors` for a full dynamic
+color theme (§7.1), the step that finally gives `engine-md3` a real
+color source: an HCT-based scheme generated from a seed color, verified
+against Material Color Utilities' own published reference test vectors
+(§7.1's own "acceptance gate, not just verify maintenance status")
+before it's pinned.
