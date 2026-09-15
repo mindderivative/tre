@@ -1,147 +1,88 @@
-# Log: M3 Phase 6, Step 12 — `engine-spec`, Full (§14 step 12)
+# Log: M3 Phase 7, Step 13 — Overlay Mechanism (§14 step 13, §11.3)
 
-Corresponds to `PLAN.md` / `BUILD_TRACKER.md` M3 Phase 6, step 12 of 1 --
-closes Phase 6. The largest bundled build-order step so far (§16.2 +
-§16.3 + §16.4 together); split into three separately-committed stages,
-each independently verified.
+Corresponds to `PLAN.md` / `BUILD_TRACKER.md` M3 Phase 7, step 13 of 3 (steps 13-15).
 
-## Stage A — §16.3 Stylesheet cascade + MD3 token resolution
+## What happened
 
-`WidgetSpec` gained `classes: Vec<String>`. `engine_spec::cascade`
-implements the exact precedence order (baseline → `kind:` → `classes:`
-→ `id:` → inline `style:`) as a per-field merge, not whole-struct
-replacement -- proven by a test asserting two rules setting different
-fields both survive in the final resolved style. `classes:` matching is
-a subset match, applied in ascending specificity order so a
-two-class rule wins over a one-class rule that also matches.
+**Checked what "dismissed on outside-click or Escape" actually needs
+before writing anything.** Real pointer/keyboard `InputEvent`/
+`AppHandler` dispatch and hit-testing (§11.10) still don't exist
+anywhere in this codebase — the same finding steps 7, 9, 11, and 12
+already made. There's nothing to wire dismissal *to* yet, and no reason
+to invent `NodeKind::MenuBar`/`MenuItem` component types with no
+dispatch to drive them. This step builds and proves the real,
+load-bearing mechanism §11.3 actually depends on everything else: tree
+residency, `Position::Absolute` placement, and append-order-is-paint-
+order — deferring dismissal behavior and real menu components to
+whenever pointer/keyboard dispatch lands.
 
-`engine_md3::ColorScheme::role(name)` centralizes MD3 token lookup in
-the crate that owns the roles. `engine-spec`'s color resolution tries a
-token lookup first, falls back to `peniko::color::parse_color` --
-`load_view` (no cascade, no tokens) kept working unchanged for its one
-existing caller; `load_styled_view` is the new full path. Real
-end-to-end test: `background: primary` resolves to the *exact* color a
-real `DynamicTheme`'s own `ColorScheme.primary` holds.
+**`engine_core::OverlayMeta`** matches §11.3's own struct sketch
+verbatim (`anchor`, `dismiss_on_outside_click`, `dismiss_on_escape`) —
+real data, stored, not yet acted on.
 
-## Stage B — §16.4 Reconciliation & hot-reload
+**`Tree::absolute_position(id)`** is a genuinely new capability, not
+previously exposed: `build_tree_scene`/`build_access_update` only ever
+computed a node's root-relative position *inline*, during their own
+full-tree walks, each keeping its own separate accumulator. Nothing
+before this let a caller ask "where is this one node, absolutely"
+without doing a full walk. Implemented as a bottom-up walk via each
+node's own `parent` chain (`O(depth)`, not `O(tree size)`) — proven
+correct through two levels of real nesting (padding + a sibling's
+width contributing to the target's own offset), not just a trivial
+single-level case.
 
-`engine_core::Tree::remove(id)`: real recursive subtree removal --
-`taffy::TaffyTree::remove` only detaches one node and orphans its
-children (confirmed directly in its own doc comment), so this crate's
-own version recurses first.
+**`Tree::set_layout_style`**: `TaffyTree::set_style` exists for exactly
+"push a style update back in after creation" (verified directly in its
+source before using it) — without it, mutating `Node::layout_style`
+directly after `insert` would silently desync `engine-core`'s own copy
+from `taffy`'s internal one, reintroducing the exact divergence
+`insert`'s own doc comment says can't happen.
 
-`engine_spec::Reconciler` implements the keyed diff (matched by `id`
-plus `NodeKindSpec`): an unmatched-props node is patched via the new
-`build::patch_node` (id/parent/children/access/interaction untouched,
-so focus and in-flight animations on those survive); a new id is
-inserted fresh; a disappeared id is actually removed, not just
-untracked. **Found and fixed a real ordering bug during testing**: the
-old id→NodeId mapping was being overwritten by the new node's mapping
-*before* the old node was removed on a kind change, so the cleanup pass
-ended up removing the freshly-inserted node instead of the stale one --
-fixed by removing the old node first, at the point of detection.
+**`Tree::open_overlay`/`close_overlay`**: `open_overlay` computes the
+anchor's absolute bounds, sets the content node's style to
+`Position::Absolute` with `inset` derived from those bounds (placed
+directly below-left of the anchor — a real dropdown's usual placement),
+appends it to the given root's children, and records the metadata.
+`close_overlay` reuses step 12's real recursive `Tree::remove` rather
+than a second removal path, and drops the metadata entry.
 
-`engine_spec::ViewWatcher` wraps a real `notify::RecommendedWatcher`,
-verified against an actual file write on disk (a bounded polling loop,
-not a fixed sleep, to avoid flakiness while still failing definitively
-if detection breaks). Not wired into a live running `engine-py` `App`
-this stage -- that needs "this app was loaded from a `view.yaml`" as
-new `App` surface nothing currently needs.
-
-**Stated scope limit:** a child whose `id` keeps its match but moves to
-a different position in a reload is patched in place but not reordered
-within `Tree`'s own `children` list -- needs a `taffy` child-order
-mutation API this stage doesn't verify, and no test scenario requires.
-
-## Stage C — §16.2 `BindingResolver` + expression grammar + `ViewModel`
-
-`engine_spec::binding`: a real hand-written recursive-descent parser
-for the exact whitelisted grammar §16.2 names (attribute access,
-indexing, comparison, arithmetic, boolean logic, zero-arg method
-calls) -- no parser-generator dependency for a grammar this small. The
-generic `BindingResolver` trait is the same dependency-inversion shape
-as `AppHandler`; primitive-only binary operations are computed directly
-by `evaluate()` itself, delegating to the resolver only when a
-`Value::Handle` (a non-primitive object) is involved. Tested with a
-fake in-crate resolver -- 8 tests -- proving the grammar/evaluator with
-zero `pyo3` knowledge, before `engine-py` implements the real one.
-
-`engine-py::PyViewModelResolver` implements `BindingResolver` via real
-`pyo3` attribute/index/method-call access against a live `Py<PyAny>`
-ViewModel -- `bool` checked before `i64` when unwrapping a Python value
-(a Python `bool` is an `int` subtype and would otherwise extract
-successfully, and wrongly, as one).
-
-`WidgetSpec` gained back `bindings`/`handlers: HashMap<String, String>`
-(raw strings -- omitted since step 5, exactly as that step's own doc
-comment predicted: "additive... when step 12 actually needs them").
-
-`engine-py::View`: `View(path)` loads a `view.yaml` into its own
-`Tree`; `View._attach(viewmodel)` is the real §16.2 inversion point --
-validates every handler eagerly (`getattr` + callable check, raising at
-attach time on a bad name, not on first click), then for every binding:
-parses it, evaluates it once inside a recording scope
-(`begin_recording`/`end_recording`, a thread-local `Vec<Py<PyAny>>`),
-applies the initial value by constructing a temporary `Node` and
-calling its own `animate()` dispatch verbatim (not reimplemented), and
-subscribes a `BindingCallback` onto every `Signal` the evaluation
-actually touched.
-
-**Real finding, not obvious from `animate`'s own contract**: the first
-pytest run of the binding tests failed -- `node.get("opacity")` kept
-returning the static YAML value, never the bound one. `animate(...,
-duration_ms=0)` only *registers* a zero-duration `ActiveAnimation`;
-`Animated::animate_to` never eagerly writes `current` itself, only the
-next `tick_all` call does. A `View` with no running render loop attached
-never calls that, so a binding's "instant" value would never actually
-become observable. Fixed by having `apply_binding_value` call
-`Tree::tick_all` immediately after registering -- `duration_ms=0` now
-means what it says regardless of whether a frame loop happens to be
-running.
-
-Python side (`python/tre/__init__.py`): a real `Signal` (`.get()` calls
-a Rust `_record_read` function that's a no-op outside an active
-recording scope; `.set()`/`.update()` notify subscribers) and
-`ViewModel` (`__init__` calls `view._attach(self)`).
-
-**Real, end-to-end proof** (`tests/test_view_binding.py`, 7 new tests,
-via `maturin develop` + pytest, same discipline as `test_engine_py.py`):
-a binding's initial value applies correctly; writing the *exact* Signal
-it read via `.set()` re-applies it automatically; the same via
-`.update()` with a full arithmetic expression (`level.get() + 0.1`); a
-Signal the binding never read has zero effect when written (proving
-dependency tracking is genuinely selective, not "re-run everything on
-any write"); a missing handler method raises at attach time; a present
-one doesn't.
-
-**Scoped narrower than §16.2's full picture, stated explicitly**:
-handler wiring stops at eager validation -- actually *firing* one needs
-real `InputEvent`/`AppHandler` pointer dispatch, which still doesn't
-exist anywhere in this codebase (the same finding steps 7/9/11 already
-made). Binding application supports `opacity`/`corner_radius` only --
-`background` needs a color-string/MD3-token parse a bound value hasn't
-gone through yet, real additive work for whenever a binding actually
-needs a dynamic color. A binding's dependency set is captured once, at
-its first evaluation, not re-tracked per write -- correct for every
-binding shape §16.2's own examples show.
+**The actual proof, split at two levels.** `engine-core`'s own unit
+tests prove the mechanics (`absolute_position` accumulates correctly,
+`open_overlay` computes the right inset and appends in the right
+place, metadata round-trips, `close_overlay` actually removes the node
+and its metadata). The real, falsifiable claim — "paint order is
+children-list order, so an appended overlay paints on top of whatever
+it overlaps, with zero special-casing anywhere in `build_tree_scene`" —
+needed a render-level pixel-readback test to actually prove, not just
+assert from reading the architecture text:
+`crates/engine-render/tests/overlay_menu.rs` builds a full-canvas green
+background panel (inserted first), a blue "trigger" anchor, then opens
+an orange dropdown menu against that anchor. One sample point sits
+inside the menu's own anchor-relative bounds *and* is also covered by
+the green background underneath — only correct positioning *and*
+real append-order-controls-paint-order together explain seeing orange
+there, and the test passed on its first real run, meaning
+`build_tree_scene`'s existing children-list walk already handles an
+absolutely-positioned, appended node with genuinely zero changes
+needed to that function. A final step closes the overlay and confirms
+the same point reverts to the background panel's own color, proving
+real removal from what gets painted, not just from bookkeeping.
 
 ## Verification
 
 ```
-$ cargo test --workspace                                  # all green
+$ cargo test -p engine-core           # 20 passed, incl. 3 new overlay tests
+$ cargo test -p engine-render --test overlay_menu -- --nocapture
+test dropdown_menu_positions_by_anchor_and_paints_above_the_background_via_append_order ... ok
+
+$ cargo test --workspace              # all green
 $ cargo clippy --workspace --all-targets -- -D warnings    # clean
-$ cargo fmt --check                                        # clean
-$ maturin develop && python -m pytest tests/ -v
-13 passed (6 pre-existing + 7 new in test_view_binding.py)
-$ python examples/animate_rect.py
-animate_rect.py: exited cleanly after 60 frames            # no regression
+$ cargo fmt --check                   # clean
 ```
 
 ## Next
 
-`BUILD_TRACKER.md` updated: Phase 6 (step 12, all three stages) done --
-M3 now 6 of 7 phases complete. Next: Phase 7 (§14 steps 13-15) --
-overlay mechanism (one dropdown menu, §11.3), multi-window (a second
-`PyWindow`, §11.1), then docking (§11.4) + virtualization (§11.7),
-sequenced last since both build on the overlay mechanism and the
-accepted multi-window model. This is M3's final phase.
+`BUILD_TRACKER.md` updated: Phase 7 step 13 done (1 of 3 steps in this
+phase). Next: step 14 — multi-window (§11.1), a second `PyWindow`
+opened from a running app, proving `WindowId`-routed event dispatch
+before docking's "detach into its own window" pattern needs it.

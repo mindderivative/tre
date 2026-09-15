@@ -10,11 +10,11 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 |---|---|---|
 | M1 — TRE v1 (archived reference) | `██████████` 100% | ✅ Archived `archived-2026-09-14` |
 | M2 — v2 Architecture (`ARCHITECTURE.md`) | `██████████` 100% | ✅ 16 sections + ADR-001, locked |
-| M3 — v2 Implementation | `████████⬜⬜` 86% | 🚧 In progress — Phases 1-6 of 7 complete, Phase 7 next (final phase) |
+| M3 — v2 Implementation | `█████████⬜` 90% | 🚧 In progress — Phases 1-6 of 7 complete, Phase 7 in progress (step 13 of 3 done) |
 
-**Just closed:** M3 Phase 6 step 12 (§14 step 12), closing Phase 6 — `engine-spec`, full: the largest bundled build-order step so far (§16.2 + §16.3 + §16.4 together), split into three separately-committed, independently-verified stages. **Stage A** (§16.3): the stylesheet cascade (baseline → kind → classes → id → inline, per-field merge) plus `engine_md3::ColorScheme::role()` for MD3 token resolution — a real end-to-end test resolves `background: primary` to the exact color a live `DynamicTheme` holds. **Stage B** (§16.4): `Tree::remove` (real recursive subtree removal — `taffy`'s own `remove` only detaches one node, confirmed directly), `Reconciler`'s keyed diff matched by id+kind (patch in place / insert / remove), and a real `notify`-backed `ViewWatcher` verified against an actual file write — found and fixed a real ordering bug where the old id→NodeId mapping was overwritten before the stale node was removed, causing the cleanup pass to delete the wrong node. **Stage C** (§16.2): a hand-written recursive-descent parser for the whitelisted binding grammar, the `BindingResolver` trait (same inversion shape as `AppHandler`) tested with a fake resolver, `engine-py`'s real `PyViewModelResolver` and `View`/`_attach()`, and a real Python `Signal`/`ViewModel` with genuine dependency tracking — a binding re-evaluates automatically only when the exact `Signal` it read changes. Found and fixed a real gap along the way: `animate(..., duration_ms=0)` only registers a zero-duration animation, never eagerly applying it, so a `View` with no running render loop would never observably apply a binding — fixed by ticking immediately after registering. 7 new end-to-end pytest tests, all passing via a real `maturin develop` build. See `PLAN.md`/`LOG.md`.
+**Just closed:** M3 Phase 7 step 13 (§14 step 13) — the overlay mechanism (§11.3). Checked directly first that real pointer/keyboard dispatch and hit-testing still don't exist anywhere in this codebase (the same finding steps 7/9/11/12 already made), so this step proves the real, load-bearing mechanism only — tree residency, `Position::Absolute` placement, append-order-is-paint-order — deferring dismiss-on-outside-click/Escape and real menu components to whenever pointer/keyboard dispatch lands. `Tree::absolute_position` is a genuinely new capability (a node's root-relative position, previously only ever computed inline during a full-tree walk); `Tree::open_overlay`/`close_overlay` position an overlay relative to its anchor's real accumulated bounds and append/remove it via step 12's own `Tree::remove`. The actual falsifiable claim — an appended overlay paints on top of whatever it overlaps, with zero special-casing in `build_tree_scene` — was proven with a headless pixel-readback test: a dropdown menu opened against a real anchor overlaps a full-canvas background panel painted first, and the overlap pixel shows the menu's own color; the test passed on its first real run, meaning the existing paint walk needed no changes at all. See `PLAN.md`/`LOG.md`.
 
-**Up next:** M3 Phase 7 (§14 steps 13-15), M3's final phase — overlay mechanism (one dropdown menu, §11.3), multi-window (a second `PyWindow`, §11.1), then docking (§11.4) + virtualization (§11.7), sequenced last since both build on the overlay mechanism and the accepted multi-window model.
+**Up next:** M3 Phase 7 step 14 (§14 step 14) — multi-window (§11.1): a second `PyWindow` opened from a running app, proving `WindowId`-routed event dispatch before docking's "detach into its own window" pattern needs it.
 
 **Known gaps:**
 - ~~§14 didn't sequence `engine-spec`/YAML-view work.~~ **Fixed.**
@@ -78,7 +78,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 ## Milestone 3 — v2 Implementation
 
-**Status: 🚧 In progress.** Phases 1–6 complete, Phase 7 next (M3's final phase); this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
+**Status: 🚧 In progress.** Phases 1–6 complete, Phase 7 in progress (step 13 of 3 done, M3's final phase); this mirrors §14's Suggested Build Order (all 15 steps now sequenced, including `engine-spec`/§16).
 
 ### Phase 1 — Workspace Scaffold ✅
 - Step: Cargo workspace + six crate skeletons (`engine-core`, `engine-md3`, `engine-render`, `engine-platform`, `engine-spec`, `engine-py`) per §12 — ✅
@@ -106,7 +106,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 ### Phase 6 — Declarative Authoring, full (§14 step 12) ✅
 - Step 12: `BindingResolver` + `ViewModel`/`View._attach()` (§16.2), stylesheet cascade with real MD3 tokens (§16.3), reconciliation/hot-reload (§16.4) — ✅ (three stages, each independently verified: A — cascade + MD3 token resolution; B — `Tree::remove` + keyed-diff `Reconciler` + real `notify` file watcher; C — whitelisted binding-expression parser + `BindingResolver` + `engine-py`'s real `View`/`Signal`/`ViewModel` with genuine dependency tracking, proven end-to-end via 7 new pytest tests — see `PLAN.md`/`LOG.md`)
 
-### Phase 7 — Desktop Shell Build-out (§14 steps 13–15) ⬜
-- Step 13: Overlay mechanism (one dropdown menu) — ⬜
+### Phase 7 — Desktop Shell Build-out (§14 steps 13–15) 🚧
+- Step 13: Overlay mechanism (one dropdown menu) — ✅ (`Tree::open_overlay`/`close_overlay`, real `Position::Absolute` placement relative to an anchor's accumulated absolute bounds, `OverlayMeta` bookkeeping; a headless pixel-readback test proves append-order-is-paint-order for real — an overlapping overlay paints on top of a full-canvas background with zero special-casing in `build_tree_scene` — see `PLAN.md`/`LOG.md`)
 - Step 14: Multi-window (second `PyWindow`) — ⬜
 - Step 15: Docking + virtualization — ⬜

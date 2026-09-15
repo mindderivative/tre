@@ -11,14 +11,18 @@
 //! which the CI benchmark this step adds would be exactly what catches
 //! that.
 
+use std::collections::HashMap;
 use std::time::Instant;
 
 use slotmap::{Key, SecondaryMap, SlotMap};
-use taffy::prelude::{AvailableSpace, Layout, Size, Style, TaffyTree};
+use taffy::prelude::{
+    AvailableSpace, Layout, Position, Rect as TaffyRect, Size, Style, TaffyTree, auto, length,
+};
 
 use crate::access::AccessNodeData;
 use crate::interaction::InteractionState;
 use crate::node::{Node, NodeId, NodeKind, PaintProperties};
+use crate::overlay::OverlayMeta;
 
 pub struct Tree {
     nodes: SlotMap<NodeId, Node>,
@@ -28,6 +32,10 @@ pub struct Tree {
     /// see `access.rs`'s module doc comment for why the actual Tab/
     /// Shift-Tab traversal logic isn't wired up yet.
     focused: Option<NodeId>,
+    /// §14 step 13 (§11.3): keyed by the overlay root's own `NodeId` --
+    /// metadata only, never the node itself, which already lives in
+    /// `nodes` like any other.
+    overlays: HashMap<NodeId, OverlayMeta>,
 }
 
 impl Default for Tree {
@@ -43,6 +51,7 @@ impl Tree {
             taffy_nodes: SecondaryMap::new(),
             taffy: TaffyTree::new(),
             focused: None,
+            overlays: HashMap::new(),
         }
     }
 
@@ -173,6 +182,116 @@ impl Tree {
         self.taffy
             .layout(taffy_node)
             .expect("layout: no computed layout yet for this node -- call compute_layout first")
+    }
+
+    /// `id`'s own on-screen position, accumulated all the way up its
+    /// `parent` chain to whichever root `compute_layout` was last called
+    /// on (§14 step 13's own real need: `open_overlay` positions an
+    /// overlay relative to its anchor's *absolute* bounds, not the
+    /// anchor's own parent-relative `Layout::location`). A genuinely new
+    /// capability, not previously exposed as a standalone query --
+    /// `build_tree_scene`/`build_access_update` only ever compute this
+    /// *inline*, during their own full-tree walks, and each keeps its
+    /// own separate accumulator; nothing before this let a caller ask
+    /// "where is this one node, absolutely" without a full walk.
+    pub fn absolute_position(&self, id: NodeId) -> (f64, f64) {
+        let mut x = 0.0;
+        let mut y = 0.0;
+        let mut current = id;
+        loop {
+            let layout = self.layout(current);
+            x += f64::from(layout.location.x);
+            y += f64::from(layout.location.y);
+            let node = self
+                .nodes
+                .get(current)
+                .expect("absolute_position: NodeId not found in this Tree");
+            match node.parent {
+                Some(parent) => current = parent,
+                None => return (x, y),
+            }
+        }
+    }
+
+    /// Updates `id`'s `layout_style` and keeps `taffy`'s own internal
+    /// copy in sync -- unlike `insert` (which hands `taffy` its copy
+    /// once, at creation), mutating `Node::layout_style` directly
+    /// afterward would silently desync the two; `TaffyTree::set_style`
+    /// exists for exactly this "push a style update back in" case
+    /// (verified directly in its own source before using it), so this
+    /// method is the only place after `insert` that's allowed to touch
+    /// `layout_style` -- doing so by hand anywhere else would reintroduce
+    /// the exact divergence `insert`'s own doc comment says can't happen.
+    pub fn set_layout_style(&mut self, id: NodeId, style: Style) {
+        let taffy_node = *self
+            .taffy_nodes
+            .get(id)
+            .expect("set_layout_style: NodeId not found in this Tree");
+        self.taffy
+            .set_style(taffy_node, style.clone())
+            .expect("set_layout_style: taffy rejected the style update");
+        self.nodes
+            .get_mut(id)
+            .expect("set_layout_style: NodeId not found in this Tree")
+            .layout_style = style;
+    }
+
+    /// §14 step 13 (§11.3): positions `content` with `Position::
+    /// Absolute`, its `inset` computed from `anchor`'s current absolute
+    /// bounds (so it appears anchored just below-left of `anchor` --
+    /// the real "one dropdown menu" placement this step's own test
+    /// proves, not an arbitrary choice), then appends it to `root`'s
+    /// `children` -- paint order is children-list order (§6), so an
+    /// appended overlay paints on top with no separate z-order concept,
+    /// exactly per §11.3's own claim. `root`/`anchor` must already have
+    /// a computed `Layout` (call `compute_layout` at least once first);
+    /// the caller must call `compute_layout` again afterward for
+    /// `content`'s own new position/size to resolve.
+    pub fn open_overlay(
+        &mut self,
+        root: NodeId,
+        anchor: NodeId,
+        content: NodeId,
+        meta: OverlayMeta,
+    ) {
+        let (anchor_x, anchor_y) = self.absolute_position(anchor);
+        let anchor_height = f64::from(self.layout(anchor).size.height);
+
+        let mut style = self
+            .get(content)
+            .expect("open_overlay: content NodeId not found in this Tree")
+            .layout_style
+            .clone();
+        style.position = Position::Absolute;
+        style.inset = TaffyRect {
+            left: length(anchor_x),
+            top: length(anchor_y + anchor_height),
+            right: auto(),
+            bottom: auto(),
+        };
+        self.set_layout_style(content, style);
+
+        self.add_child(root, content);
+        self.overlays.insert(content, meta);
+    }
+
+    /// Closes an overlay opened via `open_overlay`: removes its whole
+    /// subtree from the `Tree` (reusing step 12's real recursive
+    /// `Tree::remove`, not a second removal path) and drops its
+    /// metadata. Returns `true` if `id` was a real, currently-open
+    /// overlay.
+    pub fn close_overlay(&mut self, id: NodeId) -> bool {
+        let had_overlay = self.overlays.remove(&id).is_some();
+        let removed = self.remove(id);
+        had_overlay && removed
+    }
+
+    /// The metadata for a currently-open overlay, if `id` is one --
+    /// real bookkeeping a future dismiss-on-outside-click/Escape
+    /// dispatch (§4/§11.10, not built yet) will read; proven stored
+    /// correctly by this step's own test in the meantime.
+    pub fn overlay_meta(&self, id: NodeId) -> Option<&OverlayMeta> {
+        self.overlays.get(&id)
     }
 
     /// The central tick's per-`Tree` entry point (§5): ticks every
@@ -382,6 +501,193 @@ mod tests {
         assert!(
             !tree.remove(real),
             "removing an already-removed id must report false, not panic"
+        );
+    }
+
+    #[test]
+    fn absolute_position_accumulates_through_nested_parents() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            display: taffy::Display::Flex,
+            padding: taffy::prelude::Rect {
+                left: length(5.0),
+                top: length(5.0),
+                right: length(5.0),
+                bottom: length(5.0),
+            },
+            size: Size {
+                width: length(300.0),
+                height: length(300.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let inner_style = Style {
+            display: taffy::Display::Flex,
+            flex_direction: FlexDirection::Row,
+            size: Size {
+                width: length(200.0),
+                height: length(200.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, inner_paint) = leaf(0.0, 0.0);
+        let inner = tree.insert(NodeKind::Container, inner_style, inner_paint);
+        tree.add_child(root, inner);
+
+        // A spacer sibling before the real target, so the target's own
+        // parent-relative x is nonzero -- proving real accumulation
+        // through two levels, not a coincidence of both being at (0,0).
+        let (k, s, p) = leaf(40.0, 40.0);
+        let spacer = tree.insert(k, s, p);
+        tree.add_child(inner, spacer);
+        let (k, s, p) = leaf(40.0, 40.0);
+        let target = tree.insert(k, s, p);
+        tree.add_child(inner, target);
+
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+
+        // root padding (5,5) + inner's own location (0,0 within root's
+        // content box) + spacer's width (40) = target's absolute x.
+        let (x, y) = tree.absolute_position(target);
+        assert_eq!(x, 5.0 + 40.0);
+        assert_eq!(y, 5.0);
+    }
+
+    #[test]
+    fn open_overlay_positions_below_its_anchor_and_appends_to_root() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            display: taffy::Display::Flex,
+            size: Size {
+                width: length(300.0),
+                height: length(300.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let (k, s, p) = leaf(80.0, 20.0); // the trigger button, e.g. a menu bar item
+        let anchor = tree.insert(k, s, p);
+        tree.add_child(root, anchor);
+
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+        let (anchor_x, anchor_y) = tree.absolute_position(anchor);
+        assert_eq!((anchor_x, anchor_y), (0.0, 0.0));
+
+        let (k, s, p) = leaf(120.0, 60.0); // the dropdown menu surface
+        let menu = tree.insert(k, s, p);
+        tree.open_overlay(
+            root,
+            anchor,
+            menu,
+            OverlayMeta {
+                anchor,
+                dismiss_on_outside_click: true,
+                dismiss_on_escape: true,
+            },
+        );
+
+        // A second compute_layout is required after open_overlay, per
+        // its own doc comment, for the new absolutely-positioned child
+        // to actually resolve.
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+
+        let menu_layout = tree.layout(menu);
+        assert_eq!(
+            (menu_layout.location.x, menu_layout.location.y),
+            (anchor_x as f32, anchor_y as f32 + 20.0),
+            "the menu must land directly below the anchor's own bottom edge"
+        );
+
+        assert_eq!(
+            tree.get(root).unwrap().children,
+            vec![anchor, menu],
+            "the overlay must be appended to root's children, after the anchor"
+        );
+
+        let meta = tree
+            .overlay_meta(menu)
+            .expect("the overlay's metadata must be stored, keyed by its own NodeId");
+        assert_eq!(meta.anchor, anchor);
+        assert!(meta.dismiss_on_outside_click);
+        assert!(meta.dismiss_on_escape);
+    }
+
+    #[test]
+    fn close_overlay_removes_the_node_and_its_metadata() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            size: Size {
+                width: length(300.0),
+                height: length(300.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+        let (k, s, p) = leaf(80.0, 20.0);
+        let anchor = tree.insert(k, s, p);
+        tree.add_child(root, anchor);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+
+        let (k, s, p) = leaf(120.0, 60.0);
+        let menu = tree.insert(k, s, p);
+        tree.open_overlay(
+            root,
+            anchor,
+            menu,
+            OverlayMeta {
+                anchor,
+                dismiss_on_outside_click: true,
+                dismiss_on_escape: true,
+            },
+        );
+
+        assert!(tree.close_overlay(menu));
+        assert!(
+            tree.get(menu).is_none(),
+            "the overlay node itself must be gone"
+        );
+        assert!(
+            tree.overlay_meta(menu).is_none(),
+            "its metadata must be gone too"
+        );
+        assert_eq!(
+            tree.get(root).unwrap().children,
+            vec![anchor],
+            "root's children must no longer mention the closed overlay"
+        );
+        assert!(
+            !tree.close_overlay(menu),
+            "closing an already-closed overlay must report false"
         );
     }
 
