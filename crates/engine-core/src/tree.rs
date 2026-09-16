@@ -21,13 +21,18 @@ use taffy::prelude::{
 
 use crate::access::AccessNodeData;
 use crate::animation::MotionCurve;
+#[cfg(test)]
+use crate::canvas::CanvasState;
+use crate::canvas::{CustomHitTest, DrawCommand};
 use crate::input::{DispatchOutcome, InputEvent, Key, PointerButton};
 use crate::interaction::InteractionState;
 #[cfg(test)]
 use crate::node::{ItemExtent, VirtualListState};
 use crate::node::{Node, NodeId, NodeKind, PaintProperties};
 use crate::overlay::OverlayMeta;
-use peniko::kurbo::{Affine, Point, Rect};
+#[cfg(test)]
+use peniko::kurbo::BezPath;
+use peniko::kurbo::{Affine, ParamCurveNearest, Point, Rect};
 
 /// `Tree::move_focus`'s own direction -- Tab vs. Shift-Tab (§10).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +95,20 @@ impl Default for Tree {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The ordinary hit-test default (§11.10): a node-local point is
+/// "inside" if it falls within the node's own untransformed layout box,
+/// `(0, 0)` to `(width, height)` -- shared by every `NodeKind` with no
+/// `CustomHitTest` override (M5 Phase 3).
+fn rect_contains(layout: &Layout, local_point: Point) -> bool {
+    let bounds = Rect::new(
+        0.0,
+        0.0,
+        f64::from(layout.size.width),
+        f64::from(layout.size.height),
+    );
+    bounds.contains(local_point)
 }
 
 impl Tree {
@@ -664,6 +683,31 @@ impl Tree {
         Some(node.interaction.get_or_insert_with(InteractionState::new))
     }
 
+    /// M5 Phase 3 (§11.10, §11.11): replaces a `NodeKind::Canvas`
+    /// node's entire real content -- both what `paint_node` draws and
+    /// what `hit_test_at` tests against. The one, ordinary (non-
+    /// callback) `Tree` mutation `engine-py::Window.redraw_canvas`
+    /// calls after invoking the app's Python draw callback exactly
+    /// once and collecting its result -- see `canvas.rs`'s own module
+    /// doc comment for why the callback itself never reaches this far.
+    /// Returns `None` if `id` doesn't exist or isn't a `Canvas`.
+    pub fn set_canvas_content(
+        &mut self,
+        id: NodeId,
+        commands: Vec<DrawCommand>,
+        hit_test: Option<CustomHitTest>,
+    ) -> Option<()> {
+        let node = self.nodes.get_mut(id)?;
+        match &mut node.kind {
+            NodeKind::Canvas(state) => {
+                state.commands = commands;
+                state.hit_test = hit_test;
+                Some(())
+            }
+            _ => None,
+        }
+    }
+
     pub fn focused(&self) -> Option<NodeId> {
         self.focused
     }
@@ -689,8 +733,10 @@ impl Tree {
     /// several `engine-py` synthetic-point entry points -- all
     /// explicitly out of this phase's scope, unchanged).
     ///
-    /// **Still narrowed:** no `NodeKind::Canvas` custom hit-test
-    /// override -- `Canvas` doesn't exist yet (M5 Phase 3 adds both).
+    /// **Since M5 Phase 3:** a `NodeKind::Canvas` with a `CustomHitTest`
+    /// set (`Tree::set_canvas_content`) overrides the rect test below
+    /// for that node only, per §11.10's own text; a `Canvas` with none
+    /// (or any other `NodeKind`) keeps the ordinary rect test.
     pub fn hit_test(&self, root: NodeId, point: Point) -> Option<NodeId> {
         self.hit_test_at(root, point, Affine::IDENTITY)
     }
@@ -712,18 +758,30 @@ impl Tree {
         }
 
         // Map the caller's canvas-space `point` into this node's local
-        // space via the inverse of its composed transform, then test it
-        // against the untransformed local layout box -- exactly the
-        // local-space rect `paint_node` draws into under the identical
-        // `composed` transform (M5 Phase 1).
+        // space via the inverse of its composed transform -- both the
+        // rect default and any `CustomHitTest` below test against this
+        // same local point, exactly the local-space coordinates
+        // `paint_node` draws into under the identical `composed`
+        // transform (M5 Phase 1).
         let local_point = composed.inverse() * point;
-        let bounds = Rect::new(
-            0.0,
-            0.0,
-            f64::from(layout.size.width),
-            f64::from(layout.size.height),
-        );
-        bounds.contains(local_point).then_some(id)
+
+        let hit = match &node.kind {
+            NodeKind::Canvas(state) => match &state.hit_test {
+                Some(CustomHitTest::Circle { cx, cy, radius }) => {
+                    (local_point - Point::new(*cx, *cy)).hypot() <= *radius
+                }
+                Some(CustomHitTest::Path { path, tolerance }) => {
+                    path.segments()
+                        .map(|seg| seg.nearest(local_point, 0.1).distance_sq)
+                        .fold(f64::INFINITY, f64::min)
+                        .sqrt()
+                        <= *tolerance
+                }
+                None => rect_contains(layout, local_point),
+            },
+            _ => rect_contains(layout, local_point),
+        };
+        hit.then_some(id)
     }
 
     /// The concrete fulfillment of §7.3's own text: "hover needs no new
@@ -2364,6 +2422,103 @@ mod tests {
             "a point outside both chip's and camera's new transformed footprint (though \
              inside their old untransformed one) must fall through to root's own \
              untransformed bounds, not silently miss"
+        );
+    }
+
+    /// M5 Phase 3 (§11.10): a `Canvas` node's `CustomHitTest::Circle`
+    /// genuinely overrides the default rect test, not just narrows it --
+    /// a point inside the node's own 100x100 rect but outside the
+    /// circle must miss entirely (the canvas is this tree's only node,
+    /// so there's nothing else for it to fall through to).
+    #[test]
+    fn canvas_custom_circle_hit_test_overrides_the_default_rect() {
+        let mut tree = Tree::new();
+        let mut state = CanvasState::new();
+        state.hit_test = Some(CustomHitTest::Circle {
+            cx: 50.0,
+            cy: 50.0,
+            radius: 10.0,
+        });
+        let canvas = tree.insert(
+            NodeKind::Canvas(state),
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(100.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.compute_layout(
+            canvas,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+
+        assert_eq!(
+            tree.hit_test(canvas, Point::new(50.0, 50.0)),
+            Some(canvas),
+            "the circle's own center must hit"
+        );
+        assert_eq!(
+            tree.hit_test(canvas, Point::new(5.0, 5.0)),
+            None,
+            "a point well inside the node's 100x100 rect but far outside the 10px-radius \
+             circle must miss -- the rect default must not apply as a fallback"
+        );
+    }
+
+    /// The path half of the same claim (§11.10's own "a bezier curve
+    /// within N pixels of the point" example) -- a straight diagonal
+    /// `BezPath` (a degenerate, zero-curvature case of the same real
+    /// `ParamCurveNearest` math a true bezier would use) with a 5px
+    /// tolerance.
+    #[test]
+    fn canvas_custom_path_hit_test_uses_real_distance_to_path() {
+        let mut tree = Tree::new();
+        let mut path = BezPath::new();
+        path.move_to((0.0, 0.0));
+        path.line_to((100.0, 100.0));
+
+        let mut state = CanvasState::new();
+        state.hit_test = Some(CustomHitTest::Path {
+            path,
+            tolerance: 5.0,
+        });
+        let canvas = tree.insert(
+            NodeKind::Canvas(state),
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(100.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.compute_layout(
+            canvas,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+
+        // Distance from (50, 52) to the line y=x is |50-52|/sqrt(2) ~= 1.41px.
+        assert_eq!(
+            tree.hit_test(canvas, Point::new(50.0, 52.0)),
+            Some(canvas),
+            "a point ~1.4px from the diagonal, within the 5px tolerance, must hit"
+        );
+        // Distance from (10, 90) to the line y=x is |10-90|/sqrt(2) ~= 56.6px.
+        assert_eq!(
+            tree.hit_test(canvas, Point::new(10.0, 90.0)),
+            None,
+            "a point ~56.6px from the diagonal, well outside the 5px tolerance (though \
+             still inside the node's own rect), must miss"
         );
     }
 

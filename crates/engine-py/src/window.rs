@@ -59,6 +59,12 @@ pub struct PyWindow {
     pub(crate) width: u32,
     pub(crate) height: u32,
     materializers: HashMap<NodeId, Py<PyAny>>,
+    /// M5 Phase 3 (§11.10/§11.11): the "draw callback" storage,
+    /// mirroring `materializers`'s own shape exactly -- stored by
+    /// `add_canvas`, invoked (exactly once per call) only by the real
+    /// entry point `redraw_canvas`, never automatically every frame
+    /// (see `PLAN.md`: no consumer has asked for that yet).
+    canvas_draws: HashMap<NodeId, Py<PyAny>>,
     pub(crate) handlers: HandlerMap,
     /// M4 Phase 7 (§11.3): `anchor NodeId -> content NodeId`, shared
     /// with every `Node` this `Window` hands out (`Node.
@@ -109,6 +115,7 @@ impl PyWindow {
             width,
             height,
             materializers: HashMap::new(),
+            canvas_draws: HashMap::new(),
             handlers: Rc::new(RefCell::new(HashMap::new())),
             context_menus: Rc::new(RefCell::new(HashMap::new())),
             dock: Rc::new(RefCell::new(dock::DockState::new())),
@@ -568,6 +575,74 @@ impl PyWindow {
         }
     }
 
+    /// M5 Phase 3 (§11.10/§11.11): creates a `NodeKind::Canvas` of the
+    /// given size. `draw` is stored here, keyed by the new node's own
+    /// `NodeId` -- not called yet; `redraw_canvas` is what actually
+    /// invokes it, mirroring `add_virtual_list`/`materialize`'s own
+    /// "store now, invoke later" shape exactly.
+    fn add_canvas(&mut self, width: f64, height: f64, draw: Py<PyAny>) -> Node {
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::Canvas(engine_core::CanvasState::new()),
+            Style {
+                size: Size {
+                    width: length(width as f32),
+                    height: length(height as f32),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, id);
+        drop(tree);
+        self.canvas_draws.insert(id, draw);
+        Node {
+            id,
+            tree: self.tree.clone(),
+            handlers: self.handlers.clone(),
+            context_menus: self.context_menus.clone(),
+        }
+    }
+
+    /// The real "draw callback" invocation entry point (§11.10/§11.11):
+    /// calls `canvas`'s own stored `draw(ctx: CanvasContext) -> None`
+    /// callback exactly once, then replaces `canvas`'s entire real
+    /// content (`Tree::set_canvas_content`) with whatever `ctx`
+    /// collected. Simpler than `set_virtual_list_window`'s own
+    /// per-index error-deferral -- this is exactly one call, not N, so
+    /// a raised exception propagates as a real `PyErr` directly, no
+    /// error slot needed.
+    fn redraw_canvas(&mut self, canvas: PyRef<'_, Node>, py: Python<'_>) -> PyResult<()> {
+        let draw = self
+            .canvas_draws
+            .get(&canvas.id)
+            .ok_or(EngineError::NotACanvas)?
+            .clone_ref(py);
+
+        {
+            let tree = self.tree.borrow();
+            if !matches!(
+                tree.get(canvas.id)
+                    .expect("redraw_canvas: Node holds a NodeId missing from its own Tree")
+                    .kind,
+                NodeKind::Canvas(_)
+            ) {
+                return Err(EngineError::NotACanvas.into());
+            }
+        }
+
+        let ctx = Py::new(py, crate::canvas::CanvasContext::default())?;
+        draw.call1(py, (ctx.clone_ref(py),))?;
+
+        let ctx = ctx.borrow(py);
+        self.tree.borrow_mut().set_canvas_content(
+            canvas.id,
+            ctx.commands.clone(),
+            ctx.hit_test.clone(),
+        );
+        Ok(())
+    }
+
     /// §11.7's own claim, matching `App::run`'s existing `PyWindow::
     /// __traverse__` reference in step 14's module doc comment: every
     /// stored `PyObject` a window keeps must be visible to CPython's
@@ -578,6 +653,11 @@ impl PyWindow {
         for materializer in self.materializers.values() {
             visit.call(materializer)?;
         }
+        // M5 Phase 3: `canvas_draws` is exactly the same class of stored
+        // `PyObject` as `materializers` -- same cyclic-GC obligation.
+        for draw in self.canvas_draws.values() {
+            visit.call(draw)?;
+        }
         for handler in self.handlers.borrow().values() {
             visit.call(handler)?;
         }
@@ -586,6 +666,7 @@ impl PyWindow {
 
     fn __clear__(&mut self) {
         self.materializers.clear();
+        self.canvas_draws.clear();
         self.handlers.borrow_mut().clear();
     }
 }

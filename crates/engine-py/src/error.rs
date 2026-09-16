@@ -27,6 +27,12 @@ pub enum EngineError {
     /// materializer callback for it).
     #[error("this Node is not a VirtualList added via Window.add_virtual_list on this Window")]
     NotAVirtualList,
+    /// M5 Phase 3 (§11.10/§11.11): `Window.redraw_canvas` was called on
+    /// a `Node` that either isn't a `Canvas` at all, or is one this
+    /// particular `Window` didn't create (so it has no recorded `draw`
+    /// callback for it) -- the exact same shape as `NotAVirtualList`.
+    #[error("this Node is not a Canvas added via Window.add_canvas on this Window")]
+    NotACanvas,
 }
 
 impl From<EngineError> for PyErr {
@@ -35,6 +41,7 @@ impl From<EngineError> for PyErr {
             EngineError::UnknownProperty { .. } => PyValueError::new_err(e.to_string()),
             EngineError::TypeMismatch { .. } => PyTypeError::new_err(e.to_string()),
             EngineError::NotAVirtualList => PyValueError::new_err(e.to_string()),
+            EngineError::NotACanvas => PyValueError::new_err(e.to_string()),
         }
     }
 }

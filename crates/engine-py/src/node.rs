@@ -229,6 +229,7 @@ fn kind_name(kind: &NodeKind) -> &'static str {
         NodeKind::Text(_) => "Text",
         NodeKind::Splitter(_) => "Splitter",
         NodeKind::VirtualList(_) => "VirtualList",
+        NodeKind::Canvas(_) => "Canvas",
     }
 }
 

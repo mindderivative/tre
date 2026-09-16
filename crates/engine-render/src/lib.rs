@@ -23,9 +23,9 @@
 
 mod text;
 
-use engine_core::{NodeId, NodeKind, Tree};
+use engine_core::{DrawCommand, NodeId, NodeKind, Tree};
 use peniko::Color;
-use peniko::kurbo::{Affine, Circle, Point, Rect, RoundedRect, Shape};
+use peniko::kurbo::{Affine, Circle, Point, Rect, RoundedRect, Shape, Stroke};
 use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene, TextureBindings};
 
 pub use text::{TextPlacement, TextRenderer};
@@ -245,6 +245,42 @@ fn paint_node(
         // small real subset, never `item_count`, with zero changes
         // needed here (§14 step 15, §11.7).
         NodeKind::Container | NodeKind::VirtualList(_) => {}
+        // M5 Phase 3 (§11.10, §11.11): replays `state.commands`, already
+        // resolved ahead of time by `engine-py::Window.redraw_canvas`
+        // (`canvas.rs`'s own module doc comment) -- every coordinate is
+        // node-local, drawn under the same `composed` transform as
+        // every other `NodeKind`, with zero special-casing beyond this
+        // one match arm.
+        NodeKind::Canvas(state) => {
+            for command in &state.commands {
+                match command {
+                    DrawCommand::FillRect {
+                        x,
+                        y,
+                        width,
+                        height,
+                        color,
+                    } => {
+                        scene.set_paint(*color);
+                        scene.fill_path(&Rect::new(*x, *y, x + width, y + height).to_path(0.1));
+                    }
+                    DrawCommand::FillCircle {
+                        cx,
+                        cy,
+                        radius,
+                        color,
+                    } => {
+                        scene.set_paint(*color);
+                        scene.fill_path(&Circle::new((*cx, *cy), *radius).to_path(0.1));
+                    }
+                    DrawCommand::StrokePath { path, color, width } => {
+                        scene.set_paint(*color);
+                        scene.set_stroke(Stroke::new(*width));
+                        scene.stroke_path(path);
+                    }
+                }
+            }
+        }
     }
 
     // M4 Phase 5 (§7.3): the real ripple/hover state-layer paint --

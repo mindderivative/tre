@@ -35,6 +35,8 @@
 
 use std::time::Instant;
 
+use crate::canvas::CanvasState;
+
 use peniko::Color;
 use taffy::Style;
 
@@ -80,6 +82,12 @@ pub enum NodeKind {
     /// visible-window subset in `VirtualListState::materialized` are
     /// ever real `Node`s, regardless of `item_count`.
     VirtualList(VirtualListState),
+    /// M5 Phase 3 (§11.10, §11.11): custom-drawn content plus an
+    /// optional custom hit-test override. `CanvasState` is plain, inert
+    /// data -- no `Py<PyAny>` -- resolved ahead of time by
+    /// `Tree::set_canvas_content`, not computed live during paint or
+    /// hit-testing (see `canvas.rs`'s own module doc comment for why).
+    Canvas(CanvasState),
 }
 
 /// §11.7's own struct sketch, unchanged in shape (`item_count`,
