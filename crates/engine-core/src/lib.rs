@@ -24,7 +24,9 @@ mod tree;
 pub use access::{AccessNodeData, AccessStates, Action, Role};
 pub use animation::{ActiveAnimation, Animated, CompletionHandle, Interpolate, MotionCurve};
 pub use dock::{DockLayout, DockSide, DockZone};
-pub use input::{AppHandler, DispatchOutcome, EventKind, InputEvent, Key, PointerButton};
+pub use input::{
+    AppHandler, DispatchOutcome, EventKind, InputEvent, Key, PointerButton, ScrollDelta,
+};
 pub use interaction::{InteractionState, RippleState};
 pub use node::{
     ItemExtent, Node, NodeId, NodeKind, PaintProperties, SplitterState, TextState, VirtualListState,

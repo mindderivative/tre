@@ -83,10 +83,10 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use engine_core::{InputEvent, Key, PointerButton};
+use engine_core::{InputEvent, Key, PointerButton, ScrollDelta};
 use peniko::kurbo::Point;
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 use winit::window::{Window, WindowAttributes, WindowId};
@@ -122,6 +122,22 @@ fn translate_key(logical_key: &WinitKey) -> Option<Key> {
         WinitKey::Named(NamedKey::Space) => Some(Key::Space),
         WinitKey::Named(NamedKey::Escape) => Some(Key::Escape),
         _ => None,
+    }
+}
+
+/// M4 Phase 8 (§11.7/§11.8 groundwork): `winit::event::MouseScrollDelta`
+/// has exactly two real variants, verified directly in `winit =
+/// "0.30.13"`'s vendored `event.rs` before writing this -- `LineDelta`
+/// (a touchpad/wheel notch count) and `PixelDelta` (raw pixels, when
+/// the platform/device supports it) are genuinely different units, so
+/// `engine_core::ScrollDelta` mirrors the real split rather than
+/// collapsing it. `PixelDelta`'s own `PhysicalPosition<f64>` -> plain
+/// `(f64, f64)` is a field copy, the same "no unit conversion needed"
+/// shape `CursorMoved`'s own translation already uses.
+fn translate_scroll_delta(delta: MouseScrollDelta) -> ScrollDelta {
+    match delta {
+        MouseScrollDelta::LineDelta(x, y) => ScrollDelta::Lines(f64::from(x), f64::from(y)),
+        MouseScrollDelta::PixelDelta(position) => ScrollDelta::Pixels(position.x, position.y),
     }
 }
 
@@ -487,6 +503,19 @@ where
                     on_input(window_id, event);
                 }
             }
+            // M4 Phase 8 (§11.7/§11.8 groundwork): `winit`'s own
+            // `MouseWheel` carries no position either, the same real
+            // fact `MouseInput` already works around -- reuses
+            // `last_cursor_position` identically.
+            WindowEvent::MouseWheel { delta, .. } => {
+                on_input(
+                    window_id,
+                    InputEvent::Scroll {
+                        delta: translate_scroll_delta(delta),
+                        position: win.last_cursor_position,
+                    },
+                );
+            }
             _ => {}
         }
     }
@@ -550,5 +579,23 @@ mod tests {
         // named key this minimal model simply doesn't assign meaning to.
         assert_eq!(translate_key(&WinitKey::Character("a".into())), None);
         assert_eq!(translate_key(&WinitKey::Named(NamedKey::ArrowDown)), None);
+    }
+
+    #[test]
+    fn translate_scroll_delta_preserves_the_real_line_pixel_distinction() {
+        assert_eq!(
+            translate_scroll_delta(MouseScrollDelta::LineDelta(0.0, 3.0)),
+            ScrollDelta::Lines(0.0, 3.0)
+        );
+        assert_eq!(
+            translate_scroll_delta(MouseScrollDelta::LineDelta(-1.5, 0.0)),
+            ScrollDelta::Lines(-1.5, 0.0)
+        );
+        assert_eq!(
+            translate_scroll_delta(MouseScrollDelta::PixelDelta(
+                winit::dpi::PhysicalPosition::new(0.0, -40.0)
+            )),
+            ScrollDelta::Pixels(0.0, -40.0)
+        );
     }
 }

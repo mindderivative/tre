@@ -42,6 +42,24 @@ pub enum Key {
     Escape,
 }
 
+/// M4 Phase 8 (§11.7/§11.8 groundwork): mirrors `winit::event::
+/// MouseScrollDelta`'s own real two-variant split, verified directly in
+/// `winit = "0.30.13"`'s vendored source before writing this --
+/// `LineDelta` (a touchpad/wheel notch count) and `PixelDelta` (raw
+/// pixels, when the platform/device supports it) are genuinely
+/// different units, not two names for the same thing, so collapsing
+/// them into one plain `(f64, f64)` would misrepresent real magnitude
+/// differences for no real reason -- nothing consumes the value's
+/// magnitude yet at all (this phase is input plumbing only), so the
+/// honest choice is to preserve the real distinction rather than
+/// assume a simplification, the same lesson `PointerButton`'s own past
+/// correction already taught this codebase once.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ScrollDelta {
+    Lines(f64, f64),
+    Pixels(f64, f64),
+}
+
 /// The generic input vocabulary `engine-platform` translates real
 /// `winit` events into (§4). `position` is already in the same
 /// coordinate space `Tree::hit_test`/`Tree::absolute_position` use --
@@ -67,6 +85,18 @@ pub enum InputEvent {
     KeyReleased {
         key: Key,
         shift: bool,
+    },
+    /// M4 Phase 8: `position` is the cursor's last known position (the
+    /// same `last_cursor_position` tracking `MouseInput` already
+    /// reuses in `engine-platform`, since `winit`'s own `MouseWheel`
+    /// carries no position either) -- a future scroll-to-node wiring
+    /// will need to know which node the cursor is over. `Tree::
+    /// dispatch` is deliberately a true no-op for this event today
+    /// (plumbing only, §11.7/§11.8's own still-open scrollable-viewport
+    /// gap isn't built yet).
+    Scroll {
+        delta: ScrollDelta,
+        position: Point,
     },
 }
 

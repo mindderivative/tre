@@ -1022,6 +1022,14 @@ impl Tree {
                 Key::Escape => DispatchOutcome::None,
             },
             InputEvent::KeyReleased { .. } => DispatchOutcome::None,
+            // M4 Phase 8 (§11.7/§11.8 groundwork): a true no-op today,
+            // deliberately -- wiring this to VirtualList's window
+            // movement needs the still-open real scrollable-viewport
+            // gap (clipping + scroll offset), not manufactured here
+            // ahead of that need. Real translation from a genuine
+            // winit::WindowEvent::MouseWheel already reaches this far
+            // (engine-platform); this is where it stops for now.
+            InputEvent::Scroll { .. } => DispatchOutcome::None,
         }
     }
 
@@ -1125,6 +1133,7 @@ pub fn from_access_id(id: accesskit::NodeId) -> NodeId {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input::ScrollDelta;
     use peniko::Color;
     use taffy::prelude::{FlexDirection, length};
 
@@ -2718,6 +2727,82 @@ mod tests {
                 new: None
             },
             "leaving every hit-testable node must still report the exit half"
+        );
+    }
+
+    #[test]
+    fn dispatch_scroll_is_a_true_no_op() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            display: taffy::Display::Flex,
+            size: Size {
+                width: length(100.0),
+                height: length(50.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+        let (k, s, p) = leaf(50.0, 50.0);
+        let a = tree.insert(k, s, p);
+        tree.add_child(root, a);
+
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(50.0),
+            },
+        );
+
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let now = Instant::now();
+
+        // M4 Phase 8 (§11.7/§11.8 groundwork): real translation reaches
+        // Tree::dispatch, but a Scroll event must be a genuine no-op --
+        // no outcome, and no side effect on any other tracked state --
+        // matching this phase's own explicit "plumbing only" scope.
+        let before_hovered = tree.hovered;
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::Scroll {
+                delta: ScrollDelta::Lines(0.0, 3.0),
+                position: Point::new(25.0, 25.0),
+            },
+            &config,
+            now,
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::None,
+            "a Scroll event must produce no real outcome yet"
+        );
+        assert_eq!(
+            tree.hovered, before_hovered,
+            "a Scroll event must not touch hover state as a side effect"
+        );
+
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::Scroll {
+                delta: ScrollDelta::Pixels(0.0, -40.0),
+                position: Point::new(25.0, 25.0),
+            },
+            &config,
+            now,
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::None,
+            "a pixel-delta Scroll event must also produce no real outcome yet"
         );
     }
 
