@@ -1,17 +1,27 @@
 //! `Node` (§8's `PyNode`, renamed to match what Python actually sees --
 //! `tre.Node`, not `tre.PyNode`) -- narrower than §8's own full sketch:
-//! `animate()` only, for now. No `add_child` (no cycle to reject, so
-//! `EngineError::CycleRejected` isn't implemented yet either) and no
-//! `set_on_click` (storing a Python callback needs `PyWindow`'s
-//! `#[pyclass(gc)]` cyclic-GC participation, §8's own review note --
-//! deferred until something actually stores one). Each is additive when
-//! its own later build-order step needs it.
+//! `animate()`/`get()` plus, as of M4 Phase 1 step 3, `set_on_click`.
+//! Still no `add_child` (no cycle to reject, so `EngineError::
+//! CycleRejected` isn't implemented yet either) -- additive when its own
+//! later build-order step needs it.
+//!
+//! `set_on_click`'s callback storage (`click_handlers`) is an
+//! `Rc<RefCell<HashMap<NodeId, Py<PyAny>>>>` *shared* with the owning
+//! `PyWindow` -- created once in `window.rs`, cloned into every `Node`
+//! that `Window` hands out, the exact same sharing shape `tree:
+//! Rc<RefCell<Tree>>` already uses. This is what actually resolves §8's
+//! own review note (a Python callback stored in a Rust struct is a real
+//! GC-cycle risk unless the owning `#[pyclass]` implements `__traverse__`/
+//! `__clear__`) without needing `Node` to hold a back-reference to its
+//! own `PyWindow`: `PyWindow::__traverse__` already visits everything in
+//! this same shared map (see `window.rs`).
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use engine_core::{MotionCurve, NodeId, NodeKind, Tree};
+use engine_core::{Action, MotionCurve, NodeId, NodeKind, Tree};
 use peniko::Color;
 use pyo3::prelude::*;
 
@@ -21,6 +31,7 @@ use crate::error::EngineError;
 pub struct Node {
     pub(crate) id: NodeId,
     pub(crate) tree: Rc<RefCell<Tree>>,
+    pub(crate) click_handlers: Rc<RefCell<HashMap<NodeId, Py<PyAny>>>>,
 }
 
 #[pymethods]
@@ -107,6 +118,27 @@ impl Node {
                 property: property.to_string(),
             }
             .into()),
+        }
+    }
+
+    /// M4 Phase 1 step 3 (§4, §11.10): registers `callback` to run when
+    /// this node is *activated* -- a real primary-button click released
+    /// over it, or `Enter`/`Space` while it's the keyboard-focused node
+    /// (`Tree::dispatch`'s own `DispatchOutcome::Activated`, §2 Design
+    /// Principle 6: `Tree` only knows *that* activation happened, this
+    /// is where it's given meaning). Also adds `Action::Click` to this
+    /// node's own `access.actions` if it isn't already there -- the same
+    /// real signal `Tree::move_focus` already keys "interactive" off
+    /// (§10), so a node this is called on becomes Tab-reachable for
+    /// free, not just mouse-clickable; §10's own "keyboard operability
+    /// ships from day one" stance applied to the one call site that
+    /// actually makes a node interactive for the first time.
+    fn set_on_click(&self, callback: Py<PyAny>) {
+        self.click_handlers.borrow_mut().insert(self.id, callback);
+        if let Some(node) = self.tree.borrow_mut().get_mut(self.id)
+            && !node.access.actions.contains(&Action::Click)
+        {
+            node.access.actions.push(Action::Click);
         }
     }
 }

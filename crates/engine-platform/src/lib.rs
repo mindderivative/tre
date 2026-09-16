@@ -53,16 +53,65 @@
 //! callback hook this step doesn't build), and `WindowOpener` staying
 //! usable only inside `setup` is a real, stated scope limit, not an
 //! oversight.
+//!
+//! **M4 Phase 1 step 2** adds the real translation this module's own
+//! doc comment above named as still missing: `WindowEvent::CursorMoved`/
+//! `MouseInput`/`KeyboardInput` become `engine_core::InputEvent`, handed
+//! to a new `on_input` closure -- the same "just another closure crossing
+//! the boundary" shape `on_frame`/`build_access_update` already use, not
+//! a new pattern. `engine-platform` never touches a `Tree` itself here;
+//! it doesn't have one (generic over whatever the caller does with the
+//! translated event, matching `on_frame`'s own existing inversion for
+//! rendering). See `translate_pointer_button`/`translate_key`'s own doc
+//! comments for the real `winit = "0.30.13"` API facts this translation
+//! is built on, verified directly in its source, not assumed.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use engine_core::{InputEvent, Key, PointerButton};
+use peniko::kurbo::Point;
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
+use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 use winit::window::{Window, WindowAttributes, WindowId};
+
+/// The three buttons `engine_core::PointerButton` actually distinguishes.
+/// **Real API fact, verified directly against `winit = "0.30.13"`'s own
+/// `event.rs` before writing this:** `winit::event::MouseButton` has six
+/// variants (`Left`/`Right`/`Middle`/`Back`/`Forward`/`Other(u16)`), not
+/// three -- an earlier doc comment on `engine_core::PointerButton`
+/// claimed a 1:1 three-variant match without checking, which was wrong.
+/// `Back`/`Forward`/`Other` (a browser-navigation convention with no
+/// real MD3 desktop meaning yet) translate to `None` -- no `InputEvent`
+/// at all, a stated narrowing, not a silently-dropped case.
+fn translate_pointer_button(button: MouseButton) -> Option<PointerButton> {
+    match button {
+        MouseButton::Left => Some(PointerButton::Primary),
+        MouseButton::Right => Some(PointerButton::Secondary),
+        MouseButton::Middle => Some(PointerButton::Middle),
+        MouseButton::Back | MouseButton::Forward | MouseButton::Other(_) => None,
+    }
+}
+
+/// `engine_core::Key`'s own deliberately minimal vocabulary (§10) --
+/// every other `winit` key, including every printable character,
+/// produces `None` (no `InputEvent` at all). Matched against
+/// `winit::keyboard::Key::Named`, verified directly against `winit`'s
+/// own `keyboard.rs` (`NamedKey::{Tab, Enter, Space, Escape}` all real,
+/// confirmed variants) before writing this.
+fn translate_key(logical_key: &WinitKey) -> Option<Key> {
+    match logical_key {
+        WinitKey::Named(NamedKey::Tab) => Some(Key::Tab),
+        WinitKey::Named(NamedKey::Enter) => Some(Key::Enter),
+        WinitKey::Named(NamedKey::Space) => Some(Key::Space),
+        WinitKey::Named(NamedKey::Escape) => Some(Key::Escape),
+        _ => None,
+    }
+}
 
 pub struct WindowConfig {
     pub title: String,
@@ -133,16 +182,27 @@ impl WindowOpener {
 /// Returns `Err` rather than panicking if no display is reachable --
 /// see [`run_windowed`]'s own doc comment for why that's expected, not
 /// exceptional, on some CI runners.
-pub fn run_windowed_multi<C, F, A, S>(
+///
+/// `on_input` (M4 Phase 1 step 2) fires once per real pointer/keyboard
+/// event this module knows how to translate (`translate_pointer_button`/
+/// `translate_key`'s own doc comments name exactly which ones) -- a
+/// genuinely new `InputEvent` per call, in the same window-client-pixel
+/// coordinate space `Tree::hit_test`/`absolute_position` already use.
+/// This function never calls `Tree::dispatch` itself -- it doesn't have
+/// a `Tree` (generic over whatever the caller does with the event,
+/// matching `on_frame`'s own existing inversion for rendering).
+pub fn run_windowed_multi<C, F, A, S, N>(
     on_window_created: C,
     on_frame: F,
     build_access_update: A,
+    on_input: N,
     setup: S,
 ) -> Result<(), winit::error::EventLoopError>
 where
     C: FnMut(WindowId, u64, Arc<Window>),
     F: FnMut(WindowId, u32),
     A: FnMut(WindowId) -> accesskit::TreeUpdate,
+    N: FnMut(WindowId, InputEvent),
     S: FnOnce(&WindowOpener),
 {
     let event_loop = EventLoop::<PlatformEvent>::with_user_event().build()?;
@@ -159,6 +219,7 @@ where
         on_window_created,
         on_frame,
         build_access_update,
+        on_input,
     };
     event_loop.run_app(&mut app)
 }
@@ -192,6 +253,12 @@ where
             on_frame(&window, frame);
         },
         move |_id| build_access_update(),
+        // Neither of this wrapper's two existing callers (`rect_window.rs`,
+        // `access_button.rs`) needs input events -- a no-op keeps
+        // `run_windowed`'s own signature untouched, matching this
+        // function's own doc comment's "byte-for-byte source-compatible"
+        // contract.
+        |_id, _event| {},
         |opener| {
             opener.open_window(WindowRequest { config, token: 0 });
         },
@@ -203,21 +270,34 @@ struct PerWindow {
     access_adapter: accesskit_winit::Adapter,
     frame: u32,
     max_frames: Option<u32>,
+    /// M4 Phase 1 step 2: `KeyEvent` doesn't carry modifier state itself
+    /// -- `WindowEvent::ModifiersChanged` is a separate event -- so this
+    /// is updated there and read (via `.shift_key()`) when a
+    /// `KeyboardInput` needs to know whether it's really Tab or
+    /// Shift-Tab.
+    modifiers: ModifiersState,
+    /// M4 Phase 1 step 2: `winit`'s own `MouseInput` carries no position
+    /// -- it always corresponds to wherever the most recent `CursorMoved`
+    /// put the pointer -- so this is tracked here and read when
+    /// translating a press/release into an `InputEvent`.
+    last_cursor_position: Point,
 }
 
-struct MultiWindowApp<C, F, A> {
+struct MultiWindowApp<C, F, A, N> {
     windows: HashMap<WindowId, PerWindow>,
     proxy: EventLoopProxy<PlatformEvent>,
     on_window_created: C,
     on_frame: F,
     build_access_update: A,
+    on_input: N,
 }
 
-impl<C, F, A> ApplicationHandler<PlatformEvent> for MultiWindowApp<C, F, A>
+impl<C, F, A, N> ApplicationHandler<PlatformEvent> for MultiWindowApp<C, F, A, N>
 where
     C: FnMut(WindowId, u64, Arc<Window>),
     F: FnMut(WindowId, u32),
     A: FnMut(WindowId) -> accesskit::TreeUpdate,
+    N: FnMut(WindowId, InputEvent),
 {
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
         // Windows are created lazily, in `user_event`, as `OpenWindow`
@@ -261,6 +341,8 @@ where
                         access_adapter: adapter,
                         frame: 0,
                         max_frames: request.config.max_frames,
+                        modifiers: ModifiersState::empty(),
+                        last_cursor_position: Point::ZERO,
                     },
                 );
             }
@@ -297,6 +379,7 @@ where
             windows,
             on_frame,
             build_access_update,
+            on_input,
             ..
         } = self;
         let Some(win) = windows.get_mut(&window_id) else {
@@ -327,7 +410,109 @@ where
                 }
                 win.window.request_redraw();
             }
+            // M4 Phase 1 step 2: the real translation this module's own
+            // doc comment named as still missing. `PhysicalPosition<f64>`
+            // -> `kurbo::Point` is a plain field copy -- both are
+            // window-client pixels, top-left origin, no unit conversion
+            // needed.
+            WindowEvent::CursorMoved { position, .. } => {
+                let position = Point::new(position.x, position.y);
+                win.last_cursor_position = position;
+                on_input(window_id, InputEvent::PointerMoved { position });
+            }
+            WindowEvent::ModifiersChanged(modifiers) => {
+                win.modifiers = modifiers.state();
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                if let Some(button) = translate_pointer_button(button) {
+                    // `winit`'s own `MouseInput` carries no position --
+                    // it always corresponds to the cursor's last known
+                    // `CursorMoved` position (which always arrives first
+                    // in practice, the OS reports pointer position
+                    // continuously), tracked in `last_cursor_position`
+                    // above for exactly this.
+                    let position = win.last_cursor_position;
+                    let event = match state {
+                        ElementState::Pressed => InputEvent::PointerPressed { position, button },
+                        ElementState::Released => InputEvent::PointerReleased { position, button },
+                    };
+                    on_input(window_id, event);
+                }
+            }
+            WindowEvent::KeyboardInput {
+                event: key_event, ..
+            } => {
+                if let Some(key) = translate_key(&key_event.logical_key) {
+                    let shift = win.modifiers.shift_key();
+                    let event = match key_event.state {
+                        ElementState::Pressed => InputEvent::KeyPressed { key, shift },
+                        ElementState::Released => InputEvent::KeyReleased { key, shift },
+                    };
+                    on_input(window_id, event);
+                }
+            }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Design Principle 5: validated standalone against real `winit`
+    // enum values, no live `EventLoop` needed -- `translate_pointer_button`/
+    // `translate_key` are plain data-in, data-out functions.
+
+    #[test]
+    fn translate_pointer_button_maps_the_three_real_buttons_this_model_distinguishes() {
+        assert_eq!(
+            translate_pointer_button(MouseButton::Left),
+            Some(PointerButton::Primary)
+        );
+        assert_eq!(
+            translate_pointer_button(MouseButton::Right),
+            Some(PointerButton::Secondary)
+        );
+        assert_eq!(
+            translate_pointer_button(MouseButton::Middle),
+            Some(PointerButton::Middle)
+        );
+    }
+
+    #[test]
+    fn translate_pointer_button_ignores_buttons_with_no_md3_desktop_meaning_yet() {
+        assert_eq!(translate_pointer_button(MouseButton::Back), None);
+        assert_eq!(translate_pointer_button(MouseButton::Forward), None);
+        assert_eq!(translate_pointer_button(MouseButton::Other(7)), None);
+    }
+
+    #[test]
+    fn translate_key_maps_exactly_the_minimal_keyboard_vocabulary() {
+        assert_eq!(
+            translate_key(&WinitKey::Named(NamedKey::Tab)),
+            Some(Key::Tab)
+        );
+        assert_eq!(
+            translate_key(&WinitKey::Named(NamedKey::Enter)),
+            Some(Key::Enter)
+        );
+        assert_eq!(
+            translate_key(&WinitKey::Named(NamedKey::Space)),
+            Some(Key::Space)
+        );
+        assert_eq!(
+            translate_key(&WinitKey::Named(NamedKey::Escape)),
+            Some(Key::Escape)
+        );
+    }
+
+    #[test]
+    fn translate_key_ignores_every_key_outside_the_minimal_vocabulary() {
+        // A printable character -- real text entry needs no `NodeKind`
+        // this codebase has yet (this module's own doc comment); a
+        // named key this minimal model simply doesn't assign meaning to.
+        assert_eq!(translate_key(&WinitKey::Character("a".into())), None);
+        assert_eq!(translate_key(&WinitKey::Named(NamedKey::ArrowDown)), None);
     }
 }

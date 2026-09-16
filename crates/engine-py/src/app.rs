@@ -32,6 +32,7 @@ use taffy::prelude::{AvailableSpace, Size};
 use vello_hybrid::{RenderSize, RenderTargetConfig};
 use winit::window::{Window, WindowId};
 
+use crate::dispatch::{interaction_config, run_activation};
 use crate::window::PyWindow;
 
 #[pyclass(unsendable)]
@@ -44,13 +45,18 @@ pub struct App {
 /// need to touch a Python object -- they only ever see plain Rust data
 /// they already own, the same "only thin data crosses into winit's own
 /// callback world" discipline `engine-platform`'s own `PlatformEvent`
-/// already follows.
+/// already follows. `click_handlers` is the one exception: `Node.
+/// set_on_click`'s own real `Py<PyAny>` callbacks (M4 Phase 1 step 3)
+/// have to be looked up by the `on_input` closure below on a real
+/// activation, so this is the one Python-object-bearing field extracted
+/// here rather than converted to plain data.
 struct WindowSetup {
     tree: Rc<RefCell<Tree>>,
     root: NodeId,
     title: String,
     width: u32,
     height: u32,
+    click_handlers: Rc<RefCell<HashMap<NodeId, Py<PyAny>>>>,
 }
 
 struct GpuState {
@@ -118,6 +124,7 @@ struct WindowRuntime {
     width: u32,
     height: u32,
     gpu: GpuState,
+    click_handlers: Rc<RefCell<HashMap<NodeId, Py<PyAny>>>>,
 }
 
 #[pymethods]
@@ -159,6 +166,7 @@ impl App {
                     title: window.title.clone(),
                     width: window.width,
                     height: window.height,
+                    click_handlers: window.click_handlers.clone(),
                 }
             })
             .collect();
@@ -177,6 +185,7 @@ impl App {
         let runtimes_for_created = runtimes.clone();
         let runtimes_for_frame = runtimes.clone();
         let runtimes_for_access = runtimes.clone();
+        let runtimes_for_input = runtimes.clone();
         let setups_for_setup = setups.clone();
 
         let result = run_windowed_multi(
@@ -191,6 +200,7 @@ impl App {
                         width: setup.width,
                         height: setup.height,
                         gpu,
+                        click_handlers: setup.click_handlers.clone(),
                     },
                 );
             },
@@ -259,6 +269,26 @@ impl App {
                     .get(&window_id)
                     .expect("build_access_update requested for a window with no runtime state");
                 runtime.tree.borrow().build_access_update(runtime.root)
+            },
+            // M4 Phase 1 step 3: the real "meaning-dependent" half
+            // `Tree::dispatch` leaves for its own caller (§2 Design
+            // Principle 6) -- every mechanical consequence (hover, focus
+            // movement, ripple-spawn-on-press) already happened inside
+            // `dispatch` itself; this closure's only job is to look up
+            // and call a registered `Node.set_on_click` handler when
+            // `dispatch` reports a real activation.
+            move |window_id, event| {
+                let runtimes = runtimes_for_input.borrow();
+                let Some(runtime) = runtimes.get(&window_id) else {
+                    return;
+                };
+                let outcome = runtime.tree.borrow_mut().dispatch(
+                    runtime.root,
+                    event,
+                    &interaction_config(),
+                    Instant::now(),
+                );
+                run_activation(&runtime.click_handlers, outcome, py);
             },
             move |opener| {
                 for (index, setup) in setups_for_setup.iter().enumerate() {

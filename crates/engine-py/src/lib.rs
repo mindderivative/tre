@@ -8,6 +8,7 @@
 
 mod app;
 mod binding;
+mod dispatch;
 mod error;
 mod node;
 mod view;

@@ -8,10 +8,15 @@ description = "winit EventLoop/ApplicationHandler and the accesskit_winit adapte
 accesskit = "0.25.0"
 accesskit_winit = "0.34.0"
 engine-core = { path = "../engine-core" }
+# M4 Phase 1 step 2: `engine_core::InputEvent`'s own `position` field is
+# `peniko::kurbo::Point` -- needed for real now (translating a real
+# `winit::dpi::PhysicalPosition` into it), not just in this crate's own
+# tests as before. Already resolved at this exact version transitively
+# (via `engine-core`), so this costs nothing new in the dependency graph.
+peniko = "0.6.1"
 winit = "0.30.13"
 
 [dev-dependencies]
-peniko = "0.6.1"
 taffy = "0.14.0"
 
 # Lives in tests/, not examples/, matching TRE v1's own precedent

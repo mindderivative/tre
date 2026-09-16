@@ -8,12 +8,17 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use engine_core::{ItemExtent, NodeId, NodeKind, PaintProperties, Tree, VirtualListState};
+use engine_core::{
+    InputEvent, ItemExtent, NodeId, NodeKind, PaintProperties, PointerButton, Tree,
+    VirtualListState,
+};
 use peniko::Color;
+use peniko::kurbo::Point;
 use pyo3::class::{PyTraverseError, PyVisit};
 use pyo3::prelude::*;
-use taffy::prelude::{Rect as TaffyRect, Size, Style, auto, length};
+use taffy::prelude::{AvailableSpace, Rect as TaffyRect, Size, Style, auto, length};
 
+use crate::dispatch::{interaction_config, run_activation};
 use crate::error::EngineError;
 use crate::node::Node;
 
@@ -27,15 +32,22 @@ const GAP: f32 = 16.0;
 /// use throughout `ARCHITECTURE.md`.
 ///
 /// `materializers` is §11.7's own "materialize item N" callback storage
-/// (§8's review note: "storing a long-lived `PyObject` callback... is a
-/// new risk class... unless the `#[pyclass]` implements `__traverse__`/
-/// `__clear__`" -- `node.rs`'s own module doc comment deferred this
-/// exact question for `set_on_click` "until something actually stores
-/// one"; this is that something). Confirmed directly against pyo3
-/// 0.29.2's own real API before implementing (`tests/test_gc.rs`): no
-/// `#[pyclass(gc)]` flag exists or is needed in this version -- a
-/// `#[pyclass]` simply implementing `__traverse__`/`__clear__` in its
-/// `#[pymethods]` is enough to opt into cyclic GC support, see below.
+/// and `click_handlers` (M4 Phase 1 step 3, §11.10) is `Node.
+/// set_on_click`'s -- both real cases of §8's own review note: "storing
+/// a long-lived `PyObject` callback... is a new risk class... unless the
+/// `#[pyclass]` implements `__traverse__`/`__clear__`," which `node.rs`'s
+/// own module doc comment deferred exactly this long, "until something
+/// actually stores one." Confirmed directly against pyo3 0.29.2's own
+/// real API before implementing (`tests/test_gc.rs`): no `#[pyclass(gc)]`
+/// flag exists or is needed in this version -- a `#[pyclass]` simply
+/// implementing `__traverse__`/`__clear__` in its `#[pymethods]` is
+/// enough to opt into cyclic GC support, see below.
+///
+/// `click_handlers` is an `Rc<RefCell<...>>`, not a plain field, because
+/// `Node.set_on_click` (in `node.rs`) needs to write into the *same*
+/// map from a `Node` Python object that holds no back-reference to this
+/// `PyWindow` -- shared the exact way `tree: Rc<RefCell<Tree>>` already
+/// is between a `Window` and every `Node` it hands out.
 #[pyclass(unsendable, name = "Window")]
 pub struct PyWindow {
     pub(crate) tree: Rc<RefCell<Tree>>,
@@ -44,6 +56,7 @@ pub struct PyWindow {
     pub(crate) width: u32,
     pub(crate) height: u32,
     materializers: HashMap<NodeId, Py<PyAny>>,
+    pub(crate) click_handlers: Rc<RefCell<HashMap<NodeId, Py<PyAny>>>>,
 }
 
 #[pymethods]
@@ -82,6 +95,7 @@ impl PyWindow {
             width,
             height,
             materializers: HashMap::new(),
+            click_handlers: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
@@ -107,7 +121,67 @@ impl PyWindow {
         Node {
             id,
             tree: self.tree.clone(),
+            click_handlers: self.click_handlers.clone(),
         }
+    }
+
+    /// M4 Phase 1 step 3 (§11.10): a direct, programmatic "click this
+    /// node" entry point -- the same "expose a direct method since real
+    /// pointer dispatch has nowhere else to originate outside a live
+    /// window" pattern every prior interaction step used (`Tree::
+    /// spawn_ripple`, `Tree::open_overlay`, etc.), and this step's own
+    /// real, no-window-needed way to prove `set_on_click` actually
+    /// fires. Computes layout first (so `node`'s own bounds are current
+    /// -- the real render loop does this every frame; nothing else does
+    /// for a `Window` with no render loop attached), then dispatches a
+    /// primary-button press+release pair at `node`'s own real center
+    /// point -- exactly what a real mouse click there would produce.
+    fn click(&mut self, node: PyRef<'_, Node>, py: Python<'_>) {
+        let point = {
+            let mut tree = self.tree.borrow_mut();
+            tree.compute_layout(
+                self.root,
+                Size {
+                    width: AvailableSpace::Definite(self.width as f32),
+                    height: AvailableSpace::Definite(self.height as f32),
+                },
+            );
+            let (x, y) = tree.absolute_position(node.id);
+            let layout = tree.layout(node.id);
+            Point::new(
+                x + f64::from(layout.size.width) / 2.0,
+                y + f64::from(layout.size.height) / 2.0,
+            )
+        };
+
+        let now = std::time::Instant::now();
+        let config = interaction_config();
+        // Each `dispatch` call's own `self.tree.borrow_mut()` is a
+        // short-lived temporary, released before `run_activation` runs
+        // -- a click handler that itself touches this same `Tree` (e.g.
+        // animating the very node it's attached to, a real, plausible
+        // pattern) would otherwise panic on a re-entrant borrow.
+        let press = self.tree.borrow_mut().dispatch(
+            self.root,
+            InputEvent::PointerPressed {
+                position: point,
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        run_activation(&self.click_handlers, press, py);
+
+        let release = self.tree.borrow_mut().dispatch(
+            self.root,
+            InputEvent::PointerReleased {
+                position: point,
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        run_activation(&self.click_handlers, release, py);
     }
 
     /// §14 step 15 (§11.7): creates a `NodeKind::VirtualList` of
@@ -156,6 +230,7 @@ impl PyWindow {
         Node {
             id,
             tree: self.tree.clone(),
+            click_handlers: self.click_handlers.clone(),
         }
     }
 
@@ -252,10 +327,14 @@ impl PyWindow {
         for materializer in self.materializers.values() {
             visit.call(materializer)?;
         }
+        for click_handler in self.click_handlers.borrow().values() {
+            visit.call(click_handler)?;
+        }
         Ok(())
     }
 
     fn __clear__(&mut self) {
         self.materializers.clear();
+        self.click_handlers.borrow_mut().clear();
     }
 }

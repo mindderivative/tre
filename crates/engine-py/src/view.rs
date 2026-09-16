@@ -32,6 +32,7 @@
 //!   project applies throughout.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use engine_core::{NodeId, Tree};
@@ -108,9 +109,14 @@ fn apply_binding_value(
             )));
         }
     };
+    // Never exposed to Python -- only `animate()` is called on it below
+    // -- so an empty, throwaway `click_handlers` map is fine here; a
+    // real `View`-created `Node` (returned from `View::node`, below)
+    // shares `View`'s own persistent one instead.
     let temp_node = Node {
         id: node_id,
         tree: tree.clone(),
+        click_handlers: Rc::new(RefCell::new(HashMap::new())),
     };
     temp_node.animate(property, bound, 0)?;
     tree.borrow_mut().tick_all(std::time::Instant::now());
@@ -163,6 +169,14 @@ pub struct View {
     reconciler: Reconciler,
     bindings: Vec<(String, String, String)>, // (widget_id, property, raw "{{ expr }}")
     handlers: Vec<(String, String, String)>, // (widget_id, event, method_name)
+    /// Mirrors `PyWindow`'s own `click_handlers` (M4 Phase 1 step 3) --
+    /// shared with every `Node` this `View` hands out via `node()`, so
+    /// `set_on_click` is structurally available on a `View`'s widgets
+    /// too. Not yet reachable by any real dispatch: `View` has no event
+    /// loop wired to it (this module's own doc comment names that as
+    /// this crate's stated scope boundary) -- a future step that gives
+    /// `View` a real render loop is what would actually invoke these.
+    click_handlers: Rc<RefCell<HashMap<NodeId, Py<PyAny>>>>,
 }
 
 #[pymethods]
@@ -186,6 +200,7 @@ impl View {
             reconciler,
             bindings,
             handlers,
+            click_handlers: Rc::new(RefCell::new(HashMap::new())),
         })
     }
 
@@ -199,6 +214,7 @@ impl View {
         Ok(Node {
             id,
             tree: self.tree.clone(),
+            click_handlers: self.click_handlers.clone(),
         })
     }
 
@@ -274,5 +290,20 @@ impl View {
         }
 
         Ok(())
+    }
+
+    /// Same real GC-cycle-safety obligation `PyWindow` already carries
+    /// for its own `click_handlers` (M4 Phase 1 step 3) -- `View` stores
+    /// `Py<PyAny>` callbacks too now, so it needs to make them visible
+    /// to CPython's cyclic collector the same way.
+    fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        for click_handler in self.click_handlers.borrow().values() {
+            visit.call(click_handler)?;
+        }
+        Ok(())
+    }
+
+    fn __clear__(&mut self) {
+        self.click_handlers.borrow_mut().clear();
     }
 }

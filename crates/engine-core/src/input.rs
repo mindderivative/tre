@@ -15,9 +15,16 @@
 
 use peniko::kurbo::Point;
 
-/// Matches `winit::event::MouseButton`'s three real variants 1:1 --
-/// `engine-platform`'s future translation is a plain match, not a
-/// lossy mapping.
+/// The three buttons this minimal model actually distinguishes.
+/// **Correction (verified directly against `winit = "0.30.13"`'s own
+/// source before this was wired up in `engine-platform`, M4 step 2):**
+/// `winit::event::MouseButton` has six real variants (`Left`/`Right`/
+/// `Middle`/`Back`/`Forward`/`Other(u16)`), not three -- an earlier
+/// version of this doc comment claimed a 1:1 match, which was wrong,
+/// not verified against the real enum. `Back`/`Forward`/`Other` have no
+/// real MD3 desktop meaning yet (they're a browser-navigation
+/// convention) and translate to no `InputEvent` at all -- narrowed,
+/// stated, not silently dropped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PointerButton {
     Primary,

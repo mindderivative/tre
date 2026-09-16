@@ -40,6 +40,11 @@ fn main() {
             tree_id: accesskit::TreeId::ROOT,
             focus: accesskit::NodeId(0),
         },
+        // This test's own scope is multi-window lifecycle, not input
+        // dispatch -- see `input_translation.rs` for real coverage of
+        // the `WindowEvent -> InputEvent` translation itself (M4 Phase
+        // 1 step 2).
+        |_window_id, _event| {},
         |opener| {
             opener.open_window(WindowRequest {
                 config: WindowConfig {
