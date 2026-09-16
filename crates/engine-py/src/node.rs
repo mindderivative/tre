@@ -21,6 +21,7 @@
 //! registered handler for this node, call it" shape.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -36,6 +37,11 @@ pub struct Node {
     pub(crate) id: NodeId,
     pub(crate) tree: Rc<RefCell<Tree>>,
     pub(crate) handlers: HandlerMap,
+    /// M4 Phase 7 (§11.3): `anchor NodeId -> content NodeId`, shared
+    /// with the owning `PyWindow`/`View` the same way `handlers` is --
+    /// no `Py<PyAny>` involved at all (unlike `handlers`), so no
+    /// GC-traversal obligation the way a stored Python callback needs.
+    pub(crate) context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
 }
 
 #[pymethods]
@@ -166,6 +172,32 @@ impl Node {
         self.handlers
             .borrow_mut()
             .insert((self.id, EventKind::HoverExit), callback);
+    }
+
+    /// M4 Phase 7 (§11.3): registers `content` as this node's real
+    /// right-click context menu -- opened for real by
+    /// `dispatch::open_context_menu` on a `DispatchOutcome::
+    /// SecondaryActivated`. `open_overlay`'s own contract requires
+    /// `content` to be unattached (its `add_child` has no dedup, so
+    /// attaching an already-attached node would corrupt the tree,
+    /// confirmed by reading `add_child`'s real implementation) --
+    /// `content` typically already has a parent, since every existing
+    /// node-creation method (`add_rect`, etc.) attaches immediately, so
+    /// this detaches it first via `Tree::detach`, the same real,
+    /// existing mechanism docking's own tab-switching already uses to
+    /// keep a node "alive, parentless, ready for `add_child` elsewhere
+    /// later."
+    fn set_context_menu(&self, content: PyRef<'_, Node>) {
+        let mut tree = self.tree.borrow_mut();
+        if let Some(parent) = tree
+            .get(content.id)
+            .expect("set_context_menu: content NodeId not found in this Tree")
+            .parent
+        {
+            tree.detach(parent, content.id);
+        }
+        drop(tree);
+        self.context_menus.borrow_mut().insert(self.id, content.id);
     }
 
     /// M4 Phase 5 (§7.3): opts this node into ripple/hover state-layer

@@ -99,6 +99,13 @@ pub enum DispatchOutcome {
     /// (call a registered `on_click`, or nothing if none is registered)
     /// is `AppHandler`'s job, not `Tree`'s.
     Activated(crate::NodeId),
+    /// M4 Phase 7 (§11.3): the secondary-button (right-click) counterpart
+    /// to `Activated` -- a secondary-button pointer click released over
+    /// the same node it was pressed on. Separate from `Activated` since
+    /// a right-click's real meaning (open a registered context menu, or
+    /// nothing if none is registered) is a distinct action from a
+    /// left-click's, not a variant of the same one.
+    SecondaryActivated(crate::NodeId),
     /// M4 Phase 6 (§7.3): the hovered node genuinely changed this call
     /// -- `old`/`new` are whichever node was/is hovered, independent of
     /// whether either one ever opted into `InteractionState` (§7.3's

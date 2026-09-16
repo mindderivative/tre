@@ -32,7 +32,7 @@ use taffy::prelude::{AvailableSpace, Size};
 use vello_hybrid::{RenderSize, RenderTargetConfig};
 use winit::window::{Window, WindowId};
 
-use crate::dispatch::{HandlerMap, interaction_config, run_dispatch_outcome};
+use crate::dispatch::{HandlerMap, interaction_config, open_context_menu, run_dispatch_outcome};
 use crate::window::PyWindow;
 
 #[pyclass(unsendable)]
@@ -57,6 +57,9 @@ struct WindowSetup {
     width: u32,
     height: u32,
     handlers: HandlerMap,
+    /// M4 Phase 7 (§11.3): `anchor NodeId -> content NodeId`, plain
+    /// data (no `Py<PyAny>`), extracted the same way `handlers` is.
+    context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
 }
 
 struct GpuState {
@@ -125,6 +128,7 @@ struct WindowRuntime {
     height: u32,
     gpu: GpuState,
     handlers: HandlerMap,
+    context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
 }
 
 #[pymethods]
@@ -167,6 +171,7 @@ impl App {
                     width: window.width,
                     height: window.height,
                     handlers: window.handlers.clone(),
+                    context_menus: window.context_menus.clone(),
                 }
             })
             .collect();
@@ -202,6 +207,7 @@ impl App {
                         height: setup.height,
                         gpu,
                         handlers: setup.handlers.clone(),
+                        context_menus: setup.context_menus.clone(),
                     },
                 );
             },
@@ -290,6 +296,11 @@ impl App {
                     Instant::now(),
                 );
                 run_dispatch_outcome(&runtime.handlers, outcome, py);
+                // M4 Phase 7 (§11.3): the real, winit-driven path a
+                // genuine right-click reaches -- `Window.right_click`/
+                // `View.right_click` are the no-live-window-needed test
+                // entry points, this is where an actual mouse arrives.
+                open_context_menu(&runtime.tree, &runtime.context_menus, runtime.root, outcome);
             },
             // M4 Phase 2 (§10): a real screen reader naming a node to
             // activate or focus directly, routed through the exact same

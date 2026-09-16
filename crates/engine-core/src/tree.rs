@@ -963,12 +963,23 @@ impl Tree {
             InputEvent::PointerReleased { position, button } => {
                 let hit = self.hit_test(root, position);
                 let outcome = match self.pressed {
+                    // M4 Phase 7 (§11.3): a same-node press/release pair
+                    // means something different per button -- Primary
+                    // activates (existing, unchanged), Secondary opens a
+                    // context menu (its own real outcome now), Middle
+                    // has no real meaning yet, matching Middle's own
+                    // stated "no real MD3 desktop meaning" status
+                    // elsewhere in this module.
                     Some((pressed_button, pressed_node))
-                        if pressed_button == button
-                            && Some(pressed_node) == hit
-                            && button == PointerButton::Primary =>
+                        if pressed_button == button && Some(pressed_node) == hit =>
                     {
-                        DispatchOutcome::Activated(pressed_node)
+                        match button {
+                            PointerButton::Primary => DispatchOutcome::Activated(pressed_node),
+                            PointerButton::Secondary => {
+                                DispatchOutcome::SecondaryActivated(pressed_node)
+                            }
+                            PointerButton::Middle => DispatchOutcome::None,
+                        }
                     }
                     _ => DispatchOutcome::None,
                 };
@@ -2530,9 +2541,11 @@ mod tests {
             "releasing over a different node than was pressed must not activate anything"
         );
 
-        // Press and release over the same node with a non-primary
-        // button -- e.g. a right-click, reserved for a future
-        // context-menu mechanism, not the generic activation outcome.
+        // M4 Phase 7 (§11.3): press and release over the same node with
+        // the secondary button now produces its own real outcome --
+        // this section used to assert `None` here with a comment
+        // predicting "reserved for a future context-menu mechanism,"
+        // which this phase is.
         tree.dispatch(
             root,
             InputEvent::PointerPressed {
@@ -2553,8 +2566,35 @@ mod tests {
         );
         assert_eq!(
             outcome,
+            DispatchOutcome::SecondaryActivated(a),
+            "a same-node secondary-button press/release pair must produce SecondaryActivated"
+        );
+
+        // Middle-button press/release still has no real meaning --
+        // unlike Secondary (this phase), nothing in this codebase names
+        // a real use for Middle yet.
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(25.0, 25.0),
+                button: PointerButton::Middle,
+            },
+            &config,
+            now,
+        );
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerReleased {
+                position: Point::new(25.0, 25.0),
+                button: PointerButton::Middle,
+            },
+            &config,
+            now,
+        );
+        assert_eq!(
+            outcome,
             DispatchOutcome::None,
-            "a non-primary button press/release pair must not produce the generic activation outcome"
+            "a same-node middle-button press/release pair must still produce no real outcome"
         );
 
         // Enter/Space on the currently-focused node also activates it.

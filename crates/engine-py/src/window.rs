@@ -18,7 +18,7 @@ use pyo3::class::{PyTraverseError, PyVisit};
 use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Rect as TaffyRect, Size, Style, auto, length};
 
-use crate::dispatch::{HandlerMap, interaction_config, run_dispatch_outcome};
+use crate::dispatch::{HandlerMap, interaction_config, open_context_menu, run_dispatch_outcome};
 use crate::error::EngineError;
 use crate::node::Node;
 
@@ -59,6 +59,12 @@ pub struct PyWindow {
     pub(crate) height: u32,
     materializers: HashMap<NodeId, Py<PyAny>>,
     pub(crate) handlers: HandlerMap,
+    /// M4 Phase 7 (§11.3): `anchor NodeId -> content NodeId`, shared
+    /// with every `Node` this `Window` hands out (`Node.
+    /// set_context_menu` writes into it) -- see `Node`'s own doc
+    /// comment for why this needs no `__traverse__`/`__clear__` entry,
+    /// unlike `handlers`.
+    pub(crate) context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
 }
 
 #[pymethods]
@@ -98,6 +104,7 @@ impl PyWindow {
             height,
             materializers: HashMap::new(),
             handlers: Rc::new(RefCell::new(HashMap::new())),
+            context_menus: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
@@ -124,6 +131,7 @@ impl PyWindow {
             id,
             tree: self.tree.clone(),
             handlers: self.handlers.clone(),
+            context_menus: self.context_menus.clone(),
         }
     }
 
@@ -176,6 +184,7 @@ impl PyWindow {
             id,
             tree: self.tree.clone(),
             handlers: self.handlers.clone(),
+            context_menus: self.context_menus.clone(),
         }
     }
 
@@ -273,6 +282,54 @@ impl PyWindow {
         run_dispatch_outcome(&self.handlers, outcome, py);
     }
 
+    /// M4 Phase 7 (§11.3): `click()`'s own secondary-button (right-click)
+    /// counterpart -- the same no-live-window-needed proof pattern,
+    /// dispatching a secondary-button press+release pair at `node`'s own
+    /// real center point. If `node` has a registered context menu
+    /// (`Node.set_context_menu`), opens it via `Tree::open_overlay`,
+    /// exactly what a real right-click there would produce.
+    fn right_click(&mut self, node: PyRef<'_, Node>, py: Python<'_>) {
+        let point = {
+            let mut tree = self.tree.borrow_mut();
+            tree.compute_layout(
+                self.root,
+                Size {
+                    width: AvailableSpace::Definite(self.width as f32),
+                    height: AvailableSpace::Definite(self.height as f32),
+                },
+            );
+            let (x, y) = tree.absolute_position(node.id);
+            let layout = tree.layout(node.id);
+            Point::new(
+                x + f64::from(layout.size.width) / 2.0,
+                y + f64::from(layout.size.height) / 2.0,
+            )
+        };
+
+        let now = std::time::Instant::now();
+        let config = interaction_config();
+        self.tree.borrow_mut().dispatch(
+            self.root,
+            InputEvent::PointerPressed {
+                position: point,
+                button: PointerButton::Secondary,
+            },
+            &config,
+            now,
+        );
+        let outcome = self.tree.borrow_mut().dispatch(
+            self.root,
+            InputEvent::PointerReleased {
+                position: point,
+                button: PointerButton::Secondary,
+            },
+            &config,
+            now,
+        );
+        run_dispatch_outcome(&self.handlers, outcome, py);
+        open_context_menu(&self.tree, &self.context_menus, self.root, outcome);
+    }
+
     /// M4 Phase 2 (§10): `click()`'s own keyboard counterpart -- the
     /// real, no-window-needed way to test Tab/Shift-Tab focus movement
     /// and Enter/Space activation from Python, neither of which had a
@@ -351,6 +408,7 @@ impl PyWindow {
             id,
             tree: self.tree.clone(),
             handlers: self.handlers.clone(),
+            context_menus: self.context_menus.clone(),
         }
     }
 

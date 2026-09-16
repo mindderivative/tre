@@ -53,7 +53,7 @@ use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
 
 use crate::binding::PyViewModelResolver;
-use crate::dispatch::{HandlerMap, interaction_config, run_dispatch_outcome};
+use crate::dispatch::{HandlerMap, interaction_config, open_context_menu, run_dispatch_outcome};
 use crate::node::Node;
 
 thread_local! {
@@ -129,6 +129,7 @@ fn apply_binding_value(
         id: node_id,
         tree: tree.clone(),
         handlers: Rc::new(RefCell::new(HashMap::new())),
+        context_menus: Rc::new(RefCell::new(HashMap::new())),
     };
     temp_node.animate(property, bound, 0)?;
     tree.borrow_mut().tick_all(std::time::Instant::now());
@@ -187,6 +188,8 @@ pub struct View {
     /// `set_on_hover_enter`/`set_on_hover_exit` are all structurally
     /// available on a `View`'s widgets too.
     handlers: HandlerMap,
+    /// M4 Phase 7 (§11.3): mirrors `PyWindow`'s own `context_menus`.
+    context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
 }
 
 #[pymethods]
@@ -211,6 +214,7 @@ impl View {
             bindings,
             declared_handlers,
             handlers: Rc::new(RefCell::new(HashMap::new())),
+            context_menus: Rc::new(RefCell::new(HashMap::new())),
         })
     }
 
@@ -225,6 +229,7 @@ impl View {
             id,
             tree: self.tree.clone(),
             handlers: self.handlers.clone(),
+            context_menus: self.context_menus.clone(),
         })
     }
 
@@ -282,6 +287,7 @@ impl View {
                     id: node_id,
                     tree: self.tree.clone(),
                     handlers: self.handlers.clone(),
+                    context_menus: self.context_menus.clone(),
                 };
                 // Reuses `Node`'s own real setters verbatim (same
                 // construction `apply_binding_value` already uses for
@@ -439,6 +445,51 @@ impl View {
             std::time::Instant::now(),
         );
         run_dispatch_outcome(&self.handlers, outcome, py);
+    }
+
+    /// M4 Phase 7 (§11.3): `click()`'s own secondary-button (right-click)
+    /// counterpart, mirroring `Window.right_click` exactly.
+    fn right_click(&mut self, node: PyRef<'_, Node>, py: Python<'_>) {
+        let root = self.reconciler.root();
+        let point = {
+            let mut tree = self.tree.borrow_mut();
+            tree.compute_layout(
+                root,
+                Size {
+                    width: AvailableSpace::MaxContent,
+                    height: AvailableSpace::MaxContent,
+                },
+            );
+            let (x, y) = tree.absolute_position(node.id);
+            let layout = tree.layout(node.id);
+            Point::new(
+                x + f64::from(layout.size.width) / 2.0,
+                y + f64::from(layout.size.height) / 2.0,
+            )
+        };
+
+        let now = std::time::Instant::now();
+        let config = interaction_config();
+        self.tree.borrow_mut().dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: point,
+                button: PointerButton::Secondary,
+            },
+            &config,
+            now,
+        );
+        let outcome = self.tree.borrow_mut().dispatch(
+            root,
+            InputEvent::PointerReleased {
+                position: point,
+                button: PointerButton::Secondary,
+            },
+            &config,
+            now,
+        );
+        run_dispatch_outcome(&self.handlers, outcome, py);
+        open_context_menu(&self.tree, &self.context_menus, root, outcome);
     }
 
     /// Same real GC-cycle-safety obligation `PyWindow` already carries

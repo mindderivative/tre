@@ -1,107 +1,104 @@
-# Plan: M4 Phase 6 — `EventKind` + Real `HoverEnter`/`HoverExit` (§7.3, §16.2)
+# Plan: M4 Phase 7 — Right-Click Context Menus (§11.3)
 
 ## Context
 
-§7.3: "The engine also fires an optional `HoverEnter`/`HoverExit`
-`EventKind` (§16.2) through the ordinary handler path for the rare case
-an app wants to react to hovering itself (a delayed tooltip, say) — the
-default MD3 visual never depends on anything handling it." No
-`Event`/`EventKind` type exists anywhere yet (confirmed via grep before
-Phase 4 even started). This phase introduces the minimal real version
-and wires hover transitions through it.
+`PointerButton::Secondary` exists and is unit-tested to correctly never
+start a drag, but nothing acts on it yet. §11.3's overlay mechanism
+(`Tree::open_overlay`/`close_overlay`/`OverlayMeta`, built at M3 step
+13) is real and already proven for one dropdown menu — the missing
+piece is wiring a real right-click to it.
 
 ## Investigation before writing code
 
-- **`AppHandler` (`engine-core/src/input.rs`) is dead code.** Confirmed
-  via grep: declared, documented, re-exported — never `impl`'d anywhere.
-  The real mechanism that shipped instead (M4 Phase 1 steps 2-3) is a
-  plain `on_input: FnMut(WindowId, InputEvent)` closure on
-  `run_windowed_multi` plus `engine-py`'s own `dispatch::run_activation`
-  interpreting `DispatchOutcome` directly. Not touched by this phase
-  (out of scope — noted honestly in `BUILD_TRACKER.md`, not silently
-  left as a misleading claim), but worth knowing before extending the
-  same enum it references.
-- **The real click-handling call graph, re-traced:** `Tree::dispatch`
-  returns a `DispatchOutcome`; exactly one function,
-  `dispatch::run_activation`, interprets it into a real Python call;
-  it's invoked from exactly three real call sites — `app.rs`'s
-  `on_input` closure (the real `winit`-driven path, already receiving
-  *every* `InputEvent`, `PointerMoved` included), `Window.click()`/
-  `Window.press_key()`, and `View.click()`. Extending `DispatchOutcome`
-  with a new variant and generalizing `run_activation` to interpret it
-  reaches all three call sites for free — the same "one mechanism, many
-  real call sites" shape this project keeps reusing (splitters,
-  overlays, `set_on_click` itself).
-- **Hover transition tracking already happens unconditionally.**
-  `Tree::dispatch`'s `PointerMoved` arm calls `update_hover`, which
-  compares the hit-test result against `self.hovered` regardless of
-  whether either node ever opted into `InteractionState` — only the
-  *animation* is gated on opt-in. This matches §7.3's own text exactly:
-  the event should fire independently of whether the default MD3 visual
-  is enabled, so `HoverEnter`/`HoverExit` firing needs no new gating
-  logic, just surfacing the transition `update_hover` already computes
-  but currently discards.
+Re-read §11.3 in full, then read `overlay.rs`/`open_overlay`/
+`close_overlay` end to end, then grepped `engine-py` for any existing
+overlay wrapper. Found the real scope is bigger than the tracker's own
+one-line summary implied:
 
-**Real design decision, resolved: generalize the handler storage now,
-not duplicate it.** With three real event kinds to support (`Click`,
-`HoverEnter`, `HoverExit`), duplicating `click_handlers`'s exact shape
-two more times (`hover_enter_handlers`, `hover_exit_handlers`) would add
-two new `Rc<RefCell<HashMap<...>>>` fields to `Node`/`PyWindow`/`View`/
-`WindowSetup`/`WindowRuntime` apiece. Instead, `click_handlers` becomes
-`handlers: Rc<RefCell<HashMap<(NodeId, EventKind), Py<PyAny>>>>` — one
-field, re-keyed. This is the Rule of Three, not premature abstraction:
-duplicating a two-field shape once (`Node`'s existing precedent, one
-field) is fine; duplicating it a second and third time for the same
-underlying "which callback fires for this node+event" concept is the
-point where the generalization pays for itself.
-
-**Handlers stay zero-argument**, matching Phase 4's already-established,
-deliberately narrow convention (`Node.set_on_click`'s existing
-`lambda: ...`/`def bump(self): ...` shape) — a real `Event` struct
-carrying `source`/`data` (§16.2's own fuller sketch) is deferred until a
-real handler needs the extra context; nothing today does.
+- **No Python-facing overlay API exists at all.** `open_overlay`/
+  `close_overlay`/`OverlayMeta` are only ever referenced in doc comments
+  across `engine-py` — never called. This phase is the first to expose
+  any of it to Python, not just the dispatch half.
+- **`open_overlay`'s own doc comment requires `content` to already be a
+  real `Node`, unattached** (or its `add_child` would push a duplicate
+  parent/child edge, corrupting the tree — confirmed by reading
+  `add_child`'s real implementation, a plain unconditional push with no
+  dedup). Every existing node-creation method (`add_rect`, etc.)
+  attaches immediately to the window's root. `Tree::detach` (already
+  real, built for docking's own tab-switching) is the exact existing
+  mechanism to un-attach a node "alive, parentless, ready for
+  `add_child` elsewhere later" — reused verbatim, not reimplemented.
+- **`close_overlay` is destructive** (`Tree::remove`s the whole
+  subtree) — closing a menu once means it can never be reopened as the
+  same content. Real, correct for M3's one-shot dropdown; this phase
+  doesn't change it, and doesn't build dismissal (see below), so it
+  isn't exercised here.
+- **Dismissal (`dismiss_on_outside_click`/`dismiss_on_escape`) is a
+  real, already-named, still-open gap** — `OverlayMeta`'s own fields
+  have existed since M3 step 13 with a doc comment stating plainly
+  "a future dismiss dispatch... not built yet." That dispatch now
+  exists (M4 Phases 1-6), but wiring dismissal is a distinct, separate
+  feature from "right-click opens a menu" — a menu that opens but can
+  only be closed by a direct `close_overlay` call is a real, honest,
+  narrower deliverable, not a broken one. Scope narrowed to NOT build
+  dismissal this phase; named explicitly as the next real gap, not
+  silently dropped.
 
 ## Approach
 
-1. **`engine-core`**: `EventKind { Click, HoverEnter, HoverExit }`
-   (`Clone, Copy, PartialEq, Eq, Hash`) in `input.rs`. `DispatchOutcome`
-   gains `HoverChanged { old: Option<NodeId>, new: Option<NodeId> }`.
-   `Tree::dispatch`'s `PointerMoved` arm captures `self.hovered` before
-   calling `update_hover`, and returns `HoverChanged` when the result
-   actually differs (a genuine transition), `None` otherwise (an
-   unchanged hover is not a new fact to report, matching
-   `update_hover`'s own "repeated call, same result, is a no-op").
-2. **`engine-py`**: rename `click_handlers` → `handlers` (re-keyed by
-   `(NodeId, EventKind)`) across `Node`, `PyWindow`, `View`,
-   `WindowSetup`, `WindowRuntime`. `Node.set_on_click` inserts at
-   `(id, EventKind::Click)` (behavior unchanged). New
-   `Node.set_on_hover_enter`/`set_on_hover_exit` insert at the matching
-   key. `dispatch::run_activation` → `dispatch::run_dispatch_outcome`,
-   extended to also interpret `HoverChanged` (fire the old node's
-   `HoverExit` handler if any, the new node's `HoverEnter` handler if
-   any). New `Window.hover(node)`/`View.hover(node)` — the same
-   no-live-window-needed proof pattern `.click()` established, this
-   time dispatching a `PointerMoved` at the node's own center.
-   `View::_attach`'s handler loop generalizes its single
-   `if event == "on_click"` check into also recognizing
-   `"on_hover_enter"`/`"on_hover_exit"`.
-3. **Tests**: `engine-core` unit tests for `DispatchOutcome::
-   HoverChanged` (mirroring the existing `dispatch_activates_only_...`
-   test shape). New `tests/test_hover_events.py`: a real
-   `Window.hover(node)`/`View.hover(node)` call actually invokes a
-   registered `on_hover_enter`/`on_hover_exit` handler; hovering off a
-   node fires its exit handler; a node with no hover handler registered
-   is a safe no-op (matching `set_on_click`'s own precedent).
+1. **`engine-core`**: `DispatchOutcome` gains `SecondaryActivated
+   (NodeId)`. `Tree::dispatch`'s `PointerReleased` arm generalizes its
+   press/release-pair match to branch on button (`Primary` →
+   `Activated`, `Secondary` → `SecondaryActivated`, `Middle` → `None`)
+   instead of gating the whole match on `button == Primary` — the exact
+   change the existing test's own comment already predicted ("reserved
+   for a future context-menu mechanism"). That test's assertion updates
+   from `None` to `SecondaryActivated`, with its comment corrected.
+2. **`engine-py`**: `Node.set_context_menu(content: &Node)` — detaches
+   `content` if it has a parent (reusing `Tree::detach` verbatim), then
+   records `(anchor_id, content_id)` in a new, plain
+   `Rc<RefCell<HashMap<NodeId, NodeId>>>` (no `Py<PyAny>` involved at
+   all, so no GC-traversal obligation, unlike `handlers`). New
+   `dispatch::open_context_menu(tree, context_menus, root, outcome)`:
+   on `SecondaryActivated(anchor)`, looks up a registered menu for
+   `anchor`; if the content isn't already an open overlay (checked via
+   `overlay_meta`, guarding against a double-`add_child` if the same
+   spot is right-clicked again), calls `open_overlay` with
+   `dismiss_on_outside_click`/`dismiss_on_escape` both `true` (the
+   real, correct intent, even though nothing dispatches to it yet —
+   the same "real data, inert until its own step" precedent
+   `OverlayMeta`'s own fields already established) and recomputes
+   layout, matching `open_overlay`'s own documented contract. Called
+   alongside the existing `run_dispatch_outcome` at all three real
+   dispatch call sites (`app.rs`'s `on_input` closure,
+   `Window`/`View`'s `.click()`-adjacent methods). New
+   `Window.right_click(node)`/`View.right_click(node)`, mirroring
+   `.click()`/`.hover()`'s own no-live-window-needed pattern exactly,
+   dispatching a Secondary press+release pair.
+3. **Tests**: `engine-core` unit test proving a same-node Secondary
+   press+release produces `SecondaryActivated`, mirroring the existing
+   `dispatch_activates_only_...` test's shape. New
+   `tests/test_context_menu.py`: building a real window, an anchor, and
+   a menu-item content node with its own `on_click` handler,
+   `set_context_menu`, `window.right_click(anchor)`, then
+   `window.click(menu_item)` and asserting the menu item's own handler
+   fired — the real, functional, end-to-end proof that the content
+   actually became a live, laid-out, dispatchable part of the tree, not
+   an inspection of internal state Python has no getter for.
 
 ## Files to touch
 
-- `crates/engine-core/src/input.rs` — `EventKind`, `DispatchOutcome::
-  HoverChanged`.
-- `crates/engine-core/src/tree.rs` — `dispatch`'s `PointerMoved` arm,
-  new unit tests.
-- `crates/engine-py/src/node.rs`, `window.rs`, `view.rs`, `app.rs`,
-  `dispatch.rs` — the `handlers` rename + hover wiring described above.
-- `tests/test_hover_events.py` — new.
+- `crates/engine-core/src/input.rs` — `DispatchOutcome::
+  SecondaryActivated`.
+- `crates/engine-core/src/tree.rs` — `dispatch`'s `PointerReleased`
+  arm, the corrected existing test.
+- `crates/engine-py/src/node.rs` — `set_context_menu`.
+- `crates/engine-py/src/window.rs`, `view.rs` — `context_menus` field,
+  `right_click`.
+- `crates/engine-py/src/dispatch.rs` — `open_context_menu`.
+- `crates/engine-py/src/app.rs` — wire the new call alongside
+  `run_dispatch_outcome`.
+- `tests/test_context_menu.py` — new.
 
 ## Verification
 

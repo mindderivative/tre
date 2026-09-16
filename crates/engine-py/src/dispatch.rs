@@ -76,8 +76,51 @@ pub(crate) fn run_dispatch_outcome(
                 call_handler(handlers, new, EventKind::HoverEnter, py);
             }
         }
-        DispatchOutcome::None => {}
+        // M4 Phase 7 (§11.3): `SecondaryActivated`'s real meaning is a
+        // context menu, handled by `open_context_menu` below -- a
+        // separate function, not a new match arm here, since it needs
+        // `&mut Tree` access this function's callback-only signature
+        // doesn't carry.
+        DispatchOutcome::SecondaryActivated(_) | DispatchOutcome::None => {}
     }
+}
+
+/// M4 Phase 7 (§11.3): `SecondaryActivated`'s real meaning -- opens
+/// `anchor`'s registered context menu, if any, via the existing real
+/// `Tree::open_overlay` (§14 step 13). Guards against reopening a menu
+/// that's already open (checked via `overlay_meta`) rather than
+/// double-`add_child`-ing the same content, which `open_overlay`'s own
+/// contract doesn't protect against itself. Deliberately does not wire
+/// dismissal (`OverlayMeta.dismiss_on_outside_click`/`dismiss_on_
+/// escape`) -- a real, separate, still-open gap (`overlay.rs`'s own
+/// doc comment has named it since M3 step 13), not manufactured here
+/// just because this phase touches the same struct.
+pub(crate) fn open_context_menu(
+    tree: &Rc<RefCell<engine_core::Tree>>,
+    context_menus: &Rc<RefCell<HashMap<NodeId, NodeId>>>,
+    root: NodeId,
+    outcome: DispatchOutcome,
+) {
+    let DispatchOutcome::SecondaryActivated(anchor) = outcome else {
+        return;
+    };
+    let Some(&content) = context_menus.borrow().get(&anchor) else {
+        return;
+    };
+    let mut tree = tree.borrow_mut();
+    if tree.overlay_meta(content).is_some() {
+        return;
+    }
+    tree.open_overlay(
+        root,
+        anchor,
+        content,
+        engine_core::OverlayMeta {
+            anchor,
+            dismiss_on_outside_click: true,
+            dismiss_on_escape: true,
+        },
+    );
 }
 
 fn call_handler(handlers: &HandlerMap, node: NodeId, kind: EventKind, py: Python<'_>) {
