@@ -1,9 +1,8 @@
 //! §8's `EngineError` -- one error type funneling every `engine-py`
 //! failure into a `PyErr`, rather than ad hoc `PyErr::new_err` scattered
-//! per call site. Narrower than §8's own full sketch: no
-//! `CycleRejected` yet, since `add_child` (the only thing that could
-//! ever produce it) isn't in this step's scope -- §14 step 6 is
-//! "node creation + one property setter," not tree mutation in general.
+//! per call site. `CycleRejected` (M6 Phase 1) is the first real use of
+//! §8's own original sketch -- `add_child` (the only thing that could
+//! ever produce it) wasn't in scope until now.
 
 use pyo3::PyErr;
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -33,6 +32,20 @@ pub enum EngineError {
     /// callback for it) -- the exact same shape as `NotAVirtualList`.
     #[error("this Node is not a Canvas added via Window.add_canvas on this Window")]
     NotACanvas,
+    /// M6 Phase 1 (§8): `Node.add_child` would attach a node as a child
+    /// of its own descendant -- `Tree::try_add_child` rejected it rather
+    /// than corrupting the tree into a cycle. Message verbatim from
+    /// §8's own original sketch.
+    #[error("cannot add a node as a child of its own descendant")]
+    CycleRejected,
+    /// M6 Phase 1 (§8): `Node.add_child` was called with a `child` from
+    /// a different `Window`'s `Tree` -- rejected via `Rc::ptr_eq` before
+    /// either `Tree` is touched, since a `NodeId` is only unique within
+    /// the `Tree` that minted it (a `slotmap` generational key, not a
+    /// cross-map identity) and handing a foreign one to `taffy` risks
+    /// real corruption, not just a wrong result.
+    #[error("this Node belongs to a different Window's Tree")]
+    ForeignNode,
 }
 
 impl From<EngineError> for PyErr {
@@ -42,6 +55,8 @@ impl From<EngineError> for PyErr {
             EngineError::TypeMismatch { .. } => PyTypeError::new_err(e.to_string()),
             EngineError::NotAVirtualList => PyValueError::new_err(e.to_string()),
             EngineError::NotACanvas => PyValueError::new_err(e.to_string()),
+            EngineError::CycleRejected => PyValueError::new_err(e.to_string()),
+            EngineError::ForeignNode => PyValueError::new_err(e.to_string()),
         }
     }
 }

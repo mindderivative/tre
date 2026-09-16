@@ -173,6 +173,44 @@ impl Tree {
         self.nodes[child].parent = Some(parent);
     }
 
+    /// M6 Phase 1 (§8): the checked counterpart to `add_child`, for the
+    /// one caller that can't structurally guarantee it won't form a
+    /// cycle -- Python's own `Node.add_child`. Every existing internal
+    /// caller of `add_child` already knows it can't (attaching a
+    /// freshly-inserted node, or a reparent already proven disjoint),
+    /// and keeps calling the cheaper, infallible `add_child` directly;
+    /// `add_child` itself and its ~80 existing call sites are untouched.
+    ///
+    /// Returns `false` (no mutation at all) if attaching `child` under
+    /// `parent` would create a cycle -- `child` is `parent` itself, or
+    /// `child` is already an ancestor of `parent` -- detected by walking
+    /// up from `parent` via `Node::parent` links (the same walk
+    /// `absolute_position` already uses) and checking whether `child`
+    /// appears in that chain; `parent == child` is caught for free as
+    /// the walk's own first iteration.
+    ///
+    /// If `child` already has a different parent, detaches it first
+    /// (`Tree::detach`) before attaching -- the same "`add_child` has no
+    /// dedup" bug class M4 Phase 7 (overlay) and M4 Phase 9 (docking)
+    /// each already found and fixed once for their own specific caller;
+    /// this is the first general-purpose, arbitrary-reparenting entry
+    /// point, and the one most likely to hit it a third time.
+    pub fn try_add_child(&mut self, parent: NodeId, child: NodeId) -> bool {
+        let mut current = Some(parent);
+        while let Some(id) = current {
+            if id == child {
+                return false;
+            }
+            current = self.nodes.get(id).and_then(|n| n.parent);
+        }
+
+        if let Some(current_parent) = self.nodes[child].parent {
+            self.detach(current_parent, child);
+        }
+        self.add_child(parent, child);
+        true
+    }
+
     /// The inverse of `add_child`: detaches `child` from `parent`
     /// *without* deleting it (unlike `Tree::remove`, which deletes the
     /// whole subtree) -- `child` stays alive, parentless, ready for
@@ -1280,6 +1318,93 @@ mod tests {
             tree.get(root).unwrap().children,
             vec![sibling],
             "the parent's own children list must no longer mention the removed node"
+        );
+    }
+
+    /// M6 Phase 1 (§8): the trivial cycle case -- a node can't become
+    /// its own child.
+    #[test]
+    fn try_add_child_rejects_a_node_as_its_own_child() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let a = tree.insert(k, s, p);
+
+        assert!(
+            !tree.try_add_child(a, a),
+            "attaching a node under itself must be rejected"
+        );
+        assert_eq!(
+            tree.get(a).unwrap().children,
+            Vec::<NodeId>::new(),
+            "a rejected attach must leave the tree completely untouched"
+        );
+    }
+
+    /// The real, multi-level case: attaching an ancestor as a child of
+    /// its own descendant would corrupt the tree into a cycle no
+    /// traversal could ever terminate on.
+    #[test]
+    fn try_add_child_rejects_an_ancestor_as_a_descendants_child() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let grandparent = tree.insert(k, s, p);
+        let (k, s, p) = leaf(10.0, 10.0);
+        let parent = tree.insert(k, s, p);
+        let (k, s, p) = leaf(10.0, 10.0);
+        let child = tree.insert(k, s, p);
+        tree.add_child(grandparent, parent);
+        tree.add_child(parent, child);
+
+        assert!(
+            !tree.try_add_child(child, grandparent),
+            "attaching grandparent as child's own child must be rejected -- grandparent is \
+             already child's ancestor"
+        );
+        assert_eq!(
+            tree.get(child).unwrap().children,
+            Vec::<NodeId>::new(),
+            "a rejected attach must leave the tree completely untouched"
+        );
+        assert_eq!(
+            tree.get(grandparent).unwrap().parent,
+            None,
+            "grandparent's own real parent (none) must be unchanged"
+        );
+    }
+
+    /// The real, closely-related corruption risk found by reading
+    /// `add_child` closely (PLAN.md): re-parenting an already-attached
+    /// node must move it, not duplicate its parent pointer -- the same
+    /// "`add_child` has no dedup" bug class M4 Phase 7/9 each already
+    /// found once, now guarded against for `try_add_child`'s own
+    /// general-purpose reparenting.
+    #[test]
+    fn try_add_child_moves_an_already_attached_node_instead_of_duplicating_it() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let old_parent = tree.insert(k, s, p);
+        let (k, s, p) = leaf(10.0, 10.0);
+        let new_parent = tree.insert(k, s, p);
+        let (k, s, p) = leaf(10.0, 10.0);
+        let child = tree.insert(k, s, p);
+        tree.add_child(old_parent, child);
+
+        assert!(tree.try_add_child(new_parent, child));
+
+        assert_eq!(
+            tree.get(old_parent).unwrap().children,
+            Vec::<NodeId>::new(),
+            "the old parent must no longer list the moved child"
+        );
+        assert_eq!(
+            tree.get(new_parent).unwrap().children,
+            vec![child],
+            "the new parent must list the moved child exactly once"
+        );
+        assert_eq!(
+            tree.get(child).unwrap().parent,
+            Some(new_parent),
+            "the child's own parent pointer must point at its new parent"
         );
     }
 

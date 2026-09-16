@@ -220,6 +220,31 @@ impl Node {
     fn enable_interaction(&self) {
         self.tree.borrow_mut().interaction_mut(self.id);
     }
+
+    /// M6 Phase 1 (§8): attaches `child` under this node, rejecting a
+    /// cycle with a real `PyValueError` instead of corrupting the tree
+    /// -- §8's own original sketch, the first thing to actually need
+    /// `EngineError::CycleRejected`. Checked *before* either `Tree` is
+    /// touched: `child` must belong to this same `Node`'s own `Window`
+    /// (`Rc::ptr_eq` on the shared `Tree` handle) -- a `NodeId` is only
+    /// unique within the `Tree` that minted it, and handing a foreign
+    /// one to this `Tree`'s own `taffy` tree risks real corruption, not
+    /// just a wrong result. If `child` already has a different parent
+    /// (every existing node-creation method attaches immediately, so it
+    /// usually does), `Tree::try_add_child` detaches it first via the
+    /// same `Tree::detach` mechanism `set_context_menu` already uses,
+    /// rather than corrupting the tree the "`add_child` has no dedup"
+    /// way M4 Phase 7/9 each already found once.
+    fn add_child(&self, child: PyRef<'_, Node>) -> PyResult<()> {
+        if !Rc::ptr_eq(&self.tree, &child.tree) {
+            return Err(EngineError::ForeignNode.into());
+        }
+        if self.tree.borrow_mut().try_add_child(self.id, child.id) {
+            Ok(())
+        } else {
+            Err(EngineError::CycleRejected.into())
+        }
+    }
 }
 
 fn kind_name(kind: &NodeKind) -> &'static str {

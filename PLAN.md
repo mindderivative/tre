@@ -1,96 +1,98 @@
-# Plan: M5 Phase 4 — Node Graphs & Charts Groundwork (§11.11)
+# Plan: M6 Phase 1 — `Node.add_child` (real cycle rejection)
 
 ## Context
 
-The last phase of Milestone 5. §11.11's own text: "no new framework
-mechanism — both compose entirely from what's already specified:
-`NodeKind::Canvas` for custom-drawn content, pan/zoom via transform
-composition (§11.9), `kurbo` path drawing for links/chart geometry, and
-custom hit-testing (§11.10) ... virtualization/culling (§11.7/§11.8)."
-This phase is validation only: prove those pieces actually compose in
-one real tree, not separately-built follow-up machinery.
+`ARCHITECTURE.md` §8 sketches this exactly: `fn add_child(&self, child:
+&PyNode) -> PyResult<()>` ("rejects a child that is an ancestor of self
+with a `PyValueError`, not a silent cycle") and an `EngineError::
+CycleRejected` variant with the message "cannot add a node as a child
+of its own descendant." Confirmed directly: `engine-core::Tree::
+add_child` has no cycle check at all today, and `engine-py::Node` has
+no `add_child` method at all — the gap named when M6 was scoped.
 
-## Investigation before writing anything
+## Investigation before writing code
 
-- **§11.8 culling was never actually built** -- confirmed via grep
-  (`cull`/`clip_region`/`visible_region`: zero hits anywhere in
-  `engine-render`/`engine-core`). `BUILD_TRACKER.md`'s own "Known gaps"
-  already states this honestly ("§11.8 aren't built"), predating M5
-  entirely and out of M5's own scoped sections (§11.9/§11.10/§11.11,
-  not §11.8). This phase cannot demonstrate real engine-level culling
-  because it doesn't exist -- claiming otherwise would be exactly the
-  "manufactured, not real" mistake this project's own discipline avoids
-  throughout. What §11.11's own text actually permits stands in for it:
-  "full level-of-detail/decimation logic ... is an application or
-  library concern, not something this framework needs to own" -- so an
-  app deciding which graph nodes to draw based on a computed visible
-  range (exactly the same shape `VirtualList`'s own materializer
-  already requires the app to do) is the real, honest answer, not a
-  gap this phase needs to close.
-- **What genuinely *is* real and reusable:** `NodeKind::Canvas` (Phase
-  3), transform composition (Phase 1), transform-aware hit-testing incl.
-  the custom override (Phases 2-3), and `NodeKind::VirtualList` (M3 step
-  15 Stage C) for windowed/large datasets. None of these have been
-  proven together in one tree before -- every existing test isolates
-  one dimension (Phase 1's own transform test uses a plain `Rect` child,
-  Phase 3's own canvas test has no `VirtualList`, etc.).
-- **The idiomatic graph shape, reasoned through before building the
-  example:** individual graph *nodes* (simple, convex, clickable
-  circles) don't need `Canvas`/custom hit-testing at all -- an ordinary
-  `Rect` with `corner_radius` set to half its size (a real circle look)
-  plus the already-real `Node.set_on_click`/rect hit-test (M3/M4) is the
-  correct, existing mechanism, reused verbatim. `Canvas` +
-  `CustomHitTest::Path` is for exactly what §11.11's own text names:
-  *edges/links* -- open curves no other `NodeKind` can hit-test
-  precisely. Building the example this way (real `Rect` nodes + real
-  `Canvas` edges, not everything crammed into one `Canvas`) is itself
-  part of what "compose from what's already specified" means -- not
-  reinventing node hit-testing inside `Canvas` when a real mechanism
-  for it already exists.
-- **A `CanvasState` holds exactly one `CustomHitTest`,** confirmed by
-  its own Phase 3 shape -- correct for one edge's own precise hit-test,
-  but means "many independently clickable edges" needs one `Canvas`
-  node per edge (not a limitation this phase needs to lift; a small
-  graph's edge count is exactly the kind of "not a general vector API"
-  scope Phase 3 already named).
+- **`Tree::add_child`'s own call sites (~80, via grep) all treat it as
+  infallible.** Changing its signature would ripple through every
+  internal caller — `engine-core`'s own logic, every pixel-readback
+  test, `engine-spec::reconcile`/`build`, `engine-py::window.rs` — none
+  of which need checking (each already knows structurally it can't form
+  a cycle: attaching a freshly-inserted node, or a docking/reconcile
+  reparent already proven disjoint). **Scope narrowed, correctly:** a
+  new, separate `Tree::try_add_child` is the checked entry point for the
+  one caller that genuinely can't make that guarantee — Python's own
+  `Node.add_child` — leaving `add_child` and its ~80 existing callers
+  completely untouched.
+- **A cycle is exactly: `child` is `parent` itself, or `child` is
+  already an ancestor of `parent`.** Detected by walking up from
+  `parent` via `Node::parent` links (the same walk `absolute_position`
+  already uses) and checking whether `child` appears in that chain —
+  `parent == child` is caught for free as the walk's very first
+  iteration.
+- **A second, real, closely-related corruption risk found by reading
+  `add_child` closely, not assumed:** it has no dedup — attaching an
+  already-attached `child` under a new `parent` pushes a second parent
+  pointer into `taffy`/`children` without first detaching the old one,
+  the *exact* "`add_child` has no dedup" bug class M4 Phase 7 (overlay)
+  and M4 Phase 9 (docking) already each found and fixed once, for their
+  own specific callers. `Node.add_child` is the first *general-purpose*,
+  arbitrary-reparenting entry point — the single call site most likely
+  to trigger this a third time (a real app moving a node from one
+  container to another). Fixed the same way both prior instances were:
+  detach from the current parent first (`Tree::detach`, reusing the
+  existing mechanism, no new one) if `child` already has one.
+- **A third, real risk found before writing any Python code:** `NodeId`
+  is a `slotmap` generational key, unique only *within* the `Tree` that
+  minted it — confirmed directly, `slotmap` gives no cross-map identity
+  guarantee. `Node.add_child(child)` is the first Python-facing method
+  that takes *another Node* as a mutation target for a real tree
+  structural change (`set_context_menu`/`set_dock_handle` already take
+  a second `Node` too, but only ever store its id in a side map — never
+  hand it to `taffy`). If `self`/`child` belong to different `Window`s
+  (different `Tree`s), `child`'s `NodeId` could alias an unrelated real
+  node in `self`'s own `Tree`, and handing a foreign `taffy::NodeId` to
+  this `Tree`'s own `taffy::TaffyTree` risks corrupting or panicking
+  it — worse than a merely-wrong id. `set_context_menu`/`set_dock_handle`
+  don't guard against this today (confirmed via grep, no `Rc::ptr_eq`
+  anywhere in the codebase) — a real, pre-existing gap, but not this
+  phase's to fix retroactively. For `add_child` specifically, the real
+  `taffy`-corruption risk justifies a real, minimal guard: `engine-py`
+  already holds `Rc<RefCell<Tree>>` per `Node` (cloned from its owning
+  `Window`), so `Rc::ptr_eq(&self.tree, &child.tree)` is a cheap,
+  already-available check, made *before* either `Tree` is ever touched.
 
 ## Approach
 
-1. **New `engine-render` pixel-readback test**
-   (`tests/graph_composition.rs`): one tree, one shared "camera"
-   `Container` with a real (non-identity) animated `transform` --
-   a `Rect` "node," a `Canvas` "edge" (`StrokePath` +
-   `CustomHitTest::Path`), and a `NodeKind::VirtualList` with one
-   materialized item, all as `camera`'s children. Captures each item's
-   pure local position via `Tree::absolute_position` *before* setting
-   `camera`'s transform (transform-independent, per Phase 1/2's own
-   established boundary), then asserts, after setting a real translate
-   transform: (a) each of the three paints at its correctly-transformed
-   position, (b) `hit_test` finds each of the three at that same
-   transformed position, and (c) the edge's custom hit-test still
-   genuinely excludes a point off the path but inside the edge's own
-   bounding box (re-confirming Phase 3's "override, not narrowing"
-   claim holds inside a combined scene, not just in isolation).
-2. **New `examples/node_graph.py`**: a small, real graph -- a handful of
-   real `Rect` "node" circles (`corner_radius` = half size,
-   `set_on_click`) plus a couple of `Canvas` "edges" between them
-   (`stroke_path` + `set_hit_test_path`), all inside a "camera"
-   `Container` whose `transform` animates a pan across frames --
-   the live, human-runnable counterpart to the pixel test above.
-3. **No `engine-core`/`engine-render`/`engine-py` production code
-   changes** -- per §11.11's own "no new framework mechanism" text,
-   confirmed correct by the investigation above: every primitive this
-   phase needs already exists.
+1. **`engine-core/src/tree.rs`**: new `Tree::try_add_child(&mut self,
+   parent: NodeId, child: NodeId) -> bool` — walks up from `parent`
+   checking for `child`; on a cycle, returns `false`, no mutation. On no
+   cycle: detaches `child` from its current parent if `Some`, then calls
+   the existing `add_child(parent, child)`, returns `true`. `add_child`
+   itself is untouched.
+2. **`engine-py/src/error.rs`**: `EngineError::CycleRejected` (verbatim
+   message from `ARCHITECTURE.md` §8) and `EngineError::ForeignNode`
+   ("this Node belongs to a different Window's Tree" — the real,
+   `Rc::ptr_eq`-detected cross-tree case above), both to `PyValueError`.
+3. **`engine-py/src/node.rs`**: `Node.add_child(&self, child: PyRef<'_,
+   Node>) -> PyResult<()>` — checks `Rc::ptr_eq` first, then calls
+   `try_add_child`, translating `false` into `CycleRejected`.
+4. **New tests**: `engine-core` unit tests (self-cycle, a real multi-
+   level ancestor cycle, and the "already attached elsewhere" auto-
+   detach case, proving the *tree* — not just the return value — ends
+   up correct). New `tests/test_add_child.py`: a real attach, a rejected
+   self/ancestor cycle raises `ValueError`, a cross-window `add_child`
+   raises `ValueError`, and re-parenting an already-attached node moves
+   it (not duplicates it).
 
 ## Files to touch
 
-- `crates/engine-render/tests/graph_composition.rs` -- new.
-- `examples/node_graph.py` -- new.
+- `crates/engine-core/src/tree.rs` — `try_add_child` + tests.
+- `crates/engine-py/src/error.rs` — `CycleRejected`/`ForeignNode`.
+- `crates/engine-py/src/node.rs` — `Node.add_child`.
+- `tests/test_add_child.py` — new.
 
 ## Verification
 
 - `cargo test --workspace`, `cargo clippy --workspace --all-targets --
   -D warnings`, `cargo fmt --check`.
-- `maturin develop && python -m pytest tests/ -v` (unaffected -- no
-  Python-facing API changes) plus all examples (including the new one)
-  run clean.
+- `maturin develop && python -m pytest tests/ -v` plus all examples run.
