@@ -73,6 +73,13 @@ pub struct Tree {
     /// not one per button -- this minimal mouse-only model never needs
     /// to track two buttons held down at once.
     pressed: Option<(PointerButton, NodeId)>,
+    /// M4 Phase 3 (§11.5): the `NodeKind::Splitter` currently being
+    /// dragged, if any -- set on a primary-button `PointerPressed` that
+    /// hits a splitter, read by every subsequent `PointerMoved` until a
+    /// primary-button `PointerReleased` clears it (wherever that
+    /// happens, not conditioned on still hitting the splitter -- a real
+    /// mouse-up always ends a drag, matching real OS drag semantics).
+    dragging: Option<NodeId>,
     /// §14 step 13 (§11.3): keyed by the overlay root's own `NodeId` --
     /// metadata only, never the node itself, which already lives in
     /// `nodes` like any other.
@@ -94,6 +101,7 @@ impl Tree {
             focused: None,
             hovered: None,
             pressed: None,
+            dragging: None,
             overlays: HashMap::new(),
         }
     }
@@ -422,36 +430,65 @@ impl Tree {
     /// `flex_direction` (row -> width, column -> height), proportioning
     /// the two siblings' *current* combined extent by `position`.
     pub fn set_splitter_position(&mut self, id: NodeId, position: f64, now: Instant) {
-        // Everything read here first, as owned values, before any
-        // `&mut self` call below -- avoids holding a borrow of
-        // `self.nodes` across `set_layout_style`'s own `&mut self`.
-        let (parent, siblings) = {
-            let node = self
-                .nodes
-                .get(id)
-                .expect("set_splitter_position: NodeId not found in this Tree");
-            assert!(
-                matches!(node.kind, NodeKind::Splitter(_)),
-                "set_splitter_position: {id:?} is not a NodeKind::Splitter"
-            );
-            let parent = node
-                .parent
-                .expect("set_splitter_position: a splitter must have a parent");
-            let siblings = self
-                .nodes
-                .get(parent)
-                .expect("set_splitter_position: parent NodeId not found in this Tree")
-                .children
-                .clone();
-            (parent, siblings)
+        let (left, right, is_row, total) = self.splitter_geometry(id);
+
+        let position = position.clamp(0.0, 1.0);
+        let left_extent = total * position;
+        let right_extent = total - left_extent;
+
+        let mut left_style = self.nodes[left].layout_style.clone();
+        let mut right_style = self.nodes[right].layout_style.clone();
+        if is_row {
+            left_style.size.width = length(left_extent as f32);
+            right_style.size.width = length(right_extent as f32);
+        } else {
+            left_style.size.height = length(left_extent as f32);
+            right_style.size.height = length(right_extent as f32);
+        }
+        self.set_layout_style(left, left_style);
+        self.set_layout_style(right, right_style);
+
+        let NodeKind::Splitter(state) = &mut self.nodes[id].kind else {
+            unreachable!("checked by splitter_geometry")
         };
+        state
+            .position
+            .animate_to(position, Duration::ZERO, MotionCurve::Linear, now);
+        state.position.tick(now);
+    }
+
+    /// Shared by `set_splitter_position` and `update_drag` (M4 Phase 3,
+    /// §11.5): resolves a splitter's own flanking-siblings geometry --
+    /// which two real siblings it sits between, which axis its parent's
+    /// `flex_direction` puts them on, and their current combined extent
+    /// along that axis (which stays constant while dragging -- the two
+    /// siblings only ever trade extent between each other). Panics under
+    /// the same "internal bookkeeping bug, not a runtime condition"
+    /// reasoning `add_child` already uses for a malformed tree.
+    fn splitter_geometry(&self, id: NodeId) -> (NodeId, NodeId, bool, f64) {
+        let node = self
+            .nodes
+            .get(id)
+            .expect("splitter_geometry: NodeId not found in this Tree");
+        assert!(
+            matches!(node.kind, NodeKind::Splitter(_)),
+            "splitter_geometry: {id:?} is not a NodeKind::Splitter"
+        );
+        let parent = node
+            .parent
+            .expect("splitter_geometry: a splitter must have a parent");
+        let siblings = &self
+            .nodes
+            .get(parent)
+            .expect("splitter_geometry: parent NodeId not found in this Tree")
+            .children;
 
         let index = siblings.iter().position(|&c| c == id).expect(
-            "set_splitter_position: splitter isn't actually a child of its own recorded parent",
+            "splitter_geometry: splitter isn't actually a child of its own recorded parent",
         );
         assert!(
             index > 0 && index + 1 < siblings.len(),
-            "set_splitter_position: a splitter must sit between two real siblings, not at either end of its parent's children"
+            "splitter_geometry: a splitter must sit between two real siblings, not at either end of its parent's children"
         );
         let left = siblings[index - 1];
         let right = siblings[index + 1];
@@ -469,35 +506,38 @@ impl Tree {
             let r = self.layout(right);
             (f64::from(r.size.width), f64::from(r.size.height))
         };
-
-        let position = position.clamp(0.0, 1.0);
         let total = if is_row {
             left_w + right_w
         } else {
             left_h + right_h
         };
-        let left_extent = total * position;
-        let right_extent = total - left_extent;
 
-        let mut left_style = self.nodes[left].layout_style.clone();
-        let mut right_style = self.nodes[right].layout_style.clone();
-        if is_row {
-            left_style.size.width = length(left_extent as f32);
-            right_style.size.width = length(right_extent as f32);
-        } else {
-            left_style.size.height = length(left_extent as f32);
-            right_style.size.height = length(right_extent as f32);
-        }
-        self.set_layout_style(left, left_style);
-        self.set_layout_style(right, right_style);
+        (left, right, is_row, total)
+    }
 
-        let NodeKind::Splitter(state) = &mut self.nodes[id].kind else {
-            unreachable!("checked at the top of this function")
+    /// M4 Phase 3 (§11.5): "on drag, `position`'s tick handler mutates
+    /// its two adjacent siblings' `layout_style`" made real -- converts
+    /// `point`'s coordinate along the dragged splitter's own parent flex
+    /// axis into a 0.0..=1.0 fraction (relative to the left sibling's
+    /// own current absolute start and the flanking siblings' combined
+    /// extent from `splitter_geometry`), then calls the *existing*
+    /// `set_splitter_position` with it -- one real mechanism, reused,
+    /// not reimplemented for the drag case. A no-op if `self.dragging`
+    /// isn't currently set or the flanking siblings have zero combined
+    /// extent (nothing to divide a fraction of).
+    fn update_drag(&mut self, point: Point, now: Instant) {
+        let Some(splitter) = self.dragging else {
+            return;
         };
-        state
-            .position
-            .animate_to(position, Duration::ZERO, MotionCurve::Linear, now);
-        state.position.tick(now);
+        let (left, _right, is_row, total) = self.splitter_geometry(splitter);
+        if total <= 0.0 {
+            return;
+        }
+        let (left_x, left_y) = self.absolute_position(left);
+        let coord = if is_row { point.x } else { point.y };
+        let start = if is_row { left_x } else { left_y };
+        let fraction = ((coord - start) / total).clamp(0.0, 1.0);
+        self.set_splitter_position(splitter, fraction, now);
     }
 
     /// §14 step 15 (§11.7): materializes/recycles a `NodeKind::
@@ -872,12 +912,28 @@ impl Tree {
                     config.hover_duration,
                     now,
                 );
+                // M4 Phase 3 (§11.5): live-follows-the-cursor while a
+                // splitter drag is active -- a no-op otherwise.
+                if self.dragging.is_some() {
+                    self.update_drag(position, now);
+                }
                 DispatchOutcome::None
             }
             InputEvent::PointerPressed { position, button } => {
                 let hit = self.hit_test(root, position);
                 if let Some(node) = hit {
                     self.pressed = Some((button, node));
+                    // M4 Phase 3 (§11.5): pressing a splitter with the
+                    // primary button starts a real drag -- reuses this
+                    // same hit-test result, not a second one.
+                    if button == PointerButton::Primary
+                        && matches!(
+                            self.nodes.get(node).map(|n| &n.kind),
+                            Some(NodeKind::Splitter(_))
+                        )
+                    {
+                        self.dragging = Some(node);
+                    }
                     if let Some(state) = self.interaction_mut(node) {
                         state.spawn_ripple(
                             Point::new(position.x, position.y),
@@ -905,6 +961,15 @@ impl Tree {
                     _ => DispatchOutcome::None,
                 };
                 self.pressed = None;
+                // M4 Phase 3 (§11.5): a real mouse-up always ends a
+                // drag, wherever it happens -- not conditioned on still
+                // hitting the splitter (the pointer can leave a thin
+                // splitter's own hit region mid-drag and the drag must
+                // still track it until release, matching real OS drag
+                // semantics).
+                if button == PointerButton::Primary {
+                    self.dragging = None;
+                }
                 outcome
             }
             InputEvent::KeyPressed { key, shift } => match key {
@@ -1379,6 +1444,259 @@ mod tests {
             state.position.current, 0.75,
             "the splitter's own position must reflect the new value immediately, \
              not just the two siblings' sizes"
+        );
+    }
+
+    /// A 210x50 root, `Row`: left pane [0,100), splitter [100,110),
+    /// right pane [110,210) -- the same real geometry `set_splitter_
+    /// position_resizes_both_flanking_siblings` already uses, factored
+    /// out once `dispatch`'s own drag tests needed it too.
+    fn splitter_scene() -> (Tree, NodeId, NodeId, NodeId, NodeId, Size<AvailableSpace>) {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            display: taffy::Display::Flex,
+            flex_direction: FlexDirection::Row,
+            size: Size {
+                width: length(210.0),
+                height: length(50.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let (k, s, p) = leaf(100.0, 50.0);
+        let left = tree.insert(k, s, p);
+        tree.add_child(root, left);
+
+        let splitter = tree.insert(
+            NodeKind::Splitter(crate::node::SplitterState {
+                position: crate::animation::Animated::new(0.5),
+            }),
+            Style {
+                size: Size {
+                    width: length(10.0),
+                    height: length(50.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(root, splitter);
+
+        let (k, s, p) = leaf(100.0, 50.0);
+        let right = tree.insert(k, s, p);
+        tree.add_child(root, right);
+
+        let available = Size {
+            width: AvailableSpace::Definite(210.0),
+            height: AvailableSpace::Definite(50.0),
+        };
+        tree.compute_layout(root, available);
+        (tree, root, left, splitter, right, available)
+    }
+
+    #[test]
+    fn dispatch_drag_on_a_splitter_resizes_flanking_siblings_live_as_the_pointer_moves() {
+        let (mut tree, root, left, _splitter, right, available) = splitter_scene();
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let now = Instant::now();
+
+        // Press on the splitter itself (x=105, inside [100,110)).
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(105.0, 25.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+
+        // Drag to x=130: fraction = 130/200 = 0.65 of the shared 200px.
+        tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(130.0, 25.0),
+            },
+            &config,
+            now,
+        );
+        tree.compute_layout(root, available);
+        assert_eq!(
+            tree.layout(left).size.width,
+            130.0,
+            "the left pane must live-follow the cursor to its first drag position"
+        );
+
+        // Keep dragging, to x=160: fraction = 160/200 = 0.8 -- proves
+        // this isn't a one-shot snap, the pane keeps following.
+        tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(160.0, 25.0),
+            },
+            &config,
+            now,
+        );
+        tree.compute_layout(root, available);
+        assert_eq!(
+            tree.layout(left).size.width,
+            160.0,
+            "the left pane must keep following a second drag position, not just the first"
+        );
+        assert_eq!(tree.layout(right).size.width, 40.0);
+    }
+
+    #[test]
+    fn dispatch_release_ends_the_drag_so_further_pointer_moves_dont_resize() {
+        let (mut tree, root, left, _splitter, _right, available) = splitter_scene();
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let now = Instant::now();
+
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(105.0, 25.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(130.0, 25.0),
+            },
+            &config,
+            now,
+        );
+        tree.dispatch(
+            root,
+            InputEvent::PointerReleased {
+                position: Point::new(130.0, 25.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        tree.compute_layout(root, available);
+        let width_after_release = tree.layout(left).size.width;
+
+        // A further pointer move, with no press held, must not keep
+        // resizing the pane -- the drag genuinely ended at release.
+        tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(180.0, 25.0),
+            },
+            &config,
+            now,
+        );
+        tree.compute_layout(root, available);
+        assert_eq!(
+            tree.layout(left).size.width,
+            width_after_release,
+            "a pointer move after release must not still be tracked as a drag"
+        );
+    }
+
+    #[test]
+    fn dispatch_pressing_a_non_splitter_node_never_starts_a_drag() {
+        let (mut tree, root, left, _splitter, _right, available) = splitter_scene();
+        let original_left_width = tree.layout(left).size.width;
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let now = Instant::now();
+
+        // Press and drag starting on the left pane itself, not the
+        // splitter -- must never move the splitter it happens to share
+        // a parent with.
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(50.0, 25.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(180.0, 25.0),
+            },
+            &config,
+            now,
+        );
+        tree.compute_layout(root, available);
+        assert_eq!(
+            tree.layout(left).size.width,
+            original_left_width,
+            "dragging from a plain node must never move an unrelated splitter"
+        );
+    }
+
+    #[test]
+    fn dispatch_a_non_primary_button_press_on_a_splitter_never_starts_a_drag() {
+        let (mut tree, root, left, _splitter, _right, available) = splitter_scene();
+        let original_left_width = tree.layout(left).size.width;
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let now = Instant::now();
+
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(105.0, 25.0),
+                button: PointerButton::Secondary,
+            },
+            &config,
+            now,
+        );
+        tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(180.0, 25.0),
+            },
+            &config,
+            now,
+        );
+        tree.compute_layout(root, available);
+        assert_eq!(
+            tree.layout(left).size.width,
+            original_left_width,
+            "a non-primary-button press on a splitter must never start a drag"
         );
     }
 
