@@ -141,6 +141,27 @@ impl Node {
             node.access.actions.push(Action::Click);
         }
     }
+
+    /// M4 Phase 5 (§7.3): opts this node into ripple/hover state-layer
+    /// animation -- a thin call into `Tree::interaction_mut`, the same
+    /// real, already-correctly-wired mechanism `Tree::dispatch`'s
+    /// `PointerPressed` (ripple spawn) and `update_hover` (hover
+    /// animation) have used since M3 Phase 5 step 9 and M4 Phase 1
+    /// respectively. Nothing was missing at the dispatch level -- only
+    /// that no `engine-py` call site ever opted a real Python-created
+    /// node in at all, confirmed via grep before this method existed.
+    ///
+    /// Deliberately a separate method, not folded into `set_on_click`:
+    /// a purely-hoverable, non-clickable node is a real, independent
+    /// case §7.3 itself describes (hover is specified separately from
+    /// click), and implicitly paying the extra per-frame animation cost
+    /// just because a node got a click handler would be a surprising
+    /// side effect for a caller who only wanted the click -- Design
+    /// Principle 6's "only a node that opts in pays the cost" applies
+    /// to each independently.
+    fn enable_interaction(&self) {
+        self.tree.borrow_mut().interaction_mut(self.id);
+    }
 }
 
 fn kind_name(kind: &NodeKind) -> &'static str {

@@ -227,6 +227,53 @@ fn paint_node(
         NodeKind::Container | NodeKind::VirtualList(_) => {}
     }
 
+    // M4 Phase 5 (§7.3): the real ripple/hover state-layer paint --
+    // `interaction_mut`/`Tree::dispatch`'s ripple-spawn/`update_hover`
+    // were already real and correctly animating `InteractionState`
+    // since M3 Phase 5 step 9 and M4 Phase 1 respectively, but nothing
+    // in this real per-node walk ever painted it -- only the standalone
+    // `build_ripple_scene` spike (above) ever drew a ripple, over a
+    // synthetic single-button scene with no real `Tree` at all. Painted
+    // after the node's own fill and before its children, matching real
+    // MD3 (a state layer sits under a component's own content, e.g. an
+    // icon/label). A fixed neutral (black) tint, not a per-scheme
+    // MD3 "on-surface" token -- dynamic color (`engine_md3::color::
+    // DynamicTheme`, real since M3 Phase 5 step 11) isn't wired into
+    // `paint_node` anywhere yet, for any property, not just this one;
+    // that's a separate, larger, pre-existing gap, not solved here as a
+    // side effect. `hover_opacity`/each ripple's own `opacity` are
+    // already the real, live, animated 0.0..~0.12 values `engine-core`
+    // computed -- filling with `with_opacity` at that exact value is a
+    // true no-op when it's `0.0`, not a special-cased skip.
+    if let Some(interaction) = &node.interaction {
+        let radius = node.paint.corner_radius.current;
+        let bounds = RoundedRect::new(x, y, x + w, y + h, radius).to_path(0.1);
+
+        scene.set_paint(with_opacity(
+            Color::from_rgba8(0, 0, 0, 255),
+            interaction.hover_opacity.current,
+        ));
+        scene.fill_path(&bounds);
+
+        for ripple in &interaction.ripples {
+            // `push_layer`'s own `clip_path` intersected with the fill
+            // path below is exactly "this ripple, bounded to this
+            // node's own shape" -- no second, nested `push_layer` call
+            // needed to achieve that intersection.
+            let circle = Circle::new(ripple.origin, ripple.radius.current).to_path(0.1);
+            scene.push_layer(
+                Some(&circle),
+                None,
+                Some(ripple.opacity.current as f32),
+                None,
+                None,
+            );
+            scene.set_paint(Color::from_rgba8(0, 0, 0, 255));
+            scene.fill_path(&bounds);
+            scene.pop_layer();
+        }
+    }
+
     for &child in &node.children {
         paint_node(tree, child, x, y, scene, resources, text);
     }

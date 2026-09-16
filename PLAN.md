@@ -1,94 +1,110 @@
-# Plan: M4 Phase 4 — Wire `View`'s Declarative Handlers to Real Dispatch (§16.2)
+# Plan: M4 Phase 5 — Real Ripple/Hover, End to End (§7.3)
 
 ## Context
 
-`View::_attach` (`crates/engine-py/src/view.rs`) validates every declared
-`handlers` entry eagerly (`getattr(viewmodel, method_name)` + a
-callability check) but never registers the validated method anywhere
-real dispatch reaches — confirmed by direct code reading, not
-assumption. The module's own doc comment already named this as its
-scope boundary before M4 existed: "Actually *firing* a handler from a
-real click needs `InputEvent`/`AppHandler` pointer dispatch, which...
-doesn't exist anywhere in this codebase yet." That dispatch now exists
-(M4 Phases 1-3), but `_attach` was never revisited once it landed, so a
-`view.yaml`'s `{on_click: "bump"}` still does nothing when actually
-clicked today.
+`BUILD_TRACKER.md`'s corrected Phase 5 scope (fixed earlier this
+session after finding a factual error in the prior version) says the
+gap is "no `engine-py` API ever calls `interaction_mut`, so no real
+Python-built node has `InteractionState` to animate." That's real, but
+investigating further before writing code surfaced a second, bigger gap
+in the same area that the tracker didn't yet name.
 
 ## Investigation before writing code
 
-Re-read §16.2 in full. Confirmed directly against the current
-codebase (not assumed):
+Re-read §7.3 in full, then read `interaction.rs`, `tree.rs`'s
+`interaction_mut`/`update_hover`/`dispatch`, and — critically —
+`engine-render`'s actual real-render-path function, `paint_node`
+(what `build_tree_scene` calls, the function every real windowed app
+and every FFI-driven render actually goes through), not just the
+already-known standalone `build_ripple_scene` spike function.
 
-- `View` owns its own standalone `Tree` (`View::new` calls `Tree::new()`
-  directly) — it is **not** embedded into any `PyWindow`'s tree, and has
-  no width/height/render-loop concept at all. Giving `View` a real,
-  live winit-driven render loop (parity with `PyWindow`'s whole
-  lifecycle) is real, separate, much larger work than this phase's
-  actual, confirmed gap — not manufactured here ahead of a stated need.
-- `View` already has its own `click_handlers: Rc<RefCell<HashMap<NodeId,
-  Py<PyAny>>>>` (added in an earlier session for GC-safety consistency)
-  and its own `__traverse__`/`__clear__` visiting it — the storage
-  already exists, just never populated.
-- `Node::set_on_click` (`node.rs`) is the exact existing mechanism that
-  inserts into a `click_handlers` map and adds `Action::Click` to
-  `access.actions` — already reused verbatim by `apply_binding_value`'s
-  sibling code for `animate()`. The same reuse pattern applies here.
-- `Reconciler::root() -> NodeId` already exists (`engine-spec`), giving
-  `View` the same "one root `NodeId`" shape `PyWindow.root` has, without
-  needing a new field.
-- `PyWindow.click(node)` (M4 Phase 1 step 3) is the established,
-  no-live-window-needed pattern for proving a dispatch path fires for
-  real: compute layout, find the node's real center, dispatch a
-  primary press+release pair there. `View` needs the identical method,
-  using `AvailableSpace::MaxContent` in place of `PyWindow`'s own
-  fixed width/height (every existing test `view.yaml` already declares
-  an explicit `style.width`/`style.height` on its root widget, so
-  `MaxContent` sizing is correct, not a workaround).
+Confirmed directly:
 
-**Scope narrowed accordingly:** this phase does NOT give `View` a real
-render loop or embed it into `PyWindow`. It wires the one thing that's
-actually broken — `on_click` handlers never reaching real dispatch —
-using the same no-window-needed proof pattern M4 Phase 1 already
-established, and defers "make a YAML view actually run in a live
-window" as separate, future, larger work (not yet named by any real
-stated need).
+- `Tree::interaction_mut`/`Tree::dispatch`'s `PointerPressed` ripple
+  spawn/`update_hover`'s hover animation are all real, complete, and
+  already correctly wired at the `engine-core` level (unit-tested since
+  M3 Phase 5 step 9). Nothing needs fixing here.
+- **`paint_node` (`crates/engine-render/src/lib.rs`) never reads
+  `node.interaction` at all** — confirmed by reading the full function.
+  Only `build_ripple_scene`, a standalone spike with no `Tree`
+  involved at all (its own doc comment says so explicitly), ever draws
+  a ripple. This means even after adding a Python-facing opt-in, a real
+  click on a real Python-built button would correctly *animate*
+  `InteractionState` internally but produce **zero visible pixels** —
+  an incomplete, unprovable claim if left as-is, not a real "it works."
+
+**Scope widened accordingly**, still narrow and grounded in exactly
+what's confirmed missing (not manufacturing anything beyond it):
+
+1. `paint_node` gains real ripple/hover rendering for any node with
+   `Some(interaction)`, reusing `build_ripple_scene`'s already-proven
+   `push_layer(clip_path, ..., opacity, ...)` technique, moved into the
+   real per-node walk instead of a synthetic single-button spike.
+2. `engine-py` gets a real opt-in API.
+3. Tests prove the real, complete path: opt in → real `Tree::dispatch`
+   click → pixel-visible ripple, through the actual `build_tree_scene`
+   pipeline, not the standalone spike.
+
+**Real design decision, resolved:** should the opt-in be folded into
+`Node.set_on_click`, or a separate method? Chose **separate**
+(`Node.enable_interaction()`): a purely-hoverable, non-clickable node
+is a legitimate, real, independent case (§7.3 describes hover
+independently of click), and implicitly opting a node into extra
+per-frame animation cost just because it got a click handler would be
+a surprising side effect for a caller who only wanted the click.
+Explicit opt-in for each independently matches Design Principle 6's own
+"only a node that opts in pays the cost."
+
+**Real, stated color narrowing:** the overlay uses a fixed neutral
+(black) tint, not per-scheme MD3 "on-surface" color tokens — dynamic
+color (`engine_md3::color::DynamicTheme`, real since M3 Phase 5 step
+11) isn't wired into `paint_node` anywhere yet, for *any* property, not
+just this one; that's a separate, larger, pre-existing gap (real
+scheme-driven rendering), not something to solve as a side effect of
+this phase. `dispatch.rs`'s own `interaction_config()` already
+hardcodes MD3-value opacities the same deliberate way.
 
 ## Approach
 
-1. **`View::_attach`** — after validating a handler, if `event ==
-   "on_click"`, look up the widget's `NodeId` via
-   `self.reconciler.id_of(widget_id)` and call the exact same
-   `Node::set_on_click` mechanism `Node.set_on_click` exposes, via a
-   temporary `Node` value (the same construction `apply_binding_value`
-   already uses for `animate`), passing the validated, already-`getattr`'d
-   bound method. Other declared event names stay validate-only, matching
-   §16.2's own "generalizing to whatever named events a `NodeKind`
-   exposes" — not manufactured ahead of Phase 6's `EventKind` work.
-2. **`View.click(node, py)`** — new method on `View`, mirroring
-   `PyWindow.click` exactly: compute layout over `self.reconciler.root()`
-   with `AvailableSpace::MaxContent` on both axes, find `node`'s real
-   center via `absolute_position`/`layout()`, dispatch a primary
-   press+release pair there, running `dispatch::run_activation` against
-   `self.click_handlers` for each.
-3. **Tests** — new `tests/test_view_handlers.py`: a `view.yaml` with
-   `{on_click: "bump"}`, a `ViewModel` whose `bump` mutates a `Signal`,
-   `view.click(view.node("root"))`, assert the `Signal`'s value actually
-   changed — proving a real dispatched click invokes the bound method,
-   not just that `_attach` validated it exists. Also cover: a handler
-   for a non-`on_click` event name still validates but a click doesn't
-   invoke it (no mechanism exists yet); an uncaught exception in a
-   real `bump` is caught the same way `Window.click()`'s already is
-   (`PyErr::print`, §9's policy), not propagated.
+1. **`engine-render`**: `paint_node` paints, for any node with
+   `Some(interaction)` (after its own kind-specific fill, before
+   recursing into children — state layers sit under content, matching
+   real MD3): a flat hover overlay (`with_opacity(black, hover_opacity.
+   current)` filled over the node's own rounded-rect bounds, a no-op at
+   `0.0`) and each active ripple (`push_layer` clipped to the ripple's
+   own growing circle, filled with the node's own rect — the
+   intersection of clip and fill path is exactly the node-bounded,
+   circle-clipped ripple, no nested clipping needed).
+   New `engine-render` pixel-readback test: a real `Tree::dispatch`
+   press on an opted-in node, rendered through the real
+   `build_tree_scene`, shows the ripple color at the press point;
+   released and ticked past its duration, the pixel returns to the
+   node's own background.
+2. **`engine-py`**: `Node.enable_interaction()` — calls
+   `Tree::interaction_mut(self.id)` once, mirroring `set_on_click`'s own
+   shape (a thin, direct call into the existing `engine-core` API,
+   nothing new invented).
+3. **Tests**: pytest coverage that `enable_interaction()` doesn't raise
+   and a `Window.click()` on an opted-in node doesn't crash — the
+   definitive pixel-level proof lives in the new `engine-render` test
+   (step 1), matching this project's established split (Rust crate
+   tests carry pixel proof; Python tests prove FFI wiring), the same
+   way `test_splitter.py` deferred its own pixel proof to
+   `splitter_drag_dispatch.rs`. A new real windowed example,
+   `examples/ripple_button.py`, mirroring `resizable_panes.py`'s own
+   stated pattern: automatable proof stops at construction/rendering,
+   a human running it interactively sees the actual ripple/hover.
 
 ## Files to touch
 
-- `crates/engine-py/src/view.rs` — `_attach`'s handler loop, new
-  `click` method.
-- `tests/test_view_handlers.py` — new.
+- `crates/engine-render/src/lib.rs` — `paint_node`.
+- `crates/engine-render/tests/` — new pixel-readback test file.
+- `crates/engine-py/src/node.rs` — new `enable_interaction` method.
+- `tests/test_interaction.py` — new.
+- `examples/ripple_button.py` — new.
 
 ## Verification
 
 - `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D
   warnings`, `cargo fmt --check`.
-- `maturin develop && python -m pytest tests/ -v` — full suite plus the
-  new file.
+- `maturin develop && python -m pytest tests/ -v` plus all examples run.
