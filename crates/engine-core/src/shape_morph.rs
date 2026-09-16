@@ -1,13 +1,30 @@
 //! §7.4's shape-morph module: the one MD3 mechanism with no library to
-//! lean on (§14 step 10). "Equalize point count, then lerp" is only
-//! half the real technique -- §7.4's own review note names the missing,
-//! harder half explicitly: naive per-index interpolation assumes point
-//! *N* on one shape visually corresponds to point *N* on the other,
-//! which is usually false and produces self-intersecting or
-//! wildly-rotating mid-morph geometry. This module runs a real
-//! correspondence/alignment search -- every rotational starting-point
-//! offset, in both winding directions, scored by total point-travel
-//! distance -- before ever lerping a single point.
+//! lean on (originally built at §14 step 10). "Equalize point count,
+//! then lerp" is only half the real technique -- §7.4's own review
+//! note names the missing, harder half explicitly: naive per-index
+//! interpolation assumes point *N* on one shape visually corresponds
+//! to point *N* on the other, which is usually false and produces
+//! self-intersecting or wildly-rotating mid-morph geometry. This
+//! module runs a real correspondence/alignment search -- every
+//! rotational starting-point offset, in both winding directions,
+//! scored by total point-travel distance -- before ever lerping a
+//! single point.
+//!
+//! **M7 Phase 4 (§7.4): moved here from `engine-md3`, verbatim.**
+//! Confirmed by reading the whole file before moving it: this module's
+//! only real dependencies were always `Interpolate` and `peniko::
+//! kurbo` -- no `ColorScheme`/`DynamicTheme`/`material_colors`, nothing
+//! genuinely MD3-specific. `engine-core::node::PaintProperties`'s own
+//! doc comment already named `shape: Animated<ShapeKey>` as always
+//! intended to live directly on `PaintProperties` (matching
+//! `ARCHITECTURE.md` §2's own original struct sketch) -- impossible
+//! while `ShapeKey` lived in `engine-md3`, since `engine-core` cannot
+//! depend on it (§4). The identical resolution M7 Phase 1 already made
+//! for `MotionCurve` (real MD3 curve values landed in `engine-core`,
+//! not a separate `engine_md3::motion` module) applies here. Confirmed
+//! via grep before moving: zero references to `engine_md3::ShapeKey`/
+//! `engine_md3::shape_morph` anywhere in the workspace, so no
+//! backward-compat re-export was needed.
 //!
 //! Deliberately scoped to a path's own vertices (the endpoint of each
 //! `PathEl`), not full curve-type-aware control-point morphing: a
@@ -22,7 +39,7 @@
 //! subpath: every MD3 shape is one contour, and no planned component
 //! needs a shape with a hole.
 
-use engine_core::Interpolate;
+use crate::animation::Interpolate;
 use peniko::kurbo::{BezPath, PathEl, Point};
 
 /// A shape's own vertex sequence -- the value type an `Animated<
@@ -39,6 +56,23 @@ pub struct ShapeKey {
 }
 
 impl ShapeKey {
+    /// M7 Phase 4 (§7.4): the "no shape ever set" sentinel `Paint
+    /// Properties::new` defaults `shape` to -- an empty point list, the
+    /// same value `to_path()`'s own `if let Some(&first) = points.
+    /// next()` short-circuit already renders as an empty `BezPath` with
+    /// zero code changes needed there.
+    pub fn empty() -> Self {
+        Self { points: Vec::new() }
+    }
+
+    /// `paint_node`'s own "is a real morph active" check -- true for a
+    /// node that never called `ShapeKey::from_path`/animated `shape` at
+    /// all, matching every other additive `PaintProperties` field's
+    /// "off unless a caller opts in" contract.
+    pub fn is_empty(&self) -> bool {
+        self.points.is_empty()
+    }
+
     /// Extracts a closed shape's own vertex sequence: the endpoint of
     /// every `MoveTo`/`LineTo`/`QuadTo`/`CurveTo` segment, in path
     /// order, dropping curve control handles (see this module's own
@@ -202,6 +236,27 @@ mod tests {
         };
         points.rotate_left(offset_start);
         points
+    }
+
+    #[test]
+    fn empty_shape_key_is_empty_and_renders_an_empty_path() {
+        let key = ShapeKey::empty();
+        assert!(key.is_empty());
+        assert_eq!(
+            key.to_path().elements().len(),
+            0,
+            "an empty ShapeKey must build a genuinely empty BezPath, the true no-op \
+             paint_node relies on for a node that never set a shape"
+        );
+    }
+
+    #[test]
+    fn a_real_shape_is_not_empty() {
+        let mut path = BezPath::new();
+        path.move_to((0.0, 0.0));
+        path.line_to((10.0, 0.0));
+        path.close_path();
+        assert!(!ShapeKey::from_path(&path).is_empty());
     }
 
     #[test]
