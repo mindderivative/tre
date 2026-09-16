@@ -192,6 +192,72 @@ pub fn build_tree_scene(
 /// accumulated pure translation this function used to compute by hand
 /// via `offset_x`/`offset_y` -- purely additive, no behavior change for
 /// any existing content.
+/// M7 Phase 2 (§7.2): the real MD3 "key" shadow layer's own `(offset_y,
+/// blur)`, in px, at a real (possibly fractional -- `elevation` is a
+/// real `Animated<f64>`, not a discrete 0-5 enum) elevation level.
+/// Transcribed directly from Material Web's own `elevation/internal/
+/// _elevation.scss` (the real, current, production CSS Google ships --
+/// verified via its own documented per-integer-level comments, not
+/// recalled or guessed, `PLAN.md`), preserving its exact piecewise-
+/// linear formula so a fractional `elevation` (a card animating its own
+/// lift) interpolates smoothly rather than snapping between integer
+/// levels. Each term below reproduces one documented level's own real
+/// value -- hand-checked against all 6 before trusting it.
+fn key_shadow_geometry(level: f64) -> (f32, f32) {
+    // level1: 0,1,2,0 -- level2: 0,1,2,0 -- level3: 0,1,3,0
+    // level4: 0,2,3,0 -- level5: 0,4,4,0
+    let level1_y = level.clamp(0.0, 1.0);
+    let level4_y = (level - 3.0).clamp(0.0, 1.0);
+    let level5_y = 2.0 * (level - 4.0).clamp(0.0, 1.0);
+    let y = level1_y + level4_y + level5_y;
+
+    let level1_blur = 2.0 * level.clamp(0.0, 1.0);
+    let level3_blur = (level - 2.0).clamp(0.0, 1.0);
+    let level5_blur = (level - 4.0).clamp(0.0, 1.0);
+    let blur = level1_blur + level3_blur + level5_blur;
+
+    (y as f32, blur as f32)
+}
+
+/// The real MD3 "ambient" shadow layer's own `(offset_y, blur,
+/// spread)`, in px -- same real source and same "matches every
+/// documented integer level" verification as `key_shadow_geometry`.
+/// level1: 0,1,3,1 -- level2: 0,2,6,2 -- level3: 0,4,8,3
+/// level4: 0,6,10,4 -- level5: 0,8,12,6
+fn ambient_shadow_geometry(level: f64) -> (f32, f32, f32) {
+    let level1_y = level.clamp(0.0, 1.0);
+    let level2_y = (level - 1.0).clamp(0.0, 1.0);
+    let level3to5_y = 2.0 * (level - 2.0).clamp(0.0, 3.0);
+    let y = level1_y + level2_y + level3to5_y;
+
+    let level1to2_blur = 3.0 * level.clamp(0.0, 2.0);
+    let level3to5_blur = 2.0 * (level - 2.0).clamp(0.0, 3.0);
+    let blur = level1to2_blur + level3to5_blur;
+
+    let level1to4_spread = level.clamp(0.0, 4.0);
+    let level5_spread = 2.0 * (level - 4.0).clamp(0.0, 1.0);
+    let spread = level1to4_spread + level5_spread;
+
+    (y as f32, blur as f32, spread as f32)
+}
+
+/// CSS Backgrounds and Borders Module Level 3's own real conversion,
+/// verified directly (`PLAN.md`): "a Gaussian blur with a standard
+/// deviation equal to half the blur radius."
+fn blur_to_std_dev(blur_px: f32) -> f32 {
+    blur_px / 2.0
+}
+
+/// MD3's real `shadow` color role -- the neutral palette's own tone-0
+/// (blackest) position, constant regardless of the active theme's seed
+/// color (verified via search, `PLAN.md`), so this doesn't need to wait
+/// for M7 Phase 3's dynamic-color wiring the way ripple/hover's own
+/// tint does; `opacity` is each layer's own real, documented alpha
+/// (key: 0.3, ambient: 0.15).
+fn shadow_color(opacity: f32) -> Color {
+    with_opacity(Color::from_rgba8(0, 0, 0, 255), f64::from(opacity))
+}
+
 fn paint_node(
     tree: &Tree,
     id: NodeId,
@@ -210,6 +276,41 @@ fn paint_node(
         * Affine::translate((f64::from(layout.location.x), f64::from(layout.location.y)))
         * node.paint.transform.current;
     scene.set_transform(composed);
+
+    // M7 Phase 2 (§7.2): a real shadow, for any NodeKind, painted
+    // behind everything else -- elevation is a universal PaintProperties
+    // field, and a shadow only ever needs this node's own bounds/corner
+    // radius, independent of what it actually draws on top (the same
+    // "zero special-casing" shape M5 Phase 1's transform composition
+    // and M4 Phase 5's ripple/hover already established). Skipped
+    // entirely at elevation <= 0.0 -- matching level 0's own real
+    // 0px-everywhere values, not a degenerate zero-blur draw call.
+    let elevation = node.paint.elevation.current;
+    if elevation > 0.0 {
+        let radius = node.paint.corner_radius.current as f32;
+
+        // Ambient first, key second -- real box-shadow stacking order
+        // (a later shadow paints on top of an earlier one).
+        let (ambient_y, ambient_blur, ambient_spread) = ambient_shadow_geometry(elevation);
+        let ambient_rect = Rect::new(
+            -f64::from(ambient_spread),
+            f64::from(ambient_y) - f64::from(ambient_spread),
+            w + f64::from(ambient_spread),
+            h + f64::from(ambient_y) + f64::from(ambient_spread),
+        );
+        scene.set_paint(shadow_color(0.15));
+        scene.fill_blurred_rounded_rect(
+            &ambient_rect,
+            radius,
+            blur_to_std_dev(ambient_blur),
+            false,
+        );
+
+        let (key_y, key_blur) = key_shadow_geometry(elevation);
+        let key_rect = Rect::new(0.0, f64::from(key_y), w, h + f64::from(key_y));
+        scene.set_paint(shadow_color(0.3));
+        scene.fill_blurred_rounded_rect(&key_rect, radius, blur_to_std_dev(key_blur), false);
+    }
 
     match &node.kind {
         NodeKind::Rect | NodeKind::Splitter(_) => {

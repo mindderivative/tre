@@ -1,88 +1,103 @@
-# Plan: M7 Phase 1 — Real MD3 Motion Tokens (§7.5)
+# Plan: M7 Phase 2 — Elevation → Real Shadow Rendering (§7.2)
 
 ## Context
 
-`MotionCurve` has exactly one real variant, `Linear` — confirmed via
-grep, its own doc comment has said "deliberately not built yet" since
-M3 step 2. §7.5's own text: MD3 named easing curves are cubic-bezier
-control points, evaluated with `kurbo`'s curve math or a direct
-implementation, living as a static data table in `engine-md3`.
+`node.paint.elevation.current` is a real, animatable, Python-settable
+`PaintProperties` field that `paint_node` never reads — no node has
+ever actually painted a shadow, despite `build_shadow_scene` (M3 step
+8) already proving `vello_hybrid::Scene::fill_blurred_rounded_rect`
+works against this pinned version.
 
 ## Investigation before writing code
 
-- **The exact MD3 curve values had to be verified against a real,
-  authoritative source, not recalled from memory.** Fetched multiple
-  sources; two independent secondary sources agreed on the single-
-  segment curves but *disagreed* on "Emphasized" — one flattened it to
-  the same value as "Standard" (a common web-dev CSS approximation,
-  since CSS `transition-timing-function` can't express a compound
-  curve), the other correctly stated Emphasized has no single cubic-
-  bezier value at all. Cross-checked against Android's own
-  `MotionTokens.kt` (generated directly from the official Material
-  Design spec, per Material Components for Android's documentation) —
-  the authoritative source: `Emphasized` is a genuine two-segment SVG
-  path, `M 0,0 C 0.05,0 0.133333,0.06 0.166666,0.4 C 0.208333,0.82
-  0.25,1 1,1` — two cubic Bézier segments joined at `(0.166666, 0.4)`,
-  not a single 4-parameter curve. The single-segment curves (`Standard`/
-  `StandardDecelerate`/`StandardAccelerate`/`EmphasizedDecelerate`/
-  `EmphasizedAccelerate`) are real, standard CSS-style
-  `cubic-bezier(x1, y1, x2, y2)` values (curve fixed at `(0,0)`→`(1,1)`,
-  only the two control points vary), confirmed consistently across
-  every source checked.
-- **Evaluating a cubic-bezier timing function needs solving "given x,
-  find t such that `X(t) = x`, then return `Y(t)`"** — the same problem
-  every browser engine solves for CSS `cubic-bezier()`. `kurbo`'s own
-  `ParamCurveNearest` (already used for M5 Phase 3's custom hit-testing)
-  solves a *different* problem (nearest point to an arbitrary point, not
-  "the point whose X coordinate is exactly x") and doesn't fit here
-  directly. **Real implementation, per §7.5's own "or a direct
-  implementation" text:** bisection on `t ∈ [0, 1]` against the cubic's
-  own `X(t)` — valid because every real easing curve here has `x1, x2 ∈
-  [0, 1]`, which keeps `X(t)` monotonic (the same precondition CSS's own
-  spec requires of a valid `cubic-bezier()`). Simple, robust, and
-  correct without needing Newton-Raphson's own derivative-near-zero
-  edge case.
-- **"Emphasized" generalizes the same per-segment solve** — represented
-  as two independent 4-point Bézier segments (not the `(0,0)`→`(1,1)`-
-  fixed 2-parameter shorthand the single-segment curves use), selecting
-  which segment to solve within based on whether the input `x` falls
-  before or after the real, documented split point `x = 0.166666`.
+- **`engine-render` cannot depend on `engine-md3`** — confirmed
+  directly from `ARCHITECTURE.md` §4's own dependency diagram: the only
+  edge into `engine-render` is `H --> D` (`engine-core`); there is no
+  `H --> G` (`engine-md3`) edge anywhere in the diagram or its prose.
+  `engine-md3` hands out *resolved* `engine-core` values to `engine-py`/
+  `engine-spec`; it never feeds `engine-render` directly. This matches
+  the already-established real precedent for ripple/hover (M4 Phase 5):
+  that state-layer math (a hardcoded black tint, not a resolved MD3
+  scheme token) is computed directly inside `paint_node`, in
+  `engine-render` itself, not delegated to `engine-md3`. Elevation
+  follows the identical shape: the shadow-geometry math lives directly
+  in `engine-render`, not a new `engine-md3` module.
+- **The exact MD3 elevation shadow values had to be verified against a
+  real, authoritative source, not recalled or guessed.** A first web
+  source gave single-layer shadow values explicitly marked "alpha-stage
+  ... may change before stable release" — rejected. Found and fetched
+  the real, current, authoritative source directly: Material Web's own
+  `elevation/internal/_elevation.scss` (the actual production CSS
+  Google ships), which documents the exact per-level values in its own
+  comments and encodes them as a continuous, animatable piecewise-linear
+  formula in `--_level` (not a hard integer lookup) — exactly the shape
+  needed for `PaintProperties.elevation` being a real `Animated<f64>`,
+  not a discrete 0-5 enum. Two stacked shadow layers per elevation,
+  confirmed: a "key" shadow (opacity 0.3, no spread) and an "ambient"
+  shadow (opacity 0.15, with spread) — verified by hand-checking the
+  formula reproduces the documented value at all 6 integer levels for
+  both layers before trusting it.
+- **The CSS blur-radius → Gaussian standard-deviation conversion also
+  needed real verification**, not assumption: confirmed against the W3C
+  CSS Backgrounds and Borders Module Level 3 spec directly — "a Gaussian
+  blur with a standard deviation equal to half the blur radius." So
+  `std_dev = blur_px / 2.0`, not `blur_px` directly.
+- **The shadow color doesn't need to wait for Phase 3's dynamic-color
+  wiring.** MD3's `shadow` color role is computed from the neutral
+  palette's own tone-0 (blackest) position — confirmed via search,
+  constant black regardless of the active theme's seed color, unlike
+  `on-surface` (ripple/hover's own still-open gap). Real black
+  (`Color::from_rgba8(0, 0, 0, ...)`), scaled by each layer's own
+  0.3/0.15 opacity, is the *correct* MD3 answer today, not a
+  placeholder standing in for Phase 3.
+- **Applies uniformly to every `NodeKind`, not just `Rect`/`Splitter`**
+  — `elevation` is a universal `PaintProperties` field, and a shadow is
+  just "draw two blurred rects at this node's own bounds, behind
+  everything else, if elevation > 0," independent of what the node
+  actually draws on top. Painted once, at the very top of `paint_node`
+  (before the `match &node.kind` that draws the node's own content),
+  the same "zero special-casing" shape transform composition (M5 Phase
+  1) and ripple/hover (M4 Phase 5) already established. Skipped
+  entirely when `elevation <= 0.0` (matching level 0's own real
+  `0px 0px 0px 0px` values) — not a degenerate zero-blur draw call.
 
 ## Approach
 
-1. **`engine-core/src/animation.rs`**: a private `CubicSegment { p0,
-   p1, p2, p3: (f64, f64) }` with `eval(t) -> (f64, f64)` (De Casteljau/
-   direct cubic formula) and `solve_y_for_x(x) -> f64` (bisection on
-   `X(t)`, ~40 iterations for full `f64` precision). `MotionCurve`
-   gains `Standard`/`StandardDecelerate`/`StandardAccelerate`/
-   `Emphasized`/`EmphasizedDecelerate`/`EmphasizedAccelerate`, each
-   `ease()`-ing through the real verified control points above (the
-   single-segment curves via one `CubicSegment` fixed at `(0,0)`→
-   `(1,1)`; `Emphasized` via two, split at `x = 0.166666`).
-2. **New tests**: boundary conditions (`ease(0.0) == 0.0`, `ease(1.0)
-   == 1.0`) for every curve; monotonicity (sampled); a round-trip
-   consistency check per curve (forward-evaluate `(x, y)` at a chosen
-   `t` via `eval`, then confirm `solve_y_for_x(x)` recovers `y`) —
-   validates the bisection solver against the curve's own forward
-   math, the same rigor `Affine::inverse()`'s own round-trip tests use.
-   `Emphasized` additionally: continuity across the segment join (no
-   jump at `x = 0.166666`) and the real, externally-verified landmark
-   value (`y ≈ 0.4` at the join) — a genuine match-the-real-spec check,
-   not just internal self-consistency.
-3. **No consumers wired to a specific new curve yet** — this phase is
-   the data table itself, per §7.5's own scope; M7 Phase 3
-   (ripple/hover/focus-ring) and Phase 5 (container transform's own
-   "Emphasized" choreography) are what actually *use* a non-`Linear`
-   curve for the first time.
+1. **`engine-render/src/lib.rs`**: two private functions,
+   `key_shadow_geometry(level: f64) -> (f32 offset_y, f32 blur)` and
+   `ambient_shadow_geometry(level: f64) -> (f32 offset_y, f32 blur, f32
+   spread)`, transcribing Material Web's own verified piecewise-linear
+   formula exactly (each term individually commented with which real
+   documented level value it reproduces). `paint_node` gains a shadow-
+   painting step before its `match`: if `elevation > 0.0`, paints the
+   ambient layer then the key layer (ambient first, matching real
+   `box-shadow` stacking order — later shadows paint on top), each via
+   `Scene::fill_blurred_rounded_rect` with `std_dev = blur / 2.0`, the
+   node's own local `(0, 0, w, h)` rect shifted by `offset_y` and (for
+   ambient) inflated by `spread`, using its own `corner_radius`.
+2. **New `engine-render` pixel-readback test**: an elevated `Rect`
+   paints real shadow pixels below/around it (not just the rect's own
+   fill), and a `Rect` with `elevation == 0.0` paints no shadow at all
+   (byte-for-byte identical to a plain fill, the same "provably a
+   no-op" standard every additive M5/M7 feature has been held to).
+3. **New `engine-core` unit tests** (if the geometry helpers are more
+   naturally tested in isolation): the piecewise formula reproduces
+   Material Web's own documented value at each of the 6 real integer
+   levels, for both layers — the same "match the real spec" rigor M7
+   Phase 1's own `Emphasized` landmark test used.
 
 ## Files to touch
 
-- `crates/engine-core/src/animation.rs` — `CubicSegment`, new
-  `MotionCurve` variants, tests.
+- `crates/engine-render/src/lib.rs` — shadow geometry helpers,
+  `paint_node` wiring, new pixel test.
 
 ## Verification
 
 - `cargo test --workspace`, `cargo clippy --workspace --all-targets --
   -D warnings`, `cargo fmt --check`.
-- Full pre-existing suite must stay green unmodified (purely additive:
-  new enum variants, no existing variant's behavior changes).
+- Full pre-existing pixel-readback suite must stay green unmodified —
+  every existing node has `elevation.current == 0.0` by default
+  (`PaintProperties::new`'s own signature), so this must be a true
+  no-op for all of them.
+- `maturin develop && python -m pytest tests/ -v` plus all examples run
+  (no `engine-py` changes expected, but confirmed, not assumed).
