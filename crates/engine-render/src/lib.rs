@@ -169,15 +169,33 @@ pub fn build_tree_scene(
 ) -> Scene {
     let mut scene = Scene::new(width, height);
     scene.set_transform(Affine::IDENTITY);
-    paint_node(tree, root, 0.0, 0.0, &mut scene, resources, text);
+    paint_node(tree, root, Affine::IDENTITY, &mut scene, resources, text);
     scene
 }
 
+/// §11.9 (M5 Phase 1): `parent_transform` is the caller's own composed
+/// (canvas-space) transform for this node's *parent*; this call folds in
+/// this node's taffy-computed layout position and its own
+/// `PaintProperties.transform` in one product --
+/// `parent * translate(layout.location) * own_transform` -- exactly
+/// like nested `<g transform>` in SVG, "just ordinary matrix
+/// multiplication during the paint walk" (§11.9's own text). Every
+/// node's own content (and any recursive call for its children) is then
+/// painted/positioned in **local, node-relative coordinates**
+/// (`(0, 0)` to `(w, h)`), with `scene.set_transform(composed)` doing
+/// the mapping into canvas space -- both `Scene::fill_path` and
+/// `Scene::glyph_run` genuinely respect the scene's current transform
+/// (confirmed directly in `vello_hybrid = "0.2.0"`'s vendored source),
+/// so this needs no per-`NodeKind` special-casing. When every node's own
+/// `transform` is the default `Affine::IDENTITY` (true for every node
+/// before this phase), `composed` reduces to exactly the same
+/// accumulated pure translation this function used to compute by hand
+/// via `offset_x`/`offset_y` -- purely additive, no behavior change for
+/// any existing content.
 fn paint_node(
     tree: &Tree,
     id: NodeId,
-    offset_x: f64,
-    offset_y: f64,
+    parent_transform: Affine,
     scene: &mut Scene,
     resources: &mut Resources,
     text: &mut TextRenderer,
@@ -186,10 +204,12 @@ fn paint_node(
         .get(id)
         .expect("build_tree_scene: NodeId not found in this Tree");
     let layout = tree.layout(id);
-    let x = offset_x + f64::from(layout.location.x);
-    let y = offset_y + f64::from(layout.location.y);
     let w = f64::from(layout.size.width);
     let h = f64::from(layout.size.height);
+    let composed = parent_transform
+        * Affine::translate((f64::from(layout.location.x), f64::from(layout.location.y)))
+        * node.paint.transform.current;
+    scene.set_transform(composed);
 
     match &node.kind {
         NodeKind::Rect | NodeKind::Splitter(_) => {
@@ -200,7 +220,7 @@ fn paint_node(
             // has is all a divider's own background/corner-radius needs.
             let radius = node.paint.corner_radius.current;
             let color = with_opacity(node.paint.background.current, node.paint.opacity.current);
-            let rect = RoundedRect::new(x, y, x + w, y + h, radius);
+            let rect = RoundedRect::new(0.0, 0.0, w, h, radius);
             scene.set_paint(color);
             scene.fill_path(&rect.to_path(0.1));
         }
@@ -211,8 +231,8 @@ fn paint_node(
                 resources,
                 state,
                 TextPlacement {
-                    x,
-                    y,
+                    x: 0.0,
+                    y: 0.0,
                     max_width: w as f32,
                     color,
                 },
@@ -247,7 +267,7 @@ fn paint_node(
     // true no-op when it's `0.0`, not a special-cased skip.
     if let Some(interaction) = &node.interaction {
         let radius = node.paint.corner_radius.current;
-        let bounds = RoundedRect::new(x, y, x + w, y + h, radius).to_path(0.1);
+        let bounds = RoundedRect::new(0.0, 0.0, w, h, radius).to_path(0.1);
 
         scene.set_paint(with_opacity(
             Color::from_rgba8(0, 0, 0, 255),
@@ -256,11 +276,19 @@ fn paint_node(
         scene.fill_path(&bounds);
 
         for ripple in &interaction.ripples {
+            // `ripple.origin` is a real pointer coordinate captured by
+            // `Tree::dispatch` in absolute canvas space (§11.9's own
+            // stated scope: hit-testing/dispatch aren't transform-aware
+            // until Phase 2) -- but this node's own paths are now drawn
+            // in *local* space under `scene.set_transform(composed)`
+            // (M5 Phase 1), so `origin` has to be mapped back into that
+            // same local space via `composed`'s inverse before use.
             // `push_layer`'s own `clip_path` intersected with the fill
             // path below is exactly "this ripple, bounded to this
             // node's own shape" -- no second, nested `push_layer` call
             // needed to achieve that intersection.
-            let circle = Circle::new(ripple.origin, ripple.radius.current).to_path(0.1);
+            let local_origin = composed.inverse() * ripple.origin;
+            let circle = Circle::new(local_origin, ripple.radius.current).to_path(0.1);
             scene.push_layer(
                 Some(&circle),
                 None,
@@ -275,7 +303,7 @@ fn paint_node(
     }
 
     for &child in &node.children {
-        paint_node(tree, child, x, y, scene, resources, text);
+        paint_node(tree, child, composed, scene, resources, text);
     }
 }
 

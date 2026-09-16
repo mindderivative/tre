@@ -31,6 +31,33 @@ impl Interpolate for peniko::Color {
     }
 }
 
+impl Interpolate for peniko::kurbo::Affine {
+    /// A plain componentwise lerp of the 6 matrix coefficients, not a
+    /// rotation-aware polar/SVD decomposition -- `kurbo = "0.13.1"`'s
+    /// own `Affine::svd()` does exist and computes exactly that, but
+    /// it's `pub(crate)`, not exported (confirmed directly in kurbo's
+    /// vendored source), and §11.9's own text only ever asks for "pan
+    /// offset × zoom scale," never rotation. The subspace of affines
+    /// with no rotation/shear (`a == d`, `b == c == 0`) is convex, so a
+    /// componentwise lerp between two such affines never introduces
+    /// spurious shear or rotation mid-animation -- exact for the
+    /// translate+uniform-scale case this milestone targets. A real
+    /// interpolated rotation between two differently-rotated affines
+    /// would look like a non-circular morph rather than sweeping
+    /// through the correct arc -- a named, carried-forward limitation,
+    /// not manufactured ahead of a real need for rotation (§11 Milestone
+    /// 5 Phase 1, PLAN.md).
+    fn interpolate(&self, other: &Self, t: f64) -> Self {
+        let a = self.as_coeffs();
+        let b = other.as_coeffs();
+        let mut out = [0.0; 6];
+        for i in 0..6 {
+            out[i] = a[i] + (b[i] - a[i]) * t;
+        }
+        peniko::kurbo::Affine::new(out)
+    }
+}
+
 /// MD3 named easing curves are cubic-bezier control points (§7.5) --
 /// deliberately not built yet. Only `Linear` exists for now, which is
 /// all this step's demo needs; real MD3 curves (Standard, Emphasized,

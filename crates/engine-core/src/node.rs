@@ -8,10 +8,15 @@
 //!   (ripple/state-layer, §7.3, step 9); both fields have since landed
 //!   at their own steps, per Design Principle 5's "add it when its own
 //!   step needs it" discipline.
-//! - `PaintProperties` omits `transform: Animated<kurbo::Affine>` (needs
-//!   a non-trivial `Interpolate` impl -- matrix decomposition -- no step
-//!   before its own real use needs) and `shape: Animated<ShapeKey>` (the
-//!   §7.4 shape-correspondence-then-lerp technique, same reasoning).
+//! - `PaintProperties` originally omitted `transform: Animated<kurbo::
+//!   Affine>` (needed a non-trivial `Interpolate` impl); it landed at
+//!   M5 Phase 1 (§11.9) as a plain componentwise coefficient lerp, not
+//!   a rotation-aware decomposition -- see `animation.rs`'s own
+//!   `Interpolate for Affine` doc comment for why that's still correct
+//!   for this framework's actual pan/zoom scope. `shape:
+//!   Animated<ShapeKey>` (the §7.4 shape-correspondence-then-lerp
+//!   technique) remains omitted, same reasoning as ever: additive
+//!   whenever its own step needs it.
 //! - `NodeKind` carried only `Rect`/`Container` through step 3;
 //!   `Text(TextState)` is added at step 4 (§14 step 4, the typography
 //!   spike). `Image`/`Slider`/`Checkbox`/`Canvas` still land with their
@@ -163,6 +168,15 @@ pub struct PaintProperties {
     pub corner_radius: Animated<f64>,
     pub elevation: Animated<f64>,
     pub opacity: Animated<f64>,
+    /// §11.9 (M5 Phase 1): composed down the tree during the paint walk
+    /// -- a node's effective transform is its parent's effective
+    /// transform composed with its own, exactly like nested `<g
+    /// transform>` in SVG. Defaults to `Affine::IDENTITY`, so every
+    /// node that never sets this paints exactly where its taffy layout
+    /// already places it -- purely additive, matching every other
+    /// `PaintProperties` field's own "off unless a caller opts in"
+    /// shape.
+    pub transform: Animated<peniko::kurbo::Affine>,
 }
 
 impl PaintProperties {
@@ -172,6 +186,7 @@ impl PaintProperties {
             corner_radius: Animated::new(corner_radius),
             elevation: Animated::new(elevation),
             opacity: Animated::new(opacity),
+            transform: Animated::new(peniko::kurbo::Affine::IDENTITY),
         }
     }
 
@@ -189,7 +204,8 @@ impl PaintProperties {
         let corner_radius = self.corner_radius.tick(now);
         let elevation = self.elevation.tick(now);
         let opacity = self.opacity.tick(now);
-        background || corner_radius || elevation || opacity
+        let transform = self.transform.tick(now);
+        background || corner_radius || elevation || opacity || transform
     }
 }
 

@@ -131,8 +131,12 @@ impl TextRenderer {
 /// `TextRenderer::draw` stays under clippy's argument-count lint without
 /// losing any of these genuinely-distinct-per-call values.
 pub struct TextPlacement {
-    /// Taffy-computed absolute top-left corner (§14 step 3's own
-    /// accumulated-ancestor-offset position), not parent-relative.
+    /// Node-local top-left corner, under whatever transform the caller's
+    /// `Scene` currently has set (M5 Phase 1, §11.9) -- `paint_node`
+    /// always passes `(0.0, 0.0)` today (a text node paints at its own
+    /// origin), kept as real fields rather than hardcoded so a future
+    /// caller with genuine local padding/inset doesn't need a shape
+    /// change here.
     pub x: f64,
     pub y: f64,
     /// The node's taffy-computed box width -- what `parley` wraps to.

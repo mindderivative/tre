@@ -1,121 +1,117 @@
-# Log: M4 Phase 9 (final M4 phase) — Docking Drag-to-Rearrange (§11.4)
+# Log: M5 Phase 1 — Transform Composition (§11.9)
 
-Corresponds to `BUILD_TRACKER.md` M4 Phase 9 — the last M4 phase.
-`DockLayout`/`DockZone`/`Tree::apply_active_tab` are real since M3 step
-15 Stage B, but moving a whole panel *between* zones (not resizing,
-not switching a zone's own active tab) had never been wired to
-anything, and no Python-facing docking API existed at all.
+Corresponds to `BUILD_TRACKER.md` M5 Phase 1, the first phase of the new
+Milestone 5 (§11.9, §11.10, §11.11), scoped 2026-09-15 right after M4
+closed. `PaintProperties` had no `transform` field at all before this
+phase — this is what makes it land.
 
 ## Investigation before writing code
 
-Re-read §11.4 in full, then read `dock.rs`, `Tree::apply_active_tab`,
-and `docking.rs`'s own 3-zone pixel test end to end before designing
-anything.
+- **`Interpolate for kurbo::Affine` can't be a real rotation-aware
+  decomposition through the public API.** `kurbo = "0.13.1"`'s own
+  `Affine::svd()` computes exactly the scale+rotation decomposition a
+  general-purpose `Interpolate` would want — confirmed by reading its
+  vendored source directly — but it's `pub(crate)`, not exported.
+  Reimplementing that same SVD math by hand would be real, additive
+  work for a capability §11.9's own text never actually asks for ("pan
+  offset × zoom scale," no rotation). **Scope narrowed:** a plain
+  componentwise lerp of the 6 coefficients. Not a hack — the subspace
+  of affines with no rotation/shear is convex, so lerping between two
+  such affines never introduces spurious shear/rotation mid-flight;
+  exact for this milestone's actual pan/zoom scope, a real named
+  limitation only for a future rotation need that doesn't exist yet.
+- **Where the actual composition had to live.** `engine-core` has no
+  painting code — `PaintProperties` is inert data. Read `engine-render::
+  paint_node` end to end before touching anything: it accumulated a
+  pure `(offset_x, offset_y)` translation down the tree and built every
+  path/glyph position in already-offset absolute canvas coordinates.
+  Confirmed directly in `vello_hybrid = "0.2.0"`'s vendored source that
+  `Scene::set_transform(Affine)` is respected by both `fill_path`
+  (`effective_path_transform`) and `glyph_run`
+  (`self.transforms().scene_transform()`) — the real primitive needed
+  to refactor `paint_node` into a local-space coordinate model with
+  zero per-`NodeKind` special-casing.
+- **Reasoned through the "no behavior change for existing content"
+  claim algebraically before writing code, then verified it held.**
+  `composed(node) = composed(parent) * Affine::translate(layout.location)
+  * node.paint.transform.current`. When `transform` is the default
+  identity (true for every node before this phase), this reduces to
+  exactly the same accumulated translation the old `offset_x/offset_y`
+  scheme computed. The full pre-existing pixel-readback suite (rect,
+  ripple/hover, splitter-drag ×2, docking, overlay, text, virtual list)
+  passed unmodified on the first run after the refactor — the algebra
+  held in practice, not just on paper.
+- **`Tree::hit_test`/`Tree::absolute_position` are deliberately
+  untouched.** `hit_test`'s own doc comment already named
+  "`PaintProperties.transform` doesn't exist yet" as the reason it
+  isn't transform-aware — this phase makes the field exist, but
+  transform-aware hit-testing is M5 Phase 2, not folded in here. Stated
+  consequence, not silent: a node with both `interaction` (ripple/hover)
+  and a non-identity `transform` will paint its overlay under the same
+  local-space transform as its own fill, but the pointer position that
+  produced it was hit-tested in untransformed space — a real
+  misalignment for that specific, currently-nonexistent combination
+  until Phase 2 lands.
 
-- **No Python-facing docking API exists at all** — confirmed via grep,
-  the same class of prerequisite gap M4 Phase 7 found for overlays.
-- **Docking has no dedicated `NodeKind`.** A "zone" is an ordinary node
-  the app builds itself; `DockLayout` is pure external bookkeeping
-  `Tree` never stores. Which nodes are "handles"/"panels"/"zones" are
-  exactly the meaning-dependent facts §2 Design Principle 6 says
-  `engine-core` has no business knowing — confirmed this phase needed
-  *zero* new `engine-core` code: `Tree::hit_test`, `Tree::
-  apply_active_tab`, and the already-`pub` `Node::parent` field are
-  exactly what's needed. The whole drag-to-rearrange orchestration
-  lives in a new `engine-py` module.
-- **Real bug found by reading `apply_active_tab` closely, before
-  writing anything:** it only checks whether the *target* container
-  already lists the active panel as a child — never whether the panel
-  is still attached elsewhere first. Calling it naively while moving a
-  panel between zones would `add_child` an already-attached node,
-  corrupting the tree — the exact "`add_child` has no dedup" class of
-  bug M4 Phase 7 already found once for `open_overlay`.
-- **`open_overlay` can't support a drop-zone highlight.** Its `inset`
-  is hardcoded to place content *below* its anchor (a dropdown-menu
-  placement, confirmed by reading the actual computation) — it can't
-  cover a target zone's own bounds. Real, additive `engine-core` work
-  to add that placement mode would be disproportionate to this phase's
-  actual core claim. **Scope narrowed: no highlight overlay** — named
-  explicitly, not silently dropped. One real consequence: nothing needs
-  to track *which* zone is under the pointer mid-drag, only the drop
-  point once at release — no `PointerMoved`-time callback for docking
-  at all, just press (start) and release (end).
+## A real bug found and fixed mid-implementation, not by the pixel test
+
+`InteractionState::ripples`' `origin` field is a real pointer coordinate
+captured by `Tree::dispatch` in absolute canvas space (`interaction.rs`).
+Once `paint_node` moved to drawing every node's own content in *local*
+space under `scene.set_transform(composed)`, using `ripple.origin`
+directly (still absolute-space) would have silently drawn every ripple
+in the wrong place for any node under a non-identity ancestor transform,
+and even for identity-transform nodes it would have been offset by
+exactly that node's own absolute position — a real regression the
+existing `ripple_hover_dispatch.rs` test doesn't exercise (no node in
+that test combines interaction with a nonzero ancestor transform, since
+the feature didn't exist before this phase). Caught by re-reading
+`spawn_ripple`'s own caller in `Tree::dispatch` before wiring the paint
+side, not by a failing test. Fixed by mapping `ripple.origin` through
+`composed.inverse()` before use, converting it from canvas space into
+the same local space every other path in that node's paint now uses.
 
 ## What happened
 
-New `crates/engine-py/src/dock.rs`: `DockState { layout: DockLayout,
-containers: Vec<(DockSide, NodeId)>, handles: HashMap<NodeId, NodeId>,
-dragging: Option<NodeId> }`, shared as `Rc<RefCell<DockState>>` on
-`PyWindow` (mirrors `handlers`/`context_menus`'s own sharing shape — no
-`Py<PyAny>` involved, so no GC-traversal obligation either).
-`parse_dock_side` mirrors `press_key`'s own string-vocabulary pattern.
+`engine-core/src/animation.rs`: `impl Interpolate for peniko::kurbo::
+Affine` (componentwise coefficient lerp, per the investigation above).
+`engine-core/src/node.rs`: `PaintProperties` gains `pub transform:
+Animated<peniko::kurbo::Affine>`, defaulting to `Affine::IDENTITY` in
+`PaintProperties::new`; `tick` ticks it alongside the other four fields.
 
-New `Window` methods: `add_dock_zone(side, container, size)`,
-`dock_panel(side, panel)` (real initial setup, reused verbatim by the
-drag mechanism's own "attach into the new zone" step), `set_active_tab
-(side, index)`, `set_dock_handle(handle, panel)`, and the real
-no-live-window-needed test entry points `start_panel_drag(handle)`/
-`drop_panel_at(x, y)`, mirroring `.click()`/`.hover()`/`.right_click()`
-exactly. Real `winit` wiring: `app.rs`'s `on_input` closure inspects
-the *raw* `InputEvent` directly (not `DispatchOutcome` — "which node is
-a handle" isn't something `Tree::dispatch` has any reason to report)
-and calls the same `start_drag`/`end_drag_at` on a real primary-button
-press/release.
+`engine-render/src/lib.rs`: `paint_node` refactored to thread a
+`composed: Affine` accumulator instead of `(offset_x, offset_y)` —
+`composed = parent_transform * Affine::translate(layout.location) *
+node.paint.transform.current`, set via `scene.set_transform(composed)`
+before painting. `Rect`/`Splitter` fill, `Text` placement, and the
+ripple/hover overlay all now build their paths in local `(0, 0, w, h)`
+coordinates (`ripple.origin` mapped back via `composed.inverse()` per
+the bug above); children recurse with `composed` as their own parent
+accumulator. `build_tree_scene`'s initial call passes `Affine::IDENTITY`
+for the root, unchanged in spirit from before.
+`engine-render/src/text.rs`: `TextPlacement.x`/`.y` doc comment updated
+to reflect the new local-space meaning; fields/shape unchanged.
 
-## Real bug found and fixed by actually running the example, not just pytest
+New `engine-render/tests/transform_composition.rs`: a `Rect` background,
+a full-canvas `Container` ("camera") whose own `transform` is animated
+toward a combined pan+zoom target (`Affine::translate((60,40)) *
+Affine::scale(0.5)`), and a `Rect` child with no `transform` of its own.
+Two claims: before any transform, the child renders at its plain
+untransformed position; halfway through the animation (linear, t=0.5),
+the child has moved to the exact interpolated transformed position
+*and* no longer occupies its old spot — proving composition reaches an
+untouched descendant for free, and that `Interpolate for Affine`
+genuinely drives it mid-flight, not just at either endpoint. First
+version of the test failed for an unrelated reason: the background was
+a `Container`, which paints nothing by design, so the "child moved away"
+half of the assertion compared against a transparent pixel instead of a
+real background color — fixed by using a `Rect` background, not a
+change to the composition logic itself, which was already correct.
 
-`examples/docking.py`'s first run panicked immediately at `app.run()`:
-`"TreeUpdate includes duplicate child #..."` — a real `accesskit`
-validation failure. Root cause: `dock_panel`'s initial setup called
-`apply_active_tab` without first detaching the panel from its existing
-parent (`add_rect` attaches every new node to the window's root
-immediately) — the exact bug class named above, just not yet applied
-to `dock_panel` itself when it was first written. No pytest test
-caught this, since none of them render a real frame or call
-`build_access_update` — only the live example actually exercises
-`accesskit`'s own tree validation. Fixed by detaching the panel from
-its current parent first, guarded by the same containment check
-`apply_active_tab` itself already uses. A concrete reminder of why this
-project's own discipline runs real examples, not just unit/pytest
-suites, before calling a feature done.
-
-## Verification
-
-7 new pytest tests in `test_docking.py`: a real drag moves a panel
-between zones (proven functionally — clicking the panel in its new
-zone fires its own handler, which only works if it's really attached
-and laid out); starting a drag on an unregistered node is a safe
-no-op; dropping outside any zone cancels without moving anything;
-dropping back into the same zone is a no-op; releasing with no drag in
-progress doesn't raise; `set_active_tab` really switches which panel is
-attached; an unknown dock side raises `ValueError`. All passed after
-the one real fix above. New `examples/docking.py`, matching the
-established per-phase pattern and honestly stating what needs a human.
-
-```
-$ cargo build --workspace                                    # clean
-$ cargo clippy --workspace --all-targets -- -D warnings       # clean
-$ cargo fmt --check                                           # clean
-$ cargo test --workspace                                      # all green, unchanged (no new engine-core code)
-
-$ maturin develop
-$ python -m pytest tests/ -v
-60 passed, 1 skipped (the TRE_RUN_BENCHMARK-gated benchmark)
-
-$ python examples/*.py    # all six exit cleanly, including the newly fixed docking.py
-```
-
-## M4 is now complete
-
-All 9 phases done. Real pointer/keyboard `InputEvent` dispatch,
-hit-testing, assistive-technology action dispatch, splitter-drag,
-`View`'s declarative handlers, real ripple/hover, `EventKind` +
-`HoverEnter`/`HoverExit`, right-click context menus, scroll-wheel
-plumbing, and docking drag-to-rearrange are all real, tested, and wired
-end to end. Real, stated-not-silent gaps carried forward (not this
-phase's to close): overlay dismissal (`dismiss_on_outside_click`/
-`dismiss_on_escape`), no drop-zone highlight visual, scroll input not
-yet wired to `VirtualList`'s still-missing real scrollable viewport,
-`AppHandler` remains confirmed dead code. Milestone 5 (transform
-composition, `NodeKind::Canvas`, custom hit-testing) remains scoped and
-untouched.
+Full `cargo test --workspace --release` (44 total, up from 43), `cargo
+clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --check`
+all clean. `maturin develop --release` + full `pytest tests/` (60
+passed, 1 skipped) confirmed unaffected, as expected — this phase
+touches no `engine-py` code, and §11.9 itself doesn't ask for a Python
+API yet (`NodeKind::Canvas`, Phase 3, is what will actually need one to
+*set* a transform from Python).
