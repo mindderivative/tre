@@ -27,7 +27,7 @@ use crate::interaction::InteractionState;
 use crate::node::{ItemExtent, VirtualListState};
 use crate::node::{Node, NodeId, NodeKind, PaintProperties};
 use crate::overlay::OverlayMeta;
-use peniko::kurbo::{Point, Rect};
+use peniko::kurbo::{Affine, Point, Rect};
 
 /// `Tree::move_focus`'s own direction -- Tab vs. Shift-Tab (§10).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -676,32 +676,54 @@ impl Tree {
     /// first -- the last child in `children`-list order paints on top,
     /// §6, so it's tested first here too; this is exactly what naturally
     /// reaches an appended overlay, §11.3, before ordinary background
-    /// content, with zero special-casing). Containment is tested against
-    /// `absolute_position`/`layout().size` -- the same real bounds
-    /// `build_tree_scene`/`build_access_update` already walk.
+    /// content, with zero special-casing).
     ///
-    /// **Explicitly narrowed (PLAN.md):** no transform-aware hit-testing
-    /// (§11.9's inverse-composed-transform step) -- `PaintProperties.
-    /// transform` doesn't exist in this codebase yet (`node.rs`'s own
-    /// doc comment defers it); no `NodeKind::Canvas` custom hit-test
-    /// override -- `Canvas` doesn't exist yet either. Revisit this
-    /// method once each lands, per Design Principle 5.
+    /// **Transform-aware since M5 Phase 2** (§11.9's own composed
+    /// transform, landed M5 Phase 1): delegates to `hit_test_at`, which
+    /// composes the same `parent * translate(layout.location) *
+    /// own_transform` product `engine-render::paint_node` composes
+    /// during paint -- if this formula and that one ever diverge,
+    /// hit-testing and rendering will disagree about where a node is.
+    /// Deliberately does NOT reuse `absolute_position` (pure
+    /// translation, used by overlay placement/splitter-drag geometry/
+    /// several `engine-py` synthetic-point entry points -- all
+    /// explicitly out of this phase's scope, unchanged).
+    ///
+    /// **Still narrowed:** no `NodeKind::Canvas` custom hit-test
+    /// override -- `Canvas` doesn't exist yet (M5 Phase 3 adds both).
     pub fn hit_test(&self, root: NodeId, point: Point) -> Option<NodeId> {
-        let node = self.nodes.get(root)?;
+        self.hit_test_at(root, point, Affine::IDENTITY)
+    }
+
+    /// See `hit_test`'s own doc comment for the composition formula and
+    /// why it has to match `paint_node`'s exactly. `parent_transform` is
+    /// the caller's already-composed transform for `id`'s *parent*.
+    fn hit_test_at(&self, id: NodeId, point: Point, parent_transform: Affine) -> Option<NodeId> {
+        let node = self.nodes.get(id)?;
+        let layout = self.layout(id);
+        let composed = parent_transform
+            * Affine::translate((f64::from(layout.location.x), f64::from(layout.location.y)))
+            * node.paint.transform.current;
+
         for &child in node.children.iter().rev() {
-            if let Some(hit) = self.hit_test(child, point) {
+            if let Some(hit) = self.hit_test_at(child, point, composed) {
                 return Some(hit);
             }
         }
-        let (x, y) = self.absolute_position(root);
-        let layout = self.layout(root);
+
+        // Map the caller's canvas-space `point` into this node's local
+        // space via the inverse of its composed transform, then test it
+        // against the untransformed local layout box -- exactly the
+        // local-space rect `paint_node` draws into under the identical
+        // `composed` transform (M5 Phase 1).
+        let local_point = composed.inverse() * point;
         let bounds = Rect::new(
-            x,
-            y,
-            x + f64::from(layout.size.width),
-            y + f64::from(layout.size.height),
+            0.0,
+            0.0,
+            f64::from(layout.size.width),
+            f64::from(layout.size.height),
         );
-        bounds.contains(point).then_some(root)
+        bounds.contains(local_point).then_some(id)
     }
 
     /// The concrete fulfillment of §7.3's own text: "hover needs no new
@@ -2217,6 +2239,131 @@ mod tests {
             Some(menu),
             "an appended overlay must win hit-testing over the background it covers, \
              the same append-order-is-paint-order convention step 13 already proved for paint"
+        );
+    }
+
+    /// M5 Phase 2 (§11.10): a real, non-identity ancestor `transform`
+    /// must shift where its child is actually hit -- the same claim
+    /// M5 Phase 1's `engine-render` pixel test proved for painting, one
+    /// layer down. Uses a pure-translate transform, not scale, so the
+    /// expected hit point is exact integer arithmetic, not an
+    /// approximation.
+    #[test]
+    fn hit_test_follows_an_ancestor_translate_transform() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            size: Size {
+                width: length(200.0),
+                height: length(200.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let (_, camera_style, camera_paint) = leaf(200.0, 200.0);
+        let camera = tree.insert(NodeKind::Container, camera_style, camera_paint);
+        tree.add_child(root, camera);
+
+        let (k, s, p) = leaf(50.0, 50.0);
+        let chip = tree.insert(k, s, p);
+        tree.add_child(camera, chip);
+
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(200.0),
+            },
+        );
+
+        // Before any transform: `chip` occupies local/canvas (0,0)-(50,50)
+        // (default block layout places the sole child at its parent's
+        // origin) -- (25,25) hits it. `camera` itself is a real,
+        // full-canvas (200x200) hit-testable node too (every node is a
+        // valid hit target by its own bounds, matching the existing
+        // `hit_test_misses_entirely_outside_every_nodes_bounds` test's
+        // own comment) -- (150,150) misses `chip` but still lands on
+        // `camera`'s own bounds, not `None`.
+        assert_eq!(tree.hit_test(root, Point::new(25.0, 25.0)), Some(chip));
+        assert_eq!(tree.hit_test(root, Point::new(150.0, 150.0)), Some(camera));
+
+        // `camera`'s own transform translates by (100, 100) -- this
+        // moves `camera` itself as well as `chip` (§11.9's own "exactly
+        // like nested <g transform> in SVG": a node's own transform
+        // applies to itself, not just its descendants, proven at the
+        // paint level by M5 Phase 1). `chip` now occupies canvas
+        // (100,100)-(150,150); `camera`'s own footprint is now entirely
+        // off the original (0,0)-(200,200) canvas on its near edges.
+        tree.get_mut(camera).unwrap().paint.transform.current = Affine::translate((100.0, 100.0));
+
+        assert_eq!(
+            tree.hit_test(root, Point::new(25.0, 25.0)),
+            Some(root),
+            "chip's and camera's old, untransformed footprint must no longer hit either of \
+             them -- the point now falls through to root's own untransformed full-canvas \
+             bounds, the real background beneath"
+        );
+        assert_eq!(
+            tree.hit_test(root, Point::new(125.0, 125.0)),
+            Some(chip),
+            "chip's new, transformed position must hit it"
+        );
+    }
+
+    /// The scale half of the same claim: a non-uniform composed
+    /// transform (translate * scale) must also grow/shrink the
+    /// hit-testable area, not just move it.
+    #[test]
+    fn hit_test_follows_an_ancestor_scale_and_translate_transform() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            size: Size {
+                width: length(200.0),
+                height: length(200.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let (_, camera_style, camera_paint) = leaf(200.0, 200.0);
+        let camera = tree.insert(NodeKind::Container, camera_style, camera_paint);
+        tree.add_child(root, camera);
+
+        let (k, s, p) = leaf(40.0, 40.0);
+        let chip = tree.insert(k, s, p);
+        tree.add_child(camera, chip);
+
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(200.0),
+            },
+        );
+
+        // scale(2.0) about the origin, then translate by (20, 20):
+        // chip's local (0,0)-(40,40) box maps to canvas (20,20)-(100,100).
+        // This same transform also moves `camera`'s own 200x200 bounds
+        // to canvas (20,20)-(420,420) -- larger and shifted, not the
+        // original (0,0)-(200,200) -- so a point that misses both now
+        // falls through to `root`'s own untransformed full-canvas
+        // bounds, not `None` (mirroring the translate-only test above).
+        tree.get_mut(camera).unwrap().paint.transform.current =
+            Affine::translate((20.0, 20.0)) * Affine::scale(2.0);
+
+        assert_eq!(
+            tree.hit_test(root, Point::new(60.0, 60.0)),
+            Some(chip),
+            "a point inside the scaled-up transformed box must hit chip"
+        );
+        assert_eq!(
+            tree.hit_test(root, Point::new(10.0, 10.0)),
+            Some(root),
+            "a point outside both chip's and camera's new transformed footprint (though \
+             inside their old untransformed one) must fall through to root's own \
+             untransformed bounds, not silently miss"
         );
     }
 
