@@ -1,110 +1,144 @@
-# Plan: M4 Phase 1, Steps 2-3 — Wire Real Input to `winit`/`engine-py`
+# Plan: M4 Phase 2 — Assistive-Technology Action Dispatch (§10, §4)
 
-Step 1 (committed, `c761d1c`) built the core mechanism entirely inside
-`engine-core`: `InputEvent`/`AppHandler`/`DispatchOutcome` (`input.rs`)
-and `Tree::hit_test`/`update_hover`/`move_focus`/`dispatch` (`tree.rs`),
-proven by 32 unit tests with no `winit`/`pyo3` involved at all. This
-plan covers the two steps that make it reachable from a real window and
-a real Python app: translating actual `winit` events into `InputEvent`
-(`engine-platform`), then acting on the result (`engine-py`).
+Phase 1 (all 3 steps, committed `c761d1c`/`1d6086b`) built real pointer/
+keyboard dispatch end to end: `winit` events reach `Tree::dispatch`, and
+a real click calls a real registered Python callback. Two real gaps
+were named explicitly in Phase 1's own `LOG.md`/`BUILD_TRACKER.md`
+entries and left open:
 
-## Step 2 — Real `winit` event translation (`engine-platform`)
+1. `accesskit`'s `ActionRequested`/`AccessibilityDeactivated` events are
+   still received and ignored in `engine-platform`'s `user_event`
+   handler — a real, live screen reader (Orca on Linux, NVDA on
+   Windows, VoiceOver on macOS) literally cannot activate a button
+   through AT-SPI/UIA/NSAccessibility today, despite M3 step 7's real
+   accesskit wiring existing since early in this project. §10's own
+   text is explicit about this: "platform-driven focus requests (a
+   screen reader focusing a node directly) dispatch `accesskit::
+   Action::Focus`... both routed through the same `AppHandler`/
+   `InputEvent` inversion already wired for pointer events."
+2. Keyboard-triggered activation (Tab then Enter/Space) has no
+   Python-facing entry point to test from — `Window` only exposes
+   `click()` (pointer press+release).
 
-**Real APIs verified directly first, not assumed** (`winit = "0.30.13"`'s
-own source, `crates.io` checkout):
-- `WindowEvent::CursorMoved { position: PhysicalPosition<f64>, .. }`,
-  `MouseInput { state: ElementState, button: MouseButton, .. }`,
-  `KeyboardInput { event: KeyEvent, .. }`, `ModifiersChanged(Modifiers)`.
-- `MouseButton` has **six** real variants (`Left`/`Right`/`Middle`/
-  `Back`/`Forward`/`Other(u16)`) — `engine_core::PointerButton`'s doc
-  comment previously (wrongly, unverified) claimed a 1:1 three-variant
-  match; corrected in this step. `Back`/`Forward`/`Other` translate to
-  no `InputEvent` at all (a browser-navigation convention with no MD3
-  desktop meaning yet) — narrowed, not silently mishandled.
-- `KeyEvent.logical_key: winit::keyboard::Key`, matched against
-  `Key::Named(NamedKey::{Tab,Enter,Space,Escape})` — every other key
-  produces no `InputEvent` (§10's own stated minimal vocabulary).
-- Shift state isn't carried on `KeyEvent` itself — `ModifiersChanged`
-  is a separate event. `PerWindow` gains a `modifiers: ModifiersState`
-  field, updated on `ModifiersChanged`, read (via `.shift_key()`) when
-  translating a `KeyboardInput`.
+Both are squarely within M4's own named scope (§4, §10) and don't
+depend on anything unbuilt elsewhere (§11.9 transform composition,
+§11.8 virtualization viewport, `NodeKind::Canvas` are each real, but
+belong to different, later milestones — not started here).
 
-**`run_windowed_multi` gains a new `on_input: FnMut(WindowId,
-engine_core::InputEvent)` closure parameter**, matching `on_frame`/
-`build_access_update`'s own existing shape exactly — `engine-platform`
-translates the raw event and hands it up; it never touches a `Tree`
-itself (it doesn't have one — generic over whatever the caller does
-with the translated event, the same real inversion `on_frame` already
-uses for rendering). `run_windowed` (the byte-compatible single-window
-wrapper, kept for `rect_window.rs`/`access_button.rs`) passes a no-op
-`|_, _| {}` — neither existing caller needs input events, and this
-keeps `run_windowed`'s own signature untouched, matching its own doc
-comment's stated contract.
+## Step 1 — `Tree` gains direct activation/focus primitives (`engine-core`)
 
-**Real proof**: a new `harness = false` test (matching `multi_window.rs`'s
-own precedent — a real `winit::EventLoop` needs a real process main
-thread) that opens a window and asserts genuine `InputEvent`s arrive
-for synthetic... **actually verified against a real constraint first**:
-`winit` doesn't expose a portable way to *inject* synthetic OS-level
-input events into its own event loop from test code (there is no
-`window.send_event(WindowEvent::CursorMoved{..})`-shaped public API) —
-checked directly before assuming this was testable the same way
-`multi_window.rs` tests window lifecycle. The real, honest proof for
-this step is therefore at the translation-function level: extract the
-`WindowEvent -> InputEvent` mapping into standalone, `winit`-typed-but-
-window-independent functions (`translate_pointer_button`,
-`translate_key`) and unit-test *those* directly against real `winit`
-event/key values — proving the translation logic is correct without
-needing a live event loop to feed it, the same "validate the core
-logic standalone first" discipline Design Principle 5 already uses
-everywhere else in this codebase. The full "does it reach a live
-window's callback" wiring is exercised for real in Step 3's own
-end-to-end proof once `engine-py`'s `App.run()` has something
-meaningful to do with an activation.
+**Real API fact, verified directly against the pinned `accesskit =
+"0.25.0"`'s own source before writing anything:** `ActionRequest {
+action: Action, target_tree: TreeId, target_node: accesskit::NodeId,
+data: Option<ActionData> }`. `target_node` is an opaque `accesskit::
+NodeId` — converting it back to `engine_core::NodeId` needs the
+reverse of `to_access_id`'s existing `id.data().as_ffi()` encoding.
+Verified directly in `slotmap = "1.1.1"`'s own source: `KeyData::
+as_ffi`/`from_ffi` are a documented, guaranteed-reversible round trip
+("passing it to `from_ffi` will return a key equal to the original"),
+and `new_key_type!` generates `impl From<KeyData> for NodeId` — so
+`from_access_id` is a real, safe conversion, not a guess. A stale/
+foreign id round-trips to some `NodeId` value that simply fails `Tree`'s
+own generation check (returns `None`/behaves as "not found") rather
+than resolving to the wrong node — the same generational-safety
+property this whole project already relies on elsewhere (§5).
 
-## Step 3 — `engine-py` implements the meaning-dependent half
+`to_access_id`/a new `from_access_id` become `pub` (both were private
+free functions in `tree.rs`; `from_access_id` is new).
 
-`Node.set_on_click(callback)` finally exists — `node.rs`'s own forward-
-reference comment ("needs `PyWindow`'s cyclic-GC participation... until
-something actually stores one") is resolved: `PyWindow` already gained
-real `__traverse__`/`__clear__` at M3 step 15 Stage C for its
-`materializers` map. This step adds a second `HashMap<NodeId, Py<PyAny>>`
-field, `click_handlers`, visited by the same `__traverse__` alongside
-`materializers` (one class, two independently-populated callback maps,
-both real GC roots).
+**`Tree::activate(node) -> DispatchOutcome`**: the direct, non-`InputEvent`
+counterpart to a mouse click's own `Activated` outcome — validates
+`node` exists in this `Tree`, returns `Activated(node)` if so, `None`
+otherwise. Deliberately does **not** check `access.actions` first — the
+real mouse-click path (`dispatch`'s `PointerPressed`/`PointerReleased`
+handling) doesn't gate on it either (hit-testing alone decides *which*
+node; whether anything is actually registered to react is `engine-py`'s
+`click_handlers` lookup's own job) — keeping both activation paths
+symmetric, not inventing a stricter rule for one than the other.
 
-`App::run()`'s existing `on_input` closure (new, mirroring its own
-`on_frame`/`build_access_update` closures already there) looks up the
-window's `WindowRuntime`, calls `tree.borrow_mut().dispatch(root,
-event, &config, now)`, and on `DispatchOutcome::Activated(node)`, looks
-up `click_handlers.get(&node)` on that window's `PyWindow` and calls it
-via `Python::attach`/`call0` if present — matching §9's own stated
-policy ("unhandled exceptions from a callback are caught, logged, and
-non-fatal") rather than propagating a panic into the render loop.
-`InteractionConfig`'s real MD3 numeric values (hover/focus-ring
-opacity, ripple radius/opacity/duration) are hardcoded as named
-constants in `engine-py` for now — `engine-md3` doesn't yet expose
-named interaction presets the way it does `motion::STANDARD`; revisit
-when it does, not manufactured ahead of that need.
+**`Tree::set_focus_to(node, focus_ring_opacity, duration, now)`**: the
+direct-target counterpart to `move_focus`'s own tab-order computation —
+factors the existing "animate the old node's `focus_ring` out, the new
+one's in, opt-in-only per Design Principle 6" logic out of `move_focus`
+into a small private helper, reused by both. This is what `Action::
+Focus` (§10: "platform-driven focus requests... dispatch `accesskit::
+Action::Focus`") actually needs: jump straight to a specific node, not
+compute a tab-order neighbor.
 
-**Real proof**: a pytest exercising the full path without a live
-window — build a `Window`, `add_rect`, `set_on_click`, then call the
-new `Node`-level test-only entry point (`Tree::dispatch` reachable
-through a thin, real, non-mocked wrapper) with a synthetic
-`InputEvent::PointerPressed`/`PointerReleased` pair over the rect's own
-known bounds, and assert the registered Python callback actually ran
-(a mutated list/counter the callback closes over) — the same "prove the
-mechanism with a direct call, defer only the OS event source" pattern
-this whole project has used at every prior interaction step. A GC-cycle
-test mirroring M3 step 15 Stage C's own (`test_window_participates_in_
-cyclic_gc...`) proves `click_handlers` is visited by `__traverse__` too.
+## Step 2 — Real `accesskit_winit` wiring (`engine-platform`)
+
+`run_windowed_multi` gains a sixth parameter, `on_access_action:
+FnMut(WindowId, accesskit::ActionRequest)` — matching `on_input`'s own
+"translate the platform event, hand the raw data up, never touch a
+`Tree`" shape exactly (`engine-platform` doesn't know `engine_core::
+NodeId` exists; the conversion is the caller's job, since the caller
+already depends on `engine-core` for everything else). Fires on
+`accesskit_winit::WindowEvent::ActionRequested(request)`, replacing the
+comment that's named this exact gap since step 7. `run_windowed`'s
+wrapper passes a no-op, matching every other closure it doesn't need.
+
+**Real, checked-before-assuming constraint, matching step 2's own
+precedent:** no live AT-SPI/UIA/NSAccessibility client is available in
+this dev/CI environment to drive a genuine end-to-end screen-reader
+proof (unlike M3 step 7's original wiring, which *was* checked against
+a real, interactively-running AT-SPI bus at the time) — a synthetic
+`accesskit::ActionRequest` value is plain data, so the real, honest
+proof here is at the translation/dispatch-logic level: construct one
+directly and verify `from_access_id` round-trips correctly and
+`Tree::activate`/`set_focus_to` produce the right outcome, the same
+"validate the pure logic standalone, state what a live integration
+would still need" pattern already used for `translate_pointer_button`/
+`translate_key`.
+
+## Step 3 — `engine-py` wires the new callback + a keyboard test entry point
+
+`App::run()` gets a new `on_access_action` closure: converts
+`request.target_node` via `engine_core::from_access_id`, matches
+`request.action` (`Action::Click` → `tree.activate(node)`, `Action::
+Focus` → `tree.set_focus_to(node, ...)` via `dispatch::
+interaction_config()`'s existing values), and feeds the outcome through
+the *same* `dispatch::run_activation` already shared between `on_input`
+and `Window.click()` — one more real call site, still one copy of the
+click-handling logic.
+
+`Window.press_key(key: str, shift: bool = False)` (new, mirrors
+`click()`'s own shape): translates a small Python string vocabulary
+(`"tab"`/`"enter"`/`"space"`/`"escape"`) into `engine_core::Key`,
+dispatches a `KeyPressed` event through the same `interaction_config()`/
+`run_activation` path. Closes the stated gap: Tab-then-Enter activation
+is now directly testable from Python with no live window.
 
 ## Verification
 
-`cargo build --workspace` (the new `on_input` parameter is a real,
-compiling signature change reaching every existing caller);
-`translate_pointer_button`/`translate_key` unit tests in
-`engine-platform`; `cargo test --workspace`; `cargo clippy --workspace
---all-targets -- -D warnings`; `cargo fmt --check`; `maturin develop` +
-the new pytest coverage (click dispatch + GC cycle), plus the full
-existing pytest suite still green.
+`engine-core`: new unit tests for `from_access_id`/`to_access_id`
+round-tripping (including a stale-id-fails-safely case), `Tree::
+activate` (valid node → `Activated`, unknown `NodeId` → `None`),
+`Tree::set_focus_to` (focus moves to the exact target, `focus_ring`
+transitions the same opt-in-only way `move_focus`'s own test already
+proved). `engine-platform`: no new unit tests needed beyond wiring
+(the translation direction is trivial data plumbing, unlike `on_input`'s
+own real `WindowEvent → InputEvent` logic) — covered by the workspace
+still compiling with the new required parameter threaded through every
+call site. `engine-py`: new pytest coverage for `press_key` (Tab moves
+focus among interactive nodes, then `Enter`/`Space` activates the
+focused one) and for the `on_access_action` path (a synthetic
+`accesskit::ActionRequest`-shaped call reaching a registered
+`click_handler` — exercised at whatever level Step 2's own real
+constraint leaves testable).
+
+`engine-py`'s `on_access_action` closure body itself is *not* separately
+pytest-covered beyond compiling and type-checking correctly: it's a
+thin conversion (`from_access_id`) plus a match onto the same two
+`Tree` methods (`activate`/`set_focus_to`) already fully unit-tested at
+the `engine-core` level, and the same `dispatch::run_activation` already
+covered by `test_click_dispatch.py`. Stated plainly rather than
+manufacturing a test around a synthetic `accesskit::ActionRequest` value
+that would only re-prove what the `engine-core` tests already prove —
+a genuine end-to-end proof needs a live AT-SPI/UIA/NSAccessibility
+client, which this environment doesn't have (see Step 2's own
+real-constraint note).
+
+`cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D
+warnings`, `cargo fmt --check`, `maturin develop` + the full pytest
+suite, plus both real windowed tests and both example scripts
+unchanged.

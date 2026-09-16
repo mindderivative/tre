@@ -65,6 +65,18 @@
 //! rendering). See `translate_pointer_button`/`translate_key`'s own doc
 //! comments for the real `winit = "0.30.13"` API facts this translation
 //! is built on, verified directly in its source, not assumed.
+//!
+//! **M4 Phase 2** closes the other real gap step 7's own accesskit
+//! wiring left open: `accesskit_winit::WindowEvent::ActionRequested`
+//! (a real screen reader naming a node to activate or focus, §10) now
+//! reaches a new `on_access_action` closure, handed up as the raw
+//! `accesskit::ActionRequest` -- unlike `on_input`, not translated into
+//! an `engine_core` type here, since converting `request.target_node`
+//! back into a real `NodeId` needs `engine_core::from_access_id`, which
+//! only a caller that already depends on `engine-core` can call.
+//! `AccessibilityDeactivated` needs no new handling: every `TreeUpdate`
+//! build in this module already goes through `access_adapter::
+//! update_if_active`, which already gates on activation state.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -191,11 +203,22 @@ impl WindowOpener {
 /// This function never calls `Tree::dispatch` itself -- it doesn't have
 /// a `Tree` (generic over whatever the caller does with the event,
 /// matching `on_frame`'s own existing inversion for rendering).
-pub fn run_windowed_multi<C, F, A, S, N>(
+///
+/// `on_access_action` (M4 Phase 2, §10) fires once per real
+/// `accesskit::ActionRequest` a platform accessibility client sends --
+/// "a screen reader focusing a node directly" dispatches `Action::
+/// Focus`, activating a control dispatches `Action::Click`. Handed up
+/// raw, unlike `on_input`'s already-translated `InputEvent`: this
+/// module doesn't know `engine_core::NodeId` exists, and converting
+/// `request.target_node` back to one needs `engine_core::
+/// from_access_id`, which only a caller that already depends on
+/// `engine-core` for everything else can call.
+pub fn run_windowed_multi<C, F, A, S, N, X>(
     on_window_created: C,
     on_frame: F,
     build_access_update: A,
     on_input: N,
+    on_access_action: X,
     setup: S,
 ) -> Result<(), winit::error::EventLoopError>
 where
@@ -203,6 +226,7 @@ where
     F: FnMut(WindowId, u32),
     A: FnMut(WindowId) -> accesskit::TreeUpdate,
     N: FnMut(WindowId, InputEvent),
+    X: FnMut(WindowId, accesskit::ActionRequest),
     S: FnOnce(&WindowOpener),
 {
     let event_loop = EventLoop::<PlatformEvent>::with_user_event().build()?;
@@ -220,6 +244,7 @@ where
         on_frame,
         build_access_update,
         on_input,
+        on_access_action,
     };
     event_loop.run_app(&mut app)
 }
@@ -259,6 +284,7 @@ where
         // function's own doc comment's "byte-for-byte source-compatible"
         // contract.
         |_id, _event| {},
+        |_id, _request| {},
         |opener| {
             opener.open_window(WindowRequest { config, token: 0 });
         },
@@ -283,21 +309,23 @@ struct PerWindow {
     last_cursor_position: Point,
 }
 
-struct MultiWindowApp<C, F, A, N> {
+struct MultiWindowApp<C, F, A, N, X> {
     windows: HashMap<WindowId, PerWindow>,
     proxy: EventLoopProxy<PlatformEvent>,
     on_window_created: C,
     on_frame: F,
     build_access_update: A,
     on_input: N,
+    on_access_action: X,
 }
 
-impl<C, F, A, N> ApplicationHandler<PlatformEvent> for MultiWindowApp<C, F, A, N>
+impl<C, F, A, N, X> ApplicationHandler<PlatformEvent> for MultiWindowApp<C, F, A, N, X>
 where
     C: FnMut(WindowId, u64, Arc<Window>),
     F: FnMut(WindowId, u32),
     A: FnMut(WindowId) -> accesskit::TreeUpdate,
     N: FnMut(WindowId, InputEvent),
+    X: FnMut(WindowId, accesskit::ActionRequest),
 {
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
         // Windows are created lazily, in `user_event`, as `OpenWindow`
@@ -346,15 +374,8 @@ where
                     },
                 );
             }
-            PlatformEvent::AccessKit(event) => {
-                // `ActionRequested`/`AccessibilityDeactivated` have no
-                // interactive dispatch wired yet -- §14 step 7's own
-                // minimal scope (see this module's doc comment); only
-                // the initial-tree request is handled.
-                if matches!(
-                    event.window_event,
-                    accesskit_winit::WindowEvent::InitialTreeRequested
-                ) {
+            PlatformEvent::AccessKit(event) => match event.window_event {
+                accesskit_winit::WindowEvent::InitialTreeRequested => {
                     let Self {
                         windows,
                         build_access_update,
@@ -365,7 +386,22 @@ where
                             .update_if_active(|| build_access_update(event.window_id));
                     }
                 }
-            }
+                // M4 Phase 2 (§10): a real platform accessibility client
+                // (a screen reader) naming a node to activate or focus
+                // directly -- handed up raw, converted and dispatched by
+                // the caller (this module's own doc comment explains
+                // why: no `engine_core::NodeId` knowledge here).
+                accesskit_winit::WindowEvent::ActionRequested(request) => {
+                    (self.on_access_action)(event.window_id, request);
+                }
+                // No real per-window behavior change needed here --
+                // `access_adapter.update_if_active` (used everywhere
+                // this crate builds a `TreeUpdate`) already gates on
+                // activation state internally, so deactivation is
+                // already handled correctly by that existing check, not
+                // a gap this step leaves open.
+                accesskit_winit::WindowEvent::AccessibilityDeactivated => {}
+            },
         }
     }
 

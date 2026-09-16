@@ -41,10 +41,13 @@ fn main() {
             focus: accesskit::NodeId(0),
         },
         // This test's own scope is multi-window lifecycle, not input
-        // dispatch -- see `input_translation.rs` for real coverage of
-        // the `WindowEvent -> InputEvent` translation itself (M4 Phase
-        // 1 step 2).
+        // dispatch -- see `engine-platform`'s own `src/lib.rs` unit
+        // tests for real coverage of the `WindowEvent -> InputEvent`
+        // translation (M4 Phase 1 step 2) and `on_access_action`'s own
+        // doc comment for why `ActionRequested` translation has no
+        // separate unit test (M4 Phase 2).
         |_window_id, _event| {},
+        |_window_id, _request| {},
         |opener| {
             opener.open_window(WindowRequest {
                 config: WindowConfig {

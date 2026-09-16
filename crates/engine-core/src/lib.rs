@@ -30,4 +30,4 @@ pub use node::{
     ItemExtent, Node, NodeId, NodeKind, PaintProperties, SplitterState, TextState, VirtualListState,
 };
 pub use overlay::OverlayMeta;
-pub use tree::{FocusDirection, InteractionConfig, Tree};
+pub use tree::{FocusDirection, InteractionConfig, Tree, from_access_id, to_access_id};

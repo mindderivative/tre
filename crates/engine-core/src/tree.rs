@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use slotmap::{Key as SlotMapKey, SecondaryMap, SlotMap};
+use slotmap::{Key as SlotMapKey, KeyData, SecondaryMap, SlotMap};
 use taffy::prelude::{
     AvailableSpace, Layout, Position, Rect as TaffyRect, Size, Style, TaffyTree, auto, length,
 };
@@ -730,7 +730,7 @@ impl Tree {
         self.collect_interactive(root, &mut order);
 
         let old = self.focused;
-        self.focused = if order.is_empty() {
+        let new = if order.is_empty() {
             None
         } else {
             let next_index = match old.and_then(|f| order.iter().position(|&n| n == f)) {
@@ -745,8 +745,50 @@ impl Tree {
             };
             Some(order[next_index])
         };
+        self.transition_focus(new, focus_ring_opacity, duration, now);
+    }
 
-        if old == self.focused {
+    /// M4 Phase 2 (§10): the direct-target counterpart to `move_focus`'s
+    /// own tab-order computation -- what a platform-driven focus request
+    /// actually needs ("a screen reader focusing a node directly"
+    /// dispatches `accesskit::Action::Focus`, §10's own text), since
+    /// jumping straight to a specific node is a different operation from
+    /// "move to the next/previous interactive node in tree order."
+    /// `node` need not itself have a non-empty `access.actions` --
+    /// unlike `move_focus`'s own Tab-order, a platform accessibility
+    /// client names the exact node it wants focused, the same way a
+    /// mouse click names the exact node it hit regardless of that node's
+    /// own `access.actions` (`Tree::activate`'s own doc comment makes
+    /// the identical "don't invent a stricter rule for one path than the
+    /// other" argument).
+    pub fn set_focus_to(
+        &mut self,
+        node: NodeId,
+        focus_ring_opacity: f64,
+        duration: Duration,
+        now: Instant,
+    ) {
+        if !self.nodes.contains_key(node) {
+            return;
+        }
+        self.transition_focus(Some(node), focus_ring_opacity, duration, now);
+    }
+
+    /// Shared by `move_focus`/`set_focus_to`: animates the previously-
+    /// focused node's `focus_ring` out and the newly-focused one's in,
+    /// opt-in-only (Design Principle 6) exactly like `update_hover`
+    /// animates `hover_opacity` -- factored out once a second real
+    /// caller needed the identical transition logic, not duplicated.
+    fn transition_focus(
+        &mut self,
+        new: Option<NodeId>,
+        focus_ring_opacity: f64,
+        duration: Duration,
+        now: Instant,
+    ) {
+        let old = self.focused;
+        self.focused = new;
+        if old == new {
             return;
         }
         if let Some(old) = old
@@ -757,13 +799,32 @@ impl Tree {
                 .focus_ring
                 .animate_to(0.0, duration, MotionCurve::Linear, now);
         }
-        if let Some(new) = self.focused
+        if let Some(new) = new
             && let Some(node) = self.nodes.get_mut(new)
             && let Some(state) = node.interaction.as_mut()
         {
             state
                 .focus_ring
                 .animate_to(focus_ring_opacity, duration, MotionCurve::Linear, now);
+        }
+    }
+
+    /// M4 Phase 2 (§10): the direct, non-`InputEvent` counterpart to a
+    /// mouse click's own `Activated` outcome -- what `accesskit::
+    /// Action::Click` from a platform accessibility client actually
+    /// needs, since there's no press/release pair or on-screen point
+    /// involved, just a named target node. Deliberately does **not**
+    /// check `access.actions` first -- the real mouse-click path
+    /// (`dispatch`'s `PointerPressed`/`PointerReleased` handling)
+    /// doesn't gate on it either (hit-testing alone decides *which*
+    /// node; whether anything is actually registered to react is the
+    /// caller's own lookup, e.g. `engine-py`'s `click_handlers`) --
+    /// keeping both activation paths symmetric.
+    pub fn activate(&self, node: NodeId) -> DispatchOutcome {
+        if self.nodes.contains_key(node) {
+            DispatchOutcome::Activated(node)
+        } else {
+            DispatchOutcome::None
         }
     }
 
@@ -949,8 +1010,28 @@ impl Tree {
 /// `NodeId` (a `slotmap` key, opaque by design) to accesskit's
 /// `NodeId(u64)` -- `KeyData::as_ffi` is `slotmap`'s own purpose-built
 /// conversion for exactly this "hand a key to a foreign API" case.
-fn to_access_id(id: NodeId) -> accesskit::NodeId {
+/// `NodeId`'s own generational key data, encoded as the opaque 64-bit
+/// integer `accesskit::NodeId` wraps -- `SlotMapKey::data().as_ffi()`
+/// is real, documented `slotmap` API for exactly this ("pass slot map
+/// keys as opaque handles to foreign code... confidently use them...
+/// without worrying about unsafe behavior").
+pub fn to_access_id(id: NodeId) -> accesskit::NodeId {
     accesskit::NodeId(id.data().as_ffi())
+}
+
+/// The reverse of [`to_access_id`] -- M4 Phase 2's real need: an
+/// `accesskit::ActionRequest.target_node` (a platform accessibility
+/// client naming which node it wants activated/focused, §10) arrives as
+/// this same opaque integer and has to become a real `NodeId` again to
+/// call `Tree::activate`/`set_focus_to` with. `KeyData::from_ffi`'s own
+/// doc comment states the guarantee this relies on directly: "passing
+/// it to `from_ffi` will return a key equal to the original" -- a
+/// stale/foreign id round-trips to *some* `NodeId` value that simply
+/// fails this `Tree`'s own generation check later (behaves as "not
+/// found"), not undefined behavior, the same generational-safety
+/// property §5 already relies on everywhere else.
+pub fn from_access_id(id: accesskit::NodeId) -> NodeId {
+    NodeId::from(KeyData::from_ffi(id.0))
 }
 
 #[cfg(test)]
@@ -2158,6 +2239,143 @@ mod tests {
             now,
         );
         assert_eq!(outcome, DispatchOutcome::Activated(b));
+    }
+
+    #[test]
+    fn access_id_round_trips_through_to_access_id_and_from_access_id() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let node = tree.insert(k, s, p);
+
+        let access_id = to_access_id(node);
+        let round_tripped = from_access_id(access_id);
+        assert_eq!(
+            round_tripped, node,
+            "KeyData::as_ffi/from_ffi's own documented guarantee: round-tripping \
+             through the opaque accesskit::NodeId must return an equal key"
+        );
+    }
+
+    #[test]
+    fn from_access_id_on_a_stale_or_foreign_id_fails_safely_not_silently() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let node = tree.insert(k, s, p);
+        let access_id = to_access_id(node);
+
+        tree.remove(node);
+
+        // The real generational-safety claim (§5), applied to an
+        // accessibility-client-supplied id: a stale accesskit::NodeId
+        // for a since-removed node must not resolve to whatever now
+        // occupies that slot.
+        let stale = from_access_id(access_id);
+        assert!(
+            tree.get(stale).is_none(),
+            "a stale accesskit::NodeId must round-trip to a NodeId that fails \
+             this Tree's own generation check, not one that silently resolves"
+        );
+    }
+
+    #[test]
+    fn activate_produces_activated_for_a_real_node_and_none_for_an_unknown_one() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let node = tree.insert(k, s, p);
+
+        assert_eq!(tree.activate(node), DispatchOutcome::Activated(node));
+
+        tree.remove(node);
+        assert_eq!(
+            tree.activate(node),
+            DispatchOutcome::None,
+            "activating a NodeId no longer in this Tree must be a safe no-op, \
+             not a panic or a stale Activated outcome"
+        );
+    }
+
+    #[test]
+    fn set_focus_to_jumps_directly_to_the_named_node_and_animates_focus_ring() {
+        use std::time::Duration;
+
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let a = tree.insert(k, s, p);
+        tree.interaction_mut(a);
+        let (k, s, p) = leaf(10.0, 10.0);
+        let b = tree.insert(k, s, p);
+        tree.interaction_mut(b);
+
+        let now = Instant::now();
+        let duration = Duration::from_millis(100);
+
+        // Unlike move_focus, set_focus_to doesn't need `a`/`b` to have
+        // any access.actions at all -- it's a direct target, the same
+        // way a mouse click names its target regardless of that node's
+        // own access.actions.
+        tree.set_focus_to(a, 1.0, duration, now);
+        assert_eq!(tree.focused(), Some(a));
+        tree.tick_all(now + duration);
+        assert_eq!(
+            tree.get(a)
+                .unwrap()
+                .interaction
+                .as_ref()
+                .unwrap()
+                .focus_ring
+                .current,
+            1.0
+        );
+
+        tree.set_focus_to(b, 1.0, duration, now);
+        assert_eq!(
+            tree.focused(),
+            Some(b),
+            "set_focus_to must jump straight to the named node, not compute a \
+             tab-order neighbor"
+        );
+        tree.tick_all(now + duration + duration);
+        let a_ring = tree
+            .get(a)
+            .unwrap()
+            .interaction
+            .as_ref()
+            .unwrap()
+            .focus_ring
+            .current;
+        let b_ring = tree
+            .get(b)
+            .unwrap()
+            .interaction
+            .as_ref()
+            .unwrap()
+            .focus_ring
+            .current;
+        assert_eq!(
+            a_ring, 0.0,
+            "the previously-focused node's ring must animate out"
+        );
+        assert_eq!(b_ring, 1.0, "the newly-focused node's ring must animate in");
+    }
+
+    #[test]
+    fn set_focus_to_an_unknown_node_is_a_safe_no_op() {
+        use std::time::Duration;
+
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let real = tree.insert(k, s, p);
+        tree.set_focused(Some(real));
+        let (k, s, p) = leaf(10.0, 10.0);
+        let ghost = tree.insert(k, s, p);
+        tree.remove(ghost);
+
+        tree.set_focus_to(ghost, 1.0, Duration::from_millis(100), Instant::now());
+        assert_eq!(
+            tree.focused(),
+            Some(real),
+            "focusing an unknown NodeId must leave the real current focus untouched"
+        );
     }
 
     #[test]

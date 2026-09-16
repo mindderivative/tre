@@ -24,7 +24,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use engine_core::{NodeId, Tree};
+use engine_core::{NodeId, Tree, from_access_id};
 use engine_platform::{WindowConfig, WindowRequest, run_windowed_multi};
 use engine_render::{FrameRenderer, TextRenderer, build_tree_scene};
 use pyo3::prelude::*;
@@ -186,6 +186,7 @@ impl App {
         let runtimes_for_frame = runtimes.clone();
         let runtimes_for_access = runtimes.clone();
         let runtimes_for_input = runtimes.clone();
+        let runtimes_for_access_action = runtimes.clone();
         let setups_for_setup = setups.clone();
 
         let result = run_windowed_multi(
@@ -289,6 +290,41 @@ impl App {
                     Instant::now(),
                 );
                 run_activation(&runtime.click_handlers, outcome, py);
+            },
+            // M4 Phase 2 (§10): a real screen reader naming a node to
+            // activate or focus directly, routed through the exact same
+            // `run_activation`/`click_handlers` path a mouse click or
+            // `Window.click()` already uses -- one click-handling
+            // mechanism, reached three ways now, not three separate ones.
+            move |window_id, request| {
+                let runtimes = runtimes_for_access_action.borrow();
+                let Some(runtime) = runtimes.get(&window_id) else {
+                    return;
+                };
+                let node = from_access_id(request.target_node);
+                let mut tree = runtime.tree.borrow_mut();
+                match request.action {
+                    engine_core::Action::Click => {
+                        let outcome = tree.activate(node);
+                        drop(tree);
+                        run_activation(&runtime.click_handlers, outcome, py);
+                    }
+                    engine_core::Action::Focus => {
+                        let config = interaction_config();
+                        tree.set_focus_to(
+                            node,
+                            config.focus_ring_opacity,
+                            config.focus_ring_duration,
+                            Instant::now(),
+                        );
+                    }
+                    // No other accesskit action has real dispatch
+                    // meaning yet (§14 step 7's own original minimal
+                    // scope, still the right boundary here -- nothing
+                    // in this codebase models scrolling, text
+                    // selection, or custom actions).
+                    _ => {}
+                }
             },
             move |opener| {
                 for (index, setup) in setups_for_setup.iter().enumerate() {

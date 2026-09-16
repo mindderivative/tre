@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use engine_core::{
-    InputEvent, ItemExtent, NodeId, NodeKind, PaintProperties, PointerButton, Tree,
+    InputEvent, ItemExtent, Key, NodeId, NodeKind, PaintProperties, PointerButton, Tree,
     VirtualListState,
 };
 use peniko::Color;
@@ -182,6 +182,37 @@ impl PyWindow {
             now,
         );
         run_activation(&self.click_handlers, release, py);
+    }
+
+    /// M4 Phase 2 (§10): `click()`'s own keyboard counterpart -- the
+    /// real, no-window-needed way to test Tab/Shift-Tab focus movement
+    /// and Enter/Space activation from Python, neither of which had a
+    /// Python-facing entry point before this. `key` is one of `"tab"`/
+    /// `"enter"`/`"space"`/`"escape"` -- `engine_core::Key`'s own
+    /// deliberately minimal vocabulary (§10), not a general key-code
+    /// mapping nothing here needs yet.
+    #[pyo3(signature = (key, shift=false))]
+    fn press_key(&mut self, key: &str, shift: bool, py: Python<'_>) -> PyResult<()> {
+        let key = match key {
+            "tab" => Key::Tab,
+            "enter" => Key::Enter,
+            "space" => Key::Space,
+            "escape" => Key::Escape,
+            other => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "press_key: unknown key {other:?} -- expected one of \"tab\", \"enter\", \
+                     \"space\", \"escape\""
+                )));
+            }
+        };
+        let outcome = self.tree.borrow_mut().dispatch(
+            self.root,
+            InputEvent::KeyPressed { key, shift },
+            &interaction_config(),
+            std::time::Instant::now(),
+        );
+        run_activation(&self.click_handlers, outcome, py);
+        Ok(())
     }
 
     /// §14 step 15 (§11.7): creates a `NodeKind::VirtualList` of
