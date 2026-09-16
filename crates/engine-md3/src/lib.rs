@@ -13,10 +13,18 @@
 //! turned out to have no actual MD3-specific content at all (pure
 //! `Interpolate`/`peniko::kurbo` geometry), and `engine-core` can never
 //! depend on this crate (§4) -- the identical resolution M7 Phase 1
-//! already made for `MotionCurve`. This crate's only real content now
-//! is `color` -- true MD3 color science (`material_colors`), the one
-//! piece that couldn't move the same way.
+//! already made for `MotionCurve`. `color` -- true MD3 color science
+//! (`material_colors`) -- is the one piece that couldn't move the same
+//! way. `container_transform` (M7 Phase 5, §7.6) is this crate's other
+//! real content: genuine choreography of several `engine-core`
+//! primitives, not color science, but a real fit here since §7.6's own
+//! text names `engine-md3` as where this choreography belongs.
 
 mod color;
+mod container_transform;
 
 pub use color::{ColorScheme, DynamicTheme};
+pub use container_transform::{
+    ContainerTransformConfig, begin as begin_container_transform,
+    teardown as teardown_container_transform,
+};

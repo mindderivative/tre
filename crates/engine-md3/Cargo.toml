@@ -10,3 +10,10 @@ material-colors = "0.4.2"
 # `color.rs` maps every resolved scheme role onto `peniko::Color` --
 # already resolved at 0.6.1 elsewhere in the workspace.
 peniko = "0.6.1"
+
+[dev-dependencies]
+# M7 Phase 5: `container_transform`'s own tests build a real `Style`/
+# `Tree` scene (matching every other test in this workspace) -- test-
+# only, production code never touches `taffy` directly. Pinned to the
+# same version `engine-core` itself uses.
+taffy = "0.14.0"

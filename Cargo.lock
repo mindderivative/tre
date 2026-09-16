@@ -839,6 +839,7 @@ dependencies = [
  "engine-core",
  "material-colors",
  "peniko",
+ "taffy",
 ]
 
 [[package]]

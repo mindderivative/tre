@@ -325,6 +325,65 @@ impl PyWindow {
         }
     }
 
+    /// M7 Phase 5 (§7.6): starts a real container-transform choreography
+    /// between `trigger` and `destination` -- `destination` must already
+    /// be attached to this same `Window`'s tree, laid out, and carry its
+    /// own real target appearance (this call captures that as the
+    /// animation's target before overwriting it to `trigger`'s own
+    /// captured from-state; nothing visually changes until the next
+    /// tick). `curve` defaults to `MotionCurve::Emphasized` -- §7.5's
+    /// own text names this as container-transform's typical real curve.
+    /// Computes layout first (the same reason `click`/`hover` do) so the
+    /// captured bounds are fresh, not stale from before this call.
+    #[pyo3(signature = (trigger, destination, duration_ms=300, content_stagger_ms=90))]
+    fn begin_container_transform(
+        &mut self,
+        trigger: PyRef<'_, Node>,
+        destination: PyRef<'_, Node>,
+        duration_ms: u64,
+        content_stagger_ms: u64,
+    ) -> PyResult<()> {
+        if !Rc::ptr_eq(&self.tree, &trigger.tree) || !Rc::ptr_eq(&self.tree, &destination.tree) {
+            return Err(EngineError::ForeignNode.into());
+        }
+        let mut tree = self.tree.borrow_mut();
+        tree.compute_layout(
+            self.root,
+            Size {
+                width: AvailableSpace::Definite(self.width as f32),
+                height: AvailableSpace::Definite(self.height as f32),
+            },
+        );
+        let config = engine_md3::ContainerTransformConfig {
+            duration: std::time::Duration::from_millis(duration_ms),
+            curve: engine_core::MotionCurve::Emphasized,
+            content_stagger: std::time::Duration::from_millis(content_stagger_ms),
+        };
+        engine_md3::begin_container_transform(
+            &mut tree,
+            trigger.id,
+            destination.id,
+            &config,
+            std::time::Instant::now(),
+        );
+        Ok(())
+    }
+
+    /// M7 Phase 5 (§7.6, step 5): "the trigger node is hidden or
+    /// removed" -- called once the caller knows the transition started
+    /// by `begin_container_transform` has finished (this codebase has no
+    /// real completion-queue wiring to fire it automatically, a
+    /// confirmed, stated gap -- see `container_transform.rs`'s own doc
+    /// comment). A plain, ordinary tree mutation: detaches `trigger`
+    /// from its own parent via the already-real `Tree::detach`.
+    fn end_container_transform(&mut self, trigger: PyRef<'_, Node>) -> PyResult<()> {
+        if !Rc::ptr_eq(&self.tree, &trigger.tree) {
+            return Err(EngineError::ForeignNode.into());
+        }
+        engine_md3::teardown_container_transform(&mut self.tree.borrow_mut(), trigger.id);
+        Ok(())
+    }
+
     /// M4 Phase 1 step 3 (§11.10): a direct, programmatic "click this
     /// node" entry point -- the same "expose a direct method since real
     /// pointer dispatch has nowhere else to originate outside a live
