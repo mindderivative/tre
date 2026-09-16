@@ -32,7 +32,7 @@ use taffy::prelude::{AvailableSpace, Size};
 use vello_hybrid::{RenderSize, RenderTargetConfig};
 use winit::window::{Window, WindowId};
 
-use crate::dispatch::{interaction_config, run_activation};
+use crate::dispatch::{HandlerMap, interaction_config, run_dispatch_outcome};
 use crate::window::PyWindow;
 
 #[pyclass(unsendable)]
@@ -45,7 +45,7 @@ pub struct App {
 /// need to touch a Python object -- they only ever see plain Rust data
 /// they already own, the same "only thin data crosses into winit's own
 /// callback world" discipline `engine-platform`'s own `PlatformEvent`
-/// already follows. `click_handlers` is the one exception: `Node.
+/// already follows. `handlers` is the one exception: `Node.
 /// set_on_click`'s own real `Py<PyAny>` callbacks (M4 Phase 1 step 3)
 /// have to be looked up by the `on_input` closure below on a real
 /// activation, so this is the one Python-object-bearing field extracted
@@ -56,7 +56,7 @@ struct WindowSetup {
     title: String,
     width: u32,
     height: u32,
-    click_handlers: Rc<RefCell<HashMap<NodeId, Py<PyAny>>>>,
+    handlers: HandlerMap,
 }
 
 struct GpuState {
@@ -124,7 +124,7 @@ struct WindowRuntime {
     width: u32,
     height: u32,
     gpu: GpuState,
-    click_handlers: Rc<RefCell<HashMap<NodeId, Py<PyAny>>>>,
+    handlers: HandlerMap,
 }
 
 #[pymethods]
@@ -166,7 +166,7 @@ impl App {
                     title: window.title.clone(),
                     width: window.width,
                     height: window.height,
-                    click_handlers: window.click_handlers.clone(),
+                    handlers: window.handlers.clone(),
                 }
             })
             .collect();
@@ -201,7 +201,7 @@ impl App {
                         width: setup.width,
                         height: setup.height,
                         gpu,
-                        click_handlers: setup.click_handlers.clone(),
+                        handlers: setup.handlers.clone(),
                     },
                 );
             },
@@ -289,11 +289,11 @@ impl App {
                     &interaction_config(),
                     Instant::now(),
                 );
-                run_activation(&runtime.click_handlers, outcome, py);
+                run_dispatch_outcome(&runtime.handlers, outcome, py);
             },
             // M4 Phase 2 (§10): a real screen reader naming a node to
             // activate or focus directly, routed through the exact same
-            // `run_activation`/`click_handlers` path a mouse click or
+            // `run_dispatch_outcome`/`handlers` path a mouse click or
             // `Window.click()` already uses -- one click-handling
             // mechanism, reached three ways now, not three separate ones.
             move |window_id, request| {
@@ -307,7 +307,7 @@ impl App {
                     engine_core::Action::Click => {
                         let outcome = tree.activate(node);
                         drop(tree);
-                        run_activation(&runtime.click_handlers, outcome, py);
+                        run_dispatch_outcome(&runtime.handlers, outcome, py);
                     }
                     engine_core::Action::Focus => {
                         let config = interaction_config();

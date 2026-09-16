@@ -1,37 +1,41 @@
 //! `Node` (§8's `PyNode`, renamed to match what Python actually sees --
 //! `tre.Node`, not `tre.PyNode`) -- narrower than §8's own full sketch:
-//! `animate()`/`get()` plus, as of M4 Phase 1 step 3, `set_on_click`.
+//! `animate()`/`get()` plus, as of M4 Phase 1 step 3, `set_on_click`, and
+//! as of M4 Phase 6, `set_on_hover_enter`/`set_on_hover_exit`.
 //! Still no `add_child` (no cycle to reject, so `EngineError::
 //! CycleRejected` isn't implemented yet either) -- additive when its own
 //! later build-order step needs it.
 //!
-//! `set_on_click`'s callback storage (`click_handlers`) is an
-//! `Rc<RefCell<HashMap<NodeId, Py<PyAny>>>>` *shared* with the owning
-//! `PyWindow` -- created once in `window.rs`, cloned into every `Node`
-//! that `Window` hands out, the exact same sharing shape `tree:
-//! Rc<RefCell<Tree>>` already uses. This is what actually resolves §8's
-//! own review note (a Python callback stored in a Rust struct is a real
-//! GC-cycle risk unless the owning `#[pyclass]` implements `__traverse__`/
-//! `__clear__`) without needing `Node` to hold a back-reference to its
-//! own `PyWindow`: `PyWindow::__traverse__` already visits everything in
-//! this same shared map (see `window.rs`).
+//! Handler callback storage (`handlers`) is an `Rc<RefCell<HashMap<
+//! (NodeId, EventKind), Py<PyAny>>>>` *shared* with the owning `PyWindow`
+//! (or `View`) -- created once there, cloned into every `Node` handed
+//! out, the exact same sharing shape `tree: Rc<RefCell<Tree>>` already
+//! uses. This is what actually resolves §8's own review note (a Python
+//! callback stored in a Rust struct is a real GC-cycle risk unless the
+//! owning `#[pyclass]` implements `__traverse__`/`__clear__`) without
+//! needing `Node` to hold a back-reference to its own owner: `PyWindow`/
+//! `View`'s own `__traverse__` already visits everything in this same
+//! shared map. Keyed by `(NodeId, EventKind)` rather than one map per
+//! event kind since M4 Phase 6 (§16.2) -- the Rule of Three, once
+//! `Click`/`HoverEnter`/`HoverExit` all needed the same "look up a
+//! registered handler for this node, call it" shape.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use engine_core::{Action, MotionCurve, NodeId, NodeKind, Tree};
+use engine_core::{Action, EventKind, MotionCurve, NodeId, NodeKind, Tree};
 use peniko::Color;
 use pyo3::prelude::*;
 
+use crate::dispatch::HandlerMap;
 use crate::error::EngineError;
 
 #[pyclass(unsendable)]
 pub struct Node {
     pub(crate) id: NodeId,
     pub(crate) tree: Rc<RefCell<Tree>>,
-    pub(crate) click_handlers: Rc<RefCell<HashMap<NodeId, Py<PyAny>>>>,
+    pub(crate) handlers: HandlerMap,
 }
 
 #[pymethods]
@@ -134,12 +138,34 @@ impl Node {
     /// ships from day one" stance applied to the one call site that
     /// actually makes a node interactive for the first time.
     pub(crate) fn set_on_click(&self, callback: Py<PyAny>) {
-        self.click_handlers.borrow_mut().insert(self.id, callback);
+        self.handlers
+            .borrow_mut()
+            .insert((self.id, EventKind::Click), callback);
         if let Some(node) = self.tree.borrow_mut().get_mut(self.id)
             && !node.access.actions.contains(&Action::Click)
         {
             node.access.actions.push(Action::Click);
         }
+    }
+
+    /// M4 Phase 6 (§7.3, §16.2): registers `callback` to run when this
+    /// node becomes the hovered node -- `Tree::dispatch`'s own
+    /// `DispatchOutcome::HoverChanged`, fired independent of whether
+    /// this node ever opted into `InteractionState`'s own visual
+    /// animation (`enable_interaction`, M4 Phase 5) -- §7.3's own text:
+    /// "the default MD3 visual never depends on anything handling it."
+    pub(crate) fn set_on_hover_enter(&self, callback: Py<PyAny>) {
+        self.handlers
+            .borrow_mut()
+            .insert((self.id, EventKind::HoverEnter), callback);
+    }
+
+    /// The `HoverExit` counterpart to `set_on_hover_enter` -- fired when
+    /// this node stops being the hovered node.
+    pub(crate) fn set_on_hover_exit(&self, callback: Py<PyAny>) {
+        self.handlers
+            .borrow_mut()
+            .insert((self.id, EventKind::HoverExit), callback);
     }
 
     /// M4 Phase 5 (§7.3): opts this node into ripple/hover state-layer

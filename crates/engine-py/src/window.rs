@@ -18,7 +18,7 @@ use pyo3::class::{PyTraverseError, PyVisit};
 use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Rect as TaffyRect, Size, Style, auto, length};
 
-use crate::dispatch::{interaction_config, run_activation};
+use crate::dispatch::{HandlerMap, interaction_config, run_dispatch_outcome};
 use crate::error::EngineError;
 use crate::node::Node;
 
@@ -32,19 +32,21 @@ const GAP: f32 = 16.0;
 /// use throughout `ARCHITECTURE.md`.
 ///
 /// `materializers` is §11.7's own "materialize item N" callback storage
-/// and `click_handlers` (M4 Phase 1 step 3, §11.10) is `Node.
-/// set_on_click`'s -- both real cases of §8's own review note: "storing
-/// a long-lived `PyObject` callback... is a new risk class... unless the
-/// `#[pyclass]` implements `__traverse__`/`__clear__`," which `node.rs`'s
-/// own module doc comment deferred exactly this long, "until something
-/// actually stores one." Confirmed directly against pyo3 0.29.2's own
-/// real API before implementing (`tests/test_gc.rs`): no `#[pyclass(gc)]`
-/// flag exists or is needed in this version -- a `#[pyclass]` simply
-/// implementing `__traverse__`/`__clear__` in its `#[pymethods]` is
-/// enough to opt into cyclic GC support, see below.
+/// and `handlers` (M4 Phase 1 step 3, §11.10; re-keyed by `(NodeId,
+/// EventKind)` at M4 Phase 6, §16.2) is `Node.set_on_click`/
+/// `set_on_hover_enter`/`set_on_hover_exit`'s -- both real cases of §8's
+/// own review note: "storing a long-lived `PyObject` callback... is a
+/// new risk class... unless the `#[pyclass]` implements `__traverse__`/
+/// `__clear__`," which `node.rs`'s own module doc comment deferred
+/// exactly this long, "until something actually stores one." Confirmed
+/// directly against pyo3 0.29.2's own real API before implementing
+/// (`tests/test_gc.rs`): no `#[pyclass(gc)]` flag exists or is needed in
+/// this version -- a `#[pyclass]` simply implementing `__traverse__`/
+/// `__clear__` in its `#[pymethods]` is enough to opt into cyclic GC
+/// support, see below.
 ///
-/// `click_handlers` is an `Rc<RefCell<...>>`, not a plain field, because
-/// `Node.set_on_click` (in `node.rs`) needs to write into the *same*
+/// `handlers` is an `Rc<RefCell<...>>`, not a plain field, because
+/// `Node.set_on_click`/etc (in `node.rs`) need to write into the *same*
 /// map from a `Node` Python object that holds no back-reference to this
 /// `PyWindow` -- shared the exact way `tree: Rc<RefCell<Tree>>` already
 /// is between a `Window` and every `Node` it hands out.
@@ -56,7 +58,7 @@ pub struct PyWindow {
     pub(crate) width: u32,
     pub(crate) height: u32,
     materializers: HashMap<NodeId, Py<PyAny>>,
-    pub(crate) click_handlers: Rc<RefCell<HashMap<NodeId, Py<PyAny>>>>,
+    pub(crate) handlers: HandlerMap,
 }
 
 #[pymethods]
@@ -95,7 +97,7 @@ impl PyWindow {
             width,
             height,
             materializers: HashMap::new(),
-            click_handlers: Rc::new(RefCell::new(HashMap::new())),
+            handlers: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
@@ -121,7 +123,7 @@ impl PyWindow {
         Node {
             id,
             tree: self.tree.clone(),
-            click_handlers: self.click_handlers.clone(),
+            handlers: self.handlers.clone(),
         }
     }
 
@@ -173,7 +175,7 @@ impl PyWindow {
         Node {
             id,
             tree: self.tree.clone(),
-            click_handlers: self.click_handlers.clone(),
+            handlers: self.handlers.clone(),
         }
     }
 
@@ -209,7 +211,7 @@ impl PyWindow {
         let now = std::time::Instant::now();
         let config = interaction_config();
         // Each `dispatch` call's own `self.tree.borrow_mut()` is a
-        // short-lived temporary, released before `run_activation` runs
+        // short-lived temporary, released before `run_dispatch_outcome` runs
         // -- a click handler that itself touches this same `Tree` (e.g.
         // animating the very node it's attached to, a real, plausible
         // pattern) would otherwise panic on a re-entrant borrow.
@@ -222,7 +224,7 @@ impl PyWindow {
             &config,
             now,
         );
-        run_activation(&self.click_handlers, press, py);
+        run_dispatch_outcome(&self.handlers, press, py);
 
         let release = self.tree.borrow_mut().dispatch(
             self.root,
@@ -233,7 +235,42 @@ impl PyWindow {
             &config,
             now,
         );
-        run_activation(&self.click_handlers, release, py);
+        run_dispatch_outcome(&self.handlers, release, py);
+    }
+
+    /// M4 Phase 6 (§7.3): `click()`'s own hover counterpart -- the same
+    /// no-live-window-needed proof pattern, this time dispatching a
+    /// `PointerMoved` at `node`'s own real center point, exactly what a
+    /// real mouse arriving there would produce. Fires `HoverEnter`/
+    /// `HoverExit` (via `Tree::dispatch`'s own `DispatchOutcome::
+    /// HoverChanged`) independent of whether `node` ever called
+    /// `enable_interaction()` -- §7.3's own text: the event fires
+    /// regardless of whether the default MD3 visual is enabled.
+    fn hover(&mut self, node: PyRef<'_, Node>, py: Python<'_>) {
+        let point = {
+            let mut tree = self.tree.borrow_mut();
+            tree.compute_layout(
+                self.root,
+                Size {
+                    width: AvailableSpace::Definite(self.width as f32),
+                    height: AvailableSpace::Definite(self.height as f32),
+                },
+            );
+            let (x, y) = tree.absolute_position(node.id);
+            let layout = tree.layout(node.id);
+            Point::new(
+                x + f64::from(layout.size.width) / 2.0,
+                y + f64::from(layout.size.height) / 2.0,
+            )
+        };
+
+        let outcome = self.tree.borrow_mut().dispatch(
+            self.root,
+            InputEvent::PointerMoved { position: point },
+            &interaction_config(),
+            std::time::Instant::now(),
+        );
+        run_dispatch_outcome(&self.handlers, outcome, py);
     }
 
     /// M4 Phase 2 (§10): `click()`'s own keyboard counterpart -- the
@@ -263,7 +300,7 @@ impl PyWindow {
             &interaction_config(),
             std::time::Instant::now(),
         );
-        run_activation(&self.click_handlers, outcome, py);
+        run_dispatch_outcome(&self.handlers, outcome, py);
         Ok(())
     }
 
@@ -313,7 +350,7 @@ impl PyWindow {
         Node {
             id,
             tree: self.tree.clone(),
-            click_handlers: self.click_handlers.clone(),
+            handlers: self.handlers.clone(),
         }
     }
 
@@ -410,14 +447,14 @@ impl PyWindow {
         for materializer in self.materializers.values() {
             visit.call(materializer)?;
         }
-        for click_handler in self.click_handlers.borrow().values() {
-            visit.call(click_handler)?;
+        for handler in self.handlers.borrow().values() {
+            visit.call(handler)?;
         }
         Ok(())
     }
 
     fn __clear__(&mut self) {
         self.materializers.clear();
-        self.click_handlers.borrow_mut().clear();
+        self.handlers.borrow_mut().clear();
     }
 }

@@ -10,18 +10,21 @@
 //!
 //! - **Updated, M4 Phase 4:** `on_click` handlers are now wired for
 //!   real, not just eagerly validated -- `_attach` registers the
-//!   validated method into the same `click_handlers`/`Tree::dispatch`
+//!   validated method into the same `handlers`/`Tree::dispatch`
 //!   mechanism `Node.set_on_click` already uses (M4 Phase 1 step 3),
 //!   and `View.click(node)` (below) proves it fires without needing a
-//!   live window, the same pattern `Window.click` established. Two
-//!   real, stated narrowings remain: (1) only `on_click` is wired --
-//!   other declared event names still validate but reach no real
-//!   mechanism, since no `EventKind` beyond a bare "activated" exists
-//!   yet (that's M4 Phase 6's own scope); (2) `View` is still never
-//!   embedded into a live `winit`-driven window -- it has no width/
-//!   height/render-loop concept of its own, and giving it one is real,
-//!   separate, larger work this phase doesn't need to do to close the
-//!   actual confirmed gap (handlers never reaching dispatch at all).
+//!   live window, the same pattern `Window.click` established.
+//! - **Updated, M4 Phase 6:** `on_hover_enter`/`on_hover_exit` are now
+//!   also wired the same way, through the new `EventKind`/
+//!   `DispatchOutcome::HoverChanged` mechanism (§7.3) -- `_attach`'s
+//!   single `on_click`-only special case generalized into a small match
+//!   over the three real event kinds that exist today. Other declared
+//!   event names still validate but reach no real mechanism, matching
+//!   §16.2's own "generalizing to whatever named events a `NodeKind`
+//!   exposes" -- not manufactured ahead of a real need. `View` is still
+//!   never embedded into a live `winit`-driven window -- it has no
+//!   width/height/render-loop concept of its own, and giving it one
+//!   remains real, separate, larger work no confirmed gap needs yet.
 //! - Binding application supports `opacity`/`corner_radius` -- the two
 //!   numeric `Animated<f64>` properties a resolved `engine_spec::
 //!   Value::Int`/`Float` maps onto directly through the existing
@@ -41,7 +44,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use engine_core::{InputEvent, NodeId, PointerButton, Tree};
+use engine_core::{EventKind, InputEvent, NodeId, PointerButton, Tree};
 use engine_spec::{Expression, Reconciler, WidgetSpec, evaluate, parse_binding, parse_view};
 use peniko::kurbo::Point;
 use pyo3::IntoPyObjectExt;
@@ -50,7 +53,7 @@ use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
 
 use crate::binding::PyViewModelResolver;
-use crate::dispatch::{interaction_config, run_activation};
+use crate::dispatch::{HandlerMap, interaction_config, run_dispatch_outcome};
 use crate::node::Node;
 
 thread_local! {
@@ -119,13 +122,13 @@ fn apply_binding_value(
         }
     };
     // Never exposed to Python -- only `animate()` is called on it below
-    // -- so an empty, throwaway `click_handlers` map is fine here; a
+    // -- so an empty, throwaway `handlers` map is fine here; a
     // real `View`-created `Node` (returned from `View::node`, below)
     // shares `View`'s own persistent one instead.
     let temp_node = Node {
         id: node_id,
         tree: tree.clone(),
-        click_handlers: Rc::new(RefCell::new(HashMap::new())),
+        handlers: Rc::new(RefCell::new(HashMap::new())),
     };
     temp_node.animate(property, bound, 0)?;
     tree.borrow_mut().tick_all(std::time::Instant::now());
@@ -177,15 +180,13 @@ pub struct View {
     tree: Rc<RefCell<Tree>>,
     reconciler: Reconciler,
     bindings: Vec<(String, String, String)>, // (widget_id, property, raw "{{ expr }}")
-    handlers: Vec<(String, String, String)>, // (widget_id, event, method_name)
-    /// Mirrors `PyWindow`'s own `click_handlers` (M4 Phase 1 step 3) --
-    /// shared with every `Node` this `View` hands out via `node()`, so
-    /// `set_on_click` is structurally available on a `View`'s widgets
-    /// too. Not yet reachable by any real dispatch: `View` has no event
-    /// loop wired to it (this module's own doc comment names that as
-    /// this crate's stated scope boundary) -- a future step that gives
-    /// `View` a real render loop is what would actually invoke these.
-    click_handlers: Rc<RefCell<HashMap<NodeId, Py<PyAny>>>>,
+    declared_handlers: Vec<(String, String, String)>, // (widget_id, event, method_name)
+    /// Mirrors `PyWindow`'s own `handlers` (M4 Phase 1 step 3, re-keyed
+    /// by `(NodeId, EventKind)` at M4 Phase 6) -- shared with every
+    /// `Node` this `View` hands out via `node()`, so `set_on_click`/
+    /// `set_on_hover_enter`/`set_on_hover_exit` are all structurally
+    /// available on a `View`'s widgets too.
+    handlers: HandlerMap,
 }
 
 #[pymethods]
@@ -201,15 +202,15 @@ impl View {
 
         let mut bindings = Vec::new();
         collect_bindings(&spec, &mut bindings);
-        let mut handlers = Vec::new();
-        collect_handlers(&spec, &mut handlers);
+        let mut declared_handlers = Vec::new();
+        collect_handlers(&spec, &mut declared_handlers);
 
         Ok(Self {
             tree: Rc::new(RefCell::new(tree)),
             reconciler,
             bindings,
-            handlers,
-            click_handlers: Rc::new(RefCell::new(HashMap::new())),
+            declared_handlers,
+            handlers: Rc::new(RefCell::new(HashMap::new())),
         })
     }
 
@@ -223,7 +224,7 @@ impl View {
         Ok(Node {
             id,
             tree: self.tree.clone(),
-            click_handlers: self.click_handlers.clone(),
+            handlers: self.handlers.clone(),
         })
     }
 
@@ -233,7 +234,7 @@ impl View {
     /// applies its initial value, and subscribes a re-evaluation
     /// callback onto every `Signal` that evaluation actually read.
     fn _attach(&mut self, py: Python<'_>, viewmodel: Py<PyAny>) -> PyResult<()> {
-        for (widget_id, event, method_name) in &self.handlers {
+        for (widget_id, event, method_name) in &self.declared_handlers {
             let attr = viewmodel
                 .bind(py)
                 .getattr(method_name.as_str())
@@ -250,20 +251,27 @@ impl View {
                 )));
             }
 
-            // M4 Phase 4: wires the validated method into the same real
-            // dispatch mechanism `Node.set_on_click` already uses --
-            // `_attach` used to stop at validation, so a real click on
-            // this widget did nothing. Only `on_click` is wired today,
-            // matching §16.2's own "generalizing to whatever named
-            // events a NodeKind exposes" -- other declared event names
-            // still validate (so a typo still fails at `_attach()` time)
-            // but have no real mechanism to reach yet until Phase 6's
-            // `EventKind` work exists. Called with zero arguments, the
-            // same established convention `Node.set_on_click`/
-            // `dispatch::run_activation` already use (see
+            // M4 Phase 4/6: wires the validated method into the same
+            // real dispatch mechanism `Node.set_on_click`/
+            // `set_on_hover_enter`/`set_on_hover_exit` already use --
+            // `_attach` used to stop at validation, so a real click/hover
+            // on this widget did nothing. Only these three real event
+            // kinds are wired today, matching §16.2's own "generalizing
+            // to whatever named events a NodeKind exposes" -- other
+            // declared event names still validate (so a typo still
+            // fails at `_attach()` time) but have no real mechanism to
+            // reach yet. Called with zero arguments, the same
+            // established convention `Node.set_on_click`/`dispatch::
+            // run_dispatch_outcome` already use (see
             // `tests/test_click_dispatch.py`) -- a real `Event` argument
-            // is that phase's own scope, not manufactured here.
-            if event == "on_click" {
+            // is deferred until a real handler needs the extra context.
+            let kind = match event.as_str() {
+                "on_click" => Some(EventKind::Click),
+                "on_hover_enter" => Some(EventKind::HoverEnter),
+                "on_hover_exit" => Some(EventKind::HoverExit),
+                _ => None,
+            };
+            if let Some(kind) = kind {
                 let node_id = self.reconciler.id_of(widget_id).ok_or_else(|| {
                     PyValueError::new_err(format!(
                         "widget {widget_id:?}: handler {event:?} names a widget id never built \
@@ -273,9 +281,19 @@ impl View {
                 let node = Node {
                     id: node_id,
                     tree: self.tree.clone(),
-                    click_handlers: self.click_handlers.clone(),
+                    handlers: self.handlers.clone(),
                 };
-                node.set_on_click(attr.unbind());
+                // Reuses `Node`'s own real setters verbatim (same
+                // construction `apply_binding_value` already uses for
+                // `animate`) rather than inserting into `self.handlers`
+                // directly -- `set_on_click` also adds `Action::Click`
+                // to the node's `access.actions` (§10, Tab-reachability),
+                // a real side effect only the real method carries.
+                match kind {
+                    EventKind::Click => node.set_on_click(attr.unbind()),
+                    EventKind::HoverEnter => node.set_on_hover_enter(attr.unbind()),
+                    EventKind::HoverExit => node.set_on_hover_exit(attr.unbind()),
+                }
             }
         }
 
@@ -364,7 +382,7 @@ impl View {
         let now = std::time::Instant::now();
         let config = interaction_config();
         // Each `dispatch` call's own `self.tree.borrow_mut()` is a
-        // short-lived temporary, released before `run_activation` runs
+        // short-lived temporary, released before `run_dispatch_outcome` runs
         // -- matches `Window.click`'s own reasoning: a handler that
         // itself touches this same `Tree` would otherwise panic on a
         // re-entrant borrow.
@@ -377,7 +395,7 @@ impl View {
             &config,
             now,
         );
-        run_activation(&self.click_handlers, press, py);
+        run_dispatch_outcome(&self.handlers, press, py);
 
         let release = self.tree.borrow_mut().dispatch(
             root,
@@ -388,21 +406,53 @@ impl View {
             &config,
             now,
         );
-        run_activation(&self.click_handlers, release, py);
+        run_dispatch_outcome(&self.handlers, release, py);
+    }
+
+    /// M4 Phase 6 (§7.3): `click()`'s own hover counterpart, mirroring
+    /// `Window.hover` exactly -- dispatches a `PointerMoved` at `node`'s
+    /// own real center, firing `HoverEnter`/`HoverExit` through the same
+    /// `handlers` map `_attach` wires into (above).
+    fn hover(&mut self, node: PyRef<'_, Node>, py: Python<'_>) {
+        let root = self.reconciler.root();
+        let point = {
+            let mut tree = self.tree.borrow_mut();
+            tree.compute_layout(
+                root,
+                Size {
+                    width: AvailableSpace::MaxContent,
+                    height: AvailableSpace::MaxContent,
+                },
+            );
+            let (x, y) = tree.absolute_position(node.id);
+            let layout = tree.layout(node.id);
+            Point::new(
+                x + f64::from(layout.size.width) / 2.0,
+                y + f64::from(layout.size.height) / 2.0,
+            )
+        };
+
+        let outcome = self.tree.borrow_mut().dispatch(
+            root,
+            InputEvent::PointerMoved { position: point },
+            &interaction_config(),
+            std::time::Instant::now(),
+        );
+        run_dispatch_outcome(&self.handlers, outcome, py);
     }
 
     /// Same real GC-cycle-safety obligation `PyWindow` already carries
-    /// for its own `click_handlers` (M4 Phase 1 step 3) -- `View` stores
+    /// for its own `handlers` (M4 Phase 1 step 3) -- `View` stores
     /// `Py<PyAny>` callbacks too now, so it needs to make them visible
     /// to CPython's cyclic collector the same way.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
-        for click_handler in self.click_handlers.borrow().values() {
-            visit.call(click_handler)?;
+        for handler in self.handlers.borrow().values() {
+            visit.call(handler)?;
         }
         Ok(())
     }
 
     fn __clear__(&mut self) {
-        self.click_handlers.borrow_mut().clear();
+        self.handlers.borrow_mut().clear();
     }
 }

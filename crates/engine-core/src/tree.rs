@@ -905,7 +905,12 @@ impl Tree {
     ) -> DispatchOutcome {
         match event {
             InputEvent::PointerMoved { position } => {
-                self.update_hover(
+                // M4 Phase 6 (§7.3): captured before `update_hover` runs
+                // -- it mutates `self.hovered` internally and returns
+                // only the new value, so the *old* value has to be read
+                // here to report a real transition afterward.
+                let old_hovered = self.hovered;
+                let new_hovered = self.update_hover(
                     root,
                     position,
                     config.hover_opacity,
@@ -917,7 +922,14 @@ impl Tree {
                 if self.dragging.is_some() {
                     self.update_drag(position, now);
                 }
-                DispatchOutcome::None
+                if old_hovered != new_hovered {
+                    DispatchOutcome::HoverChanged {
+                        old: old_hovered,
+                        new: new_hovered,
+                    }
+                } else {
+                    DispatchOutcome::None
+                }
             }
             InputEvent::PointerPressed { position, button } => {
                 let hit = self.hit_test(root, position);
@@ -2557,6 +2569,116 @@ mod tests {
             now,
         );
         assert_eq!(outcome, DispatchOutcome::Activated(b));
+    }
+
+    #[test]
+    fn dispatch_reports_hover_changed_only_on_a_real_transition() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            display: taffy::Display::Flex,
+            size: Size {
+                width: length(100.0),
+                height: length(50.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let (k, s, p) = leaf(50.0, 50.0);
+        let a = tree.insert(k, s, p);
+        tree.add_child(root, a);
+        let (k, s, p) = leaf(50.0, 50.0);
+        let b = tree.insert(k, s, p);
+        tree.add_child(root, b);
+
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(50.0),
+            },
+        );
+
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let now = Instant::now();
+
+        // Moving onto A for the first time: None -> Some(a).
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(25.0, 25.0),
+            },
+            &config,
+            now,
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::HoverChanged {
+                old: None,
+                new: Some(a)
+            },
+            "hitting a node for the first time must report a real transition"
+        );
+
+        // Moving again within A: no transition, no outcome.
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(30.0, 30.0),
+            },
+            &config,
+            now,
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::None,
+            "a repeated move within the same already-hovered node must not report a transition"
+        );
+
+        // Moving from A to B: Some(a) -> Some(b).
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(75.0, 25.0),
+            },
+            &config,
+            now,
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::HoverChanged {
+                old: Some(a),
+                new: Some(b)
+            },
+            "moving directly from one hovered node to another must report both halves"
+        );
+
+        // Moving off every node: Some(b) -> None.
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(500.0, 500.0),
+            },
+            &config,
+            now,
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::HoverChanged {
+                old: Some(b),
+                new: None
+            },
+            "leaving every hit-testable node must still report the exit half"
+        );
     }
 
     #[test]

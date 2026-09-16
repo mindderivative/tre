@@ -1,107 +1,107 @@
-# Plan: M4 Phase 5 — Real Ripple/Hover, End to End (§7.3)
+# Plan: M4 Phase 6 — `EventKind` + Real `HoverEnter`/`HoverExit` (§7.3, §16.2)
 
 ## Context
 
-`BUILD_TRACKER.md`'s corrected Phase 5 scope (fixed earlier this
-session after finding a factual error in the prior version) says the
-gap is "no `engine-py` API ever calls `interaction_mut`, so no real
-Python-built node has `InteractionState` to animate." That's real, but
-investigating further before writing code surfaced a second, bigger gap
-in the same area that the tracker didn't yet name.
+§7.3: "The engine also fires an optional `HoverEnter`/`HoverExit`
+`EventKind` (§16.2) through the ordinary handler path for the rare case
+an app wants to react to hovering itself (a delayed tooltip, say) — the
+default MD3 visual never depends on anything handling it." No
+`Event`/`EventKind` type exists anywhere yet (confirmed via grep before
+Phase 4 even started). This phase introduces the minimal real version
+and wires hover transitions through it.
 
 ## Investigation before writing code
 
-Re-read §7.3 in full, then read `interaction.rs`, `tree.rs`'s
-`interaction_mut`/`update_hover`/`dispatch`, and — critically —
-`engine-render`'s actual real-render-path function, `paint_node`
-(what `build_tree_scene` calls, the function every real windowed app
-and every FFI-driven render actually goes through), not just the
-already-known standalone `build_ripple_scene` spike function.
+- **`AppHandler` (`engine-core/src/input.rs`) is dead code.** Confirmed
+  via grep: declared, documented, re-exported — never `impl`'d anywhere.
+  The real mechanism that shipped instead (M4 Phase 1 steps 2-3) is a
+  plain `on_input: FnMut(WindowId, InputEvent)` closure on
+  `run_windowed_multi` plus `engine-py`'s own `dispatch::run_activation`
+  interpreting `DispatchOutcome` directly. Not touched by this phase
+  (out of scope — noted honestly in `BUILD_TRACKER.md`, not silently
+  left as a misleading claim), but worth knowing before extending the
+  same enum it references.
+- **The real click-handling call graph, re-traced:** `Tree::dispatch`
+  returns a `DispatchOutcome`; exactly one function,
+  `dispatch::run_activation`, interprets it into a real Python call;
+  it's invoked from exactly three real call sites — `app.rs`'s
+  `on_input` closure (the real `winit`-driven path, already receiving
+  *every* `InputEvent`, `PointerMoved` included), `Window.click()`/
+  `Window.press_key()`, and `View.click()`. Extending `DispatchOutcome`
+  with a new variant and generalizing `run_activation` to interpret it
+  reaches all three call sites for free — the same "one mechanism, many
+  real call sites" shape this project keeps reusing (splitters,
+  overlays, `set_on_click` itself).
+- **Hover transition tracking already happens unconditionally.**
+  `Tree::dispatch`'s `PointerMoved` arm calls `update_hover`, which
+  compares the hit-test result against `self.hovered` regardless of
+  whether either node ever opted into `InteractionState` — only the
+  *animation* is gated on opt-in. This matches §7.3's own text exactly:
+  the event should fire independently of whether the default MD3 visual
+  is enabled, so `HoverEnter`/`HoverExit` firing needs no new gating
+  logic, just surfacing the transition `update_hover` already computes
+  but currently discards.
 
-Confirmed directly:
+**Real design decision, resolved: generalize the handler storage now,
+not duplicate it.** With three real event kinds to support (`Click`,
+`HoverEnter`, `HoverExit`), duplicating `click_handlers`'s exact shape
+two more times (`hover_enter_handlers`, `hover_exit_handlers`) would add
+two new `Rc<RefCell<HashMap<...>>>` fields to `Node`/`PyWindow`/`View`/
+`WindowSetup`/`WindowRuntime` apiece. Instead, `click_handlers` becomes
+`handlers: Rc<RefCell<HashMap<(NodeId, EventKind), Py<PyAny>>>>` — one
+field, re-keyed. This is the Rule of Three, not premature abstraction:
+duplicating a two-field shape once (`Node`'s existing precedent, one
+field) is fine; duplicating it a second and third time for the same
+underlying "which callback fires for this node+event" concept is the
+point where the generalization pays for itself.
 
-- `Tree::interaction_mut`/`Tree::dispatch`'s `PointerPressed` ripple
-  spawn/`update_hover`'s hover animation are all real, complete, and
-  already correctly wired at the `engine-core` level (unit-tested since
-  M3 Phase 5 step 9). Nothing needs fixing here.
-- **`paint_node` (`crates/engine-render/src/lib.rs`) never reads
-  `node.interaction` at all** — confirmed by reading the full function.
-  Only `build_ripple_scene`, a standalone spike with no `Tree`
-  involved at all (its own doc comment says so explicitly), ever draws
-  a ripple. This means even after adding a Python-facing opt-in, a real
-  click on a real Python-built button would correctly *animate*
-  `InteractionState` internally but produce **zero visible pixels** —
-  an incomplete, unprovable claim if left as-is, not a real "it works."
-
-**Scope widened accordingly**, still narrow and grounded in exactly
-what's confirmed missing (not manufacturing anything beyond it):
-
-1. `paint_node` gains real ripple/hover rendering for any node with
-   `Some(interaction)`, reusing `build_ripple_scene`'s already-proven
-   `push_layer(clip_path, ..., opacity, ...)` technique, moved into the
-   real per-node walk instead of a synthetic single-button spike.
-2. `engine-py` gets a real opt-in API.
-3. Tests prove the real, complete path: opt in → real `Tree::dispatch`
-   click → pixel-visible ripple, through the actual `build_tree_scene`
-   pipeline, not the standalone spike.
-
-**Real design decision, resolved:** should the opt-in be folded into
-`Node.set_on_click`, or a separate method? Chose **separate**
-(`Node.enable_interaction()`): a purely-hoverable, non-clickable node
-is a legitimate, real, independent case (§7.3 describes hover
-independently of click), and implicitly opting a node into extra
-per-frame animation cost just because it got a click handler would be
-a surprising side effect for a caller who only wanted the click.
-Explicit opt-in for each independently matches Design Principle 6's own
-"only a node that opts in pays the cost."
-
-**Real, stated color narrowing:** the overlay uses a fixed neutral
-(black) tint, not per-scheme MD3 "on-surface" color tokens — dynamic
-color (`engine_md3::color::DynamicTheme`, real since M3 Phase 5 step
-11) isn't wired into `paint_node` anywhere yet, for *any* property, not
-just this one; that's a separate, larger, pre-existing gap (real
-scheme-driven rendering), not something to solve as a side effect of
-this phase. `dispatch.rs`'s own `interaction_config()` already
-hardcodes MD3-value opacities the same deliberate way.
+**Handlers stay zero-argument**, matching Phase 4's already-established,
+deliberately narrow convention (`Node.set_on_click`'s existing
+`lambda: ...`/`def bump(self): ...` shape) — a real `Event` struct
+carrying `source`/`data` (§16.2's own fuller sketch) is deferred until a
+real handler needs the extra context; nothing today does.
 
 ## Approach
 
-1. **`engine-render`**: `paint_node` paints, for any node with
-   `Some(interaction)` (after its own kind-specific fill, before
-   recursing into children — state layers sit under content, matching
-   real MD3): a flat hover overlay (`with_opacity(black, hover_opacity.
-   current)` filled over the node's own rounded-rect bounds, a no-op at
-   `0.0`) and each active ripple (`push_layer` clipped to the ripple's
-   own growing circle, filled with the node's own rect — the
-   intersection of clip and fill path is exactly the node-bounded,
-   circle-clipped ripple, no nested clipping needed).
-   New `engine-render` pixel-readback test: a real `Tree::dispatch`
-   press on an opted-in node, rendered through the real
-   `build_tree_scene`, shows the ripple color at the press point;
-   released and ticked past its duration, the pixel returns to the
-   node's own background.
-2. **`engine-py`**: `Node.enable_interaction()` — calls
-   `Tree::interaction_mut(self.id)` once, mirroring `set_on_click`'s own
-   shape (a thin, direct call into the existing `engine-core` API,
-   nothing new invented).
-3. **Tests**: pytest coverage that `enable_interaction()` doesn't raise
-   and a `Window.click()` on an opted-in node doesn't crash — the
-   definitive pixel-level proof lives in the new `engine-render` test
-   (step 1), matching this project's established split (Rust crate
-   tests carry pixel proof; Python tests prove FFI wiring), the same
-   way `test_splitter.py` deferred its own pixel proof to
-   `splitter_drag_dispatch.rs`. A new real windowed example,
-   `examples/ripple_button.py`, mirroring `resizable_panes.py`'s own
-   stated pattern: automatable proof stops at construction/rendering,
-   a human running it interactively sees the actual ripple/hover.
+1. **`engine-core`**: `EventKind { Click, HoverEnter, HoverExit }`
+   (`Clone, Copy, PartialEq, Eq, Hash`) in `input.rs`. `DispatchOutcome`
+   gains `HoverChanged { old: Option<NodeId>, new: Option<NodeId> }`.
+   `Tree::dispatch`'s `PointerMoved` arm captures `self.hovered` before
+   calling `update_hover`, and returns `HoverChanged` when the result
+   actually differs (a genuine transition), `None` otherwise (an
+   unchanged hover is not a new fact to report, matching
+   `update_hover`'s own "repeated call, same result, is a no-op").
+2. **`engine-py`**: rename `click_handlers` → `handlers` (re-keyed by
+   `(NodeId, EventKind)`) across `Node`, `PyWindow`, `View`,
+   `WindowSetup`, `WindowRuntime`. `Node.set_on_click` inserts at
+   `(id, EventKind::Click)` (behavior unchanged). New
+   `Node.set_on_hover_enter`/`set_on_hover_exit` insert at the matching
+   key. `dispatch::run_activation` → `dispatch::run_dispatch_outcome`,
+   extended to also interpret `HoverChanged` (fire the old node's
+   `HoverExit` handler if any, the new node's `HoverEnter` handler if
+   any). New `Window.hover(node)`/`View.hover(node)` — the same
+   no-live-window-needed proof pattern `.click()` established, this
+   time dispatching a `PointerMoved` at the node's own center.
+   `View::_attach`'s handler loop generalizes its single
+   `if event == "on_click"` check into also recognizing
+   `"on_hover_enter"`/`"on_hover_exit"`.
+3. **Tests**: `engine-core` unit tests for `DispatchOutcome::
+   HoverChanged` (mirroring the existing `dispatch_activates_only_...`
+   test shape). New `tests/test_hover_events.py`: a real
+   `Window.hover(node)`/`View.hover(node)` call actually invokes a
+   registered `on_hover_enter`/`on_hover_exit` handler; hovering off a
+   node fires its exit handler; a node with no hover handler registered
+   is a safe no-op (matching `set_on_click`'s own precedent).
 
 ## Files to touch
 
-- `crates/engine-render/src/lib.rs` — `paint_node`.
-- `crates/engine-render/tests/` — new pixel-readback test file.
-- `crates/engine-py/src/node.rs` — new `enable_interaction` method.
-- `tests/test_interaction.py` — new.
-- `examples/ripple_button.py` — new.
+- `crates/engine-core/src/input.rs` — `EventKind`, `DispatchOutcome::
+  HoverChanged`.
+- `crates/engine-core/src/tree.rs` — `dispatch`'s `PointerMoved` arm,
+  new unit tests.
+- `crates/engine-py/src/node.rs`, `window.rs`, `view.rs`, `app.rs`,
+  `dispatch.rs` — the `handlers` rename + hover wiring described above.
+- `tests/test_hover_events.py` — new.
 
 ## Verification
 

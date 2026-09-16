@@ -70,6 +70,21 @@ pub enum InputEvent {
     },
 }
 
+/// M4 Phase 6 (§16.2): the small, real vocabulary of named events a
+/// registered handler can be keyed on -- `Click` (already real since
+/// M4 Phase 1) plus `HoverEnter`/`HoverExit` (§7.3's own named pair,
+/// "fires... through the ordinary handler path... independent of
+/// whether the default MD3 visual [i.e. hover's own opt-in animation]
+/// handles it"). Deliberately not the full `Change`/`Focus` set §16.2's
+/// own text eventually names -- added only when a real bound component
+/// needs one, matching Design Principle 6's own calibration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum EventKind {
+    Click,
+    HoverEnter,
+    HoverExit,
+}
+
 /// The one thing `Tree::dispatch` can't resolve by itself (§2 Design
 /// Principle 6: it's meaning-dependent, not mechanical) -- everything
 /// mechanical (hover, focus movement, ripple-spawn-on-press) already
@@ -84,6 +99,17 @@ pub enum DispatchOutcome {
     /// (call a registered `on_click`, or nothing if none is registered)
     /// is `AppHandler`'s job, not `Tree`'s.
     Activated(crate::NodeId),
+    /// M4 Phase 6 (§7.3): the hovered node genuinely changed this call
+    /// -- `old`/`new` are whichever node was/is hovered, independent of
+    /// whether either one ever opted into `InteractionState` (§7.3's
+    /// own text: the event fires regardless of whether the default
+    /// visual is enabled). Only produced on a real transition, matching
+    /// `update_hover`'s own "repeated call, same result, is a no-op"
+    /// contract -- an unchanged hover is not a new fact to report.
+    HoverChanged {
+        old: Option<crate::NodeId>,
+        new: Option<crate::NodeId>,
+    },
 }
 
 /// §4's own generic dependency-inversion trait: `engine-platform`'s
