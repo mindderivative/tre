@@ -1,95 +1,94 @@
-# Plan: M4 Phase 3 — Real Pointer-Drag Dispatch (§11.5, §11.4)
+# Plan: M4 Phase 4 — Wire `View`'s Declarative Handlers to Real Dispatch (§16.2)
 
-Phases 1-2 (`c761d1c`/`1d6086b`/`b3b179a`) built real pointer/keyboard
-dispatch and real assistive-technology action dispatch end to end. One
-real, explicitly-named gap remains from every earlier splitter/docking
-step: `Tree::set_splitter_position` has existed since M3 step 15 Stage A
-as a direct, programmatic API, with its own real doc comment and every
-later mention of it stating the same thing — "real splitter-drag input
-... needs §11.10 pointer dispatch" (step 15's own `LOG.md`), later
-"still have no `winit`-driven UX wired... nothing calls `set_splitter_
-position`... from a real drag gesture yet" (M4 Phase 1's own `BUILD_
-TRACKER.md` entry). §11.5's own text describes exactly this: "On drag,
-`position`'s tick handler mutates its two adjacent siblings' `layout_
-style`... **used both standalone... and by docking (§11.4) for zone
-resizing — one mechanism, two call sites.**" This phase makes that real
-for the first time: a user can drag a splitter with the mouse, and
-because docking's own zone-resize already reuses `set_splitter_position`
-verbatim (M3 step 15 Stage B), dragging a dock-zone boundary becomes
-real for free, with zero docking-specific code.
+## Context
 
-## Scope
+`View::_attach` (`crates/engine-py/src/view.rs`) validates every declared
+`handlers` entry eagerly (`getattr(viewmodel, method_name)` + a
+callability check) but never registers the validated method anywhere
+real dispatch reaches — confirmed by direct code reading, not
+assumption. The module's own doc comment already named this as its
+scope boundary before M4 existed: "Actually *firing* a handler from a
+real click needs `InputEvent`/`AppHandler` pointer dispatch, which...
+doesn't exist anywhere in this codebase yet." That dispatch now exists
+(M4 Phases 1-3), but `_attach` was never revisited once it landed, so a
+`view.yaml`'s `{on_click: "bump"}` still does nothing when actually
+clicked today.
 
-**In scope:** real mouse-driven splitter *resizing* — press on a
-`NodeKind::Splitter`, drag, release. This is what §11.5's own text
-describes and what every earlier step's "known gap" note actually
-named.
+## Investigation before writing code
 
-**Explicitly out of scope, stated here:** "drag-to-rearrange docking"
-in the sense of picking up a whole dock *panel* and moving it to a
-different zone (a genuinely different feature — reordering/redocking,
-not resizing) is not touched. Nothing in this codebase models that yet,
-and it's a substantially larger feature (drop-target detection, panel
-reparenting mid-drag) than this phase's own real, narrow claim.
+Re-read §16.2 in full. Confirmed directly against the current
+codebase (not assumed):
 
-## Design
+- `View` owns its own standalone `Tree` (`View::new` calls `Tree::new()`
+  directly) — it is **not** embedded into any `PyWindow`'s tree, and has
+  no width/height/render-loop concept at all. Giving `View` a real,
+  live winit-driven render loop (parity with `PyWindow`'s whole
+  lifecycle) is real, separate, much larger work than this phase's
+  actual, confirmed gap — not manufactured here ahead of a stated need.
+- `View` already has its own `click_handlers: Rc<RefCell<HashMap<NodeId,
+  Py<PyAny>>>>` (added in an earlier session for GC-safety consistency)
+  and its own `__traverse__`/`__clear__` visiting it — the storage
+  already exists, just never populated.
+- `Node::set_on_click` (`node.rs`) is the exact existing mechanism that
+  inserts into a `click_handlers` map and adds `Action::Click` to
+  `access.actions` — already reused verbatim by `apply_binding_value`'s
+  sibling code for `animate()`. The same reuse pattern applies here.
+- `Reconciler::root() -> NodeId` already exists (`engine-spec`), giving
+  `View` the same "one root `NodeId`" shape `PyWindow.root` has, without
+  needing a new field.
+- `PyWindow.click(node)` (M4 Phase 1 step 3) is the established,
+  no-live-window-needed pattern for proving a dispatch path fires for
+  real: compute layout, find the node's real center, dispatch a
+  primary press+release pair there. `View` needs the identical method,
+  using `AvailableSpace::MaxContent` in place of `PyWindow`'s own
+  fixed width/height (every existing test `view.yaml` already declares
+  an explicit `style.width`/`style.height` on its root widget, so
+  `MaxContent` sizing is correct, not a workaround).
 
-**`Tree` gains a `dragging: Option<NodeId>` field** (the splitter
-currently being dragged, if any) alongside the existing `pressed`/
-`hovered` fields, same lifecycle shape.
+**Scope narrowed accordingly:** this phase does NOT give `View` a real
+render loop or embed it into `PyWindow`. It wires the one thing that's
+actually broken — `on_click` handlers never reaching real dispatch —
+using the same no-window-needed proof pattern M4 Phase 1 already
+established, and defers "make a YAML view actually run in a live
+window" as separate, future, larger work (not yet named by any real
+stated need).
 
-**A new private `splitter_geometry(&self, id) -> (NodeId, NodeId, bool,
-f64)` helper** factors the "find a splitter's own flanking siblings,
-its parent's flex axis, and their current combined extent" logic
-already inlined in `set_splitter_position` out into something a new
-method can also call — not duplicated a second time.
+## Approach
 
-**`Tree::update_drag(&mut self, point, now)`** (new): if `self.dragging`
-names a real splitter, converts `point`'s coordinate along the parent's
-own flex axis into a 0.0..=1.0 fraction relative to the left sibling's
-own absolute start and the flanking siblings' combined extent (which
-stays constant during a drag — the two siblings only trade extent
-between each other, never grow/shrink together), then calls the
-*existing* `set_splitter_position` with that fraction — the real "one
-mechanism, reused, not reimplemented" claim §11.5's own text makes.
+1. **`View::_attach`** — after validating a handler, if `event ==
+   "on_click"`, look up the widget's `NodeId` via
+   `self.reconciler.id_of(widget_id)` and call the exact same
+   `Node::set_on_click` mechanism `Node.set_on_click` exposes, via a
+   temporary `Node` value (the same construction `apply_binding_value`
+   already uses for `animate`), passing the validated, already-`getattr`'d
+   bound method. Other declared event names stay validate-only, matching
+   §16.2's own "generalizing to whatever named events a `NodeKind`
+   exposes" — not manufactured ahead of Phase 6's `EventKind` work.
+2. **`View.click(node, py)`** — new method on `View`, mirroring
+   `PyWindow.click` exactly: compute layout over `self.reconciler.root()`
+   with `AvailableSpace::MaxContent` on both axes, find `node`'s real
+   center via `absolute_position`/`layout()`, dispatch a primary
+   press+release pair there, running `dispatch::run_activation` against
+   `self.click_handlers` for each.
+3. **Tests** — new `tests/test_view_handlers.py`: a `view.yaml` with
+   `{on_click: "bump"}`, a `ViewModel` whose `bump` mutates a `Signal`,
+   `view.click(view.node("root"))`, assert the `Signal`'s value actually
+   changed — proving a real dispatched click invokes the bound method,
+   not just that `_attach` validated it exists. Also cover: a handler
+   for a non-`on_click` event name still validates but a click doesn't
+   invoke it (no mechanism exists yet); an uncaught exception in a
+   real `bump` is caught the same way `Window.click()`'s already is
+   (`PyErr::print`, §9's policy), not propagated.
 
-**`Tree::dispatch` changes**: `PointerPressed` on a `NodeKind::Splitter`
-with the primary button sets `self.dragging = Some(node)` (alongside
-its existing `self.pressed` press-tracking and ripple-spawn, reusing
-the same hit-test call, not a second one). `PointerMoved` calls
-`update_drag` whenever a drag is active, in addition to its existing
-`update_hover` call. `PointerReleased` with the primary button clears
-`self.dragging` (a real mouse-up always ends a drag, wherever it
-happens — not conditioned on hitting the splitter again, matching real
-OS drag semantics: the pointer can leave the splitter's own thin hit
-region mid-drag and the drag must still track it).
+## Files to touch
+
+- `crates/engine-py/src/view.rs` — `_attach`'s handler loop, new
+  `click` method.
+- `tests/test_view_handlers.py` — new.
 
 ## Verification
 
-New `engine-core` unit tests, each isolating one claim: pressing a
-splitter and moving the pointer resizes the two flanking siblings
-continuously (not just once, like `set_splitter_position`'s own
-existing test proves — this proves the *live-follows-the-cursor*
-claim, sampling mid-drag, not just before/after); releasing ends the
-drag (a further pointer move afterward must not keep resizing);
-pressing on a non-splitter node never starts a drag (dragging a button
-must not accidentally move some unrelated splitter); a drag started
-with a non-primary button never happens. `cargo test --workspace`,
-`cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt
---check` all clean.
-
-A real pixel-readback test in `engine-render`, matching `splitter_drag.
-rs`'s own existing shape but driven through `Tree::dispatch`'s real
-`PointerPressed`/`PointerMoved`/`PointerReleased` sequence instead of a
-direct `set_splitter_position` call -- the concrete, on-screen proof
-that real dispatch (not just the underlying mechanism) moves a real
-rendered pane boundary.
-
-## Not this phase (stated, not silent)
-
-Two-phase press/hold/release ripple timing (`interaction.rs`'s own
-long-stated deferred scope) and `HoverEnter`/`HoverExit` firing through
-`engine-spec`'s handler path (§7.3's own text) are both real, separate
-pieces of work M4's overall scope still leaves open -- neither is
-touched here; this phase is scoped to the single most concretely-named,
-repeatedly-flagged gap.
+- `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D
+  warnings`, `cargo fmt --check`.
+- `maturin develop && python -m pytest tests/ -v` — full suite plus the
+  new file.

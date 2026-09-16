@@ -133,7 +133,7 @@ impl Node {
     /// free, not just mouse-clickable; §10's own "keyboard operability
     /// ships from day one" stance applied to the one call site that
     /// actually makes a node interactive for the first time.
-    fn set_on_click(&self, callback: Py<PyAny>) {
+    pub(crate) fn set_on_click(&self, callback: Py<PyAny>) {
         self.click_handlers.borrow_mut().insert(self.id, callback);
         if let Some(node) = self.tree.borrow_mut().get_mut(self.id)
             && !node.access.actions.contains(&Action::Click)

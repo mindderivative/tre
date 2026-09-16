@@ -8,14 +8,20 @@
 //!
 //! Scoped narrower than §16.2's full picture in two stated ways:
 //!
-//! - Handler wiring stops at eager validation (`getattr(viewmodel,
-//!   name)` must resolve to something callable, checked at `_attach()`
-//!   time, matching "validated eagerly... not discovered on first
-//!   use"). Actually *firing* a handler from a real click needs
-//!   `InputEvent`/`AppHandler` pointer dispatch, which -- checked
-//!   directly -- doesn't exist anywhere in this codebase yet (the same
-//!   finding steps 7/9/11 already made for keyboard/pointer/theme
-//!   dispatch respectively).
+//! - **Updated, M4 Phase 4:** `on_click` handlers are now wired for
+//!   real, not just eagerly validated -- `_attach` registers the
+//!   validated method into the same `click_handlers`/`Tree::dispatch`
+//!   mechanism `Node.set_on_click` already uses (M4 Phase 1 step 3),
+//!   and `View.click(node)` (below) proves it fires without needing a
+//!   live window, the same pattern `Window.click` established. Two
+//!   real, stated narrowings remain: (1) only `on_click` is wired --
+//!   other declared event names still validate but reach no real
+//!   mechanism, since no `EventKind` beyond a bare "activated" exists
+//!   yet (that's M4 Phase 6's own scope); (2) `View` is still never
+//!   embedded into a live `winit`-driven window -- it has no width/
+//!   height/render-loop concept of its own, and giving it one is real,
+//!   separate, larger work this phase doesn't need to do to close the
+//!   actual confirmed gap (handlers never reaching dispatch at all).
 //! - Binding application supports `opacity`/`corner_radius` -- the two
 //!   numeric `Animated<f64>` properties a resolved `engine_spec::
 //!   Value::Int`/`Float` maps onto directly through the existing
@@ -35,13 +41,16 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use engine_core::{NodeId, Tree};
+use engine_core::{InputEvent, NodeId, PointerButton, Tree};
 use engine_spec::{Expression, Reconciler, WidgetSpec, evaluate, parse_binding, parse_view};
+use peniko::kurbo::Point;
 use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
+use taffy::prelude::{AvailableSpace, Size};
 
 use crate::binding::PyViewModelResolver;
+use crate::dispatch::{interaction_config, run_activation};
 use crate::node::Node;
 
 thread_local! {
@@ -240,6 +249,34 @@ impl View {
                      not callable"
                 )));
             }
+
+            // M4 Phase 4: wires the validated method into the same real
+            // dispatch mechanism `Node.set_on_click` already uses --
+            // `_attach` used to stop at validation, so a real click on
+            // this widget did nothing. Only `on_click` is wired today,
+            // matching §16.2's own "generalizing to whatever named
+            // events a NodeKind exposes" -- other declared event names
+            // still validate (so a typo still fails at `_attach()` time)
+            // but have no real mechanism to reach yet until Phase 6's
+            // `EventKind` work exists. Called with zero arguments, the
+            // same established convention `Node.set_on_click`/
+            // `dispatch::run_activation` already use (see
+            // `tests/test_click_dispatch.py`) -- a real `Event` argument
+            // is that phase's own scope, not manufactured here.
+            if event == "on_click" {
+                let node_id = self.reconciler.id_of(widget_id).ok_or_else(|| {
+                    PyValueError::new_err(format!(
+                        "widget {widget_id:?}: handler {event:?} names a widget id never built \
+                         into the Tree"
+                    ))
+                })?;
+                let node = Node {
+                    id: node_id,
+                    tree: self.tree.clone(),
+                    click_handlers: self.click_handlers.clone(),
+                };
+                node.set_on_click(attr.unbind());
+            }
         }
 
         for (widget_id, property, raw_expr) in &self.bindings {
@@ -290,6 +327,68 @@ impl View {
         }
 
         Ok(())
+    }
+
+    /// M4 Phase 4 (§16.2): the same no-live-window-needed proof pattern
+    /// `Window.click` (M4 Phase 1 step 3) already established, adapted
+    /// for a `View`'s own shape -- `View` has no window width/height of
+    /// its own (it's never embedded into a `PyWindow`, see this module's
+    /// own doc comment), so layout is computed with `AvailableSpace::
+    /// MaxContent` on both axes rather than a fixed size. Every existing
+    /// `view.yaml` already declares an explicit `style.width`/`style.
+    /// height` on its root widget (see `tests/test_view_binding.py`), so
+    /// this sizes correctly rather than needing a workaround. Computes
+    /// layout, finds `node`'s real center, and dispatches a primary
+    /// press+release pair there -- exactly what a real mouse click would
+    /// produce, proving a handler `_attach` wired (above) actually
+    /// fires, not just that it validated.
+    fn click(&mut self, node: PyRef<'_, Node>, py: Python<'_>) {
+        let root = self.reconciler.root();
+        let point = {
+            let mut tree = self.tree.borrow_mut();
+            tree.compute_layout(
+                root,
+                Size {
+                    width: AvailableSpace::MaxContent,
+                    height: AvailableSpace::MaxContent,
+                },
+            );
+            let (x, y) = tree.absolute_position(node.id);
+            let layout = tree.layout(node.id);
+            Point::new(
+                x + f64::from(layout.size.width) / 2.0,
+                y + f64::from(layout.size.height) / 2.0,
+            )
+        };
+
+        let now = std::time::Instant::now();
+        let config = interaction_config();
+        // Each `dispatch` call's own `self.tree.borrow_mut()` is a
+        // short-lived temporary, released before `run_activation` runs
+        // -- matches `Window.click`'s own reasoning: a handler that
+        // itself touches this same `Tree` would otherwise panic on a
+        // re-entrant borrow.
+        let press = self.tree.borrow_mut().dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: point,
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        run_activation(&self.click_handlers, press, py);
+
+        let release = self.tree.borrow_mut().dispatch(
+            root,
+            InputEvent::PointerReleased {
+                position: point,
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        run_activation(&self.click_handlers, release, py);
     }
 
     /// Same real GC-cycle-safety obligation `PyWindow` already carries
