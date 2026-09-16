@@ -299,3 +299,45 @@ fn hover_only_paints_after_a_real_opt_in_even_though_the_pointer_move_is_real() 
         );
     });
 }
+
+/// M7 Phase 3 (§7.1): before this phase, the hover/ripple overlay was a
+/// hardcoded `Color::from_rgba8(0, 0, 0, 255)` -- any tint blended over
+/// white only ever produced *gray*, never a real hue. Sets a real,
+/// non-black `InteractionState::tint` directly (the same field `engine-
+/// py::Window.set_theme`/`Node.enable_interaction` populate) and proves
+/// `paint_node` actually reads it: a red-channel-dominant overlay must
+/// pull the green/blue channels down further than red, something a
+/// hardcoded gray blend could never produce.
+#[test]
+fn hover_overlay_paints_the_real_interaction_tint_not_a_hardcoded_gray() {
+    pollster::block_on(async {
+        let (width, height) = (120u16, 60u16);
+        let (mut tree, root) = white_rect_tree(width, height);
+        let cfg = config();
+        let now = Instant::now();
+
+        tree.interaction_mut(root).unwrap().tint = Color::from_rgba8(0xFF, 0x00, 0x00, 0xFF);
+        tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(60.0, 30.0),
+            },
+            &cfg,
+            now,
+        );
+        tree.tick_all(now + Duration::from_millis(100));
+
+        let (data, bpr) = render(&tree, root, width, height).await;
+        let center = pixel_at(&data, bpr, 60, 30);
+        assert!(
+            center[0] > center[1] && center[0] > center[2],
+            "a red interaction tint must leave the red channel visibly higher than green/blue \
+             (a hardcoded black/gray tint would keep all three equal), got {center:?}"
+        );
+        assert!(
+            center[1] < 0xFF,
+            "the overlay must still actually paint something (green channel pulled down from \
+             the plain white background), got {center:?}"
+        );
+    });
+}

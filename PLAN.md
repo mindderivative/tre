@@ -1,103 +1,144 @@
-# Plan: M7 Phase 2 — Elevation → Real Shadow Rendering (§7.2)
+# Plan: M7 Phase 3 — Dynamic Color, Wired for Real (§7.1, completing §7.3)
 
-## Context
+Corresponds to `BUILD_TRACKER.md` M7 Phase 3, the milestone's own
+scoping (three steps): (1) a `Window`-level theme concept in
+`engine-py`, generated via the real `DynamicTheme::from_seed`; (2)
+ripple/hover's hardcoded black tint becomes the real MD3 "on-surface"
+scheme role; (3) real live theme switching — `winit`'s `ThemeChanged`
+forwarded through the real `InputEvent`/dispatch path M4 already built.
 
-`node.paint.elevation.current` is a real, animatable, Python-settable
-`PaintProperties` field that `paint_node` never reads — no node has
-ever actually painted a shadow, despite `build_shadow_scene` (M3 step
-8) already proving `vello_hybrid::Scene::fill_blurred_rounded_rect`
-works against this pinned version.
+## Investigation (facts verified before writing code)
 
-## Investigation before writing code
+- `engine-md3::color::ColorScheme` is a real, already-proven 49-field
+  struct with a `role(&self, name: &str) -> Option<Color>` resolver and
+  `DynamicTheme { light, dark }` with `DynamicTheme::from_seed(seed:
+  Color) -> Self` — confirmed by reading `crates/engine-md3/src/
+  color.rs` directly, including its own test suite proving it matches
+  `material-colors`' native output.
+- `engine-core::InteractionState` (`crates/engine-core/src/
+  interaction.rs`) currently has `ripples`, `hover_opacity`,
+  `focus_ring` — no color field. `Tree::interaction_mut` is the single
+  lazy-creation choke point (`get_or_insert_with(InteractionState::
+  new)`), confirmed via grep — most nodes never get one until a real
+  opt-in call.
+- `engine-render/src/lib.rs`'s ripple/hover paint arm (`paint_node`,
+  ~line 405-439) hardcodes `Color::from_rgba8(0, 0, 0, 255)` twice (hover
+  fill, ripple fill) — its own doc comment already forward-references
+  this exact phase: "dynamic color... isn't wired into `paint_node`
+  anywhere yet... that's a separate, larger, pre-existing gap, not
+  solved here as a side effect [of M7 Phase 2]." `engine-render` cannot
+  depend on `engine-md3` (§4's dependency diagram, re-confirmed in Phase
+  2) — so it must receive an already-resolved plain `Color`, not an MD3
+  concept.
+- `engine-py::Node`'s single opt-in method is `enable_interaction()`
+  (`node.rs`), a thin call into `Tree::interaction_mut` — the exact spot
+  a real theme color needs to land at opt-in time.
+- `Node` currently shares `handlers`/`context_menus` with its owning
+  `PyWindow` via `Rc<RefCell<...>>` clones threaded through every
+  construction site (`window.rs` ×4, `view.rs` ×3, confirmed via grep).
+  A new shared theme handle follows the identical, already-established
+  pattern.
+- `View` (`view.rs`, YAML-driven) has its own separate, pre-existing
+  color-resolution path (`engine_spec::build::resolve_color`, tries a
+  scheme role name then falls back to a literal color) — untouched by
+  this phase. `BUILD_TRACKER.md`'s own Phase 3 scope text says
+  "Window/App-level theme concept" specifically — `View`'s nodes get a
+  fresh, private (non-shared) theme handle at each of its 3 construction
+  sites, so nothing about `View` changes behavior; only `Window`-created
+  nodes ever see a real theme.
+- `engine_core::InputEvent` (`input.rs`) already has a real precedent
+  for "plumbing only, `Tree::dispatch` is a true no-op for it" —
+  `Scroll` (M4 Phase 8, confirmed at `tree.rs:1174`,
+  `InputEvent::Scroll { .. } => DispatchOutcome::None`). `ThemeChanged`
+  follows the identical shape: a `Tree`-level no-op, meaningful only to
+  `engine-py`'s own dispatch closure.
+- `engine-platform`'s `on_input` closure (`lib.rs`) already translates
+  `WindowEvent::CursorMoved`/`MouseInput`/`KeyboardInput`/`MouseWheel`
+  into `InputEvent` variants, right before a final `_ => {}` catch-all
+  (confirmed at `lib.rs:470-519`) — the exact, already-real mechanism
+  the milestone's own scope text names.
+- Verified directly against the pinned `winit = "0.30.13"` source
+  (`~/.cargo/git/checkouts/winit-.../src/event.rs`): `WindowEvent::
+  ThemeChanged(Theme)` is real, `Theme` is `{ Light, Dark }`. Its own
+  doc comment: "Platform-specific: iOS / Android / X11 / Wayland /
+  Orbital: Unsupported." This means live OS theme switching will not
+  fire on this machine's own Linux/X11 or Wayland session — a real,
+  worth-stating platform limitation, not a bug in this wiring. `Window.
+  set_theme()` itself (steps 1/2) works identically on every platform;
+  only the *automatic* OS-driven switch (step 3) is unsupported here.
+- `engine-py::App::run`'s `WindowSetup`/`WindowRuntime` structs
+  (`app.rs`) already extract `tree`/`handlers`/`context_menus`/`dock`
+  from each `PyWindow` once, up front, into plain `Rc<RefCell<...>>`
+  clones the `winit` closures capture — a shared theme handle threads
+  through identically, extracted from `window.theme.clone()`.
 
-- **`engine-render` cannot depend on `engine-md3`** — confirmed
-  directly from `ARCHITECTURE.md` §4's own dependency diagram: the only
-  edge into `engine-render` is `H --> D` (`engine-core`); there is no
-  `H --> G` (`engine-md3`) edge anywhere in the diagram or its prose.
-  `engine-md3` hands out *resolved* `engine-core` values to `engine-py`/
-  `engine-spec`; it never feeds `engine-render` directly. This matches
-  the already-established real precedent for ripple/hover (M4 Phase 5):
-  that state-layer math (a hardcoded black tint, not a resolved MD3
-  scheme token) is computed directly inside `paint_node`, in
-  `engine-render` itself, not delegated to `engine-md3`. Elevation
-  follows the identical shape: the shadow-geometry math lives directly
-  in `engine-render`, not a new `engine-md3` module.
-- **The exact MD3 elevation shadow values had to be verified against a
-  real, authoritative source, not recalled or guessed.** A first web
-  source gave single-layer shadow values explicitly marked "alpha-stage
-  ... may change before stable release" — rejected. Found and fetched
-  the real, current, authoritative source directly: Material Web's own
-  `elevation/internal/_elevation.scss` (the actual production CSS
-  Google ships), which documents the exact per-level values in its own
-  comments and encodes them as a continuous, animatable piecewise-linear
-  formula in `--_level` (not a hard integer lookup) — exactly the shape
-  needed for `PaintProperties.elevation` being a real `Animated<f64>`,
-  not a discrete 0-5 enum. Two stacked shadow layers per elevation,
-  confirmed: a "key" shadow (opacity 0.3, no spread) and an "ambient"
-  shadow (opacity 0.15, with spread) — verified by hand-checking the
-  formula reproduces the documented value at all 6 integer levels for
-  both layers before trusting it.
-- **The CSS blur-radius → Gaussian standard-deviation conversion also
-  needed real verification**, not assumption: confirmed against the W3C
-  CSS Backgrounds and Borders Module Level 3 spec directly — "a Gaussian
-  blur with a standard deviation equal to half the blur radius." So
-  `std_dev = blur_px / 2.0`, not `blur_px` directly.
-- **The shadow color doesn't need to wait for Phase 3's dynamic-color
-  wiring.** MD3's `shadow` color role is computed from the neutral
-  palette's own tone-0 (blackest) position — confirmed via search,
-  constant black regardless of the active theme's seed color, unlike
-  `on-surface` (ripple/hover's own still-open gap). Real black
-  (`Color::from_rgba8(0, 0, 0, ...)`), scaled by each layer's own
-  0.3/0.15 opacity, is the *correct* MD3 answer today, not a
-  placeholder standing in for Phase 3.
-- **Applies uniformly to every `NodeKind`, not just `Rect`/`Splitter`**
-  — `elevation` is a universal `PaintProperties` field, and a shadow is
-  just "draw two blurred rects at this node's own bounds, behind
-  everything else, if elevation > 0," independent of what the node
-  actually draws on top. Painted once, at the very top of `paint_node`
-  (before the `match &node.kind` that draws the node's own content),
-  the same "zero special-casing" shape transform composition (M5 Phase
-  1) and ripple/hover (M4 Phase 5) already established. Skipped
-  entirely when `elevation <= 0.0` (matching level 0's own real
-  `0px 0px 0px 0px` values) — not a degenerate zero-blur draw call.
+## Design
 
-## Approach
+- New `engine-core::interaction::InteractionState.tint: peniko::Color`
+  field, defaulting to real black (`Color::from_rgba8(0, 0, 0, 255)`) in
+  `::new()` — byte-for-byte the current hardcoded behavior when no
+  theme is ever set, so this is additive, not a behavior change by
+  itself.
+- New `Tree::set_all_interaction_tints(&mut self, tint: Color)` —
+  iterates every node's `Option<InteractionState>`, updates `tint` on
+  each `Some`. The mechanism live theme switching (step 3) and
+  `Window.set_theme` (step 1) both reuse to update *already-opted-in*
+  nodes retroactively.
+- New `InputEvent::ThemeChanged { dark: bool }` variant; `Tree::dispatch`
+  gets one new no-op arm (`DispatchOutcome::None`), matching `Scroll`'s
+  own precedent exactly.
+- `engine-render::paint_node`'s two hardcoded
+  `Color::from_rgba8(0, 0, 0, 255)` ripple/hover fills become
+  `interaction.tint` — no other change to the paint code's shape.
+- `engine-platform`: one new `WindowEvent::ThemeChanged(theme) =>` arm
+  in the existing translation match, calling `on_input(window_id,
+  InputEvent::ThemeChanged { dark: theme == winit::window::Theme::
+  Dark })`.
+- New `engine-py::window::ThemeState { theme: Option<DynamicTheme>,
+  dark: bool }` plus `on_surface(&self) -> Color` (returns real black
+  when `theme` is `None`, matching current default; otherwise the
+  active scheme's real `on_surface` field) and `type SharedTheme =
+  Rc<RefCell<ThemeState>>`.
+- `PyWindow` gains `theme: SharedTheme`; new method `set_theme(seed:
+  (u8,u8,u8,u8), dark: bool = false)` builds `DynamicTheme::from_seed`,
+  stores it + the given mode, then calls `Tree::
+  set_all_interaction_tints` with the freshly resolved `on_surface` —
+  so nodes that already opted into interaction before the theme was set
+  pick it up immediately, matching what a real live switch must also do.
+- `Node` gains `theme: SharedTheme`; `enable_interaction` reads
+  `theme.borrow().on_surface()` and sets it on the just-opted-in
+  `InteractionState` immediately, so opting in *after* a theme was set
+  doesn't wait for another theme-change event to pick up the real color.
+- All `Node { ... }` construction sites (`window.rs` ×4) pass
+  `self.theme.clone()`; `view.rs` ×3 pass a fresh, private `Rc::new(
+  RefCell::new(ThemeState::default()))` each — `View` keeps its
+  existing, separate, untouched color story.
+- `App::run`'s `WindowSetup`/`WindowRuntime` gain `theme: SharedTheme`,
+  extracted from `window.theme.clone()` the same way `dock`/
+  `context_menus` already are. The `on_input` closure gets one new
+  match arm on the raw `event` (alongside the existing dock-drag match):
+  `InputEvent::ThemeChanged { dark } =>` updates `runtime.theme`'s
+  `dark` flag, recomputes `on_surface()`, and calls `Tree::
+  set_all_interaction_tints` — the real live-switch path.
 
-1. **`engine-render/src/lib.rs`**: two private functions,
-   `key_shadow_geometry(level: f64) -> (f32 offset_y, f32 blur)` and
-   `ambient_shadow_geometry(level: f64) -> (f32 offset_y, f32 blur, f32
-   spread)`, transcribing Material Web's own verified piecewise-linear
-   formula exactly (each term individually commented with which real
-   documented level value it reproduces). `paint_node` gains a shadow-
-   painting step before its `match`: if `elevation > 0.0`, paints the
-   ambient layer then the key layer (ambient first, matching real
-   `box-shadow` stacking order — later shadows paint on top), each via
-   `Scene::fill_blurred_rounded_rect` with `std_dev = blur / 2.0`, the
-   node's own local `(0, 0, w, h)` rect shifted by `offset_y` and (for
-   ambient) inflated by `spread`, using its own `corner_radius`.
-2. **New `engine-render` pixel-readback test**: an elevated `Rect`
-   paints real shadow pixels below/around it (not just the rect's own
-   fill), and a `Rect` with `elevation == 0.0` paints no shadow at all
-   (byte-for-byte identical to a plain fill, the same "provably a
-   no-op" standard every additive M5/M7 feature has been held to).
-3. **New `engine-core` unit tests** (if the geometry helpers are more
-   naturally tested in isolation): the piecewise formula reproduces
-   Material Web's own documented value at each of the 6 real integer
-   levels, for both layers — the same "match the real spec" rigor M7
-   Phase 1's own `Emphasized` landmark test used.
+## Verification plan
 
-## Files to touch
-
-- `crates/engine-render/src/lib.rs` — shadow geometry helpers,
-  `paint_node` wiring, new pixel test.
-
-## Verification
-
-- `cargo test --workspace`, `cargo clippy --workspace --all-targets --
-  -D warnings`, `cargo fmt --check`.
-- Full pre-existing pixel-readback suite must stay green unmodified —
-  every existing node has `elevation.current == 0.0` by default
-  (`PaintProperties::new`'s own signature), so this must be a true
-  no-op for all of them.
-- `maturin develop && python -m pytest tests/ -v` plus all examples run
-  (no `engine-py` changes expected, but confirmed, not assumed).
+- `cargo test --workspace --release`, `cargo clippy --workspace
+  --all-targets -- -D warnings`, `cargo fmt --check`.
+- New Rust tests: `InteractionState` defaults to black tint (no
+  behavior change); `Tree::set_all_interaction_tints` updates only
+  opted-in nodes, leaves not-opted-in nodes' `interaction` as `None`;
+  `Tree::dispatch(ThemeChanged)` returns `DispatchOutcome::None` and
+  touches nothing else; a pixel-level `engine-render` test proving a
+  non-black tint actually paints (mirroring `elevation_shadow.rs`'s own
+  render-to-texture-then-readback discipline).
+- `engine-platform`: a unit test on the translation function/match arm
+  proving `Theme::Dark`/`Theme::Light` map to `dark: true`/`false`
+  (matching this crate's own existing `translate_pointer_button`/
+  `translate_key` test-coverage precedent), without needing a real
+  window.
+- `maturin develop --release` + `python -m pytest tests/ -q` + all
+  examples. New `examples/theme.py`: `Window.set_theme(seed, dark)`,
+  a rect with `enable_interaction()` + `click()`, proving the call
+  chain compiles/runs end-to-end (pixel-level tint proof stays in the
+  Rust test, matching every other example/test split in this codebase).

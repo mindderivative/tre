@@ -98,6 +98,17 @@ pub enum InputEvent {
         delta: ScrollDelta,
         position: Point,
     },
+    /// M7 Phase 3 (§7.1): the OS-level light/dark appearance changed --
+    /// `winit::WindowEvent::ThemeChanged`, translated in `engine-
+    /// platform`. `Tree::dispatch` is a true no-op for this event, the
+    /// same "plumbing only" shape `Scroll` above already established --
+    /// resolving a new theme color and pushing it into every node's
+    /// `InteractionState::tint` is `engine-py`'s own job (`Tree::
+    /// set_all_interaction_tints`), not something `Tree::dispatch`
+    /// itself has the MD3 context to do.
+    ThemeChanged {
+        dark: bool,
+    },
 }
 
 /// M4 Phase 6 (§16.2): the small, real vocabulary of named events a

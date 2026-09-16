@@ -28,6 +28,7 @@
 
 use std::time::{Duration, Instant};
 
+use peniko::Color;
 use peniko::kurbo::Point;
 use smallvec::SmallVec;
 
@@ -84,6 +85,18 @@ pub struct InteractionState {
     pub ripples: SmallVec<[RippleState; 4]>,
     pub hover_opacity: Animated<f64>,
     pub focus_ring: Animated<f64>,
+    /// M7 Phase 3 (§7.1/§7.3): the state layer's own paint color --
+    /// real MD3 uses the "on-surface" scheme role, but this field is
+    /// plain, already-resolved data (Design Principle 6), same as
+    /// `PaintProperties.background`; `engine-render` cannot depend on
+    /// `engine-md3` (§4), so whatever real color this holds has to be
+    /// resolved and pushed in by the app layer (`engine-py::Window.
+    /// set_theme`/`Node.enable_interaction`), never computed here.
+    /// Defaults to real black -- byte-for-byte the hardcoded value
+    /// `engine-render`'s ripple/hover paint used before this phase, so
+    /// a node that opts into interaction with no theme ever set sees
+    /// zero behavior change.
+    pub tint: Color,
 }
 
 impl InteractionState {
@@ -92,6 +105,7 @@ impl InteractionState {
             ripples: SmallVec::new(),
             hover_opacity: Animated::new(0.0),
             focus_ring: Animated::new(0.0),
+            tint: Color::from_rgba8(0, 0, 0, 255),
         }
     }
 
@@ -200,5 +214,17 @@ mod tests {
 
         assert!(state.tick(start + Duration::from_millis(50)));
         assert!(!state.tick(start + Duration::from_millis(200)));
+    }
+
+    #[test]
+    fn new_state_defaults_to_real_black_tint_matching_the_old_hardcoded_value() {
+        let state = InteractionState::new();
+        assert_eq!(
+            state.tint,
+            Color::from_rgba8(0, 0, 0, 255),
+            "a node that opts into interaction with no theme ever set must see the exact same \
+             plain-black ripple/hover color `engine-render` hardcoded before M7 Phase 3, not \
+             some other default"
+        );
     }
 }

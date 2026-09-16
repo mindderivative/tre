@@ -393,21 +393,20 @@ fn paint_node(
     // synthetic single-button scene with no real `Tree` at all. Painted
     // after the node's own fill and before its children, matching real
     // MD3 (a state layer sits under a component's own content, e.g. an
-    // icon/label). A fixed neutral (black) tint, not a per-scheme
-    // MD3 "on-surface" token -- dynamic color (`engine_md3::color::
-    // DynamicTheme`, real since M3 Phase 5 step 11) isn't wired into
-    // `paint_node` anywhere yet, for any property, not just this one;
-    // that's a separate, larger, pre-existing gap, not solved here as a
-    // side effect. `hover_opacity`/each ripple's own `opacity` are
-    // already the real, live, animated 0.0..~0.12 values `engine-core`
-    // computed -- filling with `with_opacity` at that exact value is a
-    // true no-op when it's `0.0`, not a special-cased skip.
+    // icon/label). `interaction.tint` (M7 Phase 3, §7.1) is already an
+    // MD3 "on-surface"-resolved plain `Color` by the time it reaches
+    // here -- `engine-py::Window.set_theme`/`Node.enable_interaction`
+    // resolve it, `engine-render` never touches `engine_md3` (§4).
+    // `hover_opacity`/each ripple's own `opacity` are already the real,
+    // live, animated 0.0..~0.12 values `engine-core` computed -- filling
+    // with `with_opacity` at that exact value is a true no-op when it's
+    // `0.0`, not a special-cased skip.
     if let Some(interaction) = &node.interaction {
         let radius = node.paint.corner_radius.current;
         let bounds = RoundedRect::new(0.0, 0.0, w, h, radius).to_path(0.1);
 
         scene.set_paint(with_opacity(
-            Color::from_rgba8(0, 0, 0, 255),
+            interaction.tint,
             interaction.hover_opacity.current,
         ));
         scene.fill_path(&bounds);
@@ -433,7 +432,7 @@ fn paint_node(
                 None,
                 None,
             );
-            scene.set_paint(Color::from_rgba8(0, 0, 0, 255));
+            scene.set_paint(interaction.tint);
             scene.fill_path(&bounds);
             scene.pop_layer();
         }

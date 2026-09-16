@@ -55,6 +55,7 @@ use taffy::prelude::{AvailableSpace, Size};
 use crate::binding::PyViewModelResolver;
 use crate::dispatch::{HandlerMap, interaction_config, open_context_menu, run_dispatch_outcome};
 use crate::node::Node;
+use crate::window::ThemeState;
 
 thread_local! {
     static RECORDING: RefCell<Option<Vec<Py<PyAny>>>> = const { RefCell::new(None) };
@@ -130,6 +131,7 @@ fn apply_binding_value(
         tree: tree.clone(),
         handlers: Rc::new(RefCell::new(HashMap::new())),
         context_menus: Rc::new(RefCell::new(HashMap::new())),
+        theme: Rc::new(RefCell::new(ThemeState::default())),
     };
     temp_node.animate(property, bound, 0)?;
     tree.borrow_mut().tick_all(std::time::Instant::now());
@@ -230,6 +232,12 @@ impl View {
             tree: self.tree.clone(),
             handlers: self.handlers.clone(),
             context_menus: self.context_menus.clone(),
+            // M7 Phase 3 (§7.1): `View` has no theme concept of its own
+            // in this phase (out of scope -- see `PLAN.md`) -- a fresh,
+            // private, always-`None` instance here means a `View`-
+            // created node's ripple/hover tint stays the same plain
+            // black default it already was, byte-for-byte.
+            theme: Rc::new(RefCell::new(ThemeState::default())),
         })
     }
 
@@ -288,6 +296,7 @@ impl View {
                     tree: self.tree.clone(),
                     handlers: self.handlers.clone(),
                     context_menus: self.context_menus.clone(),
+                    theme: Rc::new(RefCell::new(ThemeState::default())),
                 };
                 // Reuses `Node`'s own real setters verbatim (same
                 // construction `apply_binding_value` already uses for

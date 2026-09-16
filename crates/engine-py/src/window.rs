@@ -12,6 +12,7 @@ use engine_core::{
     Animated, InputEvent, ItemExtent, Key, NodeId, NodeKind, PaintProperties, PointerButton,
     SplitterState, Tree, VirtualListState,
 };
+use engine_md3::DynamicTheme;
 use peniko::Color;
 use peniko::kurbo::Point;
 use pyo3::class::{PyTraverseError, PyVisit};
@@ -25,6 +26,58 @@ use crate::node::Node;
 
 const PADDING: f32 = 16.0;
 const GAP: f32 = 16.0;
+
+/// M7 Phase 3 (§7.1): a `Window`'s own theme, shared -- the same
+/// `Rc<RefCell<...>>`-clone-into-every-`Node`-it-hands-out shape
+/// `handlers`/`context_menus` already use. Holds the *full* `Dynamic
+/// Theme` (both `light`/`dark` schemes), not just the currently active
+/// color, so a real live theme switch (`InputEvent::ThemeChanged`, only
+/// ever carrying a bare `dark: bool`) can re-resolve without needing the
+/// original seed color again.
+///
+/// `theme: None` (the default, before `Window.set_theme` is ever
+/// called) makes `on_surface()` return real black -- byte-for-byte
+/// `InteractionState::new()`'s own hardcoded default, so a `Window`
+/// that never sets a theme sees zero behavior change.
+#[derive(Default)]
+pub(crate) struct ThemeState {
+    theme: Option<DynamicTheme>,
+    dark: bool,
+}
+
+impl ThemeState {
+    /// M7 Phase 3 (§7.1, Step 3): the real live-switch mutator -- called
+    /// from `engine-py::App::run`'s own `on_input` closure on a real
+    /// `InputEvent::ThemeChanged`, the one call site outside this module
+    /// that ever needs to flip which scheme is active.
+    pub(crate) fn set_dark(&mut self, dark: bool) {
+        self.dark = dark;
+    }
+
+    /// MD3's real "on-surface" scheme role -- the only role this phase
+    /// needs (ripple/hover's own tint, §7.3), resolved directly as a
+    /// struct field rather than through `ColorScheme::role("on_surface")`
+    /// -- no string lookup needed when the field name is already known
+    /// at compile time.
+    pub(crate) fn on_surface(&self) -> Color {
+        match &self.theme {
+            Some(theme) => {
+                if self.dark {
+                    theme.dark.on_surface
+                } else {
+                    theme.light.on_surface
+                }
+            }
+            None => Color::from_rgba8(0, 0, 0, 255),
+        }
+    }
+}
+
+/// Shared the same way `HandlerMap`/`context_menus` are -- a `View`'s
+/// own construction sites get a fresh, private, never-`Window`-linked
+/// instance instead (see `view.rs`), matching this phase's own stated
+/// scope: only `Window`-created nodes ever see a real theme.
+pub(crate) type SharedTheme = Rc<RefCell<ThemeState>>;
 
 /// M6 Phase 3 (§8): the real `Position::Absolute` + `taffy::Rect` inset
 /// shape every Rust-level pixel test already uses internally
@@ -109,6 +162,9 @@ pub struct PyWindow {
     /// itself never stores. Plain data, no `Py<PyAny>` involved, the
     /// same reason `context_menus` needs no GC-traversal obligation.
     pub(crate) dock: SharedDockState,
+    /// M7 Phase 3 (§7.1): shared with every `Node` this `Window` hands
+    /// out, the same way `handlers`/`context_menus`/`dock` already are.
+    pub(crate) theme: SharedTheme,
 }
 
 #[pymethods]
@@ -151,7 +207,31 @@ impl PyWindow {
             handlers: Rc::new(RefCell::new(HashMap::new())),
             context_menus: Rc::new(RefCell::new(HashMap::new())),
             dock: Rc::new(RefCell::new(dock::DockState::new())),
+            theme: Rc::new(RefCell::new(ThemeState::default())),
         }
+    }
+
+    /// M7 Phase 3 (§7.1, Step 1): builds a real MD3 `DynamicTheme` from
+    /// `seed` (via the already-proven `DynamicTheme::from_seed`) and
+    /// makes it this `Window`'s active theme -- `dark` picks which of
+    /// the theme's own `light`/`dark` schemes is active now (the same
+    /// choice a real live OS switch, §7.1 Step 3, later flips at
+    /// runtime). Immediately re-resolves and pushes the real "on-
+    /// surface" color into every node that already called `enable_
+    /// interaction()` before this was ever set (`Tree::
+    /// set_all_interaction_tints`) -- a node opting in *after* this call
+    /// picks up the same color at opt-in time instead (`Node.
+    /// enable_interaction`).
+    #[pyo3(signature = (seed, dark=false))]
+    fn set_theme(&self, seed: (u8, u8, u8, u8), dark: bool) {
+        let (r, g, b, a) = seed;
+        let dynamic = DynamicTheme::from_seed(Color::from_rgba8(r, g, b, a));
+        let mut state = self.theme.borrow_mut();
+        state.theme = Some(dynamic);
+        state.dark = dark;
+        let tint = state.on_surface();
+        drop(state);
+        self.tree.borrow_mut().set_all_interaction_tints(tint);
     }
 
     /// §14 step 6's own "node creation" -- one shape (a colored rect, a
@@ -187,6 +267,7 @@ impl PyWindow {
             tree: self.tree.clone(),
             handlers: self.handlers.clone(),
             context_menus: self.context_menus.clone(),
+            theme: self.theme.clone(),
         }
     }
 
@@ -240,6 +321,7 @@ impl PyWindow {
             tree: self.tree.clone(),
             handlers: self.handlers.clone(),
             context_menus: self.context_menus.clone(),
+            theme: self.theme.clone(),
         }
     }
 
@@ -530,6 +612,7 @@ impl PyWindow {
             tree: self.tree.clone(),
             handlers: self.handlers.clone(),
             context_menus: self.context_menus.clone(),
+            theme: self.theme.clone(),
         }
     }
 
@@ -651,6 +734,7 @@ impl PyWindow {
             tree: self.tree.clone(),
             handlers: self.handlers.clone(),
             context_menus: self.context_menus.clone(),
+            theme: self.theme.clone(),
         }
     }
 

@@ -34,7 +34,7 @@ use winit::window::{Window, WindowId};
 
 use crate::dispatch::{HandlerMap, interaction_config, open_context_menu, run_dispatch_outcome};
 use crate::dock::{self, SharedDockState};
-use crate::window::PyWindow;
+use crate::window::{PyWindow, SharedTheme};
 
 #[pyclass(unsendable)]
 pub struct App {
@@ -63,6 +63,11 @@ struct WindowSetup {
     context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
     /// M4 Phase 9 (§11.4): real docking state, extracted the same way.
     dock: SharedDockState,
+    /// M7 Phase 3 (§7.1): the window's own theme, extracted the same
+    /// way -- the real live-switch path (`on_input`'s new `ThemeChanged`
+    /// arm, below) needs to mutate it, so it stays a shared handle,
+    /// never copied to a plain snapshot.
+    theme: SharedTheme,
 }
 
 struct GpuState {
@@ -133,6 +138,7 @@ struct WindowRuntime {
     handlers: HandlerMap,
     context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
     dock: SharedDockState,
+    theme: SharedTheme,
 }
 
 #[pymethods]
@@ -177,6 +183,7 @@ impl App {
                     handlers: window.handlers.clone(),
                     context_menus: window.context_menus.clone(),
                     dock: window.dock.clone(),
+                    theme: window.theme.clone(),
                 }
             })
             .collect();
@@ -214,6 +221,7 @@ impl App {
                         handlers: setup.handlers.clone(),
                         context_menus: setup.context_menus.clone(),
                         dock: setup.dock.clone(),
+                        theme: setup.theme.clone(),
                     },
                 );
             },
@@ -330,6 +338,21 @@ impl App {
                         button: PointerButton::Primary,
                     } => {
                         dock::end_drag_at(&runtime.dock, &runtime.tree, runtime.root, position);
+                    }
+                    // M7 Phase 3 (§7.1, Step 3): the real, winit-driven
+                    // live theme switch -- `Window.set_theme`'s own
+                    // no-live-window-needed counterpart, this is where
+                    // an actual OS appearance change reaches. Updates
+                    // which of the theme's two schemes is active, then
+                    // re-pushes the freshly resolved "on-surface" color
+                    // into every already-opted-in node the identical
+                    // way `set_theme` itself does.
+                    InputEvent::ThemeChanged { dark } => {
+                        let mut state = runtime.theme.borrow_mut();
+                        state.set_dark(dark);
+                        let tint = state.on_surface();
+                        drop(state);
+                        runtime.tree.borrow_mut().set_all_interaction_tints(tint);
                     }
                     _ => {}
                 }

@@ -745,6 +745,24 @@ impl Tree {
         Some(node.interaction.get_or_insert_with(InteractionState::new))
     }
 
+    /// M7 Phase 3 (§7.1/§7.3): updates every already-opted-in node's
+    /// `InteractionState::tint` to `tint` -- the real "apply a newly
+    /// (re)resolved theme color to whatever's already on screen"
+    /// mechanism both `engine-py::Window.set_theme` (a node that opted
+    /// in before the theme was set) and real live theme switching (a
+    /// node that was already themed, now needs the *other* scheme's
+    /// color) share. A node that never opted into `InteractionState`
+    /// (`interaction: None`) is left untouched, matching `interaction_
+    /// mut`'s own "only a node that opts in pays the cost" contract --
+    /// this never lazily creates one.
+    pub fn set_all_interaction_tints(&mut self, tint: peniko::Color) {
+        for node in self.nodes.values_mut() {
+            if let Some(interaction) = node.interaction.as_mut() {
+                interaction.tint = tint;
+            }
+        }
+    }
+
     /// M5 Phase 3 (§11.10, §11.11): replaces a `NodeKind::Canvas`
     /// node's entire real content -- both what `paint_node` draws and
     /// what `hit_test_at` tests against. The one, ordinary (non-
@@ -1172,6 +1190,11 @@ impl Tree {
             // winit::WindowEvent::MouseWheel already reaches this far
             // (engine-platform); this is where it stops for now.
             InputEvent::Scroll { .. } => DispatchOutcome::None,
+            // M7 Phase 3 (§7.1): plumbing only, see `InputEvent::
+            // ThemeChanged`'s own doc comment -- `engine-py` handles
+            // this directly on the raw event, the same way it already
+            // does for dock-drag `PointerPressed`/`PointerReleased`.
+            InputEvent::ThemeChanged { .. } => DispatchOutcome::None,
         }
     }
 
@@ -2352,6 +2375,78 @@ mod tests {
                 .ripples
                 .is_empty(),
             "the finished ripple should have been pruned by tick_all"
+        );
+    }
+
+    /// M7 Phase 3 (§7.1): `set_all_interaction_tints` must update every
+    /// node that already opted into `InteractionState`, and must leave
+    /// a node that never opted in exactly as `None` -- never lazily
+    /// creating one just to give it a tint, matching `interaction_mut`'s
+    /// own "only a node that opts in pays the cost" contract.
+    #[test]
+    fn set_all_interaction_tints_updates_only_already_opted_in_nodes() {
+        let mut tree = Tree::new();
+        let (kind, style, paint) = leaf(10.0, 10.0);
+        let opted_in = tree.insert(kind, style, paint);
+        tree.interaction_mut(opted_in);
+
+        let (kind, style, paint) = leaf(10.0, 10.0);
+        let never_opted_in = tree.insert(kind, style, paint);
+
+        let real_color = peniko::Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF);
+        tree.set_all_interaction_tints(real_color);
+
+        assert_eq!(
+            tree.get(opted_in)
+                .unwrap()
+                .interaction
+                .as_ref()
+                .unwrap()
+                .tint,
+            real_color,
+            "an already-opted-in node must pick up the new tint"
+        );
+        assert!(
+            tree.get(never_opted_in).unwrap().interaction.is_none(),
+            "a node that never opted into InteractionState must not have one lazily created \
+             just to give it a tint"
+        );
+    }
+
+    /// M7 Phase 3 (§7.1): `ThemeChanged` is plumbing only, the identical
+    /// "true no-op" contract `Scroll` already established -- `engine-py`
+    /// handles the real color-resolution/tint-push side effect directly
+    /// on the raw event, not through `Tree::dispatch`'s own return value.
+    #[test]
+    fn theme_changed_dispatches_to_a_true_no_op() {
+        let mut tree = Tree::new();
+        let (kind, style, paint) = leaf(10.0, 10.0);
+        let root = tree.insert(kind, style, paint);
+        tree.interaction_mut(root);
+        let tint_before = tree.get(root).unwrap().interaction.as_ref().unwrap().tint;
+
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::ThemeChanged { dark: true },
+            &config,
+            Instant::now(),
+        );
+
+        assert_eq!(outcome, DispatchOutcome::None);
+        assert_eq!(
+            tree.get(root).unwrap().interaction.as_ref().unwrap().tint,
+            tint_before,
+            "Tree::dispatch itself must never touch a tint on ThemeChanged -- that's \
+             engine-py's own job, via set_all_interaction_tints"
         );
     }
 

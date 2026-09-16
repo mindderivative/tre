@@ -141,6 +141,14 @@ fn translate_scroll_delta(delta: MouseScrollDelta) -> ScrollDelta {
     }
 }
 
+/// M7 Phase 3 (§7.1): `winit::window::Theme` collapsed to the single
+/// `bool` `InputEvent::ThemeChanged` carries -- factored out as its own
+/// free function (matching `translate_pointer_button`/`translate_key`'s
+/// own shape) so it's directly unit-testable with no live `EventLoop`.
+fn translate_theme(theme: winit::window::Theme) -> bool {
+    theme == winit::window::Theme::Dark
+}
+
 pub struct WindowConfig {
     pub title: String,
     pub width: u32,
@@ -516,6 +524,22 @@ where
                     },
                 );
             }
+            // M7 Phase 3 (§7.1): real live OS light/dark switching --
+            // verified directly against the pinned `winit = "0.30.13"`
+            // source (`src/event.rs`): `WindowEvent::ThemeChanged(Theme)`
+            // is real, `Theme` is `{ Light, Dark }`. Its own doc comment
+            // states this is unsupported on iOS/Android/X11/Wayland/
+            // Orbital -- it simply never fires there, which is a real,
+            // known platform limitation of this event, not a bug in
+            // this translation.
+            WindowEvent::ThemeChanged(theme) => {
+                on_input(
+                    window_id,
+                    InputEvent::ThemeChanged {
+                        dark: translate_theme(theme),
+                    },
+                );
+            }
             _ => {}
         }
     }
@@ -579,6 +603,12 @@ mod tests {
         // named key this minimal model simply doesn't assign meaning to.
         assert_eq!(translate_key(&WinitKey::Character("a".into())), None);
         assert_eq!(translate_key(&WinitKey::Named(NamedKey::ArrowDown)), None);
+    }
+
+    #[test]
+    fn translate_theme_maps_winits_two_real_variants_to_the_matching_bool() {
+        assert!(translate_theme(winit::window::Theme::Dark));
+        assert!(!translate_theme(winit::window::Theme::Light));
     }
 
     #[test]

@@ -32,6 +32,7 @@ use pyo3::prelude::*;
 
 use crate::dispatch::HandlerMap;
 use crate::error::EngineError;
+use crate::window::SharedTheme;
 
 #[pyclass(unsendable)]
 pub struct Node {
@@ -43,6 +44,12 @@ pub struct Node {
     /// no `Py<PyAny>` involved at all (unlike `handlers`), so no
     /// GC-traversal obligation the way a stored Python callback needs.
     pub(crate) context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
+    /// M7 Phase 3 (§7.1): shared with the owning `PyWindow` the same
+    /// way `context_menus` is -- no `Py<PyAny>` involved, no GC
+    /// obligation. A `View`-created `Node` gets a fresh, private,
+    /// never-`Window`-linked instance instead (`view.rs`), matching
+    /// this phase's own stated scope.
+    pub(crate) theme: SharedTheme,
 }
 
 #[pymethods]
@@ -224,6 +231,13 @@ impl Node {
     /// that no `engine-py` call site ever opted a real Python-created
     /// node in at all, confirmed via grep before this method existed.
     ///
+    /// M7 Phase 3 (§7.1) additionally applies this `Window`'s current
+    /// theme's real "on-surface" color immediately, so a node enabled
+    /// *after* `Window.set_theme` doesn't paint the plain-black default
+    /// until the next live theme change -- `Window.set_theme` itself
+    /// (§7.1 Step 1) is the counterpart for a node already enabled
+    /// *before* the theme was set.
+    ///
     /// Deliberately a separate method, not folded into `set_on_click`:
     /// a purely-hoverable, non-clickable node is a real, independent
     /// case §7.3 itself describes (hover is specified separately from
@@ -233,7 +247,10 @@ impl Node {
     /// Principle 6's "only a node that opts in pays the cost" applies
     /// to each independently.
     fn enable_interaction(&self) {
-        self.tree.borrow_mut().interaction_mut(self.id);
+        let tint = self.theme.borrow().on_surface();
+        if let Some(state) = self.tree.borrow_mut().interaction_mut(self.id) {
+            state.tint = tint;
+        }
     }
 
     /// M6 Phase 1 (§8): attaches `child` under this node, rejecting a
