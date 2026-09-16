@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use engine_core::{
-    InputEvent, ItemExtent, Key, NodeId, NodeKind, PaintProperties, PointerButton, Tree,
-    VirtualListState,
+    Animated, InputEvent, ItemExtent, Key, NodeId, NodeKind, PaintProperties, PointerButton,
+    SplitterState, Tree, VirtualListState,
 };
 use peniko::Color;
 use peniko::kurbo::Point;
@@ -108,6 +108,58 @@ impl PyWindow {
         let mut tree = self.tree.borrow_mut();
         let id = tree.insert(
             NodeKind::Rect,
+            Style {
+                size: Size {
+                    width: length(width),
+                    height: length(height),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, id);
+        Node {
+            id,
+            tree: self.tree.clone(),
+            click_handlers: self.click_handlers.clone(),
+        }
+    }
+
+    /// M4 Phase 3, step 2 (§11.5): the missing Python-facing half of
+    /// step 1's already-real drag mechanism -- until now, nothing created a
+    /// `NodeKind::Splitter` from Python at all, so `Tree::dispatch`'s
+    /// real drag handling (`Tree::update_drag`/`set_splitter_position`,
+    /// reachable from a real mouse the moment such a node exists) had no
+    /// way to actually be exercised by a Python app.
+    ///
+    /// Adds a child of this window's own root row, the same append-only
+    /// way `add_rect` does -- called between two `add_rect` calls (left
+    /// pane, splitter, right pane, in that order), it produces exactly
+    /// the resizable-pane layout §11.5's own architecture text
+    /// describes, with no separate "pane container" concept needed: the
+    /// window's root row already *is* the flex parent `Tree::
+    /// splitter_geometry` expects, holding the splitter directly between
+    /// its two real flanking siblings.
+    ///
+    /// `background` matches `add_rect`'s own parameter shape exactly --
+    /// a real splitter typically just wants a background for its own
+    /// grip/handle (§11.5's own text: `SplitterState` carries no
+    /// separate appearance data). `initial_position` (0.0..=1.0 along
+    /// the split axis) defaults to an even 0.5 split.
+    #[pyo3(signature = (background, width, height, initial_position=0.5))]
+    fn add_splitter(
+        &mut self,
+        background: (u8, u8, u8, u8),
+        width: f32,
+        height: f32,
+        initial_position: f64,
+    ) -> Node {
+        let (r, g, b, a) = background;
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::Splitter(SplitterState {
+                position: Animated::new(initial_position),
+            }),
             Style {
                 size: Size {
                     width: length(width),
