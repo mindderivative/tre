@@ -1,0 +1,94 @@
+//! §4's own generic `InputEvent` enum and `AppHandler` trait -- M4 Phase
+//! 1 step 1's real dispatch core. `engine-platform` translates raw
+//! `winit` events into `InputEvent` and calls `Tree::dispatch` (in
+//! `tree.rs`); `AppHandler` is the one remaining meaning-dependent hook
+//! `Tree::dispatch` can't resolve on its own (§2 Design Principle 6) --
+//! `engine-py` is the crate that actually implements it, since only it
+//! can map a `NodeId` back to a registered Python callback.
+//!
+//! `Key` is deliberately narrow: `Tab`/`Enter`/`Space`/`Escape` only,
+//! matching §10's own stated minimal keyboard focus model exactly --
+//! not a general key-code/character-input mapping, which nothing here
+//! needs before a real text-entry `NodeKind` exists (the same "additive
+//! when its own step needs it" discipline `node.rs`'s `NodeKind` already
+//! uses).
+
+use peniko::kurbo::Point;
+
+/// Matches `winit::event::MouseButton`'s three real variants 1:1 --
+/// `engine-platform`'s future translation is a plain match, not a
+/// lossy mapping.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PointerButton {
+    Primary,
+    Secondary,
+    Middle,
+}
+
+/// §10's own minimal keyboard model's exact vocabulary -- see this
+/// module's own doc comment for why nothing broader is built yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Key {
+    Tab,
+    Enter,
+    Space,
+    Escape,
+}
+
+/// The generic input vocabulary `engine-platform` translates real
+/// `winit` events into (§4). `position` is already in the same
+/// coordinate space `Tree::hit_test`/`Tree::absolute_position` use --
+/// window-client pixels, top-left origin -- so `Tree::dispatch` never
+/// needs to know anything about `winit`'s own event shapes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum InputEvent {
+    PointerMoved {
+        position: Point,
+    },
+    PointerPressed {
+        position: Point,
+        button: PointerButton,
+    },
+    PointerReleased {
+        position: Point,
+        button: PointerButton,
+    },
+    KeyPressed {
+        key: Key,
+        shift: bool,
+    },
+    KeyReleased {
+        key: Key,
+        shift: bool,
+    },
+}
+
+/// The one thing `Tree::dispatch` can't resolve by itself (§2 Design
+/// Principle 6: it's meaning-dependent, not mechanical) -- everything
+/// mechanical (hover, focus movement, ripple-spawn-on-press) already
+/// happened inside `dispatch` itself before this is ever produced.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DispatchOutcome {
+    /// Nothing meaning-dependent happened this call.
+    None,
+    /// `NodeId` was activated -- a primary-button pointer click released
+    /// over the same node it was pressed on, or `Enter`/`Space` while it
+    /// was `Tree::focused()`. What activating a node actually *means*
+    /// (call a registered `on_click`, or nothing if none is registered)
+    /// is `AppHandler`'s job, not `Tree`'s.
+    Activated(crate::NodeId),
+}
+
+/// §4's own generic dependency-inversion trait: `engine-platform`'s
+/// event loop is generic over this, `engine-py` is the crate that
+/// actually implements it (it alone has GIL access and a Python
+/// callback map) -- the same shape already used for `BindingResolver`
+/// (§16.2) and the `on_complete` completion-queue mechanism (§5).
+pub trait AppHandler {
+    /// Called once per `DispatchOutcome::Activated` `Tree::dispatch`
+    /// produces. Takes no `&mut Tree` -- an activation handler that
+    /// wants to mutate the tree (start an animation, change a property)
+    /// does so through whatever handle it already holds (`engine-py`'s
+    /// own `Node`/`Rc<RefCell<Tree>>`, §9), not through this call.
+    fn on_activated(&mut self, node: crate::NodeId);
+}

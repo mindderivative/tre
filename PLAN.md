@@ -1,92 +1,117 @@
-# Plan: M3 Phase 7, Step 15 — Docking + Virtualization (§14 step 15)
+# Plan: M4 Phase 1, Step 1 — Real Input Dispatch Core (§4, §7.3, §9, §10, §11.10)
 
-Corresponds to `BUILD_TRACKER.md` M3 Phase 7, step 15 of 3 — **M3's
-final step.** §14's own text: "the two largest net-new v1 subsystems
-from §11, sequenced last since both build on the overlay mechanism
-(step 13), splitters, and the accepted multi-window model (step 14)."
-Splitters (§11.5) aren't a separately-numbered build-order step but are
-a hard prerequisite docking's own text names directly ("docking is a
-*consumer* of splitters, not a second resize mechanism") — nothing in
-this codebase has `NodeKind::Splitter` yet, so it's built here, first.
+M3 (all 15 of §14's Suggested Build Order steps) is complete. No M4 is
+sequenced anywhere in `ARCHITECTURE.md` — this is the first work on it,
+picking up the single most consistently recurring finding from every
+interaction-dependent step in M3 (7, 9, 11, 12, 13, 14, 15, each checked
+directly): real pointer/keyboard `InputEvent`/`AppHandler` dispatch and
+hit-testing don't exist anywhere in this codebase. Every one of those
+steps exposed a direct, programmatic `Tree` method instead (`spawn_ripple`,
+`open_overlay`, `set_splitter_position`, `apply_active_tab`,
+`set_virtual_list_window`) and explicitly deferred "wire this to a real
+input source" to whichever step first built dispatch. This is that step.
 
-Three stages, each separately committed and verified, matching step
-12's own precedent for a step this large.
+`interaction.rs`'s and `access.rs`'s own module doc comments both name
+this exact gap and its exact blocking reason ("nothing to dispatch to
+yet") — both now have a real target: the button built in M3 step 7
+(`AccessNodeData::new(Role::Button).with_label(...).with_action(Action::Click)`).
 
-## Stage A — Splitters (§11.5)
+## Scope for this step
 
-`NodeKind::Splitter(SplitterState { position: Animated<f64> })`.
-`Tree::set_splitter_position(splitter, position, now)`: finds the
-splitter's two flanking siblings in its parent's own `children` order
-(the splitter must sit directly between them), resizes both from
-`position` (0.0..=1.0 along the split axis) against their combined
-current extent, applying the result via step 13's own
-`Tree::set_layout_style` (which already keeps `taffy`'s internal style
-copy in sync — no new machinery needed there). A drag is a 1:1,
-instant mouse-follow, not a smoothly-eased transition, so this sets
-`position` via `animate_to` with `Duration::ZERO` and ticks it
-immediately (the same "an instant application needs an explicit tick to
-actually materialize" fix step 12 already found and applied to
-bindings).
+Core mechanism only, entirely inside `engine-core` — no `winit`, no
+`pyo3` yet. Real winit event translation (`engine-platform`) and a real
+`AppHandler` impl enabling `Node.set_on_click` (`engine-py`) are each
+their own later step, once this core is proven standalone (Design
+Principle 5).
 
-Proof: a headless pixel-readback test — two colored panes with a
-splitter between them; calling `set_splitter_position` moves the real
-pane boundary, verified on screen, not just in `layout_style` data.
+**`engine-core/src/input.rs` (new)**: `InputEvent` (`PointerMoved`/
+`PointerPressed`/`PointerReleased` with `position: kurbo::Point` +
+`button: PointerButton`; `KeyPressed`/`KeyReleased` with a minimal `Key`
+enum — `Tab`/`Enter`/`Space`/`Escape` only, matching §10's own stated
+minimal keyboard model exactly, not a full text-input key-code mapping
+nothing here needs yet) and `AppHandler` (the generic trait §4 names,
+kept to the one meaning-dependent outcome this step produces —
+activation — everything mechanical stays inside `Tree` itself per
+Design Principle 6, not pushed onto `AppHandler` implementors).
 
-## Stage B — Docking (§11.4)
+**`Tree` gains, in `tree.rs`**:
+- `hit_test(root, point) -> Option<NodeId>` (§11.10): reverse paint-order
+  walk (last child first — topmost), rect containment via existing
+  `absolute_position`/`layout().size`. **Explicitly narrowed, stated
+  here rather than silently skipped:** no transform-aware hit-testing
+  (§11.9's inverse-transform step) — `PaintProperties.transform` doesn't
+  exist yet (`node.rs`'s own doc comment defers it); no `NodeKind::Canvas`
+  custom hit-test override — `Canvas` doesn't exist yet either. Both
+  revisit this method once their own prerequisite lands, per Design
+  Principle 5.
+- `update_hover(root, point, hover_opacity, duration, now) -> Option<NodeId>`:
+  the concrete fulfillment of §7.3's own text ("hover needs no new
+  dispatch mechanism — it falls out of hit-testing, run every
+  pointer-move... entirely inside `engine-core`"). Only animates nodes
+  that already opted into `InteractionState` (Design Principle 6's "only
+  a node that opts in pays the cost") — never lazily creates it, unlike
+  `interaction_mut`. `hover_opacity`/`duration` are caller-supplied, not
+  hardcoded: `engine-core` stays MD3-agnostic (§1 Locked Decisions) —
+  the actual MD3 hover value is `engine-md3`'s to supply later, the same
+  generic/preset split `MotionCurve`/`engine_md3::motion::STANDARD`
+  already uses.
+- `move_focus(root, direction, focus_ring_opacity, duration, now)`:
+  Tab/Shift-Tab in tree order (§10) — "interactive" means
+  `access.actions` is non-empty (the real, already-existing signal, no
+  new field needed), wrapping at both ends. Animates `focus_ring` the
+  same opt-in-only way `update_hover` animates `hover_opacity`.
+- `dispatch(root, event, config: &InteractionConfig, now) -> DispatchOutcome`:
+  the one real top-level entry point `engine-platform` will call.
+  `DispatchOutcome::Activated(NodeId)` is the single meaning-dependent
+  outcome (a primary-button click released over the same node it was
+  pressed on, or Enter/Space on the focused node) — `AppHandler`'s job,
+  later, is entirely "what does activating this node mean" (call a
+  registered `on_click` or nothing); everything mechanical (hover,
+  focus movement, ripple-spawn-on-press) happens inside `dispatch`
+  itself before it ever reaches `AppHandler`.
 
-`engine_core::{DockLayout, DockZone}` matching §11.4's own struct
-sketch exactly (`zones: [Option<DockZone>; 5]`, `panels: SmallVec<
-[NodeId; 4]>`, `active_tab: usize`, `size: Animated<f64>`) — POD, so an
-app can serialize/restore it, per the architecture's own stated reason.
+**Real API-drift finding, verified directly (not assumed) before
+writing any code:** §10's own text says Enter/Space "dispatches
+`accesskit::Action::Default`" — checked directly against the pinned
+`accesskit = "0.25.0"`'s real `Action` enum (`accesskit-0.25.0/src/
+lib.rs`): there is no `Action::Default` variant. The real, equivalent
+variant is `Action::Click` ("do the equivalent of a single click or
+tap") — already the exact action M3 step 7's own button test uses. This
+codebase's own `AccessNodeData::with_action(Action::Click)` is what
+"interactive" (focusable) actually keys off, so this isn't a new
+convention, just making an existing one do real work.
 
-**Tabbed grouping via detach, not `Display::None`:** `Tree::
-apply_active_tab(container, zone)` ensures exactly `zone.panels[zone.
-active_tab]` is attached as a child of `container`, detaching (not
-deleting — `taffy::TaffyTree::remove_child`, verified directly in its
-own doc comment: "not removed from the tree entirely, simply no longer
-attached") any other currently-attached panel. A detached panel isn't
-in anyone's `children` list, so `build_tree_scene`'s existing recursive
-walk already excludes it from paint automatically — the same "reuse
-what's already there, prove it doesn't need touching" pattern step 13's
-overlay proof established for append-order.
-
-**Resizing between zones reuses Stage A's splitter mechanism exactly**
-(§11.4's own text) — a docked layout's zone containers and the
-splitters between them are ordinary flex siblings; `set_splitter_
-position` needs no docking-specific code at all to resize a zone
-boundary. `DockZone.size` is the app's own persisted-size mirror,
-synced from the real post-resize layout by a small helper, not written
-by the splitter mechanism itself — keeping "one generic resize
-mechanism, N unrelated call sites" real, not just asserted.
-
-Proof: a real (3-zone: Left/Center/Right, the same mechanism a 5-zone
-layout would use) docked screen — each zone's active tab shows its own
-color, switching a tab changes what's visible without disturbing other
-zones, and dragging the Left/Center splitter moves the real zone
-boundary on screen.
-
-## Stage C — Virtualization (§11.7)
-
-`NodeKind::VirtualList(VirtualListState { item_count, item_extent,
-materialized: BTreeMap<usize, NodeId> })`. Only the visible window (+
-small overscan) are ever real `Node`s; scrolling recycles slots via
-§5's own generational `NodeId` reuse (already free — `Tree::remove`
-already invalidates a slot's generation on drop, nothing new needed
-there either).
-
-**The Risk Register's own named acceptance gate for this step:** "Spike
-this against a real large dataset... before any data-grid-shaped
-component depends on it; if per-call GIL overhead dominates, batch the
-callback." `engine-py` gains the "materialize item N" FFI callback
-(§11.7's own "genuinely different callback pattern" from `on_click`/
-`on_complete`) and a real benchmark against 100,000+ logical rows,
-measuring actual per-call `pyo3` overhead crossing the GIL boundary --
-not assumed fast enough, measured.
+**Ripple stays single-shot for this step**, not upgraded to
+`interaction.rs`'s own described two-phase press/hold/release model —
+that's a real, separate scope of its own (tracking *which* ripple is
+still "held down" across a press/release pair, MD3's actual timing
+curves) genuinely bigger than "make real events reach the tree at all,"
+which is this step's actual claim. Stated here, not silently dropped.
 
 ## Verification
 
-Each stage: its own new tests pass, `cargo test --workspace`, `cargo
-clippy --workspace --all-targets -- -D warnings`, `cargo fmt --check`
-all clean; Stage C additionally needs a real `maturin develop` +
-benchmark run. Each stage gets its own local commit as it completes.
-This closes M3 entirely once Stage C lands.
+New `engine-core` unit tests, each isolating one claim: `hit_test`
+picks the topmost of two overlapping siblings and correctly reaches
+into an appended overlay over background content (reusing step 13's
+own overlay-proof shape); `update_hover` only animates nodes that
+already opted into `InteractionState`, and correctly fades the old node
+out while fading the new one in on a real hover-target change;
+`move_focus` cycles through exactly the nodes with a non-empty
+`access.actions` list, in tree order, wrapping at both ends, leaving
+non-interactive nodes untouched; `dispatch` produces `Activated` only
+for a same-node press+release pair with the primary button, and `None`
+for a press/release over different nodes (a drag-off, not a click) and
+for every non-primary button. `cargo test --workspace`, `cargo clippy
+--workspace --all-targets -- -D warnings`, `cargo fmt --check` all
+clean.
+
+## Next (not this step)
+
+`engine-platform`: translate real `winit` `CursorMoved`/`MouseInput`/
+`KeyboardInput` events into `InputEvent` and call `Tree::dispatch`,
+proven via a real `harness = false` test. `engine-py`: implement
+`AppHandler` for real — this is what finally lets `Node.set_on_click`
+exist (still just a forward-reference comment in `node.rs` today),
+needing the same real `PyObject`-callback-storage + `__traverse__`/
+`__clear__` GC-cycle-safety discipline M3 step 15 Stage C's materializer
+callback just established for `PyWindow`.

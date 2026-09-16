@@ -14,27 +14,65 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use slotmap::{Key, SecondaryMap, SlotMap};
+use slotmap::{Key as SlotMapKey, SecondaryMap, SlotMap};
 use taffy::prelude::{
     AvailableSpace, Layout, Position, Rect as TaffyRect, Size, Style, TaffyTree, auto, length,
 };
 
 use crate::access::AccessNodeData;
 use crate::animation::MotionCurve;
+use crate::input::{DispatchOutcome, InputEvent, Key, PointerButton};
 use crate::interaction::InteractionState;
 #[cfg(test)]
 use crate::node::{ItemExtent, VirtualListState};
 use crate::node::{Node, NodeId, NodeKind, PaintProperties};
 use crate::overlay::OverlayMeta;
+use peniko::kurbo::{Point, Rect};
+
+/// `Tree::move_focus`'s own direction -- Tab vs. Shift-Tab (§10).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FocusDirection {
+    Next,
+    Previous,
+}
+
+/// `Tree::dispatch`'s own MD3-value inputs, kept entirely out of
+/// `engine-core` itself (§1 Locked Decisions: "keep `engine-core`
+/// MD3-agnostic") -- a caller (eventually `engine-md3`'s own named
+/// presets, the same `MotionCurve`/`engine_md3::motion::STANDARD` split
+/// already used elsewhere) supplies the actual numbers; `Tree` only
+/// knows how to animate toward whatever it's given. No `Default` impl,
+/// deliberately -- a caller/test must state real values, not inherit an
+/// implicit one that would itself be an unstated MD3 opinion.
+pub struct InteractionConfig {
+    pub hover_opacity: f64,
+    pub hover_duration: Duration,
+    pub focus_ring_opacity: f64,
+    pub focus_ring_duration: Duration,
+    pub ripple_radius: f64,
+    pub ripple_opacity: f64,
+    pub ripple_duration: Duration,
+}
 
 pub struct Tree {
     nodes: SlotMap<NodeId, Node>,
     taffy_nodes: SecondaryMap<NodeId, taffy::NodeId>,
     taffy: TaffyTree<()>,
-    /// §14 step 7: which node `TreeUpdate.focus` reports. Plain data --
-    /// see `access.rs`'s module doc comment for why the actual Tab/
-    /// Shift-Tab traversal logic isn't wired up yet.
+    /// §14 step 7: which node `TreeUpdate.focus` reports. Moved by
+    /// `move_focus` (M4 Phase 1 step 1, §10) in real Tab/Shift-Tab tree
+    /// order, not left as inert plain data anymore.
     focused: Option<NodeId>,
+    /// M4 Phase 1 step 1 (§7.3): the node `update_hover` last reported
+    /// as hit, so a repeated `PointerMoved` over the same node is a
+    /// no-op rather than re-triggering a hover transition every frame.
+    hovered: Option<NodeId>,
+    /// M4 Phase 1 step 1 (§11.10 dispatch): the `(button, node)` a
+    /// `PointerPressed` last hit, so `PointerReleased` can tell a real
+    /// click (same button, same node) from a drag-off (different node,
+    /// no node, or a different button released) apart. A single slot,
+    /// not one per button -- this minimal mouse-only model never needs
+    /// to track two buttons held down at once.
+    pressed: Option<(PointerButton, NodeId)>,
     /// §14 step 13 (§11.3): keyed by the overlay root's own `NodeId` --
     /// metadata only, never the node itself, which already lives in
     /// `nodes` like any other.
@@ -54,6 +92,8 @@ impl Tree {
             taffy_nodes: SecondaryMap::new(),
             taffy: TaffyTree::new(),
             focused: None,
+            hovered: None,
+            pressed: None,
             overlays: HashMap::new(),
         }
     }
@@ -590,6 +630,250 @@ impl Tree {
 
     pub fn set_focused(&mut self, id: Option<NodeId>) {
         self.focused = id;
+    }
+
+    /// §11.10: pointer-to-node resolution, reverse paint order (topmost
+    /// first -- the last child in `children`-list order paints on top,
+    /// §6, so it's tested first here too; this is exactly what naturally
+    /// reaches an appended overlay, §11.3, before ordinary background
+    /// content, with zero special-casing). Containment is tested against
+    /// `absolute_position`/`layout().size` -- the same real bounds
+    /// `build_tree_scene`/`build_access_update` already walk.
+    ///
+    /// **Explicitly narrowed (PLAN.md):** no transform-aware hit-testing
+    /// (§11.9's inverse-composed-transform step) -- `PaintProperties.
+    /// transform` doesn't exist in this codebase yet (`node.rs`'s own
+    /// doc comment defers it); no `NodeKind::Canvas` custom hit-test
+    /// override -- `Canvas` doesn't exist yet either. Revisit this
+    /// method once each lands, per Design Principle 5.
+    pub fn hit_test(&self, root: NodeId, point: Point) -> Option<NodeId> {
+        let node = self.nodes.get(root)?;
+        for &child in node.children.iter().rev() {
+            if let Some(hit) = self.hit_test(child, point) {
+                return Some(hit);
+            }
+        }
+        let (x, y) = self.absolute_position(root);
+        let layout = self.layout(root);
+        let bounds = Rect::new(
+            x,
+            y,
+            x + f64::from(layout.size.width),
+            y + f64::from(layout.size.height),
+        );
+        bounds.contains(point).then_some(root)
+    }
+
+    /// The concrete fulfillment of §7.3's own text: "hover needs no new
+    /// dispatch mechanism -- it falls out of hit-testing, run every
+    /// pointer-move... entirely inside `engine-core`." Only animates a
+    /// node that already opted into `InteractionState` (Design
+    /// Principle 6: "only a node that opts in pays the cost") -- unlike
+    /// `interaction_mut`, this never lazily creates one just because a
+    /// node happened to be hovered. `hover_opacity`/`duration` are
+    /// caller-supplied, not hardcoded: `engine-core` stays MD3-agnostic
+    /// (§1 Locked Decisions) -- the real MD3 hover value is
+    /// `engine-md3`'s to supply, the same generic/preset split
+    /// `MotionCurve`/`engine_md3::motion::STANDARD` already uses.
+    ///
+    /// Returns the newly-hovered node (`None` if the pointer left every
+    /// hit-testable node). A repeated call with the same result is a
+    /// no-op -- it doesn't retrigger the same animation every frame.
+    pub fn update_hover(
+        &mut self,
+        root: NodeId,
+        point: Point,
+        hover_opacity: f64,
+        duration: Duration,
+        now: Instant,
+    ) -> Option<NodeId> {
+        let hit = self.hit_test(root, point);
+        if hit == self.hovered {
+            return hit;
+        }
+        if let Some(old) = self.hovered
+            && let Some(node) = self.nodes.get_mut(old)
+            && let Some(state) = node.interaction.as_mut()
+        {
+            state
+                .hover_opacity
+                .animate_to(0.0, duration, MotionCurve::Linear, now);
+        }
+        if let Some(new) = hit
+            && let Some(node) = self.nodes.get_mut(new)
+            && let Some(state) = node.interaction.as_mut()
+        {
+            state
+                .hover_opacity
+                .animate_to(hover_opacity, duration, MotionCurve::Linear, now);
+        }
+        self.hovered = hit;
+        hit
+    }
+
+    /// §10's own minimal keyboard focus model: Tab/Shift-Tab moves
+    /// `focused` in tree order, wrapping at both ends. "Interactive"
+    /// means `access.actions` is non-empty -- the real, already-existing
+    /// signal (M3 step 7's own button test sets `Action::Click`), not a
+    /// new field manufactured for this step. Animates `focus_ring` the
+    /// same opt-in-only way `update_hover` animates `hover_opacity`, for
+    /// the same Design Principle 6 reason.
+    pub fn move_focus(
+        &mut self,
+        root: NodeId,
+        direction: FocusDirection,
+        focus_ring_opacity: f64,
+        duration: Duration,
+        now: Instant,
+    ) {
+        let mut order = Vec::new();
+        self.collect_interactive(root, &mut order);
+
+        let old = self.focused;
+        self.focused = if order.is_empty() {
+            None
+        } else {
+            let next_index = match old.and_then(|f| order.iter().position(|&n| n == f)) {
+                Some(idx) => match direction {
+                    FocusDirection::Next => (idx + 1) % order.len(),
+                    FocusDirection::Previous => (idx + order.len() - 1) % order.len(),
+                },
+                None => match direction {
+                    FocusDirection::Next => 0,
+                    FocusDirection::Previous => order.len() - 1,
+                },
+            };
+            Some(order[next_index])
+        };
+
+        if old == self.focused {
+            return;
+        }
+        if let Some(old) = old
+            && let Some(node) = self.nodes.get_mut(old)
+            && let Some(state) = node.interaction.as_mut()
+        {
+            state
+                .focus_ring
+                .animate_to(0.0, duration, MotionCurve::Linear, now);
+        }
+        if let Some(new) = self.focused
+            && let Some(node) = self.nodes.get_mut(new)
+            && let Some(state) = node.interaction.as_mut()
+        {
+            state
+                .focus_ring
+                .animate_to(focus_ring_opacity, duration, MotionCurve::Linear, now);
+        }
+    }
+
+    /// Pre-order walk collecting every node whose `access.actions` is
+    /// non-empty, in tree order -- `move_focus`'s own Tab-order.
+    fn collect_interactive(&self, id: NodeId, out: &mut Vec<NodeId>) {
+        let Some(node) = self.nodes.get(id) else {
+            return;
+        };
+        if !node.access.actions.is_empty() {
+            out.push(id);
+        }
+        for &child in &node.children {
+            self.collect_interactive(child, out);
+        }
+    }
+
+    /// M4 Phase 1 step 1's one real top-level entry point: `engine-
+    /// platform` translates a raw `winit` event into `InputEvent` and
+    /// calls this. Every *mechanical* consequence (hover, focus
+    /// movement, ripple-spawn-on-press, §2 Design Principle 6) happens
+    /// here, inside `engine-core`; the one *meaning-dependent* outcome
+    /// (`DispatchOutcome::Activated`) is left for the caller's own
+    /// `AppHandler` impl to interpret -- `Tree` has no idea what
+    /// activating a node means, only that it happened.
+    ///
+    /// Ripple stays the existing single-shot press+release
+    /// approximation (`InteractionState::spawn_ripple`) for this step --
+    /// upgrading to real two-phase press/hold/release timing is a real,
+    /// separate scope (PLAN.md), not bundled into "make real events
+    /// reach the tree at all."
+    pub fn dispatch(
+        &mut self,
+        root: NodeId,
+        event: InputEvent,
+        config: &InteractionConfig,
+        now: Instant,
+    ) -> DispatchOutcome {
+        match event {
+            InputEvent::PointerMoved { position } => {
+                self.update_hover(
+                    root,
+                    position,
+                    config.hover_opacity,
+                    config.hover_duration,
+                    now,
+                );
+                DispatchOutcome::None
+            }
+            InputEvent::PointerPressed { position, button } => {
+                let hit = self.hit_test(root, position);
+                if let Some(node) = hit {
+                    self.pressed = Some((button, node));
+                    if let Some(state) = self.interaction_mut(node) {
+                        state.spawn_ripple(
+                            Point::new(position.x, position.y),
+                            config.ripple_radius,
+                            config.ripple_opacity,
+                            config.ripple_duration,
+                            now,
+                        );
+                    }
+                } else {
+                    self.pressed = None;
+                }
+                DispatchOutcome::None
+            }
+            InputEvent::PointerReleased { position, button } => {
+                let hit = self.hit_test(root, position);
+                let outcome = match self.pressed {
+                    Some((pressed_button, pressed_node))
+                        if pressed_button == button
+                            && Some(pressed_node) == hit
+                            && button == PointerButton::Primary =>
+                    {
+                        DispatchOutcome::Activated(pressed_node)
+                    }
+                    _ => DispatchOutcome::None,
+                };
+                self.pressed = None;
+                outcome
+            }
+            InputEvent::KeyPressed { key, shift } => match key {
+                Key::Tab => {
+                    let direction = if shift {
+                        FocusDirection::Previous
+                    } else {
+                        FocusDirection::Next
+                    };
+                    self.move_focus(
+                        root,
+                        direction,
+                        config.focus_ring_opacity,
+                        config.focus_ring_duration,
+                        now,
+                    );
+                    DispatchOutcome::None
+                }
+                Key::Enter | Key::Space => match self.focused {
+                    Some(node) => DispatchOutcome::Activated(node),
+                    None => DispatchOutcome::None,
+                },
+                // No overlay-dismiss consumer exists yet to route this
+                // to (§11.3's own "dismissed on outside-click or
+                // Escape" isn't wired) -- explicitly deferred, not
+                // silently dropped.
+                Key::Escape => DispatchOutcome::None,
+            },
+            InputEvent::KeyReleased { .. } => DispatchOutcome::None,
+        }
     }
 
     /// Builds a fresh `accesskit::TreeUpdate` from the current `Node`
@@ -1354,6 +1638,526 @@ mod tests {
                 .is_empty(),
             "the finished ripple should have been pruned by tick_all"
         );
+    }
+
+    /// A 100x100 root with two overlapping 60x60 children at the same
+    /// position -- `second` is added later, so it's `first`'s topmost
+    /// sibling per §6's own children-list-order-is-paint-order rule, and
+    /// `hit_test` must pick it.
+    fn overlapping_siblings() -> (Tree, NodeId, NodeId, NodeId) {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            display: taffy::Display::Flex,
+            size: Size {
+                width: length(100.0),
+                height: length(100.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let zero_inset = TaffyRect {
+            left: length(0.0),
+            top: length(0.0),
+            right: auto(),
+            bottom: auto(),
+        };
+
+        let (k, s, p) = leaf(60.0, 60.0);
+        let mut absolute = s.clone();
+        absolute.position = Position::Absolute;
+        absolute.inset = zero_inset;
+        let first = tree.insert(k, absolute, p);
+        tree.add_child(root, first);
+
+        let (k, s, p) = leaf(60.0, 60.0);
+        let mut absolute = s.clone();
+        absolute.position = Position::Absolute;
+        absolute.inset = zero_inset;
+        let second = tree.insert(k, absolute, p);
+        tree.add_child(root, second);
+
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+        (tree, root, first, second)
+    }
+
+    #[test]
+    fn hit_test_reaches_the_topmost_of_two_overlapping_siblings() {
+        let (tree, root, _first, second) = overlapping_siblings();
+        let hit = tree.hit_test(root, Point::new(30.0, 30.0));
+        assert_eq!(
+            hit,
+            Some(second),
+            "the later (topmost-painted) sibling must win a point both overlap"
+        );
+    }
+
+    #[test]
+    fn hit_test_misses_entirely_outside_every_nodes_bounds() {
+        let (tree, root, _first, _second) = overlapping_siblings();
+        // root itself spans exactly [0,100)x[0,100) (it's a real,
+        // hit-testable node too, by design -- every node is a valid hit
+        // target by its own bounds, matching §11.10's own text), so the
+        // only genuinely-outside point is beyond root's own extent.
+        assert_eq!(tree.hit_test(root, Point::new(150.0, 150.0)), None);
+    }
+
+    #[test]
+    fn hit_test_reaches_an_appended_overlay_over_background_content() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            display: taffy::Display::Flex,
+            size: Size {
+                width: length(300.0),
+                height: length(300.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        // Background content covering the whole canvas.
+        let (k, s, p) = leaf(300.0, 300.0);
+        let background = tree.insert(k, s, p);
+        tree.add_child(root, background);
+
+        // A small anchor button sitting on top of the background, at
+        // the canvas's own top-left -- an ordinary toolbar-button shape,
+        // not something that itself covers the whole canvas (unlike
+        // `background`), so `open_overlay`'s own "below the anchor's
+        // bottom edge" placement lands the menu somewhere still on
+        // screen and still overlapping `background`.
+        let zero_inset = TaffyRect {
+            left: length(0.0),
+            top: length(0.0),
+            right: auto(),
+            bottom: auto(),
+        };
+        let (k, s, p) = leaf(80.0, 20.0);
+        let mut anchor_style = s;
+        anchor_style.position = Position::Absolute;
+        anchor_style.inset = zero_inset;
+        let anchor = tree.insert(k, anchor_style, p);
+        tree.add_child(root, anchor);
+
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+
+        let (k, s, p) = leaf(120.0, 60.0);
+        let menu = tree.insert(k, s, p);
+        tree.open_overlay(
+            root,
+            anchor,
+            menu,
+            OverlayMeta {
+                anchor,
+                dismiss_on_outside_click: true,
+                dismiss_on_escape: true,
+            },
+        );
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+
+        // (10, 25) sits inside both the full-canvas background AND the
+        // overlay menu (positioned just below the anchor button's
+        // bottom edge, at y=20, per `open_overlay`) -- the point this
+        // test exists to prove: the overlay wins, not the background
+        // it's stacked above.
+        let hit = tree.hit_test(root, Point::new(10.0, 25.0));
+        assert_eq!(
+            hit,
+            Some(menu),
+            "an appended overlay must win hit-testing over the background it covers, \
+             the same append-order-is-paint-order convention step 13 already proved for paint"
+        );
+    }
+
+    #[test]
+    fn update_hover_only_animates_nodes_that_already_opted_into_interaction_state() {
+        use std::time::Duration;
+
+        let mut tree = Tree::new();
+        let root_style = Style {
+            display: taffy::Display::Flex,
+            size: Size {
+                width: length(100.0),
+                height: length(50.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let (k, s, p) = leaf(50.0, 50.0);
+        let opted_in = tree.insert(k, s, p);
+        tree.add_child(root, opted_in);
+        tree.interaction_mut(opted_in); // opts in, per `InteractionState::new`'s own 0.0 default
+
+        let (k, s, p) = leaf(50.0, 50.0);
+        let never_opted_in = tree.insert(k, s, p);
+        tree.add_child(root, never_opted_in);
+
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(50.0),
+            },
+        );
+
+        let now = Instant::now();
+        tree.update_hover(
+            root,
+            Point::new(25.0, 25.0),
+            0.08,
+            Duration::from_millis(100),
+            now,
+        );
+        let hover_target = tree
+            .get(opted_in)
+            .unwrap()
+            .interaction
+            .as_ref()
+            .unwrap()
+            .hover_opacity
+            .active
+            .as_ref()
+            .map(|a| a.to);
+        assert_eq!(
+            hover_target,
+            Some(0.08),
+            "the opted-in hovered node must have a real hover animation registered toward 0.08"
+        );
+
+        tree.update_hover(
+            root,
+            Point::new(75.0, 25.0),
+            0.08,
+            Duration::from_millis(100),
+            now,
+        );
+        assert!(
+            tree.get(never_opted_in).unwrap().interaction.is_none(),
+            "hovering a node that never opted into InteractionState must not create one -- \
+             Design Principle 6, only a node that opts in pays the cost"
+        );
+    }
+
+    #[test]
+    fn update_hover_fades_the_old_node_out_and_the_new_one_in_on_a_real_change() {
+        use std::time::Duration;
+
+        let mut tree = Tree::new();
+        let root_style = Style {
+            display: taffy::Display::Flex,
+            size: Size {
+                width: length(100.0),
+                height: length(50.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let (k, s, p) = leaf(50.0, 50.0);
+        let a = tree.insert(k, s, p);
+        tree.add_child(root, a);
+        tree.interaction_mut(a);
+
+        let (k, s, p) = leaf(50.0, 50.0);
+        let b = tree.insert(k, s, p);
+        tree.add_child(root, b);
+        tree.interaction_mut(b);
+
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(50.0),
+            },
+        );
+
+        let start = Instant::now();
+        let hover = tree.update_hover(
+            root,
+            Point::new(25.0, 25.0),
+            0.08,
+            Duration::from_millis(100),
+            start,
+        );
+        assert_eq!(hover, Some(a));
+        tree.tick_all(start + Duration::from_millis(100));
+        let a_hover_after_settling = tree
+            .get(a)
+            .unwrap()
+            .interaction
+            .as_ref()
+            .unwrap()
+            .hover_opacity
+            .current;
+        assert!(
+            (a_hover_after_settling - 0.08).abs() < 0.001,
+            "A must have settled at the real hover target, got {a_hover_after_settling}"
+        );
+
+        let now = start + Duration::from_millis(200);
+        let hover = tree.update_hover(
+            root,
+            Point::new(75.0, 25.0),
+            0.08,
+            Duration::from_millis(100),
+            now,
+        );
+        assert_eq!(hover, Some(b));
+        tree.tick_all(now + Duration::from_millis(100));
+
+        let a_hover = tree
+            .get(a)
+            .unwrap()
+            .interaction
+            .as_ref()
+            .unwrap()
+            .hover_opacity
+            .current;
+        let b_hover = tree
+            .get(b)
+            .unwrap()
+            .interaction
+            .as_ref()
+            .unwrap()
+            .hover_opacity
+            .current;
+        assert!(
+            a_hover.abs() < 0.001,
+            "A must have faded back out once the pointer left it, got {a_hover}"
+        );
+        assert!(
+            (b_hover - 0.08).abs() < 0.001,
+            "B must have faded in to the real hover target, got {b_hover}"
+        );
+    }
+
+    #[test]
+    fn move_focus_cycles_only_through_interactive_nodes_in_tree_order_wrapping_at_both_ends() {
+        use std::time::Duration;
+
+        use crate::access::{AccessNodeData, Action, Role};
+
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(0.0, 0.0);
+        let root = tree.insert(k, s, p);
+
+        let (k, s, p) = leaf(10.0, 10.0);
+        let button_a = tree.insert(k, s, p);
+        tree.set_access(
+            button_a,
+            AccessNodeData::new(Role::Button).with_action(Action::Click),
+        );
+        tree.add_child(root, button_a);
+
+        // A plain, non-interactive node in between -- must be skipped
+        // entirely by Tab, not just left unfocused.
+        let (k, s, p) = leaf(10.0, 10.0);
+        let decoration = tree.insert(k, s, p);
+        tree.add_child(root, decoration);
+
+        let (k, s, p) = leaf(10.0, 10.0);
+        let button_b = tree.insert(k, s, p);
+        tree.set_access(
+            button_b,
+            AccessNodeData::new(Role::Button).with_action(Action::Click),
+        );
+        tree.add_child(root, button_b);
+
+        assert_eq!(tree.focused(), None);
+        let now = Instant::now();
+        let duration = Duration::from_millis(100);
+
+        tree.move_focus(root, FocusDirection::Next, 1.0, duration, now);
+        assert_eq!(
+            tree.focused(),
+            Some(button_a),
+            "Tab from nothing focused lands on the first interactive node"
+        );
+
+        tree.move_focus(root, FocusDirection::Next, 1.0, duration, now);
+        assert_eq!(
+            tree.focused(),
+            Some(button_b),
+            "Tab skips the non-interactive decoration node entirely"
+        );
+
+        tree.move_focus(root, FocusDirection::Next, 1.0, duration, now);
+        assert_eq!(
+            tree.focused(),
+            Some(button_a),
+            "Tab wraps back to the first interactive node at the end"
+        );
+
+        tree.move_focus(root, FocusDirection::Previous, 1.0, duration, now);
+        assert_eq!(
+            tree.focused(),
+            Some(button_b),
+            "Shift-Tab wraps backward past the first node to the last"
+        );
+
+        assert!(
+            tree.get(decoration).unwrap().interaction.is_none(),
+            "the non-interactive node must never be touched by focus movement at all"
+        );
+    }
+
+    #[test]
+    fn dispatch_activates_only_a_same_node_primary_press_and_release_pair() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            display: taffy::Display::Flex,
+            size: Size {
+                width: length(100.0),
+                height: length(50.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let (k, s, p) = leaf(50.0, 50.0);
+        let a = tree.insert(k, s, p);
+        tree.add_child(root, a);
+        let (k, s, p) = leaf(50.0, 50.0);
+        let b = tree.insert(k, s, p);
+        tree.add_child(root, b);
+
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(50.0),
+            },
+        );
+
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let now = Instant::now();
+
+        // Press and release over the same node (A) -- a real click.
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(25.0, 25.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::None,
+            "a press alone never activates"
+        );
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerReleased {
+                position: Point::new(25.0, 25.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Activated(a),
+            "press and release over the same node with the primary button must activate it"
+        );
+
+        // Press over A, release over B -- a drag-off, not a click.
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(25.0, 25.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerReleased {
+                position: Point::new(75.0, 25.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::None,
+            "releasing over a different node than was pressed must not activate anything"
+        );
+
+        // Press and release over the same node with a non-primary
+        // button -- e.g. a right-click, reserved for a future
+        // context-menu mechanism, not the generic activation outcome.
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(25.0, 25.0),
+                button: PointerButton::Secondary,
+            },
+            &config,
+            now,
+        );
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerReleased {
+                position: Point::new(25.0, 25.0),
+                button: PointerButton::Secondary,
+            },
+            &config,
+            now,
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::None,
+            "a non-primary button press/release pair must not produce the generic activation outcome"
+        );
+
+        // Enter/Space on the currently-focused node also activates it.
+        tree.set_focused(Some(b));
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::KeyPressed {
+                key: Key::Enter,
+                shift: false,
+            },
+            &config,
+            now,
+        );
+        assert_eq!(outcome, DispatchOutcome::Activated(b));
     }
 
     #[test]
