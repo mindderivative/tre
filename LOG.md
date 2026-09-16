@@ -1,81 +1,73 @@
-# Log: M6 Phase 2 — `transform` exposure from Python
+# Log: M6 Phase 3 — `Position::Absolute` exposure from Python
 
-Corresponds to `BUILD_TRACKER.md` M6 Phase 2. `Node.animate()`'s real
-property list (`engine-py/src/node.rs`) was `opacity`/`corner_radius`/
-`elevation`/`background` only, confirmed by direct reading — no
-`transform`, despite M5 Phase 1 building the whole real
-`PaintProperties.transform` composition mechanism. This is the exact
-gap M5 Phase 4 hit while trying to write a live-animated Python pan/zoom
-example.
+Corresponds to `BUILD_TRACKER.md` M6 Phase 3. Confirmed directly
+(`engine-py/src/window.rs`): every Python-facing node-creation method
+built a plain `Style { size, ..Default::default() }` — implicit
+flex-row/block flow only, never `Position::Absolute`. The exact
+concrete blocker M5 Phase 4 hit, and the reason M6 Phase 2's own
+`pan_zoom.py` had to animate one node's transform directly instead of
+a "camera" wrapping positioned children.
 
 ## Investigation before writing code
 
-- **The Python-facing representation has to match `Interpolate for
-  Affine`'s own real, already-stated limitation, not expose more than
-  it correctly supports.** M5 Phase 1's own `Interpolate` impl is a
-  plain componentwise coefficient lerp — exact only for the convex
-  subspace of affines with no rotation/shear. A raw 6-coefficient tuple
-  would let a Python caller construct a rotated/sheared `Affine` that,
-  when animated, would visibly "morph" rather than sweep through a
-  correct arc — a real limitation that's existed since M5 Phase 1 but
-  was never actually reachable, so never exercised. **Scope narrowed,
-  correctly, to match the framework's own real interpolation
-  guarantee:** `transform` is exposed as a `(translate_x, translate_y,
-  scale)` 3-tuple — "pan offset × zoom scale," §11.9's own text,
-  verbatim — composed as `Affine::translate((tx, ty)) *
-  Affine::scale(scale)`, the exact product M5 Phase 1's own pixel test
-  already used. Not a reduced convenience shape layered over a fuller
-  one — the actual boundary of what this framework's transform
-  animation is correct for today. A rotation-capable API is additive
-  whenever `Interpolate` itself gets a real decomposition.
+- **Scoped to `add_rect`/`add_canvas` specifically, not every node-
+  creation method.** `add_splitter`/`add_virtual_list` are both
+  semantically tied to their real position in the flex-row flow (a
+  splitter sits *between* its two flanking siblings; a virtual list's
+  own block-stacking is how "a list" reads at all) — absolute
+  positioning wouldn't compose meaningfully with either, and no
+  consumer needs it there. `add_rect`/`add_canvas` are exactly the two
+  methods M5 Phase 4's own node-graph story needed freely-positioned
+  instances of.
+- **The containing block for `Position::Absolute` insets is the
+  window's own root, which already has real padding** (`PADDING =
+  16.0`, `PyWindow::new`'s own constructor) — confirmed by reading it
+  directly. An absolutely-positioned child's `(x, y)` lands relative to
+  the root's own padding-box origin, not the raw window corner. Named
+  explicitly in the new kwargs' doc comment rather than silently
+  surprising a caller.
 
-## A real scope correction found mid-implementation, before writing the wrong test
+## A real testing constraint found while planning verification, not discovered by trial and error
 
-`PLAN.md` originally called for a new `engine-render` pixel test
-proving a live Python `animate("transform", ...)` call moves a rendered
-pixel. Investigation (grepping every `tests/*.py` file) found this
-isn't actually this project's established pattern for *any*
-`animate()`-settable property — no Python-level test anywhere reads
-back a rendered pixel, or even a non-`f64` property's applied value
-(`background`'s own `animate()` path has never been pixel- or
-value-verified from Python either, the same "isn't a single f64, and
-nothing yet needs to read it back" precedent `Node.get()`'s own doc
-comment already states for excluding it). The underlying paint
-mechanism for `PaintProperties.transform` is already exhaustively
-pixel-proven at the Rust level (M5 Phase 1's `transform_composition.
-rs`) — this phase adds a new *write path* to that same field, not new
-paint/hit-test logic, so there was nothing new for a pixel test to
-prove. Building embedded-Python-interpreter Rust tests to force a pixel
-readback from the FFI layer would have been real, disproportionate new
-test infrastructure this project has never needed for any other
-property — corrected in `PLAN.md` before writing it, not after.
+No Python-level pixel readback exists anywhere (M6 Phase 2's own
+corrected finding), and there is no raw-coordinate hit-test entry point
+either — `Window.click(node)` always resolves to `node`'s *own* current
+center point before dispatching, never an arbitrary `(x, y)`. The real,
+available proof: position a second node to deliberately *overlap* a
+first node's own default (unpositioned) flex-row position, then click
+the first node — `Window.click`'s own real implementation resolves to
+the clicked node's center and then runs genuine topmost-wins
+hit-testing there, so if the explicit position genuinely took effect,
+the *second* node's handler fires instead. If positioning had silently
+fallen back to the old flex-row-only behavior, the second node would
+sit elsewhere in-flow and the first node's own handler would still
+fire. This tests the real, observable behavior through the same
+dispatch mechanism every other FFI test in this project already uses,
+with no new introspection API needed.
 
 ## What happened
 
-`engine-py/src/node.rs`: new `extract_translate_scale(to, property) ->
-Result<(f64, f64, f64), EngineError>`, mirroring `extract_f64`/
-`extract_color`'s exact shape. New `"transform"` arm in `animate()`'s
-match, building `Affine::translate((tx, ty)) * Affine::scale(scale)`
-and calling `node.paint.transform.animate_to(...)`.
+`engine-py/src/window.rs`: new private `fn positioned_style(size, x:
+Option<f32>, y: Option<f32>) -> Style` — the real `Position::Absolute`
++ `taffy::Rect` inset shape every Rust-level pixel test already uses
+internally, factored out once here. `add_rect`/`add_canvas` gain
+`x`/`y` optional kwargs (both default `None`, fully backward
+compatible — omitting both is byte-for-byte the prior behavior),
+routed through it.
 
-New pytest coverage (matching the same FFI-wiring-only scope every
-other non-`f64` `animate()` property already has): `transform` added to
-the "accepts each known paint property" test, plus a new
-`TypeMismatch` test for a bad-shape argument. New
-`examples/pan_zoom.py`: a real, live-animated pan+zoom on one node — the
-concrete thing M5 Phase 4 found it couldn't build. A real, honest
-constraint discovered while writing it: `Window` has no Python-facing
-way to create a plain `Container` yet (only `add_rect`/`add_splitter`/
-`add_virtual_list`/`add_canvas` exist), so the example animates one
-visible rect's own transform directly rather than a "camera" wrapping
-children — a real, currently-buildable shape, not a compromise (a
-node's own transform moves *itself* too, per §11.9's "exactly like
-nested `<g transform>`" semantics, so this is a complete, real
-demonstration on its own).
+Three new pytest tests: the overlap-proves-positioning trick for both
+`add_rect` and `add_canvas`, plus an explicit backward-compatibility
+regression test for omitting `x`/`y` entirely — all passed on the first
+run. New `examples/positioned_graph.py`: the real, idiomatic node-graph
+shape M5 Phase 4 originally wanted — independently-positioned, real,
+clickable `Rect` nodes plus one positioned `Canvas` for edges, closing
+that phase's own stated gap for real (`examples/node_graph.py`'s own
+single-`Canvas` workaround is left as-is, still a legitimate, different
+pattern for batched drawing, not replaced).
 
 Full `cargo test --workspace --release` clean (unchanged Rust test
-count — this phase touched no paint/hit-test logic), `cargo clippy
---workspace --all-targets -- -D warnings`, `cargo fmt --check` all
-clean. `maturin develop --release` + full `pytest tests/` (74 passed,
-up from 73, 1 skipped) and all nine examples (eight existing + new
-`pan_zoom.py`) confirmed clean.
+count — this phase touched no `engine-core`/`engine-render` code),
+`cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt
+--check` all clean. `maturin develop --release` + full `pytest tests/`
+(77 passed, up from 74, 1 skipped) and all ten examples (nine existing
++ new `positioned_graph.py`) confirmed clean.

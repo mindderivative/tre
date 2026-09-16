@@ -1,82 +1,70 @@
-# Plan: M6 Phase 2 — `transform` exposure from Python
+# Plan: M6 Phase 3 — `Position::Absolute` exposure from Python
 
 ## Context
 
-Confirmed directly (`engine-py/src/node.rs`): `Node.animate()`'s real
-property list is `opacity`/`corner_radius`/`elevation`/`background`
-only — no `transform`. M5 Phase 1 built `PaintProperties.transform:
-Animated<kurbo::Affine>` and the whole real composition mechanism, but
-nothing in `engine-py` ever reaches it. This is the exact gap M5 Phase
-4 hit while trying to write a live-animated Python pan/zoom example.
+Confirmed directly (`engine-py/src/window.rs`): every Python-facing
+node-creation method (`add_rect`, `add_canvas`, `add_splitter`,
+`add_virtual_list`) builds a plain `Style { size, ..Default::default()
+}` — always implicit flex-row/block flow, never `Position::Absolute`.
+The exact concrete blocker M5 Phase 4 hit while trying to write a
+positioned node-graph example, and the reason M6 Phase 2's own
+`pan_zoom.py` had to animate one node's transform directly instead of
+a "camera" wrapping positioned children.
 
 ## Investigation before writing code
 
-- **The Python-facing representation has to match `Interpolate for
-  Affine`'s own real, already-stated limitation, not expose more than
-  it correctly supports.** M5 Phase 1's own `Interpolate` impl is a
-  plain componentwise coefficient lerp — exact only for the convex
-  subspace of affines with no rotation/shear (uniform scale + translate,
-  `a == d`, `b == c == 0`). A raw 6-coefficient tuple would let a Python
-  caller construct a rotated/sheared `Affine`; animating between two
-  such values would then visibly "morph" rather than sweep through a
-  correct arc — the exact named limitation M5 Phase 1's own doc comment
-  already flags, but currently unreachable from Python at all, so never
-  actually exercised by a real caller. **Scope narrowed, correctly, to
-  match the framework's own real interpolation guarantee:** expose
-  `transform` as a `(translate_x, translate_y, scale)` 3-tuple —
-  "pan offset × zoom scale," §11.9's own text, verbatim — composed as
-  `Affine::translate((tx, ty)) * Affine::scale(scale)`, the exact
-  product M5 Phase 1's own pixel test already used. This isn't a
-  reduced convenience shape layered over a fuller one; it's the actual
-  boundary of what this framework's transform animation is correct for
-  today. A rotation-capable API is additive whenever `Interpolate`
-  itself gets the real SVD-based decomposition M5 Phase 1's own
-  `LOG.md` named as the (currently unbuilt) alternative.
-- **`Node.get()` doesn't need a `"transform"` case.** It only ever
-  returns `f64` (`background` was already excluded from it for the same
-  reason — "isn't a single f64, and nothing yet needs to read it back").
-  Consistent, not a new decision.
-- **Corrected mid-plan, before writing the wrong test:** this plan
-  originally called for a new `engine-render` pixel test proving a live
-  Python `animate("transform", ...)` call moves a rendered pixel.
-  Investigation found that's not actually this project's established
-  pattern for *any* `animate()`-settable property — confirmed via grep,
-  no Python-level test anywhere reads back a rendered pixel or even a
-  non-`f64` property's applied value (`background`'s own `animate()`
-  path has never been pixel- or value-verified from Python either, the
-  same precedent `Node.get()`'s own doc comment already states). The
-  underlying paint mechanism for `PaintProperties.transform` is already
-  exhaustively pixel-proven at the Rust level (M5 Phase 1's
-  `transform_composition.rs`) — Phase 2 adds a new *write path* to that
-  same field, not new paint/hit-test logic, so there is nothing new for
-  a pixel test to prove. Building embedded-Python-interpreter Rust
-  tests to force a pixel readback from the FFI layer would be real,
-  disproportionate new test infrastructure this project has never
-  needed for any other property — not built here either.
+- **Scoped to `add_rect`/`add_canvas` specifically, not every node-
+  creation method** — `add_splitter`/`add_virtual_list` are both
+  semantically tied to their real position in the flex-row flow
+  (a splitter sits *between* its two flanking siblings;
+  `set_virtual_list_window`'s own block-stacking is how a "list" reads
+  top-to-bottom at all) — absolute positioning wouldn't compose
+  meaningfully with either, and no consumer needs it there. `add_rect`/
+  `add_canvas` are exactly the two node-creation methods M5 Phase 4's
+  own node-graph story actually needed freely-positioned instances of
+  (circular nodes, custom-drawn edges).
+- **The containing block for `Position::Absolute` insets is the
+  window's own root, which already has real padding (`PADDING = 16.0`,
+  `PyWindow::new`'s own constructor).** Confirmed by reading it
+  directly, not assumed — an absolutely-positioned child's `(x, y)`
+  lands relative to the root's own padding-box origin, not the raw
+  window corner. Named explicitly in the new kwargs' own doc comment
+  rather than silently surprising a caller who expects `(0, 0)` to mean
+  the window's own top-left pixel.
+- **Both `x`/`y` are independently optional, but trigger the same
+  positioning mode together** — if either is given, the node uses
+  `Position::Absolute` with both insets (the other defaulting to
+  `0.0` if only one was given); if neither is given, behavior is
+  byte-for-byte unchanged (the existing implicit flex-row flow) —
+  fully backward compatible, no existing caller's output changes.
 
 ## Approach
 
-1. **`engine-py/src/node.rs`**: new `extract_translate_scale(to,
-   property) -> Result<(f64, f64, f64), EngineError>`, mirroring
-   `extract_f64`/`extract_color`'s exact shape. New `"transform"` arm in
-   `animate()`'s match: extracts `(tx, ty, scale)`, builds
-   `Affine::translate((tx, ty)) * Affine::scale(scale)`, calls
-   `node.paint.transform.animate_to(...)`.
-2. **New pytest tests**, matching the same FFI-wiring-only scope every
-   other non-`f64` `animate()` property already has: a real call with a
-   valid 3-tuple doesn't raise; a bad-shape argument raises a clear
-   `TypeError`.
-3. **New example** showing a real, live-animated camera pan — the
-   concrete thing M5 Phase 4 couldn't build (no Python `transform`
-   exposure existed), now buildable; the actual, honest visual proof a
-   human can run, matching this project's own "the live example is the
-   real proof of visible behavior" pattern used throughout.
+1. **`engine-py/src/window.rs`**: new private `fn positioned_style(size:
+   Size<Dimension>, x: Option<f32>, y: Option<f32>) -> Style` — the
+   real `Position::Absolute` + `taffy::Rect` inset shape every Rust-
+   level pixel test already uses internally (`absolute()` helpers in
+   `overlay_menu.rs`/`transform_composition.rs`/etc.), factored out
+   once here since two real Python call sites now need it. `add_rect`/
+   `add_canvas` gain `x: Option<f32> = None, y: Option<f32> = None`
+   kwargs, both routed through it.
+2. **New pytest tests**: an absolutely-positioned rect/canvas actually
+   lands at its own explicit position (verified the same way
+   `absolute_position`-based tests elsewhere do — no pixel readback
+   needed here either, matching M6 Phase 2's own corrected scope: this
+   is a layout-shape claim, testable via the tree's own real bounds);
+   omitting `x`/`y` entirely is unchanged (existing flex-row tests
+   still pass unmodified).
+3. **New example**: the real, positioned node-graph M5 Phase 4 couldn't
+   build — independently-positioned `Rect` nodes and `Canvas` edges in
+   one shared coordinate space, closing that phase's own stated gap for
+   real this time.
 
 ## Files to touch
 
-- `crates/engine-py/src/node.rs` — `extract_translate_scale`,
-  `"transform"` arm.
-- New pixel test + pytest tests + example.
+- `crates/engine-py/src/window.rs` — `positioned_style`, `add_rect`/
+  `add_canvas` kwargs.
+- New pytest tests + example.
 
 ## Verification
 

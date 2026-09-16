@@ -16,7 +16,7 @@ use peniko::Color;
 use peniko::kurbo::Point;
 use pyo3::class::{PyTraverseError, PyVisit};
 use pyo3::prelude::*;
-use taffy::prelude::{AvailableSpace, Rect as TaffyRect, Size, Style, auto, length};
+use taffy::prelude::{AvailableSpace, Position, Rect as TaffyRect, Size, Style, auto, length};
 
 use crate::dispatch::{HandlerMap, interaction_config, open_context_menu, run_dispatch_outcome};
 use crate::dock::{self, SharedDockState};
@@ -25,6 +25,38 @@ use crate::node::Node;
 
 const PADDING: f32 = 16.0;
 const GAP: f32 = 16.0;
+
+/// M6 Phase 3 (§8): the real `Position::Absolute` + `taffy::Rect` inset
+/// shape every Rust-level pixel test already uses internally
+/// (`overlay_menu.rs`/`transform_composition.rs`/etc.'s own `absolute()`
+/// helpers), factored out here since two real Python call sites
+/// (`add_rect`/`add_canvas`) now need it. `x`/`y` are independently
+/// optional but trigger the same positioning mode together -- if either
+/// is given, the node is absolutely positioned with both insets (the
+/// other defaulting to `0.0`); if neither is given, `size` alone is
+/// returned unchanged (the existing implicit flex-row flow, byte-for-
+/// byte backward compatible). The inset lands relative to the window's
+/// own root padding-box origin (`PADDING`, `PyWindow::new`), not the
+/// raw window corner -- a real, stated detail, not a silent surprise.
+fn positioned_style(size: Size<taffy::style::Dimension>, x: Option<f32>, y: Option<f32>) -> Style {
+    if x.is_none() && y.is_none() {
+        return Style {
+            size,
+            ..Default::default()
+        };
+    }
+    Style {
+        position: Position::Absolute,
+        inset: TaffyRect {
+            left: length(x.unwrap_or(0.0)),
+            top: length(y.unwrap_or(0.0)),
+            right: auto(),
+            bottom: auto(),
+        },
+        size,
+        ..Default::default()
+    }
+}
 
 /// `unsendable` (owns `Rc<RefCell<Tree>>`, §9) -- named `Window` to
 /// Python, matching `Node`'s own "renamed to match what Python actually
@@ -126,18 +158,27 @@ impl PyWindow {
     /// child of this window's implicit root row) is the real minimal
     /// slice; unchanged by the `PyWindow` split, just moved here with
     /// `App` itself.
-    fn add_rect(&self, background: (u8, u8, u8, u8), width: f32, height: f32) -> Node {
+    #[pyo3(signature = (background, width, height, x=None, y=None))]
+    fn add_rect(
+        &self,
+        background: (u8, u8, u8, u8),
+        width: f32,
+        height: f32,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> Node {
         let (r, g, b, a) = background;
         let mut tree = self.tree.borrow_mut();
         let id = tree.insert(
             NodeKind::Rect,
-            Style {
-                size: Size {
+            positioned_style(
+                Size {
                     width: length(width),
                     height: length(height),
                 },
-                ..Default::default()
-            },
+                x,
+                y,
+            ),
             PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
@@ -580,17 +621,26 @@ impl PyWindow {
     /// `NodeId` -- not called yet; `redraw_canvas` is what actually
     /// invokes it, mirroring `add_virtual_list`/`materialize`'s own
     /// "store now, invoke later" shape exactly.
-    fn add_canvas(&mut self, width: f64, height: f64, draw: Py<PyAny>) -> Node {
+    #[pyo3(signature = (width, height, draw, x=None, y=None))]
+    fn add_canvas(
+        &mut self,
+        width: f64,
+        height: f64,
+        draw: Py<PyAny>,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> Node {
         let mut tree = self.tree.borrow_mut();
         let id = tree.insert(
             NodeKind::Canvas(engine_core::CanvasState::new()),
-            Style {
-                size: Size {
+            positioned_style(
+                Size {
                     width: length(width as f32),
                     height: length(height as f32),
                 },
-                ..Default::default()
-            },
+                x,
+                y,
+            ),
             PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
