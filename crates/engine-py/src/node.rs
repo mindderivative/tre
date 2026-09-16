@@ -27,6 +27,7 @@ use std::time::{Duration, Instant};
 
 use engine_core::{Action, EventKind, MotionCurve, NodeId, NodeKind, Tree};
 use peniko::Color;
+use peniko::kurbo::Affine;
 use pyo3::prelude::*;
 
 use crate::dispatch::HandlerMap;
@@ -94,6 +95,20 @@ impl Node {
                 let value = extract_color(&to, property)?;
                 node.paint
                     .background
+                    .animate_to(value, duration, MotionCurve::Linear, now);
+            }
+            // M6 Phase 2 (§8): "pan offset × zoom scale" (§11.9's own
+            // text), not a raw 6-coefficient `Affine` -- matches
+            // `Interpolate for Affine`'s own real limitation (M5 Phase
+            // 1): a plain componentwise coefficient lerp, exact only
+            // for the no-rotation/shear subspace this 3-tuple can only
+            // ever construct. A rotation-capable API is additive
+            // whenever `Interpolate` itself gets a real decomposition.
+            "transform" => {
+                let (tx, ty, scale) = extract_translate_scale(&to, property)?;
+                let value = Affine::translate((tx, ty)) * Affine::scale(scale);
+                node.paint
+                    .transform
                     .animate_to(value, duration, MotionCurve::Linear, now);
             }
             _ => {
@@ -280,6 +295,21 @@ fn extract_color(to: &Bound<'_, PyAny>, property: &str) -> Result<Color, EngineE
         .map_err(|_| EngineError::TypeMismatch {
             property: property.to_string(),
             expected: "an (r, g, b, a) tuple of 0-255 ints",
+            actual: type_name_of(to),
+        })
+}
+
+/// M6 Phase 2: `"transform"`'s own real, narrower shape -- see
+/// `animate()`'s own doc comment for why this is `(translate_x,
+/// translate_y, scale)`, not a raw `Affine` coefficient tuple.
+fn extract_translate_scale(
+    to: &Bound<'_, PyAny>,
+    property: &str,
+) -> Result<(f64, f64, f64), EngineError> {
+    to.extract::<(f64, f64, f64)>()
+        .map_err(|_| EngineError::TypeMismatch {
+            property: property.to_string(),
+            expected: "a (translate_x, translate_y, scale) tuple of floats",
             actual: type_name_of(to),
         })
 }

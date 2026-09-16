@@ -38,6 +38,7 @@ def test_animate_accepts_each_known_paint_property():
     node.animate("corner_radius", 12.0, duration_ms=100)
     node.animate("elevation", 4.0, duration_ms=100)
     node.animate("background", (255, 255, 255, 255), duration_ms=100)
+    node.animate("transform", (10.0, 20.0, 1.5), duration_ms=100)
 
 
 def test_animate_defaults_duration_to_an_instant_snap():
@@ -65,6 +66,16 @@ def test_background_requires_a_four_tuple_not_a_float():
     node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
     with pytest.raises(TypeError, match="expects an \\(r, g, b, a\\) tuple"):
         node.animate("background", 0.5)
+
+
+def test_transform_requires_a_translate_x_translate_y_scale_three_tuple():
+    """M6 Phase 2 (§8): `transform` is `(translate_x, translate_y,
+    scale)`, not a raw affine-coefficient tuple -- matches `Interpolate
+    for Affine`'s own real limitation (M5 Phase 1, `PLAN.md`)."""
+    window = Window(width=200, height=200)
+    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    with pytest.raises(TypeError, match="expects a \\(translate_x, translate_y, scale\\) tuple"):
+        node.animate("transform", 0.5)
 
 
 def test_app_requires_at_least_one_window():

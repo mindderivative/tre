@@ -1,76 +1,81 @@
-# Log: M6 Phase 1 — `Node.add_child` (real cycle rejection)
+# Log: M6 Phase 2 — `transform` exposure from Python
 
-Corresponds to `BUILD_TRACKER.md` M6 Phase 1. `ARCHITECTURE.md` §8
-sketches this exactly: `fn add_child(&self, child: &PyNode) ->
-PyResult<()>` rejecting an ancestor-as-child cycle with a
-`PyValueError`, and `EngineError::CycleRejected`. This phase makes it
-real.
+Corresponds to `BUILD_TRACKER.md` M6 Phase 2. `Node.animate()`'s real
+property list (`engine-py/src/node.rs`) was `opacity`/`corner_radius`/
+`elevation`/`background` only, confirmed by direct reading — no
+`transform`, despite M5 Phase 1 building the whole real
+`PaintProperties.transform` composition mechanism. This is the exact
+gap M5 Phase 4 hit while trying to write a live-animated Python pan/zoom
+example.
 
 ## Investigation before writing code
 
-- **`Tree::add_child`'s ~80 existing call sites all treat it as
-  infallible** (confirmed via grep) — every one of them already knows
-  structurally it can't form a cycle. Changing its signature would have
-  rippled through all of them for zero real benefit. **Scope narrowed,
-  correctly:** a new, separate `Tree::try_add_child` is the checked
-  entry point for the one caller that genuinely can't make that
-  guarantee — Python's own `Node.add_child` — leaving `add_child` and
-  every existing caller completely untouched.
-- **A second, real, closely-related corruption risk found by reading
-  `add_child` closely, not assumed:** it has no dedup. Attaching an
-  already-attached `child` under a new `parent` pushes a second parent
-  pointer without detaching the old one first — the exact "`add_child`
-  has no dedup" bug class M4 Phase 7 (overlay) and M4 Phase 9 (docking)
-  each already found and fixed once, for their own specific caller.
-  `Node.add_child` is the first *general-purpose* reparenting entry
-  point, and the one most likely to hit it a third time (a real app
-  moving a node between containers). Fixed the same way both prior
-  instances were: detach from the current parent first (`Tree::detach`,
-  reusing the existing mechanism, not a new one).
-- **A third, real risk found before writing any Python code:** `NodeId`
-  is a `slotmap` generational key, unique only *within* the `Tree` that
-  minted it — confirmed directly, `slotmap` gives no cross-map identity
-  guarantee. `Node.add_child` is the first Python-facing method that
-  hands another node's id to `taffy` for a real structural mutation
-  (`set_context_menu`/`set_dock_handle` also take a second `Node`, but
-  only ever store its id in a side map, never touch `taffy` with it).
-  A cross-`Window` call could alias an unrelated real node in the
-  wrong `Tree` and hand a foreign `taffy::NodeId` to this `Tree`'s own
-  `taffy::TaffyTree` — real corruption risk, not just a wrong result.
-  `set_context_menu`/`set_dock_handle` don't guard against this today
-  (confirmed via grep, no `Rc::ptr_eq` anywhere in the codebase) — a
-  real, pre-existing gap, not this phase's to fix retroactively. For
-  `add_child` specifically, the risk justified a real, minimal guard:
-  `Rc::ptr_eq(&self.tree, &child.tree)`, checked before either `Tree`
-  is ever touched.
+- **The Python-facing representation has to match `Interpolate for
+  Affine`'s own real, already-stated limitation, not expose more than
+  it correctly supports.** M5 Phase 1's own `Interpolate` impl is a
+  plain componentwise coefficient lerp — exact only for the convex
+  subspace of affines with no rotation/shear. A raw 6-coefficient tuple
+  would let a Python caller construct a rotated/sheared `Affine` that,
+  when animated, would visibly "morph" rather than sweep through a
+  correct arc — a real limitation that's existed since M5 Phase 1 but
+  was never actually reachable, so never exercised. **Scope narrowed,
+  correctly, to match the framework's own real interpolation
+  guarantee:** `transform` is exposed as a `(translate_x, translate_y,
+  scale)` 3-tuple — "pan offset × zoom scale," §11.9's own text,
+  verbatim — composed as `Affine::translate((tx, ty)) *
+  Affine::scale(scale)`, the exact product M5 Phase 1's own pixel test
+  already used. Not a reduced convenience shape layered over a fuller
+  one — the actual boundary of what this framework's transform
+  animation is correct for today. A rotation-capable API is additive
+  whenever `Interpolate` itself gets a real decomposition.
+
+## A real scope correction found mid-implementation, before writing the wrong test
+
+`PLAN.md` originally called for a new `engine-render` pixel test
+proving a live Python `animate("transform", ...)` call moves a rendered
+pixel. Investigation (grepping every `tests/*.py` file) found this
+isn't actually this project's established pattern for *any*
+`animate()`-settable property — no Python-level test anywhere reads
+back a rendered pixel, or even a non-`f64` property's applied value
+(`background`'s own `animate()` path has never been pixel- or
+value-verified from Python either, the same "isn't a single f64, and
+nothing yet needs to read it back" precedent `Node.get()`'s own doc
+comment already states for excluding it). The underlying paint
+mechanism for `PaintProperties.transform` is already exhaustively
+pixel-proven at the Rust level (M5 Phase 1's `transform_composition.
+rs`) — this phase adds a new *write path* to that same field, not new
+paint/hit-test logic, so there was nothing new for a pixel test to
+prove. Building embedded-Python-interpreter Rust tests to force a pixel
+readback from the FFI layer would have been real, disproportionate new
+test infrastructure this project has never needed for any other
+property — corrected in `PLAN.md` before writing it, not after.
 
 ## What happened
 
-`engine-core/src/tree.rs`: new `Tree::try_add_child(&mut self, parent,
-child) -> bool` — walks up from `parent` via `Node::parent` links
-(the same walk `absolute_position` already uses) checking for `child`;
-rejects (returns `false`, no mutation) on a cycle. On no cycle: detaches
-`child` from its current parent if `Some` (`Tree::detach`), then calls
-the existing, untouched `add_child`.
+`engine-py/src/node.rs`: new `extract_translate_scale(to, property) ->
+Result<(f64, f64, f64), EngineError>`, mirroring `extract_f64`/
+`extract_color`'s exact shape. New `"transform"` arm in `animate()`'s
+match, building `Affine::translate((tx, ty)) * Affine::scale(scale)`
+and calling `node.paint.transform.animate_to(...)`.
 
-`engine-py/src/error.rs`: `EngineError::CycleRejected` (message
-verbatim from §8's own sketch) and `EngineError::ForeignNode` (the
-cross-`Window` case above), both to `PyValueError`.
+New pytest coverage (matching the same FFI-wiring-only scope every
+other non-`f64` `animate()` property already has): `transform` added to
+the "accepts each known paint property" test, plus a new
+`TypeMismatch` test for a bad-shape argument. New
+`examples/pan_zoom.py`: a real, live-animated pan+zoom on one node — the
+concrete thing M5 Phase 4 found it couldn't build. A real, honest
+constraint discovered while writing it: `Window` has no Python-facing
+way to create a plain `Container` yet (only `add_rect`/`add_splitter`/
+`add_virtual_list`/`add_canvas` exist), so the example animates one
+visible rect's own transform directly rather than a "camera" wrapping
+children — a real, currently-buildable shape, not a compromise (a
+node's own transform moves *itself* too, per §11.9's "exactly like
+nested `<g transform>`" semantics, so this is a complete, real
+demonstration on its own).
 
-`engine-py/src/node.rs`: `Node.add_child(&self, child: PyRef<'_,
-Node>) -> PyResult<()>` — `Rc::ptr_eq` check first, then
-`try_add_child`, translating a rejection into `CycleRejected`.
-
-Three new `engine-core` unit tests (self-cycle, real multi-level
-ancestor cycle, re-parenting an already-attached node moves it rather
-than duplicating it) — all passed on the first run, each asserting the
-*tree* ended up correct, not just the return value. New
-`tests/test_add_child.py` (5 tests): a real attach, both cycle shapes,
-re-parenting, and the cross-`Window` rejection — all passed on the
-first run.
-
-Full `cargo test --workspace --release` clean (`engine-core` 50 tests,
-up from 47), `cargo clippy --workspace --all-targets -- -D warnings`,
-`cargo fmt --check` all clean. `maturin develop --release` + full
-`pytest tests/` (73 passed, up from 68, 1 skipped) and all eight
-examples confirmed clean.
+Full `cargo test --workspace --release` clean (unchanged Rust test
+count — this phase touched no paint/hit-test logic), `cargo clippy
+--workspace --all-targets -- -D warnings`, `cargo fmt --check` all
+clean. `maturin develop --release` + full `pytest tests/` (74 passed,
+up from 73, 1 skipped) and all nine examples (eight existing + new
+`pan_zoom.py`) confirmed clean.
