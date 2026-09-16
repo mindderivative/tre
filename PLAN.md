@@ -1,73 +1,90 @@
-# Plan: M6 Phase 3 — `Position::Absolute` exposure from Python
+# Plan: M6 Phase 4 — `Tree::absolute_position` transform-awareness
 
 ## Context
 
-Confirmed directly (`engine-py/src/window.rs`): every Python-facing
-node-creation method (`add_rect`, `add_canvas`, `add_splitter`,
-`add_virtual_list`) builds a plain `Style { size, ..Default::default()
-}` — always implicit flex-row/block flow, never `Position::Absolute`.
-The exact concrete blocker M5 Phase 4 hit while trying to write a
-positioned node-graph example, and the reason M6 Phase 2's own
-`pan_zoom.py` had to animate one node's transform directly instead of
-a "camera" wrapping positioned children.
+The post-M5 code review finding, now the milestone's final phase:
+`Tree::absolute_position` still doesn't know `PaintProperties.transform`
+exists — deliberately, per M5's own stated scope (`hit_test`/
+`paint_node` alone became transform-aware; `absolute_position` was
+explicitly left as pure layout-translation both times). Its real
+callers — `open_overlay`'s anchor placement, `splitter_geometry`'s drag
+math, and every `engine-py` synthetic-point entry point — will silently
+compute the wrong canvas position for a node inside a panned/zoomed
+`Container`.
 
 ## Investigation before writing code
 
-- **Scoped to `add_rect`/`add_canvas` specifically, not every node-
-  creation method** — `add_splitter`/`add_virtual_list` are both
-  semantically tied to their real position in the flex-row flow
-  (a splitter sits *between* its two flanking siblings;
-  `set_virtual_list_window`'s own block-stacking is how a "list" reads
-  top-to-bottom at all) — absolute positioning wouldn't compose
-  meaningfully with either, and no consumer needs it there. `add_rect`/
-  `add_canvas` are exactly the two node-creation methods M5 Phase 4's
-  own node-graph story actually needed freely-positioned instances of
-  (circular nodes, custom-drawn edges).
-- **The containing block for `Position::Absolute` insets is the
-  window's own root, which already has real padding (`PADDING = 16.0`,
-  `PyWindow::new`'s own constructor).** Confirmed by reading it
-  directly, not assumed — an absolutely-positioned child's `(x, y)`
-  lands relative to the root's own padding-box origin, not the raw
-  window corner. Named explicitly in the new kwargs' own doc comment
-  rather than silently surprising a caller who expects `(0, 0)` to mean
-  the window's own top-left pixel.
-- **Both `x`/`y` are independently optional, but trigger the same
-  positioning mode together** — if either is given, the node uses
-  `Position::Absolute` with both insets (the other defaulting to
-  `0.0` if only one was given); if neither is given, behavior is
-  byte-for-byte unchanged (the existing implicit flex-row flow) —
-  fully backward compatible, no existing caller's output changes.
+- **Every real caller of `absolute_position`, enumerated via grep,
+  before deciding how to fix it:** `engine-core::tree.rs` itself
+  (`open_overlay`'s anchor placement, `splitter_geometry`'s flanking-
+  sibling math) and `engine-py` (`window.rs`'s `click`/`hover`/
+  `right_click`, `view.rs`'s equivalents) — all resolve "where is this
+  node, in canvas space" for a purpose that needs the *real*,
+  transform-composed position, exactly the same claim `hit_test`
+  already makes correctly since M5 Phase 2.
+- **Changing `absolute_position`'s own behavior in place, not adding a
+  parallel method, is the correct fix here** — unlike `hit_test`
+  (M5 Phase 2) and `add_child` (M6 Phase 1), where a *new* checked
+  method was correct because the existing infallible one had ~80
+  trusted callers that structurally couldn't need the new behavior,
+  `absolute_position` has a small, fully-enumerated set of real callers
+  (five, all listed above), and *every one of them* wants the
+  transform-aware answer — there is no caller that specifically wants
+  the old pure-translation behavior. Confirmed by reading each call
+  site: none of them are hot-path-per-frame the way `paint_node`/
+  `hit_test_at` are (an overlay opens once per interaction, a splitter
+  drag reads it once per pointer move, not once per node per frame),
+  so the small extra cost of composing a transform is not a real
+  concern the way it would be for a mass per-frame walk.
+- **The composition formula is the same product Phases 1/2 already
+  established** — `composed(node) = composed(parent) *
+  Affine::translate(layout.location) * node.paint.transform.current`
+  — but `absolute_position` returns an `(f64, f64)` point, not an
+  `Affine`. The real fix: compose the full `Affine` walking down from
+  the root (mirroring `hit_test_at`'s own top-down recursion, not
+  `absolute_position`'s current bottom-up parent-chain walk, since an
+  `Affine` composes correctly only in root-to-node order) and apply it
+  to the node's own local origin `Point::ORIGIN` to get its real,
+  transformed canvas position.
+- **This does change `absolute_position`'s answer for any node under a
+  non-identity ancestor transform** — a real, intentional behavior
+  change, not a silent one: every existing call site's own tests (this
+  phase's own new tests, plus the full pre-existing suite) must
+  confirm the identity-transform case (every node before this phase,
+  and everywhere `transform` is never set) is byte-for-byte unchanged,
+  the same "provably a no-op" standard M5 Phase 1 held itself to.
 
 ## Approach
 
-1. **`engine-py/src/window.rs`**: new private `fn positioned_style(size:
-   Size<Dimension>, x: Option<f32>, y: Option<f32>) -> Style` — the
-   real `Position::Absolute` + `taffy::Rect` inset shape every Rust-
-   level pixel test already uses internally (`absolute()` helpers in
-   `overlay_menu.rs`/`transform_composition.rs`/etc.), factored out
-   once here since two real Python call sites now need it. `add_rect`/
-   `add_canvas` gain `x: Option<f32> = None, y: Option<f32> = None`
-   kwargs, both routed through it.
-2. **New pytest tests**: an absolutely-positioned rect/canvas actually
-   lands at its own explicit position (verified the same way
-   `absolute_position`-based tests elsewhere do — no pixel readback
-   needed here either, matching M6 Phase 2's own corrected scope: this
-   is a layout-shape claim, testable via the tree's own real bounds);
-   omitting `x`/`y` entirely is unchanged (existing flex-row tests
-   still pass unmodified).
-3. **New example**: the real, positioned node-graph M5 Phase 4 couldn't
-   build — independently-positioned `Rect` nodes and `Canvas` edges in
-   one shared coordinate space, closing that phase's own stated gap for
-   real this time.
+1. **`engine-core/src/tree.rs`**: rewrite `absolute_position` to walk
+   top-down from the root (find the root via repeated `.parent` lookups
+   first, matching the *shape* of the existing bottom-up walk but
+   composing an `Affine` instead of accumulating `(f64, f64)`), then
+   return `(composed * Point::ORIGIN).x, (composed * Point::ORIGIN).y)`.
+   Its public signature (`&self, id: NodeId) -> (f64, f64)`) is
+   unchanged — every caller keeps working, just gets the correct answer.
+2. **New `engine-core` tests**: a node under a real ancestor transform
+   reports its actual transformed position via `absolute_position`, not
+   its untransformed layout position; the full pre-existing
+   `absolute_position` test suite (identity-transform case) stays green
+   unmodified.
+3. **No `engine-py` changes needed** — every real caller (`open_overlay`,
+   `splitter_geometry`, `click`/`hover`/`right_click` and their `View`
+   equivalents) already calls the same public `absolute_position`, so
+   the fix reaches all of them for free, the same "mechanism reaches
+   everywhere at once" pattern this project has used repeatedly.
 
 ## Files to touch
 
-- `crates/engine-py/src/window.rs` — `positioned_style`, `add_rect`/
-  `add_canvas` kwargs.
-- New pytest tests + example.
+- `crates/engine-core/src/tree.rs` — `absolute_position` rewrite +
+  tests.
 
 ## Verification
 
 - `cargo test --workspace`, `cargo clippy --workspace --all-targets --
   -D warnings`, `cargo fmt --check`.
+- Full pre-existing suite (including every overlay/splitter-drag/docking
+  pixel test) must stay green unmodified — the "no behavior change for
+  identity-transform content" claim, held to the same standard M5
+  Phase 1 established.
 - `maturin develop && python -m pytest tests/ -v` plus all examples run.

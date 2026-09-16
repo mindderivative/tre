@@ -20,6 +20,12 @@ whichever node is actually there, topmost-wins. If positioning silently
 fell back to the old flex-row-only behavior, the second node would
 instead sit in-flow (not at `(16, 16)`), and the click would still
 reach the first node instead.
+
+Also covers M6 Phase 4's own real proof: `Window.click(node)` resolves
+its dispatch point via `Tree::absolute_position`, which is now
+transform-aware -- a node whose own `transform` has moved it (M6 Phase
+2) must still be found by `click`, not missed via a stale,
+untransformed dispatch point.
 """
 
 from tre import Window
@@ -78,4 +84,31 @@ def test_add_canvas_with_explicit_position_overlaps_the_default_flow_position():
     assert hits == ["explicit"], (
         "an explicitly-positioned Canvas (topmost) must win real hit-testing at the "
         f"default node's own center point, got {hits!r}"
+    )
+
+
+def test_click_still_finds_a_node_after_its_own_transform_moves_it():
+    """M6 Phase 4 (§8): the post-M5-review gap this phase closes --
+    `Window.click(node)` resolves its dispatch point via `Tree::
+    absolute_position`, which now correctly accounts for `node`'s own
+    animated `transform` (M6 Phase 2). Before this phase, a node with a
+    real transform would visibly move (real hit-testing has been
+    transform-aware since M5 Phase 2), but `click`'s own dispatch point
+    would still be computed from the node's stale, untransformed
+    position -- missing it entirely."""
+    window = Window(width=200, height=200)
+    hits = []
+    node = window.add_rect(background=(0, 0, 0, 255), width=40, height=40)
+    node.set_on_click(lambda: hits.append(True))
+
+    # duration_ms=0 -- an instant snap, matching this project's own
+    # established convention for testing an animation's endpoint
+    # synchronously.
+    node.animate("transform", (60.0, 60.0, 1.0), duration_ms=0)
+
+    window.click(node)
+
+    assert hits == [True], (
+        "click must still find the node at its real, transformed position, not its "
+        f"stale untransformed one, got {hits!r}"
     )

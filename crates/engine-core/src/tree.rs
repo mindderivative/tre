@@ -327,33 +327,57 @@ impl Tree {
             .expect("layout: no computed layout yet for this node -- call compute_layout first")
     }
 
-    /// `id`'s own on-screen position, accumulated all the way up its
-    /// `parent` chain to whichever root `compute_layout` was last called
-    /// on (§14 step 13's own real need: `open_overlay` positions an
-    /// overlay relative to its anchor's *absolute* bounds, not the
-    /// anchor's own parent-relative `Layout::location`). A genuinely new
-    /// capability, not previously exposed as a standalone query --
-    /// `build_tree_scene`/`build_access_update` only ever compute this
-    /// *inline*, during their own full-tree walks, and each keeps its
-    /// own separate accumulator; nothing before this let a caller ask
-    /// "where is this one node, absolutely" without a full walk.
+    /// `id`'s own real, on-screen position -- transform-aware since M6
+    /// Phase 4 (§8): composes the identical `parent *
+    /// translate(layout.location) * own_transform` product `paint_node`/
+    /// `hit_test_at` already compose (M5 Phase 1/2), not just a pure
+    /// accumulated translation. §14 step 13's own real need: `open_overlay`
+    /// positions an overlay relative to its anchor's *absolute* bounds,
+    /// not the anchor's own parent-relative `Layout::location` --
+    /// `splitter_geometry`'s drag math and every `engine-py` synthetic-
+    /// point entry point (`Window`/`View`'s `.click()`/`.hover()`/
+    /// `.right_click()`) have the exact same real need, confirmed via
+    /// grep as this method's only real callers (a small, fully
+    /// enumerated set, unlike `add_child`'s ~80 -- every one of them
+    /// wants the transform-aware answer, so this rewrites the method in
+    /// place rather than adding a parallel checked sibling the way M6
+    /// Phase 1/M5 Phase 2 did for `add_child`/`hit_test`).
+    ///
+    /// An `Affine` only composes correctly root-to-node, the opposite
+    /// order of the old bottom-up accumulation -- so this collects the
+    /// chain from `id` up to the root first, then walks it in reverse.
+    /// None of this method's real callers run once per node per frame
+    /// (an overlay opens once per interaction, a drag reads this once
+    /// per pointer move), so the extra composition cost here is not the
+    /// same concern it would be for `paint_node`/`hit_test_at`'s own
+    /// per-frame walks.
     pub fn absolute_position(&self, id: NodeId) -> (f64, f64) {
-        let mut x = 0.0;
-        let mut y = 0.0;
+        let mut chain = vec![id];
         let mut current = id;
-        loop {
-            let layout = self.layout(current);
-            x += f64::from(layout.location.x);
-            y += f64::from(layout.location.y);
+        while let Some(parent) = self
+            .nodes
+            .get(current)
+            .expect("absolute_position: NodeId not found in this Tree")
+            .parent
+        {
+            chain.push(parent);
+            current = parent;
+        }
+
+        let mut composed = Affine::IDENTITY;
+        for &node_id in chain.iter().rev() {
+            let layout = self.layout(node_id);
             let node = self
                 .nodes
-                .get(current)
+                .get(node_id)
                 .expect("absolute_position: NodeId not found in this Tree");
-            match node.parent {
-                Some(parent) => current = parent,
-                None => return (x, y),
-            }
+            composed = composed
+                * Affine::translate((f64::from(layout.location.x), f64::from(layout.location.y)))
+                * node.paint.transform.current;
         }
+
+        let p = composed * Point::ORIGIN;
+        (p.x, p.y)
     }
 
     /// Updates `id`'s `layout_style` and keeps `taffy`'s own internal
@@ -1477,6 +1501,61 @@ mod tests {
         let (x, y) = tree.absolute_position(target);
         assert_eq!(x, 5.0 + 40.0);
         assert_eq!(y, 5.0);
+    }
+
+    /// M6 Phase 4 (§8): the real, post-M5-review gap this phase closes --
+    /// `absolute_position` must report a node's *actual* transformed
+    /// canvas position, not its plain untransformed layout position, for
+    /// a node inside an ancestor with a real `transform` -- the same
+    /// claim `hit_test`/`paint_node` already correctly make (M5 Phase
+    /// 1/2), now true here too.
+    #[test]
+    fn absolute_position_follows_an_ancestor_transform() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            size: Size {
+                width: length(200.0),
+                height: length(200.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let (_, camera_style, camera_paint) = leaf(200.0, 200.0);
+        let camera = tree.insert(NodeKind::Container, camera_style, camera_paint);
+        tree.add_child(root, camera);
+
+        let (k, s, p) = leaf(40.0, 40.0);
+        let chip = tree.insert(k, s, p);
+        tree.add_child(camera, chip);
+
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(200.0),
+            },
+        );
+
+        // Before any transform: chip sits at its plain local (0,0) --
+        // default block layout places the sole child at its parent's
+        // origin, matching every other transform test's own established
+        // baseline (M5 Phase 1/2).
+        assert_eq!(tree.absolute_position(chip), (0.0, 0.0));
+
+        // camera's own transform: scale(2.0) about the origin, then
+        // translate by (20, 20) -- chip's local (0,0) maps to canvas
+        // (20, 20), not (0, 0).
+        tree.get_mut(camera).unwrap().paint.transform.current =
+            Affine::translate((20.0, 20.0)) * Affine::scale(2.0);
+
+        assert_eq!(
+            tree.absolute_position(chip),
+            (20.0, 20.0),
+            "absolute_position must report chip's real, transformed canvas position, not \
+             its plain untransformed layout position"
+        );
     }
 
     #[test]
