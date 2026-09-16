@@ -2,13 +2,11 @@
 name = "engine-md3"
 version.workspace = true
 edition.workspace = true
-description = "Material Design 3 theming: color scheme, shadow/ripple helpers, shape morph, motion-curve presets. Depends on engine-core, never the reverse. See ARCHITECTURE.md §4, §7."
+description = "Material Design 3 theming: dynamic color science (HCT/tonal palettes/scheme roles). Depends on engine-core, never the reverse. See ARCHITECTURE.md §4, §7.1. (shape_morph/motion-curve presets moved to engine-core at M7 Phase 1/4 -- neither had real MD3-specific content.)"
 
 [dependencies]
 engine-core = { path = "../engine-core" }
 material-colors = "0.4.2"
-# §7.4's shape-morph module needs `kurbo::BezPath`/`Point`/`PathEl` --
-# via `peniko::kurbo`'s re-export, matching every other crate's own
-# "go through peniko, don't depend on kurbo directly" convention.
-# Already resolved at 0.6.1 elsewhere in the workspace.
+# `color.rs` maps every resolved scheme role onto `peniko::Color` --
+# already resolved at 0.6.1 elsewhere in the workspace.
 peniko = "0.6.1"

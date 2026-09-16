@@ -1,144 +1,121 @@
-# Plan: M7 Phase 3 — Dynamic Color, Wired for Real (§7.1, completing §7.3)
+# Plan: M7 Phase 4 — Shape Morphing, Wired for Real (§7.4)
 
-Corresponds to `BUILD_TRACKER.md` M7 Phase 3, the milestone's own
-scoping (three steps): (1) a `Window`-level theme concept in
-`engine-py`, generated via the real `DynamicTheme::from_seed`; (2)
-ripple/hover's hardcoded black tint becomes the real MD3 "on-surface"
-scheme role; (3) real live theme switching — `winit`'s `ThemeChanged`
-forwarded through the real `InputEvent`/dispatch path M4 already built.
+Corresponds to `BUILD_TRACKER.md` M7 Phase 4's own scoping: `Paint
+Properties` (or a `NodeKind::Rect`-specific payload) gains a real
+`Animated<ShapeKey>` field wired into `paint_node`'s `Rect` fill path
+(Step 1), plus a Python-facing way to trigger a morph between two real
+shapes (Step 2).
 
-## Investigation (facts verified before writing code)
+## Investigation before writing code
 
-- `engine-md3::color::ColorScheme` is a real, already-proven 49-field
-  struct with a `role(&self, name: &str) -> Option<Color>` resolver and
-  `DynamicTheme { light, dark }` with `DynamicTheme::from_seed(seed:
-  Color) -> Self` — confirmed by reading `crates/engine-md3/src/
-  color.rs` directly, including its own test suite proving it matches
-  `material-colors`' native output.
-- `engine-core::InteractionState` (`crates/engine-core/src/
-  interaction.rs`) currently has `ripples`, `hover_opacity`,
-  `focus_ring` — no color field. `Tree::interaction_mut` is the single
-  lazy-creation choke point (`get_or_insert_with(InteractionState::
-  new)`), confirmed via grep — most nodes never get one until a real
-  opt-in call.
-- `engine-render/src/lib.rs`'s ripple/hover paint arm (`paint_node`,
-  ~line 405-439) hardcodes `Color::from_rgba8(0, 0, 0, 255)` twice (hover
-  fill, ripple fill) — its own doc comment already forward-references
-  this exact phase: "dynamic color... isn't wired into `paint_node`
-  anywhere yet... that's a separate, larger, pre-existing gap, not
-  solved here as a side effect [of M7 Phase 2]." `engine-render` cannot
-  depend on `engine-md3` (§4's dependency diagram, re-confirmed in Phase
-  2) — so it must receive an already-resolved plain `Color`, not an MD3
-  concept.
-- `engine-py::Node`'s single opt-in method is `enable_interaction()`
-  (`node.rs`), a thin call into `Tree::interaction_mut` — the exact spot
-  a real theme color needs to land at opt-in time.
-- `Node` currently shares `handlers`/`context_menus` with its owning
-  `PyWindow` via `Rc<RefCell<...>>` clones threaded through every
-  construction site (`window.rs` ×4, `view.rs` ×3, confirmed via grep).
-  A new shared theme handle follows the identical, already-established
-  pattern.
-- `View` (`view.rs`, YAML-driven) has its own separate, pre-existing
-  color-resolution path (`engine_spec::build::resolve_color`, tries a
-  scheme role name then falls back to a literal color) — untouched by
-  this phase. `BUILD_TRACKER.md`'s own Phase 3 scope text says
-  "Window/App-level theme concept" specifically — `View`'s nodes get a
-  fresh, private (non-shared) theme handle at each of its 3 construction
-  sites, so nothing about `View` changes behavior; only `Window`-created
-  nodes ever see a real theme.
-- `engine_core::InputEvent` (`input.rs`) already has a real precedent
-  for "plumbing only, `Tree::dispatch` is a true no-op for it" —
-  `Scroll` (M4 Phase 8, confirmed at `tree.rs:1174`,
-  `InputEvent::Scroll { .. } => DispatchOutcome::None`). `ThemeChanged`
-  follows the identical shape: a `Tree`-level no-op, meaningful only to
-  `engine-py`'s own dispatch closure.
-- `engine-platform`'s `on_input` closure (`lib.rs`) already translates
-  `WindowEvent::CursorMoved`/`MouseInput`/`KeyboardInput`/`MouseWheel`
-  into `InputEvent` variants, right before a final `_ => {}` catch-all
-  (confirmed at `lib.rs:470-519`) — the exact, already-real mechanism
-  the milestone's own scope text names.
-- Verified directly against the pinned `winit = "0.30.13"` source
-  (`~/.cargo/git/checkouts/winit-.../src/event.rs`): `WindowEvent::
-  ThemeChanged(Theme)` is real, `Theme` is `{ Light, Dark }`. Its own
-  doc comment: "Platform-specific: iOS / Android / X11 / Wayland /
-  Orbital: Unsupported." This means live OS theme switching will not
-  fire on this machine's own Linux/X11 or Wayland session — a real,
-  worth-stating platform limitation, not a bug in this wiring. `Window.
-  set_theme()` itself (steps 1/2) works identically on every platform;
-  only the *automatic* OS-driven switch (step 3) is unsupported here.
-- `engine-py::App::run`'s `WindowSetup`/`WindowRuntime` structs
-  (`app.rs`) already extract `tree`/`handlers`/`context_menus`/`dock`
-  from each `PyWindow` once, up front, into plain `Rc<RefCell<...>>`
-  clones the `winit` closures capture — a shared theme handle threads
-  through identically, extracted from `window.theme.clone()`.
+- `engine_md3::shape_morph::ShapeKey` (M3 step 10) is real, tested,
+  proven math — `ShapeKey::from_path(&BezPath)`/`to_path(&self) ->
+  BezPath`, `impl Interpolate for ShapeKey` (a real correspondence-
+  search-then-lerp, not naive per-index pairing). Confirmed via grep:
+  **zero real consumers anywhere in the codebase** — matches this
+  milestone's own scoping text ("zero integration").
+- **Real finding: `ShapeKey` has no actual MD3-specific content at
+  all.** Read the full 336-line file — its only imports are
+  `engine_core::Interpolate` and `peniko::kurbo::{BezPath, PathEl,
+  Point}`. No `ColorScheme`, no `DynamicTheme`, no `material_colors`.
+  It's pure vertex-correspondence geometry, organizationally under
+  "§7.4" (an MD3 spec section) but not technically MD3 domain
+  knowledge the way color science genuinely is.
+- **Direct textual confirmation this was always meant to live in
+  `engine-core`:** `ARCHITECTURE.md`'s own §2 struct sketch (line ~207)
+  already writes `pub shape: Animated<ShapeKey>` directly inside
+  `PaintProperties` — the same struct that is now `engine-core::node::
+  PaintProperties`. `engine-core/src/node.rs`'s own module doc comment
+  states explicitly: "`shape: Animated<ShapeKey>` (the §7.4 shape-
+  correspondence-then-lerp technique) remains omitted, same reasoning
+  as ever: additive whenever its own step needs it" — i.e. always
+  intended to land directly in `PaintProperties`, not routed through a
+  separate crate.
+- **This is the identical shape M7 Phase 1 already resolved for
+  `MotionCurve`:** real MD3 curve *values* landed directly in
+  `engine-core`, not a separate `engine_md3::motion` module, because
+  the underlying math has no real MD3-specific dependency and `engine-
+  core` already owns `Animated`/`Interpolate`. `engine-md3`'s own
+  `Cargo.toml` description ("color scheme, shadow/ripple helpers, shape
+  morph, motion-curve presets") is stale evidence of this drift — it
+  still lists "motion-curve presets" despite Phase 1 already moving
+  that reality into `engine-core`.
+- `engine-core` cannot depend on `engine-md3` (§4, re-confirmed every
+  phase this milestone) — so `PaintProperties` (engine-core) can never
+  hold an `engine_md3::ShapeKey` field as long as `ShapeKey` stays in
+  `engine-md3`. Given the two facts above, the correct resolution is
+  the same one Phase 1 already established for `MotionCurve`: **move
+  `ShapeKey`'s implementation from `engine-md3::shape_morph` into
+  `engine-core::shape_morph`**, not invent a workaround. Verified this
+  is a clean move: nothing outside `crates/engine-md3/src/shape_morph.
+  rs` and `crates/engine-md3/src/lib.rs` (its own `mod`/`pub use`)
+  references `ShapeKey`/`shape_morph` anywhere (grep, zero hits for
+  `engine_md3::ShapeKey`/`engine_md3::shape_morph` in the rest of the
+  workspace) — no re-export needed for backward compatibility.
+- `PaintProperties::new(background, corner_radius, elevation, opacity)`
+  is the single real construction choke point (confirmed via grep —
+  no other `PaintProperties { ... }` struct literal exists anywhere);
+  `transform` was added there directly at M5 Phase 1 the same way
+  `shape` will be here.
+- `paint_node`'s `NodeKind::Rect | NodeKind::Splitter(_)` arm currently
+  always builds `RoundedRect::new(0.0, 0.0, w, h, radius).to_path(0.1)`.
+  An "active morph" needs a real way to tell "this node has a real
+  shape set" from "this node never touched `shape` at all" — `ShapeKey`
+  has no `Default`; a fresh, empty `ShapeKey { points: vec![] }` (via a
+  new `ShapeKey::empty()`/`Default` impl) is the natural "no shape set"
+  sentinel, since `to_path()` already renders an empty `BezPath` for an
+  empty point list (confirmed by reading `to_path`'s own `if let
+  Some(&first) = points.next()` short-circuit) — no new enum/`Option`
+  wrapper needed.
+- Python-facing trigger (Step 2): the same `animate()` dispatch shape
+  M6 Phase 2 added for `"transform"` — a new `"shape"` arm taking two
+  lists of `(x, y)` tuples (the target shape's own vertices, since
+  Python has no `BezPath` type to hand over) is the natural surface;
+  `ShapeKey`'s own constructor is `from_path(&BezPath)`, so the new
+  Python arm builds a `BezPath` from the given points (`move_to` +
+  `line_to`s + `close_path`) and calls `ShapeKey::from_path` on it,
+  mirroring `extract_translate_scale`'s own "convert Python's plain
+  tuples into the real engine-core value" role for `"transform"`.
 
 ## Design
 
-- New `engine-core::interaction::InteractionState.tint: peniko::Color`
-  field, defaulting to real black (`Color::from_rgba8(0, 0, 0, 255)`) in
-  `::new()` — byte-for-byte the current hardcoded behavior when no
-  theme is ever set, so this is additive, not a behavior change by
-  itself.
-- New `Tree::set_all_interaction_tints(&mut self, tint: Color)` —
-  iterates every node's `Option<InteractionState>`, updates `tint` on
-  each `Some`. The mechanism live theme switching (step 3) and
-  `Window.set_theme` (step 1) both reuse to update *already-opted-in*
-  nodes retroactively.
-- New `InputEvent::ThemeChanged { dark: bool }` variant; `Tree::dispatch`
-  gets one new no-op arm (`DispatchOutcome::None`), matching `Scroll`'s
-  own precedent exactly.
-- `engine-render::paint_node`'s two hardcoded
-  `Color::from_rgba8(0, 0, 0, 255)` ripple/hover fills become
-  `interaction.tint` — no other change to the paint code's shape.
-- `engine-platform`: one new `WindowEvent::ThemeChanged(theme) =>` arm
-  in the existing translation match, calling `on_input(window_id,
-  InputEvent::ThemeChanged { dark: theme == winit::window::Theme::
-  Dark })`.
-- New `engine-py::window::ThemeState { theme: Option<DynamicTheme>,
-  dark: bool }` plus `on_surface(&self) -> Color` (returns real black
-  when `theme` is `None`, matching current default; otherwise the
-  active scheme's real `on_surface` field) and `type SharedTheme =
-  Rc<RefCell<ThemeState>>`.
-- `PyWindow` gains `theme: SharedTheme`; new method `set_theme(seed:
-  (u8,u8,u8,u8), dark: bool = false)` builds `DynamicTheme::from_seed`,
-  stores it + the given mode, then calls `Tree::
-  set_all_interaction_tints` with the freshly resolved `on_surface` —
-  so nodes that already opted into interaction before the theme was set
-  pick it up immediately, matching what a real live switch must also do.
-- `Node` gains `theme: SharedTheme`; `enable_interaction` reads
-  `theme.borrow().on_surface()` and sets it on the just-opted-in
-  `InteractionState` immediately, so opting in *after* a theme was set
-  doesn't wait for another theme-change event to pick up the real color.
-- All `Node { ... }` construction sites (`window.rs` ×4) pass
-  `self.theme.clone()`; `view.rs` ×3 pass a fresh, private `Rc::new(
-  RefCell::new(ThemeState::default()))` each — `View` keeps its
-  existing, separate, untouched color story.
-- `App::run`'s `WindowSetup`/`WindowRuntime` gain `theme: SharedTheme`,
-  extracted from `window.theme.clone()` the same way `dock`/
-  `context_menus` already are. The `on_input` closure gets one new
-  match arm on the raw `event` (alongside the existing dock-drag match):
-  `InputEvent::ThemeChanged { dark } =>` updates `runtime.theme`'s
-  `dark` flag, recomputes `on_surface()`, and calls `Tree::
-  set_all_interaction_tints` — the real live-switch path.
+- Move `crates/engine-md3/src/shape_morph.rs` to `crates/engine-core/
+  src/shape_morph.rs` verbatim (only its `use engine_core::Interpolate`
+  import line changes, to `use crate::animation::Interpolate`).
+  `engine-core/src/lib.rs` gains `mod shape_morph;` / `pub use
+  shape_morph::ShapeKey;`. `engine-md3/src/lib.rs` drops `mod
+  shape_morph;`/its own `pub use` (no re-export needed, confirmed zero
+  consumers) and its own module doc comment's "step 10" reference is
+  corrected to note the real move. `engine-md3/Cargo.toml`'s
+  description drops "shape morph" (and, while touching it, the already
+  known-stale "motion-curve presets" — both real, in-scope corrections
+  of the same drift this investigation found).
+- `ShapeKey` gains `pub fn empty() -> Self` (an empty point list) and
+  `pub fn is_empty(&self) -> bool` — the "no morph set" sentinel
+  `PaintProperties::new` uses and `paint_node` checks.
+- `PaintProperties` gains `pub shape: Animated<ShapeKey>`, initialized
+  to `Animated::new(ShapeKey::empty())` in `::new()`; `PaintProperties::
+  tick` advances it like every other field.
+- `paint_node`'s `Rect | Splitter(_)` arm: if `!node.paint.shape.
+  current.is_empty()`, fill `node.paint.shape.current.to_path()`
+  instead of the plain `RoundedRect` — an inactive/never-set shape is a
+  true no-op, byte-for-byte the existing rendering, matching every
+  additive `PaintProperties` field's own contract in this codebase.
+- `engine-py::Node::animate`'s dispatch gains a `"shape"` arm: takes a
+  `Vec<(f64, f64)>` of target vertices, builds a closed `BezPath`,
+  converts via `ShapeKey::from_path`, and calls `animate_to` on `paint.
+  shape` the same way `"transform"`'s arm does today.
 
 ## Verification plan
 
-- `cargo test --workspace --release`, `cargo clippy --workspace
-  --all-targets -- -D warnings`, `cargo fmt --check`.
-- New Rust tests: `InteractionState` defaults to black tint (no
-  behavior change); `Tree::set_all_interaction_tints` updates only
-  opted-in nodes, leaves not-opted-in nodes' `interaction` as `None`;
-  `Tree::dispatch(ThemeChanged)` returns `DispatchOutcome::None` and
-  touches nothing else; a pixel-level `engine-render` test proving a
-  non-black tint actually paints (mirroring `elevation_shadow.rs`'s own
-  render-to-texture-then-readback discipline).
-- `engine-platform`: a unit test on the translation function/match arm
-  proving `Theme::Dark`/`Theme::Light` map to `dark: true`/`false`
-  (matching this crate's own existing `translate_pointer_button`/
-  `translate_key` test-coverage precedent), without needing a real
-  window.
-- `maturin develop --release` + `python -m pytest tests/ -q` + all
-  examples. New `examples/theme.py`: `Window.set_theme(seed, dark)`,
-  a rect with `enable_interaction()` + `click()`, proving the call
-  chain compiles/runs end-to-end (pixel-level tint proof stays in the
-  Rust test, matching every other example/test split in this codebase).
+- `cargo test --workspace --release`/clippy/fmt — the full, unmodified
+  `shape_morph.rs` test suite must still pass after the move (byte-for-
+  byte relocated, only the `use` line differs). New tests: `ShapeKey::
+  empty()`/`is_empty()`; `PaintProperties::new` defaults to an empty
+  shape (`paint_node` no-op, same standard every additive feature has
+  been held to since M5 Phase 1); a real `engine-render` pixel test
+  proving an active morph paints the *morphed* silhouette, not a plain
+  rounded rect.
+- `maturin develop --release` + `pytest tests/` + all examples. New
+  `examples/shape_morph.py`: a rect morphing into a triangle via
+  `Node.animate("shape", ...)`.

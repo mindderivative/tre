@@ -20,6 +20,7 @@ mod input;
 mod interaction;
 mod node;
 mod overlay;
+mod shape_morph;
 mod tree;
 
 pub use access::{AccessNodeData, AccessStates, Action, Role};
@@ -34,4 +35,5 @@ pub use node::{
     ItemExtent, Node, NodeId, NodeKind, PaintProperties, SplitterState, TextState, VirtualListState,
 };
 pub use overlay::OverlayMeta;
+pub use shape_morph::ShapeKey;
 pub use tree::{FocusDirection, InteractionConfig, Tree, from_access_id, to_access_id};

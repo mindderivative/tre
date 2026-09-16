@@ -15,8 +15,8 @@
 //!   `Interpolate for Affine` doc comment for why that's still correct
 //!   for this framework's actual pan/zoom scope. `shape:
 //!   Animated<ShapeKey>` (the §7.4 shape-correspondence-then-lerp
-//!   technique) remains omitted, same reasoning as ever: additive
-//!   whenever its own step needs it.
+//!   technique) landed at M7 Phase 4, once `ShapeKey` itself moved here
+//!   from `engine-md3` (see `shape_morph.rs`'s own doc comment).
 //! - `NodeKind` carried only `Rect`/`Container` through step 3;
 //!   `Text(TextState)` is added at step 4 (§14 step 4, the typography
 //!   spike). `Image`/`Slider`/`Checkbox`/`Canvas` still land with their
@@ -185,6 +185,14 @@ pub struct PaintProperties {
     /// `PaintProperties` field's own "off unless a caller opts in"
     /// shape.
     pub transform: Animated<peniko::kurbo::Affine>,
+    /// M7 Phase 4 (§7.4): the real MD3 shape-morph target -- defaults
+    /// to `ShapeKey::empty()` (no shape ever set), which `paint_node`
+    /// treats as a true no-op, matching every other additive field's
+    /// "off unless a caller opts in" contract. See `shape_morph.rs`'s
+    /// own module doc comment for why this lives here, in
+    /// `engine-core`, and not `engine-md3` (where it was originally
+    /// built, M3 step 10).
+    pub shape: Animated<crate::shape_morph::ShapeKey>,
 }
 
 impl PaintProperties {
@@ -195,6 +203,7 @@ impl PaintProperties {
             elevation: Animated::new(elevation),
             opacity: Animated::new(opacity),
             transform: Animated::new(peniko::kurbo::Affine::IDENTITY),
+            shape: Animated::new(crate::shape_morph::ShapeKey::empty()),
         }
     }
 
@@ -213,7 +222,8 @@ impl PaintProperties {
         let elevation = self.elevation.tick(now);
         let opacity = self.opacity.tick(now);
         let transform = self.transform.tick(now);
-        background || corner_radius || elevation || opacity || transform
+        let shape = self.shape.tick(now);
+        background || corner_radius || elevation || opacity || transform || shape
     }
 }
 

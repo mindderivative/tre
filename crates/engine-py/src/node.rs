@@ -25,9 +25,9 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use engine_core::{Action, EventKind, MotionCurve, NodeId, NodeKind, Tree};
+use engine_core::{Action, EventKind, MotionCurve, NodeId, NodeKind, ShapeKey, Tree};
 use peniko::Color;
-use peniko::kurbo::Affine;
+use peniko::kurbo::{Affine, BezPath};
 use pyo3::prelude::*;
 
 use crate::dispatch::HandlerMap;
@@ -116,6 +116,32 @@ impl Node {
                 let value = Affine::translate((tx, ty)) * Affine::scale(scale);
                 node.paint
                     .transform
+                    .animate_to(value, duration, MotionCurve::Linear, now);
+            }
+            // M7 Phase 4 (§7.4): a list of `(x, y)` vertices, since
+            // Python has no `BezPath` type to hand over directly --
+            // `extract_shape_points` builds one (closed, straight-line
+            // segments between each point, matching `ShapeKey`'s own
+            // "vertices only" scope), then `ShapeKey::from_path` does
+            // the real extraction. The interpolation itself (real
+            // correspondence-search-then-lerp, not naive per-index
+            // pairing) is `Interpolate for ShapeKey`'s own job, already
+            // real and unit-tested since M3 step 10 -- this arm only
+            // ever supplies the *target* shape.
+            "shape" => {
+                let points = extract_shape_points(&to, property)?;
+                let mut path = BezPath::new();
+                let mut points = points.into_iter();
+                if let Some(first) = points.next() {
+                    path.move_to(first);
+                    for point in points {
+                        path.line_to(point);
+                    }
+                    path.close_path();
+                }
+                let value = ShapeKey::from_path(&path);
+                node.paint
+                    .shape
                     .animate_to(value, duration, MotionCurve::Linear, now);
             }
             _ => {
@@ -327,6 +353,23 @@ fn extract_translate_scale(
         .map_err(|_| EngineError::TypeMismatch {
             property: property.to_string(),
             expected: "a (translate_x, translate_y, scale) tuple of floats",
+            actual: type_name_of(to),
+        })
+}
+
+/// M7 Phase 4 (§7.4): `"shape"`'s own real, narrower shape -- a plain
+/// list of `(x, y)` vertices, since Python has no `BezPath` type to
+/// hand over directly. Mirrors `extract_translate_scale`'s own role:
+/// convert Python's plain tuples into the real value `ShapeKey::
+/// from_path` needs, nothing more.
+fn extract_shape_points(
+    to: &Bound<'_, PyAny>,
+    property: &str,
+) -> Result<Vec<(f64, f64)>, EngineError> {
+    to.extract::<Vec<(f64, f64)>>()
+        .map_err(|_| EngineError::TypeMismatch {
+            property: property.to_string(),
+            expected: "a list of (x, y) float tuples",
             actual: type_name_of(to),
         })
 }

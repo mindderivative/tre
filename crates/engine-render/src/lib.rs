@@ -319,11 +319,21 @@ fn paint_node(
             // animatable position (§11.5), no separate appearance data,
             // since the universal `PaintProperties` every node already
             // has is all a divider's own background/corner-radius needs.
-            let radius = node.paint.corner_radius.current;
             let color = with_opacity(node.paint.background.current, node.paint.opacity.current);
-            let rect = RoundedRect::new(0.0, 0.0, w, h, radius);
             scene.set_paint(color);
-            scene.fill_path(&rect.to_path(0.1));
+            // M7 Phase 4 (§7.4): a real, active shape morph (`node.
+            // paint.shape.current` non-empty) paints the current
+            // interpolated silhouette instead of the plain rounded
+            // rect -- `shape` defaults to `ShapeKey::empty()`, so a
+            // node that never touches it renders byte-for-byte the
+            // same `RoundedRect` fill as before this phase.
+            if node.paint.shape.current.is_empty() {
+                let radius = node.paint.corner_radius.current;
+                let rect = RoundedRect::new(0.0, 0.0, w, h, radius);
+                scene.fill_path(&rect.to_path(0.1));
+            } else {
+                scene.fill_path(&node.paint.shape.current.to_path());
+            }
         }
         NodeKind::Text(state) => {
             let color = with_opacity(node.paint.background.current, node.paint.opacity.current);
