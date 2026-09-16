@@ -19,6 +19,7 @@ use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Rect as TaffyRect, Size, Style, auto, length};
 
 use crate::dispatch::{HandlerMap, interaction_config, open_context_menu, run_dispatch_outcome};
+use crate::dock::{self, SharedDockState};
 use crate::error::EngineError;
 use crate::node::Node;
 
@@ -65,6 +66,11 @@ pub struct PyWindow {
     /// comment for why this needs no `__traverse__`/`__clear__` entry,
     /// unlike `handlers`.
     pub(crate) context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
+    /// M4 Phase 9 (§11.4): real docking state -- `DockLayout` plus
+    /// engine-py's own zone-container/drag-handle bookkeeping `Tree`
+    /// itself never stores. Plain data, no `Py<PyAny>` involved, the
+    /// same reason `context_menus` needs no GC-traversal obligation.
+    pub(crate) dock: SharedDockState,
 }
 
 #[pymethods]
@@ -105,6 +111,7 @@ impl PyWindow {
             materializers: HashMap::new(),
             handlers: Rc::new(RefCell::new(HashMap::new())),
             context_menus: Rc::new(RefCell::new(HashMap::new())),
+            dock: Rc::new(RefCell::new(dock::DockState::new())),
         }
     }
 
@@ -359,6 +366,72 @@ impl PyWindow {
         );
         run_dispatch_outcome(&self.handlers, outcome, py);
         Ok(())
+    }
+
+    /// M4 Phase 9 (§11.4): registers `container` as `side`'s real dock
+    /// zone -- a plain node the app already built (e.g. via `add_rect`),
+    /// exactly like `docking.rs`'s own Rust-level proof (M3 step 15
+    /// Stage B) builds one by hand. `size` seeds the zone's own
+    /// `Animated<f64>` extent (§11.4's own struct sketch).
+    fn add_dock_zone(&mut self, side: &str, container: PyRef<'_, Node>, size: f64) -> PyResult<()> {
+        let side = dock::parse_dock_side(side)?;
+        dock::add_dock_zone(&self.dock, side, container.id, size);
+        Ok(())
+    }
+
+    /// Real initial "put a panel in this zone" setup -- attaches
+    /// `panel` as `side`'s new active tab via the existing real
+    /// `Tree::apply_active_tab` (M3 step 15 Stage B), not a second
+    /// resize/attach mechanism.
+    fn dock_panel(&mut self, side: &str, panel: PyRef<'_, Node>) -> PyResult<()> {
+        let side = dock::parse_dock_side(side)?;
+        dock::dock_panel(&self.dock, &self.tree, side, panel.id)
+    }
+
+    /// Switches `side`'s own active tab by index -- the same plain
+    /// index switch §11.4's own text describes, via `Tree::
+    /// apply_active_tab`.
+    fn set_active_tab(&mut self, side: &str, index: usize) -> PyResult<()> {
+        let side = dock::parse_dock_side(side)?;
+        dock::set_active_tab(&self.dock, &self.tree, side, index)
+    }
+
+    /// Registers `handle` as `panel`'s real drag handle -- pressing
+    /// `handle` (via a real mouse press or `start_panel_drag`) starts
+    /// tracking a drag of `panel`, not `handle` itself, mirroring
+    /// `set_context_menu`'s own "anchor names a different node" shape
+    /// (M4 Phase 7).
+    fn set_dock_handle(&mut self, handle: PyRef<'_, Node>, panel: PyRef<'_, Node>) {
+        dock::set_dock_handle(&self.dock, handle.id, panel.id);
+    }
+
+    /// M4 Phase 9's own no-live-window-needed proof pattern (matching
+    /// `.click()`/`.hover()`/`.right_click()`): starts tracking a real
+    /// drag as if `handle` had just been pressed. Returns whether a
+    /// drag actually started -- `handle` must already be registered via
+    /// `set_dock_handle`.
+    fn start_panel_drag(&mut self, handle: PyRef<'_, Node>) -> bool {
+        dock::start_drag(&self.dock, handle.id)
+    }
+
+    /// The real "release" half of a drag -- hit-tests `(x, y)` against
+    /// this window's own real, current layout (computed fresh here, the
+    /// same "nothing else does this for a `Window` with no render loop
+    /// attached" reasoning `.click()` already states) and reparents the
+    /// dragged panel into whichever registered zone encloses that
+    /// point, if any and if different from its current zone.
+    fn drop_panel_at(&mut self, x: f64, y: f64) {
+        {
+            let mut tree = self.tree.borrow_mut();
+            tree.compute_layout(
+                self.root,
+                Size {
+                    width: AvailableSpace::Definite(self.width as f32),
+                    height: AvailableSpace::Definite(self.height as f32),
+                },
+            );
+        }
+        dock::end_drag_at(&self.dock, &self.tree, self.root, Point::new(x, y));
     }
 
     /// §14 step 15 (§11.7): creates a `NodeKind::VirtualList` of

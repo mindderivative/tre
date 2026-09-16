@@ -9,6 +9,7 @@
 mod app;
 mod binding;
 mod dispatch;
+mod dock;
 mod error;
 mod node;
 mod view;

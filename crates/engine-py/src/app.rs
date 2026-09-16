@@ -24,7 +24,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use engine_core::{NodeId, Tree, from_access_id};
+use engine_core::{InputEvent, NodeId, PointerButton, Tree, from_access_id};
 use engine_platform::{WindowConfig, WindowRequest, run_windowed_multi};
 use engine_render::{FrameRenderer, TextRenderer, build_tree_scene};
 use pyo3::prelude::*;
@@ -33,6 +33,7 @@ use vello_hybrid::{RenderSize, RenderTargetConfig};
 use winit::window::{Window, WindowId};
 
 use crate::dispatch::{HandlerMap, interaction_config, open_context_menu, run_dispatch_outcome};
+use crate::dock::{self, SharedDockState};
 use crate::window::PyWindow;
 
 #[pyclass(unsendable)]
@@ -60,6 +61,8 @@ struct WindowSetup {
     /// M4 Phase 7 (§11.3): `anchor NodeId -> content NodeId`, plain
     /// data (no `Py<PyAny>`), extracted the same way `handlers` is.
     context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
+    /// M4 Phase 9 (§11.4): real docking state, extracted the same way.
+    dock: SharedDockState,
 }
 
 struct GpuState {
@@ -129,6 +132,7 @@ struct WindowRuntime {
     gpu: GpuState,
     handlers: HandlerMap,
     context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
+    dock: SharedDockState,
 }
 
 #[pymethods]
@@ -172,6 +176,7 @@ impl App {
                     height: window.height,
                     handlers: window.handlers.clone(),
                     context_menus: window.context_menus.clone(),
+                    dock: window.dock.clone(),
                 }
             })
             .collect();
@@ -208,6 +213,7 @@ impl App {
                         gpu,
                         handlers: setup.handlers.clone(),
                         context_menus: setup.context_menus.clone(),
+                        dock: setup.dock.clone(),
                     },
                 );
             },
@@ -301,6 +307,32 @@ impl App {
                 // `View.right_click` are the no-live-window-needed test
                 // entry points, this is where an actual mouse arrives.
                 open_context_menu(&runtime.tree, &runtime.context_menus, runtime.root, outcome);
+                // M4 Phase 9 (§11.4): the real, winit-driven path a
+                // genuine panel drag reaches -- `Window.start_panel_drag`/
+                // `drop_panel_at` are the no-live-window-needed test
+                // entry points, this is where an actual mouse arrives.
+                // Inspects the raw `event` directly (not `outcome`) --
+                // "which node is a drag handle" is meaning-dependent
+                // bookkeeping only `engine-py`'s own `dock` module
+                // knows, not something `Tree::dispatch` has any reason
+                // to report through `DispatchOutcome`.
+                match event {
+                    InputEvent::PointerPressed {
+                        position,
+                        button: PointerButton::Primary,
+                    } => {
+                        if let Some(hit) = runtime.tree.borrow().hit_test(runtime.root, position) {
+                            dock::start_drag(&runtime.dock, hit);
+                        }
+                    }
+                    InputEvent::PointerReleased {
+                        position,
+                        button: PointerButton::Primary,
+                    } => {
+                        dock::end_drag_at(&runtime.dock, &runtime.tree, runtime.root, position);
+                    }
+                    _ => {}
+                }
             },
             // M4 Phase 2 (§10): a real screen reader naming a node to
             // activate or focus directly, routed through the exact same

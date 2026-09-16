@@ -1,87 +1,115 @@
-# Plan: M4 Phase 8 — Scroll-Wheel Input Plumbing (§11.7/§11.8 groundwork)
+# Plan: M4 Phase 9 (final M4 phase) — Docking Drag-to-Rearrange (§11.4)
 
 ## Context
 
-No `InputEvent::Scroll` variant exists anywhere (confirmed via grep).
-This phase adds the real translation from `winit`'s `WindowEvent::
-MouseWheel` into a new `engine_core::InputEvent::Scroll`, deliberately
-stopping at input plumbing — wiring it to `VirtualList`'s window
-movement needs the still-open real scrollable-viewport gap (clipping +
-scroll offset, §11.8/§11.9), which isn't built yet and isn't this
-phase's job to build.
+`DockLayout`/`DockZone`/`Tree::apply_active_tab` are real since M3 step
+15 Stage B (proven by `crates/engine-render/tests/docking.rs`'s own
+3-zone pixel test), but moving a whole panel *between* zones — as
+opposed to resizing (M4 Phase 3) or switching a zone's active tab
+(already real) — has never been wired to anything, and no Python-facing
+docking API exists at all yet.
 
 ## Investigation before writing code
 
-Re-read §11.7 (Virtualization) and §11.8 (Culling) — neither section
-actually specifies a scroll *input* mechanism; §11.7 only says
-"scrolling recycles `NodeId` slots" as a fact about `VirtualList`'s own
-behavior once scrolling happens, by whatever means. Like M4 itself,
-this phase isn't fulfilling an explicit architecture requirement so
-much as building the one remaining named prerequisite for a real gap
-already on record (`VirtualList` has no real scrollable viewport yet,
-`BUILD_TRACKER.md`'s own Known Gaps).
+Re-read §11.4 in full, then read `dock.rs`, `Tree::apply_active_tab`,
+and `docking.rs`'s own test end to end before designing anything.
 
-Verified `winit = "0.30.13"`'s real API directly in its vendored
-`event.rs` before writing anything (this project's own standing
-discipline, after `PointerButton`'s own past correction):
-
-- `WindowEvent::MouseWheel { device_id, delta: MouseScrollDelta, phase }`
-  is real.
-- `MouseScrollDelta` has exactly two variants: `LineDelta(f32, f32)`
-  (a touchpad/wheel notch count) and `PixelDelta(PhysicalPosition<f64>)`
-  (raw pixels, when the platform/device supports it) — genuinely
-  different units, not two names for the same thing. Collapsing both
-  into one plain `(f64, f64)` would misrepresent real magnitude
-  differences (a `LineDelta` of 1.0 is not 1.0 pixel) for no real
-  reason yet, since nothing consumes the value's magnitude at all this
-  phase — the honest choice is to preserve the real distinction,
-  mirroring how `PointerButton`'s own past correction found value in
-  matching the real API exactly rather than assuming a simplification.
+- **No Python-facing docking API exists at all** — confirmed via grep:
+  `DockLayout`/`DockZone`/`apply_active_tab` are referenced only in one
+  doc comment across `engine-py`, never actually wrapped. Like M4 Phase
+  7's own overlay discovery, this phase's real prerequisite is bigger
+  than "wire drag-to-rearrange" alone.
+- **Docking has no dedicated `NodeKind`.** A "zone" is just an ordinary
+  `Rect`/`Container` node the app builds itself; "panels" are ordinary
+  content nodes; `DockLayout`/`DockZone` are pure external bookkeeping
+  the *caller* owns and passes into `apply_active_tab` by reference —
+  `Tree` itself never stores a `DockLayout`. This means "which node is
+  a panel drag handle" and "which node is a zone" are exactly the kind
+  of meaning-dependent facts Design Principle 6 says `engine-core` has
+  no business knowing — the whole drag-to-rearrange orchestration
+  belongs in `engine-py`, not `engine-core`. Confirmed this needs zero
+  new `engine-core` code: `Tree::hit_test`, `Tree::apply_active_tab`,
+  and the already-`pub` `Node::parent` field are exactly what's needed.
+- **Real bug found by reading `apply_active_tab` closely before
+  writing anything:** it only checks whether the *target* container
+  already lists the active panel as a child — it never checks whether
+  the panel is still attached to a *different* (e.g. old) parent
+  first. Calling it naively while moving a panel between zones would
+  call `add_child` while the panel is still attached elsewhere,
+  corrupting the tree — the exact same "`add_child` has no dedup" class
+  of bug M4 Phase 7 already found once for `open_overlay`. The real
+  fix: explicitly `Tree::detach` the panel from its *old* zone's
+  container first, guarded by the same containment check
+  `apply_active_tab` itself already uses, before ever touching the new
+  zone.
+- **`open_overlay`'s real positioning can't support a drop-zone
+  highlight.** Its `inset` is hardcoded to place content *below* its
+  anchor (a dropdown-menu placement) — confirmed by reading the actual
+  `inset` computation, not assumed. A drop-zone highlight needs to
+  cover the *target zone's own bounds* exactly, a different placement
+  mode `open_overlay` doesn't offer today. Real, additive engine-core
+  work to add that would be disproportionate to this phase's actual
+  core claim. **Scope narrowed: no highlight overlay this phase** —
+  the real, functionally complete deliverable is "a real drag gesture
+  provably moves a panel from one zone to another"; the visual
+  highlight during the drag is a separate UX nicety, not manufactured
+  here. Named explicitly, not silently dropped.
+- **Consequence of skipping the highlight:** nothing needs to track
+  *which* zone is under the pointer while the drag is in progress —
+  only the drop *point*, once, at release. This drops any need for a
+  `PointerMoved`-time callback for docking at all, keeping the real
+  mechanism to exactly two moments: press (on a registered handle,
+  starts the drag) and release (hit-tests the drop point, finds the
+  enclosing zone by walking `Node::parent` links, and reparents).
 
 ## Approach
 
-1. **`engine-core`**: new `ScrollDelta { Lines(f64, f64), Pixels(f64, f64) }`
-   and `InputEvent::Scroll { delta: ScrollDelta, position: Point }` —
-   `position` included since every other pointer-originated
-   `InputEvent` carries one (a future scroll-to-node wiring will need
-   to know which node the cursor is over, the same way `MouseInput`
-   already reuses `last_cursor_position`), reusing `win.
-   last_cursor_position` in `engine-platform` the identical way
-   `MouseInput` already does. `Tree::dispatch` gains the required match
-   arm — a true no-op, `DispatchOutcome::None` unconditionally,
-   matching this phase's own explicit "plumbing only" scope; adding
-   real hit-testing-driven behavior here would be building ahead of
-   the still-open scrollable-viewport gap this phase deliberately
-   doesn't touch.
-2. **`engine-platform`**: new `translate_scroll_delta(delta:
-   MouseScrollDelta) -> ScrollDelta` pure function, mirroring
-   `translate_pointer_button`/`translate_key`'s own shape exactly (unit
-   -testable directly, since `winit` has no public API to inject a
-   synthetic `WindowEvent` into a live loop, verified in M4 Phase 1
-   step 2 and unchanged since). `WindowEvent::MouseWheel` handled in
-   the main match, calling `on_input` with the translated event.
-3. **Tests**: `engine-core` unit test that a real `Tree::dispatch` call
-   with `InputEvent::Scroll` returns `DispatchOutcome::None` and
-   touches no other state (`hovered`/`pressed`/`dragging` all
-   unchanged) — proving it's a genuine no-op, not silently wrong.
-   `engine-platform` unit tests for `translate_scroll_delta`, mirroring
-   the existing `translate_pointer_button`/`translate_key` test shape:
-   both real variants translate correctly, sign/magnitude preserved.
+1. **New `engine-py/src/dock.rs`**: `DockState { layout: DockLayout,
+   containers: Vec<(DockSide, NodeId)>, handles: HashMap<NodeId,
+   NodeId>, dragging: Option<NodeId> }`, shared as `Rc<RefCell<
+   DockState>>` on `PyWindow` (mirrors `handlers`/`context_menus`'
+   sharing shape). `parse_dock_side(&str)` mirrors `press_key`'s own
+   string-vocabulary pattern (`"left"/"right"/"top"/"bottom"/
+   "center"`).
+2. **`Window` methods**: `add_dock_zone(side, container, size)`,
+   `dock_panel(side, panel)` (real initial setup — records the panel
+   and calls `apply_active_tab`), `set_active_tab(side, index)`,
+   `set_dock_handle(handle, panel)`.
+3. **Shared drag orchestration** (module-private, used by both the
+   real `winit`-driven path and the Python test entry points): `fn
+   start_drag(dock, node_id) -> bool` (registers `dragging` if `node_id`
+   is a known handle); `fn end_drag_at(dock, tree, root, position)`
+   (hit-tests `position`, walks `Node::parent` to find an enclosing
+   registered zone, and — if it's a real, different-from-source target
+   — detaches the panel from its old zone's container first (the real
+   fix above), fixes up the old zone's `active_tab`, reparents into the
+   new zone via `apply_active_tab`; always clears `dragging`).
+4. **Test entry points**: `Window.start_panel_drag(handle)`/
+   `Window.drop_panel_at(x, y)`, the same no-live-window-needed pattern
+   `.click()`/`.hover()`/`.right_click()` already established.
+5. **Real `winit` wiring**: `app.rs`'s `on_input` closure additionally
+   calls `start_drag` on a real `PointerPressed(Primary)` hit and
+   `end_drag_at` on a real `PointerReleased(Primary)`, alongside (not
+   instead of) the existing `run_dispatch_outcome`/`open_context_menu`
+   calls on the same raw event — mirroring exactly how those two
+   already coexist on one event today.
 
 ## Files to touch
 
-- `crates/engine-core/src/input.rs` — `ScrollDelta`, `InputEvent::
-  Scroll`.
-- `crates/engine-core/src/tree.rs` — `dispatch`'s new match arm, new
-  unit test.
-- `crates/engine-platform/src/lib.rs` — `translate_scroll_delta`,
-  `WindowEvent::MouseWheel` handling, new unit tests.
+- `crates/engine-py/src/dock.rs` — new.
+- `crates/engine-py/src/window.rs` — `dock` field, new methods,
+  `__traverse__`/`__clear__` unaffected (no `Py<PyAny>` involved, same
+  reasoning as `context_menus`).
+- `crates/engine-py/src/app.rs` — `WindowSetup`/`WindowRuntime` gain
+  `dock`, `on_input` closure wired.
+- `crates/engine-py/src/lib.rs` — register the new module.
+- `tests/test_docking.py` — new.
+- `examples/docking.py` — new, matching the established per-phase
+  example pattern.
 
 ## Verification
 
 - `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D
-  warnings`, `cargo fmt --check`.
-- `maturin develop && python -m pytest tests/ -v` plus all examples run
-  (no Python-facing API changes expected — this phase is `engine-core`/
-  `engine-platform` only, nothing for `engine-py` to expose yet since
-  there's no real consumer).
+  warnings`, `cargo fmt --check` (no `engine-core` changes expected, so
+  no new Rust unit tests this phase beyond what already exists).
+- `maturin develop && python -m pytest tests/ -v` plus all examples run.
