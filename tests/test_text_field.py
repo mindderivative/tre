@@ -70,6 +70,34 @@ def test_a_real_tab_press_reaches_the_text_field():
     assert field.is_focused() is True, "a real Tab press must reach the one real TextField"
 
 
+def test_a_real_click_also_reaches_the_text_field():
+    """M18 Phase 1 (§8, §10): real click-to-focus for `TextField`,
+    found while investigating this phase -- before it, `PointerPressed`
+    never touched real focus at all, anywhere, for any `NodeKind`.
+    `Window.click(node)` already dispatches a real `PointerPressed`/
+    `PointerReleased` pair at the node's own real center point through
+    `Tree::dispatch` (M4 Phase 1 step 3) -- a genuine, pleasant scope
+    finding: that existing entry point reaches the new focus-on-click
+    code path for free, no new `engine-py` API needed at all.
+    """
+    window = Window(width=200, height=100)
+    field = window.add_text_field(background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24)
+    assert field.is_focused() is False
+
+    window.click(field)
+
+    assert field.is_focused() is True, "a real click on a TextField must move real focus there"
+
+
+def test_clicking_a_non_text_field_still_does_not_move_focus():
+    window = Window(width=200, height=100)
+    checkbox = window.add_checkbox(background=(0xEE, 0xEE, 0xEE, 0xFF), width=24, height=24)
+    window.click(checkbox)
+    assert (
+        checkbox.is_focused() is False
+    ), "click-to-focus is scoped to TextField only, not every node kind"
+
+
 def test_shift_tab_from_a_focused_field_moves_focus_away():
     window = Window(width=200, height=100)
     field = window.add_text_field(background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24)

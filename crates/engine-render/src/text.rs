@@ -17,7 +17,7 @@ use parley::{
     Affinity, Alignment, AlignmentOptions, Cursor, FontContext, FontFamily, FontWeight,
     LayoutContext, PositionedLayoutItem, Selection, StyleProperty,
 };
-use peniko::kurbo::{Rect, Shape};
+use peniko::kurbo::{Point, Rect, Shape};
 use peniko::{Blob, Color};
 use vello_hybrid::{Resources, Scene};
 
@@ -127,6 +127,66 @@ impl TextRenderer {
         }
     }
 
+    /// Shared by `draw_field` and `hit_test_position` (M18 Phase 1,
+    /// §8, §10, §11.9, §11.10) -- both need the identical real `Layout`
+    /// (same content/font fields, same line-break width) that paint
+    /// derives its glyph/caret/selection geometry from and a real click
+    /// resolves a byte offset against; building it once here means a
+    /// hit-test can never silently drift from what was actually painted.
+    fn build_field_layout(
+        &mut self,
+        content: &str,
+        font_family: &str,
+        font_weight: f32,
+        font_size: f32,
+        max_width: f32,
+    ) -> parley::Layout<[u8; 4]> {
+        let mut builder = self
+            .layout_cx
+            .ranged_builder(&mut self.font_cx, content, 1.0, true);
+        builder.push_default(StyleProperty::FontFamily(FontFamily::named(font_family)));
+        builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));
+        builder.push_default(StyleProperty::FontSize(font_size));
+        let mut layout = builder.build(content);
+        layout.break_all_lines(Some(max_width));
+        layout.align(Alignment::Start, AlignmentOptions::default());
+        layout
+    }
+
+    /// M18 Phase 1 (§8, §10, §11.9, §11.10): the real per-glyph-shaping
+    /// half of click-to-position -- `engine-core` has no visibility into
+    /// `parley` at all (§4), so it cannot itself turn a click point into
+    /// a byte offset; this is the one place that real answer can be
+    /// computed, using the exact same `Layout` `draw_field` paints from.
+    ///
+    /// **Deliberate scope simplification, stated in `PLAN.md`:** hit-
+    /// tests against `state.content` alone, ignoring an active
+    /// `preedit` (M17 Phase 2) -- a real click landing mid-composition
+    /// is a genuine corner case `winit`'s own real behavior already
+    /// keeps rare (composing and plain pointer/keyboard input aren't
+    /// coordinated here), out of this phase's stated scope.
+    ///
+    /// `point` is in the same local coordinate space `at.x`/`at.y`
+    /// place the field's own painted origin at -- the caller (`engine-
+    /// py`'s `on_input` closure) is expected to pass `Tree::
+    /// hit_test_local`'s own already-transform-aware local point, not a
+    /// raw window-space one.
+    pub fn hit_test_position(
+        &mut self,
+        state: &TextFieldState,
+        at: TextPlacement,
+        point: Point,
+    ) -> usize {
+        let layout = self.build_field_layout(
+            &state.content,
+            &state.font_family,
+            state.font_weight,
+            state.font_size,
+            at.max_width,
+        );
+        Cursor::from_point(&layout, (point.x - at.x) as f32, (point.y - at.y) as f32).index()
+    }
+
     /// M15 Phase 1 (§5, §16.7): `draw`'s own real editable-field
     /// sibling -- builds the identical kind of `Layout` `draw` does
     /// (same content/font fields, `TextFieldState` mirrors `TextState`
@@ -167,19 +227,13 @@ impl TextRenderer {
             _ => (state.content.clone(), None, state.cursor),
         };
 
-        let mut builder =
-            self.layout_cx
-                .ranged_builder(&mut self.font_cx, &display_content, 1.0, true);
-        builder.push_default(StyleProperty::FontFamily(FontFamily::named(
+        let layout = self.build_field_layout(
+            &display_content,
             &state.font_family,
-        )));
-        builder.push_default(StyleProperty::FontWeight(FontWeight::new(
             state.font_weight,
-        )));
-        builder.push_default(StyleProperty::FontSize(state.font_size));
-        let mut layout = builder.build(&display_content);
-        layout.break_all_lines(Some(at.max_width));
-        layout.align(Alignment::Start, AlignmentOptions::default());
+            state.font_size,
+            at.max_width,
+        );
 
         // Selection highlight, painted first (behind the glyphs below).
         // Real selection and a real active composition are mutually

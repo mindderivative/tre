@@ -15,8 +15,9 @@
 //!    not a hardcoded always-on/always-off.
 
 use engine_core::{NodeKind, PaintProperties, TextFieldState, Tree};
-use engine_render::{FrameRenderer, TextRenderer, build_tree_scene};
+use engine_render::{FrameRenderer, TextPlacement, TextRenderer, build_tree_scene};
 use peniko::Color;
+use peniko::kurbo::Point;
 use taffy::prelude::{AvailableSpace, Size, Style, length};
 use vello_hybrid::{RenderSize, RenderTargetConfig};
 
@@ -323,4 +324,68 @@ fn a_cleared_preedit_i_e_an_empty_string_paints_no_underline_same_as_none() {
             "an empty-string preedit must paint exactly like a real None -- no stray underline"
         );
     });
+}
+
+/// M18 Phase 1 (§8, §10, §11.9, §11.10): `hit_test_position`'s own real
+/// claim -- it genuinely reaches `parley`'s own shaped `Layout`, not a
+/// stub. No GPU/pixel readback needed at all (unlike every test above):
+/// `TextRenderer::new()` is pure CPU-side font/layout setup, and `hit_
+/// test_position` returns a plain `usize`, no `Scene`/`Resources`
+/// involved -- the same reason `checkbox_paint.rs`-style pixel tests
+/// exist for *painting* claims but a plain unit test suffices here.
+#[test]
+fn hit_test_position_at_the_very_start_of_the_field_returns_byte_offset_zero() {
+    let mut renderer = TextRenderer::new();
+    let state = TextFieldState::new("hello", "Roboto", 400.0, 16.0);
+    let at = TextPlacement {
+        x: 0.0,
+        y: 0.0,
+        max_width: 200.0,
+        color: Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF),
+    };
+    let offset = renderer.hit_test_position(&state, at, Point::new(0.0, 8.0));
+    assert_eq!(
+        offset, 0,
+        "a click squarely on the field's own left edge must resolve to byte offset 0"
+    );
+}
+
+#[test]
+fn hit_test_position_far_past_the_end_returns_the_full_content_length() {
+    let mut renderer = TextRenderer::new();
+    let state = TextFieldState::new("hello", "Roboto", 400.0, 16.0);
+    let at = TextPlacement {
+        x: 0.0,
+        y: 0.0,
+        max_width: 200.0,
+        color: Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF),
+    };
+    // Well past where 5 real glyphs at 16px could possibly reach --
+    // `parley::editing::Cursor::from_point`'s own real fallback (no
+    // cluster hit) is the layout's own real text length, confirmed via
+    // direct source read.
+    let offset = renderer.hit_test_position(&state, at, Point::new(1000.0, 8.0));
+    assert_eq!(
+        offset,
+        state.content.len(),
+        "a click far past every real glyph must resolve to the end of the real content"
+    );
+}
+
+#[test]
+fn hit_test_position_accounts_for_the_placements_own_local_offset() {
+    // The same field, painted at a real, non-zero (x, y) -- a click at
+    // that same offset must still resolve to byte 0, proving `at.x`/
+    // `at.y` are genuinely subtracted before reaching `Cursor::
+    // from_point`, not silently ignored.
+    let mut renderer = TextRenderer::new();
+    let state = TextFieldState::new("hello", "Roboto", 400.0, 16.0);
+    let at = TextPlacement {
+        x: 40.0,
+        y: 12.0,
+        max_width: 200.0,
+        color: Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF),
+    };
+    let offset = renderer.hit_test_position(&state, at, Point::new(40.0, 20.0));
+    assert_eq!(offset, 0);
 }

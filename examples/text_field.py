@@ -18,17 +18,27 @@ definitive proof is the pixel-level `crates/engine-render/tests/
 text_field_paint.rs::a_composing_preedit_paints_a_real_underline_
 distinct_from_the_same_field_when_not_composing`, not a script here.
 
+M18 Phase 1 (§8, §10) closes the first half of that mouse gap: a real
+click now also focuses a `TextField`, demonstrated below via `Window.
+click(field)` -- the same real `Tree::dispatch`'s `PointerPressed`
+mechanism a genuine mouse press reaches, not a separate code path.
+Click-to-*position* (moving the cursor to the exact character clicked)
+needs real per-glyph shaping this script has no way to synthesize
+without a live window/renderer -- its definitive proof is `crates/
+engine-render/tests/text_field_paint.rs::hit_test_position_*` (pure
+`parley` shaping math) plus `crates/engine-core/src/tree.rs::tests::
+set_text_field_cursor_*`, not this script.
+
 What this script proves automatically (headless-CI-safe, no human
-needed): a real text field, reached by a real Tab press, edited by a
-real sequence of synthetic keystrokes (typing, cursor navigation,
-Backspace) that mirror exactly what a real `winit`-driven keyboard
-would produce, its own real content/focus state observable from
-Python throughout, and a real render loop painting it (caret included)
-over actual frames without crashing. The definitive pixel-level proof
-the caret itself only paints while focused is `crates/engine-render/
-tests/text_field_paint.rs`, not this script -- the same split this
-workspace's own examples have used throughout. Mouse click-to-position
-remains a real, separate, unscoped gap.
+needed): a real text field, reached by both a real Tab press and a
+real click, edited by a real sequence of synthetic keystrokes (typing,
+cursor navigation, Backspace) that mirror exactly what a real `winit`-
+driven keyboard would produce, its own real content/focus state
+observable from Python throughout, and a real render loop painting it
+(caret included) over actual frames without crashing. The definitive
+pixel-level proof the caret itself only paints while focused is
+`crates/engine-render/tests/text_field_paint.rs`, not this script --
+the same split this workspace's own examples have used throughout.
 """
 
 from tre import App, Window
@@ -63,6 +73,21 @@ window.press_key("end")
 window.press_key("backspace")
 print(f"after End + Backspace: text={field.get_text()!r}")
 assert field.get_text() == ">> hello worl"
+
+# M18 Phase 1 (§8, §10): a real click also focuses a TextField -- a
+# second focusable node gives Tab somewhere else to land, so "field is
+# no longer focused" genuinely proves something rather than Tab-order
+# just wrapping back to the field itself. (A Checkbox won't do here --
+# only TextField opts into Tab's own focus order today, M15 Phase 1's
+# own finding: `Tree::set_access` had zero other real callers.)
+spacer = window.add_text_field(background=(0xCC, 0xCC, 0xCC, 0xFF), width=60, height=24)
+window.press_key("tab")
+print(f"after Tab-away: is_focused={field.is_focused()}")
+assert not field.is_focused()
+
+window.click(field)
+print(f"after Window.click(field): is_focused={field.is_focused()}")
+assert field.is_focused(), "a real click on a TextField must move real focus there"
 
 app = App()
 app.add_window(window)

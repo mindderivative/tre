@@ -24,9 +24,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use engine_core::{EventKind, InputEvent, NodeId, PointerButton, Tree, from_access_id};
+use engine_core::{EventKind, InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
 use engine_platform::{WindowConfig, WindowRequest, run_windowed_multi};
-use engine_render::{FrameRenderer, TextRenderer, build_tree_scene};
+use engine_render::{FrameRenderer, TextPlacement, TextRenderer, build_tree_scene};
 use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
 use vello_hybrid::{RenderSize, RenderTargetConfig};
@@ -350,8 +350,17 @@ impl App {
             // and call a registered `Node.set_on_click` handler when
             // `dispatch` reports a real activation.
             move |window_id, event| {
-                let runtimes = runtimes_for_input.borrow();
-                let Some(runtime) = runtimes.get(&window_id) else {
+                // M18 Phase 1 (§8, §10, §11.9, §11.10): widened from
+                // `.borrow()` to `.borrow_mut()` -- a real click-to-
+                // position hit-test needs `&mut runtime.gpu.
+                // text_renderer` (its `font_cx`/`layout_cx` are mutably
+                // borrowed to build a `Layout`, the same as painting
+                // already requires), and `GpuState` is a plain field,
+                // not independently wrapped in its own `RefCell`.
+                // Confirmed safe: nothing else in this closure body
+                // re-borrows this same outer `RefCell` re-entrantly.
+                let mut runtimes = runtimes_for_input.borrow_mut();
+                let Some(runtime) = runtimes.get_mut(&window_id) else {
                     return;
                 };
                 let outcome = runtime.tree.borrow_mut().dispatch(
@@ -386,8 +395,53 @@ impl App {
                         position,
                         button: PointerButton::Primary,
                     } => {
-                        if let Some(hit) = runtime.tree.borrow().hit_test(runtime.root, position) {
+                        // M18 Phase 1 (§8, §10, §11.9, §11.10): widened
+                        // from `hit_test` to `hit_test_local` -- the
+                        // extra local-space point is exactly what a
+                        // real click-to-position hit-test needs below;
+                        // `dock::start_drag`'s own existing use only
+                        // ever needed the `NodeId`, unaffected.
+                        if let Some((hit, local_point)) =
+                            runtime.tree.borrow().hit_test_local(runtime.root, position)
+                        {
                             dock::start_drag(&runtime.dock, hit);
+                            // A real click-to-position: `engine-core`
+                            // has no `parley` visibility (§4), so the
+                            // real per-glyph hit-test happens here, the
+                            // one place with both a live `TextRenderer`
+                            // and the `Tree`. Mirrors exactly what
+                            // `paint_node`'s own `TextField` arm paints
+                            // (`TextPlacement { x: 0.0, y: 0.0, .. }`,
+                            // `max_width` from the node's own real
+                            // computed layout width) -- a hit-test that
+                            // silently used different placement values
+                            // than painting would resolve to the wrong
+                            // character.
+                            let field_info = {
+                                let tree = runtime.tree.borrow();
+                                let node = tree.get(hit);
+                                match node.map(|n| &n.kind) {
+                                    Some(NodeKind::TextField(state)) => {
+                                        let width = tree.layout(hit).size.width;
+                                        Some((state.clone(), width))
+                                    }
+                                    _ => None,
+                                }
+                            };
+                            if let Some((state, width)) = field_info {
+                                let at = TextPlacement {
+                                    x: 0.0,
+                                    y: 0.0,
+                                    max_width: width,
+                                    color: peniko::Color::TRANSPARENT,
+                                };
+                                let offset = runtime.gpu.text_renderer.hit_test_position(
+                                    &state,
+                                    at,
+                                    local_point,
+                                );
+                                runtime.tree.borrow_mut().set_text_field_cursor(hit, offset);
+                            }
                         }
                     }
                     InputEvent::PointerReleased {

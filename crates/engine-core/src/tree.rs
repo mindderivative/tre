@@ -1096,12 +1096,31 @@ impl Tree {
     /// (or any other `NodeKind`) keeps the ordinary rect test.
     pub fn hit_test(&self, root: NodeId, point: Point) -> Option<NodeId> {
         self.hit_test_at(root, point, Affine::IDENTITY)
+            .map(|(id, _local_point)| id)
+    }
+
+    /// M18 Phase 1 (§8, §10, §11.9, §11.10): `hit_test`'s own sibling,
+    /// additionally returning the click's own local-space point on the
+    /// hit node -- needed by a caller (`TextRenderer::hit_test_position`)
+    /// that has to turn a click into a byte offset within text painted
+    /// at that node's own local origin, the same real transform-aware
+    /// coordinate `hit_test_at` already computes internally for its own
+    /// rect/custom-hit-test containment check but never exposed before
+    /// this. Reuses `hit_test_at`'s own composition math verbatim, not a
+    /// second way of computing it.
+    pub fn hit_test_local(&self, root: NodeId, point: Point) -> Option<(NodeId, Point)> {
+        self.hit_test_at(root, point, Affine::IDENTITY)
     }
 
     /// See `hit_test`'s own doc comment for the composition formula and
     /// why it has to match `paint_node`'s exactly. `parent_transform` is
     /// the caller's already-composed transform for `id`'s *parent*.
-    fn hit_test_at(&self, id: NodeId, point: Point, parent_transform: Affine) -> Option<NodeId> {
+    fn hit_test_at(
+        &self,
+        id: NodeId,
+        point: Point,
+        parent_transform: Affine,
+    ) -> Option<(NodeId, Point)> {
         let node = self.nodes.get(id)?;
         let layout = self.layout(id);
         let composed = parent_transform
@@ -1138,7 +1157,7 @@ impl Tree {
             },
             _ => rect_contains(layout, local_point),
         };
-        hit.then_some(id)
+        hit.then_some((id, local_point))
     }
 
     /// The concrete fulfillment of §7.3's own text: "hover needs no new
@@ -1498,6 +1517,40 @@ impl Tree {
         Some(text)
     }
 
+    /// M18 Phase 1 (§8, §10, §11.9, §11.10): the real, pure `engine-core`
+    /// half of click-to-position -- `engine-render`'s `TextRenderer::
+    /// hit_test_position` (the real per-glyph shaping `engine-core` has
+    /// no visibility into, §4) computes *which byte offset* a click
+    /// landed on; this method is the plain mutation that applies it,
+    /// the identical "engine-core owns the real mutation" split `set_
+    /// slider_position`/`dispatch_text_field_key` already established.
+    /// A plain click always collapses any active selection -- real
+    /// desktop-editor behavior, matching every non-shift cursor movement
+    /// `dispatch_text_field_key` already has (M15 Phase 2/3).
+    ///
+    /// `offset` is clamped to a real UTF-8 char boundary within `0..=
+    /// content.len()` -- defensive: `parley::editing::Cursor::from_point`
+    /// 's own result should already land on one, but this method must
+    /// stay correct even if a future caller doesn't go through it.
+    /// Returns whether `field` was actually a real `TextField` -- a
+    /// no-op on any other kind or a stale/missing `NodeId`, mirroring
+    /// `dock::start_drag`'s own "press on the wrong thing, nothing
+    /// happens" precedent.
+    pub fn set_text_field_cursor(&mut self, field: NodeId, offset: usize) -> bool {
+        let Some(NodeKind::TextField(state)) = self.nodes.get_mut(field).map(|n| &mut n.kind)
+        else {
+            return false;
+        };
+        let clamped = offset.min(state.content.len());
+        let boundary = (0..=clamped)
+            .rev()
+            .find(|&i| state.content.is_char_boundary(i))
+            .unwrap_or(0);
+        state.cursor = boundary;
+        state.selection_anchor = None;
+        true
+    }
+
     /// M4 Phase 2 (§10): the direct, non-`InputEvent` counterpart to a
     /// mouse click's own `Activated` outcome -- what `accesskit::
     /// Action::Click` from a platform accessibility client actually
@@ -1605,6 +1658,33 @@ impl Tree {
                         )
                     {
                         self.dragging = Some(node);
+                    }
+                    // M18 Phase 1 (§8, §10): a real click-to-focus,
+                    // scoped specifically to `TextField` -- before this,
+                    // `PointerPressed` never touched `self.focused` at
+                    // all anywhere (focus was Tab-driven, or explicit
+                    // via `set_focus_to`'s own AT-SPI/test callers), a
+                    // real, bigger-than-scoped finding surfaced while
+                    // investigating this phase. Every real text field in
+                    // every real desktop app focuses itself on click;
+                    // this is not a generic click-to-focus for every
+                    // node kind, which would be real, separate scope
+                    // creep beyond what this phase needs. Reuses `set_
+                    // focus_to` verbatim -- the real focus-ring
+                    // transition it already drives is exactly correct
+                    // here too, not a second mechanism.
+                    if button == PointerButton::Primary
+                        && matches!(
+                            self.nodes.get(node).map(|n| &n.kind),
+                            Some(NodeKind::TextField(_))
+                        )
+                    {
+                        self.set_focus_to(
+                            node,
+                            config.focus_ring_opacity,
+                            config.focus_ring_duration,
+                            now,
+                        );
                     }
                     if let Some(state) = self.interaction_mut(node) {
                         state.spawn_ripple(
@@ -5911,5 +5991,203 @@ mod tests {
             state.preedit, None,
             "a real Commit (reaching TextInput) must clear the stale preview"
         );
+    }
+
+    /// M18 Phase 1 (§8, §10): a real click-to-focus, scoped to
+    /// `TextField` -- `text_field_scene` is deliberately NOT reused here
+    /// (it pre-focuses via `set_focus_to`), since this test's own claim
+    /// is that a plain `PointerPressed` genuinely does the focusing.
+    #[test]
+    fn pointer_press_on_a_text_field_moves_focus_there() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            size: Size {
+                width: length(120.0),
+                height: length(24.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+        let field = tree.insert(
+            NodeKind::TextField(TextFieldState::new("hi", "Roboto", 400.0, 16.0)),
+            Style {
+                size: Size {
+                    width: length(120.0),
+                    height: length(24.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(root, field);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(120.0),
+                height: AvailableSpace::Definite(24.0),
+            },
+        );
+        assert_eq!(tree.focused(), None, "must start genuinely unfocused");
+
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(10.0, 10.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            Instant::now(),
+        );
+        assert_eq!(
+            tree.focused(),
+            Some(field),
+            "a real click on a TextField must move real focus there, the same as every real \
+             desktop text field"
+        );
+    }
+
+    #[test]
+    fn pointer_press_on_a_non_text_field_does_not_move_focus() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(100.0, 100.0);
+        let root = tree.insert(k, s, p);
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(10.0, 10.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            Instant::now(),
+        );
+        assert_eq!(
+            tree.focused(),
+            None,
+            "clicking an ordinary Rect must never move focus -- this is scoped to TextField, \
+             not a generic click-to-focus for every node kind"
+        );
+    }
+
+    /// M18 Phase 1 (§8, §11.9, §11.10): `hit_test_local`'s own real
+    /// claim -- it must report the SAME local point `paint_node`
+    /// painted into, under a real ancestor transform, not just the same
+    /// hit `NodeId` `hit_test` already proved (`hit_test_follows_an_
+    /// ancestor_translate_transform`, above).
+    #[test]
+    fn hit_test_local_reports_the_click_in_the_hit_nodes_own_local_space() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            size: Size {
+                width: length(200.0),
+                height: length(200.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let (_, camera_style, camera_paint) = leaf(200.0, 200.0);
+        let camera = tree.insert(NodeKind::Container, camera_style, camera_paint);
+        tree.add_child(root, camera);
+
+        let (k, s, p) = leaf(50.0, 50.0);
+        let chip = tree.insert(k, s, p);
+        tree.add_child(camera, chip);
+
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(200.0),
+            },
+        );
+
+        assert_eq!(
+            tree.hit_test_local(root, Point::new(25.0, 25.0)),
+            Some((chip, Point::new(25.0, 25.0))),
+            "with no transform applied, the local point must equal the canvas point"
+        );
+
+        // Same real (100, 100) translate `hit_test_follows_an_ancestor_
+        // translate_transform` already proves moves `chip` to canvas
+        // (100,100)-(150,150) -- a click at canvas (125, 125) must
+        // report chip's own LOCAL point as (25, 25), the inverse-
+        // transformed coordinate `paint_node` itself painted at, not
+        // the raw canvas point.
+        tree.get_mut(camera).unwrap().paint.transform.current = Affine::translate((100.0, 100.0));
+        assert_eq!(
+            tree.hit_test_local(root, Point::new(125.0, 125.0)),
+            Some((chip, Point::new(25.0, 25.0))),
+        );
+    }
+
+    #[test]
+    fn set_text_field_cursor_moves_the_cursor_and_clears_a_selection() {
+        let (mut tree, _root, field) = text_field_scene("hello");
+        {
+            let NodeKind::TextField(state) = &mut tree.get_mut(field).unwrap().kind else {
+                panic!("expected a TextField node");
+            };
+            state.selection_anchor = Some(0);
+            state.cursor = 5;
+        }
+        let moved = tree.set_text_field_cursor(field, 2);
+        assert!(moved);
+        let state = field_state(&tree, field);
+        assert_eq!(state.cursor, 2);
+        assert_eq!(
+            state.selection_anchor, None,
+            "a plain click-driven cursor move must collapse any active selection"
+        );
+    }
+
+    #[test]
+    fn set_text_field_cursor_clamps_beyond_content_length() {
+        let (mut tree, _root, field) = text_field_scene("hi");
+        assert!(tree.set_text_field_cursor(field, 999));
+        assert_eq!(field_state(&tree, field).cursor, 2);
+    }
+
+    #[test]
+    fn set_text_field_cursor_snaps_to_a_real_char_boundary() {
+        // "h" + a 3-byte character -- byte offset 2 lands inside it.
+        let (mut tree, _root, field) = text_field_scene("h\u{5462}");
+        assert!(tree.set_text_field_cursor(field, 2));
+        let cursor = field_state(&tree, field).cursor;
+        assert!(
+            field_state(&tree, field).content.is_char_boundary(cursor),
+            "a mid-character offset must snap back to a real char boundary, not corrupt state"
+        );
+        assert_eq!(
+            cursor, 1,
+            "must snap DOWN to the boundary before the requested offset"
+        );
+    }
+
+    #[test]
+    fn set_text_field_cursor_on_a_non_text_field_is_a_true_no_op() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(100.0, 100.0);
+        let root = tree.insert(k, s, p);
+        assert!(!tree.set_text_field_cursor(root, 0));
     }
 }
