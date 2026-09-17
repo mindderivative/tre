@@ -174,6 +174,20 @@ impl App {
     /// #261), not to the app's own lifetime as a whole.
     #[pyo3(signature = (max_frames=None))]
     fn run(&self, py: Python<'_>, max_frames: Option<u32>) -> PyResult<()> {
+        // M16 Phase 1 (§3, §9): the one real place to wire a `tracing`
+        // subscriber -- `App::run` is Design Principle 1's own "one
+        // blocking call," the real entry point every per-frame/
+        // callback code path already funnels through. `try_init`
+        // (not `init`, which panics) is real, load-bearing idempotency:
+        // `test_engine_py.py`'s own `test_app_requires_at_least_one_
+        // window` (and any real app that legitimately constructs more
+        // than one `App` in a process) can call this more than once in
+        // the same process -- a global subscriber can only ever be set
+        // once, so every call after the first must be a silent no-op,
+        // not a panic. `.ok()` discards that real, expected "already
+        // set" error deliberately, not by accident.
+        tracing_subscriber::fmt::try_init().ok();
+
         // Extracted once, up front, while `py` is already held --
         // see `WindowSetup`'s own doc comment for why nothing below
         // this point ever touches a Python object again.
@@ -202,6 +216,13 @@ impl App {
                 "App.run() called with no windows -- call add_window() at least once first",
             ));
         }
+
+        // M16 Phase 1 (§3, §9): the first real span this codebase
+        // establishes -- one per genuine `App.run()` session (past the
+        // "no windows" early return above, which isn't a real session
+        // at all). Held for the rest of this function's own real work
+        // via `.entered()`'s RAII guard, not manually entered/exited.
+        let _app_run_span = tracing::info_span!("app_run", windows = setups.len()).entered();
 
         let setups = Rc::new(setups);
         let runtimes: Rc<RefCell<HashMap<WindowId, WindowRuntime>>> =

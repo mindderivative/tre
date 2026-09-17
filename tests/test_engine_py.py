@@ -87,6 +87,22 @@ def test_app_requires_at_least_one_window():
         app.run()
 
 
+def test_app_run_tracing_subscriber_init_does_not_panic_across_multiple_calls():
+    """M16 Phase 1 (§3, §9): `App.run()` calls `tracing_subscriber::fmt
+    ::try_init()` at its own real top, before even the "no windows"
+    check above -- a global `tracing` subscriber can only ever be
+    installed once per process, so a second real call (this whole
+    pytest process already made one, via the test above, and every
+    other test file in this suite that calls `.run()`) must be a
+    silent no-op, not a panic. `try_init` (not `init`) is the real,
+    load-bearing choice this test actually exercises -- calling `.run()`
+    a second time here, real proof, not just reasoning about the API.
+    """
+    app = App()
+    with pytest.raises(RuntimeError, match="add_window"):
+        app.run()  # must not panic on subscriber re-init
+
+
 def test_animate_accepts_a_real_on_complete_callback():
     """M9 Phase 2 (§5): `on_complete`, when given, must not raise --
     registering it is a fire-and-forget call, the same as `animate()`

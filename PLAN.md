@@ -1,73 +1,62 @@
-# Plan: M15 Phase 3 — Selection & Two-Way Binding (§16.7)
+# Plan: M16 Phase 1 — Real `tracing` Subscriber Wiring (§3, §9)
 
-Corresponds to `BUILD_TRACKER.md` M15 Phase 3's own scoping, closing
-M15 entirely: shift+arrow selection extension and a real Backspace/
-Delete-with-selection; `NodeKindSpec::TextField` + `WidgetSpec`
-declarability in `view.yaml`; real `two_way: text` binding sugar.
+Corresponds to `BUILD_TRACKER.md` M16 Phase 1's own scoping: add
+`tracing`/`tracing-subscriber` to the workspace, wire a real subscriber
+once at `App::run`'s own real entry point, establishing the real
+span/event vocabulary this codebase will use going forward.
 
 ## Investigation before writing code
 
-- `Tree::dispatch_text_field_key` (M15 Phase 2) only ever took `key`,
-  not `shift` — confirmed by direct read — so it had no way to
-  distinguish "move" from "extend." `InputEvent::KeyPressed` already
-  carries `shift: bool`, unused by that method until now.
-- Real design question, resolved before writing: does a bare (non-
-  shift) arrow key, pressed while a real selection is active, move the
-  cursor one more character from the focus end, or collapse to the
-  selection's own near edge? Every real desktop text editor does the
-  latter — decided to match that, not the simpler-but-wrong former.
-- `WidgetSpec.text: Option<TextSpec>` already exists for `kind: Text`
-  — confirmed via direct read, `TextSpec`'s own four fields (`content`/
-  `font_family`/`font_weight`/`font_size`) are byte-for-byte what
-  `TextFieldState::new` needs. `Checkbox`/`Slider` each needed a new
-  dedicated `WidgetSpec` field (`checked`/`value`) because neither had
-  a matching sibling block to reuse; `TextField` does, so `kind:
-  TextField` reuses the same `text:` block `kind: Text` already
-  requires, rather than adding a third, near-duplicate field.
-- `apply_binding_value`/`TwoWayCallback` (M14 Phase 3) already
-  special-case `"checked"` for the one non-numeric property that
-  exists so far — `text` is the second, and `engine_spec::Value::Str`
-  is already a real variant (confirmed via direct read), so both
-  branches need only mirror the existing `"checked"` shape, not a new
-  mechanism.
+- No `[workspace.dependencies]` section exists (confirmed via direct
+  read of the root `Cargo.toml`) — every crate manages its own
+  dependencies independently, so `tracing`/`tracing-subscriber` land
+  in `engine-py`'s own `Cargo.toml`, the one crate that actually needs
+  either.
+- **Real finding:** `tracing = 0.1.44` is already a real transitive
+  dependency of `engine-py` — confirmed via `cargo tree -p engine-py -i
+  tracing`, pulled in by `winit`/`accesskit_unix`/`zbus`. Depending on
+  it directly adds no new crate to the tree, only a name.
+  `tracing-subscriber` is genuinely new (confirmed via the same
+  `cargo tree` check, zero hits before this) — an application-level
+  crate no library dependency pulls in on its own.
+- `tracing-subscriber`'s own `env-filter` feature is not in its
+  default feature set (confirmed via direct read of its `Cargo.toml`)
+  — needed explicitly for a real `RUST_LOG`-driven verbosity dial,
+  matching §3's own "correlate with frame timing" framing.
+  `tracing_subscriber::fmt::try_init()` (confirmed real via direct
+  source read) already wires `EnvFilter::from_default_env()`
+  automatically once that feature is on — no manual builder needed.
+- **Real design risk, found before writing, not after:** a global
+  `tracing` subscriber can only ever be installed once per process.
+  `test_engine_py.py`'s own `test_app_requires_at_least_one_window`
+  (and any real app constructing more than one `App` in a process)
+  can call `App.run()` more than once in the same process — `try_init`
+  (which returns a `Result`, confirmed via direct source read), not
+  `init` (which panics on a second call), is the load-bearing choice.
 
 ## Design
 
-- `Tree::dispatch_text_field_key(field, key, shift)`: `ArrowLeft`/
-  `ArrowRight` — if `!shift` and a real selection is active, collapse
-  to its near edge and clear it; else (extending or no selection) seed
-  `selection_anchor` from the pre-move cursor the first time `shift`
-  is held, then move normally. `Home`/`End` mirror the same
-  anchor-seed-then-jump shape. New shared `Tree::delete_selection
-  (state) -> bool`: deletes a real, non-collapsed selection and
-  returns `true`; a zero-width "selection" (`anchor == cursor`) both
-  clears itself and reports `false` — a real no-op, not an empty
-  delete. `Backspace`/`Delete`/`Space`/`TextInput` all call it first,
-  replacing an active selection instead of acting at a bare cursor —
-  real desktop-editor behavior, not `engine-core` inventing a special
-  case per key.
-- `NodeKindSpec::TextField` (unit variant); `build.rs::node_kind_and_
-  paint` gains a matching arm requiring `style.background` + `text:`,
-  building `TextFieldState::new` from the reused `TextSpec`.
-- `apply_binding_value` gains a `Value::Str` branch calling `Node.
-  set_text`; `TwoWayCallback::__call__` gains a `"text"` branch
-  calling `Node.get_text`.
+- `engine-py/Cargo.toml` gains `tracing = "0.1.44"` and `tracing-
+  subscriber = { version = "0.3.23", features = ["env-filter"] }`.
+- `App::run` calls `tracing_subscriber::fmt::try_init().ok()` at its
+  own real top — before even the "no windows" early return, so the
+  idempotency claim is exercised by the cheapest possible real call.
+  `.ok()` discards the real, expected "already set" error on every
+  call after the first, deliberately, not by accident.
+- One real span, `tracing::info_span!("app_run", windows = ...)`,
+  entered via RAII guard for the rest of a genuine run session (past
+  the "no windows" check) — the first real span this codebase
+  establishes, the vocabulary Phase 2's own call-site migration will
+  build on.
 
 ## Verification plan
 
 `cargo test --workspace --release`/`clippy -D warnings`/`fmt --check`;
-new `engine-core` tests (shift-arrow extends from the cursor; a bare
-arrow after a real selection collapses to the correct near/far edge;
-shift+Home/End extend to the real edges; Backspace/Delete/typing/Space
-each replace a real active selection; a zero-width selection is
-treated as no selection at all); new `engine-spec` tests (`TextField`
-parses reusing the same `text:` block `Text` uses; `load_view` builds
-a real `TextFieldState` from it; missing background/missing `text:`
-each fail with a clear, real error); `maturin develop --release`; new
-`tests/test_two_way_binding.py`/`test_text_field.py` coverage (a real
-`two_way: text` round trip; shift+arrow selection + Backspace/typing
-reaching the real focused field via `Window.press_key(shift=True)`);
-extend the existing `examples/two_way_binding.py`/`.yaml` with a real
-`TextField` alongside the existing Checkbox/Slider, rather than a
-parallel duplicate; every example re-run; `LOG.md`/`BUILD_TRACKER.md`/
-tracker artifact/commit/memory — closing M15 entirely (all 3 phases).
+`maturin develop --release`; new `tests/test_engine_py.py` test
+proving `App.run()` called a second time in the same process does not
+panic (real proof, not just reasoning about the API); manually confirm
+`RUST_LOG=info python3 examples/checkbox.py` genuinely emits real,
+span-wrapped `tracing` events (including from a transitive dependency,
+`wgpu_hal`, a real bonus this phase gives for free) while the default
+(no `RUST_LOG`) run stays exactly as quiet as before; every example
+re-run; `LOG.md`/`BUILD_TRACKER.md`/tracker artifact/commit/memory.
