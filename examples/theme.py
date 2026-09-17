@@ -5,23 +5,24 @@ opts into interaction (`enable_interaction()`) -- its ripple/hover tint
 is now the theme's real "on-surface" role, not the plain hardcoded black
 every node painted before this phase.
 
-M20 Phase 1 (§7.1, §7.3) extends the same real mechanism to Checkbox's
-checkmark and Slider's track -- both a checkbox/slider created *before*
-`set_theme` (re-tinted by the same `Tree::set_all_component_tints` push
-`set_all_interaction_tints` already used) and one created *after*
-(themed at construction, the real `Node.enable_interaction`-style
-precedent) are demonstrated below.
+M20 (§7.1, §7.3) extends the same real mechanism to Checkbox's
+checkmark (Phase 1), Slider's track (Phase 1), and TextField's text/
+caret/selection (Phase 2) -- a component created *before* `set_theme`
+(re-tinted by the same `Tree::set_all_component_tints` push `set_all_
+interaction_tints` already used) and one created *after* (themed at
+construction, the real `Node.enable_interaction`-style precedent) are
+both demonstrated below.
 
 What this script proves automatically (headless-CI-safe, no human
 needed): `set_theme`/`enable_interaction`/`click()`, and now `add_
-checkbox`/`add_slider` both before and after `set_theme`, all compile
-and run through the real pipeline for real frames, exiting cleanly --
-the definitive pixel-level proof that each tint is genuinely the
-theme's own color (not still hardcoded black/white/gray) is `crates/
-engine-render/tests/ripple_hover_dispatch.rs`/`checkbox_paint.rs`/
-`slider_paint.rs`'s own new tests, not this script, the same split this
-workspace has used throughout (e.g. `elevation.py` / `elevation_
-shadow.rs`).
+checkbox`/`add_slider`/`add_text_field` both before and after `set_
+theme`, all compile and run through the real pipeline for real frames,
+exiting cleanly -- the definitive pixel-level proof that each tint is
+genuinely the theme's own color (not still hardcoded black/white/gray/
+dark) is `crates/engine-render/tests/ripple_hover_dispatch.rs`/
+`checkbox_paint.rs`/`slider_paint.rs`/`text_field_paint.rs`'s own new
+tests, not this script, the same split this workspace has used
+throughout (e.g. `elevation.py` / `elevation_shadow.rs`).
 """
 
 from tre import App, Window
@@ -35,6 +36,14 @@ window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), dark=False)
 
 # Created after set_theme -- must start genuinely themed already.
 late_slider = window.add_slider(background=(0x03, 0xDA, 0xC6, 0xFF), width=180, height=32)
+late_field = window.add_text_field(
+    background=(0xEE, 0xEE, 0xEE, 0xFF),
+    width=180,
+    height=32,
+    content="themed",
+    font_family="Roboto",
+    font_size=16,
+)
 
 card = window.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=120, height=80)
 card.enable_interaction()

@@ -1059,6 +1059,9 @@ impl Tree {
             match &mut node.kind {
                 NodeKind::Checkbox(state) => state.mark_tint = tint,
                 NodeKind::Slider(state) => state.track_tint = tint,
+                // M20 Phase 2 (§7.1, §7.3): `TextField`'s own real
+                // sibling, closing the milestone's own real mechanism.
+                NodeKind::TextField(state) => state.text_tint = tint,
                 _ => {}
             }
         }
@@ -6317,6 +6320,12 @@ mod tests {
             Style::default(),
             PaintProperties::new(Color::from_rgba8(0, 0, 0, 0xFF), 0.0, 0.0, 1.0),
         );
+        // M20 Phase 2 (§7.1, §7.3): TextField's own real sibling case.
+        let text_field = tree.insert(
+            NodeKind::TextField(TextFieldState::new("hi", "Roboto", 400.0, 16.0)),
+            Style::default(),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0xFF), 0.0, 0.0, 1.0),
+        );
         let (kind, style, paint) = leaf(10.0, 10.0);
         let rect = tree.insert(kind, style, paint);
 
@@ -6332,6 +6341,11 @@ mod tests {
             panic!("expected a Slider node");
         };
         assert_eq!(state.track_tint, real_color);
+
+        let NodeKind::TextField(state) = &tree.get(text_field).unwrap().kind else {
+            panic!("expected a TextField node");
+        };
+        assert_eq!(state.text_tint, real_color);
 
         assert!(
             matches!(tree.get(rect).unwrap().kind, NodeKind::Rect),

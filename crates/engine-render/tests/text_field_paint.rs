@@ -389,3 +389,31 @@ fn hit_test_position_accounts_for_the_placements_own_local_offset() {
     let offset = renderer.hit_test_position(&state, at, Point::new(40.0, 20.0));
     assert_eq!(offset, 0);
 }
+
+/// M20 Phase 2 (§7.1, §7.3): the real, definitive proof `text_tint` is
+/// genuinely read at paint time, not just stored -- the same real diff
+/// -based proof `a_composing_preedit_paints_a_real_underline_distinct_
+/// from_the_same_field_when_not_composing` (M17 Phase 2) already
+/// established for a similarly hard-to-pin-down-exact-pixel claim: two
+/// otherwise-identical fields, one with the real default `text_tint`,
+/// one with a real, different one, must paint genuinely different
+/// pixels.
+#[test]
+fn a_themed_text_field_paints_genuinely_different_pixels_than_the_default() {
+    pollster::block_on(async {
+        let default_state = TextFieldState::new("x", "Roboto", 400.0, 16.0);
+        let (tree_a, root_a, _) = build_tree_with_state(default_state);
+        let (data_a, _) = render(&tree_a, root_a, 100, 24).await;
+
+        let mut themed_state = TextFieldState::new("x", "Roboto", 400.0, 16.0);
+        themed_state.text_tint = Color::from_rgba8(0x00, 0xFF, 0x00, 0xFF);
+        let (tree_b, root_b, _) = build_tree_with_state(themed_state);
+        let (data_b, _) = render(&tree_b, root_b, 100, 24).await;
+
+        assert!(
+            data_a != data_b,
+            "a real, non-default text_tint must paint genuinely different pixels than the \
+             default -- the two renders were pixel-identical"
+        );
+    });
+}

@@ -172,6 +172,12 @@ pub struct TextFieldState {
     /// composition cursor sits) -- real, but strictly more detail than
     /// "a preedit underline" needs; a real, stated simplification.
     pub preedit: Option<String>,
+    /// M20 Phase 2 (§7.1, §7.3): the field's own real text/caret/
+    /// selection-highlight color -- `CheckboxState.mark_tint`'s own
+    /// real sibling, same reasoning. Defaults to real, byte-for-byte
+    /// the historical hardcoded `0x1C1B1F` `engine-render`'s own
+    /// `TextField` paint used before this phase.
+    pub text_tint: Color,
 }
 
 impl TextFieldState {
@@ -194,6 +200,7 @@ impl TextFieldState {
             cursor,
             selection_anchor: None,
             preedit: None,
+            text_tint: Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF),
         }
     }
 }

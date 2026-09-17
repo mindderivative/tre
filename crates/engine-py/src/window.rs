@@ -486,14 +486,22 @@ impl PyWindow {
         y: Option<f32>,
     ) -> Node {
         let (r, g, b, a) = background;
+        // M20 Phase 2 (§7.1, §7.3): same real "themed-at-construction,
+        // gated on a real theme actually being set" reasoning as
+        // `add_checkbox`/`add_slider` (M20 Phase 1) -- `TextFieldState`
+        // 's own real default text color is dark (`0x1C1B1F`), not
+        // `on_surface()`'s own black no-theme default.
+        let mut text_field_state =
+            TextFieldState::new(content, font_family, font_weight, font_size);
+        {
+            let theme = self.theme.borrow();
+            if theme.is_set() {
+                text_field_state.text_tint = theme.on_surface();
+            }
+        }
         let mut tree = self.tree.borrow_mut();
         let id = tree.insert(
-            NodeKind::TextField(TextFieldState::new(
-                content,
-                font_family,
-                font_weight,
-                font_size,
-            )),
+            NodeKind::TextField(text_field_state),
             positioned_style(
                 Size {
                     width: length(width),

@@ -413,10 +413,12 @@ fn paint_node(
             scene.set_paint(bg);
             scene.fill_path(&RoundedRect::new(0.0, 0.0, w, h, radius).to_path(0.1));
 
-            let text_color = with_opacity(
-                Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF),
-                node.paint.opacity.current,
-            );
+            // M20 Phase 2 (§7.1, §7.3): the real resolved color now
+            // comes from `state.text_tint` -- plain dark by default
+            // (byte-for-byte the old hardcoded literal), a real
+            // resolved MD3 "on-surface" color once `Window.set_theme`
+            // has pushed one in.
+            let text_color = with_opacity(state.text_tint, node.paint.opacity.current);
             text.draw_field(
                 scene,
                 resources,
