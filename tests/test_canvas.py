@@ -75,6 +75,63 @@ def test_stroke_path_and_hit_test_path_reject_fewer_than_two_points():
         window.redraw_canvas(canvas)
 
 
+def test_stroke_path_and_set_hit_test_path_accept_real_quadratic_and_cubic_segments():
+    """M11 Phase 1 (§11.10, §11.11): `points` entries of length 4
+    (quadratic) and 6 (cubic) build a real curved `BezPath`, not just
+    the length-2 line-to points this accepted before this phase --
+    `crates/engine-core/src/tree.rs`'s own `canvas_custom_path_hit_
+    test_uses_the_real_curve_not_the_straight_chord_between_its_
+    endpoints` is the definitive proof the resulting path is really
+    curved (a curve-aware hit, not just "this doesn't raise"); this
+    test only proves the FFI authoring surface itself accepts the real
+    shapes, matching this file's own established "not the definitive
+    proof" split.
+    """
+    window = Window(width=200, height=200)
+
+    def draw(ctx):
+        ctx.stroke_path(
+            points=[(0, 0), (50, 100, 100, 0)],  # move_to, quad_to
+            color=(0, 0, 255, 255),
+            width=2.0,
+        )
+        ctx.stroke_path(
+            points=[(0, 0), (30, 100, 70, -100, 100, 0)],  # move_to, curve_to
+            color=(255, 0, 0, 255),
+            width=2.0,
+        )
+        ctx.set_hit_test_path(points=[(0, 0), (50, 100, 100, 0)], tolerance=5.0)
+
+    canvas = window.add_canvas(width=100, height=100, draw=draw)
+    window.redraw_canvas(canvas)  # must not raise
+
+
+def test_stroke_path_rejects_a_point_with_an_invalid_number_of_coordinates():
+    window = Window(width=200, height=200)
+
+    def draw(ctx):
+        ctx.stroke_path(points=[(0, 0), (1, 2, 3)], color=(255, 0, 0, 255), width=1.0)
+
+    canvas = window.add_canvas(width=100, height=100, draw=draw)
+    with pytest.raises(ValueError, match="2 numbers .line., 4"):
+        window.redraw_canvas(canvas)
+
+
+def test_stroke_path_rejects_a_curve_segment_as_the_first_point():
+    window = Window(width=200, height=200)
+
+    def draw(ctx):
+        ctx.stroke_path(
+            points=[(0, 0, 50, 50), (10, 10)],  # first point can't be a curve segment
+            color=(255, 0, 0, 255),
+            width=1.0,
+        )
+
+    canvas = window.add_canvas(width=100, height=100, draw=draw)
+    with pytest.raises(ValueError, match="first point must be a plain"):
+        window.redraw_canvas(canvas)
+
+
 def test_redraw_canvas_rejects_a_node_that_is_not_a_canvas():
     window = Window(width=200, height=200)
     rect = window.add_rect(background=(0, 0, 0, 255), width=10, height=10)

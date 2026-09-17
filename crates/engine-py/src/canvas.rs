@@ -25,16 +25,47 @@ fn to_color(rgba: (u8, u8, u8, u8)) -> Color {
     Color::from_rgba8(rgba.0, rgba.1, rgba.2, rgba.3)
 }
 
-fn polyline(points: Vec<(f64, f64)>) -> PyResult<BezPath> {
+/// M11 Phase 1 (§11.10, §11.11): each entry in `points` is a real
+/// bezier segment, not just a line-to point -- 2 numbers (`x, y`) is a
+/// line-to (a plain point, the only shape this ever accepted before
+/// this phase), 4 (`cx, cy, x, y`) is a quadratic `quad_to`, 6 (`c1x,
+/// c1y, c2x, c2y, x, y`) is a cubic `curve_to`. The *first* entry must
+/// be 2 numbers -- a `move_to` has no control points of its own, so a
+/// curve there would be meaningless. `kurbo::BezPath::quad_to`/
+/// `curve_to` already exist and already accept `(f64, f64)` tuples via
+/// `Into<Point>`, the identical mechanism `line_to` already relied on
+/// -- nothing new needed from `kurbo` itself, only this authoring
+/// surface, confirmed via direct read before this phase.
+fn build_path(points: Vec<Vec<f64>>) -> PyResult<BezPath> {
     if points.len() < 2 {
         return Err(PyValueError::new_err(
             "stroke_path/set_hit_test_path needs at least 2 points",
         ));
     }
     let mut path = BezPath::new();
-    path.move_to(points[0]);
-    for &p in &points[1..] {
-        path.line_to(p);
+    match points[0].as_slice() {
+        &[x, y] => path.move_to((x, y)),
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "stroke_path/set_hit_test_path: the first point must be a plain (x, y) pair, \
+                 got {} numbers",
+                other.len()
+            )));
+        }
+    }
+    for p in &points[1..] {
+        match p.as_slice() {
+            &[x, y] => path.line_to((x, y)),
+            &[cx, cy, x, y] => path.quad_to((cx, cy), (x, y)),
+            &[c1x, c1y, c2x, c2y, x, y] => path.curve_to((c1x, c1y), (c2x, c2y), (x, y)),
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "stroke_path/set_hit_test_path: each point must be 2 numbers (line), 4 \
+                     (quadratic), or 6 (cubic), got {} numbers",
+                    other.len()
+                )));
+            }
+        }
     }
     Ok(path)
 }
@@ -67,18 +98,19 @@ impl CanvasContext {
         });
     }
 
-    /// `points` builds a real `kurbo::BezPath` (a straight-line polyline
-    /// via `move_to`/`line_to`) -- not a general curve-authoring API
-    /// this phase; see `engine_core::canvas`'s own module doc comment
-    /// for why the underlying distance-to-path hit-test math already
-    /// generalizes to true bezier curves regardless.
+    /// `points` builds a real `kurbo::BezPath` -- each entry a line-to
+    /// (2 numbers), quadratic (4), or cubic (6) segment; see
+    /// `build_path`'s own doc comment for the exact vocabulary. M11
+    /// Phase 1 (§11.10, §11.11): real curve authoring, closing the gap
+    /// this doc comment used to name here ("a straight-line polyline
+    /// ... not a general curve-authoring API").
     fn stroke_path(
         &mut self,
-        points: Vec<(f64, f64)>,
+        points: Vec<Vec<f64>>,
         color: (u8, u8, u8, u8),
         width: f64,
     ) -> PyResult<()> {
-        let path = polyline(points)?;
+        let path = build_path(points)?;
         self.commands.push(DrawCommand::StrokePath {
             path,
             color: to_color(color),
@@ -96,10 +128,14 @@ impl CanvasContext {
     }
 
     /// §11.10's own "a bezier curve within N pixels of the point"
-    /// example (a straight polyline here, same underlying real
-    /// distance-to-path math a true curve would use).
-    fn set_hit_test_path(&mut self, points: Vec<(f64, f64)>, tolerance: f64) -> PyResult<()> {
-        let path = polyline(points)?;
+    /// example -- M11 Phase 1 (§11.10, §11.11): `points` can now
+    /// author a real curve (see `build_path`'s own doc comment), so
+    /// this hit-tests against the true curve, not a straight-line
+    /// approximation of it. The underlying distance-to-path math
+    /// (`ParamCurveNearest`, `tree.rs`) already generalized to real
+    /// curves before this phase -- only the authoring surface changed.
+    fn set_hit_test_path(&mut self, points: Vec<Vec<f64>>, tolerance: f64) -> PyResult<()> {
+        let path = build_path(points)?;
         self.hit_test = Some(CustomHitTest::Path { path, tolerance });
         Ok(())
     }

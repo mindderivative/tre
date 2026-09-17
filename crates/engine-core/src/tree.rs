@@ -3489,6 +3489,67 @@ mod tests {
         );
     }
 
+    /// M11 Phase 1 (§11.10, §11.11): the non-degenerate case the test
+    /// above's own doc comment names but doesn't exercise -- a real
+    /// `quad_to` curve, not a straight line. `move_to(0,0)`, `quad_to`
+    /// control `(50,100)`, end `(100,0)` bulges to a true midpoint of
+    /// `(50,50)` (the standard quadratic-bezier weighted-control-point
+    /// formula), far from the naive chord's own midpoint `(50,0)`.
+    #[test]
+    fn canvas_custom_path_hit_test_uses_the_real_curve_not_the_straight_chord_between_its_endpoints()
+     {
+        let mut tree = Tree::new();
+        let mut path = BezPath::new();
+        path.move_to((0.0, 0.0));
+        path.quad_to((50.0, 100.0), (100.0, 0.0));
+
+        let mut state = CanvasState::new();
+        state.hit_test = Some(CustomHitTest::Path {
+            path,
+            tolerance: 5.0,
+        });
+        let canvas = tree.insert(
+            NodeKind::Canvas(state),
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(100.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.compute_layout(
+            canvas,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+
+        // (50, 50) sits right on the true curve's own real midpoint --
+        // 50px from the naive straight chord (0,0)-(100,0), so this
+        // would wrongly MISS if hit-testing only ever saw a straight
+        // line between the curve's endpoints.
+        assert_eq!(
+            tree.hit_test(canvas, Point::new(50.0, 50.0)),
+            Some(canvas),
+            "a point on the real curve's own midpoint, far from the straight chord between \
+             its endpoints, must hit -- proving this is real curve-aware distance, not a \
+             straight-line approximation"
+        );
+        // (50, 2) sits ~2px from the naive straight chord -- it would
+        // wrongly HIT under a chord-only distance, but the real curve
+        // passes through (50, 50) here, ~48px away, well outside the
+        // 5px tolerance.
+        assert_eq!(
+            tree.hit_test(canvas, Point::new(50.0, 2.0)),
+            None,
+            "a point near the straight chord but far from the real curve must miss -- the \
+             adversarial case a chord-only (not curve-aware) distance would get wrong"
+        );
+    }
+
     #[test]
     fn update_hover_only_animates_nodes_that_already_opted_into_interaction_state() {
         use std::time::Duration;

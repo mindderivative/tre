@@ -1,108 +1,73 @@
-# Log: M10 Phase 3 — Drop-Zone Highlight Overlay for Docking (§11.4)
+# Log: M11 Phase 1 — True Bezier Curve Authoring (§11.10, §11.11)
 
-Corresponds to `BUILD_TRACKER.md` M10 Phase 3, closing M10 entirely.
-`dock.rs`'s own module doc comment named this exact gap from M4 Phase
-9: "Deliberately no drop-zone highlight overlay... `open_overlay`'s own
-`inset` computation is hardcoded to place content *below* its anchor...
-it can't cover a target zone's own bounds." This phase closes it.
+Corresponds to `BUILD_TRACKER.md` M11 Phase 1. `stroke_path`/`set_hit_
+test_path` gain real curved-segment authoring, closing the single
+most-repeatedly-passed-over candidate across M8 and M10's own scoping.
 
 ## Investigation before writing code
 
-Confirmed by direct re-read: `Tree::open_overlay` (`tree.rs`) only ever
-sets `inset.left`/`inset.top` from an anchor's own absolute bounds,
-leaving `right`/`bottom` `auto()` and `content`'s own size untouched --
-anchor-relative-below only, no way to cover an arbitrary rect. Every
-type this needed (`Size`, `length`, `auto`, `TaffyRect`, `Position`,
-`Rect`) was already imported in `tree.rs`. `dock.rs`'s own doc comment
-also named the real, related consequence: no `PointerMoved`-time
-callback for docking existed at all before this phase, only press
-(`start_drag`) and release (`end_drag_at`) -- confirmed via grep.
-`PyWindow.start_panel_drag`/`drop_panel_at` are purely synthetic (no
-real winit event routing into `dock.rs` anywhere), the same
-no-live-window-needed proof pattern `.click()`/`.hover()`/
-`.right_click()` already establish.
+`crates/engine-py/src/canvas.rs`'s own `polyline` helper (both real
+callers, `stroke_path` and `set_hit_test_path`, went through it)
+built a `BezPath` using only `move_to`/`line_to` — confirmed via
+direct read and grep, no `quad_to`/`curve_to` call anywhere in the
+file. `kurbo::BezPath::quad_to`/`curve_to` already exist in the pinned
+kurbo version and already accept `(f64, f64)` tuples via `Into<Point>`
+— the same mechanism `line_to` already relied on. `CustomHitTest::
+Path`'s own distance math (`ParamCurveNearest`, already imported in
+`tree.rs`) already generalizes to real curve segments — confirmed this
+was purely a Python-facing authoring gap, not an engine-level one.
+
+Considered and rejected adding parallel `stroke_curve`/`set_hit_test_
+curve` methods (a second mechanism, against this project's own
+repeated "one mechanism, not two/three" convention). Considered and
+rejected a custom `FromPyObject` enum for a tagged point type — pyo3
+0.29's `FromPyObject` trait needs `type Error: Into<PyErr>` plus a
+`Borrowed<'a, 'py, PyAny>`-based `extract` method, real avoidable
+complexity (confirmed via direct read of the pinned pyo3 source; zero
+precedent for a custom `FromPyObject` impl exists anywhere in this
+codebase) for what a plain arity-dispatch on `Vec<f64>` already solves.
 
 ## What happened
 
-**`Tree::position_overlay_over(&mut self, content: NodeId, rect: Rect)`**
-(`engine-core/tree.rs`, next to `open_overlay`): sets `Position::
-Absolute` with `inset.left`/`top` from `rect`'s own origin and an
-explicit `style.size` matching `rect`'s own width/height -- unlike
-`open_overlay`, always resizes `content` to exactly cover `rect`.
-Deliberately does not attach `content` anywhere or touch `self.
-overlays`: a rect-covering highlight has no anchor and no outside-
-click/Escape dismissal, so `OverlayMeta` doesn't fit it; attach/detach
-lifecycle is the caller's own responsibility.
+`polyline` renamed to `build_path`, widened from `points: Vec<(f64,
+f64)>` to `points: Vec<Vec<f64>>` — a 2-element inner sequence is a
+line-to (the only shape ever accepted before this phase, so every
+existing call site keeps working unmodified with zero Python-side
+changes), 4 elements is a quadratic (`quad_to`, 2 control + 2 end
+coordinates), 6 is a cubic (`curve_to`, 4 control + 2 end). The first
+point must be 2 elements (a `move_to` has no control points of its
+own); any other length anywhere is a real `PyValueError` naming the
+offending length. `stroke_path`/`set_hit_test_path` keep their exact
+signatures and parameter name (`points`), both still calling the one
+shared `build_path` helper. Two stale doc comments corrected (both
+methods' own, which previously stated "a straight-line polyline... not
+a general curve-authoring API").
 
-`engine-py`'s `dock.rs`: `DockState` gains `highlight: Option<NodeId>`.
-`set_drop_zone_highlight(dock, tree, content)` registers it -- and,
-since `add_rect` (like every node-creation method) already attached
-`content` to root immediately, detaches it first, the same real
-"alive, parentless, ready for `add_child` elsewhere later" contract
-`Node.set_context_menu` already commits to for its own registered
-content, for the identical reason: a highlight must start hidden.
-`drag_over(dock, tree, root, position)` is the new `PointerMoved`-
-during-drag step: hit-tests `position`, reuses `enclosing_zone`
-unchanged to find the enclosing registered zone (if any); if found,
-computes that zone's container's real absolute rect (`absolute_
-position` + `layout(..).size`) and calls `Tree::position_overlay_over`,
-attaching the highlight to root if not already attached; if not found,
-detaches it if attached. `end_drag_at` gains one new unconditional step
-right after taking `dragging`, before any of its own existing early
-returns: detach the highlight if attached -- a real drag ending, for
-*any* reason, must always hide it, not just on a successful move.
+New `engine-core` unit test (`tree.rs`):
+`canvas_custom_path_hit_test_uses_the_real_curve_not_the_straight_
+chord_between_its_endpoints` — the non-degenerate case the pre-existing
+straight-line test's own doc comment named but never exercised. A real
+`quad_to` curve (`move_to(0,0)`, control `(50,100)`, end `(100,0)`)
+bulges to a true midpoint of `(50,50)`, far from the naive chord's own
+midpoint `(50,0)`. Two adversarial points prove this is genuinely
+curve-aware, not a chord approximation: `(50,50)` (on the real curve,
+50px from the chord) hits; `(50,2)` (2px from the chord, ~48px from the
+real curve) misses — the exact pair that would come out wrong under
+chord-only distance.
 
-`engine-py`'s `window.rs`: `PyWindow.set_drop_zone_highlight(content:
-PyRef<'_, Node>) -> PyResult<()>` -- the same `Rc::ptr_eq` same-tree
-guard M10 Phase 2 added to `set_dock_handle`, applied here too.
-`PyWindow.drag_panel_over(x: f64, y: f64)` -- computes layout fresh
-(the same reasoning `.click()`/`drop_panel_at` already state), then
-calls `dock::drag_over`.
+New pytest coverage (`test_canvas.py`): `stroke_path`/`set_hit_test_
+path` accept real quadratic and cubic segments without raising (the
+FFI-authoring-surface proof; the Rust test above is the definitive
+curve-aware-math proof, matching this file's own established split);
+an invalid point length (3 numbers) raises a clear `ValueError`; a
+curve segment as the first point is rejected with a clear message.
 
-**Real finding during implementation (not anticipated in `PLAN.md`):**
-the first draft of the new pytest coverage used `(200.0, 50.0)` for "a
-point inside the Right zone," copied from the existing, already-
-passing `test_dragging_a_registered_handle_moves_its_panel_for_real`.
-Direct debugging (temporary `eprintln!` instrumentation, removed
-before this phase's own verification pass) revealed that point
-actually lands exactly on the Right zone's own right edge, not inside
-it -- three 100px-wide root children (`left_container`, `right_
-container`, `handle`) don't fit `Window`'s own 300px width once
-padding/gap are subtracted, so taffy's default flex-shrink compresses
-`right_container` down to 68px wide (132 to 200), and `(200.0, 50.0)`
-falls just outside, resolving to the root itself, not the zone. This
-means the *pre-existing* test's own "the real, functional proof" claim
-is weaker than its docstring states: `window.click(panel)` firing after
-`drop_panel_at(200.0, 50.0)` doesn't actually distinguish "the panel
-moved to Right" from "the drop was silently a same-zone no-op," since
-`panel` stays clickable either way -- a real, pre-existing gap in that
-test's own discriminating power, left as-is (out of this phase's own
-scope; not a regression this phase introduced). This phase's own new
-tests use `(160.0, 50.0)`, confirmed via the same direct debugging to
-land genuinely inside the Right zone's real, computed bounds.
-
-New pytest coverage (`test_docking.py`): dragging over a different zone
-shows the highlight, real-attached and covering it (proven the only way
-available from Python -- clicking the highlight's own real computed
-center fires its handler); dragging outside every zone hides it; ending
-a drag (`drop_panel_at`) always hides it; `drag_panel_over` with no
-drag in progress or no highlight registered is a safe no-op (matching
-`drop_panel_at`'s own precedent); `set_drop_zone_highlight` rejects
-content from a different `Window` (the same `Rc::ptr_eq` guard's own
-test pattern). New `engine-core` unit test: `Tree::position_overlay_
-over` covers an arbitrary rect, independent of any anchor, and doesn't
-attach the node anywhere by itself.
-
-`examples/docking.py` registers a translucent highlight via `set_drop_
-zone_highlight`; its own doc comment, which previously named this
-exact gap, is corrected to state it's closed.
-
-Full `cargo test --workspace --release` clean (81 `engine-core` tests,
-up from 80 -- the new `position_overlay_over` test), `cargo clippy
---workspace --all-targets -- -D warnings`, `cargo fmt --check` all
-clean. `maturin develop --release` + full `pytest tests/` (93 passed,
-up from 87, 1 skipped) and all sixteen examples confirmed clean,
-including `docking.py` with its new highlight.
-
-M10 (Interaction & Overlay Completeness) is now complete: all 3 phases
-done.
+No `engine-core` production change this phase (only a new test) — full
+`cargo test --workspace --release` (`engine-core` 82, up from 81),
+`cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt
+--check` all clean. `maturin develop --release` + full `pytest tests/`
+(96 passed, up from 93, 1 skipped) and all sixteen examples confirmed
+clean — including the three pre-existing `stroke_path` call sites
+(`node_graph.py`, `positioned_graph.py`, `canvas.py`), unmodified and
+still using plain 2-tuples, proving the widened parameter type is
+fully backward-compatible.

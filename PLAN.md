@@ -1,165 +1,98 @@
-# Plan: M10 Phase 3 — Drop-Zone Highlight Overlay for Docking (§11.4)
+# Plan: M11 Phase 1 — True Bezier Curve Authoring (§11.10, §11.11)
 
-Corresponds to `BUILD_TRACKER.md` M10 Phase 3's own scoping: a real way
-to position an overlay to cover an arbitrary target rect (a dock zone's
-own real computed bounds), then wiring it into the real
-drag-in-progress path so the zone currently under the pointer shows a
-real, live highlight — closing the milestone.
+Corresponds to `BUILD_TRACKER.md` M11 Phase 1's own scoping:
+`stroke_path`/`set_hit_test_path` gain a real way to author curved
+segments (quadratic/cubic bezier), not just straight polylines.
 
 ## Investigation before writing code
 
-- `crates/engine-py/src/dock.rs`'s own module doc comment (lines
-  30-41) already names this exact gap, in its own words, from M4 Phase
-  9: "Deliberately no drop-zone highlight overlay. `open_overlay`'s
-  own `inset` computation is hardcoded to place content *below* its
-  anchor ... it can't cover a target zone's own bounds, which is what
-  a highlight needs." Confirmed by direct re-read of `Tree::
-  open_overlay` (`tree.rs:417-443`): `style.inset.left = anchor_x`,
-  `style.inset.top = anchor_y + anchor_height`, `right`/`bottom` left
-  `auto()` — anchor-relative-below only, no width/height override, so
-  content keeps whatever size its own `layout_style` already gives it.
-  There is no existing way to position a node's absolute box over an
-  arbitrary caller-supplied rect.
-- `crates/engine-core/src/tree.rs:18-20` already imports everything a
-  new "position over rect" primitive needs: `Size`, `length`, `auto`,
-  `TaffyRect`, `Position` (taffy) and `Rect` (`peniko::kurbo`, used
-  already at `tree.rs:105`). `style.size.width`/`.height` are already
-  set via `length(..)` elsewhere (`tree.rs:597-601`, splitter geometry)
-  — the same pattern this needs, so no new imports required.
-- `dock.rs`'s own doc comment (lines 18-28) already names the real
-  precedent for "no `PointerMoved`-time callback for docking at all,
-  just press (start) and release (end)" — confirmed via grep: `dock::
-  start_drag`/`end_drag_at` are the only two drag-related functions,
-  called from `PyWindow.start_panel_drag`/`drop_panel_at`
-  (`window.rs:681-703`), both purely synthetic (no real winit event
-  routing into `dock.rs` anywhere) — the same "no-live-window-needed
-  proof pattern" `.click()`/`.hover()`/`.right_click()` already
-  establish (`window.rs:473-506`, `.hover()`'s own doc comment names
-  this explicitly). A third synthetic entry point, `drag_panel_over(x,
-  y)`, is the natural continuation of that exact vocabulary
-  (`start_panel_drag` → `drag_panel_over` → `drop_panel_at`).
-- `enclosing_zone` (`dock.rs:203-216`) and `container_for`
-  (`dock.rs:194-201`) already exist and are exactly what's needed to
-  find "which registered zone's container is under this point" — reused
-  as-is, not reimplemented.
-- `Tree::absolute_position`/`Tree::layout` (confirmed real, transform-
-  aware since M6 Phase 4) give a container's real on-screen rect
-  directly: `absolute_position(container)` for origin,
-  `layout(container).size` for width/height.
-- `DockState` (`dock.rs:58-74`) has no field for a registered highlight
-  node yet — needs one, mirroring `handles: HashMap<NodeId, NodeId>`'s
-  own simple-storage shape (a single `Option<NodeId>` is enough; unlike
-  handles there's only ever one highlight per `Window`).
-- `PyWindow.set_dock_handle` (`window.rs:668-674`) is the direct, just-
-  shipped (M10 Phase 2) template for the same-tree `Rc::ptr_eq` guard
-  the new `set_drop_zone_highlight(content: PyRef<'_, Node>)` needs too
-  — one more `PyRef<'_, Node>`-taking registration method, same
-  treatment.
-- `examples/docking.py`'s own doc comment (lines 18-20) already names
-  this gap in user-facing terms: "There is deliberately no translucent
-  drop-zone highlight while dragging — a real, separate, stated gap
-  this phase's own `LOG.md` names, not silently missing." This phase
-  closes it; the example gets a highlight rect registered and its doc
-  comment corrected to stop claiming the gap exists.
+- `crates/engine-py/src/canvas.rs`'s own `polyline(points: Vec<(f64,
+  f64)>) -> PyResult<BezPath>` (confirmed by direct read, lines 28-37):
+  builds a `BezPath` via exactly `move_to(points[0])` then
+  `line_to(p)` for every remaining point — no `quad_to`/`curve_to`
+  call anywhere in this file (confirmed via grep). Both real callers,
+  `stroke_path` and `set_hit_test_path`, go through this one helper —
+  reused as the one place to extend, not duplicated.
+- `kurbo::BezPath` (confirmed via direct read of the pinned `kurbo`
+  0.11.3 source, `bezpath.rs`) already exposes `quad_to<P: Into<Point>>
+  (p1: P, p2: P)` and `curve_to<P: Into<Point>>(p1: P, p2: P, p3: P)`
+  alongside the already-used `move_to`/`line_to` — `(f64, f64)` tuples
+  already satisfy `Into<Point>` (the exact mechanism `polyline`'s own
+  existing `line_to(p)` call already relies on). Nothing new needed
+  from `kurbo` itself.
+- `CustomHitTest::Path { path: BezPath, tolerance: f64 }`
+  (`engine-core/canvas.rs`) already stores a full `BezPath`, and
+  `tree.rs` already imports `kurbo::ParamCurveNearest` for its
+  distance-to-path hit-test math (confirmed via grep,
+  `tree.rs:35`) — `ParamCurveNearest` is implemented generically for
+  every `PathSeg` variant (`Line`/`Quad`/`Cubic`), so a `BezPath`
+  containing real curve segments already hit-tests correctly with zero
+  `engine-core` changes. This phase is purely a Python-facing
+  *authoring* gap, confirmed by direct read, not an engine-level one.
+- Real API-design question investigated before choosing: how does a
+  Python caller specify a curve? Considered adding parallel
+  `stroke_curve`/`set_hit_test_curve` methods, but that would be
+  exactly the "second mechanism" this project's own conventions
+  consistently avoid (ARCHITECTURE.md §11.3's own "one overlay
+  mechanism, not three" reasoning; §11.5's "one mechanism, two call
+  sites" for splitters). Instead: widen `polyline`'s own `points`
+  parameter from `Vec<(f64, f64)>` to `Vec<Vec<f64>>` — pyo3 already
+  extracts a nested `Vec<Vec<f64>>` from any Python sequence of
+  sequences with zero custom code (the same "any sequence of numbers"
+  mechanism the existing `Vec<(f64, f64)>` extraction already relies
+  on), so every existing call site (`stroke_path(points=[(ax, ay),
+  (bx, by)], ...)` in `node_graph.py`/`positioned_graph.py`/
+  `canvas.py`) keeps working unmodified — a 2-element inner sequence
+  still means a line-to point, exactly as before. A 4-element inner
+  sequence means a quadratic control+end point; a 6-element sequence
+  means a cubic. Considered and rejected a custom `FromPyObject` enum
+  (would need pyo3 0.29's own more complex
+  `type Error: Into<PyErr>` + `Borrowed<'a, 'py, PyAny>` trait shape,
+  confirmed via direct read of the pinned pyo3 0.29.2 source — real,
+  avoidable complexity for what a plain arity-dispatch on `Vec<f64>`
+  already solves with zero new trait machinery, and zero precedent for
+  a custom `FromPyObject` impl exists anywhere in this codebase,
+  confirmed via grep).
 
 ## Design
 
-**Step 1 — `engine-core` primitive (`tree.rs`, next to `open_overlay`):**
+`crates/engine-py/src/canvas.rs`:
 
-```rust
-pub fn position_overlay_over(&mut self, content: NodeId, rect: Rect) {
-    let mut style = self
-        .get(content)
-        .expect("position_overlay_over: content NodeId not found in this Tree")
-        .layout_style
-        .clone();
-    style.position = Position::Absolute;
-    style.inset = TaffyRect {
-        left: length(rect.x0 as f32),
-        top: length(rect.y0 as f32),
-        right: auto(),
-        bottom: auto(),
-    };
-    style.size = Size {
-        width: length(rect.width() as f32),
-        height: length(rect.height() as f32),
-    };
-    self.set_layout_style(content, style);
-}
-```
-
-Deliberately does *not* call `add_child`/touch `self.overlays` the way
-`open_overlay` does — a drop-zone highlight has no anchor, is never
-dismissed by outside-click/Escape (`OverlayMeta` doesn't fit it), and
-its attach/detach lifecycle is driven entirely by drag state, not
-click/key dispatch. `dock.rs` (Step 2) manages attach/detach itself
-via the same `add_child`/`detach` primitives it already uses elsewhere
-in this file — one mechanism (this method) for *where the box sits*,
-reused by any future caller that needs to cover an arbitrary rect,
-independent of *whether it's currently attached*.
-
-**Step 2 — wiring into the drag path (`engine-py`):**
-
-- `DockState` gains `highlight: Option<NodeId>`.
-- `dock::set_drop_zone_highlight(dock: &SharedDockState, content:
-  NodeId)` — stores it, mirroring `set_dock_handle`'s own plain-insert
-  shape.
-- `dock::drag_over(dock: &SharedDockState, tree: &Rc<RefCell<Tree>>,
-  root: NodeId, position: Point)`:
-  - No-op if no drag is in progress (`dragging.is_none()`) or no
-    highlight is registered — matching `drop_panel_at`'s own "no drag
-    in progress does not raise" no-op precedent.
-  - Hit-tests `position`, finds the enclosing registered zone via
-    `enclosing_zone` (reused as-is).
-  - If a target zone is found: computes its container's real absolute
-    rect (`absolute_position` + `layout(..).size`), calls `Tree::
-    position_overlay_over(highlight, rect)`, and `add_child(root,
-    highlight)` if not already attached (checked via `Node::parent`,
-    the same "check tree parent directly" idiom `dock_panel` already
-    uses at `dock.rs:121-126`).
-  - If no target zone (pointer outside every registered zone): detach
-    the highlight if it's currently attached — it must disappear the
-    moment the pointer leaves every zone, not linger over the last one.
-- `dock::end_drag_at` gains one new unconditional step, right after
-  taking `dragging` (before any of its existing early returns): detach
-  the highlight if attached. A real drag ending — for *any* reason
-  (real move, cancelled drop outside every zone, drop back in the same
-  zone) — must always hide the highlight; putting this before the
-  function's existing early-return branches is what makes it
-  unconditional, not just one of several exit paths.
-- `PyWindow.set_drop_zone_highlight(&mut self, content: PyRef<'_,
-  Node>) -> PyResult<()>` — the same `Rc::ptr_eq` same-tree guard M10
-  Phase 2 just added to `set_dock_handle`, applied to this new
-  registration method too.
-- `PyWindow.drag_panel_over(&mut self, x: f64, y: f64)` — computes
-  layout fresh (the same "nothing else does this for a `Window` with
-  no render loop attached" reasoning `.click()`/`drop_panel_at`
-  already state), then calls `dock::drag_over`.
-
-**Example update:** `examples/docking.py` registers a translucent
-highlight rect via the new `set_drop_zone_highlight`, and its doc
-comment is corrected to state the gap is closed (matching this
-project's own discipline of never leaving a stated gap's own doc
-comment stale once the gap is closed — the exact class of staleness
-M10 Phase 1 found and fixed for `overlay.rs`'s doc comment).
+- `polyline` renamed to `build_path` (no longer polyline-only) and
+  widened from `points: Vec<(f64, f64)>` to `points: Vec<Vec<f64>>`.
+  The first point must be a 2-element sequence (`move_to`); each
+  remaining point may be 2 elements (`line_to`), 4 (`quad_to`, control
+  + end), or 6 (`curve_to`, two controls + end) — any other length is
+  a real `PyValueError` naming the offending length, not a silent
+  misinterpretation.
+- `stroke_path`/`set_hit_test_path` both keep their exact existing
+  signatures (`points: Vec<Vec<f64>>` in place of `Vec<(f64, f64)>`,
+  same parameter name so existing `points=[...]` keyword calls are
+  unaffected) and both keep calling the one shared `build_path` helper
+  — zero duplication between the stroke path and hit-test path.
+- Doc comments on `stroke_path`/`set_hit_test_path` corrected — they
+  currently state "a straight polyline via `move_to`/`line_to` — not a
+  general curve-authoring API this phase" (`stroke_path`) and "a
+  straight polyline here, same underlying real distance-to-path math a
+  true curve would use" (`set_hit_test_path`), both now stale once
+  this phase ships real curve authoring.
 
 ## Verification plan
 
-- `cargo test --workspace --release` — new `engine-core` unit test(s)
-  for `Tree::position_overlay_over` (positions and sizes a node to
-  cover an arbitrary rect, independent of any anchor).
-- `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt
-  --check`.
-- `maturin develop --release` + `pytest tests/`. New `test_docking.py`
-  coverage: dragging a handle and calling `drag_panel_over` with a
-  point inside a *different* registered zone shows the highlight
-  attached and covering that zone's real container bounds (the same
-  "clicking it there proves it really moved" functional-proof
-  discipline this file already uses — here, checking the highlight's
-  own real computed position/size after `compute_layout`, since
-  there's no other observable signal); a point outside every zone
-  leaves it detached; ending the drag (`drop_panel_at`) always detaches
-  it. Existing `test_docking.py` tests must keep passing unmodified.
-- Run all examples (`examples/docking.py` at minimum) — confirm clean
-  exit, no panic, matching every prior phase's own verification
-  discipline.
+- `cargo test --workspace --release`/clippy/fmt — this phase touches
+  only `engine-py`, no `engine-core` change (confirmed by design: the
+  hit-test math already generalizes, nothing there needs to change).
+- `maturin develop --release` + `pytest tests/`. New coverage: a
+  `stroke_path`/`set_hit_test_path` call using a real quadratic and a
+  real cubic segment builds without error; an existing 2-tuple-only
+  call keeps working unmodified (regression guard); an invalid
+  point-length (e.g. 3 or 5 numbers) raises a real, clear
+  `ValueError`. `set_hit_test_path`'s own real functional proof: a
+  point genuinely on a real curve (not just near the straight
+  chord between its endpoints) hits; a point near the chord but off
+  the true curve misses — the one test that actually exercises
+  `ParamCurveNearest`'s own curve-aware math, not just "it didn't
+  crash."
+- Run all examples — confirm the three existing `stroke_path` call
+  sites (`node_graph.py`, `positioned_graph.py`, `canvas.py`) still
+  exit cleanly, unmodified.
