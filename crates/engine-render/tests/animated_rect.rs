@@ -34,8 +34,14 @@ fn animated_color_and_opacity_render_the_interpolated_value_mid_flight() {
 
         // Halfway through: both should still be mid-flight.
         let halfway = start + Duration::from_millis(500);
-        assert!(color.tick(halfway), "color animation ended early");
-        assert!(opacity.tick(halfway), "opacity animation ended early");
+        assert!(
+            color.tick(halfway, &mut Vec::new()),
+            "color animation ended early"
+        );
+        assert!(
+            opacity.tick(halfway, &mut Vec::new()),
+            "opacity animation ended early"
+        );
 
         let instance = wgpu::Instance::default();
         let adapter = instance

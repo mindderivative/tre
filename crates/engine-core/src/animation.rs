@@ -214,7 +214,10 @@ impl<T: Interpolate + Clone> Animated<T> {
     /// always the value's current state, not whatever the previous
     /// animation's own `to` was -- interrupting a still-running animation
     /// starts smoothly from wherever it actually is, not where it was
-    /// headed.
+    /// headed. No completion callback -- see `animate_to_with_completion`
+    /// for the sibling that attaches a real `CompletionHandle` (M9 Phase
+    /// 1, §5); kept separate rather than a 5th parameter here so none of
+    /// this method's own ~15+ existing call sites needed touching.
     pub fn animate_to(&mut self, to: T, duration: Duration, curve: MotionCurve, now: Instant) {
         self.active = Some(ActiveAnimation {
             from: self.current.clone(),
@@ -226,6 +229,29 @@ impl<T: Interpolate + Clone> Animated<T> {
         });
     }
 
+    /// M9 Phase 1 (§5): `animate_to`'s own real completion-callback
+    /// counterpart -- identical body, except `on_complete: Some(...)`
+    /// instead of `None`. `Tree::tick_all`'s own real drain (below,
+    /// `tick`) is what actually reports `on_complete` back out once
+    /// this animation genuinely finishes.
+    pub fn animate_to_with_completion(
+        &mut self,
+        to: T,
+        duration: Duration,
+        curve: MotionCurve,
+        now: Instant,
+        on_complete: CompletionHandle,
+    ) {
+        self.active = Some(ActiveAnimation {
+            from: self.current.clone(),
+            to,
+            start: now,
+            duration,
+            curve,
+            on_complete: Some(on_complete),
+        });
+    }
+
     /// Advances this value to `now`, returning `true` if it's still
     /// mid-animation afterward (stays dirty for another frame). This is
     /// the tick mechanism §5 describes applied to one value -- the
@@ -233,13 +259,26 @@ impl<T: Interpolate + Clone> Animated<T> {
     /// not matching on any specific component) arrives once `Node`/`Tree`
     /// exist to walk (step 3); until then, a caller ticks each `Animated<T>`
     /// it owns directly, which is what this step's demo does.
-    pub fn tick(&mut self, now: Instant) -> bool {
+    ///
+    /// M9 Phase 1 (§5): `completed` is a shared, caller-owned
+    /// accumulator (not a return value) so a caller ticking many
+    /// `Animated<T>` fields in one pass (`PaintProperties::tick`, the
+    /// central `Tree::tick_all` walk) can collect every real completion
+    /// across all of them without allocating a fresh `Vec` per field --
+    /// pushed into *before* `self.active` is cleared, the same "read
+    /// what's needed out of the borrowed `ActiveAnimation` before
+    /// clearing it" order this method's own `anim.to.clone()` already
+    /// used.
+    pub fn tick(&mut self, now: Instant, completed: &mut Vec<CompletionHandle>) -> bool {
         let Some(anim) = &self.active else {
             return false;
         };
         let elapsed = now.saturating_duration_since(anim.start);
         if elapsed >= anim.duration {
             self.current = anim.to.clone();
+            if let Some(handle) = anim.on_complete {
+                completed.push(handle);
+            }
             self.active = None;
             return false;
         }
@@ -383,7 +422,7 @@ mod tests {
     #[test]
     fn tick_with_no_active_animation_is_a_no_op() {
         let mut value = Animated::new(5.0_f64);
-        assert!(!value.tick(Instant::now()));
+        assert!(!value.tick(Instant::now(), &mut Vec::new()));
         assert_eq!(value.current, 5.0);
     }
 
@@ -394,12 +433,12 @@ mod tests {
         value.animate_to(100.0, Duration::from_secs(1), MotionCurve::Linear, start);
 
         // Halfway through: still active, current ~50.
-        let still_active = value.tick(start + Duration::from_millis(500));
+        let still_active = value.tick(start + Duration::from_millis(500), &mut Vec::new());
         assert!(still_active);
         assert!((value.current - 50.0).abs() < 0.01);
 
         // Past the end: snaps exactly to `to`, reports not-active.
-        let still_active = value.tick(start + Duration::from_millis(1500));
+        let still_active = value.tick(start + Duration::from_millis(1500), &mut Vec::new());
         assert!(!still_active);
         assert_eq!(value.current, 100.0);
         assert!(value.active.is_none());
@@ -410,7 +449,7 @@ mod tests {
         let start = Instant::now();
         let mut value = Animated::new(1.0_f64);
         value.animate_to(9.0, Duration::ZERO, MotionCurve::Linear, start);
-        assert!(!value.tick(start));
+        assert!(!value.tick(start, &mut Vec::new()));
         assert_eq!(value.current, 9.0);
     }
 
@@ -419,7 +458,7 @@ mod tests {
         let start = Instant::now();
         let mut value = Animated::new(0.0_f64);
         value.animate_to(100.0, Duration::from_secs(1), MotionCurve::Linear, start);
-        value.tick(start + Duration::from_millis(500)); // current ~= 50
+        value.tick(start + Duration::from_millis(500), &mut Vec::new()); // current ~= 50
         let current_before_interrupt = value.current;
 
         // Retarget mid-flight -- `from` should be ~50, not 0 or 100.
@@ -431,5 +470,59 @@ mod tests {
         );
         let from = value.active.as_ref().unwrap().from;
         assert_eq!(from, current_before_interrupt);
+    }
+
+    #[test]
+    fn animate_to_with_completion_reports_its_handle_exactly_on_the_completing_tick() {
+        let start = Instant::now();
+        let mut value = Animated::new(0.0_f64);
+        let handle = CompletionHandle(42);
+        value.animate_to_with_completion(
+            100.0,
+            Duration::from_secs(1),
+            MotionCurve::Linear,
+            start,
+            handle,
+        );
+
+        // Halfway through: still animating, no completion yet.
+        let mut completed = Vec::new();
+        value.tick(start + Duration::from_millis(500), &mut completed);
+        assert!(
+            completed.is_empty(),
+            "must not report completion before the animation genuinely finishes"
+        );
+
+        // Past the end: the completing tick reports the real handle,
+        // exactly once.
+        let mut completed = Vec::new();
+        value.tick(start + Duration::from_millis(1500), &mut completed);
+        assert_eq!(completed, vec![handle]);
+
+        // A later tick on an already-inactive value must not re-report
+        // it -- `self.active` is `None` by now, so `tick`'s own
+        // early-return path never touches `completed` at all.
+        let mut completed_again = Vec::new();
+        value.tick(start + Duration::from_secs(2), &mut completed_again);
+        assert!(
+            completed_again.is_empty(),
+            "a finished animation must report its completion exactly once, not on every \
+             later tick"
+        );
+    }
+
+    #[test]
+    fn plain_animate_to_never_reports_a_completion() {
+        // The existing, real no-op case: an animation started the plain
+        // way (no completion callback) must never populate `completed`,
+        // even on the exact tick it finishes -- `on_complete: None` is
+        // `animate_to`'s own real, unchanged default.
+        let start = Instant::now();
+        let mut value = Animated::new(0.0_f64);
+        value.animate_to(100.0, Duration::from_secs(1), MotionCurve::Linear, start);
+
+        let mut completed = Vec::new();
+        value.tick(start + Duration::from_secs(2), &mut completed);
+        assert!(completed.is_empty());
     }
 }

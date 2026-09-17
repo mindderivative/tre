@@ -229,13 +229,13 @@ impl PaintProperties {
     /// ahead of a step that profiles it as actually necessary; the
     /// frame-time CI benchmark this same step adds is exactly what would
     /// catch it if a naive walk ever stopped meeting the 16.6ms budget.
-    pub fn tick(&mut self, now: Instant) -> bool {
-        let background = self.background.tick(now);
-        let corner_radius = self.corner_radius.tick(now);
-        let elevation = self.elevation.tick(now);
-        let opacity = self.opacity.tick(now);
-        let transform = self.transform.tick(now);
-        let shape = self.shape.tick(now);
+    pub fn tick(&mut self, now: Instant, completed: &mut Vec<crate::CompletionHandle>) -> bool {
+        let background = self.background.tick(now, completed);
+        let corner_radius = self.corner_radius.tick(now, completed);
+        let elevation = self.elevation.tick(now, completed);
+        let opacity = self.opacity.tick(now, completed);
+        let transform = self.transform.tick(now, completed);
+        let shape = self.shape.tick(now, completed);
         background || corner_radius || elevation || opacity || transform || shape
     }
 }

@@ -14,17 +14,18 @@
 //! source" to whichever later build-order step first lands real pointer
 //! input, the same scope narrowing step 7 applied to keyboard dispatch.
 //!
-//! Also deliberately skips building a completion-queue for pruning
-//! finished ripples, despite §7.3's text framing removal as reusing
-//! "the same completion-queue mechanism §5 already defines for
-//! `on_complete`". That queue (`CompletionHandle`, still just an unused
-//! struct field -- checked directly, no drain exists anywhere) is
-//! `engine-py`'s future mechanism for handing a finished animation to a
-//! *Python-visible* callback. Nothing about ripple pruning is
-//! Python-visible; checking each `RippleState`'s own `Animated::tick`
-//! return value directly is the same underlying fact that queue would
-//! ultimately be built from, without manufacturing unused machinery
-//! ahead of a caller that needs it.
+//! Also deliberately skips *using* the real completion queue for
+//! pruning finished ripples, despite §7.3's text framing removal as
+//! reusing "the same completion-queue mechanism §5 already defines for
+//! `on_complete`" -- that queue is real now (M9 Phase 1: `Animated::
+//! tick`'s own `completed: &mut Vec<CompletionHandle>` parameter,
+//! threaded through this module's own `tick` methods below), but
+//! nothing about ripple pruning is Python-visible, so nothing here ever
+//! attaches a real `CompletionHandle` via `animate_to_with_completion`
+//! -- checking each `RippleState`'s own `Animated::tick` boolean
+//! return value directly remains the correct mechanism for pruning,
+//! not manufacturing an unused completion callback ahead of a real
+//! need.
 
 use std::time::{Duration, Instant};
 
@@ -32,7 +33,7 @@ use peniko::Color;
 use peniko::kurbo::Point;
 use smallvec::SmallVec;
 
-use crate::animation::{Animated, MotionCurve};
+use crate::animation::{Animated, CompletionHandle, MotionCurve};
 
 /// One expanding-and-fading ripple, matching §7.3's own struct sketch.
 pub struct RippleState {
@@ -69,9 +70,9 @@ impl RippleState {
     }
 
     /// Advances both animations; `true` while either is still running.
-    fn tick(&mut self, now: Instant) -> bool {
-        let radius_active = self.radius.tick(now);
-        let opacity_active = self.opacity.tick(now);
+    fn tick(&mut self, now: Instant, completed: &mut Vec<CompletionHandle>) -> bool {
+        let radius_active = self.radius.tick(now, completed);
+        let opacity_active = self.opacity.tick(now, completed);
         radius_active || opacity_active
     }
 }
@@ -136,10 +137,10 @@ impl InteractionState {
     /// still animating it can never visibly change again. Returns `true`
     /// if anything here is still mid-animation (stays dirty another
     /// frame), matching `PaintProperties::tick`'s own contract.
-    pub fn tick(&mut self, now: Instant) -> bool {
-        let hover_active = self.hover_opacity.tick(now);
-        let focus_active = self.focus_ring.tick(now);
-        self.ripples.retain(|ripple| ripple.tick(now));
+    pub fn tick(&mut self, now: Instant, completed: &mut Vec<CompletionHandle>) -> bool {
+        let hover_active = self.hover_opacity.tick(now, completed);
+        let focus_active = self.focus_ring.tick(now, completed);
+        self.ripples.retain(|ripple| ripple.tick(now, completed));
         hover_active || focus_active || !self.ripples.is_empty()
     }
 }
@@ -166,7 +167,7 @@ mod tests {
             start,
         );
 
-        let still_active = state.tick(start + Duration::from_millis(100));
+        let still_active = state.tick(start + Duration::from_millis(100), &mut Vec::new());
         assert!(still_active, "ripple should still be mid-animation at 50%");
         let ripple = &state.ripples[0];
         assert!(
@@ -196,7 +197,7 @@ mod tests {
 
         // Past the ripple's own duration: both radius and opacity have
         // finished, so tick() must prune it, not just report inactive.
-        let still_active = state.tick(start + Duration::from_millis(500));
+        let still_active = state.tick(start + Duration::from_millis(500), &mut Vec::new());
         assert!(!still_active);
         assert!(
             state.ripples.is_empty(),
@@ -212,8 +213,8 @@ mod tests {
             .hover_opacity
             .animate_to(1.0, Duration::from_millis(100), MotionCurve::Linear, start);
 
-        assert!(state.tick(start + Duration::from_millis(50)));
-        assert!(!state.tick(start + Duration::from_millis(200)));
+        assert!(state.tick(start + Duration::from_millis(50), &mut Vec::new()));
+        assert!(!state.tick(start + Duration::from_millis(200), &mut Vec::new()));
     }
 
     #[test]
@@ -226,5 +227,27 @@ mod tests {
              plain-black ripple/hover color `engine-render` hardcoded before M7 Phase 3, not \
              some other default"
         );
+    }
+
+    /// M9 Phase 1 (§5): proves `InteractionState::tick` genuinely
+    /// threads `completed` down to `hover_opacity` -- not just that the
+    /// parameter compiles, but that a real `on_complete` handle
+    /// attached to it actually surfaces.
+    #[test]
+    fn interaction_state_tick_surfaces_a_real_completion_from_hover_opacity() {
+        let start = Instant::now();
+        let mut state = InteractionState::new();
+        let handle = crate::animation::CompletionHandle(7);
+        state.hover_opacity.animate_to_with_completion(
+            1.0,
+            Duration::from_millis(100),
+            MotionCurve::Linear,
+            start,
+            handle,
+        );
+
+        let mut completed = Vec::new();
+        state.tick(start + Duration::from_millis(200), &mut completed);
+        assert_eq!(completed, vec![handle]);
     }
 }

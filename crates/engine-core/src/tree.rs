@@ -20,7 +20,7 @@ use taffy::prelude::{
 };
 
 use crate::access::AccessNodeData;
-use crate::animation::MotionCurve;
+use crate::animation::{CompletionHandle, MotionCurve};
 #[cfg(test)]
 use crate::canvas::CanvasState;
 use crate::canvas::{CustomHitTest, DrawCommand};
@@ -535,7 +535,14 @@ impl Tree {
         state
             .position
             .animate_to(position, Duration::ZERO, MotionCurve::Linear, now);
-        state.position.tick(now);
+        // M9 Phase 1 (§5): kind-specific fields (`SplitterState.
+        // position`, ticked manually here, outside `Tree::tick_all`'s
+        // own real per-node walk since M8 Phase 2's own confirmed
+        // finding) don't participate in the central completion queue --
+        // a real, stated scope boundary, not silently dropped
+        // functionality (nothing attaches `on_complete` to a splitter's
+        // own position animation).
+        state.position.tick(now, &mut Vec::new());
     }
 
     /// Shared by `set_splitter_position` and `update_drag` (M4 Phase 3,
@@ -744,19 +751,28 @@ impl Tree {
     /// naive whole-tree walk, not the "active set only" scoped version
     /// §5 describes -- see `PaintProperties::tick` for why that scoping
     /// is deliberately deferred past this step.
-    pub fn tick_all(&mut self, now: Instant) -> bool {
+    /// M9 Phase 1 (§5): also returns the real set of `CompletionHandle`s
+    /// that finished on exactly this tick, across every node -- one
+    /// shared `Vec` threaded through the whole walk (`PaintProperties::
+    /// tick`/`InteractionState::tick`'s own `completed` parameter),
+    /// not a per-node allocation. `engine-py`'s own per-frame render
+    /// loop is what actually drains this and invokes a real Python
+    /// callback for each one (M9 Phase 2) -- this method itself stays
+    /// pyo3-agnostic, just plumbing the real data out.
+    pub fn tick_all(&mut self, now: Instant) -> (bool, Vec<CompletionHandle>) {
         let mut any_active = false;
+        let mut completed = Vec::new();
         for node in self.nodes.values_mut() {
-            if node.paint.tick(now) {
+            if node.paint.tick(now, &mut completed) {
                 any_active = true;
             }
             if let Some(interaction) = &mut node.interaction
-                && interaction.tick(now)
+                && interaction.tick(now, &mut completed)
             {
                 any_active = true;
             }
         }
-        any_active
+        (any_active, completed)
     }
 
     /// Opts one node into accessibility -- every node defaults to
@@ -2538,12 +2554,12 @@ mod tests {
         );
         let id = tree.insert(kind, style, paint);
 
-        let still_active = tree.tick_all(start + Duration::from_millis(500));
+        let (still_active, _completed) = tree.tick_all(start + Duration::from_millis(500));
         assert!(still_active);
         let node = tree.get(id).unwrap();
         assert!((node.paint.opacity.current - 0.5).abs() < 0.01);
 
-        let still_active = tree.tick_all(start + Duration::from_secs(2));
+        let (still_active, _completed) = tree.tick_all(start + Duration::from_secs(2));
         assert!(!still_active);
         assert_eq!(tree.get(id).unwrap().paint.opacity.current, 0.0);
     }
@@ -2572,7 +2588,7 @@ mod tests {
             start,
         );
 
-        let still_active = tree.tick_all(start + Duration::from_millis(100));
+        let (still_active, _completed) = tree.tick_all(start + Duration::from_millis(100));
         assert!(
             still_active,
             "a mid-flight ripple should keep tick_all reporting active"
@@ -2585,7 +2601,7 @@ mod tests {
             "ripple radius should be ~halfway to 50.0, got {radius}"
         );
 
-        let still_active = tree.tick_all(start + Duration::from_secs(1));
+        let (still_active, _completed) = tree.tick_all(start + Duration::from_secs(1));
         assert!(!still_active);
         assert!(
             tree.get(id)

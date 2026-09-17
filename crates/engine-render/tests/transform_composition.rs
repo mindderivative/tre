@@ -246,7 +246,12 @@ fn a_containers_animated_transform_propagates_to_an_untouched_child() {
         // (0.75x+30, 0.75y+20). The chip's local box (20,20)-(60,60)
         // therefore maps to canvas (45,35)-(75,65); center (60,50).
         let halfway = start + Duration::from_millis(500);
-        let still_active = tree.get_mut(camera).unwrap().paint.transform.tick(halfway);
+        let still_active = tree
+            .get_mut(camera)
+            .unwrap()
+            .paint
+            .transform
+            .tick(halfway, &mut Vec::new());
         assert!(still_active, "transform animation ended early at t=0.5");
 
         let (data_mid, bpr_mid) = render(&tree, root, width, height).await;
