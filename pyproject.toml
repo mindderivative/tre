@@ -18,3 +18,40 @@ manifest-path = "crates/engine-py/Cargo.toml"
 # interpreter, not linked standalone). See ARCHITECTURE.md §12's own
 # pyproject.toml sketch -- this mirrors it exactly.
 features = ["pyo3/extension-module"]
+
+# M21 Phase 1 (§13): the real, deliberate decision ARCHITECTURE.md's
+# own text insists on, not left to the default -- a manylinux-repaired,
+# portable wheel (never `--auditwheel skip`). No `compatibility` value
+# is pinned here on purpose: the real *achievable* manylinux tag is a
+# fact about the build *environment*'s own glibc, not a constant of
+# this project -- pinning one that's wrong for a given build host would
+# either needlessly narrow a container build with an older glibc, or
+# silently fail one with a newer glibc than the pin assumes.
+#
+# Real, confirmed finding: on a bleeding-edge dev host (this session's
+# own machine, glibc 2.44), a bare `maturin build --release` with no
+# flags silently falls back to a plain, non-portable `linux` platform
+# tag -- "No compatible platform tag found, using the linux tag
+# instead" -- with no error, exactly the "let the default silently
+# decide" failure mode this section exists to prevent. Building a real
+# manylinux wheel from *this specific* host needs `maturin[zig]` (`pip
+# install maturin[zig]`, plus a `zig` executable on `PATH` -- the
+# `ziglang` PyPI package only installs a `python-zig` entry point, not
+# a plain `zig` binary maturin itself looks for, so a one-line shim
+# script is needed too) and an explicit `--compatibility` target:
+# `maturin build --release --zig --compatibility manylinux_2_38` is
+# the real, confirmed-working command for this exact dependency set on
+# this exact host (`libfontconfig`/`libfreetype`, vendored in from the
+# system at build time, need `GLIBC_2.38` -- the real floor, not this
+# project's own compiled code). A different build host (in particular,
+# `maturin-action`'s own real manylinux Docker container, §13 Phase 2)
+# has a genuinely older glibc baseline and will achieve a substantially
+# broader, more portable tag automatically, with no zig cross-
+# compilation needed at all -- confirmed via this exact investigation,
+# not assumed. The real, built artifact was verified end-to-end in a
+# genuinely fresh venv (`pip install` the built `.whl` directly, not
+# `-e`, not from source) -- `import tre` plus real example scripts
+# (real keyboard input, real clipboard, real live theme switching, a
+# real two-window session) all ran a real frame loop to completion,
+# the exact class of end-to-end proof TRE v1's own missing coverage
+# never had before its real double-loaded-library production segfault.

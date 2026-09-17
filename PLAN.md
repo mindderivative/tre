@@ -1,47 +1,62 @@
-# Plan: M20 Phase 2 — Real TextField Component Theming (§7.1, §7.3), closing M20
+# Plan: M21 Phase 1 — Real Built-Wheel Verification (§13)
 
-Corresponds to `BUILD_TRACKER.md` M20 Phase 2: `TextFieldState` gains
-`text_tint: Color`, threaded through `TextRenderer::draw_field`'s own
-`at.color` and pushed the same real way Phase 1's two fields already
-are.
+Corresponds to `BUILD_TRACKER.md` M21 Phase 1: decide deliberately
+between a manylinux-repaired portable wheel and a system-linked wheel,
+configure `pyproject.toml` accordingly, build the real wheel, and
+verify it end-to-end in a genuinely fresh venv.
 
 ## Investigation before writing code
 
-`paint_node`'s `NodeKind::TextField` arm (`crates/engine-render/src/
-lib.rs`) computes `text_color` from a hardcoded `Color::from_rgba8
-(0x1C, 0x1B, 0x1F, 0xFF)` literal, passed into `TextPlacement.color` —
-confirmed via direct read. `Window.add_text_field` (`crates/engine-py/
-src/window.rs`) constructs a fresh `TextFieldState` with no theme
-awareness at all today.
-
-**Real, confirmed continuation of Phase 1's own finding:** `0x1C1B1F`
-(28, 27, 31) is *not* equal to `ThemeState::on_surface()`'s own
-no-theme-set default (real black, `0,0,0,255`) — the identical real
-gap Phase 1 found and fixed for `Checkbox`/`Slider`. The same
-`is_set()`-gated construction-time read applies here too.
+- Confirmed via `maturin build --help`: `--auditwheel repair` is real
+  and, per ARCHITECTURE.md's own text, is what happens *by default*
+  when `--auditwheel skip` isn't passed — the default `--compatibility`
+  is "the lowest compatible `manylinux` tag" auto-detected for this
+  dependency set. `pyproject.toml` currently has zero `[tool.maturin]`
+  auditwheel/compatibility configuration at all (confirmed via direct
+  read) — the exact "don't let the default silently decide this"
+  situation ARCHITECTURE.md's own text warns against, even though the
+  default's *behavior* already happens to match the user's own chosen
+  direction (manylinux-repaired).
+- `patchelf` (the real ELF-rewriting tool `maturin`'s own built-in
+  repair logic needs — confirmed maturin does not shell out to the
+  Python `auditwheel` package, it has its own Rust implementation) was
+  missing from this venv (flagged in every prior `maturin develop`
+  run's own warning this session: "Failed to execute 'patchelf'").
+  Installed via `pip install patchelf`.
+- **Decision, made explicitly, not left to the default:** manylinux-
+  repaired, portable wheel — the user's own explicit choice. Rather
+  than hardcoding a specific old manylinux tag (e.g. `manylinux2014`)
+  blindly, which risks a real, unverifiable failure if this dependency
+  set's own real glibc/symbol requirements don't actually support that
+  old a target, this phase makes the *request* explicit (`--auditwheel
+  repair`, not left unspecified) while letting maturin's own real
+  auto-detection report which tag is *actually achievable* for this
+  exact dependency set — informed, not silent, and verified by
+  actually building and inspecting the real artifact, not assumed.
 
 ## Design
 
-- `TextFieldState` gains `pub text_tint: Color`, defaulted in `::new`
-  to the exact historical literal (`0x1C, 0x1B, 0x1F, 0xFF`).
-- `paint_node`'s `TextField` arm reads `state.text_tint` (still passed
-  through `with_opacity` exactly as before) instead of the literal.
-- `Tree::set_all_component_tints` gains a `NodeKind::TextField(state)
-  => state.text_tint = tint` arm, closing the milestone's own real
-  mechanism.
-- `Window.add_text_field` seeds `text_tint` from `self.theme.borrow()
-  .on_surface()`, gated on `theme.is_set()` — the identical pattern
-  `add_checkbox`/`add_slider` already established in Phase 1.
+- `pyproject.toml`'s `[tool.maturin]` gains an explicit `compatibility`
+  setting once the real achievable tag is confirmed by a first real
+  build (see verification below) — recorded deliberately, not left
+  for maturin's own CLI default to decide silently on a future build.
+- Build the real wheel via `maturin build --release` (not `develop`,
+  which never exercises the repair path at all).
+- Install the real built `.whl` file into a genuinely fresh venv
+  (no dev-time build artifacts, no editable install) and verify
+  `import tre` plus a real example script actually runs — the same
+  real, end-to-end verification TRE v1's own missing coverage let a
+  production segfault through.
 
 ## Verification plan
 
-`cargo test --workspace --release`/`clippy -D warnings`/`fmt --check`;
-widen the existing `set_all_component_tints` engine-core test to also
-cover `TextField`; new `engine-render` pixel tests in `text_field_
-paint.rs` proving an un-themed field still paints the real historical
-dark text/caret color and a themed field paints the real resolved
-tint; `maturin develop --release`; full `pytest tests/` (no new FFI
-surface expected, matching Phase 1's own finding — colors aren't
-Python-observable); update `examples/theme.py` with a themed
-`TextField` case; `LOG.md`/`BUILD_TRACKER.md`/tracker artifact/commit/
-push/memory — closing M20 entirely (both phases).
+Real, not simulated: `maturin build --release`, inspect the resulting
+wheel's own filename tag and `auditwheel show`-equivalent output
+(maturin logs which libraries it repaired/vendored); create a fresh
+`venv` outside this project's own `.venv`, `pip install` the built
+wheel directly (not `-e`, not from source), run `python -c "import
+tre"` and a real example script inside that fresh environment;
+confirm no double-loaded-library symptom (the exact TRE v1 failure
+mode) by checking the process actually runs a real frame loop to
+completion, not just imports. `LOG.md`/`BUILD_TRACKER.md`/tracker
+artifact/commit/push/memory.
