@@ -1,86 +1,71 @@
-# Plan: M19 Phase 2 — Real View Composition via `include:` (§16.6)
+# Plan: M20 Phase 1 — Real Checkbox/Slider Component Theming (§7.1, §7.3)
 
-Corresponds to `BUILD_TRACKER.md` M19 Phase 2, closing M19 entirely.
-`WidgetSpec` gains a real `include:` field; loading expands each
-included file's own `WidgetSpec` tree in place, before validation, as
-ordinary children indistinguishable from inline ones — with real path
-confinement, cycle detection, and a depth limit.
+Corresponds to `BUILD_TRACKER.md` M20 Phase 1: `CheckboxState` gains
+`mark_tint: Color`, `SliderState` gains `track_tint: Color` — both
+threaded through `paint_node`'s existing hardcoded-literal paint
+sites, pushed a real resolved color by `Window.set_theme`.
 
 ## Investigation before writing code
 
-- `WidgetSpec`'s own `#[serde(deny_unknown_fields)]` + required `id`/
-  `kind` fields mean a bare `{include: "path"}` mapping can't
-  deserialize directly into it (missing required fields, an unknown
-  key) — confirmed via direct read of `spec.rs`. Two real design
-  options: widen `WidgetSpec.children`'s own element type to a new
-  untagged enum (`Include | Widget(WidgetSpec)`), or expand `include:`
-  markers on the *raw* `serde_yaml_ng::Value` tree before ever
-  deserializing into `WidgetSpec` at all. The untagged-enum route
-  would ripple `children`'s type through `build.rs`/`reconcile.rs`
-  everywhere it's walked; the raw-`Value` route keeps `WidgetSpec`
-  itself completely unchanged — `build.rs`/`reconcile.rs` need zero
-  changes — and matches §16.6's own text exactly: "expanded during
-  loading, *before* validation... indistinguishable from inline ones
-  once loaded." Chosen.
-- `serde_yaml_ng::Value` (confirmed via direct source read of the
-  vendored crate) is `{Null, Bool, Number, String, Sequence, Mapping,
-  Tagged}`; `Mapping::get<I: Index>` accepts a plain `&str` key
-  (`impl Index for str`), and `Mapping` is `IntoIterator` over owned
-  `(Value, Value)` pairs — enough to walk and rebuild a tree generically
-  without a second, hand-rolled YAML representation.
-- `Reconciler::load`/`Reconciler::reconcile` already take two
-  additive `Option<&T>` parameters (`sheet`, `scheme`) — widening both
-  with a third, `base_dir: Option<&Path>`, matches that exact existing
-  precedent rather than inventing a new shape. `None` means "no base
-  directory known" — an `include:` encountered with no `base_dir`
-  fails with a clear error, not a silent no-op. 9 existing call sites
-  (7 in `engine-spec`'s own tests, 2 in `engine-py::view.rs`) need one
-  more `None` argument each — a bounded, mechanical change.
-- Real security requirements, named explicitly in ARCHITECTURE.md's
-  own §16.6 text: path confinement (no `../` escaping the view
-  directory), cycle detection (a file cannot transitively include
-  itself), a depth limit. `Path::canonicalize()` resolves symlinks too
-  (a real, not superficial, confinement check) and requires the target
-  to actually exist — acceptable, since the file has to be read anyway.
+- Confirmed via direct source read: `CheckboxState`/`SliderState`
+  (`crates/engine-core/src/node.rs`) have no `#[derive(...)]` at all
+  today, and `peniko::Color` is already imported in that file — adding
+  a plain `Color` field to each needs no new derive/import.
+- `paint_node`'s `NodeKind::Checkbox` arm (`crates/engine-render/src/
+  lib.rs`) paints the checkmark with a hardcoded `Color::from_rgba8
+  (0xFF, 0xFF, 0xFF, 0xFF)`; the `NodeKind::Slider` arm paints the
+  track with a hardcoded `Color::from_rgba8(0x79, 0x74, 0x7A, 0xFF)`
+  — both confirmed via direct read, both replaced with a read from the
+  new state fields.
+- `Tree::set_all_interaction_tints` (`crates/engine-core/src/tree.rs`)
+  is the real, established M7 Phase 3 precedent — but it's specifically
+  scoped to `InteractionState::tint` (an `Option<InteractionState>`
+  field every node may or may not opt into via `enable_interaction()`).
+  `mark_tint`/`track_tint` are different in kind: plain fields every
+  real `CheckboxState`/`SliderState` *always* has (not an optional
+  capability), living on `NodeKind`-specific state, not
+  `InteractionState`. Widening `set_all_interaction_tints` itself to
+  also match on `NodeKind` would conflate two distinct real mechanisms
+  and change an already-tested method's own documented behavior. A
+  new, separate `Tree::set_all_component_tints(tint: Color)` matches
+  this session's own repeated "distinct real behaviors, distinct
+  methods" precedent (`set_text_field_cursor`/`extend_text_field_
+  selection`, `hit_test`/`hit_test_local`).
+- `Window.set_theme` (`crates/engine-py/src/window.rs`) already
+  resolves one real `tint: Color` (`state.on_surface()`) and calls
+  `tree.borrow_mut().set_all_interaction_tints(tint)` — this phase
+  adds one more call, `set_all_component_tints(tint)`, using the exact
+  same already-resolved value (the real, deliberate M20 scope decision
+  to reuse the existing "on-surface" role rather than resolve a second,
+  more specific one per component).
 
 ## Design
 
-- New `crates/engine-spec/src/include.rs` module (mirroring `watch.rs`'s
-  own precedent of one small, focused file per capability):
-  `expand_includes(value, base_dir, visited: &mut Vec<PathBuf>) ->
-  Result<Value, SpecError>` — recursively walks every `Mapping`/
-  `Sequence`. A mapping whose *sole* key is `include` (any other key
-  alongside it is a real, stated error, not silently ignored) resolves
-  its string value against `base_dir` via a confining `canonicalize`
-  check, reads+parses the target file's own raw YAML, recurses into
-  it (with the target's own parent directory as the new `base_dir` for
-  *its* includes, and itself pushed onto `visited` for cycle
-  detection), and splices the fully-expanded result in place of the
-  include marker. `SpecError` gains new variants for a missing/absent
-  `base_dir`, an out-of-bounds path, a cycle, the depth limit, and a
-  wrapped file-read/parse failure.
-- New `parse_view_with_includes(yaml, base_dir) -> Result<WidgetSpec,
-  SpecError>`: parses into a raw `Value` first, calls `expand_includes`,
-  then deserializes the fully-expanded `Value` into `WidgetSpec` via
-  `serde_yaml_ng::from_value` — `deny_unknown_fields`'s own real
-  validation runs on the *final*, expanded tree, exactly as specified.
-- `Reconciler::load`/`Reconciler::reconcile` gain `base_dir: Option<
-  &Path>` (a third parameter, after `scheme`); when `Some`, they call
-  `parse_view_with_includes` instead of the plain `parse_view`.
-- `engine-py::view.rs`: `View::new`/`poll_reload` pass `Some(parent
-  directory of self.path)` — the first real caller besides tests.
+- `CheckboxState` gains `pub mark_tint: Color`, defaulted in `::new`
+  to the exact historical literal (`0xFF, 0xFF, 0xFF, 0xFF`) — zero
+  visual change for a node whose app never calls `set_theme`.
+- `SliderState` gains `pub track_tint: Color`, defaulted in `::new`
+  to the exact historical literal (`0x79, 0x74, 0x7A, 0xFF`).
+- `paint_node`'s `Checkbox`/`Slider` arms read `state.mark_tint`/
+  `state.track_tint` instead of the hardcoded literals.
+- New `Tree::set_all_component_tints(&mut self, tint: Color)`: walks
+  every node, setting `mark_tint`/`track_tint` on a `Checkbox`/
+  `Slider` respectively; any other `NodeKind` untouched. Unconditional
+  per matching node (no opt-in gate — unlike `InteractionState`, every
+  real `CheckboxState`/`SliderState` always has these fields).
+- `Window.set_theme` calls the new method alongside the existing one.
 
 ## Verification plan
 
 `cargo test --workspace --release`/`clippy -D warnings`/`fmt --check`;
-new `engine-spec` tests: a real two-file include splices in correctly;
-nested includes; `../` path-escape rejected; a real self-including
-cycle rejected; the depth limit rejected; an `include:` with no
-`base_dir` fails clearly, not silently; `include:` alongside another
-key in the same mapping fails clearly. `maturin develop --release`;
-new `tests/test_view_composition.py` proving a real `View` loads a
-two-file `view.yaml` correctly through the real FFI path; every
-example re-run (a new `examples/view_composition.py` + two YAML
-files, matching the established per-feature convention); `LOG.md`/
-`BUILD_TRACKER.md`/tracker artifact/commit/memory — closing M19
-entirely (both phases).
+new `engine-core` test proving `set_all_component_tints` updates
+`Checkbox`/`Slider` nodes and leaves others untouched; new
+`engine-render` pixel tests proving a themed checkmark/track paint the
+real resolved color, not the old literal, while an un-themed one still
+paints the exact historical default; `maturin develop --release`; full
+`pytest tests/` (a new hermetic test via `Window.set_theme` +
+`Node.get`-style readback if the color is Python-observable, otherwise
+the pixel tests are the definitive proof, matching this project's own
+established "pixel test for paint claims" split); every example
+re-run; `LOG.md`/`BUILD_TRACKER.md`/tracker artifact/commit/push/
+memory.

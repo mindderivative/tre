@@ -1,82 +1,64 @@
-# Log: M19 Phase 2 — Real View Composition via `include:` (§16.6), closing M19
+# Log: M20 Phase 1 — Real Checkbox/Slider Component Theming (§7.1, §7.3)
 
-Corresponds to `BUILD_TRACKER.md` M19 Phase 2, closing M19 entirely
-(both phases). `WidgetSpec` gains a real `include:` field; loading
-expands each included file's own `WidgetSpec` tree in place, before
-validation, as ordinary children indistinguishable from inline ones —
-with real path confinement, cycle detection, and a depth limit.
+Corresponds to `BUILD_TRACKER.md` M20 Phase 1: `CheckboxState` gains
+`mark_tint: Color`, `SliderState` gains `track_tint: Color` — both
+threaded through `paint_node`'s existing hardcoded-literal paint
+sites, pushed a real resolved color by `Window.set_theme`.
 
 ## Investigation before writing code
 
-`WidgetSpec`'s own `#[serde(deny_unknown_fields)]` plus required `id`/
-`kind` fields mean a bare `{include: "path"}` mapping can't
-deserialize directly into it. Two real design options: widen
-`WidgetSpec.children`'s element type to an untagged `Include | Widget`
-enum, or expand `include:` markers on the *raw* `serde_yaml_ng::Value`
-tree before ever deserializing into `WidgetSpec` at all. The
-raw-`Value` route was chosen — it keeps `WidgetSpec`, `build.rs`, and
-`reconcile.rs` completely unchanged, and matches §16.6's own text
-exactly: "expanded during loading, *before* validation."
-
-`Reconciler::load`/`Reconciler::reconcile` already took two additive
-`Option<&T>` parameters (`sheet`, `scheme`) — widened with a third,
-`base_dir: Option<&Path>`, matching that exact existing precedent. 9
-existing call sites (7 in `engine-spec`'s own tests, 2 in
-`engine-py::view.rs`) needed one more argument each — a bounded,
-mechanical change, all updated.
+`paint_node`'s `Checkbox`/`Slider` arms painted a hardcoded white
+checkmark and a hardcoded gray track — confirmed via direct read.
+`Tree::set_all_interaction_tints` (M7 Phase 3) is the real, established
+precedent for this class of problem, but scoped specifically to the
+optional `InteractionState::tint` — `mark_tint`/`track_tint` are
+different in kind (plain fields every real `CheckboxState`/
+`SliderState` always has), so a new, separate `Tree::
+set_all_component_tints` was added rather than widening the existing,
+already-tested method.
 
 ## What happened
 
-New `crates/engine-spec/src/include.rs` (mirroring `watch.rs`'s own
-precedent of one small, focused module per capability):
-`parse_view_with_includes(yaml, base_dir: Option<&Path>) ->
-Result<WidgetSpec, SpecError>` parses into a raw `Value`, calls a
-recursive `expand_includes`, then deserializes the fully-expanded tree
-— `deny_unknown_fields`'s own real validation runs on the *final*
-tree, exactly as specified. A mapping whose *sole* key is `include`
-(any other key alongside it is a real, stated error) resolves its
-path via `Path::canonicalize`-based confinement (rejects an absolute
-path or a real `../` escape; resolves symlinks too, so one can't evade
-it), reads+parses the target, recurses (the target's own parent
-directory becomes the new `base_dir` for *its* includes, pushed onto a
-`visited` stack for cycle detection), and splices the result in place
-of the marker. `base_dir: None` is real and valid — content with no
-`include:` at all parses exactly as plain `parse_view` would; an
-`include:` actually encountered with no `base_dir` fails clearly
-(`SpecError::IncludeNoBaseDir`), not silently. `MAX_INCLUDE_DEPTH = 8`
-guards a genuinely unbounded chain. `SpecError` gained six new
-variants covering every real failure mode.
+`CheckboxState`/`SliderState` gain `mark_tint`/`track_tint`, each
+defaulting to the exact historical hardcoded literal. New `Tree::
+set_all_component_tints(tint)` walks every node, updating whichever
+field matches — unconditional per matching node, no opt-in gate
+(unlike `InteractionState`, these aren't an optional capability).
+`paint_node` reads the new fields instead of the literals. `Window.
+set_theme` and the real live OS `ThemeChanged` path both call the new
+method alongside the existing one, using the identical already-
+resolved "on-surface" tint.
 
-`Reconciler::load`/`Reconciler::reconcile` gained `base_dir: Option<
-&Path>` and now always call `parse_view_with_includes` (not
-conditionally). `engine-py::view.rs`: `View::new`/`poll_reload` pass
-`Some(parent directory of self.path)` — the first real callers besides
-tests. **Real, additional fix caught while wiring `View::new`:** the
-second, separate `parse_view(&yaml)` call there (used only to collect
-`bindings`/`declared_handlers`/`two_way`) also needed to become
-include-aware — otherwise a binding or handler declared inside an
-*included* file would never be collected at all, a real, silent gap
-that would have shipped alongside the main feature had it not been
-caught during implementation, not by a test.
+**Real bug caught before it shipped, not by a test:** the first design
+read `ThemeState::on_surface()` unconditionally at `add_checkbox`/
+`add_slider` construction time, mirroring `Node.enable_interaction`'s
+own real precedent — but `on_surface()`'s own no-theme-set default is
+black, while `CheckboxState`/`SliderState`'s own real historical
+defaults are white/gray. Applying it unconditionally would have
+silently replaced every un-themed checkbox's white mark and slider's
+gray track with black the moment this phase shipped — a real
+regression `InteractionState.tint` never had, since its own hardcoded
+default already happens to equal `on_surface()`'s no-theme value "by
+coincidence." Fixed with a new `ThemeState::is_set()` accessor,
+gating the construction-time read so the real historical default
+survives untouched until an app genuinely calls `set_theme`.
 
-New `crates/engine-spec/src/include.rs` tests (9, all passed first
-run): a real two-file include splices in correctly; nested includes
-resolve relative to their own file, not the top-level `base_dir`; no
-`base_dir` fails clearly; an absolute path is rejected; a real `../`
-escape outside `base_dir` is rejected; a real self-including cycle is
-rejected; a chain past the depth limit is rejected; `include:`
-alongside another key is rejected; content with no `include:` at all
-parses byte-for-byte the same as plain `parse_view`. New
-`tests/test_view_composition.py` (2 tests): a real `View` loads a
-two-file `view.yaml` and reaches the included widget's own `id`
-through the real FFI path; an absolute include path fails loudly
-there too, not silently. New `examples/view_composition.py` +
-`view_composition.yaml` + `confirm_dialog.yaml`.
+New `engine-core` test (1, passed first run): `set_all_component_tints`
+updates a `Checkbox`/`Slider` on their own distinct fields and leaves
+an unrelated `NodeKind` untouched. New `engine-render` pixel tests
+(3, all passed first run): an un-themed slider still paints the real,
+byte-for-byte historical gray track; a themed checkbox paints the real
+resolved tint on its checkmark; a themed slider paints the real
+resolved tint on its track. Updated `examples/theme.py`: a checkbox
+created *before* `set_theme` (re-tinted by the push) and a slider
+created *after* (themed at construction) — both real, distinct
+timing cases.
 
-Full `cargo test --workspace --release` (`engine-spec` 46, up from
-37)/`cargo clippy --workspace --all-targets -- -D warnings`/`cargo fmt
---check` all clean — every prior test passed unmodified. `maturin
-develop --release` + full `pytest tests/` (168 passed, up from 166, 1
-skipped) and all twenty-seven examples confirmed clean.
-
-M19 — Declarative Authoring Completeness is now fully complete.
+Full `cargo test --workspace --release` (`engine-core` 138, up from
+137; `engine-render` 3 in `checkbox_paint.rs`, up from 2, 4 in
+`slider_paint.rs`, up from 2)/`cargo clippy --workspace --all-targets
+-- -D warnings`/`cargo fmt --check` all clean — every prior test
+passed unmodified. `maturin develop --release` + full `pytest tests/`
+(168 passed, unchanged, 1 skipped — confirming no new Python-facing
+FFI surface was needed, colors aren't Python-observable via `Node.
+get()`) and all twenty-seven examples confirmed clean.

@@ -219,3 +219,55 @@ fn a_checked_checkbox_paints_a_real_visible_checkmark() {
         );
     });
 }
+
+/// M20 Phase 1 (§7.1, §7.3): the real, definitive proof `mark_tint` is
+/// genuinely read at paint time, not just stored -- a real, non-
+/// default tint (as `Window.set_theme` would push via `Tree::
+/// set_all_component_tints`) must reach the actual painted pixel.
+#[test]
+fn a_themed_checkbox_paints_the_real_resolved_tint_not_the_default() {
+    pollster::block_on(async {
+        let mut tree = Tree::new();
+        let root = tree.insert(
+            NodeKind::Rect,
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(100.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+        );
+
+        let mut state = CheckboxState::new(true);
+        state.mark_tint = Color::from_rgba8(0x00, 0xFF, 0x00, 0xFF);
+        let checkbox = tree.insert(
+            NodeKind::Checkbox(state),
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(100.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(BOX_COLOR, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(root, checkbox);
+
+        let available = Size {
+            width: AvailableSpace::Definite(100.0),
+            height: AvailableSpace::Definite(100.0),
+        };
+        tree.compute_layout(root, available);
+
+        let (data, bpr) = render(&tree, root, 100, 100).await;
+        let mark_point = pixel_at(&data, bpr, 61, 50);
+        assert_eq!(
+            mark_point,
+            [0x00, 0xFF, 0x00, 0xFF],
+            "a real, non-default mark_tint must reach the actual painted checkmark pixel, \
+             got {mark_point:?}"
+        );
+    });
+}

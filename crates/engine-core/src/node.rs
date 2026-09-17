@@ -285,6 +285,16 @@ impl VirtualListState {
 pub struct CheckboxState {
     pub checked: bool,
     pub check_progress: Animated<f64>,
+    /// M20 Phase 1 (§7.1, §7.3): the checkmark's own real paint color
+    /// -- plain, already-resolved data (Design Principle 6), same as
+    /// `InteractionState.tint`'s own real precedent (M7 Phase 3), but
+    /// living here since every real `CheckboxState` always has one
+    /// (not an optional opt-in capability the way `InteractionState`
+    /// is). Defaults to real white -- byte-for-byte the hardcoded
+    /// value `engine-render`'s own checkmark paint used before this
+    /// phase, so a checkbox whose app never calls `Window.set_theme`
+    /// sees zero visual change.
+    pub mark_tint: Color,
 }
 
 impl CheckboxState {
@@ -292,6 +302,7 @@ impl CheckboxState {
         Self {
             checked,
             check_progress: Animated::new(if checked { 1.0 } else { 0.0 }),
+            mark_tint: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF),
         }
     }
 }
@@ -301,12 +312,20 @@ impl CheckboxState {
 /// shape `SplitterState.position` already established.
 pub struct SliderState {
     pub thumb_position: Animated<f64>,
+    /// M20 Phase 1 (§7.1, §7.3): the track's own real paint color --
+    /// `CheckboxState.mark_tint`'s own real sibling, same reasoning.
+    /// The thumb itself already paints with the node's own real,
+    /// per-node `PaintProperties.background` (already themeable
+    /// directly) -- only the track ever needed a fixed literal.
+    /// Defaults to real byte-for-byte the historical hardcoded gray.
+    pub track_tint: Color,
 }
 
 impl SliderState {
     pub fn new(value: f64) -> Self {
         Self {
             thumb_position: Animated::new(value.clamp(0.0, 1.0)),
+            track_tint: Color::from_rgba8(0x79, 0x74, 0x7A, 0xFF),
         }
     }
 }

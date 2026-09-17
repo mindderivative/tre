@@ -75,6 +75,22 @@ impl ThemeState {
             None => Color::from_rgba8(0, 0, 0, 255),
         }
     }
+
+    /// M20 Phase 1 (§7.1, §7.3): whether a real theme has actually been
+    /// set yet. Needed because `Checkbox`/`Slider`'s own real, pre-
+    /// existing defaults (white checkmark, gray track) are genuinely
+    /// *different* colors than `on_surface()`'s own no-theme-set
+    /// default (real black) -- unlike `InteractionState.tint`, whose
+    /// own hardcoded default already happens to equal `on_surface()`'s
+    /// no-theme value, so `enable_interaction`'s own unconditional read
+    /// works for it "by coincidence." Reading `on_surface()`
+    /// unconditionally here would silently replace every un-themed
+    /// checkbox's white mark / slider's gray track with black --
+    /// checked first instead, so the real historical default survives
+    /// untouched until an app genuinely calls `set_theme`.
+    pub(crate) fn is_set(&self) -> bool {
+        self.theme.is_some()
+    }
 }
 
 /// Shared the same way `HandlerMap`/`context_menus` are -- a `View`'s
@@ -275,7 +291,13 @@ impl PyWindow {
         state.dark = dark;
         let tint = state.on_surface();
         drop(state);
-        self.tree.borrow_mut().set_all_interaction_tints(tint);
+        let mut tree = self.tree.borrow_mut();
+        tree.set_all_interaction_tints(tint);
+        // M20 Phase 1 (§7.1, §7.3): the real, deliberate scope choice
+        // -- reuses this exact same already-resolved "on-surface" tint
+        // rather than resolving a second, more specific MD3 role per
+        // component.
+        tree.set_all_component_tints(tint);
     }
 
     /// §14 step 6's own "node creation" -- one shape (a colored rect, a
@@ -336,9 +358,28 @@ impl PyWindow {
         y: Option<f32>,
     ) -> Node {
         let (r, g, b, a) = background;
+        // M20 Phase 1 (§7.1, §7.3): a Checkbox created *after* `Window.
+        // set_theme` must start genuinely themed, not stuck with the
+        // plain white default until another `set_theme` call happens
+        // to re-push it -- the same real intent `Node.enable_
+        // interaction`'s own construction-time read already has. Real,
+        // necessary difference from that precedent: `ThemeState::
+        // on_surface()`'s own no-theme-set default is black, but
+        // `CheckboxState`'s own real default is white -- reading it
+        // unconditionally would silently replace an un-themed
+        // checkbox's real white mark with black. Gated on `theme.
+        // is_set()` so the real historical default survives untouched
+        // until an app genuinely calls `set_theme`.
+        let mut checkbox_state = CheckboxState::new(checked);
+        {
+            let theme = self.theme.borrow();
+            if theme.is_set() {
+                checkbox_state.mark_tint = theme.on_surface();
+            }
+        }
         let mut tree = self.tree.borrow_mut();
         let id = tree.insert(
-            NodeKind::Checkbox(CheckboxState::new(checked)),
+            NodeKind::Checkbox(checkbox_state),
             positioned_style(
                 Size {
                     width: length(width),
@@ -380,9 +421,20 @@ impl PyWindow {
         y: Option<f32>,
     ) -> Node {
         let (r, g, b, a) = background;
+        // M20 Phase 1 (§7.1, §7.3): same real "themed-at-construction,
+        // gated on a real theme actually being set" reasoning as
+        // `add_checkbox`, above -- `SliderState`'s own real default
+        // track color is gray, not `on_surface()`'s own black default.
+        let mut slider_state = SliderState::new(value);
+        {
+            let theme = self.theme.borrow();
+            if theme.is_set() {
+                slider_state.track_tint = theme.on_surface();
+            }
+        }
         let mut tree = self.tree.borrow_mut();
         let id = tree.insert(
-            NodeKind::Slider(SliderState::new(value)),
+            NodeKind::Slider(slider_state),
             positioned_style(
                 Size {
                     width: length(width),

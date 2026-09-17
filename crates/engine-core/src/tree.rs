@@ -1040,6 +1040,30 @@ impl Tree {
         }
     }
 
+    /// M20 Phase 1 (§7.1, §7.3): `set_all_interaction_tints`'s own real
+    /// sibling for a genuinely different kind of field -- `mark_tint`/
+    /// `track_tint` live directly on `CheckboxState`/`SliderState`
+    /// (every real instance always has one), not on the optional
+    /// `InteractionState` every node may or may not opt into. A
+    /// separate method, not a widened `set_all_interaction_tints`,
+    /// keeps that already-tested method's own real, documented
+    /// behavior (touches only `node.interaction`) unchanged, matching
+    /// this codebase's own "distinct real behaviors, distinct methods"
+    /// precedent (`set_text_field_cursor`/`extend_text_field_
+    /// selection`). No opt-in gate, unlike `set_all_interaction_
+    /// tints`: every matching node unconditionally gets the real
+    /// resolved color, since these fields aren't an optional
+    /// capability to begin with.
+    pub fn set_all_component_tints(&mut self, tint: peniko::Color) {
+        for node in self.nodes.values_mut() {
+            match &mut node.kind {
+                NodeKind::Checkbox(state) => state.mark_tint = tint,
+                NodeKind::Slider(state) => state.track_tint = tint,
+                _ => {}
+            }
+        }
+    }
+
     /// M5 Phase 3 (§11.10, §11.11): replaces a `NodeKind::Canvas`
     /// node's entire real content -- both what `paint_node` draws and
     /// what `hit_test_at` tests against. The one, ordinary (non-
@@ -6271,5 +6295,47 @@ mod tests {
         let (k, s, p) = leaf(100.0, 100.0);
         let root = tree.insert(k, s, p);
         assert!(!tree.extend_text_field_selection(root, 0));
+    }
+
+    /// M20 Phase 1 (§7.1, §7.3): `set_all_component_tints`'s own real
+    /// claim -- a `Checkbox` and a `Slider` both pick up the real
+    /// resolved tint on their own distinct fields, and an unrelated
+    /// `NodeKind` (a plain `Rect`) is left completely untouched, the
+    /// same "only a real match, never a lazily-created capability"
+    /// contract `set_all_interaction_tints`'s own test already proves
+    /// for a different field.
+    #[test]
+    fn set_all_component_tints_updates_checkbox_and_slider_and_leaves_others_untouched() {
+        let mut tree = Tree::new();
+        let checkbox = tree.insert(
+            NodeKind::Checkbox(CheckboxState::new(false)),
+            Style::default(),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0xFF), 0.0, 0.0, 1.0),
+        );
+        let slider = tree.insert(
+            NodeKind::Slider(SliderState::new(0.0)),
+            Style::default(),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0xFF), 0.0, 0.0, 1.0),
+        );
+        let (kind, style, paint) = leaf(10.0, 10.0);
+        let rect = tree.insert(kind, style, paint);
+
+        let real_color = Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF);
+        tree.set_all_component_tints(real_color);
+
+        let NodeKind::Checkbox(state) = &tree.get(checkbox).unwrap().kind else {
+            panic!("expected a Checkbox node");
+        };
+        assert_eq!(state.mark_tint, real_color);
+
+        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
+            panic!("expected a Slider node");
+        };
+        assert_eq!(state.track_tint, real_color);
+
+        assert!(
+            matches!(tree.get(rect).unwrap().kind, NodeKind::Rect),
+            "an unrelated NodeKind must be left completely untouched"
+        );
     }
 }

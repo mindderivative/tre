@@ -534,7 +534,13 @@ impl App {
                         state.set_dark(dark);
                         let tint = state.on_surface();
                         drop(state);
-                        runtime.tree.borrow_mut().set_all_interaction_tints(tint);
+                        let mut tree = runtime.tree.borrow_mut();
+                        tree.set_all_interaction_tints(tint);
+                        // M20 Phase 1 (§7.1, §7.3): a real live OS
+                        // theme switch must re-tint Checkbox/Slider
+                        // component colors too, the identical way
+                        // `Window.set_theme` itself already does.
+                        tree.set_all_component_tints(tint);
                     }
                     // M17 Phase 1 (§8): the real, winit-driven Ctrl+C
                     // path -- `Tree::text_field_selected_text` is a pure

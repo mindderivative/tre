@@ -478,10 +478,11 @@ fn paint_node(
         // path strokes on top, its own opacity driven directly by
         // `check_progress` -- 0.0 (unchecked) paints no visible mark at
         // all, 1.0 (checked) paints it fully opaque, and any value
-        // between (mid-animation) fades it in/out smoothly. A plain
-        // white mark -- real, but not yet theme-aware, the same
-        // "wire theme later when a real need arises" precedent ripple's
-        // own hardcoded tint already had before M7 Phase 3.
+        // between (mid-animation) fades it in/out smoothly. M20 Phase 1
+        // (§7.1, §7.3): the mark's own real color now comes from
+        // `state.mark_tint` -- plain white by default (byte-for-byte
+        // the old hardcoded literal), a real resolved MD3 "on-surface"
+        // color once `Window.set_theme` has pushed one in.
         NodeKind::Checkbox(state) => {
             let color = with_opacity(node.paint.background.current, node.paint.opacity.current);
             scene.set_paint(color);
@@ -494,26 +495,24 @@ fn paint_node(
                 mark.move_to((w * 0.2, h * 0.55));
                 mark.line_to((w * 0.42, h * 0.75));
                 mark.line_to((w * 0.8, h * 0.25));
-                scene.set_paint(with_opacity(
-                    Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF),
-                    state.check_progress.current,
-                ));
+                scene.set_paint(with_opacity(state.mark_tint, state.check_progress.current));
                 scene.set_stroke(Stroke::new((w.min(h) * 0.12).max(1.0)));
                 scene.stroke_path(&mark);
             }
         }
-        // M14 Phase 2 (§5, §7.3): a real track (a thin, fixed-gray bar
-        // spanning the node's own full width, vertically centered) plus
-        // a real thumb (a filled circle at `thumb_position * w`, the
-        // node's own real `background` color -- the same universal
-        // field every other `NodeKind`'s primary fill already uses).
-        // The track color is a plain, fixed neutral gray -- real but
-        // not yet theme-aware, the same precedent `Checkbox`'s own
-        // checkmark just established.
+        // M14 Phase 2 (§5, §7.3): a real track (a thin bar spanning the
+        // node's own full width, vertically centered) plus a real
+        // thumb (a filled circle at `thumb_position * w`, the node's
+        // own real `background` color -- the same universal field
+        // every other `NodeKind`'s primary fill already uses). M20
+        // Phase 1 (§7.1, §7.3): the track's own real color now comes
+        // from `state.track_tint` -- plain gray by default (byte-for-
+        // byte the old hardcoded literal), a real resolved MD3
+        // "on-surface" color once `Window.set_theme` has pushed one in.
         NodeKind::Slider(state) => {
             let track_height = (h * 0.15).max(2.0);
             let track_rect = Rect::new(0.0, (h - track_height) / 2.0, w, (h + track_height) / 2.0);
-            scene.set_paint(Color::from_rgba8(0x79, 0x74, 0x7A, 0xFF));
+            scene.set_paint(state.track_tint);
             scene.fill_path(&track_rect.to_path(0.1));
 
             let thumb_radius = (h * 0.4).max(4.0);

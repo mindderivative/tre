@@ -224,3 +224,77 @@ fn a_thumb_at_one_paints_at_the_real_right_edge() {
         );
     });
 }
+
+/// M20 Phase 1 (§7.1, §7.3): the track's own real default color --
+/// byte-for-byte the historical hardcoded literal, proving `Slider
+/// State::new`'s own default keeps zero visual change from before this
+/// phase. Thumb at 0.0 (near x=0) leaves x=100 (track band, y=20) a
+/// pure track-only pixel, well outside the thumb's own 16px reach.
+#[test]
+fn an_unthemed_slider_paints_the_real_default_gray_track() {
+    pollster::block_on(async {
+        let (tree, root) = build_tree(0.0);
+        let (data, bpr) = render(&tree, root, 200, 40).await;
+
+        let track_point = pixel_at(&data, bpr, 100, 20);
+        assert_eq!(
+            track_point,
+            [0x79, 0x74, 0x7A, 0xFF],
+            "an un-themed slider must paint the real, historical default gray track, \
+             got {track_point:?}"
+        );
+    });
+}
+
+/// M20 Phase 1 (§7.1, §7.3): the real, definitive proof `track_tint`
+/// is genuinely read at paint time, not just stored -- a real, non-
+/// default tint (as `Window.set_theme` would push via `Tree::
+/// set_all_component_tints`) must reach the actual painted track
+/// pixel.
+#[test]
+fn a_themed_slider_paints_the_real_resolved_track_tint() {
+    pollster::block_on(async {
+        let mut tree = Tree::new();
+        let root = tree.insert(
+            NodeKind::Rect,
+            Style {
+                size: Size {
+                    width: length(200.0),
+                    height: length(40.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+        );
+
+        let mut state = SliderState::new(0.0);
+        state.track_tint = Color::from_rgba8(0x00, 0xFF, 0x00, 0xFF);
+        let slider = tree.insert(
+            NodeKind::Slider(state),
+            Style {
+                size: Size {
+                    width: length(200.0),
+                    height: length(40.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(THUMB_COLOR, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(root, slider);
+
+        let available = Size {
+            width: AvailableSpace::Definite(200.0),
+            height: AvailableSpace::Definite(40.0),
+        };
+        tree.compute_layout(root, available);
+
+        let (data, bpr) = render(&tree, root, 200, 40).await;
+        let track_point = pixel_at(&data, bpr, 100, 20);
+        assert_eq!(
+            track_point,
+            [0x00, 0xFF, 0x00, 0xFF],
+            "a real, non-default track_tint must reach the actual painted track pixel, \
+             got {track_point:?}"
+        );
+    });
+}
