@@ -46,6 +46,19 @@ jobs:
         with:
           manylinux: auto
           args: --release --out dist --find-interpreter
+          # M21 Phase 2 (§13): real finding from this workflow's own
+          # first triggered run -- `yeslogic-fontconfig-sys`'s build
+          # script needs `fontconfig`'s own pkg-config file at compile
+          # time (`ci.yml`'s own header comment already names this for
+          # the ordinary Ubuntu `test` job's `libfontconfig1-dev`), but
+          # the real manylinux container image is a different, RPM-
+          # based base (CentOS/AlmaLinux) with no fontconfig-dev
+          # installed by default -- confirmed by a real failed run,
+          # not assumed in advance. `yum`/`dnf` first (the real,
+          # common manylinux base), `apt-get` as a real fallback for a
+          # Debian-based manylinux variant.
+          before-script-linux: |
+            yum install -y fontconfig-devel || dnf install -y fontconfig-devel || (apt-get update && apt-get install -y libfontconfig1-dev)
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-linux
