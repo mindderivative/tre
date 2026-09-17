@@ -229,6 +229,42 @@ impl TextFieldState {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImageState {
     pub image: peniko::ImageData,
+    /// M22 Phase 2 (§16.1): how the image's own real pixel content
+    /// fits a node whose box doesn't share its aspect ratio -- real,
+    /// standard CSS `object-fit` semantics (`Cover` crops to fill with
+    /// no letterboxing, `Contain` scales down to fit entirely, leaving
+    /// the node's own `background` visible on the uncovered sides,
+    /// `Fill` stretches non-uniformly to the box exactly). Defaults to
+    /// `Fill` -- Phase 1's own real, only behavior, so an `ImageState`
+    /// built through `ImageState::new` (every Phase 1 call site) keeps
+    /// byte-for-byte the same paint as before this phase.
+    pub content_fit: ContentFit,
+}
+
+impl ImageState {
+    pub fn new(image: peniko::ImageData) -> Self {
+        Self {
+            image,
+            content_fit: ContentFit::Fill,
+        }
+    }
+}
+
+/// M22 Phase 2 (§16.1): see `ImageState.content_fit`'s own doc comment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ContentFit {
+    /// Scales up (never down) just enough to cover the node's box
+    /// entirely, cropping whichever axis overflows; centered.
+    Cover,
+    /// Scales to fit entirely inside the node's box, letterboxing
+    /// (leaving `background` visible) on whichever axis has slack;
+    /// centered.
+    Contain,
+    /// Stretches non-uniformly to the box exactly, ignoring the
+    /// image's own real aspect ratio -- Phase 1's own original, only
+    /// behavior.
+    #[default]
+    Fill,
 }
 
 /// §11.7's own struct sketch, unchanged in shape (`item_count`,

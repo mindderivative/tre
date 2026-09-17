@@ -1,134 +1,138 @@
-# Plan: M22 Phase 1 — Real Image Loading & Paint (§5)
+# Plan: M22 Phase 2 — Real Declarative Image Support & Content-Fit (§16.1), closing M22
 
-Corresponds to `BUILD_TRACKER.md` M22 Phase 1: `NodeKind::Image(ImageState)`,
-a real file-backed image loaded through the `image` crate and painted
-through `vello_hybrid`'s own real `PaintType::Image` mechanism, plus
-`Window.add_image` in `engine-py`.
+Corresponds to `BUILD_TRACKER.md` M22 Phase 2: `NodeKindSpec::Image`
+makes `kind: Image` declarable in `view.yaml`, plus a real content-fit
+mode (cover/contain/fill) — closing the milestone.
 
 ## Investigation before writing code
 
-- ARCHITECTURE.md's own §5 Core Data Model struct sketch names
-  `NodeKind::Image(ImageState)` explicitly, at the same authoritative
-  level `Slider(SliderState)`/`Checkbox(CheckboxState)` were named at
-  before being built — confirmed via direct read. `engine_core::
-  NodeKind` has no `Image` variant yet — confirmed via direct read of
-  `crates/engine-core/src/node.rs`, whose own module doc comment
-  already lists "`Image`/`Slider`/`Checkbox`/`Canvas` still land with
-  their own later build-order steps" — this phase is exactly that.
-- **Crate-boundary precedent, confirmed via direct read:**
-  `NodeKind::Canvas`'s own module doc comment (`canvas.rs`) states its
-  content is "resolved ahead of time by `Tree::set_canvas_content`
-  rather than computed live" — the real Python draw callback runs in
-  `engine-py::Window.redraw_canvas`, and only the *result*
-  (`Vec<DrawCommand>`, plain inert data) ever reaches `engine-core`.
-  This phase follows the identical split: file I/O and image *decoding*
-  (the `image` crate, PNG/JPEG bytes → raw RGBA8 pixels) happens in
-  `engine-py::Window.add_image`, not `engine-core` — `engine-core`
-  only ever holds the already-decoded, renderer-agnostic result.
-- **What "already-decoded, renderer-agnostic result" means concretely:**
-  `peniko::ImageData` (`data: Blob<u8>`, `format: ImageFormat`,
-  `alpha_type: ImageAlphaType`, `width: u32`, `height: u32`) —
-  confirmed via direct read of the vendored `peniko-0.6.1/src/image.rs`.
-  `peniko` is already a real, direct `engine-core` dependency (used
-  today for `Color`), so `ImageState` can hold a `peniko::ImageData`
-  field directly with zero new dependency-graph edge in `engine-core`.
-- **The real paint-side conversion, confirmed via direct source read
-  of the vendored crates (not assumed):** `vello_hybrid::Scene::
-  set_paint` takes `impl Into<PaintType>`, where `vello_common::paint::
-  PaintType = peniko::Brush<vello_common::paint::Image, Gradient>` and
-  `vello_common::paint::Image = peniko::ImageBrush<ImageSource>` —
-  *not* `peniko::ImageBrush<ImageData>` directly. `vello_common::paint::
-  ImageSource::from_peniko_image_data(&peniko::ImageData) -> ImageSource`
-  is the real, existing conversion function (confirmed via direct read
-  of vendored `vello_common-0.2.0/src/paint.rs`) — the exact same
-  function `vello_hybrid`'s own `text.rs` glyph-atlas path already
-  relies on for its own real `Image` construction (`vello_hybrid::
-  text::set_paint_image`), the closest real precedent already living
-  in this dependency tree.
-- **Real, necessary new direct dependency:** `vello_hybrid` never
-  re-exports `vello_common::paint::{Image, ImageSource, PaintType}` —
-  confirmed via grep across its own `lib.rs`'s `pub use` lines (it only
-  re-exports `TextureId`/`SizeU16`/`multi_atlas`/`Pixmap`). So
-  `engine-render` needs a real, direct `vello_common` dependency to
-  name these types itself. Pinned to exactly what `vello_hybrid` 0.2.0
-  itself requires (`vello_common = "0.2.0"`, its own `Cargo.toml`) —
-  `grep -c 'name = "vello_common"' Cargo.lock` stays at 1 after adding
-  it, the same "zero new resolution, only a direct edge" pattern
-  `kurbo`/`parley` already established in this file. `default-features
-  = false, features = ["std"]` matches `vello_hybrid`'s own exact
-  feature set — its default `"png"` feature (an internal PNG decoder)
-  is deliberately left off, since decoding goes through this
-  workspace's own `image` crate instead.
-- **The `image` crate itself, confirmed via `cargo add --dry-run`:**
-  latest is `0.25.10`; its *default* feature set pulls in a broad
-  format list (avif, bmp, dds, exr, ff, gif, hdr, ico, jpeg, png, pnm,
-  qoi, rayon, tga, tiff, webp) — several with heavy/native codec
-  dependencies (avif especially), a real risk for the M21-built
-  manylinux wheel CI job. `default-features = false, features = ["png",
-  "jpeg"]` — the two ubiquitous formats this milestone's own scoping
-  paragraph named — mirrors this crate's own established minimal-
-  dependency discipline (`arboard`'s own `default-features = false`,
-  `tracing-subscriber`'s `env-filter`-only). `Cargo.lock` confirmed:
-  `image v0.25.10` plus its real transitive decode deps (`png`,
-  `zune-jpeg`, `flate2`, etc.), no `avif`/`rayon`/native-codec entries.
-- **`Tree::tick_all` needs no new arm:** confirmed via direct read —
-  its real per-kind dispatch only adds arms for `Checkbox`/`Slider`
-  (`check_progress`/`thumb_position`, both real *animated* values). An
-  `Image` has no animatable field of its own this phase; a real fade-
-  in is already `PaintProperties.opacity`'s job, universal to every
-  `NodeKind` already.
-- **Hit-testing needs no new logic:** `Tree::hit_test_at`'s default
-  rect test (§11.10) already applies to any `NodeKind` with no custom
-  `CanvasState.hit_test` override — an `Image` node is hit-tested as a
-  plain rect exactly like `Rect`/`Checkbox`/`Slider` already are.
+- `engine-spec::spec.rs`'s own `NodeKindSpec` doc comment already
+  named this exact gap: "`Image`/`Canvas` remain real, un-scoped future
+  candidates" — confirmed via direct read. `Canvas` stays un-scoped
+  (no `kind: Canvas` support exists or is asked for); `Image` is this
+  phase's own real target.
+- **Spec shape, following the established `text:`/`TextSpec` sibling-
+  block precedent exactly** (confirmed via direct read of `WidgetSpec`/
+  `TextSpec`, and the module's own doc comment explaining *why* a
+  data-carrying `kind: {Image: {...}}` shape was rejected for `Text`):
+  a new `WidgetSpec::image: Option<ImageSpec>` field, required (and
+  validated as such at tree-build time, matching `text`'s own
+  contract) when `kind: Image`. `ImageSpec { src: String, fit:
+  ContentFitSpec }` — `src` a path relative to the owning `view.yaml`
+  file, `fit` one of `Cover`/`Contain`/`Fill` (`#[serde(default)]` ->
+  `Fill`, matching Phase 1's own real "stretched to fill" behavior
+  byte-for-byte when a `view.yaml` author doesn't state one).
+- **Real, necessary new capability: path resolution needs a
+  `base_dir`, which `build_tree`/`load_view`/`load_styled_view` don't
+  carry today** — confirmed via direct read, every existing kind's
+  construction (`node_kind_and_paint`) is 100% synchronous/pure, no
+  file I/O or path context anywhere. `include.rs`'s own `resolve_
+  confined(base_dir, include_path)` already solves the identical real
+  problem (a relative, potentially-malicious path from inside a
+  `view.yaml`, confined to `base_dir`, symlink-escape-resistant, `../`
+  and absolute paths rejected) for `include:` — reused here rather
+  than inventing a second path-confinement scheme; needs widening from
+  private (module-local to `include.rs`) to `pub(crate)` so `build.rs`
+  can call it too. `engine-py::View` already tracks its own real
+  `path: String` (M19 Phase 1) — the real, already-available source for
+  the `base_dir` `View::_attach`/construction threads down into
+  `parse_view_with_includes` today; the identical value threads into
+  `build_tree` too, one extra parameter, not a new concept.
+- **Real, necessary new dependency:** `engine-spec` gains a direct
+  `image` dependency (pinned identically to `engine-py`'s own choice:
+  `default-features = false, features = ["png", "jpeg"]`) — decoding
+  happens here now too, since `kind: Image`'s own real file read/decode
+  has to happen at tree-build time, the same moment every other kind's
+  spec becomes real `engine-core` state. The ~10-line decode-into-
+  `peniko::ImageData` routine `engine-py::Window.add_image` already has
+  is small enough that duplicating it here (rather than inventing a
+  shared crate neither `engine-spec` nor `engine-py` currently depends
+  on, for one function) matches this codebase's own established
+  tolerance for small, localized duplication over premature abstraction
+  (§2's own "don't build ahead of need").
+- **Content-fit is a real paint-time concern, not a build-time
+  one:** `NodeKind::Image`/`ImageState` (`engine-core`) stay unchanged
+  — the same `peniko::ImageData` Phase 1 already established, no new
+  field there. `engine-render::paint_node`'s `NodeKind::Image` arm
+  currently always stretches (`SampleRect.transform = scale_non_
+  uniform(w/img_w, h/img_h)`, filling the node's box exactly,
+  ignoring the image's own aspect ratio) — a real, necessary
+  generalization: `ContentFit` (new, plain `Copy` enum:
+  `Cover`/`Contain`/`Fill`) has to live somewhere `paint_node` can read
+  it *per node*, which means it belongs on `ImageState` itself (a real,
+  additive field, `engine-core`), not threaded as a separate parameter
+  — matches `CheckboxState.mark_tint`/`SliderState.track_tint`'s own
+  "paint-affecting state lives on the kind's own state struct" shape.
+  `Fill` reproduces Phase 1's exact current math unchanged (`byte-for-
+  byte no visual change` for any existing `Image` node/test); `Cover`/
+  `Contain` each compute a real non-uniform-vs-uniform scale factor
+  from the image's own real aspect ratio vs. the node's box aspect
+  ratio, then center the result (`Cover` crops via a narrower
+  `SampleRect.source_region` than the full image when the ratios
+  don't match; `Contain` letterboxes by scaling *down* to fit,
+  leaving the box's own `background`/transparent fill visible on the
+  uncovered sides — real, standard CSS `object-fit` semantics, the
+  same de facto standard `background-size: cover/contain` already
+  established well before CSS `object-fit` existed).
+- `Window.add_image` (`engine-py`, imperative API) is a **separate,
+  already-complete real entry point** (Phase 1) — this phase does not
+  change it. Should `Window.add_image` also gain a `fit` parameter for
+  symmetry with the new declarative `fit:`? Real, deliberate scope
+  decision: **yes** — `ImageState.content_fit` is the one real field
+  both entry points construct, so leaving the imperative path stuck at
+  `Fill` forever while only `view.yaml` can choose would be a real,
+  arbitrary asymmetry between the two authoring paths this project has
+  consistently avoided elsewhere (every other declarative field this
+  project has added has a matching imperative one, and vice versa).
+  Additive, default-`Fill`, so this stays fully backward-compatible
+  with Phase 1's own `add_image` signature/tests.
 
 ## What will change
 
-- `crates/engine-core/src/node.rs`: new `ImageState { pub image:
-  peniko::ImageData }` (derives `Clone, Debug, PartialEq`, mirroring
-  `peniko::ImageData`'s own derives exactly); new `NodeKind::
-  Image(ImageState)` variant.
-- `crates/engine-render/Cargo.toml`: new direct `vello_common`
-  dependency (see investigation above).
-- `crates/engine-render/src/lib.rs`: new `NodeKind::Image(state)` arm
-  in `paint_node` — converts `state.image` via `ImageSource::
-  from_peniko_image_data`, builds a `vello_common::paint::Image`
-  (default `ImageSampler`), `scene.set_paint(...)`, then
-  `scene.fill_path` over the node's full `(0, 0, w, h)` rect (Phase 1
-  scope: stretched to fill, the same implicit behavior every other
-  boxed `NodeKind`'s background fill already has; real content-fit
-  modes are Phase 2's own explicit scope, §16.1).
-- `crates/engine-py/Cargo.toml`: new direct `image` dependency (see
-  investigation above).
-- `crates/engine-py/src/error.rs`: new `EngineError::ImageLoadFailed
-  { path: String, reason: String }` variant, mapped to `PyIOError` (a
-  real file-load/decode failure, not a value/type mismatch the
-  existing `PyValueError`/`PyTypeError` variants represent).
-- `crates/engine-py/src/window.rs`: new `Window.add_image(path, width,
-  height, x=None, y=None) -> PyResult<Node>` — mirrors `add_canvas`'s
-  own real shape (hardcoded transparent `PaintProperties` background,
-  §11.10/§11.11 precedent: a fully custom-drawn/replaced `NodeKind`
-  doesn't expose a separate `background` param the way `Rect`/
-  `Checkbox`/`Slider` do, since there's no meaningful "behind the
-  content" fill this phase scopes). Reads the file, decodes via
-  `image::open`, converts to `.to_rgba8()`, wraps its raw bytes in
-  `peniko::Blob::from(Vec<u8>)` (`Blob<T>: From<Vec<T>>`, confirmed via
-  direct read), builds `peniko::ImageData { format: Rgba8, alpha_type:
-  Alpha (straight/unpremultiplied — the `image` crate's own real
-  `to_rgba8()` output), width, height }`.
-- New engine-core unit test(s): `NodeKind::Image` round-trips through
-  `Tree::insert`/`Tree::get` like every other kind.
-- New engine-render pixel test: a real small in-memory `peniko::
-  ImageData` (synthesized directly, no file I/O in a Rust test) painted
-  and read back via the existing `rect_window`-style pixel-probe
-  harness, confirming real pixel colors land where expected.
-- New `tests/test_image.py` (pytest, `engine_py` extension): `Window.
-  add_image` with a real tiny PNG fixture checked into `tests/
-  fixtures/` (or generated on the fly via the `image` crate... no,
-  Python-side — via `PIL`? Check `tests/` for an existing image-fixture
-  precedent or a lightweight in-test PNG-bytes literal before deciding
-  final fixture strategy).
-- New `examples/image.py` demonstrating a real loaded image on screen.
+- `crates/engine-core/src/node.rs`: `ImageState` gains `pub content_fit:
+  ContentFit` (new `#[derive(Clone, Copy, Debug, PartialEq)] pub enum
+  ContentFit { Cover, Contain, Fill }`, `Fill` as the contract every
+  existing Phase 1 test/example already assumes); re-exported from
+  `lib.rs`.
+- `crates/engine-render/src/lib.rs`: `paint_node`'s `NodeKind::Image`
+  arm computes `SampleRect` differently per `state.content_fit` —
+  `Fill` unchanged; `Cover`/`Contain` compute real aspect-ratio-aware
+  scale/crop/letterbox geometry.
+- `crates/engine-spec/Cargo.toml`: new direct `image` dependency
+  (pinned identically to `engine-py`'s own choice).
+- `crates/engine-spec/src/spec.rs`: new `WidgetSpec::image: Option<
+  ImageSpec>`; new `ImageSpec { src: String, fit: ContentFitSpec }`;
+  new `ContentFitSpec` enum (`Cover`/`Contain`/`Fill`, `#[serde(default)]`
+  -> `Fill`); `NodeKindSpec` gains `Image`.
+- `crates/engine-spec/src/include.rs`: `resolve_confined` widened from
+  private to `pub(crate)`.
+- `crates/engine-spec/src/build.rs`: `load_view`/`load_styled_view`/
+  `build_tree`/`patch_node`/`node_kind_and_paint` all gain a `base_dir:
+  Option<&Path>` parameter (mirroring `parse_view_with_includes`'s own
+  shape exactly); `node_kind_and_paint` gains a real `NodeKindSpec::
+  Image` arm — resolves `src` through `resolve_confined`, reads +
+  decodes the file via the `image` crate, builds `peniko::ImageData`,
+  maps `ContentFitSpec` -> `engine_core::ContentFit`.
+- `crates/engine-py/src/view.rs`: threads `View`'s own real `path`
+  (parent directory) through as `base_dir` to both `parse_view_with_
+  includes` (already does, unchanged) and the new `build_tree`/`load_
+  styled_view` parameter.
+- `crates/engine-py/src/window.rs`: `Window.add_image` gains an
+  optional `fit` parameter (default `Fill`), setting `ImageState.
+  content_fit`.
+- New `engine-spec` tests: `kind: Image` parses and builds a real
+  `NodeKind::Image` node with a real decoded image and the right
+  `ContentFit`; a `src:` path escaping `base_dir` is rejected the same
+  way an `include:` escape already is; a missing `image:` block on
+  `kind: Image` is a clear `SpecError`, not a panic.
+- New `engine-render` pixel tests: `Cover`/`Contain`/`Fill` each paint
+  the real, geometrically-distinct expected pixels for a non-square
+  image in a differently-proportioned box.
+- Updated `tests/test_image.py`: `add_image(..., fit=...)` accepted,
+  defaults preserved.
+- New declarative example (`examples/*.yaml` + a loader script, or an
+  addition to an existing composition example) demonstrating `kind:
+  Image` with a real `fit:` value.
 
 ## Testing
 
@@ -136,8 +140,5 @@ through `vello_hybrid`'s own real `PaintType::Image` mechanism, plus
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo fmt --check`
 - `maturin develop --release`
-- `pytest tests/ -v` (including the new `test_image.py`)
-- Run every example script, including the new `examples/image.py`,
-  confirmed rendering a real loaded image on screen (manual visual
-  check, matching this project's own established example-running
-  discipline).
+- `pytest tests/ -v`
+- Run every example script, including the new/updated one(s).

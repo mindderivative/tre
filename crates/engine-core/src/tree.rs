@@ -6391,9 +6391,7 @@ mod tests {
         };
         let (_, style, paint) = leaf(10.0, 10.0);
         let id = tree.insert(
-            NodeKind::Image(ImageState {
-                image: image_data.clone(),
-            }),
+            NodeKind::Image(ImageState::new(image_data.clone())),
             style,
             paint,
         );

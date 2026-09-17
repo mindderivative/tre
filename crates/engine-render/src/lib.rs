@@ -24,7 +24,7 @@
 mod image_cache;
 mod text;
 
-use engine_core::{DrawCommand, NodeId, NodeKind, Tree};
+use engine_core::{ContentFit, DrawCommand, NodeId, NodeKind, Tree};
 use peniko::Color;
 use peniko::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Shape, Stroke};
 use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
@@ -271,6 +271,73 @@ fn blur_to_std_dev(blur_px: f32) -> f32 {
 /// (key: 0.3, ambient: 0.15).
 fn shadow_color(opacity: f32) -> Color {
     with_opacity(Color::from_rgba8(0, 0, 0, 255), f64::from(opacity))
+}
+
+/// M22 Phase 2 (§16.1): the real `(source_region, transform)` pair
+/// `Scene::draw_texture_rects` needs for a given `ContentFit` --
+/// `Scene::draw_texture_rects`'s own doc comment states the real
+/// contract this relies on: the destination drawn is always `transform`
+/// applied to a rect whose size is `source_region`'s own real pixel
+/// width/height, not the node's `(w, h)` box directly. `Fill` reuses
+/// the identical, unchanged math Phase 1 already shipped (the full
+/// image, non-uniformly scaled to `(w, h)` exactly). `Contain` scales
+/// the full image *uniformly* by the smaller of the two axis ratios
+/// (so it never overflows either axis) and centers the result inside
+/// `(w, h)` via a real translate composed on top of the scale --
+/// `source_region` stays the full image, since nothing is cropped.
+/// `Cover` instead crops `source_region` to the same aspect ratio as
+/// `(w, h)` (centered within the full image), so a uniform scale of
+/// *that* cropped region already lands exactly on `(w, h)` with zero
+/// overflow -- deliberately not "scale the full image up and rely on
+/// an implicit clip," since `NodeKind::Image` has none today and
+/// adding one is real, unneeded complexity no real use case here asks
+/// for.
+fn image_sample_rect(
+    w: f64,
+    h: f64,
+    img_width: u32,
+    img_height: u32,
+    fit: ContentFit,
+) -> (vello_common::geometry::RectU16, Affine) {
+    let iw = f64::from(img_width);
+    let ih = f64::from(img_height);
+    let full = vello_common::geometry::RectU16 {
+        x0: 0,
+        y0: 0,
+        x1: img_width as u16,
+        y1: img_height as u16,
+    };
+    match fit {
+        ContentFit::Fill => (full, Affine::scale_non_uniform(w / iw, h / ih)),
+        ContentFit::Contain => {
+            let scale = (w / iw).min(h / ih);
+            let offset = ((w - iw * scale) / 2.0, (h - ih * scale) / 2.0);
+            (full, Affine::translate(offset) * Affine::scale(scale))
+        }
+        ContentFit::Cover => {
+            let box_aspect = w / h;
+            let img_aspect = iw / ih;
+            let (sx, sy, sw, sh) = if img_aspect > box_aspect {
+                let sw = ih * box_aspect;
+                (((iw - sw) / 2.0).max(0.0), 0.0, sw, ih)
+            } else {
+                let sh = iw / box_aspect;
+                (0.0, ((ih - sh) / 2.0).max(0.0), iw, sh)
+            };
+            let x0 = sx.round() as u16;
+            let y0 = sy.round() as u16;
+            let x1 = ((sx + sw).round() as i64)
+                .clamp(i64::from(x0) + 1, i64::from(img_width))
+                .max(0) as u16;
+            let y1 = ((sy + sh).round() as i64)
+                .clamp(i64::from(y0) + 1, i64::from(img_height))
+                .max(0) as u16;
+            let region = vello_common::geometry::RectU16 { x0, y0, x1, y1 };
+            let transform =
+                Affine::scale_non_uniform(w / f64::from(x1 - x0), h / f64::from(y1 - y0));
+            (region, transform)
+        }
+    }
 }
 
 fn paint_node(
@@ -549,20 +616,14 @@ fn paint_node(
             let img_width = state.image.width;
             let img_height = state.image.height;
             if img_width > 0 && img_height > 0 {
+                let (source_region, transform) =
+                    image_sample_rect(w, h, img_width, img_height, state.content_fit);
                 scene.draw_texture_rects(
                     image_cache::texture_id_for(id),
                     peniko::ImageQuality::Medium,
                     [vello_hybrid::SampleRect {
-                        source_region: vello_common::geometry::RectU16 {
-                            x0: 0,
-                            y0: 0,
-                            x1: img_width as u16,
-                            y1: img_height as u16,
-                        },
-                        transform: Affine::scale_non_uniform(
-                            w / f64::from(img_width),
-                            h / f64::from(img_height),
-                        ),
+                        source_region,
+                        transform,
                     }],
                 );
             }

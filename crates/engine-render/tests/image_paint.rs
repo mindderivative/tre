@@ -10,7 +10,7 @@
 //! decoding is `engine-py`'s job); this test only proves the *paint*
 //! half, with a real, known-value image the test itself controls.
 
-use engine_core::{ImageState, NodeKind, PaintProperties, Tree};
+use engine_core::{ContentFit, ImageState, NodeKind, PaintProperties, Tree};
 use engine_render::{FrameRenderer, TextRenderer, build_tree_scene};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, Size, Style, length};
@@ -174,9 +174,7 @@ fn build_tree() -> (Tree, engine_core::NodeId) {
     );
 
     let image = tree.insert(
-        NodeKind::Image(ImageState {
-            image: green_2x2_image_data(),
-        }),
+        NodeKind::Image(ImageState::new(green_2x2_image_data())),
         Style {
             size: Size {
                 width: length(40.0),
@@ -198,6 +196,120 @@ fn build_tree() -> (Tree, engine_core::NodeId) {
     };
     tree.compute_layout(root, available);
     (tree, root)
+}
+
+/// A real, solid, opaque `width`x`height` `peniko::ImageData` of one
+/// uniform color -- M22 Phase 2's own content-fit tests only need to
+/// check *where* the image's own pixels land relative to the node's
+/// box and its `background`, not per-pixel content, so a uniform fill
+/// (unlike `green_2x2_image_data`'s own checkerboard-adjacent use) is
+/// the simplest real image that still proves real cropping/
+/// letterboxing geometry, not just "something painted somewhere."
+fn solid_image_data(width: u32, height: u32, color: [u8; 4]) -> peniko::ImageData {
+    let mut bytes = Vec::with_capacity((width * height * 4) as usize);
+    for _ in 0..(width * height) {
+        bytes.extend_from_slice(&color);
+    }
+    peniko::ImageData {
+        data: peniko::Blob::from(bytes),
+        format: peniko::ImageFormat::Rgba8,
+        alpha_type: peniko::ImageAlphaType::Alpha,
+        width,
+        height,
+    }
+}
+
+const GREEN: [u8; 4] = [0x00, 0xFF, 0x00, 0xFF];
+
+/// A 4x4 (square) solid-green image in a real, non-square 100x50 box
+/// -- `content_fit` picks apart `Contain` (letterboxes -- background
+/// visible on the box's own longer axis) from `Cover` (crops -- the
+/// box is fully covered, no background visible anywhere inside it).
+fn build_tree_with_fit(content_fit: ContentFit) -> (Tree, engine_core::NodeId) {
+    let mut tree = Tree::new();
+    let root = tree.insert(
+        NodeKind::Rect,
+        Style {
+            size: Size {
+                width: length(100.0),
+                height: length(50.0),
+            },
+            ..Default::default()
+        },
+        PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+    );
+
+    let mut state = ImageState::new(solid_image_data(4, 4, GREEN));
+    state.content_fit = content_fit;
+    let image = tree.insert(
+        NodeKind::Image(state),
+        Style {
+            size: Size {
+                width: length(100.0),
+                height: length(50.0),
+            },
+            ..Default::default()
+        },
+        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+    );
+    tree.add_child(root, image);
+
+    let available = Size {
+        width: AvailableSpace::Definite(100.0),
+        height: AvailableSpace::Definite(50.0),
+    };
+    tree.compute_layout(root, available);
+    (tree, root)
+}
+
+#[test]
+fn content_fit_contain_letterboxes_the_boxs_own_longer_axis() {
+    pollster::block_on(async {
+        let (tree, root) = build_tree_with_fit(ContentFit::Contain);
+        let (data, bpr) = render(&tree, root, 100, 50).await;
+
+        // A real 4x4 image uniformly scaled to fit inside a 100x50 box
+        // (scale = min(100/4, 50/4) = 12.5) draws a real 50x50 square,
+        // centered -- x in [25, 75), y in [0, 50). (10, 25) is well
+        // inside the real left letterbox bar; (50, 25) is the box's
+        // own real center, well inside the drawn square.
+        let letterbox = pixel_at(&data, bpr, 10, 25);
+        assert_eq!(
+            letterbox,
+            [0x11, 0x11, 0x11, 0xFF],
+            "Contain must leave the box's own real background visible in its letterbox bars, \
+             got {letterbox:?}"
+        );
+        let center = pixel_at(&data, bpr, 50, 25);
+        assert_eq!(
+            center, GREEN,
+            "Contain must still paint the real image at the box's own center, got {center:?}"
+        );
+    });
+}
+
+#[test]
+fn content_fit_cover_fills_the_box_with_no_letterboxing() {
+    pollster::block_on(async {
+        let (tree, root) = build_tree_with_fit(ContentFit::Cover);
+        let (data, bpr) = render(&tree, root, 100, 50).await;
+
+        // Cover crops (never letterboxes) -- every real point inside
+        // the 100x50 box, including near its own edges, must be the
+        // image's own real color, not the background `Contain`'s own
+        // test just proved shows through at the identical point.
+        let near_left_edge = pixel_at(&data, bpr, 10, 25);
+        assert_eq!(
+            near_left_edge, GREEN,
+            "Cover must fill the box's own full extent with no real background showing \
+             through, got {near_left_edge:?}"
+        );
+        let center = pixel_at(&data, bpr, 50, 25);
+        assert_eq!(
+            center, GREEN,
+            "Cover must still paint the real image at the box's own center, got {center:?}"
+        );
+    });
 }
 
 #[test]

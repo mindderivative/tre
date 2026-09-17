@@ -9,9 +9,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use engine_core::{
-    AccessNodeData, Action, Animated, CheckboxState, EventKind, ImageState, InputEvent, ItemExtent,
-    Key, NodeId, NodeKind, PaintProperties, PointerButton, Role, SliderState, SplitterState,
-    TextFieldState, Tree, VirtualListState,
+    AccessNodeData, Action, Animated, CheckboxState, ContentFit, EventKind, ImageState, InputEvent,
+    ItemExtent, Key, NodeId, NodeKind, PaintProperties, PointerButton, Role, SliderState,
+    SplitterState, TextFieldState, Tree, VirtualListState,
 };
 use engine_md3::DynamicTheme;
 use peniko::Color;
@@ -111,6 +111,20 @@ pub(crate) type SharedTheme = Rc<RefCell<ThemeState>>;
 /// byte backward compatible). The inset lands relative to the window's
 /// own root padding-box origin (`PADDING`, `PyWindow::new`), not the
 /// raw window corner -- a real, stated detail, not a silent surprise.
+/// M22 Phase 2 (§16.1): `Window.add_image`'s own real `fit:` string
+/// vocabulary -- `parse_dock_side`'s own established pattern
+/// (`dock.rs`), applied to `ContentFit`'s three real variants.
+fn parse_content_fit(fit: &str) -> PyResult<ContentFit> {
+    match fit {
+        "cover" => Ok(ContentFit::Cover),
+        "contain" => Ok(ContentFit::Contain),
+        "fill" => Ok(ContentFit::Fill),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "unknown content fit {other:?} -- expected one of \"cover\", \"contain\", \"fill\""
+        ))),
+    }
+}
+
 fn positioned_style(size: Size<taffy::style::Dimension>, x: Option<f32>, y: Option<f32>) -> Style {
     if x.is_none() && y.is_none() {
         return Style {
@@ -475,15 +489,25 @@ impl PyWindow {
     /// those raw bytes become a `peniko::ImageData` via `peniko::Blob`'s
     /// own real `From<Vec<u8>>` impl -- zero copying beyond what
     /// `to_rgba8()` itself already allocates.
-    #[pyo3(signature = (path, width, height, x=None, y=None))]
+    ///
+    /// M22 Phase 2 (§16.1): `fit` (`"cover"`/`"contain"`/`"fill"`,
+    /// default `"fill"` -- byte-for-byte Phase 1's own only behavior)
+    /// sets `ImageState.content_fit`, the identical field `kind: Image`
+    /// in a real `view.yaml`'s own `image.fit:` sets -- kept symmetric
+    /// with the declarative path rather than leaving this imperative
+    /// entry point stuck at `Fill` forever.
+    #[pyo3(signature = (path, width, height, fit="fill", x=None, y=None))]
+    #[allow(clippy::too_many_arguments)]
     fn add_image(
         &self,
         path: &str,
         width: f32,
         height: f32,
+        fit: &str,
         x: Option<f32>,
         y: Option<f32>,
     ) -> PyResult<Node> {
+        let content_fit = parse_content_fit(fit)?;
         let decoded = image::open(path)
             .map_err(|e| EngineError::ImageLoadFailed {
                 path: path.to_string(),
@@ -498,10 +522,12 @@ impl PyWindow {
             width: img_width,
             height: img_height,
         };
+        let mut image_state = ImageState::new(image_data);
+        image_state.content_fit = content_fit;
 
         let mut tree = self.tree.borrow_mut();
         let id = tree.insert(
-            NodeKind::Image(ImageState { image: image_data }),
+            NodeKind::Image(image_state),
             positioned_style(
                 Size {
                     width: length(width),
