@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use engine_core::{
     Animated, CheckboxState, InputEvent, ItemExtent, Key, NodeId, NodeKind, PaintProperties,
-    PointerButton, SplitterState, Tree, VirtualListState,
+    PointerButton, SliderState, SplitterState, Tree, VirtualListState,
 };
 use engine_md3::DynamicTheme;
 use peniko::Color;
@@ -338,6 +338,50 @@ impl PyWindow {
         let mut tree = self.tree.borrow_mut();
         let id = tree.insert(
             NodeKind::Checkbox(CheckboxState::new(checked)),
+            positioned_style(
+                Size {
+                    width: length(width),
+                    height: length(height),
+                },
+                x,
+                y,
+            ),
+            PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, id);
+        Node {
+            id,
+            tree: self.tree.clone(),
+            handlers: self.handlers.clone(),
+            context_menus: self.context_menus.clone(),
+            theme: self.theme.clone(),
+            completions: self.completions.clone(),
+        }
+    }
+
+    /// M14 Phase 2 (§5, §7.3): creates a real `NodeKind::Slider`,
+    /// mirroring `add_checkbox`'s own real shape exactly -- `background`
+    /// is the thumb's own real fill color (universal `PaintProperties`,
+    /// same as any other node); `value` seeds `SliderState`'s own
+    /// initial `thumb_position` (clamped `0.0..=1.0`, `SliderState::
+    /// new`'s own real contract). The real drag-to-set interaction is
+    /// entirely internal to `Tree::dispatch` (M14 Phase 2's own real
+    /// finding, mirroring how `Splitter` dragging already works) -- no
+    /// Python-facing wiring needed for that half at all.
+    #[pyo3(signature = (background, width, height, value=0.0, x=None, y=None))]
+    fn add_slider(
+        &self,
+        background: (u8, u8, u8, u8),
+        width: f32,
+        height: f32,
+        value: f64,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> Node {
+        let (r, g, b, a) = background;
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::Slider(SliderState::new(value)),
             positioned_style(
                 Size {
                     width: length(width),

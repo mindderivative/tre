@@ -99,6 +99,23 @@ pub enum NodeKind {
     /// any `NodeKind` already) is what this phase reuses unchanged; an
     /// app's own `on_click` handler is what actually flips `checked`.
     Checkbox(CheckboxState),
+    /// M14 Phase 2 (§5, §7.3): a real MD3 slider. `thumb_position` *is*
+    /// the real value (0.0..=1.0 along the track, the identical shape
+    /// `SplitterState.position` already has) -- no separate field, the
+    /// same "the animated field is the value" precedent. A real drag
+    /// (`Tree::set_slider_position`) sets it the same instant, `Duration
+    /// ::ZERO` + immediate-manual-tick way `SplitterState.position`
+    /// already does, live-following the pointer. Unlike `SplitterState.
+    /// position` (never exposed to `Node.animate()` at all -- confirmed
+    /// via direct read, so it never needs central ticking), `thumb_
+    /// position` *is* exposed (`"thumb_position"`, this phase's own
+    /// second real kind-payload `animate()` arm) for a real, app-
+    /// triggered eased move (e.g. a keyboard nudge, not a drag) -- real
+    /// finding while designing this: that path needs `Tree::tick_all`
+    /// to actually tick it centrally, or a nonzero-duration `animate()`
+    /// call would set an active animation that never progresses. Ticked
+    /// there, unconditionally, alongside `CheckboxState.check_progress`.
+    Slider(SliderState),
 }
 
 /// §11.7's own struct sketch, unchanged in shape (`item_count`,
@@ -195,6 +212,21 @@ impl CheckboxState {
         Self {
             checked,
             check_progress: Animated::new(if checked { 1.0 } else { 0.0 }),
+        }
+    }
+}
+
+/// §5's own struct sketch, unchanged in shape -- `thumb_position` is
+/// the real value itself, `0.0..=1.0` along the track, the identical
+/// shape `SplitterState.position` already established.
+pub struct SliderState {
+    pub thumb_position: Animated<f64>,
+}
+
+impl SliderState {
+    pub fn new(value: f64) -> Self {
+        Self {
+            thumb_position: Animated::new(value.clamp(0.0, 1.0)),
         }
     }
 }

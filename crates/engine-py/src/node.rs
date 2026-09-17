@@ -179,6 +179,25 @@ impl Node {
                     .into());
                 }
             },
+            // M14 Phase 2 (§8): the second real kind-payload arm -- a
+            // real, app-triggered eased move (a keyboard nudge, say),
+            // distinct from the real drag path (`Tree::set_slider_
+            // position`, driven entirely inside `engine-core`'s own
+            // dispatch, never through here).
+            "thumb_position" => match &mut node.kind {
+                NodeKind::Slider(state) => {
+                    let value = extract_f64(&to, property)?;
+                    let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                    animate_field(&mut state.thumb_position, value, duration, now, handle);
+                }
+                _ => {
+                    return Err(EngineError::UnknownProperty {
+                        kind,
+                        property: property.to_string(),
+                    }
+                    .into());
+                }
+            },
             _ => {
                 return Err(EngineError::UnknownProperty {
                     kind,
@@ -208,6 +227,14 @@ impl Node {
             "elevation" => Ok(node.paint.elevation.current),
             "check_progress" => match &node.kind {
                 NodeKind::Checkbox(state) => Ok(state.check_progress.current),
+                _ => Err(EngineError::UnknownProperty {
+                    kind,
+                    property: property.to_string(),
+                }
+                .into()),
+            },
+            "thumb_position" => match &node.kind {
+                NodeKind::Slider(state) => Ok(state.thumb_position.current),
                 _ => Err(EngineError::UnknownProperty {
                     kind,
                     property: property.to_string(),
@@ -438,6 +465,7 @@ fn kind_name(kind: &NodeKind) -> &'static str {
         NodeKind::VirtualList(_) => "VirtualList",
         NodeKind::Canvas(_) => "Canvas",
         NodeKind::Checkbox(_) => "Checkbox",
+        NodeKind::Slider(_) => "Slider",
     }
 }
 

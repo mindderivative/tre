@@ -468,6 +468,27 @@ fn paint_node(
                 scene.stroke_path(&mark);
             }
         }
+        // M14 Phase 2 (§5, §7.3): a real track (a thin, fixed-gray bar
+        // spanning the node's own full width, vertically centered) plus
+        // a real thumb (a filled circle at `thumb_position * w`, the
+        // node's own real `background` color -- the same universal
+        // field every other `NodeKind`'s primary fill already uses).
+        // The track color is a plain, fixed neutral gray -- real but
+        // not yet theme-aware, the same precedent `Checkbox`'s own
+        // checkmark just established.
+        NodeKind::Slider(state) => {
+            let track_height = (h * 0.15).max(2.0);
+            let track_rect = Rect::new(0.0, (h - track_height) / 2.0, w, (h + track_height) / 2.0);
+            scene.set_paint(Color::from_rgba8(0x79, 0x74, 0x7A, 0xFF));
+            scene.fill_path(&track_rect.to_path(0.1));
+
+            let thumb_radius = (h * 0.4).max(4.0);
+            let thumb_x = state.thumb_position.current * w;
+            let thumb_color =
+                with_opacity(node.paint.background.current, node.paint.opacity.current);
+            scene.set_paint(thumb_color);
+            scene.fill_path(&Circle::new((thumb_x, h / 2.0), thumb_radius).to_path(0.1));
+        }
     }
 
     // M4 Phase 5 (§7.3): the real ripple/hover state-layer paint --

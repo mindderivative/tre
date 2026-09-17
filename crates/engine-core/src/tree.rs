@@ -27,7 +27,7 @@ use crate::canvas::{CustomHitTest, DrawCommand};
 use crate::input::{DispatchOutcome, InputEvent, Key, PointerButton, ScrollDelta};
 use crate::interaction::InteractionState;
 #[cfg(test)]
-use crate::node::{CheckboxState, ItemExtent, VirtualListState};
+use crate::node::{CheckboxState, ItemExtent, SliderState, VirtualListState};
 use crate::node::{Node, NodeId, NodeKind, PaintProperties};
 use crate::overlay::OverlayMeta;
 #[cfg(test)]
@@ -78,12 +78,15 @@ pub struct Tree {
     /// not one per button -- this minimal mouse-only model never needs
     /// to track two buttons held down at once.
     pressed: Option<(PointerButton, NodeId)>,
-    /// M4 Phase 3 (§11.5): the `NodeKind::Splitter` currently being
-    /// dragged, if any -- set on a primary-button `PointerPressed` that
-    /// hits a splitter, read by every subsequent `PointerMoved` until a
-    /// primary-button `PointerReleased` clears it (wherever that
-    /// happens, not conditioned on still hitting the splitter -- a real
-    /// mouse-up always ends a drag, matching real OS drag semantics).
+    /// M4 Phase 3 (§11.5), widened M14 Phase 2 (§7.3): the node
+    /// currently being pointer-dragged, if any -- a `NodeKind::
+    /// Splitter` or (M14 Phase 2) a `NodeKind::Slider`, set on a
+    /// primary-button `PointerPressed` that hits one, read by every
+    /// subsequent `PointerMoved` until a primary-button `PointerRelease
+    /// d` clears it (wherever that happens, not conditioned on still
+    /// hitting the node -- a real mouse-up always ends a drag, matching
+    /// real OS drag semantics). `update_drag` is what actually branches
+    /// on which real kind this is.
     dragging: Option<NodeId>,
     /// §14 step 13 (§11.3): keyed by the overlay root's own `NodeId` --
     /// metadata only, never the node itself, which already lives in
@@ -658,6 +661,26 @@ impl Tree {
         state.position.tick(now, &mut Vec::new());
     }
 
+    /// M14 Phase 2 (§5, §7.3): moves a `NodeKind::Slider`'s own real
+    /// `thumb_position` to `position` (clamped `0.0..=1.0`) -- mirrors
+    /// `set_splitter_position`'s own instant (`Duration::ZERO`)
+    /// `animate_to` + immediate `tick` shape exactly (a drag is a 1:1
+    /// mouse-follow, not a smoothly-eased transition), with no sibling-
+    /// resize step: a slider doesn't resize anything else, only itself.
+    /// Panics if `id` isn't a real `NodeKind::Slider` in this `Tree`,
+    /// the same "internal bug, not a runtime condition" contract
+    /// `set_splitter_position`/`scroll_virtual_list_by` already use.
+    pub fn set_slider_position(&mut self, id: NodeId, position: f64, now: Instant) {
+        let position = position.clamp(0.0, 1.0);
+        let NodeKind::Slider(state) = &mut self.nodes[id].kind else {
+            panic!("set_slider_position: {id:?} is not a NodeKind::Slider");
+        };
+        state
+            .thumb_position
+            .animate_to(position, Duration::ZERO, MotionCurve::Linear, now);
+        state.thumb_position.tick(now, &mut Vec::new());
+    }
+
     /// Shared by `set_splitter_position` and `update_drag` (M4 Phase 3,
     /// §11.5): resolves a splitter's own flanking-siblings geometry --
     /// which two real siblings it sits between, which axis its parent's
@@ -726,10 +749,25 @@ impl Tree {
     /// not reimplemented for the drag case. A no-op if `self.dragging`
     /// isn't currently set or the flanking siblings have zero combined
     /// extent (nothing to divide a fraction of).
+    ///
+    /// M14 Phase 2 (§7.3): widened with a real `Slider` branch -- much
+    /// simpler geometry (no flanking siblings; the node's own real
+    /// absolute position/width *is* the whole track), horizontal-only
+    /// for now (the same "not built since nothing here needs it yet"
+    /// scope limit `set_virtual_list_window`'s own vertical-only
+    /// restriction already established).
     fn update_drag(&mut self, point: Point, now: Instant) {
-        let Some(splitter) = self.dragging else {
+        let Some(dragging) = self.dragging else {
             return;
         };
+        match &self.nodes[dragging].kind {
+            NodeKind::Splitter(_) => self.update_splitter_drag(dragging, point, now),
+            NodeKind::Slider(_) => self.update_slider_drag(dragging, point, now),
+            _ => {}
+        }
+    }
+
+    fn update_splitter_drag(&mut self, splitter: NodeId, point: Point, now: Instant) {
         let (left, _right, is_row, total) = self.splitter_geometry(splitter);
         if total <= 0.0 {
             return;
@@ -739,6 +777,22 @@ impl Tree {
         let start = if is_row { left_x } else { left_y };
         let fraction = ((coord - start) / total).clamp(0.0, 1.0);
         self.set_splitter_position(splitter, fraction, now);
+    }
+
+    /// M14 Phase 2 (§7.3): the slider's own real, live-follows-the-
+    /// cursor drag math -- the node's own real absolute x and current
+    /// computed width are the whole track, no flanking siblings
+    /// involved. A no-op if the slider has zero real width (nothing to
+    /// divide a fraction of, the same guard `update_splitter_drag`
+    /// already has for zero combined sibling extent).
+    fn update_slider_drag(&mut self, slider: NodeId, point: Point, now: Instant) {
+        let (x, _y) = self.absolute_position(slider);
+        let width = f64::from(self.layout(slider).size.width);
+        if width <= 0.0 {
+            return;
+        }
+        let fraction = ((point.x - x) / width).clamp(0.0, 1.0);
+        self.set_slider_position(slider, fraction, now);
     }
 
     /// §14 step 15 (§11.7): materializes/recycles a `NodeKind::
@@ -927,6 +981,21 @@ impl Tree {
             // already gets, not a second, separate mechanism.
             if let NodeKind::Checkbox(state) = &mut node.kind
                 && state.check_progress.tick(now, &mut completed)
+            {
+                any_active = true;
+            }
+            // M14 Phase 2 (§7.3): real finding while designing this --
+            // `thumb_position` is *also* exposed to `Node.animate()`
+            // (unlike `SplitterState.position`, never exposed there at
+            // all), so a real, app-triggered eased move (not a drag)
+            // needs this same central ticking, or a nonzero-duration
+            // `animate()` call would set an active animation that never
+            // progresses. The drag path itself already ticks manually
+            // (`set_slider_position`'s own `Duration::ZERO` + immediate
+            // tick), so this is a true no-op for that path -- `tick`
+            // returns `false` immediately once `self.active` is `None`.
+            if let NodeKind::Slider(state) = &mut node.kind
+                && state.thumb_position.tick(now, &mut completed)
             {
                 any_active = true;
             }
@@ -1313,13 +1382,14 @@ impl Tree {
                 let hit = self.hit_test(root, position);
                 if let Some(node) = hit {
                     self.pressed = Some((button, node));
-                    // M4 Phase 3 (§11.5): pressing a splitter with the
-                    // primary button starts a real drag -- reuses this
-                    // same hit-test result, not a second one.
+                    // M4 Phase 3 (§11.5), widened M14 Phase 2 (§7.3):
+                    // pressing a splitter or a slider with the primary
+                    // button starts a real drag -- reuses this same
+                    // hit-test result, not a second one.
                     if button == PointerButton::Primary
                         && matches!(
                             self.nodes.get(node).map(|n| &n.kind),
-                            Some(NodeKind::Splitter(_))
+                            Some(NodeKind::Splitter(_)) | Some(NodeKind::Slider(_))
                         )
                     {
                         self.dragging = Some(node);
@@ -2517,6 +2587,256 @@ mod tests {
             tree.layout(left).size.width,
             width_after_release,
             "a pointer move after release must not still be tracked as a drag"
+        );
+    }
+
+    /// M14 Phase 2 (§5, §7.3): a real `Slider` scene -- a real, definite
+    /// width/height it drags along, mirroring `splitter_scene`'s own
+    /// real-geometry shape (no `Style::default()` auto-sizing, which
+    /// gives `update_slider_drag` nothing real to divide a fraction of).
+    fn slider_scene() -> (Tree, NodeId, NodeId, Size<AvailableSpace>) {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            size: Size {
+                width: length(200.0),
+                height: length(20.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let slider = tree.insert(
+            NodeKind::Slider(SliderState::new(0.0)),
+            Style {
+                size: Size {
+                    width: length(200.0),
+                    height: length(20.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0x63, 0x50, 0xA4, 0xFF), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(root, slider);
+
+        let available = Size {
+            width: AvailableSpace::Definite(200.0),
+            height: AvailableSpace::Definite(20.0),
+        };
+        tree.compute_layout(root, available);
+        (tree, root, slider, available)
+    }
+
+    #[test]
+    fn dispatch_drag_on_a_slider_moves_thumb_position_live_as_the_pointer_moves() {
+        let (mut tree, root, slider, _available) = slider_scene();
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let now = Instant::now();
+
+        // Press anywhere on the slider (x=50, well inside [0,200)).
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(50.0, 10.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+
+        // Drag to x=100: fraction = 100/200 = 0.5.
+        tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(100.0, 10.0),
+            },
+            &config,
+            now,
+        );
+        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
+            panic!("expected a Slider");
+        };
+        assert_eq!(
+            state.thumb_position.current, 0.5,
+            "the thumb must live-follow the cursor to its first drag position"
+        );
+
+        // Keep dragging, to x=170: fraction = 170/200 = 0.85 -- proves
+        // this isn't a one-shot snap, the thumb keeps following.
+        tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(170.0, 10.0),
+            },
+            &config,
+            now,
+        );
+        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
+            panic!("expected a Slider");
+        };
+        assert_eq!(state.thumb_position.current, 0.85);
+    }
+
+    #[test]
+    fn dispatch_a_slider_drag_clamps_to_the_real_0_to_1_range() {
+        let (mut tree, root, slider, _available) = slider_scene();
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let now = Instant::now();
+
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(50.0, 10.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        // Well past the slider's own right edge.
+        tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(10_000.0, 10.0),
+            },
+            &config,
+            now,
+        );
+        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
+            panic!("expected a Slider");
+        };
+        assert_eq!(
+            state.thumb_position.current, 1.0,
+            "must clamp to 1.0, not overshoot"
+        );
+
+        // Well past the left edge, including negative.
+        tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(-500.0, 10.0),
+            },
+            &config,
+            now,
+        );
+        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
+            panic!("expected a Slider");
+        };
+        assert_eq!(
+            state.thumb_position.current, 0.0,
+            "must clamp to 0.0, not go negative"
+        );
+    }
+
+    #[test]
+    fn dispatch_release_ends_a_slider_drag_so_further_pointer_moves_dont_move_it() {
+        let (mut tree, root, slider, _available) = slider_scene();
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let now = Instant::now();
+
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(50.0, 10.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(100.0, 10.0),
+            },
+            &config,
+            now,
+        );
+        tree.dispatch(
+            root,
+            InputEvent::PointerReleased {
+                position: Point::new(100.0, 10.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
+            panic!("expected a Slider");
+        };
+        let position_after_release = state.thumb_position.current;
+
+        tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(180.0, 10.0),
+            },
+            &config,
+            now,
+        );
+        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
+            panic!("expected a Slider");
+        };
+        assert_eq!(
+            state.thumb_position.current, position_after_release,
+            "a pointer move after release must not still be tracked as a drag"
+        );
+    }
+
+    #[test]
+    fn tick_all_animates_thumb_position_toward_a_real_target() {
+        let mut tree = Tree::new();
+        let (_, style, paint) = leaf(200.0, 20.0);
+        let slider = tree.insert(NodeKind::Slider(SliderState::new(0.0)), style, paint);
+
+        let now = Instant::now();
+        let NodeKind::Slider(state) = &mut tree.get_mut(slider).unwrap().kind else {
+            panic!("expected a Slider");
+        };
+        state
+            .thumb_position
+            .animate_to(1.0, Duration::from_millis(100), MotionCurve::Linear, now);
+
+        let (any_active, _) = tree.tick_all(now + Duration::from_millis(50));
+        assert!(
+            any_active,
+            "a mid-flight thumb_position animation must report as active"
+        );
+        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
+            panic!("expected a Slider");
+        };
+        assert!(
+            state.thumb_position.current > 0.0 && state.thumb_position.current < 1.0,
+            "thumb_position must be genuinely mid-animation at the halfway point, got {}",
+            state.thumb_position.current
+        );
+
+        let (any_active, _) = tree.tick_all(now + Duration::from_millis(200));
+        assert!(
+            !any_active,
+            "the animation must be finished well past its own duration"
         );
     }
 
