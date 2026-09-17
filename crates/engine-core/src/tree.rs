@@ -1432,6 +1432,24 @@ impl Tree {
                     _ => DispatchOutcome::None,
                 };
                 self.pressed = None;
+
+                // M14 Phase 3 (§16.7): a real `Slider` drag genuinely
+                // ending is this node's own real, meaningful edit --
+                // takes priority over the ordinary same-node-press-
+                // release `Activated`/`SecondaryActivated` logic above
+                // (a slider's own real interaction is its value
+                // settling, not a click). Checked *before* `self.
+                // dragging` is cleared below.
+                let outcome = if button == PointerButton::Primary
+                    && matches!(
+                        self.dragging.map(|id| &self.nodes[id].kind),
+                        Some(NodeKind::Slider(_))
+                    ) {
+                    DispatchOutcome::Changed(self.dragging.expect("checked by matches! above"))
+                } else {
+                    outcome
+                };
+
                 // M4 Phase 3 (§11.5): a real mouse-up always ends a
                 // drag, wherever it happens -- not conditioned on still
                 // hitting the splitter (the pointer can leave a thin
@@ -2803,6 +2821,91 @@ mod tests {
             state.thumb_position.current, position_after_release,
             "a pointer move after release must not still be tracked as a drag"
         );
+    }
+
+    /// M14 Phase 3 (§16.7): the real, mechanical half of a slider's own
+    /// `Change` -- `Tree::dispatch` itself must produce `DispatchOutcome
+    /// ::Changed(slider)` on the real release that ends a real drag, the
+    /// same "engine-core only knows THAT it happened" contract
+    /// `Activated`/`HoverChanged` already have.
+    #[test]
+    fn dispatch_release_ending_a_real_slider_drag_produces_changed() {
+        let (mut tree, root, slider, _available) = slider_scene();
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let now = Instant::now();
+
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(50.0, 10.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(100.0, 10.0),
+            },
+            &config,
+            now,
+        );
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerReleased {
+                position: Point::new(100.0, 10.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Changed(slider),
+            "a real release ending a real slider drag must produce Changed(slider), not \
+             Activated or None"
+        );
+    }
+
+    /// M14 Phase 3 (§16.7): a release with *no* drag in progress (a
+    /// plain click elsewhere, or a release on a real `Slider` that was
+    /// never actually pressed to start a drag) must never produce a
+    /// spurious `Changed` -- the same "no real mechanical fact, no
+    /// outcome" contract every other `DispatchOutcome` variant already
+    /// has.
+    #[test]
+    fn dispatch_release_with_no_slider_drag_in_progress_never_produces_changed() {
+        let (mut tree, root, _slider, _available) = slider_scene();
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let now = Instant::now();
+
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerReleased {
+                position: Point::new(500.0, 500.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        assert_eq!(outcome, DispatchOutcome::None);
     }
 
     #[test]

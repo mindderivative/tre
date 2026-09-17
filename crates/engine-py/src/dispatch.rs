@@ -111,6 +111,10 @@ pub(crate) fn run_dispatch_outcome(
                 call_handler(handlers, new, EventKind::HoverEnter, py);
             }
         }
+        // M14 Phase 3 (§16.7): a real `Slider` drag ending -- reuses
+        // the same real `call_handler` every other mechanical outcome
+        // already does, registered via `Node.set_on_change`.
+        DispatchOutcome::Changed(node) => call_handler(handlers, node, EventKind::Change, py),
         // M4 Phase 7 (§11.3): `SecondaryActivated`'s real meaning is a
         // context menu, handled by `open_context_menu` below -- a
         // separate function, not a new match arm here, since it needs
@@ -182,7 +186,15 @@ pub(crate) fn run_completions(
     }
 }
 
-fn call_handler(handlers: &HandlerMap, node: NodeId, kind: EventKind, py: Python<'_>) {
+/// M14 Phase 3 (§16.7): widened to `pub(crate)` -- `Node.set_checked`
+/// reuses this directly, since a real `Checkbox` edit isn't mechanical
+/// the way a `Slider` drag is (Design Principle 6: `engine-core` never
+/// touches `checked` itself), so it has no `Tree::dispatch` outcome to
+/// resolve through `run_dispatch_outcome` at all; calling this exact
+/// same real lookup-and-invoke helper directly is the one real,
+/// consistent way both components' own `Change` firing ends up going
+/// through the identical mechanism, not two divergent ones.
+pub(crate) fn call_handler(handlers: &HandlerMap, node: NodeId, kind: EventKind, py: Python<'_>) {
     // Cloned out and the borrow dropped *before* calling the handler: a
     // handler that itself registers a new handler (a real, plausible
     // pattern -- rebinding a button's own click behavior from inside a

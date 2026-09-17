@@ -1,83 +1,120 @@
-# Log: M14 Phase 2 — Real Slider (§5, §7.3)
+# Log: M14 Phase 3 — Real `Change` EventKind + Two-Way Binding Sugar (§5, §7.3, §16.7)
 
-Corresponds to `BUILD_TRACKER.md` M14 Phase 2. `NodeKind::Slider
-(SliderState)` with real paint (track + thumb) and real drag-to-set
-interaction, mirroring `Tree::set_splitter_position`/`splitter_
-geometry`'s own established drag math.
+Corresponds to `BUILD_TRACKER.md` M14 Phase 3. Closes M14 entirely (3
+of 3 phases). A real `Change` fired two ways (mechanical for a Slider
+drag-release, direct for a Checkbox via `Node.set_checked`), plus
+§16.7's two-way binding sugar wiring it into `View`/`ViewModel`.
 
 ## Investigation before writing code
 
-ARCHITECTURE.md §5's own sketch: `SliderState { thumb_position:
-Animated<f64> }` -- no separate "value" field, `thumb_position` *is*
-the real value, the identical shape `SplitterState.position` already
-has. Confirmed by direct read: splitter dragging is entirely internal
-to `Tree::dispatch` -- `PointerPressed` on a `Splitter` sets `self.
-dragging`; every subsequent `PointerMoved` calls `update_drag`, which
-resolves real geometry and calls `set_splitter_position`; `PointerRel
-eased` clears `self.dragging` unconditionally. This is a better
-precedent to mirror than docking's own synthetic Python-level drag API
--- a slider drag is exactly the same "press it, follow the pointer,
-release ends it" shape, with no meaning-dependent decision engine-core
-can't make itself.
+Confirmed by direct read: `EventKind`/`DispatchOutcome` had no
+`Change`/`Changed` at all; a Slider drag-release produced no
+distinguishable outcome. Design Principle 6 (engine-core never knows
+"meaning") rules out one uniform firing path — a Slider drag genuinely
+completes inside `Tree::dispatch` (mechanical), but `checked` is
+app-owned data `engine-core` never touches (§5), so its own `Change`
+can only originate from `Node.set_checked` in `engine-py`. `call_
+handler` was private — needed `pub(crate)` for `set_checked` to reuse
+it directly rather than inventing a second dispatch path. Two-way
+binding is a `View`/YAML-only concept, and `NodeKindSpec` only had
+`Rect`/`Container`/`Text` — testing/demonstrating it required making
+`Checkbox`/`Slider` declarable in `view.yaml` for the first time, a
+real, additional scope expansion reasoned through explicitly.
 
 ## What happened
 
-`NodeKind::Slider(SliderState)`; `SliderState::new(value)` clamps to
-`0.0..=1.0`. New `Tree::set_slider_position` mirrors `set_splitter_
-position`'s own instant (`Duration::ZERO`) `animate_to` + immediate
-`tick` shape, with no sibling-resize step. `self.dragging: Option
-<NodeId>` broadened (documentation, not type) to "the node currently
-being pointer-dragged" -- `PointerPressed`'s own condition now also
-matches `Slider`; `update_drag` gains a real match on the dragged
-node's own kind, splitting into `update_splitter_drag` (unchanged
-logic) and new `update_slider_drag` (much simpler: the node's own real
-absolute position/width *is* the whole track, no flanking siblings).
-Horizontal-only for now, the same "not built since nothing here needs
-it yet" scope limit `set_virtual_list_window`'s own vertical-only
-restriction already established.
+`EventKind::Change` + `DispatchOutcome::Changed(NodeId)` in
+`engine-core`. `Tree::dispatch`'s `PointerReleased` arm checks for a
+real ending Slider drag *before* clearing `self.dragging`, taking
+priority over `Activated`. `Node.set_checked` now fires `Change`
+directly via `call_handler` (widened to `pub(crate)`) after writing
+`state.checked`. New `Node.get_checked`/`Node.set_on_change` (the
+missing read-back getter and handler registration, mirroring `set_on_
+click`/`set_on_hover_*`). `engine-py::dispatch::run_dispatch_outcome`
+gained a `Changed` arm.
 
-**Real finding while designing `tick_all`'s own scope:** unlike
-`SplitterState.position` (never exposed to `Node.animate()` at all),
-`thumb_position` *is* exposed (`"thumb_position"`, this phase's own
-second real kind-payload `animate()` arm) for a real, app-triggered
-eased move distinct from a drag. That path needs `Tree::tick_all` to
-actually tick it centrally, or a nonzero-duration `animate()` call
-would set an active animation that never progresses -- caught while
-writing the design, not after. `tick_all` gains a `Slider` arm ticking
-`thumb_position`, alongside the existing `Checkbox` one; the drag path
-itself already ticks manually, so this is a true no-op for that path.
+`WidgetSpec` gained `checked: bool`/`value: f64`/`two_way:
+Option<String>` (all `#[serde(default)]`, additive); `NodeKindSpec`
+gained `Checkbox`/`Slider`; `build.rs::node_kind_and_paint` gained
+matching arms via the existing `required_background` helper —
+`Checkbox`/`Slider` are now real, declarable `view.yaml` kinds, not
+just imperative-API-only.
 
-`paint_node` gains a `Slider` arm: a real track (thin, fixed-gray bar,
-vertically centered, spanning the node's own width) plus a real thumb
-(filled circle at `thumb_position * w`, the node's own real
-`background` color). `Node.animate`/`.get` gain `"thumb_position"`,
-the second real kind-payload dispatch arm. New `Window.add_slider
-(value=0.0, ...)` mirrors `add_checkbox`'s own shape. No `set_value`-
-style plain setter was added -- `thumb_position` *is* the value,
-already reachable via `animate`/`get`, and the real drag path sets it
-directly inside `engine-core`, never through Python.
+`View._attach`: `on_change` handler-name wiring; `apply_binding_value`
+gained a `Value::Bool` branch calling `set_checked` (its stale "only
+numeric" doc comment corrected — `animate()` already dispatched every
+real numeric property with zero change needed); a new `TwoWayCallback`
+pyclass registered as the widget's own `Change` handler, reading the
+node's current value back (`get_checked()`/`get(property)`) and
+writing it into the bound `Signal`.
 
-New `engine-core` tests (mirroring the existing splitter-drag tests
-exactly, via a new `slider_scene()` helper): a real dispatched drag
-moves `thumb_position` live as the pointer moves, in two steps, not a
-one-shot snap; clamps to `0.0..=1.0` past either edge; release ends
-the drag so further moves don't affect it; `tick_all` genuinely
-animates `thumb_position` toward a real target. Existing splitter-drag
-tests kept passing completely unmodified -- the real regression check
-that broadening `self.dragging`/`update_drag` didn't change splitter
-behavior at all. New `engine-render/tests/slider_paint.rs`: a thumb at
-`0.0` paints at the real left edge (and nowhere near the right, off
-the track's own vertical band too); a thumb at `1.0` paints at the
-real right edge, the mirror case.
+**Real finding #1, caught only once the round-trip was actually
+tested, not merely unit-tested in isolation:** a first draft required
+the two-way binding's own expression to be a *bare* `Expression::Ident`
+(matching ARCHITECTURE.md §16.7's own inline illustration, `{{
+username }}` with no `.get()`). But every binding's forward direction
+resolves through `PyViewModelResolver::ident`, which reads the raw
+Python attribute unmodified — for a `Signal`, that's the `Signal`
+object itself, not its value, so it always resolved to an opaque
+`Value::Handle` and `apply_binding_value` rejected it *before* the
+two-way registration code even ran. Every real binding elsewhere in
+this codebase already requires `.get()` to extract a primitive (see
+`test_view_binding.py`) — the fix matches that established convention:
+the two-way check now requires `Expression::Call(Expression::Ident
+(signal_name), "get")`, which both resolves to the real primitive
+forward (identical to every other binding) and still names the exact
+`Signal` to write back to.
 
-New `tests/test_slider.py` (6 tests) + new `examples/slider.py`: a
-real, live slider seeded at a non-zero value, moved via a real
-programmatic `animate("thumb_position", ...)` call.
+**Real finding #2, caught only by actually running the new example
+end to end, not by any unit test:** with finding #1 fixed, `checkbox.
+set_checked(True)` fired `Change` → `TwoWayCallback` wrote `signal.
+set(True)` → `Signal.set`'s own unconditional notify re-triggered the
+widget's *own forward binding* → which called `set_checked(True)`
+again → infinite recursion. Each level was individually caught and
+printed by `call_handler`'s own pre-existing "an uncaught exception is
+non-fatal" policy (§9), which is exactly why `pytest` never caught
+it — the assertion the test cared about (`vm.agreed.get() is True`)
+was already satisfied by the outermost call before the recursion
+storm even started unwinding. The correct, general fix (not a
+two-way-specific special case): `Signal.set`/`Signal.update` now skip
+notification entirely when the new value equals the current one —
+standard reactive-signal change-detection, and the natural place the
+recursion above actually terminates (the *second* `set(True)` in the
+loop is a no-op write to a `Signal` already holding `True`). Verified
+in isolation with two new pure-Python `Signal` tests (no `View`/`Tree`
+involved), a targeted `test_two_way_round_trip_does_not_recurse_
+infinitely` asserting stderr stays completely clean (not just "the
+final value is right"), and confirmed against every existing `.set()`/
+`.update()` caller in the repo — none relied on always-notify
+semantics.
 
-Full `cargo test --workspace --release` (`engine-core` 92, up from 88,
-plus 2 new `engine-render` pixel tests)/`cargo clippy --workspace
---all-targets -- -D warnings`/`cargo fmt --check` all clean -- every
-prior splitter test passed unmodified. `maturin develop --release` +
-full `pytest tests/` (119 passed, up from 113, 1 skipped) and all
-twenty-one examples (twenty existing + new `slider.py`) confirmed
-clean.
+New `engine-core` tests (`dispatch_release_ending_a_real_slider_drag_
+produces_changed`, `dispatch_release_with_no_slider_drag_in_progress_
+never_produces_changed`) proving the mechanical Slider path. New
+`engine-spec` tests: `WidgetSpec`/`NodeKindSpec` parse real `Checkbox`/
+`Slider` widgets with `checked`/`value`/`two_way` (plus their real
+defaults when omitted); `load_view` builds real `NodeKind::Checkbox`/
+`Slider` nodes correctly seeded from the spec; a colorless `Checkbox`
+fails the same `MissingField` way `Rect`/`Text` already do. New
+`tests/test_change_event.py` (5 tests): `get_checked`/`set_on_change`
+FFI wiring, a real registered handler firing on `set_checked`, the
+same "uncaught exception is caught and logged" policy already proven
+for click/hover handlers. New `tests/test_two_way_binding.py` (5
+tests): the real round trip both directions, the recursion regression
+above, and both load-time errors (`two_way` on a computed expression;
+an unmatched `two_way` staying a harmless no-op). New `tests/test_
+view_binding.py` additions (2 tests): `Signal` change-detection in
+isolation. New `examples/two_way_binding.py` + `two_way_binding.yaml`:
+a real `Checkbox`/`Slider` view, both two-way bound, run with no live
+window (matching `View`'s own "no render-loop concept" scope) — proves
+the initial one-way apply from each `Signal`'s starting value and a
+real write-back round trip after a real `Change`.
+
+Full `cargo test --workspace --release` (`engine-core` 94, up from 92;
+`engine-spec` 33, up from 29)/`cargo clippy --workspace --all-targets
+-- -D warnings`/`cargo fmt --check` all clean — every prior test
+(splitter, checkbox, slider, view-binding, cascade) passed unmodified.
+`maturin develop --release` + full `pytest tests/` (131 passed, up
+from 119, 1 skipped) and all twenty-two examples (twenty-one existing
++ new `two_way_binding.py`) confirmed clean, including a second full
+run after the `Signal` fix.

@@ -1,0 +1,14 @@
+id: root
+kind: Container
+style: {flex_direction: Column, width: 240, height: 80, gap: 8, padding: 8}
+children:
+  - id: agree
+    kind: Checkbox
+    style: {width: 24, height: 24, background: "#6750A4"}
+    bindings: {checked: "{{ agreed.get() }}"}
+    two_way: checked
+  - id: volume
+    kind: Slider
+    style: {width: 200, height: 32, background: "#03DAC6"}
+    bindings: {thumb_position: "{{ level.get() }}"}
+    two_way: thumb_position

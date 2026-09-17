@@ -63,6 +63,19 @@ pub struct WidgetSpec {
     /// when `kind: Text`; ignored for every other kind.
     #[serde(default)]
     pub text: Option<TextSpec>,
+    /// M14 Phase 3 (§5, §7.3): this widget's own initial `checked` --
+    /// only meaningful for `kind: Checkbox`, ignored otherwise, the
+    /// same "required/meaningful for one kind, ignored for others"
+    /// shape `text` already has. Overwritten immediately by a real
+    /// `bindings: {checked: ...}` one-way resolution if one exists, the
+    /// same way a static `style.opacity` is overwritten by a bound one.
+    #[serde(default)]
+    pub checked: bool,
+    /// M14 Phase 3 (§5, §7.3): this widget's own initial `thumb_
+    /// position` -- only meaningful for `kind: Slider`, same shape as
+    /// `checked` above.
+    #[serde(default)]
+    pub value: f64,
     /// `property name -> "{{ expression }}"` (§16.2). Raw strings --
     /// see this module's own doc comment for why parsing is deferred to
     /// whoever actually attaches a `ViewModel`.
@@ -72,14 +85,34 @@ pub struct WidgetSpec {
     /// "bump"}`.
     #[serde(default)]
     pub handlers: HashMap<String, String>,
+    /// M14 Phase 3 (§16.7): names which of this widget's own `bindings`
+    /// keys (if any) is also a real two-way binding -- writes back to
+    /// its bound `Signal` on a real `Change`. `None` (the default)
+    /// means every binding here stays one-way, matching every binding
+    /// before this phase. **A deliberate, real deviation** from
+    /// ARCHITECTURE.md §16.7's own inline illustration (`bindings:
+    /// {text: "{{ username }}", two_way: true}`, a `two_way` key mixed
+    /// into the same map as per-property expressions) -- that shape
+    /// can't cleanly deserialize into this struct's own flat `bindings:
+    /// HashMap<String, String>` without either a mixed-type value enum
+    /// or losing `deny_unknown_fields`' own "fail loudly on a typo"
+    /// guarantee across the whole map. A separate, explicitly-named
+    /// sibling field is simpler, equally expressive for this
+    /// framework's own real bindable components (one natural edit
+    /// property per widget -- `Slider.value`/`Checkbox.checked`, not
+    /// several at once), and fully backward-compatible with every
+    /// existing `view.yaml`.
+    #[serde(default)]
+    pub two_way: Option<String>,
     #[serde(default)]
     pub children: Vec<WidgetSpec>,
 }
 
-/// Maps to `engine_core::NodeKind` (§5). Only the three variants
-/// `engine-core` currently has -- `Rect`/`Container`/`Text` -- match
-/// step 3/4's own scope exactly; `Image`/`Slider`/`Checkbox`/`Canvas`
-/// land here whenever `engine-core::NodeKind` itself grows them.
+/// Maps to `engine_core::NodeKind` (§5). `Rect`/`Container`/`Text`
+/// matched step 3/4's own original scope; `Checkbox`/`Slider` (M14
+/// Phase 3) are real now -- this comment used to name them as landing
+/// "whenever `engine_core::NodeKind` itself grows them," which it has.
+/// `Image`/`Canvas` remain real, un-scoped future candidates.
 /// Deliberately unit-only -- see the module doc comment for why `Text`'s
 /// own fields live in a sibling `WidgetSpec::text` instead of here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -87,6 +120,8 @@ pub enum NodeKindSpec {
     Rect,
     Container,
     Text,
+    Checkbox,
+    Slider,
 }
 
 /// Mirrors `engine_core::TextState` exactly (§14 step 4) -- no new
@@ -200,6 +235,53 @@ children:
             text.font_weight, 400.0,
             "unset font_weight must default to 400 (normal)"
         );
+    }
+
+    #[test]
+    fn parses_checkbox_and_slider_widgets_with_checked_value_and_two_way() {
+        let yaml = r##"
+id: root
+kind: Container
+children:
+  - id: agree
+    kind: Checkbox
+    checked: true
+    bindings: {checked: "{{ agreed }}"}
+    two_way: checked
+    style: {width: 24, height: 24, background: "#6750A4"}
+  - id: volume
+    kind: Slider
+    value: 0.5
+    style: {width: 180, height: 32, background: "#03DAC6"}
+"##;
+        let spec = parse_view(yaml).expect("Checkbox/Slider widgets must parse");
+        assert_eq!(spec.children.len(), 2);
+
+        let checkbox = &spec.children[0];
+        assert!(matches!(checkbox.kind, NodeKindSpec::Checkbox));
+        assert!(checkbox.checked);
+        assert_eq!(checkbox.two_way.as_deref(), Some("checked"));
+
+        let slider = &spec.children[1];
+        assert!(matches!(slider.kind, NodeKindSpec::Slider));
+        assert_eq!(slider.value, 0.5);
+        assert_eq!(
+            slider.two_way, None,
+            "two_way is per-widget and opt-in -- a widget that never names it stays one-way"
+        );
+    }
+
+    #[test]
+    fn checked_and_value_and_two_way_all_default_when_omitted() {
+        let yaml = r##"
+id: root
+kind: Checkbox
+style: {width: 24, height: 24, background: "#6750A4"}
+"##;
+        let spec = parse_view(yaml).expect("a Checkbox with no checked:/two_way: must still parse");
+        assert!(!spec.checked, "checked must default to false");
+        assert_eq!(spec.value, 0.0, "value must default to 0.0");
+        assert_eq!(spec.two_way, None, "two_way must default to None");
     }
 
     #[test]

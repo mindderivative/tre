@@ -1,111 +1,90 @@
-# Plan: M14 Phase 2 — Real Slider (§5, §7.3)
+# Plan: M14 Phase 3 — Real `Change` EventKind + Two-Way Binding Sugar (§5, §7.3, §16.7)
 
-Corresponds to `BUILD_TRACKER.md` M14 Phase 2's own scoping:
-`NodeKind::Slider(SliderState)` with real paint (track + thumb) and
-real drag-to-set interaction, mirroring `Tree::set_splitter_position`/
-`splitter_geometry`'s own established drag math.
+Corresponds to `BUILD_TRACKER.md` M14 Phase 3's own scoping: a real
+`EventKind::Change`, fired two different ways (mechanically for a
+Slider drag-release inside `Tree::dispatch`; directly for a Checkbox
+via `Node.set_checked`), plus §16.7's two-way binding sugar wiring it
+into `View`/`ViewModel` so a bound `Signal` writes back automatically.
+Closes M14 entirely (3 of 3 phases).
 
 ## Investigation before writing code
 
-- ARCHITECTURE.md §5's own sketch: `SliderState { thumb_position:
-  Animated<f64> }` -- "0.0..=1.0 along the track," the identical shape
-  `SplitterState.position` already has. No separate "value" field is
-  shown or needed; `thumb_position` *is* the real value, the same way
-  `SplitterState.position` already is.
-- **Splitter dragging is entirely internal to `Tree::dispatch`,
-  confirmed by direct read** — `PointerPressed` on a `Splitter` sets
-  `self.dragging = Some(node)`; every subsequent `PointerMoved` while
-  `self.dragging.is_some()` calls `update_drag`, which resolves real
-  geometry and calls `set_splitter_position`; `PointerReleased` clears
-  `self.dragging` unconditionally on any primary release. This is a
-  *better* precedent to mirror than docking's own synthetic Python-
-  level drag API — a slider drag is exactly the same "press it, follow
-  the pointer, release ends it" shape a splitter already has, with no
-  meaning-dependent decision engine-core can't make itself (unlike
-  docking's "which zone" question).
-- `self.dragging: Option<NodeId>` (`tree.rs:87`) is currently
-  documented as Splitter-only, but its own real *type* already fits
-  either kind — broadening its documented meaning (not its type) to
-  "the node currently being pointer-dragged" is the natural, minimal
-  extension, not a new field.
-- `update_drag` (`tree.rs:729-742`) calls `splitter_geometry` directly
-  and has no kind-dispatch today, confirmed by direct read — needs a
-  real match on `self.dragging`'s own node kind to branch between
-  splitter geometry (two flanking siblings) and slider geometry (the
-  node's own width alone, no siblings involved).
-- Scoped horizontal-only, mirroring `set_virtual_list_window`'s own
-  stated "vertical-list only... not built since nothing here needs it
-  yet" precedent for an analogous axis restriction.
+- `EventKind`/`DispatchOutcome` (`engine-core/src/input.rs`) currently
+  have `Click`/`HoverEnter`/`HoverExit` and `Activated`/
+  `SecondaryActivated`/`HoverChanged` respectively — no `Change`/
+  `Changed` at all, confirmed by direct read. A Slider drag-release
+  today produces no distinguishable outcome (falls through to
+  `Activated`, the same as any other release) — the real, missing
+  signal this phase adds.
+- Design Principle 6 (engine-core never knows "meaning," only
+  mechanics) rules out a single uniform `Change`-firing path: a Slider
+  drag genuinely completes *inside* `Tree::dispatch` (mechanical), but
+  a Checkbox's `checked` is app-owned data `engine-core` never touches
+  at all (§5) — its own `Change` can only originate from wherever
+  `checked` is actually written, i.e. `Node.set_checked` in
+  `engine-py`, never through `Tree::dispatch`.
+- `call_handler` (`engine-py/src/dispatch.rs`) is currently a private
+  `fn`, confirmed by direct read — `Node.set_checked` needs to reuse it
+  directly (not invent a second dispatch path) once it fires `Change`,
+  so it needs `pub(crate)`.
+- `Node.get`/`Node.animate` (`engine-py/src/node.rs`) already do the
+  real "two-level dispatch" ARCHITECTURE.md §8 describes for
+  `check_progress`/`thumb_position` (M14 Phases 1/2) — no changes
+  needed there for this phase; `checked` itself has no getter yet
+  (`get_checked` is new, needed for two-way write-back to read the
+  node's own current value back).
+- ARCHITECTURE.md §16.7's own inline illustration mixes a `two_way`
+  boolean into the same `bindings:` map as per-property expressions
+  (`bindings: {text: "{{ username }}", two_way: true}`) — doesn't
+  cleanly deserialize into `WidgetSpec.bindings: HashMap<String,
+  String>` without either a mixed-type value enum or losing
+  `deny_unknown_fields`'s own guarantee across the whole map. A
+  separate `WidgetSpec.two_way: Option<String>` field, naming which
+  property is two-way, is simpler and fully backward-compatible — a
+  deliberate, documented deviation.
+- Two-way binding is a `View`/YAML-only concept (`Window` has no
+  `_attach`/binding mechanism at all) — testing/demonstrating it needs
+  `Checkbox`/`Slider` declarable in `view.yaml`, which they aren't yet
+  (`NodeKindSpec` only has `Rect`/`Container`/`Text`, confirmed by
+  direct read) — real, additional scope this phase must also cover.
 
 ## Design
 
-`crates/engine-core/src/node.rs`: `NodeKind` gains `Slider
-(SliderState)`; `SliderState { thumb_position: Animated<f64> }` with a
-`new(value: f64) -> Self` constructor (clamped to `0.0..=1.0`).
-
-`crates/engine-core/src/tree.rs`:
-- New `Tree::set_slider_position(&mut self, id: NodeId, position: f64,
-  now: Instant)` — mirrors `set_splitter_position`'s own instant
-  (`Duration::ZERO`) `animate_to` + immediate `tick` shape exactly, but
-  with no sibling-resize step (a slider doesn't resize anything else).
-- `PointerPressed`'s own real arm: the `matches!(..., Some(NodeKind::
-  Splitter(_)))` check widens to also match `Some(NodeKind::Slider
-  (_))`, setting `self.dragging` the same way.
-- `update_drag` gains a real match on `self.nodes[dragging].kind`:
-  the existing `Splitter` branch (unchanged logic, just moved under
-  the match), plus a new `Slider` branch computing `fraction = ((point
-  .x - absolute_x) / width).clamp(0.0, 1.0)` from the node's own real
-  absolute position/width (no flanking siblings), then calling `set_
-  slider_position`.
-- `tick_all`/`build_access_update` do **not** need a `Slider` arm:
-  `thumb_position` is driven directly during a drag (`Duration::ZERO`
-  + immediate tick, the same as `SplitterState.position`), never eased
-  toward a target the central tick would need to advance; `checked`-
-  style automatic accessibility derivation doesn't apply to a slider's
-  own continuous value the same way (no MD3-standard boolean state to
-  derive) — confirmed by re-reading ARCHITECTURE.md §7.3/§10, neither
-  names an automatic accessibility flag for `Slider`.
-
-`crates/engine-render/src/lib.rs`: `paint_node` gains a `NodeKind::
-Slider(state)` arm — a real track (a thin, fixed-gray horizontal bar
-spanning the node's own width, vertically centered) plus a real thumb
-(a filled circle at `thumb_position.current * w`, using the node's own
-real `background` color — the same universal field every other
-`NodeKind`'s primary fill already uses).
-
-`crates/engine-py/src/window.rs`: new `Window.add_slider(background=
-.., width=.., height=.., value=0.0, x=None, y=None) -> Node`, mirroring
-`add_checkbox`'s own real shape.
-
-`crates/engine-py/src/node.rs`: `Node.animate("thumb_position", ...)`/
-`Node.get("thumb_position")` reach `SliderState.thumb_position` when
-`node.kind` is `Slider` — the second real arm of the two-level
-dispatch M14 Phase 1 started. No `set_value`-style plain setter is
-needed the way `Checkbox.set_checked` was: `thumb_position` *is* the
-real value (continuous, not boolean), already reachable via `animate`/
-`get`, and the real drag path sets it directly inside `engine-core`
-(`set_slider_position`), not through Python at all.
+- `EventKind::Change` (new variant) + `DispatchOutcome::Changed
+  (NodeId)` (new variant), both in `engine-core`.
+- `Tree::dispatch`'s `PointerReleased` arm: check for `Changed` (a real
+  Slider drag ending) *before* clearing `self.dragging`, taking
+  priority over `Activated`/`SecondaryActivated`.
+- `Node.set_checked` fires `Change` directly via `call_handler` after
+  writing `state.checked`, once `call_handler` is `pub(crate)`.
+- `Node.get_checked` (new): the missing read-back getter.
+- `Node.set_on_change` (new): registers into `handlers[(id,
+  EventKind::Change)]`, mirroring `set_on_click`/`set_on_hover_*`.
+- `engine-py/src/dispatch.rs::run_dispatch_outcome` gains a `Changed`
+  arm calling `call_handler`.
+- `WidgetSpec.checked: bool`/`value: f64`/`two_way: Option<String>`
+  (all `#[serde(default)]`, additive) + `NodeKindSpec::Checkbox`/
+  `Slider` (unit variants) in `engine-spec`; `build.rs::
+  node_kind_and_paint` gains matching arms using the existing
+  `required_background` helper.
+- `View._attach`: `on_change` handler-name mapping; `apply_binding_
+  value` gains a `Value::Bool` branch calling `set_checked` (its own
+  stale "only numeric" doc comment corrected); a new `TwoWayCallback`
+  pyclass registered as the widget's own `Change` handler, reading the
+  node's current value back (`get_checked()` or `get(property)`) and
+  calling `signal.set(value)`. Restricted to a plain Signal `.get()`
+  call (`Expression::Call(Expression::Ident(name), "get")`) — matches
+  every other binding's own established `.get()` convention, not a
+  bare identifier (ARCHITECTURE.md §16.7's own illustration shows a
+  bare one, but every real binding in this codebase already needs
+  `.get()` to extract a primitive; a bare identifier resolves to the
+  raw `Signal` object itself through `PyViewModelResolver`, an opaque
+  `Value::Handle`, not anything `apply_binding_value` can apply
+  forward — confirmed only once actual testing below caught it).
 
 ## Verification plan
 
-- `cargo test --workspace --release`/clippy/fmt. New `engine-core`
-  tests: a real dispatched drag (press inside the slider, `PointerMoved`
-  to a real point, `PointerReleased`) moves `thumb_position` to the
-  real, correct fraction of the slider's own width; releasing ends the
-  drag (a further `PointerMoved` no longer moves it); `set_slider_
-  position` clamps to `0.0..=1.0` the same way `set_splitter_position`
-  already does for its own position. Existing splitter-drag tests must
-  keep passing completely unmodified — the real regression check that
-  broadening `self.dragging`/`update_drag` didn't change splitter
-  behavior at all.
-- New `engine-render` pixel test (mirroring `checkbox_paint.rs`'s own
-  split): a real thumb paints at its own real, correct position for two
-  different `thumb_position` values, not a fixed spot.
-- `maturin develop --release` + `pytest tests/`. New `test_slider.py`:
-  `add_slider` returns a real `Node`; a real dispatched drag (via
-  `Window`'s own existing `click`-style synthetic dispatch primitives,
-  extended if needed) moves `thumb_position` to a real, distinct value;
-  `"thumb_position"` is unknown on a non-`Slider` node, matching `"check
-  _progress"`'s own established error contract.
-- Run all examples; a new `examples/slider.py` demonstrating a real,
-  live, drag-to-set slider.
+Same discipline as every prior phase: `cargo test --workspace
+--release`/`clippy -D warnings`/`fmt --check`, `maturin develop
+--release`, full `pytest tests/`, every example script run, then
+`LOG.md`/`BUILD_TRACKER.md`/tracker artifact/commit/memory.

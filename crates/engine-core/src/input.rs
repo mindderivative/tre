@@ -124,6 +124,15 @@ pub enum EventKind {
     Click,
     HoverEnter,
     HoverExit,
+    /// M14 Phase 3 (§16.7): a real, genuine edit -- a `Slider` drag
+    /// ending (mechanical, detected by `Tree::dispatch` itself, the
+    /// same way `HoverChanged` is), or `Node.set_checked` being called
+    /// on a `Checkbox` (not mechanical in the same sense -- `engine-
+    /// core` never touches `checked` itself, Design Principle 6 -- so
+    /// that firing happens directly in `engine-py`, not through `Tree::
+    /// dispatch` at all; see `Node.set_checked`'s own doc comment).
+    /// §16.7's own real "two-way binding" sugar is built on this.
+    Change,
 }
 
 /// The one thing `Tree::dispatch` can't resolve by itself (§2 Design
@@ -158,6 +167,13 @@ pub enum DispatchOutcome {
         old: Option<crate::NodeId>,
         new: Option<crate::NodeId>,
     },
+    /// M14 Phase 3 (§16.7): a real `Slider` drag genuinely ended (a
+    /// primary-button `PointerReleased` while `Tree`'s own internal
+    /// drag-tracking held this `NodeId`) -- the mechanical half of a
+    /// real edit `Tree::dispatch` itself can detect, the same way
+    /// `HoverChanged` already is; what a real `Change` means (call a
+    /// registered handler, or nothing) is still `AppHandler`'s job.
+    Changed(crate::NodeId),
 }
 
 /// §4's own generic dependency-inversion trait: `engine-platform`'s

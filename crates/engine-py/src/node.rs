@@ -30,7 +30,7 @@ use peniko::Color;
 use peniko::kurbo::{Affine, BezPath};
 use pyo3::prelude::*;
 
-use crate::dispatch::{HandlerMap, SharedCompletions};
+use crate::dispatch::{HandlerMap, SharedCompletions, call_handler};
 use crate::error::EngineError;
 use crate::window::SharedTheme;
 
@@ -215,7 +215,7 @@ impl Node {
     /// needed to be observed from Python rather than only ever written.
     /// `background` isn't included: it isn't a single `f64`, and
     /// nothing yet needs to read it back.
-    fn get(&self, property: &str) -> PyResult<f64> {
+    pub(crate) fn get(&self, property: &str) -> PyResult<f64> {
         let tree = self.tree.borrow();
         let node = tree.get(self.id).expect(
             "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
@@ -290,6 +290,20 @@ impl Node {
         self.handlers
             .borrow_mut()
             .insert((self.id, EventKind::HoverExit), callback);
+    }
+
+    /// M14 Phase 3 (§16.7): registers `callback` to run on this node's
+    /// own real `Change` -- a `Slider` drag genuinely ending (fired
+    /// through the ordinary `Tree::dispatch` -> `DispatchOutcome::
+    /// Changed` -> `run_dispatch_outcome` path, the same as `Click`/
+    /// `HoverEnter`/`HoverExit`), or `Node.set_checked` being called on
+    /// a `Checkbox` (fired directly there, not through `Tree::dispatch`
+    /// at all -- see `set_checked`'s own doc comment for why). The real
+    /// mechanism §16.7's own two-way binding sugar is built on.
+    pub(crate) fn set_on_change(&self, callback: Py<PyAny>) {
+        self.handlers
+            .borrow_mut()
+            .insert((self.id, EventKind::Change), callback);
     }
 
     /// M4 Phase 7 (§11.3): registers `content` as this node's real
@@ -414,7 +428,14 @@ impl Node {
     /// keeps the real accessibility tree correct for free -- `Tree::
     /// build_access_update` reads this same field directly, so there's
     /// nothing else to update.
-    fn set_checked(&self, checked: bool) -> PyResult<()> {
+    ///
+    /// M14 Phase 3 (§16.7): also fires a real `Change` (`Node.set_on_
+    /// change`'s own registered handler, if any) -- not mechanical the
+    /// way a `Slider` drag ending is (`engine-core` never touches
+    /// `checked` itself), so it fires directly here rather than through
+    /// a `Tree::dispatch` outcome; this is the *only* place `checked`
+    /// ever genuinely changes, so it's the one real place to fire from.
+    pub(crate) fn set_checked(&self, checked: bool, py: Python<'_>) -> PyResult<()> {
         let mut tree = self.tree.borrow_mut();
         let node = tree.get_mut(self.id).expect(
             "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
@@ -423,10 +444,34 @@ impl Node {
         match &mut node.kind {
             NodeKind::Checkbox(state) => {
                 state.checked = checked;
+                drop(tree);
+                call_handler(&self.handlers, self.id, EventKind::Change, py);
                 Ok(())
             }
             _ => Err(EngineError::UnknownProperty {
                 kind,
+                property: "checked".to_string(),
+            }
+            .into()),
+        }
+    }
+
+    /// M14 Phase 3 (§16.7): the missing read-back half of `set_checked`
+    /// -- real two-way binding sugar needs to read a `Checkbox`'s own
+    /// current `checked` to write it back into a bound `Signal` on a
+    /// real `Change`; `check_progress` (the animated visual half) was
+    /// already readable via `Node.get`, but `checked` itself (a plain
+    /// `bool`, not an `f64` `Animated<T>` field `get`'s own real
+    /// contract returns) needed its own dedicated getter.
+    pub(crate) fn get_checked(&self) -> PyResult<bool> {
+        let tree = self.tree.borrow();
+        let node = tree.get(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        match &node.kind {
+            NodeKind::Checkbox(state) => Ok(state.checked),
+            _ => Err(EngineError::UnknownProperty {
+                kind: kind_name(&node.kind),
                 property: "checked".to_string(),
             }
             .into()),

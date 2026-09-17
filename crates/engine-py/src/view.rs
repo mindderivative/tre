@@ -106,34 +106,54 @@ fn end_recording() -> Vec<Py<PyAny>> {
 /// what it says regardless of whether a frame loop happens to be
 /// running, rather than only working correctly by accident once one
 /// eventually is.
+///
+/// **M14 Phase 3 (§5, §16.7):** this doc comment used to say "only
+/// numeric (opacity/corner_radius) bindings are supported today" --
+/// stale even before this phase, since `animate()` itself already
+/// dispatches any real numeric property it recognizes (`check_
+/// progress`/`thumb_position` included, once M14 Phases 1/2 added
+/// them, with zero change needed here). `checked` is the one genuinely
+/// new case: a real `bool`, not a numeric `Animated<T>` field `animate
+/// ()`'s own contract can ever reach, so it goes through `Node.set_
+/// checked` directly instead.
 fn apply_binding_value(
     tree: &Rc<RefCell<Tree>>,
+    handlers: &HandlerMap,
     node_id: NodeId,
     property: &str,
     py: Python<'_>,
     value: &engine_spec::Value,
 ) -> PyResult<()> {
+    // Never exposed to Python beyond this function's own real calls
+    // below -- an empty, throwaway `context_menus`/`theme`/`completions`
+    // is fine here; a real `View`-created `Node` (returned from `View::
+    // node`, below) shares `View`'s own persistent ones instead.
+    // `handlers` is the one real exception -- `set_checked` fires a
+    // real `Change` through it (M14 Phase 3), so this reuses `View`'s
+    // own persistent map, not a throwaway one, or a registered `on_
+    // change` handler would never see a binding-applied `checked` value.
+    let temp_node = Node {
+        id: node_id,
+        tree: tree.clone(),
+        handlers: handlers.clone(),
+        context_menus: Rc::new(RefCell::new(HashMap::new())),
+        theme: Rc::new(RefCell::new(ThemeState::default())),
+        completions: Rc::new(RefCell::new(CompletionRegistry::new())),
+    };
+
+    if let engine_spec::Value::Bool(checked) = value {
+        return temp_node.set_checked(*checked, py);
+    }
+
     let bound: Bound<'_, PyAny> = match value {
         engine_spec::Value::Int(i) => (*i as f64).into_bound_py_any(py)?,
         engine_spec::Value::Float(f) => (*f).into_bound_py_any(py)?,
         other => {
             return Err(PyValueError::new_err(format!(
-                "binding for property {property:?} resolved to {other:?} -- only numeric \
-                 (opacity/corner_radius) bindings are supported today"
+                "binding for property {property:?} resolved to {other:?} -- only numeric and \
+                 boolean (checked) bindings are supported today"
             )));
         }
-    };
-    // Never exposed to Python -- only `animate()` is called on it below
-    // -- so an empty, throwaway `handlers` map is fine here; a
-    // real `View`-created `Node` (returned from `View::node`, below)
-    // shares `View`'s own persistent one instead.
-    let temp_node = Node {
-        id: node_id,
-        tree: tree.clone(),
-        handlers: Rc::new(RefCell::new(HashMap::new())),
-        context_menus: Rc::new(RefCell::new(HashMap::new())),
-        theme: Rc::new(RefCell::new(ThemeState::default())),
-        completions: Rc::new(RefCell::new(CompletionRegistry::new())),
     };
     temp_node.animate(property, bound, 0, None)?;
     tree.borrow_mut().tick_all(std::time::Instant::now());
@@ -158,12 +178,25 @@ fn collect_handlers(spec: &WidgetSpec, out: &mut Vec<(String, String, String)>) 
     }
 }
 
+/// M14 Phase 3 (§16.7): mirrors `collect_bindings`/`collect_handlers`'
+/// own shape exactly -- `(widget_id, property)` for every widget that
+/// named a real `two_way:` property.
+fn collect_two_way(spec: &WidgetSpec, out: &mut Vec<(String, String)>) {
+    if let Some(property) = &spec.two_way {
+        out.push((spec.id.clone(), property.clone()));
+    }
+    for child in &spec.children {
+        collect_two_way(child, out);
+    }
+}
+
 /// A binding's own re-evaluation trigger, subscribed onto every
 /// `Signal` its expression read during its initial evaluation.
 /// `Signal._notify` calls this like any other zero-arg Python callable.
 #[pyclass(unsendable)]
 struct BindingCallback {
     tree: Rc<RefCell<Tree>>,
+    handlers: HandlerMap,
     node_id: NodeId,
     property: String,
     expr: Expression,
@@ -176,7 +209,51 @@ impl BindingCallback {
         let resolver = PyViewModelResolver::new(self.viewmodel.clone_ref(py));
         let value =
             evaluate(&self.expr, &resolver).map_err(|e| PyValueError::new_err(e.to_string()))?;
-        apply_binding_value(&self.tree, self.node_id, &self.property, py, &value)
+        apply_binding_value(
+            &self.tree,
+            &self.handlers,
+            self.node_id,
+            &self.property,
+            py,
+            &value,
+        )
+    }
+}
+
+/// M14 Phase 3 (§16.7): a two-way binding's own real write-back --
+/// registered as this widget's own `EventKind::Change` handler
+/// (`Node.set_on_change`'s own real storage, reused directly rather
+/// than inventing a second callback-registration path). Reads the
+/// node's own current, real value for `property` (the exact reverse of
+/// `apply_binding_value`'s own forward direction: `checked` via `Node.
+/// get_checked`, everything else via `Node.get`) and writes it into
+/// the bound `Signal` via its own real, public `.set(value)`.
+#[pyclass(unsendable)]
+struct TwoWayCallback {
+    tree: Rc<RefCell<Tree>>,
+    node_id: NodeId,
+    property: String,
+    signal: Py<PyAny>,
+}
+
+#[pymethods]
+impl TwoWayCallback {
+    fn __call__(&self, py: Python<'_>) -> PyResult<()> {
+        let temp_node = Node {
+            id: self.node_id,
+            tree: self.tree.clone(),
+            handlers: Rc::new(RefCell::new(HashMap::new())),
+            context_menus: Rc::new(RefCell::new(HashMap::new())),
+            theme: Rc::new(RefCell::new(ThemeState::default())),
+            completions: Rc::new(RefCell::new(CompletionRegistry::new())),
+        };
+        let value: Bound<'_, PyAny> = if self.property == "checked" {
+            temp_node.get_checked()?.into_bound_py_any(py)?
+        } else {
+            temp_node.get(&self.property)?.into_bound_py_any(py)?
+        };
+        self.signal.bind(py).call_method1("set", (value,))?;
+        Ok(())
     }
 }
 
@@ -186,6 +263,11 @@ pub struct View {
     reconciler: Reconciler,
     bindings: Vec<(String, String, String)>, // (widget_id, property, raw "{{ expr }}")
     declared_handlers: Vec<(String, String, String)>, // (widget_id, event, method_name)
+    /// M14 Phase 3 (§16.7): `(widget_id, property)` for every widget
+    /// with a real `two_way:` name -- see `WidgetSpec.two_way`'s own
+    /// doc comment for why this is a separate field, not folded into
+    /// `bindings` above.
+    two_way: Vec<(String, String)>,
     /// Mirrors `PyWindow`'s own `handlers` (M4 Phase 1 step 3, re-keyed
     /// by `(NodeId, EventKind)` at M4 Phase 6) -- shared with every
     /// `Node` this `View` hands out via `node()`, so `set_on_click`/
@@ -211,12 +293,15 @@ impl View {
         collect_bindings(&spec, &mut bindings);
         let mut declared_handlers = Vec::new();
         collect_handlers(&spec, &mut declared_handlers);
+        let mut two_way = Vec::new();
+        collect_two_way(&spec, &mut two_way);
 
         Ok(Self {
             tree: Rc::new(RefCell::new(tree)),
             reconciler,
             bindings,
             declared_handlers,
+            two_way,
             handlers: Rc::new(RefCell::new(HashMap::new())),
             context_menus: Rc::new(RefCell::new(HashMap::new())),
         })
@@ -288,6 +373,11 @@ impl View {
                 "on_click" => Some(EventKind::Click),
                 "on_hover_enter" => Some(EventKind::HoverEnter),
                 "on_hover_exit" => Some(EventKind::HoverExit),
+                // M14 Phase 3 (§16.7): the real handler-name counterpart
+                // to `EventKind::Change` -- wires a declared `on_change:`
+                // the same way every other real event kind here already
+                // is.
+                "on_change" => Some(EventKind::Change),
                 _ => None,
             };
             if let Some(kind) = kind {
@@ -315,6 +405,7 @@ impl View {
                     EventKind::Click => node.set_on_click(attr.unbind()),
                     EventKind::HoverEnter => node.set_on_hover_enter(attr.unbind()),
                     EventKind::HoverExit => node.set_on_hover_exit(attr.unbind()),
+                    EventKind::Change => node.set_on_change(attr.unbind()),
                 }
             }
         }
@@ -341,15 +432,16 @@ impl View {
                 ))
             })?;
 
-            apply_binding_value(&self.tree, node_id, property, py, &value)?;
+            apply_binding_value(&self.tree, &self.handlers, node_id, property, py, &value)?;
 
             let callback = Py::new(
                 py,
                 BindingCallback {
                     tree: self.tree.clone(),
+                    handlers: self.handlers.clone(),
                     node_id,
                     property: property.clone(),
-                    expr,
+                    expr: expr.clone(),
                     viewmodel: viewmodel.clone_ref(py),
                 },
             )?;
@@ -363,6 +455,70 @@ impl View {
                              to a Signal it read: {e}"
                         ))
                     })?;
+            }
+
+            // M14 Phase 3 (§16.7): the real write-back half -- only for
+            // a widget/property pair the author actually named `two_
+            // way:`. ARCHITECTURE.md §16.7's own text: "only for a plain
+            // Signal reference -- never a computed expression, since
+            // there's no way to reverse `{{ f"{first} {last}" }}` back
+            // into two Signals," enforced here by requiring the parsed
+            // `expr` to be exactly a bare Signal's own `.get()` call
+            // (`Expression::Call(Expression::Ident(signal_name), "get")`)
+            // -- a real, load-time-checked error otherwise, not a silent
+            // no-op. **Real finding:** a first draft of this check
+            // required a *bare* `Expression::Ident` instead (matching
+            // §16.7's own inline illustration, `{{ username }}` with no
+            // `.get()`), but every binding's forward direction resolves
+            // through `PyViewModelResolver::ident`, which reads the raw
+            // Python attribute unmodified -- for a `Signal`, that's the
+            // `Signal` object itself, not its value, so it always
+            // resolved to an opaque `Value::Handle` and `apply_binding_
+            // value` (above, forward direction) rejected it before this
+            // code ever ran. `.get()` is the one shape that both
+            // resolves to the real primitive forward (identical to every
+            // other binding in this codebase -- see `test_view_binding.
+            // py`) and still names the exact Signal to write back to.
+            if self
+                .two_way
+                .iter()
+                .any(|(w, p)| w == widget_id && p == property)
+            {
+                let Expression::Call(receiver, method) = &expr else {
+                    return Err(PyValueError::new_err(format!(
+                        "widget {widget_id:?}: two_way binding on {property:?} ({raw_expr:?}) \
+                         must be a plain Signal's own .get() call (e.g. \"{{{{ username.get() \
+                         }}}}\"), not a computed expression -- there's no way to reverse it back \
+                         into a Signal"
+                    )));
+                };
+                let (Expression::Ident(signal_name), true) = (receiver.as_ref(), method == "get")
+                else {
+                    return Err(PyValueError::new_err(format!(
+                        "widget {widget_id:?}: two_way binding on {property:?} ({raw_expr:?}) \
+                         must be a plain Signal's own .get() call (e.g. \"{{{{ username.get() \
+                         }}}}\"), not a computed expression -- there's no way to reverse it back \
+                         into a Signal"
+                    )));
+                };
+                let signal = viewmodel.bind(py).getattr(signal_name.as_str()).map_err(|_| {
+                    PyValueError::new_err(format!(
+                        "widget {widget_id:?}: two_way binding names {signal_name:?}, which has \
+                         no matching attribute on the ViewModel"
+                    ))
+                })?;
+                let two_way_callback = Py::new(
+                    py,
+                    TwoWayCallback {
+                        tree: self.tree.clone(),
+                        node_id,
+                        property: property.clone(),
+                        signal: signal.unbind(),
+                    },
+                )?;
+                self.handlers
+                    .borrow_mut()
+                    .insert((node_id, EventKind::Change), two_way_callback.into_any());
             }
         }
 

@@ -5,7 +5,7 @@
 //! 1-4) unchanged, since a built `Tree` is indistinguishable here from
 //! one built imperatively.
 
-use engine_core::{NodeId, NodeKind, PaintProperties, TextState, Tree};
+use engine_core::{CheckboxState, NodeId, NodeKind, PaintProperties, SliderState, TextState, Tree};
 use engine_md3::ColorScheme;
 use peniko::Color;
 use taffy::prelude::{Rect as TaffyRect, Size, Style, auto, length, zero};
@@ -191,6 +191,26 @@ fn node_kind_and_paint(
                 PaintProperties::new(background, corner_radius, 0.0, opacity),
             ))
         }
+        // M14 Phase 3 (§5, §7.3): `checked`/`value` are the widget's
+        // own real initial state -- immediately overwritten by a real
+        // one-way `bindings: {checked: ...}`/`{value: ...}` resolution
+        // if one exists, the same way a static `style.opacity` already
+        // is by a bound one (`View::_attach`'s own established order:
+        // build the tree first, resolve bindings after).
+        NodeKindSpec::Checkbox => {
+            let background = required_background(spec, style, scheme, "Checkbox")?;
+            Ok((
+                NodeKind::Checkbox(CheckboxState::new(spec.checked)),
+                PaintProperties::new(background, corner_radius, 0.0, opacity),
+            ))
+        }
+        NodeKindSpec::Slider => {
+            let background = required_background(spec, style, scheme, "Slider")?;
+            Ok((
+                NodeKind::Slider(SliderState::new(spec.value)),
+                PaintProperties::new(background, corner_radius, 0.0, opacity),
+            ))
+        }
     }
 }
 
@@ -297,6 +317,65 @@ children:
         assert_eq!(swatch_layout.location.x, 10.0); // root's own padding
         let label_layout = tree.layout(label);
         assert_eq!(label_layout.location.x, 10.0 + 100.0 + 5.0); // padding + swatch width + gap
+    }
+
+    /// M14 Phase 3 (§5, §7.3): `NodeKindSpec::Checkbox`/`Slider` must
+    /// build real `NodeKind::Checkbox`/`Slider` nodes seeded from the
+    /// widget's own `checked`/`value` fields -- the same real-tree proof
+    /// `load_view_builds_a_real_tree_matching_the_spec` already gives
+    /// `Container`/`Rect`/`Text`, extended to the two kinds this phase
+    /// makes declarable in `view.yaml` for the first time.
+    #[test]
+    fn load_view_builds_real_checkbox_and_slider_nodes_seeded_from_their_spec() {
+        let yaml = r##"
+id: root
+kind: Container
+children:
+  - id: agree
+    kind: Checkbox
+    checked: true
+    style: {width: 24, height: 24, background: "#6750A4"}
+  - id: volume
+    kind: Slider
+    value: 0.75
+    style: {width: 180, height: 32, background: "#03DAC6"}
+"##;
+        let mut tree = Tree::new();
+        let root = load_view(&mut tree, yaml).expect("valid Checkbox/Slider view must build");
+        let root_node = tree.get(root).unwrap();
+
+        let checkbox = tree.get(root_node.children[0]).unwrap();
+        let NodeKind::Checkbox(state) = &checkbox.kind else {
+            panic!("expected a Checkbox node");
+        };
+        assert!(
+            state.checked,
+            "checked: true in the spec must seed real CheckboxState.checked"
+        );
+
+        let slider = tree.get(root_node.children[1]).unwrap();
+        let NodeKind::Slider(state) = &slider.kind else {
+            panic!("expected a Slider node");
+        };
+        assert_eq!(
+            state.thumb_position.current, 0.75,
+            "value: 0.75 in the spec must seed real SliderState.thumb_position"
+        );
+    }
+
+    #[test]
+    fn checkbox_without_background_is_a_clear_error_not_a_default() {
+        let yaml = r#"
+id: root
+kind: Checkbox
+style: {width: 24, height: 24}
+"#;
+        let mut tree = Tree::new();
+        let err = load_view(&mut tree, yaml).expect_err("a colorless Checkbox must fail to build");
+        assert!(matches!(
+            err,
+            SpecError::MissingField { id, kind: "Checkbox", field: "style.background" } if id == "root"
+        ));
     }
 
     #[test]

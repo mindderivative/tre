@@ -34,7 +34,24 @@ from tre._core import App, Node, View, Window, _record_read
 class Signal:
     """A minimal reactive value cell (§16.2). `.get()` records a
     dependency when read during a binding's evaluation; `.set()`/
-    `.update()` notify every binding subscribed through that read.
+    `.update()` notify every binding subscribed through that read --
+    but only when the new value actually differs from the current one.
+
+    **M14 Phase 3 real finding:** a two-way-bound widget (§16.7) is both
+    a `Signal` subscriber (its own `bindings:` entry, forward direction)
+    and, through `TwoWayCallback`, a `Signal` writer (reverse direction)
+    -- unconditional notification turned a single real `Change` into
+    infinite recursion: `set_checked(True)` fires `Change` ->
+    `TwoWayCallback` writes `signal.set(True)` -> notifies the widget's
+    own forward binding -> which calls `set_checked(True)` again -> ...
+    Each level was individually caught and logged by `call_handler`'s
+    own "an uncaught exception is non-fatal" policy (§9), which is why
+    this stayed silent under `pytest` instead of crashing loudly -- only
+    surfaced by actually running `examples/two_way_binding.py` end to
+    end. Skipping notification when the value hasn't changed is the
+    correct general fix, not a two-way-specific special case: the second
+    `set(True)` in the loop above is a no-op write to a `Signal` already
+    holding `True`, so the recursion terminates there on its own.
     """
 
     def __init__(self, value):
@@ -46,15 +63,22 @@ class Signal:
         return self._value
 
     def set(self, value):
+        if value == self._value:
+            return
         self._value = value
         self._notify()
 
     def update(self, fn):
         """Sets this signal's value to `fn(current_value)`, then
         notifies -- the idiomatic "read, transform, write" update, e.g.
-        `clicks.update(lambda n: n + 1)`.
+        `clicks.update(lambda n: n + 1)` -- unless the result is the same
+        value the signal already held, matching `.set()`'s own real
+        change-detection above.
         """
-        self._value = fn(self._value)
+        new_value = fn(self._value)
+        if new_value == self._value:
+            return
+        self._value = new_value
         self._notify()
 
     def _subscribe(self, callback):

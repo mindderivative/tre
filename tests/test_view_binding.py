@@ -92,6 +92,37 @@ bindings: {opacity: "{{ level.get() + 0.1 }}"}
     assert node.get("opacity") == pytest.approx(0.8)
 
 
+def test_setting_a_signal_to_its_current_value_does_not_notify_subscribers():
+    """M14 Phase 3 real finding (see `test_two_way_binding.py`'s own
+    `test_two_way_round_trip_does_not_recurse_infinitely`): `Signal.set`
+    used to notify unconditionally, which turned a two-way binding's
+    write-back into infinite recursion. The general, correct fix is
+    change-detection on `Signal` itself, proven here in isolation with
+    no `View`/`Tree` involved at all.
+    """
+    level = Signal(0.3)
+    calls = []
+    level._subscribe(lambda: calls.append("notified"))
+
+    level.set(0.3)
+    assert calls == [], "setting a Signal to the value it already holds must not notify"
+
+    level.set(0.9)
+    assert calls == ["notified"], "setting a Signal to a genuinely new value must still notify"
+
+
+def test_update_returning_the_same_value_does_not_notify_subscribers():
+    count = Signal(5)
+    calls = []
+    count._subscribe(lambda: calls.append("notified"))
+
+    count.update(lambda n: n)  # returns the same value unchanged
+    assert calls == [], "an update() that resolves to the same value must not notify"
+
+    count.update(lambda n: n + 1)
+    assert calls == ["notified"]
+
+
 def test_a_signal_never_read_by_a_binding_does_not_trigger_it(tmp_path):
     path = write_view(
         tmp_path,
