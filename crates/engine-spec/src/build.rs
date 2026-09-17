@@ -13,7 +13,9 @@ use peniko::Color;
 use taffy::prelude::{Rect as TaffyRect, Size, Style, auto, length, zero};
 
 use crate::cascade::{Stylesheet, resolve_style};
-use crate::spec::{FlexDirectionSpec, NodeKindSpec, StyleSpec, WidgetSpec, parse_view};
+use crate::spec::{
+    ContentFitSpec, FlexDirectionSpec, NodeKindSpec, StyleSpec, WidgetSpec, parse_view,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SpecError {
@@ -80,6 +82,79 @@ pub enum SpecError {
         #[source]
         source: std::io::Error,
     },
+    /// M22 Phase 2 (§16.1): `kind: Image`'s own real `image.src:` path
+    /// needs a base directory to resolve against, the identical real
+    /// requirement `include:` already has (`IncludeNoBaseDir`'s own
+    /// sibling) -- a distinct variant, not a reused `Include*` one, so
+    /// the error message names the real YAML key an author actually
+    /// wrote (`image.src`, not `include`).
+    #[error("image.src: {path:?} requires a base directory to resolve against, none given")]
+    ImageSrcNoBaseDir { path: String },
+    /// Real path confinement, the identical real requirement `include:`
+    /// already has (`IncludePathEscapesBase`'s own sibling).
+    #[error("image.src: {path:?} resolves outside the view directory it was loaded from")]
+    ImageSrcEscapesBase { path: String },
+    /// Wraps a real filesystem failure resolving/reading `image.src:`
+    /// (not found, permission denied, a real `../` escape whose
+    /// canonicalization itself fails, ...).
+    #[error("failed to read image {path:?}: {source}")]
+    ImageReadFailed {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// A real file existed and was readable but wasn't a real,
+    /// decodable image (`image::open`'s own real format-sniffing
+    /// failure) -- distinct from `ImageReadFailed`, the same real
+    /// "I/O failure" vs. "content failure" distinction `engine-py::
+    /// EngineError::ImageLoadFailed` already draws for `Window.
+    /// add_image`.
+    #[error("failed to decode image {path:?}: {source}")]
+    ImageDecodeFailed {
+        path: std::path::PathBuf,
+        #[source]
+        source: image::ImageError,
+    },
+}
+
+/// M22 Phase 2 (§16.1): `kind: Image`'s own real `image.src:` path
+/// resolution -- the identical real canonicalization-based, symlink-
+/// escape-resistant confinement `include.rs`'s own private `resolve_
+/// confined` already established for `include:`, duplicated here
+/// (rather than widened and shared) only because the two need
+/// genuinely different `SpecError` variants so a real error message
+/// names the YAML key an author actually wrote (`include:` vs.
+/// `image.src:`) -- the same small, localized duplication this
+/// codebase already tolerates elsewhere over a premature shared
+/// abstraction for two call sites.
+fn resolve_image_src(
+    base_dir: &std::path::Path,
+    src: &str,
+) -> Result<std::path::PathBuf, SpecError> {
+    if std::path::Path::new(src).is_absolute() {
+        return Err(SpecError::ImageSrcEscapesBase {
+            path: src.to_string(),
+        });
+    }
+    let joined = base_dir.join(src);
+    let canon_base = base_dir
+        .canonicalize()
+        .map_err(|source| SpecError::ImageReadFailed {
+            path: base_dir.to_path_buf(),
+            source,
+        })?;
+    let canon_joined = joined
+        .canonicalize()
+        .map_err(|source| SpecError::ImageReadFailed {
+            path: joined.clone(),
+            source,
+        })?;
+    if !canon_joined.starts_with(&canon_base) {
+        return Err(SpecError::ImageSrcEscapesBase {
+            path: src.to_string(),
+        });
+    }
+    Ok(canon_joined)
 }
 
 /// Parses `yaml` and builds it into `tree`, returning the new subtree's
@@ -89,44 +164,60 @@ pub enum SpecError {
 /// below is the step-12 entry point that resolves both.
 pub fn load_view(tree: &mut Tree, yaml: &str) -> Result<NodeId, SpecError> {
     let spec = parse_view(yaml)?;
-    build_tree(tree, &spec, None, None)
+    // M22 Phase 2 (§16.1): `None` is real and valid here, the identical
+    // "no base directory, so a relative path fails clearly instead of
+    // silently" contract `include:`'s own `base_dir: None` already
+    // established -- `load_view`'s own public signature stays
+    // unchanged for its one existing caller; a `kind: Image` loaded
+    // this way (no base directory to resolve `src:` against at all)
+    // gets a real, clear `SpecError::ImageSrcNoBaseDir`.
+    build_tree(tree, &spec, None, None, None)
 }
 
 /// The full §16.3 path: parses `yaml`, resolves every widget's style
 /// through `sheet`'s cascade, and resolves any MD3 token name
 /// (`background: primary`) against `scheme` -- falling back to literal
 /// color parsing (`background: "#6750A4"`) for anything that isn't a
-/// recognized role name.
+/// recognized role name. `base_dir` (M22 Phase 2, §16.1) resolves any
+/// real `kind: Image` `image.src:` path -- `None` is real and valid,
+/// the same `include:`-established contract `load_view`'s own doc
+/// comment states.
 pub fn load_styled_view(
     tree: &mut Tree,
     yaml: &str,
     sheet: &Stylesheet,
     scheme: &ColorScheme,
+    base_dir: Option<&std::path::Path>,
 ) -> Result<NodeId, SpecError> {
     let spec = parse_view(yaml)?;
-    build_tree(tree, &spec, Some(sheet), Some(scheme))
+    build_tree(tree, &spec, Some(sheet), Some(scheme), base_dir)
 }
 
 /// Recursively inserts `spec` and its `children` into `tree`, wiring
 /// each parent/child edge with `Tree::add_child` as it goes. `sheet`/
 /// `scheme` are `None` for the plain literal-values-only path
 /// (`load_view`), `Some` for the full styled path (`load_styled_view`).
+/// `base_dir` (M22 Phase 2, §16.1) is the same real base directory
+/// `include:` resolution already uses (`include::parse_view_with_
+/// includes`) -- threaded here too so a real `kind: Image` `image.
+/// src:` resolves against the identical directory.
 pub fn build_tree(
     tree: &mut Tree,
     spec: &WidgetSpec,
     sheet: Option<&Stylesheet>,
     scheme: Option<&ColorScheme>,
+    base_dir: Option<&std::path::Path>,
 ) -> Result<NodeId, SpecError> {
     let resolved_style = match sheet {
         Some(sheet) => resolve_style(spec, sheet),
         None => spec.style.clone(),
     };
     let layout_style = layout_style(&resolved_style);
-    let (kind, paint) = node_kind_and_paint(spec, &resolved_style, scheme)?;
+    let (kind, paint) = node_kind_and_paint(spec, &resolved_style, scheme, base_dir)?;
     let id = tree.insert(kind, layout_style, paint);
 
     for child_spec in &spec.children {
-        let child_id = build_tree(tree, child_spec, sheet, scheme)?;
+        let child_id = build_tree(tree, child_spec, sheet, scheme, base_dir)?;
         tree.add_child(id, child_id);
     }
 
@@ -150,13 +241,14 @@ pub(crate) fn patch_node(
     spec: &WidgetSpec,
     sheet: Option<&Stylesheet>,
     scheme: Option<&ColorScheme>,
+    base_dir: Option<&std::path::Path>,
 ) -> Result<(), SpecError> {
     let resolved_style = match sheet {
         Some(sheet) => resolve_style(spec, sheet),
         None => spec.style.clone(),
     };
     let new_layout_style = layout_style(&resolved_style);
-    let (kind, paint) = node_kind_and_paint(spec, &resolved_style, scheme)?;
+    let (kind, paint) = node_kind_and_paint(spec, &resolved_style, scheme, base_dir)?;
 
     let node = tree
         .get_mut(id)
@@ -196,6 +288,7 @@ fn node_kind_and_paint(
     spec: &WidgetSpec,
     style: &StyleSpec,
     scheme: Option<&ColorScheme>,
+    base_dir: Option<&std::path::Path>,
 ) -> Result<(NodeKind, PaintProperties), SpecError> {
     let corner_radius = f64::from(style.corner_radius.unwrap_or(0.0));
     let opacity = f64::from(style.opacity.unwrap_or(1.0));
@@ -284,6 +377,53 @@ fn node_kind_and_paint(
                     text_spec.font_size,
                 )),
                 PaintProperties::new(background, corner_radius, 0.0, opacity),
+            ))
+        }
+        // M22 Phase 2 (§16.1, §5): mirrors `Window.add_image`'s own
+        // real decode-then-build shape exactly -- `image.src:` resolved
+        // and confined against `base_dir` first (`resolve_image_src`'s
+        // own doc comment), then read/decoded via the `image` crate.
+        // `PaintProperties`'s own `background` stays hardcoded
+        // transparent, the identical real reason `add_image` itself
+        // takes no `background` param (this module's `ImageSpec` has
+        // none either, deliberately, for the same reason) -- `style.
+        // background`, if an author sets one anyway, is silently
+        // unused here, matching `Canvas`'s own real precedent (no
+        // declarative `kind: Canvas` exists to compare against, but
+        // `add_canvas`'s own hardcoded transparent fill is the
+        // identical imperative-API precedent this mirrors).
+        NodeKindSpec::Image => {
+            let image_spec = spec.image.as_ref().ok_or_else(|| SpecError::MissingField {
+                id: spec.id.clone(),
+                kind: "Image",
+                field: "image",
+            })?;
+            let base_dir = base_dir.ok_or_else(|| SpecError::ImageSrcNoBaseDir {
+                path: image_spec.src.clone(),
+            })?;
+            let resolved_path = resolve_image_src(base_dir, &image_spec.src)?;
+            let decoded = image::open(&resolved_path)
+                .map_err(|source| SpecError::ImageDecodeFailed {
+                    path: resolved_path.clone(),
+                    source,
+                })?
+                .to_rgba8();
+            let (img_width, img_height) = decoded.dimensions();
+            let mut image_state = engine_core::ImageState::new(peniko::ImageData {
+                data: peniko::Blob::from(decoded.into_raw()),
+                format: peniko::ImageFormat::Rgba8,
+                alpha_type: peniko::ImageAlphaType::Alpha,
+                width: img_width,
+                height: img_height,
+            });
+            image_state.content_fit = match image_spec.fit {
+                ContentFitSpec::Cover => engine_core::ContentFit::Cover,
+                ContentFitSpec::Contain => engine_core::ContentFit::Contain,
+                ContentFitSpec::Fill => engine_core::ContentFit::Fill,
+            };
+            Ok((
+                NodeKind::Image(image_state),
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), corner_radius, 0.0, opacity),
             ))
         }
     }
@@ -566,7 +706,7 @@ kind: Rect
 style: {width: 10, height: 10, background: primary}
 "#;
         let mut tree = Tree::new();
-        let root = load_styled_view(&mut tree, yaml, &sheet, &theme.light)
+        let root = load_styled_view(&mut tree, yaml, &sheet, &theme.light, None)
             .expect("a token-named background must resolve against the given scheme");
         let node = tree.get(root).unwrap();
         assert_eq!(node.paint.background.current, theme.light.primary);
@@ -586,7 +726,7 @@ kind: Rect
 style: {width: 10, height: 10, background: "#112233"}
 "##;
         let mut tree = Tree::new();
-        let root = load_styled_view(&mut tree, yaml, &sheet, &theme.light)
+        let root = load_styled_view(&mut tree, yaml, &sheet, &theme.light, None)
             .expect("a literal color must still parse with a scheme active");
         let node = tree.get(root).unwrap();
         assert_eq!(
@@ -610,5 +750,150 @@ style: {width: 10, height: 10, background: primary}
         let err = load_view(&mut tree, yaml)
             .expect_err("a token name with no scheme to resolve it against must fail");
         assert!(matches!(err, SpecError::InvalidColor { .. }));
+    }
+
+    // M22 Phase 2 (§16.1): a real, tiny, decodable 4x4 PNG -- the
+    // identical real bytes `examples/image.py`/`tests/test_image.py`
+    // already embed, reused here so every real image-loading test in
+    // this workspace (Rust and Python) trusts the same one real,
+    // hand-verified file rather than three separately-maintained ones.
+    const TINY_PNG: &[u8] = &[
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x04, 0x08, 0x06, 0x00, 0x00, 0x00, 0xA9,
+        0xF1, 0x9E, 0x7E, 0x00, 0x00, 0x00, 0x4F, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x01, 0x44,
+        0x00, 0xBB, 0xFF, 0x00, 0xF4, 0x43, 0x36, 0xFF, 0xFF, 0x98, 0x00, 0xFF, 0xFF, 0xEB, 0x3B,
+        0xFF, 0x4C, 0xAF, 0x50, 0xFF, 0x01, 0x00, 0xBC, 0xD4, 0xFF, 0x21, 0xDA, 0x1F, 0x00, 0x1E,
+        0xBB, 0xC2, 0x00, 0x5D, 0xD6, 0xFB, 0x00, 0x00, 0xE9, 0x1E, 0x63, 0xFF, 0x79, 0x55, 0x48,
+        0xFF, 0x60, 0x7D, 0x8B, 0xFF, 0x00, 0x00, 0x00, 0x80, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x00,
+        0xC2, 0x08, 0x00, 0x8C, 0x02, 0x43, 0x00, 0xDC, 0x77, 0x6D, 0x00, 0xBD, 0x52, 0x20, 0xA1,
+        0x64, 0xD1, 0xE1, 0x93, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60,
+        0x82,
+    ];
+
+    /// A fresh, real, uniquely-named temp directory per test -- the
+    /// identical real-filesystem discipline `include.rs`'s own tests
+    /// already established, not a mocked one.
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "engine_spec_build_test_{name}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("create test dir");
+        dir
+    }
+
+    #[test]
+    fn kind_image_builds_a_real_node_with_the_real_decoded_image_and_fit() {
+        let dir = temp_dir("image_basic");
+        std::fs::write(dir.join("logo.png"), TINY_PNG).expect("write test PNG");
+        let yaml = r#"
+id: logo
+kind: Image
+image: {src: logo.png, fit: Cover}
+style: {width: 40, height: 40}
+"#;
+        let mut tree = Tree::new();
+        let root = load_view_with_base_dir(&mut tree, yaml, Some(&dir))
+            .expect("a real, decodable image must build");
+        let NodeKind::Image(state) = &tree.get(root).unwrap().kind else {
+            panic!("expected an Image node");
+        };
+        assert_eq!(state.image.width, 4);
+        assert_eq!(state.image.height, 4);
+        assert_eq!(state.content_fit, engine_core::ContentFit::Cover);
+    }
+
+    #[test]
+    fn kind_image_with_no_fit_defaults_to_fill() {
+        let dir = temp_dir("image_default_fit");
+        std::fs::write(dir.join("logo.png"), TINY_PNG).expect("write test PNG");
+        let yaml = r#"
+id: logo
+kind: Image
+image: {src: logo.png}
+style: {width: 40, height: 40}
+"#;
+        let mut tree = Tree::new();
+        let root = load_view_with_base_dir(&mut tree, yaml, Some(&dir))
+            .expect("an image with no fit: must still build");
+        let NodeKind::Image(state) = &tree.get(root).unwrap().kind else {
+            panic!("expected an Image node");
+        };
+        assert_eq!(state.content_fit, engine_core::ContentFit::Fill);
+    }
+
+    #[test]
+    fn kind_image_with_no_image_block_is_a_clear_error_not_a_panic() {
+        let yaml = "id: logo\nkind: Image\nstyle: {width: 40, height: 40}\n";
+        let mut tree = Tree::new();
+        let err = load_view(&mut tree, yaml)
+            .expect_err("kind: Image with no image: block must fail clearly");
+        assert!(matches!(err, SpecError::MissingField { .. }));
+    }
+
+    #[test]
+    fn kind_image_with_no_base_dir_is_a_clear_error_not_a_panic() {
+        let yaml = r#"
+id: logo
+kind: Image
+image: {src: logo.png}
+style: {width: 40, height: 40}
+"#;
+        let mut tree = Tree::new();
+        let err = load_view(&mut tree, yaml)
+            .expect_err("kind: Image with no base_dir to resolve src: against must fail");
+        assert!(matches!(err, SpecError::ImageSrcNoBaseDir { .. }));
+    }
+
+    #[test]
+    fn kind_image_src_escaping_base_dir_is_rejected() {
+        let dir = temp_dir("image_escape");
+        let inner = dir.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+        std::fs::write(dir.join("secret.png"), TINY_PNG).expect("write test PNG");
+        let yaml = r#"
+id: logo
+kind: Image
+image: {src: "../secret.png"}
+style: {width: 40, height: 40}
+"#;
+        let mut tree = Tree::new();
+        let err = load_view_with_base_dir(&mut tree, yaml, Some(&inner))
+            .expect_err("a real ../ escape outside base_dir must be rejected");
+        assert!(matches!(err, SpecError::ImageSrcEscapesBase { .. }));
+    }
+
+    #[test]
+    fn kind_image_with_an_undecodable_file_is_a_clear_error_not_a_panic() {
+        let dir = temp_dir("image_bogus");
+        std::fs::write(dir.join("logo.png"), b"not a real png").expect("write bogus file");
+        let yaml = r#"
+id: logo
+kind: Image
+image: {src: logo.png}
+style: {width: 40, height: 40}
+"#;
+        let mut tree = Tree::new();
+        let err = load_view_with_base_dir(&mut tree, yaml, Some(&dir))
+            .expect_err("an undecodable file must fail clearly, not panic");
+        assert!(matches!(err, SpecError::ImageDecodeFailed { .. }));
+    }
+
+    /// `load_view`'s own real public signature stays exactly as its doc
+    /// comment states (unchanged, for its one existing caller); these
+    /// tests need a real `base_dir`, so this local helper reaches
+    /// `build_tree` directly the same way `load_view`/`load_styled_view`
+    /// themselves do, rather than widening `load_view`'s own contract.
+    fn load_view_with_base_dir(
+        tree: &mut Tree,
+        yaml: &str,
+        base_dir: Option<&std::path::Path>,
+    ) -> Result<NodeId, SpecError> {
+        let spec = parse_view(yaml)?;
+        build_tree(tree, &spec, None, None, base_dir)
     }
 }

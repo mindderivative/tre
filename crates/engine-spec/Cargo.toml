@@ -7,6 +7,13 @@ description = "YAML view/stylesheet parsing, reconciliation, and the BindingReso
 [dependencies]
 engine-core = { path = "../engine-core" }
 engine-md3 = { path = "../engine-md3" }
+# M22 Phase 2 (§16.1): `kind: Image`'s own real `src:` file has to be
+# read and decoded at tree-build time, the same moment every other
+# `NodeKindSpec` becomes real `engine-core` state -- `engine-py::Window.
+# add_image`'s own identical real need, pinned identically here
+# (`default-features = false, features = ["png", "jpeg"]`, deliberately
+# not `image`'s own much heavier default feature set).
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 notify = "8.2.0"
 # Color parsing only right now (peniko::color::parse_color) -- §14 step 5
 # is deliberately literal-value-only (`background: "#6750A4"`), not MD3

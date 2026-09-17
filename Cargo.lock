@@ -952,6 +952,7 @@ version = "0.1.0"
 dependencies = [
  "engine-core",
  "engine-md3",
+ "image",
  "notify",
  "peniko",
  "serde",

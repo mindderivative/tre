@@ -52,7 +52,7 @@ impl Reconciler {
         base_dir: Option<&Path>,
     ) -> Result<Self, SpecError> {
         let spec = parse_view_with_includes(yaml, base_dir)?;
-        let root = build_tree(tree, &spec, sheet, scheme)?;
+        let root = build_tree(tree, &spec, sheet, scheme, base_dir)?;
         let mut ids = HashMap::new();
         record_ids(tree, root, &spec, &mut ids);
         Ok(Self { root, spec, ids })
@@ -85,7 +85,7 @@ impl Reconciler {
 
         if new_spec.id != self.spec.id || new_spec.kind != self.spec.kind {
             tree.remove(self.root);
-            let new_root = build_tree(tree, &new_spec, sheet, scheme)?;
+            let new_root = build_tree(tree, &new_spec, sheet, scheme, base_dir)?;
             let mut ids = HashMap::new();
             record_ids(tree, new_root, &new_spec, &mut ids);
             self.root = new_root;
@@ -101,6 +101,7 @@ impl Reconciler {
             &new_spec,
             sheet,
             scheme,
+            base_dir,
             &mut self.ids,
         )?;
         self.spec = new_spec;
@@ -131,11 +132,21 @@ fn remove_ids(spec: &WidgetSpec, ids: &mut HashMap<String, NodeId>) {
 }
 
 /// A node's own properties, ignoring `id` (already matched by the
-/// caller) and `children` (diffed separately, below).
+/// caller) and `children` (diffed separately, below). M22 Phase 2
+/// (§16.1): `image` compared too -- a real `image.src:`/`fit:` change
+/// across a reload, with everything else unchanged, must still trigger
+/// a real `patch_node` call; omitting it here would silently leave the
+/// old image on screen after a real reload, the same real bug class
+/// this function's own comparison already prevents for `style`/`text`.
 fn node_props_equal(a: &WidgetSpec, b: &WidgetSpec) -> bool {
-    a.kind == b.kind && a.classes == b.classes && a.style == b.style && a.text == b.text
+    a.kind == b.kind
+        && a.classes == b.classes
+        && a.style == b.style
+        && a.text == b.text
+        && a.image == b.image
 }
 
+#[allow(clippy::too_many_arguments)]
 fn reconcile_node(
     tree: &mut Tree,
     tree_id: NodeId,
@@ -143,10 +154,11 @@ fn reconcile_node(
     new_spec: &WidgetSpec,
     sheet: Option<&Stylesheet>,
     scheme: Option<&ColorScheme>,
+    base_dir: Option<&Path>,
     ids: &mut HashMap<String, NodeId>,
 ) -> Result<(), SpecError> {
     if !node_props_equal(old_spec, new_spec) {
-        patch_node(tree, tree_id, new_spec, sheet, scheme)?;
+        patch_node(tree, tree_id, new_spec, sheet, scheme, base_dir)?;
     }
 
     let old_by_id: HashMap<&str, &WidgetSpec> = old_spec
@@ -171,6 +183,7 @@ fn reconcile_node(
                 new_child,
                 sheet,
                 scheme,
+                base_dir,
                 ids,
             )?;
         } else {
@@ -195,7 +208,7 @@ fn reconcile_node(
                 consumed.insert(new_child.id.as_str());
             }
 
-            let new_tree_id = build_tree(tree, new_child, sheet, scheme)?;
+            let new_tree_id = build_tree(tree, new_child, sheet, scheme, base_dir)?;
             tree.add_child(tree_id, new_tree_id);
             record_ids(tree, new_tree_id, new_child, ids);
         }

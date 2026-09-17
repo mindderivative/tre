@@ -76,6 +76,11 @@ pub struct WidgetSpec {
     /// `checked` above.
     #[serde(default)]
     pub value: f64,
+    /// M22 Phase 2 (§16.1, §5): required (and validated as such at
+    /// tree-build time, matching `text`'s own contract) when `kind:
+    /// Image`; ignored otherwise.
+    #[serde(default)]
+    pub image: Option<ImageSpec>,
     /// `property name -> "{{ expression }}"` (§16.2). Raw strings --
     /// see this module's own doc comment for why parsing is deferred to
     /// whoever actually attaches a `ViewModel`.
@@ -112,10 +117,13 @@ pub struct WidgetSpec {
 /// matched step 3/4's own original scope; `Checkbox`/`Slider` (M14
 /// Phase 3) are real now -- this comment used to name them as landing
 /// "whenever `engine_core::NodeKind` itself grows them," which it has.
-/// `TextField` (M15 Phase 3) is real too. `Image`/`Canvas` remain real,
-/// un-scoped future candidates. Deliberately unit-only -- see the
-/// module doc comment for why `Text`'s own fields live in a sibling
-/// `WidgetSpec::text` instead of here.
+/// `TextField` (M15 Phase 3) is real too. `Image` (M22 Phase 2) is real
+/// now too -- `Canvas` remains a real, un-scoped future candidate (its
+/// content is a Python draw callback, §11.10/§11.11, with no obvious
+/// static YAML representation the way a file-backed `Image` has).
+/// Deliberately unit-only -- see the module doc comment for why
+/// `Text`'s own fields live in a sibling `WidgetSpec::text` instead of
+/// here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum NodeKindSpec {
     Rect,
@@ -124,6 +132,36 @@ pub enum NodeKindSpec {
     Checkbox,
     Slider,
     TextField,
+    Image,
+}
+
+/// M22 Phase 2 (§16.1, §5): `kind: Image`'s own sibling block, the
+/// identical "required/meaningful for one kind, ignored for others"
+/// shape `text`/`checked`/`value` already established. `src` is a path
+/// relative to the owning `view.yaml` file's own directory -- resolved
+/// and confined the same way `include:` already confines its own
+/// paths (`include.rs`'s `resolve_confined`, reused rather than a
+/// second path-confinement scheme), not relative to the current
+/// working directory or the running process's own location.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImageSpec {
+    pub src: String,
+    #[serde(default)]
+    pub fit: ContentFitSpec,
+}
+
+/// Mirrors `engine_core::ContentFit` exactly -- see `ImageState.
+/// content_fit`'s own doc comment for what each variant means.
+/// `#[default] Fill` matches `ContentFit::default()`'s own real
+/// choice, so an `image:` block with no `fit:` at all keeps
+/// `Window.add_image`'s own byte-for-byte default behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+pub enum ContentFitSpec {
+    Cover,
+    Contain,
+    #[default]
+    Fill,
 }
 
 /// Mirrors `engine_core::TextState` exactly (§14 step 4) -- no new
