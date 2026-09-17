@@ -21,12 +21,13 @@
 //! over a `wgpu::Device`/`Queue`/`TextureView` the caller already has,
 //! matching §4's crate-boundary rule.
 
+mod image_cache;
 mod text;
 
 use engine_core::{DrawCommand, NodeId, NodeKind, Tree};
 use peniko::Color;
 use peniko::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Shape, Stroke};
-use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene, TextureBindings};
+use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
 pub use text::{TextPlacement, TextRenderer};
 
@@ -524,6 +525,48 @@ fn paint_node(
             scene.set_paint(thumb_color);
             scene.fill_path(&Circle::new((thumb_x, h / 2.0), thumb_radius).to_path(0.1));
         }
+        // M22 Phase 1 (§5): **real finding, confirmed by a failing
+        // test, not assumed:** `vello_hybrid`'s ordinary `set_paint`+
+        // `fill_path` path panics on CPU-side pixel data
+        // (`ImageSource::Pixmap`) -- "pixmap image sources are not
+        // supported by Vello Hybrid" -- only a pre-registered,
+        // externally-owned GPU texture (`ImageSource::OpaqueId`) is
+        // ever accepted by its own wgpu renderer. `Scene::
+        // draw_texture_rects` is the one real, currently-supported
+        // path (`image_cache`'s own module doc comment has the full
+        // investigation): `id`'s own deterministic `TextureId`
+        // (`image_cache::texture_id_for`) must already be bound in
+        // the `TextureBindings` `FrameRenderer::render` hands to
+        // `vello_hybrid` -- `FrameRenderer::sync_image_textures`,
+        // called once per frame before `render`, is what guarantees
+        // that. `source_region` is the image's own full real pixel
+        // extent; `transform` scales that local rect up to the node's
+        // own `(w, h)` box -- Phase 1's own stated "stretched to fill"
+        // scope, composed on top of `scene.set_transform(composed)`
+        // (already active above). Real content-fit modes (cover/
+        // contain) are Phase 2's, §16.1.
+        NodeKind::Image(state) => {
+            let img_width = state.image.width;
+            let img_height = state.image.height;
+            if img_width > 0 && img_height > 0 {
+                scene.draw_texture_rects(
+                    image_cache::texture_id_for(id),
+                    peniko::ImageQuality::Medium,
+                    [vello_hybrid::SampleRect {
+                        source_region: vello_common::geometry::RectU16 {
+                            x0: 0,
+                            y0: 0,
+                            x1: img_width as u16,
+                            y1: img_height as u16,
+                        },
+                        transform: Affine::scale_non_uniform(
+                            w / f64::from(img_width),
+                            h / f64::from(img_height),
+                        ),
+                    }],
+                );
+            }
+        }
     }
 
     // M4 Phase 5 (§7.3): the real ripple/hover state-layer paint --
@@ -629,6 +672,12 @@ fn paint_node(
 pub struct FrameRenderer {
     renderer: Renderer,
     resources: Resources,
+    // M22 Phase 1 (§5): every real `Image` node's own GPU texture,
+    // plus the live `TextureBindings` `render` hands to `vello_hybrid`
+    // -- empty (byte-for-byte this struct's pre-M22 behavior) unless a
+    // caller's own tree has real `Image` nodes and calls
+    // `sync_image_textures`.
+    images: image_cache::ImageTextureCache,
 }
 
 impl FrameRenderer {
@@ -637,6 +686,7 @@ impl FrameRenderer {
         Self {
             renderer,
             resources,
+            images: image_cache::ImageTextureCache::new(),
         }
     }
 
@@ -661,9 +711,19 @@ impl FrameRenderer {
                 encoder,
                 render_size,
                 target,
-                &TextureBindings::new(),
+                self.images.bindings(),
             )
             .expect("vello_hybrid render failed");
+    }
+
+    /// M22 Phase 1 (§5): ensures every real `Image` node in `tree` has
+    /// a real, uploaded GPU texture bound before the next `render`
+    /// call -- see `ImageTextureCache::sync`'s own doc comment for the
+    /// full "why". A caller whose tree has no `Image` nodes never
+    /// needs to call this at all; `render`'s own `TextureBindings`
+    /// then stays empty, exactly this crate's pre-M22 behavior.
+    pub fn sync_image_textures(&mut self, tree: &Tree, device: &wgpu::Device, queue: &wgpu::Queue) {
+        self.images.sync(tree, device, queue);
     }
 
     /// The same `Resources` `render` uses internally, exposed for

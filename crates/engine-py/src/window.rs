@@ -9,8 +9,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use engine_core::{
-    AccessNodeData, Action, Animated, CheckboxState, EventKind, InputEvent, ItemExtent, Key,
-    NodeId, NodeKind, PaintProperties, PointerButton, Role, SliderState, SplitterState,
+    AccessNodeData, Action, Animated, CheckboxState, EventKind, ImageState, InputEvent, ItemExtent,
+    Key, NodeId, NodeKind, PaintProperties, PointerButton, Role, SliderState, SplitterState,
     TextFieldState, Tree, VirtualListState,
 };
 use engine_md3::DynamicTheme;
@@ -454,6 +454,73 @@ impl PyWindow {
             theme: self.theme.clone(),
             completions: self.completions.clone(),
         }
+    }
+
+    /// M22 Phase 1 (§5): creates a real `NodeKind::Image`, loaded from
+    /// a real file on disk. Unlike `add_rect`/`add_checkbox`/
+    /// `add_slider`, deliberately does *not* take a `background` param
+    /// -- mirrors `add_canvas`'s own real precedent instead (a
+    /// hardcoded transparent `PaintProperties` fill), since there's no
+    /// meaningful "behind the content" color this phase scopes for a
+    /// node whose entire content is a loaded image, the same "fully
+    /// custom-drawn kind doesn't expose a separate background" reasoning
+    /// `add_canvas` already established.
+    ///
+    /// Decoding is the real crate-boundary work this method does that
+    /// `engine-core` deliberately never does itself (`ImageState`'s own
+    /// doc comment) -- `image::open` reads and decodes the file
+    /// (whatever real format its own magic-byte sniffing detects among
+    /// this crate's enabled `png`/`jpeg` features), `.to_rgba8()` gives
+    /// real straight-alpha (unpremultiplied) 8-bit RGBA pixels, and
+    /// those raw bytes become a `peniko::ImageData` via `peniko::Blob`'s
+    /// own real `From<Vec<u8>>` impl -- zero copying beyond what
+    /// `to_rgba8()` itself already allocates.
+    #[pyo3(signature = (path, width, height, x=None, y=None))]
+    fn add_image(
+        &self,
+        path: &str,
+        width: f32,
+        height: f32,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<Node> {
+        let decoded = image::open(path)
+            .map_err(|e| EngineError::ImageLoadFailed {
+                path: path.to_string(),
+                reason: e.to_string(),
+            })?
+            .to_rgba8();
+        let (img_width, img_height) = decoded.dimensions();
+        let image_data = peniko::ImageData {
+            data: peniko::Blob::from(decoded.into_raw()),
+            format: peniko::ImageFormat::Rgba8,
+            alpha_type: peniko::ImageAlphaType::Alpha,
+            width: img_width,
+            height: img_height,
+        };
+
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::Image(ImageState { image: image_data }),
+            positioned_style(
+                Size {
+                    width: length(width),
+                    height: length(height),
+                },
+                x,
+                y,
+            ),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, id);
+        Ok(Node {
+            id,
+            tree: self.tree.clone(),
+            handlers: self.handlers.clone(),
+            context_menus: self.context_menus.clone(),
+            theme: self.theme.clone(),
+            completions: self.completions.clone(),
+        })
     }
 
     /// M15 Phase 1 (§5, §16.7): creates a real `NodeKind::TextField`,

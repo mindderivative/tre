@@ -131,6 +131,12 @@ pub enum NodeKind {
     /// inert data, engine-render re-derives it" split `TextState`
     /// itself already uses.
     TextField(TextFieldState),
+    /// M22 Phase 1 (§5): a real, file-backed image, painted through
+    /// `vello_hybrid`'s own real `PaintType::Image` mechanism -- see
+    /// `ImageState`'s own doc comment for the real crate-boundary
+    /// reasoning (decoding lives in `engine-py`, this holds only the
+    /// already-decoded result).
+    Image(ImageState),
 }
 
 /// M15 Phase 1 (§5, §16.7): mirrors `TextState`'s own four font/content
@@ -203,6 +209,26 @@ impl TextFieldState {
             text_tint: Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF),
         }
     }
+}
+
+/// M22 Phase 1 (§5): a real, file-backed image. `image` is already-
+/// decoded, renderer-agnostic pixel data -- `peniko::ImageData` is
+/// exactly `TextFieldState`'s own "`engine-core` holds inert data"
+/// precedent, except here there's no separate engine-core-native
+/// representation to invent at all (unlike `TextState`'s deliberate
+/// avoidance of a raw `parley::Layout`, §4's crate-boundary rule):
+/// `peniko` is already a real, direct `engine-core` dependency (used
+/// for `Color` throughout this file), and `peniko::ImageData` is
+/// already exactly the shape a renderer needs (`Blob<u8>` pixel data
+/// plus format/alpha-type/width/height), so storing it directly costs
+/// zero new dependency-graph edge here. Decoding an actual image file
+/// (the `image` crate, PNG/JPEG bytes -> raw RGBA8) happens in
+/// `engine-py::Window.add_image` -- the same real "resolved ahead of
+/// time, not computed live" split `NodeKind::Canvas`'s own module doc
+/// comment already established for its Python draw callback.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImageState {
+    pub image: peniko::ImageData,
 }
 
 /// §11.7's own struct sketch, unchanged in shape (`item_count`,

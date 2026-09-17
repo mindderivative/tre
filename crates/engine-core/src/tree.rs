@@ -28,7 +28,7 @@ use crate::input::{DispatchOutcome, InputEvent, Key, PointerButton, ScrollDelta}
 use crate::interaction::InteractionState;
 #[cfg(test)]
 use crate::node::{CheckboxState, ItemExtent, SliderState, VirtualListState};
-use crate::node::{Node, NodeId, NodeKind, PaintProperties, TextFieldState};
+use crate::node::{ImageState, Node, NodeId, NodeKind, PaintProperties, TextFieldState};
 use crate::overlay::OverlayMeta;
 #[cfg(test)]
 use peniko::kurbo::BezPath;
@@ -1092,6 +1092,19 @@ impl Tree {
         }
     }
 
+    /// M22 Phase 1 (§5): every real `Image` node currently in this
+    /// tree -- `engine-render::FrameRenderer::sync_image_textures`'s
+    /// own real need, to know which GPU textures must exist before a
+    /// real `render()` call, without `engine-render` ever reaching
+    /// into this `Tree`'s own private `nodes` map directly (§4's
+    /// crate-boundary rule).
+    pub fn image_nodes(&self) -> impl Iterator<Item = (NodeId, &ImageState)> {
+        self.nodes.iter().filter_map(|(id, node)| match &node.kind {
+            NodeKind::Image(state) => Some((id, state)),
+            _ => None,
+        })
+    }
+
     pub fn focused(&self) -> Option<NodeId> {
         self.focused
     }
@@ -2085,6 +2098,15 @@ pub fn to_access_id(id: NodeId) -> accesskit::NodeId {
 /// property §5 already relies on everywhere else.
 pub fn from_access_id(id: accesskit::NodeId) -> NodeId {
     NodeId::from(KeyData::from_ffi(id.0))
+}
+
+/// M22 Phase 1 (§5): a stable `u64` for a `NodeId` -- `to_access_id`'s
+/// own real `KeyData::as_ffi()` encoding, reused here for a different
+/// foreign-handle consumer (`engine-render`'s own GPU texture cache
+/// keys a real, persistent `vello_hybrid::TextureId` per `Image` node
+/// by this exact value, rather than inventing a second id scheme).
+pub fn node_id_as_u64(id: NodeId) -> u64 {
+    id.data().as_ffi()
 }
 
 #[cfg(test)]
@@ -6351,5 +6373,34 @@ mod tests {
             matches!(tree.get(rect).unwrap().kind, NodeKind::Rect),
             "an unrelated NodeKind must be left completely untouched"
         );
+    }
+
+    /// M22 Phase 1 (§5): `NodeKind::Image` round-trips through
+    /// `Tree::insert`/`Tree::get` exactly like every other kind -- no
+    /// special-cased storage, the same "common core + per-kind payload"
+    /// shape §1 Locked Decisions already establishes.
+    #[test]
+    fn nodekind_image_round_trips_through_insert_and_get() {
+        let mut tree = Tree::new();
+        let image_data = peniko::ImageData {
+            data: peniko::Blob::from(vec![0xFFu8, 0x00, 0x00, 0xFF]),
+            format: peniko::ImageFormat::Rgba8,
+            alpha_type: peniko::ImageAlphaType::Alpha,
+            width: 1,
+            height: 1,
+        };
+        let (_, style, paint) = leaf(10.0, 10.0);
+        let id = tree.insert(
+            NodeKind::Image(ImageState {
+                image: image_data.clone(),
+            }),
+            style,
+            paint,
+        );
+
+        let NodeKind::Image(state) = &tree.get(id).unwrap().kind else {
+            panic!("expected an Image node");
+        };
+        assert_eq!(state.image, image_data);
     }
 }

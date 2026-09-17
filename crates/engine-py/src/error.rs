@@ -5,7 +5,7 @@
 //! ever produce it) wasn't in scope until now.
 
 use pyo3::PyErr;
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::{PyIOError, PyTypeError, PyValueError};
 
 #[derive(thiserror::Error, Debug)]
 pub enum EngineError {
@@ -46,6 +46,12 @@ pub enum EngineError {
     /// real corruption, not just a wrong result.
     #[error("this Node belongs to a different Window's Tree")]
     ForeignNode,
+    /// M22 Phase 1 (§5): `Window.add_image` couldn't read or decode
+    /// the file at `path` -- a real I/O/format failure, not a value or
+    /// type mismatch the way the two variants above represent, so this
+    /// maps to `PyIOError` rather than `PyValueError`/`PyTypeError`.
+    #[error("failed to load image '{path}': {reason}")]
+    ImageLoadFailed { path: String, reason: String },
 }
 
 impl From<EngineError> for PyErr {
@@ -57,6 +63,7 @@ impl From<EngineError> for PyErr {
             EngineError::NotACanvas => PyValueError::new_err(e.to_string()),
             EngineError::CycleRejected => PyValueError::new_err(e.to_string()),
             EngineError::ForeignNode => PyValueError::new_err(e.to_string()),
+            EngineError::ImageLoadFailed { .. } => PyIOError::new_err(e.to_string()),
         }
     }
 }

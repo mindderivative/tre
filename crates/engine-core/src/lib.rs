@@ -32,9 +32,11 @@ pub use input::{
 };
 pub use interaction::{InteractionState, RippleState};
 pub use node::{
-    CheckboxState, ItemExtent, Node, NodeId, NodeKind, PaintProperties, SliderState, SplitterState,
-    TextFieldState, TextState, VirtualListState,
+    CheckboxState, ImageState, ItemExtent, Node, NodeId, NodeKind, PaintProperties, SliderState,
+    SplitterState, TextFieldState, TextState, VirtualListState,
 };
 pub use overlay::OverlayMeta;
 pub use shape_morph::ShapeKey;
-pub use tree::{FocusDirection, InteractionConfig, Tree, from_access_id, to_access_id};
+pub use tree::{
+    FocusDirection, InteractionConfig, Tree, from_access_id, node_id_as_u64, to_access_id,
+};

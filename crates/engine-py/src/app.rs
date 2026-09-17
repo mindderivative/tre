@@ -347,6 +347,16 @@ impl App {
 
                 let scene = {
                     let tree_ref = runtime.tree.borrow();
+                    // M22 Phase 1 (§5): every real `Image` node needs a
+                    // real, uploaded GPU texture bound before `render`
+                    // -- see `ImageTextureCache::sync`'s own doc
+                    // comment. A window with no `Image` nodes pays only
+                    // the cost of an empty `Tree::image_nodes` walk.
+                    runtime.gpu.frame_renderer.sync_image_textures(
+                        &tree_ref,
+                        &runtime.gpu.device,
+                        &runtime.gpu.queue,
+                    );
                     build_tree_scene(
                         &tree_ref,
                         runtime.root,

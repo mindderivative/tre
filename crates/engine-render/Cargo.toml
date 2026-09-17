@@ -29,6 +29,21 @@ kurbo = "0.13.1"
 parley = "0.11.1"
 peniko = "0.6.1"
 raw-window-handle = "0.6.2"
+# M22 Phase 1 (§5): the real `ImageSource::from_peniko_image_data`
+# conversion (`peniko::ImageData` -> a paintable `vello_common::paint::
+# Image`) that `vello_hybrid` itself never re-exports (confirmed via
+# grep across its own `lib.rs`) -- a real, necessary direct dependency,
+# not an added architectural layer. Pinned to exactly what
+# `vello_hybrid` 0.2.0 itself requires (its own Cargo.toml: `vello_common
+# = "0.2.0"`), same "zero new resolution, only a direct edge" pattern
+# `kurbo`/`parley` above already established -- confirmed via `grep -c
+# 'name = "vello_common"' Cargo.lock` staying at 1 after this was added.
+# `default-features = false, features = ["std"]` matches `vello_hybrid`'s
+# own exact feature set (its Cargo.toml) -- its default `"png"` feature
+# (an internal PNG decoder) is deliberately left off, since decoding
+# happens through this workspace's own `image` crate instead (in
+# `engine-py`), not vello_common's.
+vello_common = { version = "0.2.0", default-features = false, features = ["std"] }
 # Pinned to exactly what vello_hybrid 0.2.0 itself requires (its own
 # Cargo.toml: `wgpu = "29.0.3"`), not the latest wgpu (30.0.1) -- adding
 # wgpu independently resolved two incompatible major versions into the
