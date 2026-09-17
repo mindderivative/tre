@@ -232,3 +232,75 @@ fn canvas_draw_commands_paint_real_pixels_composed_with_an_ancestor_transform() 
         );
     });
 }
+
+/// M25 Phase 2 (§5, §6): a real, previously-missing compounding -- a
+/// `Canvas` node's own real `PaintProperties.opacity` must fade every
+/// one of its `DrawCommand`s, not just leave them at full alpha
+/// regardless. The real range-check pattern `animated_rect.rs`'s own
+/// mid-flight test already established (strictly between the fully-
+/// opaque and fully-transparent extremes), since predicting an exact
+/// blended byte value depends on `vello_hybrid`'s own real compositing
+/// internals this test doesn't need to know.
+#[test]
+fn canvas_draw_commands_compound_with_the_nodes_own_real_opacity() {
+    pollster::block_on(async {
+        let width: u16 = 100;
+        let height: u16 = 100;
+
+        let mut tree = Tree::new();
+        let root = tree.insert(
+            NodeKind::Rect,
+            Style {
+                size: Size {
+                    width: length(f32::from(width)),
+                    height: length(f32::from(height)),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+        );
+
+        let mut state = CanvasState::new();
+        state.commands.push(DrawCommand::FillRect {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            height: 100.0,
+            color: CIRCLE,
+        });
+
+        let canvas = tree.insert(
+            NodeKind::Canvas(state),
+            Style {
+                size: Size {
+                    width: length(f32::from(width)),
+                    height: length(f32::from(height)),
+                },
+                ..Default::default()
+            },
+            // opacity = 0.5, the fourth positional field.
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 0.5),
+        );
+        tree.add_child(root, canvas);
+
+        let available = Size {
+            width: AvailableSpace::Definite(f32::from(width)),
+            height: AvailableSpace::Definite(f32::from(height)),
+        };
+        tree.compute_layout(root, available);
+
+        let (data, bpr) = render(&tree, root, width, height).await;
+        let center = pixel_at(&data, bpr, 50, 50);
+
+        // Green channel: fully-opaque would be 0xFF, fully-transparent
+        // (pure background) would be 0x11 -- real partial opacity must
+        // land strictly between the two.
+        let observed_g = f32::from(center[1]);
+        assert!(
+            observed_g > f32::from(0x11_u8) && observed_g < f32::from(0xFF_u8),
+            "green channel {observed_g} is not strictly between background (0x11) and the \
+             command's own full-alpha color (0xFF) -- the FillRect isn't compounding with the \
+             node's own real opacity, got {center:?}"
+        );
+    });
+}

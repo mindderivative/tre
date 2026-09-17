@@ -338,3 +338,57 @@ fn an_image_node_paints_the_real_loaded_pixel_color() {
         );
     });
 }
+
+/// M25 Phase 2 (§5, §6): a real, previously-missing compounding --
+/// `Scene::draw_texture_rects` has no opacity parameter of its own at
+/// all, so `PaintProperties.opacity` was silently ignored for every
+/// `Image` node before this. Same range-check pattern `animated_
+/// rect.rs`'s own mid-flight test already established.
+#[test]
+fn an_image_node_compounds_with_the_nodes_own_real_opacity() {
+    pollster::block_on(async {
+        let mut tree = Tree::new();
+        let root = tree.insert(
+            NodeKind::Rect,
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(100.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+        );
+
+        let image = tree.insert(
+            NodeKind::Image(ImageState::new(green_2x2_image_data())),
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(100.0),
+                },
+                ..Default::default()
+            },
+            // opacity = 0.5, the fourth positional field.
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 0.5),
+        );
+        tree.add_child(root, image);
+
+        let available = Size {
+            width: AvailableSpace::Definite(100.0),
+            height: AvailableSpace::Definite(100.0),
+        };
+        tree.compute_layout(root, available);
+
+        let (data, bpr) = render(&tree, root, 100, 100).await;
+        let center = pixel_at(&data, bpr, 50, 50);
+
+        let observed_g = f32::from(center[1]);
+        assert!(
+            observed_g > f32::from(0x11_u8) && observed_g < f32::from(0xFF_u8),
+            "green channel {observed_g} is not strictly between background (0x11) and the \
+             image's own full-alpha green (0xFF) -- the Image paint isn't compounding with \
+             the node's own real opacity, got {center:?}"
+        );
+    });
+}

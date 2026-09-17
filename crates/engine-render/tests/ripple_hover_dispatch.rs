@@ -341,3 +341,65 @@ fn hover_overlay_paints_the_real_interaction_tint_not_a_hardcoded_gray() {
         );
     });
 }
+
+/// M25 Phase 2 (§5, §6): a real, previously-missing compounding -- the
+/// ripple/hover overlay's own real alpha multiplied only its own
+/// independent `hover_opacity`/`ripple.opacity` before this, never
+/// `node.paint.opacity.current` too, so a fully faded-out node
+/// (`opacity: 0.0`) would still show a fully visible ripple on top of
+/// what should be invisible content. A node invisible in every other
+/// respect must show no interaction overlay either.
+#[test]
+fn a_fully_faded_node_shows_no_ripple_at_all() {
+    pollster::block_on(async {
+        let (width, height) = (120u16, 60u16);
+        let mut tree = Tree::new();
+        let root = tree.insert(
+            NodeKind::Rect,
+            Style {
+                size: Size {
+                    width: length(f32::from(width)),
+                    height: length(f32::from(height)),
+                },
+                ..Default::default()
+            },
+            // opacity = 0.0, the fourth positional field -- otherwise
+            // byte-for-byte `white_rect_tree`'s own real shape.
+            PaintProperties::new(Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF), 0.0, 0.0, 0.0),
+        );
+        let available = Size {
+            width: AvailableSpace::Definite(f32::from(width)),
+            height: AvailableSpace::Definite(f32::from(height)),
+        };
+        tree.compute_layout(root, available);
+        let cfg = config();
+
+        let now = Instant::now();
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(30.0, 30.0),
+                button: PointerButton::Primary,
+            },
+            &cfg,
+            now,
+        );
+        tree.tick_all(now + Duration::from_millis(100)); // halfway through the 200ms ripple
+
+        let (data, bpr) = render(&tree, root, width, height).await;
+        // The node's own fill is already fully transparent at opacity
+        // 0.0, so this reads whatever the render target itself starts
+        // as -- the real, decisive claim is that the ripple's own
+        // origin looks identical to a point outside its radius: no
+        // ripple-shaped darkening anywhere, proving the real
+        // compounding, not merely "the base fill is invisible too."
+        let at_origin = pixel_at(&data, bpr, 30, 30);
+        let far_corner = pixel_at(&data, bpr, 110, 50);
+        assert_eq!(
+            at_origin, far_corner,
+            "a fully faded-out node's own ripple must not be visible at all -- the ripple's \
+             own origin ({at_origin:?}) must match an untouched point ({far_corner:?}), \
+             proving the overlay compounds with the node's own real opacity"
+        );
+    });
+}

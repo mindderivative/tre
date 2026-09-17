@@ -401,7 +401,15 @@ fn paint_node(
     // entirely at elevation <= 0.0 -- matching level 0's own real
     // 0px-everywhere values, not a degenerate zero-blur draw call.
     let elevation = node.paint.elevation.current;
-    if elevation > 0.0 {
+    // M25 Phase 2 (§5, §6): a real, previously-missing compounding --
+    // a fading node's own real shadow must fade with it (the same real
+    // expectation any CSS `opacity` compositing already has: a shadow
+    // is part of what "how visible is this node" governs, not a
+    // separate, always-opaque layer underneath it). `<= 0.0` also
+    // skips the shadow now, matching `elevation <= 0.0`'s own existing
+    // "don't draw an invisible thing" precedent.
+    let node_opacity = node.paint.opacity.current;
+    if elevation > 0.0 && node_opacity > 0.0 {
         let radius = node.paint.corner_radius.current as f32;
 
         // Ambient first, key second -- real box-shadow stacking order
@@ -413,7 +421,7 @@ fn paint_node(
             w + f64::from(ambient_spread),
             h + f64::from(ambient_y) + f64::from(ambient_spread),
         );
-        scene.set_paint(shadow_color(0.15));
+        scene.set_paint(shadow_color(0.15 * node_opacity as f32));
         scene.fill_blurred_rounded_rect(
             &ambient_rect,
             radius,
@@ -423,7 +431,7 @@ fn paint_node(
 
         let (key_y, key_blur) = key_shadow_geometry(elevation);
         let key_rect = Rect::new(0.0, f64::from(key_y), w, h + f64::from(key_y));
-        scene.set_paint(shadow_color(0.3));
+        scene.set_paint(shadow_color(0.3 * node_opacity as f32));
         scene.fill_blurred_rounded_rect(&key_rect, radius, blur_to_std_dev(key_blur), false);
     }
 
@@ -513,6 +521,12 @@ fn paint_node(
         // node-local, drawn under the same `composed` transform as
         // every other `NodeKind`, with zero special-casing beyond this
         // one match arm.
+        // M25 Phase 2 (§5, §6): every real `DrawCommand`'s own color
+        // now compounds with `node.paint.opacity.current` -- a real,
+        // previously-missing gap (confirmed via direct read: this arm
+        // painted every command's own raw color, the only real
+        // `NodeKind` arm in this whole match that never touched the
+        // node's own universal opacity at all).
         NodeKind::Canvas(state) => {
             for command in &state.commands {
                 match command {
@@ -523,7 +537,7 @@ fn paint_node(
                         height,
                         color,
                     } => {
-                        scene.set_paint(*color);
+                        scene.set_paint(with_opacity(*color, node.paint.opacity.current));
                         scene.fill_path(&Rect::new(*x, *y, x + width, y + height).to_path(0.1));
                     }
                     DrawCommand::FillCircle {
@@ -532,11 +546,11 @@ fn paint_node(
                         radius,
                         color,
                     } => {
-                        scene.set_paint(*color);
+                        scene.set_paint(with_opacity(*color, node.paint.opacity.current));
                         scene.fill_path(&Circle::new((*cx, *cy), *radius).to_path(0.1));
                     }
                     DrawCommand::StrokePath { path, color, width } => {
-                        scene.set_paint(*color);
+                        scene.set_paint(with_opacity(*color, node.paint.opacity.current));
                         scene.set_stroke(Stroke::new(*width));
                         scene.stroke_path(path);
                     }
@@ -565,7 +579,19 @@ fn paint_node(
                 mark.move_to((w * 0.2, h * 0.55));
                 mark.line_to((w * 0.42, h * 0.75));
                 mark.line_to((w * 0.8, h * 0.25));
-                scene.set_paint(with_opacity(state.mark_tint, state.check_progress.current));
+                // M25 Phase 2 (§5, §6): a real, previously-missing
+                // compounding -- the checkmark's own real alpha
+                // multiplied only `check_progress` before this, never
+                // `node.paint.opacity.current` too, so a checked
+                // checkbox mid-fade-out would show its own checkmark
+                // at full alpha while its box correctly faded. Two
+                // independent real "how visible" factors, multiplied
+                // together the same way any compositing pipeline
+                // compounds independent alpha sources.
+                scene.set_paint(with_opacity(
+                    state.mark_tint,
+                    state.check_progress.current * node.paint.opacity.current,
+                ));
                 scene.set_stroke(Stroke::new((w.min(h) * 0.12).max(1.0)));
                 scene.stroke_path(&mark);
             }
@@ -582,7 +608,12 @@ fn paint_node(
         NodeKind::Slider(state) => {
             let track_height = (h * 0.15).max(2.0);
             let track_rect = Rect::new(0.0, (h - track_height) / 2.0, w, (h + track_height) / 2.0);
-            scene.set_paint(state.track_tint);
+            // M25 Phase 2 (§5, §6): a real, previously-missing
+            // compounding -- only the thumb (below) multiplied by
+            // `node.paint.opacity.current`; the track painted its own
+            // real `track_tint` raw, a real internal inconsistency
+            // within this one `NodeKind`.
+            scene.set_paint(with_opacity(state.track_tint, node.paint.opacity.current));
             scene.fill_path(&track_rect.to_path(0.1));
 
             let thumb_radius = (h * 0.4).max(4.0);
@@ -612,12 +643,24 @@ fn paint_node(
         // scope, composed on top of `scene.set_transform(composed)`
         // (already active above). Real content-fit modes (cover/
         // contain) are Phase 2's, §16.1.
+        // M25 Phase 2 (§5, §6): a real, previously-missing compounding
+        // -- `Scene::draw_texture_rects` has no opacity parameter of
+        // its own at all (confirmed via direct source read), unlike
+        // every `set_paint`-based fill in this match. `push_layer`'s
+        // own real `opacity` parameter (the identical mechanism the
+        // ripple/hover overlay above already uses for the same real
+        // "an opacity-only layer, no clip") wraps the draw instead --
+        // skipped entirely at `opacity <= 0.0`, the same "don't draw
+        // an invisible thing" precedent the elevation section above
+        // already established.
         NodeKind::Image(state) => {
             let img_width = state.image.width;
             let img_height = state.image.height;
-            if img_width > 0 && img_height > 0 {
+            let node_opacity = node.paint.opacity.current;
+            if img_width > 0 && img_height > 0 && node_opacity > 0.0 {
                 let (source_region, transform) =
                     image_sample_rect(w, h, img_width, img_height, state.content_fit);
+                scene.push_layer(None, None, Some(node_opacity as f32), None, None);
                 scene.draw_texture_rects(
                     image_cache::texture_id_for(id),
                     peniko::ImageQuality::Medium,
@@ -626,6 +669,7 @@ fn paint_node(
                         transform,
                     }],
                 );
+                scene.pop_layer();
             }
         }
         // M23 Phase 1 (§1, §3): `state.path` is real, already-parsed
@@ -675,9 +719,16 @@ fn paint_node(
         let radius = node.paint.corner_radius.current;
         let bounds = RoundedRect::new(0.0, 0.0, w, h, radius).to_path(0.1);
 
+        // M25 Phase 2 (§5, §6): a real, previously-missing compounding
+        // -- both the hover overlay and each ripple (below) multiplied
+        // only by their own real, independent opacity (`hover_
+        // opacity`/`ripple.opacity`) before this, never by `node.
+        // paint.opacity.current` too, so a fading node's own ripple/
+        // hover state layer would stay fully visible while everything
+        // else around it faded.
         scene.set_paint(with_opacity(
             interaction.tint,
-            interaction.hover_opacity.current,
+            interaction.hover_opacity.current * node.paint.opacity.current,
         ));
         scene.fill_path(&bounds);
 
@@ -698,7 +749,7 @@ fn paint_node(
             scene.push_layer(
                 Some(&circle),
                 None,
-                Some(ripple.opacity.current as f32),
+                Some((ripple.opacity.current * node.paint.opacity.current) as f32),
                 None,
                 None,
             );

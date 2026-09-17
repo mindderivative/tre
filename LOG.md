@@ -1,79 +1,82 @@
-# Log: M25 Phase 1 — Real Animation Completion Callback Firing (§5, §9)
+# Log: M25 Phase 2 — Real `PaintProperties.opacity` Compounding Across Every Remaining Paint Site (§5, §6), closing M25
 
-Corresponds to `BUILD_TRACKER.md` M25 Phase 1: diagnose and fix why
-`on_complete` never fired for `examples/animation_completion.py`/
-`container_transform.py`.
+Corresponds to `BUILD_TRACKER.md` M25 Phase 2: six real paint sites in
+`engine-render::paint_node` were silently ignoring `node.paint.
+opacity.current`, or applying only their own local alpha without
+compounding it with the node's own real opacity.
 
-## Real finding: there was no engine bug at all
+## Investigation (confirmed via direct read of every `scene.set_paint`
+call site in `paint_node`)
 
-Traced the full real call chain end to end, reading every link
-directly rather than assuming: `Node.animate(..., on_complete=cb)`
-registers the callback into `CompletionRegistry` and mints a
-`CompletionHandle`, `Animated::animate_to_with_completion` stores it
-on the active animation, `Animated::tick` pushes it into `Tree::
-tick_all`'s own `completed: Vec<CompletionHandle>` the instant
-`elapsed >= duration` (true from the very first tick for `duration_ms
-=0`), and `engine-py::app.rs`'s own per-frame loop calls `run_
-completions` with exactly that vector. Every one of these, read
-directly, was already correct — confirmed by adding `RUST_LOG=warn`
-and finding the real, decisive clue instead: `no display available,
-exiting cleanly`.
+1. `NodeKind::Canvas`'s own `DrawCommand::FillRect`/`FillCircle`/
+   `StrokePath` — painted `*color` raw, zero opacity handling.
+2. `NodeKind::Image`'s `draw_texture_rects` call — no opacity
+   parameter used at all.
+3. `NodeKind::Slider`'s own track fill — painted `state.track_tint`
+   raw; only the thumb multiplied by `node.paint.opacity.current`, a
+   real internal inconsistency within one `NodeKind`.
+4. `NodeKind::Checkbox`'s own checkmark stroke — multiplied only by
+   `check_progress`, never compounded with `node.paint.opacity.
+   current`.
+5. Elevation/shadow painting (`shadow_color(0.15)`/`shadow_color(0.3)`,
+   the fixed MD3 ambient/key alphas) — never multiplied by the node's
+   own opacity at all.
+6. The ripple/hover interaction overlay (`hover_opacity`/each
+   ripple's own `opacity`) — never compounded with `node.paint.
+   opacity.current` either.
 
-**Real root cause: this session's own test-running convention, not
-the engine.** Every example script this whole session was run via
-`env -u DISPLAY -u WAYLAND_DISPLAY ...`, adopted early on as a
-"headless-CI-safe" habit. This sandboxed dev environment actually has
-a real, working display the whole time (`DISPLAY=:0`, `WAYLAND_
-DISPLAY=wayland-0`, a live `/tmp/.X11-unix/X0` socket, `Xvfb`
-installed) — stripping those variables made `winit::EventLoop::build()`
-fail with "neither WAYLAND_DISPLAY nor WAYLAND_SOCKET nor DISPLAY is
-set," which `App::run`'s own real, deliberate, already-correct
-"gracefully exit with `Ok(())` when no display is reachable" handling
-(TRE v1 finding #261's own convention, confirmed via direct read)
-caught and converted into a silent, successful, **zero-real-frames**
-return. `animation_completion.py`/`container_transform.py` are the
-two example scripts in this whole workspace that happen to assert on
-a value only a real per-frame `tick_all` call can ever produce —
-every other example either never reads back a ticked value at all, or
-(the pixel tests) uses its own separate, real wgpu-adapter path that
-never goes through `winit`'s `EventLoop` in the first place. So this
-was the one real place the zero-frames condition was ever actually
-*visible* — not because it was the one broken thing, but because it
-was the one script capable of *detecting* it.
+Every real, already-correct site (`Rect`/`Splitter`, `Text`,
+`TextField`, `Checkbox`'s own box, `Slider`'s own thumb, `Icon`)
+already used `with_opacity(color, node.paint.opacity.current)`. This
+phase extends the identical pattern to the six sites above.
 
-**Re-verified with the real display available (no env stripping):**
-both scripts now pass — `on_complete` fires exactly once in each,
-correctly. Re-ran all thirty-two examples this way: all thirty-two
-pass. `cargo test --workspace --release`/pytest already never touched
-`App.run()`'s own real winit loop the same way, so both suites were
-unaffected by this the whole time regardless.
+## What happened
 
-**Real, decisive confirmation this never touched CI:** `.github/
-workflows/ci.yml` deliberately has no display at all (its own header
-comment states this explicitly) and only ever runs `examples/
-animate_rect.py` — a script whose own doc comment already states "App.
-run() itself exits 0... when no display/GPU is reachable, so this
-script is safe to run unattended," and which never asserts on a
-ticked value. CI was never at risk from this; the false alarm was
-confined entirely to this session's own local verification runs.
+`Canvas`/`Slider` track: each real color now wrapped in `with_opacity
+(*color, node.paint.opacity.current)`. `Checkbox`'s checkmark: now
+`with_opacity(state.mark_tint, state.check_progress.current * node.
+paint.opacity.current)` — two independent real alpha sources
+multiplied together, the correct way two "how visible" factors
+compound. Elevation/shadow: both `shadow_color` calls multiplied by
+`node.paint.opacity.current`, and the whole shadow block now skips
+entirely at `opacity <= 0.0` too (mirroring the existing `elevation <=
+0.0` skip). Ripple/hover: `hover_opacity.current` and each `ripple.
+opacity.current` each multiplied by `node.paint.opacity.current`
+before use.
 
-## What actually changed
+**Real, necessary design decision for `Image`:** `Scene::
+draw_texture_rects` has no opacity parameter of its own at all
+(confirmed via direct source read) — unlike every `set_paint`-based
+fill, opacity can't be baked into a color argument. Wrapped the call
+in `scene.push_layer(None, None, Some(opacity), None, None)`/
+`pop_layer()` instead — the identical real "opacity-only layer, no
+clip" mechanism the ripple/hover overlay already relies on. Skipped
+entirely at `opacity <= 0.0`, avoiding an unnecessary GPU draw.
 
-Nothing in `engine-core`/`engine-py`/`engine-render` — there was
-nothing to fix. Going forward this session, example scripts are run
-with the real display available (no `env -u DISPLAY -u
-WAYLAND_DISPLAY`), which is strictly more thorough verification (a
-real winit `EventLoop`, a real GPU-adapter render loop, real per-frame
-ticking) than the accidental zero-frames graceful exit this session
-was silently accepting as "passed" for every prior milestone's own
-example verification.
+Six new pixel tests, one per site, each proving real compounding, not
+merely "doesn't crash": `canvas_paint.rs`/`image_paint.rs`/`slider_
+paint.rs` each use the same real range-check pattern `animated_
+rect.rs`'s own mid-flight test already established (a blended channel
+strictly between the fully-opaque and fully-transparent extremes, not
+an exact predicted byte value, since exact blend math depends on
+`vello_hybrid`'s own internals); `checkbox_paint.rs` proves the
+checkmark paints genuinely different pixels at opacity 1.0 vs. 0.5;
+`elevation_shadow.rs` proves a fully faded elevated node (`opacity:
+0.0`) now casts no shadow at all; `ripple_hover_dispatch.rs` proves a
+fully faded node's own ripple is now completely invisible (its origin
+pixel matches an untouched point, not just "the base fill is also
+invisible").
 
-Full `cargo test --workspace --release`/clippy/fmt already clean
-(untouched by this finding). `pytest` (187 passed, 1 pre-existing
-skip, unaffected) and all thirty-two examples now confirmed to pass
-with a real display and real per-frame execution, not just a graceful
-zero-frame exit.
+Every pre-existing test passed unmodified — every node's own real
+default `opacity = 1.0` makes `with_opacity(color, 1.0)`/`x * 1.0` a
+true no-op, so nothing visually changed for any node that never
+touches `opacity` at all.
 
-M25 Phase 1 is complete — no code fix was needed; the real fix was
-correcting this session's own test-running convention and confirming,
-with real verification, that the engine was correct the whole time.
+Full `cargo test --workspace --release` (new `engine-render` tests:
+Canvas/Image/Slider/Checkbox/Shadow/Ripple, six total), `cargo clippy
+--workspace --all-targets -- -D warnings`, `cargo fmt --check` all
+clean. `maturin develop --release` + `pytest tests/` (187 passed,
+unchanged, 1 pre-existing skip) and all thirty-two examples run with
+the real display (the corrected convention from Phase 1) — all pass.
+
+M25 — Known Gap Resolution is now fully complete.

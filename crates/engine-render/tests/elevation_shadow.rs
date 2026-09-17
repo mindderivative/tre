@@ -243,3 +243,51 @@ fn real_elevation_paints_real_shadow_pixels_below_the_node() {
         );
     });
 }
+
+/// M25 Phase 2 (§5, §6): a real, previously-missing compounding -- a
+/// real elevated node's own shadow painted at its own fixed MD3 alpha
+/// regardless of `node.paint.opacity.current` before this, so a fully
+/// faded-out node (`opacity: 0.0`) would still cast a fully visible
+/// shadow. A node invisible in every other respect must cast none.
+#[test]
+fn a_fully_faded_elevated_node_casts_no_shadow_at_all() {
+    pollster::block_on(async {
+        let mut tree = Tree::new();
+        let root = tree.insert(
+            NodeKind::Rect,
+            Style {
+                size: Size {
+                    width: length(200.0),
+                    height: length(200.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+        );
+
+        let chip = tree.insert(
+            NodeKind::Rect,
+            absolute(60.0, 60.0, 60.0, 60.0),
+            // opacity = 0.0, the fourth positional field.
+            PaintProperties::new(CHIP, 0.0, 0.0, 0.0),
+        );
+        tree.add_child(root, chip);
+        tree.get_mut(chip).unwrap().paint.transform.current = Affine::IDENTITY;
+        tree.get_mut(chip).unwrap().paint.elevation.current = 3.0;
+
+        let available = Size {
+            width: AvailableSpace::Definite(200.0),
+            height: AvailableSpace::Definite(200.0),
+        };
+        tree.compute_layout(root, available);
+
+        let (data, bpr) = render(&tree, root, 200, 200).await;
+        let below = pixel_at(&data, bpr, 90, 123);
+        assert_eq!(
+            below,
+            [0x11, 0x11, 0x11, 0xFF],
+            "a fully-faded-out (opacity 0.0) elevated node must cast no shadow at all -- \
+             plain background just below its own box, got {below:?}"
+        );
+    });
+}

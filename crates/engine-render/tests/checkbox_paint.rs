@@ -220,6 +220,67 @@ fn a_checked_checkbox_paints_a_real_visible_checkmark() {
     });
 }
 
+/// M25 Phase 2 (§5, §6): a real, previously-missing compounding -- the
+/// checkmark's own real alpha multiplied only `check_progress` before
+/// this, never `node.paint.opacity.current` too, so a checked
+/// checkbox mid-fade-out would show its checkmark at full alpha while
+/// its box correctly faded. Proven comparatively (opacity 1.0 vs.
+/// 0.5 must paint genuinely different mark pixels) rather than
+/// predicting an exact blended byte value, the same real reasoning
+/// `animated_rect.rs`'s own mid-flight test already uses.
+#[test]
+fn a_checked_checkboxs_own_checkmark_compounds_with_the_nodes_real_opacity() {
+    pollster::block_on(async {
+        fn build_tree_with_opacity(opacity: f64) -> (Tree, engine_core::NodeId) {
+            let mut tree = Tree::new();
+            let root = tree.insert(
+                NodeKind::Rect,
+                Style {
+                    size: Size {
+                        width: length(100.0),
+                        height: length(100.0),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+            );
+            let checkbox = tree.insert(
+                NodeKind::Checkbox(CheckboxState::new(true)),
+                Style {
+                    size: Size {
+                        width: length(100.0),
+                        height: length(100.0),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(BOX_COLOR, 0.0, 0.0, opacity),
+            );
+            tree.add_child(root, checkbox);
+            let available = Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(100.0),
+            };
+            tree.compute_layout(root, available);
+            (tree, root)
+        }
+
+        let (full_tree, full_root) = build_tree_with_opacity(1.0);
+        let (full_data, full_bpr) = render(&full_tree, full_root, 100, 100).await;
+        let full_mark = pixel_at(&full_data, full_bpr, 61, 50);
+
+        let (faded_tree, faded_root) = build_tree_with_opacity(0.5);
+        let (faded_data, faded_bpr) = render(&faded_tree, faded_root, 100, 100).await;
+        let faded_mark = pixel_at(&faded_data, faded_bpr, 61, 50);
+
+        assert_ne!(
+            full_mark, faded_mark,
+            "a checked checkbox's own checkmark must paint genuinely different pixels at \
+             node opacity 1.0 ({full_mark:?}) vs. 0.5 ({faded_mark:?}) -- the checkmark isn't \
+             compounding with the node's own real opacity"
+        );
+    });
+}
+
 /// M20 Phase 1 (§7.1, §7.3): the real, definitive proof `mark_tint` is
 /// genuinely read at paint time, not just stored -- a real, non-
 /// default tint (as `Window.set_theme` would push via `Tree::

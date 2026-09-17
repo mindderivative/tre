@@ -298,3 +298,65 @@ fn a_themed_slider_paints_the_real_resolved_track_tint() {
         );
     });
 }
+
+/// M25 Phase 2 (§5, §6): a real, previously-missing compounding --
+/// only the thumb multiplied by `node.paint.opacity.current` before
+/// this; the track painted its own real `track_tint` raw, a genuine
+/// internal inconsistency within one `NodeKind`. Same range-check
+/// pattern `animated_rect.rs`'s own mid-flight test already
+/// established.
+#[test]
+fn a_faded_slider_compounds_the_nodes_own_real_opacity_into_the_track_too() {
+    pollster::block_on(async {
+        let mut tree = Tree::new();
+        let root = tree.insert(
+            NodeKind::Rect,
+            Style {
+                size: Size {
+                    width: length(200.0),
+                    height: length(40.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+        );
+
+        // Thumb at 0.0 (near x=0) keeps x=100 (track band, y=20) a
+        // pure track-only pixel, well outside the thumb's own reach --
+        // the same real isolation `an_unthemed_slider_paints_the_real_
+        // default_gray_track` already established.
+        let slider = tree.insert(
+            NodeKind::Slider(SliderState::new(0.0)),
+            Style {
+                size: Size {
+                    width: length(200.0),
+                    height: length(40.0),
+                },
+                ..Default::default()
+            },
+            // opacity = 0.5, the fourth positional field.
+            PaintProperties::new(THUMB_COLOR, 0.0, 0.0, 0.5),
+        );
+        tree.add_child(root, slider);
+
+        let available = Size {
+            width: AvailableSpace::Definite(200.0),
+            height: AvailableSpace::Definite(40.0),
+        };
+        tree.compute_layout(root, available);
+
+        let (data, bpr) = render(&tree, root, 200, 40).await;
+        let track_point = pixel_at(&data, bpr, 100, 20);
+
+        // The real default gray track is 0x79 -- a faded track at
+        // 0.5 opacity, blended over 0x11 background, must land
+        // strictly between the two, not stay at the full 0x79.
+        let observed_r = f32::from(track_point[0]);
+        assert!(
+            observed_r > f32::from(0x11_u8) && observed_r < f32::from(0x79_u8),
+            "track red channel {observed_r} is not strictly between background (0x11) and \
+             the real full-opacity default gray (0x79) -- the track isn't compounding with \
+             the node's own real opacity, got {track_point:?}"
+        );
+    });
+}
