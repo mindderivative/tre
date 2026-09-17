@@ -396,6 +396,40 @@ fn paint_node(
                 },
             );
         }
+        // M15 Phase 1 (§5, §16.7): unlike `NodeKind::Text` (a plain
+        // label with no visible box, `background` repurposed as the
+        // glyph color), a real `TextField` is a genuinely boxed input
+        // -- `background` paints its own real fill first (the same
+        // `RoundedRect` fill every other boxed `NodeKind` uses), and
+        // `draw_field` paints its content/caret/selection on top in a
+        // fixed, real, not-yet-theme-aware color (the same "real but
+        // not yet theme-aware" scope `Checkbox`'s own hardcoded white
+        // checkmark, M14 Phase 1, already established -- `engine-render`
+        // has no `engine-md3` dependency, §4, to resolve a real
+        // on-surface token from here).
+        NodeKind::TextField(state) => {
+            let radius = node.paint.corner_radius.current;
+            let bg = with_opacity(node.paint.background.current, node.paint.opacity.current);
+            scene.set_paint(bg);
+            scene.fill_path(&RoundedRect::new(0.0, 0.0, w, h, radius).to_path(0.1));
+
+            let text_color = with_opacity(
+                Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF),
+                node.paint.opacity.current,
+            );
+            text.draw_field(
+                scene,
+                resources,
+                state,
+                TextPlacement {
+                    x: 0.0,
+                    y: 0.0,
+                    max_width: w as f32,
+                    color: text_color,
+                },
+                tree.focused() == Some(id),
+            );
+        }
         // A `VirtualList` container paints nothing itself, same as
         // `Container` -- it exists purely to give `taffy` something to
         // lay its (windowed) children out against; the recursive walk

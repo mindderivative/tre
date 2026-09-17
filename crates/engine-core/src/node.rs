@@ -116,6 +116,70 @@ pub enum NodeKind {
     /// call would set an active animation that never progresses. Ticked
     /// there, unconditionally, alongside `CheckboxState.check_progress`.
     Slider(SliderState),
+    /// M15 Phase 1 (§5, §16.7): a real, single-line editable text
+    /// field. `content`/`cursor`/`selection_anchor` are plain, engine-
+    /// core-native byte-offset state -- Design Principle 6's own
+    /// "app-owned meaning" shape `CheckboxState.checked` already
+    /// established, except here the *engine* is the one real mutator
+    /// (via `Tree::dispatch`'s own keyboard-editing arm, M15 Phase 2),
+    /// since typing is mechanical, not app-defined meaning the way a
+    /// checkbox's "checked" is. Deliberately does *not* carry a
+    /// `parley::Layout`/`Selection` directly: `engine-core` has no
+    /// `parley` dependency at all (§4's crate-boundary rule) --
+    /// `engine-render` reconstructs both, each frame, purely to compute
+    /// real caret/highlight paint geometry, the same "engine-core holds
+    /// inert data, engine-render re-derives it" split `TextState`
+    /// itself already uses.
+    TextField(TextFieldState),
+}
+
+/// M15 Phase 1 (§5, §16.7): mirrors `TextState`'s own four font/content
+/// fields exactly (so `engine-render`'s own layout-building code can be
+/// shared between the two), plus real editable-field state. `cursor`/
+/// `selection_anchor` are plain UTF-8 *byte* offsets into `content`,
+/// not char or grapheme-cluster indices -- `String` slicing/`char_
+/// indices` are what M15 Phase 2's own real keyboard-editing mutation
+/// uses to keep every offset on a real UTF-8 boundary; `engine-core`
+/// itself never validates this beyond what those std APIs already
+/// guarantee, since `content` is never sliced at an arbitrary offset
+/// here, only ever at boundaries `char_indices` itself produced.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextFieldState {
+    pub content: String,
+    pub font_family: String,
+    pub font_weight: f32,
+    pub font_size: f32,
+    /// A real UTF-8 byte offset into `content`, `0..=content.len()`.
+    pub cursor: usize,
+    /// `Some(byte_offset)` when a real selection is active (`cursor`
+    /// is the selection's own "focus" end, this is its "anchor" end,
+    /// the identical two-endpoint shape `parley::editing::Selection`
+    /// itself uses) -- `None` (the default) means no selection, the
+    /// overwhelmingly common case for a freshly-created field.
+    pub selection_anchor: Option<usize>,
+}
+
+impl TextFieldState {
+    /// Seeds `cursor` at `content`'s own real end -- a real text
+    /// field's own real, expected initial-cursor-at-end convention
+    /// (every desktop toolkit's own default), not `0`.
+    pub fn new(
+        content: impl Into<String>,
+        font_family: impl Into<String>,
+        font_weight: f32,
+        font_size: f32,
+    ) -> Self {
+        let content = content.into();
+        let cursor = content.len();
+        Self {
+            content,
+            font_family: font_family.into(),
+            font_weight,
+            font_size,
+            cursor,
+            selection_anchor: None,
+        }
+    }
 }
 
 /// §11.7's own struct sketch, unchanged in shape (`item_count`,

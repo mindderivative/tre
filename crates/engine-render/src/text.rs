@@ -11,12 +11,13 @@
 
 use std::sync::Arc;
 
-use engine_core::TextState;
+use engine_core::{TextFieldState, TextState};
 use parley::fontique::{Collection, CollectionOptions};
 use parley::{
-    Alignment, AlignmentOptions, FontContext, FontFamily, FontWeight, LayoutContext,
-    PositionedLayoutItem, StyleProperty,
+    Affinity, Alignment, AlignmentOptions, Cursor, FontContext, FontFamily, FontWeight,
+    LayoutContext, PositionedLayoutItem, Selection, StyleProperty,
 };
+use peniko::kurbo::{Rect, Shape};
 use peniko::{Blob, Color};
 use vello_hybrid::{Resources, Scene};
 
@@ -123,6 +124,100 @@ impl TextRenderer {
                     .font_size(font_size)
                     .fill_glyphs(glyphs);
             }
+        }
+    }
+
+    /// M15 Phase 1 (§5, §16.7): `draw`'s own real editable-field
+    /// sibling -- builds the identical kind of `Layout` `draw` does
+    /// (same content/font fields, `TextFieldState` mirrors `TextState`
+    /// exactly for this reason), but from that *one* `Layout` also
+    /// derives real caret/selection-highlight paint geometry via
+    /// `parley::{Cursor, Selection}` -- not a second, disconnected
+    /// measurement, so the geometry always lines up with the glyphs
+    /// actually painted. Real MD3 stacking order: selection highlight
+    /// first (behind text), then glyphs, then the caret last (on top)
+    /// -- the same order any real text editor paints these three
+    /// layers in. Neither the caret nor the highlight is yet a real,
+    /// theme-resolved MD3 color (`engine-render` doesn't depend on
+    /// `engine-md3`, §4) -- both derive from `at.color`, the same
+    /// "real but not yet theme-aware" scope `Checkbox`'s own hardcoded
+    /// white checkmark (M14 Phase 1) already established.
+    pub fn draw_field(
+        &mut self,
+        scene: &mut Scene,
+        resources: &mut Resources,
+        state: &TextFieldState,
+        at: TextPlacement,
+        show_caret: bool,
+    ) {
+        let mut builder =
+            self.layout_cx
+                .ranged_builder(&mut self.font_cx, &state.content, 1.0, true);
+        builder.push_default(StyleProperty::FontFamily(FontFamily::named(
+            &state.font_family,
+        )));
+        builder.push_default(StyleProperty::FontWeight(FontWeight::new(
+            state.font_weight,
+        )));
+        builder.push_default(StyleProperty::FontSize(state.font_size));
+        let mut layout = builder.build(&state.content);
+        layout.break_all_lines(Some(at.max_width));
+        layout.align(Alignment::Start, AlignmentOptions::default());
+
+        // Selection highlight, painted first (behind the glyphs below).
+        if let Some(anchor) = state.selection_anchor
+            && anchor != state.cursor
+        {
+            let anchor_cursor = Cursor::from_byte_index(&layout, anchor, Affinity::Downstream);
+            let focus_cursor = Cursor::from_byte_index(&layout, state.cursor, Affinity::Downstream);
+            let selection = Selection::new(anchor_cursor, focus_cursor);
+            scene.set_paint(crate::with_opacity(at.color, 0.3));
+            for (bounds, _line_idx) in selection.geometry(&layout) {
+                let rect = Rect::new(
+                    bounds.x0 + at.x,
+                    bounds.y0 + at.y,
+                    bounds.x1 + at.x,
+                    bounds.y1 + at.y,
+                );
+                scene.fill_path(&rect.to_path(0.1));
+            }
+        }
+
+        scene.set_paint(at.color);
+        for line in layout.lines() {
+            for item in line.items() {
+                let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
+                    continue;
+                };
+                let run = glyph_run.run();
+                let font = run.font();
+                let font_size = run.font_size();
+                let glyphs = glyph_run.positioned_glyphs().map(|g| glifo::Glyph {
+                    id: g.id,
+                    x: g.x + at.x as f32,
+                    y: g.y + at.y as f32,
+                });
+                scene
+                    .glyph_run(resources, font)
+                    .font_size(font_size)
+                    .fill_glyphs(glyphs);
+            }
+        }
+
+        // Caret, painted last (on top of the glyphs above) -- only when
+        // this field is the `Tree`'s own real, live focused node
+        // (`paint_node`'s own real caller decides `show_caret`).
+        if show_caret {
+            let cursor = Cursor::from_byte_index(&layout, state.cursor, Affinity::Downstream);
+            let bounds = cursor.geometry(&layout, 1.5);
+            let rect = Rect::new(
+                bounds.x0 + at.x,
+                bounds.y0 + at.y,
+                bounds.x1 + at.x,
+                bounds.y1 + at.y,
+            );
+            scene.set_paint(at.color);
+            scene.fill_path(&rect.to_path(0.1));
         }
     }
 }

@@ -27,7 +27,7 @@ use crate::canvas::{CustomHitTest, DrawCommand};
 use crate::input::{DispatchOutcome, InputEvent, Key, PointerButton, ScrollDelta};
 use crate::interaction::InteractionState;
 #[cfg(test)]
-use crate::node::{CheckboxState, ItemExtent, SliderState, VirtualListState};
+use crate::node::{CheckboxState, ItemExtent, SliderState, TextFieldState, VirtualListState};
 use crate::node::{Node, NodeId, NodeKind, PaintProperties};
 use crate::overlay::OverlayMeta;
 #[cfg(test)]
@@ -1596,6 +1596,12 @@ impl Tree {
         // would just be two copies of the same fact that could drift.
         if let NodeKind::Checkbox(state) = &node.kind {
             access_node.set_toggled(state.checked.into());
+        }
+        // M15 Phase 1 (§5, §16.7): the same real, automatic derivation
+        // -- `content` is the one real source of truth, never mirrored
+        // into a second copy here.
+        if let NodeKind::TextField(state) = &node.kind {
+            access_node.set_value(state.content.clone());
         }
         access_node.set_bounds(accesskit::Rect {
             x0: x,
@@ -5005,6 +5011,63 @@ mod tests {
             node.toggled(),
             Some(accesskit::Toggled::True),
             "a checked checkbox must report Toggled::True"
+        );
+    }
+
+    /// M15 Phase 1 (§5, §16.7): `TextFieldState::new`'s own real
+    /// contract -- `cursor` seeds at `content`'s own real end, a real
+    /// text field's own expected initial-cursor-at-end convention, not
+    /// `0`.
+    #[test]
+    fn text_field_state_new_seeds_the_cursor_at_the_end_of_the_initial_content() {
+        let state = TextFieldState::new("hello", "Roboto", 400.0, 16.0);
+        assert_eq!(state.content, "hello");
+        assert_eq!(
+            state.cursor, 5,
+            "cursor must start at content's own real end (byte offset 5 for \"hello\")"
+        );
+        assert_eq!(state.selection_anchor, None);
+    }
+
+    /// A `TextField`'s own real, automatic accessibility derivation --
+    /// mirrors `build_access_update_reports_the_real_toggled_state_for_
+    /// a_checkbox`'s own shape: reads `content` directly from `NodeKind
+    /// ::TextField`, not a second, separately-set copy.
+    #[test]
+    fn build_access_update_reports_the_real_value_role_and_focus_action_for_a_text_field() {
+        use crate::access::{Action, Role};
+
+        let mut tree = Tree::new();
+        let (_, style, paint) = leaf(120.0, 32.0);
+        let field = tree.insert(
+            NodeKind::TextField(TextFieldState::new("hello", "Roboto", 400.0, 16.0)),
+            style,
+            paint,
+        );
+        tree.set_access(
+            field,
+            AccessNodeData::new(Role::TextInput).with_action(Action::Focus),
+        );
+        tree.compute_layout(
+            field,
+            Size {
+                width: AvailableSpace::Definite(120.0),
+                height: AvailableSpace::Definite(32.0),
+            },
+        );
+
+        let update = tree.build_access_update(field);
+        let (_, node) = &update.nodes[0];
+        assert_eq!(node.role(), Role::TextInput);
+        assert_eq!(
+            node.value(),
+            Some("hello"),
+            "a TextField's own real content must reach the accessibility tree's value, \
+             not a stale or missing one"
+        );
+        assert!(
+            node.supports_action(Action::Focus),
+            "a TextField must be a real Focus target for Tab/screen-reader reachability"
         );
     }
 }

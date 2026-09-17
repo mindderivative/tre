@@ -477,6 +477,34 @@ impl Node {
             .into()),
         }
     }
+
+    /// M15 Phase 1 (§5, §16.7): the real read-back getter for a
+    /// `TextField`'s own current `content` -- mirrors `get_checked`'s
+    /// own exact shape (rejecting a non-`TextField` node the same way).
+    pub(crate) fn get_text(&self) -> PyResult<String> {
+        let tree = self.tree.borrow();
+        let node = tree.get(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        match &node.kind {
+            NodeKind::TextField(state) => Ok(state.content.clone()),
+            _ => Err(EngineError::UnknownProperty {
+                kind: kind_name(&node.kind),
+                property: "text".to_string(),
+            }
+            .into()),
+        }
+    }
+
+    /// M15 Phase 1 (§10): the real, missing "is this node currently
+    /// focused" query -- confirmed via grep, no Python-facing way to
+    /// read `Tree::focused()` existed anywhere before this. Works for
+    /// any `NodeKind`, not just `TextField` (§10's own focus model is
+    /// generic), the same "no stricter rule for one kind than another"
+    /// precedent `Tree::activate`/`set_focus_to` already state.
+    fn is_focused(&self) -> bool {
+        self.tree.borrow().focused() == Some(self.id)
+    }
 }
 
 /// M9 Phase 2 (§5): `animate()`'s own shared "start this field
@@ -511,6 +539,7 @@ fn kind_name(kind: &NodeKind) -> &'static str {
         NodeKind::Canvas(_) => "Canvas",
         NodeKind::Checkbox(_) => "Checkbox",
         NodeKind::Slider(_) => "Slider",
+        NodeKind::TextField(_) => "TextField",
     }
 }
 

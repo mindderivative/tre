@@ -9,8 +9,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use engine_core::{
-    Animated, CheckboxState, InputEvent, ItemExtent, Key, NodeId, NodeKind, PaintProperties,
-    PointerButton, SliderState, SplitterState, Tree, VirtualListState,
+    AccessNodeData, Action, Animated, CheckboxState, InputEvent, ItemExtent, Key, NodeId, NodeKind,
+    PaintProperties, PointerButton, Role, SliderState, SplitterState, TextFieldState, Tree,
+    VirtualListState,
 };
 use engine_md3::DynamicTheme;
 use peniko::Color;
@@ -391,6 +392,69 @@ impl PyWindow {
                 y,
             ),
             PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, id);
+        Node {
+            id,
+            tree: self.tree.clone(),
+            handlers: self.handlers.clone(),
+            context_menus: self.context_menus.clone(),
+            theme: self.theme.clone(),
+            completions: self.completions.clone(),
+        }
+    }
+
+    /// M15 Phase 1 (§5, §16.7): creates a real `NodeKind::TextField`,
+    /// mirroring `add_checkbox`/`add_slider`'s own real shape --
+    /// `background` is the field's own real box fill (universal
+    /// `PaintProperties`, same as any other node); `content`/
+    /// `font_family`/`font_weight`/`font_size` seed `TextFieldState`
+    /// directly (`TextFieldState::new`'s own real contract: `cursor`
+    /// starts at `content`'s own end). **Real finding (see `PLAN.md`):**
+    /// this is the first real `engine-py` caller of `Tree::set_access`
+    /// anywhere -- every other `add_*` method leaves a node at the
+    /// default `Role::Unknown`/no actions, confirmed via grep before
+    /// this method. A `TextField` is inherently interactive (unlike a
+    /// plain `Rect`, which only becomes Tab-reachable as a side effect
+    /// of `set_on_click`), so it opts into `Role::TextInput` +
+    /// `Action::Focus` right here at construction, not deferred to a
+    /// later opt-in call.
+    #[pyo3(signature = (background, width, height, content="", font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn add_text_field(
+        &self,
+        background: (u8, u8, u8, u8),
+        width: f32,
+        height: f32,
+        content: &str,
+        font_family: &str,
+        font_weight: f32,
+        font_size: f32,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> Node {
+        let (r, g, b, a) = background;
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::TextField(TextFieldState::new(
+                content,
+                font_family,
+                font_weight,
+                font_size,
+            )),
+            positioned_style(
+                Size {
+                    width: length(width),
+                    height: length(height),
+                },
+                x,
+                y,
+            ),
+            PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
+        );
+        tree.set_access(
+            id,
+            AccessNodeData::new(Role::TextInput).with_action(Action::Focus),
         );
         tree.add_child(self.root, id);
         Node {
