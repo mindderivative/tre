@@ -251,7 +251,17 @@ impl Node {
     /// existing mechanism docking's own tab-switching already uses to
     /// keep a node "alive, parentless, ready for `add_child` elsewhere
     /// later."
-    fn set_context_menu(&self, content: PyRef<'_, Node>) {
+    ///
+    /// M10 Phase 2 (§8): `content` must belong to this same `Node`'s
+    /// own `Window` -- `NodeId` is only unique within the `Tree` that
+    /// minted it, so a foreign `Node` would store a foreign id that
+    /// could alias an unrelated real node the next time it's read back
+    /// (the exact real gap `Node.add_child`'s own `Rc::ptr_eq` check
+    /// already closed, M6 Phase 1 -- mirrored here verbatim).
+    fn set_context_menu(&self, content: PyRef<'_, Node>) -> PyResult<()> {
+        if !Rc::ptr_eq(&self.tree, &content.tree) {
+            return Err(EngineError::ForeignNode.into());
+        }
         let mut tree = self.tree.borrow_mut();
         if let Some(parent) = tree
             .get(content.id)
@@ -262,6 +272,7 @@ impl Node {
         }
         drop(tree);
         self.context_menus.borrow_mut().insert(self.id, content.id);
+        Ok(())
     }
 
     /// M4 Phase 5 (§7.3): opts this node into ripple/hover state-layer

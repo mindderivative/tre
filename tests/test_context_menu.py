@@ -18,6 +18,8 @@ Same "requires `maturin develop` first, imports the real compiled
 extension" discipline as `test_engine_py.py`.
 """
 
+import pytest
+
 from tre import Window
 
 
@@ -120,3 +122,18 @@ def test_left_clicking_an_anchor_with_a_context_menu_does_not_open_it():
     menu_item.set_on_click(lambda: calls.append("selected"))
     window.click(menu_item)
     assert calls == [], "a plain left-click on the anchor must not open its context menu"
+
+
+def test_set_context_menu_rejects_content_from_a_different_window():
+    """M10 Phase 2 (§8): the same real `Rc::ptr_eq` same-tree guard
+    `Node.add_child` already has (`test_add_child.py`'s own analogous
+    test), mirrored here -- a `NodeId` is only unique within the `Tree`
+    that minted it.
+    """
+    window_a = Window(width=200, height=120)
+    window_b = Window(width=200, height=120)
+    anchor = window_a.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=80, height=40)
+    foreign_content = window_b.add_rect(background=(0x00, 0x80, 0x00, 0xFF), width=60, height=20)
+
+    with pytest.raises(ValueError, match="different Window"):
+        anchor.set_context_menu(foreign_content)

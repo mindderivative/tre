@@ -16,6 +16,8 @@ Same "requires `maturin develop` first, imports the real compiled
 extension" discipline as `test_engine_py.py`.
 """
 
+import pytest
+
 from tre import Window
 
 
@@ -129,3 +131,23 @@ def test_an_unknown_dock_side_raises_value_error():
         raise AssertionError("expected a ValueError")
     except ValueError as e:
         assert "nowhere" in str(e)
+
+
+def test_set_dock_handle_rejects_a_handle_or_panel_from_a_different_window():
+    """M10 Phase 2 (§8): the same real `Rc::ptr_eq` same-tree guard
+    `Node.add_child`/`Node.set_context_menu` already have -- a `NodeId`
+    is only unique within the `Tree` that minted it.
+    """
+    window_a = Window(width=300, height=120)
+    window_b = Window(width=300, height=120)
+    container = window_a.add_rect(background=(0, 0, 0, 0), width=100, height=100)
+    window_a.add_dock_zone("left", container, 100.0)
+    panel = window_a.add_rect(background=(0xFF, 0x00, 0x00, 0xFF), width=100, height=80)
+    window_a.dock_panel("left", panel)
+    handle = window_a.add_rect(background=(0x80, 0x80, 0x80, 0xFF), width=100, height=20)
+    foreign = window_b.add_rect(background=(0, 0, 0, 255), width=10, height=10)
+
+    with pytest.raises(ValueError, match="different Window"):
+        window_a.set_dock_handle(foreign, panel)
+    with pytest.raises(ValueError, match="different Window"):
+        window_a.set_dock_handle(handle, foreign)

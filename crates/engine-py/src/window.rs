@@ -658,8 +658,19 @@ impl PyWindow {
     /// tracking a drag of `panel`, not `handle` itself, mirroring
     /// `set_context_menu`'s own "anchor names a different node" shape
     /// (M4 Phase 7).
-    fn set_dock_handle(&mut self, handle: PyRef<'_, Node>, panel: PyRef<'_, Node>) {
+    ///
+    /// M10 Phase 2 (§8): both `handle` and `panel` must belong to this
+    /// same `Window`'s own `Tree` -- the same real `Rc::ptr_eq` guard
+    /// `Node.add_child`/`Node.set_context_menu`/`Window.begin_
+    /// container_transform` already use, mirrored here for the same
+    /// real reason (a foreign `NodeId` could alias an unrelated real
+    /// node the next time it's read back).
+    fn set_dock_handle(&mut self, handle: PyRef<'_, Node>, panel: PyRef<'_, Node>) -> PyResult<()> {
+        if !Rc::ptr_eq(&self.tree, &handle.tree) || !Rc::ptr_eq(&self.tree, &panel.tree) {
+            return Err(EngineError::ForeignNode.into());
+        }
         dock::set_dock_handle(&self.dock, handle.id, panel.id);
+        Ok(())
     }
 
     /// M4 Phase 9's own no-live-window-needed proof pattern (matching
