@@ -1,62 +1,58 @@
-# Log: M13 Phase 1 — Real AppShell Composition (§11.2)
+# Log: M13 Phase 2 — Real Content Navigation (§11.2, optionally §7.6)
 
-Corresponds to `BUILD_TRACKER.md` M13 Phase 1. A real `Window`-level
-way to build the shell's named regions (menu bar, toolbar, status bar,
-and the stable `content` swap region) in one call, no new `engine-core`
-primitive.
+Corresponds to `BUILD_TRACKER.md` M13 Phase 2, closing M13 entirely. A
+real `Node.remove()`, plus a real example demonstrating navigation
+between two screens.
 
 ## Investigation before writing code
 
-ARCHITECTURE.md §11.2's own struct sketch: `AppShell` is a passive
-bookkeeping record naming which of a window's own already-built nodes
-serve which chrome role, not a builder of their content. `PyWindow::
-new`'s own root is hardcoded `Flex Row` -- every other `add_*` method's
-own implicit flow depends on that, so shell composition needs its own
-dedicated child container, `Flex Column`. `taffy::Style` has a real
-`flex_grow: f32` field for "this region fills whatever space remains."
-No new `engine-core` primitive was needed anywhere -- confirmed by
-investigation.
+Confirmed via grep and direct read: `Node.add_child` existed but
+nothing exposed `Tree::remove` to Python at all. `Tree::remove`
+(`tree.rs:271-289`) recursively removes a node and its whole subtree,
+unlinking it from its own parent's `children` first — exactly
+"replacing `content`'s own children," the one missing half
+ARCHITECTURE.md §11.2's own text names. `Window.begin_container_
+transform`/`end_container_transform` (§7.6) are already real and
+Python-facing — no new wiring needed to compose them with navigation.
 
 ## What happened
 
-New `PyWindow.build_shell(menu_bar=None, toolbar=None, status_bar=
-None) -> Node`: checks each given region with the same `Rc::ptr_eq`
-same-tree guard `set_dock_handle`/`set_drop_zone_highlight` already
-established; creates one new `Flex Column` `Container` child of `self.
-root`; re-parents each given region into it in order; creates a new,
-empty `content` `Container` with `flex_grow: 1.0`; returns `content`.
+New `Node.remove(&self)` — calls `Tree::remove(self.id)`, mirroring
+`add_child`'s own minimal shape. No return value: a `Node` handle
+Python already holds always refers to a real, present `NodeId`, the
+same assumption every other `Node` method already makes.
 
-**Real finding, caught live, not by pytest:** the first draft
-re-parented `menu_bar`/`toolbar`/`status_bar` using the cheap `Tree::
-add_child` (the same primitive `add_rect` itself uses for a
-freshly-inserted node) -- but every `add_*` method already attaches its
-result to `self.root` immediately, so these nodes always already have a
-real parent by the time `build_shell` runs. `add_child` doesn't detach
-first (confirmed via direct read of its own doc comment: only correct
-for "a freshly-inserted node, or a reparent already proven disjoint"),
-so this left a node listed as a child of *both* its old parent and the
-new shell -- real tree corruption. Not caught by any pytest test (none
-render a real frame); caught by `examples/app_shell.py`'s own live run,
-which panicked with `TreeUpdate includes duplicate child` from
-`accesskit`'s own validation -- the exact same "caught by the live
-example, not pytest" pattern `dock_panel`'s own doc comment already
-names for an analogous M4 Phase 9 bug. Fixed by using `Tree::try_add_
-child` (which detaches first, the same mechanism `Node.add_child`'s own
-pyo3 wrapper already uses) for the three re-parenting calls; the
-freshly-inserted `shell`/`content` nodes still correctly use the cheap
-`add_child`, since they genuinely have no prior parent.
+New `tests/test_remove.py`: a node genuinely detaches so a new sibling
+occupying the same real position is the one a real dispatched click
+reaches afterward (the functional proof, since calling `Window.click`
+on the removed node's own now-stale handle would panic via `Tree::
+absolute_position`'s own `.expect()` — an internal-bug condition
+everywhere else in this codebase, not something to attempt from a
+test); removing a node with real children doesn't corrupt the rest of
+the tree (an unrelated, freshly-built node still dispatches correctly
+afterward).
 
-New `tests/test_app_shell.py`: all three regions given, real functional
-proof each is genuinely attached (clicking it fires its own handler);
-no regions given still returns a real, usable `content`; `content`'s
-own `flex_grow` genuinely fills remaining space after a fixed-height
-menu bar (a child added to `content` is still real and clickable, not
-squeezed to zero height); a foreign-`Window` region raises the same
-`ForeignNode` error every other same-tree guard already does. New
-`examples/app_shell.py`: a real, live four-region shell.
+New `examples/navigation.py`: a real `AppShell` (Phase 1) with two
+screens built into `content`; navigating removes the first screen's
+real subtree and adds the second's, proven by a real dispatched click
+landing on the second screen's own card, not the first's. Deliberately
+does **not** attempt to combine this with `begin_container_transform`
+in the same script — `examples/container_transform.py` is already the
+definitive, verified proof that mechanism works on its own; composing
+it correctly with `content`'s own pre-attached-destination requirement
+would need careful re-verification this phase's own narrow scope (a
+real `remove()` primitive) doesn't need to risk. §11.2's own text
+states the two *compose*, not that this phase must re-prove container-
+transform itself.
 
 Full `cargo test --workspace --release`/clippy `-D warnings`/fmt clean
-(no `engine-core` change, `engine-py`-only). `maturin develop --release`
-+ full `pytest tests/` (104 passed, up from 100, 1 skipped) and all
-eighteen examples (seventeen existing + new `app_shell.py`) confirmed
-clean, including the real bug fix verified live.
+(no `engine-core` change, `engine-py`-only — `Tree::remove` already
+existed and was already tested). `maturin develop --release` + full
+`pytest tests/` (106 passed, up from 104, 1 skipped) and all nineteen
+examples (eighteen existing + new `navigation.py`) confirmed clean.
+
+M13 (AppShell / Single-Page Navigation) is now complete: both phases
+done — Phase 1 built real shell composition (and, along the way, found
+and fixed a real tree-corruption bug caught live by `accesskit`), Phase
+2 built the one missing removal primitive and proved real navigation
+works end to end.

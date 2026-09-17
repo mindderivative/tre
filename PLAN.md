@@ -1,84 +1,59 @@
-# Plan: M13 Phase 1 — Real AppShell Composition (§11.2)
+# Plan: M13 Phase 2 — Real Content Navigation (§11.2, optionally §7.6)
 
-Corresponds to `BUILD_TRACKER.md` M13 Phase 1's own scoping: a real
-`Window`-level way to build the shell's named regions (menu bar,
-toolbar, status bar, and the stable `content` swap region) in one
-call, as ordinary flex-composed containers, no new `engine-core`
-primitive.
+Corresponds to `BUILD_TRACKER.md` M13 Phase 2's own scoping, closing
+the milestone: a real `Node.remove()`, plus a real example
+demonstrating navigation between two screens, optionally composed with
+the already-real container-transform choreography.
 
 ## Investigation before writing code
 
-- ARCHITECTURE.md §11.2's own struct sketch: `AppShell { menu_bar:
-  Option<NodeId>, toolbar: Option<NodeId>, dock: DockLayout, status_
-  bar: Option<NodeId>, content: NodeId }` — a passive bookkeeping
-  record naming which of a window's own already-built nodes serve
-  which chrome role, not a builder of their *content*. `content` is
-  the one mandatory field, "the swappable region."
-- `PyWindow::new` (`window.rs:213-222`, confirmed by direct read):
-  every node any `add_*` method creates attaches directly to `self.
-  root`, whose own `Style` is hardcoded `Display::Flex` +
-  `FlexDirection::Row`. A real header/content/footer shell needs a
-  *column* arrangement — reusing `self.root` directly isn't possible
-  without breaking every other `add_*` method's own implicit row flow,
-  so shell composition needs its own dedicated child container.
-- `Node.add_child` (`node.rs:323-332`) already exists and already
-  detaches a node from its current parent first (`Tree::try_add_child`
-  — confirmed via direct read) — the exact "re-parent an already-built
-  node into the shell" mechanism this phase needs, with zero new
-  `engine-core` work.
-- `taffy::Style` (pinned 0.14.0, confirmed via direct read of its own
-  source) has a real `flex_grow: f32` field — the standard flexbox
-  mechanism for "this region fills whatever space remains" the
-  `content` region needs, so it isn't squeezed to zero by the chrome
-  regions' own explicit sizes.
-- No new `engine-core` primitive is needed anywhere in this design —
-  confirmed by investigation: `Tree::insert`/`add_child` (already
-  real) build the shell's own container structure; each individual
-  chrome region's *content* is built by the app itself via already-real
-  primitives (`add_rect`, etc.), matching AppShell's own "composition
-  convenience," not content-authoring, framing.
+- Confirmed via grep (already done during M13's own scoping, re-
+  confirmed by direct read of `node.rs`'s full `#[pymethods] impl`):
+  `Node.add_child` exists; nothing exposes `Tree::remove` to Python at
+  all. `Tree::remove` (`tree.rs:271-289`, confirmed by direct read)
+  recursively removes `id` and its whole subtree, unlinking it from its
+  own parent's `children` first — exactly "replacing `content`'s own
+  children," the one missing half ARCHITECTURE.md §11.2's own text
+  names ("navigating means replacing that node's children, an
+  ordinary, already-supported tree mutation").
+- `Node.add_child`'s own real shape (`node.rs:323-332`) is the direct
+  template: `Rc::ptr_eq` same-tree check first (not needed here —
+  `remove` only ever touches `self.id`, already known to belong to
+  this `Node`'s own `Tree`), then a plain `Tree` method call.
+- `Window.begin_container_transform`/`end_container_transform` (§7.6,
+  M7 Phase 5) are already real, already Python-facing — no new wiring
+  needed to compose them with a real remove+add navigation; this phase
+  only needs to *demonstrate* the composition in a real example, not
+  build new machinery for it.
 
 ## Design
 
-`crates/engine-py/src/window.rs`:
+`crates/engine-py/src/node.rs`:
 
-- New `PyWindow.build_shell(menu_bar: Option<PyRef<'_, Node>>,
-  toolbar: Option<PyRef<'_, Node>>, status_bar: Option<PyRef<'_,
-  Node>>) -> PyResult<Node>`:
-  - Each given region is checked with the same `Rc::ptr_eq` same-tree
-    guard `set_dock_handle`/`set_drop_zone_highlight` already
-    established (M10 Phase 2/3) — a foreign `Window`'s own `Node`
-    raises `EngineError::ForeignNode`.
-  - Creates one new "shell" `Container` child of `self.root`, sized to
-    the window's own real width/height, `FlexDirection::Column` — the
-    one new structural node this phase adds.
-  - Re-parents each given region into the shell container, in order
-    (`menu_bar`, `toolbar`, then `content`, then `status_bar`) via
-    `Tree::add_child` (already handles detaching from wherever the
-    node currently is).
-  - Creates a new, empty `Container` node for `content`, `flex_grow:
-    1.0` so it fills whatever vertical space the given chrome regions
-    don't take, appended into the shell container between `toolbar`
-    and `status_bar`.
-  - Returns `content` — the one handle the app needs to keep for
-    Phase 2's own navigation.
+- New `Node.remove(&self)` — calls `Tree::remove(self.id)`, mirroring
+  `add_child`'s own minimal shape. No return value: `Tree::remove`
+  itself returns `bool` ("was it actually present"), but a `Node`
+  handle Python already holds always refers to a real, present
+  `NodeId` at the point `.remove()` is called (the same assumption
+  `add_child`/every other `Node` method already makes) — a bare `bool`
+  return with no real failure case to report would be dead API surface,
+  not real information.
 
 ## Verification plan
 
-- `cargo test --workspace --release`/clippy/fmt — this phase is
-  `engine-py`-only, no `engine-core` change.
-- `maturin develop --release` + `pytest tests/`. New `test_app_shell.py`
-  (mirroring `test_docking.py`'s own file-per-feature convention):
-  `build_shell` with all three optional regions given, real functional
-  proof each region is genuinely attached and positioned (clicking a
-  registered handler on each region's own real node still fires,
-  proving it's really part of the live tree, the same "clicking it
-  proves it's real" discipline this project's test suite consistently
-  uses); `build_shell` with all three omitted still returns a real,
-  usable `content` node; a foreign-`Window` region raises the same
-  `ForeignNode` `ValueError` every other same-tree guard already does.
-- Run all examples — confirm clean exit; a new `examples/app_shell.py`
-  demonstrating a real shell with menu bar/toolbar/status bar and an
-  initial `content` screen, matching this project's own established
-  pattern of pairing a new capability with a real, visible
-  demonstration.
+- `cargo test --workspace --release`/clippy/fmt — `engine-py`-only, no
+  `engine-core` change (`Tree::remove` already exists and is already
+  tested).
+- `maturin develop --release` + `pytest tests/`. New `test_node.py` (or
+  extending an existing file if a better-fitting one exists — check
+  first) coverage: `Node.remove()` genuinely detaches a node from its
+  own real parent (a sibling still added afterward doesn't collide/
+  isn't confused with the removed node); removing a node, then clicking
+  where it used to be, no longer fires its old handler (the real
+  functional proof it's genuinely gone from the live tree, matching
+  this project's established "clicking it proves it" discipline).
+- New `examples/navigation.py`: a real `AppShell` (Phase 1) with two
+  "screens" built into `content`, navigating between them by removing
+  the current screen's children and adding the next, run live through
+  real frames. Run all examples — confirm clean exit, no panic (the
+  same live-rendering check that caught Phase 1's own real bug).

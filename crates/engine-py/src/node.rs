@@ -330,6 +330,23 @@ impl Node {
             Err(EngineError::CycleRejected.into())
         }
     }
+
+    /// M13 Phase 2 (§11.2): the one missing half `add_child` already
+    /// had a counterpart for at the `engine-core` level (`Tree::remove`,
+    /// real since §5) but never a Python-facing one -- "navigating"
+    /// (§11.2's own text) means replacing `content`'s own children, an
+    /// ordinary remove-then-add, and `add_child` alone could only ever
+    /// do the "add" half. Recursively removes this node and its whole
+    /// subtree, unlinking it from its own parent first (`Tree::remove`'s
+    /// own real behavior) -- no return value: a `Node` handle Python
+    /// already holds always refers to a real, present `NodeId` at the
+    /// point this is called, the same assumption every other `Node`
+    /// method already makes, so `Tree::remove`'s own bare `bool` ("was
+    /// it actually present") would be dead API surface here, not real
+    /// information.
+    fn remove(&self) {
+        self.tree.borrow_mut().remove(self.id);
+    }
 }
 
 /// M9 Phase 2 (§5): `animate()`'s own shared "start this field
