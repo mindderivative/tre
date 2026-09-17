@@ -27,7 +27,7 @@ use crate::canvas::{CustomHitTest, DrawCommand};
 use crate::input::{DispatchOutcome, InputEvent, Key, PointerButton, ScrollDelta};
 use crate::interaction::InteractionState;
 #[cfg(test)]
-use crate::node::{CheckboxState, ItemExtent, SliderState, VirtualListState};
+use crate::node::{CheckboxState, IconState, ItemExtent, SliderState, VirtualListState};
 use crate::node::{ImageState, Node, NodeId, NodeKind, PaintProperties, TextFieldState};
 use crate::overlay::OverlayMeta;
 #[cfg(test)]
@@ -6400,5 +6400,29 @@ mod tests {
             panic!("expected an Image node");
         };
         assert_eq!(state.image, image_data);
+    }
+
+    /// M23 Phase 1 (§1, §3): `NodeKind::Icon` round-trips through
+    /// `Tree::insert`/`Tree::get` exactly like every other kind.
+    #[test]
+    fn nodekind_icon_round_trips_through_insert_and_get() {
+        let mut tree = Tree::new();
+        let path = peniko::kurbo::BezPath::from_svg("M0,0 L10,0 L10,10 Z").unwrap();
+        let tint = Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF);
+        let (_, style, paint) = leaf(24.0, 24.0);
+        let id = tree.insert(
+            NodeKind::Icon(IconState {
+                path: path.clone(),
+                tint,
+            }),
+            style,
+            paint,
+        );
+
+        let NodeKind::Icon(state) = &tree.get(id).unwrap().kind else {
+            panic!("expected an Icon node");
+        };
+        assert_eq!(state.path, path);
+        assert_eq!(state.tint, tint);
     }
 }

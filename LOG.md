@@ -1,110 +1,100 @@
-# Log: M22 Phase 2 — Real Declarative Image Support & Content-Fit (§16.1), closing M22
+# Log: M23 Phase 1 — Real Icon Rendering Primitive & Starter Icon Set, closing M23 (§1, §3)
 
-Corresponds to `BUILD_TRACKER.md` M22 Phase 2, closing M22 entirely:
-`NodeKindSpec::Image` makes `kind: Image` declarable in `view.yaml`,
-plus a real content-fit mode (`Cover`/`Contain`/`Fill`).
+Corresponds to `BUILD_TRACKER.md` M23 Phase 1, closing M23 entirely:
+`NodeKind::Icon(IconState)`, a real vector icon painted as a solid-
+tint fill, plus a small, real curated set of genuine Material Symbols
+icons and `Window.add_icon`.
 
 ## Investigation before writing code
 
-`engine-spec::spec.rs`'s own `NodeKindSpec` doc comment already named
-this exact gap ("`Image`/`Canvas` remain real, un-scoped future
-candidates"). `Canvas` stays un-scoped (its content is a Python draw
-callback, no obvious static YAML shape); `Image` is this phase's real
-target, following `text:`'s own established sibling-block precedent
-(`WidgetSpec::image: Option<ImageSpec>`, required when `kind: Image`).
+ARCHITECTURE.md §1 Locked Decisions: "MD3's own icon set embedded as
+`kurbo::BezPath` data at build time; `usvg`+`vello_svg` reserved for
+user-supplied custom SVG only." `engine_core::NodeKind` had no `Icon`
+variant, confirmed via direct read; no crate in this workspace
+depended on `usvg`/`vello_svg`, confirmed via grep.
 
-**Real, necessary new capability, confirmed via direct read:**
-`build_tree`/`load_view`/`load_styled_view`/`node_kind_and_paint` were
-100% synchronous/pure before this phase — no path context anywhere —
-but resolving a relative `image.src:` needs a `base_dir`, the identical
-real problem `include:` already solved (`include.rs`'s own private
-`resolve_confined`: canonicalization-based, symlink-escape-resistant
-path confinement). Reusing that function directly turned out wrong:
-its own `SpecError` variants are named for `include:` specifically
-(`"include: ... resolves outside the view directory"`), and reusing
-them verbatim for a `src:` escape would misname the real YAML key an
-author wrote. Duplicated the ~15-line confinement logic instead
-(`resolve_image_src`), with its own `ImageSrc*`/`ImageReadFailed`/
-`ImageDecodeFailed` `SpecError` variants — small, deliberate
-duplication over a premature shared abstraction for two call sites,
-this codebase's own established tolerance.
+**Real, scope-simplifying finding, verified empirically, not
+assumed:** a real network fetch of eight distinct Material Symbols
+icons directly from Google's own CDN (`fonts.gstatic.com`) confirmed
+every one is a plain, single `<path d="...">` SVG with a fixed
+`viewBox="0 -960 960 960"` — no text, clipping, masking, filters,
+patterns, group opacity, or even a `<g transform>`. Every one of
+`vello_svg`'s own documented gaps (§15 Risk Register) is therefore
+structurally irrelevant to this specific, simple icon format. Real
+consequence: **zero new dependencies**, not `usvg` — `peniko::kurbo::
+BezPath::from_svg(&str)` (already pinned via `peniko`, confirmed via
+direct source read of the vendored `kurbo 0.13.1`) parses an SVG
+path's own `d=` attribute directly into a real, paintable `BezPath`.
 
-`engine-py::View` already tracked its own real `path` (M19 Phase 1) and
-already threaded a `base_dir` into `parse_view_with_includes` — the
-identical value now also reaches `build_tree`/`patch_node` through
-`Reconciler::load`/`reconcile` (whose own public signatures already
-carried `base_dir`, just previously dropped it before this phase), so
-`View`'s own code needed zero changes.
-
-`load_view`'s own public signature (its doc comment: "kept exactly
-as-is for its one existing caller") stays completely unchanged —
-`None` is real and valid, the identical `include:`-established
-contract, so a `kind: Image` loaded through it gets a real, clear
-`SpecError::ImageSrcNoBaseDir` rather than a widened signature nobody
-asked for.
+Crate placement follows the established `Checkbox`/`Slider`/
+`TextField` precedent exactly: `NodeKind::Icon` lives in `engine-core`
+("MD3-agnostic" means never hardcoding MD3 *theme* resolution there,
+not excluding MD3-shaped components); the curated icon *data* lives
+in `engine-md3` instead, the identical "generic mechanism in
+engine-core, MD3-specific data/resolution in engine-md3" split
+`DynamicTheme`/`ColorScheme` already established for color.
 
 ## What happened
 
-New `engine-core::ContentFit` (`Cover`/`Contain`/`Fill`, `#[default]
-Fill`) on a new `ImageState.content_fit` field (`ImageState::new`
-seeds it to `Fill` — byte-for-byte Phase 1's own only behavior, zero
-visual change for any existing `Image` node). New `engine-render`
-`image_sample_rect` helper computes the real `(source_region,
-transform)` pair `Scene::draw_texture_rects` needs per mode: `Fill`
-unchanged; `Contain` scales uniformly by the smaller axis ratio and
-centers via a real composed translate (letterboxing the box's own
-`background` on the longer axis); `Cover` crops `source_region` to the
-box's own aspect ratio (centered within the full image) so a uniform
-scale of the crop lands exactly on the box with zero overflow —
-deliberately not "scale the full image up and rely on an implicit
-clip," since `NodeKind::Image` has none and none was needed.
-`Window.add_image` gained a matching `fit` parameter (`"cover"`/
-`"contain"`/`"fill"`, default `"fill"`), parsed via a new
-`parse_content_fit`, the identical string-vocabulary pattern
-`parse_dock_side` already established — kept symmetric with the new
-declarative `image.fit:` rather than leaving the imperative path stuck
-at `Fill` forever.
+New `engine_core::ICON_VIEWBOX_SIZE: f64 = 960.0` (every curated icon
+shares this identical real viewBox dimension) and `IconState { path:
+peniko::kurbo::BezPath, tint: Color }`, mirroring `ImageState`'s own
+"already-resolved, inert paint data" shape — parsing happens once, at
+`Window.add_icon` call time (`engine-py`), not in `engine-core`.
 
-`engine-spec`: new `WidgetSpec::image: Option<ImageSpec>`
-(`{src, fit}`), new `ContentFitSpec` (mirrors `ContentFit` exactly),
-new `NodeKindSpec::Image`. `node_kind_and_paint` gained a real `Image`
-arm — resolves `src` via `resolve_image_src`, decodes through the
-`image` crate (pinned identically to `engine-py`'s own choice),
-builds `peniko::ImageData`, maps `ContentFitSpec` → `ContentFit`.
-`reconcile.rs`'s `node_props_equal` now also compares `image` — a real
-correctness fix caught by design review before it shipped: without it,
-a real `image.src:`/`fit:` change across a hot-reload, with everything
-else unchanged, would have been silently skipped by `patch_node`,
-leaving the old image on screen.
+New `engine-render` `NodeKind::Icon` paint arm: temporarily changes
+the active scene transform to `composed * scale(w/960, h/960) *
+translate(0, 960)` (the translate brings the real negative-`y` SVG
+range into `0..960` first, then the scale maps it into the node's own
+local box), fills the path with `state.tint` (multiplied by the
+node's own real `PaintProperties.opacity`, the same universal handling
+every other fill already gets), then restores `composed` — required
+because `Scene::fill_path` always draws in whatever transform is
+currently active (unlike `Image`'s own `draw_texture_rects`, whose
+`SampleRect.transform` is a real, separate per-call argument) and the
+post-match ripple/hover overlay code relies on `composed` still being
+active afterward. Verified correct on the first real test run via a
+deliberately asymmetric hand-built "left half of the viewBox" shape —
+a wrong transform would have painted neither half, not just the wrong
+one, so this is a genuine geometry proof.
 
-New `engine-spec` tests (6): a real `kind: Image` builds a real node
-with the real decoded image and `ContentFit`; a missing `fit:` defaults
-to `Fill`; a missing `image:` block, a missing `base_dir`, a `src:`
-escaping `base_dir`, and an undecodable file are each a real, distinct,
-clear `SpecError`, not a panic. New `engine-render` pixel tests (2):
-`Contain` genuinely letterboxes (background visible in the bars);
-`Cover` genuinely fills with zero background showing through — the
-same real image, same non-square box, opposite real geometry. New
-`tests/test_image.py` tests for `fit` (each real value accepted, an
-unknown one rejected). New `examples/declarative_image.py` — a real
-`kind: Image` widget, loaded through `View`, its node genuinely
-reachable.
+New `crates/engine-md3/src/icons.rs`: eight real, verbatim `d=` path
+strings fetched directly from `fonts.gstatic.com` (`home`/`search`/
+`menu`/`close`/`check`/`arrow_back`/`add`/`settings`), `path_for(name)
+-> Option<&'static str>`, `names()` iterator. New `Window.add_icon
+(name, color, size, x=None, y=None)` — deliberately takes one square
+`size`, not `width`+`height` (Material Symbols icons are a real,
+uniformly square system by design, confirmed across all eight fetched
+icons' own identical `width`/`height` SVG attributes), and no
+`background` param at all (mirroring `add_canvas`/`add_image`'s own
+real precedent for a kind with no meaningful separate background). An
+unknown `name` is a real, clear `PyValueError` listing the real known
+set, the same `parse_dock_side`/`parse_content_fit` "fail loudly at
+the boundary" pattern, not routed through `EngineError` (a pure
+name-lookup failure, no I/O involved).
 
-**Real, corrective finding, caught by a real CI failure, not locally:**
-an earlier version of `tests/test_image.py` generated its test PNG via
-Pillow — installed in this session's own dev `.venv` for unrelated
-reasons, but absent from both `pyproject.toml` and `ci.yml`'s own `pip
-install` step, so CI's Linux job failed with `ModuleNotFoundError: No
-module named 'PIL'`. Fixed by embedding a real, tiny base64-encoded PNG
-instead — the same dependency-free approach `examples/image.py`
-already used, extended to `examples/declarative_image.py` too.
+New `engine-md3` tests (2): every curated icon's own real path data
+parses as a real `BezPath`; an unknown name returns `None`. New
+`engine-core` test: `NodeKind::Icon` round-trips through `insert`/
+`get`. New `crates/engine-render/tests/icon_paint.rs`: the real,
+decisive left-half-only geometry proof described above. New
+`tests/test_icon.py` (10 tests): every one of the eight real curated
+icons builds a real `Node`; an unknown name raises a real `ValueError`.
+New `examples/icon.py`: four real curated icons, different real
+sizes/tints, rendered through a full real `App.run` loop.
 
-Full `cargo test --workspace --release` (`engine-core` 139, `engine-
-spec` 52 up from 46, new `engine-render` content-fit tests), `cargo
-clippy --workspace --all-targets -- -D warnings`, `cargo fmt --check`
-all clean. `maturin develop --release` + `pytest tests/` (177 passed,
-up from 172, 1 pre-existing skip) and all thirty examples run
-headlessly — the same two pre-existing, unrelated `on_complete`
-failures already flagged as a separate task, no new regressions.
+**Real, deliberate scope boundary:** a small, curated eight-icon
+starter set, not the full multi-thousand-icon Material Symbols
+library — additive to grow later exactly the way `DrawCommand`'s own
+real variants have only ever grown when a real need asked for more.
 
-M22 — Real Image Rendering is now fully complete.
+Full `cargo test --workspace --release` (`engine-core` 140, up from
+139; `engine-md3` 11, up from 9; new `engine-render` `icon_paint.rs`),
+`cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt
+--check` all clean. `maturin develop --release` + `pytest tests/` (187
+passed, up from 177, 1 pre-existing skip) and all thirty-two examples
+run headlessly — the same two pre-existing, unrelated `on_complete`
+failures already flagged separately (`task_a5249ecc`), no new
+regressions.
+
+M23 — MD3 Icon Pipeline is now fully complete.

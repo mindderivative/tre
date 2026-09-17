@@ -24,7 +24,7 @@
 mod image_cache;
 mod text;
 
-use engine_core::{ContentFit, DrawCommand, NodeId, NodeKind, Tree};
+use engine_core::{ContentFit, DrawCommand, ICON_VIEWBOX_SIZE, NodeId, NodeKind, Tree};
 use peniko::Color;
 use peniko::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Shape, Stroke};
 use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
@@ -627,6 +627,30 @@ fn paint_node(
                     }],
                 );
             }
+        }
+        // M23 Phase 1 (§1, §3): `state.path` is real, already-parsed
+        // `BezPath` data in the icon's own fixed `0..ICON_VIEWBOX_SIZE`
+        // SVG-source coordinate space (§1's own real "MD3's own icon
+        // set embedded as `kurbo::BezPath` data" design) -- every
+        // curated icon shares the identical real `viewBox="0 -960 960
+        // 960"`, confirmed via a real fetch of eight distinct icons
+        // directly from Google's own CDN, so a single fixed transform
+        // (translate the real negative-y range up into `0..960`, then
+        // scale into the node's own local box) applies uniformly.
+        // `Scene::fill_path` always draws in whatever transform is
+        // currently active (unlike `Image`'s own `draw_texture_rects`,
+        // whose `SampleRect.transform` is a real, separate per-call
+        // argument needing no such restore) -- `composed` is put back
+        // immediately after, since the post-match ripple/hover overlay
+        // below relies on it still being active.
+        NodeKind::Icon(state) => {
+            let icon_scale = 1.0 / ICON_VIEWBOX_SIZE;
+            let icon_transform = Affine::scale_non_uniform(w * icon_scale, h * icon_scale)
+                * Affine::translate((0.0, ICON_VIEWBOX_SIZE));
+            scene.set_transform(composed * icon_transform);
+            scene.set_paint(with_opacity(state.tint, node.paint.opacity.current));
+            scene.fill_path(&state.path);
+            scene.set_transform(composed);
         }
     }
 

@@ -22,6 +22,7 @@
 
 mod color;
 mod container_transform;
+pub mod icons;
 
 pub use color::{ColorScheme, DynamicTheme};
 pub use container_transform::{

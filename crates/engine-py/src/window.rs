@@ -9,9 +9,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use engine_core::{
-    AccessNodeData, Action, Animated, CheckboxState, ContentFit, EventKind, ImageState, InputEvent,
-    ItemExtent, Key, NodeId, NodeKind, PaintProperties, PointerButton, Role, SliderState,
-    SplitterState, TextFieldState, Tree, VirtualListState,
+    AccessNodeData, Action, Animated, CheckboxState, ContentFit, EventKind, IconState, ImageState,
+    InputEvent, ItemExtent, Key, NodeId, NodeKind, PaintProperties, PointerButton, Role,
+    SliderState, SplitterState, TextFieldState, Tree, VirtualListState,
 };
 use engine_md3::DynamicTheme;
 use peniko::Color;
@@ -532,6 +532,72 @@ impl PyWindow {
                 Size {
                     width: length(width),
                     height: length(height),
+                },
+                x,
+                y,
+            ),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, id);
+        Ok(Node {
+            id,
+            tree: self.tree.clone(),
+            handlers: self.handlers.clone(),
+            context_menus: self.context_menus.clone(),
+            theme: self.theme.clone(),
+            completions: self.completions.clone(),
+        })
+    }
+
+    /// M23 Phase 1 (§1, §3): creates a real `NodeKind::Icon` from one
+    /// of this project's own real curated Material Symbols icons
+    /// (`engine_md3::icons::path_for`) -- deliberately takes one
+    /// square `size`, not `width`+`height` the way every other
+    /// `add_*` method does: Material Symbols icons are a real,
+    /// uniformly square icon system by design (every fetched icon's
+    /// own SVG `width`/`height` attributes are identical), so a
+    /// single size parameter is a genuine ergonomic fit, not an
+    /// invented shortcut. `color` is the icon's own real, plain fill
+    /// tint -- MD3 icons have no separate "background" the way a
+    /// boxed component does, so unlike `add_rect`/`add_checkbox` this
+    /// takes no `background` param at all (mirroring `add_canvas`/
+    /// `add_image`'s own real precedent for a kind with no meaningful
+    /// separate background). An unknown `name` is a real, clear
+    /// `PyValueError` -- `parse_dock_side`/`parse_content_fit`'s own
+    /// established "fail loudly at the boundary" pattern, not routed
+    /// through `EngineError` since this is a pure name-lookup failure
+    /// with no I/O involved, the same reason those two live directly
+    /// here rather than in `error.rs`.
+    #[pyo3(signature = (name, color, size, x=None, y=None))]
+    fn add_icon(
+        &self,
+        name: &str,
+        color: (u8, u8, u8, u8),
+        size: f32,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<Node> {
+        let d = engine_md3::icons::path_for(name).ok_or_else(|| {
+            let known: Vec<&str> = engine_md3::icons::names().collect();
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown icon {name:?} -- expected one of {known:?}"
+            ))
+        })?;
+        let path = peniko::kurbo::BezPath::from_svg(d).unwrap_or_else(|e| {
+            panic!("engine_md3::icons's own curated path data for {name:?} must parse: {e}")
+        });
+        let (r, g, b, a) = color;
+
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::Icon(IconState {
+                path,
+                tint: Color::from_rgba8(r, g, b, a),
+            }),
+            positioned_style(
+                Size {
+                    width: length(size),
+                    height: length(size),
                 },
                 x,
                 y,

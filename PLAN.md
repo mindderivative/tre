@@ -1,138 +1,126 @@
-# Plan: M22 Phase 2 — Real Declarative Image Support & Content-Fit (§16.1), closing M22
+# Plan: M23 Phase 1 — Real Icon Rendering Primitive & Starter Icon Set (§1, §3)
 
-Corresponds to `BUILD_TRACKER.md` M22 Phase 2: `NodeKindSpec::Image`
-makes `kind: Image` declarable in `view.yaml`, plus a real content-fit
-mode (cover/contain/fill) — closing the milestone.
+Corresponds to `BUILD_TRACKER.md` M23 Phase 1: `NodeKind::Icon(IconState)`,
+a real MD3 vector icon painted as a solid-tint fill, plus a small,
+real curated set of genuine Material Symbols icons and
+`Window.add_icon`.
 
 ## Investigation before writing code
 
-- `engine-spec::spec.rs`'s own `NodeKindSpec` doc comment already
-  named this exact gap: "`Image`/`Canvas` remain real, un-scoped future
-  candidates" — confirmed via direct read. `Canvas` stays un-scoped
-  (no `kind: Canvas` support exists or is asked for); `Image` is this
-  phase's own real target.
-- **Spec shape, following the established `text:`/`TextSpec` sibling-
-  block precedent exactly** (confirmed via direct read of `WidgetSpec`/
-  `TextSpec`, and the module's own doc comment explaining *why* a
-  data-carrying `kind: {Image: {...}}` shape was rejected for `Text`):
-  a new `WidgetSpec::image: Option<ImageSpec>` field, required (and
-  validated as such at tree-build time, matching `text`'s own
-  contract) when `kind: Image`. `ImageSpec { src: String, fit:
-  ContentFitSpec }` — `src` a path relative to the owning `view.yaml`
-  file, `fit` one of `Cover`/`Contain`/`Fill` (`#[serde(default)]` ->
-  `Fill`, matching Phase 1's own real "stretched to fill" behavior
-  byte-for-byte when a `view.yaml` author doesn't state one).
-- **Real, necessary new capability: path resolution needs a
-  `base_dir`, which `build_tree`/`load_view`/`load_styled_view` don't
-  carry today** — confirmed via direct read, every existing kind's
-  construction (`node_kind_and_paint`) is 100% synchronous/pure, no
-  file I/O or path context anywhere. `include.rs`'s own `resolve_
-  confined(base_dir, include_path)` already solves the identical real
-  problem (a relative, potentially-malicious path from inside a
-  `view.yaml`, confined to `base_dir`, symlink-escape-resistant, `../`
-  and absolute paths rejected) for `include:` — reused here rather
-  than inventing a second path-confinement scheme; needs widening from
-  private (module-local to `include.rs`) to `pub(crate)` so `build.rs`
-  can call it too. `engine-py::View` already tracks its own real
-  `path: String` (M19 Phase 1) — the real, already-available source for
-  the `base_dir` `View::_attach`/construction threads down into
-  `parse_view_with_includes` today; the identical value threads into
-  `build_tree` too, one extra parameter, not a new concept.
-- **Real, necessary new dependency:** `engine-spec` gains a direct
-  `image` dependency (pinned identically to `engine-py`'s own choice:
-  `default-features = false, features = ["png", "jpeg"]`) — decoding
-  happens here now too, since `kind: Image`'s own real file read/decode
-  has to happen at tree-build time, the same moment every other kind's
-  spec becomes real `engine-core` state. The ~10-line decode-into-
-  `peniko::ImageData` routine `engine-py::Window.add_image` already has
-  is small enough that duplicating it here (rather than inventing a
-  shared crate neither `engine-spec` nor `engine-py` currently depends
-  on, for one function) matches this codebase's own established
-  tolerance for small, localized duplication over premature abstraction
-  (§2's own "don't build ahead of need").
-- **Content-fit is a real paint-time concern, not a build-time
-  one:** `NodeKind::Image`/`ImageState` (`engine-core`) stay unchanged
-  — the same `peniko::ImageData` Phase 1 already established, no new
-  field there. `engine-render::paint_node`'s `NodeKind::Image` arm
-  currently always stretches (`SampleRect.transform = scale_non_
-  uniform(w/img_w, h/img_h)`, filling the node's box exactly,
-  ignoring the image's own aspect ratio) — a real, necessary
-  generalization: `ContentFit` (new, plain `Copy` enum:
-  `Cover`/`Contain`/`Fill`) has to live somewhere `paint_node` can read
-  it *per node*, which means it belongs on `ImageState` itself (a real,
-  additive field, `engine-core`), not threaded as a separate parameter
-  — matches `CheckboxState.mark_tint`/`SliderState.track_tint`'s own
-  "paint-affecting state lives on the kind's own state struct" shape.
-  `Fill` reproduces Phase 1's exact current math unchanged (`byte-for-
-  byte no visual change` for any existing `Image` node/test); `Cover`/
-  `Contain` each compute a real non-uniform-vs-uniform scale factor
-  from the image's own real aspect ratio vs. the node's box aspect
-  ratio, then center the result (`Cover` crops via a narrower
-  `SampleRect.source_region` than the full image when the ratios
-  don't match; `Contain` letterboxes by scaling *down* to fit,
-  leaving the box's own `background`/transparent fill visible on the
-  uncovered sides — real, standard CSS `object-fit` semantics, the
-  same de facto standard `background-size: cover/contain` already
-  established well before CSS `object-fit` existed).
-- `Window.add_image` (`engine-py`, imperative API) is a **separate,
-  already-complete real entry point** (Phase 1) — this phase does not
-  change it. Should `Window.add_image` also gain a `fit` parameter for
-  symmetry with the new declarative `fit:`? Real, deliberate scope
-  decision: **yes** — `ImageState.content_fit` is the one real field
-  both entry points construct, so leaving the imperative path stuck at
-  `Fill` forever while only `view.yaml` can choose would be a real,
-  arbitrary asymmetry between the two authoring paths this project has
-  consistently avoided elsewhere (every other declarative field this
-  project has added has a matching imperative one, and vice versa).
-  Additive, default-`Fill`, so this stays fully backward-compatible
-  with Phase 1's own `add_image` signature/tests.
+- ARCHITECTURE.md §1 Locked Decisions: "MD3's own icon set embedded as
+  `kurbo::BezPath` data at build time; `usvg`+`vello_svg` reserved for
+  user-supplied custom SVG only" — confirmed via direct read, this is
+  a real, always-intended design, not invented. `engine_core::NodeKind`
+  has no `Icon` variant, confirmed via direct read; no crate in this
+  workspace depends on `usvg`/`vello_svg`, confirmed via grep.
+- **Real, scope-simplifying finding, verified empirically (a real
+  network fetch, not assumed):** a real Material Symbols icon,
+  fetched directly from `fonts.gstatic.com` (Google's own CDN; eight
+  distinct icons checked — `home`/`search`/`menu`/`close`/`check`/
+  `arrow_back`/`add`/`settings`), is a plain, single `<path
+  d="...">` SVG with a fixed `viewBox="0 -960 960 960"` — no text, no
+  clipping, no masking, no filters, no patterns, no group opacity, no
+  gradients, not even a `<g transform>`. Every one of `vello_svg`'s
+  own documented gaps (§15 Risk Register) is therefore structurally
+  irrelevant to this specific, simple icon format.
+- **Real consequence: zero new dependencies needed, not `usvg`.**
+  `peniko::kurbo::BezPath::from_svg(&str) -> Result<BezPath,
+  SvgParseError>` (`kurbo = "0.13.1"`, already pinned transitively via
+  `peniko`, confirmed via direct source read of the vendored crate)
+  parses an SVG path's own `d=` attribute directly into a real,
+  paintable `BezPath`. Painted through the ordinary `scene.
+  set_paint`/`fill_path` mechanism every solid-color fill already
+  uses — a vector path fill, not raster pixel data, so none of
+  `Image`'s own real GPU-texture-cache complication (M22 Phase 1)
+  applies here.
+- **Crate placement, following established precedent:** `NodeKind::
+  Icon` lives in `engine-core`, mirroring `Checkbox`/`Slider`/
+  `TextField` (all real MD3 components whose `NodeKind` variant still
+  lives in `engine-core`, not `engine-md3` — "MD3-agnostic" means
+  `engine-core` never hardcodes MD3 *theme* resolution, not that MD3-
+  shaped components can't have their `NodeKind` there). The curated
+  icon *data* (real MD3-specific content) belongs in `engine-md3`
+  instead, a new `icons` module — the identical "engine-core holds
+  the generic mechanism, engine-md3 holds the MD3-specific data/
+  resolution" split `DynamicTheme`/`ColorScheme` already established
+  for color.
+- **Where parsing happens:** `Window.add_icon` (`engine-py`) looks up
+  the curated `d=` string via `engine_md3::icons::path_for(name)`,
+  parses it via `BezPath::from_svg` once, at construction — the same
+  "resolved ahead of time, not computed live" split `ImageState`/
+  `CanvasState` already established. No lazy-static/cache needed:
+  parsing a ~200-byte SVG path string once, at `add_icon` call time,
+  costs nothing worth optimizing yet (`Window.add_image`'s own file-
+  decode step is a strictly heavier real operation done the same
+  simple way).
+- **The real 960-unit viewBox → node-box transform:** every curated
+  icon shares the identical `viewBox="0 -960 960 960"` (x: 0..960, y:
+  -960..0) — a real, fixed MD3 convention, not a per-icon variable, so
+  a single constant (`engine_core::ICON_VIEWBOX_SIZE: f64 = 960.0`)
+  suffices. `paint_node`'s new `Icon` arm temporarily changes the
+  active scene transform to `composed * scale(w/960, h/960) *
+  translate(0, 960)` (translate first, to bring the real y range into
+  `0..960`, then scale into the node's own local `(0,0)-(w,h)` box),
+  fills the path, then restores `composed` — required because
+  `Scene::fill_path` always draws in whatever transform is currently
+  active (unlike `Image`'s own `draw_texture_rects`, whose `SampleRect.
+  transform` is a real, separate per-call parameter needing no such
+  restore) and the post-match ripple/hover overlay code relies on
+  `composed` still being active afterward.
+- **Real, deliberate scope boundary:** a small, curated starter set
+  (the eight icons above — common, broadly useful, and enough to prove
+  the real mechanism end-to-end) rather than the full multi-thousand-
+  icon Material Symbols library, matching this codebase's own "don't
+  build ahead of need" discipline (`DrawCommand`'s own real variant
+  set is the direct precedent: "additive whenever a real future need
+  asks for more").
+- **Real API shape, deliberately narrower than every other `add_*`
+  method:** `add_icon(name, color, size, x=None, y=None)` takes a
+  single `size` (not `width`+`height`) — Material Symbols icons are a
+  real, uniformly square icon system by design (every fetched icon's
+  own `height`/`width` attributes are identical), so a single size
+  parameter is a genuine ergonomic fit, not an invented shortcut;
+  internally still builds an ordinary square `Size` via the same
+  `positioned_style` helper every other `add_*` method uses. An
+  unknown `name` is a real, clear `PyValueError`, the same "fail
+  loudly at the boundary" pattern `parse_dock_side`/`parse_content_
+  fit` already established (not routed through `EngineError`, since
+  this is a pure name-lookup failure with no I/O involved, matching
+  where those two live too).
 
 ## What will change
 
-- `crates/engine-core/src/node.rs`: `ImageState` gains `pub content_fit:
-  ContentFit` (new `#[derive(Clone, Copy, Debug, PartialEq)] pub enum
-  ContentFit { Cover, Contain, Fill }`, `Fill` as the contract every
-  existing Phase 1 test/example already assumes); re-exported from
-  `lib.rs`.
-- `crates/engine-render/src/lib.rs`: `paint_node`'s `NodeKind::Image`
-  arm computes `SampleRect` differently per `state.content_fit` —
-  `Fill` unchanged; `Cover`/`Contain` compute real aspect-ratio-aware
-  scale/crop/letterbox geometry.
-- `crates/engine-spec/Cargo.toml`: new direct `image` dependency
-  (pinned identically to `engine-py`'s own choice).
-- `crates/engine-spec/src/spec.rs`: new `WidgetSpec::image: Option<
-  ImageSpec>`; new `ImageSpec { src: String, fit: ContentFitSpec }`;
-  new `ContentFitSpec` enum (`Cover`/`Contain`/`Fill`, `#[serde(default)]`
-  -> `Fill`); `NodeKindSpec` gains `Image`.
-- `crates/engine-spec/src/include.rs`: `resolve_confined` widened from
-  private to `pub(crate)`.
-- `crates/engine-spec/src/build.rs`: `load_view`/`load_styled_view`/
-  `build_tree`/`patch_node`/`node_kind_and_paint` all gain a `base_dir:
-  Option<&Path>` parameter (mirroring `parse_view_with_includes`'s own
-  shape exactly); `node_kind_and_paint` gains a real `NodeKindSpec::
-  Image` arm — resolves `src` through `resolve_confined`, reads +
-  decodes the file via the `image` crate, builds `peniko::ImageData`,
-  maps `ContentFitSpec` -> `engine_core::ContentFit`.
-- `crates/engine-py/src/view.rs`: threads `View`'s own real `path`
-  (parent directory) through as `base_dir` to both `parse_view_with_
-  includes` (already does, unchanged) and the new `build_tree`/`load_
-  styled_view` parameter.
-- `crates/engine-py/src/window.rs`: `Window.add_image` gains an
-  optional `fit` parameter (default `Fill`), setting `ImageState.
-  content_fit`.
-- New `engine-spec` tests: `kind: Image` parses and builds a real
-  `NodeKind::Image` node with a real decoded image and the right
-  `ContentFit`; a `src:` path escaping `base_dir` is rejected the same
-  way an `include:` escape already is; a missing `image:` block on
-  `kind: Image` is a clear `SpecError`, not a panic.
-- New `engine-render` pixel tests: `Cover`/`Contain`/`Fill` each paint
-  the real, geometrically-distinct expected pixels for a non-square
-  image in a differently-proportioned box.
-- Updated `tests/test_image.py`: `add_image(..., fit=...)` accepted,
-  defaults preserved.
-- New declarative example (`examples/*.yaml` + a loader script, or an
-  addition to an existing composition example) demonstrating `kind:
-  Image` with a real `fit:` value.
+- `crates/engine-core/src/node.rs`: new `pub const ICON_VIEWBOX_SIZE:
+  f64`; new `IconState { path: peniko::kurbo::BezPath, tint:
+  peniko::Color }`; new `NodeKind::Icon(IconState)` variant.
+- `crates/engine-core/src/lib.rs`: re-export `IconState`,
+  `ICON_VIEWBOX_SIZE`.
+- `crates/engine-py/src/node.rs`: `kind_name`'s exhaustive match gains
+  an `Icon` arm (compiler-required, mirrors every prior `NodeKind`
+  addition).
+- New `crates/engine-md3/src/icons.rs`: real `d=` path-data constants
+  for `home`/`search`/`menu`/`close`/`check`/`arrow_back`/`add`/
+  `settings` (fetched directly from `fonts.gstatic.com`, recorded
+  verbatim); `pub fn path_for(name: &str) -> Option<&'static str>`.
+  Exported from `engine-md3`'s own `lib.rs`.
+- `crates/engine-render/src/lib.rs`: new `NodeKind::Icon` paint arm
+  (see the transform reasoning above).
+- `crates/engine-py/src/window.rs`: new `Window.add_icon(name, color,
+  size, x=None, y=None) -> PyResult<Node>`.
+- New `engine-core` unit test: `NodeKind::Icon` round-trips through
+  `Tree::insert`/`Tree::get`.
+- New `crates/engine-render/tests/icon_paint.rs`: a real, synthesized
+  simple square `BezPath` (not a fetched icon — a hand-built shape
+  with a known, real filled/empty region) painted through the real
+  transform, confirming a point inside the shape shows the real tint
+  and a point outside shows plain background — the same headless
+  pixel-readback discipline `checkbox_paint.rs`/`image_paint.rs`
+  already established.
+- New `tests/test_icon.py`: `add_icon` returns a real `Node` for each
+  of the eight curated names; an unknown name raises a real
+  `ValueError`.
+- New `examples/icon.py`: a few real curated icons rendered through a
+  full `App.run` loop.
 
 ## Testing
 
@@ -141,4 +129,4 @@ mode (cover/contain/fill) — closing the milestone.
 - `cargo fmt --check`
 - `maturin develop --release`
 - `pytest tests/ -v`
-- Run every example script, including the new/updated one(s).
+- Run every example script, including the new `examples/icon.py`.

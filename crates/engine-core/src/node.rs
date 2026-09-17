@@ -137,6 +137,10 @@ pub enum NodeKind {
     /// reasoning (decoding lives in `engine-py`, this holds only the
     /// already-decoded result).
     Image(ImageState),
+    /// M23 Phase 1 (§1, §3): a real MD3 vector icon, painted as a
+    /// solid-`tint` `BezPath` fill -- see `IconState`'s own doc
+    /// comment for the real crate-boundary reasoning.
+    Icon(IconState),
 }
 
 /// M15 Phase 1 (§5, §16.7): mirrors `TextState`'s own four font/content
@@ -265,6 +269,27 @@ pub enum ContentFit {
     /// behavior.
     #[default]
     Fill,
+}
+
+/// M23 Phase 1 (§1, §3): every real Material Symbols icon this
+/// project curates shares this identical, fixed SVG `viewBox` width/
+/// height (`viewBox="0 -960 960 960"`, confirmed via a real fetch of
+/// eight distinct icons directly from Google's own CDN) -- a real MD3
+/// convention, not a per-icon variable, so one constant suffices.
+pub const ICON_VIEWBOX_SIZE: f64 = 960.0;
+
+/// M23 Phase 1 (§1, §3): a real MD3 vector icon -- `path` is already-
+/// parsed, renderer-ready `peniko::kurbo::BezPath` data (`ImageState`'s
+/// own "engine-core holds inert data" precedent: parsing a curated
+/// icon's own `d=` SVG path string happens in `engine-py::Window.
+/// add_icon`, not here), painted as a plain solid-`tint` fill -- no
+/// GPU texture involved at all (unlike `ImageState`, §5), since a
+/// vector path fill is exactly what `vello_hybrid::Scene::fill_path`
+/// already does for every other `NodeKind`'s own shape.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IconState {
+    pub path: peniko::kurbo::BezPath,
+    pub tint: Color,
 }
 
 /// §11.7's own struct sketch, unchanged in shape (`item_count`,

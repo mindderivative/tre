@@ -575,6 +575,7 @@ fn kind_name(kind: &NodeKind) -> &'static str {
         NodeKind::Slider(_) => "Slider",
         NodeKind::TextField(_) => "TextField",
         NodeKind::Image(_) => "Image",
+        NodeKind::Icon(_) => "Icon",
     }
 }
 
