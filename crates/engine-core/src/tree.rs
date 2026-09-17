@@ -27,7 +27,7 @@ use crate::canvas::{CustomHitTest, DrawCommand};
 use crate::input::{DispatchOutcome, InputEvent, Key, PointerButton, ScrollDelta};
 use crate::interaction::InteractionState;
 #[cfg(test)]
-use crate::node::{ItemExtent, VirtualListState};
+use crate::node::{CheckboxState, ItemExtent, VirtualListState};
 use crate::node::{Node, NodeId, NodeKind, PaintProperties};
 use crate::overlay::OverlayMeta;
 #[cfg(test)]
@@ -918,6 +918,18 @@ impl Tree {
             {
                 any_active = true;
             }
+            // M14 Phase 1 (§7.3): `check_progress` is meant to animate
+            // toward a real target once the app sets `checked` (unlike
+            // `SplitterState.position`/`VirtualListState.scroll_offset`,
+            // driven directly, never eased -- confirmed by direct read
+            // this loop never touched kind-specific payloads before this
+            // phase), so it needs the same central ticking `node.paint`
+            // already gets, not a second, separate mechanism.
+            if let NodeKind::Checkbox(state) = &mut node.kind
+                && state.check_progress.tick(now, &mut completed)
+            {
+                any_active = true;
+            }
         }
         (any_active, completed)
     }
@@ -1485,6 +1497,17 @@ impl Tree {
         }
         if node.access.states.disabled {
             access_node.set_disabled();
+        }
+        // M14 Phase 1 (§7.3): the real, automatic derivation
+        // ARCHITECTURE.md already promised -- "a well-known field name
+        // on a NodeKind payload... derives its corresponding
+        // AccessStates flag... the app sets one property and the
+        // accessibility tree stays correct for free." Reads `checked`
+        // directly from `NodeKind::Checkbox` -- deliberately not
+        // mirrored into a second `AccessStates` field first, which
+        // would just be two copies of the same fact that could drift.
+        if let NodeKind::Checkbox(state) = &node.kind {
+            access_node.set_toggled(state.checked.into());
         }
         access_node.set_bounds(accesskit::Rect {
             x0: x,
@@ -4488,5 +4511,77 @@ mod tests {
         // focus, this must be set to the root."
         assert_eq!(update.focus, to_access_id(button));
         assert_eq!(update.tree_id, accesskit::TreeId::ROOT);
+    }
+
+    /// M14 Phase 1 (§7.3): `check_progress` must animate toward a real
+    /// target the same way `PaintProperties`' own fields already do --
+    /// confirming `tick_all`'s new `NodeKind::Checkbox` arm actually
+    /// runs, not just that it compiles.
+    #[test]
+    fn tick_all_animates_check_progress_toward_a_real_target() {
+        let mut tree = Tree::new();
+        let (_, style, paint) = leaf(20.0, 20.0);
+        let checkbox = tree.insert(NodeKind::Checkbox(CheckboxState::new(false)), style, paint);
+
+        let now = Instant::now();
+        let NodeKind::Checkbox(state) = &mut tree.get_mut(checkbox).unwrap().kind else {
+            panic!("expected a Checkbox");
+        };
+        state
+            .check_progress
+            .animate_to(1.0, Duration::from_millis(100), MotionCurve::Linear, now);
+
+        let (any_active, _) = tree.tick_all(now + Duration::from_millis(50));
+        assert!(
+            any_active,
+            "a mid-flight check_progress animation must report as active"
+        );
+        let NodeKind::Checkbox(state) = &tree.get(checkbox).unwrap().kind else {
+            panic!("expected a Checkbox");
+        };
+        assert!(
+            state.check_progress.current > 0.0 && state.check_progress.current < 1.0,
+            "check_progress must be genuinely mid-animation at the halfway point, got {}",
+            state.check_progress.current
+        );
+
+        let (any_active, _) = tree.tick_all(now + Duration::from_millis(200));
+        assert!(
+            !any_active,
+            "the animation must be finished well past its own duration"
+        );
+        let NodeKind::Checkbox(state) = &tree.get(checkbox).unwrap().kind else {
+            panic!("expected a Checkbox");
+        };
+        assert_eq!(
+            state.check_progress.current, 1.0,
+            "must reach the real target exactly"
+        );
+    }
+
+    /// M14 Phase 1 (§7.3): the real, automatic `checked` -> `Toggled`
+    /// derivation ARCHITECTURE.md promises -- reading straight from
+    /// `NodeKind::Checkbox`'s own real `checked` field, not a second,
+    /// separately-set copy.
+    #[test]
+    fn build_access_update_reports_the_real_toggled_state_for_a_checkbox() {
+        let mut tree = Tree::new();
+        let (_, style, paint) = leaf(20.0, 20.0);
+        let checkbox = tree.insert(NodeKind::Checkbox(CheckboxState::new(true)), style, paint);
+        tree.compute_layout(
+            checkbox,
+            Size {
+                width: AvailableSpace::Definite(20.0),
+                height: AvailableSpace::Definite(20.0),
+            },
+        );
+
+        let update = tree.build_access_update(checkbox);
+        let (_, node) = &update.nodes[0];
+        assert_eq!(
+            node.toggled(),
+            Some(accesskit::Toggled::True),
+            "a checked checkbox must report Toggled::True"
+        );
     }
 }

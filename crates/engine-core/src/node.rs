@@ -88,6 +88,17 @@ pub enum NodeKind {
     /// `Tree::set_canvas_content`, not computed live during paint or
     /// hit-testing (see `canvas.rs`'s own module doc comment for why).
     Canvas(CanvasState),
+    /// M14 Phase 1 (§5, §7.3): a real MD3 checkbox. `checked` is plain,
+    /// app-owned state (Design Principle 6 -- "selection/checked-state
+    /// ... depend on what the app's data means," not anything the
+    /// engine determines on its own); `check_progress` is the engine-
+    /// driven visual consequence, animated toward `1.0`/`0.0` whenever
+    /// the app sets `checked`. The engine deliberately does not toggle
+    /// `checked` on click itself -- the already-generic `Click`
+    /// dispatch/`Node.enable_interaction()` ripple mechanism (works for
+    /// any `NodeKind` already) is what this phase reuses unchanged; an
+    /// app's own `on_click` handler is what actually flips `checked`.
+    Checkbox(CheckboxState),
 }
 
 /// §11.7's own struct sketch, unchanged in shape (`item_count`,
@@ -164,6 +175,26 @@ impl VirtualListState {
         match &self.item_extent {
             ItemExtent::Fixed(v) => self.item_count as f64 * v,
             ItemExtent::Variable => self.offset_of(self.item_count),
+        }
+    }
+}
+
+/// §5's own struct sketch, plus the real `checked: bool` §7.3's own
+/// text separately names (the struct sketch only showed the animated
+/// half). `check_progress` starts already matching `checked` (`1.0`
+/// for checked, `0.0` for not) so a checkbox created already-checked
+/// shows its own real initial state without a spurious animation from
+/// `0.0` the instant it first paints.
+pub struct CheckboxState {
+    pub checked: bool,
+    pub check_progress: Animated<f64>,
+}
+
+impl CheckboxState {
+    pub fn new(checked: bool) -> Self {
+        Self {
+            checked,
+            check_progress: Animated::new(if checked { 1.0 } else { 0.0 }),
         }
     }
 }

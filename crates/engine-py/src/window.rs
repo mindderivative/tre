@@ -9,8 +9,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use engine_core::{
-    Animated, InputEvent, ItemExtent, Key, NodeId, NodeKind, PaintProperties, PointerButton,
-    SplitterState, Tree, VirtualListState,
+    Animated, CheckboxState, InputEvent, ItemExtent, Key, NodeId, NodeKind, PaintProperties,
+    PointerButton, SplitterState, Tree, VirtualListState,
 };
 use engine_md3::DynamicTheme;
 use peniko::Color;
@@ -294,6 +294,50 @@ impl PyWindow {
         let mut tree = self.tree.borrow_mut();
         let id = tree.insert(
             NodeKind::Rect,
+            positioned_style(
+                Size {
+                    width: length(width),
+                    height: length(height),
+                },
+                x,
+                y,
+            ),
+            PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, id);
+        Node {
+            id,
+            tree: self.tree.clone(),
+            handlers: self.handlers.clone(),
+            context_menus: self.context_menus.clone(),
+            theme: self.theme.clone(),
+            completions: self.completions.clone(),
+        }
+    }
+
+    /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,
+    /// mirroring `add_rect`'s own real shape exactly -- `background`
+    /// is the box's own real fill color (universal `PaintProperties`,
+    /// same as any other node), `checked` seeds `CheckboxState`'s own
+    /// initial state (and its `check_progress` starting already at the
+    /// matching `1.0`/`0.0`, `CheckboxState::new`'s own real contract).
+    /// The already-generic `set_on_click`/`enable_interaction()` work
+    /// on this exactly like any other node -- no new interaction wiring
+    /// needed here.
+    #[pyo3(signature = (background, width, height, checked=false, x=None, y=None))]
+    fn add_checkbox(
+        &self,
+        background: (u8, u8, u8, u8),
+        width: f32,
+        height: f32,
+        checked: bool,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> Node {
+        let (r, g, b, a) = background;
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::Checkbox(CheckboxState::new(checked)),
             positioned_style(
                 Size {
                     width: length(width),

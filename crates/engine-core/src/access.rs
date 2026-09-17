@@ -10,6 +10,15 @@
 //! wiring with nothing to dispatch *to* yet (no interactive component
 //! exists before §7.3), so it's deferred to whichever step first needs
 //! it, not built ahead of that need.
+//!
+//! M14 Phase 1 (§7.3): `Tree::build_access_update` derives `checked`
+//! directly from `NodeKind::Checkbox`'s own real `checked: bool` --
+//! deliberately *not* mirrored into a second field here, which would
+//! just be two copies of the same fact that could drift out of sync;
+//! `CheckboxState.checked` is the one real source of truth, exactly
+//! "the app sets one property and the accessibility tree stays correct
+//! for free," not "the app sets one property and something else has to
+//! remember to copy it."
 
 pub use accesskit::{Action, Role};
 

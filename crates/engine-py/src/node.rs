@@ -160,6 +160,25 @@ impl Node {
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
                 animate_field(&mut node.paint.shape, value, duration, now, handle);
             }
+            // M14 Phase 1 (§8): the first real arm of the "two-level
+            // dispatch" ARCHITECTURE.md §8 describes -- `property`
+            // against `PaintProperties`' own universal fields first
+            // (above), then against the node's own `NodeKind` payload
+            // if it has one. Only resolves on a real `Checkbox`.
+            "check_progress" => match &mut node.kind {
+                NodeKind::Checkbox(state) => {
+                    let value = extract_f64(&to, property)?;
+                    let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                    animate_field(&mut state.check_progress, value, duration, now, handle);
+                }
+                _ => {
+                    return Err(EngineError::UnknownProperty {
+                        kind,
+                        property: property.to_string(),
+                    }
+                    .into());
+                }
+            },
             _ => {
                 return Err(EngineError::UnknownProperty {
                     kind,
@@ -187,6 +206,14 @@ impl Node {
             "opacity" => Ok(node.paint.opacity.current),
             "corner_radius" => Ok(node.paint.corner_radius.current),
             "elevation" => Ok(node.paint.elevation.current),
+            "check_progress" => match &node.kind {
+                NodeKind::Checkbox(state) => Ok(state.check_progress.current),
+                _ => Err(EngineError::UnknownProperty {
+                    kind,
+                    property: property.to_string(),
+                }
+                .into()),
+            },
             _ => Err(EngineError::UnknownProperty {
                 kind,
                 property: property.to_string(),
@@ -347,6 +374,37 @@ impl Node {
     fn remove(&self) {
         self.tree.borrow_mut().remove(self.id);
     }
+
+    /// M14 Phase 1 (§5, §7.3): the real, plain (non-animated) write to
+    /// `NodeKind::Checkbox`'s own `checked: bool` -- Design Principle 6
+    /// ("selection/checked-state... depend on what the app's data
+    /// means") is why the engine never flips this itself on click; the
+    /// app's own `on_click` handler calls this, typically alongside
+    /// `.animate("check_progress", ...)` for the real visual
+    /// consequence, mirroring exactly how §7.3's own text separates the
+    /// two ("checked-state... ordinary NodeKind-payload fields...
+    /// animated through the same Animated<T> mechanism once set"). Also
+    /// keeps the real accessibility tree correct for free -- `Tree::
+    /// build_access_update` reads this same field directly, so there's
+    /// nothing else to update.
+    fn set_checked(&self, checked: bool) -> PyResult<()> {
+        let mut tree = self.tree.borrow_mut();
+        let node = tree.get_mut(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        let kind = kind_name(&node.kind);
+        match &mut node.kind {
+            NodeKind::Checkbox(state) => {
+                state.checked = checked;
+                Ok(())
+            }
+            _ => Err(EngineError::UnknownProperty {
+                kind,
+                property: "checked".to_string(),
+            }
+            .into()),
+        }
+    }
 }
 
 /// M9 Phase 2 (§5): `animate()`'s own shared "start this field
@@ -379,6 +437,7 @@ fn kind_name(kind: &NodeKind) -> &'static str {
         NodeKind::Splitter(_) => "Splitter",
         NodeKind::VirtualList(_) => "VirtualList",
         NodeKind::Canvas(_) => "Canvas",
+        NodeKind::Checkbox(_) => "Checkbox",
     }
 }
 

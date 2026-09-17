@@ -25,7 +25,7 @@ mod text;
 
 use engine_core::{DrawCommand, NodeId, NodeKind, Tree};
 use peniko::Color;
-use peniko::kurbo::{Affine, Circle, Point, Rect, RoundedRect, Shape, Stroke};
+use peniko::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Shape, Stroke};
 use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene, TextureBindings};
 
 pub use text::{TextPlacement, TextRenderer};
@@ -437,6 +437,35 @@ fn paint_node(
                         scene.stroke_path(path);
                     }
                 }
+            }
+        }
+        // M14 Phase 1 (§5, §7.3): the box itself paints exactly like a
+        // Rect (same rounded-rect fill), then a real checkmark tick
+        // path strokes on top, its own opacity driven directly by
+        // `check_progress` -- 0.0 (unchecked) paints no visible mark at
+        // all, 1.0 (checked) paints it fully opaque, and any value
+        // between (mid-animation) fades it in/out smoothly. A plain
+        // white mark -- real, but not yet theme-aware, the same
+        // "wire theme later when a real need arises" precedent ripple's
+        // own hardcoded tint already had before M7 Phase 3.
+        NodeKind::Checkbox(state) => {
+            let color = with_opacity(node.paint.background.current, node.paint.opacity.current);
+            scene.set_paint(color);
+            let radius = node.paint.corner_radius.current;
+            let rect = RoundedRect::new(0.0, 0.0, w, h, radius);
+            scene.fill_path(&rect.to_path(0.1));
+
+            if state.check_progress.current > 0.0 {
+                let mut mark = BezPath::new();
+                mark.move_to((w * 0.2, h * 0.55));
+                mark.line_to((w * 0.42, h * 0.75));
+                mark.line_to((w * 0.8, h * 0.25));
+                scene.set_paint(with_opacity(
+                    Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF),
+                    state.check_progress.current,
+                ));
+                scene.set_stroke(Stroke::new((w.min(h) * 0.12).max(1.0)));
+                scene.stroke_path(&mark);
             }
         }
     }

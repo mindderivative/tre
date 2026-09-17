@@ -32,7 +32,8 @@ pub use input::{
 };
 pub use interaction::{InteractionState, RippleState};
 pub use node::{
-    ItemExtent, Node, NodeId, NodeKind, PaintProperties, SplitterState, TextState, VirtualListState,
+    CheckboxState, ItemExtent, Node, NodeId, NodeKind, PaintProperties, SplitterState, TextState,
+    VirtualListState,
 };
 pub use overlay::OverlayMeta;
 pub use shape_morph::ShapeKey;
