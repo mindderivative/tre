@@ -169,7 +169,21 @@ pub fn build_tree_scene(
 ) -> Scene {
     let mut scene = Scene::new(width, height);
     scene.set_transform(Affine::IDENTITY);
-    paint_node(tree, root, Affine::IDENTITY, &mut scene, resources, text);
+    // M8 Phase 1 (§11.8): the real, canvas-space "currently visible"
+    // rect -- the whole viewport at the top of the walk. Threaded
+    // through `paint_node`'s own recursion so a later `NodeKind` (a
+    // real scrollable `VirtualList`, M8 Phase 2) can narrow it on the
+    // way into its own clipped children, not just check it once here.
+    let visible = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
+    paint_node(
+        tree,
+        root,
+        Affine::IDENTITY,
+        visible,
+        &mut scene,
+        resources,
+        text,
+    );
     scene
 }
 
@@ -262,6 +276,7 @@ fn paint_node(
     tree: &Tree,
     id: NodeId,
     parent_transform: Affine,
+    visible: Rect,
     scene: &mut Scene,
     resources: &mut Resources,
     text: &mut TextRenderer,
@@ -275,6 +290,38 @@ fn paint_node(
     let composed = parent_transform
         * Affine::translate((f64::from(layout.location.x), f64::from(layout.location.y)))
         * node.paint.transform.current;
+
+    // M8 Phase 1 (§11.8): a whole-subtree skip, not a per-pixel clip --
+    // this node's own real, composed, absolute bounding box (all four
+    // local corners transformed, not just two opposite ones, so this
+    // stays correct even under a future rotation-capable `Affine`, not
+    // just today's shear/rotation-free subspace) checked against the
+    // "currently visible" rect threaded down from `build_tree_scene`.
+    // No Vello scene-encoding happens at all for a node -- or anything
+    // in its subtree -- that doesn't overlap it; `tree` is an immutable
+    // reference throughout this whole walk, so there's no side effect
+    // to lose by skipping.
+    let corners = [
+        composed * Point::new(0.0, 0.0),
+        composed * Point::new(w, 0.0),
+        composed * Point::new(0.0, h),
+        composed * Point::new(w, h),
+    ];
+    let min_x = corners.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+    let max_x = corners
+        .iter()
+        .map(|p| p.x)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let min_y = corners.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+    let max_y = corners
+        .iter()
+        .map(|p| p.y)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let bounds = Rect::new(min_x, min_y, max_x, max_y);
+    if !bounds.overlaps(visible) {
+        return;
+    }
+
     scene.set_transform(composed);
 
     // M7 Phase 2 (§7.2): a real shadow, for any NodeKind, painted
@@ -449,7 +496,7 @@ fn paint_node(
     }
 
     for &child in &node.children {
-        paint_node(tree, child, composed, scene, resources, text);
+        paint_node(tree, child, composed, visible, scene, resources, text);
     }
 }
 
