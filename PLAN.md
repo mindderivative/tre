@@ -1,130 +1,84 @@
-# Plan: M12 Phase 2 — Python-Facing Size-Hint Callback (§11.7)
+# Plan: M13 Phase 1 — Real AppShell Composition (§11.2)
 
-Corresponds to `BUILD_TRACKER.md` M12 Phase 2's own scoping, closing
-the milestone: `Window.add_virtual_list`/`set_virtual_list_window`
-gain a real way to supply per-item heights from Python, wiring Phase
-1's new `engine-core` capability (`ItemExtent::Variable`,
-`VirtualListState.resolved_offsets`, `Tree::set_virtual_list_
-resolved_offsets`) through to real app code.
+Corresponds to `BUILD_TRACKER.md` M13 Phase 1's own scoping: a real
+`Window`-level way to build the shell's named regions (menu bar,
+toolbar, status bar, and the stable `content` swap region) in one
+call, as ordinary flex-composed containers, no new `engine-core`
+primitive.
 
 ## Investigation before writing code
 
-- `PyWindow.add_virtual_list` (`window.rs:763-797`, confirmed by direct
-  read): `item_extent: f64` is currently a required parameter; the
-  materialized `NodeKind::VirtualList(VirtualListState::new(item_count,
-  ItemExtent::Fixed(item_extent)))` is built directly from it.
-- `PyWindow.set_virtual_list_window` (`window.rs:818-880`) reads
-  `item_extent` a *second* time, for a genuinely different purpose than
-  positioning: `Style.size.height = length(item_extent as f32)` for
-  each newly-materialized item (line 855) — its real on-screen height,
-  not its cumulative offset (which `Tree::set_virtual_list_window`
-  itself now computes via `VirtualListState::offset_of`, Phase 1). Both
-  values are needed for `Variable` mode, and they're different: offset
-  is cumulative, height is per-item.
-- All real call sites (`examples/scrollable_list.py`, every `tests/
-  test_virtual_list*.py` call) use `item_extent=...`/`materialize=...`
-  exclusively as keyword arguments, confirmed via grep — no positional
-  call anywhere, so the Rust-side parameter order is free to change
-  without breaking any real caller.
-- `Tree::set_virtual_list_window`'s own closure parameter (`impl FnMut
-  (usize) -> (NodeKind, Style, PaintProperties)`) is called *while*
-  `Tree::set_virtual_list_window` itself holds `&mut self` — the
-  closure built in `window.rs` cannot also borrow `tree` from inside
-  itself (the exact self-referential-borrow conflict the *existing*
-  code already avoids by extracting `item_extent` as a plain scalar
-  copy *before* building the closure). The same shape is needed for
-  `Variable` mode: whatever per-item height lookup the closure needs
-  must be extracted as an owned snapshot before the closure is built,
-  not read live from `tree` inside it.
-
-## Design decision: eager, one-time resolution, not lazy/incremental
-
-A real per-item height callback (`size_hint(idx) -> float`) is
-fundamentally different in cost class from `materialize` (which builds
-a real `Node` — paint, layout, potential child structure): it's a
-plain, cheap arithmetic call. Computing a *cumulative* offset for any
-item, though, structurally requires knowing every preceding item's own
-height — there's no way around this for correct, non-estimated
-positioning. Rather than building a stateful, incrementally-extended
-lazy cache (real complexity — cache invalidation, partial-resolution
-bookkeeping — for a milestone that ARCHITECTURE.md itself describes in
-one line, "a size-hint callback for variable-height items", with no
-further spec), this phase resolves **eagerly, once, at `add_virtual_
-list` time**: when `size_hint` is given, it's called exactly
-`item_count` times immediately, building the complete real cumulative-
-offset table up front via `Tree::set_virtual_list_resolved_offsets`.
-
-This is a real, deliberate, stated tradeoff, not a hidden cost:
-`Fixed` still creates zero real `Node`s beyond the visible window
-(§11.7's own core claim, untouched); `Variable` additionally pays one
-real, one-time `O(item_count)` Python-call cost at list-creation time
-to know the shape of the data — cheap per call (no `Node` creation),
-but real for very large lists, and honestly documented as such, not
-silently deferred into a later surprise.
+- ARCHITECTURE.md §11.2's own struct sketch: `AppShell { menu_bar:
+  Option<NodeId>, toolbar: Option<NodeId>, dock: DockLayout, status_
+  bar: Option<NodeId>, content: NodeId }` — a passive bookkeeping
+  record naming which of a window's own already-built nodes serve
+  which chrome role, not a builder of their *content*. `content` is
+  the one mandatory field, "the swappable region."
+- `PyWindow::new` (`window.rs:213-222`, confirmed by direct read):
+  every node any `add_*` method creates attaches directly to `self.
+  root`, whose own `Style` is hardcoded `Display::Flex` +
+  `FlexDirection::Row`. A real header/content/footer shell needs a
+  *column* arrangement — reusing `self.root` directly isn't possible
+  without breaking every other `add_*` method's own implicit row flow,
+  so shell composition needs its own dedicated child container.
+- `Node.add_child` (`node.rs:323-332`) already exists and already
+  detaches a node from its current parent first (`Tree::try_add_child`
+  — confirmed via direct read) — the exact "re-parent an already-built
+  node into the shell" mechanism this phase needs, with zero new
+  `engine-core` work.
+- `taffy::Style` (pinned 0.14.0, confirmed via direct read of its own
+  source) has a real `flex_grow: f32` field — the standard flexbox
+  mechanism for "this region fills whatever space remains" the
+  `content` region needs, so it isn't squeezed to zero by the chrome
+  regions' own explicit sizes.
+- No new `engine-core` primitive is needed anywhere in this design —
+  confirmed by investigation: `Tree::insert`/`add_child` (already
+  real) build the shell's own container structure; each individual
+  chrome region's *content* is built by the app itself via already-real
+  primitives (`add_rect`, etc.), matching AppShell's own "composition
+  convenience," not content-authoring, framing.
 
 ## Design
 
 `crates/engine-py/src/window.rs`:
 
-- `add_virtual_list` gains a new optional `size_hint:
-  Option<Py<PyAny>>` parameter alongside `item_extent`, which itself
-  becomes `Option<f64>` (previously required). Exactly one of the two
-  must be given — `PyValueError` otherwise (neither given, or both).
-  When `size_hint` is given: calls it once per index `0..item_count`,
-  accumulating a real running sum into a `Vec<(usize, f64)>` of
-  cumulative offsets (index `0` maps to offset `0.0`; index
-  `item_count`, one past the last item, maps to the real total
-  extent) — a callback exception propagates as a real `PyErr`
-  immediately (via `?`), the same "raises as a real error" contract
-  `materialize` already has. Builds `NodeKind::VirtualList(VirtualList
-  State::new(item_count, ItemExtent::Variable))`, then calls `Tree::
-  set_virtual_list_resolved_offsets` with the resolved table before
-  returning the new `Node`.
-- `set_virtual_list_window`: extracts a small, local, private
-  `enum ResolvedItemHeights { Fixed(f64), Variable(BTreeMap<usize,
-  f64>) }` snapshot from the list's own current state *before*
-  building the materializer closure (mirroring the existing scalar-
-  extraction shape exactly, just widened to also cover `Variable`).
-  Inside the closure, each newly-materialized item's own real height
-  is `Fixed(v) => v`, or for `Variable(offsets)`, `offsets[idx + 1] -
-  offsets[idx]` (both guaranteed present — Phase 2's own eager
-  resolution always resolves every index up to and including
-  `item_count`) — used for that item's own `Style.size.height`,
-  replacing the old uniform `item_extent as f32`.
-- Doc comments on both methods corrected — `add_virtual_list`'s own
-  currently states "only `ItemExtent::Fixed` is exposed -- see `engine_
-  core::ItemExtent`'s own doc comment for why the variable-height
-  variant isn't built yet," stale once this phase ships.
+- New `PyWindow.build_shell(menu_bar: Option<PyRef<'_, Node>>,
+  toolbar: Option<PyRef<'_, Node>>, status_bar: Option<PyRef<'_,
+  Node>>) -> PyResult<Node>`:
+  - Each given region is checked with the same `Rc::ptr_eq` same-tree
+    guard `set_dock_handle`/`set_drop_zone_highlight` already
+    established (M10 Phase 2/3) — a foreign `Window`'s own `Node`
+    raises `EngineError::ForeignNode`.
+  - Creates one new "shell" `Container` child of `self.root`, sized to
+    the window's own real width/height, `FlexDirection::Column` — the
+    one new structural node this phase adds.
+  - Re-parents each given region into the shell container, in order
+    (`menu_bar`, `toolbar`, then `content`, then `status_bar`) via
+    `Tree::add_child` (already handles detaching from wherever the
+    node currently is).
+  - Creates a new, empty `Container` node for `content`, `flex_grow:
+    1.0` so it fills whatever vertical space the given chrome regions
+    don't take, appended into the shell container between `toolbar`
+    and `status_bar`.
+  - Returns `content` — the one handle the app needs to keep for
+    Phase 2's own navigation.
 
 ## Verification plan
 
 - `cargo test --workspace --release`/clippy/fmt — this phase is
-  `engine-py`-only; `engine-core`'s own `ItemExtent::Variable`/
-  `resolved_offsets`/`offset_of`/`total_extent`/`set_virtual_list_
-  resolved_offsets` (Phase 1) are reused entirely as-is, no changes.
-- `maturin develop --release` + `pytest tests/`. New `test_virtual_
-  list.py` coverage: `add_virtual_list(size_hint=...)` builds a real
-  `Variable` list whose materialized items land at their own real,
-  non-uniform positions and heights (the same kind of "clicking it
-  there proves it really moved" functional proof this file's sibling
-  tests already use, adapted for position/size instead of click
-  routing — checked via `Window.click()` on items at their own real,
-  distinct computed centers, since there's no direct position getter);
-  `size_hint` is called exactly `item_count` times, once each, at
-  `add_virtual_list` time, not lazily per `set_virtual_list_window`
-  call; passing neither or both of `item_extent`/`size_hint` raises a
-  clear `ValueError`; a `size_hint` callback raising propagates as a
-  real Python error, matching `materialize`'s own established
-  contract. Existing `Fixed`-mode tests (every one already in `test_
-  virtual_list.py`/`test_virtual_list_benchmark.py`) must keep passing
-  completely unmodified — the real regression check that `item_extent=
-  ...` (unchanged, just now `Optional` on the Rust side) still works
-  exactly as before.
-- Run all examples (`examples/scrollable_list.py` at minimum, still
-  `Fixed`-mode, unmodified) — confirm clean exit, no panic.
-- Consider adding a small new example demonstrating a real `Variable`
-  list (e.g. rows of varying text-derived height) if it meaningfully
-  proves the feature works live, matching this project's own pattern
-  of pairing a new capability with a real, visible demonstration —
-  decide once the FFI-level implementation and its pytest coverage are
-  solid, not before.
+  `engine-py`-only, no `engine-core` change.
+- `maturin develop --release` + `pytest tests/`. New `test_app_shell.py`
+  (mirroring `test_docking.py`'s own file-per-feature convention):
+  `build_shell` with all three optional regions given, real functional
+  proof each region is genuinely attached and positioned (clicking a
+  registered handler on each region's own real node still fires,
+  proving it's really part of the live tree, the same "clicking it
+  proves it's real" discipline this project's test suite consistently
+  uses); `build_shell` with all three omitted still returns a real,
+  usable `content` node; a foreign-`Window` region raises the same
+  `ForeignNode` `ValueError` every other same-tree guard already does.
+- Run all examples — confirm clean exit; a new `examples/app_shell.py`
+  demonstrating a real shell with menu bar/toolbar/status bar and an
+  initial `content` screen, matching this project's own established
+  pattern of pairing a new capability with a real, visible
+  demonstration.

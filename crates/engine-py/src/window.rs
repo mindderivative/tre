@@ -315,6 +315,108 @@ impl PyWindow {
         }
     }
 
+    /// M13 Phase 1 (§11.2): a real, one-call way to build `AppShell`'s
+    /// own named regions -- `self.root` itself stays a plain `Flex Row`
+    /// (every other `add_*` method's own implicit flow depends on that,
+    /// confirmed by direct read of `PyWindow::new`), so this creates one
+    /// new dedicated `Container` child of `self.root`, `Flex Column`,
+    /// sized to the window's own real width/height -- the one new
+    /// structural node this phase adds. `menu_bar`/`toolbar`/`status_
+    /// bar` are already-built `Node`s the app supplies (this method is
+    /// a composition convenience, not a content-authoring one, matching
+    /// `AppShell`'s own struct sketch: it names *which* node serves
+    /// which chrome role, it doesn't build that node's own content) --
+    /// each is re-parented into the shell container via `Tree::try_add_
+    /// child`, not the cheap `Tree::add_child` the freshly-inserted
+    /// `shell`/`content` nodes below use -- **real finding while writing
+    /// this phase's own example:** every `add_*` method already
+    /// attaches its result to `self.root` immediately, so `menu_bar`/
+    /// `toolbar`/`status_bar` always already have a real parent by the
+    /// time this runs; the cheap `add_child` only ever detaches nothing,
+    /// leaving a node listed as a child of *both* its old parent and the
+    /// shell -- real tree corruption `examples/app_shell.py`'s own live
+    /// `accesskit` validation caught as a duplicate-child panic, not any
+    /// pytest test (none render a real frame). `try_add_child` is the
+    /// real, checked counterpart that detaches first, the same mechanism
+    /// `Node.add_child`'s own pyo3 wrapper already uses. A new, empty
+    /// `content` `Container` is created here, `flex_grow: 1.0` so it
+    /// fills whatever vertical space the given chrome regions don't take
+    /// -- the one handle the caller needs to keep, for Phase 2's own
+    /// real navigation.
+    #[pyo3(signature = (menu_bar=None, toolbar=None, status_bar=None))]
+    fn build_shell(
+        &mut self,
+        menu_bar: Option<PyRef<'_, Node>>,
+        toolbar: Option<PyRef<'_, Node>>,
+        status_bar: Option<PyRef<'_, Node>>,
+    ) -> PyResult<Node> {
+        for region in [&menu_bar, &toolbar, &status_bar].into_iter().flatten() {
+            if !Rc::ptr_eq(&self.tree, &region.tree) {
+                return Err(EngineError::ForeignNode.into());
+            }
+        }
+
+        let mut tree = self.tree.borrow_mut();
+        let shell = tree.insert(
+            NodeKind::Container,
+            Style {
+                display: taffy::Display::Flex,
+                flex_direction: taffy::FlexDirection::Column,
+                size: Size {
+                    width: length(self.width as f32),
+                    height: length(self.height as f32),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, shell);
+
+        // menu_bar/toolbar/status_bar are pre-existing nodes -- every
+        // add_* method already attaches its result to self.root
+        // immediately, so each already has a real parent here. The
+        // cheap, unchecked `Tree::add_child` above is only ever correct
+        // for a freshly-inserted node with no parent yet (confirmed via
+        // direct read of its own doc comment) -- reusing it for an
+        // already-attached node would leave it listed as a child of
+        // *both* its old parent and the shell, real tree corruption
+        // caught live by accesskit's own duplicate-child panic while
+        // writing this example, not by any pytest test (none render a
+        // real frame). `try_add_child` is the real, checked counterpart
+        // that detaches first, the same mechanism `Node.add_child`'s
+        // own pyo3 wrapper already uses.
+        if let Some(menu_bar) = &menu_bar {
+            tree.try_add_child(shell, menu_bar.id);
+        }
+        if let Some(toolbar) = &toolbar {
+            tree.try_add_child(shell, toolbar.id);
+        }
+
+        let content = tree.insert(
+            NodeKind::Container,
+            Style {
+                flex_grow: 1.0,
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(shell, content);
+
+        if let Some(status_bar) = &status_bar {
+            tree.try_add_child(shell, status_bar.id);
+        }
+
+        drop(tree);
+        Ok(Node {
+            id: content,
+            tree: self.tree.clone(),
+            handlers: self.handlers.clone(),
+            context_menus: self.context_menus.clone(),
+            theme: self.theme.clone(),
+            completions: self.completions.clone(),
+        })
+    }
+
     /// M4 Phase 3, step 2 (§11.5): the missing Python-facing half of
     /// step 1's already-real drag mechanism -- until now, nothing created a
     /// `NodeKind::Splitter` from Python at all, so `Tree::dispatch`'s
