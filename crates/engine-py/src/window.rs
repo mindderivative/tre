@@ -478,6 +478,47 @@ impl PyWindow {
         run_dispatch_outcome(&self.handlers, outcome, py);
     }
 
+    /// M8 Phase 3 (§11.7): `click()`/`hover()`'s own scroll counterpart
+    /// -- the same no-live-window-needed proof pattern, dispatching a
+    /// real `InputEvent::Scroll` at `node`'s own real center point,
+    /// exactly what a real mouse wheel over it would produce. `delta_y`
+    /// is real pixels (`ScrollDelta::Pixels`, not `Lines`) -- the
+    /// clearest, most direct unit for an explicit Python call, unlike a
+    /// real `winit`-driven event which may arrive as either. Fires
+    /// `Tree::dispatch`'s own real scroll-bubbling (walks up from
+    /// whatever's hit to the nearest `NodeKind::VirtualList` ancestor)
+    /// -- `node` itself doesn't need to be the list; any of its real
+    /// children work too, matching real scroll-wheel behavior.
+    fn scroll(&mut self, node: PyRef<'_, Node>, delta_y: f64, py: Python<'_>) {
+        let point = {
+            let mut tree = self.tree.borrow_mut();
+            tree.compute_layout(
+                self.root,
+                Size {
+                    width: AvailableSpace::Definite(self.width as f32),
+                    height: AvailableSpace::Definite(self.height as f32),
+                },
+            );
+            let (x, y) = tree.absolute_position(node.id);
+            let layout = tree.layout(node.id);
+            Point::new(
+                x + f64::from(layout.size.width) / 2.0,
+                y + f64::from(layout.size.height) / 2.0,
+            )
+        };
+
+        let outcome = self.tree.borrow_mut().dispatch(
+            self.root,
+            InputEvent::Scroll {
+                delta: engine_core::ScrollDelta::Pixels(0.0, delta_y),
+                position: point,
+            },
+            &interaction_config(),
+            std::time::Instant::now(),
+        );
+        run_dispatch_outcome(&self.handlers, outcome, py);
+    }
+
     /// M4 Phase 7 (§11.3): `click()`'s own secondary-button (right-click)
     /// counterpart -- the same no-live-window-needed proof pattern,
     /// dispatching a secondary-button press+release pair at `node`'s own
@@ -630,13 +671,26 @@ impl PyWindow {
     /// yet). `materialize` is stored here, keyed by the new node's own
     /// `NodeId` -- not called yet; `set_virtual_list_window` is what
     /// actually invokes it, once per newly-visible index.
-    #[pyo3(signature = (item_count, item_extent, materialize, width=None))]
+    ///
+    /// `height` is now a real, meaningful viewport height (M8 Phase 3,
+    /// §11.7/§11.8) -- `Window.scroll`/a real dispatched mouse wheel
+    /// (`Tree::dispatch`'s own `InputEvent::Scroll` arm) clamp the
+    /// list's own `scroll_offset` against exactly this value. Before
+    /// this phase it was left `auto()`, which taffy resolves against
+    /// *content* size -- and every materialized item is `Position::
+    /// Absolute` (resolved from its own `inset`, not counted toward the
+    /// parent's own intrinsic size, the same real fact `open_overlay`
+    /// already established), so `auto()` never gave a real viewport
+    /// height at all. Defaults to this `Window`'s own real height, the
+    /// same fallback shape `width` already uses.
+    #[pyo3(signature = (item_count, item_extent, materialize, width=None, height=None))]
     fn add_virtual_list(
         &mut self,
         item_count: usize,
         item_extent: f64,
         materialize: Py<PyAny>,
         width: Option<f32>,
+        height: Option<f32>,
     ) -> Node {
         let mut tree = self.tree.borrow_mut();
         let id = tree.insert(
@@ -646,18 +700,8 @@ impl PyWindow {
             )),
             Style {
                 size: Size {
-                    // A real scrollable viewport (clipping, an actual
-                    // scroll offset/transform, §11.8/§11.9) isn't built
-                    // yet -- nothing in this step's own scope needs it,
-                    // so the list's own box height is left `auto()`
-                    // rather than manufacturing a viewport concept ahead
-                    // of a step that needs one. `auto()` doesn't affect
-                    // item positioning: absolutely positioned children
-                    // (every materialized item) are resolved from their
-                    // own `inset`, not their parent's size, the same
-                    // real taffy fact `open_overlay` already established.
                     width: length(width.unwrap_or(self.width as f32)),
-                    height: auto(),
+                    height: length(height.unwrap_or(self.height as f32)),
                 },
                 ..Default::default()
             },

@@ -24,7 +24,7 @@ use crate::animation::MotionCurve;
 #[cfg(test)]
 use crate::canvas::CanvasState;
 use crate::canvas::{CustomHitTest, DrawCommand};
-use crate::input::{DispatchOutcome, InputEvent, Key, PointerButton};
+use crate::input::{DispatchOutcome, InputEvent, Key, PointerButton, ScrollDelta};
 use crate::interaction::InteractionState;
 #[cfg(test)]
 use crate::node::{ItemExtent, VirtualListState};
@@ -705,6 +705,39 @@ impl Tree {
         }
     }
 
+    /// M8 Phase 3 (§11.7): moves `id`'s own real `scroll_offset` by
+    /// `delta_y` real pixels, clamped to `[0.0, max_offset]` --
+    /// `max_offset` is `id`'s own real content extent (`item_extent *
+    /// item_count`) minus its own real, computed viewport height
+    /// (`Tree::layout`), floored at `0.0` (a list whose content is
+    /// shorter than its own viewport can't scroll at all, correctly).
+    /// A positive `delta_y` increases the offset (content moves up,
+    /// later items come into view) -- this crate's own chosen, stated
+    /// convention (`PLAN.md`), not one `winit`'s own docs pin down.
+    /// Exposed as its own real method, the same "a direct method
+    /// `dispatch` reuses internally" shape `set_splitter_position`/
+    /// `spawn_ripple` already use -- panics if `id` isn't a real
+    /// `NodeKind::VirtualList` in this `Tree`, the same "internal bug,
+    /// not a runtime condition" contract those methods use too.
+    pub fn scroll_virtual_list_by(&mut self, id: NodeId, delta_y: f64) {
+        let node = self
+            .nodes
+            .get(id)
+            .expect("scroll_virtual_list_by: NodeId not found in this Tree");
+        let NodeKind::VirtualList(state) = &node.kind else {
+            panic!("scroll_virtual_list_by: {id:?} is not a NodeKind::VirtualList");
+        };
+        let content_extent = state.item_extent.value() * state.item_count as f64;
+        let viewport_height = f64::from(self.layout(id).size.height);
+        let max_offset = (content_extent - viewport_height).max(0.0);
+
+        let NodeKind::VirtualList(state) = &mut self.nodes[id].kind else {
+            unreachable!("checked above")
+        };
+        state.scroll_offset.current =
+            (state.scroll_offset.current + delta_y).clamp(0.0, max_offset);
+    }
+
     /// The central tick's per-`Tree` entry point (§5): ticks every
     /// node's `PaintProperties` and (§14 step 9) its `InteractionState`
     /// if it has one, returning `true` if any is still mid-animation. A
@@ -1189,7 +1222,35 @@ impl Tree {
             // ahead of that need. Real translation from a genuine
             // winit::WindowEvent::MouseWheel already reaches this far
             // (engine-platform); this is where it stops for now.
-            InputEvent::Scroll { .. } => DispatchOutcome::None,
+            // M8 Phase 3 (§11.7): closes M4 Phase 8's own stated gap --
+            // hit-tests at the event's own position (the same real
+            // mechanism PointerPressed/PointerReleased already use),
+            // walks up the hit node's own parent chain for the nearest
+            // NodeKind::VirtualList (a scroll gesture can land on any
+            // materialized child, not just the list's own root pixel --
+            // real browser/OS scroll-bubbling behavior), and moves that
+            // list's own real scroll offset. A mechanical consequence
+            // handled entirely here, the same shape ripple-spawn-on-
+            // press/hover-update already use -- still DispatchOutcome::
+            // None, nothing for the app layer to be told happened.
+            InputEvent::Scroll { delta, position } => {
+                if let Some(hit) = self.hit_test(root, position) {
+                    let mut current = Some(hit);
+                    while let Some(id) = current {
+                        let node = &self.nodes[id];
+                        if matches!(node.kind, NodeKind::VirtualList(_)) {
+                            let delta_y = match delta {
+                                ScrollDelta::Lines(_, y) => y * 20.0,
+                                ScrollDelta::Pixels(_, y) => y,
+                            };
+                            self.scroll_virtual_list_by(id, delta_y);
+                            break;
+                        }
+                        current = node.parent;
+                    }
+                }
+                DispatchOutcome::None
+            }
             // M7 Phase 3 (§7.1): plumbing only, see `InputEvent::
             // ThemeChanged`'s own doc comment -- `engine-py` handles
             // this directly on the raw event, the same way it already
@@ -1298,7 +1359,6 @@ pub fn from_access_id(id: accesskit::NodeId) -> NodeId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::input::ScrollDelta;
     use peniko::Color;
     use taffy::prelude::{FlexDirection, length};
 
@@ -2256,6 +2316,167 @@ mod tests {
                 "a scrolled-away item's old NodeId must no longer resolve to anything"
             );
         }
+    }
+
+    /// A list with a real, definite viewport height, much shorter than
+    /// its own real content extent (`item_extent * item_count`) -- the
+    /// exact shape `scroll_virtual_list_by`'s own clamping needs to be
+    /// real, not vacuous (`Style::default()`'s own auto-sizing, used by
+    /// this module's other `VirtualList` tests, doesn't give a
+    /// meaningful "viewport" to clamp against).
+    fn scrollable_list(item_count: usize) -> (Tree, NodeId) {
+        let mut tree = Tree::new();
+        let list = tree.insert(
+            NodeKind::VirtualList(VirtualListState::new(item_count, ItemExtent::Fixed(20.0))),
+            Style {
+                size: Size {
+                    width: length(200.0),
+                    height: length(100.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.compute_layout(
+            list,
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+        (tree, list)
+    }
+
+    #[test]
+    fn scroll_virtual_list_by_moves_and_clamps_the_offset_at_both_ends() {
+        // 20 items * 20px = 400px of real content, in a 100px-tall
+        // viewport -- max_offset = 400 - 100 = 300.0.
+        let (mut tree, list) = scrollable_list(20);
+
+        tree.scroll_virtual_list_by(list, 50.0);
+        let NodeKind::VirtualList(state) = &tree.get(list).unwrap().kind else {
+            panic!("expected a VirtualList");
+        };
+        assert_eq!(state.scroll_offset.current, 50.0);
+
+        // Past the real upper bound -- must clamp to max_offset, not
+        // overshoot into content that doesn't exist.
+        tree.scroll_virtual_list_by(list, 1000.0);
+        let NodeKind::VirtualList(state) = &tree.get(list).unwrap().kind else {
+            panic!("expected a VirtualList");
+        };
+        assert_eq!(
+            state.scroll_offset.current, 300.0,
+            "must clamp to the real max_offset (content_extent - viewport_height), not overshoot"
+        );
+
+        // Past the real lower bound -- must clamp to 0.0, not go
+        // negative.
+        tree.scroll_virtual_list_by(list, -10_000.0);
+        let NodeKind::VirtualList(state) = &tree.get(list).unwrap().kind else {
+            panic!("expected a VirtualList");
+        };
+        assert_eq!(
+            state.scroll_offset.current, 0.0,
+            "must clamp to 0.0, not go negative"
+        );
+    }
+
+    #[test]
+    fn scroll_virtual_list_by_cannot_scroll_a_list_shorter_than_its_own_viewport() {
+        // 3 items * 20px = 60px of real content, in a 100px-tall
+        // viewport -- there's nothing to reveal, so max_offset must be
+        // 0.0, not negative.
+        let (mut tree, list) = scrollable_list(3);
+        tree.scroll_virtual_list_by(list, 50.0);
+        let NodeKind::VirtualList(state) = &tree.get(list).unwrap().kind else {
+            panic!("expected a VirtualList");
+        };
+        assert_eq!(
+            state.scroll_offset.current, 0.0,
+            "a list shorter than its own viewport must not be scrollable at all"
+        );
+    }
+
+    #[test]
+    fn dispatch_scroll_over_a_virtual_lists_child_updates_its_real_scroll_offset() {
+        let (mut tree, list) = scrollable_list(20);
+        tree.set_virtual_list_window(list, 0..5, virtual_list_materializer);
+        tree.compute_layout(
+            list,
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        // Item 1's own real slot (y in [20, 40)) -- a real scroll
+        // gesture over a materialized *child*, not the list's own root
+        // pixel, must still bubble up to the list's own scroll offset.
+        let outcome = tree.dispatch(
+            list,
+            InputEvent::Scroll {
+                delta: ScrollDelta::Lines(0.0, 2.0),
+                position: Point::new(100.0, 30.0),
+            },
+            &config,
+            Instant::now(),
+        );
+
+        assert_eq!(outcome, DispatchOutcome::None);
+        let NodeKind::VirtualList(state) = &tree.get(list).unwrap().kind else {
+            panic!("expected a VirtualList");
+        };
+        assert_eq!(
+            state.scroll_offset.current, 40.0,
+            "2.0 lines * this crate's own 20px-per-line convention == 40.0px"
+        );
+    }
+
+    #[test]
+    fn dispatch_scroll_that_hits_nothing_is_a_true_no_op() {
+        let mut tree = Tree::new();
+        let (kind, style, paint) = leaf(50.0, 50.0);
+        let root = tree.insert(kind, style, paint);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(50.0),
+                height: AvailableSpace::Definite(50.0),
+            },
+        );
+
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        // Hits `root` itself (a plain Rect, no VirtualList ancestor at
+        // all) -- must not panic, and there's nothing real to assert
+        // changed, since nothing in this tree can scroll.
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::Scroll {
+                delta: ScrollDelta::Lines(0.0, 2.0),
+                position: Point::new(25.0, 25.0),
+            },
+            &config,
+            Instant::now(),
+        );
+        assert_eq!(outcome, DispatchOutcome::None);
     }
 
     /// Three fixed-size children in a row, via `FlexDirection::Row` with

@@ -1,97 +1,88 @@
-# Plan: M8 Phase 2 — `VirtualList` Real Scroll Offset & Clipping (§11.7)
+# Plan: M8 Phase 3 — Real Scroll Input Wired to `VirtualList` (§11.7, closing M4 Phase 8's own gap and M8 entirely)
 
-Corresponds to `BUILD_TRACKER.md` M8 Phase 2's own scoping: a new
-`Animated<f64>` scroll offset on `VirtualListState`, composed into
-materialized children's own effective position; real clipping via
-`Scene::push_layer`'s own `clip_path` support.
+Corresponds to `BUILD_TRACKER.md` M8 Phase 3's own scoping: `Tree::
+dispatch`'s `InputEvent::Scroll` arm, when it hits a real `NodeKind::
+VirtualList`, updates that list's own real scroll offset instead of
+remaining a no-op.
 
 ## Investigation before writing code
 
-- `VirtualListState` (`engine-core/src/node.rs`) currently has
-  `item_count`, `item_extent`, `materialized: BTreeMap<usize, NodeId>`
-  — no scroll concept at all. `Tree::set_virtual_list_window` requires
-  the *caller* to supply an explicit `visible: Range<usize>`; this
-  phase doesn't change that contract (a real, stated scope boundary,
-  not silently expanded) — it only makes the *paint-time* position/
-  clip of whatever's already materialized real.
-- **Real finding: kind-specific `Animated<T>` fields are never ticked
-  by `Tree::tick_all`.** Confirmed by reading `tick_all` directly — it
-  only ever ticks `node.paint`/`node.interaction`. `SplitterState.
-  position` (also kind-specific) is never touched by `tick_all` either
-  — it's ticked manually, inline, inside its own dedicated `Tree::
-  set_splitter_position` method. `scroll_offset` follows the identical
-  precedent: driven by its own dedicated mechanism, not the central
-  tick. Given real scroll input (Phase 3) is a continuous, high-
-  frequency, per-wheel-event *direct* value (like a slider being
-  dragged, not a discrete eased transition), `Animated<f64>`'s plain
-  `.current` field is what a caller sets directly — using `Animated<
-  f64>` still keeps the door open for a future "scroll to item,
-  animated" caller without requiring one now.
-- **Real finding: `vello_hybrid::Scene::push_layer`'s own `clip_path`
-  is baked into absolute/device-space strips at the moment `push_layer`
-  is called** (confirmed by reading `push_layer`'s own source directly:
-  `layer_transform = self.effective_path_transform()`, captured once,
-  before any content is drawn into the layer). This means a clip
-  pushed using the `VirtualList` node's own `composed` transform stays
-  correctly anchored even though each child painted inside the layer
-  goes on to call `scene.set_transform` again for its own composed
-  transform — the same real mechanism ripple's own clip (M4 Phase 5)
-  already proves works, just reused for a node's own bounds instead of
-  a circle.
-- `paint_node`'s own child-recursion currently applies zero clipping
-  anywhere for any `NodeKind` (confirmed via direct read) — Container's
-  children can already overflow its own bounds with nothing hiding
-  them; this phase only introduces a real clip for `VirtualList`
-  specifically, not implicit `overflow: hidden` everywhere (a much
-  larger, unscoped change no other `NodeKind` asked for).
-- M8 Phase 1's own `visible: Rect` threading is directly reusable here:
-  the `bounds` value `paint_node` already computes for *this* node's
-  own culling check (its real composed absolute bounding box) is
-  exactly the rect a `VirtualList`'s own real visual clip also uses —
-  intersecting `visible` with `bounds` before recursing into a
-  `VirtualList`'s own children means an off-screen-*within-the-clip*
-  materialized child also gets engine-culled for real, not just
-  visually hidden behind the clip. This narrowing must be scoped to
-  `VirtualList` specifically (the one `NodeKind` that introduces a real
-  visual clip) — narrowing `visible` for every `NodeKind` would
-  incorrectly cull legitimately-overflowing content under any other
-  kind, since nothing else in this engine clips today.
+- `Tree::dispatch`'s `InputEvent::Scroll { .. } => DispatchOutcome::
+  None` (confirmed via direct read, `tree.rs`) is the exact, real,
+  deliberate no-op M4 Phase 8's own gap note has stated since it
+  landed — this phase closes it for real.
+- `Tree::hit_test(&self, root: NodeId, point: Point) -> Option<NodeId>`
+  (M5 Phase 2, transform-aware) is the same real mechanism `Pointer
+  Pressed`/`PointerReleased`'s own dispatch arms already use — scroll
+  reuses it identically, hit-testing at the event's own `position`.
+- A scroll gesture can land on any descendant of a `VirtualList` (its
+  own materialized children, or a child's own child), not just the
+  list's own root pixel — matching real browser/OS scroll-bubbling
+  behavior, `dispatch` walks up the hit node's own `parent` chain
+  (already a plain field on `Node`) until it finds the nearest
+  `NodeKind::VirtualList` ancestor (inclusive of the hit node itself),
+  or reaches the root with none found (a true no-op, matching every
+  other dispatch arm's own "no real target, do nothing" shape).
+- `ScrollDelta` (`engine-core/src/input.rs`) has two real variants,
+  `Lines`/`Pixels` — confirmed via direct read, `engine-platform`'s own
+  `translate_scroll_delta` is a straight passthrough from `winit::
+  MouseScrollDelta`, no sign flip. **Checked `winit`'s own doc comment
+  for `MouseScrollDelta` directly and found no explicit statement of
+  which sign means "scroll down"** — rather than guess and present it
+  as verified, this phase states its own chosen, real, tested
+  convention plainly: a positive `y` component increases the list's
+  own `scroll_offset` (content moves up, later items come into view).
+  `Lines` needs a real pixels-per-line conversion — no existing
+  constant for this anywhere in the codebase; a plain, stated `20.0px`
+  per line (a common, ordinary default many toolkits use) is this
+  phase's own real v1 choice, not pulled from any spec this project
+  names.
+- Clamping needs the list's own real content extent (`item_extent *
+  item_count`) and its own real, computed viewport height (`Tree::
+  layout(id).size.height`, already real since before this milestone)
+  — `max(0, content_extent - viewport_height)` is the real upper bound;
+  `0.0` the real lower bound. A list whose content is shorter than its
+  own viewport clamps to `max_offset = 0.0`, meaning it can't scroll at
+  all — correct, not a bug (there's nothing to reveal).
+- A public `Tree::scroll_virtual_list_by(id, delta_y)` (clamped,
+  directly settable) is the natural, testable, dispatch-reusable shape
+  — the same "expose a direct method, `dispatch` reuses it internally"
+  precedent `set_splitter_position`/`spawn_ripple` already establish,
+  not a private-only helper `dispatch`'s own arm would otherwise
+  duplicate if a future non-dispatch caller (a Python-facing "scroll by
+  N" test entry point, matching `Window.click`/`.hover`'s own no-live-
+  window-needed pattern) ever needs it.
 
 ## Design
 
-- `VirtualListState` gains `pub scroll_offset: Animated<f64>`,
-  initialized to `Animated::new(0.0)` in `VirtualListState::new`.
-  Vertical scroll only, a real, stated v1 scope limit (§11.7's own
-  text/every real scrolling list this framework's own examples need is
-  vertical) — additive whenever a real horizontal-scroll consumer
-  exists.
-- `paint_node`'s child-recursion becomes `NodeKind`-aware: for
-  `NodeKind::VirtualList(state)`, pushes a real clip layer (`Scene::
-  push_layer` with a local `Rect::new(0.0, 0.0, w, h)` path, matching
-  ripple's own clip precedent), composes `Affine::translate((0.0,
-  -state.scroll_offset.current))` into the transform its children
-  recurse with (so materialized content visually scrolls without
-  moving the list's own frame), narrows `visible` to `visible.
-  intersect(bounds)` (`bounds` already computed for this node's own
-  Phase 1 culling check) before recursing, then pops the layer. Every
-  other `NodeKind` keeps the exact plain recursion from before this
-  phase — no shared code path changes for them.
+- New `Tree::scroll_virtual_list_by(&mut self, id: NodeId, delta_y:
+  f64)`: reads the list's own real `item_extent`/`item_count`/
+  `layout(id).size.height`, computes `max_offset`, and clamps `state.
+  scroll_offset.current + delta_y` into `[0.0, max_offset]`. Panics if
+  `id` isn't a real `NodeKind::VirtualList` in this `Tree` — the same
+  "internal bug, not a runtime condition" contract every other kind-
+  specific `Tree` method (`set_splitter_position`) already uses.
+- `Tree::dispatch`'s `InputEvent::Scroll { delta, position }` arm:
+  hit-tests at `position`, walks up the hit node's own parent chain for
+  the nearest `NodeKind::VirtualList`, and — if found — converts
+  `delta` to a real pixel `delta_y` (`Lines(_, y) => y * 20.0`,
+  `Pixels(_, y) => y`) and calls `scroll_virtual_list_by`. Still
+  returns `DispatchOutcome::None` — this is a mechanical consequence
+  handled entirely inside `dispatch` itself, the same shape ripple-
+  spawn-on-press and hover-update already use, not something the app
+  layer needs to be told happened.
 
 ## Verification plan
 
-- `cargo test --workspace --release`/clippy/fmt — full pre-existing
-  suite must pass unmodified (a `VirtualList` at the default `scroll_
-  offset: 0.0` must render byte-for-byte the same as before this
-  phase, the same "provably a no-op" standard every additive feature
-  since M5 Phase 1 has been held to — the existing `virtual_list.rs`
-  pixel test is the real proof). New tests: a non-zero scroll offset
-  genuinely shifts materialized children's own painted position; a
-  materialized child positioned outside the list's own clip bounds
-  (post-scroll) is genuinely not visible (proves the real clip, not
-  just an assumption that positioning it off-list would look right
-  anyway); a child *within* the list's own bounds pre-scroll but
-  pushed outside them by scrolling is clipped, not still fully painted.
-- `maturin develop --release` + `pytest tests/` + all examples — this
-  phase adds no new Python-facing API (scroll offset is set/read only
-  at the Rust `Tree`/test level for now; Phase 3 is what wires a real,
-  Python-reachable trigger) — a pure regression check.
+- `cargo test --workspace --release`/clippy/fmt. New tests: a real
+  dispatched `Scroll` event over a `VirtualList`'s own materialized
+  child updates that list's own `scroll_offset`, clamped correctly at
+  both ends (scrolling past the real content extent doesn't overshoot;
+  scrolling before `0.0` doesn't go negative); a `Scroll` event that
+  hits nothing (or hits content with no `VirtualList` ancestor at all)
+  is a true no-op, touching no node's state.
+- `maturin develop --release` + `pytest tests/` + all examples. New
+  `examples/scrollable_list.py`: a real `VirtualList` plus a real
+  dispatched scroll (via a new, no-live-window-needed `Window.scroll`
+  test entry point, mirroring `Window.click`/`.hover`'s own precedent
+  exactly) proving the whole call chain compiles and runs end to end.
