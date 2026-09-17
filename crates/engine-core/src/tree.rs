@@ -750,10 +750,11 @@ impl Tree {
     /// An index newly entering `visible` is built by calling
     /// `materialize(index)` for its `(NodeKind, Style, PaintProperties)`,
     /// then inserted and absolutely positioned by this method itself --
-    /// `top: index * item_extent`, vertical-list only (the common list/
-    /// data-grid case; a horizontal virtual list would need the same
-    /// treatment along the other axis, not built since nothing here
-    /// needs it yet). `Position::Absolute` here resolves against `list`
+    /// `top: state.offset_of(idx)` (M12 Phase 1: `idx * item_extent` for
+    /// `Fixed`, a real resolved cumulative offset for `Variable`),
+    /// vertical-list only (the common list/data-grid case; a horizontal
+    /// virtual list would need the same treatment along the other axis,
+    /// not built since nothing here needs it yet). `Position::Absolute` here resolves against `list`
     /// itself, `list` being the item's own direct parent -- verified
     /// directly in `taffy`'s own `compute/flexbox.rs` at step 15 Stage A
     /// (no separate "positioned ancestor" walk needed, matching
@@ -774,13 +775,13 @@ impl Tree {
         visible: std::ops::Range<usize>,
         mut materialize: impl FnMut(usize) -> (NodeKind, Style, PaintProperties),
     ) {
-        let item_extent = match &self
+        match &self
             .nodes
             .get(list)
             .expect("set_virtual_list_window: NodeId not found in this Tree")
             .kind
         {
-            NodeKind::VirtualList(state) => state.item_extent.value(),
+            NodeKind::VirtualList(_) => {}
             _ => panic!("set_virtual_list_window: {list:?} is not a NodeKind::VirtualList"),
         };
 
@@ -810,10 +811,14 @@ impl Tree {
                 continue;
             }
             let (kind, mut style, paint) = materialize(idx);
+            let top = match &self.nodes[list].kind {
+                NodeKind::VirtualList(state) => state.offset_of(idx),
+                _ => unreachable!("checked at the top of this function"),
+            };
             style.position = Position::Absolute;
             style.inset = TaffyRect {
                 left: length(0.0),
-                top: length((idx as f64 * item_extent) as f32),
+                top: length(top as f32),
                 right: auto(),
                 bottom: auto(),
             };
@@ -827,10 +832,12 @@ impl Tree {
 
     /// M8 Phase 3 (§11.7): moves `id`'s own real `scroll_offset` by
     /// `delta_y` real pixels, clamped to `[0.0, max_offset]` --
-    /// `max_offset` is `id`'s own real content extent (`item_extent *
-    /// item_count`) minus its own real, computed viewport height
-    /// (`Tree::layout`), floored at `0.0` (a list whose content is
-    /// shorter than its own viewport can't scroll at all, correctly).
+    /// `max_offset` is `id`'s own real content extent (`VirtualList
+    /// State::total_extent`, M12 Phase 1: `item_extent * item_count`
+    /// for `Fixed`, the real resolved sum for `Variable`) minus its own
+    /// real, computed viewport height (`Tree::layout`), floored at
+    /// `0.0` (a list whose content is shorter than its own viewport
+    /// can't scroll at all, correctly).
     /// A positive `delta_y` increases the offset (content moves up,
     /// later items come into view) -- this crate's own chosen, stated
     /// convention (`PLAN.md`), not one `winit`'s own docs pin down.
@@ -847,7 +854,7 @@ impl Tree {
         let NodeKind::VirtualList(state) = &node.kind else {
             panic!("scroll_virtual_list_by: {id:?} is not a NodeKind::VirtualList");
         };
-        let content_extent = state.item_extent.value() * state.item_count as f64;
+        let content_extent = state.total_extent();
         let viewport_height = f64::from(self.layout(id).size.height);
         let max_offset = (content_extent - viewport_height).max(0.0);
 
@@ -856,6 +863,33 @@ impl Tree {
         };
         state.scroll_offset.current =
             (state.scroll_offset.current + delta_y).clamp(0.0, max_offset);
+    }
+
+    /// M12 Phase 1 (§11.7): the real way a caller supplies resolved
+    /// cumulative offsets for a `Variable`-extent list -- `engine-core`
+    /// itself never computes a cumulative sum from raw per-item heights
+    /// (no size-hint callback lives here, §4); it only stores what it's
+    /// given, mirroring `materialized`'s own "resolve once, cache"
+    /// shape. `offsets`'s own key `item_count` (one past the last real
+    /// item) is where the real total content extent belongs -- see
+    /// `VirtualListState::offset_of`/`total_extent`'s own doc comments.
+    /// Panics if `list` isn't a real `NodeKind::VirtualList` in this
+    /// `Tree`, the same "internal bug, not a runtime condition"
+    /// contract `scroll_virtual_list_by` already uses.
+    pub fn set_virtual_list_resolved_offsets(
+        &mut self,
+        list: NodeId,
+        offsets: impl IntoIterator<Item = (usize, f64)>,
+    ) {
+        let NodeKind::VirtualList(state) = &mut self
+            .nodes
+            .get_mut(list)
+            .expect("set_virtual_list_resolved_offsets: NodeId not found in this Tree")
+            .kind
+        else {
+            panic!("set_virtual_list_resolved_offsets: {list:?} is not a NodeKind::VirtualList");
+        };
+        state.resolved_offsets.extend(offsets);
     }
 
     /// The central tick's per-`Tree` entry point (§5): ticks every
@@ -2842,6 +2876,140 @@ mod tests {
         assert_eq!(
             state.scroll_offset.current, 0.0,
             "a list shorter than its own viewport must not be scrollable at all"
+        );
+    }
+
+    /// M12 Phase 1 (§11.7): a real, non-uniform set of resolved offsets
+    /// -- rows of height 10, 30, 15, 25, matching neither a uniform
+    /// spacing nor a simple arithmetic sequence, so a test passing here
+    /// can't be an accident of `Fixed`-shaped math still secretly being
+    /// used underneath.
+    fn variable_offsets() -> Vec<(usize, f64)> {
+        // Heights: [10, 30, 15, 25] -> cumulative offsets [0, 10, 40, 55],
+        // total extent (index 4, one past the last item) = 80.
+        vec![(0, 0.0), (1, 10.0), (2, 40.0), (3, 55.0), (4, 80.0)]
+    }
+
+    #[test]
+    fn offset_of_and_total_extent_match_the_uniform_formula_for_fixed() {
+        let state = VirtualListState::new(10, ItemExtent::Fixed(20.0));
+        for idx in 0..10 {
+            assert_eq!(
+                state.offset_of(idx),
+                idx as f64 * 20.0,
+                "Fixed must keep computing idx * item_extent exactly as before this phase"
+            );
+        }
+        assert_eq!(
+            state.total_extent(),
+            200.0,
+            "Fixed must keep computing item_count * item_extent exactly as before this phase"
+        );
+    }
+
+    #[test]
+    fn offset_of_and_total_extent_use_real_resolved_offsets_for_variable() {
+        let mut tree = Tree::new();
+        let list = tree.insert(
+            NodeKind::VirtualList(VirtualListState::new(4, ItemExtent::Variable)),
+            Style::default(),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.set_virtual_list_resolved_offsets(list, variable_offsets());
+
+        let NodeKind::VirtualList(state) = &tree.get(list).unwrap().kind else {
+            panic!("expected a VirtualList");
+        };
+        assert_eq!(state.offset_of(0), 0.0);
+        assert_eq!(state.offset_of(1), 10.0);
+        assert_eq!(state.offset_of(2), 40.0);
+        assert_eq!(
+            state.offset_of(3),
+            55.0,
+            "must reflect the real, non-uniform spacing"
+        );
+        assert_eq!(
+            state.total_extent(),
+            80.0,
+            "total_extent must be the real resolved offset one past the last item, not \
+             item_count * some average extent"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "item 2's own offset must be resolved")]
+    fn offset_of_panics_on_an_unresolved_variable_index() {
+        let state = VirtualListState::new(4, ItemExtent::Variable);
+        // Nothing has been resolved -- querying any index must panic
+        // with a clear message, not silently return a wrong answer
+        // (e.g. 0.0, which could be mistaken for a real, resolved offset).
+        state.offset_of(2);
+    }
+
+    #[test]
+    fn set_virtual_list_window_positions_items_at_their_real_non_uniform_offsets() {
+        let mut tree = Tree::new();
+        let list = tree.insert(
+            NodeKind::VirtualList(VirtualListState::new(4, ItemExtent::Variable)),
+            Style::default(),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.set_virtual_list_resolved_offsets(list, variable_offsets());
+
+        tree.set_virtual_list_window(list, 0..4, virtual_list_materializer);
+        tree.compute_layout(
+            list,
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(400.0),
+            },
+        );
+
+        let expected = [0.0, 10.0, 40.0, 55.0];
+        for (idx, &expected_y) in expected.iter().enumerate() {
+            let id = state_materialized_id(&tree, list, idx);
+            let (_, y) = tree.absolute_position(id);
+            assert_eq!(
+                y, expected_y,
+                "item {idx} must be positioned at its own real, non-uniform resolved offset, \
+                 not idx * some uniform extent"
+            );
+        }
+    }
+
+    #[test]
+    fn scroll_virtual_list_by_clamps_against_the_real_non_uniform_total_extent() {
+        let mut tree = Tree::new();
+        let list = tree.insert(
+            NodeKind::VirtualList(VirtualListState::new(4, ItemExtent::Variable)),
+            Style {
+                size: Size {
+                    width: length(200.0),
+                    height: length(30.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.compute_layout(
+            list,
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(30.0),
+            },
+        );
+        tree.set_virtual_list_resolved_offsets(list, variable_offsets());
+
+        // Real content extent 80.0, viewport 30.0 -> max_offset = 50.0,
+        // not the wrong 4 * some uniform guess a Fixed-shaped formula
+        // would produce.
+        tree.scroll_virtual_list_by(list, 1000.0);
+        let NodeKind::VirtualList(state) = &tree.get(list).unwrap().kind else {
+            panic!("expected a VirtualList");
+        };
+        assert_eq!(
+            state.scroll_offset.current, 50.0,
+            "must clamp to the real non-uniform total_extent minus viewport height"
         );
     }
 

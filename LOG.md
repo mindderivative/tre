@@ -1,63 +1,79 @@
-# Log: M11 Phase 2 — Canvas Redraw Triggering: Investigate and Resolve (§11.10, §11.11)
+# Log: M12 Phase 1 — Real Variable-Height Extent Support in `engine-core` (§11.7)
 
-Corresponds to `BUILD_TRACKER.md` M11 Phase 2, closing M11 entirely.
-Investigates whether `Window.redraw_canvas`'s explicit, app-triggered-
-only design is a real gap or a deliberate, correct choice — the open
-question this milestone's own scoping deliberately left unresolved
-rather than presupposing an answer.
+Corresponds to `BUILD_TRACKER.md` M12 Phase 1. `ItemExtent` gains a
+real way to represent variable, per-item extents; the two uniform-
+spacing call sites in `tree.rs` generalize to real per-item cumulative
+sums.
 
-## Investigation
+## Investigation before writing code
 
-`crates/engine-py/src/app.rs`'s real winit frame loop was checked
-directly: `canvas_draws` (the `HashMap<NodeId, Py<PyAny>>` backing
-`redraw_canvas`) never appears anywhere in `app.rs` — confirmed via
-grep. It isn't part of `WindowSetup`/`WindowRuntime`, the two structs
-carrying everything the per-frame closures can see; the per-frame
-closure only calls `Tree::tick_all` and drains completions. This is
-structural, not an oversight: `WindowSetup`'s own module doc comment
-already states the real reason a Python-callback field gets threaded
-into the frame loop at all — `handlers` is invoked only on a real
-dispatched activation, `completions` only on a real animation actually
-completing. Every existing case is event-driven; none is unconditional
-per-frame work. `engine_core::canvas`'s own module doc comment already
-correctly documents the current design without caveat ("the actual
-Python 'draw callback' is invoked exactly once by ... `redraw_canvas`,
-at an app-triggered sync point"). `ARCHITECTURE.md` (§11.10, §11.11,
-and a full grep for "redraw"/"Canvas") specifies no requirement for
-automatic per-frame redraw anywhere.
+`ItemExtent` (`node.rs`) had exactly one variant, `Fixed(f64)`; its own
+doc comment already stated the intent since M8: "fixed, or a size-hint
+callback for variable-height items." Two real production call sites in
+`tree.rs` assumed uniform spacing: `set_virtual_list_window`'s own
+materialization positioning (`idx as f64 * item_extent`) and the M8
+Phase 3 scroll-clamp's own total-extent computation (`item_extent.
+value() * item_count`). `engine-py`'s own `set_virtual_list_window`
+additionally used the scalar `item_extent` for each materialized
+item's real `Style.size.height` -- a distinct value from cumulative
+offset, and out of this phase's own scope (Phase 2's concern; `engine-
+core` never sets item size, only position). `engine-render`'s scroll-
+offset handling is a pure paint-time translation, entirely independent
+of `item_extent` -- confirmed via direct read, so no `engine-render`
+change was needed.
 
-Real cost analysis: unconditional per-frame redraw would mean, every
-frame, for every registered canvas, a Python call across the GIL, a
-fresh `CanvasContext`, the app's own draw closure re-running in full,
-and a `Vec<DrawCommand>` rebuild plus `Tree::set_canvas_content` — real
-cost for content that, in the common case, hasn't changed since the
-last real interaction. This is exactly the class of per-frame overhead
-this codebase has consistently designed against elsewhere.
+Real design question: how should `engine-core` represent "item N's
+real cumulative offset" for `Variable` mode, given §4's pyo3-agnostic
+boundary rules out a callback living here? Considered storing raw
+per-item heights and summing on every query (rejected: real repeated
+work, and computing item N's offset this way requires every preceding
+index resolved, which `engine-core` has no way to request). Chose
+storing already-*cumulative offsets* directly (`BTreeMap<usize, f64>`,
+keyed by index) -- `engine-core` never sums anything, only looks a
+resolved value up. The key `item_count` (one past the last real item)
+holds the real total content extent.
 
-## Resolution
+## What happened
 
-**No change needed.** `redraw_canvas`'s explicit, app-triggered-only
-design is confirmed deliberate and correct for this framework's
-retained-mode `Tree` model, not a gap: the frame loop's own
-architecture keeps Python-callback invocation narrow and event-driven
-by design; `ARCHITECTURE.md` names no automatic-redraw requirement;
-and unconditional per-frame invocation would impose real, avoidable
-cost for the common unchanged-content case. This mirrors M7 Phase 5
-Step 1's own honest "real finding: already existed, nothing new needed
-building" resolution shape.
+`ItemExtent` gains `Variable` (a fieldless marker -- the real per-item
+data lives on `VirtualListState`, not the enum). `VirtualListState`
+gains `resolved_offsets: BTreeMap<usize, f64>` and two new methods,
+the single shared source of truth both `tree.rs` call sites now use:
+`offset_of(idx)` (item `idx`'s own real top-offset -- `idx *
+item_extent` for `Fixed`, a real resolved lookup for `Variable`,
+panicking with a clear message if unresolved) and `total_extent()`
+(`item_count * item_extent` for `Fixed`, `offset_of(item_count)` for
+`Variable`). `ItemExtent::value()` (no longer meaningful once a second
+variant exists) is removed; its two callers rewritten in terms of the
+new methods. New `Tree::set_virtual_list_resolved_offsets` is the real
+way a caller (Phase 2, `engine-py`) supplies resolved offsets --
+`engine-core` itself never calls it.
 
-`BUILD_TRACKER.md`'s M5 carried-forward "known gap" note, which had
-stated the fact without resolving it, is corrected to record this
-resolution — closing the question so it doesn't get re-surfaced as
-open in a future milestone's own scoping.
+`engine-py`'s own `set_virtual_list_window` needed one small fix to
+keep compiling: its `let ItemExtent::Fixed(v) = state.item_extent;`
+was an irrefutable pattern only because `ItemExtent` had exactly one
+variant. Made exhaustive with an `unreachable!` arm for `Variable`,
+honestly reflecting that `add_virtual_list` still only ever constructs
+`Fixed` until Phase 2 adds real Python-facing `Variable` support.
 
-No production code change this phase. `cargo test --workspace
---release`/clippy `-D warnings`/fmt all re-confirmed clean as a
-formality; `pytest` (96 passed, 1 skipped, unchanged) and all sixteen
-examples re-confirmed clean, verifying the zero-code-change claim is
-actually true.
+New `engine-core` tests: `offset_of`/`total_extent` for `Fixed` match
+the exact pre-existing uniform formula (regression guard); for
+`Variable`, a real, non-uniform set of resolved offsets (heights 10,
+30, 15, 25 -- deliberately not an arithmetic sequence, so a passing
+test can't be an accident of `Fixed`-shaped math still secretly
+running underneath) produces the correct real cumulative offset per
+index and the correct real total extent; `set_virtual_list_window`
+with `Variable` extent positions materialized items at their own real,
+non-uniform offsets; `scroll_virtual_list_by` with `Variable` extent
+clamps against the real non-uniform total extent. A `#[should_panic]`
+test proves querying an unresolved `Variable` index panics with a
+clear message, not a silent wrong answer.
 
-M11 (Canvas Authoring Completeness) is now complete: both phases done
-— Phase 1 shipped the real capability (curve authoring), Phase 2
-investigated and resolved the milestone's own remaining open question
-with no code change required.
+Full `cargo test --workspace --release` (`engine-core` 86, up from 82),
+`cargo clippy --workspace --all-targets -- -D warnings` (one real
+`needless_range_loop` lint caught and fixed), `cargo fmt --check` all
+clean -- every prior test passed unmodified. `maturin develop
+--release` + full `pytest tests/` (96 passed, 1 skipped, unchanged)
+and all sixteen examples confirmed clean -- a pure regression check,
+since this phase is `engine-core`-only and changes no observable
+Python-facing behavior yet.

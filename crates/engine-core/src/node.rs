@@ -113,6 +113,19 @@ pub struct VirtualListState {
     /// mechanism, so this follows that same real precedent rather than
     /// inventing a new one.
     pub scroll_offset: Animated<f64>,
+    /// M12 Phase 1 (§11.7): real, resolved cumulative offsets for
+    /// `Variable`-extent lists -- index `idx` maps to item `idx`'s own
+    /// real top-offset (not its height). Always empty for `Fixed`
+    /// (whose offsets are computed directly, `idx * item_extent`). The
+    /// key `item_count` (one past the last real item, the same "one
+    /// past the end" convention a `Range` already uses) holds the real
+    /// total content extent. `engine-core` never computes a cumulative
+    /// sum itself here -- only looks a resolved value up (`offset_of`/
+    /// `total_extent` below); §4's own pyo3-agnostic boundary is why
+    /// the actual per-item size-hint resolution lives in `engine-py`
+    /// (populated via `Tree::set_virtual_list_resolved_offsets`), the
+    /// same real reason `materialize` itself lives there too, not here.
+    pub resolved_offsets: std::collections::BTreeMap<usize, f64>,
 }
 
 impl VirtualListState {
@@ -122,28 +135,51 @@ impl VirtualListState {
             item_extent,
             materialized: std::collections::BTreeMap::new(),
             scroll_offset: Animated::new(0.0),
+            resolved_offsets: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// Item `idx`'s own real top-offset. Panics if `item_extent` is
+    /// `Variable` and `idx` isn't yet resolved in `resolved_offsets` --
+    /// an internal bookkeeping bug (the caller must resolve an index
+    /// before positioning it), the same "internal bug, not a runtime
+    /// condition" contract `set_splitter_position` already uses for its
+    /// own malformed-call panics.
+    pub fn offset_of(&self, idx: usize) -> f64 {
+        match &self.item_extent {
+            ItemExtent::Fixed(v) => idx as f64 * v,
+            ItemExtent::Variable => *self.resolved_offsets.get(&idx).unwrap_or_else(|| {
+                panic!(
+                    "VirtualListState::offset_of: item {idx}'s own offset must be resolved \
+                     (via Tree::set_virtual_list_resolved_offsets) before it can be positioned"
+                )
+            }),
+        }
+    }
+
+    /// The real total content extent across every item -- `item_count *
+    /// item_extent` for `Fixed`, or `offset_of(item_count)` (the
+    /// resolved offset "one past the last item") for `Variable`.
+    pub fn total_extent(&self) -> f64 {
+        match &self.item_extent {
+            ItemExtent::Fixed(v) => self.item_count as f64 * v,
+            ItemExtent::Variable => self.offset_of(self.item_count),
         }
     }
 }
 
 /// §11.7's own text: "fixed, or a size-hint callback for variable-height
-/// items." Only `Fixed` is built here -- no consumer needs the
-/// callback-based variant yet (the same "additive when its own step
-/// needs it" discipline this module's own doc comment already applies
-/// to `set_on_click`), and a per-item Rust/Python size-hint callback
-/// raises the exact same real PyObject-callback-storage/GC design
-/// question `set_on_click` is itself still deferred over -- not
-/// reintroduced here ahead of a real consumer.
+/// items." M12 Phase 1 (§11.7): `Variable` is real now -- a fieldless
+/// marker, deliberately; the actual per-item data lives on `VirtualList
+/// State::resolved_offsets`, not this enum itself, since only `Virtual
+/// ListState` has a `Tree`-mutation path (`Tree::set_virtual_list_
+/// resolved_offsets`) to populate it. No callback lives in `engine-core`
+/// itself -- §4's own pyo3-agnostic boundary rules that out, the same
+/// real reason `materialize` lives in `engine-py`, not here; resolving
+/// a real per-item size-hint from Python is Phase 2's own concern.
 pub enum ItemExtent {
     Fixed(f64),
-}
-
-impl ItemExtent {
-    pub(crate) fn value(&self) -> f64 {
-        match self {
-            ItemExtent::Fixed(v) => *v,
-        }
-    }
+    Variable,
 }
 
 /// §11.5's own struct sketch, unchanged: `position` is 0.0..=1.0 along

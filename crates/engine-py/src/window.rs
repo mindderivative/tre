@@ -834,10 +834,19 @@ impl PyWindow {
             .expect("set_virtual_list_window: Node holds a NodeId missing from its own Tree")
             .kind
         {
-            NodeKind::VirtualList(state) => {
-                let ItemExtent::Fixed(v) = state.item_extent;
-                v
-            }
+            NodeKind::VirtualList(state) => match state.item_extent {
+                ItemExtent::Fixed(v) => v,
+                // M12 Phase 1 (§11.7): `ItemExtent::Variable` is real in
+                // `engine-core` now, but `add_virtual_list` below still
+                // only ever constructs `Fixed` -- Phase 2 is what adds a
+                // real Python-facing way to build a `Variable` list, and
+                // will replace this whole arm with real per-item extent
+                // handling then.
+                ItemExtent::Variable => unreachable!(
+                    "set_virtual_list_window: add_virtual_list never constructs \
+                     ItemExtent::Variable yet (M12 Phase 2)"
+                ),
+            },
             _ => return Err(EngineError::NotAVirtualList.into()),
         };
 
