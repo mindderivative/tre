@@ -459,6 +459,22 @@ impl PyWindow {
             ),
             PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
         );
+        // M24 Phase 1 (§10): a real, necessary connected fix, found
+        // only by actually trying the new arrow-key increment end to
+        // end from Python, not assumed -- `Tree::dispatch`'s own new
+        // `dispatch_slider_key` requires a real focused slider to ever
+        // reach it at all, but before this a `Slider` had no `access.
+        // actions` set anywhere, so `collect_interactive`'s own real
+        // Tab-order predicate never included one (`enable_interaction`
+        // only ever touched ripple/hover tint, not focusability). A
+        // real `Slider` now opts into keyboard focus at construction
+        // the identical way `add_text_field` already does -- §10's own
+        // "keyboard operability ships from day one" text, applied to
+        // the one real component this milestone's own scope covers.
+        tree.set_access(
+            id,
+            AccessNodeData::new(Role::Slider).with_action(Action::Focus),
+        );
         tree.add_child(self.root, id);
         Node {
             id,

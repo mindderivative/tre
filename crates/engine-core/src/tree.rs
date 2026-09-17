@@ -1492,6 +1492,42 @@ impl Tree {
         }
     }
 
+    /// M24 Phase 1 (§10): ARCHITECTURE.md's own real, explicitly-
+    /// deferred gap ("a slider's arrow-key increments... deferred to
+    /// per-component design... exactly when each such component is
+    /// actually built") -- `Slider` landed at M14, this closes it.
+    /// `ArrowLeft`/`ArrowRight` only (WCAG's own baseline "operate the
+    /// value via keyboard" pair every mainstream desktop slider
+    /// already supports) -- `None` for any other key, the identical
+    /// "not mine to handle" contract `dispatch_text_field_key` already
+    /// established, so `Tab`/`Enter`/`Escape` still fall through to
+    /// the generic `match key` for a focused slider too. Reuses
+    /// `set_slider_position` verbatim for the real clamp + immediate
+    /// `Duration::ZERO` tick a mouse drag already gets -- the same
+    /// "live-follows" semantics, not a second mechanism -- and returns
+    /// `Changed`, the identical outcome a real drag-release already
+    /// produces, so any caller already reacting to that (e.g. a
+    /// two-way `bindings: {value: ...}` write-back) picks up an
+    /// arrow-key nudge for free.
+    fn dispatch_slider_key(
+        &mut self,
+        id: NodeId,
+        key: Key,
+        now: Instant,
+    ) -> Option<DispatchOutcome> {
+        const STEP: f64 = 0.05;
+        let NodeKind::Slider(state) = &self.nodes[id].kind else {
+            return None;
+        };
+        let target = match key {
+            Key::ArrowLeft => state.thumb_position.current - STEP,
+            Key::ArrowRight => state.thumb_position.current + STEP,
+            _ => return None,
+        };
+        self.set_slider_position(id, target, now);
+        Some(DispatchOutcome::Changed(id))
+    }
+
     /// M15 Phase 3 (§16.7): deletes a real, active selection (`anchor
     /// != cursor`) and leaves `cursor` at the deleted range's own
     /// start -- returns `true` if it did, `false` (a true no-op) if no
@@ -1846,6 +1882,21 @@ impl Tree {
                 {
                     return outcome;
                 }
+                // M24 Phase 1 (§10): a focused `Slider`'s own real
+                // ArrowLeft/ArrowRight increment -- the identical
+                // "first refusal, `None` means not mine" contract
+                // `dispatch_text_field_key` above already established,
+                // so `Tab`/`Enter`/`Escape` still fall through to the
+                // generic `match key` below for a focused slider too.
+                if let Some(node) = self.focused
+                    && matches!(
+                        self.nodes.get(node).map(|n| &n.kind),
+                        Some(NodeKind::Slider(_))
+                    )
+                    && let Some(outcome) = self.dispatch_slider_key(node, key, now)
+                {
+                    return outcome;
+                }
                 match key {
                     Key::Tab => {
                         let direction = if shift {
@@ -1877,9 +1928,11 @@ impl Tree {
                     }
                     // M15 Phase 2: real, but only ever meaningful when a
                     // `TextField` is focused -- handled above via `
-                    // dispatch_text_field_key` in that case. Reaching
-                    // here means no `TextField` is focused at all, a
-                    // true no-op.
+                    // dispatch_text_field_key` in that case.
+                    // `ArrowLeft`/`ArrowRight` (M24 Phase 1, §10) are
+                    // also real when a `Slider` is focused instead,
+                    // handled above via `dispatch_slider_key`. Reaching
+                    // here means neither is focused, a true no-op.
                     Key::Backspace
                     | Key::Delete
                     | Key::ArrowLeft
@@ -3371,6 +3424,78 @@ mod tests {
             &config,
             now,
         );
+        assert_eq!(outcome, DispatchOutcome::None);
+    }
+
+    /// M24 Phase 1 (§10): a focused slider's own real ArrowRight
+    /// increment -- the real, explicitly-deferred gap ARCHITECTURE.md
+    /// §10 named for exactly this component.
+    #[test]
+    fn arrow_right_on_a_focused_slider_increases_thumb_position_by_the_real_step() {
+        let (mut tree, root, slider, _available) = slider_scene();
+        let now = Instant::now();
+        tree.set_focus_to(slider, 1.0, Duration::from_millis(100), now);
+
+        let outcome = dispatch_key(&mut tree, root, Key::ArrowRight);
+        assert_eq!(outcome, DispatchOutcome::Changed(slider));
+
+        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
+            panic!("expected a Slider");
+        };
+        assert!(
+            (state.thumb_position.current - 0.05).abs() < 1e-9,
+            "expected thumb_position 0.05, got {}",
+            state.thumb_position.current
+        );
+    }
+
+    /// `dispatch_key`'s own real `ArrowLeft` sibling case.
+    #[test]
+    fn arrow_left_on_a_focused_slider_decreases_thumb_position_by_the_real_step() {
+        let (mut tree, root, slider, _available) = slider_scene();
+        let now = Instant::now();
+        tree.set_slider_position(slider, 0.5, now);
+        tree.set_focus_to(slider, 1.0, Duration::from_millis(100), now);
+
+        let outcome = dispatch_key(&mut tree, root, Key::ArrowLeft);
+        assert_eq!(outcome, DispatchOutcome::Changed(slider));
+
+        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
+            panic!("expected a Slider");
+        };
+        assert!(
+            (state.thumb_position.current - 0.45).abs() < 1e-9,
+            "expected thumb_position 0.45, got {}",
+            state.thumb_position.current
+        );
+    }
+
+    /// A real, already-at-the-limit press must clamp, not go out of
+    /// range -- `set_slider_position`'s own real `clamp(0.0, 1.0)`
+    /// contract, reused verbatim here, not a second clamp.
+    #[test]
+    fn arrow_left_at_the_real_minimum_clamps_instead_of_going_negative() {
+        let (mut tree, root, slider, _available) = slider_scene();
+        let now = Instant::now();
+        tree.set_focus_to(slider, 1.0, Duration::from_millis(100), now);
+
+        let outcome = dispatch_key(&mut tree, root, Key::ArrowLeft);
+        assert_eq!(outcome, DispatchOutcome::Changed(slider));
+
+        let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
+            panic!("expected a Slider");
+        };
+        assert_eq!(state.thumb_position.current, 0.0);
+    }
+
+    /// With no slider focused at all, `ArrowLeft`/`ArrowRight` remain
+    /// the real, established no-op the pre-M24 catch-all already
+    /// proved -- `dispatch_slider_key` must never fire spuriously.
+    #[test]
+    fn arrow_keys_with_no_slider_focused_remain_a_true_no_op() {
+        let (mut tree, root, _slider, _available) = slider_scene();
+
+        let outcome = dispatch_key(&mut tree, root, Key::ArrowRight);
         assert_eq!(outcome, DispatchOutcome::None);
     }
 
