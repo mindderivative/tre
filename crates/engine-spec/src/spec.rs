@@ -112,9 +112,10 @@ pub struct WidgetSpec {
 /// matched step 3/4's own original scope; `Checkbox`/`Slider` (M14
 /// Phase 3) are real now -- this comment used to name them as landing
 /// "whenever `engine_core::NodeKind` itself grows them," which it has.
-/// `Image`/`Canvas` remain real, un-scoped future candidates.
-/// Deliberately unit-only -- see the module doc comment for why `Text`'s
-/// own fields live in a sibling `WidgetSpec::text` instead of here.
+/// `TextField` (M15 Phase 3) is real too. `Image`/`Canvas` remain real,
+/// un-scoped future candidates. Deliberately unit-only -- see the
+/// module doc comment for why `Text`'s own fields live in a sibling
+/// `WidgetSpec::text` instead of here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum NodeKindSpec {
     Rect,
@@ -122,11 +123,16 @@ pub enum NodeKindSpec {
     Text,
     Checkbox,
     Slider,
+    TextField,
 }
 
 /// Mirrors `engine_core::TextState` exactly (§14 step 4) -- no new
 /// fields invented here, since this crate's job is mapping to that
-/// struct, not extending it.
+/// struct, not extending it. M15 Phase 3 (§16.7): also the real,
+/// deliberately-reused shape `kind: TextField`'s own `text:` block
+/// uses -- `TextFieldState`'s own font/content fields are byte-for-byte
+/// the same four `TextState` already has, so a second, parallel spec
+/// struct would just be a duplicate, not a real distinction.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TextSpec {
@@ -282,6 +288,31 @@ style: {width: 24, height: 24, background: "#6750A4"}
         assert!(!spec.checked, "checked must default to false");
         assert_eq!(spec.value, 0.0, "value must default to 0.0");
         assert_eq!(spec.two_way, None, "two_way must default to None");
+    }
+
+    #[test]
+    fn parses_a_text_field_widget_reusing_the_same_text_block_kind_text_uses() {
+        let yaml = r##"
+id: username
+kind: TextField
+text: {content: "jane", font_family: Roboto, font_size: 16}
+bindings: {text: "{{ name.get() }}"}
+two_way: text
+style: {width: 200, height: 32, background: "#EEEEEE"}
+"##;
+        let spec = parse_view(yaml).expect("a TextField widget must parse");
+        assert!(matches!(spec.kind, NodeKindSpec::TextField));
+        let text = spec
+            .text
+            .as_ref()
+            .expect("kind: TextField must carry a text: block");
+        assert_eq!(text.content, "jane");
+        assert_eq!(text.font_family, "Roboto");
+        assert_eq!(
+            text.font_weight, 400.0,
+            "unset font_weight must default to 400 (normal), the same as kind: Text"
+        );
+        assert_eq!(spec.two_way.as_deref(), Some("text"));
     }
 
     #[test]

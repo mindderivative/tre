@@ -55,6 +55,46 @@ two_way: checked
     assert vm.agreed.get() is False, "each real Change writes back again, not just the first"
 
 
+def test_two_way_text_field_writes_the_signal_back_when_text_changes(tmp_path):
+    """M15 Phase 3 (§16.7): `TextField`'s own real two-way binding --
+    `set_text` (the only Python-reachable `Change` source for a
+    `TextField` from a `View`, which has no live window to type
+    through) is the same real mechanism the Checkbox test above already
+    proves for `checked`, now exercised through `TwoWayCallback`'s new
+    `"text"` branch instead of `"checked"`.
+    """
+    path = write_view(
+        tmp_path,
+        """
+id: username
+kind: TextField
+text: {content: "", font_family: Roboto, font_size: 16}
+style: {width: 200, height: 32, background: "#EEEEEE"}
+bindings: {text: "{{ name.get() }}"}
+two_way: text
+""",
+    )
+    view = View(path)
+
+    class VM(ViewModel):
+        def __init__(self, view):
+            self.name = Signal("jane")
+            super().__init__(view)
+
+    vm = VM(view)
+    node = view.node("username")
+    assert node.get_text() == "jane", "the initial bindings: apply must still run one-way"
+
+    node.set_text("janet")
+    assert vm.name.get() == "janet", (
+        "a real Change on the two-way-bound TextField must write its current text back into "
+        "the Signal it's bound to"
+    )
+
+    node.set_text("")
+    assert vm.name.get() == "", "each real Change writes back again, not just the first"
+
+
 def test_two_way_round_trip_does_not_recurse_infinitely(capsys, tmp_path):
     """Real finding (M14 Phase 3): a two-way-bound widget is both a
     `Signal` subscriber (its own forward `bindings:` entry) and, via

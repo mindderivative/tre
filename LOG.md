@@ -1,78 +1,78 @@
-# Log: M15 Phase 2 — Real Keyboard-Driven Editing (§8, §10)
+# Log: M15 Phase 3 — Selection & Two-Way Binding (§16.7)
 
-Corresponds to `BUILD_TRACKER.md` M15 Phase 2. `winit::event::KeyEvent
-.text` reaches a real `InputEvent` for the first time, `Tree::dispatch`
-inserts characters into a focused `TextField` and handles real
-Backspace/Delete/Left/Right/Home/End, and `EventKind::Change` fires on
-every real edit.
+Corresponds to `BUILD_TRACKER.md` M15 Phase 3, closing M15 entirely
+(all 3 phases). Shift+arrow selection extension, real Backspace/
+Delete/typing-with-selection, `TextField` declarable in `view.yaml`,
+and real `two_way: text` binding sugar.
 
 ## Investigation before writing code
 
-`Key` had exactly four variants, confirmed by direct read — no
-character-producing key at all; `winit`'s own real `KeyEvent.text:
-Option<SmolStr>` was completely discarded. **Real design conflict,
-found while designing:** `NamedKey::Space` is matched by `translate_
-key` before any `TextInput` fallback would ever see it, but `Key::
-Space` already means "activate a focused node" — a focused `TextField`
-needs `Space` to insert a literal space instead. Resolved by having
-`Tree::dispatch` check the focused node's own kind first, before the
-generic Tab/Enter/Space/Escape handling. `InputEvent` derived `Copy`;
-adding `TextInput(String)` needed dropping it (kept `Clone`) — the one
-real call site that needed a `.clone()` (`app.rs`'s `on_input`
-closure, which uses `event` twice) was found by attempting the build,
-not by guessing every call site in advance.
+`dispatch_text_field_key` (M15 Phase 2) only ever took `key`, not
+`shift` — `InputEvent::KeyPressed` already carries it, unused until
+now. Real design question resolved before writing: a bare arrow key
+pressed while a real selection is active must collapse to the
+selection's own near edge (real desktop-editor behavior), not move one
+more character from the focus end. `WidgetSpec.text: Option<TextSpec>`
+already exists for `kind: Text` — confirmed via direct read, its four
+fields are byte-for-byte what `TextFieldState::new` needs, so `kind:
+TextField` reuses that same block rather than adding a third,
+near-duplicate `WidgetSpec` field the way `checked`/`value` each
+needed their own. `apply_binding_value`/`TwoWayCallback` already
+special-case `"checked"`; `text` is the second non-numeric property,
+and `engine_spec::Value::Str` was already real — both branches mirror
+the existing shape exactly.
 
 ## What happened
 
-`Key` gains `Backspace`/`Delete`/`ArrowLeft`/`ArrowRight`/`Home`/`End`
-(all real `NamedKey` variants, confirmed via direct source read before
-adding). `InputEvent` gains `TextInput(String)`.
+`dispatch_text_field_key` widened to take `shift: bool`. `ArrowLeft`/
+`ArrowRight`/`Home`/`End`: without `shift`, a real active selection
+collapses to its near/far edge and clears; with `shift`, `selection_
+anchor` seeds from the pre-move cursor the first time (left alone on
+further extends), then the cursor moves normally. New shared `Tree::
+delete_selection(state) -> bool`: deletes a real, non-collapsed
+selection (`true`); a zero-width "selection" (`anchor == cursor`)
+clears itself and reports `false`, a genuine no-op. `Backspace`/
+`Delete`/`Space`/`TextInput` all call it first, replacing an active
+selection instead of acting at a bare cursor.
 
-New private `Tree::dispatch_text_field_key(field, key) ->
-Option<DispatchOutcome>`: `None` for `Tab`/`Escape` (falls through to
-the generic handling — a focused field must still lose focus on Tab
-and still dismiss overlays on Escape); `Some(Changed(field))` for any
-real content edit; `Some(None)` for pure cursor movement or a genuine
-no-op (`Backspace` at `cursor == 0`, `Delete` at the real end) —
-`Change` only ever means "the bound value genuinely changed." `Enter`
-is consumed without inserting a newline (real, stated single-line-
-field scope) or activating. `Tree::dispatch`'s `KeyPressed` arm checks
-the focused node first; a new `TextInput` arm inserts at `cursor` and
-advances it. Every mutation stays on real `char_indices` boundaries.
+`NodeKindSpec::TextField` added; `build.rs::node_kind_and_paint` gains
+a matching arm requiring `style.background` + the reused `text:`
+block, building `TextFieldState::new` from it. `apply_binding_value`
+gains a `Value::Str` branch calling `set_text`; `TwoWayCallback::
+__call__` gains a `"text"` branch calling `get_text`.
 
-`engine-platform::translate_key` widened; the real `WindowEvent::
-KeyboardInput` handler now falls back to firing `TextInput` when
-`translate_key` returns `None` and `key_event.text` is real, press
-only. New `Node.set_text` mirrors `set_checked`'s own shape exactly,
-including always firing `Change` — protected against a two-way-
-binding feedback loop by the exact `Signal`-level fix M14 Phase 3
-already made, no new fix needed. `Window.press_key` widened to the six
-new named keys; new `Window.type_text(text)` mirrors `press_key`'s own
-synthetic-dispatch pattern for `TextInput`.
+New `engine-core` tests (9, all passed first run): shift-arrow extends
+the selection from the cursor; a bare arrow after a real selection
+collapses to the correct near edge (moving left) and far edge (moving
+right); shift+Home/End extend to the real edges; Backspace/Delete/
+typing/Space each replace a real active selection instead of acting at
+a bare cursor; a zero-width selection is treated as no selection at
+all (still a genuine no-op). New `engine-spec` tests (4, one fixed
+after a real assertion mistake caught by actually running it — "jane"
+is 4 characters, not 5): `TextField` parses reusing the same `text:`
+block `Text` already requires; `load_view` builds a real
+`TextFieldState` from it, cursor seeded at the real content end;
+missing background and missing `text:` each fail with the correct,
+clear `MissingField` error.
 
-New `engine-core` tests (12): real insertion at an arbitrary cursor
-position; Backspace/Delete both as a real edit and as a genuine no-op
-(neither reports `Changed`); pure cursor movement never reports
-`Changed`; Space inserts rather than activates; Enter is consumed
-without inserting or activating; Tab still moves focus away from a
-focused field; a real multi-byte UTF-8 character (`"café"`'s own "é")
-removed whole, not corrupted — all 12 passed on the first run.
-`engine-platform`'s own vocabulary test widened for the six new keys,
-passed unmodified otherwise. New `tests/test_text_field.py` additions
-(9 tests): `type_text` inserts into the focused field and is a safe
-no-op with none focused; Backspace/Delete/arrow/Home/End all reach the
-real field via `press_key`; `set_text` overwrites content and fires a
-real `on_change`; `set_text` rejects a non-`TextField` node; typing
-fires `on_change` with the real current text each time; pure cursor
-navigation and genuine no-op edits do *not* fire `on_change` — all 16
-tests in the file (7 existing + 9 new) passed on the first run. Updated
-`examples/text_field.py`: real typing past the end, `Home` + insert at
-the start, `End` + `Backspace`, each step asserted against the exact
-real resulting content.
+New `tests/test_two_way_binding.py::test_two_way_text_field_writes_
+the_signal_back_when_text_changes` (real round trip via `set_text`,
+the only Python-reachable `Change` source for a `TextField` from a
+`View` with no live window). New `tests/test_text_field.py` additions
+(2 tests): shift+arrow selection via `Window.press_key(shift=True)`
+followed by a real Backspace deleting the whole selected range;
+typing over a real selection replaces it. Extended the existing
+`examples/two_way_binding.py`/`.yaml` with a real `TextField` alongside
+the existing Checkbox/Slider (a `name` `Signal`, both directions
+proved), rather than a parallel duplicate example.
 
-Full `cargo test --workspace --release` (`engine-core` 108, up from
-96; `engine-platform` unchanged at 6, widened coverage)/`cargo clippy
---workspace --all-targets -- -D warnings`/`cargo fmt --check` all
-clean — every prior test passed unmodified. `maturin develop --release`
-+ full `pytest tests/` (147 passed, up from 138, 1 skipped) and all
+Full `cargo test --workspace --release` (`engine-core` 117, up from
+108; `engine-spec` 37, up from 33)/`cargo clippy --workspace
+--all-targets -- -D warnings`/`cargo fmt --check` all clean — every
+prior test passed unmodified. `maturin develop --release` + full
+`pytest tests/` (150 passed, up from 147, 1 skipped) and all
 twenty-three examples confirmed clean.
+
+M15 — TextField / Real Keyboard Text Entry is now fully complete: all
+3 phases (state/paint, keyboard-driven editing, selection + two-way
+binding) closed §16.7's own long-deferred component gap.

@@ -27,8 +27,8 @@ use crate::canvas::{CustomHitTest, DrawCommand};
 use crate::input::{DispatchOutcome, InputEvent, Key, PointerButton, ScrollDelta};
 use crate::interaction::InteractionState;
 #[cfg(test)]
-use crate::node::{CheckboxState, ItemExtent, SliderState, TextFieldState, VirtualListState};
-use crate::node::{Node, NodeId, NodeKind, PaintProperties};
+use crate::node::{CheckboxState, ItemExtent, SliderState, VirtualListState};
+use crate::node::{Node, NodeId, NodeKind, PaintProperties, TextFieldState};
 use crate::overlay::OverlayMeta;
 #[cfg(test)]
 use peniko::kurbo::BezPath;
@@ -1305,12 +1305,34 @@ impl Tree {
     /// `cursor == 0`) -- `EventKind::Change` (M14 Phase 3) only ever
     /// means "the bound value actually changed," and cursor position
     /// isn't the bound value.
-    fn dispatch_text_field_key(&mut self, field: NodeId, key: Key) -> Option<DispatchOutcome> {
+    ///
+    /// M15 Phase 3 (§16.7) adds real `shift`-driven selection: an
+    /// arrow/`Home`/`End` key held with `shift` extends the selection
+    /// from wherever it started (`selection_anchor` seeded from the
+    /// pre-move cursor the first time, left alone on every further
+    /// extend); the same key *without* `shift`, while a real selection
+    /// is active, collapses to that selection's own near edge (real
+    /// desktop-editor behavior) instead of moving one more character
+    /// past the focus end. `Backspace`/`Delete`/a real inserted
+    /// character (`Space` here, `TextInput` below) all delete a real,
+    /// active selection first via the shared `delete_selection` helper
+    /// -- replacing the selection, the same real behavior every desktop
+    /// text editor has, not `engine-core` inventing a special case per
+    /// key.
+    fn dispatch_text_field_key(
+        &mut self,
+        field: NodeId,
+        key: Key,
+        shift: bool,
+    ) -> Option<DispatchOutcome> {
         let NodeKind::TextField(state) = &mut self.nodes[field].kind else {
             return None;
         };
         match key {
             Key::Backspace => {
+                if Self::delete_selection(state) {
+                    return Some(DispatchOutcome::Changed(field));
+                }
                 if state.cursor == 0 {
                     return Some(DispatchOutcome::None);
                 }
@@ -1321,10 +1343,12 @@ impl Tree {
                     .unwrap_or(0);
                 state.content.replace_range(prev..state.cursor, "");
                 state.cursor = prev;
-                state.selection_anchor = None;
                 Some(DispatchOutcome::Changed(field))
             }
             Key::Delete => {
+                if Self::delete_selection(state) {
+                    return Some(DispatchOutcome::Changed(field));
+                }
                 if state.cursor >= state.content.len() {
                     return Some(DispatchOutcome::None);
                 }
@@ -1334,10 +1358,16 @@ impl Tree {
                     .map(|(i, _)| state.cursor + i)
                     .unwrap_or(state.content.len());
                 state.content.replace_range(state.cursor..next, "");
-                state.selection_anchor = None;
                 Some(DispatchOutcome::Changed(field))
             }
             Key::ArrowLeft => {
+                if !shift && let Some(anchor) = state.selection_anchor.take() {
+                    state.cursor = state.cursor.min(anchor);
+                    return Some(DispatchOutcome::None);
+                }
+                if shift {
+                    state.selection_anchor.get_or_insert(state.cursor);
+                }
                 if state.cursor > 0 {
                     state.cursor = state.content[..state.cursor]
                         .char_indices()
@@ -1345,10 +1375,16 @@ impl Tree {
                         .map(|(i, _)| i)
                         .unwrap_or(0);
                 }
-                state.selection_anchor = None;
                 Some(DispatchOutcome::None)
             }
             Key::ArrowRight => {
+                if !shift && let Some(anchor) = state.selection_anchor.take() {
+                    state.cursor = state.cursor.max(anchor);
+                    return Some(DispatchOutcome::None);
+                }
+                if shift {
+                    state.selection_anchor.get_or_insert(state.cursor);
+                }
                 if state.cursor < state.content.len() {
                     state.cursor = state.content[state.cursor..]
                         .char_indices()
@@ -1356,17 +1392,24 @@ impl Tree {
                         .map(|(i, _)| state.cursor + i)
                         .unwrap_or(state.content.len());
                 }
-                state.selection_anchor = None;
                 Some(DispatchOutcome::None)
             }
             Key::Home => {
+                if shift {
+                    state.selection_anchor.get_or_insert(state.cursor);
+                } else {
+                    state.selection_anchor = None;
+                }
                 state.cursor = 0;
-                state.selection_anchor = None;
                 Some(DispatchOutcome::None)
             }
             Key::End => {
+                if shift {
+                    state.selection_anchor.get_or_insert(state.cursor);
+                } else {
+                    state.selection_anchor = None;
+                }
                 state.cursor = state.content.len();
-                state.selection_anchor = None;
                 Some(DispatchOutcome::None)
             }
             // A real space keypress reaches `KeyPressed` (`Key::Space`,
@@ -1376,9 +1419,9 @@ impl Tree {
             // not fall through to `Key::Enter | Key::Space =>
             // Activated`'s own generic button-activation meaning.
             Key::Space => {
+                Self::delete_selection(state);
                 state.content.insert(state.cursor, ' ');
                 state.cursor += 1;
-                state.selection_anchor = None;
                 Some(DispatchOutcome::Changed(field))
             }
             // A single-line field: `Enter` is consumed (no activation,
@@ -1388,6 +1431,30 @@ impl Tree {
             Key::Enter => Some(DispatchOutcome::None),
             Key::Tab | Key::Escape => None,
         }
+    }
+
+    /// M15 Phase 3 (§16.7): deletes a real, active selection (`anchor
+    /// != cursor`) and leaves `cursor` at the deleted range's own
+    /// start -- returns `true` if it did, `false` (a true no-op) if no
+    /// real selection was active. Shared by every real edit that must
+    /// replace a selection rather than naively act at a bare cursor.
+    fn delete_selection(state: &mut TextFieldState) -> bool {
+        let Some(anchor) = state.selection_anchor else {
+            return false;
+        };
+        if anchor == state.cursor {
+            state.selection_anchor = None;
+            return false;
+        }
+        let (start, end) = if anchor < state.cursor {
+            (anchor, state.cursor)
+        } else {
+            (state.cursor, anchor)
+        };
+        state.content.replace_range(start..end, "");
+        state.cursor = start;
+        state.selection_anchor = None;
+        true
     }
 
     /// M4 Phase 2 (§10): the direct, non-`InputEvent` counterpart to a
@@ -1581,7 +1648,7 @@ impl Tree {
                         self.nodes.get(field).map(|n| &n.kind),
                         Some(NodeKind::TextField(_))
                     )
-                    && let Some(outcome) = self.dispatch_text_field_key(field, key)
+                    && let Some(outcome) = self.dispatch_text_field_key(field, key, shift)
                 {
                     return outcome;
                 }
@@ -1639,9 +1706,13 @@ impl Tree {
                 let NodeKind::TextField(state) = &mut self.nodes[field].kind else {
                     return DispatchOutcome::None;
                 };
+                // M15 Phase 3 (§16.7): typing over a real, active
+                // selection replaces it -- the same real desktop-editor
+                // behavior `Backspace`/`Delete`/`Space` already apply,
+                // via the identical shared helper.
+                Self::delete_selection(state);
                 state.content.insert_str(state.cursor, &text);
                 state.cursor += text.len();
-                state.selection_anchor = None;
                 DispatchOutcome::Changed(field)
             }
             // M4 Phase 8 (§11.7/§11.8 groundwork): a true no-op today,
@@ -5274,6 +5345,26 @@ mod tests {
         )
     }
 
+    /// M15 Phase 3 (§16.7): `dispatch_key`'s own real `shift`-held
+    /// sibling, for selection-extension tests.
+    fn dispatch_shift_key(tree: &mut Tree, root: NodeId, key: Key) -> DispatchOutcome {
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        tree.dispatch(
+            root,
+            InputEvent::KeyPressed { key, shift: true },
+            &config,
+            Instant::now(),
+        )
+    }
+
     #[test]
     fn text_input_with_no_focused_field_is_a_true_no_op() {
         let mut tree = Tree::new();
@@ -5449,5 +5540,157 @@ mod tests {
         let outcome = dispatch_key(&mut tree, root, Key::Backspace);
         assert_eq!(outcome, DispatchOutcome::Changed(field));
         assert_eq!(field_state(&tree, field).content, "caf");
+    }
+
+    #[test]
+    fn shift_arrow_extends_a_real_selection_from_the_cursor() {
+        let (mut tree, root, field) = text_field_scene("hello");
+        dispatch_key(&mut tree, root, Key::Home); // cursor -> 0
+
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight);
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight);
+
+        let state = field_state(&tree, field);
+        assert_eq!(
+            state.selection_anchor,
+            Some(0),
+            "the anchor must stay at the real position the selection started from"
+        );
+        assert_eq!(
+            state.cursor, 2,
+            "the cursor is the selection's own real focus end"
+        );
+    }
+
+    #[test]
+    fn a_bare_arrow_after_a_real_selection_collapses_to_its_near_edge() {
+        let (mut tree, root, field) = text_field_scene("hello");
+        dispatch_key(&mut tree, root, Key::Home);
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight);
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight); // selects "he" (0..2)
+
+        // A bare (non-shift) Left must collapse to the selection's own
+        // real left edge (0), not move one more char left from the
+        // focus end -- real desktop-editor behavior.
+        dispatch_key(&mut tree, root, Key::ArrowLeft);
+        let state = field_state(&tree, field);
+        assert_eq!(state.cursor, 0);
+        assert_eq!(
+            state.selection_anchor, None,
+            "collapsing must clear the selection"
+        );
+    }
+
+    #[test]
+    fn a_bare_arrow_after_a_real_selection_collapses_to_its_far_edge_when_moving_right() {
+        let (mut tree, root, field) = text_field_scene("hello");
+        dispatch_key(&mut tree, root, Key::Home);
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight);
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight); // selects "he" (0..2)
+
+        dispatch_key(&mut tree, root, Key::ArrowRight);
+        let state = field_state(&tree, field);
+        assert_eq!(state.cursor, 2);
+        assert_eq!(state.selection_anchor, None);
+    }
+
+    #[test]
+    fn shift_home_and_shift_end_extend_the_real_selection_to_the_real_edges() {
+        let (mut tree, root, field) = text_field_scene("hello");
+        // cursor starts at content's own end (5).
+        dispatch_shift_key(&mut tree, root, Key::Home);
+        let state = field_state(&tree, field);
+        assert_eq!(state.selection_anchor, Some(5));
+        assert_eq!(state.cursor, 0);
+
+        dispatch_key(&mut tree, root, Key::End); // collapse, cursor -> end, clears selection
+        dispatch_shift_key(&mut tree, root, Key::Home);
+        assert_eq!(field_state(&tree, field).selection_anchor, Some(5));
+    }
+
+    #[test]
+    fn backspace_deletes_a_real_active_selection_instead_of_one_char() {
+        let (mut tree, root, field) = text_field_scene("hello");
+        dispatch_key(&mut tree, root, Key::Home);
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight);
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight); // selects "he"
+
+        let outcome = dispatch_key(&mut tree, root, Key::Backspace);
+        assert_eq!(outcome, DispatchOutcome::Changed(field));
+        let state = field_state(&tree, field);
+        assert_eq!(state.content, "llo");
+        assert_eq!(state.cursor, 0);
+        assert_eq!(state.selection_anchor, None);
+    }
+
+    #[test]
+    fn delete_deletes_a_real_active_selection_instead_of_one_char() {
+        let (mut tree, root, field) = text_field_scene("hello");
+        dispatch_key(&mut tree, root, Key::Home);
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight);
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight); // selects "he"
+
+        let outcome = dispatch_key(&mut tree, root, Key::Delete);
+        assert_eq!(outcome, DispatchOutcome::Changed(field));
+        assert_eq!(field_state(&tree, field).content, "llo");
+    }
+
+    #[test]
+    fn typing_over_a_real_selection_replaces_it() {
+        let (mut tree, root, field) = text_field_scene("hello");
+        dispatch_key(&mut tree, root, Key::Home);
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight);
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight); // selects "he"
+
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::TextInput("HI".to_string()),
+            &config,
+            Instant::now(),
+        );
+        assert_eq!(outcome, DispatchOutcome::Changed(field));
+        let state = field_state(&tree, field);
+        assert_eq!(state.content, "HIllo");
+        assert_eq!(state.cursor, 2);
+    }
+
+    #[test]
+    fn space_over_a_real_selection_replaces_it() {
+        let (mut tree, root, field) = text_field_scene("hello");
+        dispatch_key(&mut tree, root, Key::Home);
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight);
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight); // selects "he"
+
+        dispatch_key(&mut tree, root, Key::Space);
+        assert_eq!(field_state(&tree, field).content, " llo");
+    }
+
+    #[test]
+    fn a_collapsed_zero_width_selection_is_not_treated_as_real() {
+        // Shift+Right then Shift+Left back to the same spot leaves a
+        // real selection_anchor set, but anchor == cursor -- a real
+        // editor treats this as "no selection," not an empty delete.
+        let (mut tree, root, field) = text_field_scene("hi");
+        dispatch_key(&mut tree, root, Key::Home);
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight);
+        dispatch_shift_key(&mut tree, root, Key::ArrowLeft);
+        assert_eq!(field_state(&tree, field).cursor, 0);
+
+        let outcome = dispatch_key(&mut tree, root, Key::Backspace);
+        assert_eq!(
+            outcome,
+            DispatchOutcome::None,
+            "a zero-width selection at the real start must still be a genuine no-op"
+        );
+        assert_eq!(field_state(&tree, field).content, "hi");
     }
 }

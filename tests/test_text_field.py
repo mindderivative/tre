@@ -200,3 +200,35 @@ def test_backspace_at_start_and_delete_at_end_do_not_fire_on_change():
     window.press_key("delete")  # already at end -- a real no-op
 
     assert calls == [], "a genuine no-op edit must not fire Change"
+
+
+def test_shift_arrow_selects_and_backspace_deletes_the_real_selected_range():
+    window = Window(width=200, height=100)
+    field = window.add_text_field(
+        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hello"
+    )
+    window.press_key("tab")
+
+    window.press_key("home")
+    window.press_key("right", shift=True)
+    window.press_key("right", shift=True)  # selects "he"
+
+    window.press_key("backspace")
+
+    assert field.get_text() == "llo", "Backspace over a real selection must delete the whole range"
+
+
+def test_typing_over_a_real_selection_replaces_it():
+    window = Window(width=200, height=100)
+    field = window.add_text_field(
+        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hello"
+    )
+    window.press_key("tab")
+
+    window.press_key("home")
+    window.press_key("right", shift=True)
+    window.press_key("right", shift=True)  # selects "he"
+
+    window.type_text("HI")
+
+    assert field.get_text() == "HIllo"

@@ -144,14 +144,22 @@ fn apply_binding_value(
     if let engine_spec::Value::Bool(checked) = value {
         return temp_node.set_checked(*checked, py);
     }
+    // M15 Phase 3 (§16.7): the same real, direct dispatch the `Bool`
+    // branch above already established for `checked` -- `text` is the
+    // one other genuinely non-numeric bindable property, so it goes
+    // through `Node.set_text` directly rather than `animate()`'s own
+    // `Animated<f64>` contract, which a `String` can never satisfy.
+    if let engine_spec::Value::Str(text) = value {
+        return temp_node.set_text(text, py);
+    }
 
     let bound: Bound<'_, PyAny> = match value {
         engine_spec::Value::Int(i) => (*i as f64).into_bound_py_any(py)?,
         engine_spec::Value::Float(f) => (*f).into_bound_py_any(py)?,
         other => {
             return Err(PyValueError::new_err(format!(
-                "binding for property {property:?} resolved to {other:?} -- only numeric and \
-                 boolean (checked) bindings are supported today"
+                "binding for property {property:?} resolved to {other:?} -- only numeric, \
+                 boolean (checked), and string (text) bindings are supported today"
             )));
         }
     };
@@ -249,6 +257,11 @@ impl TwoWayCallback {
         };
         let value: Bound<'_, PyAny> = if self.property == "checked" {
             temp_node.get_checked()?.into_bound_py_any(py)?
+        } else if self.property == "text" {
+            // M15 Phase 3 (§16.7): the same real read-back split
+            // `checked` already established -- `text` isn't an
+            // `Animated<f64>` property `Node.get` dispatches to.
+            temp_node.get_text()?.into_bound_py_any(py)?
         } else {
             temp_node.get(&self.property)?.into_bound_py_any(py)?
         };

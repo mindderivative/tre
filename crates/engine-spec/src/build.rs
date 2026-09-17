@@ -5,7 +5,9 @@
 //! 1-4) unchanged, since a built `Tree` is indistinguishable here from
 //! one built imperatively.
 
-use engine_core::{CheckboxState, NodeId, NodeKind, PaintProperties, SliderState, TextState, Tree};
+use engine_core::{
+    CheckboxState, NodeId, NodeKind, PaintProperties, SliderState, TextFieldState, TextState, Tree,
+};
 use engine_md3::ColorScheme;
 use peniko::Color;
 use taffy::prelude::{Rect as TaffyRect, Size, Style, auto, length, zero};
@@ -211,6 +213,31 @@ fn node_kind_and_paint(
                 PaintProperties::new(background, corner_radius, 0.0, opacity),
             ))
         }
+        // M15 Phase 3 (§16.7): reuses `spec.text` verbatim -- the same
+        // real `TextSpec` block `kind: Text` already requires, since
+        // `TextFieldState`'s own font/content fields are byte-for-byte
+        // identical (see `TextSpec`'s own doc comment). `checked: bool`/
+        // `value: f64` each got their own dedicated `WidgetSpec` field
+        // when Checkbox/Slider needed one (M14 Phase 3) because neither
+        // already had a matching sibling block to reuse -- `TextField`
+        // does, so it uses that instead of adding a third.
+        NodeKindSpec::TextField => {
+            let background = required_background(spec, style, scheme, "TextField")?;
+            let text_spec = spec.text.as_ref().ok_or_else(|| SpecError::MissingField {
+                id: spec.id.clone(),
+                kind: "TextField",
+                field: "text",
+            })?;
+            Ok((
+                NodeKind::TextField(TextFieldState::new(
+                    text_spec.content.clone(),
+                    text_spec.font_family.clone(),
+                    text_spec.font_weight,
+                    text_spec.font_size,
+                )),
+                PaintProperties::new(background, corner_radius, 0.0, opacity),
+            ))
+        }
     }
 }
 
@@ -361,6 +388,62 @@ children:
             state.thumb_position.current, 0.75,
             "value: 0.75 in the spec must seed real SliderState.thumb_position"
         );
+    }
+
+    #[test]
+    fn load_view_builds_a_real_text_field_node_seeded_from_its_own_text_block() {
+        let yaml = r##"
+id: username
+kind: TextField
+text: {content: "jane", font_family: Roboto, font_size: 16}
+style: {width: 200, height: 32, background: "#EEEEEE"}
+"##;
+        let mut tree = Tree::new();
+        let root = load_view(&mut tree, yaml).expect("valid TextField view must build");
+        let node = tree.get(root).unwrap();
+        let NodeKind::TextField(state) = &node.kind else {
+            panic!("expected a TextField node");
+        };
+        assert_eq!(state.content, "jane");
+        assert_eq!(state.font_family, "Roboto");
+        assert_eq!(state.font_size, 16.0);
+        assert_eq!(
+            state.cursor, 4,
+            "the built TextFieldState must seed its cursor at content's own real end, \
+             the same TextFieldState::new contract the imperative API uses"
+        );
+    }
+
+    #[test]
+    fn text_field_without_background_is_a_clear_error_not_a_default() {
+        let yaml = r#"
+id: username
+kind: TextField
+text: {content: "jane", font_family: Roboto, font_size: 16}
+style: {width: 200, height: 32}
+"#;
+        let mut tree = Tree::new();
+        let err = load_view(&mut tree, yaml).expect_err("a colorless TextField must fail to build");
+        assert!(matches!(
+            err,
+            SpecError::MissingField { id, kind: "TextField", field: "style.background" } if id == "username"
+        ));
+    }
+
+    #[test]
+    fn text_field_without_a_text_block_is_a_clear_error_not_a_default() {
+        let yaml = r#"
+id: username
+kind: TextField
+style: {width: 200, height: 32, background: "white"}
+"#;
+        let mut tree = Tree::new();
+        let err =
+            load_view(&mut tree, yaml).expect_err("a TextField with no text: block must fail");
+        assert!(matches!(
+            err,
+            SpecError::MissingField { id, kind: "TextField", field: "text" } if id == "username"
+        ));
     }
 
     #[test]
