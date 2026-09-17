@@ -116,6 +116,31 @@ pub enum InputEvent {
     /// only, engine-core never knows meaning" shape every other real
     /// dispatch already follows (Design Principle 6).
     TextInput(String),
+    /// M17 Phase 1 (§8): a real Ctrl+C press -- fired by `engine-
+    /// platform` (checked *before* the `TextInput` fallback above,
+    /// fixing a real latent bug that predates this phase: `winit`'s own
+    /// `logical_key` is documented as "affected by all modifiers except
+    /// Ctrl," so a bare Ctrl+C press produces `Character("c")`, exactly
+    /// like an unmodified `c` -- without this check, it would have
+    /// silently inserted a literal "c" instead). Deliberately carries
+    /// no clipboard data: `engine-core` has zero OS/platform access
+    /// (§4's crate-boundary rule) and can't touch a real clipboard --
+    /// this is a pure intent signal `Tree::dispatch` never resolves
+    /// itself (see `DispatchOutcome`'s own doc comment), left for
+    /// `engine-py`'s own real handling, the same "meaning-dependent
+    /// outcome" split `Activated` already established.
+    Copy,
+    /// M17 Phase 1 (§8): `Copy`'s own real Ctrl+X sibling -- same real
+    /// reasoning, same fix for the same latent bug.
+    Cut,
+    /// M17 Phase 1 (§8): a real Ctrl+V press. Named `PasteRequested`,
+    /// not `Paste`, since -- unlike `Copy`/`Cut`, which only ever *read*
+    /// real `Tree` state `engine-core` already owns -- a real paste
+    /// needs content from the actual OS clipboard, which `engine-core`
+    /// can never reach; this only ever signals "the user asked to
+    /// paste," and `engine-py`'s own real handling supplies the actual
+    /// text afterward via the already-real `TextInput` mechanism above.
+    PasteRequested,
     /// M4 Phase 8: `position` is the cursor's last known position (the
     /// same `last_cursor_position` tracking `MouseInput` already
     /// reuses in `engine-platform`, since `winit`'s own `MouseWheel`

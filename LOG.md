@@ -1,103 +1,79 @@
-# Log: M16 Phase 2 — Migrate Real Call Sites to `tracing` (§9)
+# Log: M17 Phase 1 — Real Clipboard Copy/Cut/Paste (§8)
 
-Corresponds to `BUILD_TRACKER.md` M16 Phase 2, closing M16 entirely
-(both phases). `dispatch.rs`'s `call_handler`/`run_completions` and
-`app.rs`'s two `eprintln!` sites become real `tracing::error!`/
-`tracing::warn!` events.
+Corresponds to `BUILD_TRACKER.md` M17 Phase 1. A real clipboard crate
+wired to Ctrl+C/Ctrl+X/Ctrl+V on a focused `TextField`'s own real
+selection.
 
 ## Investigation before writing code
 
-**Real finding beyond the original scoping:** `run_completions` had
-its own real `err.print(py)` site the M16 scoping paragraph never
-named — confirmed via grep, three real call sites to migrate, not two.
-`PyErr` has no single method giving both the *full* traceback (frames
-included) and an owned `String` — `err.traceback(py)`'s own real
-`.format()` (`pyo3::types::PyTracebackMethods`, confirmed via direct
-source read) is the real way to get it.
+`arboard = "3.6.1"` real and cached, `default-features = false`
+(only `get_text`/`set_text` needed). **The genuine, stated unknown,
+resolved by actually testing it:** a throwaway probe confirmed a real,
+live clipboard is genuinely reachable in this environment — kept
+afterward as a real, permanent regression test, gracefully skipping
+(not failing) in an environment with no reachable clipboard. **Real,
+non-obvious finding, changing the whole design:** `winit`'s own
+`logical_key` is "affected by all modifiers except Ctrl" — a real
+Ctrl+C press produces `Character("c")`, identical to a bare `c`,
+meaning **before this phase, a real Ctrl+C press on a focused
+`TextField` inserted a literal "c" character** — a genuine latent bug
+this phase's own Ctrl-modifier detection fixes as a real side effect,
+not a separate patch. Real architectural split: Paste reuses the
+existing `InputEvent::TextInput` mechanism completely; Copy/Cut are
+pure `engine-core` `Tree` methods `engine-py` calls directly, not
+through `Tree::dispatch`.
 
 ## What happened
 
-New `dispatch::log_uncaught_exception(err, py)` renders the full
-traceback (falling back to plain `Display` if missing/unformattable)
-and emits `tracing::error!`. `call_handler`/`run_completions` both
-call it in place of `err.print(py)`. `app.rs`'s two `eprintln!` sites
-become `tracing::warn!` (expected, gracefully-handled conditions, not
-errors).
+`InputEvent` gains `Copy`/`Cut`/`PasteRequested` (zero-payload intent
+signals, true no-ops in `Tree::dispatch`, the same "plumbing only"
+shape `ThemeChanged` already uses). New `Tree::text_field_selected_
+text`/`cut_text_field_selection` (pure read; read + delete, reusing
+`delete_selection`). New `engine-platform::translate_clipboard_
+shortcut`, checked before the `TextInput` fallback — fixing the latent
+bug. `engine-py::app.rs`'s `on_input` closure does the real `arboard`
+I/O for all three, with clipboard failures logged via `tracing::warn!`
+and non-fatal.
 
-**Real finding #1, caught immediately by running the full pytest
-suite, not anticipated in `PLAN.md`:** three existing tests asserting
-on `capsys.readouterr().err` started failing with empty captures, even
-though the real event genuinely fired (visible in pytest's own
-"Captured stderr call" section). `capsys` monkeypatches Python's
-`sys.stderr` object; `tracing_subscriber`'s own writer is a raw OS-
-level write from Rust that bypasses it entirely — `PyErr::print` (what
-this phase replaces) *did* go through `sys.stderr` internally, so
-`capsys` used to work by coincidence, not because it was the right
-tool. Fixed by switching all three (plus a fourth, `test_two_way_
-binding.py`'s own recursion regression test, which asserted `captured.
-err == ""` — a real, silent-weakening risk: with `capsys`, that
-assertion would trivially pass regardless of whether a real recursion
-error fired underneath, silently losing the exact guarantee the test
-exists for) to `capfd`, which captures at the file-descriptor level,
-real for both Python and Rust writes.
+**Real design gap, found while writing the pytest coverage, not
+anticipated in `PLAN.md`:** a real Cut genuinely edits content, but
+`cut_text_field_selection` is called directly on `Tree`, never through
+`Tree::dispatch` — so it never produces `DispatchOutcome::Changed` the
+way keyboard editing gets "for free." Both `Window.cut()` and the real
+winit-driven `InputEvent::Cut` handling needed an explicit `call_
+handler(..., EventKind::Change, ...)` added, mirroring `Node.
+set_checked`/`set_text`'s own established pattern — caught by a test
+(`test_copy_fires_no_on_change_but_cut_does`) that would otherwise have
+silently passed with `cut()` never firing `Change` at all. A real Cut
+also writes to the clipboard *before* deleting the selection, and only
+actually deletes once that write genuinely succeeds — a failed
+clipboard write must never destroy the user's own selected text.
 
-**Real finding #2, caught only by manually running an example, not by
-any pytest test:** `App::run`'s own subscriber install (M16 Phase 1)
-is *not* the one guaranteed place a subscriber needs to be live —
-`Window.click`/`Node.set_checked`/`View.click` (the whole no-live-
-window-needed synthetic dispatch surface this project's own test
-suite relies on since M4 Phase 1 step 3) are all real, independently
-callable without `App::run()` ever running. Two pytest tests using
-exactly those entry points captured empty stderr, because no
-subscriber had been installed yet in that pytest process — cross-file
-test *order* had been silently doing the installing until then, via
-whichever file happened to call `App.run()` first (confirmed by
-running the affected files in isolation, with `App.run()` never
-called, and watching them still fail). Fixed by extracting subscriber
-install into `dispatch::ensure_tracing_subscriber()`, called from both
-`App::run` (early, for a real app) and `log_uncaught_exception` itself
-(the one real place every uncaught-callback-exception log actually
-funnels through) — `try_init` is already idempotent and cheap, so a
-second call site costs nothing and guarantees correctness regardless
-of entry point. Re-verified by running the four affected test files in
-total isolation, `App.run()` never called, all passing.
+New `Window.copy()`/`cut()`/`paste(text)`: deliberately **hermetic**
+(never touch the real OS clipboard) — unlike `press_key`/`type_text`,
+a real Ctrl+C only ever originates from an actual OS-level keyboard
+event reaching `engine-platform` directly, and there is no synthetic
+way to drive that specific path from Python at all; a real, stated
+scope boundary, not an oversight.
 
-**Real finding #3, caught only by manually re-running an example after
-finding #2's own fix:** `tracing_subscriber::fmt`'s default `MakeWriter`
-is `fn() -> io::Stdout` (confirmed via direct source read of
-`SubscriberBuilder`'s own default type parameter) — surprising, and
-wrong for this codebase's own real convention (`PyErr::print` always
-wrote to `sys.stderr`; diagnostic output belongs on stderr, not mixed
-into a program's real stdout). Fixed with `.with_writer(std::io::
-stderr)` on the builder.
+New `engine-core` tests (5, all passed first run): `text_field_
+selected_text` reads without mutating, is `None` with no real
+selection or a non-`TextField` node; `cut_text_field_selection` reads
+and genuinely deletes, is a true no-op with no real selection. New
+`engine-platform` tests (3): the real Copy/Cut/Paste vocabulary,
+case-insensitivity (a real Ctrl+Shift+C is the same shortcut), every
+other character/named key ignored. New, permanent `engine-py` test
+(the first Rust unit test in this crate ever): a real `arboard`
+set/get round trip, gracefully skipping if no clipboard is reachable.
+New `tests/test_clipboard.py` (8 tests, one fixed after the real
+Change-firing gap above): copy/cut/paste all reach the real focused
+field's own selection correctly; copy never fires `on_change`, cut
+does. New `examples/clipboard.py`: a real live field, select/copy/
+cut/paste all proved via the hermetic surface, each step asserted.
 
-**Real finding #4, caught only by manually re-running an example after
-finding #3's own fix:** switching from the free function `tracing_
-subscriber::fmt::try_init()` (which specially wires `EnvFilter::
-from_default_env()` for you, confirmed via direct source read) to the
-builder chain (needed for `.with_writer`) silently dropped `RUST_LOG`
-support entirely — the builder's own default filter is a flat
-`LevelFilter::INFO` (`Subscriber::DEFAULT_MAX_LEVEL`, confirmed via
-direct source read), completely ignoring the environment. Every
-example started emitting real INFO events unconditionally. Fixed by
-adding `.with_env_filter(EnvFilter::from_default_env())` explicitly.
-New `tests/test_tracing.py` (2 tests): a real subscriber's filter is
-captured once, at construction time, not re-read per event, so this
-can only be tested with genuinely fresh subprocesses, not by toggling
-`RUST_LOG` mid-pytest-process — both cases (no `RUST_LOG`, stays
-silent; `RUST_LOG=info`, genuinely verbose, real `app_run` span
-visible) verified via a real `subprocess.run` against a fresh
-`python3` process, both passed on the first run after the fix.
-
-Full `cargo test --workspace --release`/`cargo clippy --workspace
---all-targets -- -D warnings`/`cargo fmt --check` all clean. `maturin
-develop --release` + full `pytest tests/` (153 passed, up from 151, 1
-skipped) and all twenty-three examples confirmed clean, including a
-manual `RUST_LOG=info` vs. default-quiet re-check after every real
-finding above was fixed.
-
-M16 — Structured Logging via `tracing` is now fully complete: both
-phases (subscriber wiring, real call-site migration) closed §3/§9's
-own stated-but-unbuilt policy — four real, non-obvious findings along
-the way, none caught by unit tests alone, all caught by actually
-running real code end to end.
+Full `cargo test --workspace --release` (`engine-core` 122, up from
+117; `engine-platform` 9, up from 6; `engine-py` 1, new)/`cargo clippy
+--workspace --all-targets -- -D warnings`/`cargo fmt --check` all
+clean — every prior test passed unmodified. `maturin develop --release`
++ full `pytest tests/` (161 passed, up from 153, 1 skipped) and all
+twenty-four examples confirmed clean.

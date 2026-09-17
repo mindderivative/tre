@@ -51,3 +51,8 @@ tracing = "0.1.44"
 # "correlate with frame timing" framing (a developer needs to be able
 # to turn the noise up/down, not get one fixed level forever).
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+# M17 Phase 1 (§8): real clipboard text access -- `default-features =
+# false` since this phase only needs `get_text`/`set_text` (confirmed
+# real via direct source read), not `arboard`'s own default `image-
+# data` feature (image clipboard support, unneeded here).
+arboard = { version = "3.6.1", default-features = false }

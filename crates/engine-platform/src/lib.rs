@@ -134,6 +134,30 @@ fn translate_key(logical_key: &WinitKey) -> Option<Key> {
     }
 }
 
+/// M17 Phase 1 (§8): the real Ctrl+C/Ctrl+X/Ctrl+V vocabulary --
+/// checked only when the real `ModifiersState::control_key()` is held
+/// (the caller's own job), since `logical_key` alone is Ctrl-blind
+/// (confirmed via direct source read of `winit`'s own `event.rs`:
+/// "This value is affected by all modifiers except Ctrl"). Case-
+/// insensitive (`Character("C")` for a real Ctrl+Shift+C press is the
+/// identical real shortcut, not a different one) -- every other
+/// character produces `None`, no `InputEvent` at all, the same
+/// deliberately minimal vocabulary `translate_key` already keeps.
+fn translate_clipboard_shortcut(logical_key: &WinitKey) -> Option<InputEvent> {
+    let WinitKey::Character(c) = logical_key else {
+        return None;
+    };
+    if c.eq_ignore_ascii_case("c") {
+        Some(InputEvent::Copy)
+    } else if c.eq_ignore_ascii_case("x") {
+        Some(InputEvent::Cut)
+    } else if c.eq_ignore_ascii_case("v") {
+        Some(InputEvent::PasteRequested)
+    } else {
+        None
+    }
+}
+
 /// M4 Phase 8 (§11.7/§11.8 groundwork): `winit::event::MouseScrollDelta`
 /// has exactly two real variants, verified directly in `winit =
 /// "0.30.13"`'s vendored `event.rs` before writing this -- `LineDelta`
@@ -519,6 +543,23 @@ where
                     };
                     on_input(window_id, event);
                 } else if key_event.state == ElementState::Pressed
+                    && win.modifiers.control_key()
+                    && let Some(clipboard_event) =
+                        translate_clipboard_shortcut(&key_event.logical_key)
+                {
+                    // M17 Phase 1 (§8), checked *before* the `TextInput`
+                    // fallback below -- real, load-bearing ordering, not
+                    // arbitrary. `winit::event::KeyEvent.logical_key` is
+                    // documented as "affected by all modifiers except
+                    // Ctrl" (confirmed via direct source read), so a
+                    // real Ctrl+C press produces `Character("c")`,
+                    // identical to a bare `c` press -- without this
+                    // check running first, it would fall through and
+                    // insert a literal "c" instead, a real latent bug
+                    // this phase's own design surfaced and fixes as a
+                    // side effect, not a separate patch.
+                    on_input(window_id, clipboard_event);
+                } else if key_event.state == ElementState::Pressed
                     && let Some(text) = &key_event.text
                 {
                     // M15 Phase 2 (§8, §10): a real, produced character
@@ -650,6 +691,44 @@ mod tests {
         // named key this minimal model simply doesn't assign meaning to.
         assert_eq!(translate_key(&WinitKey::Character("a".into())), None);
         assert_eq!(translate_key(&WinitKey::Named(NamedKey::ArrowDown)), None);
+    }
+
+    #[test]
+    fn translate_clipboard_shortcut_maps_the_real_copy_cut_paste_vocabulary() {
+        assert_eq!(
+            translate_clipboard_shortcut(&WinitKey::Character("c".into())),
+            Some(InputEvent::Copy)
+        );
+        assert_eq!(
+            translate_clipboard_shortcut(&WinitKey::Character("x".into())),
+            Some(InputEvent::Cut)
+        );
+        assert_eq!(
+            translate_clipboard_shortcut(&WinitKey::Character("v".into())),
+            Some(InputEvent::PasteRequested)
+        );
+    }
+
+    #[test]
+    fn translate_clipboard_shortcut_is_case_insensitive() {
+        // A real Ctrl+Shift+C press produces the uppercase character --
+        // the identical real shortcut, not a different one.
+        assert_eq!(
+            translate_clipboard_shortcut(&WinitKey::Character("C".into())),
+            Some(InputEvent::Copy)
+        );
+    }
+
+    #[test]
+    fn translate_clipboard_shortcut_ignores_every_other_character_and_named_key() {
+        assert_eq!(
+            translate_clipboard_shortcut(&WinitKey::Character("a".into())),
+            None
+        );
+        assert_eq!(
+            translate_clipboard_shortcut(&WinitKey::Named(NamedKey::Enter)),
+            None
+        );
     }
 
     #[test]

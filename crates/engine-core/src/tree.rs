@@ -1457,6 +1457,47 @@ impl Tree {
         true
     }
 
+    /// M17 Phase 1 (§8): a pure, real read of a `TextField`'s own
+    /// currently selected text -- `None` if `field` isn't a real,
+    /// present `TextField`, or its selection is empty/collapsed
+    /// (`anchor == cursor`), the same "not a real selection"
+    /// definition `delete_selection` already uses. Never touches a
+    /// real OS clipboard itself -- `engine-core` has no platform
+    /// access at all (§4's crate-boundary rule); the real, external
+    /// clipboard write is `engine-py`'s own job, this only ever
+    /// answers "what text a real copy would grab."
+    pub fn text_field_selected_text(&self, field: NodeId) -> Option<String> {
+        let NodeKind::TextField(state) = &self.nodes.get(field)?.kind else {
+            return None;
+        };
+        let anchor = state.selection_anchor?;
+        if anchor == state.cursor {
+            return None;
+        }
+        let (start, end) = if anchor < state.cursor {
+            (anchor, state.cursor)
+        } else {
+            (state.cursor, anchor)
+        };
+        Some(state.content[start..end].to_string())
+    }
+
+    /// M17 Phase 1 (§8): `text_field_selected_text`'s own real cut
+    /// counterpart -- reads the same real selected text, then deletes
+    /// it via the identical shared `delete_selection` helper `Backspace`
+    /// /`Delete`/`Space`/`TextInput` already use (M15 Phase 3), so a
+    /// real cut is genuinely indistinguishable from "select text, read
+    /// it, then delete it" -- not a second, parallel selection-removal
+    /// mechanism.
+    pub fn cut_text_field_selection(&mut self, field: NodeId) -> Option<String> {
+        let text = self.text_field_selected_text(field)?;
+        let NodeKind::TextField(state) = &mut self.nodes[field].kind else {
+            return None;
+        };
+        Self::delete_selection(state);
+        Some(text)
+    }
+
     /// M4 Phase 2 (§10): the direct, non-`InputEvent` counterpart to a
     /// mouse click's own `Activated` outcome -- what `accesskit::
     /// Action::Click` from a platform accessibility client actually
@@ -1756,6 +1797,14 @@ impl Tree {
             // this directly on the raw event, the same way it already
             // does for dock-drag `PointerPressed`/`PointerReleased`.
             InputEvent::ThemeChanged { .. } => DispatchOutcome::None,
+            // M17 Phase 1 (§8): plumbing only, the identical shape --
+            // `engine-core` has no clipboard access at all, so the real
+            // work (reading `Tree::text_field_selected_text`/`cut_
+            // text_field_selection` and the actual OS clipboard I/O)
+            // happens in `engine-py`'s own raw-event handling, not here.
+            InputEvent::Copy | InputEvent::Cut | InputEvent::PasteRequested => {
+                DispatchOutcome::None
+            }
         }
     }
 
@@ -5692,5 +5741,63 @@ mod tests {
             "a zero-width selection at the real start must still be a genuine no-op"
         );
         assert_eq!(field_state(&tree, field).content, "hi");
+    }
+
+    #[test]
+    fn text_field_selected_text_reads_the_real_selected_range() {
+        let (mut tree, root, field) = text_field_scene("hello");
+        dispatch_key(&mut tree, root, Key::Home);
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight);
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight);
+
+        assert_eq!(tree.text_field_selected_text(field), Some("he".to_string()));
+        assert_eq!(
+            field_state(&tree, field).content,
+            "hello",
+            "a pure read must never mutate the field's own real content"
+        );
+    }
+
+    #[test]
+    fn text_field_selected_text_is_none_with_no_real_selection() {
+        let (tree, _root, field) = text_field_scene("hello");
+        assert_eq!(
+            tree.text_field_selected_text(field),
+            None,
+            "a freshly created field has no real selection at all"
+        );
+    }
+
+    #[test]
+    fn text_field_selected_text_is_none_for_a_non_text_field_node() {
+        let mut tree = Tree::new();
+        let (kind, style, paint) = leaf(10.0, 10.0);
+        let rect = tree.insert(kind, style, paint);
+        assert_eq!(tree.text_field_selected_text(rect), None);
+    }
+
+    #[test]
+    fn cut_text_field_selection_reads_and_deletes_the_real_selection() {
+        let (mut tree, root, field) = text_field_scene("hello");
+        dispatch_key(&mut tree, root, Key::Home);
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight);
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight);
+
+        let cut = tree.cut_text_field_selection(field);
+        assert_eq!(cut, Some("he".to_string()));
+        let state = field_state(&tree, field);
+        assert_eq!(
+            state.content, "llo",
+            "the real selected range must actually be removed, not just read"
+        );
+        assert_eq!(state.cursor, 0);
+        assert_eq!(state.selection_anchor, None);
+    }
+
+    #[test]
+    fn cut_text_field_selection_with_no_real_selection_is_a_true_no_op() {
+        let (mut tree, _root, field) = text_field_scene("hello");
+        assert_eq!(tree.cut_text_field_selection(field), None);
+        assert_eq!(field_state(&tree, field).content, "hello");
     }
 }

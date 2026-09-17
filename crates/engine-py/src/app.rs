@@ -24,7 +24,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use engine_core::{InputEvent, NodeId, PointerButton, Tree, from_access_id};
+use engine_core::{EventKind, InputEvent, NodeId, PointerButton, Tree, from_access_id};
 use engine_platform::{WindowConfig, WindowRequest, run_windowed_multi};
 use engine_render::{FrameRenderer, TextRenderer, build_tree_scene};
 use pyo3::prelude::*;
@@ -33,8 +33,8 @@ use vello_hybrid::{RenderSize, RenderTargetConfig};
 use winit::window::{Window, WindowId};
 
 use crate::dispatch::{
-    HandlerMap, SharedCompletions, interaction_config, open_context_menu, run_completions,
-    run_dispatch_outcome,
+    HandlerMap, SharedCompletions, call_handler, interaction_config, open_context_menu,
+    run_completions, run_dispatch_outcome,
 };
 use crate::dock::{self, SharedDockState};
 use crate::window::{PyWindow, SharedTheme};
@@ -397,6 +397,91 @@ impl App {
                         drop(state);
                         runtime.tree.borrow_mut().set_all_interaction_tints(tint);
                     }
+                    // M17 Phase 1 (§8): the real, winit-driven Ctrl+C
+                    // path -- `Tree::text_field_selected_text` is a pure
+                    // read (`engine-core` never touches a real
+                    // clipboard, §4), so the actual OS write happens
+                    // here, the one place with both `Tree` and real
+                    // clipboard access. A clipboard failure (no real
+                    // clipboard service reachable, a real, possible
+                    // condition in some headless environments) is
+                    // logged and non-fatal, the same "real, expected,
+                    // gracefully-handled" policy M16 Phase 2 already
+                    // established for no-GPU/no-display.
+                    InputEvent::Copy => {
+                        let selected = runtime.tree.borrow().focused().and_then(|field| {
+                            runtime.tree.borrow().text_field_selected_text(field)
+                        });
+                        if let Some(text) = selected {
+                            match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
+                                Ok(()) => {}
+                                Err(err) => {
+                                    tracing::warn!(%err, "failed to write to the real OS clipboard");
+                                }
+                            }
+                        }
+                    }
+                    // M17 Phase 1 (§8): `Copy`'s own real Cut sibling --
+                    // writes to the real clipboard *first*, using a pure
+                    // read (`text_field_selected_text`, not the
+                    // mutating `cut_text_field_selection`), and only
+                    // actually removes the real selection once that
+                    // write genuinely succeeds. A failed clipboard write
+                    // must never silently destroy the user's own
+                    // selected text with no way to recover it.
+                    InputEvent::Cut => {
+                        let field_and_text = runtime.tree.borrow().focused().and_then(|field| {
+                            runtime
+                                .tree
+                                .borrow()
+                                .text_field_selected_text(field)
+                                .map(|text| (field, text))
+                        });
+                        if let Some((field, text)) = field_and_text {
+                            match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
+                                Ok(()) => {
+                                    runtime.tree.borrow_mut().cut_text_field_selection(field);
+                                    // A real cut genuinely edits the
+                                    // field's own content -- fires
+                                    // `Change` the same way `Window.cut`
+                                    // 's own hermetic FFI counterpart
+                                    // does, since this path also calls
+                                    // `cut_text_field_selection`
+                                    // directly, not through `Tree::
+                                    // dispatch`.
+                                    call_handler(&runtime.handlers, field, EventKind::Change, py);
+                                }
+                                Err(err) => {
+                                    tracing::warn!(
+                                        %err,
+                                        "failed to write to the real OS clipboard -- selection left untouched"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    // M17 Phase 1 (§8): the real, winit-driven Ctrl+V
+                    // path -- reads the real OS clipboard, then
+                    // dispatches the resulting text exactly like a real
+                    // typed character (`InputEvent::TextInput`, M15
+                    // Phase 2's own existing mechanism, reused
+                    // completely, no new insertion path).
+                    InputEvent::PasteRequested => {
+                        match arboard::Clipboard::new().and_then(|mut cb| cb.get_text()) {
+                            Ok(text) => {
+                                let outcome = runtime.tree.borrow_mut().dispatch(
+                                    runtime.root,
+                                    InputEvent::TextInput(text),
+                                    &interaction_config(),
+                                    Instant::now(),
+                                );
+                                run_dispatch_outcome(&runtime.handlers, outcome, py);
+                            }
+                            Err(err) => {
+                                tracing::warn!(%err, "failed to read the real OS clipboard");
+                            }
+                        }
+                    }
                     _ => {}
                 }
             },
@@ -463,6 +548,52 @@ impl App {
                 // as the no-adapter case above.
                 tracing::warn!(%err, "no display available, exiting cleanly");
                 Ok(())
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// M17 Phase 1 (§8): the one real, permanent regression check that
+    /// `arboard` genuinely connects to a live OS clipboard in *this*
+    /// environment -- manually verified once via a throwaway probe
+    /// before committing to the dependency at all (see `PLAN.md`/
+    /// `LOG.md`), kept here as a real, automated check rather than
+    /// trusting that one-off result forever. No real keyboard event can
+    /// be synthesized from a test (the real Ctrl+C/X/V path only ever
+    /// originates from an actual OS-level `winit` event, confirmed in
+    /// `Window.copy`/`cut`/`paste`'s own doc comments) -- this instead
+    /// proves the one real, testable half: a genuine set/get round trip
+    /// against whatever clipboard mechanism is actually reachable here.
+    /// Treats "no clipboard service reachable" as a real, honest skip,
+    /// not a failure -- the same "genuinely different environment"
+    /// tolerance this codebase already applies to GPU/display absence
+    /// (TRE v1 finding #261).
+    #[test]
+    fn arboard_genuinely_round_trips_through_a_real_clipboard() {
+        let Ok(mut clipboard) = arboard::Clipboard::new() else {
+            eprintln!(
+                "arboard_genuinely_round_trips_through_a_real_clipboard: no real clipboard \
+                 service reachable in this environment -- skipping, not failing"
+            );
+            return;
+        };
+        let marker = "tre-engine-py-clipboard-round-trip-test";
+        if clipboard.set_text(marker).is_err() {
+            eprintln!(
+                "arboard_genuinely_round_trips_through_a_real_clipboard: clipboard reachable \
+                 but the real write failed -- skipping, not failing"
+            );
+            return;
+        }
+        match clipboard.get_text() {
+            Ok(text) => assert_eq!(
+                text, marker,
+                "a real set_text must be readable back verbatim"
+            ),
+            Err(err) => {
+                panic!("clipboard accepted a real write but the real read-back failed: {err}")
             }
         }
     }

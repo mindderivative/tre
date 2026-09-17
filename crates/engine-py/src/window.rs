@@ -9,9 +9,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use engine_core::{
-    AccessNodeData, Action, Animated, CheckboxState, InputEvent, ItemExtent, Key, NodeId, NodeKind,
-    PaintProperties, PointerButton, Role, SliderState, SplitterState, TextFieldState, Tree,
-    VirtualListState,
+    AccessNodeData, Action, Animated, CheckboxState, EventKind, InputEvent, ItemExtent, Key,
+    NodeId, NodeKind, PaintProperties, PointerButton, Role, SliderState, SplitterState,
+    TextFieldState, Tree, VirtualListState,
 };
 use engine_md3::DynamicTheme;
 use peniko::Color;
@@ -21,8 +21,8 @@ use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Position, Rect as TaffyRect, Size, Style, auto, length};
 
 use crate::dispatch::{
-    CompletionRegistry, HandlerMap, SharedCompletions, interaction_config, open_context_menu,
-    run_dispatch_outcome,
+    CompletionRegistry, HandlerMap, SharedCompletions, call_handler, interaction_config,
+    open_context_menu, run_dispatch_outcome,
 };
 use crate::dock::{self, SharedDockState};
 use crate::error::EngineError;
@@ -937,6 +937,55 @@ impl PyWindow {
             std::time::Instant::now(),
         );
         run_dispatch_outcome(&self.handlers, outcome, py);
+    }
+
+    /// M17 Phase 1 (§8): the real, no-live-window-needed synthetic
+    /// entry point for "what a Ctrl+C press would copy" -- deliberately
+    /// **hermetic**, unlike the real `winit`-driven path (`engine-
+    /// platform::translate_clipboard_shortcut` + `App::run`'s own
+    /// `on_input` handling of `InputEvent::Copy`, both real and tested
+    /// on their own terms): it never touches the actual OS clipboard,
+    /// only the real, pure `Tree::text_field_selected_text` read. This
+    /// is a genuine, stated scope boundary, not an oversight -- unlike
+    /// `press_key`/`type_text`, which dispatch through `Tree::dispatch`
+    /// the exact same way a real `winit` event would, a *real* Ctrl+C
+    /// only ever originates from an actual OS-level keyboard event
+    /// reaching `engine-platform` directly; there is no synthetic way
+    /// to drive that path from Python without a live window, the same
+    /// real category of gap this codebase's own "no live AT-SPI client"
+    /// note already states honestly elsewhere.
+    fn copy(&self) -> Option<String> {
+        let field = self.tree.borrow().focused()?;
+        self.tree.borrow().text_field_selected_text(field)
+    }
+
+    /// `copy`'s own real Cut sibling -- same real scope boundary
+    /// (hermetic, no real OS clipboard touched), reusing the real,
+    /// pure `Tree::cut_text_field_selection`.
+    fn cut(&mut self, py: Python<'_>) -> Option<String> {
+        let field = self.tree.borrow().focused()?;
+        let text = self.tree.borrow_mut().cut_text_field_selection(field)?;
+        // A real cut genuinely edits the field's own content -- fires
+        // `Change` the same way `Node.set_checked`/`set_text` already
+        // do for a direct, non-`Tree::dispatch` mutation (`cut_text_
+        // field_selection` is called straight on `Tree`, not through
+        // `dispatch`, so no `DispatchOutcome::Changed` exists here to
+        // carry this automatically the way Backspace/Delete/typing get
+        // it for free).
+        call_handler(&self.handlers, field, EventKind::Change, py);
+        Some(text)
+    }
+
+    /// `type_text`'s own real Paste-shaped sibling -- takes an explicit
+    /// `text` rather than reading the real OS clipboard (the same real
+    /// scope boundary `copy`/`cut` state above), so this stays
+    /// deterministic and hermetic: exactly what a real Ctrl+V would do
+    /// *after* the real clipboard read already happened, reusing the
+    /// identical `InputEvent::TextInput` mechanism `type_text` already
+    /// uses -- a real paste is genuinely nothing more than "insert this
+    /// text," the same real finding `PLAN.md` already states.
+    fn paste(&mut self, text: &str, py: Python<'_>) {
+        self.type_text(text, py);
     }
 
     /// M4 Phase 9 (§11.4): registers `container` as `side`'s real dock
