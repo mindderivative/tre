@@ -66,6 +66,44 @@ def test_right_clicking_the_same_anchor_twice_does_not_crash():
     assert calls == ["selected"]
 
 
+def test_a_real_click_outside_an_open_context_menu_dismisses_it():
+    """M10 Phase 1 (§11.3): the real FFI-level proof that outside-click
+    dismissal reaches all the way through -- a click somewhere else
+    entirely closes the menu for real (its own content is genuinely
+    gone from the tree, not just hidden), proven the same functional
+    way the other tests in this file do: the menu item's own click
+    handler no longer fires once it's gone.
+    """
+    window = Window(width=200, height=200)
+    anchor = window.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=80, height=40)
+    menu_item = window.add_rect(background=(0x00, 0x80, 0x00, 0xFF), width=60, height=20)
+    elsewhere = window.add_rect(background=(0x00, 0x00, 0xFF, 0xFF), width=20, height=20)
+    anchor.set_context_menu(menu_item)
+
+    window.right_click(anchor)
+    window.click(elsewhere)  # real click, well away from the open menu
+
+    calls = []
+    menu_item.set_on_click(lambda: calls.append("selected"))
+    window.click(menu_item)
+    assert calls == [], "the menu must be genuinely gone after a real outside click"
+
+
+def test_a_real_escape_press_dismisses_an_open_context_menu():
+    window = Window(width=200, height=120)
+    anchor = window.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=80, height=40)
+    menu_item = window.add_rect(background=(0x00, 0x80, 0x00, 0xFF), width=60, height=20)
+    anchor.set_context_menu(menu_item)
+
+    window.right_click(anchor)
+    window.press_key("escape")
+
+    calls = []
+    menu_item.set_on_click(lambda: calls.append("selected"))
+    window.click(menu_item)
+    assert calls == [], "the menu must be genuinely gone after a real Escape press"
+
+
 def test_left_clicking_an_anchor_with_a_context_menu_does_not_open_it():
     """Only a secondary-button press/release opens a context menu --
     a primary click must not trigger it, matching real desktop

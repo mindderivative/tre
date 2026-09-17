@@ -10,13 +10,12 @@
 use crate::node::NodeId;
 
 /// Matches §11.3's own struct sketch exactly. `dismiss_on_outside_click`/
-/// `dismiss_on_escape` are stored as real data here but not yet acted on
-/// by any dispatch mechanism -- real pointer/keyboard `InputEvent`/
-/// `AppHandler` dispatch and hit-testing (§11.10) don't exist anywhere
-/// in this codebase yet (checked directly), so there's nothing to wire
-/// dismissal *to* yet. Additive once that dispatch exists, the same
-/// "the field is real, the behavior lands with its own step" shape as
-/// `Tree::focused` since step 7.
+/// `dismiss_on_escape` are real data acted on by `Tree::dispatch`'s own
+/// real `PointerPressed`/`KeyPressed` arms (M10 Phase 1) -- real
+/// pointer/keyboard `InputEvent` dispatch and hit-testing (§11.10) have
+/// existed since M4/M5, respectively; this field waited on `Tree::
+/// dismiss_overlays_outside`/`dismiss_escapable_overlays` actually
+/// being written, not on the dispatch mechanism itself.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OverlayMeta {
     /// Positions the overlay's root relative to this node's computed

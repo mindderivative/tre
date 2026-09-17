@@ -442,23 +442,97 @@ impl Tree {
         self.overlays.insert(content, meta);
     }
 
-    /// Closes an overlay opened via `open_overlay`: removes its whole
-    /// subtree from the `Tree` (reusing step 12's real recursive
-    /// `Tree::remove`, not a second removal path) and drops its
-    /// metadata. Returns `true` if `id` was a real, currently-open
-    /// overlay.
+    /// Closes an overlay opened via `open_overlay`: detaches its whole
+    /// subtree from its own parent (the same real `Tree::detach`
+    /// mechanism `Node.set_context_menu` already uses to keep content
+    /// "alive, parentless, ready for `add_child` elsewhere later") and
+    /// drops its metadata. Returns `true` if `id` was a real,
+    /// currently-open overlay.
+    ///
+    /// **M10 Phase 1 (§11.3): real finding, corrected before this
+    /// phase's own dismissal wiring shipped, not after.** Originally
+    /// used `Tree::remove` (full, irreversible destruction) -- this
+    /// genuinely broke the single most realistic real use of dismissal:
+    /// right-click a context menu open, dismiss it (outside click or
+    /// Escape), right-click the *same* anchor again. `Node.set_
+    /// context_menu` registers one specific, app-owned content `NodeId`
+    /// meant to be reopened repeatedly, not recreated per click --
+    /// destroying it on the very first dismissal left `dispatch::
+    /// open_context_menu`'s own stored `content` id dangling, panicking
+    /// the next real reopen attempt (`open_overlay`'s own `self.get(
+    /// content).expect(...)`). Detach, not destroy, is the same
+    /// contract `set_context_menu` already committed to for exactly
+    /// this reason -- a caller that genuinely wants an overlay's own
+    /// content destroyed can still call `Tree::remove` on it directly
+    /// afterward.
     pub fn close_overlay(&mut self, id: NodeId) -> bool {
         let had_overlay = self.overlays.remove(&id).is_some();
-        let removed = self.remove(id);
-        had_overlay && removed
+        if !had_overlay {
+            return false;
+        }
+        if let Some(parent) = self.get(id).and_then(|node| node.parent) {
+            self.detach(parent, id);
+        }
+        true
     }
 
     /// The metadata for a currently-open overlay, if `id` is one --
-    /// real bookkeeping a future dismiss-on-outside-click/Escape
-    /// dispatch (§4/§11.10, not built yet) will read; proven stored
-    /// correctly by this step's own test in the meantime.
+    /// real bookkeeping the real dismiss-on-outside-click/Escape
+    /// dispatch (below, M10 Phase 1) reads, alongside `dispatch::
+    /// open_context_menu`'s own re-open guard.
     pub fn overlay_meta(&self, id: NodeId) -> Option<&OverlayMeta> {
         self.overlays.get(&id)
+    }
+
+    /// M10 Phase 1 (§11.3): closes every currently-open overlay whose
+    /// own `OverlayMeta.dismiss_on_outside_click` is true and whose
+    /// whole visible subtree, *and* whose own anchor, don't contain
+    /// `point` -- `hit_test` scoped to the overlay's own `content`
+    /// `NodeId` is `None` exactly when the point is genuinely outside
+    /// it (safe to call with a non-root `NodeId` here: every overlay's
+    /// own `content` is always a direct child of the tree's own true
+    /// root, which always has identity location/transform, `PLAN.md`).
+    /// The anchor is excluded too -- a real, found-while-testing bug
+    /// fix: a press that lands back on the anchor itself (e.g. right-
+    /// clicking the same trigger a second time, `dispatch::open_
+    /// context_menu`'s own re-open guard already handles that safely)
+    /// must not be treated as an outside click, or the very press meant
+    /// to interact with the anchor would dismiss its own overlay first
+    /// and never reach `SecondaryActivated` at all. Returns whether
+    /// anything was actually dismissed, so `dispatch`'s own
+    /// `PointerPressed` arm knows whether to consume that press.
+    fn dismiss_overlays_outside(&mut self, point: Point) -> bool {
+        let to_dismiss: Vec<NodeId> = self
+            .overlays
+            .iter()
+            .filter(|(content, meta)| {
+                meta.dismiss_on_outside_click
+                    && self.hit_test(**content, point).is_none()
+                    && self.hit_test(meta.anchor, point).is_none()
+            })
+            .map(|(&content, _)| content)
+            .collect();
+        let dismissed_any = !to_dismiss.is_empty();
+        for content in to_dismiss {
+            self.close_overlay(content);
+        }
+        dismissed_any
+    }
+
+    /// M10 Phase 1 (§11.3): closes every currently-open overlay whose
+    /// own `OverlayMeta.dismiss_on_escape` is true, unconditionally --
+    /// `Key::Escape` always means "close it," no position check needed,
+    /// unlike outside-click dismissal above.
+    fn dismiss_escapable_overlays(&mut self) {
+        let to_dismiss: Vec<NodeId> = self
+            .overlays
+            .iter()
+            .filter(|(_, meta)| meta.dismiss_on_escape)
+            .map(|(&content, _)| content)
+            .collect();
+        for content in to_dismiss {
+            self.close_overlay(content);
+        }
     }
 
     /// §14 step 15 (§11.4): "tabbed grouping... a plain index switch."
@@ -1141,6 +1215,16 @@ impl Tree {
                 }
             }
             InputEvent::PointerPressed { position, button } => {
+                // M10 Phase 1 (§11.3): a real press outside every open
+                // dismiss_on_outside_click overlay's own subtree closes
+                // it and consumes this press -- skips the normal hit/
+                // ripple registration below entirely, matching
+                // Android's own real "outside touch dismisses, doesn't
+                // pass through" convention (`PLAN.md`).
+                if self.dismiss_overlays_outside(position) {
+                    self.pressed = None;
+                    return DispatchOutcome::None;
+                }
                 let hit = self.hit_test(root, position);
                 if let Some(node) = hit {
                     self.pressed = Some((button, node));
@@ -1224,11 +1308,14 @@ impl Tree {
                     Some(node) => DispatchOutcome::Activated(node),
                     None => DispatchOutcome::None,
                 },
-                // No overlay-dismiss consumer exists yet to route this
-                // to (§11.3's own "dismissed on outside-click or
-                // Escape" isn't wired) -- explicitly deferred, not
-                // silently dropped.
-                Key::Escape => DispatchOutcome::None,
+                // M10 Phase 1 (§11.3): closes every real, currently-open
+                // dismiss_on_escape overlay -- a mechanical consequence
+                // handled entirely here, the same shape ripple-spawn/
+                // hover-update already use, no new outcome variant.
+                Key::Escape => {
+                    self.dismiss_escapable_overlays();
+                    DispatchOutcome::None
+                }
             },
             InputEvent::KeyReleased { .. } => DispatchOutcome::None,
             // M4 Phase 8 (§11.7/§11.8 groundwork): a true no-op today,
@@ -1731,7 +1818,7 @@ mod tests {
     }
 
     #[test]
-    fn close_overlay_removes_the_node_and_its_metadata() {
+    fn close_overlay_detaches_the_node_and_drops_its_metadata() {
         let mut tree = Tree::new();
         let root_style = Style {
             size: Size {
@@ -1768,8 +1855,13 @@ mod tests {
 
         assert!(tree.close_overlay(menu));
         assert!(
-            tree.get(menu).is_none(),
-            "the overlay node itself must be gone"
+            tree.get(menu).is_some(),
+            "M10 Phase 1: the overlay node itself must survive closing -- detached, not \
+             destroyed, so `set_context_menu`'s own registered content can be reopened"
+        );
+        assert!(
+            tree.get(menu).unwrap().parent.is_none(),
+            "a closed overlay must be genuinely detached from its former parent"
         );
         assert!(
             tree.overlay_meta(menu).is_none(),
@@ -1783,6 +1875,252 @@ mod tests {
         assert!(
             !tree.close_overlay(menu),
             "closing an already-closed overlay must report false"
+        );
+    }
+
+    /// M10 Phase 1 (§11.3): a root + anchor (0,0)-(80,20) + a real open
+    /// overlay `menu`, positioned by `open_overlay` itself directly
+    /// below the anchor -- (0,20)-(120,80) -- with both `dismiss_on_*`
+    /// flags set as given, ready for a real dispatch.
+    fn overlay_scene(
+        dismiss_on_outside_click: bool,
+        dismiss_on_escape: bool,
+    ) -> (Tree, NodeId, NodeId, NodeId) {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            size: Size {
+                width: length(300.0),
+                height: length(300.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+        let (k, s, p) = leaf(80.0, 20.0);
+        let anchor = tree.insert(k, s, p);
+        tree.add_child(root, anchor);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+
+        let (k, s, p) = leaf(120.0, 60.0);
+        let menu = tree.insert(k, s, p);
+        tree.open_overlay(
+            root,
+            anchor,
+            menu,
+            OverlayMeta {
+                anchor,
+                dismiss_on_outside_click,
+                dismiss_on_escape,
+            },
+        );
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+        (tree, root, anchor, menu)
+    }
+
+    fn dispatch_config() -> InteractionConfig {
+        InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        }
+    }
+
+    #[test]
+    fn a_real_press_outside_a_dismiss_on_outside_click_overlay_closes_it() {
+        let (mut tree, root, _, menu) = overlay_scene(true, true);
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(250.0, 250.0), // well outside the menu's own (0,20)-(120,80)
+                button: PointerButton::Primary,
+            },
+            &dispatch_config(),
+            Instant::now(),
+        );
+        assert_eq!(outcome, DispatchOutcome::None);
+        assert!(
+            tree.overlay_meta(menu).is_none(),
+            "a real outside press must genuinely close the overlay, not just hide it"
+        );
+        assert!(
+            !tree.get(root).unwrap().children.contains(&menu),
+            "the closed overlay must no longer be displayed, detached from root"
+        );
+    }
+
+    #[test]
+    fn a_real_press_inside_the_overlay_leaves_it_open_and_dispatches_normally() {
+        let (mut tree, root, _, menu) = overlay_scene(true, true);
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(50.0, 50.0), // inside the menu's own (0,20)-(120,80)
+                button: PointerButton::Primary,
+            },
+            &dispatch_config(),
+            Instant::now(),
+        );
+        assert_eq!(outcome, DispatchOutcome::None);
+        assert!(
+            tree.get(menu).is_some(),
+            "a press genuinely inside the overlay must never dismiss it"
+        );
+        assert_eq!(
+            tree.pressed,
+            Some((PointerButton::Primary, menu)),
+            "an in-bounds press must still register normally -- dismissal must not swallow it"
+        );
+    }
+
+    #[test]
+    fn a_real_press_back_on_the_anchor_does_not_dismiss_its_own_overlay() {
+        // A real regression found while verifying Phase 1 end to end
+        // (Python's own `test_right_clicking_the_same_anchor_twice_
+        // does_not_crash`): right-clicking the same anchor a second
+        // time must not have its own press treated as an "outside
+        // click" against the overlay it's about to (safely, no-op)
+        // reopen -- the anchor itself is genuinely excluded.
+        let (mut tree, root, anchor, menu) = overlay_scene(true, true);
+        let anchor_center = {
+            let (x, y) = tree.absolute_position(anchor);
+            let layout = tree.layout(anchor);
+            Point::new(
+                x + f64::from(layout.size.width) / 2.0,
+                y + f64::from(layout.size.height) / 2.0,
+            )
+        };
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: anchor_center,
+                button: PointerButton::Secondary,
+            },
+            &dispatch_config(),
+            Instant::now(),
+        );
+        assert!(
+            tree.get(menu).is_some(),
+            "a press back on the overlay's own anchor must not dismiss it"
+        );
+    }
+
+    #[test]
+    fn dismiss_on_outside_click_false_survives_a_real_outside_press() {
+        let (mut tree, root, _, menu) = overlay_scene(false, true);
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(250.0, 250.0),
+                button: PointerButton::Primary,
+            },
+            &dispatch_config(),
+            Instant::now(),
+        );
+        assert!(
+            tree.get(menu).is_some(),
+            "dismiss_on_outside_click: false must never be dismissed by an outside press"
+        );
+    }
+
+    #[test]
+    fn a_real_escape_dispatch_closes_every_dismiss_on_escape_overlay() {
+        let (mut tree, root, _, menu) = overlay_scene(true, true);
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::KeyPressed {
+                key: Key::Escape,
+                shift: false,
+            },
+            &dispatch_config(),
+            Instant::now(),
+        );
+        assert_eq!(outcome, DispatchOutcome::None);
+        assert!(
+            tree.overlay_meta(menu).is_none(),
+            "a real Escape dispatch must genuinely close a dismiss_on_escape overlay"
+        );
+        assert!(
+            !tree.get(root).unwrap().children.contains(&menu),
+            "the closed overlay must no longer be displayed, detached from root"
+        );
+    }
+
+    #[test]
+    fn dismiss_on_escape_false_survives_a_real_escape_dispatch() {
+        let (mut tree, root, _, menu) = overlay_scene(true, false);
+        tree.dispatch(
+            root,
+            InputEvent::KeyPressed {
+                key: Key::Escape,
+                shift: false,
+            },
+            &dispatch_config(),
+            Instant::now(),
+        );
+        assert!(
+            tree.get(menu).is_some(),
+            "dismiss_on_escape: false must never be dismissed by an Escape dispatch"
+        );
+    }
+
+    /// M10 Phase 1 (§11.3): the exact real scenario that motivated
+    /// `close_overlay`'s own detach-not-destroy fix -- close an
+    /// overlay via a real Escape dispatch, then reopen the *same*
+    /// content node again via `open_overlay`. Must not panic (a
+    /// destroyed content `NodeId` would make `open_overlay`'s own
+    /// `self.get(content).expect(...)` fail), and the reopened overlay
+    /// must be for real (attached to root again).
+    #[test]
+    fn a_dismissed_overlays_own_content_can_be_reopened() {
+        let (mut tree, root, anchor, menu) = overlay_scene(true, true);
+        tree.dispatch(
+            root,
+            InputEvent::KeyPressed {
+                key: Key::Escape,
+                shift: false,
+            },
+            &dispatch_config(),
+            Instant::now(),
+        );
+        assert!(
+            tree.overlay_meta(menu).is_none(),
+            "sanity: must be closed first"
+        );
+
+        tree.open_overlay(
+            root,
+            anchor,
+            menu,
+            OverlayMeta {
+                anchor,
+                dismiss_on_outside_click: true,
+                dismiss_on_escape: true,
+            },
+        );
+
+        assert!(
+            tree.overlay_meta(menu).is_some(),
+            "the same content NodeId must be reopenable after a real dismissal"
+        );
+        assert!(
+            tree.get(root).unwrap().children.contains(&menu),
+            "the reopened overlay must be genuinely attached to root again"
         );
     }
 

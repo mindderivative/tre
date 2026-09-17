@@ -1,67 +1,81 @@
-# Log: M9 Phase 3 — Real Automatic Teardown for Container Transform (§7.6), closing M9 entirely
+# Log: M10 Phase 1 — Real Overlay Dismissal (§11.3)
 
-Corresponds to `BUILD_TRACKER.md` M9 Phase 3, the milestone's own final
-phase. `Window.begin_container_transform` gains an optional
-`on_complete` parameter, wired onto the destination's own driven
-`transform` animation via the new completion mechanism — a real app can
-now pass a callback that calls `end_container_transform` and have
-teardown fire automatically, closing the exact gap `container_
-transform.rs`'s own doc comment named as confirmed-still-unwired.
+Corresponds to `BUILD_TRACKER.md` M10 Phase 1.
+`OverlayMeta.dismiss_on_outside_click`/`dismiss_on_escape` (real data
+since M3 step 13) wired to `Tree::dispatch`'s real `PointerPressed`/
+`KeyPressed` arms.
 
 ## Investigation before writing code
 
-- `engine_md3::container_transform::begin` is pure Rust with no `pyo3`
-  awareness (§4) — it can accept a plain `Option<CompletionHandle>`
-  (already a real dependency of `engine-md3` via `engine-core`) but can
-  never itself mint one or call a Python callback; only `engine-py` can
-  do either.
-- `begin`'s own real body already drives all four properties with one
-  shared `now`/`config.duration`/`config.curve` (confirmed via direct
-  re-read) — attaching the one real handle to just the `transform`
-  animation is sufficient, since all four complete on the exact same
-  tick.
-- `Node::animate`'s own `animate_field` helper (M9 Phase 2) is
-  `engine-py`-only — `container_transform::begin` needed its own,
-  simpler, `engine-core`-only branch (`animate_to` vs. `animate_to_
-  with_completion` based on a plain `Option<CompletionHandle>`).
+- `overlay.rs`'s own module doc comment was confirmed stale: claimed
+  real dispatch/hit-testing "don't exist anywhere in this codebase yet"
+  — true at M3 step 13, false since M4/M5.
+- `Tree::dispatch`'s own `Key::Escape` arm already named this exact gap
+  in a real comment. Confirmed via grep: `overlay_meta` had exactly one
+  real reader before this phase (`dispatch::open_context_menu`'s own
+  re-open guard), never a dismissal check.
+- `Tree::hit_test(root, point)` treats `root`'s own `parent_transform`
+  as identity — confirmed safe to call with an overlay's own `content`
+  `NodeId` directly, since `open_overlay` always attaches `content` as
+  a direct child of the tree's own true root, which always has identity
+  location/transform.
+
+## Real finding during implementation (not anticipated during scoping)
+
+`Tree::close_overlay`'s own original implementation used `Tree::remove`
+— full, irreversible destruction. Nothing in `engine-py` ever called it
+before this phase (confirmed via grep) — real dismissal was the first
+live caller. The moment it became reachable, the single most realistic
+use case broke: right-click a menu open, dismiss it, right-click the
+*same* anchor again — `Node.set_context_menu` registers one specific,
+reusable content `NodeId`; destroying it on first dismissal left
+`open_context_menu`'s own stored id dangling, panicking the next
+reopen (`open_overlay`'s own `self.get(content).expect(...)`). Caught
+via this project's own real pytest-level verification (`test_context_
+menu.py`'s existing "right-click twice" test started panicking), not
+left as a follow-up: `close_overlay` now detaches, not destroys — the
+identical contract `Node.set_context_menu` already committed to.
+
+Also found: `dismiss_overlays_outside`'s first draft treated *any*
+press outside the overlay's own bounds as dismissal, including a press
+back on the overlay's own anchor — which broke the "right-click the
+same anchor twice" test differently (the anchor's own second press was
+itself misclassified as an outside click, consuming it before
+`SecondaryActivated` could fire). Fixed by also excluding the anchor's
+own bounds from the outside-click check.
 
 ## What happened
 
-`container_transform::begin` gains `on_complete: Option<CompletionHandle
->`, wired onto the destination's own `transform` animation only.
-`Window.begin_container_transform` gains `on_complete: Option<
-Py<PyAny>>`, registered into `self.completions` the same way `Node.
-animate` already does, and passed down as the new handle.
+New `Tree::dismiss_overlays_outside(point) -> bool` (private): closes
+every open overlay with `dismiss_on_outside_click: true` whose own
+content subtree *and* anchor don't contain `point`. New `Tree::
+dismiss_escapable_overlays()` (private): closes every open overlay with
+`dismiss_on_escape: true`, unconditionally. `Tree::dispatch`'s
+`PointerPressed` arm calls the former first, consuming the press (skips
+normal hit/ripple registration) if anything was dismissed; `Key::
+Escape` calls the latter instead of being a no-op. `close_overlay`
+changed from destroy to detach (see finding above). Two stale doc
+comments corrected (`overlay.rs`'s own module doc comment; `overlay_
+meta`'s own doc comment).
 
-Two stale doc comments corrected along the way (this project's own
-established discipline): `container_transform.rs`'s own module doc
-comment, which explicitly named this exact gap as "confirmed-still-
-unwired... separate, larger, unscoped work," now states it's real;
-`CompletionHandle`'s own doc comment in `animation.rs`, which said "no
-allocator/registry exists yet," now names the real one (M9 Phase 2's
-`CompletionRegistry`).
+New `engine-core` tests: outside press dismisses; in-bounds press
+leaves it open and still dispatches normally; `dismiss_on_outside_
+click: false` survives an outside press; a press back on the anchor
+itself never dismisses its own overlay (the real regression test); a
+real `Key::Escape` dispatch dismisses every `dismiss_on_escape`
+overlay; `dismiss_on_escape: false` survives Escape; a dismissed
+overlay's own content can be reopened (the real motivating scenario
+for the detach-not-destroy fix); `close_overlay`'s own existing test
+updated to assert detachment, not destruction. New pytest tests
+(`test_context_menu.py`): a real outside click dismisses a live context
+menu; a real Escape press dismisses one — both proven functionally
+(the menu item's own click handler no longer fires once dismissed),
+the same style every other test in that file already uses.
 
-New `engine-md3` tests: a real `on_complete` handle given to `begin`
-genuinely reaches `Tree::tick_all`'s own real drain once the transition
-finishes, not before; `on_complete: None` never reports a completion —
-the real regression counterpart. New pytest test: `Window.
-begin_container_transform(..., on_complete=callback)` accepted without
-raising (the same FFI-smoke-test scope M9 Phase 2's own tests used —
-`App.run()` needs a real display to prove live firing). Updated
-`examples/container_transform.py`: `on_complete` now calls `end_
-container_transform` automatically, replacing the manual call at the
-end of the script — the real, live, closing proof this milestone's own
-investigation set out to enable.
-
-Full `cargo test --workspace --release` clean (`engine-md3` gains 2
-tests: 7 → 9 — every prior test passed unmodified), `cargo clippy
---workspace --all-targets -- -D warnings`, `cargo fmt --check` all
-clean. `maturin develop --release` + full `pytest tests/` (83 passed,
-up from 82, 1 skipped) and all sixteen examples confirmed clean.
-
-M9 — Animation Completion Callbacks is now complete: all 3 phases done.
-`CompletionHandle`/`ActiveAnimation.on_complete` were real, exported,
-genuinely unused types before this milestone — now wired end to end,
-from `Animated::tick`'s own real per-tick detection through `Tree::
-tick_all`'s real drain, `engine-py`'s own Python-facing registry, and
-into container transform's own real automatic teardown.
+Full `cargo test --workspace --release` clean (`engine-core` gains 8
+new tests, 1 existing test updated for the real detach-not-destroy
+contract change — every other prior test passed unmodified), `cargo
+clippy --workspace --all-targets -- -D warnings`, `cargo fmt --check`
+all clean. `maturin develop --release` + full `pytest tests/` (85
+passed, up from 83, 1 skipped) and all sixteen examples confirmed
+clean.
