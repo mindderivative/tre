@@ -18,13 +18,15 @@
 //! insert, remove) is fully real.
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use engine_core::{NodeId, Tree};
 use engine_md3::ColorScheme;
 
 use crate::build::{SpecError, build_tree, patch_node};
 use crate::cascade::Stylesheet;
-use crate::spec::{WidgetSpec, parse_view};
+use crate::include::parse_view_with_includes;
+use crate::spec::WidgetSpec;
 
 /// Owns the live mapping from a view's own author-assigned `id`s (§16.1)
 /// to their current `NodeId`s, plus the last-loaded `WidgetSpec` tree to
@@ -47,8 +49,9 @@ impl Reconciler {
         yaml: &str,
         sheet: Option<&Stylesheet>,
         scheme: Option<&ColorScheme>,
+        base_dir: Option<&Path>,
     ) -> Result<Self, SpecError> {
-        let spec = parse_view(yaml)?;
+        let spec = parse_view_with_includes(yaml, base_dir)?;
         let root = build_tree(tree, &spec, sheet, scheme)?;
         let mut ids = HashMap::new();
         record_ids(tree, root, &spec, &mut ids);
@@ -76,8 +79,9 @@ impl Reconciler {
         yaml: &str,
         sheet: Option<&Stylesheet>,
         scheme: Option<&ColorScheme>,
+        base_dir: Option<&Path>,
     ) -> Result<(), SpecError> {
-        let new_spec = parse_view(yaml)?;
+        let new_spec = parse_view_with_includes(yaml, base_dir)?;
 
         if new_spec.id != self.spec.id || new_spec.kind != self.spec.kind {
             tree.remove(self.root);
@@ -225,11 +229,13 @@ children:
     style: {width: 10, height: 10, background: "#112233"}
 "##;
         let mut tree = Tree::new();
-        let mut reconciler = Reconciler::load(&mut tree, yaml, None, None).unwrap();
+        let mut reconciler = Reconciler::load(&mut tree, yaml, None, None, None).unwrap();
         let swatch_id = reconciler.id_of("swatch").unwrap();
 
         // Reconcile against byte-identical YAML -- nothing changed at all.
-        reconciler.reconcile(&mut tree, yaml, None, None).unwrap();
+        reconciler
+            .reconcile(&mut tree, yaml, None, None, None)
+            .unwrap();
 
         assert_eq!(
             reconciler.id_of("swatch"),
@@ -257,10 +263,12 @@ children:
     style: {width: 10, height: 10, background: "#445566"}
 "##;
         let mut tree = Tree::new();
-        let mut reconciler = Reconciler::load(&mut tree, before, None, None).unwrap();
+        let mut reconciler = Reconciler::load(&mut tree, before, None, None, None).unwrap();
         let swatch_id = reconciler.id_of("swatch").unwrap();
 
-        reconciler.reconcile(&mut tree, after, None, None).unwrap();
+        reconciler
+            .reconcile(&mut tree, after, None, None, None)
+            .unwrap();
 
         assert_eq!(
             reconciler.id_of("swatch"),
@@ -293,10 +301,12 @@ children:
     style: {width: 10, height: 10, background: "#445566"}
 "##;
         let mut tree = Tree::new();
-        let mut reconciler = Reconciler::load(&mut tree, before, None, None).unwrap();
+        let mut reconciler = Reconciler::load(&mut tree, before, None, None, None).unwrap();
         let a_id = reconciler.id_of("a").unwrap();
 
-        reconciler.reconcile(&mut tree, after, None, None).unwrap();
+        reconciler
+            .reconcile(&mut tree, after, None, None, None)
+            .unwrap();
 
         assert!(
             tree.get(a_id).is_none(),
@@ -332,11 +342,13 @@ children:
     style: {width: 10, height: 10, background: "#112233"}
 "##;
         let mut tree = Tree::new();
-        let mut reconciler = Reconciler::load(&mut tree, before, None, None).unwrap();
+        let mut reconciler = Reconciler::load(&mut tree, before, None, None, None).unwrap();
         let old_id = reconciler.id_of("w").unwrap();
         assert!(matches!(tree.get(old_id).unwrap().kind, NodeKind::Rect));
 
-        reconciler.reconcile(&mut tree, after, None, None).unwrap();
+        reconciler
+            .reconcile(&mut tree, after, None, None, None)
+            .unwrap();
 
         assert!(
             tree.get(old_id).is_none(),
@@ -356,10 +368,12 @@ children:
         let after = "id: different-root\nkind: Container\n";
 
         let mut tree = Tree::new();
-        let mut reconciler = Reconciler::load(&mut tree, before, None, None).unwrap();
+        let mut reconciler = Reconciler::load(&mut tree, before, None, None, None).unwrap();
         let old_root = reconciler.root();
 
-        reconciler.reconcile(&mut tree, after, None, None).unwrap();
+        reconciler
+            .reconcile(&mut tree, after, None, None, None)
+            .unwrap();
 
         assert!(tree.get(old_root).is_none());
         assert_ne!(reconciler.root(), old_root);

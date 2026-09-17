@@ -32,6 +32,54 @@ pub enum SpecError {
         #[source]
         source: peniko::color::ParseError,
     },
+    /// M19 Phase 2 (§16.6): `include: {path}` appeared but no `base_dir`
+    /// was given to resolve it against -- a real, stated error, not a
+    /// silent no-op (an include with nowhere to resolve from must fail
+    /// loudly, the same "fail loudly at the boundary" reasoning every
+    /// other `SpecError` variant already follows).
+    #[error("include: {path:?} requires a base directory to resolve against, none given")]
+    IncludeNoBaseDir { path: String },
+    /// `include:`'s own value must be a plain string path -- any other
+    /// YAML shape (a number, a nested mapping, ...) is a real,
+    /// stated authoring error, not silently coerced or ignored.
+    #[error("include: value must be a plain string path, got {value:?}")]
+    IncludeValueNotString { value: String },
+    /// An `include:` mapping with any other key alongside it -- real,
+    /// deliberately strict: §16.6's own illustration is always a bare
+    /// single-key `{include: path}` mapping, so extra keys are almost
+    /// certainly an author mistake worth failing on, not silently
+    /// ignoring either the include or the extra keys.
+    #[error(
+        "include: {path:?} must be the only key in its own mapping, found {extra_keys:?} alongside it"
+    )]
+    IncludeNotSoleKey {
+        path: String,
+        extra_keys: Vec<String>,
+    },
+    /// Real path confinement (ARCHITECTURE.md §16.6's own stated
+    /// requirement): an `include:` path that resolves outside its own
+    /// base directory (an absolute path, or a real `../` escape,
+    /// checked via `Path::canonicalize` so a symlink can't evade it
+    /// either).
+    #[error("include: {path:?} resolves outside the view directory it was included from")]
+    IncludePathEscapesBase { path: String },
+    /// A file cannot transitively include itself.
+    #[error("include: {path:?} would create a real include cycle")]
+    IncludeCycle { path: std::path::PathBuf },
+    /// A real, stated depth limit -- not manufactured ahead of a real
+    /// need, but a genuinely unbounded include chain (accidental or
+    /// adversarial) needs a hard stop somewhere.
+    #[error("include chain exceeded the maximum depth of {limit}")]
+    IncludeDepthExceeded { limit: usize },
+    /// Wraps a real filesystem failure reading an included file (not
+    /// found, permission denied, ...) with the path that failed, since
+    /// `std::io::Error` alone doesn't carry it.
+    #[error("failed to read included view {path:?}: {source}")]
+    IncludeReadFailed {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// Parses `yaml` and builds it into `tree`, returning the new subtree's

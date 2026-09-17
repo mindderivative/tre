@@ -1,75 +1,86 @@
-# Plan: M19 Phase 1 — Real Hot-Reload Wiring (§16.4)
+# Plan: M19 Phase 2 — Real View Composition via `include:` (§16.6)
 
-Corresponds to `BUILD_TRACKER.md` M19 Phase 1: `ViewWatcher` reaches a
-real, live `View` for the first time, polling for a real file change
-and calling `Reconciler::reconcile` to patch the live `Tree` in place.
+Corresponds to `BUILD_TRACKER.md` M19 Phase 2, closing M19 entirely.
+`WidgetSpec` gains a real `include:` field; loading expands each
+included file's own `WidgetSpec` tree in place, before validation, as
+ordinary children indistinguishable from inline ones — with real path
+confinement, cycle detection, and a depth limit.
 
 ## Investigation before writing code
 
-- **Real, significant, previously-unregistered finding:** `View` has
-  **no live-window/render-loop concept of its own at all** — confirmed
-  via direct read of `view.rs`'s own module doc comment and, decisively,
-  `examples/two_way_binding.py`'s own docstring, stated in plain words:
-  "`View` has no live-window/render-loop concept of its own... there's
-  no `App.run()` here." `Window`/`App` (`window.rs`/`app.rs`) never
-  reference `View` at all (confirmed via grep) — `View` and the real,
-  GPU-backed render loop are two entirely separate, never-connected
-  systems today. This means "wire `ViewWatcher` into a real running
-  `App`'s frame loop" (the scoping paragraph's own literal words) isn't
-  literally buildable as stated — there is no such frame loop to hook
-  into. The honest translation: `View` gains its own real, explicit,
-  caller-invoked poll method, matching §16.4's own "the caller's own
-  frame loop calls `poll_changed()` once per tick" as closely as
-  `View`'s real, pre-existing, stated architecture allows.
-- `View::new` reads its own `path` via `std::fs::read_to_string` but
-  never stores it — a real, necessary fix, since a reload needs to
-  re-read the same file later.
-- `Reconciler::reconcile(&mut self, tree, yaml, sheet, scheme) ->
-  Result<(), SpecError>` is real and already used correctly by
-  `engine-spec`'s own tests (keyed diffing, unchanged nodes keep their
-  real `NodeId`/focus/animations, confirmed via direct read).
-- **Real, stated scope boundary, not a silent gap:** `bindings:`/
-  `handlers:`/`two_way:` are resolved entirely separately from
-  `Reconciler::reconcile` — by `View::_attach`'s own `BindingResolver`
-  logic, against a `viewmodel: Py<PyAny>` that `View` doesn't currently
-  store either. A hot-reloaded view whose YAML adds a *new* binding or
-  handler needs `_attach` called again — this phase's own module doc
-  comment already half-anticipates this split ("a change that adds a
-  new binding or handler calls back into the `BindingResolver`" is
-  named as a distinct case from plain styling patches). Re-running
-  `_attach` automatically on every reload risks double-subscribing a
-  `Signal`'s re-evaluation callback (not verified safe) and needs
-  remembering the `viewmodel` too — real, additional scope this phase
-  deliberately does not take on. `poll_reload` patches structure/
-  paint/layout only; an app that adds a genuinely new binding after a
-  hot-reload must call `_attach` again itself, the same way it would
-  after adding one imperatively.
-- A construction-time `ViewWatcher::watch` failure (an unusual
-  filesystem with no real inotify-equivalent) is treated as non-fatal,
-  the same "real, expected, gracefully-handled" policy this codebase
-  already applies to no-GPU/no-display (TRE v1 finding #261) — `View`
-  still works, `poll_reload` just always reports no change.
+- `WidgetSpec`'s own `#[serde(deny_unknown_fields)]` + required `id`/
+  `kind` fields mean a bare `{include: "path"}` mapping can't
+  deserialize directly into it (missing required fields, an unknown
+  key) — confirmed via direct read of `spec.rs`. Two real design
+  options: widen `WidgetSpec.children`'s own element type to a new
+  untagged enum (`Include | Widget(WidgetSpec)`), or expand `include:`
+  markers on the *raw* `serde_yaml_ng::Value` tree before ever
+  deserializing into `WidgetSpec` at all. The untagged-enum route
+  would ripple `children`'s type through `build.rs`/`reconcile.rs`
+  everywhere it's walked; the raw-`Value` route keeps `WidgetSpec`
+  itself completely unchanged — `build.rs`/`reconcile.rs` need zero
+  changes — and matches §16.6's own text exactly: "expanded during
+  loading, *before* validation... indistinguishable from inline ones
+  once loaded." Chosen.
+- `serde_yaml_ng::Value` (confirmed via direct source read of the
+  vendored crate) is `{Null, Bool, Number, String, Sequence, Mapping,
+  Tagged}`; `Mapping::get<I: Index>` accepts a plain `&str` key
+  (`impl Index for str`), and `Mapping` is `IntoIterator` over owned
+  `(Value, Value)` pairs — enough to walk and rebuild a tree generically
+  without a second, hand-rolled YAML representation.
+- `Reconciler::load`/`Reconciler::reconcile` already take two
+  additive `Option<&T>` parameters (`sheet`, `scheme`) — widening both
+  with a third, `base_dir: Option<&Path>`, matches that exact existing
+  precedent rather than inventing a new shape. `None` means "no base
+  directory known" — an `include:` encountered with no `base_dir`
+  fails with a clear error, not a silent no-op. 9 existing call sites
+  (7 in `engine-spec`'s own tests, 2 in `engine-py::view.rs`) need one
+  more `None` argument each — a bounded, mechanical change.
+- Real security requirements, named explicitly in ARCHITECTURE.md's
+  own §16.6 text: path confinement (no `../` escaping the view
+  directory), cycle detection (a file cannot transitively include
+  itself), a depth limit. `Path::canonicalize()` resolves symlinks too
+  (a real, not superficial, confinement check) and requires the target
+  to actually exist — acceptable, since the file has to be read anyway.
 
 ## Design
 
-- `View` gains `path: String` (remembered from construction) and
-  `watcher: Option<ViewWatcher>` (`None` if the initial watch failed,
-  logged via `tracing::warn!`, non-fatal).
-- New `View.poll_reload(&mut self) -> PyResult<bool>`: `false` with no
-  watcher or no real change detected (`ViewWatcher::poll_changed()`);
-  otherwise re-reads `path`, calls `self.reconciler.reconcile(...)` to
-  patch the live `Tree`, and returns `true`. Structural/paint/layout
-  changes only — bindings/handlers are the caller's own responsibility
-  to re-attach, per the stated scope boundary above.
+- New `crates/engine-spec/src/include.rs` module (mirroring `watch.rs`'s
+  own precedent of one small, focused file per capability):
+  `expand_includes(value, base_dir, visited: &mut Vec<PathBuf>) ->
+  Result<Value, SpecError>` — recursively walks every `Mapping`/
+  `Sequence`. A mapping whose *sole* key is `include` (any other key
+  alongside it is a real, stated error, not silently ignored) resolves
+  its string value against `base_dir` via a confining `canonicalize`
+  check, reads+parses the target file's own raw YAML, recurses into
+  it (with the target's own parent directory as the new `base_dir` for
+  *its* includes, and itself pushed onto `visited` for cycle
+  detection), and splices the fully-expanded result in place of the
+  include marker. `SpecError` gains new variants for a missing/absent
+  `base_dir`, an out-of-bounds path, a cycle, the depth limit, and a
+  wrapped file-read/parse failure.
+- New `parse_view_with_includes(yaml, base_dir) -> Result<WidgetSpec,
+  SpecError>`: parses into a raw `Value` first, calls `expand_includes`,
+  then deserializes the fully-expanded `Value` into `WidgetSpec` via
+  `serde_yaml_ng::from_value` — `deny_unknown_fields`'s own real
+  validation runs on the *final*, expanded tree, exactly as specified.
+- `Reconciler::load`/`Reconciler::reconcile` gain `base_dir: Option<
+  &Path>` (a third parameter, after `scheme`); when `Some`, they call
+  `parse_view_with_includes` instead of the plain `parse_view`.
+- `engine-py::view.rs`: `View::new`/`poll_reload` pass `Some(parent
+  directory of self.path)` — the first real caller besides tests.
 
 ## Verification plan
 
 `cargo test --workspace --release`/`clippy -D warnings`/`fmt --check`;
-`maturin develop --release`; new `tests/test_hot_reload.py` — a real
-temp file, edited on disk between two `poll_reload()` calls, proving a
-real structural change (a widget's style/content) reaches the live
-`Tree` and an *unchanged* widget's own `NodeId` survives (matching
-`Reconciler`'s own existing `engine-spec` unit-test claim, now proven
-end to end through the real Python FFI surface for the first time);
-every example re-run; `LOG.md`/`BUILD_TRACKER.md`/tracker artifact/
-commit/memory.
+new `engine-spec` tests: a real two-file include splices in correctly;
+nested includes; `../` path-escape rejected; a real self-including
+cycle rejected; the depth limit rejected; an `include:` with no
+`base_dir` fails clearly, not silently; `include:` alongside another
+key in the same mapping fails clearly. `maturin develop --release`;
+new `tests/test_view_composition.py` proving a real `View` loads a
+two-file `view.yaml` correctly through the real FFI path; every
+example re-run (a new `examples/view_composition.py` + two YAML
+files, matching the established per-feature convention); `LOG.md`/
+`BUILD_TRACKER.md`/tracker artifact/commit/memory — closing M19
+entirely (both phases).

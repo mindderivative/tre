@@ -46,7 +46,8 @@ use std::rc::Rc;
 
 use engine_core::{EventKind, InputEvent, NodeId, PointerButton, Tree};
 use engine_spec::{
-    Expression, Reconciler, ViewWatcher, WidgetSpec, evaluate, parse_binding, parse_view,
+    Expression, Reconciler, ViewWatcher, WidgetSpec, evaluate, parse_binding,
+    parse_view_with_includes,
 };
 use peniko::kurbo::Point;
 use pyo3::IntoPyObjectExt;
@@ -310,10 +311,16 @@ impl View {
     fn new(path: String) -> PyResult<Self> {
         let yaml = std::fs::read_to_string(&path)
             .map_err(|e| PyRuntimeError::new_err(format!("failed to read view {path:?}: {e}")))?;
+        // M19 Phase 2 (§16.6): an `include:` path is only ever
+        // meaningful relative to the file that named it -- `View`'s
+        // own directory is the real base every include in this view
+        // (and, recursively, every file it includes) resolves against.
+        let base_dir = std::path::Path::new(&path).parent();
         let mut tree = Tree::new();
-        let reconciler = Reconciler::load(&mut tree, &yaml, None, None)
+        let reconciler = Reconciler::load(&mut tree, &yaml, None, None, base_dir)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let spec = parse_view(&yaml).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let spec = parse_view_with_includes(&yaml, base_dir)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
         let mut bindings = Vec::new();
         collect_bindings(&spec, &mut bindings);
@@ -407,9 +414,10 @@ impl View {
         let yaml = std::fs::read_to_string(&self.path).map_err(|e| {
             PyRuntimeError::new_err(format!("failed to re-read view {:?}: {e}", self.path))
         })?;
+        let base_dir = std::path::Path::new(&self.path).parent();
         let mut tree = self.tree.borrow_mut();
         self.reconciler
-            .reconcile(&mut tree, &yaml, None, None)
+            .reconcile(&mut tree, &yaml, None, None, base_dir)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(true)
     }

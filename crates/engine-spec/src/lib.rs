@@ -10,6 +10,7 @@
 mod binding;
 mod build;
 mod cascade;
+mod include;
 mod reconcile;
 mod spec;
 mod watch;
@@ -20,6 +21,7 @@ pub use binding::{
 };
 pub use build::{SpecError, build_tree, load_styled_view, load_view};
 pub use cascade::{StyleRule, Stylesheet, parse_stylesheet, resolve_style};
+pub use include::parse_view_with_includes;
 pub use reconcile::Reconciler;
 pub use spec::{FlexDirectionSpec, NodeKindSpec, StyleSpec, TextSpec, WidgetSpec, parse_view};
 pub use watch::ViewWatcher;
