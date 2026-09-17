@@ -347,13 +347,26 @@ impl PyWindow {
     /// own text names this as container-transform's typical real curve.
     /// Computes layout first (the same reason `click`/`hover` do) so the
     /// captured bounds are fresh, not stale from before this call.
-    #[pyo3(signature = (trigger, destination, duration_ms=300, content_stagger_ms=90))]
+    ///
+    /// M9 Phase 3 (§5): `on_complete`, when given, is called with no
+    /// arguments exactly once, the real tick the whole transition
+    /// genuinely finishes -- registered the same real way `Node.
+    /// animate(..., on_complete=...)` already is, and wired onto the
+    /// destination's own driven `transform` animation (`engine_md3::
+    /// container_transform::begin`'s own doc comment: all four driven
+    /// properties share one `start`/`duration`, so any one of them
+    /// completing is enough). A real app can now pass a callback that
+    /// calls `end_container_transform` and get automatic teardown --
+    /// the exact gap `container_transform.rs`'s own doc comment named
+    /// as confirmed-still-unwired before this phase.
+    #[pyo3(signature = (trigger, destination, duration_ms=300, content_stagger_ms=90, on_complete=None))]
     fn begin_container_transform(
         &mut self,
         trigger: PyRef<'_, Node>,
         destination: PyRef<'_, Node>,
         duration_ms: u64,
         content_stagger_ms: u64,
+        on_complete: Option<Py<PyAny>>,
     ) -> PyResult<()> {
         if !Rc::ptr_eq(&self.tree, &trigger.tree) || !Rc::ptr_eq(&self.tree, &destination.tree) {
             return Err(EngineError::ForeignNode.into());
@@ -371,12 +384,14 @@ impl PyWindow {
             curve: engine_core::MotionCurve::Emphasized,
             content_stagger: std::time::Duration::from_millis(content_stagger_ms),
         };
+        let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
         engine_md3::begin_container_transform(
             &mut tree,
             trigger.id,
             destination.id,
             &config,
             std::time::Instant::now(),
+            handle,
         );
         Ok(())
     }

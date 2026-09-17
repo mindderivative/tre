@@ -1,95 +1,73 @@
-# Plan: M9 Phase 2 — Python-Facing `on_complete` Callbacks
+# Plan: M9 Phase 3 — Real Automatic Teardown for Container Transform (§7.6, closing its own stated gap and M9 entirely)
 
-Corresponds to `BUILD_TRACKER.md` M9 Phase 2's own scoping: `Node.
-animate(property, to, duration_ms, on_complete=None)` mints a real
-`CompletionHandle` and stores the Python callback keyed by it; `App::
-run`'s own per-frame loop drains `Tree::tick_all`'s new completions and
-invokes each matching stored Python callback exactly once.
+Corresponds to `BUILD_TRACKER.md` M9 Phase 3's own scoping: `Window.
+begin_container_transform` gains an optional `on_complete` parameter,
+wired onto the destination's own driven `transform` animation via the
+new completion mechanism — a real app can now pass a callback that
+calls `end_container_transform` and have teardown fire automatically,
+closing the exact gap `container_transform.rs`'s own doc comment named
+as confirmed-still-unwired.
 
 ## Investigation before writing code
 
-- `dispatch.rs`'s own `HandlerMap`/`run_dispatch_outcome`/
-  `call_handler` (M4 Phase 1 step 3, generalized M4 Phase 6) is the
-  exact real template to mirror: a shared `Rc<RefCell<HashMap<...,
-  Py<PyAny>>>>`, cloned into every `Node`/`PyWindow`/`View` the same
-  way, plus a "look up, clone out, drop the borrow, *then* call" helper
-  (avoids a re-entrant `RefCell` borrow panic if the callback itself
-  registers a new one — a real, plausible pattern this codebase already
-  guards against for click/hover handlers). Completion callbacks follow
-  the identical shape, with one real difference: they're one-shot
-  (`HashMap::remove`, not `get`) — matching a real CSS `transitionend`/
-  JS Promise-style single fire, not a repeating subscription.
-- `Node`'s own `theme: SharedTheme` field (M7 Phase 3) is the most
-  recent real precedent for "a new shared registry threaded through
-  every `Node` construction site" — `window.rs` (4 sites) shares the
-  real one; `view.rs` (3 sites) gets a fresh, private instance each,
-  since `View` has no real per-frame render loop to drain completions
-  through (confirmed via its own module doc comment: "never embedded
-  into a live `winit`-driven window") — a completion registered on a
-  `View`-created node would sit unreachable forever, the same real,
-  stated scope limit `theme` already accepted for `View`.
-- `App::run`'s own `on_frame` closure (`app.rs`) already captures `py:
-  Python<'_>` from the enclosing `run(&self, py: Python<'_>, ...)`
-  method (confirmed by reading the `on_input` closure's own body,
-  which already uses `py` the same way) — no new parameter threading
-  needed to reach it from `on_frame`.
-- `Node::animate`'s own real dispatch (`node.rs`) is six separate match
-  arms, each calling a *different* `Animated<T>` field's own
-  `.animate_to(...)` (`T` differs per arm: `f64`, `Color`, `Affine`,
-  `ShapeKey`) — no existing shared helper unifies them. A small,
-  private, generic `animate_field<T: Interpolate + Clone>(field: &mut
-  Animated<T>, ..., handle: Option<CompletionHandle>)` (choosing
-  `animate_to_with_completion` vs. plain `animate_to` based on
-  `handle`) is directly reusable across all six arms, avoiding
-  per-arm duplication of that branch.
-- Registering the `CompletionHandle` *inside* whichever single arm
-  actually matches (not once up front, before knowing `property` is
-  valid) avoids leaking an orphaned, never-invoked callback into the
-  registry when a caller passes an unknown property name (the existing
-  `UnknownProperty` error path) — `on_complete: Option<Py<PyAny>>` is
-  moved into exactly one arm at match time, which Rust allows.
+- `engine_md3::container_transform::begin(tree, trigger, destination,
+  config, now)` is a pure Rust function with no `pyo3` awareness (§4:
+  `engine-md3` never depends on `pyo3`) — it can accept a plain
+  `Option<CompletionHandle>` (already `engine-core`, already a real
+  dependency of `engine-md3`) but can never itself mint one or call a
+  Python callback; only `engine-py` can do either.
+- `begin`'s own real body already drives all four properties
+  (`transform`/`corner_radius`/`background`/`elevation`) with one
+  shared `now`/`config.duration`/`config.curve` — confirmed via direct
+  re-read — so attaching the one real handle to just the `transform`
+  animation (matching this phase's own scoping text) is sufficient:
+  all four complete on the exact same tick.
+- `Node::animate`'s own new `animate_field` helper (M9 Phase 2) is
+  `engine-py`-only (lives in `node.rs`, takes a `Py<PyAny>`-registering
+  closure) — `container_transform::begin` needs its own, simpler,
+  `engine-core`-only branch (`animate_to` vs. `animate_to_with_
+  completion` based on a plain `Option<CompletionHandle>`), since it
+  has no `SharedCompletions`/`Py<PyAny>` to work with at all.
+- `Window.begin_container_transform` (`window.rs`) already mirrors
+  `Node.animate`'s own real construction shape closely enough (both
+  build a `ContainerTransformConfig`-equivalent and call into
+  `engine_md3`) that registering a handle there, the same way `Node.
+  animate` now does, and passing it down as a new function parameter
+  is the natural, minimal extension — no new registry, no new GC
+  obligation (`PyWindow.completions` already exists and is already
+  traversed, M9 Phase 2).
 
 ## Design
 
-- New `dispatch::CompletionRegistry { next_id: u64, callbacks: HashMap<
-  CompletionHandle, Py<PyAny>> }` with `register(&mut self, callback:
-  Py<PyAny>) -> CompletionHandle` (mints a fresh, monotonically
-  increasing handle); `type SharedCompletions = Rc<RefCell<
-  CompletionRegistry>>`.
-- New `dispatch::run_completions(completions: &SharedCompletions,
-  completed: Vec<CompletionHandle>, py: Python<'_>)` — for each real
-  handle, removes (not just looks up) its callback and calls it,
-  printing (not raising) any real Python exception the same way
-  `call_handler` already does.
-- `PyWindow` gains `completions: SharedCompletions`, initialized fresh
-  in `::new`. `Node` gains the same field, threaded through all 7
-  construction sites (`window.rs` shares `self.completions.clone()`;
-  `view.rs` gets a fresh, private instance each).
-- `Node::animate` gains `on_complete: Option<Py<PyAny>>` (`#[pyo3(
-  signature = (property, to, duration_ms=0, on_complete=None))]`). A
-  new private `animate_field` helper (generic over `T: Interpolate +
-  Clone`) replaces each arm's own direct `.animate_to(...)` call,
-  registering a real handle (moving `on_complete` into whichever one
-  arm matches) only when one was actually given.
-- `App::run`'s `WindowSetup`/`WindowRuntime` gain `completions:
-  SharedCompletions`, extracted from `window.completions.clone()` the
-  same way `theme`/`dock`/`context_menus` already are. The `on_frame`
-  closure's own `tick_all` call is updated to bind the new `Vec<
-  CompletionHandle>` return and pass it to the new `run_completions`.
+- `engine_md3::container_transform::ContainerTransformConfig` stays
+  unchanged; `begin` gains a new `on_complete: Option<CompletionHandle>`
+  parameter, passed through to the `transform` animation's own
+  `animate_to`/`animate_to_with_completion` choice (the other three
+  properties keep plain `animate_to`, matching this phase's own stated
+  "any one of them completing means the transition is genuinely done"
+  reasoning — only one handle is needed, not four).
+- `Window.begin_container_transform` gains `on_complete: Option<
+  Py<PyAny>>` (`#[pyo3(signature = (trigger, destination, duration_ms=
+  300, content_stagger_ms=90, on_complete=None))]`), registers it into
+  `self.completions` the same way `Node.animate` now does, and passes
+  the resulting handle into `engine_md3::begin_container_transform`.
 
 ## Verification plan
 
-- `cargo test --workspace --release`/clippy/fmt — this phase is
-  entirely `engine-py`, no `engine-core`/`engine-render` change, so the
-  full Rust suite is a pure regression check (must stay exactly as it
-  was after Phase 1).
+- `cargo test --workspace --release`/clippy/fmt. New `engine-md3` test:
+  `begin` with a real `Some(handle)` attaches it to the destination's
+  own `transform` animation (`ActiveAnimation.on_complete`), and
+  ticking to completion reports it via `Tree::tick_all`'s own real
+  drain — proving the wiring reaches all the way through, not just that
+  the parameter compiles; `begin` with `None` behaves byte-for-byte as
+  before this phase (no completion ever reported), a true regression
+  check.
 - `maturin develop --release` + `pytest tests/` + all examples. New
-  pytest tests: a zero-duration `on_complete` fires exactly once, with
-  no arguments, on the very next `tick_all`; a still-running animation
-  never fires its callback early; an animation with no `on_complete`
-  behaves exactly as before this phase (a true no-op regression check);
-  a `View`-created node's `on_complete` (no live render loop to drain
-  it through) never fires — the real, stated scope limit, proven, not
-  just claimed. New `examples/animation_completion.py`: a real
-  `Window`-driven animation whose `on_complete` callback prints a
-  message once, proving the whole call chain end to end.
+  pytest test: `Window.begin_container_transform(..., on_complete=
+  callback)` doesn't raise (the same FFI-smoke-test scope M9 Phase 2's
+  own tests used, for the same real reason — `App.run()` needs a real
+  display to prove live firing). Updated `examples/
+  container_transform.py`: passes a real `on_complete` that calls
+  `end_container_transform` automatically, replacing the manual call
+  at the end of the script — the real, live, closing proof this
+  milestone's own investigation set out to enable.

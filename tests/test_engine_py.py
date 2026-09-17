@@ -102,6 +102,24 @@ def test_animate_accepts_a_real_on_complete_callback():
     node.animate("opacity", 0.5, duration_ms=100, on_complete=lambda: None)
 
 
+def test_begin_container_transform_accepts_a_real_on_complete_callback():
+    """M9 Phase 3 (§5): `Window.begin_container_transform`'s own new
+    `on_complete` parameter, the same FFI-smoke-test scope as `Node.
+    animate`'s own `on_complete` tests above (§5) -- `App.run()` needs a
+    real display to prove live firing, so that's `examples/
+    container_transform.py`'s own job, not this file's. The definitive
+    proof the handle actually reaches `Tree::tick_all`'s own real drain
+    is `engine-md3`'s own `a_real_on_complete_handle_reaches_tick_alls_
+    own_drain_when_the_transition_finishes` test (M9 Phase 3).
+    """
+    window = Window(width=200, height=200)
+    trigger = window.add_rect(background=(0xFF, 0x00, 0x00, 0xFF), width=40, height=40)
+    destination = window.add_rect(background=(0x00, 0x00, 0xFF, 0xFF), width=100, height=100)
+    window.begin_container_transform(
+        trigger, destination, duration_ms=100, on_complete=lambda: None
+    )
+
+
 def test_animate_still_works_with_on_complete_omitted():
     # Every other test in this file already omits `on_complete` and
     # still passes -- this one states that regression explicitly.

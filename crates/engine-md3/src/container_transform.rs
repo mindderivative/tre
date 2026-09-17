@@ -33,16 +33,17 @@
 //! engine can know what "content" means generically: each container's
 //! own direct children (`Node.children`) -- not a new concept.
 //!
-//! **A real, confirmed, stated gap, not silently worked around:** §7.6's
-//! own step 5 names "§5's queue-drain mechanism" (`CompletionHandle`)
-//! for automatic teardown-on-completion. Confirmed via direct read of
-//! `engine_core::interaction`'s own doc comment: that queue is "still
-//! just an unused struct field... no drain exists anywhere" in this
-//! codebase. Wiring it for real is separate, larger, unscoped work --
-//! `teardown` here is instead a plain, explicit function the caller
-//! invokes once it knows the transition is done (e.g. after the same
-//! known `duration` has elapsed), "an ordinary tree mutation" exactly
-//! as §7.6's own text says.
+//! **§7.6's own step 5 names "§5's queue-drain mechanism"
+//! (`CompletionHandle`) for automatic teardown-on-completion.** Real and
+//! wired end to end as of M9 Phase 3: `begin`'s own `on_complete`
+//! parameter attaches a real handle to the destination's own driven
+//! `transform` animation, and `engine-py::Window.begin_container_
+//! transform`'s own `on_complete` Python parameter is what a real app
+//! uses to fire `end_container_transform` automatically. `teardown`
+//! itself stays a plain, explicit function regardless -- "an ordinary
+//! tree mutation" exactly as §7.6's own text says, called by the app's
+//! own callback (or manually, `on_complete` omitted), not invoked by
+//! this module on its own.
 
 use std::time::{Duration, Instant};
 
@@ -65,14 +66,23 @@ pub struct ContainerTransformConfig {
 /// carry its own real target `corner_radius`/`background`/`elevation`
 /// -- this function captures those as the animation's real targets
 /// before overwriting them to the trigger's captured from-state, then
-/// animates back. Call `teardown` separately once the transition is
-/// known to have finished (step 5).
+/// animates back.
+///
+/// M9 Phase 3 (§5): `on_complete`, when given, is attached to the
+/// destination's own driven `transform` animation only -- all four
+/// driven properties share one `start`/`duration`/`curve` (step 3,
+/// below), so any one of them completing means the whole transition is
+/// genuinely done; no real need to attach it to more than one. This is
+/// what finally lets a caller fire `teardown` automatically instead of
+/// only ever manually (the exact gap this module's own doc comment
+/// named as confirmed-still-unwired before this phase).
 pub fn begin(
     tree: &mut Tree,
     trigger: NodeId,
     destination: NodeId,
     config: &ContainerTransformConfig,
     now: Instant,
+    on_complete: Option<engine_core::CompletionHandle>,
 ) {
     // Step 1: Capture -- the trigger's real, computed bounds (position
     // via the transform-aware `absolute_position`, size via `layout`,
@@ -146,10 +156,21 @@ pub fn begin(
         let dest_node = tree
             .get_mut(destination)
             .expect("begin: destination NodeId not found in this Tree");
-        dest_node
-            .paint
-            .transform
-            .animate_to(Affine::IDENTITY, config.duration, config.curve, now);
+        match on_complete {
+            Some(handle) => dest_node.paint.transform.animate_to_with_completion(
+                Affine::IDENTITY,
+                config.duration,
+                config.curve,
+                now,
+                handle,
+            ),
+            None => dest_node.paint.transform.animate_to(
+                Affine::IDENTITY,
+                config.duration,
+                config.curve,
+                now,
+            ),
+        }
         dest_node
             .paint
             .corner_radius
@@ -326,7 +347,7 @@ mod tests {
         let dest_real_radius = tree.get(destination).unwrap().paint.corner_radius.current;
         let dest_real_color = tree.get(destination).unwrap().paint.background.current;
 
-        begin(&mut tree, trigger, destination, &config(), now);
+        begin(&mut tree, trigger, destination, &config(), now, None);
 
         let dest = tree.get(destination).unwrap();
         assert_eq!(
@@ -370,7 +391,7 @@ mod tests {
         let now = Instant::now();
         let cfg = config();
 
-        begin(&mut tree, trigger, destination, &cfg, now);
+        begin(&mut tree, trigger, destination, &cfg, now, None);
 
         // Immediately: the destination's own child is pinned at 0.0
         // (its stagger hasn't started yet).
@@ -401,7 +422,14 @@ mod tests {
     #[test]
     fn teardown_detaches_the_trigger_from_its_own_parent() {
         let (mut tree, trigger, destination, _, _) = scene();
-        begin(&mut tree, trigger, destination, &config(), Instant::now());
+        begin(
+            &mut tree,
+            trigger,
+            destination,
+            &config(),
+            Instant::now(),
+            None,
+        );
 
         let root = tree.get(trigger).unwrap().parent.unwrap();
         assert!(tree.get(root).unwrap().children.contains(&trigger));
@@ -416,5 +444,53 @@ mod tests {
             tree.get(destination).unwrap().parent.is_some(),
             "the destination must remain in the tree, untouched by teardown"
         );
+    }
+
+    /// M9 Phase 3 (§5): the real proof this phase exists to make -- a
+    /// real `on_complete` handle given to `begin` genuinely reaches
+    /// `Tree::tick_all`'s own real drain once the transition finishes,
+    /// not just that the new parameter compiles and is silently
+    /// dropped somewhere along the way.
+    #[test]
+    fn a_real_on_complete_handle_reaches_tick_alls_own_drain_when_the_transition_finishes() {
+        let (mut tree, trigger, destination, _, _) = scene();
+        let now = Instant::now();
+        let handle = engine_core::CompletionHandle(99);
+
+        begin(
+            &mut tree,
+            trigger,
+            destination,
+            &config(),
+            now,
+            Some(handle),
+        );
+
+        // Not yet -- still mid-flight.
+        let (_, completed) = tree.tick_all(now + Duration::from_millis(50));
+        assert!(
+            completed.is_empty(),
+            "must not report completion before the transition genuinely finishes"
+        );
+
+        // Past the shared duration: the real handle reports exactly
+        // once, the same tick every driven property finishes on.
+        let (_, completed) = tree.tick_all(now + Duration::from_secs(1));
+        assert_eq!(completed, vec![handle]);
+    }
+
+    /// The real regression counterpart -- `on_complete: None` (this
+    /// module's own default, and every prior test's own real usage)
+    /// must never report a completion, even on the exact tick the
+    /// transition finishes.
+    #[test]
+    fn no_on_complete_given_never_reports_a_completion() {
+        let (mut tree, trigger, destination, _, _) = scene();
+        let now = Instant::now();
+
+        begin(&mut tree, trigger, destination, &config(), now, None);
+
+        let (_, completed) = tree.tick_all(now + Duration::from_secs(1));
+        assert!(completed.is_empty());
     }
 }

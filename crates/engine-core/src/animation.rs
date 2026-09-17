@@ -180,8 +180,9 @@ impl MotionCurve {
 
 /// Opaque handle for a finished animation's `on_complete` callback,
 /// resolved to an actual Python callback only in `engine-py` (§5's
-/// queue-drain decision). No allocator/registry exists yet -- that's
-/// `engine-py`'s own `HashMap<CompletionHandle, PyObject>`, step 6+.
+/// queue-drain decision) -- real as of M9 Phase 2: `engine-py::
+/// dispatch::CompletionRegistry`'s own `HashMap<CompletionHandle,
+/// Py<PyAny>>` is the allocator/registry this always deferred to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CompletionHandle(pub u64);
 
