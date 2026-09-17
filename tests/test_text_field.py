@@ -82,3 +82,121 @@ def test_shift_tab_from_a_focused_field_moves_focus_away():
     window.press_key("tab")
     assert other.is_focused() is True
     assert field.is_focused() is False, "focus must genuinely move, not stay on both"
+
+
+def test_type_text_inserts_into_the_focused_field():
+    window = Window(width=200, height=100)
+    field = window.add_text_field(background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24)
+    window.press_key("tab")
+
+    window.type_text("hi")
+
+    assert field.get_text() == "hi"
+
+
+def test_type_text_with_no_focused_field_is_a_safe_no_op():
+    window = Window(width=200, height=100)
+    field = window.add_text_field(
+        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="untouched"
+    )
+    window.type_text("x")  # must not raise, and must not touch the unfocused field
+    assert field.get_text() == "untouched"
+
+
+def test_backspace_and_delete_edit_the_real_focused_field():
+    window = Window(width=200, height=100)
+    field = window.add_text_field(
+        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hello"
+    )
+    window.press_key("tab")
+
+    window.press_key("backspace")
+    assert field.get_text() == "hell"
+
+    window.press_key("home")
+    window.press_key("delete")
+    assert field.get_text() == "ell"
+
+
+def test_arrow_and_home_end_keys_move_the_cursor_without_changing_content():
+    window = Window(width=200, height=100)
+    field = window.add_text_field(
+        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hello"
+    )
+    window.press_key("tab")
+
+    window.press_key("home")
+    window.press_key("right")
+    window.type_text("X")
+
+    assert field.get_text() == "hXello", "the cursor must have genuinely moved before typing"
+
+
+def test_set_text_overwrites_content_and_fires_on_change():
+    window = Window(width=200, height=100)
+    field = window.add_text_field(background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24)
+
+    calls = []
+    field.set_on_change(lambda: calls.append(field.get_text()))
+
+    field.set_text("hello")
+
+    assert field.get_text() == "hello"
+    assert calls == ["hello"], "set_text must fire a real on_change handler, mirroring set_checked"
+
+
+def test_set_text_rejects_a_non_text_field_node():
+    window = Window(width=200, height=100)
+    rect = window.add_rect(background=(0, 0, 0, 255), width=24, height=24)
+    with pytest.raises(ValueError, match="Rect has no property 'text'"):
+        rect.set_text("nope")
+
+
+def test_typing_fires_a_real_on_change_handler():
+    window = Window(width=200, height=100)
+    field = window.add_text_field(background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24)
+    window.press_key("tab")
+
+    calls = []
+    field.set_on_change(lambda: calls.append(field.get_text()))
+
+    window.type_text("a")
+    window.type_text("b")
+
+    assert calls == ["a", "ab"], "each real edit must fire on_change again, with the real current text"
+
+
+def test_pure_cursor_movement_does_not_fire_on_change():
+    window = Window(width=200, height=100)
+    field = window.add_text_field(
+        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hi"
+    )
+    window.press_key("tab")
+
+    calls = []
+    field.set_on_change(lambda: calls.append("called"))
+
+    window.press_key("left")
+    window.press_key("right")
+    window.press_key("home")
+    window.press_key("end")
+
+    assert calls == [], "pure cursor navigation must not fire Change -- content never changed"
+
+
+def test_backspace_at_start_and_delete_at_end_do_not_fire_on_change():
+    window = Window(width=200, height=100)
+    field = window.add_text_field(
+        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, content="hi"
+    )
+    window.press_key("tab")
+
+    calls = []
+    field.set_on_change(lambda: calls.append("called"))
+
+    window.press_key("home")
+    window.press_key("backspace")  # already at start -- a real no-op
+    window.press_key("end")
+    window.press_key("delete")  # already at end -- a real no-op
+
+    assert calls == [], "a genuine no-op edit must not fire Change"

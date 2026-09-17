@@ -34,12 +34,25 @@ pub enum PointerButton {
 
 /// §10's own minimal keyboard model's exact vocabulary -- see this
 /// module's own doc comment for why nothing broader is built yet.
+/// M15 Phase 2 (§8, §10) widens this with the real named/control keys
+/// `TextField` editing needs (`Backspace`/`Delete`/`ArrowLeft`/
+/// `ArrowRight`/`Home`/`End`) -- still deliberately minimal, still no
+/// general key-code mapping: every printable character reaches `Tree::
+/// dispatch` through the sibling `InputEvent::TextInput(String)`
+/// variant instead (mirroring `winit::event::KeyEvent`'s own real
+/// split between `logical_key`/`text`), not through this enum.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key {
     Tab,
     Enter,
     Space,
     Escape,
+    Backspace,
+    Delete,
+    ArrowLeft,
+    ArrowRight,
+    Home,
+    End,
 }
 
 /// M4 Phase 8 (§11.7/§11.8 groundwork): mirrors `winit::event::
@@ -65,7 +78,14 @@ pub enum ScrollDelta {
 /// coordinate space `Tree::hit_test`/`Tree::absolute_position` use --
 /// window-client pixels, top-left origin -- so `Tree::dispatch` never
 /// needs to know anything about `winit`'s own event shapes.
-#[derive(Clone, Copy, Debug, PartialEq)]
+///
+/// M15 Phase 2 (§8, §10): no longer `Copy` -- the new `TextInput
+/// (String)` variant owns a real, non-`Copy` `String` (mirroring
+/// `winit::event::KeyEvent.text: Option<SmolStr>`'s own real produced-
+/// text payload). Every real caller already takes `InputEvent` by
+/// value, confirmed via grep before this change, so dropping `Copy`
+/// (keeping `Clone`) needed no call-site rewrites.
+#[derive(Clone, Debug, PartialEq)]
 pub enum InputEvent {
     PointerMoved {
         position: Point,
@@ -86,6 +106,16 @@ pub enum InputEvent {
         key: Key,
         shift: bool,
     },
+    /// M15 Phase 2 (§8, §10): a real, produced *character* keypress --
+    /// mirrors `winit::event::KeyEvent.text: Option<SmolStr>` exactly
+    /// (confirmed via direct source read of the pinned `winit =
+    /// "0.30.13"`), fired for a printable-character keypress that
+    /// `translate_key` doesn't already claim as a named/control key.
+    /// Only meaningful when a `NodeKind::TextField` is the `Tree`'s own
+    /// real focused node -- a true no-op otherwise, the same "mechanism
+    /// only, engine-core never knows meaning" shape every other real
+    /// dispatch already follows (Design Principle 6).
+    TextInput(String),
     /// M4 Phase 8: `position` is the cursor's last known position (the
     /// same `last_cursor_position` tracking `MouseInput` already
     /// reuses in `engine-platform`, since `winit`'s own `MouseWheel`

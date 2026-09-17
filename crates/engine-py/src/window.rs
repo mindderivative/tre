@@ -885,9 +885,11 @@ impl PyWindow {
     /// real, no-window-needed way to test Tab/Shift-Tab focus movement
     /// and Enter/Space activation from Python, neither of which had a
     /// Python-facing entry point before this. `key` is one of `"tab"`/
-    /// `"enter"`/`"space"`/`"escape"` -- `engine_core::Key`'s own
-    /// deliberately minimal vocabulary (§10), not a general key-code
-    /// mapping nothing here needs yet.
+    /// `"enter"`/`"space"`/`"escape"`/`"backspace"`/`"delete"`/
+    /// `"left"`/`"right"`/`"home"`/`"end"` (the latter six added M15
+    /// Phase 2, §8/§10, for real `TextField` editing) -- `engine_core::
+    /// Key`'s own deliberately minimal vocabulary, not a general
+    /// key-code mapping nothing here needs yet.
     #[pyo3(signature = (key, shift=false))]
     fn press_key(&mut self, key: &str, shift: bool, py: Python<'_>) -> PyResult<()> {
         let key = match key {
@@ -895,10 +897,17 @@ impl PyWindow {
             "enter" => Key::Enter,
             "space" => Key::Space,
             "escape" => Key::Escape,
+            "backspace" => Key::Backspace,
+            "delete" => Key::Delete,
+            "left" => Key::ArrowLeft,
+            "right" => Key::ArrowRight,
+            "home" => Key::Home,
+            "end" => Key::End,
             other => {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
                     "press_key: unknown key {other:?} -- expected one of \"tab\", \"enter\", \
-                     \"space\", \"escape\""
+                     \"space\", \"escape\", \"backspace\", \"delete\", \"left\", \"right\", \
+                     \"home\", \"end\""
                 )));
             }
         };
@@ -910,6 +919,24 @@ impl PyWindow {
         );
         run_dispatch_outcome(&self.handlers, outcome, py);
         Ok(())
+    }
+
+    /// M15 Phase 2 (§8, §10): `press_key`'s own real counterpart for a
+    /// produced *character* keypress -- the same no-live-window-needed
+    /// synthetic-dispatch pattern, this time for `InputEvent::TextInput
+    /// (String)`, mirroring exactly what a real `winit::event::KeyEvent
+    /// .text` would produce for an ordinary printable-character
+    /// keypress. Only meaningful when a `TextField` is the window's own
+    /// currently focused node (a true no-op otherwise, `Tree::dispatch`
+    /// 's own real behavior).
+    fn type_text(&mut self, text: &str, py: Python<'_>) {
+        let outcome = self.tree.borrow_mut().dispatch(
+            self.root,
+            InputEvent::TextInput(text.to_string()),
+            &interaction_config(),
+            std::time::Instant::now(),
+        );
+        run_dispatch_outcome(&self.handlers, outcome, py);
     }
 
     /// M4 Phase 9 (§11.4): registers `container` as `side`'s real dock

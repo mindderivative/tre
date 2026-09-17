@@ -111,16 +111,25 @@ fn translate_pointer_button(button: MouseButton) -> Option<PointerButton> {
 
 /// `engine_core::Key`'s own deliberately minimal vocabulary (§10) --
 /// every other `winit` key, including every printable character,
-/// produces `None` (no `InputEvent` at all). Matched against
-/// `winit::keyboard::Key::Named`, verified directly against `winit`'s
-/// own `keyboard.rs` (`NamedKey::{Tab, Enter, Space, Escape}` all real,
-/// confirmed variants) before writing this.
+/// produces `None` (no `KeyPressed`/`KeyReleased` `InputEvent` at all
+/// -- a printable character instead reaches `InputEvent::TextInput`
+/// below, M15 Phase 2). Matched against `winit::keyboard::Key::Named`,
+/// verified directly against `winit`'s own `keyboard.rs` (`NamedKey::
+/// {Tab, Enter, Space, Escape, Backspace, Delete, ArrowLeft,
+/// ArrowRight, Home, End}` all real, confirmed variants) before
+/// writing this.
 fn translate_key(logical_key: &WinitKey) -> Option<Key> {
     match logical_key {
         WinitKey::Named(NamedKey::Tab) => Some(Key::Tab),
         WinitKey::Named(NamedKey::Enter) => Some(Key::Enter),
         WinitKey::Named(NamedKey::Space) => Some(Key::Space),
         WinitKey::Named(NamedKey::Escape) => Some(Key::Escape),
+        WinitKey::Named(NamedKey::Backspace) => Some(Key::Backspace),
+        WinitKey::Named(NamedKey::Delete) => Some(Key::Delete),
+        WinitKey::Named(NamedKey::ArrowLeft) => Some(Key::ArrowLeft),
+        WinitKey::Named(NamedKey::ArrowRight) => Some(Key::ArrowRight),
+        WinitKey::Named(NamedKey::Home) => Some(Key::Home),
+        WinitKey::Named(NamedKey::End) => Some(Key::End),
         _ => None,
     }
 }
@@ -509,6 +518,18 @@ where
                         ElementState::Released => InputEvent::KeyReleased { key, shift },
                     };
                     on_input(window_id, event);
+                } else if key_event.state == ElementState::Pressed
+                    && let Some(text) = &key_event.text
+                {
+                    // M15 Phase 2 (§8, §10): a real, produced character
+                    // keypress `translate_key` doesn't already claim as
+                    // a named/control key -- `KeyEvent.text: Option<
+                    // SmolStr>` is `winit`'s own real per-keypress
+                    // produced text (confirmed via direct source read
+                    // of the pinned `winit = "0.30.13"`), fired only on
+                    // press (not release, which has no real "text
+                    // input" meaning).
+                    on_input(window_id, InputEvent::TextInput(text.to_string()));
                 }
             }
             // M4 Phase 8 (§11.7/§11.8 groundwork): `winit`'s own
@@ -593,6 +614,32 @@ mod tests {
         assert_eq!(
             translate_key(&WinitKey::Named(NamedKey::Escape)),
             Some(Key::Escape)
+        );
+        // M15 Phase 2 (§8, §10): the real named/control keys `TextField`
+        // editing added to the minimal vocabulary.
+        assert_eq!(
+            translate_key(&WinitKey::Named(NamedKey::Backspace)),
+            Some(Key::Backspace)
+        );
+        assert_eq!(
+            translate_key(&WinitKey::Named(NamedKey::Delete)),
+            Some(Key::Delete)
+        );
+        assert_eq!(
+            translate_key(&WinitKey::Named(NamedKey::ArrowLeft)),
+            Some(Key::ArrowLeft)
+        );
+        assert_eq!(
+            translate_key(&WinitKey::Named(NamedKey::ArrowRight)),
+            Some(Key::ArrowRight)
+        );
+        assert_eq!(
+            translate_key(&WinitKey::Named(NamedKey::Home)),
+            Some(Key::Home)
+        );
+        assert_eq!(
+            translate_key(&WinitKey::Named(NamedKey::End)),
+            Some(Key::End)
         );
     }
 

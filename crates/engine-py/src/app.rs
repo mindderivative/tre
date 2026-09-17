@@ -321,7 +321,13 @@ impl App {
                 };
                 let outcome = runtime.tree.borrow_mut().dispatch(
                     runtime.root,
-                    event,
+                    // M15 Phase 2: `InputEvent` is no longer `Copy`
+                    // (the new `TextInput(String)` variant owns a real
+                    // `String`) -- `event` itself is still needed below
+                    // (the real, winit-driven dock-drag/theme-switch
+                    // match), so this clones once rather than
+                    // restructuring the two real, independent uses.
+                    event.clone(),
                     &interaction_config(),
                     Instant::now(),
                 );

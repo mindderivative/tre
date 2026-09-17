@@ -456,6 +456,40 @@ impl Node {
         }
     }
 
+    /// M15 Phase 2 (§8, §16.7): the plain, non-animated, programmatic
+    /// write `set_checked`'s own real shape mirrors exactly (including
+    /// always firing a real `Change`, the same established convention
+    /// `apply_binding_value`'s own forward-bind path will need for a
+    /// real `two_way: text` round trip -- `Signal`'s own change-
+    /// detection, M14 Phase 3, already protects against a feedback
+    /// loop here too, no new fix needed). `cursor` resets to the new
+    /// content's own real end, the same "fresh content, fresh cursor"
+    /// convention `TextFieldState::new` already establishes -- an old
+    /// byte offset could land mid-character or past the new content's
+    /// own end otherwise.
+    pub(crate) fn set_text(&self, content: &str, py: Python<'_>) -> PyResult<()> {
+        let mut tree = self.tree.borrow_mut();
+        let node = tree.get_mut(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        let kind = kind_name(&node.kind);
+        match &mut node.kind {
+            NodeKind::TextField(state) => {
+                state.content = content.to_string();
+                state.cursor = state.content.len();
+                state.selection_anchor = None;
+                drop(tree);
+                call_handler(&self.handlers, self.id, EventKind::Change, py);
+                Ok(())
+            }
+            _ => Err(EngineError::UnknownProperty {
+                kind,
+                property: "text".to_string(),
+            }
+            .into()),
+        }
+    }
+
     /// M14 Phase 3 (§16.7): the missing read-back half of `set_checked`
     /// -- real two-way binding sugar needs to read a `Checkbox`'s own
     /// current `checked` to write it back into a bound `Signal` on a

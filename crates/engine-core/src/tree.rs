@@ -1286,6 +1286,110 @@ impl Tree {
         }
     }
 
+    /// M15 Phase 2 (§8, §10): real keyboard-driven `TextField` editing
+    /// -- the `Tree`'s own real mutator (unlike `CheckboxState.
+    /// checked`, a real keystroke is mechanical, not app-defined
+    /// meaning, so `engine-core` is the one real owner here, mirroring
+    /// `set_slider_position`'s own "engine-core owns the real
+    /// mutation" shape). `content`/`cursor` stay on real UTF-8 char
+    /// boundaries throughout via `char_indices` -- grapheme-cluster
+    /// and BiDi-visual-order movement are `parley::editing::Selection`
+    /// 's own richer job, deliberately not reused here (`engine-core`
+    /// has no `parley` dependency at all, §4).
+    ///
+    /// Returns `None` for a key this method doesn't claim (`Tab`/
+    /// `Escape`) -- the caller falls through to the generic handling
+    /// for those. Every other key returns `Some`: `Changed(field)` for
+    /// a real content edit, `None` (the outcome, not the `Option`) for
+    /// pure cursor movement or a genuine no-op (e.g. `Backspace` at
+    /// `cursor == 0`) -- `EventKind::Change` (M14 Phase 3) only ever
+    /// means "the bound value actually changed," and cursor position
+    /// isn't the bound value.
+    fn dispatch_text_field_key(&mut self, field: NodeId, key: Key) -> Option<DispatchOutcome> {
+        let NodeKind::TextField(state) = &mut self.nodes[field].kind else {
+            return None;
+        };
+        match key {
+            Key::Backspace => {
+                if state.cursor == 0 {
+                    return Some(DispatchOutcome::None);
+                }
+                let prev = state.content[..state.cursor]
+                    .char_indices()
+                    .next_back()
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
+                state.content.replace_range(prev..state.cursor, "");
+                state.cursor = prev;
+                state.selection_anchor = None;
+                Some(DispatchOutcome::Changed(field))
+            }
+            Key::Delete => {
+                if state.cursor >= state.content.len() {
+                    return Some(DispatchOutcome::None);
+                }
+                let next = state.content[state.cursor..]
+                    .char_indices()
+                    .nth(1)
+                    .map(|(i, _)| state.cursor + i)
+                    .unwrap_or(state.content.len());
+                state.content.replace_range(state.cursor..next, "");
+                state.selection_anchor = None;
+                Some(DispatchOutcome::Changed(field))
+            }
+            Key::ArrowLeft => {
+                if state.cursor > 0 {
+                    state.cursor = state.content[..state.cursor]
+                        .char_indices()
+                        .next_back()
+                        .map(|(i, _)| i)
+                        .unwrap_or(0);
+                }
+                state.selection_anchor = None;
+                Some(DispatchOutcome::None)
+            }
+            Key::ArrowRight => {
+                if state.cursor < state.content.len() {
+                    state.cursor = state.content[state.cursor..]
+                        .char_indices()
+                        .nth(1)
+                        .map(|(i, _)| state.cursor + i)
+                        .unwrap_or(state.content.len());
+                }
+                state.selection_anchor = None;
+                Some(DispatchOutcome::None)
+            }
+            Key::Home => {
+                state.cursor = 0;
+                state.selection_anchor = None;
+                Some(DispatchOutcome::None)
+            }
+            Key::End => {
+                state.cursor = state.content.len();
+                state.selection_anchor = None;
+                Some(DispatchOutcome::None)
+            }
+            // A real space keypress reaches `KeyPressed` (`Key::Space`,
+            // matched by `translate_key` before `TextInput` would ever
+            // fire for it, §8) rather than `TextInput` -- so a focused
+            // `TextField` must claim it here as a real inserted space,
+            // not fall through to `Key::Enter | Key::Space =>
+            // Activated`'s own generic button-activation meaning.
+            Key::Space => {
+                state.content.insert(state.cursor, ' ');
+                state.cursor += 1;
+                state.selection_anchor = None;
+                Some(DispatchOutcome::Changed(field))
+            }
+            // A single-line field: `Enter` is consumed (no activation,
+            // matching `Space`'s own reasoning above) but deliberately
+            // doesn't insert a newline either -- real, stated,
+            // single-line scope, not a general multiline text area.
+            Key::Enter => Some(DispatchOutcome::None),
+            Key::Tab | Key::Escape => None,
+        }
+    }
+
     /// M4 Phase 2 (§10): the direct, non-`InputEvent` counterpart to a
     /// mouse click's own `Activated` outcome -- what `accesskit::
     /// Action::Click` from a platform accessibility client actually
@@ -1461,36 +1565,85 @@ impl Tree {
                 }
                 outcome
             }
-            InputEvent::KeyPressed { key, shift } => match key {
-                Key::Tab => {
-                    let direction = if shift {
-                        FocusDirection::Previous
-                    } else {
-                        FocusDirection::Next
-                    };
-                    self.move_focus(
-                        root,
-                        direction,
-                        config.focus_ring_opacity,
-                        config.focus_ring_duration,
-                        now,
-                    );
-                    DispatchOutcome::None
+            InputEvent::KeyPressed { key, shift } => {
+                // M15 Phase 2 (§8, §10): a focused `TextField` gets
+                // first refusal on most keys -- its own real "Enter"/
+                // "Space" meaning (insert a character) is genuinely
+                // different from the generic button-activation meaning
+                // below, so this can't simply run after it. `Tab`/
+                // `Escape` still fall through unchanged (`dispatch_
+                // text_field_key` returns `None` for those two,
+                // meaning "not mine to handle") -- a focused field must
+                // still lose focus on Tab and still dismiss overlays on
+                // Escape, the same as any other focused node.
+                if let Some(field) = self.focused
+                    && matches!(
+                        self.nodes.get(field).map(|n| &n.kind),
+                        Some(NodeKind::TextField(_))
+                    )
+                    && let Some(outcome) = self.dispatch_text_field_key(field, key)
+                {
+                    return outcome;
                 }
-                Key::Enter | Key::Space => match self.focused {
-                    Some(node) => DispatchOutcome::Activated(node),
-                    None => DispatchOutcome::None,
-                },
-                // M10 Phase 1 (§11.3): closes every real, currently-open
-                // dismiss_on_escape overlay -- a mechanical consequence
-                // handled entirely here, the same shape ripple-spawn/
-                // hover-update already use, no new outcome variant.
-                Key::Escape => {
-                    self.dismiss_escapable_overlays();
-                    DispatchOutcome::None
+                match key {
+                    Key::Tab => {
+                        let direction = if shift {
+                            FocusDirection::Previous
+                        } else {
+                            FocusDirection::Next
+                        };
+                        self.move_focus(
+                            root,
+                            direction,
+                            config.focus_ring_opacity,
+                            config.focus_ring_duration,
+                            now,
+                        );
+                        DispatchOutcome::None
+                    }
+                    Key::Enter | Key::Space => match self.focused {
+                        Some(node) => DispatchOutcome::Activated(node),
+                        None => DispatchOutcome::None,
+                    },
+                    // M10 Phase 1 (§11.3): closes every real, currently-
+                    // open dismiss_on_escape overlay -- a mechanical
+                    // consequence handled entirely here, the same shape
+                    // ripple-spawn/hover-update already use, no new
+                    // outcome variant.
+                    Key::Escape => {
+                        self.dismiss_escapable_overlays();
+                        DispatchOutcome::None
+                    }
+                    // M15 Phase 2: real, but only ever meaningful when a
+                    // `TextField` is focused -- handled above via `
+                    // dispatch_text_field_key` in that case. Reaching
+                    // here means no `TextField` is focused at all, a
+                    // true no-op.
+                    Key::Backspace
+                    | Key::Delete
+                    | Key::ArrowLeft
+                    | Key::ArrowRight
+                    | Key::Home
+                    | Key::End => DispatchOutcome::None,
                 }
-            },
+            }
             InputEvent::KeyReleased { .. } => DispatchOutcome::None,
+            // M15 Phase 2 (§8, §10): a real, produced character
+            // keypress -- only meaningful when a `TextField` is
+            // focused (a true no-op otherwise, the same "mechanism
+            // only" shape every other real dispatch already follows).
+            InputEvent::TextInput(text) => {
+                let Some(field) = self.focused else {
+                    return DispatchOutcome::None;
+                };
+                let NodeKind::TextField(state) = &mut self.nodes[field].kind else {
+                    return DispatchOutcome::None;
+                };
+                state.content.insert_str(state.cursor, &text);
+                state.cursor += text.len();
+                state.selection_anchor = None;
+                DispatchOutcome::Changed(field)
+            }
             // M4 Phase 8 (§11.7/§11.8 groundwork): a true no-op today,
             // deliberately -- wiring this to VirtualList's window
             // movement needs the still-open real scrollable-viewport
@@ -5069,5 +5222,232 @@ mod tests {
             node.supports_action(Action::Focus),
             "a TextField must be a real Focus target for Tab/screen-reader reachability"
         );
+    }
+
+    /// M15 Phase 2 (§8, §10): mirrors `slider_scene`'s own shape -- a
+    /// real `TextField`, already the `Tree`'s own real focused node
+    /// (every real editing test needs that, so seeding it here avoids
+    /// repeating a `set_focus_to` call in every single test below).
+    fn text_field_scene(content: &str) -> (Tree, NodeId, NodeId) {
+        let mut tree = Tree::new();
+        let (_, root_style, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let field = tree.insert(
+            NodeKind::TextField(TextFieldState::new(content, "Roboto", 400.0, 16.0)),
+            Style {
+                size: Size {
+                    width: length(120.0),
+                    height: length(24.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(root, field);
+        tree.set_focus_to(field, 1.0, Duration::ZERO, Instant::now());
+        (tree, root, field)
+    }
+
+    fn field_state(tree: &Tree, field: NodeId) -> &TextFieldState {
+        let NodeKind::TextField(state) = &tree.get(field).unwrap().kind else {
+            panic!("expected a TextField node");
+        };
+        state
+    }
+
+    fn dispatch_key(tree: &mut Tree, root: NodeId, key: Key) -> DispatchOutcome {
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        tree.dispatch(
+            root,
+            InputEvent::KeyPressed { key, shift: false },
+            &config,
+            Instant::now(),
+        )
+    }
+
+    #[test]
+    fn text_input_with_no_focused_field_is_a_true_no_op() {
+        let mut tree = Tree::new();
+        let (_, root_style, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::TextInput("a".to_string()),
+            &config,
+            Instant::now(),
+        );
+        assert_eq!(outcome, DispatchOutcome::None);
+    }
+
+    #[test]
+    fn text_input_inserts_at_the_real_cursor_and_advances_it() {
+        let (mut tree, root, field) = text_field_scene("hllo");
+        // Real cursor starts at content's own end (`TextFieldState::
+        // new`'s own contract) -- move it to byte offset 1 (after "h")
+        // first via a real ArrowLeft x3 from the end, so the insert
+        // below lands in the middle, not just appended.
+        dispatch_key(&mut tree, root, Key::Home);
+        dispatch_key(&mut tree, root, Key::ArrowRight);
+
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::TextInput("e".to_string()),
+            &config,
+            Instant::now(),
+        );
+        assert_eq!(outcome, DispatchOutcome::Changed(field));
+        let state = field_state(&tree, field);
+        assert_eq!(state.content, "hello");
+        assert_eq!(
+            state.cursor, 2,
+            "cursor must advance past the real inserted text"
+        );
+    }
+
+    #[test]
+    fn backspace_removes_the_real_char_before_the_cursor() {
+        let (mut tree, root, field) = text_field_scene("hello");
+        let outcome = dispatch_key(&mut tree, root, Key::Backspace);
+        assert_eq!(outcome, DispatchOutcome::Changed(field));
+        let state = field_state(&tree, field);
+        assert_eq!(state.content, "hell");
+        assert_eq!(state.cursor, 4);
+    }
+
+    #[test]
+    fn backspace_at_the_real_start_is_a_genuine_no_op() {
+        let (mut tree, root, field) = text_field_scene("hello");
+        dispatch_key(&mut tree, root, Key::Home);
+        let outcome = dispatch_key(&mut tree, root, Key::Backspace);
+        assert_eq!(
+            outcome,
+            DispatchOutcome::None,
+            "no real edit happened, so this must not report Changed"
+        );
+        assert_eq!(field_state(&tree, field).content, "hello");
+    }
+
+    #[test]
+    fn delete_removes_the_real_char_after_the_cursor() {
+        let (mut tree, root, field) = text_field_scene("hello");
+        dispatch_key(&mut tree, root, Key::Home);
+        let outcome = dispatch_key(&mut tree, root, Key::Delete);
+        assert_eq!(outcome, DispatchOutcome::Changed(field));
+        let state = field_state(&tree, field);
+        assert_eq!(state.content, "ello");
+        assert_eq!(state.cursor, 0);
+    }
+
+    #[test]
+    fn delete_at_the_real_end_is_a_genuine_no_op() {
+        let (mut tree, root, field) = text_field_scene("hello");
+        let outcome = dispatch_key(&mut tree, root, Key::Delete);
+        assert_eq!(outcome, DispatchOutcome::None);
+        assert_eq!(field_state(&tree, field).content, "hello");
+    }
+
+    #[test]
+    fn arrow_keys_move_the_real_cursor_without_reporting_changed() {
+        let (mut tree, root, field) = text_field_scene("hi");
+        assert_eq!(field_state(&tree, field).cursor, 2);
+
+        let outcome = dispatch_key(&mut tree, root, Key::ArrowLeft);
+        assert_eq!(
+            outcome,
+            DispatchOutcome::None,
+            "pure cursor movement is not a bound-value change"
+        );
+        assert_eq!(field_state(&tree, field).cursor, 1);
+
+        dispatch_key(&mut tree, root, Key::ArrowRight);
+        assert_eq!(field_state(&tree, field).cursor, 2);
+    }
+
+    #[test]
+    fn home_and_end_jump_the_real_cursor_to_the_real_edges() {
+        let (mut tree, root, field) = text_field_scene("hello");
+        dispatch_key(&mut tree, root, Key::Home);
+        assert_eq!(field_state(&tree, field).cursor, 0);
+        dispatch_key(&mut tree, root, Key::End);
+        assert_eq!(field_state(&tree, field).cursor, 5);
+    }
+
+    #[test]
+    fn a_focused_text_field_inserts_a_real_space_instead_of_activating() {
+        let (mut tree, root, field) = text_field_scene("ab");
+        dispatch_key(&mut tree, root, Key::Home);
+        dispatch_key(&mut tree, root, Key::ArrowRight);
+        let outcome = dispatch_key(&mut tree, root, Key::Space);
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Changed(field),
+            "Space on a focused TextField must be a real inserted character, not Activated"
+        );
+        assert_eq!(field_state(&tree, field).content, "a b");
+    }
+
+    #[test]
+    fn enter_on_a_focused_text_field_is_consumed_without_inserting_or_activating() {
+        let (mut tree, root, field) = text_field_scene("hi");
+        let outcome = dispatch_key(&mut tree, root, Key::Enter);
+        assert_eq!(
+            outcome,
+            DispatchOutcome::None,
+            "a single-line TextField must not activate on Enter, matching Space's own reasoning"
+        );
+        assert_eq!(
+            field_state(&tree, field).content,
+            "hi",
+            "Enter must not insert a newline into a single-line field either"
+        );
+    }
+
+    #[test]
+    fn tab_still_moves_focus_away_from_a_focused_text_field() {
+        let (mut tree, root, field) = text_field_scene("hi");
+        assert_eq!(tree.focused(), Some(field));
+        dispatch_key(&mut tree, root, Key::Tab);
+        assert_ne!(
+            tree.focused(),
+            Some(field),
+            "Tab must still move focus away from a focused TextField"
+        );
+    }
+
+    #[test]
+    fn backspace_removes_a_real_multi_byte_utf8_character_whole() {
+        // "café" -- "é" is a real 2-byte UTF-8 scalar; a naive
+        // byte-at-a-time backspace would corrupt it into invalid UTF-8.
+        let (mut tree, root, field) = text_field_scene("café");
+        let outcome = dispatch_key(&mut tree, root, Key::Backspace);
+        assert_eq!(outcome, DispatchOutcome::Changed(field));
+        assert_eq!(field_state(&tree, field).content, "caf");
     }
 }

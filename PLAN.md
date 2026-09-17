@@ -1,121 +1,92 @@
-# Plan: M15 Phase 1 — Real `TextField` State & Paint (§5, §16.7)
+# Plan: M15 Phase 2 — Real Keyboard-Driven Editing (§8, §10)
 
-Corresponds to `BUILD_TRACKER.md` M15 Phase 1's own scoping:
-`NodeKind::TextField(TextFieldState)` with real, plain byte-offset
-state and real paint (text, plus a real caret and selection-highlight
-computed via `parley`'s own editing module purely for painting), and
-real keyboard-focus integration making a `TextField` focusable. No
-editing yet — that's Phase 2.
+Corresponds to `BUILD_TRACKER.md` M15 Phase 2's own scoping:
+`winit::event::KeyEvent.text` reaches a real `InputEvent` for the
+first time, `Tree::dispatch` inserts characters into a focused
+`TextField` and handles real Backspace/Delete/Left/Right/Home/End
+(plain UTF-8 char-boundary logic inside `engine-core`), and
+`EventKind::Change` fires on every real edit.
 
 ## Investigation before writing code
 
-- `NodeKind` (`engine-core/src/node.rs`) has `Rect`/`Container`/
-  `Text(TextState)`/`Splitter`/`VirtualList`/`Canvas`/`Checkbox`/
-  `Slider` — no `TextField`, confirmed by direct read. `TextState`'s
-  own shape (`content`/`font_family`/`font_weight`/`font_size`) is the
-  real precedent for `TextFieldState`'s own font fields.
-- **Real finding: `NodeKind::Text` has zero imperative Python
-  constructor anywhere** — confirmed via grep, no `add_text`/`Text`
-  reference exists in `engine-py::window.rs` at all; `Text` is
-  YAML-only (`engine-spec`) today. `Checkbox`/`Slider` both *do* have
-  real `Window.add_checkbox`/`add_slider` constructors (M14 Phases
-  1/2), matching every other *interactive* component. Since M15's own
-  point is a real, live, runnable example proving keyboard text entry
-  (the same "example script proves it" discipline this whole project
-  uses), `TextField` follows the `Checkbox`/`Slider` precedent, not
-  `Text`'s — a real `Window.add_text_field` belongs in this phase, not
-  deferred to Phase 2 the way the original scoping paragraph's own
-  wording suggested (a minor, honest scope-boundary refinement made on
-  contact with implementation, not a change to the milestone's overall
-  shape).
-- **Real finding: `Tree::set_access` has zero real callers from
-  `engine-py` today** — confirmed via grep across `window.rs`/
-  `node.rs`, every `Window.add_*` method leaves every node at the
-  default `Role::Unknown`, no label, no actions. `AccessNodeData`/
-  `Action`/`Role` are exercised only by direct `engine-core`-level
-  tests. `accesskit::Role::TextInput` is real (confirmed via direct
-  source read of the pinned `accesskit = "0.25.0"`), as is a real
-  `Value` property (`Node::set_value`/`.value()`/`.clear_value()`, the
-  macro-generated accessor at `accesskit/src/lib.rs:2118`). For
-  `TextField` to be genuinely Tab-reachable (`Tree::collect_
-  interactive`'s own real rule: `!access.actions.is_empty()`),
-  `Window.add_text_field` needs to be the *first* real `engine-py`
-  caller of `Tree::set_access`, setting `Role::TextInput` +
-  `Action::Focus` — small, real, additive, and honestly the first of
-  its kind, not silently glossed over.
-- **Real finding, changing the caret-visibility design:** `Interaction
-  State.focus_ring: Animated<f64>` is ticked but genuinely never
-  painted anywhere in `engine-render` — confirmed via grep, no
-  `focus_ring` reference exists in `lib.rs` at all. Rather than invent
-  a second, TextField-specific "is this visually focused" concept,
-  `paint_node` already receives `tree: &Tree` directly (confirmed by
-  direct read of its own signature) — so the caret is gated on the
-  real, live `tree.focused() == Some(id)`, genuinely reusing §10's
-  already-real focus state, not a new field.
-- **Real, scope-simplifying finding (already recorded in the
-  milestone's own scoping):** `parley::{Cursor, Selection}` (the crate
-  root re-exports `editing::*`, confirmed via direct read of
-  `parley/src/lib.rs`) already does the hard cursor-geometry math:
-  `Cursor::from_byte_index(&layout, index, affinity) -> Cursor`,
-  `Cursor::geometry(&layout, width) -> BoundingBox`, `Selection::new
-  (anchor, focus)`, `Selection::geometry(&layout) -> Vec<(BoundingBox,
-  usize)>`. `BoundingBox { x0, y0, x1, y1 }` (`f64`) is the real shape
-  (`parley/src/util.rs`). These need the *same* shaped `parley::Layout`
-  the glyphs themselves were painted against, or the caret/highlight
-  geometry won't line up — so both must be built from one shared
-  layout inside one function, not reconstructed twice.
-- `TextRenderer::draw` (`engine-render/src/text.rs`) is the real,
-  existing precedent for building that `Layout` from a `TextState`-
-  shaped struct and painting its glyphs — `TextFieldState` mirrors
-  `TextState`'s own four font/content fields exactly, so a sibling
-  `draw_field` method can reuse the identical layout-building code,
-  adding only the caret/selection painting on top.
-- `crates/engine-render/tests/checkbox_paint.rs` is the real, established
-  headless render-to-texture-then-readback pattern for a genuine pixel-
-  level proof — reused verbatim for `text_field_paint.rs`.
+- `Key` (`engine-core::input.rs`) had exactly four variants (`Tab`/
+  `Enter`/`Space`/`Escape`), confirmed by direct read — no character-
+  producing key, no Backspace/Delete/arrow keys at all.
+  `engine-platform::translate_key` only matched those four against
+  `winit::keyboard::Key::Named`; `key_event.text: Option<SmolStr>`
+  (winit's own real per-keypress produced text, confirmed via direct
+  source read of the pinned `winit = "0.30.13"`) was completely
+  discarded.
+- **Real design conflict, found while designing, not after:**
+  `NamedKey::Space` is matched by `translate_key` *before* any
+  `TextInput` fallback would ever see it, so a literal space keypress
+  can never reach `TextInput` — but `Key::Space` already has a real,
+  established meaning (`Enter | Space => Activated`, button
+  activation). A focused `TextField` genuinely needs `Space` to insert
+  a space character instead. Resolved by having `Tree::dispatch`
+  check whether the *focused* node is a `TextField` first, before the
+  generic Tab/Enter/Space/Escape handling — the same real, deliberate
+  "meaning depends on what's focused" case a keyboard model has to
+  handle, not an edge case to gloss over.
+- `InputEvent` currently derives `Copy` — confirmed via direct read,
+  every real caller takes it by value, so adding a `TextInput(String)`
+  variant (needed to carry real produced text, `String` isn't `Copy`)
+  is a safe, additive change to the derive list, not a breaking one to
+  any call site's own shape.
+- `crates/engine-py/src/app.rs`'s own `on_input` closure uses `event`
+  twice (once consumed by `dispatch`, once matched again for the real
+  dock-drag/theme-switch handling) — the one real call site that
+  actually needed a `.clone()` once `Copy` is gone, confirmed by
+  attempting the build first rather than guessing every call site in
+  advance.
 
 ## Design
 
-- `engine-core::node::TextFieldState { content: String, font_family:
-  String, font_weight: f32, font_size: f32, cursor: usize,
-  selection_anchor: Option<usize> }`, `new(content, font_family,
-  font_weight, font_size)` seeding `cursor` at `content.len()` (a real
-  text field's own real initial-cursor-at-end convention).
-  `NodeKind::TextField(TextFieldState)`, exported from `lib.rs`.
-- `Tree::collect_access_nodes` gains a `NodeKind::TextField` arm:
-  `access_node.set_value(state.content.clone())` — the same real,
-  automatic "one property, no duplicated copy" derivation `Checkbox`'s
-  own `set_toggled` already established.
-- `TextRenderer::draw_field(scene, resources, state: &TextFieldState,
-  at: TextPlacement, show_caret: bool)`: builds the same `Layout` as
-  `draw`, paints a real selection-highlight rect first (only when
-  `selection_anchor` is `Some` and differs from `cursor`, via
-  `Selection::geometry`), then glyphs, then a real caret line last
-  (only when `show_caret`, via `Cursor::geometry`) — highlight behind
-  text, caret on top, real MD3/every-text-editor stacking order.
-- `paint_node` gains a `NodeKind::TextField(state)` arm calling
-  `draw_field` with `show_caret: tree.focused() == Some(id)`.
-- `Window.add_text_field(background, width, height, content="",
-  font_family="Roboto", font_weight=400.0, font_size=16.0, x=None,
-  y=None) -> Node`, mirroring `add_checkbox`'s own real shape, plus the
-  new `tree.set_access(id, AccessNodeData::new(Role::TextInput)
-  .with_action(Action::Focus))` call.
-- `Node.get_text() -> PyResult<String>`, mirroring `get_checked`'s own
-  shape exactly (rejects a non-`TextField` node the same way).
+- `Key` gains `Backspace`/`Delete`/`ArrowLeft`/`ArrowRight`/`Home`/
+  `End` (all real `NamedKey` variants, confirmed via direct source
+  read of `winit`'s own `keyboard.rs` before adding them).
+- `InputEvent` gains `TextInput(String)`, `derive`s `Clone` only (not
+  `Copy` anymore).
+- New private `Tree::dispatch_text_field_key(field, key) ->
+  Option<DispatchOutcome>`: `None` for `Tab`/`Escape` (fall through to
+  generic handling); `Some(Changed(field))` for any real content edit
+  (character insert, Backspace/Delete that actually removed
+  something, a literal Space); `Some(None)` (the outcome) for pure
+  cursor movement (`ArrowLeft`/`ArrowRight`/`Home`/`End`) or a genuine
+  no-op (`Backspace` at `cursor == 0`, `Delete` at `cursor ==
+  content.len()`) — `Change` only ever means "the bound value
+  genuinely changed," not "a key was pressed." `Enter` is consumed
+  (no activation, no newline — a real, stated single-line-field
+  scope).
+- `Tree::dispatch`'s `KeyPressed` arm checks the focused node first;
+  a new `TextInput` arm inserts at `cursor`, advances it by the
+  inserted byte length, clears any selection, and reports `Changed`.
+  Both mutate `content`/`cursor` only ever at real `char_indices`
+  boundaries.
+- `engine-platform::translate_key` widened; the `WindowEvent::
+  KeyboardInput` handler falls back to firing `TextInput` when
+  `translate_key` returns `None` and `key_event.text` is real, on
+  press only.
+- `Node.set_text(content)` (`engine-py`) mirrors `set_checked`'s own
+  shape exactly, including always firing `Change` — the same
+  established convention, protected against a two-way-binding feedback
+  loop by the exact `Signal`-level fix M14 Phase 3 already made, no
+  new fix needed here.
+- `Window.press_key` widened to the six new named keys; new `Window.
+  type_text(text)` mirrors `press_key`'s own synthetic-dispatch
+  pattern for `TextInput`.
 
 ## Verification plan
 
 `cargo test --workspace --release`/`clippy -D warnings`/`fmt --check`;
-new `engine-core` tests (`TextFieldState::new` seeds `cursor` at
-`content.len()`; `build_access_update` reports the real `Role::
-TextInput`/`value`/`Action::Focus` for a `TextField`); new
-`engine-render/tests/text_field_paint.rs` (glyphs paint; a caret
-paints only when the node is the tree's own focused node, proven both
-ways); `maturin develop --release`; new `tests/test_text_field.py`
-(`add_text_field` returns a usable `Node`; `get_text` reads back
-content; `get_text` rejects a non-`TextField` node; a real `Window.
-press_key("tab")` reaches it, proven via `Node.get("opacity")`-style
-focus-adjacent check or a direct `Window`-level focus query if one
-exists — investigate at implementation time); new `examples/
-text_field.py`; every existing example re-run for regressions; `LOG.md`
-/`BUILD_TRACKER.md`/tracker artifact/commit/memory.
+new `engine-core` tests (insertion, Backspace/Delete both real-edit
+and genuine-no-op cases, cursor movement never reports `Changed`,
+Space inserts rather than activates, Enter is consumed without
+inserting, Tab still moves focus away, a real multi-byte UTF-8
+character removed whole); `engine-platform` test widened for the new
+vocabulary; `maturin develop --release`; new `tests/test_text_field.py`
+coverage for `type_text`/widened `press_key`/`set_text`, including
+that pure navigation and genuine no-op edits do *not* fire
+`on_change`; updated `examples/text_field.py` demonstrating real
+typing/navigation/deletion; every example re-run; `LOG.md`/
+`BUILD_TRACKER.md`/tracker artifact/commit/memory.
