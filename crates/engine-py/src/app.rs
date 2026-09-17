@@ -223,6 +223,20 @@ impl App {
         // at all). Held for the rest of this function's own real work
         // via `.entered()`'s RAII guard, not manually entered/exited.
         let _app_run_span = tracing::info_span!("app_run", windows = setups.len()).entered();
+        // Real, deliberate instrumentation, not test scaffolding: before
+        // this, no code in this crate ever emitted a bare `tracing::
+        // info!` event at all -- `test_rust_log_info_genuinely_raises_
+        // the_real_verbosity` only ever passed locally by accident, via
+        // `wgpu_hal`'s own incidental INFO-level logging once a real GPU
+        // adapter was found. CI has no display at all (deliberately, see
+        // `.github/workflows/ci.yml`'s own header comment) and never
+        // reaches adapter creation, so nothing there ever logged at INFO
+        // -- a real, previously-unvalidated gap, only surfacing now that
+        // CI has actually run against these commits for the first time.
+        // This event fires unconditionally for every genuine run session
+        // (display or no display, adapter or no adapter), giving `RUST_
+        // LOG=info` something real and first-party to prove.
+        tracing::info!("starting a real app run session");
 
         let setups = Rc::new(setups);
         let runtimes: Rc<RefCell<HashMap<WindowId, WindowRuntime>>> =
