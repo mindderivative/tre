@@ -30,7 +30,7 @@ use peniko::Color;
 use peniko::kurbo::{Affine, BezPath};
 use pyo3::prelude::*;
 
-use crate::dispatch::HandlerMap;
+use crate::dispatch::{HandlerMap, SharedCompletions};
 use crate::error::EngineError;
 use crate::window::SharedTheme;
 
@@ -50,6 +50,18 @@ pub struct Node {
     /// never-`Window`-linked instance instead (`view.rs`), matching
     /// this phase's own stated scope.
     pub(crate) theme: SharedTheme,
+    /// M9 Phase 2 (§5): `animate(..., on_complete=...)`'s own registry,
+    /// shared with the owning `PyWindow` the same way `handlers` is --
+    /// real `Py<PyAny>` callbacks live here, but `PyWindow`'s own
+    /// `__traverse__`/`__clear__` already cover this same shared
+    /// `Rc<RefCell<...>>` (it's the same underlying map, not a
+    /// separate copy), so `Node` itself needs no new GC obligation of
+    /// its own -- matching `handlers`' own existing precedent (`Node`
+    /// has never implemented `__traverse__`/`__clear__` itself). A
+    /// `View`-created `Node` gets a fresh, private instance instead,
+    /// matching `theme`'s own precedent -- `View` has no real
+    /// per-frame render loop to ever drain a completion through.
+    pub(crate) completions: SharedCompletions,
 }
 
 #[pymethods]
@@ -64,12 +76,22 @@ impl Node {
     /// `Animated` fields to it), so that second level currently always
     /// falls through to `UnknownProperty`, which is the honest, correct
     /// behavior today, not a gap.
-    #[pyo3(signature = (property, to, duration_ms=0))]
+    /// M9 Phase 2 (§5): `on_complete`, when given, is called with no
+    /// arguments exactly once, the real tick this specific animation
+    /// genuinely finishes (`App::run`'s own per-frame loop is what
+    /// actually drains and invokes it -- a `Window`-created node's
+    /// callback fires for real; a `View`-created node's callback is
+    /// registered the same way but never fires, since `View` has no
+    /// real per-frame render loop to drain it through, the same stated
+    /// scope limit `Window.set_theme` vs. `View`'s own theme already
+    /// established, M7 Phase 3).
+    #[pyo3(signature = (property, to, duration_ms=0, on_complete=None))]
     pub(crate) fn animate(
         &self,
         property: &str,
         to: Bound<'_, PyAny>,
         duration_ms: u64,
+        on_complete: Option<Py<PyAny>>,
     ) -> PyResult<()> {
         let duration = Duration::from_millis(duration_ms);
         let now = Instant::now();
@@ -82,27 +104,23 @@ impl Node {
         match property {
             "opacity" => {
                 let value = extract_f64(&to, property)?;
-                node.paint
-                    .opacity
-                    .animate_to(value, duration, MotionCurve::Linear, now);
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                animate_field(&mut node.paint.opacity, value, duration, now, handle);
             }
             "corner_radius" => {
                 let value = extract_f64(&to, property)?;
-                node.paint
-                    .corner_radius
-                    .animate_to(value, duration, MotionCurve::Linear, now);
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                animate_field(&mut node.paint.corner_radius, value, duration, now, handle);
             }
             "elevation" => {
                 let value = extract_f64(&to, property)?;
-                node.paint
-                    .elevation
-                    .animate_to(value, duration, MotionCurve::Linear, now);
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                animate_field(&mut node.paint.elevation, value, duration, now, handle);
             }
             "background" => {
                 let value = extract_color(&to, property)?;
-                node.paint
-                    .background
-                    .animate_to(value, duration, MotionCurve::Linear, now);
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                animate_field(&mut node.paint.background, value, duration, now, handle);
             }
             // M6 Phase 2 (§8): "pan offset × zoom scale" (§11.9's own
             // text), not a raw 6-coefficient `Affine` -- matches
@@ -114,9 +132,8 @@ impl Node {
             "transform" => {
                 let (tx, ty, scale) = extract_translate_scale(&to, property)?;
                 let value = Affine::translate((tx, ty)) * Affine::scale(scale);
-                node.paint
-                    .transform
-                    .animate_to(value, duration, MotionCurve::Linear, now);
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                animate_field(&mut node.paint.transform, value, duration, now, handle);
             }
             // M7 Phase 4 (§7.4): a list of `(x, y)` vertices, since
             // Python has no `BezPath` type to hand over directly --
@@ -140,9 +157,8 @@ impl Node {
                     path.close_path();
                 }
                 let value = ShapeKey::from_path(&path);
-                node.paint
-                    .shape
-                    .animate_to(value, duration, MotionCurve::Linear, now);
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                animate_field(&mut node.paint.shape, value, duration, now, handle);
             }
             _ => {
                 return Err(EngineError::UnknownProperty {
@@ -302,6 +318,28 @@ impl Node {
         } else {
             Err(EngineError::CycleRejected.into())
         }
+    }
+}
+
+/// M9 Phase 2 (§5): `animate()`'s own shared "start this field
+/// animating, optionally with a real completion handle" dispatch --
+/// generic over every `T: Interpolate + Clone` an `Animated<T>` can
+/// wrap (`f64`, `Color`, `Affine`, `ShapeKey`), so each of `animate()`'s
+/// six match arms needs one call, not its own copy of this branch.
+/// `MotionCurve::Linear` matches every one of those arms' own existing,
+/// unchanged choice.
+fn animate_field<T: engine_core::Interpolate + Clone>(
+    field: &mut engine_core::Animated<T>,
+    value: T,
+    duration: Duration,
+    now: Instant,
+    handle: Option<engine_core::CompletionHandle>,
+) {
+    match handle {
+        Some(handle) => {
+            field.animate_to_with_completion(value, duration, MotionCurve::Linear, now, handle);
+        }
+        None => field.animate_to(value, duration, MotionCurve::Linear, now),
     }
 }
 

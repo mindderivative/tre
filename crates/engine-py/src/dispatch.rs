@@ -23,7 +23,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use engine_core::{DispatchOutcome, EventKind, InteractionConfig, NodeId};
+use engine_core::{CompletionHandle, DispatchOutcome, EventKind, InteractionConfig, NodeId};
 use pyo3::prelude::*;
 
 /// The one real shape shared by `Node`/`PyWindow`/`View`'s handler
@@ -31,6 +31,41 @@ use pyo3::prelude::*;
 /// convenience) since this module is the one place that actually
 /// interprets it.
 pub(crate) type HandlerMap = Rc<RefCell<HashMap<(NodeId, EventKind), Py<PyAny>>>>;
+
+/// M9 Phase 2 (§5): the real registry `Node.animate(..., on_complete=
+/// ...)` mints a fresh handle into, and `run_completions` (below)
+/// drains -- the same `Rc<RefCell<...>>`-shared-into-every-`Node`
+/// shape `HandlerMap`/`SharedTheme` already use. `next_id` is a plain
+/// monotonic counter, not `NodeId`-derived: a `CompletionHandle` names
+/// one specific *animation*, not a node -- the same node can have
+/// several real completions registered (each of its own animatable
+/// properties, independently) outstanding at once.
+pub(crate) struct CompletionRegistry {
+    next_id: u64,
+    /// `pub(crate)`, not private: `PyWindow`'s own `__traverse__`/
+    /// `__clear__` (real `Py<PyAny>` values -- same cyclic-GC
+    /// obligation as `handlers`) need direct access, the same way
+    /// `HandlerMap`'s own inner `HashMap` is accessed directly there.
+    pub(crate) callbacks: HashMap<CompletionHandle, Py<PyAny>>,
+}
+
+impl CompletionRegistry {
+    pub(crate) fn new() -> Self {
+        Self {
+            next_id: 0,
+            callbacks: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn register(&mut self, callback: Py<PyAny>) -> CompletionHandle {
+        let handle = CompletionHandle(self.next_id);
+        self.next_id += 1;
+        self.callbacks.insert(handle, callback);
+        handle
+    }
+}
+
+pub(crate) type SharedCompletions = Rc<RefCell<CompletionRegistry>>;
 
 /// `Tree::dispatch`'s own MD3-value inputs (§1 Locked Decisions keeps
 /// `engine-core` itself MD3-agnostic, so these live at the real call
@@ -121,6 +156,30 @@ pub(crate) fn open_context_menu(
             dismiss_on_escape: true,
         },
     );
+}
+
+/// M9 Phase 2 (§5): `Tree::tick_all`'s own real "meaning-dependent"
+/// half -- invokes each just-completed animation's registered `on_
+/// complete` callback exactly once. The same "clone out, drop the
+/// borrow, *then* call" shape `call_handler` already uses (a callback
+/// that itself registers a new `on_complete`, a real plausible
+/// pattern, would otherwise panic on a re-entrant `RefCell` borrow),
+/// but `HashMap::remove` instead of `get`: a real CSS `transitionend`/
+/// JS Promise-style single fire, not a repeating subscription -- once
+/// invoked, this exact handle can never fire again.
+pub(crate) fn run_completions(
+    completions: &SharedCompletions,
+    completed: Vec<CompletionHandle>,
+    py: Python<'_>,
+) {
+    for handle in completed {
+        let callback = completions.borrow_mut().callbacks.remove(&handle);
+        if let Some(callback) = callback
+            && let Err(err) = callback.call0(py)
+        {
+            err.print(py);
+        }
+    }
 }
 
 fn call_handler(handlers: &HandlerMap, node: NodeId, kind: EventKind, py: Python<'_>) {

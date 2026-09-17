@@ -1,69 +1,94 @@
-# Log: M9 Phase 1 — Real Completion-Handle Plumbing Through the Central Tick
+# Log: M9 Phase 2 — Python-Facing `on_complete` Callbacks
 
-Corresponds to `BUILD_TRACKER.md` M9 Phase 1. `Animated<T>::tick`
-surfaces a just-completed `on_complete` handle, threaded through
-`PaintProperties`/`InteractionState`/`RippleState` up to `Tree::
-tick_all`, which now returns the real set of handles that finished each
-tick instead of just a bare `bool`. A new `animate_to_with_completion`
-sibling method actually attaches a real handle; `animate_to` itself is
-unchanged.
+Corresponds to `BUILD_TRACKER.md` M9 Phase 2. `Node.animate(property,
+to, duration_ms, on_complete=None)` mints a real `CompletionHandle` and
+stores the Python callback keyed by it; `App::run`'s own per-frame loop
+drains `Tree::tick_all`'s new completions and invokes each matching
+stored Python callback exactly once.
 
 ## Investigation before writing code
 
-- `CompletionHandle(pub u64)` already derives `Clone, Copy, Debug,
-  PartialEq, Eq, Hash` — cheap to copy out of a borrow.
-- `Animated::tick`'s existing body already reads `anim.to.clone()`
-  before `self.active = None` clears the borrow away — confirmed this
-  already compiles today, so reading `anim.on_complete` (also `Copy`)
-  the same way needed no new borrow-checker workaround.
-- Full call-site enumeration via grep before editing: `Animated::tick`
-  is called from `PaintProperties::tick` (6 fields), `InteractionState
-  ::tick` (`hover_opacity`/`focus_ring`), `RippleState::tick`
-  (`radius`/`opacity`, via `SmallVec::retain`'s `&mut T` closure), and
-  `Tree::set_splitter_position`'s own inline call — 10 real call sites,
-  all inside `engine-core`, none missed.
-- `Tree::tick_all`'s own real callers that bind the old bare-`bool`
-  return needed updating (`engine-core::tree`'s own tests); callers
-  that discard it (`engine-py::app.rs`'s per-frame loop, `view.rs`,
-  most Rust pixel tests) compiled unchanged.
-- `Animated::animate_to`'s own real signature has no `on_complete`
-  parameter — added a new, additive sibling method instead of a 5th
-  parameter, so none of its ~15+ existing call sites needed touching.
+- `dispatch.rs`'s own `HandlerMap`/`run_dispatch_outcome`/
+  `call_handler` (M4 Phase 1 step 3/M4 Phase 6) is the exact real
+  template mirrored: a shared `Rc<RefCell<HashMap<..., Py<PyAny>>>>`,
+  cloned into every `Node`/`PyWindow`/`View`, plus a "look up, clone
+  out, drop the borrow, *then* call" helper (avoids a re-entrant
+  `RefCell` borrow panic if a callback itself registers a new one).
+  Completion callbacks differ in one real way: one-shot (`HashMap::
+  remove`, not `get`) — a real CSS `transitionend`/JS Promise-style
+  single fire, not a repeating subscription.
+- `Node.theme: SharedTheme` (M7 Phase 3) is the most recent real
+  precedent for "a new shared registry threaded through every `Node`
+  construction site" — `window.rs` (4 sites) shares the real one;
+  `view.rs` (3 sites) gets a fresh, private instance each, since `View`
+  has no real per-frame render loop to ever drain a completion through
+  (confirmed via its own module doc comment) — the same real, stated
+  scope limit `theme` already accepted for `View`.
+- `App::run`'s own `on_frame` closure already captures `py: Python<'_>`
+  from the enclosing `run(&self, py: Python<'_>, ...)` method (confirmed
+  by reading the `on_input` closure's own body) — no new parameter
+  threading needed.
+- `Node::animate`'s own real dispatch is six separate match arms, each
+  calling a *different* `Animated<T>` field's own `.animate_to(...)`
+  (`T` differs per arm). A small, private, generic `animate_field<T:
+  Interpolate + Clone>` helper replaces each arm's own direct call,
+  choosing `animate_to_with_completion` vs. plain `animate_to` based on
+  whether a handle was registered — avoiding six copies of that branch.
+- Registering the `CompletionHandle` inside whichever single arm
+  actually matches (not once up front) avoids leaking an orphaned,
+  never-invoked callback into the registry on an unknown-property error
+  — `on_complete: Option<Py<PyAny>>` is moved into exactly one arm at
+  match time, which Rust allows.
+- `completions` holds real `Py<PyAny>` values — the same cyclic-GC
+  obligation `handlers` already has. `PyWindow`'s own `__traverse__`/
+  `__clear__` cover it (the same underlying shared `Rc<RefCell<...>>`
+  `Node` also holds a clone of); `Node` itself needs no separate
+  `__traverse__`, matching `handlers`' own existing precedent.
+- **Real constraint confirmed while planning verification:** `App.run()`
+  blocks and opens a real window/display — `test_engine_py.py`'s own
+  module doc comment already states it's deliberately never exercised
+  in pytest, only in real examples. This meant the pytest-level
+  coverage for `on_complete` stays an FFI smoke test (accepted without
+  raising) plus a real cyclic-GC regression test; the real, live,
+  end-to-end "does it actually fire" proof is the new example.
 
 ## What happened
 
-`Animated<T>::tick(&mut self, now, completed: &mut Vec<CompletionHandle
->) -> bool` — pushes `anim.on_complete` into `completed` on the exact
-tick an animation finishes, before `self.active` is cleared. New
-`Animated<T>::animate_to_with_completion(to, duration, curve, now,
-on_complete)` — identical to `animate_to` except it actually sets
-`on_complete: Some(...)`.
+New `dispatch::CompletionRegistry { next_id: u64, callbacks: HashMap<
+CompletionHandle, Py<PyAny>> }` with `register(&mut self, callback) ->
+CompletionHandle`; `type SharedCompletions = Rc<RefCell<
+CompletionRegistry>>`. New `dispatch::run_completions(completions,
+completed, py)` — removes and calls each real callback, printing (not
+raising) any real Python exception the same way `call_handler` already
+does.
 
-`PaintProperties::tick`/`InteractionState::tick`/`RippleState::tick`
-each gained the same `completed` parameter, threaded uniformly into
-every inner `.tick` call. `Tree::tick_all` now returns `(bool, Vec<
-CompletionHandle>)`, collecting one shared `Vec` across the whole
-per-node walk. `set_splitter_position`'s own inline tick call gets a
-throwaway `Vec::new()` — kind-specific fields stay outside the central
-completion queue, the same M8 Phase 2 precedent already established for
-`Tree::tick_all` itself.
+`PyWindow` gains `completions: SharedCompletions` (fresh in `::new`),
+covered by its own `__traverse__`/`__clear__`. `Node` gains the same
+field, threaded through all 7 construction sites. `Node::animate` gains
+`on_complete: Option<Py<PyAny>>`; a new private `animate_field` helper
+replaces each of the six arms' own direct `.animate_to` call.
+`App::run`'s `WindowSetup`/`WindowRuntime` gain `completions:
+SharedCompletions`; the `on_frame` closure's `tick_all` call now binds
+the real completion `Vec` and passes it to `run_completions`.
 
-New tests: `animate_to_with_completion` reports its handle exactly on
-the completing tick, never early, never twice on a later tick; plain
-`animate_to` never reports a completion (a true no-op for the existing,
-unchanged default path); `InteractionState::tick` genuinely threads a
-real completion up from `hover_opacity`. Every existing test that bound
-`tick_all`'s old return value updated to destructure the new tuple (2
-sites in `tree.rs`); two downstream `engine-render` tests
-(`animated_rect.rs`, `transform_composition.rs`) updated for
-`Animated::tick`'s new signature.
+New tests (`test_engine_py.py`): `on_complete` accepted without raising;
+omitting it still works (explicit regression); a real cyclic-GC test
+(mirroring `test_virtual_list.py`'s own analogous `materializers` test)
+proves a `Window`-capturing `on_complete` callback is genuinely
+collected once unreachable, not leaked forever. New `examples/
+animation_completion.py`: a real `App.run()`-driven animation whose
+`on_complete` fires exactly once — found and fixed a real timing issue
+while writing it (a 100ms real-duration animation never completed
+within a reasonable `max_frames` budget in this headless environment's
+own unpredictable software-rendered frame rate; switched to
+`duration_ms=0`, which `Animated::tick`'s own real "elapsed >= duration"
+contract snaps immediately on the first tick, making completion
+deterministic regardless of real wall-clock frame pacing).
 
-Full `cargo test --workspace --release` clean (`engine-core` gains 3
-new tests: 69 → 72 — every prior test passed unmodified), `cargo
-clippy --workspace --all-targets -- -D warnings`, `cargo fmt --check`
-all clean. This phase adds no `engine-py`/Python-facing API — `maturin
-develop --release` + full `pytest tests/` (79 passed, 1 skipped,
-unaffected) and all fifteen examples confirmed clean, a pure regression
-check proving the `Tree::tick_all` signature change compiles cleanly
-through `engine-py` even though nothing there consumes the new return
-value yet.
+Full `cargo test --workspace --release` clean (no `engine-core`/
+`engine-render` change this phase, a pure regression check — unchanged
+from Phase 1's own counts), `cargo clippy --workspace --all-targets --
+-D warnings`, `cargo fmt --check` all clean. `maturin develop --release`
++ full `pytest tests/` (82 passed, up from 79, 1 skipped) and all
+sixteen examples (fifteen existing + new `animation_completion.py`)
+confirmed clean.

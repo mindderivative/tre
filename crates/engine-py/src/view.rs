@@ -53,6 +53,7 @@ use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
 
 use crate::binding::PyViewModelResolver;
+use crate::dispatch::CompletionRegistry;
 use crate::dispatch::{HandlerMap, interaction_config, open_context_menu, run_dispatch_outcome};
 use crate::node::Node;
 use crate::window::ThemeState;
@@ -132,8 +133,9 @@ fn apply_binding_value(
         handlers: Rc::new(RefCell::new(HashMap::new())),
         context_menus: Rc::new(RefCell::new(HashMap::new())),
         theme: Rc::new(RefCell::new(ThemeState::default())),
+        completions: Rc::new(RefCell::new(CompletionRegistry::new())),
     };
-    temp_node.animate(property, bound, 0)?;
+    temp_node.animate(property, bound, 0, None)?;
     tree.borrow_mut().tick_all(std::time::Instant::now());
     Ok(())
 }
@@ -238,6 +240,10 @@ impl View {
             // created node's ripple/hover tint stays the same plain
             // black default it already was, byte-for-byte.
             theme: Rc::new(RefCell::new(ThemeState::default())),
+            // M9 Phase 2 (§5): same scope reasoning as `theme` above --
+            // a fresh, private instance, never drained through a real
+            // per-frame render loop `View` doesn't have.
+            completions: Rc::new(RefCell::new(CompletionRegistry::new())),
         })
     }
 
@@ -297,6 +303,7 @@ impl View {
                     handlers: self.handlers.clone(),
                     context_menus: self.context_menus.clone(),
                     theme: Rc::new(RefCell::new(ThemeState::default())),
+                    completions: Rc::new(RefCell::new(CompletionRegistry::new())),
                 };
                 // Reuses `Node`'s own real setters verbatim (same
                 // construction `apply_binding_value` already uses for

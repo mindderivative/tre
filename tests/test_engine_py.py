@@ -17,6 +17,9 @@ the active environment first -- these tests import the real `tre`
 package, not a mock.
 """
 
+import gc
+import weakref
+
 import pytest
 
 from tre import App, Node, Window
@@ -82,3 +85,76 @@ def test_app_requires_at_least_one_window():
     app = App()
     with pytest.raises(RuntimeError, match="add_window"):
         app.run()
+
+
+def test_animate_accepts_a_real_on_complete_callback():
+    """M9 Phase 2 (§5): `on_complete`, when given, must not raise --
+    registering it is a fire-and-forget call, the same as `animate()`
+    itself (§8's own design rule). The definitive proof it actually
+    *fires* needs a real, running `App.run()` loop (this file's own
+    docstring: that needs a real display, so it isn't exercised here,
+    `examples/animation_completion.py` is that real, live proof) --
+    `engine-core`'s own tests (M9 Phase 1) already proved the tick-level
+    mechanics exhaustively; this is the FFI boundary's own smoke test.
+    """
+    window = Window(width=200, height=200)
+    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node.animate("opacity", 0.5, duration_ms=100, on_complete=lambda: None)
+
+
+def test_animate_still_works_with_on_complete_omitted():
+    # Every other test in this file already omits `on_complete` and
+    # still passes -- this one states that regression explicitly.
+    window = Window(width=200, height=200)
+    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node.animate("opacity", 0.5, duration_ms=100)
+
+
+def test_window_participates_in_cyclic_gc_when_an_on_complete_callback_captures_it_back():
+    """M9 Phase 2 (§5): the same real reason `PyWindow` already
+    implements `__traverse__`/`__clear__` for `handlers`/`materializers`
+    (`test_virtual_list.py`'s own analogous test) applies to
+    `completions` too -- it holds real `Py<PyAny>` callbacks the same
+    way. An `on_complete` callback that captures the very `Window` it
+    was registered on (a plausible, real pattern -- a bound method
+    reading other state off the window) forms a reference cycle plain
+    refcounting can never break; this proves CPython's cyclic collector
+    actually reclaims it, not just that the methods exist and don't
+    crash. Uses a bound method, not a closure over a local, for the same
+    real reason `test_virtual_list.py`'s own analogous test does (a
+    closure over an enclosing local shares one cell with it, so it can't
+    outlive that scope's own `del`).
+    """
+
+    class Holder:
+        def __init__(self):
+            self.window = None
+
+        def on_complete(self):
+            self.window
+
+    holder = Holder()
+    window = Window(width=200, height=200)
+    holder.window = window
+    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+
+    # window -> completions -> holder.on_complete (bound method) ->
+    # __self__ -> holder -> .window -> window.
+    node.animate("opacity", 0.5, duration_ms=100, on_complete=holder.on_complete)
+
+    holder_ref = weakref.ref(holder)
+    del window
+    del node
+    del holder
+    assert holder_ref() is not None, (
+        "sanity check: a real reference cycle must survive plain refcounting alone "
+        "(if this fails, the test itself isn't constructing a real cycle)"
+    )
+
+    gc.collect()
+    assert holder_ref() is None, (
+        "the cycle (window <-> bound-method on_complete callback <-> holder) must be "
+        "collected by CPython's cyclic GC once nothing outside it references any part of "
+        "it -- if this fails, completions' own __traverse__/__clear__ aren't actually "
+        "making window's own side of the cycle visible to the collector"
+    )

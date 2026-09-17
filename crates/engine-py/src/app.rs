@@ -32,7 +32,10 @@ use taffy::prelude::{AvailableSpace, Size};
 use vello_hybrid::{RenderSize, RenderTargetConfig};
 use winit::window::{Window, WindowId};
 
-use crate::dispatch::{HandlerMap, interaction_config, open_context_menu, run_dispatch_outcome};
+use crate::dispatch::{
+    HandlerMap, SharedCompletions, interaction_config, open_context_menu, run_completions,
+    run_dispatch_outcome,
+};
 use crate::dock::{self, SharedDockState};
 use crate::window::{PyWindow, SharedTheme};
 
@@ -68,6 +71,10 @@ struct WindowSetup {
     /// arm, below) needs to mutate it, so it stays a shared handle,
     /// never copied to a plain snapshot.
     theme: SharedTheme,
+    /// M9 Phase 2 (§5): the window's own `on_complete` registry,
+    /// extracted the same way -- the real `on_frame` closure needs to
+    /// mutate it (removing a callback the instant it's invoked).
+    completions: SharedCompletions,
 }
 
 struct GpuState {
@@ -139,6 +146,7 @@ struct WindowRuntime {
     context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
     dock: SharedDockState,
     theme: SharedTheme,
+    completions: SharedCompletions,
 }
 
 #[pymethods]
@@ -184,6 +192,7 @@ impl App {
                     context_menus: window.context_menus.clone(),
                     dock: window.dock.clone(),
                     theme: window.theme.clone(),
+                    completions: window.completions.clone(),
                 }
             })
             .collect();
@@ -222,6 +231,7 @@ impl App {
                         context_menus: setup.context_menus.clone(),
                         dock: setup.dock.clone(),
                         theme: setup.theme.clone(),
+                        completions: setup.completions.clone(),
                     },
                 );
             },
@@ -232,7 +242,13 @@ impl App {
                 };
 
                 let now = Instant::now();
-                runtime.tree.borrow_mut().tick_all(now);
+                let (_, completed) = runtime.tree.borrow_mut().tick_all(now);
+                // M9 Phase 2 (§5): the real drain -- invokes each
+                // just-completed animation's registered `on_complete`
+                // callback exactly once, the same "look up and call a
+                // registered callback" shape `run_dispatch_outcome`
+                // already uses for click/hover handlers.
+                run_completions(&runtime.completions, completed, py);
                 runtime.tree.borrow_mut().compute_layout(
                     runtime.root,
                     Size {

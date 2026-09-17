@@ -19,7 +19,10 @@ use pyo3::class::{PyTraverseError, PyVisit};
 use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Position, Rect as TaffyRect, Size, Style, auto, length};
 
-use crate::dispatch::{HandlerMap, interaction_config, open_context_menu, run_dispatch_outcome};
+use crate::dispatch::{
+    CompletionRegistry, HandlerMap, SharedCompletions, interaction_config, open_context_menu,
+    run_dispatch_outcome,
+};
 use crate::dock::{self, SharedDockState};
 use crate::error::EngineError;
 use crate::node::Node;
@@ -165,6 +168,12 @@ pub struct PyWindow {
     /// M7 Phase 3 (§7.1): shared with every `Node` this `Window` hands
     /// out, the same way `handlers`/`context_menus`/`dock` already are.
     pub(crate) theme: SharedTheme,
+    /// M9 Phase 2 (§5): `Node.animate(..., on_complete=...)`'s own
+    /// registry, shared the same way `theme` is. Holds real `Py<PyAny>`
+    /// callbacks (like `handlers`, unlike `context_menus`/`dock`/
+    /// `theme`) -- needs the same `__traverse__`/`__clear__` obligation
+    /// below.
+    pub(crate) completions: SharedCompletions,
 }
 
 #[pymethods]
@@ -208,6 +217,7 @@ impl PyWindow {
             context_menus: Rc::new(RefCell::new(HashMap::new())),
             dock: Rc::new(RefCell::new(dock::DockState::new())),
             theme: Rc::new(RefCell::new(ThemeState::default())),
+            completions: Rc::new(RefCell::new(CompletionRegistry::new())),
         }
     }
 
@@ -268,6 +278,7 @@ impl PyWindow {
             handlers: self.handlers.clone(),
             context_menus: self.context_menus.clone(),
             theme: self.theme.clone(),
+            completions: self.completions.clone(),
         }
     }
 
@@ -322,6 +333,7 @@ impl PyWindow {
             handlers: self.handlers.clone(),
             context_menus: self.context_menus.clone(),
             theme: self.theme.clone(),
+            completions: self.completions.clone(),
         }
     }
 
@@ -716,6 +728,7 @@ impl PyWindow {
             handlers: self.handlers.clone(),
             context_menus: self.context_menus.clone(),
             theme: self.theme.clone(),
+            completions: self.completions.clone(),
         }
     }
 
@@ -838,6 +851,7 @@ impl PyWindow {
             handlers: self.handlers.clone(),
             context_menus: self.context_menus.clone(),
             theme: self.theme.clone(),
+            completions: self.completions.clone(),
         }
     }
 
@@ -898,6 +912,11 @@ impl PyWindow {
         for handler in self.handlers.borrow().values() {
             visit.call(handler)?;
         }
+        // M9 Phase 2: `completions` holds real `Py<PyAny>` callbacks --
+        // the same cyclic-GC obligation as `handlers`.
+        for callback in self.completions.borrow().callbacks.values() {
+            visit.call(callback)?;
+        }
         Ok(())
     }
 
@@ -905,5 +924,6 @@ impl PyWindow {
         self.materializers.clear();
         self.canvas_draws.clear();
         self.handlers.borrow_mut().clear();
+        self.completions.borrow_mut().callbacks.clear();
     }
 }
