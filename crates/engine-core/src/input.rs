@@ -141,6 +141,19 @@ pub enum InputEvent {
     /// paste," and `engine-py`'s own real handling supplies the actual
     /// text afterward via the already-real `TextInput` mechanism above.
     PasteRequested,
+    /// M17 Phase 2 (§8): a real IME composition preview update --
+    /// mirrors `winit::event::Ime::Preedit`'s own text (dropping its
+    /// real sub-cursor-range detail, a stated simplification -- see
+    /// `TextFieldState.preedit`'s own doc comment). An empty string
+    /// means "the preview was cleared," `winit`'s own real convention
+    /// for this event, reused verbatim rather than a separate variant.
+    /// `Tree::dispatch` only ever sets/clears the focused `TextField`'s
+    /// own `preedit` -- a real mutation, but never a `Change` (nothing
+    /// has actually been typed yet). A real IME `Commit` needs no
+    /// sibling variant here at all: it reaches the exact same
+    /// `TextInput` above, the identical mechanism a plain keypress
+    /// already uses (M15 Phase 2).
+    ImePreedit(String),
     /// M4 Phase 8: `position` is the cursor's last known position (the
     /// same `last_cursor_position` tracking `MouseInput` already
     /// reuses in `engine-platform`, since `winit`'s own `MouseWheel`

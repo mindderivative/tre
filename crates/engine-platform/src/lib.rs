@@ -86,7 +86,7 @@ use std::sync::Arc;
 use engine_core::{InputEvent, Key, PointerButton, ScrollDelta};
 use peniko::kurbo::Point;
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 use winit::window::{Window, WindowAttributes, WindowId};
@@ -413,6 +413,17 @@ where
                     &window,
                     self.proxy.clone(),
                 );
+                // M17 Phase 2 (§8): real, load-bearing -- `Window::
+                // set_ime_allowed`'s own doc comment states plainly
+                // "IME is not allowed by default" (confirmed via direct
+                // source read); without this call, `WindowEvent::Ime`
+                // never fires at all, silently dead-ending the whole
+                // feature. "During the preedit phase the window will
+                // NOT get `KeyboardInput` events" (also real, same doc
+                // comment) -- composing and plain typing are already
+                // mutually exclusive at the `winit` level, nothing this
+                // codebase needs to coordinate itself.
+                window.set_ime_allowed(true);
                 window.set_visible(true);
                 window.request_redraw();
                 let id = window.id();
@@ -602,6 +613,25 @@ where
                     },
                 );
             }
+            // M17 Phase 2 (§8): real IME composition, reachable only
+            // because `resumed`'s own window creation now calls
+            // `Window::set_ime_allowed(true)` -- see that call site's
+            // own doc comment for why this event otherwise never fires
+            // at all. `Enabled`/`Disabled` are true no-ops for now, the
+            // same "not manufactured ahead of a real need" scope every
+            // other minimal-vocabulary translation in this module
+            // already keeps -- `Commit` reaches the exact same real
+            // `TextInput` mechanism a plain keypress already uses (M15
+            // Phase 2), no new variant needed for it at all.
+            WindowEvent::Ime(ime) => match ime {
+                Ime::Preedit(text, _cursor_range) => {
+                    on_input(window_id, InputEvent::ImePreedit(text));
+                }
+                Ime::Commit(text) => {
+                    on_input(window_id, InputEvent::TextInput(text));
+                }
+                Ime::Enabled | Ime::Disabled => {}
+            },
             _ => {}
         }
     }

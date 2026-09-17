@@ -1754,6 +1754,15 @@ impl Tree {
                 Self::delete_selection(state);
                 state.content.insert_str(state.cursor, &text);
                 state.cursor += text.len();
+                // M17 Phase 2 (§8): a real insertion -- whether from a
+                // plain keypress or a real IME `Commit` (both reach
+                // this same arm) -- always clears any stale preedit.
+                // Defensive: `winit`'s own real behavior already keeps
+                // plain `KeyboardInput`/`Ime` events mutually exclusive
+                // during composition, so `preedit` should already be
+                // `None` here in practice, but a real commit is exactly
+                // the moment composition ends either way.
+                state.preedit = None;
                 DispatchOutcome::Changed(field)
             }
             // M4 Phase 8 (§11.7/§11.8 groundwork): a true no-op today,
@@ -1803,6 +1812,22 @@ impl Tree {
             // text_field_selection` and the actual OS clipboard I/O)
             // happens in `engine-py`'s own raw-event handling, not here.
             InputEvent::Copy | InputEvent::Cut | InputEvent::PasteRequested => {
+                DispatchOutcome::None
+            }
+            // M17 Phase 2 (§8): a real, mechanical mutation (unlike
+            // Copy/Cut/PasteRequested above, this needs no OS access --
+            // `engine-platform` already extracted the real preedit text
+            // from `winit::event::Ime::Preedit` before this ever
+            // reaches here), but never a `Change`: a composition
+            // preview isn't committed content, nothing has actually
+            // been typed yet.
+            InputEvent::ImePreedit(text) => {
+                if let Some(field) = self.focused
+                    && let Some(NodeKind::TextField(state)) =
+                        self.nodes.get_mut(field).map(|n| &mut n.kind)
+                {
+                    state.preedit = if text.is_empty() { None } else { Some(text) };
+                }
                 DispatchOutcome::None
             }
         }
@@ -5799,5 +5824,92 @@ mod tests {
         let (mut tree, _root, field) = text_field_scene("hello");
         assert_eq!(tree.cut_text_field_selection(field), None);
         assert_eq!(field_state(&tree, field).content, "hello");
+    }
+
+    fn dispatch_ime_preedit(tree: &mut Tree, root: NodeId, text: &str) -> DispatchOutcome {
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        tree.dispatch(
+            root,
+            InputEvent::ImePreedit(text.to_string()),
+            &config,
+            Instant::now(),
+        )
+    }
+
+    #[test]
+    fn ime_preedit_sets_the_real_focused_fields_own_preview_without_touching_content() {
+        let (mut tree, root, field) = text_field_scene("hi");
+        let outcome = dispatch_ime_preedit(&mut tree, root, "n");
+        assert_eq!(
+            outcome,
+            DispatchOutcome::None,
+            "a composition preview is not a real content change"
+        );
+        let state = field_state(&tree, field);
+        assert_eq!(state.preedit, Some("n".to_string()));
+        assert_eq!(
+            state.content, "hi",
+            "a real preedit must never touch committed content"
+        );
+    }
+
+    #[test]
+    fn ime_preedit_with_an_empty_string_clears_a_real_active_preview() {
+        let (mut tree, root, field) = text_field_scene("hi");
+        dispatch_ime_preedit(&mut tree, root, "n");
+        assert_eq!(field_state(&tree, field).preedit, Some("n".to_string()));
+
+        dispatch_ime_preedit(&mut tree, root, "");
+        assert_eq!(
+            field_state(&tree, field).preedit,
+            None,
+            "an empty preedit string is winit's own real 'cleared' convention"
+        );
+    }
+
+    #[test]
+    fn ime_preedit_with_no_focused_field_is_a_true_no_op() {
+        let mut tree = Tree::new();
+        let (_, root_style, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+        let outcome = dispatch_ime_preedit(&mut tree, root, "n");
+        assert_eq!(outcome, DispatchOutcome::None);
+    }
+
+    #[test]
+    fn a_real_text_input_commit_clears_a_stale_preedit() {
+        let (mut tree, root, field) = text_field_scene("hi");
+        dispatch_ime_preedit(&mut tree, root, "n");
+        assert_eq!(field_state(&tree, field).preedit, Some("n".to_string()));
+
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        tree.dispatch(
+            root,
+            InputEvent::TextInput("\u{5462}".to_string()),
+            &config,
+            Instant::now(),
+        );
+        let state = field_state(&tree, field);
+        assert_eq!(state.content, "hi\u{5462}");
+        assert_eq!(
+            state.preedit, None,
+            "a real Commit (reaching TextInput) must clear the stale preview"
+        );
     }
 }

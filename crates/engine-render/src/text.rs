@@ -150,9 +150,26 @@ impl TextRenderer {
         at: TextPlacement,
         show_caret: bool,
     ) {
+        // M17 Phase 2 (§8): a real, in-progress IME composition is
+        // spliced into the *displayed* text at `cursor` -- purely for
+        // painting, `state.content` itself stays uncommitted the whole
+        // time (`TextFieldState.preedit`'s own doc comment). Real IME
+        // caret behavior: while composing, the caret sits at the end of
+        // the in-progress composition, not at the real, frozen `cursor`
+        // underneath it.
+        let (display_content, preedit_range, caret_at) = match &state.preedit {
+            Some(preedit) if !preedit.is_empty() => {
+                let mut combined = state.content.clone();
+                combined.insert_str(state.cursor, preedit);
+                let end = state.cursor + preedit.len();
+                (combined, Some(state.cursor..end), end)
+            }
+            _ => (state.content.clone(), None, state.cursor),
+        };
+
         let mut builder =
             self.layout_cx
-                .ranged_builder(&mut self.font_cx, &state.content, 1.0, true);
+                .ranged_builder(&mut self.font_cx, &display_content, 1.0, true);
         builder.push_default(StyleProperty::FontFamily(FontFamily::named(
             &state.font_family,
         )));
@@ -160,11 +177,16 @@ impl TextRenderer {
             state.font_weight,
         )));
         builder.push_default(StyleProperty::FontSize(state.font_size));
-        let mut layout = builder.build(&state.content);
+        let mut layout = builder.build(&display_content);
         layout.break_all_lines(Some(at.max_width));
         layout.align(Alignment::Start, AlignmentOptions::default());
 
         // Selection highlight, painted first (behind the glyphs below).
+        // Real selection and a real active composition are mutually
+        // exclusive in practice (an IME owns keyboard input entirely
+        // while composing, confirmed via direct source read of
+        // `winit::window::Window::set_ime_allowed`'s own doc comment),
+        // so this stays keyed on `state.cursor` unconditionally.
         if let Some(anchor) = state.selection_anchor
             && anchor != state.cursor
         {
@@ -204,11 +226,36 @@ impl TextRenderer {
             }
         }
 
-        // Caret, painted last (on top of the glyphs above) -- only when
+        // M17 Phase 2 (§8): a real preedit underline, painted on top of
+        // the glyphs above (a composition preview is visually "live" the
+        // same way a caret is) -- reuses the identical `Selection::
+        // geometry` mechanism the selection highlight above already
+        // does, since a `[start, end)` byte range's own real geometry
+        // is the same shape either way; only a thin line at each rect's
+        // own bottom edge, not a fill.
+        if let Some(range) = preedit_range {
+            let start_cursor = Cursor::from_byte_index(&layout, range.start, Affinity::Downstream);
+            let end_cursor = Cursor::from_byte_index(&layout, range.end, Affinity::Downstream);
+            let preedit_selection = Selection::new(start_cursor, end_cursor);
+            scene.set_paint(at.color);
+            for (bounds, _line_idx) in preedit_selection.geometry(&layout) {
+                let underline = Rect::new(
+                    bounds.x0 + at.x,
+                    bounds.y1 + at.y - 1.0,
+                    bounds.x1 + at.x,
+                    bounds.y1 + at.y,
+                );
+                scene.fill_path(&underline.to_path(0.1));
+            }
+        }
+
+        // Caret, painted last (on top of everything above) -- only when
         // this field is the `Tree`'s own real, live focused node
         // (`paint_node`'s own real caller decides `show_caret`).
+        // `caret_at` is the real, in-progress composition's own end
+        // while a preedit is active, `state.cursor` otherwise.
         if show_caret {
-            let cursor = Cursor::from_byte_index(&layout, state.cursor, Affinity::Downstream);
+            let cursor = Cursor::from_byte_index(&layout, caret_at, Affinity::Downstream);
             let bounds = cursor.geometry(&layout, 1.5);
             let rect = Rect::new(
                 bounds.x0 + at.x,

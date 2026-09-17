@@ -1,79 +1,102 @@
-# Log: M17 Phase 1 — Real Clipboard Copy/Cut/Paste (§8)
+# Log: M17 Phase 2 — Real IME Composition Preview (§8)
 
-Corresponds to `BUILD_TRACKER.md` M17 Phase 1. A real clipboard crate
-wired to Ctrl+C/Ctrl+X/Ctrl+V on a focused `TextField`'s own real
-selection.
+Corresponds to `BUILD_TRACKER.md` M17 Phase 2, closing M17 entirely
+(and the whole M15/M16/M17 sequence): `winit::event::Ime::{Preedit,
+Commit}` reach a real `InputEvent`, rendering a real preedit underline
+at the cursor and committing real text via M15 Phase 2's own existing
+character-insertion mechanism on `Commit`.
 
 ## Investigation before writing code
 
-`arboard = "3.6.1"` real and cached, `default-features = false`
-(only `get_text`/`set_text` needed). **The genuine, stated unknown,
-resolved by actually testing it:** a throwaway probe confirmed a real,
-live clipboard is genuinely reachable in this environment — kept
-afterward as a real, permanent regression test, gracefully skipping
-(not failing) in an environment with no reachable clipboard. **Real,
-non-obvious finding, changing the whole design:** `winit`'s own
-`logical_key` is "affected by all modifiers except Ctrl" — a real
-Ctrl+C press produces `Character("c")`, identical to a bare `c`,
-meaning **before this phase, a real Ctrl+C press on a focused
-`TextField` inserted a literal "c" character** — a genuine latent bug
-this phase's own Ctrl-modifier detection fixes as a real side effect,
-not a separate patch. Real architectural split: Paste reuses the
-existing `InputEvent::TextInput` mechanism completely; Copy/Cut are
-pure `engine-core` `Tree` methods `engine-py` calls directly, not
-through `Tree::dispatch`.
+`WindowEvent::Ime(Ime)` is real; `Ime::{Enabled, Preedit(String,
+Option<(usize, usize)>), Commit(String), Disabled}`. **Real,
+load-bearing finding, confirmed via direct source read, that would
+have silently dead-ended the whole feature:** `winit::window::Window::
+set_ime_allowed`'s own doc comment states plainly "IME is not allowed
+by default" — without calling it, `WindowEvent::Ime` never fires at
+all. Same doc comment: "during the preedit phase the window will NOT
+get `KeyboardInput` events" — composing and plain typing are already
+mutually exclusive at the `winit` level, nothing this codebase needs
+to coordinate itself. Real, deliberate scope narrowing: `Preedit`'s
+own `Option<(usize, usize)>` sub-cursor range (for showing exactly
+where composition input lands inside a multi-candidate string) is
+strictly more detail than a real underline needs — dropped, kept as
+`Option<String>` only. Real design: `Commit(text)` needs no new
+`engine-core` primitive at all — it's exactly `InputEvent::
+TextInput(text)`, the identical mechanism a real keypress already
+uses (M15 Phase 2).
 
 ## What happened
 
-`InputEvent` gains `Copy`/`Cut`/`PasteRequested` (zero-payload intent
-signals, true no-ops in `Tree::dispatch`, the same "plumbing only"
-shape `ThemeChanged` already uses). New `Tree::text_field_selected_
-text`/`cut_text_field_selection` (pure read; read + delete, reusing
-`delete_selection`). New `engine-platform::translate_clipboard_
-shortcut`, checked before the `TextInput` fallback — fixing the latent
-bug. `engine-py::app.rs`'s `on_input` closure does the real `arboard`
-I/O for all three, with clipboard failures logged via `tracing::warn!`
-and non-fatal.
+`TextFieldState` gains `preedit: Option<String>` — purely visual,
+uncommitted, never spliced into `content`. `engine-platform`: `window.
+set_ime_allowed(true)` added at the one real window-creation site;
+`WindowEvent::Ime(ime)` translates `Preedit(text, _)` (dropping the
+sub-cursor detail) to a new `InputEvent::ImePreedit(String)` (empty
+string means "cleared," matching `winit`'s own real convention) and
+`Commit(text)` directly to the existing `InputEvent::TextInput(text)`
+— no new variant for Commit. `Tree::dispatch`'s new `ImePreedit` arm
+sets/clears the focused `TextField`'s own `preedit`, always
+`DispatchOutcome::None` (a composition preview isn't committed
+content, no `Change` fires); the existing `TextInput` arm additionally
+clears a stale `preedit` on every real insertion, defensive.
 
-**Real design gap, found while writing the pytest coverage, not
-anticipated in `PLAN.md`:** a real Cut genuinely edits content, but
-`cut_text_field_selection` is called directly on `Tree`, never through
-`Tree::dispatch` — so it never produces `DispatchOutcome::Changed` the
-way keyboard editing gets "for free." Both `Window.cut()` and the real
-winit-driven `InputEvent::Cut` handling needed an explicit `call_
-handler(..., EventKind::Change, ...)` added, mirroring `Node.
-set_checked`/`set_text`'s own established pattern — caught by a test
-(`test_copy_fires_no_on_change_but_cut_does`) that would otherwise have
-silently passed with `cut()` never firing `Change` at all. A real Cut
-also writes to the clipboard *before* deleting the selection, and only
-actually deletes once that write genuinely succeeds — a failed
-clipboard write must never destroy the user's own selected text.
+`TextRenderer::draw_field` splices `preedit` into a *display-only*
+copy of the content at `cursor` when composing (`content` itself is
+never mutated — shaped and painted, but never touching the real,
+uncommitted field state), reusing the same `Selection::geometry`
+mechanism the selection highlight already established (M15 Phase 1)
+to paint a real underline under that span — a thin rect at each
+returned bound's own bottom edge instead of a translucent fill. The
+caret shows at the end of the spliced-in preedit while composing
+(`cursor + preedit.len()`), not the raw, frozen `cursor` underneath
+it, matching real IME caret behavior.
 
-New `Window.copy()`/`cut()`/`paste(text)`: deliberately **hermetic**
-(never touch the real OS clipboard) — unlike `press_key`/`type_text`,
-a real Ctrl+C only ever originates from an actual OS-level keyboard
-event reaching `engine-platform` directly, and there is no synthetic
-way to drive that specific path from Python at all; a real, stated
-scope boundary, not an oversight.
+**Confirmed, not assumed:** `engine-py::app.rs`'s `on_input` closure
+already calls `tree.dispatch(root, event.clone(), ...)` unconditionally
+before its own raw-event match (the mechanism every event already goes
+through). Since `ImePreedit`'s state mutation happens entirely inside
+`Tree::dispatch` itself and always returns `DispatchOutcome::None`, no
+additional handling was needed in `app.rs` at all — unlike `Copy`/
+`Cut`/`PasteRequested` (M17 Phase 1), which are pure intent signals
+needing real OS I/O only `engine-py` can do. The existing trailing
+`_ => {}` arm already covers it correctly.
 
-New `engine-core` tests (5, all passed first run): `text_field_
-selected_text` reads without mutating, is `None` with no real
-selection or a non-`TextField` node; `cut_text_field_selection` reads
-and genuinely deletes, is a true no-op with no real selection. New
-`engine-platform` tests (3): the real Copy/Cut/Paste vocabulary,
-case-insensitivity (a real Ctrl+Shift+C is the same shortcut), every
-other character/named key ignored. New, permanent `engine-py` test
-(the first Rust unit test in this crate ever): a real `arboard`
-set/get round trip, gracefully skipping if no clipboard is reachable.
-New `tests/test_clipboard.py` (8 tests, one fixed after the real
-Change-firing gap above): copy/cut/paste all reach the real focused
-field's own selection correctly; copy never fires `on_change`, cut
-does. New `examples/clipboard.py`: a real live field, select/copy/
-cut/paste all proved via the hermetic surface, each step asserted.
+**Real, honest deviation from `PLAN.md`:** the plan called for a "new
+`engine-platform` translation test," but none was added — the `Ime`
+match arm inside `window_event` is trivial inline logic (unlike
+`translate_clipboard_shortcut`, a genuine pure function worth
+isolating), the same "not manufactured ahead of a real need" scope
+`ThemeChanged`'s own translation already established with no dedicated
+test of its own.
 
-Full `cargo test --workspace --release` (`engine-core` 122, up from
-117; `engine-platform` 9, up from 6; `engine-py` 1, new)/`cargo clippy
---workspace --all-targets -- -D warnings`/`cargo fmt --check` all
-clean — every prior test passed unmodified. `maturin develop --release`
-+ full `pytest tests/` (161 passed, up from 153, 1 skipped) and all
-twenty-four examples confirmed clean.
+New `engine-core` tests (4, all passed first run): a real preedit
+sets/clears the focused field without touching `content`; an empty
+string clears an active preview; no focused field is a true no-op; a
+real `TextInput` commit clears a stale preedit. New `engine-render`
+pixel tests (2, in `text_field_paint.rs`, matching that file's own
+established render-to-texture-then-readback discipline): a composing
+field's own render differs from an otherwise pixel-identical,
+non-composing field (proving a real underline exists); a defensive
+`Some(String::new())` preedit paints byte-identical to a real `None`
+(no stray underline from an edge case that shouldn't occur in
+practice, since `Tree::dispatch` already normalizes an empty string to
+`None`, but the rendering side is proven correct on its own too).
+
+**Confirmed, not assumed:** no new Python-facing FFI surface or pytest
+coverage was needed. A real IME composition event only ever originates
+from an actual OS input method — there is no synthetic way to inject
+one from Python, the same real scope boundary M17 Phase 1 already
+established for a real Ctrl+C/X/V keypress. `examples/text_field.py`'s
+own docstring is updated to point at the real, definitive proof
+(`text_field_paint.rs`'s new pixel tests) instead of naming clipboard/
+IME as an unscoped gap — both are now real, and IME specifically has
+no live-window demo possible for the reason above.
+
+Full `cargo test --workspace --release` (`engine-core` 126, up from
+122; `engine-render` 4 in `text_field_paint.rs`, up from 2)/`cargo
+clippy --workspace --all-targets -- -D warnings`/`cargo fmt --check`
+all clean — every prior test passed unmodified. `maturin develop
+--release` + full `pytest tests/` (161 passed, 1 skipped, unchanged
+from M17 Phase 1 — confirming no new Python surface was needed) and
+all twenty-four examples confirmed clean.

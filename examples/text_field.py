@@ -8,6 +8,16 @@ once the field is genuinely the window's own focused node (§10's
 already-real Tab/focus model), reached here via a real `Window.
 press_key("tab")`, not a hardcoded assumption.
 
+M17 (§8) closes the two real gaps this docstring used to name:
+clipboard's own hermetic half is `examples/clipboard.py`; real IME
+composition has no Python-facing entry point at all (an `Ime` event
+only ever originates from a real OS input method -- there is nothing
+for a script to synthesize, the same category of gap `clipboard.py`'s
+own docstring already names for a real Ctrl+C/X/V keypress), so its
+definitive proof is the pixel-level `crates/engine-render/tests/
+text_field_paint.rs::a_composing_preedit_paints_a_real_underline_
+distinct_from_the_same_field_when_not_composing`, not a script here.
+
 What this script proves automatically (headless-CI-safe, no human
 needed): a real text field, reached by a real Tab press, edited by a
 real sequence of synthetic keystrokes (typing, cursor navigation,
@@ -18,8 +28,7 @@ over actual frames without crashing. The definitive pixel-level proof
 the caret itself only paints while focused is `crates/engine-render/
 tests/text_field_paint.rs`, not this script -- the same split this
 workspace's own examples have used throughout. Mouse click-to-position
-and clipboard/IME are real, separate, un-scoped gaps this milestone's
-own status line already names (M17 covers clipboard/IME).
+remains a real, separate, unscoped gap.
 """
 
 from tre import App, Window

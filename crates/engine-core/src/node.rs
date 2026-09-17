@@ -157,6 +157,21 @@ pub struct TextFieldState {
     /// itself uses) -- `None` (the default) means no selection, the
     /// overwhelmingly common case for a freshly-created field.
     pub selection_anchor: Option<usize>,
+    /// M17 Phase 2 (§8): a real, *uncommitted* IME composition preview
+    /// -- `Some` while an input method is composing (e.g. pinyin
+    /// candidates before the user picks one), `None` otherwise.
+    /// Deliberately not spliced into `content` itself: nothing is
+    /// really "typed" until a real `winit::event::Ime::Commit`, which
+    /// reaches the exact same `TextInput` mechanism a plain keypress
+    /// already uses (M15 Phase 2) -- this field exists purely so
+    /// `engine-render` can paint the real, visible in-progress preview
+    /// (with a real underline) without ever mutating real content for
+    /// text that might still be revised or cancelled mid-composition.
+    /// Drops `winit::event::Ime::Preedit`'s own real sub-cursor range
+    /// (`Option<(usize, usize)>`, where *within* the preedit text the
+    /// composition cursor sits) -- real, but strictly more detail than
+    /// "a preedit underline" needs; a real, stated simplification.
+    pub preedit: Option<String>,
 }
 
 impl TextFieldState {
@@ -178,6 +193,7 @@ impl TextFieldState {
             font_size,
             cursor,
             selection_anchor: None,
+            preedit: None,
         }
     }
 }
