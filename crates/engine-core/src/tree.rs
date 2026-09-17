@@ -1541,13 +1541,46 @@ impl Tree {
         else {
             return false;
         };
-        let clamped = offset.min(state.content.len());
-        let boundary = (0..=clamped)
-            .rev()
-            .find(|&i| state.content.is_char_boundary(i))
-            .unwrap_or(0);
-        state.cursor = boundary;
+        state.cursor = Self::char_boundary(&state.content, offset);
         state.selection_anchor = None;
+        true
+    }
+
+    /// Shared by `set_text_field_cursor` and `extend_text_field_
+    /// selection` (M18 Phase 1/2): clamps a raw byte offset to
+    /// `0..=content.len()` and snaps down to the nearest real UTF-8
+    /// char boundary -- defensive in both callers (`parley::editing::
+    /// Cursor::from_point`'s own result should already land on one),
+    /// factored out once a second real caller needed it, not
+    /// duplicated.
+    fn char_boundary(content: &str, offset: usize) -> usize {
+        let clamped = offset.min(content.len());
+        (0..=clamped)
+            .rev()
+            .find(|&i| content.is_char_boundary(i))
+            .unwrap_or(0)
+    }
+
+    /// M18 Phase 2 (§8, §10): `set_text_field_cursor`'s own real drag-
+    /// extend sibling -- a genuinely different operation, not the same
+    /// method with a flag (the same "two distinct real behaviors, two
+    /// methods" shape `text_field_selected_text`/`cut_text_field_
+    /// selection` already established). Seeds `selection_anchor` at the
+    /// *current* `cursor` only if one isn't already active -- the
+    /// identical `get_or_insert`-at-first-move pattern shift-arrow
+    /// selection already uses (M15 Phase 3) -- then moves `cursor`,
+    /// growing the real selection instead of repeatedly collapsing it
+    /// the way `set_text_field_cursor` deliberately does for a plain
+    /// click.
+    pub fn extend_text_field_selection(&mut self, field: NodeId, offset: usize) -> bool {
+        let Some(NodeKind::TextField(state)) = self.nodes.get_mut(field).map(|n| &mut n.kind)
+        else {
+            return false;
+        };
+        if state.selection_anchor.is_none() {
+            state.selection_anchor = Some(state.cursor);
+        }
+        state.cursor = Self::char_boundary(&state.content, offset);
         true
     }
 
@@ -6189,5 +6222,54 @@ mod tests {
         let (k, s, p) = leaf(100.0, 100.0);
         let root = tree.insert(k, s, p);
         assert!(!tree.set_text_field_cursor(root, 0));
+    }
+
+    #[test]
+    fn extend_text_field_selection_seeds_the_anchor_at_the_current_cursor_on_first_move() {
+        let (mut tree, _root, field) = text_field_scene("hello");
+        tree.set_text_field_cursor(field, 2);
+        assert_eq!(field_state(&tree, field).selection_anchor, None);
+
+        let extended = tree.extend_text_field_selection(field, 5);
+        assert!(extended);
+        let state = field_state(&tree, field);
+        assert_eq!(
+            state.selection_anchor,
+            Some(2),
+            "the anchor must seed at wherever the cursor already was, the real click position"
+        );
+        assert_eq!(state.cursor, 5);
+    }
+
+    #[test]
+    fn extend_text_field_selection_keeps_growing_without_moving_the_anchor() {
+        let (mut tree, _root, field) = text_field_scene("hello world");
+        tree.set_text_field_cursor(field, 0);
+        tree.extend_text_field_selection(field, 3);
+        tree.extend_text_field_selection(field, 7);
+        tree.extend_text_field_selection(field, 11);
+        let state = field_state(&tree, field);
+        assert_eq!(
+            state.selection_anchor,
+            Some(0),
+            "repeated drag-move calls must never re-seed or move the anchor"
+        );
+        assert_eq!(state.cursor, 11);
+    }
+
+    #[test]
+    fn extend_text_field_selection_clamps_beyond_content_length() {
+        let (mut tree, _root, field) = text_field_scene("hi");
+        tree.set_text_field_cursor(field, 0);
+        assert!(tree.extend_text_field_selection(field, 999));
+        assert_eq!(field_state(&tree, field).cursor, 2);
+    }
+
+    #[test]
+    fn extend_text_field_selection_on_a_non_text_field_is_a_true_no_op() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(100.0, 100.0);
+        let root = tree.insert(k, s, p);
+        assert!(!tree.extend_text_field_selection(root, 0));
     }
 }

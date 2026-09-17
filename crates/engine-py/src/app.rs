@@ -27,6 +27,7 @@ use std::time::Instant;
 use engine_core::{EventKind, InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
 use engine_platform::{WindowConfig, WindowRequest, run_windowed_multi};
 use engine_render::{FrameRenderer, TextPlacement, TextRenderer, build_tree_scene};
+use peniko::kurbo::Point;
 use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
 use vello_hybrid::{RenderSize, RenderTargetConfig};
@@ -75,6 +76,37 @@ struct WindowSetup {
     /// extracted the same way -- the real `on_frame` closure needs to
     /// mutate it (removing a callback the instant it's invoked).
     completions: SharedCompletions,
+}
+
+/// M18 Phase 1/2 (§8, §10, §11.9, §11.10): the real per-glyph hit-test
+/// `engine-core` structurally can't do itself (§4) -- shared by
+/// `PointerPressed`'s click-to-position and `PointerMoved`'s drag-
+/// extend, both of which need the exact same "is `hit` a `TextField`,
+/// and if so what real byte offset does `local_point` land on"
+/// answer. Mirrors `paint_node`'s own real `TextPlacement { x: 0.0,
+/// y: 0.0, max_width: <the node's own real computed layout width> }`
+/// exactly -- a hit-test using different placement values than what
+/// was actually painted would resolve to the wrong character.
+fn text_field_hit_offset(
+    tree: &Rc<RefCell<Tree>>,
+    text_renderer: &mut TextRenderer,
+    hit: NodeId,
+    local_point: Point,
+) -> Option<usize> {
+    let (state, width) = {
+        let tree = tree.borrow();
+        match tree.get(hit).map(|n| &n.kind) {
+            Some(NodeKind::TextField(state)) => (state.clone(), tree.layout(hit).size.width),
+            _ => return None,
+        }
+    };
+    let at = TextPlacement {
+        x: 0.0,
+        y: 0.0,
+        max_width: width,
+        color: peniko::Color::TRANSPARENT,
+    };
+    Some(text_renderer.hit_test_position(&state, at, local_point))
 }
 
 struct GpuState {
@@ -149,6 +181,17 @@ struct WindowRuntime {
     dock: SharedDockState,
     theme: SharedTheme,
     completions: SharedCompletions,
+    /// M18 Phase 2 (§8, §10): which `TextField` (if any) a real
+    /// press-and-drag is currently extending a selection in -- plain,
+    /// not `RefCell`-wrapped, since only `on_input`'s own closure ever
+    /// reads or writes it. Lives here rather than `engine-core`'s
+    /// existing `Tree.dragging` (Splitter/Slider drags): that
+    /// mechanism's own `update_drag` is pure geometry with zero
+    /// rendering knowledge, but a real drag-selection needs the exact
+    /// same per-glyph hit-test Phase 1 already established only
+    /// `engine-render` can do (§4) -- `engine-core` structurally can't
+    /// own this drag's own per-frame tracking.
+    text_drag: Option<NodeId>,
 }
 
 #[pymethods]
@@ -267,6 +310,7 @@ impl App {
                         dock: setup.dock.clone(),
                         theme: setup.theme.clone(),
                         completions: setup.completions.clone(),
+                        text_drag: None,
                     },
                 );
             },
@@ -405,43 +449,62 @@ impl App {
                             runtime.tree.borrow().hit_test_local(runtime.root, position)
                         {
                             dock::start_drag(&runtime.dock, hit);
-                            // A real click-to-position: `engine-core`
-                            // has no `parley` visibility (§4), so the
-                            // real per-glyph hit-test happens here, the
-                            // one place with both a live `TextRenderer`
-                            // and the `Tree`. Mirrors exactly what
-                            // `paint_node`'s own `TextField` arm paints
-                            // (`TextPlacement { x: 0.0, y: 0.0, .. }`,
-                            // `max_width` from the node's own real
-                            // computed layout width) -- a hit-test that
-                            // silently used different placement values
-                            // than painting would resolve to the wrong
-                            // character.
-                            let field_info = {
-                                let tree = runtime.tree.borrow();
-                                let node = tree.get(hit);
-                                match node.map(|n| &n.kind) {
-                                    Some(NodeKind::TextField(state)) => {
-                                        let width = tree.layout(hit).size.width;
-                                        Some((state.clone(), width))
-                                    }
-                                    _ => None,
-                                }
-                            };
-                            if let Some((state, width)) = field_info {
-                                let at = TextPlacement {
-                                    x: 0.0,
-                                    y: 0.0,
-                                    max_width: width,
-                                    color: peniko::Color::TRANSPARENT,
-                                };
-                                let offset = runtime.gpu.text_renderer.hit_test_position(
-                                    &state,
-                                    at,
-                                    local_point,
-                                );
+                            if let Some(offset) = text_field_hit_offset(
+                                &runtime.tree,
+                                &mut runtime.gpu.text_renderer,
+                                hit,
+                                local_point,
+                            ) {
                                 runtime.tree.borrow_mut().set_text_field_cursor(hit, offset);
+                                // M18 Phase 2 (§8, §10): a real press
+                                // on a TextField always ARMS drag
+                                // tracking -- whether it turns into a
+                                // real selection depends entirely on
+                                // whether a genuine PointerMoved to a
+                                // different position follows before
+                                // release (below); a plain click never
+                                // does, so `selection_anchor` stays
+                                // `None` exactly as `set_text_field_
+                                // cursor` already left it.
+                                runtime.text_drag = Some(hit);
                             }
+                        }
+                    }
+                    InputEvent::PointerMoved { position } => {
+                        // M18 Phase 2 (§8, §10): the real drag-select
+                        // half of click-to-position. Lives here, not
+                        // inside `Tree::dispatch`'s own existing
+                        // `self.dragging`/`update_drag` mechanism
+                        // (Splitter/Slider) -- that mechanism is pure
+                        // geometry with zero rendering knowledge, but
+                        // this needs the identical real per-glyph
+                        // hit-test `PointerPressed` above already uses,
+                        // which only `engine-render` can do (§4).
+                        //
+                        // **Real, stated scope boundary:** a real drag
+                        // that leaves the field's own bounds mid-drag
+                        // simply stops updating the selection until it
+                        // re-enters (`hit_test_local` returning a
+                        // different node, or `None`, is a genuine
+                        // no-op below) -- it does not clamp to the
+                        // field's own nearest edge the way some real
+                        // desktop editors do. A further, real,
+                        // un-scoped refinement beyond this phase.
+                        if let Some(field) = runtime.text_drag
+                            && let Some((hit, local_point)) =
+                                runtime.tree.borrow().hit_test_local(runtime.root, position)
+                            && hit == field
+                            && let Some(offset) = text_field_hit_offset(
+                                &runtime.tree,
+                                &mut runtime.gpu.text_renderer,
+                                hit,
+                                local_point,
+                            )
+                        {
+                            runtime
+                                .tree
+                                .borrow_mut()
+                                .extend_text_field_selection(hit, offset);
                         }
                     }
                     InputEvent::PointerReleased {
@@ -449,6 +512,14 @@ impl App {
                         button: PointerButton::Primary,
                     } => {
                         dock::end_drag_at(&runtime.dock, &runtime.tree, runtime.root, position);
+                        // M18 Phase 2 (§8, §10): a real mouse-up always
+                        // ends any in-progress text drag, wherever it
+                        // happens -- the same "not conditioned on still
+                        // hitting the original node" real mouse-up
+                        // semantics `Tree::dispatch`'s own `self.
+                        // dragging = None` already established for
+                        // Splitter/Slider (M4 Phase 3).
+                        runtime.text_drag = None;
                     }
                     // M7 Phase 3 (§7.1, Step 3): the real, winit-driven
                     // live theme switch -- `Window.set_theme`'s own
