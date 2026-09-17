@@ -5,7 +5,7 @@
 //! window instead of assumed singular.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 
 use engine_core::{
@@ -111,6 +111,39 @@ fn positioned_style(size: Size<taffy::style::Dimension>, x: Option<f32>, y: Opti
         },
         size,
         ..Default::default()
+    }
+}
+
+/// M12 Phase 2 (§11.7): the per-item height lookup `set_virtual_list_
+/// window`'s own materializer closure needs -- extracted as an owned
+/// snapshot *before* the closure is built (the closure runs while
+/// `Tree::set_virtual_list_window` already holds `&mut self`'s own
+/// `Tree`, so it can't also borrow `tree` live from inside itself, the
+/// same reason the pre-M12 code already extracted a plain `item_extent`
+/// scalar up front). `Variable`'s own per-item height is the real
+/// difference between two adjacent resolved cumulative offsets, not a
+/// separately-stored value -- `add_virtual_list`'s own eager resolution
+/// (M12 Phase 2) always resolves every index up to and including
+/// `item_count`, so both `idx` and `idx + 1` are guaranteed present.
+enum ResolvedItemHeights {
+    Fixed(f64),
+    Variable(BTreeMap<usize, f64>),
+}
+
+impl ResolvedItemHeights {
+    fn of(&self, idx: usize) -> f64 {
+        match self {
+            ResolvedItemHeights::Fixed(v) => *v,
+            ResolvedItemHeights::Variable(offsets) => {
+                let start = offsets.get(&idx).unwrap_or_else(|| {
+                    panic!("ResolvedItemHeights::of: item {idx}'s own offset must be resolved")
+                });
+                let end = offsets.get(&(idx + 1)).unwrap_or_else(|| {
+                    panic!("ResolvedItemHeights::of: item {idx}'s own end offset must be resolved")
+                });
+                end - start
+            }
+        }
     }
 }
 
@@ -741,39 +774,83 @@ impl PyWindow {
     }
 
     /// §14 step 15 (§11.7): creates a `NodeKind::VirtualList` of
-    /// `item_count` logical rows, each `item_extent` px tall (only
-    /// `ItemExtent::Fixed` is exposed -- see `engine_core::ItemExtent`'s
-    /// own doc comment for why the variable-height variant isn't built
-    /// yet). `materialize` is stored here, keyed by the new node's own
+    /// `item_count` logical rows. Exactly one of `item_extent` (every
+    /// row the same fixed height) or `size_hint` (M12 Phase 2: a real
+    /// `Callable[[int], float]`, one row's own real height) must be
+    /// given -- a real `ValueError` otherwise (neither, or both).
+    /// `materialize` is stored here, keyed by the new node's own
     /// `NodeId` -- not called yet; `set_virtual_list_window` is what
     /// actually invokes it, once per newly-visible index.
     ///
-    /// `height` is now a real, meaningful viewport height (M8 Phase 3,
+    /// **`size_hint` resolves eagerly, once, right here -- not lazily
+    /// per `set_virtual_list_window` call.** A real per-item cumulative
+    /// offset structurally requires knowing every preceding item's own
+    /// height; rather than a stateful, incrementally-extended lazy
+    /// cache (real complexity §11.7's own one-line "size-hint callback"
+    /// text doesn't ask for), this calls `size_hint` exactly `item_
+    /// count` times immediately, building the complete real cumulative-
+    /// offset table via `Tree::set_virtual_list_resolved_offsets`
+    /// before this method ever returns. A real, deliberate, stated
+    /// tradeoff, not a hidden cost: `size_hint` is a plain, cheap
+    /// arithmetic call (unlike `materialize`, which builds a real
+    /// `Node`), but this is a genuine `O(item_count)` cost at list-
+    /// creation time `item_extent`'s own `Fixed` path never pays.
+    ///
+    /// `height` is a real, meaningful viewport height (M8 Phase 3,
     /// §11.7/§11.8) -- `Window.scroll`/a real dispatched mouse wheel
     /// (`Tree::dispatch`'s own `InputEvent::Scroll` arm) clamp the
     /// list's own `scroll_offset` against exactly this value. Before
-    /// this phase it was left `auto()`, which taffy resolves against
+    /// that phase it was left `auto()`, which taffy resolves against
     /// *content* size -- and every materialized item is `Position::
     /// Absolute` (resolved from its own `inset`, not counted toward the
     /// parent's own intrinsic size, the same real fact `open_overlay`
     /// already established), so `auto()` never gave a real viewport
     /// height at all. Defaults to this `Window`'s own real height, the
     /// same fallback shape `width` already uses.
-    #[pyo3(signature = (item_count, item_extent, materialize, width=None, height=None))]
+    #[pyo3(signature = (item_count, materialize, item_extent=None, size_hint=None, width=None, height=None))]
+    // Every real caller uses keyword arguments exclusively (confirmed
+    // via grep) -- Python's own kwarg ergonomics are the reason pyo3
+    // methods with several optional parameters are a normal shape here,
+    // not a real code smell a struct would meaningfully fix.
+    #[allow(clippy::too_many_arguments)]
     fn add_virtual_list(
         &mut self,
         item_count: usize,
-        item_extent: f64,
         materialize: Py<PyAny>,
+        item_extent: Option<f64>,
+        size_hint: Option<Py<PyAny>>,
         width: Option<f32>,
         height: Option<f32>,
-    ) -> Node {
+        py: Python<'_>,
+    ) -> PyResult<Node> {
+        let (extent, resolved_offsets) = match (item_extent, size_hint) {
+            (Some(v), None) => (ItemExtent::Fixed(v), None),
+            (None, Some(hint)) => {
+                let mut offsets = Vec::with_capacity(item_count + 1);
+                let mut cumulative = 0.0;
+                for idx in 0..item_count {
+                    offsets.push((idx, cumulative));
+                    let item_height: f64 = hint.call1(py, (idx,))?.extract(py)?;
+                    cumulative += item_height;
+                }
+                offsets.push((item_count, cumulative));
+                (ItemExtent::Variable, Some(offsets))
+            }
+            (Some(_), Some(_)) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "add_virtual_list: pass exactly one of item_extent or size_hint, not both",
+                ));
+            }
+            (None, None) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "add_virtual_list: pass exactly one of item_extent or size_hint",
+                ));
+            }
+        };
+
         let mut tree = self.tree.borrow_mut();
         let id = tree.insert(
-            NodeKind::VirtualList(VirtualListState::new(
-                item_count,
-                ItemExtent::Fixed(item_extent),
-            )),
+            NodeKind::VirtualList(VirtualListState::new(item_count, extent)),
             Style {
                 size: Size {
                     width: length(width.unwrap_or(self.width as f32)),
@@ -784,16 +861,19 @@ impl PyWindow {
             PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
+        if let Some(offsets) = resolved_offsets {
+            tree.set_virtual_list_resolved_offsets(id, offsets);
+        }
         drop(tree);
         self.materializers.insert(id, materialize);
-        Node {
+        Ok(Node {
             id,
             tree: self.tree.clone(),
             handlers: self.handlers.clone(),
             context_menus: self.context_menus.clone(),
             theme: self.theme.clone(),
             completions: self.completions.clone(),
-        }
+        })
     }
 
     /// §14 step 15 (§11.7): the "materialize item N" FFI entry point --
@@ -829,23 +909,16 @@ impl PyWindow {
             .clone_ref(py);
 
         let mut tree = self.tree.borrow_mut();
-        let item_extent = match &tree
+        let item_heights = match &tree
             .get(list.id)
             .expect("set_virtual_list_window: Node holds a NodeId missing from its own Tree")
             .kind
         {
-            NodeKind::VirtualList(state) => match state.item_extent {
-                ItemExtent::Fixed(v) => v,
-                // M12 Phase 1 (§11.7): `ItemExtent::Variable` is real in
-                // `engine-core` now, but `add_virtual_list` below still
-                // only ever constructs `Fixed` -- Phase 2 is what adds a
-                // real Python-facing way to build a `Variable` list, and
-                // will replace this whole arm with real per-item extent
-                // handling then.
-                ItemExtent::Variable => unreachable!(
-                    "set_virtual_list_window: add_virtual_list never constructs \
-                     ItemExtent::Variable yet (M12 Phase 2)"
-                ),
+            NodeKind::VirtualList(state) => match &state.item_extent {
+                ItemExtent::Fixed(v) => ResolvedItemHeights::Fixed(*v),
+                ItemExtent::Variable => {
+                    ResolvedItemHeights::Variable(state.resolved_offsets.clone())
+                }
             },
             _ => return Err(EngineError::NotAVirtualList.into()),
         };
@@ -861,7 +934,7 @@ impl PyWindow {
                     Style {
                         size: Size {
                             width: auto(),
-                            height: length(item_extent as f32),
+                            height: length(item_heights.of(idx) as f32),
                         },
                         ..Default::default()
                     },

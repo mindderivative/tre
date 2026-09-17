@@ -1,149 +1,130 @@
-# Plan: M12 Phase 1 — Real Variable-Height Extent Support in `engine-core` (§11.7)
+# Plan: M12 Phase 2 — Python-Facing Size-Hint Callback (§11.7)
 
-Corresponds to `BUILD_TRACKER.md` M12 Phase 1's own scoping: `ItemExtent`
-gains a real way to represent variable, per-item extents; `VirtualListState`'s
-materialization math and the M8 Phase 3 scroll-clamping math both
-generalize to real per-item cumulative sums.
+Corresponds to `BUILD_TRACKER.md` M12 Phase 2's own scoping, closing
+the milestone: `Window.add_virtual_list`/`set_virtual_list_window`
+gain a real way to supply per-item heights from Python, wiring Phase
+1's new `engine-core` capability (`ItemExtent::Variable`,
+`VirtualListState.resolved_offsets`, `Tree::set_virtual_list_
+resolved_offsets`) through to real app code.
 
 ## Investigation before writing code
 
-- `ItemExtent` (`crates/engine-core/src/node.rs:137-147`) has exactly
-  one variant, `Fixed(f64)`, confirmed by direct read; its own doc
-  comment already states the intent verbatim: "fixed, or a size-hint
-  callback for variable-height items."
-- Two real production call sites assume uniform spacing, confirmed by
-  direct read of `tree.rs`:
-  - `set_virtual_list_window` (line 816): `top: length((idx as f64 *
-    item_extent) as f32)` — every materialized item's own absolute
-    `inset.top` is `idx * item_extent`.
-  - `scroll_virtual_list_by` (line 850): `content_extent =
-    state.item_extent.value() * state.item_count as f64` — the M8
-    Phase 3 scroll-clamp's own total-extent computation.
-- `engine-py`'s own `set_virtual_list_window` (`window.rs:832-842`)
-  additionally uses the scalar `item_extent` for a *third*, distinct
-  purpose: each materialized item's own `Style.size.height =
-  length(item_extent as f32)` (line 855) — its real on-screen height,
-  not its position. This is a real, separate value from the cumulative
-  offset (Phase 2's own concern; `engine-core` doesn't set item size at
-  all, only position, so this doesn't affect this phase's own design).
-- `engine-render`'s own scroll-offset handling (`lib.rs:520`,
-  `Affine::translate((0.0, -state.scroll_offset.current))`) is a pure
-  paint-time translation applied uniformly to the whole `VirtualList`
-  subtree, entirely independent of `item_extent` — confirmed via direct
-  read, so **no `engine-render` change is needed this phase**: as long
-  as each materialized item's own `inset.top` already holds its correct
-  real cumulative offset, the existing scroll translation composes
-  correctly regardless of whether spacing is uniform or variable.
-- **Real design question investigated before choosing a shape:** how
-  should `engine-core` represent "item N's real cumulative offset" for
-  `Variable` mode, given §4's own pyo3-agnostic boundary rules out
-  storing a callback here (the same real reason `materialize` itself
-  lives in `engine-py`, not `engine-core`)? Two shapes were considered:
-  1. Store raw per-item *heights* (`BTreeMap<usize, f64>`) and have
-     `engine-core` sum them on every `offset_of`/`total_extent` call.
-     Rejected: summing a growing map on every call is real, avoidable
-     repeated work, and — more importantly — computing item `idx`'s
-     offset this way requires *every* preceding index's height to
-     already be resolved and present, which `engine-core` itself has no
-     way to enforce or request (it can't call back into Python to
-     resolve a missing one).
-  2. Store already-*cumulative offsets* directly (`BTreeMap<usize,
-     f64>`, keyed by index, value = that item's own real top-offset) —
-     chosen. `engine-core` never sums anything itself; it only looks a
-     resolved value up, `O(log n)` via `BTreeMap`. The special key
-     `item_count` (one past the last real item — the same "one past
-     the end" convention a `Range` already uses) holds the real total
-     content extent for `total_extent()`. Whoever populates this map
-     (Phase 2, in `engine-py`) owns the actual cumulative-sum
-     computation — matching this codebase's own established "`engine-
-     core` carries inert state, an `engine-py` method is what drives
-     it" shape (`materialized`, `context_menus`, `dock`, all the same
-     pattern) rather than teaching `engine-core` a new kind of active
-     computation.
-- `ItemExtent::value()` (the sole method on the type today) has no
-  sensible single-`f64` meaning once a second variant exists — it's
-  removed outright; its two production callers are rewritten in terms
-  of the new `VirtualListState::offset_of`/`total_extent` methods
-  instead (confirmed via grep: `value()` has no other callers anywhere
-  in the workspace beyond those two, both being rewritten).
+- `PyWindow.add_virtual_list` (`window.rs:763-797`, confirmed by direct
+  read): `item_extent: f64` is currently a required parameter; the
+  materialized `NodeKind::VirtualList(VirtualListState::new(item_count,
+  ItemExtent::Fixed(item_extent)))` is built directly from it.
+- `PyWindow.set_virtual_list_window` (`window.rs:818-880`) reads
+  `item_extent` a *second* time, for a genuinely different purpose than
+  positioning: `Style.size.height = length(item_extent as f32)` for
+  each newly-materialized item (line 855) — its real on-screen height,
+  not its cumulative offset (which `Tree::set_virtual_list_window`
+  itself now computes via `VirtualListState::offset_of`, Phase 1). Both
+  values are needed for `Variable` mode, and they're different: offset
+  is cumulative, height is per-item.
+- All real call sites (`examples/scrollable_list.py`, every `tests/
+  test_virtual_list*.py` call) use `item_extent=...`/`materialize=...`
+  exclusively as keyword arguments, confirmed via grep — no positional
+  call anywhere, so the Rust-side parameter order is free to change
+  without breaking any real caller.
+- `Tree::set_virtual_list_window`'s own closure parameter (`impl FnMut
+  (usize) -> (NodeKind, Style, PaintProperties)`) is called *while*
+  `Tree::set_virtual_list_window` itself holds `&mut self` — the
+  closure built in `window.rs` cannot also borrow `tree` from inside
+  itself (the exact self-referential-borrow conflict the *existing*
+  code already avoids by extracting `item_extent` as a plain scalar
+  copy *before* building the closure). The same shape is needed for
+  `Variable` mode: whatever per-item height lookup the closure needs
+  must be extracted as an owned snapshot before the closure is built,
+  not read live from `tree` inside it.
+
+## Design decision: eager, one-time resolution, not lazy/incremental
+
+A real per-item height callback (`size_hint(idx) -> float`) is
+fundamentally different in cost class from `materialize` (which builds
+a real `Node` — paint, layout, potential child structure): it's a
+plain, cheap arithmetic call. Computing a *cumulative* offset for any
+item, though, structurally requires knowing every preceding item's own
+height — there's no way around this for correct, non-estimated
+positioning. Rather than building a stateful, incrementally-extended
+lazy cache (real complexity — cache invalidation, partial-resolution
+bookkeeping — for a milestone that ARCHITECTURE.md itself describes in
+one line, "a size-hint callback for variable-height items", with no
+further spec), this phase resolves **eagerly, once, at `add_virtual_
+list` time**: when `size_hint` is given, it's called exactly
+`item_count` times immediately, building the complete real cumulative-
+offset table up front via `Tree::set_virtual_list_resolved_offsets`.
+
+This is a real, deliberate, stated tradeoff, not a hidden cost:
+`Fixed` still creates zero real `Node`s beyond the visible window
+(§11.7's own core claim, untouched); `Variable` additionally pays one
+real, one-time `O(item_count)` Python-call cost at list-creation time
+to know the shape of the data — cheap per call (no `Node` creation),
+but real for very large lists, and honestly documented as such, not
+silently deferred into a later surprise.
 
 ## Design
 
-`crates/engine-core/src/node.rs`:
+`crates/engine-py/src/window.rs`:
 
-- `ItemExtent` gains `Variable` (a fieldless marker — the real per-item
-  data lives on `VirtualListState`, not the enum itself, since only
-  `VirtualListState` has a `Tree`-mutation path to populate it):
-  ```rust
-  pub enum ItemExtent {
-      Fixed(f64),
-      Variable,
-  }
-  ```
-- `VirtualListState` gains:
-  ```rust
-  /// Real, resolved cumulative offsets for `Variable`-extent lists --
-  /// index `idx` maps to item `idx`'s own real top-offset (not its
-  /// height). Always empty for `Fixed` (whose offsets are computed
-  /// directly). The key `item_count` (one past the last real item)
-  /// holds the real total content extent. `engine-core` never computes
-  /// a cumulative sum itself -- only looks a resolved value up; §4's
-  /// own pyo3-agnostic boundary is why the actual per-item size-hint
-  /// resolution lives in `engine-py` (Phase 2), not here.
-  pub resolved_offsets: BTreeMap<usize, f64>,
-  ```
-- Two new `VirtualListState` methods, the single shared source of truth
-  both `tree.rs` call sites use:
-  ```rust
-  /// Item `idx`'s own real top-offset. Panics if `item_extent` is
-  /// `Variable` and `idx` isn't yet resolved -- an internal bookkeeping
-  /// bug (the caller must resolve an index before positioning it), the
-  /// same "internal bug, not a runtime condition" contract `set_
-  /// splitter_position` already uses for its own malformed-call panics.
-  pub fn offset_of(&self, idx: usize) -> f64 { ... }
-
-  /// The real total content extent -- `item_count * item_extent` for
-  /// `Fixed`, or `offset_of(item_count)` for `Variable`.
-  pub fn total_extent(&self) -> f64 { ... }
-  ```
-
-`crates/engine-core/src/tree.rs`:
-
-- `set_virtual_list_window`: the `top: length((idx as f64 *
-  item_extent) as f32)` line becomes `top: length(state.offset_of(idx)
-  as f32)`, computed via a fresh, short-lived immutable borrow of
-  `self.nodes[list]` inside the loop (matching the borrow shape the
-  rest of this method already uses to interleave reads and the mutating
-  `self.insert`/`self.add_child` calls) rather than extracting a single
-  scalar up front, since the offset now genuinely varies per index.
-- `scroll_virtual_list_by`: `state.item_extent.value() *
-  state.item_count as f64` becomes `state.total_extent()`.
-- New `Tree::set_virtual_list_resolved_offsets(&mut self, list: NodeId,
-  offsets: impl IntoIterator<Item = (usize, f64)>)` — the real way a
-  caller supplies resolved cumulative offsets; merges into `state.
-  resolved_offsets` via `extend`. This is Phase 2's own entry point
-  into this phase's new storage — `engine-core` itself never calls it,
-  the same "primitive first, wiring second" split M10 Phase 3/M11
-  Phase 1 both already used.
+- `add_virtual_list` gains a new optional `size_hint:
+  Option<Py<PyAny>>` parameter alongside `item_extent`, which itself
+  becomes `Option<f64>` (previously required). Exactly one of the two
+  must be given — `PyValueError` otherwise (neither given, or both).
+  When `size_hint` is given: calls it once per index `0..item_count`,
+  accumulating a real running sum into a `Vec<(usize, f64)>` of
+  cumulative offsets (index `0` maps to offset `0.0`; index
+  `item_count`, one past the last item, maps to the real total
+  extent) — a callback exception propagates as a real `PyErr`
+  immediately (via `?`), the same "raises as a real error" contract
+  `materialize` already has. Builds `NodeKind::VirtualList(VirtualList
+  State::new(item_count, ItemExtent::Variable))`, then calls `Tree::
+  set_virtual_list_resolved_offsets` with the resolved table before
+  returning the new `Node`.
+- `set_virtual_list_window`: extracts a small, local, private
+  `enum ResolvedItemHeights { Fixed(f64), Variable(BTreeMap<usize,
+  f64>) }` snapshot from the list's own current state *before*
+  building the materializer closure (mirroring the existing scalar-
+  extraction shape exactly, just widened to also cover `Variable`).
+  Inside the closure, each newly-materialized item's own real height
+  is `Fixed(v) => v`, or for `Variable(offsets)`, `offsets[idx + 1] -
+  offsets[idx]` (both guaranteed present — Phase 2's own eager
+  resolution always resolves every index up to and including
+  `item_count`) — used for that item's own `Style.size.height`,
+  replacing the old uniform `item_extent as f32`.
+- Doc comments on both methods corrected — `add_virtual_list`'s own
+  currently states "only `ItemExtent::Fixed` is exposed -- see `engine_
+  core::ItemExtent`'s own doc comment for why the variable-height
+  variant isn't built yet," stale once this phase ships.
 
 ## Verification plan
 
-- `cargo test --workspace --release`/clippy/fmt. New `engine-core`
-  tests: `offset_of`/`total_extent` for `Fixed` match the pre-existing
-  uniform formula exactly (regression guard); for `Variable`, a real,
-  non-uniform set of resolved offsets (e.g. rows of heights 10, 30, 15)
-  produces the correct real cumulative offset for each index and the
-  correct real total extent; `set_virtual_list_window` with `Variable`
-  extent positions materialized items at their own real, non-uniform
-  offsets (not the old uniform formula); `scroll_virtual_list_by` with
-  `Variable` extent clamps against the real non-uniform total extent,
-  not `item_extent * item_count`. A `#[should_panic]` test proves
-  querying an unresolved `Variable` index panics with a clear message,
-  not a silent wrong answer.
-- Existing `Fixed`-extent tests (materialization positioning, scroll
-  clamping) must keep passing completely unmodified — the real
-  regression check that this phase didn't change `Fixed`'s own behavior
-  at all.
-- `maturin develop --release` + `pytest tests/` + all examples — this
-  phase is `engine-core`-only, so this is a pure regression check
-  (nothing in `engine-py`/Python changes until Phase 2).
+- `cargo test --workspace --release`/clippy/fmt — this phase is
+  `engine-py`-only; `engine-core`'s own `ItemExtent::Variable`/
+  `resolved_offsets`/`offset_of`/`total_extent`/`set_virtual_list_
+  resolved_offsets` (Phase 1) are reused entirely as-is, no changes.
+- `maturin develop --release` + `pytest tests/`. New `test_virtual_
+  list.py` coverage: `add_virtual_list(size_hint=...)` builds a real
+  `Variable` list whose materialized items land at their own real,
+  non-uniform positions and heights (the same kind of "clicking it
+  there proves it really moved" functional proof this file's sibling
+  tests already use, adapted for position/size instead of click
+  routing — checked via `Window.click()` on items at their own real,
+  distinct computed centers, since there's no direct position getter);
+  `size_hint` is called exactly `item_count` times, once each, at
+  `add_virtual_list` time, not lazily per `set_virtual_list_window`
+  call; passing neither or both of `item_extent`/`size_hint` raises a
+  clear `ValueError`; a `size_hint` callback raising propagates as a
+  real Python error, matching `materialize`'s own established
+  contract. Existing `Fixed`-mode tests (every one already in `test_
+  virtual_list.py`/`test_virtual_list_benchmark.py`) must keep passing
+  completely unmodified — the real regression check that `item_extent=
+  ...` (unchanged, just now `Optional` on the Rust side) still works
+  exactly as before.
+- Run all examples (`examples/scrollable_list.py` at minimum, still
+  `Fixed`-mode, unmodified) — confirm clean exit, no panic.
+- Consider adding a small new example demonstrating a real `Variable`
+  list (e.g. rows of varying text-derived height) if it meaningfully
+  proves the feature works live, matching this project's own pattern
+  of pairing a new capability with a real, visible demonstration —
+  decide once the FFI-level implementation and its pytest coverage are
+  solid, not before.

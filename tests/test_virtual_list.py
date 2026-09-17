@@ -6,6 +6,13 @@ itself raising), and that `engine-core`'s own recycling actually reaches
 Python-visible behavior (a scrolled-away index's callback isn't called
 again for free -- it has to be re-materialized).
 
+M12 Phase 2 (§11.7) adds `size_hint`, the real Python-facing way to
+build a `Variable`-extent list -- resolved eagerly, once, at
+`add_virtual_list` time (proven here via call-tracking, the same "FFI
+wiring only" split this file already uses for `materialize`); the
+definitive proof of the resulting real, non-uniform positions/heights
+lives in `engine-core`'s own M12 Phase 1 tests, not here.
+
 Same "requires `maturin develop` first, imports the real compiled
 extension" discipline as `test_engine_py.py`. `test_virtual_list_benchmark.py`
 is the separate, `skip`-by-default real GIL-overhead measurement --
@@ -26,6 +33,82 @@ def test_add_virtual_list_returns_a_node():
         item_count=100_000, item_extent=20.0, materialize=lambda idx: (0, 0, 0, 255)
     )
     assert isinstance(node, Node)
+
+
+def test_add_virtual_list_with_size_hint_returns_a_node():
+    """M12 Phase 2 (§11.7): the real Python-facing entry point for a
+    `Variable`-extent list -- `size_hint` replaces `item_extent`, not a
+    second call. The definitive proof that the resulting real per-item
+    positions/heights are genuinely non-uniform (not just "this doesn't
+    raise") is `crates/engine-core/src/tree.rs`'s own M12 Phase 1 tests
+    (`offset_of_and_total_extent_use_real_resolved_offsets_for_
+    variable`, `set_virtual_list_window_positions_items_at_their_real_
+    non_uniform_offsets`) -- matching this file's own established
+    "FFI wiring only" split (no direct position/size getter exists on
+    `Node` from Python at all, for any list).
+    """
+    window = Window(width=200, height=200)
+    node = window.add_virtual_list(
+        item_count=10,
+        materialize=lambda idx: (0, 0, 0, 255),
+        size_hint=lambda idx: 10.0 + idx,
+    )
+    assert isinstance(node, Node)
+
+
+def test_add_virtual_list_size_hint_is_called_exactly_once_per_item_eagerly():
+    """M12 Phase 2's own real, stated design: `size_hint` resolves
+    *eagerly*, once, right at `add_virtual_list` time -- not lazily per
+    `set_virtual_list_window` call, and not re-invoked for an index
+    already resolved.
+    """
+    window = Window(width=200, height=200)
+    calls = []
+
+    def size_hint(idx):
+        calls.append(idx)
+        return 10.0
+
+    window.add_virtual_list(
+        item_count=5, materialize=lambda idx: (0, 0, 0, 255), size_hint=size_hint
+    )
+    assert calls == [0, 1, 2, 3, 4], "size_hint must be called exactly once per item, in order"
+
+    vl = window.add_virtual_list(
+        item_count=5, materialize=lambda idx: (0, 0, 0, 255), size_hint=size_hint
+    )
+    calls.clear()  # isolate exactly what set_virtual_list_window itself contributes
+    window.set_virtual_list_window(vl, 0, 3)
+    assert calls == [], "set_virtual_list_window must not re-invoke size_hint at all"
+
+
+def test_add_virtual_list_requires_exactly_one_of_item_extent_or_size_hint():
+    window = Window(width=200, height=200)
+
+    with pytest.raises(ValueError, match="exactly one of item_extent or size_hint"):
+        window.add_virtual_list(item_count=10, materialize=lambda idx: (0, 0, 0, 255))
+
+    with pytest.raises(ValueError, match="exactly one of item_extent or size_hint"):
+        window.add_virtual_list(
+            item_count=10,
+            materialize=lambda idx: (0, 0, 0, 255),
+            item_extent=20.0,
+            size_hint=lambda idx: 20.0,
+        )
+
+
+def test_add_virtual_list_size_hint_exception_propagates_as_a_real_python_error():
+    window = Window(width=200, height=200)
+
+    def size_hint(idx):
+        if idx == 2:
+            raise RuntimeError(f"item {idx} is cursed")
+        return 10.0
+
+    with pytest.raises(RuntimeError, match="item 2 is cursed"):
+        window.add_virtual_list(
+            item_count=10, materialize=lambda idx: (0, 0, 0, 255), size_hint=size_hint
+        )
 
 
 def test_set_virtual_list_window_calls_materialize_only_for_newly_visible_indices():
