@@ -114,11 +114,20 @@ handlers: {on_change: "on_change"}
     assert calls == [], "on_change has no real dispatch mechanism yet and must not fire on a click"
 
 
-def test_a_raising_view_handler_is_caught_logged_and_non_fatal(capsys, tmp_path):
+def test_a_raising_view_handler_is_caught_logged_and_non_fatal(capfd, tmp_path):
     """Matches `Window.click`'s own established policy (§9): an
-    uncaught exception from a real handler is caught and printed, not
-    propagated -- `dispatch::run_activation` is the same shared
-    mechanism both paths already use.
+    uncaught exception from a real handler is caught and logged via
+    `tracing::error!` (M16 Phase 2), not propagated -- `dispatch::
+    run_activation` is the same shared mechanism both paths already
+    use.
+
+    `capfd`, not `capsys`: `tracing_subscriber`'s own writer is a raw
+    OS-level stderr write from Rust, bypassing Python's `sys.stderr`
+    object entirely -- `capsys` can't see it (confirmed by actually
+    running this test with `capsys` first and watching it fail with an
+    empty capture despite the real event genuinely firing); `capfd`
+    captures at the file-descriptor level, real for both Python and
+    Rust writes.
     """
     path = write_view(
         tmp_path,
@@ -140,6 +149,6 @@ handlers: {on_click: "bump"}
 
     view.click(node)  # must not raise
 
-    captured = capsys.readouterr()
+    captured = capfd.readouterr()
     assert "boom" in captured.err
     assert "RuntimeError" in captured.err

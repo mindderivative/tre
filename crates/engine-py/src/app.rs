@@ -101,8 +101,10 @@ impl GpuState {
             // condition on some CI runners -- exit 0, don't fail the
             // process, per TRE v1's own established convention
             // (finding #261), applied identically everywhere else in
-            // this workspace.
-            eprintln!("engine-py: no wgpu adapter available ({err}), exiting 0");
+            // this workspace. `tracing::warn!` (M16 Phase 2): real,
+            // worth logging, but not an error -- a genuinely expected,
+            // gracefully-handled condition, not a bug.
+            tracing::warn!(%err, "no wgpu adapter available, exiting 0");
             std::process::exit(0);
         });
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -174,19 +176,17 @@ impl App {
     /// #261), not to the app's own lifetime as a whole.
     #[pyo3(signature = (max_frames=None))]
     fn run(&self, py: Python<'_>, max_frames: Option<u32>) -> PyResult<()> {
-        // M16 Phase 1 (§3, §9): the one real place to wire a `tracing`
-        // subscriber -- `App::run` is Design Principle 1's own "one
-        // blocking call," the real entry point every per-frame/
-        // callback code path already funnels through. `try_init`
-        // (not `init`, which panics) is real, load-bearing idempotency:
-        // `test_engine_py.py`'s own `test_app_requires_at_least_one_
-        // window` (and any real app that legitimately constructs more
-        // than one `App` in a process) can call this more than once in
-        // the same process -- a global subscriber can only ever be set
-        // once, so every call after the first must be a silent no-op,
-        // not a panic. `.ok()` discards that real, expected "already
-        // set" error deliberately, not by accident.
-        tracing_subscriber::fmt::try_init().ok();
+        // M16 Phase 1 (§3, §9): `App::run` is Design Principle 1's own
+        // "one blocking call," a real, early place to get a `tracing`
+        // subscriber installed before any per-frame/callback work
+        // starts. **Real finding (M16 Phase 2):** this is *not* the
+        // only place that needs to -- `dispatch::log_uncaught_
+        // exception`'s own doc comment explains why the actual install
+        // call lives there instead (shared via `dispatch::ensure_
+        // tracing_subscriber`, reused verbatim here); `App::run` calls
+        // it too only to get the subscriber live as early as possible
+        // for a real app, not because it's the sole guarantor.
+        crate::dispatch::ensure_tracing_subscriber();
 
         // Extracted once, up front, while `py` is already held --
         // see `WindowSetup`'s own doc comment for why nothing below
@@ -458,8 +458,10 @@ impl App {
                 // case exits the process directly (above), so this is
                 // the one remaining failure mode. Same TRE v1 finding
                 // #261 convention as every other entry point in this
-                // workspace.
-                eprintln!("engine-py: no display available ({err}), exiting cleanly");
+                // workspace. `tracing::warn!` (M16 Phase 2): the same
+                // "expected, gracefully-handled, not an error" reasoning
+                // as the no-adapter case above.
+                tracing::warn!(%err, "no display available, exiting cleanly");
                 Ok(())
             }
         }

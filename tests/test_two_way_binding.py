@@ -95,7 +95,7 @@ two_way: text
     assert vm.name.get() == "", "each real Change writes back again, not just the first"
 
 
-def test_two_way_round_trip_does_not_recurse_infinitely(capsys, tmp_path):
+def test_two_way_round_trip_does_not_recurse_infinitely(capfd, tmp_path):
     """Real finding (M14 Phase 3): a two-way-bound widget is both a
     `Signal` subscriber (its own forward `bindings:` entry) and, via
     `TwoWayCallback`, a `Signal` writer -- `set_checked` fires `Change`,
@@ -103,10 +103,18 @@ def test_two_way_round_trip_does_not_recurse_infinitely(capsys, tmp_path):
     change-detection fix) unconditionally re-notified the very binding
     that called `set_checked` in the first place, recursing until
     Python's stack limit. Each recursion level was individually caught
-    and printed by `call_handler`'s own non-fatal-handler policy (§9),
+    and logged by `call_handler`'s own non-fatal-handler policy (§9),
     so `test_two_way_checkbox_writes_the_signal_back_when_checked_
     changes` above still passed even before the fix -- this test is the
     one that actually catches it, by asserting stderr stays clean.
+
+    `capfd`, not `capsys` (M16 Phase 2): `call_handler`'s own logging
+    now goes through `tracing::error!`, a raw OS-level stderr write
+    from Rust that bypasses Python's `sys.stderr` object entirely --
+    `capsys` can no longer see it at all, which would make this test's
+    own `captured.err == ""` assertion trivially pass regardless of
+    whether a real recursion error actually fired underneath, silently
+    losing the exact regression guarantee this test exists for.
     """
     path = write_view(
         tmp_path,
@@ -130,7 +138,7 @@ two_way: checked
 
     node.set_checked(True)
 
-    captured = capsys.readouterr()
+    captured = capfd.readouterr()
     assert captured.err == "", (
         f"a real two-way round trip must not recurse or raise at all -- got stderr: {captured.err!r}"
     )

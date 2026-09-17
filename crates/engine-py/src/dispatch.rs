@@ -26,6 +26,77 @@ use std::rc::Rc;
 use engine_core::{CompletionHandle, DispatchOutcome, EventKind, InteractionConfig, NodeId};
 use pyo3::prelude::*;
 
+/// M16 Phase 2 (§3, §9) real finding, not anticipated in `PLAN.md`:
+/// `App::run`'s own top is *not* the one guaranteed place a `tracing`
+/// subscriber needs to be live. `Window.click`/`Node.set_checked`/
+/// `View.click` (and every other synthetic, no-live-window-needed
+/// dispatch entry point this whole project's own test suite relies
+/// on, deliberately, since M4 Phase 1 step 3) are all real,
+/// independently callable without `App::run()` ever running --
+/// confirmed the hard way, by a real pytest failure: two tests using
+/// exactly those entry points captured empty stderr even though the
+/// real event fired, because no subscriber had been installed yet in
+/// that pytest process (cross-file test *order* had been silently
+/// doing the installing until then, via whichever test file happened
+/// to call `App.run()` first). `try_init` is already idempotent and
+/// cheap (confirmed by M16 Phase 1's own multi-call test) -- calling
+/// it again here, at the one real place every uncaught-callback-
+/// exception log actually funnels through, is the correct fix: any
+/// caller of `log_uncaught_exception` gets a real, working subscriber
+/// regardless of whether `App::run()` was ever reached, not just
+/// real apps that happen to call it first.
+pub(crate) fn ensure_tracing_subscriber() {
+    // M16 Phase 2 real finding, caught only by actually running an
+    // example, not by reading the docs: `tracing_subscriber::fmt::
+    // try_init()` (the *free function*) specially wires `EnvFilter::
+    // from_default_env()` for you (confirmed via direct source read),
+    // but `fmt()` (the *builder*, needed here for `.with_writer`) does
+    // *not* -- its own default `filter` field is a flat `LevelFilter::
+    // INFO` (`Subscriber::DEFAULT_MAX_LEVEL`, confirmed via direct
+    // source read), completely ignoring `RUST_LOG`. Switching to the
+    // builder for the stderr fix above silently regressed `RUST_LOG`
+    // support entirely -- every example started emitting real INFO
+    // events unconditionally, caught by manually re-running one after
+    // this phase's own earlier stderr fix, not anticipated in advance.
+    // `.with_env_filter(EnvFilter::from_default_env())` restores the
+    // exact behavior the free function gave for free.
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init()
+        .ok();
+}
+
+/// §9's own stated policy -- "unhandled
+/// exceptions from a callback are caught, logged via `tracing::
+/// error!`, and non-fatal." `PyErr` itself has no single method that
+/// both formats the *full* real traceback (frames included, not just
+/// the exception's own type/message -- `PyErr`'s own `Display` impl
+/// only gives the latter, confirmed via direct source read) and
+/// returns it as a `String` rather than writing straight to `sys.
+/// stderr` (`PyErr::print`/`display`, both real, both print-only, no
+/// string-returning sibling). `err.traceback(py)`'s own real `.format()`
+/// (`pyo3::types::PyTracebackMethods`, confirmed via direct source
+/// read -- its own doc example is literally `format!("{}{}",
+/// traceback.format()?, err)`) is the one real way to get the same
+/// full text `PyErr::print` would have shown, as an owned `String` a
+/// `tracing::error!` field can actually carry. Falls back to the
+/// exception's own plain `Display` (type + message, no frames) if
+/// either the traceback is missing (a real, possible case -- an
+/// exception constructed but never actually raised) or formatting it
+/// itself fails, rather than losing the event entirely.
+fn log_uncaught_exception(err: &PyErr, py: Python<'_>) {
+    ensure_tracing_subscriber();
+    let traceback = match err.traceback(py) {
+        Some(tb) => match tb.format() {
+            Ok(formatted) => format!("{formatted}{err}"),
+            Err(_) => err.to_string(),
+        },
+        None => err.to_string(),
+    };
+    tracing::error!(%traceback, "uncaught exception in a Python callback");
+}
+
 /// The one real shape shared by `Node`/`PyWindow`/`View`'s handler
 /// storage -- named here (clippy's own `type_complexity` lint, not just
 /// convenience) since this module is the one place that actually
@@ -181,7 +252,7 @@ pub(crate) fn run_completions(
         if let Some(callback) = callback
             && let Err(err) = callback.call0(py)
         {
-            err.print(py);
+            log_uncaught_exception(&err, py);
         }
     }
 }
@@ -208,9 +279,10 @@ pub(crate) fn call_handler(handlers: &HandlerMap, node: NodeId, kind: EventKind,
         && let Err(err) = handler.call0(py)
     {
         // §9's own stated policy: "unhandled exceptions from a callback
-        // are caught, logged, and non-fatal" -- `PyErr::print` gives the
-        // same real traceback CPython itself would print for an
-        // uncaught exception, not just a one-line message.
-        err.print(py);
+        // are caught, logged via `tracing::error!`, and non-fatal" --
+        // `log_uncaught_exception` (M16 Phase 2) carries the same full
+        // real traceback `PyErr::print` used to write straight to
+        // stderr, now as a real structured `tracing` event instead.
+        log_uncaught_exception(&err, py);
     }
 }

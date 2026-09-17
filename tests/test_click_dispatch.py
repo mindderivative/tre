@@ -48,11 +48,19 @@ def test_click_only_fires_the_clicked_nodes_own_handler_not_a_sibling():
     assert calls == ["b"]
 
 
-def test_a_raising_click_handler_is_caught_logged_and_non_fatal(capsys):
+def test_a_raising_click_handler_is_caught_logged_and_non_fatal(capfd):
     """§9's own stated policy: "unhandled exceptions from a callback are
-    caught, logged, and non-fatal." A raising handler must not crash the
-    process, and its traceback must actually reach stderr -- not be
-    silently swallowed.
+    caught, logged via `tracing::error!` (M16 Phase 2), and non-fatal."
+    A raising handler must not crash the process, and its traceback
+    must actually reach stderr -- not be silently swallowed.
+
+    `capfd`, not `capsys`: `tracing_subscriber`'s own writer is a raw
+    OS-level stderr write from Rust, bypassing Python's `sys.stderr`
+    object entirely -- `capsys` can't see it (confirmed by actually
+    running this test with `capsys` first and watching it fail with an
+    empty capture despite the real event genuinely firing); `capfd`
+    captures at the file-descriptor level, real for both Python and
+    Rust writes.
     """
     window = Window(width=200, height=200)
     calls = []
@@ -67,7 +75,7 @@ def test_a_raising_click_handler_is_caught_logged_and_non_fatal(capsys):
     window.click(button)  # must not raise/propagate into Python
 
     assert calls == ["ran"]
-    captured = capsys.readouterr()
+    captured = capfd.readouterr()
     assert "boom from a click handler" in captured.err
 
 

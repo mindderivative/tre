@@ -52,11 +52,20 @@ def test_set_checked_with_no_registered_handler_does_not_raise():
     checkbox.set_checked(True)  # must not raise -- an unregistered Change handler is a no-op
 
 
-def test_a_raising_on_change_handler_is_caught_logged_and_non_fatal(capsys):
+def test_a_raising_on_change_handler_is_caught_logged_and_non_fatal(capfd):
     """Matches `Window.click`'s own established policy (§9): an uncaught
-    exception from a real handler is caught and printed, not propagated
-    -- `call_handler` is the same shared mechanism `Node.set_checked`
-    now reuses for a direct `Change` fire.
+    exception from a real handler is caught and logged via `tracing::
+    error!` (M16 Phase 2), not propagated -- `call_handler` is the same
+    shared mechanism `Node.set_checked` now reuses for a direct `Change`
+    fire.
+
+    `capfd`, not `capsys`: `tracing_subscriber`'s own writer is a raw
+    OS-level stderr write from Rust, bypassing Python's `sys.stderr`
+    object entirely -- `capsys` (which only monkeypatches that Python
+    object) can't see it, confirmed by actually running this test with
+    `capsys` and watching it fail with an empty capture even though the
+    real event was genuinely emitted (`capfd` captures at the file-
+    descriptor level, real for both Python and Rust writes).
     """
     window = Window(width=200, height=200)
     checkbox = window.add_checkbox(background=(0x63, 0x50, 0xA4, 0xFF), width=24, height=24)
@@ -67,6 +76,6 @@ def test_a_raising_on_change_handler_is_caught_logged_and_non_fatal(capsys):
     checkbox.set_on_change(on_change)
     checkbox.set_checked(True)  # must not raise
 
-    captured = capsys.readouterr()
+    captured = capfd.readouterr()
     assert "boom" in captured.err
     assert "RuntimeError" in captured.err
