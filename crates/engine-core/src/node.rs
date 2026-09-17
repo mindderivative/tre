@@ -101,6 +101,18 @@ pub struct VirtualListState {
     pub item_count: usize,
     pub item_extent: ItemExtent,
     pub materialized: std::collections::BTreeMap<usize, NodeId>,
+    /// M8 Phase 2 (§11.7): the real vertical scroll position, in local
+    /// pixels -- composed into materialized children's own effective
+    /// paint-time position (`paint_node`), not their `layout_style`
+    /// (their real taffy layout never changes; only where they're
+    /// *drawn* does). Plain `Animated<f64>`, driven directly (like a
+    /// scrollbar being dragged, not eased toward a target) the same way
+    /// `SplitterState.position` already is -- confirmed via reading
+    /// `Tree::tick_all` directly that kind-specific `Animated<T>`
+    /// fields are never ticked centrally, only by their own dedicated
+    /// mechanism, so this follows that same real precedent rather than
+    /// inventing a new one.
+    pub scroll_offset: Animated<f64>,
 }
 
 impl VirtualListState {
@@ -109,6 +121,7 @@ impl VirtualListState {
             item_count,
             item_extent,
             materialized: std::collections::BTreeMap::new(),
+            scroll_offset: Animated::new(0.0),
         }
     }
 }

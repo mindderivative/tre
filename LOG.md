@@ -1,70 +1,66 @@
-# Log: M8 Phase 1 — Engine-Level Paint Culling (§11.8)
+# Log: M8 Phase 2 — `VirtualList` Real Scroll Offset & Clipping (§11.7)
 
-Corresponds to `BUILD_TRACKER.md` M8 Phase 1. `build_tree_scene`/
-`paint_node` gain a real "current visible rect," and a node whose own
-composed absolute bounds don't intersect it skips Vello scene-encoding
-for its entire subtree.
+Corresponds to `BUILD_TRACKER.md` M8 Phase 2. A new `Animated<f64>`
+scroll offset on `VirtualListState`, composed into materialized
+children's own effective position; real clipping via `Scene::
+push_layer`'s own `clip_path` support.
 
 ## Investigation before writing code
 
-- `ARCHITECTURE.md` §11.8's own text, read again directly, specifies
-  exactly this mechanism: skip Vello scene-encoding entirely for any
-  subtree whose computed layout bounds, transformed into viewport
-  space, don't intersect the current visible/clip region. Confirmed via
-  grep: zero "cull" hits anywhere in the codebase before this phase.
-- `paint_node` already computes `composed`/`w`/`h` as its very first
-  real step — everything needed for the culling check already exists
-  at exactly the right point in the walk, nothing new to read from
-  `Tree`.
-- `peniko::kurbo::Rect::overlaps(&self, other: Rect) -> bool` (verified
-  directly in kurbo `0.13.1`'s vendored source) is an inclusive-boundary
-  intersection test, already the exact check needed; `Rect` was already
-  imported in this file.
-- `paint_node` is private (confirmed via grep — only called from
-  `build_tree_scene` and recursively from itself); its signature could
-  change freely with zero external callers to update. `tree: &Tree` is
-  immutable throughout the whole walk, so skipping a subtree's
-  recursion has no side effects to lose — a pure rendering optimization.
-- The "current visible rect" is threaded as a real parameter (not just
-  computed once and left unused) because M8 Phase 2 (`VirtualList` real
-  clipping) will need to *narrow* it on the way into a list's own
-  materialized children — established here, consumed there.
-- Real, stated scope limit: the culling check uses a node's own plain
-  layout bounds, not padded for elevation's own shadow spread (M7 Phase
-  2) — a node whose shadow extends past its own box could show a hard
-  edge exactly at the cull boundary. `ARCHITECTURE.md` §11.8's own text
-  doesn't call for shadow-aware padding, and no real app in this
-  workspace pans content near a cull boundary with visible elevation —
-  the simplest thing that could work, not manufactured precision.
+- `VirtualListState` had no scroll concept at all — `Tree::
+  set_virtual_list_window` requires the caller to supply an explicit
+  `visible: Range<usize>`; this phase doesn't change that contract, it
+  only makes the paint-time position/clip of whatever's already
+  materialized real.
+- Real finding: `Tree::tick_all` only ever ticks `node.paint`/`node.
+  interaction` — kind-specific `Animated<T>` fields (confirmed via
+  `SplitterState.position`'s own precedent) are driven by their own
+  dedicated mechanism, ticked manually inline where they're set, not
+  centrally. `scroll_offset` follows the identical shape — a plain
+  `Animated<f64>` set directly, not eased by default.
+- Real finding: `vello_hybrid::Scene::push_layer`'s own `clip_path` is
+  baked into absolute/device-space strips at the moment `push_layer` is
+  called (confirmed by reading its own source: `layer_transform =
+  self.effective_path_transform()`, captured once, before any content
+  is drawn). A clip pushed under the `VirtualList` node's own `composed`
+  transform stays correctly anchored even though each child painted
+  inside the layer goes on to set its own transform — the same real
+  mechanism ripple's own clip (M4 Phase 5) already proves works.
+- `paint_node`'s own child-recursion applied zero clipping anywhere for
+  any `NodeKind` before this phase — this phase introduces a real clip
+  only for `VirtualList`, not implicit `overflow: hidden` everywhere.
+- M8 Phase 1's own `visible: Rect` threading is directly reusable: the
+  `bounds` value already computed for a node's own culling check is
+  exactly the rect a `VirtualList`'s real clip also uses — intersecting
+  `visible` with `bounds` before recursing into a `VirtualList`'s own
+  children means an off-screen-within-the-clip materialized child also
+  gets engine-culled, not just visually hidden. Scoped to `VirtualList`
+  specifically, since no other `NodeKind` introduces a real visual clip.
 
 ## What happened
 
-`build_tree_scene` computes `visible = Rect::new(0.0, 0.0, width,
-height)` once and threads it into `paint_node`. `paint_node` gains a
-`visible: Rect` parameter; right after computing `composed`/`w`/`h`, it
-transforms all four local corners `(0,0)`/`(w,0)`/`(0,h)`/`(w,h)`
-through `composed`, takes their min/max x/y to build this node's own
-real composed bounding box, and returns immediately (no shadow, fill,
-interaction, or recursion into children) if that box doesn't `overlap`
-`visible`. The recursive call into `node.children` passes `visible`
-through unchanged for this phase (no `NodeKind` narrows it yet — that's
-Phase 2's own job).
+`VirtualListState` gains `pub scroll_offset: Animated<f64>`, defaulting
+to `Animated::new(0.0)` in `::new`. `paint_node`'s final child-recursion
+becomes `NodeKind`-aware: for `NodeKind::VirtualList(state)`, pushes a
+real clip layer (a local `RoundedRect(0,0,w,h,corner_radius)` path,
+matching the list's own real corner radius), composes `Affine::
+translate((0.0, -state.scroll_offset.current))` into the transform
+children recurse with, narrows `visible` to `visible.intersect(bounds)`
+before recursing, then pops the layer. Every other `NodeKind` keeps the
+exact plain recursion from before this phase.
 
-New `crates/engine-render/tests/paint_culling.rs`: the real,
-distinguishing behavior culling adds (a parent positioned 10,000px
-off-screen, whose child's own `transform` would otherwise bring it back
-onto visible canvas, never paints — proving the parent's whole subtree
-was skipped before the child's own transform was ever computed, not
-just that off-screen content happens not to rasterize); a node only
-partially overlapping the viewport (straddling its edge) still paints
-its real, visible portion (proving this is a bounding-box-overlap
-decision, not an all-or-nothing "must be fully inside" test). Both
-passed on the first run.
+New `crates/engine-render/tests/virtual_list_scroll.rs`: a real scroll
+offset genuinely shifts materialized children's own painted position
+(a partially-scrolled item shows exactly the real overlap remaining);
+scrolled-out content is genuinely clipped, not just repositioned (an
+item scrolled 1000px up shows nothing anywhere in the list, not moved
+off to a still-visible spot). Both passed on the first run.
 
 Full `cargo test --workspace --release` clean (`engine-render` gains 2
-new tests — every prior test passed unmodified, confirming the no-op
-claim for on-screen content), `cargo clippy --workspace --all-targets
--- -D warnings`, `cargo fmt --check` all clean. This phase touches no
-`engine-py`/Python-facing API at all — `maturin develop --release` +
-full `pytest tests/` (78 passed, 1 skipped, unaffected) and all fourteen
-examples confirmed clean, a pure regression check.
+new tests — the full pre-existing `virtual_list.rs` suite passed
+unmodified, confirming the default `scroll_offset: 0.0` is a true
+no-op), `cargo clippy --workspace --all-targets -- -D warnings`, `cargo
+fmt --check` all clean. This phase adds no new Python-facing API —
+`maturin develop --release` + full `pytest tests/` (78 passed, 1
+skipped, unaffected) and all fourteen examples confirmed clean, a pure
+regression check.

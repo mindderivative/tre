@@ -495,8 +495,45 @@ fn paint_node(
         }
     }
 
-    for &child in &node.children {
-        paint_node(tree, child, composed, visible, scene, resources, text);
+    // M8 Phase 2 (§11.7): a `VirtualList`'s own materialized children
+    // scroll and clip for real -- every other `NodeKind` recurses
+    // exactly as before this phase (no other kind introduces a real
+    // visual clip today, confirmed via direct read before this change,
+    // so narrowing `visible` for any of them would wrongly cull
+    // legitimately-overflowing content nothing here actually hides).
+    if let NodeKind::VirtualList(state) = &node.kind {
+        // The real clip: a local `(0, 0)-(w, h)` path, pushed under
+        // this node's own `composed` transform (already active via
+        // `scene.set_transform(composed)` above) -- `Scene::push_layer`
+        // bakes its own `clip_path` into absolute strips at the moment
+        // it's called (confirmed by reading `vello_hybrid`'s own
+        // source), so it stays correctly anchored even though each
+        // child below goes on to set its own transform.
+        let clip_radius = node.paint.corner_radius.current;
+        let clip = RoundedRect::new(0.0, 0.0, w, h, clip_radius).to_path(0.1);
+        scene.push_layer(Some(&clip), None, None, None, None);
+
+        // The real scroll offset: composed into the transform children
+        // recurse with, not `layout_style` -- their own taffy layout
+        // never changes, only where they're painted does. Vertical
+        // only, a real, stated v1 scope limit (`PLAN.md`).
+        let scrolled = composed * Affine::translate((0.0, -state.scroll_offset.current));
+
+        // Reuses `bounds` (this node's own real composed absolute box,
+        // already computed above for its own Phase 1 culling check) to
+        // narrow `visible` for its children -- a materialized child
+        // sitting outside the clip is now genuinely engine-culled too,
+        // not just visually hidden behind the clip pushed above.
+        let narrowed = visible.intersect(bounds);
+        for &child in &node.children {
+            paint_node(tree, child, scrolled, narrowed, scene, resources, text);
+        }
+
+        scene.pop_layer();
+    } else {
+        for &child in &node.children {
+            paint_node(tree, child, composed, visible, scene, resources, text);
+        }
     }
 }
 
