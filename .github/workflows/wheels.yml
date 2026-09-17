@@ -1,0 +1,107 @@
+# M21 Phase 2 (§13): the real cross-platform release wheel matrix
+# ARCHITECTURE.md's own Packaging section names -- Linux/macOS/Windows
+# x supported Python versions, via `PyO3/maturin-action`, the standard
+# real action for this exact job.
+#
+# Deliberately a SEPARATE workflow from `ci.yml`, not an added job
+# there: this is a real, release-time capability (ARCHITECTURE.md's
+# own words, "the full cross-platform release matrix"), not a per-
+# commit gate -- building 3 platforms x 5 Python versions of real
+# wheels on every ordinary push would burn a lot of CI time for a
+# project still landing many small commits per day. Triggers only on
+# a real `v*` tag push or a manual `workflow_dispatch` run.
+#
+# Real, confirmed finding from M21 Phase 1's own local investigation:
+# a bare `maturin build` on a bleeding-edge host can silently produce
+# a non-portable wheel with no manylinux compliance at all. The real,
+# structural fix here is letting `maturin-action`'s own Linux path run
+# *inside a real manylinux Docker container* (a genuinely old glibc
+# baseline, `manylinux: auto` below) -- no local `zig`/shim workaround
+# needed the way Phase 1's own dev-host investigation required, since
+# the container itself already has the right glibc, not this
+# session's own bleeding-edge one.
+#
+# Linux uses `--find-interpreter` inside the one manylinux container
+# run to build wheels for every real Python interpreter it finds
+# there in a single job -- the real, standard `maturin-action` pattern
+# for manylinux builds (the container ships several CPython versions
+# pre-installed), rather than a separate container spin-up per Python
+# version. macOS/Windows are native (not containerized) runners with
+# exactly one Python installed at a time, so those two real platforms
+# genuinely need `actions/setup-python`'s own per-version matrix.
+name: Wheels
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags: ["v*"]
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build manylinux wheels (all real interpreters in the container)
+        uses: PyO3/maturin-action@v1
+        with:
+          manylinux: auto
+          args: --release --out dist --find-interpreter
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux
+          path: dist/*.whl
+
+  macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          args: --release --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-${{ matrix.python-version }}
+          path: dist/*.whl
+
+  windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          args: --release --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows-${{ matrix.python-version }}
+          path: dist/*.whl
+
+  # ARCHITECTURE.md's own §13 text names both wheels and a source
+  # distribution -- `maturin build --sdist` is the real, dedicated
+  # flag for it, a single platform-agnostic archive, not a per-OS job.
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
