@@ -45,7 +45,9 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use engine_core::{EventKind, InputEvent, NodeId, PointerButton, Tree};
-use engine_spec::{Expression, Reconciler, WidgetSpec, evaluate, parse_binding, parse_view};
+use engine_spec::{
+    Expression, Reconciler, ViewWatcher, WidgetSpec, evaluate, parse_binding, parse_view,
+};
 use peniko::kurbo::Point;
 use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -289,6 +291,17 @@ pub struct View {
     handlers: HandlerMap,
     /// M4 Phase 7 (§11.3): mirrors `PyWindow`'s own `context_menus`.
     context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
+    /// M19 Phase 1 (§16.4): remembered so `poll_reload` can re-read the
+    /// same file later -- `View::new` used to discard it the instant
+    /// the initial read finished.
+    path: String,
+    /// M19 Phase 1 (§16.4): `None` only if the initial `ViewWatcher::
+    /// watch` genuinely failed (an unusual filesystem with no real
+    /// inotify-equivalent) -- non-fatal, the same "real, expected,
+    /// gracefully-handled" policy this codebase already applies to
+    /// no-GPU/no-display (TRE v1 finding #261); `View` still works,
+    /// `poll_reload` just always reports no change.
+    watcher: Option<ViewWatcher>,
 }
 
 #[pymethods]
@@ -309,6 +322,19 @@ impl View {
         let mut two_way = Vec::new();
         collect_two_way(&spec, &mut two_way);
 
+        // M19 Phase 1 (§16.4): a real, additive capability -- `View`
+        // worked fine without it before this phase, so a failure here
+        // (an unusual filesystem with no real inotify-equivalent) is
+        // non-fatal, logged and skipped, not propagated as a
+        // constructor error.
+        let watcher = match ViewWatcher::watch(std::path::Path::new(&path)) {
+            Ok(watcher) => Some(watcher),
+            Err(err) => {
+                tracing::warn!(%err, path = %path, "failed to start watching this view file for hot-reload -- poll_reload will always report no change");
+                None
+            }
+        };
+
         Ok(Self {
             tree: Rc::new(RefCell::new(tree)),
             reconciler,
@@ -317,6 +343,8 @@ impl View {
             two_way,
             handlers: Rc::new(RefCell::new(HashMap::new())),
             context_menus: Rc::new(RefCell::new(HashMap::new())),
+            path,
+            watcher,
         })
     }
 
@@ -343,6 +371,47 @@ impl View {
             // per-frame render loop `View` doesn't have.
             completions: Rc::new(RefCell::new(CompletionRegistry::new())),
         })
+    }
+
+    /// M19 Phase 1 (§16.4): the real, first Python-facing entry point
+    /// for reconciliation -- `ViewWatcher`/`Reconciler` both already
+    /// existed as tested `engine-spec` primitives, but nothing ever
+    /// called them from a real, live `View` before this. Returns
+    /// `false` with no real change detected (no watcher, or nothing
+    /// written to the file since the last call) -- `true` once a real
+    /// change was actually reconciled into the live `Tree`.
+    ///
+    /// **Real, stated scope boundary:** patches structure/paint/layout
+    /// only (`Reconciler::reconcile`'s own real diffing -- an unchanged
+    /// widget keeps its real `NodeId`, so its focus/scroll/in-flight
+    /// animation survive). `bindings:`/`handlers:`/`two_way:` are
+    /// resolved entirely separately, by `_attach`'s own `BindingResolver`
+    /// logic against a `viewmodel` this method has no access to -- a
+    /// hot-reloaded view that adds a genuinely *new* binding or handler
+    /// needs `_attach` called again, the caller's own responsibility,
+    /// the same as it would be after adding one imperatively.
+    ///
+    /// `View` itself has no live-window/render-loop concept (this
+    /// module's own doc comment) to call this automatically every
+    /// "frame" the way §16.4's own text describes -- this is the real,
+    /// honest translation of that intent given `View`'s own real,
+    /// pre-existing architecture: an explicit method the caller invokes
+    /// wherever its own script's equivalent of "between frames" is.
+    fn poll_reload(&mut self) -> PyResult<bool> {
+        let Some(watcher) = &self.watcher else {
+            return Ok(false);
+        };
+        if !watcher.poll_changed() {
+            return Ok(false);
+        }
+        let yaml = std::fs::read_to_string(&self.path).map_err(|e| {
+            PyRuntimeError::new_err(format!("failed to re-read view {:?}: {e}", self.path))
+        })?;
+        let mut tree = self.tree.borrow_mut();
+        self.reconciler
+            .reconcile(&mut tree, &yaml, None, None)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(true)
     }
 
     /// §16.2's real inversion point. Validates every declared handler

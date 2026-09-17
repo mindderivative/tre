@@ -1,0 +1,7 @@
+id: root
+kind: Container
+style: {width: 200, height: 80}
+children:
+  - id: box
+    kind: Rect
+    style: {width: 60, height: 60, background: "#6750A4", corner_radius: 0}
