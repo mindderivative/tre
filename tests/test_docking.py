@@ -151,3 +151,94 @@ def test_set_dock_handle_rejects_a_handle_or_panel_from_a_different_window():
         window_a.set_dock_handle(foreign, panel)
     with pytest.raises(ValueError, match="different Window"):
         window_a.set_dock_handle(handle, foreign)
+
+
+def test_dragging_over_a_different_zone_shows_the_highlight_covering_it():
+    """M10 Phase 3 (§11.4): the real, functional proof that `drag_panel_
+    over` shows the registered highlight over whatever zone is really
+    under the pointer -- checked the only way there is to check it from
+    Python (no getter for internal `DockState`): clicking the highlight
+    itself, at its own real computed center, proves it's really
+    attached, laid out, and positioned to cover the Right zone's own
+    real bounds -- (160.0, 50.0) is confirmed (via `drop_panel_at`
+    actually moving the panel there in `test_dragging_a_registered_
+    handle_moves_its_panel_for_real`, above) to land inside the Right
+    zone's own real, computed container bounds, unlike (200.0, 50.0),
+    which sits exactly on its right edge (the container is flex-shrunk
+    to fit three 100px-wide root children into less available width) --
+    not inside it.
+    """
+    window, handle, panel, right_container = build_two_zone_window()
+    highlight = window.add_rect(background=(0x00, 0x80, 0xFF, 0x60), width=1, height=1)
+    window.set_drop_zone_highlight(highlight)
+
+    window.start_panel_drag(handle)
+    window.drag_panel_over(160.0, 50.0)  # inside the Right zone's real bounds
+
+    calls = []
+    highlight.set_on_click(lambda: calls.append("hit"))
+    window.click(highlight)
+    assert calls == ["hit"], "the highlight must be real, attached, and cover the Right zone"
+
+
+def test_dragging_outside_every_zone_hides_the_highlight():
+    window, handle, panel, right_container = build_two_zone_window()
+    highlight = window.add_rect(background=(0x00, 0x80, 0xFF, 0x60), width=1, height=1)
+    window.set_drop_zone_highlight(highlight)
+
+    window.start_panel_drag(handle)
+    window.drag_panel_over(160.0, 50.0)  # shows it over the Right zone first
+    window.drag_panel_over(-500.0, -500.0)  # nowhere near any registered zone
+
+    calls = []
+    highlight.set_on_click(lambda: calls.append("hit"))
+    window.click(highlight)
+    assert calls == [], "the highlight must be hidden once the pointer leaves every zone"
+
+
+def test_ending_a_drag_always_hides_the_highlight():
+    window, handle, panel, right_container = build_two_zone_window()
+    highlight = window.add_rect(background=(0x00, 0x80, 0xFF, 0x60), width=1, height=1)
+    window.set_drop_zone_highlight(highlight)
+
+    window.start_panel_drag(handle)
+    window.drag_panel_over(160.0, 50.0)
+    window.drop_panel_at(160.0, 50.0)
+
+    calls = []
+    highlight.set_on_click(lambda: calls.append("hit"))
+    window.click(highlight)
+    assert calls == [], "the highlight must be hidden once the drag has ended"
+
+
+def test_drag_panel_over_with_no_drag_in_progress_is_a_safe_no_op():
+    window, handle, panel, right_container = build_two_zone_window()
+    highlight = window.add_rect(background=(0x00, 0x80, 0xFF, 0x60), width=1, height=1)
+    window.set_drop_zone_highlight(highlight)
+
+    window.drag_panel_over(160.0, 50.0)  # must not raise -- nothing is dragging
+
+    calls = []
+    highlight.set_on_click(lambda: calls.append("hit"))
+    window.click(highlight)
+    assert calls == []
+
+
+def test_drag_panel_over_with_no_highlight_registered_is_a_safe_no_op():
+    window, handle, panel, right_container = build_two_zone_window()
+
+    window.start_panel_drag(handle)
+    window.drag_panel_over(200.0, 50.0)  # must not raise -- no highlight registered
+
+
+def test_set_drop_zone_highlight_rejects_content_from_a_different_window():
+    """M10 Phase 3 (§11.4): the same real `Rc::ptr_eq` same-tree guard
+    every other content-registering method on `Window`/`Node` already
+    has (`set_dock_handle`, `set_context_menu`).
+    """
+    window_a = Window(width=300, height=120)
+    window_b = Window(width=300, height=120)
+    foreign = window_b.add_rect(background=(0, 0, 0, 255), width=10, height=10)
+
+    with pytest.raises(ValueError, match="different Window"):
+        window_a.set_drop_zone_highlight(foreign)

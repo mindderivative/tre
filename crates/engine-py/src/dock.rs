@@ -27,25 +27,25 @@
 //! by the same containment check `apply_active_tab` itself already
 //! uses.
 //!
-//! **Deliberately no drop-zone highlight overlay.** `open_overlay`'s
-//! own `inset` computation is hardcoded to place content *below* its
-//! anchor (a dropdown-menu placement, confirmed by reading the actual
-//! computation) -- it can't cover a target zone's own bounds, which is
-//! what a highlight needs. Real, additive `engine-core` work to add
-//! that placement mode is out of proportion to this phase's actual
-//! core claim ("a real drag provably moves a panel between zones");
-//! named here as a real, separate, stated gap, not manufactured or
-//! silently dropped. One consequence: nothing needs to track *which*
-//! zone is under the pointer mid-drag -- only the drop point, once, at
-//! release -- so there's no `PointerMoved`-time callback for docking
-//! at all, just press (start) and release (end).
+//! **M10 Phase 3 (§11.4): the drop-zone highlight overlay this
+//! module's own doc comment used to name as a deliberate, stated gap.**
+//! `open_overlay`'s own `inset` computation is hardcoded to place
+//! content *below* its anchor -- it can't cover a target zone's own
+//! bounds. `Tree::position_overlay_over` (`engine-core`, M10 Phase 3)
+//! is the real, additive primitive that closes this: sets an
+//! absolutely-positioned node's own `inset`/`size` to cover an
+//! arbitrary rect, independent of any anchor. `drag_over` below is the
+//! new `PointerMoved`-during-drag entry point this module previously
+//! had no need for (before this phase, only press/release mattered);
+//! it re-hit-tests on every call, exactly like `end_drag_at` already
+//! does for the release point, reusing `enclosing_zone` unchanged.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use engine_core::{DockLayout, DockSide, DockZone, NodeId, Tree};
-use peniko::kurbo::Point;
+use peniko::kurbo::{Point, Rect};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -60,6 +60,11 @@ pub(crate) struct DockState {
     containers: Vec<(DockSide, NodeId)>,
     handles: HashMap<NodeId, NodeId>,
     dragging: Option<NodeId>,
+    /// M10 Phase 3 (§11.4): the registered drop-zone highlight content,
+    /// if any -- a single `Option`, unlike `handles`, since a `Window`
+    /// only ever needs one highlight, shown over whichever zone is
+    /// currently under the pointer during a drag.
+    highlight: Option<NodeId>,
 }
 
 impl DockState {
@@ -69,6 +74,7 @@ impl DockState {
             containers: Vec::new(),
             handles: HashMap::new(),
             dragging: None,
+            highlight: None,
         }
     }
 }
@@ -166,6 +172,30 @@ pub(crate) fn set_dock_handle(dock: &SharedDockState, handle: NodeId, panel: Nod
     dock.borrow_mut().handles.insert(handle, panel);
 }
 
+/// M10 Phase 3 (§11.4): registers `content` as this `Window`'s single
+/// drop-zone highlight. `add_rect` (like every node-creation method)
+/// already attached `content` to root immediately, so this detaches it
+/// first -- the same real "alive, parentless, ready for `add_child`
+/// elsewhere later" contract `Node.set_context_menu` already commits
+/// to for its own registered content, for the identical reason: a
+/// highlight must start hidden, only shown by `drag_over` once a real
+/// drag actually puts the pointer over a registered zone. `drag_over`/
+/// `end_drag_at` below are the only real callers that ever attach/
+/// detach or reposition it afterward.
+pub(crate) fn set_drop_zone_highlight(
+    dock: &SharedDockState,
+    tree: &Rc<RefCell<Tree>>,
+    content: NodeId,
+) {
+    {
+        let mut tree_mut = tree.borrow_mut();
+        if let Some(parent) = tree_mut.get(content).and_then(|n| n.parent) {
+            tree_mut.detach(parent, content);
+        }
+    }
+    dock.borrow_mut().highlight = Some(content);
+}
+
 /// Starts tracking a real drag if `node` is a registered handle.
 /// Returns whether a drag actually started -- a press on any other
 /// node is a real, safe no-op, matching every other "press this,
@@ -178,6 +208,54 @@ pub(crate) fn start_drag(dock: &SharedDockState, node: NodeId) -> bool {
         true
     } else {
         false
+    }
+}
+
+/// M10 Phase 3 (§11.4): the real `PointerMoved`-during-drag step --
+/// shows the registered highlight over whichever registered zone
+/// currently encloses `position`, or hides it if none does. A safe
+/// no-op if no drag is in progress or no highlight is registered,
+/// matching `end_drag_at`'s own "no drag in progress does not raise"
+/// precedent.
+pub(crate) fn drag_over(
+    dock: &SharedDockState,
+    tree: &Rc<RefCell<Tree>>,
+    root: NodeId,
+    position: Point,
+) {
+    let (highlight, is_dragging) = {
+        let dock_ref = dock.borrow();
+        (dock_ref.highlight, dock_ref.dragging.is_some())
+    };
+    let (Some(highlight), true) = (highlight, is_dragging) else {
+        return;
+    };
+
+    let hit = tree.borrow().hit_test(root, position);
+    let target_side = hit.and_then(|node| {
+        let dock_ref = dock.borrow();
+        enclosing_zone(&tree.borrow(), &dock_ref, node)
+    });
+
+    match target_side {
+        Some(side) => {
+            let container = container_for(dock, side)
+                .expect("drag_over: enclosing_zone only ever returns a registered side");
+            let mut tree_mut = tree.borrow_mut();
+            let (x, y) = tree_mut.absolute_position(container);
+            let size = tree_mut.layout(container).size;
+            let rect = Rect::new(x, y, x + f64::from(size.width), y + f64::from(size.height));
+            tree_mut.position_overlay_over(highlight, rect);
+            if tree_mut.get(highlight).and_then(|n| n.parent).is_none() {
+                tree_mut.add_child(root, highlight);
+            }
+        }
+        None => {
+            let mut tree_mut = tree.borrow_mut();
+            if let Some(parent) = tree_mut.get(highlight).and_then(|n| n.parent) {
+                tree_mut.detach(parent, highlight);
+            }
+        }
     }
 }
 
@@ -234,6 +312,22 @@ pub(crate) fn end_drag_at(
             None => return,
         }
     };
+
+    // M10 Phase 3 (§11.4): a real drag ending -- for any reason, not
+    // just a successful move -- must always hide the highlight. This
+    // runs before every one of this function's own early returns below
+    // (dropped outside any zone, dropped back in the same zone) so
+    // none of them can leave it lingering over the last zone it
+    // covered.
+    {
+        let highlight = dock.borrow().highlight;
+        if let Some(highlight) = highlight {
+            let mut tree_mut = tree.borrow_mut();
+            if let Some(parent) = tree_mut.get(highlight).and_then(|n| n.parent) {
+                tree_mut.detach(parent, highlight);
+            }
+        }
+    }
 
     let hit = tree.borrow().hit_test(root, position);
     let target_side = match hit {

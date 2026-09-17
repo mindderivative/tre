@@ -442,6 +442,45 @@ impl Tree {
         self.overlays.insert(content, meta);
     }
 
+    /// M10 Phase 3 (§11.4): `open_overlay`'s own missing "cover an
+    /// arbitrary rect" counterpart -- `open_overlay` only ever places
+    /// content anchor-relative-below (`dock.rs`'s own doc comment names
+    /// this exact gap: a drop-zone highlight needs to cover a target
+    /// zone's own real computed bounds, not sit below some anchor).
+    /// Sets `Position::Absolute` with `inset.left`/`top` from `rect`'s
+    /// own origin and an explicit `style.size` matching `rect`'s own
+    /// width/height -- unlike `open_overlay`, which leaves `content`'s
+    /// existing size untouched, this method always resizes `content` to
+    /// exactly cover `rect`, since that's the whole point of a
+    /// highlight. Deliberately does *not* attach `content` anywhere or
+    /// touch `self.overlays` -- a rect-covering highlight has no anchor
+    /// and no outside-click/Escape dismissal (`OverlayMeta` doesn't fit
+    /// it); attach/detach lifecycle is the caller's own responsibility,
+    /// driven by whatever real state (e.g. drag-in-progress) decides
+    /// when it should be visible. `root`/whatever produced `rect` must
+    /// already have a computed `Layout`; the caller must call `compute_
+    /// layout` again afterward for `content`'s own new position/size to
+    /// resolve, exactly like `open_overlay`.
+    pub fn position_overlay_over(&mut self, content: NodeId, rect: Rect) {
+        let mut style = self
+            .get(content)
+            .expect("position_overlay_over: content NodeId not found in this Tree")
+            .layout_style
+            .clone();
+        style.position = Position::Absolute;
+        style.inset = TaffyRect {
+            left: length(rect.x0),
+            top: length(rect.y0),
+            right: auto(),
+            bottom: auto(),
+        };
+        style.size = Size {
+            width: length(rect.width()),
+            height: length(rect.height()),
+        };
+        self.set_layout_style(content, style);
+    }
+
     /// Closes an overlay opened via `open_overlay`: detaches its whole
     /// subtree from its own parent (the same real `Tree::detach`
     /// mechanism `Node.set_context_menu` already uses to keep content
@@ -1815,6 +1854,60 @@ mod tests {
         assert_eq!(meta.anchor, anchor);
         assert!(meta.dismiss_on_outside_click);
         assert!(meta.dismiss_on_escape);
+    }
+
+    #[test]
+    fn position_overlay_over_covers_an_arbitrary_rect_independent_of_any_anchor() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            size: Size {
+                width: length(300.0),
+                height: length(300.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+
+        // A dock zone's own container -- some arbitrary rect nowhere
+        // near the origin, proving this isn't secretly anchor-relative.
+        let (k, s, p) = leaf(120.0, 80.0);
+        let highlight = tree.insert(k, s, p);
+        tree.position_overlay_over(highlight, Rect::new(140.0, 60.0, 260.0, 140.0));
+
+        // Not attached anywhere -- `position_overlay_over` only sets
+        // layout_style, matching its own doc comment ("deliberately
+        // does not attach content anywhere").
+        assert!(tree.get(highlight).unwrap().parent.is_none());
+
+        tree.add_child(root, highlight);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+
+        let (x, y) = tree.absolute_position(highlight);
+        let size = tree.layout(highlight).size;
+        assert_eq!(
+            (x, y),
+            (140.0, 60.0),
+            "must land exactly at the rect's own origin"
+        );
+        assert_eq!(
+            (size.width, size.height),
+            (120.0, 80.0),
+            "must be resized to exactly cover the rect, not keep its own prior size"
+        );
     }
 
     #[test]
