@@ -20,7 +20,9 @@ use engine_core::{
 };
 use peniko::Color;
 use pyo3::prelude::*;
-use taffy::prelude::{AlignItems, JustifyContent, Rect as TaffyRect, Size, Style, length, zero};
+use taffy::prelude::{
+    AlignItems, JustifyContent, Rect as TaffyRect, Size, Style, auto, length, zero,
+};
 
 use crate::error::EngineError;
 use crate::node::Node;
@@ -97,6 +99,13 @@ impl Md3Baseline {
     const OUTLINE_VARIANT: Color = Color::from_rgba8(0xCA, 0xC4, 0xD0, 0xFF);
     const INVERSE_SURFACE: Color = Color::from_rgba8(0x31, 0x30, 0x33, 0xFF);
     const INVERSE_ON_SURFACE: Color = Color::from_rgba8(0xF4, 0xEF, 0xF4, 0xFF);
+    /// M30 Phase 4 Step 2 (§7): real, confirmed via Material Web's own
+    /// token chain, not guessed -- `_md-sys-color.scss`'s own
+    /// `values-light()` maps `inverse-primary` to `md-ref-palette`'s
+    /// `primary80` tone, and `_md-ref-palette.scss` gives `primary80`
+    /// as `#D0BCFF` for the real M3 baseline seed (`primary40` =
+    /// `#6750A4`, matching this file's own `PRIMARY` above).
+    const INVERSE_PRIMARY: Color = Color::from_rgba8(0xD0, 0xBC, 0xFF, 0xFF);
     const SCRIM: Color = Color::from_rgba8(0x00, 0x00, 0x00, 0xFF);
     const SURFACE: Color = Color::from_rgba8(0xFF, 0xFB, 0xFE, 0xFF);
     const ON_SURFACE_VARIANT: Color = Color::from_rgba8(0x49, 0x45, 0x4F, 0xFF);
@@ -516,6 +525,25 @@ const DIALOG_HEADLINE_FONT_WEIGHT: f32 = 400.0;
 const DIALOG_BODY_FONT_SIZE: f32 = 14.0;
 const DIALOG_BODY_FONT_WEIGHT: f32 = 400.0;
 const DIALOG_SCRIM_OPACITY: f64 = 0.32;
+
+/// MD3's own real Snackbar anatomy (M30 Phase 4 Step 2), verified
+/// against Material Web's own token source (`_md-comp-snackbar.scss`)
+/// before writing any code: `with-single-line-container-height` (48dp,
+/// no multi-line variant scoped by this step), `container-shape`
+/// (`corner-extra-small`, 4dp), `container-elevation` (`level3`).
+/// Horizontal padding/gap/action-width/desktop-anchor-margins have no
+/// discrete token in that same file (confirmed by the same fetch) --
+/// reasonable, MD3-consistent values, stated honestly, the identical
+/// caveat `Dialog`'s own padding constants above already carry.
+const SNACKBAR_HEIGHT: f32 = 48.0;
+const SNACKBAR_CORNER_RADIUS: f64 = 4.0;
+const SNACKBAR_ELEVATION: f64 = 3.0;
+const SNACKBAR_HORIZONTAL_PADDING: f32 = 16.0;
+const SNACKBAR_GAP: f32 = 8.0;
+const SNACKBAR_ICON_SIZE: f32 = 24.0;
+const SNACKBAR_ACTION_WIDTH: f32 = 64.0;
+const SNACKBAR_BOTTOM_MARGIN: f32 = 24.0;
+const SNACKBAR_LEFT_MARGIN: f32 = 24.0;
 
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
@@ -2127,6 +2155,275 @@ impl PyWindow {
         let mut tree = self.tree.borrow_mut();
         let anchor = tree.overlay_meta(dialog.id).map(|meta| meta.anchor);
         tree.close_overlay(dialog.id);
+        if let Some(anchor) = anchor {
+            tree.remove(anchor);
+        }
+        Ok(())
+    }
+
+    /// M30 Phase 4 Step 2 (§5, §7, §11.3): `Snackbar`, a real transient
+    /// notification. Real anatomy verified against Material Web's own
+    /// token source (`SNACKBAR_*` constants above have the full real
+    /// finding chain, including tracing `inverse-primary` two files
+    /// deeper to its real hex). Supporting text reuses Body Medium's
+    /// own already-declared constants (`DIALOG_BODY_FONT_SIZE`/
+    /// `_WEIGHT`, the identical real MD3 type role `Dialog`'s own body
+    /// text already uses); the action label reuses Label Large's own
+    /// already-declared constants (`BUTTON_LABEL_FONT_SIZE`/`_WEIGHT`/
+    /// `_LINE_HEIGHT`, the same real role every other labeled
+    /// component in this catalog already shares) -- neither is a new
+    /// per-component type constant, both are real shared MD3 roles.
+    ///
+    /// **Real, deliberate anatomy departure from every prior component
+    /// in this catalog: returns up to three independent real `Node`s,
+    /// not one.** `Segmented Button`'s own real precedent (`Vec<Node>`,
+    /// one per independently-selectable segment, Phase 1 Step 4)
+    /// already established that a genuinely multi-interactive-region
+    /// composite returns multiple real `Node`s rather than one --
+    /// `Chip`'s own `removable` trailing icon is real precedent for
+    /// the *other* case (a purely decorative sub-icon, never
+    /// independently clickable, confirmed by direct re-read of
+    /// `add_chip` before choosing this component's own shape): a real
+    /// MD3 snackbar's action button must be independently clickable
+    /// from the rest of the snackbar (which isn't itself a button), so
+    /// the decorative-icon shape doesn't fit here -- this returns
+    /// `(container, action, close)`, the last two `None` when not
+    /// requested, each of `action`/`close` a real, separately
+    /// `enable_interaction()`-able `Node` the same way every
+    /// standalone interactive component already is. Returned genuinely
+    /// unattached anywhere, the same real contract `add_dialog`'s own
+    /// panel already has -- `open_snackbar` is what actually shows it.
+    #[pyo3(signature = (text, width, action_label=None, closable=false))]
+    fn add_snackbar(
+        &self,
+        text: &str,
+        width: f32,
+        action_label: Option<&str>,
+        closable: bool,
+    ) -> PyResult<(Node, Option<Node>, Option<Node>)> {
+        let (container_color, text_color, action_color, icon_color) = {
+            let theme = self.theme.borrow();
+            let role = |name: &str, fallback: Color| -> Color {
+                if theme.is_set() {
+                    theme.role(name).unwrap_or(fallback)
+                } else {
+                    fallback
+                }
+            };
+            (
+                role("inverse_surface", Md3Baseline::INVERSE_SURFACE),
+                role("inverse_on_surface", Md3Baseline::INVERSE_ON_SURFACE),
+                role("inverse_primary", Md3Baseline::INVERSE_PRIMARY),
+                role("inverse_on_surface", Md3Baseline::INVERSE_ON_SURFACE),
+            )
+        };
+
+        let mut tree = self.tree.borrow_mut();
+
+        let container_style = Style {
+            size: Size {
+                width: length(width),
+                height: length(SNACKBAR_HEIGHT),
+            },
+            display: taffy::Display::Flex,
+            align_items: Some(AlignItems::CENTER),
+            padding: TaffyRect {
+                left: length(SNACKBAR_HORIZONTAL_PADDING),
+                right: length(SNACKBAR_HORIZONTAL_PADDING),
+                top: zero(),
+                bottom: zero(),
+            },
+            gap: Size {
+                width: length(SNACKBAR_GAP),
+                height: length(0.0),
+            },
+            ..Default::default()
+        };
+        let container = tree.insert(
+            NodeKind::Rect,
+            container_style,
+            PaintProperties::new(
+                container_color,
+                SNACKBAR_CORNER_RADIUS,
+                SNACKBAR_ELEVATION,
+                1.0,
+            ),
+        );
+
+        let text_id = tree.insert(
+            NodeKind::Text(TextState {
+                content: text.to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: DIALOG_BODY_FONT_WEIGHT,
+                font_size: DIALOG_BODY_FONT_SIZE,
+                align: TextAlign::Start,
+            }),
+            Style {
+                flex_grow: 1.0,
+                size: Size {
+                    width: auto(),
+                    height: length(DIALOG_BODY_FONT_SIZE + 4.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(text_color, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(container, text_id);
+
+        let action = if let Some(label) = action_label {
+            let action_container = tree.insert(
+                NodeKind::Rect,
+                Style {
+                    size: Size {
+                        width: length(SNACKBAR_ACTION_WIDTH),
+                        height: length(BUTTON_LABEL_LINE_HEIGHT),
+                    },
+                    display: taffy::Display::Flex,
+                    justify_content: Some(JustifyContent::CENTER),
+                    align_items: Some(AlignItems::CENTER),
+                    ..Default::default()
+                },
+                PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+            );
+            let label_id = tree.insert(
+                NodeKind::Text(TextState {
+                    content: label.to_string(),
+                    font_family: "Roboto".to_string(),
+                    font_weight: BUTTON_LABEL_FONT_WEIGHT,
+                    font_size: BUTTON_LABEL_FONT_SIZE,
+                    align: TextAlign::Center,
+                }),
+                Style {
+                    size: Size {
+                        width: length(SNACKBAR_ACTION_WIDTH),
+                        height: length(BUTTON_LABEL_LINE_HEIGHT),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(action_color, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(action_container, label_id);
+            tree.add_child(container, action_container);
+            Some(self.wrap_node(action_container))
+        } else {
+            None
+        };
+
+        let close = if closable {
+            let close_path = resolve_icon_path("close")?;
+            let close_container = tree.insert(
+                NodeKind::Rect,
+                Style {
+                    size: Size {
+                        width: length(SNACKBAR_ICON_SIZE),
+                        height: length(SNACKBAR_ICON_SIZE),
+                    },
+                    display: taffy::Display::Flex,
+                    justify_content: Some(JustifyContent::CENTER),
+                    align_items: Some(AlignItems::CENTER),
+                    ..Default::default()
+                },
+                PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+            );
+            let icon_id = tree.insert(
+                NodeKind::Icon(IconState {
+                    path: close_path,
+                    tint: icon_color,
+                }),
+                Style {
+                    size: Size {
+                        width: length(SNACKBAR_ICON_SIZE),
+                        height: length(SNACKBAR_ICON_SIZE),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(close_container, icon_id);
+            tree.add_child(container, close_container);
+            Some(self.wrap_node(close_container))
+        } else {
+            None
+        };
+
+        Ok((self.wrap_node(container), action, close))
+    }
+
+    /// M30 Phase 4 Step 2 (§11.3): opens `snackbar` (from
+    /// `add_snackbar`) anchored to the real desktop bottom-left corner
+    /// -- this milestone's own already-established desktop-adaptation
+    /// rule for MD3's mobile-only full-width-at-bottom anatomy (§7's
+    /// own scope text), not a new rule invented for this step.
+    /// `dismiss_on_outside_click: false`/`dismiss_on_escape: false`/
+    /// `modal: false`: a real snackbar is a passive notification, not
+    /// an interaction-blocking overlay (unlike `Dialog`'s own real
+    /// `modal: true`), and isn't dismissed by an accidental outside
+    /// click or Escape -- only its own explicit action/close, or
+    /// whatever timeout the app itself drives. **Real, stated,
+    /// deliberate scope limit, not a silently missing feature:** this
+    /// engine has no timer/scheduler primitive anywhere (confirmed by
+    /// grep across `engine-core`/`engine-py` before scoping this step
+    /// -- zero hits), so a real auto-dismiss-after-duration is the
+    /// app's own responsibility (e.g. closing it after N frames of its
+    /// own `App.run` loop), matching Design Principle 6 ("engine gives
+    /// primitives, app composes behavior"). Reuses `open_dialog`'s own
+    /// real synthetic-zero-size-anchor technique a second time, placed
+    /// at `(SNACKBAR_LEFT_MARGIN, height - SNACKBAR_BOTTOM_MARGIN -
+    /// SNACKBAR_HEIGHT)` instead of the origin -- the identical
+    /// `inset.top = anchor_y + anchor_height` math `open_overlay`
+    /// already does resolves directly to that corner for a zero-size
+    /// anchor, no new positioning primitive needed a second time
+    /// either.
+    fn open_snackbar(&self, snackbar: PyRef<'_, Node>) -> PyResult<()> {
+        if !Rc::ptr_eq(&self.tree, &snackbar.tree) {
+            return Err(EngineError::ForeignNode.into());
+        }
+        let mut tree = self.tree.borrow_mut();
+        if tree.overlay_meta(snackbar.id).is_some() {
+            return Ok(());
+        }
+        let anchor_x = SNACKBAR_LEFT_MARGIN;
+        let anchor_y = self.height as f32 - SNACKBAR_BOTTOM_MARGIN - SNACKBAR_HEIGHT;
+        let anchor_style = positioned_style(
+            Size {
+                width: length(0.0),
+                height: length(0.0),
+            },
+            Some(anchor_x),
+            Some(anchor_y),
+        );
+        let anchor = tree.insert(
+            NodeKind::Rect,
+            anchor_style,
+            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, anchor);
+        tree.open_overlay(
+            self.root,
+            anchor,
+            snackbar.id,
+            OverlayMeta {
+                anchor,
+                dismiss_on_outside_click: false,
+                dismiss_on_escape: false,
+                modal: false,
+            },
+        );
+        Ok(())
+    }
+
+    /// M30 Phase 4 Step 2 (§11.3): `open_snackbar`'s own real close
+    /// counterpart -- identical real contract to `close_dialog` (closes
+    /// the real overlay, detach not destroy, and removes the synthetic
+    /// anchor `open_snackbar` created so repeated open/close cycles
+    /// don't leak one every time).
+    fn close_snackbar(&self, snackbar: PyRef<'_, Node>) -> PyResult<()> {
+        if !Rc::ptr_eq(&self.tree, &snackbar.tree) {
+            return Err(EngineError::ForeignNode.into());
+        }
+        let mut tree = self.tree.borrow_mut();
+        let anchor = tree.overlay_meta(snackbar.id).map(|meta| meta.anchor);
+        tree.close_overlay(snackbar.id);
         if let Some(anchor) = anchor {
             tree.remove(anchor);
         }

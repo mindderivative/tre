@@ -418,6 +418,40 @@ class Window:
         `ValueError` if `dialog` belongs to a different `Window`.
         """
         ...
+    def add_snackbar(
+        self,
+        text: str,
+        width: float,
+        action_label: str | None = None,
+        closable: bool = False,
+    ) -> tuple[Node, Node | None, Node | None]:
+        """A real MD3 snackbar -- a transient notification. Returns
+        `(container, action, close)`: `action`/`close` are `None`
+        unless `action_label`/`closable` were given, and each is a
+        real, independently `enable_interaction()`-able `Node` --
+        unlike `Chip`'s purely decorative `removable` icon, a real
+        snackbar action must be clickable on its own. Returned
+        genuinely unattached anywhere -- pass `container` to
+        `open_snackbar` to actually show it. This engine has no
+        timer/scheduler primitive, so a real auto-dismiss-after-
+        duration is the app's own responsibility.
+        """
+        ...
+    def open_snackbar(self, snackbar: Node) -> None:
+        """Opens `snackbar` (the `container` from `add_snackbar`)
+        anchored to the real desktop bottom-left corner. Never
+        dismisses on an outside click or Escape, and never blocks
+        background interaction (unlike a modal `Dialog`) -- only its
+        own action/close, or whatever the app itself drives, closes
+        it. A safe no-op if already open. Raises `ValueError` if
+        `snackbar` belongs to a different `Window`.
+        """
+        ...
+    def close_snackbar(self, snackbar: Node) -> None:
+        """Closes a snackbar opened via `open_snackbar`. Raises
+        `ValueError` if `snackbar` belongs to a different `Window`.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,
