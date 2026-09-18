@@ -707,6 +707,37 @@ class Window:
         `calendar` modules), not this engine.
         """
         ...
+    def add_time_input_field(
+        self,
+        value: str,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """One real MD3 Time Input hour/minute field (96x72dp,
+        `surface_container_highest`, real `corner-small` shape, a
+        large Display Medium numeral). A genuine `NodeKind.TextField`
+        -- typing, focus, and selection all work exactly like
+        `add_text_field`'s own. Deliberately the real *Time Input*
+        variant, not the analog clock-face dial -- that needs a
+        genuinely new drag-to-angle engine capability this project
+        doesn't have.
+        """
+        ...
+    def add_period_selector(
+        self,
+        selected: str = "AM",
+        x: float | None = None,
+        y: float | None = None,
+    ) -> tuple[Node, Node]:
+        """A real MD3 AM/PM period selector -- two real, independently
+        `enable_interaction()`-able `Node`s (`am`, `pm`) stacked
+        vertically (52x36dp each). The selected one fills with
+        `tertiary_container`; the app drives real toggling itself
+        (group-exclusivity is application state, the same real
+        contract `Segmented Button`/`Chip` already have). Raises
+        `ValueError` if `selected` isn't `"AM"` or `"PM"`.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,

@@ -871,6 +871,54 @@ const DATE_CELL_SIZE: f32 = 48.0;
 const DATE_CELL_CORNER_RADIUS: f64 = DATE_CELL_SIZE as f64 / 2.0;
 const DATE_TODAY_OUTLINE_WIDTH: f64 = 1.0;
 
+/// `Time Picker` (M30 Phase 7 Step 2), the real *Time Input* variant
+/// -- verified against Material Web's own token source
+/// (`_md-comp-time-input.scss`) before writing any code. **Real,
+/// deliberate scope, not the full component:** MD3's other real Time
+/// variant, the analog clock-face dial (`_md-comp-time-picker.scss`,
+/// confirmed to exist via the same real directory listing `Date
+/// Picker`'s own investigation already found), needs a genuinely new
+/// engine-core capability this catalog doesn't have anywhere --
+/// drag-to-angle gesture handling and converting a circular hit point
+/// into a time value -- a real, separate, much larger undertaking
+/// than any per-component investigation this milestone has done so
+/// far; Time Input is the real, desktop-realistic scope this step
+/// actually builds. Real field anatomy: 96×72dp, `surface_container_
+/// highest` fill, real `corner-small` shape -- the identical real
+/// 8dp value `Chip`'s own `CHIP_CORNER_RADIUS` already confirmed for
+/// the same real token, reused directly. Label is Display Medium
+/// (2.8125rem = 45px, `weight-regular` = 400, traced through
+/// `_md-sys-typescale.scss`/`_md-ref-typeface.scss`), `on_surface` --
+/// a real, genuinely large numeral display, distinct from every other
+/// type role this catalog has used so far. **Real, deliberate reuse
+/// of `TextField`'s own existing real `NodeKind`, the identical real
+/// design `Search Bar` already established:** the hour/minute field
+/// is a genuine `NodeKind::TextField`, not a bare styled box -- every
+/// one of its already-real capabilities (typing, focus, selection)
+/// work for free. Period selector (AM/PM): 52×72dp overall, split
+/// into two real 52×36dp options stacked vertically, real `corner-
+/// small` shape; selected: `tertiary_container` fill (a real, newly-
+/// used-for-time role, `Md3Baseline::TERTIARY_CONTAINER`/`ON_
+/// TERTIARY_CONTAINER` both already declared from an earlier
+/// component); unselected: transparent fill, `on_surface` label, the
+/// same real convention `Segmented Button`/`Chip` already established
+/// for their own unselected states. **Real, honest caveat, not
+/// independently token-verified:** the period-selector's own label
+/// type role and any shared-outline-frame detail beyond its overall
+/// container dimensions weren't present in the fetched token set --
+/// Label Large (the near-universal real "control button label" role
+/// every other component in this catalog already uses) and a plain
+/// two-independent-buttons anatomy (no shared border) are reasonable,
+/// MD3-consistent choices, stated honestly rather than asserted as
+/// independently confirmed.
+const TIME_FIELD_WIDTH: f32 = 96.0;
+const TIME_FIELD_HEIGHT: f32 = 72.0;
+const TIME_DISPLAY_FONT_SIZE: f32 = 45.0;
+const TIME_DISPLAY_FONT_WEIGHT: f32 = 400.0;
+const PERIOD_SELECTOR_WIDTH: f32 = 52.0;
+const PERIOD_SELECTOR_HEIGHT: f32 = 72.0;
+const PERIOD_OPTION_HEIGHT: f32 = PERIOD_SELECTOR_HEIGHT / 2.0;
+
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
 /// trailing icon -- that's `Icon Button`'s own separate anatomy, Phase
@@ -4814,6 +4862,164 @@ impl PyWindow {
 
         tree.add_child(self.root, cell);
         self.wrap_node(cell)
+    }
+
+    /// M30 Phase 7 Step 2 (§5, §7): `Time Picker`'s own real *Time
+    /// Input* hour/minute field -- see the `TIME_FIELD_*` constants
+    /// above for the full real finding, including the real scope
+    /// decision this step made (Time Input, not the analog clock-face
+    /// dial, which needs a genuinely new drag-to-angle engine
+    /// capability this catalog doesn't have). Real, deliberate reuse
+    /// of `TextField`'s own existing real `NodeKind`, the identical
+    /// real design `Search Bar` already established -- every one of
+    /// its already-real capabilities (typing, focus, selection) work
+    /// for free; `add_text_field`'s own construction pattern is
+    /// mirrored inline, not cross-called (this file's own unbroken
+    /// convention).
+    #[pyo3(signature = (value, x=None, y=None))]
+    fn add_time_input_field(&self, value: &str, x: Option<f32>, y: Option<f32>) -> Node {
+        let text_color = self.theme.borrow().on_surface();
+        let mut text_field_state = TextFieldState::new(
+            value,
+            "Roboto".to_string(),
+            TIME_DISPLAY_FONT_WEIGHT,
+            TIME_DISPLAY_FONT_SIZE,
+        );
+        text_field_state.text_tint = text_color;
+
+        let mut tree = self.tree.borrow_mut();
+        let container_color = {
+            let theme = self.theme.borrow();
+            if theme.is_set() {
+                theme
+                    .role("surface_container_highest")
+                    .unwrap_or(Md3Baseline::SURFACE_CONTAINER_HIGHEST)
+            } else {
+                Md3Baseline::SURFACE_CONTAINER_HIGHEST
+            }
+        };
+        let mut field_style = positioned_style(
+            Size {
+                width: length(TIME_FIELD_WIDTH),
+                height: length(TIME_FIELD_HEIGHT),
+            },
+            x,
+            y,
+        );
+        field_style.display = taffy::Display::Flex;
+        field_style.justify_content = Some(JustifyContent::CENTER);
+        field_style.align_items = Some(AlignItems::CENTER);
+        let id = tree.insert(
+            NodeKind::TextField(text_field_state),
+            field_style,
+            PaintProperties::new(container_color, CHIP_CORNER_RADIUS, 0.0, 1.0),
+        );
+        tree.set_access(
+            id,
+            AccessNodeData::new(Role::TextInput).with_action(Action::Focus),
+        );
+        tree.add_child(self.root, id);
+        self.wrap_node(id)
+    }
+
+    /// M30 Phase 7 Step 2 (§5, §7): `Time Picker`'s own real AM/PM
+    /// period selector -- see the `TIME_FIELD_*` constants above for
+    /// the full real finding, including this step's own honest
+    /// caveat about the parts the fetched token set didn't cover.
+    /// Real, deliberate architectural choice, the same real dividing
+    /// line `Segmented Button`/`Filter Chip` already established:
+    /// AM/PM is a real 2-option exclusive toggle, app-owned selection
+    /// state (Design Principle 6), not a new engine `NodeKind` --
+    /// returns `(am, pm)`, both real, independently `enable_
+    /// interaction()`-able `Node`s the app wires up itself.
+    #[pyo3(signature = (selected="AM", x=None, y=None))]
+    fn add_period_selector(
+        &self,
+        selected: &str,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<(Node, Node)> {
+        if selected != "AM" && selected != "PM" {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "add_period_selector's own selected must be \"AM\" or \"PM\", got {selected:?}"
+            )));
+        }
+
+        let (selected_fill, selected_label, unselected_label) = {
+            let theme = self.theme.borrow();
+            let tertiary_container = if theme.is_set() {
+                theme
+                    .role("tertiary_container")
+                    .unwrap_or(Md3Baseline::TERTIARY_CONTAINER)
+            } else {
+                Md3Baseline::TERTIARY_CONTAINER
+            };
+            let on_tertiary_container = if theme.is_set() {
+                theme
+                    .role("on_tertiary_container")
+                    .unwrap_or(Md3Baseline::ON_TERTIARY_CONTAINER)
+            } else {
+                Md3Baseline::ON_TERTIARY_CONTAINER
+            };
+            (
+                tertiary_container,
+                on_tertiary_container,
+                theme.on_surface(),
+            )
+        };
+
+        let mut tree = self.tree.borrow_mut();
+        let base_x = x.unwrap_or(0.0);
+        let base_y = y.unwrap_or(0.0);
+
+        let mut build_option = |label: &str, is_selected: bool, offset_y: f32| {
+            let (fill, label_color) = if is_selected {
+                (selected_fill, selected_label)
+            } else {
+                (TRANSPARENT, unselected_label)
+            };
+            let mut option_style = positioned_style(
+                Size {
+                    width: length(PERIOD_SELECTOR_WIDTH),
+                    height: length(PERIOD_OPTION_HEIGHT),
+                },
+                Some(base_x),
+                Some(base_y + offset_y),
+            );
+            option_style.display = taffy::Display::Flex;
+            option_style.justify_content = Some(JustifyContent::CENTER);
+            option_style.align_items = Some(AlignItems::CENTER);
+            let option = tree.insert(
+                NodeKind::Rect,
+                option_style,
+                PaintProperties::new(fill, CHIP_CORNER_RADIUS, 0.0, 1.0),
+            );
+            let label_id = tree.insert(
+                NodeKind::Text(TextState {
+                    content: label.to_string(),
+                    font_family: "Roboto".to_string(),
+                    font_weight: BUTTON_LABEL_FONT_WEIGHT,
+                    font_size: BUTTON_LABEL_FONT_SIZE,
+                    align: TextAlign::Center,
+                }),
+                Style {
+                    size: Size {
+                        width: length(PERIOD_SELECTOR_WIDTH),
+                        height: length(BUTTON_LABEL_LINE_HEIGHT),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(label_color, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(option, label_id);
+            tree.add_child(self.root, option);
+            option
+        };
+
+        let am = build_option("AM", selected == "AM", 0.0);
+        let pm = build_option("PM", selected == "PM", PERIOD_OPTION_HEIGHT);
+
+        Ok((self.wrap_node(am), self.wrap_node(pm)))
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,
