@@ -3,6 +3,9 @@ name = "engine-py"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 description = "PyO3 bindings -- the only crate depending on pyo3, and the only stability contract for framework users. See ARCHITECTURE.md §4, §8."
 
 [lib]
