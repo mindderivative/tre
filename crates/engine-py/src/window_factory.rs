@@ -700,6 +700,69 @@ const TAB_INDICATOR_CORNER_RADIUS: f64 = 3.0;
 /// honest caveat `Dialog`'s own padding constants carry.
 const TAB_ICON_LABEL_GAP: f32 = 2.0;
 
+/// MD3's own real Search anatomy (M30 Phase 5 Step 5), closing
+/// Phase 5's own component list -- verified against Material Web's
+/// own token source before writing any code, confirmed via a real
+/// GitHub directory listing that both real files exist exactly where
+/// this step's own name already implies (`_md-comp-search-bar.scss`/
+/// `_md-comp-search-view.scss`, the "bar and view" pairing this
+/// step's own tracker text already names). Real Search Bar anatomy:
+/// `surface_container_high` fill, real `corner-full` shape (56dp
+/// height, matching `Snackbar`'s own already-real single-line height
+/// pattern of "shape derived from height/2"), a real rest-state
+/// elevation (level 3, matching `Menu`'s own panel and `Dialog`'s own
+/// panel). Leading icon `on_surface`; trailing icon(s) `on_surface_
+/// variant` -- a real, confirmed asymmetry, the same shape `Top App
+/// Bar` already found. Input text is Body Large (16sp/400 weight,
+/// traced through `_md-sys-typescale.scss` into `_md-ref-typeface.
+/// scss`'s real `weight-regular` = 400), `on_surface`; the same real
+/// role/type pair the placeholder/"supporting text" uses too, just
+/// `on_surface_variant` instead. Real Search View anatomy (the real
+/// *docked* variant -- MD3's own real *full-screen* variant is a
+/// mobile pattern, excluded per this milestone's own desktop-
+/// adaptation rule): `surface_container_high` (the identical real
+/// role the bar itself uses), elevation level 3, real `corner-extra-
+/// large` shape -- the identical real 28dp value `Dialog`'s own
+/// `DIALOG_CORNER_RADIUS` already confirmed for the same real token,
+/// reused directly rather than re-declared.
+///
+/// **Real, deliberate design reusing `TextField`'s own existing real
+/// `NodeKind`, not a bare styled box:** the search bar's own input is
+/// a genuine `NodeKind::TextField` (`add_text_field`'s own real
+/// construction pattern mirrored inline, not called through --
+/// established precedent throughout this file: every `add_*` method
+/// builds its own nodes directly, none cross-call another factory
+/// method, avoiding any re-entrant `self.tree.borrow_mut()` risk) --
+/// the app gets every one of `TextField`'s already-real capabilities
+/// (typing, focus, selection, IME) for free, not a re-implementation.
+///
+/// **Real, deliberate design reusing `Window.open_menu`/`close_menu`
+/// directly, not new dedicated methods:** `add_search_view`'s own
+/// returned panel is shown/hidden the identical real way `Tooltip`'s
+/// own panel already is (Phase 3 Step 5's own real precedent,
+/// deliberately not given its own `open_tooltip`/`close_tooltip`
+/// pair) -- a real dropdown-below-anchor overlay is exactly what
+/// `open_overlay`'s own original, simplest form already does, with
+/// the search bar container itself as a real, natural anchor; no
+/// synthetic anchor node needed this time, unlike every modal variant
+/// this milestone built (`Dialog`/`Side Sheet`/`Navigation Drawer`).
+const SEARCH_BAR_HEIGHT: f32 = 56.0;
+const SEARCH_BAR_CORNER_RADIUS: f64 = SEARCH_BAR_HEIGHT as f64 / 2.0;
+const SEARCH_BAR_ELEVATION: f64 = 3.0;
+const SEARCH_INPUT_FONT_SIZE: f32 = 16.0;
+const SEARCH_INPUT_FONT_WEIGHT: f32 = 400.0;
+const SEARCH_VIEW_ELEVATION: f64 = 3.0;
+/// Icon size (24dp) is the universal real MD3 icon token this whole
+/// catalog already reuses everywhere -- the search bar's own token
+/// file doesn't declare a separate discrete one (confirmed by the
+/// same fetch). Padding/icon-button-size are likewise not discrete
+/// tokens there -- reasonable, MD3-consistent values, the identical
+/// honest caveat `Dialog`'s own padding constants carry.
+const SEARCH_ICON_SIZE: f32 = 24.0;
+const SEARCH_ICON_BUTTON_SIZE: f32 = 40.0;
+const SEARCH_BAR_HORIZONTAL_PADDING: f32 = 4.0;
+const SEARCH_TRAILING_ICON_GAP: f32 = 8.0;
+
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
 /// trailing icon -- that's `Icon Button`'s own separate anatomy, Phase
@@ -3784,6 +3847,250 @@ impl PyWindow {
 
         tree.add_child(self.root, row);
         Ok(tabs)
+    }
+
+    /// M30 Phase 5 Step 5 (§5, §7): `Search Bar`, closing Phase 5's
+    /// own component list. Real anatomy: see the `SEARCH_*` constants
+    /// above for the full real finding, including the real design
+    /// reusing `TextField`'s own existing `NodeKind` for the input
+    /// (every one of its already-real typing/focus/selection/IME
+    /// capabilities, for free) and `Icon Button`'s own real anatomy
+    /// (Phase 1 Step 2) for the leading/trailing actions, the same
+    /// real precedent `Top App Bar` (Step 3) already reused. Returns
+    /// `(bar, text_field, leading, trailing)`: `leading` is `None`
+    /// unless `leading_icon` was given; `trailing` a `Vec<Node>`, one
+    /// per requested trailing icon -- the identical real "independently
+    /// interactive sub-elements get their own real `Node`s" shape
+    /// `Snackbar`/`Top App Bar` already established.
+    #[pyo3(signature = (placeholder, width, leading_icon=None, trailing_icons=None, x=None, y=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn add_search_bar(
+        &self,
+        placeholder: &str,
+        width: f32,
+        leading_icon: Option<&str>,
+        trailing_icons: Option<Vec<String>>,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<(Node, Node, Option<Node>, Vec<Node>)> {
+        let trailing_icons = trailing_icons.unwrap_or_default();
+        let leading_path = leading_icon.map(resolve_icon_path).transpose()?;
+        let trailing_paths: Vec<_> = trailing_icons
+            .iter()
+            .map(|name| resolve_icon_path(name))
+            .collect::<PyResult<Vec<_>>>()?;
+
+        let (container_color, leading_icon_color, trailing_icon_color, input_color) = {
+            let theme = self.theme.borrow();
+            let role = |name: &str, fallback: Color| -> Color {
+                if theme.is_set() {
+                    theme.role(name).unwrap_or(fallback)
+                } else {
+                    fallback
+                }
+            };
+            (
+                role(
+                    "surface_container_high",
+                    Md3Baseline::SURFACE_CONTAINER_HIGH,
+                ),
+                theme.on_surface(),
+                role("on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT),
+                theme.on_surface(),
+            )
+        };
+
+        let mut tree = self.tree.borrow_mut();
+
+        let mut bar_style = positioned_style(
+            Size {
+                width: length(width),
+                height: length(SEARCH_BAR_HEIGHT),
+            },
+            x,
+            y,
+        );
+        bar_style.display = taffy::Display::Flex;
+        bar_style.align_items = Some(AlignItems::CENTER);
+        bar_style.padding = TaffyRect {
+            left: length(SEARCH_BAR_HORIZONTAL_PADDING),
+            right: length(SEARCH_BAR_HORIZONTAL_PADDING),
+            top: zero(),
+            bottom: zero(),
+        };
+        let bar = tree.insert(
+            NodeKind::Rect,
+            bar_style,
+            PaintProperties::new(
+                container_color,
+                SEARCH_BAR_CORNER_RADIUS,
+                SEARCH_BAR_ELEVATION,
+                1.0,
+            ),
+        );
+
+        let leading = if let Some(path) = leading_path {
+            let leading_container = tree.insert(
+                NodeKind::Rect,
+                Style {
+                    size: Size {
+                        width: length(SEARCH_ICON_BUTTON_SIZE),
+                        height: length(SEARCH_ICON_BUTTON_SIZE),
+                    },
+                    display: taffy::Display::Flex,
+                    justify_content: Some(JustifyContent::CENTER),
+                    align_items: Some(AlignItems::CENTER),
+                    ..Default::default()
+                },
+                PaintProperties::new(TRANSPARENT, SEARCH_ICON_BUTTON_SIZE as f64 / 2.0, 0.0, 1.0),
+            );
+            let icon_id = tree.insert(
+                NodeKind::Icon(IconState {
+                    path,
+                    tint: leading_icon_color,
+                }),
+                Style {
+                    size: Size {
+                        width: length(SEARCH_ICON_SIZE),
+                        height: length(SEARCH_ICON_SIZE),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(leading_container, icon_id);
+            tree.add_child(bar, leading_container);
+            Some(self.wrap_node(leading_container))
+        } else {
+            None
+        };
+
+        let field_width = (width
+            - 2.0 * SEARCH_BAR_HORIZONTAL_PADDING
+            - if leading.is_some() {
+                SEARCH_ICON_BUTTON_SIZE
+            } else {
+                0.0
+            }
+            - trailing_paths.len() as f32 * (SEARCH_ICON_BUTTON_SIZE + SEARCH_TRAILING_ICON_GAP))
+            .max(0.0);
+        let mut text_field_state = TextFieldState::new(
+            placeholder,
+            "Roboto".to_string(),
+            SEARCH_INPUT_FONT_WEIGHT,
+            SEARCH_INPUT_FONT_SIZE,
+        );
+        text_field_state.text_tint = input_color;
+        let field_id = tree.insert(
+            NodeKind::TextField(text_field_state),
+            Style {
+                flex_grow: 1.0,
+                size: Size {
+                    width: length(field_width),
+                    height: length(SEARCH_INPUT_FONT_SIZE + 4.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+        tree.set_access(
+            field_id,
+            AccessNodeData::new(Role::TextInput).with_action(Action::Focus),
+        );
+        tree.add_child(bar, field_id);
+        let text_field = self.wrap_node(field_id);
+
+        let mut trailing = Vec::with_capacity(trailing_paths.len());
+        for path in trailing_paths {
+            let trailing_container = tree.insert(
+                NodeKind::Rect,
+                Style {
+                    size: Size {
+                        width: length(SEARCH_ICON_BUTTON_SIZE),
+                        height: length(SEARCH_ICON_BUTTON_SIZE),
+                    },
+                    display: taffy::Display::Flex,
+                    justify_content: Some(JustifyContent::CENTER),
+                    align_items: Some(AlignItems::CENTER),
+                    margin: TaffyRect {
+                        left: length(SEARCH_TRAILING_ICON_GAP),
+                        right: zero(),
+                        top: zero(),
+                        bottom: zero(),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(TRANSPARENT, SEARCH_ICON_BUTTON_SIZE as f64 / 2.0, 0.0, 1.0),
+            );
+            let icon_id = tree.insert(
+                NodeKind::Icon(IconState {
+                    path,
+                    tint: trailing_icon_color,
+                }),
+                Style {
+                    size: Size {
+                        width: length(SEARCH_ICON_SIZE),
+                        height: length(SEARCH_ICON_SIZE),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(trailing_container, icon_id);
+            tree.add_child(bar, trailing_container);
+            trailing.push(self.wrap_node(trailing_container));
+        }
+
+        tree.add_child(self.root, bar);
+        Ok((self.wrap_node(bar), text_field, leading, trailing))
+    }
+
+    /// M30 Phase 5 Step 5 (§5, §7, §11.3): `Search View`, the real
+    /// *docked* dropdown suggestions/results panel -- MD3's own real
+    /// *full-screen* variant is a mobile pattern, excluded per this
+    /// milestone's own desktop-adaptation rule. Real, deliberate
+    /// design: a plain styled `Rect` container with no fixed content
+    /// anatomy of its own, the identical real "engine gives primitives,
+    /// app composes content" contract `Card` already established --
+    /// the app populates it with its own real suggestion rows via the
+    /// already-generic `Node.add_child`. Returned genuinely unattached
+    /// anywhere -- shown/hidden via `Window.open_menu`/`close_menu`
+    /// directly, the identical real reuse `Tooltip`'s own panel
+    /// (Phase 3 Step 5) already established, not a new dedicated
+    /// `open_search_view`/`close_search_view` pair duplicating them.
+    #[pyo3(signature = (width, height, x=None, y=None))]
+    fn add_search_view(&self, width: f32, height: f32, x: Option<f32>, y: Option<f32>) -> Node {
+        let container_color = {
+            let theme = self.theme.borrow();
+            if theme.is_set() {
+                theme
+                    .role("surface_container_high")
+                    .unwrap_or(Md3Baseline::SURFACE_CONTAINER_HIGH)
+            } else {
+                Md3Baseline::SURFACE_CONTAINER_HIGH
+            }
+        };
+
+        let mut tree = self.tree.borrow_mut();
+        let style = positioned_style(
+            Size {
+                width: length(width),
+                height: length(height),
+            },
+            x,
+            y,
+        );
+        let id = tree.insert(
+            NodeKind::Rect,
+            style,
+            PaintProperties::new(
+                container_color,
+                DIALOG_CORNER_RADIUS,
+                SEARCH_VIEW_ELEVATION,
+                1.0,
+            ),
+        );
+        self.wrap_node(id)
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,

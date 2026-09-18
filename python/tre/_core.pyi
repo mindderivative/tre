@@ -582,6 +582,40 @@ class Window:
         length, or if `selected` is out of range.
         """
         ...
+    def add_search_bar(
+        self,
+        placeholder: str,
+        width: float,
+        leading_icon: str | None = None,
+        trailing_icons: list[str] | None = None,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> tuple[Node, Node, Node | None, list[Node]]:
+        """A real MD3 search bar. Returns `(bar, text_field, leading,
+        trailing)`: `text_field` is a real `NodeKind.TextField` node
+        (typing, focus, selection, IME all work exactly like
+        `add_text_field`'s own); `leading` is `None` unless
+        `leading_icon` was given; `trailing` is one real Node per
+        entry in `trailing_icons`, empty if none.
+        """
+        ...
+    def add_search_view(
+        self,
+        width: float,
+        height: float,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """A real MD3 search view -- the *docked* dropdown suggestions
+        panel (MD3's own *full-screen* variant is a mobile pattern,
+        not built here). A plain styled container with no fixed
+        content anatomy -- populate it with `Node.add_child`. Returned
+        genuinely unattached anywhere -- show/hide it via the existing
+        `Window.open_menu`/`close_menu` (the same real reuse
+        `add_tooltip`'s own panel already has), anchored to the search
+        bar's own `bar` node.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,
