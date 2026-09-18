@@ -749,6 +749,21 @@ class Window:
         dedicated open/close pair.
         """
         ...
+    def add_link(
+        self,
+        text: str,
+        width: float,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """A real, standalone clickable label (MD3 has no official
+        Link page; `primary`-colored, Body Large). Backed by a real,
+        dedicated `NodeKind.Link` -- unlike a bare label built from
+        the lower-level view/text primitives, it genuinely claims its
+        own clicks rather than deferring to its own parent. Does not
+        call `enable_interaction()` automatically.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,

@@ -177,6 +177,22 @@ pub enum NodeKind {
     /// own token source -- no `track-color` token exists for it,
     /// unlike the linear indicator's real, separate `track-color`).
     CircularProgress(CircularProgressState),
+    /// M30 Phase 8 Step 2 (§5, §7): a real, standalone clickable label
+    /// -- MD3's own `Link`. Fulfills a real, explicit commitment this
+    /// codebase already made to itself (Phase 1's own `Tree::hit_test_
+    /// at` fix, `NodeKind::Text(_) => false`'s own doc comment): "a
+    /// future standalone clickable label... gets its own dedicated
+    /// `NodeKind`... not a handler bolted onto bare `Text`." A bare
+    /// `Text` node deliberately never independently claims a hit (it
+    /// always defers to whatever real interactive container it sits
+    /// inside) -- a genuinely new variant, by simply not matching that
+    /// arm, is real, minimal hit-testing independence "for free" via
+    /// `hit_test_at`'s own existing `_ => rect_contains(...)`
+    /// catch-all, no new hit-test logic needed at all. Reuses
+    /// `TextState` verbatim as its own payload -- `Link`'s own real
+    /// content/font shape is identical to `Text`'s, the only real
+    /// difference is which `NodeKind` variant it is.
+    Link(TextState),
 }
 
 /// M15 Phase 1 (§5, §16.7): mirrors `TextState`'s own four font/content

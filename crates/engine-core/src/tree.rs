@@ -2368,6 +2368,7 @@ pub fn node_id_as_u64(id: NodeId) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::node::{TextAlign, TextState};
     use peniko::Color;
     use taffy::prelude::{FlexDirection, length};
 
@@ -7131,6 +7132,103 @@ mod tests {
             tree.hit_test(root, point),
             Some(outer),
             "after opting out, the same point must resolve to the ancestor instead"
+        );
+    }
+
+    /// M30 Phase 8 Step 2 (§5, §7): real, direct coverage of `NodeKind
+    /// ::Link`'s own real point -- fulfills the explicit commitment
+    /// `NodeKind::Text(_) => false`'s own doc comment already made
+    /// ("a future standalone clickable label... gets its own dedicated
+    /// `NodeKind`"). Builds the identical real geometry twice -- a
+    /// bare `Text` child spanning its own parent's full bounds, then a
+    /// `Link` child in the same real position -- proving the real
+    /// contrast directly: `Text` always defers (the parent, not the
+    /// label, is what `hit_test` returns there), `Link` never does.
+    #[test]
+    fn link_independently_claims_a_hit_where_text_would_defer() {
+        fn text_state(content: &str) -> TextState {
+            TextState {
+                content: content.to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: 400.0,
+                font_size: 14.0,
+                align: TextAlign::Start,
+            }
+        }
+
+        let mut tree = Tree::new();
+        let root = tree.insert(
+            NodeKind::Container,
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(40.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        let text_child = tree.insert(
+            NodeKind::Text(text_state("plain label")),
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(40.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(root, text_child);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(40.0),
+            },
+        );
+        let point = Point::new(50.0, 20.0);
+        assert_eq!(
+            tree.hit_test(root, point),
+            Some(root),
+            "a bare Text child must defer -- the point resolves to its own parent, not the label"
+        );
+
+        let mut tree = Tree::new();
+        let root = tree.insert(
+            NodeKind::Container,
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(40.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        let link_child = tree.insert(
+            NodeKind::Link(text_state("Learn more")),
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(40.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(root, link_child);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(40.0),
+            },
+        );
+        assert_eq!(
+            tree.hit_test(root, point),
+            Some(link_child),
+            "a Link child must independently claim the hit, unlike Text at the identical geometry"
         );
     }
 }

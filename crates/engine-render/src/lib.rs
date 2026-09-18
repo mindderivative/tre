@@ -492,7 +492,7 @@ fn paint_node(
                 scene.stroke_path(&border_rect.to_path(0.1));
             }
         }
-        NodeKind::Text(state) => {
+        NodeKind::Text(state) | NodeKind::Link(state) => {
             let color = with_opacity(node.paint.background.current, node.paint.opacity.current);
             text.draw(
                 scene,
