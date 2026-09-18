@@ -126,15 +126,17 @@ Reads a `Checkbox`'s current `checked` value.
 
 **`set_text(content)`**
 
-Plain write to a `TextField`'s content; resets the cursor to the new
-content's end. Fires `Change`. Raises `ValueError` if this node isn't a
-`TextField`.
+Works on both `TextField` and plain `Text` labels. On a `TextField`:
+resets the cursor to the new content's end and fires `Change`. On a
+plain `Text` label: just replaces the content (no cursor, no `Change`
+— a label isn't interactive). Raises `ValueError` for any other node
+kind.
 
 ### `get_text`
 
 **`get_text() -> str`**
 
-Reads a `TextField`'s current content.
+Reads the current content of a `TextField` or a plain `Text` label.
 
 ## Focus
 

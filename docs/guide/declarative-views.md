@@ -154,7 +154,7 @@ class SettingsVM(ViewModel):
         super().__init__(view)  # must run after the Signals exist --
                                  # _attach evaluates every binding immediately
 
-    def bump(self, event):
+    def bump(self):
         self.level.update(lambda v: v + 0.1)
 
 

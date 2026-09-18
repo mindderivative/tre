@@ -35,6 +35,7 @@ attaches its new node as a direct child of that root, in call order.
 | Method | Creates |
 | --- | --- |
 | `add_rect(background, width, height, x=None, y=None)` | A plain colored rectangle |
+| `add_text(content, background, width, height, font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None)` | A plain, non-editable text label |
 | `add_checkbox(background, width, height, checked=False, x=None, y=None)` | An MD3 checkbox |
 | `add_slider(background, width, height, value=0.0, x=None, y=None)` | An MD3 slider (drag-to-set built in) |
 | `add_text_field(background, width, height, content="", font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None)` | An MD3 text field |

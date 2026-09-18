@@ -482,6 +482,23 @@ impl Node {
                 call_handler(&self.handlers, self.id, EventKind::Change, py);
                 Ok(())
             }
+            // M27 Phase 4: a real, genuine gap found while building the
+            // showcase demo's data screen -- `Window.add_text` (M27
+            // Phase 2) creates a real, plain `NodeKind::Text` label,
+            // but nothing could ever update one's own content
+            // afterward (`set_text` only ever handled `TextField`,
+            // confirmed by a real `ValueError` from actually calling
+            // it, not assumed). A plain label has no cursor/selection
+            // concept and isn't interactive, so this arm is simpler
+            // than `TextField`'s own real one -- no cursor reset, no
+            // `Change` fired (nothing has ever registered a change
+            // handler on a label, since it has no real `Change` source
+            // of its own the way a `TextField` edit or `Checkbox`
+            // toggle does).
+            NodeKind::Text(state) => {
+                state.content = content.to_string();
+                Ok(())
+            }
             _ => Err(EngineError::UnknownProperty {
                 kind,
                 property: "text".to_string(),
@@ -522,6 +539,11 @@ impl Node {
         );
         match &node.kind {
             NodeKind::TextField(state) => Ok(state.content.clone()),
+            // The real read-back counterpart to `set_text`'s own new
+            // `NodeKind::Text` arm, above -- the identical real need
+            // (verifying a label's content actually changed) surfaced
+            // by the exact same phase.
+            NodeKind::Text(state) => Ok(state.content.clone()),
             _ => Err(EngineError::UnknownProperty {
                 kind: kind_name(&node.kind),
                 property: "text".to_string(),

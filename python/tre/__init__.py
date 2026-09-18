@@ -108,7 +108,7 @@ class ViewModel:
                                          # immediately, so it needs to see
                                          # the real attributes it names.
 
-            def bump(self, event):
+            def bump(self):
                 self.clicks.update(lambda n: n + 1)
 
         vm = CounterViewModel(view)

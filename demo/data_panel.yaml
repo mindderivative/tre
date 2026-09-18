@@ -1,0 +1,8 @@
+id: root
+kind: Container
+style: {flex_direction: Column, width: 200, height: 60, gap: 8}
+children:
+  - id: bump_button
+    kind: Rect
+    style: {width: 160, height: 40, background: primary}
+    handlers: {on_click: bump}
