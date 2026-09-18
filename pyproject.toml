@@ -6,6 +6,8 @@ build-backend = "maturin"
 name = "tre"
 version = "0.2.0"
 requires-python = ">=3.9"
+license = "MIT"
+readme = "README.md"
 
 [tool.maturin]
 module-name = "tre._core"

@@ -2,7 +2,7 @@
 
 **Python-facing declarative/imperative GUI framework, Rust-native rendering backend.**
 
-Status: pre-implementation design document. This is the reference for engineering decisions made so far — update it as decisions change, don't let it drift from the actual code.
+Status: living design reference, actively implemented. 25 milestones built against this document as of `v0.2.0` (see [`BUILD_TRACKER.md`](BUILD_TRACKER.md) for the complete phase-by-phase history) — update it as decisions change, don't let it drift from the actual code.
 
 ---
 

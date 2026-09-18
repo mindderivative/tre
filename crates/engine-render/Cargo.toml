@@ -2,6 +2,7 @@
 name = "engine-render"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Vello Scene building and GPU rendering. Depends on engine-core (to walk Node/PaintProperties for painting); no winit/engine-platform dependency, only raw-window-handle once windowing is wired. See ARCHITECTURE.md §4, §6."
 
 [dependencies]

@@ -12,6 +12,7 @@ members = [
 [workspace.package]
 version = "0.2.0"
 edition = "2024"
+license = "MIT"
 # No `rust-version` yet, deliberately -- see PLAN.md M3 Phase 1. Claiming
 # an MSRV floor before any real dependency exists to derive it from is
 # exactly the mistake LESSONS_LEARNED.md §5 documents (TRE v1's `1.75`

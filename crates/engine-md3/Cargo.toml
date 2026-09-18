@@ -2,6 +2,7 @@
 name = "engine-md3"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Material Design 3 theming: dynamic color science (HCT/tonal palettes/scheme roles). Depends on engine-core, never the reverse. See ARCHITECTURE.md §4, §7.1. (shape_morph/motion-curve presets moved to engine-core at M7 Phase 1/4 -- neither had real MD3-specific content.)"
 
 [dependencies]

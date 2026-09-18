@@ -2,6 +2,7 @@
 name = "engine-core"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "Pure-Rust node tree, Animated<T> animation core, and the generic AppHandler/InputEvent/BindingResolver interfaces other crates build on. No pyo3, no winit, MD3-agnostic. See ARCHITECTURE.md §4-§5."
 
 [dependencies]
