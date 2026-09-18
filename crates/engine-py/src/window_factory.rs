@@ -94,6 +94,8 @@ impl Md3Baseline {
     const SURFACE_CONTAINER_HIGH: Color = Color::from_rgba8(0xEC, 0xE6, 0xF0, 0xFF);
     const SURFACE_CONTAINER_HIGHEST: Color = Color::from_rgba8(0xE6, 0xE0, 0xE9, 0xFF);
     const OUTLINE: Color = Color::from_rgba8(0x79, 0x74, 0x7E, 0xFF);
+    const OUTLINE_VARIANT: Color = Color::from_rgba8(0xCA, 0xC4, 0xD0, 0xFF);
+    const SURFACE: Color = Color::from_rgba8(0xFF, 0xFB, 0xFE, 0xFF);
     const ON_SURFACE_VARIANT: Color = Color::from_rgba8(0x49, 0x45, 0x4F, 0xFF);
     const ERROR: Color = Color::from_rgba8(0xB3, 0x26, 0x1E, 0xFF);
     const ON_ERROR: Color = Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF);
@@ -396,6 +398,68 @@ const BADGE_DOT_SIZE: f32 = 6.0;
 const BADGE_LABELED_HEIGHT: f32 = 16.0;
 const BADGE_LABEL_FONT_SIZE: f32 = 11.0;
 const BADGE_LABEL_FONT_WEIGHT: f32 = 500.0;
+
+/// M30 Phase 3 Step 3 (§5, §7): `Card`'s real three MD3 variants,
+/// verified against Material Web's own token source (`_md-comp-
+/// elevated-card.scss`/`_md-comp-filled-card.scss`/`_md-comp-
+/// outlined-card.scss`) before writing any code -- all three share
+/// the identical real `corner-medium` shape (12dp), but differ in
+/// container color/elevation/border exactly the way `Button`'s own
+/// Elevated/Filled/Outlined variants do, the same real MD3 pattern
+/// reused a second time at the container level. Outlined Card's real
+/// border role is `outline_variant`, genuinely distinct from
+/// `outline` (`Button`'s Outlined variant's own role) -- confirmed
+/// from the real token file, not assumed the same role reused. `Card`
+/// is a plain container, not a fixed anatomy -- the app populates it
+/// with arbitrary children via the already-generic `Node.add_child`,
+/// the same real "engine gives primitives, app composes content"
+/// shape every other plain-container node in this codebase already
+/// has (`add_rect` included).
+struct CardColors {
+    container: Color,
+    border_color: Color,
+    border_width: f64,
+    elevation: f64,
+}
+
+fn resolve_card_colors(theme: &crate::window::ThemeState, variant: &str) -> PyResult<CardColors> {
+    let role = |name: &str, fallback: Color| -> Color {
+        if theme.is_set() {
+            theme.role(name).unwrap_or(fallback)
+        } else {
+            fallback
+        }
+    };
+    match variant {
+        "elevated" => Ok(CardColors {
+            container: role("surface_container_low", Md3Baseline::SURFACE_CONTAINER_LOW),
+            border_color: TRANSPARENT,
+            border_width: 0.0,
+            elevation: 1.0,
+        }),
+        "filled" => Ok(CardColors {
+            container: role(
+                "surface_container_highest",
+                Md3Baseline::SURFACE_CONTAINER_HIGHEST,
+            ),
+            border_color: TRANSPARENT,
+            border_width: 0.0,
+            elevation: 0.0,
+        }),
+        "outlined" => Ok(CardColors {
+            container: role("surface", Md3Baseline::SURFACE),
+            border_color: role("outline_variant", Md3Baseline::OUTLINE_VARIANT),
+            border_width: 1.0,
+            elevation: 0.0,
+        }),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "unknown card variant {other:?} -- expected one of \"elevated\", \"filled\", \
+             \"outlined\""
+        ))),
+    }
+}
+
+const CARD_CORNER_RADIUS: f64 = 12.0;
 
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
@@ -1655,6 +1719,46 @@ impl PyWindow {
         );
         tree.add_child(self.root, id);
         self.wrap_node(id)
+    }
+
+    /// M30 Phase 3 Step 3 (§5, §7): `Card`, MD3's three real variants
+    /// (Elevated/Filled/Outlined). A plain `Rect` container -- see
+    /// `CardColors`'s own doc comment for why this carries no fixed
+    /// anatomy of its own; the app adds arbitrary content via `Node.
+    /// add_child`, already generic for any node. Deliberately does
+    /// **not** auto-call `enable_interaction()` -- a real MD3 card is
+    /// not always clickable (many are purely a visual container), the
+    /// same "only a node that opts in pays the cost" contract every
+    /// other composite `add_*` in this catalog already establishes.
+    #[pyo3(signature = (width, height, variant="elevated", x=None, y=None))]
+    fn add_card(
+        &self,
+        width: f32,
+        height: f32,
+        variant: &str,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<Node> {
+        let colors = resolve_card_colors(&self.theme.borrow(), variant)?;
+        let mut tree = self.tree.borrow_mut();
+        let mut paint =
+            PaintProperties::new(colors.container, CARD_CORNER_RADIUS, colors.elevation, 1.0);
+        paint.border_color = Animated::new(colors.border_color);
+        paint.border_width = Animated::new(colors.border_width);
+        let id = tree.insert(
+            NodeKind::Rect,
+            positioned_style(
+                Size {
+                    width: length(width),
+                    height: length(height),
+                },
+                x,
+                y,
+            ),
+            paint,
+        );
+        tree.add_child(self.root, id);
+        Ok(self.wrap_node(id))
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,

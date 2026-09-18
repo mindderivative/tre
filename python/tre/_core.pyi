@@ -355,6 +355,20 @@ class Window:
         360°`. `value` clamped `0.0..=1.0`, read/write the same way.
         """
         ...
+    def add_card(
+        self,
+        width: float,
+        height: float,
+        variant: str = "elevated",
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """MD3's three real card variants: `"elevated"`, `"filled"`,
+        `"outlined"`. A plain container -- add arbitrary content with
+        `Node.add_child`. Raises `ValueError` for an unknown
+        `variant`.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,
