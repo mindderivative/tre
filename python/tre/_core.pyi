@@ -381,6 +381,22 @@ class Window:
         `vertical=True`.
         """
         ...
+    def add_tooltip(
+        self,
+        text: str,
+        width: float,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """A real MD3 plain tooltip panel -- returned **not yet
+        attached anywhere**, the same real contract `build_menu`'s own
+        panel has. Show/hide it with `open_menu`/`close_menu`,
+        triggered from the anchor's own `Node.set_on_hover_enter`/
+        `set_on_hover_exit` -- there is no dedicated `open_tooltip`/
+        `close_tooltip` pair, since those would only duplicate
+        `open_menu`/`close_menu`.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,
