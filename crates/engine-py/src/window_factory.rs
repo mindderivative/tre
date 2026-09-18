@@ -823,6 +823,23 @@ const LIST_ITEM_TWO_LINE_HEIGHT: f32 = 72.0;
 /// (already real) rather than needing a new rotation primitive.
 const ACCORDION_CHEVRON_ICON: &str = "expand_more";
 
+/// `Tree View` (M30 Phase 6 Step 3). **Real, confirmed grounding,
+/// already established rather than re-derived here:** the identical
+/// real "no official M3 component page, grounded in the Lists
+/// guideline's own expand-and-collapse text" finding `Accordion`
+/// already made, applied recursively -- `BUILD_TRACKER.md`'s own
+/// scope text already names this exactly. Real, deliberate design:
+/// a tree node's own row is `Accordion`'s own header anatomy again
+/// (reusing the identical `MENU_ITEM_*`/`ACCORDION_CHEVRON_ICON`
+/// constants, not re-declared), with one real, new addition a flat
+/// accordion header never needed -- a per-node `depth: usize` real
+/// left-indent, the one real, load-bearing difference "recursively"
+/// actually means here. Real, honest design choice: `leaf: bool`
+/// omits the chevron entirely for a childless node -- a leaf has
+/// nothing to expand, matching real desktop file-browser convention,
+/// not the app's own responsibility to fake with an invisible one.
+const TREE_NODE_INDENT_WIDTH: f32 = 24.0;
+
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
 /// trailing icon -- that's `Icon Button`'s own separate anatomy, Phase
@@ -4540,6 +4557,141 @@ impl PyWindow {
 
         tree.add_child(self.root, header);
         Ok((self.wrap_node(header), self.wrap_node(chevron)))
+    }
+
+    /// M30 Phase 6 Step 3 (§1, §3, §5, §7): `Tree View`'s own real
+    /// per-node row -- see the `TREE_NODE_INDENT_WIDTH` constant above
+    /// for the full real finding, including the identical real
+    /// grounding `Accordion` already established, applied recursively.
+    /// Real anatomy: `Accordion`'s own header again (`MENU_ITEM_*`/
+    /// `ACCORDION_CHEVRON_ICON` reused verbatim), with `depth *
+    /// TREE_NODE_INDENT_WIDTH` real left padding added on top of the
+    /// existing `MENU_ITEM_LEADING_SPACE` -- the one real difference
+    /// "recursively" means here. Returns `(header, chevron)`, `chevron`
+    /// `None` when `leaf` -- a childless node has nothing to expand,
+    /// matching real desktop file-browser convention, not left for the
+    /// app to fake with an invisible one. `expanded`/toggling reuse
+    /// the identical real contract `Accordion`'s own header already
+    /// has (group/expand state is app-owned, Design Principle 6; the
+    /// chevron flips via `Node.animate("transform", ...)`, the same
+    /// real `Affine::scale(-1.0)`-as-180°-flip substitute `Accordion`
+    /// already established for the identical real reason -- this
+    /// engine still has no rotation primitive).
+    #[pyo3(signature = (title, depth=0, expanded=false, leaf=false, width=360.0, x=None, y=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn add_tree_node(
+        &self,
+        title: &str,
+        depth: usize,
+        expanded: bool,
+        leaf: bool,
+        width: f32,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<(Node, Option<Node>)> {
+        let chevron_path = if leaf {
+            None
+        } else {
+            Some(resolve_icon_path(ACCORDION_CHEVRON_ICON)?)
+        };
+
+        let (headline_color, chevron_color) = {
+            let theme = self.theme.borrow();
+            let on_surface_variant = if theme.is_set() {
+                theme
+                    .role("on_surface_variant")
+                    .unwrap_or(Md3Baseline::ON_SURFACE_VARIANT)
+            } else {
+                Md3Baseline::ON_SURFACE_VARIANT
+            };
+            (theme.on_surface(), on_surface_variant)
+        };
+
+        let mut tree = self.tree.borrow_mut();
+        let indent = depth as f32 * TREE_NODE_INDENT_WIDTH;
+        let leading_padding = MENU_ITEM_LEADING_SPACE + indent;
+
+        let mut header_style = positioned_style(
+            Size {
+                width: length(width),
+                height: length(MENU_ITEM_HEIGHT),
+            },
+            x,
+            y,
+        );
+        header_style.display = taffy::Display::Flex;
+        header_style.align_items = Some(AlignItems::CENTER);
+        header_style.padding = TaffyRect {
+            left: length(leading_padding),
+            right: length(MENU_ITEM_LEADING_SPACE),
+            top: zero(),
+            bottom: zero(),
+        };
+        header_style.gap = Size {
+            width: length(MENU_ITEM_ICON_GAP),
+            height: length(0.0),
+        };
+        let header = tree.insert(
+            NodeKind::Rect,
+            header_style,
+            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+
+        let chevron_reserved = if chevron_path.is_some() {
+            MENU_ITEM_ICON_SIZE + MENU_ITEM_ICON_GAP
+        } else {
+            0.0
+        };
+        let headline_width =
+            (width - leading_padding - MENU_ITEM_LEADING_SPACE - chevron_reserved).max(0.0);
+
+        let chevron = if let Some(path) = chevron_path {
+            let mut chevron_paint = PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0);
+            if expanded {
+                chevron_paint.transform = Animated::new(Affine::scale(-1.0));
+            }
+            let id = tree.insert(
+                NodeKind::Icon(IconState {
+                    path,
+                    tint: chevron_color,
+                }),
+                Style {
+                    size: Size {
+                        width: length(MENU_ITEM_ICON_SIZE),
+                        height: length(MENU_ITEM_ICON_SIZE),
+                    },
+                    ..Default::default()
+                },
+                chevron_paint,
+            );
+            tree.add_child(header, id);
+            Some(self.wrap_node(id))
+        } else {
+            None
+        };
+
+        let headline_id = tree.insert(
+            NodeKind::Text(TextState {
+                content: title.to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: BUTTON_LABEL_FONT_WEIGHT,
+                font_size: BUTTON_LABEL_FONT_SIZE,
+                align: TextAlign::Start,
+            }),
+            Style {
+                flex_grow: 1.0,
+                size: Size {
+                    width: length(headline_width),
+                    height: length(BUTTON_LABEL_LINE_HEIGHT),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(headline_color, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(header, headline_id);
+
+        tree.add_child(self.root, header);
+        Ok((self.wrap_node(header), chevron))
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,

@@ -669,6 +669,26 @@ class Window:
         initial orientation to match.
         """
         ...
+    def add_tree_node(
+        self,
+        title: str,
+        depth: int = 0,
+        expanded: bool = False,
+        leaf: bool = False,
+        width: float = ...,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> tuple[Node, Node | None]:
+        """One real `Tree View` row -- the identical real grounding
+        `add_accordion_header` already has, applied recursively:
+        `depth` adds real left indentation per nesting level. Returns
+        `(header, chevron)`: `chevron` is `None` when `leaf` is `True`
+        (nothing to expand); otherwise it's the same real,
+        independently-addressable icon `Node` `add_accordion_header`
+        already returns, flipped the same way (`Node.animate(
+        "transform", (0.0, 0.0, -1.0))`).
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,
