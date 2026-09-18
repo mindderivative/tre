@@ -1,0 +1,60 @@
+# Builds docs/ (MkDocs) and deploys it to GitHub Pages. Separate from
+# ci.yml's own per-push gate and wheels.yml's own release build -- this
+# workflow's only job is publishing the public docs site, triggered by
+# the same push-to-main event but scoped (via `paths:`) to only the
+# files that can actually change its output, so an unrelated engine
+# commit doesn't redeploy the same site.
+#
+# Real finding: GitHub Pages was already enabled on this repo (`gh api
+# repos/mindderivative/tre/pages`), `build_type: "workflow"`, serving a
+# *stale* TRE v1 site (the old `archive/mkdocs.yml`'s own readthedocs-
+# themed build) from some earlier point before this repo's v2 rewrite --
+# confirmed by fetching the live URL and reading its own `<title>` tag
+# ("TRE — Tesserae Render Engine"). This workflow replaces that stale
+# deployment with the real, current docs/ site the moment it first runs.
+name: Deploy Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "pyproject.toml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment at a time; a newer push should win over an
+# in-flight older one, not queue behind it.
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install '.[docs]'
+      - run: mkdocs build --strict
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
