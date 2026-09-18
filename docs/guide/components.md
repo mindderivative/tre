@@ -8,7 +8,7 @@ in the engine — not as Python-side wrapper logic, but as native
 
 ```python
 box = window.add_checkbox(background=(0x67, 0x50, 0xA4, 0xFF), width=24, height=24, checked=False)
-box.set_on_click(lambda e: box.set_checked(not box.get_checked()))
+box.set_on_click(lambda: box.set_checked(not box.get_checked()))
 box.animate("check_progress", 1.0, duration_ms=150)
 ```
 
@@ -28,7 +28,7 @@ box.animate("check_progress", 1.0, duration_ms=150)
 
 ```python
 slider = window.add_slider(background=(0x03, 0xDA, 0xC6, 0xFF), width=200, height=32, value=0.3)
-slider.set_on_change(lambda e: print("new value:", slider.get("thumb_position")))
+slider.set_on_change(lambda: print("new value:", slider.get("thumb_position")))
 ```
 
 - `value` seeds `thumb_position`, clamped to `0.0..=1.0`.

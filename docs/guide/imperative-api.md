@@ -56,10 +56,10 @@ docking methods.
 Every `Node` supports these handler registrations:
 
 ```python
-node.set_on_click(lambda event: ...)
-node.set_on_hover_enter(lambda event: ...)
-node.set_on_hover_exit(lambda event: ...)
-node.set_on_change(lambda event: ...)   # a Slider drag ending, or set_checked/set_text
+node.set_on_click(lambda: ...)
+node.set_on_hover_enter(lambda: ...)
+node.set_on_hover_exit(lambda: ...)
+node.set_on_change(lambda: ...)   # a Slider drag ending, or set_checked/set_text
 ```
 
 Handlers are called with no arguments. An exception raised inside a

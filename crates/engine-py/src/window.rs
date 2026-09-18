@@ -883,7 +883,7 @@ impl PyWindow {
     /// as confirmed-still-unwired before this phase.
     #[pyo3(signature = (trigger, destination, duration_ms=300, content_stagger_ms=90, on_complete=None))]
     fn begin_container_transform(
-        &mut self,
+        &self,
         trigger: PyRef<'_, Node>,
         destination: PyRef<'_, Node>,
         duration_ms: u64,
@@ -925,7 +925,7 @@ impl PyWindow {
     /// confirmed, stated gap -- see `container_transform.rs`'s own doc
     /// comment). A plain, ordinary tree mutation: detaches `trigger`
     /// from its own parent via the already-real `Tree::detach`.
-    fn end_container_transform(&mut self, trigger: PyRef<'_, Node>) -> PyResult<()> {
+    fn end_container_transform(&self, trigger: PyRef<'_, Node>) -> PyResult<()> {
         if !Rc::ptr_eq(&self.tree, &trigger.tree) {
             return Err(EngineError::ForeignNode.into());
         }
@@ -944,7 +944,7 @@ impl PyWindow {
     /// for a `Window` with no render loop attached), then dispatches a
     /// primary-button press+release pair at `node`'s own real center
     /// point -- exactly what a real mouse click there would produce.
-    fn click(&mut self, node: PyRef<'_, Node>, py: Python<'_>) {
+    fn click(&self, node: PyRef<'_, Node>, py: Python<'_>) {
         let point = {
             let mut tree = self.tree.borrow_mut();
             tree.compute_layout(
@@ -1000,7 +1000,7 @@ impl PyWindow {
     /// HoverChanged`) independent of whether `node` ever called
     /// `enable_interaction()` -- §7.3's own text: the event fires
     /// regardless of whether the default MD3 visual is enabled.
-    fn hover(&mut self, node: PyRef<'_, Node>, py: Python<'_>) {
+    fn hover(&self, node: PyRef<'_, Node>, py: Python<'_>) {
         let point = {
             let mut tree = self.tree.borrow_mut();
             tree.compute_layout(
@@ -1038,7 +1038,7 @@ impl PyWindow {
     /// whatever's hit to the nearest `NodeKind::VirtualList` ancestor)
     /// -- `node` itself doesn't need to be the list; any of its real
     /// children work too, matching real scroll-wheel behavior.
-    fn scroll(&mut self, node: PyRef<'_, Node>, delta_y: f64, py: Python<'_>) {
+    fn scroll(&self, node: PyRef<'_, Node>, delta_y: f64, py: Python<'_>) {
         let point = {
             let mut tree = self.tree.borrow_mut();
             tree.compute_layout(
@@ -1074,7 +1074,7 @@ impl PyWindow {
     /// real center point. If `node` has a registered context menu
     /// (`Node.set_context_menu`), opens it via `Tree::open_overlay`,
     /// exactly what a real right-click there would produce.
-    fn right_click(&mut self, node: PyRef<'_, Node>, py: Python<'_>) {
+    fn right_click(&self, node: PyRef<'_, Node>, py: Python<'_>) {
         let point = {
             let mut tree = self.tree.borrow_mut();
             tree.compute_layout(
@@ -1126,7 +1126,7 @@ impl PyWindow {
     /// Key`'s own deliberately minimal vocabulary, not a general
     /// key-code mapping nothing here needs yet.
     #[pyo3(signature = (key, shift=false))]
-    fn press_key(&mut self, key: &str, shift: bool, py: Python<'_>) -> PyResult<()> {
+    fn press_key(&self, key: &str, shift: bool, py: Python<'_>) -> PyResult<()> {
         let key = match key {
             "tab" => Key::Tab,
             "enter" => Key::Enter,
@@ -1164,7 +1164,7 @@ impl PyWindow {
     /// keypress. Only meaningful when a `TextField` is the window's own
     /// currently focused node (a true no-op otherwise, `Tree::dispatch`
     /// 's own real behavior).
-    fn type_text(&mut self, text: &str, py: Python<'_>) {
+    fn type_text(&self, text: &str, py: Python<'_>) {
         let outcome = self.tree.borrow_mut().dispatch(
             self.root,
             InputEvent::TextInput(text.to_string()),
@@ -1197,7 +1197,7 @@ impl PyWindow {
     /// `copy`'s own real Cut sibling -- same real scope boundary
     /// (hermetic, no real OS clipboard touched), reusing the real,
     /// pure `Tree::cut_text_field_selection`.
-    fn cut(&mut self, py: Python<'_>) -> Option<String> {
+    fn cut(&self, py: Python<'_>) -> Option<String> {
         let field = self.tree.borrow().focused()?;
         let text = self.tree.borrow_mut().cut_text_field_selection(field)?;
         // A real cut genuinely edits the field's own content -- fires
@@ -1219,7 +1219,7 @@ impl PyWindow {
     /// identical `InputEvent::TextInput` mechanism `type_text` already
     /// uses -- a real paste is genuinely nothing more than "insert this
     /// text," the same real finding `PLAN.md` already states.
-    fn paste(&mut self, text: &str, py: Python<'_>) {
+    fn paste(&self, text: &str, py: Python<'_>) {
         self.type_text(text, py);
     }
 
@@ -1228,7 +1228,7 @@ impl PyWindow {
     /// exactly like `docking.rs`'s own Rust-level proof (M3 step 15
     /// Stage B) builds one by hand. `size` seeds the zone's own
     /// `Animated<f64>` extent (§11.4's own struct sketch).
-    fn add_dock_zone(&mut self, side: &str, container: PyRef<'_, Node>, size: f64) -> PyResult<()> {
+    fn add_dock_zone(&self, side: &str, container: PyRef<'_, Node>, size: f64) -> PyResult<()> {
         let side = dock::parse_dock_side(side)?;
         dock::add_dock_zone(&self.dock, side, container.id, size);
         Ok(())
@@ -1238,7 +1238,7 @@ impl PyWindow {
     /// `panel` as `side`'s new active tab via the existing real
     /// `Tree::apply_active_tab` (M3 step 15 Stage B), not a second
     /// resize/attach mechanism.
-    fn dock_panel(&mut self, side: &str, panel: PyRef<'_, Node>) -> PyResult<()> {
+    fn dock_panel(&self, side: &str, panel: PyRef<'_, Node>) -> PyResult<()> {
         let side = dock::parse_dock_side(side)?;
         dock::dock_panel(&self.dock, &self.tree, side, panel.id)
     }
@@ -1246,7 +1246,7 @@ impl PyWindow {
     /// Switches `side`'s own active tab by index -- the same plain
     /// index switch §11.4's own text describes, via `Tree::
     /// apply_active_tab`.
-    fn set_active_tab(&mut self, side: &str, index: usize) -> PyResult<()> {
+    fn set_active_tab(&self, side: &str, index: usize) -> PyResult<()> {
         let side = dock::parse_dock_side(side)?;
         dock::set_active_tab(&self.dock, &self.tree, side, index)
     }
@@ -1263,7 +1263,7 @@ impl PyWindow {
     /// container_transform` already use, mirrored here for the same
     /// real reason (a foreign `NodeId` could alias an unrelated real
     /// node the next time it's read back).
-    fn set_dock_handle(&mut self, handle: PyRef<'_, Node>, panel: PyRef<'_, Node>) -> PyResult<()> {
+    fn set_dock_handle(&self, handle: PyRef<'_, Node>, panel: PyRef<'_, Node>) -> PyResult<()> {
         if !Rc::ptr_eq(&self.tree, &handle.tree) || !Rc::ptr_eq(&self.tree, &panel.tree) {
             return Err(EngineError::ForeignNode.into());
         }
@@ -1279,7 +1279,7 @@ impl PyWindow {
     /// a drag, and hidden again by `drop_panel_at`. The same `Rc::
     /// ptr_eq` same-tree guard M10 Phase 2 added to `set_dock_handle`,
     /// applied here for the same real reason.
-    fn set_drop_zone_highlight(&mut self, content: PyRef<'_, Node>) -> PyResult<()> {
+    fn set_drop_zone_highlight(&self, content: PyRef<'_, Node>) -> PyResult<()> {
         if !Rc::ptr_eq(&self.tree, &content.tree) {
             return Err(EngineError::ForeignNode.into());
         }
@@ -1295,7 +1295,7 @@ impl PyWindow {
     /// highlight over whichever registered zone encloses that point, or
     /// hides it if none does. A safe no-op if no drag is in progress or
     /// no highlight is registered.
-    fn drag_panel_over(&mut self, x: f64, y: f64) {
+    fn drag_panel_over(&self, x: f64, y: f64) {
         {
             let mut tree = self.tree.borrow_mut();
             tree.compute_layout(
@@ -1314,7 +1314,7 @@ impl PyWindow {
     /// drag as if `handle` had just been pressed. Returns whether a
     /// drag actually started -- `handle` must already be registered via
     /// `set_dock_handle`.
-    fn start_panel_drag(&mut self, handle: PyRef<'_, Node>) -> bool {
+    fn start_panel_drag(&self, handle: PyRef<'_, Node>) -> bool {
         dock::start_drag(&self.dock, handle.id)
     }
 
@@ -1324,7 +1324,7 @@ impl PyWindow {
     /// attached" reasoning `.click()` already states) and reparents the
     /// dragged panel into whichever registered zone encloses that
     /// point, if any and if different from its current zone.
-    fn drop_panel_at(&mut self, x: f64, y: f64) {
+    fn drop_panel_at(&self, x: f64, y: f64) {
         {
             let mut tree = self.tree.borrow_mut();
             tree.compute_layout(
@@ -1461,7 +1461,7 @@ impl PyWindow {
     /// (proving the callback mechanism and measuring its real GIL
     /// overhead below), not a general rollback guarantee.
     fn set_virtual_list_window(
-        &mut self,
+        &self,
         list: PyRef<'_, Node>,
         start: usize,
         end: usize,
@@ -1574,7 +1574,7 @@ impl PyWindow {
     /// per-index error-deferral -- this is exactly one call, not N, so
     /// a raised exception propagates as a real `PyErr` directly, no
     /// error slot needed.
-    fn redraw_canvas(&mut self, canvas: PyRef<'_, Node>, py: Python<'_>) -> PyResult<()> {
+    fn redraw_canvas(&self, canvas: PyRef<'_, Node>, py: Python<'_>) -> PyResult<()> {
         let draw = self
             .canvas_draws
             .get(&canvas.id)

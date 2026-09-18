@@ -52,7 +52,7 @@ label = window.add_text_field(
 clicks = 0
 
 
-def on_click(event):
+def on_click():
     global clicks
     clicks += 1
     label.set_text(f"{clicks} clicks")

@@ -1,69 +1,61 @@
-# Plan: M26 Phase 1 — Wire Stylesheet Cascade & MD3 Token Resolution into `View` (§16.3), closing M26
+# Plan: M27 Phase 1 — Shell & Navigation Scaffold
 
-Corresponds to `BUILD_TRACKER.md` M26 Phase 1.
+Corresponds to `BUILD_TRACKER.md` M27 Phase 1.
 
 ## Investigation (already done, confirmed via direct read)
 
-- `crates/engine-spec/src/reconcile.rs`'s `Reconciler::load`/`Reconciler::
-  reconcile` already accept `sheet: Option<&Stylesheet>, scheme:
-  Option<&ColorScheme>` and thread both correctly through `build_tree`
-  (the include-aware path `View` already uses).
-- `crates/engine-py/src/view.rs`'s `View::new`/`poll_reload` are the
-  *only* two real call sites of those methods in this crate, and both
-  always pass `None, None` today (confirmed via direct read of both).
-- `engine_spec::{Stylesheet, parse_stylesheet}` are already re-exported
-  at the crate root (`lib.rs`); `engine_md3::{ColorScheme,
-  DynamicTheme}` are too. `engine-py`'s own `Cargo.toml` already
-  depends on both crates — no new dependency needed.
-- `DynamicTheme::from_seed(seed: Color) -> DynamicTheme { light:
-  ColorScheme, dark: ColorScheme }` is the exact same real mechanism
-  `Window.set_theme` already calls; picking `light`/`dark` by a plain
-  `bool` mirrors `Window.set_theme(seed, dark=False)`'s own real
-  parameter shape.
-- The stylesheet path a `View(...)` call is given is a plain Python
-  constructor argument — as trusted as `path` itself already is — so
-  it's read directly via `std::fs::read_to_string`, the same way
-  `path` already is, not through `include:`'s own confined-path
-  resolution (that mechanism exists because `include:` paths are
-  embedded inside YAML *content*, not supplied directly by the caller).
+- `Window.build_shell(menu_bar=...)` returns `content`: a real node
+  with `Style { flex_grow: 1.0, ..Default::default() }`. Confirmed
+  directly in taffy 0.14.0's own source (`~/.cargo/registry/.../
+  taffy-0.14.0/src/style/mod.rs`, `Cargo.toml`'s own `default =
+  [..., "flexbox", ...]` feature list) that `Style::default()`'s
+  `display` is `Display::Flex` and `FlexDirection::default()` is
+  `Row` — so `content` is already a real `Flex Row` container with no
+  extra style config needed: a nav rail added first and a screen area
+  added second lay out side by side automatically.
+- `Node.remove()` truly deletes a node and its subtree (`Tree::
+  remove`), not a soft detach — re-showing a previously-shown screen
+  means rebuilding it fresh, the identical real pattern `examples/
+  navigation.py` already proves end to end (remove the old screen,
+  build and attach a new one). This phase reuses that pattern verbatim
+  for nav-driven screen switching.
+- `Node.set_on_click` already adds `Action::Click` to a node's own
+  `access.actions`, making it Tab-reachable with no extra call needed
+  (confirmed in `node.rs`'s own doc comment) — every nav button is
+  keyboard-operable for free the moment it gets a click handler.
 
 ## What will change
 
-`crates/engine-py/src/view.rs`:
+New `demo/showcase.py` (a fresh top-level location, not `examples/` —
+`examples/` is explicitly "one real mechanism" per script; this is the
+opposite, a consolidated multi-screen app, per the milestone's own
+stated purpose):
 
-- New imports: `engine_md3::{ColorScheme, DynamicTheme}`,
-  `engine_spec::{Stylesheet, parse_stylesheet}` (added to the existing
-  `engine_spec::{...}` import list), `peniko::Color`.
-- `View`'s `#[new]` constructor gains
-  `#[pyo3(signature = (path, stylesheet=None, theme_seed=None, dark=false))]`:
-  `stylesheet: Option<String>` (a path to a stylesheet YAML file, read
-  and parsed via `parse_stylesheet`), `theme_seed: Option<(u8, u8, u8,
-  u8)>` (built into a `DynamicTheme::from_seed`, resolving `light` or
-  `dark` per the `dark` flag into a real `ColorScheme`).
-- `View` struct gains two new fields: `stylesheet: Option<Stylesheet>`,
-  `scheme: Option<ColorScheme>` — both stored so `poll_reload` can
-  reuse them on every future reconcile, not just the initial build.
-- Both the constructor's `Reconciler::load(...)` call and
-  `poll_reload`'s `self.reconciler.reconcile(...)` call pass
-  `self.stylesheet.as_ref()`/`self.scheme.as_ref()` instead of the
-  current hardcoded `None, None`.
-- New `examples/` script proving both a real stylesheet cascade
-  (`kind`/`classes`/`id` selectors) and a real MD3 token name
-  (`background: primary`) resolve correctly through the real Python
-  `View` API for the first time — the same "real, end-to-end proof"
-  standard every other milestone this session has held itself to.
-- Update `docs/guide/declarative-views.md`'s existing "Stylesheets and
-  MD3 color tokens aren't wired up from Python yet" admonition — this
-  phase closes that exact gap — and add the new constructor params to
-  `docs/api/python/view.md`.
+- `Window` sized 720×480, `Window.build_shell(menu_bar=...)` for the
+  chrome.
+- A persistent left nav rail (`NAV_WIDTH` px) attached first to
+  `content`, a screen area attached second — real side-by-side layout
+  via `content`'s own default `Flex Row`, no extra style needed.
+- One real nav button per showcased screen (`add_rect` + `set_on_click`
+  + `enable_interaction`), highlighted (background swap) when its own
+  screen is active.
+- `show_screen(key)`: removes the currently-shown screen's subtree and
+  builds+attaches the requested one fresh — the real, proven `examples/
+  navigation.py` pattern, not a new mechanism.
+- Phase 1's own two screens are placeholders (a labeled colored card
+  each) — Phases 2–4 replace them with real content, added to the same
+  file's own `SCREENS` registry.
+- Real, headless-CI-safe proof: a dispatched `window.click()` on the
+  second nav button actually switches the active screen (checked via
+  the script's own tracked state, not just "didn't crash"); a real
+  Tab-order check presses Tab once per nav button and confirms each
+  becomes focused in the same order they were attached.
 
 ## Testing
 
-- `cargo test --workspace --release`
-- `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo fmt --check`
-- `maturin develop --release`
-- `pytest tests/ -v`
-- Run the new example script plus the full example suite (real
-  display, no env stripping).
-- `mkdocs build --strict` after the docs updates.
+- `cargo test --workspace --release` / clippy / fmt (no engine code
+  changes expected this phase — a pure Python composition; run anyway
+  to confirm no accidental regression)
+- `maturin develop --release` + `python demo/showcase.py` directly,
+  with the real display
+- Full `pytest tests/` + all `examples/*.py` regression pass
