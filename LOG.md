@@ -1,36 +1,34 @@
-# LOG — M30 Phase 8 Step 2: Link
+# LOG — M30 Phase 8 Step 3: SpinBox
 
-- Confirmed no official MD3 Link token page exists via the same
-  directory-listing technique used throughout this milestone.
-- Added a genuine new `NodeKind::Link(TextState)` to
-  `crates/engine-core/src/node.rs`, reusing `TextState` verbatim as
-  its own payload rather than a new struct — Link's real content/font
-  shape is identical to Text's.
-- Compiled to find every exhaustive match needing a new arm:
-  `engine-render/src/lib.rs`'s `paint_node` (fixed with an or-pattern,
-  `NodeKind::Text(state) | NodeKind::Link(state) =>`, since both share
-  identical paint logic) and `engine-py/src/node.rs`'s `kind_name`.
-  `Tree::hit_test_at` needed zero changes — by not matching
-  `NodeKind::Text(_) => false`, Link falls through to the existing
-  `_ => rect_contains(...)` catch-all automatically.
-- Added a direct `engine-core` unit test
-  (`link_independently_claims_a_hit_where_text_would_defer`) proving
-  the real contrast: identical geometry built twice, a bare Text
-  child (defers, parent claims the hit) vs a Link child (claims it
-  directly). Passed on the first run.
-- Implemented `add_link` in `crates/engine-py/src/window_factory.rs`
-  (primary color, Body Large label reusing
-  `SEARCH_INPUT_FONT_SIZE`/`_WEIGHT`).
+- Confirmed no official MD3 page exists for either "SpinBox" or
+  "Stepper" naming, reusing pyCopper's own prior finding that MD3's
+  vocabulary already uses "Stepper" for a completely different
+  multi-step flow indicator.
+- Checked the curated icon set — only "add" existed, no decrement
+  glyph. Fetched the real "remove" SVG path data verbatim from
+  Google's own CDN (viewBox `0 -960 960 960`, matching every other
+  curated icon), added as the tenth curated icon in
+  `crates/engine-md3/src/icons.rs`.
+- Designed to reuse TextField for the numeric field (Time Input's own
+  `surface_container_highest`/`corner-small` convention), and Icon
+  Button's own anatomy for decrement/increment (40dp,
+  `SEARCH_ICON_BUTTON_SIZE` reused, add/remove icons).
+- Implemented `add_spin_box` in
+  `crates/engine-py/src/window_factory.rs`. Fixed a real
+  redundant-shadow pattern before compiling (matching a mistake made
+  twice before this session — `let x = f(); let mut x = x;` — merged
+  into `let mut x = f();` directly).
 - Added `.pyi` stub.
-- Wrote `tests/test_link.py` (4 tests) — all passed on the first run,
-  reproducing the Text-vs-Link contrast through the real Python FFI
-  (a bare `add_text` label never independently claims its click; a
-  Link does).
-- Wrote `examples/link.py` (headless-CI-safe) — clean on the first
+- Wrote `tests/test_spin_box.py` (5 tests) — all passed on the first
+  run, including a real `press_key`/`type_text`/`get_text` round-trip
+  and independent-click tests for both increment and decrement.
+- Wrote `examples/spin_box.py` (headless-CI-safe), clean on the first
   run, `mypy --strict` clean too.
 - Full verification: `cargo check`/`clippy -D warnings`/`fmt --check`
-  clean, `cargo test --workspace --release` (engine-core 150 up from
-  149), `maturin develop --release`, `pytest tests/` (424 passed, 1
-  skipped), all 58 examples clean, showcase demo clean.
+  clean, `cargo test --workspace --release` (43 binaries green,
+  unchanged — confirming the new "remove" icon's real path data
+  parses correctly), `maturin develop --release`, `pytest tests/`
+  (429 passed, 1 skipped), all 59 examples clean, showcase demo
+  clean.
 - Updated `BUILD_TRACKER.md`, regenerated and republished the Build
   Tracker artifact at https://claude.ai/artifact/CaPkWjpd91oR7YFbcqC9ty.

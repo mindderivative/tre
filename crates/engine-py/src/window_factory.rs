@@ -995,6 +995,37 @@ const POPOVER_SUBHEAD_GAP: f32 = 8.0;
 const LINK_FONT_SIZE: f32 = SEARCH_INPUT_FONT_SIZE;
 const LINK_FONT_WEIGHT: f32 = SEARCH_INPUT_FONT_WEIGHT;
 
+/// `SpinBox`, a real numeric increment control (M30 Phase 8 Step 3).
+/// **Real, deliberate naming, not the obvious guess:** pyCopper's own
+/// real prior naming-risk finding, reused directly per `BUILD_TRACKER
+/// .md`'s own scope text -- MD3's own vocabulary already uses
+/// "Stepper" for a completely different real component (a multi-step
+/// flow indicator), so this is named `SpinBox` from the start,
+/// avoiding the exact collision pyCopper caught and had to rename
+/// around mid-build. MD3 has no official page for either real name
+/// (confirmed via the same directory-listing technique this whole
+/// milestone already uses). Real, honest anatomy, not independently
+/// token-verified: the numeric field reuses the identical real
+/// `surface_container_highest`/`corner-small` convention `Time Input`
+/// already established for a small boxed numeric display (a
+/// genuinely smaller real footprint than Time Input's own 96×72dp
+/// display, since a spin-box value is typically a short quantity, not
+/// a two-digit clock field) -- Body Large text (`SEARCH_INPUT_FONT_
+/// SIZE`/`_WEIGHT` reused directly), `on_surface`. Increment/
+/// decrement reuse `Icon Button`'s own exact real anatomy (Phase 1
+/// Step 2) -- `SEARCH_ICON_BUTTON_SIZE` reused directly (the
+/// identical real 40dp value `Search Bar`/`Top App Bar` already
+/// settled on for a compact icon-button footprint) -- with the newly
+/// curated `add`/`remove` glyphs (`remove` fetched fresh this step,
+/// the tenth curated icon, the identical real "additive... when a
+/// real need asks for more" growth this module's own doc comment
+/// already promises, `expand_more`'s own real precedent from Phase 6
+/// Step 2 a second time).
+const SPIN_BOX_FIELD_WIDTH: f32 = 64.0;
+const SPIN_BOX_FIELD_HEIGHT: f32 = 40.0;
+const SPIN_BOX_BUTTON_SIZE: f32 = SEARCH_ICON_BUTTON_SIZE;
+const SPIN_BOX_GAP: f32 = 4.0;
+
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
 /// trailing icon -- that's `Icon Button`'s own separate anatomy, Phase
@@ -5253,6 +5284,136 @@ impl PyWindow {
         );
         tree.add_child(self.root, id);
         self.wrap_node(id)
+    }
+
+    /// M30 Phase 8 Step 3 (§5, §7): `SpinBox`, a real numeric
+    /// increment control -- see the `SPIN_BOX_*` constants above for
+    /// the full real finding, including the real, deliberate naming
+    /// choice (not "Stepper", pyCopper's own real prior finding).
+    /// Real, deliberate reuse of `TextField`'s own existing real
+    /// `NodeKind` for the numeric display, the identical real design
+    /// `Search Bar`/`Time Input` already established -- every one of
+    /// its already-real capabilities (typing, focus, selection) work
+    /// for free. Increment/decrement reuse `Icon Button`'s own exact
+    /// real anatomy (Phase 1 Step 2, a `Rect` container with a
+    /// centered, correctly-deferring `Icon` child) a second/third
+    /// time this catalog already has (`Top App Bar`/`Search Bar`).
+    /// Returns `(field, decrement, increment)` -- `field` is a real
+    /// `NodeKind::TextField`, `decrement`/`increment` each a real,
+    /// independently `enable_interaction()`-able `Node`, the app
+    /// wiring real `+`/`-1` logic itself (Design Principle 6 -- the
+    /// engine has no notion of the value's own real numeric semantics
+    /// or bounds).
+    #[pyo3(signature = (value, x=None, y=None))]
+    fn add_spin_box(
+        &self,
+        value: &str,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<(Node, Node, Node)> {
+        let minus_path = resolve_icon_path("remove")?;
+        let plus_path = resolve_icon_path("add")?;
+
+        let (field_color, text_color, icon_color) = {
+            let theme = self.theme.borrow();
+            let role = |name: &str, fallback: Color| -> Color {
+                if theme.is_set() {
+                    theme.role(name).unwrap_or(fallback)
+                } else {
+                    fallback
+                }
+            };
+            (
+                role(
+                    "surface_container_highest",
+                    Md3Baseline::SURFACE_CONTAINER_HIGHEST,
+                ),
+                theme.on_surface(),
+                role("on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT),
+            )
+        };
+
+        let mut tree = self.tree.borrow_mut();
+        let base_x = x.unwrap_or(0.0);
+        let base_y = y.unwrap_or(0.0);
+        let field_x = base_x + SPIN_BOX_BUTTON_SIZE + SPIN_BOX_GAP;
+
+        let mut build_icon_button = |path: peniko::kurbo::BezPath, offset_x: f32| {
+            let mut button_style = positioned_style(
+                Size {
+                    width: length(SPIN_BOX_BUTTON_SIZE),
+                    height: length(SPIN_BOX_BUTTON_SIZE),
+                },
+                Some(base_x + offset_x),
+                Some(base_y),
+            );
+            button_style.display = taffy::Display::Flex;
+            button_style.justify_content = Some(JustifyContent::CENTER);
+            button_style.align_items = Some(AlignItems::CENTER);
+            let button = tree.insert(
+                NodeKind::Rect,
+                button_style,
+                PaintProperties::new(TRANSPARENT, SPIN_BOX_BUTTON_SIZE as f64 / 2.0, 0.0, 1.0),
+            );
+            let icon_id = tree.insert(
+                NodeKind::Icon(IconState {
+                    path,
+                    tint: icon_color,
+                }),
+                Style {
+                    size: Size {
+                        width: length(MENU_ITEM_ICON_SIZE),
+                        height: length(MENU_ITEM_ICON_SIZE),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(button, icon_id);
+            tree.add_child(self.root, button);
+            button
+        };
+
+        let decrement = build_icon_button(minus_path, 0.0);
+        let increment = build_icon_button(
+            plus_path,
+            SPIN_BOX_BUTTON_SIZE + SPIN_BOX_GAP + SPIN_BOX_FIELD_WIDTH + SPIN_BOX_GAP,
+        );
+
+        let mut field_style = positioned_style(
+            Size {
+                width: length(SPIN_BOX_FIELD_WIDTH),
+                height: length(SPIN_BOX_FIELD_HEIGHT),
+            },
+            Some(field_x),
+            Some(base_y),
+        );
+        field_style.display = taffy::Display::Flex;
+        field_style.justify_content = Some(JustifyContent::CENTER);
+        field_style.align_items = Some(AlignItems::CENTER);
+        let mut text_field_state = TextFieldState::new(
+            value,
+            "Roboto".to_string(),
+            SEARCH_INPUT_FONT_WEIGHT,
+            BUTTON_LABEL_FONT_SIZE,
+        );
+        text_field_state.text_tint = text_color;
+        let field = tree.insert(
+            NodeKind::TextField(text_field_state),
+            field_style,
+            PaintProperties::new(field_color, CHIP_CORNER_RADIUS, 0.0, 1.0),
+        );
+        tree.set_access(
+            field,
+            AccessNodeData::new(Role::TextInput).with_action(Action::Focus),
+        );
+        tree.add_child(self.root, field);
+
+        Ok((
+            self.wrap_node(field),
+            self.wrap_node(decrement),
+            self.wrap_node(increment),
+        ))
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,

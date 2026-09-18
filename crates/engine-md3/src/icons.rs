@@ -65,6 +65,14 @@ const ICONS: &[(&str, &str)] = &[
         "expand_more",
         "M480-345 240-585l56-56 184 184 184-184 56 56-240 240Z",
     ),
+    // M30 Phase 8 Step 3 (§1, §3): a real, confirmed need -- `SpinBox`
+    // needs a real decrement ("minus") glyph to pair with the
+    // already-curated `add` ("plus"). Fetched directly from the
+    // identical real CDN this module's own doc comment already
+    // cites, not invented or approximated -- the tenth curated icon,
+    // growing this set exactly the way its own doc comment says it
+    // will, "when a real need asks for more."
+    ("remove", "M200-440v-80h560v80H200Z"),
 ];
 
 /// The real, verbatim `d=` SVG path data for a curated icon `name`, or

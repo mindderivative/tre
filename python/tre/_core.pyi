@@ -764,6 +764,22 @@ class Window:
         call `enable_interaction()` automatically.
         """
         ...
+    def add_spin_box(
+        self,
+        value: str,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> tuple[Node, Node, Node]:
+        """A real numeric increment control -- deliberately named
+        `SpinBox`, not `Stepper` (MD3's own vocabulary already uses
+        that name for a completely different multi-step flow
+        indicator). Returns `(field, decrement, increment)`: `field`
+        is a real `NodeKind.TextField` (typing/focus/selection all
+        work); `decrement`/`increment` are each a real, independently
+        `enable_interaction()`-able `Node` -- the app wires up real
+        `+`/`-1` logic itself.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,
