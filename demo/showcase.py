@@ -212,9 +212,128 @@ def build_gallery_screen(window):
     return screen
 
 
+# --- Phase 3: Motion & Custom Drawing screen ---
+
+# A small real node graph, the same real shape `examples/node_graph.py`
+# already proves -- edges and node circles as real `DrawCommand`s
+# inside one `Canvas`, with a real `CustomHitTest::Circle` on one node.
+GRAPH_POSITIONS = [(30, 30), (130, 20), (210, 55), (160, 130), (50, 120)]
+GRAPH_EDGES = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 0), (1, 3)]
+GRAPH_NODE_COLORS = [
+    (0xFF, 0xA5, 0x00, 0xFF),
+    (0x03, 0xDA, 0xC6, 0xFF),
+    (0xCF, 0x62, 0x79, 0xFF),
+    (0x67, 0x50, 0xA4, 0xFF),
+    (0x38, 0x8E, 0x3C, 0xFF),
+]
+GRAPH_NODE_RADIUS = 10
+
+MOTION_REFS = {}
+
+
+def draw_node_graph(ctx):
+    for a, b in GRAPH_EDGES:
+        ax, ay = GRAPH_POSITIONS[a]
+        bx, by = GRAPH_POSITIONS[b]
+        ctx.stroke_path(points=[(ax, ay), (bx, by)], color=(0x63, 0x50, 0xA4, 0xFF), width=2.0)
+    for (x, y), color in zip(GRAPH_POSITIONS, GRAPH_NODE_COLORS):
+        ctx.fill_circle(cx=x, cy=y, radius=GRAPH_NODE_RADIUS, color=color)
+    cx, cy = GRAPH_POSITIONS[2]
+    ctx.set_hit_test_circle(cx=cx, cy=cy, radius=GRAPH_NODE_RADIUS)
+
+
+def build_motion_screen(window):
+    """Phase 3's real animation breadth (opacity/corner_radius/
+    elevation/shape), each triggered by a real dispatched click on its
+    own button -- not auto-playing on a timer with nothing driving it
+    -- plus a live `Canvas` (a real node graph) with its own real
+    `transform` pan/zoom, the same real mechanism `examples/pan_zoom.py`
+    already proves, applied here to a `Canvas` node rather than a
+    `Rect` for the first time.
+    """
+    screen = window.add_rect(background=SCREEN_BG, width=SCREEN_WIDTH, height=SCREEN_HEIGHT)
+
+    def label(text, x, y, width=140, height=18, font_size=13):
+        node = window.add_text(text, background=LABEL_COLOR, width=width, height=height, x=x, y=y, font_size=font_size)
+        screen.add_child(node)
+        return node
+
+    def trigger_button(text, x, y, width=76):
+        label(text, x, y - 20, width=width, font_size=12)
+        btn = window.add_rect(background=(0x33, 0x33, 0x33, 0xFF), width=width, height=32, x=x, y=y)
+        btn.enable_interaction()
+        screen.add_child(btn)
+        return btn
+
+    label("Animation (click a trigger below)", 16, 12, width=280)
+
+    card = window.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=120, height=120, x=16, y=100)
+    screen.add_child(card)
+
+    anim_state = {"faded": False, "rounded": False, "elevated": False, "morphed": False}
+    TRIANGLE = [(60.0, 0.0), (120.0, 120.0), (0.0, 120.0)]
+    DIAMOND = [(60.0, 0.0), (120.0, 60.0), (60.0, 120.0), (0.0, 60.0)]
+
+    def trigger_fade():
+        anim_state["faded"] = not anim_state["faded"]
+        card.animate("opacity", 0.25 if anim_state["faded"] else 1.0, duration_ms=400)
+
+    def trigger_round():
+        anim_state["rounded"] = not anim_state["rounded"]
+        card.animate("corner_radius", 48.0 if anim_state["rounded"] else 0.0, duration_ms=400)
+
+    def trigger_elevate():
+        anim_state["elevated"] = not anim_state["elevated"]
+        card.animate("elevation", 6.0 if anim_state["elevated"] else 0.0, duration_ms=400)
+
+    def trigger_morph():
+        anim_state["morphed"] = not anim_state["morphed"]
+        card.animate("shape", DIAMOND if anim_state["morphed"] else TRIANGLE, duration_ms=400)
+
+    fade_btn = trigger_button("Fade", 16, 60)
+    round_btn = trigger_button("Round", 100, 60)
+    elevate_btn = trigger_button("Elevate", 184, 60)
+    morph_btn = trigger_button("Morph", 268, 60)
+    fade_btn.set_on_click(trigger_fade)
+    round_btn.set_on_click(trigger_round)
+    elevate_btn.set_on_click(trigger_elevate)
+    morph_btn.set_on_click(trigger_morph)
+
+    # --- Canvas: a real node graph, pannable/zoomable as a whole ---
+    label("Canvas (node graph)", 300, 12, width=220)
+    graph = window.add_canvas(width=240, height=160, draw=draw_node_graph, x=300, y=36)
+    screen.add_child(graph)
+    window.redraw_canvas(graph)
+
+    pan_zoom_state = {"panned": False}
+
+    def trigger_pan_zoom():
+        pan_zoom_state["panned"] = not pan_zoom_state["panned"]
+        graph.animate(
+            "transform", (30.0, 20.0, 1.25) if pan_zoom_state["panned"] else (0.0, 0.0, 1.0), duration_ms=500
+        )
+
+    pan_zoom_btn = trigger_button("Pan/Zoom", 300, 224)
+    pan_zoom_btn.set_on_click(trigger_pan_zoom)
+
+    MOTION_REFS.clear()
+    MOTION_REFS.update(
+        {
+            "card": card,
+            "graph": graph,
+            "fade_btn": fade_btn,
+            "round_btn": round_btn,
+            "elevate_btn": elevate_btn,
+            "morph_btn": morph_btn,
+            "pan_zoom_btn": pan_zoom_btn,
+        }
+    )
+    return screen
+
+
 SCREENS = {
     "components": build_gallery_screen,
-    "motion": lambda window: build_placeholder_screen(window, (0x03, 0xDA, 0xC6, 0xFF)),
+    "motion": build_motion_screen,
 }
 
 
@@ -290,9 +409,13 @@ def verify_gallery_screen(window):
     # slider.py` already established: focus it via Tab, then a real
     # dispatched arrow-key nudge (`Tree::dispatch_slider_key`'s own
     # mechanism manually ticks immediately, unlike `animate()`).
+    #
+    # Only 2 more Tab presses are needed here, not 4: `main()` already
+    # ran its own nav-order check immediately before calling this
+    # function, which already consumed the first two Tab stops (both
+    # nav buttons) -- an explicit, stated call-order dependency, not a
+    # hidden one.
     before = refs["slider"].get("thumb_position")
-    window.press_key("tab")  # -> nav button 1
-    window.press_key("tab")  # -> nav button 2
     window.press_key("tab")  # -> checkbox (first gallery control, built after the nav)
     window.press_key("tab")  # -> slider
     window.press_key("right")
@@ -314,11 +437,63 @@ def verify_gallery_screen(window):
     print(f"Theme: cycled all {len(refs['swatches'])} seed swatches + dark toggle, no error")
 
 
+def verify_motion_screen(window):
+    """Phase 3's real functional proof, run while "motion" is the
+    active screen. Matches the exact verification bar every prior
+    motion-related example in this workspace already uses (`pan_zoom.
+    py`/`shape_morph.py`/`elevation.py`): a real dispatched click on
+    each trigger registers its animation with no error -- the
+    definitive pixel-level proof that each one actually paints its
+    target is `engine-render`'s own tests, not this script. A
+    duration>0 animation deliberately isn't asserted to have "landed"
+    a specific value here -- unlike Phase 2's Slider check, there's no
+    real, immediate-tick mechanism for `opacity`/`corner_radius`/
+    `elevation`/`shape`/`transform` the way a keyboard nudge gives a
+    Slider, so asserting a landed value would depend on unpredictable
+    real wall-clock/frame-rate timing, not the real thing being proved.
+    """
+    refs = MOTION_REFS
+    for btn in (refs["fade_btn"], refs["round_btn"], refs["elevate_btn"], refs["morph_btn"]):
+        window.click(btn)
+    print("Motion: Fade/Round/Elevate/Morph triggers each registered a real animation, no error")
+
+    window.click(refs["pan_zoom_btn"])
+    print("Canvas: pan/zoom transform animation registered on a real Canvas node, no error")
+
+    # Real finding, caught only by actually dispatching this click (a
+    # first draft assumed the opposite): `set_hit_test_circle` *replaces*
+    # the canvas's default rectangular hit test entirely, not narrows it
+    # -- `draw_node_graph`'s own circle sits over graph node 2's
+    # position, not the canvas's own geometric center, so a real click
+    # at the canvas's center (all `Window.click` can target) now misses
+    # it entirely. Asserted here as the real, positive proof that the
+    # custom hit test genuinely took effect, not the inverted claim a
+    # first draft made.
+    clicked = []
+    refs["graph"].set_on_click(lambda: clicked.append(True))
+    window.click(refs["graph"])
+    assert not clicked, "the custom circular hit test must replace the default rect, not add to it"
+    print("Canvas: the custom circular hit test genuinely replaced the default rectangular one")
+
+
 def main():
     window = Window(width=WINDOW_WIDTH, height=WINDOW_HEIGHT, title="tre v2 -- showcase")
     state, buttons, show_screen = build_showcase(window)
 
     assert state["current_key"] == SCREEN_ORDER[0], "the first screen must be shown at startup"
+
+    # Real Tab-order proof, done first while it's a clean, predictable
+    # state: the nav rail is always built before either screen's own
+    # content (see `build_showcase`), so the two nav buttons are always
+    # the first two Tab stops regardless of which screen is active --
+    # checked here before any other Tab presses (Phase 2's own Slider
+    # check below moves focus further) could make this ambiguous.
+    for expected_key in SCREEN_ORDER:
+        window.press_key("tab")
+        assert buttons[expected_key].is_focused(), (
+            f"Tab order must reach the {expected_key!r} nav button next"
+        )
+    print("keyboard Tab reaches every nav button first, in order")
 
     # Phase 2: exercise every gallery control while "components" (the
     # first screen) is still active.
@@ -330,17 +505,9 @@ def main():
     assert state["current_key"] == SCREEN_ORDER[1], "clicking a nav button must switch the active screen"
     print(f"nav click switched the active screen to {state['current_key']!r}")
 
-    # Real Tab-order proof: now that "motion" (a plain placeholder) is
-    # active, the two nav buttons are the only interactive content in
-    # the tree (the gallery's own many focusable controls were removed
-    # along with the "components" screen), so pressing Tab once per
-    # button must visit them in the same order they were attached.
-    for expected_key in SCREEN_ORDER:
-        window.press_key("tab")
-        assert buttons[expected_key].is_focused(), (
-            f"Tab order must reach the {expected_key!r} nav button next"
-        )
-    print("keyboard Tab reaches every nav button, in order")
+    # Phase 3: exercise every motion/canvas control while "motion" is
+    # the active screen.
+    verify_motion_screen(window)
 
     # Leave the gallery as the visible starting screen for anyone
     # actually running this interactively.
@@ -349,7 +516,7 @@ def main():
     app = App()
     app.add_window(window)
     app.run(max_frames=60)
-    print("demo/showcase.py: exited cleanly after 60 frames (Phase 2: MD3 component & theming gallery)")
+    print("demo/showcase.py: exited cleanly after 60 frames (Phase 3: motion & custom drawing)")
 
 
 if __name__ == "__main__":

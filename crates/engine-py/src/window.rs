@@ -210,13 +210,23 @@ pub struct PyWindow {
     pub(crate) title: String,
     pub(crate) width: u32,
     pub(crate) height: u32,
-    materializers: HashMap<NodeId, Py<PyAny>>,
+    /// M27 Phase 3: wrapped in a `RefCell` (previously a plain
+    /// `HashMap`) so `add_virtual_list` can be `&self` like every other
+    /// `add_*` method -- the real, concrete need Phase 1's own stated
+    /// residual limitation predicted: a real click handler that
+    /// navigates to a new screen and builds a `Canvas`/`VirtualList`
+    /// there (an entirely ordinary pattern) needs this, confirmed by
+    /// hitting the exact predicted "Already borrowed" panic while
+    /// building the showcase demo's own motion screen.
+    materializers: RefCell<HashMap<NodeId, Py<PyAny>>>,
     /// M5 Phase 3 (§11.10/§11.11): the "draw callback" storage,
     /// mirroring `materializers`'s own shape exactly -- stored by
     /// `add_canvas`, invoked (exactly once per call) only by the real
     /// entry point `redraw_canvas`, never automatically every frame
-    /// (see `PLAN.md`: no consumer has asked for that yet).
-    canvas_draws: HashMap<NodeId, Py<PyAny>>,
+    /// (see `PLAN.md`: no consumer has asked for that yet). Also
+    /// `RefCell`-wrapped as of M27 Phase 3, for the identical real
+    /// reason `materializers` is.
+    canvas_draws: RefCell<HashMap<NodeId, Py<PyAny>>>,
     pub(crate) handlers: HandlerMap,
     /// M4 Phase 7 (§11.3): `anchor NodeId -> content NodeId`, shared
     /// with every `Node` this `Window` hands out (`Node.
@@ -275,8 +285,8 @@ impl PyWindow {
             title: title.to_string(),
             width,
             height,
-            materializers: HashMap::new(),
-            canvas_draws: HashMap::new(),
+            materializers: RefCell::new(HashMap::new()),
+            canvas_draws: RefCell::new(HashMap::new()),
             handlers: Rc::new(RefCell::new(HashMap::new())),
             context_menus: Rc::new(RefCell::new(HashMap::new())),
             dock: Rc::new(RefCell::new(dock::DockState::new())),
@@ -1439,7 +1449,7 @@ impl PyWindow {
     // not a real code smell a struct would meaningfully fix.
     #[allow(clippy::too_many_arguments)]
     fn add_virtual_list(
-        &mut self,
+        &self,
         item_count: usize,
         materialize: Py<PyAny>,
         item_extent: Option<f64>,
@@ -1490,7 +1500,7 @@ impl PyWindow {
             tree.set_virtual_list_resolved_offsets(id, offsets);
         }
         drop(tree);
-        self.materializers.insert(id, materialize);
+        self.materializers.borrow_mut().insert(id, materialize);
         Ok(Node {
             id,
             tree: self.tree.clone(),
@@ -1529,6 +1539,7 @@ impl PyWindow {
     ) -> PyResult<()> {
         let materialize = self
             .materializers
+            .borrow()
             .get(&list.id)
             .ok_or(EngineError::NotAVirtualList)?
             .clone_ref(py);
@@ -1593,7 +1604,7 @@ impl PyWindow {
     /// "store now, invoke later" shape exactly.
     #[pyo3(signature = (width, height, draw, x=None, y=None))]
     fn add_canvas(
-        &mut self,
+        &self,
         width: f64,
         height: f64,
         draw: Py<PyAny>,
@@ -1615,7 +1626,7 @@ impl PyWindow {
         );
         tree.add_child(self.root, id);
         drop(tree);
-        self.canvas_draws.insert(id, draw);
+        self.canvas_draws.borrow_mut().insert(id, draw);
         Node {
             id,
             tree: self.tree.clone(),
@@ -1637,6 +1648,7 @@ impl PyWindow {
     fn redraw_canvas(&self, canvas: PyRef<'_, Node>, py: Python<'_>) -> PyResult<()> {
         let draw = self
             .canvas_draws
+            .borrow()
             .get(&canvas.id)
             .ok_or(EngineError::NotACanvas)?
             .clone_ref(py);
@@ -1672,12 +1684,12 @@ impl PyWindow {
     /// `Window` (a plausible, real pattern -- e.g. a bound method) forms
     /// a reference cycle the refcounting GC alone can never collect.
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
-        for materializer in self.materializers.values() {
+        for materializer in self.materializers.borrow().values() {
             visit.call(materializer)?;
         }
         // M5 Phase 3: `canvas_draws` is exactly the same class of stored
         // `PyObject` as `materializers` -- same cyclic-GC obligation.
-        for draw in self.canvas_draws.values() {
+        for draw in self.canvas_draws.borrow().values() {
             visit.call(draw)?;
         }
         for handler in self.handlers.borrow().values() {
@@ -1692,8 +1704,8 @@ impl PyWindow {
     }
 
     fn __clear__(&mut self) {
-        self.materializers.clear();
-        self.canvas_draws.clear();
+        self.materializers.borrow_mut().clear();
+        self.canvas_draws.borrow_mut().clear();
         self.handlers.borrow_mut().clear();
         self.completions.borrow_mut().callbacks.clear();
     }

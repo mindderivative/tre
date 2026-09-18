@@ -1,65 +1,62 @@
-# Log: M27 Phase 2 — MD3 Component & Theming Gallery Screen
+# Log: M27 Phase 3 — Motion & Custom Drawing Screen
 
-`demo/showcase.py`'s "components" placeholder replaced with a real
-gallery: `Checkbox`, `Slider`, `TextField`, `Image`, and `Icon` all
-live, plus a real seed-color/dark-mode theme picker exercising
-`Window.set_theme`'s own real live-re-theming path (confirmed:
-`set_theme` unconditionally calls both `Tree::set_all_interaction_tints`
-and `Tree::set_all_component_tints` on every call, retroactively
-re-tinting every already-built themed component, not just future ones
-— genuinely live re-theming, not just "new nodes pick up the new
-theme").
+`demo/showcase.py`'s "motion" placeholder replaced with a real screen:
+four real animation triggers (`opacity`/`corner_radius`/`elevation`/
+`shape` morph) on a shared demo card, each fired by a real dispatched
+click on its own button — not auto-playing on a timer with nothing
+driving it, per the milestone's own stated bar — plus a live `Canvas`
+(a real node graph, the same shape `examples/node_graph.py` already
+proves: edges/nodes as real `DrawCommand`s, one node with a real
+`CustomHitTest::Circle`) with its own real `transform` pan/zoom,
+`examples/pan_zoom.py`'s own mechanism applied to a `Canvas` node for
+the first time.
 
-**A real, genuine gap found while building this screen, not assumed:**
-`Window` had no way to create a plain `NodeKind::Text` label at all —
-`NodeKind::Text` has been fully real and renderable since §14 step 4,
-and a declarative `kind: Text` widget has built one since step 5, but
-no imperative `add_text` existed (confirmed via grep before writing
-any code). New `Window.add_text(content, background, width, height,
-font_family="Roboto", font_weight=400.0, font_size=16.0, x=None,
-y=None)`, mirroring `add_rect`'s own exact shape — `background` is
-repurposed as the glyph color, the identical real convention
-`paint_node`'s own `NodeKind::Text` arm and the declarative
-`required_background(..., "Text")` path already establish.
+**A real, connected fix this phase directly needed — exactly the
+residual limitation M27 Phase 1's own log predicted, now hit for
+real:** building this screen's `Canvas` from inside a nav-button click
+handler (an entirely ordinary "click here, build new UI there"
+pattern) panicked with `RuntimeError: Already borrowed`, because
+`add_canvas`/`add_virtual_list` were the two `PyWindow` methods Phase 1
+deliberately left `&mut self` — they write into `materializers`/
+`canvas_draws`, the only two `PyWindow` fields not already behind a
+`RefCell`. Fixed for real this time: wrapped both fields in their own
+`RefCell<HashMap<...>>`, converted `add_virtual_list`/`add_canvas` to
+`&self` (mirroring every other real `add_*` method), and updated their
+own read sites (`set_virtual_list_window`/`redraw_canvas`) and the
+`__traverse__`/`__clear__` GC hooks to borrow through the new
+`RefCell` instead of accessing the map directly. No more residual
+limitation — every `PyWindow` method can now be called from within any
+other one's own call stack.
 
-**Two more real, connected bugs found only by actually running the
-gallery end to end:**
+**Two more real bugs caught only by actually running it:**
 
-1. `Node.animate(property, value, duration_ms=0)` only *registers* the
-   animation — it snaps to the target the next time something ticks
-   the node, normally `App.run()`'s per-frame loop (already documented
-   in `view.rs::apply_binding_value`'s own doc comment, but not
-   something this demo's own first draft accounted for): a Slider
-   nudge attempted via `.animate("thumb_position", 0.9, duration_ms=0)`
-   before `app.run()` ever starts silently never landed. Fixed by
-   using the same real, already-proven mechanism `examples/slider.py`
-   established instead — a real Tab-focus + dispatched `ArrowRight`
-   key, which internally ticks immediately (unlike `animate()`).
-2. Tab order in the gallery screen starts *after* the two nav buttons
-   (built first, in `build_showcase`, before any screen's own content
-   exists) — a first draft's verification assumed the gallery's own
-   `Checkbox` was the first Tab stop; it's actually the third (two nav
-   buttons, then the checkbox). Fixed by accounting for the nav
-   buttons explicitly, confirmed by a standalone debug script isolating
-   the gallery screen alone (which needed only 2 Tabs, not 4) before
-   fixing the real script.
-
-Verification for the whole gallery avoids any new pixel-level readback
-(the definitive color-correctness proof stays in `engine-render`'s own
-tests, the same split every other example in this workspace already
-uses): `Checkbox.get_checked()` before/after a real toggle,
-`Slider.get("thumb_position")` before/after a real keyboard nudge,
-`TextField.get_text()` round-tripping real content, and every one of
-the 4 seed swatches plus the dark-mode toggle exercised through a real
-`Window.set_theme` call with no error.
+1. A first draft's Tab-order verification assumed the gallery's own
+   `Checkbox` was still the very first focusable control by the time
+   its check ran — but Phase 3 moved the nav-button Tab-order proof to
+   run *first* (a cleaner, more robust ordering in its own right,
+   since real content on both screens now means no screen is ever
+   "placeholder-only" anymore), which itself consumes the first two Tab
+   stops. Fixed by reducing the gallery's own Slider Tab-press count
+   from 4 to 2, with an explicit comment stating the real call-order
+   dependency rather than leaving it implicit.
+2. A first draft assumed `Node.set_hit_test_circle` only *narrows*
+   hits elsewhere in a canvas's bounds while leaving the default
+   rectangular hit-test intact for the canvas's own center — the
+   opposite of its real, documented behavior (it *replaces* the
+   default hit test entirely). A real dispatched click at the canvas's
+   own center (all `Window.click` can target) missed the custom circle
+   (centered on a specific graph node, not the canvas's own geometric
+   center) and never fired the handler. Fixed by asserting the real,
+   correct behavior instead of the wrong assumption — the click
+   genuinely misses, proving the override took effect.
 
 Full `cargo test --workspace --release` (all pre-existing suites
-unmodified and passing)/clippy `-D warnings`/fmt clean. `maturin
+unmodified and passing — widening `&self` can't break a test that
+never relied on exclusivity)/clippy `-D warnings`/fmt clean. `maturin
 develop --release` + `pytest tests/` (187 passed, unchanged, 1
 pre-existing skip), all 33 pre-existing examples, and the updated demo
-confirmed clean with the real display. Updated `docs/api/python/
-window.md` with the new `add_text` method. `mkdocs build --strict`
-clean.
+confirmed clean with the real display.
 
-M27 Phase 2 — MD3 Component & Theming Gallery Screen is now complete.
-M27 continues with Phase 3 (motion & custom-drawing screen).
+M27 Phase 3 — Motion & Custom Drawing Screen is now complete. M27
+continues with Phase 4 (data & layout screen: virtualized list +
+docking + a declarative `View` panel).

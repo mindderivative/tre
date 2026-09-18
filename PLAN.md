@@ -1,25 +1,29 @@
-# Plan: M27 Phase 2 — MD3 Component & Theming Gallery Screen
+# Plan: M27 Phase 3 — Motion & Custom Drawing Screen
 
-Corresponds to `BUILD_TRACKER.md` M27 Phase 2. Written retroactively
-alongside implementation (moved directly from scoping to building this
-phase) — see `LOG.md` and `BUILD_TRACKER.md`'s own Phase 2 entry for
-the complete real investigation, findings, and verification record.
+Corresponds to `BUILD_TRACKER.md` M27 Phase 3. Written retroactively
+alongside implementation — see `LOG.md` and `BUILD_TRACKER.md`'s own
+Phase 3 entry for the complete real investigation, findings, and
+verification record.
 
 ## What changed
 
-- New `Window.add_text(...)` (`crates/engine-py/src/window.rs`) — a
-  real, genuine gap found while building this screen: no imperative
-  way to create a plain `NodeKind::Text` label existed before this.
-- `demo/showcase.py`'s "components" placeholder replaced with
-  `build_gallery_screen`: `Checkbox`/`Slider`/`TextField`/`Image`/
-  `Icon` all live, plus a real seed-color/dark-mode theme picker
-  calling `Window.set_theme`.
-- Two real, connected bugs found and fixed by actually running it:
-  `Node.animate(..., duration_ms=0)` needs a tick to land (no render
-  loop running yet at verification time) — worked around with a real
-  Tab-focus + `ArrowRight` nudge instead, mirroring `examples/
-  slider.py`; and the gallery's own Tab order starts after the two
-  nav buttons, not at the gallery's own first control.
-- `docs/api/python/window.md` updated with the new `add_text` method.
+- `demo/showcase.py`'s "motion" placeholder replaced with
+  `build_motion_screen`: four real animation triggers (opacity/
+  corner_radius/elevation/shape) on a shared card, each fired by a
+  real click; a live `Canvas` node graph (reusing `examples/
+  node_graph.py`'s own real drawing/hit-test pattern) with its own
+  real `transform` pan/zoom (reusing `examples/pan_zoom.py`'s own
+  mechanism, applied to a `Canvas` for the first time).
+- Real, connected fix: `materializers`/`canvas_draws`
+  (`crates/engine-py/src/window.rs`) wrapped in their own `RefCell`,
+  letting `add_virtual_list`/`add_canvas` become `&self` like every
+  other `add_*` method — closes the exact residual re-entrancy
+  limitation Phase 1's own log predicted, hit for real this phase (a
+  nav-click handler building a `Canvas` panicked with `RuntimeError:
+  Already borrowed` before this fix).
+- Two more real bugs fixed after actually running it: a Tab-order
+  count assumption broken by reordering the nav-button check earlier,
+  and a wrong assumption about `set_hit_test_circle` replacing (not
+  narrowing) the canvas's default hit test.
 
 See `LOG.md` for the full narrative and verification results.
