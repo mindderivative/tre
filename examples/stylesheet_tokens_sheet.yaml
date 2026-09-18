@@ -1,0 +1,6 @@
+styles:
+  - style: {corner_radius: 4}
+  - kind: Rect
+    style: {corner_radius: 8, background: primary}
+  - classes: [accent]
+    style: {corner_radius: 16, background: secondary}

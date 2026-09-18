@@ -1,77 +1,61 @@
-# Plan: M25 Phase 2 — Real `PaintProperties.opacity` Compounding Across Every Remaining Paint Site (§5, §6), closing M25
+# Plan: M26 Phase 1 — Wire Stylesheet Cascade & MD3 Token Resolution into `View` (§16.3), closing M26
 
-Corresponds to `BUILD_TRACKER.md` M25 Phase 2: six real paint sites in
-`engine-render::paint_node` currently ignore `node.paint.opacity.
-current` entirely, or apply only their own local alpha without
-compounding it with the node's own real opacity.
+Corresponds to `BUILD_TRACKER.md` M26 Phase 1.
 
 ## Investigation (already done, confirmed via direct read)
 
-Every `scene.set_paint(...)` call site in `paint_node` audited
-directly:
-
-1. `NodeKind::Canvas`'s own `DrawCommand::FillRect`/`FillCircle`/
-   `StrokePath` — paints `*color` raw, zero opacity handling.
-2. `NodeKind::Image`'s `draw_texture_rects` call — no opacity
-   parameter used at all (`SampleRect`/`ImageQuality` carry none).
-3. `NodeKind::Slider`'s own track fill — paints `state.track_tint`
-   raw; only the thumb (a separate fill) multiplies by `node.paint.
-   opacity.current`, a real internal inconsistency within one kind.
-4. `NodeKind::Checkbox`'s own checkmark stroke — multiplies only by
-   `state.check_progress.current`, never compounded with `node.paint.
-   opacity.current`, so a checked checkbox mid-fade-out would show its
-   checkmark at full alpha while its own box correctly fades.
-5. Elevation/shadow painting (`shadow_color(0.15)`/`shadow_color(0.3)`,
-   the real fixed MD3 ambient/key alphas) — never multiplied by the
-   node's own opacity at all.
-6. The ripple/hover interaction overlay (`hover_opacity`/each ripple's
-   own `opacity`) — never compounded with `node.paint.opacity.current`
-   either.
-
-Every real, already-correct site (`Rect`/`Splitter`, `Text`,
-`TextField`, `Checkbox`'s own box, `Slider`'s own thumb, `Icon`) uses
-the identical `with_opacity(color, node.paint.opacity.current)`
-pattern already — this phase extends that same pattern to the six
-sites above, not a new mechanism.
+- `crates/engine-spec/src/reconcile.rs`'s `Reconciler::load`/`Reconciler::
+  reconcile` already accept `sheet: Option<&Stylesheet>, scheme:
+  Option<&ColorScheme>` and thread both correctly through `build_tree`
+  (the include-aware path `View` already uses).
+- `crates/engine-py/src/view.rs`'s `View::new`/`poll_reload` are the
+  *only* two real call sites of those methods in this crate, and both
+  always pass `None, None` today (confirmed via direct read of both).
+- `engine_spec::{Stylesheet, parse_stylesheet}` are already re-exported
+  at the crate root (`lib.rs`); `engine_md3::{ColorScheme,
+  DynamicTheme}` are too. `engine-py`'s own `Cargo.toml` already
+  depends on both crates — no new dependency needed.
+- `DynamicTheme::from_seed(seed: Color) -> DynamicTheme { light:
+  ColorScheme, dark: ColorScheme }` is the exact same real mechanism
+  `Window.set_theme` already calls; picking `light`/`dark` by a plain
+  `bool` mirrors `Window.set_theme(seed, dark=False)`'s own real
+  parameter shape.
+- The stylesheet path a `View(...)` call is given is a plain Python
+  constructor argument — as trusted as `path` itself already is — so
+  it's read directly via `std::fs::read_to_string`, the same way
+  `path` already is, not through `include:`'s own confined-path
+  resolution (that mechanism exists because `include:` paths are
+  embedded inside YAML *content*, not supplied directly by the caller).
 
 ## What will change
 
-- `crates/engine-render/src/lib.rs`:
-  - `Canvas` arm: each `DrawCommand` fill/stroke's own `*color`
-    becomes `with_opacity(*color, node.paint.opacity.current)`.
-  - `Image` arm: `Scene::draw_texture_rects` has no opacity parameter
-    (confirmed via direct source read of `vello_hybrid` 0.2.0) — apply
-    opacity the same way the `Icon` arm's own transform restoration
-    already establishes a "wrap in a temporary scene-state change"
-    precedent, here via `scene.push_layer(None, None, Some(opacity),
-    None, None)` / `pop_layer()` around the `draw_texture_rects` call
-    (the identical real opacity-only-layer mechanism ripple/hover
-    already uses) — skip the call entirely at `opacity <= 0.0` to
-    avoid an unnecessary GPU draw, matching the elevation section's
-    own existing `if elevation > 0.0` early-skip precedent.
-  - `Slider` arm: track fill becomes `with_opacity(state.track_tint,
-    node.paint.opacity.current)`.
-  - `Checkbox` arm: checkmark stroke becomes `with_opacity(state.
-    mark_tint, state.check_progress.current * node.paint.opacity.
-    current)` — compounds both real alpha sources multiplicatively,
-    the correct way two independent "how visible" factors combine.
-  - Elevation/shadow section: both `shadow_color(0.15)`/`shadow_color
-    (0.3)` calls become `shadow_color(0.15 * node.paint.opacity.
-    current)`/`shadow_color(0.3 * node.paint.opacity.current)`.
-  - Ripple/hover section: `hover_opacity.current` and each `ripple.
-    opacity.current` each multiplied by `node.paint.opacity.current`
-    before use.
-- New/updated `engine-render` pixel tests proving each of the six
-  sites genuinely fades with `node.paint.opacity`, not just "doesn't
-  crash": a `Canvas` node at `opacity: 0.5` paints its own real
-  half-alpha-blended `FillRect`; an `Image` node at `opacity: 0.5`
-  blends with its own real background; a `Slider` at `opacity: 0.5`
-  shows both track and thumb blended; a checked `Checkbox` at
-  `opacity: 0.5` shows its checkmark at real half alpha (not full);
-  elevation shadow at `opacity: 0.0` paints no shadow at all
-  (currently it would still paint one); ripple/hover overlay at
-  `opacity: 0.0` shows nothing (currently the ripple would still
-  paint at full ripple-opacity).
+`crates/engine-py/src/view.rs`:
+
+- New imports: `engine_md3::{ColorScheme, DynamicTheme}`,
+  `engine_spec::{Stylesheet, parse_stylesheet}` (added to the existing
+  `engine_spec::{...}` import list), `peniko::Color`.
+- `View`'s `#[new]` constructor gains
+  `#[pyo3(signature = (path, stylesheet=None, theme_seed=None, dark=false))]`:
+  `stylesheet: Option<String>` (a path to a stylesheet YAML file, read
+  and parsed via `parse_stylesheet`), `theme_seed: Option<(u8, u8, u8,
+  u8)>` (built into a `DynamicTheme::from_seed`, resolving `light` or
+  `dark` per the `dark` flag into a real `ColorScheme`).
+- `View` struct gains two new fields: `stylesheet: Option<Stylesheet>`,
+  `scheme: Option<ColorScheme>` — both stored so `poll_reload` can
+  reuse them on every future reconcile, not just the initial build.
+- Both the constructor's `Reconciler::load(...)` call and
+  `poll_reload`'s `self.reconciler.reconcile(...)` call pass
+  `self.stylesheet.as_ref()`/`self.scheme.as_ref()` instead of the
+  current hardcoded `None, None`.
+- New `examples/` script proving both a real stylesheet cascade
+  (`kind`/`classes`/`id` selectors) and a real MD3 token name
+  (`background: primary`) resolve correctly through the real Python
+  `View` API for the first time — the same "real, end-to-end proof"
+  standard every other milestone this session has held itself to.
+- Update `docs/guide/declarative-views.md`'s existing "Stylesheets and
+  MD3 color tokens aren't wired up from Python yet" admonition — this
+  phase closes that exact gap — and add the new constructor params to
+  `docs/api/python/view.md`.
 
 ## Testing
 
@@ -80,5 +64,6 @@ sites above, not a new mechanism.
 - `cargo fmt --check`
 - `maturin develop --release`
 - `pytest tests/ -v`
-- Run every example script (real display, no env stripping per the
-  corrected convention from Phase 1).
+- Run the new example script plus the full example suite (real
+  display, no env stripping).
+- `mkdocs build --strict` after the docs updates.

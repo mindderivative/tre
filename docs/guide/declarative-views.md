@@ -69,14 +69,52 @@ A typo'd field name is a load-time error naming the bad key and its line
 number, not a silently-ignored style — unknown fields are rejected
 everywhere in this schema.
 
-!!! note "Stylesheets and MD3 color tokens aren't wired up from Python yet"
-    `engine-spec` (the Rust crate parsing this schema) has a real
-    stylesheet cascade (`kind`/`classes`/`id` selectors) and can resolve
-    MD3 token names like `background: primary` against a live color
-    scheme — but the Python-facing `View` class doesn't call that path
-    yet; it only ever loads a view with literal colors and no
-    stylesheet. `classes:` is parsed but currently has no visible effect.
-    Use literal hex/named colors in `style.background` for now.
+## Stylesheets & MD3 color tokens
+
+Pass `stylesheet=` (a path to a stylesheet YAML file) and `theme_seed=`
+(an `(r, g, b, a)` tuple, the same shape `Window.set_theme` takes) to
+`View(...)` to enable the real stylesheet cascade and MD3 token
+resolution:
+
+```python
+view = View(
+    "gallery.yaml",
+    stylesheet="gallery_sheet.yaml",
+    theme_seed=(0x67, 0x50, 0xA4, 0xFF),
+    dark=False,
+)
+```
+
+A stylesheet is `{styles: [...]}`, a list of rules applied in real
+cascade precedence — baseline (no selector) → `kind:` → `classes:`
+(more classes beat fewer) → `id:` → the widget's own inline `style:`:
+
+```yaml
+styles:
+  - style: {corner_radius: 4}
+  - kind: Rect
+    style: {corner_radius: 8, background: primary}
+  - classes: [accent]
+    style: {corner_radius: 16, background: secondary}
+```
+
+With a real `theme_seed` given, `style.background` values that name a
+recognized MD3 role (`primary`, `on_primary`, `secondary`, `surface`,
+`error`, and every other real `ColorScheme` role) resolve against that
+scheme instead of being parsed as a literal color — a role name always
+wins over a same-named coincidental CSS color. Anything that isn't a
+recognized role name still falls back to literal color parsing
+(`"#6750A4"`, `"transparent"`), so a stylesheet can freely mix token
+names and literal colors.
+
+!!! note
+    `stylesheet=`/`theme_seed=` are both optional and independent — a
+    `View(path)` call with neither given (or `stylesheet=` given but no
+    `theme_seed=`) works exactly as before: literal colors only, no
+    cascade. A token name given with no `theme_seed=` fails to parse as
+    a literal color, the same real error it always would have.
+    `poll_reload()` re-resolves against the same stylesheet/theme on
+    every hot-reload, not just the initial load.
 
 ## Composing with `include:`
 

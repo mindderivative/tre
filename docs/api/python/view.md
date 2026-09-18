@@ -6,7 +6,7 @@ walkthrough of the YAML schema and data binding.
 
 ## `View`
 
-**`View(path)`**
+**`View(path, stylesheet=None, theme_seed=None, dark=False)`**
 
 Reads and parses the file at `path` (resolving `include:` directives
 relative to its own directory, recursively), builds the widget tree, and
@@ -16,6 +16,14 @@ file can't be read, `ValueError` if the YAML fails to parse or build.
 ```python
 view = View("counter.yaml")
 ```
+
+`stylesheet` (a path to a stylesheet YAML file) and `theme_seed` (an
+`(r, g, b, a)` tuple, `dark` a bool) enable the real stylesheet cascade
+and MD3 color token resolution — see
+[Declarative Views → Stylesheets & MD3 color tokens](../../guide/declarative-views.md#stylesheets-md3-color-tokens).
+Both default to `None`/`False`, byte-for-byte the prior literal-colors-
+only behavior. Both are remembered and reused by `poll_reload()` on
+every future hot-reload, not just the initial load.
 
 `View` has no width/height/render-loop of its own — it's never embedded
 in a live `winit` window.

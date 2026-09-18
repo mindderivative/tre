@@ -45,10 +45,12 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use engine_core::{EventKind, InputEvent, NodeId, PointerButton, Tree};
+use engine_md3::{ColorScheme, DynamicTheme};
 use engine_spec::{
-    Expression, Reconciler, ViewWatcher, WidgetSpec, evaluate, parse_binding,
-    parse_view_with_includes,
+    Expression, Reconciler, Stylesheet, ViewWatcher, WidgetSpec, evaluate, parse_binding,
+    parse_stylesheet, parse_view_with_includes,
 };
+use peniko::Color;
 use peniko::kurbo::Point;
 use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -303,12 +305,37 @@ pub struct View {
     /// no-GPU/no-display (TRE v1 finding #261); `View` still works,
     /// `poll_reload` just always reports no change.
     watcher: Option<ViewWatcher>,
+    /// M26 Phase 1 (§16.3): remembered so `poll_reload` re-resolves
+    /// against the same real stylesheet/scheme on every future
+    /// reconcile, not just the initial `Reconciler::load` -- both
+    /// `None` (the default) is byte-for-byte the prior "no styling,
+    /// literal colors only" behavior every existing `view.yaml` still
+    /// gets.
+    stylesheet: Option<Stylesheet>,
+    scheme: Option<ColorScheme>,
 }
 
 #[pymethods]
 impl View {
+    /// M26 Phase 1 (§16.3): `stylesheet` (a path to a real stylesheet
+    /// YAML file, read and parsed the same direct way `path` itself
+    /// already is -- a plain Python constructor argument, as trusted as
+    /// `path`, not embedded YAML *content* the way `include:` paths
+    /// are, so it needs none of `include:`'s own path-confinement
+    /// machinery) and `theme_seed`/`dark` (the identical real
+    /// `DynamicTheme::from_seed` mechanism `Window.set_theme` already
+    /// uses, picking `light`/`dark` the same way) are both optional and
+    /// both default to `None` -- a `View(path)` call with neither given
+    /// is byte-for-byte today's existing "literal colors only, no
+    /// stylesheet" behavior.
     #[new]
-    fn new(path: String) -> PyResult<Self> {
+    #[pyo3(signature = (path, stylesheet=None, theme_seed=None, dark=false))]
+    fn new(
+        path: String,
+        stylesheet: Option<String>,
+        theme_seed: Option<(u8, u8, u8, u8)>,
+        dark: bool,
+    ) -> PyResult<Self> {
         let yaml = std::fs::read_to_string(&path)
             .map_err(|e| PyRuntimeError::new_err(format!("failed to read view {path:?}: {e}")))?;
         // M19 Phase 2 (§16.6): an `include:` path is only ever
@@ -316,9 +343,35 @@ impl View {
         // own directory is the real base every include in this view
         // (and, recursively, every file it includes) resolves against.
         let base_dir = std::path::Path::new(&path).parent();
+
+        let stylesheet = match stylesheet {
+            Some(sheet_path) => {
+                let sheet_yaml = std::fs::read_to_string(&sheet_path).map_err(|e| {
+                    PyRuntimeError::new_err(format!(
+                        "failed to read stylesheet {sheet_path:?}: {e}"
+                    ))
+                })?;
+                Some(
+                    parse_stylesheet(&sheet_yaml)
+                        .map_err(|e| PyValueError::new_err(e.to_string()))?,
+                )
+            }
+            None => None,
+        };
+        let scheme = theme_seed.map(|(r, g, b, a)| {
+            let theme = DynamicTheme::from_seed(Color::from_rgba8(r, g, b, a));
+            if dark { theme.dark } else { theme.light }
+        });
+
         let mut tree = Tree::new();
-        let reconciler = Reconciler::load(&mut tree, &yaml, None, None, base_dir)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let reconciler = Reconciler::load(
+            &mut tree,
+            &yaml,
+            stylesheet.as_ref(),
+            scheme.as_ref(),
+            base_dir,
+        )
+        .map_err(|e| PyValueError::new_err(e.to_string()))?;
         let spec = parse_view_with_includes(&yaml, base_dir)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
@@ -352,6 +405,8 @@ impl View {
             context_menus: Rc::new(RefCell::new(HashMap::new())),
             path,
             watcher,
+            stylesheet,
+            scheme,
         })
     }
 
@@ -417,7 +472,13 @@ impl View {
         let base_dir = std::path::Path::new(&self.path).parent();
         let mut tree = self.tree.borrow_mut();
         self.reconciler
-            .reconcile(&mut tree, &yaml, None, None, base_dir)
+            .reconcile(
+                &mut tree,
+                &yaml,
+                self.stylesheet.as_ref(),
+                self.scheme.as_ref(),
+                base_dir,
+            )
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(true)
     }
