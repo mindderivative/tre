@@ -1927,11 +1927,24 @@ impl PyWindow {
     /// attached to `self.root` like every other `add_*` node, the same
     /// "detach, then re-attach elsewhere" real mechanism `Tree::detach`
     /// already provides for exactly this kind of real re-parenting.
-    #[pyo3(signature = (label, icon=None, width=200.0, x=None, y=None))]
+    ///
+    /// M30 Phase 8 Step 6 (§11.3): `submenu` adds a real trailing
+    /// `chevron_right` indicator -- MD3's own real convention for "this
+    /// item opens a nested menu." A purely visual affordance, not a new
+    /// interaction primitive: the real submenu itself is just *another*
+    /// `Menu` (`build_menu` + `open_menu`), opened with this item's own
+    /// returned `Node` as the anchor, exactly the way `Main Menu`
+    /// submenus extend the already-real context-menu overlay mechanism
+    /// (M4 Phase 7) rather than needing a new overlay kind -- confirmed
+    /// directly (`Tree::open_overlay` takes any `NodeId` as its own real
+    /// anchor already, no special-casing for "is this a menu item"
+    /// anywhere), not assumed.
+    #[pyo3(signature = (label, icon=None, submenu=false, width=200.0, x=None, y=None))]
     fn add_menu_item(
         &self,
         label: &str,
         icon: Option<&str>,
+        submenu: bool,
         width: f32,
         x: Option<f32>,
         y: Option<f32>,
@@ -1948,6 +1961,11 @@ impl PyWindow {
             (theme.on_surface(), icon_color)
         };
         let icon_path = icon.map(resolve_icon_path).transpose()?;
+        let chevron_path = if submenu {
+            Some(resolve_icon_path("chevron_right")?)
+        } else {
+            None
+        };
 
         let mut tree = self.tree.borrow_mut();
         let mut container_style = positioned_style(
@@ -1996,9 +2014,15 @@ impl PyWindow {
             tree.add_child(container, icon_id);
         }
 
+        let trailing_reserved = if chevron_path.is_some() {
+            MENU_ITEM_ICON_SIZE + MENU_ITEM_ICON_GAP
+        } else {
+            0.0
+        };
         let label_width = (width
             - 2.0 * MENU_ITEM_LEADING_SPACE
-            - icon_count * (MENU_ITEM_ICON_SIZE + MENU_ITEM_ICON_GAP))
+            - icon_count * (MENU_ITEM_ICON_SIZE + MENU_ITEM_ICON_GAP)
+            - trailing_reserved)
             .max(0.0);
         let label_id = tree.insert(
             NodeKind::Text(TextState {
@@ -2018,6 +2042,24 @@ impl PyWindow {
             PaintProperties::new(label_color, 0.0, 0.0, 1.0),
         );
         tree.add_child(container, label_id);
+
+        if let Some(path) = chevron_path {
+            let chevron_id = tree.insert(
+                NodeKind::Icon(IconState {
+                    path,
+                    tint: icon_color,
+                }),
+                Style {
+                    size: Size {
+                        width: length(MENU_ITEM_ICON_SIZE),
+                        height: length(MENU_ITEM_ICON_SIZE),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(container, chevron_id);
+        }
 
         tree.add_child(self.root, container);
         Ok(self.wrap_node(container))

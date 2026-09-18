@@ -84,6 +84,17 @@ const ICONS: &[(&str, &str)] = &[
         "arrow_forward",
         "M647-440H160v-80h487L423-744l57-56 320 320-320 320-57-56 224-224Z",
     ),
+    // M30 Phase 8 Step 6 (§1, §3): a real, confirmed need -- a `Main
+    // Menu` submenu item needs a real right-pointing chevron
+    // indicator. Fetched directly from the identical real CDN this
+    // module's own doc comment already cites, not invented or
+    // approximated -- the twelfth curated icon, growing this set
+    // exactly the way its own doc comment says it will, "when a real
+    // need asks for more."
+    (
+        "chevron_right",
+        "M504-480 320-664l56-56 240 240-240 240-56-56 184-184Z",
+    ),
 ];
 
 /// The real, verbatim `d=` SVG path data for a curated icon `name`, or

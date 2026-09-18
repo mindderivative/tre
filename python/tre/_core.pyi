@@ -281,11 +281,18 @@ class Window:
         self,
         label: str,
         icon: str | None = None,
+        submenu: bool = False,
         width: float = 200.0,
         x: float | None = None,
         y: float | None = None,
     ) -> Node:
-        """One real MD3 menu row. Raises `ValueError` for an unknown
+        """One real MD3 menu row. `submenu=True` adds a real trailing
+        chevron indicator ("this item opens a nested menu") -- a
+        purely visual affordance; the real submenu itself is just
+        another `build_menu`/`open_menu` pair, opened with this
+        item's own returned `Node` as the anchor (`Main Menu`
+        submenus extend the existing context-menu overlay mechanism,
+        not a new overlay kind). Raises `ValueError` for an unknown
         `icon`. Not shown anywhere on its own -- pass a list of these
         to `build_menu`.
         """

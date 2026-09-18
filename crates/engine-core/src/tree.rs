@@ -603,11 +603,37 @@ impl Tree {
     /// anything was actually dismissed, so `dispatch`'s own
     /// `PointerPressed` arm knows whether to consume that press.
     fn dismiss_overlays_outside(&mut self, point: Point) -> bool {
+        // M30 Phase 8 Step 6 (§11.3): a real, confirmed bug this step's
+        // own `Main Menu` submenus found live, not assumed in advance --
+        // a submenu opened *inside* a real parent menu (`open_menu`
+        // with a menu-item `Node` as its own anchor, exactly what this
+        // step's own real submenu design already does) genuinely sits
+        // outside the parent menu's own bounds (`open_overlay` always
+        // positions content anchor-relative-below, so a submenu grows
+        // past whatever real vertical space the parent menu's own
+        // bounds occupy). A real click on a submenu item used to
+        // dismiss the *parent* menu first -- its own `dismiss_on_
+        // outside_click` filter only ever checked the point against
+        // that ONE overlay's own bounds, found it genuinely outside,
+        // and consumed the click before it ever reached the submenu
+        // item at all. The real, minimal fix: a point inside *any*
+        // currently-open overlay is never "outside" for the purposes
+        // of dismissing a *different* overlay -- the user is still
+        // interacting with the real overlay system as a whole. A true
+        // no-op for the single-overlay case every existing real caller
+        // (`Menu`/`Tooltip`/`Search View`/`Popover`) already exercises:
+        // with only one overlay open, "inside any overlay" and "inside
+        // this overlay" are the identical real condition.
+        let inside_any_overlay = self
+            .overlays
+            .keys()
+            .any(|&content| self.hit_test(content, point).is_some());
         let to_dismiss: Vec<NodeId> = self
             .overlays
             .iter()
             .filter(|(content, meta)| {
                 meta.dismiss_on_outside_click
+                    && !inside_any_overlay
                     && self.hit_test(**content, point).is_none()
                     && self.hit_test(meta.anchor, point).is_none()
             })
@@ -3392,6 +3418,135 @@ mod tests {
         assert!(
             tree.get(root).unwrap().children.contains(&menu),
             "the reopened overlay must be genuinely attached to root again"
+        );
+    }
+
+    /// M30 Phase 8 Step 6 (§11.3): direct, dedicated coverage for the
+    /// real, confirmed bug this step's own `Main Menu` submenus found
+    /// live (not assumed in advance, via a genuinely failing example
+    /// run) -- `open_overlay` always positions content anchor-relative-
+    /// *below*, so a submenu anchored to an item inside an already-open
+    /// parent menu genuinely sits outside the parent menu's own bounds.
+    /// Before the fix, `dismiss_overlays_outside`'s own filter only
+    /// checked a *candidate* overlay's own bounds, so a press genuinely
+    /// inside the submenu (but outside the parent menu) was wrongly
+    /// treated as "outside" the parent menu -- dismissing it and
+    /// consuming the press via `dispatch`'s own early-return, before the
+    /// submenu's own content ever got a chance to register the press.
+    ///
+    /// Builds a two-overlay scene deliberately, not reusing
+    /// `overlay_scene` (which only ever opens one overlay): a
+    /// `trigger` (0,0)-(80,20) anchors `parent_menu` (0,20)-(120,40);
+    /// `parent_item`, a real child of `parent_menu` sized to fill it
+    /// exactly, anchors `submenu` (0,40)-(120,100) -- so `submenu`
+    /// genuinely starts exactly where `parent_menu` ends, definitively
+    /// outside it. A press at `submenu`'s own center (60,70) is inside
+    /// `submenu` but outside `parent_menu`'s own (0,20)-(120,40) bounds.
+    #[test]
+    fn a_press_inside_a_nested_submenu_does_not_dismiss_its_own_parent_menu() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            size: Size {
+                width: length(300.0),
+                height: length(300.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+        let (k, s, p) = leaf(80.0, 20.0);
+        let trigger = tree.insert(k, s, p);
+        tree.add_child(root, trigger);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+
+        let (k, s, p) = leaf(120.0, 20.0);
+        let parent_menu = tree.insert(k, s, p);
+        tree.open_overlay(
+            root,
+            trigger,
+            parent_menu,
+            OverlayMeta {
+                anchor: trigger,
+                dismiss_on_outside_click: true,
+                dismiss_on_escape: true,
+                modal: false,
+            },
+        );
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+
+        // A real child of parent_menu, sized to fill it exactly, the
+        // same way `add_menu_item`'s own real container fills its own
+        // parent `Menu` -- its own resolved absolute position is
+        // therefore identical to parent_menu's, (0,20).
+        let (k, s, p) = leaf(120.0, 20.0);
+        let parent_item = tree.insert(k, s, p);
+        tree.add_child(parent_menu, parent_item);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+
+        let (k, s, p) = leaf(120.0, 60.0);
+        let submenu = tree.insert(k, s, p);
+        tree.open_overlay(
+            root,
+            parent_item,
+            submenu,
+            OverlayMeta {
+                anchor: parent_item,
+                dismiss_on_outside_click: true,
+                dismiss_on_escape: true,
+                modal: false,
+            },
+        );
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(60.0, 70.0), // inside submenu's (0,40)-(120,100), outside parent_menu's (0,20)-(120,40)
+                button: PointerButton::Primary,
+            },
+            &dispatch_config(),
+            Instant::now(),
+        );
+
+        assert_eq!(outcome, DispatchOutcome::None);
+        assert!(
+            tree.overlay_meta(parent_menu).is_some(),
+            "a real press inside a nested submenu must never dismiss its own parent menu, \
+             even though the submenu itself sits outside the parent menu's own bounds"
+        );
+        assert!(
+            tree.overlay_meta(submenu).is_some(),
+            "a real press genuinely inside the submenu must never dismiss the submenu itself"
+        );
+        assert_eq!(
+            tree.pressed,
+            Some((PointerButton::Primary, submenu)),
+            "the press must reach the submenu's own content, not be swallowed by a wrongful \
+             dismissal of the parent menu"
         );
     }
 
