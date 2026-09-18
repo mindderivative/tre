@@ -648,6 +648,27 @@ class Window:
         different `Window`.
         """
         ...
+    def add_accordion_header(
+        self,
+        title: str,
+        expanded: bool = False,
+        width: float = ...,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> tuple[Node, Node]:
+        """An `Accordion` header -- MD3 has no official Accordion
+        page; this reuses List Item's own real anatomy (a headline +
+        trailing expand/collapse chevron). Returns `(header, chevron)`:
+        `header` is the real clickable row; `chevron` is the real,
+        independently-addressable icon `Node` to flip on toggle.
+        This engine has no rotation-animation primitive exposed to
+        Python, so flip it via `Node.animate("transform", (0.0, 0.0,
+        -1.0))` (collapsed: `1.0`) -- a uniform negative scale, which
+        for this glyph's own point-symmetric shape looks identical to
+        a real 180° rotation. `expanded` seeds the chevron's own
+        initial orientation to match.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,

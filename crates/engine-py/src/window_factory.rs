@@ -19,6 +19,7 @@ use engine_core::{
     Role, SliderState, SplitterState, SwitchState, TextAlign, TextFieldState, TextState,
 };
 use peniko::Color;
+use peniko::kurbo::Affine;
 use pyo3::prelude::*;
 use taffy::prelude::{
     AlignItems, JustifyContent, Position, Rect as TaffyRect, Size, Style, auto, length, zero,
@@ -785,6 +786,42 @@ const SEARCH_TRAILING_ICON_GAP: f32 = 8.0;
 /// same "engine gives primitives, app composes" contract every other
 /// bare-container component in this catalog already has.
 const LIST_ITEM_TWO_LINE_HEIGHT: f32 = 72.0;
+
+/// `Accordion` (M30 Phase 6 Step 2). **Real, confirmed finding,
+/// already established rather than re-derived here:** MD3 has no
+/// official Accordion component page at all -- `BUILD_TRACKER.md`'s
+/// own scope text already names this, confirmed by pyCopper's own
+/// real prior research against the full M3 reference library;
+/// grounded instead in the Lists guideline's own "expand and collapse
+/// in a folder-like manner" text, the identical real grounding
+/// pyCopper used. Real, deliberate scope: only the *header* (title +
+/// expand/collapse chevron) is this step's own real new anatomy --
+/// the collapsible content region has no distinctive MD3 styling of
+/// its own, so the app composes it from any already-real container
+/// (`add_rect`/`add_card`) and shows/hides it via the already-generic
+/// `Node.add_child`/`Node.remove()`, the identical "engine gives
+/// primitives, app composes" contract `Card` itself already has --
+/// no dedicated `add_accordion_content` method invented for something
+/// with zero real anatomy of its own. Header reuses List Item's own
+/// real anatomy (`MENU_ITEM_*`) exactly -- the same real "no dedicated
+/// token file, reuse List Item's" pattern `Menu`/`List` already
+/// established.
+///
+/// **Real, confirmed engine limitation found and honestly worked
+/// around, not silently assumed solved:** `Node.animate("transform",
+/// ...)` only ever composes translate+scale (`extract_translate_
+/// scale`'s own real, stated shape, M6 Phase 2) -- there is no real
+/// rotation capability exposed to Python at all. A literal spinning
+/// chevron is not buildable through the existing API. The real,
+/// working substitute: `Affine::scale(-1.0)` (a uniform negative
+/// scale, flipping both axes) is mathematically identical to a 180°
+/// rotation for any point-symmetric glyph, and the curated `expand_
+/// more` chevron (a plain V-shape, symmetric about its own center) is
+/// exactly that -- so `Node.animate("transform", (0.0, 0.0, -1.0))`
+/// on the real, independently-returned chevron `Node` genuinely does
+/// flip it into a convincing "expanded" orientation, reusing scale
+/// (already real) rather than needing a new rotation primitive.
+const ACCORDION_CHEVRON_ICON: &str = "expand_more";
 
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
@@ -4387,6 +4424,122 @@ impl PyWindow {
 
         tree.add_child(self.root, frame);
         Ok(self.wrap_node(frame))
+    }
+
+    /// M30 Phase 6 Step 2 (§1, §3, §5, §7): `Accordion`'s own real
+    /// header -- see the `ACCORDION_CHEVRON_ICON` constant above for
+    /// the full real finding, including MD3's own real lack of an
+    /// official Accordion page and the real, honest chevron-rotation
+    /// workaround (`Affine::scale(-1.0)`, not a rotation primitive
+    /// that doesn't exist). Real anatomy reuses List Item's own
+    /// exactly (`MENU_ITEM_*`): 56dp height, `on_surface` headline
+    /// (Label Large), a trailing 24dp chevron (`on_surface_variant`).
+    /// Returns `(header, chevron)`: `header` is the real clickable
+    /// row (`enable_interaction()`/`set_on_click()` toggle it exactly
+    /// like any other component in this catalog -- group-exclusivity/
+    /// expand-state is app-owned, Design Principle 6, the same real
+    /// dividing line every other toggle-shaped component in this
+    /// milestone already established); `chevron` is the real,
+    /// independently-addressable `Node` the app flips via `Node.
+    /// animate("transform", (0.0, 0.0, -1.0 if expanded else 1.0))`.
+    /// `expanded` seeds the chevron's own real initial orientation --
+    /// a true no-op (`scale: 1.0`, identity) when `false`.
+    #[pyo3(signature = (title, expanded=false, width=360.0, x=None, y=None))]
+    fn add_accordion_header(
+        &self,
+        title: &str,
+        expanded: bool,
+        width: f32,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<(Node, Node)> {
+        let chevron_path = resolve_icon_path(ACCORDION_CHEVRON_ICON)?;
+
+        let (headline_color, chevron_color) = {
+            let theme = self.theme.borrow();
+            let on_surface_variant = if theme.is_set() {
+                theme
+                    .role("on_surface_variant")
+                    .unwrap_or(Md3Baseline::ON_SURFACE_VARIANT)
+            } else {
+                Md3Baseline::ON_SURFACE_VARIANT
+            };
+            (theme.on_surface(), on_surface_variant)
+        };
+
+        let mut tree = self.tree.borrow_mut();
+
+        let mut header_style = positioned_style(
+            Size {
+                width: length(width),
+                height: length(MENU_ITEM_HEIGHT),
+            },
+            x,
+            y,
+        );
+        header_style.display = taffy::Display::Flex;
+        header_style.align_items = Some(AlignItems::CENTER);
+        header_style.padding = TaffyRect {
+            left: length(MENU_ITEM_LEADING_SPACE),
+            right: length(MENU_ITEM_LEADING_SPACE),
+            top: zero(),
+            bottom: zero(),
+        };
+        header_style.gap = Size {
+            width: length(MENU_ITEM_ICON_GAP),
+            height: length(0.0),
+        };
+        let header = tree.insert(
+            NodeKind::Rect,
+            header_style,
+            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+
+        let headline_width =
+            (width - 2.0 * MENU_ITEM_LEADING_SPACE - MENU_ITEM_ICON_SIZE - MENU_ITEM_ICON_GAP)
+                .max(0.0);
+        let headline_id = tree.insert(
+            NodeKind::Text(TextState {
+                content: title.to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: BUTTON_LABEL_FONT_WEIGHT,
+                font_size: BUTTON_LABEL_FONT_SIZE,
+                align: TextAlign::Start,
+            }),
+            Style {
+                flex_grow: 1.0,
+                size: Size {
+                    width: length(headline_width),
+                    height: length(BUTTON_LABEL_LINE_HEIGHT),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(headline_color, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(header, headline_id);
+
+        let mut chevron_paint = PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0);
+        if expanded {
+            chevron_paint.transform = Animated::new(Affine::scale(-1.0));
+        }
+        let chevron = tree.insert(
+            NodeKind::Icon(IconState {
+                path: chevron_path,
+                tint: chevron_color,
+            }),
+            Style {
+                size: Size {
+                    width: length(MENU_ITEM_ICON_SIZE),
+                    height: length(MENU_ITEM_ICON_SIZE),
+                },
+                ..Default::default()
+            },
+            chevron_paint,
+        );
+        tree.add_child(header, chevron);
+
+        tree.add_child(self.root, header);
+        Ok((self.wrap_node(header), self.wrap_node(chevron)))
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,
