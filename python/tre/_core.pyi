@@ -616,6 +616,38 @@ class Window:
         bar's own `bar` node.
         """
         ...
+    def add_list_item(
+        self,
+        headline: str,
+        leading_icon: str | None = None,
+        trailing_icon: str | None = None,
+        supporting_text: str | None = None,
+        width: float = ...,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """A real MD3 list item -- one-line (56dp) by default, or a
+        real two-line (72dp) variant when `supporting_text` is given.
+        Already attached -- pass it (with siblings) to `add_list` to
+        group them into an actual list frame.
+        """
+        ...
+    def add_list(
+        self,
+        items: list[Node],
+        width: float = ...,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """Groups `add_list_item`-built rows into one real, plain,
+        non-virtualized vertical list -- for small real collections;
+        `VirtualList` stays the real choice for large ones. Moves
+        each item (detach, then re-parent) into the returned frame,
+        the same real mechanism `build_menu` already uses. Raises
+        `ValueError` if `items` is empty or any item belongs to a
+        different `Window`.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,

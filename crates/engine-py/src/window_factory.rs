@@ -763,6 +763,29 @@ const SEARCH_ICON_BUTTON_SIZE: f32 = 40.0;
 const SEARCH_BAR_HORIZONTAL_PADDING: f32 = 4.0;
 const SEARCH_TRAILING_ICON_GAP: f32 = 8.0;
 
+/// MD3's own real List/ListItem anatomy (M30 Phase 6 Step 1). Real,
+/// confirmed relationship to `VirtualList` (already real since M4/M8):
+/// this is a plain, non-virtualized list for small real collections
+/// -- `VirtualList` stays the real choice for large ones, not two
+/// unrelated mechanisms, this step's own real scope note already
+/// named this explicitly. Real per-item anatomy is List Item's own
+/// token file, already investigated once (Phase 2 Step 4, `Menu`'s
+/// own real finding that Material Web has no dedicated menu-item
+/// token file and reuses List Item's directly) -- `MENU_ITEM_*`
+/// reused verbatim here for the identical real reason, plus a real,
+/// confirmed new finding this step made: the *two-line* variant (72dp,
+/// vs. the already-known one-line 56dp) for a headline + real
+/// supporting-text second line, Body Medium (`DIALOG_BODY_FONT_SIZE`/
+/// `_WEIGHT` reused directly, the identical real role `Dialog`'s own
+/// body text already uses), `on_surface_variant` -- the same real
+/// role trailing supporting text (metadata) also uses, confirmed from
+/// the same fetch. No divider token exists in the list's own file
+/// (confirmed by the same fetch) -- an app composes one itself via
+/// the already-real `add_divider` (`OUTLINE_VARIANT`) if wanted, the
+/// same "engine gives primitives, app composes" contract every other
+/// bare-container component in this catalog already has.
+const LIST_ITEM_TWO_LINE_HEIGHT: f32 = 72.0;
+
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
 /// trailing icon -- that's `Icon Button`'s own separate anatomy, Phase
@@ -4091,6 +4114,279 @@ impl PyWindow {
             ),
         );
         self.wrap_node(id)
+    }
+
+    /// M30 Phase 6 Step 1 (§5, §7): one real MD3 list item.
+    /// `Chip`/`Menu Item`'s own real composition shape (`Rect` +
+    /// optional leading `Icon` + `Text` + optional trailing `Icon`)
+    /// extended with a real, new second real line -- see the
+    /// `LIST_ITEM_TWO_LINE_HEIGHT` constant above for the full real
+    /// finding. **Real, deliberate design avoiding a repeat of
+    /// `Navigation Rail`/`Tabs`'s own hit-test bug, applied
+    /// proactively this time, not found the hard way a third time:**
+    /// the two-line variant's own headline+supporting-text block is a
+    /// real, necessary `NodeKind::Container` wrapper (two stacked
+    /// `Text` children need *some* grouping node) -- `Tree::
+    /// set_hit_testable(text_block, false)` is applied immediately on
+    /// insertion, the same real capability `Navigation Rail` added and
+    /// `Tabs` already confirmed generalizes, verified again here by
+    /// this step's own click-dispatch test rather than assumed safe.
+    /// Attached to `self.root` immediately, matching `Menu Item`'s own
+    /// real contract -- `add_list` is what re-parents it into an
+    /// actual list frame, the identical real `Tree::detach`-then-
+    /// `add_child` mechanism `build_menu` already established.
+    #[pyo3(signature = (headline, leading_icon=None, trailing_icon=None, supporting_text=None, width=360.0, x=None, y=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn add_list_item(
+        &self,
+        headline: &str,
+        leading_icon: Option<&str>,
+        trailing_icon: Option<&str>,
+        supporting_text: Option<&str>,
+        width: f32,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<Node> {
+        let leading_path = leading_icon.map(resolve_icon_path).transpose()?;
+        let trailing_path = trailing_icon.map(resolve_icon_path).transpose()?;
+
+        let (headline_color, icon_color, supporting_color) = {
+            let theme = self.theme.borrow();
+            let on_surface_variant = if theme.is_set() {
+                theme
+                    .role("on_surface_variant")
+                    .unwrap_or(Md3Baseline::ON_SURFACE_VARIANT)
+            } else {
+                Md3Baseline::ON_SURFACE_VARIANT
+            };
+            (theme.on_surface(), on_surface_variant, on_surface_variant)
+        };
+
+        let mut tree = self.tree.borrow_mut();
+        let height = if supporting_text.is_some() {
+            LIST_ITEM_TWO_LINE_HEIGHT
+        } else {
+            MENU_ITEM_HEIGHT
+        };
+
+        let mut container_style = positioned_style(
+            Size {
+                width: length(width),
+                height: length(height),
+            },
+            x,
+            y,
+        );
+        container_style.display = taffy::Display::Flex;
+        container_style.align_items = Some(AlignItems::CENTER);
+        container_style.padding = TaffyRect {
+            left: length(MENU_ITEM_LEADING_SPACE),
+            right: length(MENU_ITEM_LEADING_SPACE),
+            top: zero(),
+            bottom: zero(),
+        };
+        container_style.gap = Size {
+            width: length(MENU_ITEM_ICON_GAP),
+            height: length(0.0),
+        };
+        let container = tree.insert(
+            NodeKind::Rect,
+            container_style,
+            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+
+        let mut side_width = 0.0_f32;
+        if let Some(path) = leading_path {
+            side_width += MENU_ITEM_ICON_SIZE + MENU_ITEM_ICON_GAP;
+            let icon_id = tree.insert(
+                NodeKind::Icon(IconState {
+                    path,
+                    tint: icon_color,
+                }),
+                Style {
+                    size: Size {
+                        width: length(MENU_ITEM_ICON_SIZE),
+                        height: length(MENU_ITEM_ICON_SIZE),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(container, icon_id);
+        }
+        if trailing_path.is_some() {
+            side_width += MENU_ITEM_ICON_SIZE + MENU_ITEM_ICON_GAP;
+        }
+
+        let text_width = (width - 2.0 * MENU_ITEM_LEADING_SPACE - side_width).max(0.0);
+        if let Some(supporting) = supporting_text {
+            let text_block = tree.insert(
+                NodeKind::Container,
+                Style {
+                    display: taffy::Display::Flex,
+                    flex_direction: taffy::FlexDirection::Column,
+                    size: Size {
+                        width: length(text_width),
+                        height: length(LIST_ITEM_TWO_LINE_HEIGHT),
+                    },
+                    justify_content: Some(JustifyContent::CENTER),
+                    ..Default::default()
+                },
+                PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+            );
+            tree.set_hit_testable(text_block, false);
+
+            let headline_id = tree.insert(
+                NodeKind::Text(TextState {
+                    content: headline.to_string(),
+                    font_family: "Roboto".to_string(),
+                    font_weight: BUTTON_LABEL_FONT_WEIGHT,
+                    font_size: BUTTON_LABEL_FONT_SIZE,
+                    align: TextAlign::Start,
+                }),
+                Style {
+                    size: Size {
+                        width: length(text_width),
+                        height: length(BUTTON_LABEL_LINE_HEIGHT),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(headline_color, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(text_block, headline_id);
+
+            let supporting_id = tree.insert(
+                NodeKind::Text(TextState {
+                    content: supporting.to_string(),
+                    font_family: "Roboto".to_string(),
+                    font_weight: DIALOG_BODY_FONT_WEIGHT,
+                    font_size: DIALOG_BODY_FONT_SIZE,
+                    align: TextAlign::Start,
+                }),
+                Style {
+                    size: Size {
+                        width: length(text_width),
+                        height: length(DIALOG_BODY_FONT_SIZE + 4.0),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(supporting_color, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(text_block, supporting_id);
+            tree.add_child(container, text_block);
+        } else {
+            let headline_id = tree.insert(
+                NodeKind::Text(TextState {
+                    content: headline.to_string(),
+                    font_family: "Roboto".to_string(),
+                    font_weight: BUTTON_LABEL_FONT_WEIGHT,
+                    font_size: BUTTON_LABEL_FONT_SIZE,
+                    align: TextAlign::Start,
+                }),
+                Style {
+                    size: Size {
+                        width: length(text_width),
+                        height: length(BUTTON_LABEL_LINE_HEIGHT),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(headline_color, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(container, headline_id);
+        }
+
+        if let Some(path) = trailing_path {
+            let icon_id = tree.insert(
+                NodeKind::Icon(IconState {
+                    path,
+                    tint: icon_color,
+                }),
+                Style {
+                    size: Size {
+                        width: length(MENU_ITEM_ICON_SIZE),
+                        height: length(MENU_ITEM_ICON_SIZE),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(container, icon_id);
+        }
+
+        tree.add_child(self.root, container);
+        Ok(self.wrap_node(container))
+    }
+
+    /// M30 Phase 6 Step 1 (§5, §7): `List`, a plain, non-virtualized
+    /// vertical grouping of `add_list_item`-built rows -- the real,
+    /// confirmed relationship to `VirtualList` this step's own scope
+    /// note already named: small real collections, not large ones
+    /// (`VirtualList`, already real since M4/M8, stays the real choice
+    /// there). Real, deliberate design: no fill/elevation/shape of its
+    /// own in real MD3 -- a bare structural grouping, `NodeKind::
+    /// Container` (matching `AppShell`'s own real content-region
+    /// precedent), individual items carry all the visual weight.
+    /// **Real, deliberate reuse, not a new re-parenting mechanism:**
+    /// moves each item (`Tree::detach` then `add_child`) into the
+    /// returned frame, the identical real mechanism `build_menu`
+    /// already established for `Menu Item`'s own real re-parenting.
+    #[pyo3(signature = (items, width=360.0, x=None, y=None))]
+    fn add_list(
+        &self,
+        items: Vec<PyRef<'_, Node>>,
+        width: f32,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<Node> {
+        if items.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "add_list needs at least 1 item",
+            ));
+        }
+        for item in &items {
+            if !Rc::ptr_eq(&self.tree, &item.tree) {
+                return Err(EngineError::ForeignNode.into());
+            }
+        }
+
+        let mut tree = self.tree.borrow_mut();
+
+        // Real, deliberate choice, not an oversight: height is `auto()`,
+        // not summed from each item's own already-real height -- an
+        // item's `Layout` is only ever meaningful after a real
+        // `compute_layout` pass has run at least once, which this
+        // method has no guarantee of (`add_list_item` only inserts and
+        // attaches, it never computes layout itself). A flex column
+        // with a definite cross-axis (`width`) and `auto()` main-axis
+        // sizes itself from its own children's real heights during the
+        // app's own next real layout pass -- the identical real
+        // pattern `AppShell`'s own `content` region already uses
+        // (`flex_grow: 1.0`, no explicit height).
+        let mut frame_style = positioned_style(
+            Size {
+                width: length(width),
+                height: auto(),
+            },
+            x,
+            y,
+        );
+        frame_style.display = taffy::Display::Flex;
+        frame_style.flex_direction = taffy::FlexDirection::Column;
+        let frame = tree.insert(
+            NodeKind::Container,
+            frame_style,
+            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+
+        for item in items {
+            if let Some(parent) = tree.get(item.id).and_then(|node| node.parent) {
+                tree.detach(parent, item.id);
+            }
+            tree.add_child(frame, item.id);
+        }
+
+        tree.add_child(self.root, frame);
+        Ok(self.wrap_node(frame))
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,
