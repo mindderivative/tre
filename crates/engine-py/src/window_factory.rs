@@ -545,6 +545,25 @@ const SNACKBAR_ACTION_WIDTH: f32 = 64.0;
 const SNACKBAR_BOTTOM_MARGIN: f32 = 24.0;
 const SNACKBAR_LEFT_MARGIN: f32 = 24.0;
 
+/// MD3's own real Side Sheet anatomy (M30 Phase 4 Step 3). **Real,
+/// confirmed finding, not assumed:** Material Web has no dedicated
+/// side-sheet token file at all (a direct fetch 404s, the identical
+/// real finding `Menu`'s own token investigation already hit) --
+/// these reuse `Navigation Drawer`'s own real tokens instead
+/// (`_md-comp-navigation-drawer.scss`), the structurally closest real
+/// MD3 component (an edge-docked elevated panel): real `Standard`
+/// container color `surface`/elevation `level0` (flat, embedded in
+/// the layout, never floating) vs. real `Modal` container color
+/// `surface_container_low`/elevation `level1` (a real shadow, since
+/// it floats over content); `container-shape` `corner-large-end`
+/// (16dp, matching `FAB`'s own already-confirmed real `corner-large`
+/// value, rounded only on the corners *away* from the docked edge);
+/// real `container-width` (360px) and `container-height` (100%).
+const SIDE_SHEET_WIDTH: f32 = 360.0;
+const SIDE_SHEET_CORNER_RADIUS: f64 = 16.0;
+const SIDE_SHEET_STANDARD_ELEVATION: f64 = 0.0;
+const SIDE_SHEET_MODAL_ELEVATION: f64 = 1.0;
+
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
 /// trailing icon -- that's `Icon Button`'s own separate anatomy, Phase
@@ -2424,6 +2443,198 @@ impl PyWindow {
         let mut tree = self.tree.borrow_mut();
         let anchor = tree.overlay_meta(snackbar.id).map(|meta| meta.anchor);
         tree.close_overlay(snackbar.id);
+        if let Some(anchor) = anchor {
+            tree.remove(anchor);
+        }
+        Ok(())
+    }
+
+    /// M30 Phase 4 Step 3 (§5, §7, §11.3): `Side Sheet`, the real
+    /// desktop counterpart to Bottom Sheet (excluded as a mobile
+    /// pattern, this milestone's own scope). Real anatomy: see the
+    /// `SIDE_SHEET_*` constants above for the full real token-source
+    /// finding (Material Web has no dedicated side-sheet token file,
+    /// reuses `Navigation Drawer`'s own real tokens instead). The real
+    /// per-corner rounding (`corner-large-end`, rounded only on the
+    /// two corners *away* from the docked edge) reuses `PaintProperties.
+    /// corner_radii_override` -- `Segmented Button`'s own already-real
+    /// universal capability (Phase 1 Step 4), not a new per-corner
+    /// primitive invented a second time.
+    ///
+    /// **Real, deliberate behavioral fork by variant, not one uniform
+    /// shape forced onto two genuinely different real MD3 lifecycles:**
+    /// `Standard` (`modal=false`) is a real layout participant, not an
+    /// overlay at all -- attached immediately to `self.root`, the
+    /// identical real precedent `add_card` already establishes (a
+    /// plain positioned `Rect`, optional `x`/`y`, the app re-parents
+    /// it into its own layout via the already-generic `Node.add_child`/
+    /// `Tree::try_add_child` the same way any `Card` content already
+    /// does, or docks it via the existing real 5-zone `Dock` -- M4
+    /// Phase 9, confirmed still the most capable real docking
+    /// mechanism this codebase has, nothing new needed there) -- no
+    /// scrim, no blocking, no open/close lifecycle needed. `Modal`
+    /// (`modal=true`) genuinely floats over content and must block
+    /// interaction behind it -- reuses `Dialog`'s own real full-window
+    /// scrim (`DIALOG_SCRIM_OPACITY`, the same well-established 32%
+    /// MD3 convention) and returns the **scrim** node unattached, the
+    /// identical real contract `add_dialog` already has; `open_side_
+    /// sheet`/`close_side_sheet` are what actually show/hide it,
+    /// anchored to the real right edge (flex `justify_content:
+    /// FLEX_END`, full height) instead of `Dialog`'s own centered
+    /// placement.
+    #[pyo3(signature = (width=SIDE_SHEET_WIDTH, height=None, modal=false, x=None, y=None))]
+    fn add_side_sheet(
+        &self,
+        width: f32,
+        height: Option<f32>,
+        modal: bool,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> Node {
+        let (container_color, scrim_color) = {
+            let theme = self.theme.borrow();
+            let role = |name: &str, fallback: Color| -> Color {
+                if theme.is_set() {
+                    theme.role(name).unwrap_or(fallback)
+                } else {
+                    fallback
+                }
+            };
+            if modal {
+                (
+                    role("surface_container_low", Md3Baseline::SURFACE_CONTAINER_LOW),
+                    role("scrim", Md3Baseline::SCRIM),
+                )
+            } else {
+                (role("surface", Md3Baseline::SURFACE), Md3Baseline::SCRIM)
+            }
+        };
+        let elevation = if modal {
+            SIDE_SHEET_MODAL_ELEVATION
+        } else {
+            SIDE_SHEET_STANDARD_ELEVATION
+        };
+
+        let mut tree = self.tree.borrow_mut();
+        let panel_height = height.unwrap_or(self.height as f32);
+
+        let mut panel_paint = PaintProperties::new(container_color, 0.0, elevation, 1.0);
+        panel_paint.corner_radii_override =
+            Some([SIDE_SHEET_CORNER_RADIUS, 0.0, 0.0, SIDE_SHEET_CORNER_RADIUS]);
+
+        if modal {
+            let scrim_style = Style {
+                size: Size {
+                    width: length(self.width as f32),
+                    height: length(self.height as f32),
+                },
+                display: taffy::Display::Flex,
+                justify_content: Some(JustifyContent::FLEX_END),
+                ..Default::default()
+            };
+            let scrim = tree.insert(
+                NodeKind::Rect,
+                scrim_style,
+                PaintProperties::new(scrim_color, 0.0, 0.0, DIALOG_SCRIM_OPACITY),
+            );
+            let panel_style = Style {
+                size: Size {
+                    width: length(width),
+                    height: length(panel_height),
+                },
+                ..Default::default()
+            };
+            let panel = tree.insert(NodeKind::Rect, panel_style, panel_paint);
+            tree.add_child(scrim, panel);
+            self.wrap_node(scrim)
+        } else {
+            let panel_style = positioned_style(
+                Size {
+                    width: length(width),
+                    height: length(panel_height),
+                },
+                x,
+                y,
+            );
+            let panel = tree.insert(NodeKind::Rect, panel_style, panel_paint);
+            tree.add_child(self.root, panel);
+            self.wrap_node(panel)
+        }
+    }
+
+    /// M30 Phase 4 Step 3 (§11.3): opens a real *modal* side sheet
+    /// (from `add_side_sheet(..., modal=True)`) -- identical real
+    /// contract to `open_dialog` (`modal: true`, `dismiss_on_escape:
+    /// true`, `dismiss_on_outside_click: false`, the same real
+    /// synthetic-zero-size-anchor technique), the only real difference
+    /// being the anchor's own position: pinned at the window's real
+    /// top-right corner instead of the origin, since a side sheet's
+    /// own scrim already right-aligns its panel via flex (`add_side_
+    /// sheet`'s own `justify_content: FLEX_END`) and only needs a
+    /// zero-size anchor to make `open_overlay`'s existing math resolve
+    /// to `(0, 0)` relative to the scrim itself, the identical real
+    /// reasoning `open_dialog`'s own doc comment already has. A real,
+    /// explicit no-op if `side_sheet` was built with `modal=False` --
+    /// a standard side sheet has no overlay lifecycle at all, already
+    /// attached to `self.root` by `add_side_sheet` itself.
+    fn open_side_sheet(&self, side_sheet: PyRef<'_, Node>) -> PyResult<()> {
+        if !Rc::ptr_eq(&self.tree, &side_sheet.tree) {
+            return Err(EngineError::ForeignNode.into());
+        }
+        let mut tree = self.tree.borrow_mut();
+        if tree.overlay_meta(side_sheet.id).is_some() {
+            return Ok(());
+        }
+        if tree
+            .get(side_sheet.id)
+            .and_then(|node| node.parent)
+            .is_some()
+        {
+            // A standard side sheet (`modal=False`) is already attached
+            // to `self.root` by `add_side_sheet` -- opening it again
+            // here would be a real double-attach, not a safe no-op the
+            // way an already-open overlay is.
+            return Ok(());
+        }
+        let anchor_style = positioned_style(
+            Size {
+                width: length(0.0),
+                height: length(0.0),
+            },
+            Some(0.0),
+            Some(0.0),
+        );
+        let anchor = tree.insert(
+            NodeKind::Rect,
+            anchor_style,
+            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, anchor);
+        tree.open_overlay(
+            self.root,
+            anchor,
+            side_sheet.id,
+            OverlayMeta {
+                anchor,
+                dismiss_on_outside_click: false,
+                dismiss_on_escape: true,
+                modal: true,
+            },
+        );
+        Ok(())
+    }
+
+    /// M30 Phase 4 Step 3 (§11.3): `open_side_sheet`'s own real close
+    /// counterpart -- identical real contract to `close_dialog`. A
+    /// real, explicit no-op for a standard (`modal=False`) side sheet,
+    /// the same real reason `open_side_sheet` is.
+    fn close_side_sheet(&self, side_sheet: PyRef<'_, Node>) -> PyResult<()> {
+        if !Rc::ptr_eq(&self.tree, &side_sheet.tree) {
+            return Err(EngineError::ForeignNode.into());
+        }
+        let mut tree = self.tree.borrow_mut();
+        let anchor = tree.overlay_meta(side_sheet.id).map(|meta| meta.anchor);
+        tree.close_overlay(side_sheet.id);
         if let Some(anchor) = anchor {
             tree.remove(anchor);
         }

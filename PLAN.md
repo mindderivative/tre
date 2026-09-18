@@ -1,40 +1,40 @@
-# PLAN — M30 Phase 4 Step 2: Snackbar
+# PLAN — M30 Phase 4 Step 3: Side Sheet (closes Phase 4)
 
 ## Goal
-Add `Window.add_snackbar`/`open_snackbar`/`close_snackbar` — a real
-MD3 transient notification, anchored to the desktop bottom-left
-corner. Unlike every prior overlay component, its action and close
-affordances must be independently clickable, not decorative.
+Add `Window.add_side_sheet`/`open_side_sheet`/`close_side_sheet` —
+the real desktop counterpart to Bottom Sheet, in Standard (embedded,
+non-overlay) and Modal (floating, blocking) variants.
 
 ## Steps
-1. Verify real MD3 Snackbar tokens via WebFetch against Material
-   Web's own `_md-comp-snackbar.scss`.
-2. Trace `inverse-primary` (no direct hex in the snackbar token file)
-   through `_md-sys-color.scss` and `_md-ref-palette.scss` to its real
-   hex (`#D0BCFF`, `primary80`).
-3. Check for an existing timer/scheduler primitive (grep) — confirm
-   none exists, so auto-dismiss-after-duration is out of scope, the
-   app's own responsibility.
-4. Check `Chip`'s `removable` icon precedent (decorative, not
-   independently clickable) and `Segmented Button`'s `Vec<Node>`
-   precedent (multiple independently-interactive nodes) before
-   deciding `add_snackbar`'s own return shape.
-5. Implement `add_snackbar` (returns `(container, action, close)`,
-   `action`/`close` real independent `Node`s when requested) and
-   `open_snackbar`/`close_snackbar` (reusing `open_dialog`'s synthetic-
-   anchor technique, positioned bottom-left instead of centered).
-6. Add `Md3Baseline::INVERSE_PRIMARY`.
-7. Add `.pyi` stubs for all three methods.
-8. Write `tests/test_snackbar.py`, including real click-dispatch
-   proofs that `action`/`close` are independently clickable.
-9. Write `examples/snackbar.py`, headless-CI-safe.
-10. Full verification chain: cargo check/clippy/fmt/test, maturin
-    develop, pytest (full suite), all examples, showcase demo, mypy
-    --strict.
-11. Update `BUILD_TRACKER.md` (Top Metrics row, step line), regenerate
-    + republish the Build Tracker artifact.
-12. Update memory, commit, push.
+1. Verify real MD3 Side Sheet tokens via WebFetch — 404, confirming
+   no dedicated token file exists (matching Menu's own earlier
+   finding). Fall back to Navigation Drawer's own real tokens, the
+   structurally closest MD3 component.
+2. Decide the real behavioral fork: Standard is a plain layout
+   participant (Card's own precedent — attach immediately, optional
+   x/y), Modal is a real blocking overlay (Dialog's own precedent —
+   scrim + OverlayMeta.modal, unattached until opened).
+3. Implement `add_side_sheet` (builds both variants from one method,
+   corner_radii_override for the real corner-large-end shape) and
+   `open_side_sheet`/`close_side_sheet` (modal-only lifecycle,
+   real explicit no-op for standard sheets).
+4. Add `.pyi` stubs for all three methods.
+5. Write `tests/test_side_sheet.py`, including a real click-dispatch
+   proof that the modal variant blocks background clicks (reusing
+   Dialog's own OverlayMeta.modal capability against a second,
+   independently-built overlay) and a real re-parenting proof for the
+   standard variant.
+6. Write `examples/side_sheet.py`, headless-CI-safe, demonstrating
+   both variants.
+7. Full verification chain: cargo check/clippy/fmt/test, maturin
+   develop, pytest (full suite), all examples, showcase demo, mypy
+   --strict.
+8. Update `BUILD_TRACKER.md` (Top Metrics row, Phase 4 heading now
+   ✅, step line, Step 4 .pyi-stubs line), regenerate + republish the
+   Build Tracker artifact. Closes Phase 4 entirely.
+9. Update memory, commit, push.
 
 ## Status
-Complete. All steps done; full verification chain green (318 pytest
-passed/1 skipped, 45 examples, showcase demo, 43 Rust test binaries).
+Complete. All steps done; full verification chain green (327 pytest
+passed/1 skipped, 46 examples, showcase demo, 43 Rust test binaries).
+Phase 4 (Overlay-Dependent) is now fully complete, all 4 steps.

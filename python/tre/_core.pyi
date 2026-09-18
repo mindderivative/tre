@@ -452,6 +452,42 @@ class Window:
         `ValueError` if `snackbar` belongs to a different `Window`.
         """
         ...
+    def add_side_sheet(
+        self,
+        width: float = ...,
+        height: float | None = None,
+        modal: bool = False,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """A real MD3 side sheet, docked to the right edge. When
+        `modal` is `False` (the default, MD3's real *Standard*
+        variant): a plain layout participant, already attached --
+        the app re-parents it into its own layout (`Node.add_child`)
+        or docks it via the existing `Dock`. When `modal` is `True`
+        (real *Modal* variant): a real floating overlay with a
+        full-window scrim, returned **unattached** -- pass it to
+        `open_side_sheet` to actually show it. `height` defaults to
+        the window's own full height.
+        """
+        ...
+    def open_side_sheet(self, side_sheet: Node) -> None:
+        """Opens a **modal** `side_sheet` (from `add_side_sheet(...,
+        modal=True)`) -- blocks interaction with everything behind
+        it, dismisses on Escape but not an outside click. A real,
+        explicit no-op for a standard (`modal=False`) side sheet,
+        which has no overlay lifecycle at all. A safe no-op if
+        already open. Raises `ValueError` if `side_sheet` belongs to
+        a different `Window`.
+        """
+        ...
+    def close_side_sheet(self, side_sheet: Node) -> None:
+        """Closes a modal side sheet opened via `open_side_sheet`. A
+        real, explicit no-op for a standard (`modal=False`) side
+        sheet. Raises `ValueError` if `side_sheet` belongs to a
+        different `Window`.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,
