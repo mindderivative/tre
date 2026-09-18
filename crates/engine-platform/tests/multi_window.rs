@@ -30,6 +30,11 @@ fn main() {
             frame_counts_for_frame
                 .borrow_mut()
                 .insert(window_id, frame + 1);
+            // M29 Phase 2: this test's own scope is multi-window
+            // lifecycle, not animation-aware polling -- always reporting
+            // "still animating" keeps it polling to its own `max_frames`
+            // bound exactly as before this phase.
+            true
         },
         move |_window_id| accesskit::TreeUpdate {
             nodes: vec![(

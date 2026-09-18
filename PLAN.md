@@ -1,48 +1,74 @@
-# Plan: M28 — Code Review Follow-Through
+# Plan: M29 — Render Loop Dirty-Tracking
 
-Corresponds to `BUILD_TRACKER.md` M28 (all 3 phases). Written
+Corresponds to `BUILD_TRACKER.md` M29 (both phases). Written
 retroactively alongside implementation — see `LOG.md` and
-`BUILD_TRACKER.md`'s own M28 entry for the complete real investigation,
+`BUILD_TRACKER.md`'s own M29 entry for the complete real investigation,
 findings, and verification record.
 
 ## What changed
 
-- `crates/engine-render/src/text.rs`: `TextRenderer` gained a real
-  per-`NodeId` shaped-`Layout` cache (`shaped_layout`), keyed on
-  `content`/`font_family`/`font_weight`/`font_size`/`max_width` — no
-  separate invalidation logic, since a changed key is the cache miss.
-  New `evict_stale_layouts(&tree)`, called once per frame from
-  `App::run` alongside `sync_image_textures`. New `#[cfg(test)] mod
-  tests` proving caching and eviction both actually happen.
-- `crates/engine-render/src/lib.rs`/`crates/engine-py/src/app.rs`:
-  threaded `node_id`/the new eviction call through `paint_node` and the
-  per-frame render path.
-- `crates/engine-core/src/tree.rs`: `Tree::remove` now also clears
-  `self.overlays` for the removed id (previously only `close_overlay`
-  did). New test covering both direct removal and removed-ancestor
-  cases.
-- `crates/engine-py/src/window.rs` (1712 lines) split into `window.rs`
-  (construction/theming/GC), `window_factory.rs` (9 `add_*`/
-  `build_shell` methods), `window_input.rs` (11 synthetic-dispatch
-  methods), `window_docking.rs` (8 `dock.rs` delegation wrappers), and
-  `window_virtual_canvas.rs` (4 methods). Enabled by pyo3's
-  `multiple-pymethods` feature (`crates/engine-py/Cargo.toml`) —
-  verified this actually merges all 5 `#[pymethods]` blocks into one
-  Python-visible `Window` class before relying on it. Zero behavior
-  change: every method moved verbatim.
+- `crates/engine-core/src/tree.rs`: `Tree` gained a private `dirty:
+  bool` field (starting `true`) and `pub fn take_dirty(&mut self) ->
+  bool`. All 29 real mutating methods set it as their first statement
+  (mechanically inserted via a script against exact signature
+  boundaries); `tick_all` sets it whenever its own `any_active` is
+  `true`. New test `take_dirty_reports_true_after_each_real_mutation_
+  category_and_false_between`.
+- `crates/engine-py/src/app.rs`: `App::run`'s per-frame closure reads
+  `tree.take_dirty()` after `tick_all`/before `compute_layout`, skipping
+  layout/GPU work entirely when nothing changed. The closure now
+  returns `bool` (`tick_all`'s own `any_active`) at every exit point,
+  for `engine-platform`'s own polling decision.
+- `crates/engine-platform/src/lib.rs`: `run_windowed_multi`'s `on_frame`
+  bound widened to `FnMut(WindowId, u32) -> bool`. `PerWindow` gained
+  `animating: bool`. `RedrawRequested` sets `ControlFlow::Poll` while
+  any open window is animating, `ControlFlow::Wait` once all have
+  settled. Every real input-handling arm in `window_event`
+  (`CursorMoved`/`MouseInput`/`KeyboardInput`/`MouseWheel`/
+  `ThemeChanged`/`Ime`) now calls `request_redraw()` explicitly, as
+  does the AccessKit `ActionRequested` path in `user_event`.
+  `run_windowed`'s own public signature stayed unchanged — its internal
+  wrapper always reports `true`, preserving `rect_window.rs`/
+  `access_button.rs`'s pre-M29 behavior byte-for-byte.
+- `crates/engine-platform/tests/multi_window.rs`: updated its
+  `on_frame` closure to return `true` (same reasoning as
+  `run_windowed`'s wrapper).
+
+## Real bug found and fixed during implementation
+
+A window opened with `max_frames: Some(_)` — this codebase's own
+dominant example/test pattern — hung indefinitely under the first real
+Phase 2 implementation: once `on_frame` reported "not animating,"
+nothing kept requesting its next redraw, so it never reached its own
+frame count. Caught by actually running every example against the
+change (several timed out), not assumed. Fixed by treating any window
+with `max_frames: Some(_)` as always-animating for `ControlFlow`
+purposes, regardless of what `on_frame` itself reports — only a
+genuinely unbounded window (`max_frames: None`) gets Phase 2's
+idle-CPU benefit. Documented in `run_windowed_multi`'s own doc comment.
 
 ## What was deliberately not done
 
-- The redraw-loop half of the text-shaping finding (the render loop
-  requests a redraw unconditionally every frame, `engine-platform/src/
-  lib.rs`) is still open. Investigated directly: `Tree::tick_all`'s
-  `any_active` return value looked like a ready-made dirty signal, but
-  it only covers animated properties — it misses one-shot property
-  writes, `TextField` typing, scroll, drag, focus changes, and every
-  imperative `add_*`/`set_*` call. Correctly gating redraws needs a
-  real dirty-tracking mechanism threaded through ~30–40 mutating
-  methods across `engine-core`/`engine-py` — a genuine architectural
-  change to the core render loop, not a contained fix, so it's left
-  for a deliberate future pass rather than rushed here.
+- Window resize (`WindowEvent::Resized`/`ScaleFactorChanged`) handling
+  — confirmed via grep this codebase has no resize support anywhere
+  yet, a real, pre-existing, separate gap this milestone's own
+  investigation surfaced but didn't need to touch.
+- Partial/incremental repaint (redrawing only the changed screen
+  region) — a materially larger change to `engine-render`'s whole-tree
+  paint walk; this milestone's dirty flag is coarse (whole-frame
+  yes/no), matching the existing architecture.
 
-See `LOG.md` for the full narrative and verification results.
+## Verification
+
+Full `cargo check`/clippy `-D warnings`/fmt clean. `cargo test
+--workspace --release` clean (`engine-core` 146, up from 145).
+`maturin develop --release` + pytest (187 passed, 1 pre-existing skip),
+all 29 examples (re-run twice — once before, once after the
+`max_frames` fix, to confirm the hang was genuinely resolved), and the
+showcase demo (real click/keyboard/drag interaction, not just a static
+scene) all clean with the real display. Empirical idle-CPU check: an
+unbounded static window settled to ~0.8–1.3% CPU over several real
+seconds (`ps -o pcpu`), consistent with `ControlFlow::Wait` genuinely
+taking effect.
+
+See `LOG.md` for the full narrative.

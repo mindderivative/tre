@@ -248,6 +248,33 @@ impl WindowOpener {
 /// accessibility tree in sync (§10). Exits once every window has closed
 /// or reached its own `max_frames`.
 ///
+/// M29 Phase 2 (§5, §6): `on_frame`'s own `bool` return -- `true` means
+/// "this window is still genuinely animating, call me again next tick
+/// with no other trigger needed"; `false` means "nothing left to
+/// animate, don't bother scheduling another redraw on my account." This
+/// function keeps `ControlFlow::Poll` for as long as *any* open window
+/// last reported `true`, and drops to `ControlFlow::Wait` the moment
+/// every open window has settled -- real input still reaches a waiting
+/// loop exactly as before (`winit` delivers `WindowEvent`s regardless
+/// of `ControlFlow`), each real input-handling arm below just has to
+/// ask for its own next redraw explicitly now, since nothing else will.
+/// A caller with no real animation and no real input (this crate's own
+/// `access_button.rs`/`rect_window.rs`/`multi_window.rs` test harnesses,
+/// via [`run_windowed`]'s own wrapper) can simply always return `true`
+/// to keep its pre-M29 always-polling behavior byte-for-byte.
+///
+/// **Real finding, caught by actually running every example in the
+/// workspace against this change, not assumed:** a window opened with
+/// `max_frames: Some(_)` keeps polling toward its own frame count
+/// regardless of what `on_frame` itself reports, even if it reports
+/// `false` every single frame -- otherwise a static "runs N frames then
+/// exits" window (this codebase's own dominant example/test pattern)
+/// would never reach `max_frames` once idle, and hang forever under
+/// `ControlFlow::Wait` waiting for input that never arrives. Only a
+/// genuinely unbounded window (`max_frames: None`) actually needs
+/// `on_frame` to report accurately for Phase 2's idle-CPU benefit to
+/// apply to it at all.
+///
 /// Returns `Err` rather than panicking if no display is reachable --
 /// see [`run_windowed`]'s own doc comment for why that's expected, not
 /// exceptional, on some CI runners.
@@ -280,7 +307,7 @@ pub fn run_windowed_multi<C, F, A, S, N, X>(
 ) -> Result<(), winit::error::EventLoopError>
 where
     C: FnMut(WindowId, u64, Arc<Window>),
-    F: FnMut(WindowId, u32),
+    F: FnMut(WindowId, u32) -> bool,
     A: FnMut(WindowId) -> accesskit::TreeUpdate,
     N: FnMut(WindowId, InputEvent),
     X: FnMut(WindowId, accesskit::ActionRequest),
@@ -333,6 +360,12 @@ where
                 .clone()
                 .expect("on_window_created always fires before on_frame for the same window");
             on_frame(&window, frame);
+            // M29 Phase 2: this wrapper's own two existing callers
+            // (`rect_window.rs`/`access_button.rs`) render unconditionally
+            // every frame already, with no animation-aware concept of
+            // their own -- always reporting "still animating" keeps
+            // them polling exactly as before this phase, byte-for-byte.
+            true
         },
         move |_id| build_access_update(),
         // Neither of this wrapper's two existing callers (`rect_window.rs`,
@@ -364,6 +397,12 @@ struct PerWindow {
     /// put the pointer -- so this is tracked here and read when
     /// translating a press/release into an `InputEvent`.
     last_cursor_position: Point,
+    /// M29 Phase 2 (§5, §6): this window's own last-reported `on_frame`
+    /// return -- `true` until the first real `RedrawRequested` settles
+    /// it, so a freshly created window (which already gets one explicit
+    /// `request_redraw()` call, below) doesn't accidentally drop the
+    /// whole loop to `ControlFlow::Wait` before it's ever painted once.
+    animating: bool,
 }
 
 struct MultiWindowApp<C, F, A, N, X> {
@@ -379,7 +418,7 @@ struct MultiWindowApp<C, F, A, N, X> {
 impl<C, F, A, N, X> ApplicationHandler<PlatformEvent> for MultiWindowApp<C, F, A, N, X>
 where
     C: FnMut(WindowId, u64, Arc<Window>),
-    F: FnMut(WindowId, u32),
+    F: FnMut(WindowId, u32) -> bool,
     A: FnMut(WindowId) -> accesskit::TreeUpdate,
     N: FnMut(WindowId, InputEvent),
     X: FnMut(WindowId, accesskit::ActionRequest),
@@ -439,6 +478,7 @@ where
                         max_frames: request.config.max_frames,
                         modifiers: ModifiersState::empty(),
                         last_cursor_position: Point::ZERO,
+                        animating: true,
                     },
                 );
             }
@@ -461,6 +501,18 @@ where
                 // why: no `engine_core::NodeId` knowledge here).
                 accesskit_winit::WindowEvent::ActionRequested(request) => {
                     (self.on_access_action)(event.window_id, request);
+                    // M29 Phase 2 (§5, §6): a screen-reader-driven
+                    // `Action::Focus`/`Action::Click` is a real, `Tree`-
+                    // mutating input path with no `WindowEvent` behind it
+                    // at all -- the one real gap Phase 2's own scoping
+                    // named as needing a direct check. Without this, a
+                    // window sitting in `ControlFlow::Wait` would never
+                    // paint the result of an assistive-technology action
+                    // until some *other*, unrelated event happened to
+                    // wake it.
+                    if let Some(win) = self.windows.get(&event.window_id) {
+                        win.window.request_redraw();
+                    }
                 }
                 // No real per-window behavior change needed here --
                 // `access_adapter.update_if_active` (used everywhere
@@ -499,7 +551,21 @@ where
                 }
             }
             WindowEvent::RedrawRequested => {
-                on_frame(window_id, win.frame);
+                let real_still_animating = on_frame(window_id, win.frame);
+                // M29 Phase 2: real finding, caught by actually running
+                // this against every example/test in the workspace, not
+                // assumed -- a bounded run (`max_frames: Some(_)`) must
+                // keep polling toward its own frame count regardless of
+                // `on_frame`'s own animation/dirty report, or it would
+                // never reach that count once idle and hang forever
+                // under `ControlFlow::Wait` with no real input arriving
+                // to wake it. Every existing example/test in this
+                // workspace relies on exactly this "runs N frames then
+                // exits" pattern to finish in bounded wall-clock time.
+                // Only a genuinely unbounded window (`max_frames: None`,
+                // a real interactive app) gets Phase 2's idle-CPU benefit.
+                let still_animating = real_still_animating || win.max_frames.is_some();
+                win.animating = still_animating;
                 win.access_adapter
                     .update_if_active(|| build_access_update(window_id));
                 win.frame += 1;
@@ -512,7 +578,29 @@ where
                     }
                     return;
                 }
-                win.window.request_redraw();
+                // M29 Phase 2 (§5, §6): the polling half of the same
+                // dirty-tracking signal Phase 1 taught `Tree` to compute
+                // -- a window `on_frame` reports still-animating keeps
+                // scheduling its own next redraw exactly like every
+                // window unconditionally did before this phase; one that
+                // reports settled does not, and instead waits for a real
+                // input event (or another window's own animation) to
+                // wake it via an explicit `request_redraw()` call
+                // elsewhere in this file.
+                if still_animating {
+                    win.window.request_redraw();
+                }
+                // `ControlFlow` is a single, event-loop-wide setting, not
+                // per-window -- with more than one window open, this
+                // must stay `Poll` as long as *any* of them is still
+                // animating, and only drop to `Wait` once every open
+                // window has independently settled.
+                let any_window_animating = windows.values().any(|w| w.animating);
+                event_loop.set_control_flow(if any_window_animating {
+                    ControlFlow::Poll
+                } else {
+                    ControlFlow::Wait
+                });
             }
             // M4 Phase 1 step 2: the real translation this module's own
             // doc comment named as still missing. `PhysicalPosition<f64>`
@@ -523,6 +611,15 @@ where
                 let position = Point::new(position.x, position.y);
                 win.last_cursor_position = position;
                 on_input(window_id, InputEvent::PointerMoved { position });
+                // M29 Phase 2 (§5, §6): a waiting loop only wakes for a
+                // real event like this one -- nothing else will ask for
+                // the next redraw on its own anymore, so every real
+                // input-handling arm below does, unconditionally (cheap,
+                // and simpler/safer than tracking whether this specific
+                // event actually changed anything worth a repaint --
+                // `Tree`'s own dirty flag, Phase 1, already makes an
+                // extra request here free if it turns out nothing did).
+                win.window.request_redraw();
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 win.modifiers = modifiers.state();
@@ -542,6 +639,7 @@ where
                     };
                     on_input(window_id, event);
                 }
+                win.window.request_redraw();
             }
             WindowEvent::KeyboardInput {
                 event: key_event, ..
@@ -583,6 +681,7 @@ where
                     // input" meaning).
                     on_input(window_id, InputEvent::TextInput(text.to_string()));
                 }
+                win.window.request_redraw();
             }
             // M4 Phase 8 (§11.7/§11.8 groundwork): `winit`'s own
             // `MouseWheel` carries no position either, the same real
@@ -596,6 +695,7 @@ where
                         position: win.last_cursor_position,
                     },
                 );
+                win.window.request_redraw();
             }
             // M7 Phase 3 (§7.1): real live OS light/dark switching --
             // verified directly against the pinned `winit = "0.30.13"`
@@ -612,6 +712,7 @@ where
                         dark: translate_theme(theme),
                     },
                 );
+                win.window.request_redraw();
             }
             // M17 Phase 2 (§8): real IME composition, reachable only
             // because `resumed`'s own window creation now calls
@@ -623,15 +724,18 @@ where
             // already keeps -- `Commit` reaches the exact same real
             // `TextInput` mechanism a plain keypress already uses (M15
             // Phase 2), no new variant needed for it at all.
-            WindowEvent::Ime(ime) => match ime {
-                Ime::Preedit(text, _cursor_range) => {
-                    on_input(window_id, InputEvent::ImePreedit(text));
+            WindowEvent::Ime(ime) => {
+                match ime {
+                    Ime::Preedit(text, _cursor_range) => {
+                        on_input(window_id, InputEvent::ImePreedit(text));
+                    }
+                    Ime::Commit(text) => {
+                        on_input(window_id, InputEvent::TextInput(text));
+                    }
+                    Ime::Enabled | Ime::Disabled => {}
                 }
-                Ime::Commit(text) => {
-                    on_input(window_id, InputEvent::TextInput(text));
-                }
-                Ime::Enabled | Ime::Disabled => {}
-            },
+                win.window.request_redraw();
+            }
             _ => {}
         }
     }

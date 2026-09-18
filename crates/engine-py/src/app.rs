@@ -314,20 +314,39 @@ impl App {
                     },
                 );
             },
-            move |window_id, _frame| {
+            move |window_id, _frame| -> bool {
                 let mut runtimes = runtimes_for_frame.borrow_mut();
                 let Some(runtime) = runtimes.get_mut(&window_id) else {
-                    return;
+                    return false;
                 };
 
                 let now = Instant::now();
-                let (_, completed) = runtime.tree.borrow_mut().tick_all(now);
+                let (any_active, completed) = runtime.tree.borrow_mut().tick_all(now);
                 // M9 Phase 2 (§5): the real drain -- invokes each
                 // just-completed animation's registered `on_complete`
                 // callback exactly once, the same "look up and call a
                 // registered callback" shape `run_dispatch_outcome`
                 // already uses for click/hover handlers.
                 run_completions(&runtime.completions, completed, py);
+
+                // M29 Phase 1 (§5, §6): skip every real per-frame cost
+                // below -- layout, GPU texture/text-cache sync, scene
+                // encoding, submit, present -- on a frame nothing real
+                // touched. `take_dirty` already saw `tick_all`'s own
+                // `any_active` above, so a mid-flight animation still
+                // renders every frame exactly as before; only a genuinely
+                // idle window (no input, no active animation) skips real
+                // work now. `any_active` (M29 Phase 2) is returned at
+                // every exit point below regardless of whether this
+                // particular frame skipped or did full paint work -- it
+                // answers a different question (does `engine-platform`
+                // need to keep scheduling this window's next redraw on
+                // its own) than `take_dirty` does (did *this* frame have
+                // real paint work to do).
+                if !runtime.tree.borrow_mut().take_dirty() {
+                    return any_active;
+                }
+
                 runtime.tree.borrow_mut().compute_layout(
                     runtime.root,
                     Size {
@@ -340,7 +359,7 @@ impl App {
                 | wgpu::CurrentSurfaceTexture::Suboptimal(output)) =
                     runtime.gpu.surface.get_current_texture()
                 else {
-                    return;
+                    return any_active;
                 };
                 let view = output
                     .texture
@@ -392,6 +411,7 @@ impl App {
                 );
                 runtime.gpu.queue.submit([encoder.finish()]);
                 output.present();
+                any_active
             },
             // §14 step 7: every window this framework opens reports a
             // real accessibility tree, built fresh from that window's

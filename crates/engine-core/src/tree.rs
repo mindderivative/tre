@@ -92,6 +92,16 @@ pub struct Tree {
     /// metadata only, never the node itself, which already lives in
     /// `nodes` like any other.
     overlays: HashMap<NodeId, OverlayMeta>,
+    /// M29 Phase 1 (§5, §6): coarse, whole-tree "does the next frame
+    /// need real paint/GPU work at all" signal -- set `true` by every
+    /// real mutating method below (deliberately conservative: a method
+    /// that sets it even when its own specific call turned out to be a
+    /// no-op costs nothing, since idle frames are the case this exists
+    /// to skip, not frames already doing real input/animation work) and
+    /// by `tick_all` whenever it reports `any_active`. Starts `true` so
+    /// the very first frame always paints. Read via `take_dirty`, never
+    /// this field directly, so "read" and "reset" can never drift apart.
+    dirty: bool,
 }
 
 impl Default for Tree {
@@ -125,7 +135,20 @@ impl Tree {
             pressed: None,
             dragging: None,
             overlays: HashMap::new(),
+            dirty: true,
         }
+    }
+
+    /// M29 Phase 1 (§5, §6): reads and clears the dirty flag in one
+    /// step (`std::mem::replace`) -- a caller that read `true`, then
+    /// crashed or skipped acting on it before ever resetting the flag,
+    /// would otherwise leave every subsequent frame permanently
+    /// "still dirty from before" or, the opposite bug, a separate
+    /// read-then-a-separate-reset pair could race a real mutation
+    /// landing in between. One atomic-with-respect-to-this-`&mut self`
+    /// operation instead.
+    pub fn take_dirty(&mut self) -> bool {
+        std::mem::replace(&mut self.dirty, false)
     }
 
     /// Creates a new, parentless node (attach it under another with
@@ -136,6 +159,7 @@ impl Tree {
         layout_style: Style,
         paint: PaintProperties,
     ) -> NodeId {
+        self.dirty = true;
         let taffy_node = self
             .taffy
             .new_leaf(layout_style.clone())
@@ -160,6 +184,7 @@ impl Tree {
     /// runtime condition (unlike the GPU/display absence this codebase
     /// exits gracefully for elsewhere).
     pub fn add_child(&mut self, parent: NodeId, child: NodeId) {
+        self.dirty = true;
         let parent_taffy = *self
             .taffy_nodes
             .get(parent)
@@ -199,6 +224,7 @@ impl Tree {
     /// this is the first general-purpose, arbitrary-reparenting entry
     /// point, and the one most likely to hit it a third time.
     pub fn try_add_child(&mut self, parent: NodeId, child: NodeId) -> bool {
+        self.dirty = true;
         let mut current = Some(parent);
         while let Some(id) = current {
             if id == child {
@@ -225,6 +251,7 @@ impl Tree {
     /// removed from the tree entirely, simply no longer attached to its
     /// previous parent") before using it.
     pub fn detach(&mut self, parent: NodeId, child: NodeId) {
+        self.dirty = true;
         let parent_taffy = *self
             .taffy_nodes
             .get(parent)
@@ -254,6 +281,7 @@ impl Tree {
     }
 
     pub fn get_mut(&mut self, id: NodeId) -> Option<&mut Node> {
+        self.dirty = true;
         self.nodes.get_mut(id)
     }
 
@@ -275,6 +303,7 @@ impl Tree {
     /// wasn't in this `Tree` at all (a no-op, not an error -- matching
     /// `set_access`'s own "id not found is a silent no-op" contract).
     pub fn remove(&mut self, id: NodeId) -> bool {
+        self.dirty = true;
         let Some(node) = self.nodes.get(id) else {
             return false;
         };
@@ -402,6 +431,7 @@ impl Tree {
     /// `layout_style` -- doing so by hand anywhere else would reintroduce
     /// the exact divergence `insert`'s own doc comment says can't happen.
     pub fn set_layout_style(&mut self, id: NodeId, style: Style) {
+        self.dirty = true;
         let taffy_node = *self
             .taffy_nodes
             .get(id)
@@ -433,6 +463,7 @@ impl Tree {
         content: NodeId,
         meta: OverlayMeta,
     ) {
+        self.dirty = true;
         let (anchor_x, anchor_y) = self.absolute_position(anchor);
         let anchor_height = f64::from(self.layout(anchor).size.height);
 
@@ -474,6 +505,7 @@ impl Tree {
     /// layout` again afterward for `content`'s own new position/size to
     /// resolve, exactly like `open_overlay`.
     pub fn position_overlay_over(&mut self, content: NodeId, rect: Rect) {
+        self.dirty = true;
         let mut style = self
             .get(content)
             .expect("position_overlay_over: content NodeId not found in this Tree")
@@ -517,6 +549,7 @@ impl Tree {
     /// content destroyed can still call `Tree::remove` on it directly
     /// afterward.
     pub fn close_overlay(&mut self, id: NodeId) -> bool {
+        self.dirty = true;
         let had_overlay = self.overlays.remove(&id).is_some();
         if !had_overlay {
             return false;
@@ -596,6 +629,7 @@ impl Tree {
     /// already exists, prove it doesn't need touching" pattern step 13's
     /// overlay proof established for append-order.
     pub fn apply_active_tab(&mut self, container: NodeId, zone: &crate::dock::DockZone) {
+        self.dirty = true;
         let active = zone.panels.get(zone.active_tab).copied();
 
         for &panel in &zone.panels {
@@ -636,6 +670,7 @@ impl Tree {
     /// `flex_direction` (row -> width, column -> height), proportioning
     /// the two siblings' *current* combined extent by `position`.
     pub fn set_splitter_position(&mut self, id: NodeId, position: f64, now: Instant) {
+        self.dirty = true;
         let (left, right, is_row, total) = self.splitter_geometry(id);
 
         let position = position.clamp(0.0, 1.0);
@@ -680,6 +715,7 @@ impl Tree {
     /// the same "internal bug, not a runtime condition" contract
     /// `set_splitter_position`/`scroll_virtual_list_by` already use.
     pub fn set_slider_position(&mut self, id: NodeId, position: f64, now: Instant) {
+        self.dirty = true;
         let position = position.clamp(0.0, 1.0);
         let NodeKind::Slider(state) = &mut self.nodes[id].kind else {
             panic!("set_slider_position: {id:?} is not a NodeKind::Slider");
@@ -838,6 +874,7 @@ impl Tree {
         visible: std::ops::Range<usize>,
         mut materialize: impl FnMut(usize) -> (NodeKind, Style, PaintProperties),
     ) {
+        self.dirty = true;
         match &self
             .nodes
             .get(list)
@@ -910,6 +947,7 @@ impl Tree {
     /// `NodeKind::VirtualList` in this `Tree`, the same "internal bug,
     /// not a runtime condition" contract those methods use too.
     pub fn scroll_virtual_list_by(&mut self, id: NodeId, delta_y: f64) {
+        self.dirty = true;
         let node = self
             .nodes
             .get(id)
@@ -944,6 +982,7 @@ impl Tree {
         list: NodeId,
         offsets: impl IntoIterator<Item = (usize, f64)>,
     ) {
+        self.dirty = true;
         let NodeKind::VirtualList(state) = &mut self
             .nodes
             .get_mut(list)
@@ -1009,6 +1048,13 @@ impl Tree {
                 any_active = true;
             }
         }
+        // M29 Phase 1 (§5, §6): a mid-flight animation is itself a real
+        // reason to redraw next frame -- `any_active` was already the
+        // exact signal this needs, just never fed into a redraw
+        // decision before now.
+        if any_active {
+            self.dirty = true;
+        }
         (any_active, completed)
     }
 
@@ -1017,6 +1063,7 @@ impl Tree {
     /// effectively invisible to a screen reader) until a caller sets
     /// something real here (§14 step 7).
     pub fn set_access(&mut self, id: NodeId, access: AccessNodeData) {
+        self.dirty = true;
         if let Some(node) = self.nodes.get_mut(id) {
             node.access = access;
         }
@@ -1027,6 +1074,7 @@ impl Tree {
     /// node defaults to nothing until a caller opts in" shape. Returns
     /// `None` only if `id` doesn't exist in this `Tree`.
     pub fn interaction_mut(&mut self, id: NodeId) -> Option<&mut InteractionState> {
+        self.dirty = true;
         let node = self.nodes.get_mut(id)?;
         Some(node.interaction.get_or_insert_with(InteractionState::new))
     }
@@ -1042,6 +1090,7 @@ impl Tree {
     /// mut`'s own "only a node that opts in pays the cost" contract --
     /// this never lazily creates one.
     pub fn set_all_interaction_tints(&mut self, tint: peniko::Color) {
+        self.dirty = true;
         for node in self.nodes.values_mut() {
             if let Some(interaction) = node.interaction.as_mut() {
                 interaction.tint = tint;
@@ -1064,6 +1113,7 @@ impl Tree {
     /// resolved color, since these fields aren't an optional
     /// capability to begin with.
     pub fn set_all_component_tints(&mut self, tint: peniko::Color) {
+        self.dirty = true;
         for node in self.nodes.values_mut() {
             match &mut node.kind {
                 NodeKind::Checkbox(state) => state.mark_tint = tint,
@@ -1090,6 +1140,7 @@ impl Tree {
         commands: Vec<DrawCommand>,
         hit_test: Option<CustomHitTest>,
     ) -> Option<()> {
+        self.dirty = true;
         let node = self.nodes.get_mut(id)?;
         match &mut node.kind {
             NodeKind::Canvas(state) => {
@@ -1119,6 +1170,7 @@ impl Tree {
     }
 
     pub fn set_focused(&mut self, id: Option<NodeId>) {
+        self.dirty = true;
         self.focused = id;
     }
 
@@ -1232,6 +1284,7 @@ impl Tree {
         duration: Duration,
         now: Instant,
     ) -> Option<NodeId> {
+        self.dirty = true;
         let hit = self.hit_test(root, point);
         if hit == self.hovered {
             return hit;
@@ -1271,6 +1324,7 @@ impl Tree {
         duration: Duration,
         now: Instant,
     ) {
+        self.dirty = true;
         let mut order = Vec::new();
         self.collect_interactive(root, &mut order);
 
@@ -1313,6 +1367,7 @@ impl Tree {
         duration: Duration,
         now: Instant,
     ) {
+        self.dirty = true;
         if !self.nodes.contains_key(node) {
             return;
         }
@@ -1590,6 +1645,7 @@ impl Tree {
     /// it, then delete it" -- not a second, parallel selection-removal
     /// mechanism.
     pub fn cut_text_field_selection(&mut self, field: NodeId) -> Option<String> {
+        self.dirty = true;
         let text = self.text_field_selected_text(field)?;
         let NodeKind::TextField(state) = &mut self.nodes[field].kind else {
             return None;
@@ -1618,6 +1674,7 @@ impl Tree {
     /// `dock::start_drag`'s own "press on the wrong thing, nothing
     /// happens" precedent.
     pub fn set_text_field_cursor(&mut self, field: NodeId, offset: usize) -> bool {
+        self.dirty = true;
         let Some(NodeKind::TextField(state)) = self.nodes.get_mut(field).map(|n| &mut n.kind)
         else {
             return false;
@@ -1654,6 +1711,7 @@ impl Tree {
     /// the way `set_text_field_cursor` deliberately does for a plain
     /// click.
     pub fn extend_text_field_selection(&mut self, field: NodeId, offset: usize) -> bool {
+        self.dirty = true;
         let Some(NodeKind::TextField(state)) = self.nodes.get_mut(field).map(|n| &mut n.kind)
         else {
             return false;
@@ -1719,6 +1777,7 @@ impl Tree {
         config: &InteractionConfig,
         now: Instant,
     ) -> DispatchOutcome {
+        self.dirty = true;
         match event {
             InputEvent::PointerMoved { position } => {
                 // M4 Phase 6 (§7.3): captured before `update_hover` runs
@@ -2185,6 +2244,78 @@ mod tests {
             },
             PaintProperties::new(Color::from_rgba8(255, 0, 0, 255), 0.0, 0.0, 1.0),
         )
+    }
+
+    /// M29 Phase 1 (§5, §6): real regression coverage for the
+    /// centralized dirty flag -- `take_dirty()` must report `true` after
+    /// each real category of mutation (structural, paint-property via
+    /// the `get_mut` chokepoint, interaction, animation-tick) and
+    /// `false` on a `Tree` touched only by read-only calls in between.
+    #[test]
+    fn take_dirty_reports_true_after_each_real_mutation_category_and_false_between() {
+        let mut tree = Tree::new();
+        assert!(
+            tree.take_dirty(),
+            "a brand new Tree must report dirty once, so the very first frame always paints"
+        );
+        assert!(
+            !tree.take_dirty(),
+            "a second read with no mutation in between must report clean"
+        );
+
+        // Structural: insert.
+        let (kind, style, paint) = leaf(10.0, 10.0);
+        let id = tree.insert(kind, style, paint);
+        assert!(tree.take_dirty(), "insert must mark the tree dirty");
+        assert!(!tree.take_dirty(), "a plain read must not");
+        let _ = tree.get(id);
+        let _ = tree.focused();
+        assert!(
+            !tree.take_dirty(),
+            "read-only accessors must never mark the tree dirty"
+        );
+
+        // Paint-property, via the get_mut chokepoint every raw Node
+        // mutation (Node.animate/set_checked/set_text/etc.) goes through.
+        tree.get_mut(id).unwrap().paint.opacity.current = 0.5;
+        assert!(tree.take_dirty(), "get_mut must mark the tree dirty");
+        assert!(!tree.take_dirty());
+
+        // Interaction: interaction_mut (auto-vivifying, per its own doc
+        // comment) is the one other raw-state chokepoint besides get_mut.
+        tree.interaction_mut(id);
+        assert!(
+            tree.take_dirty(),
+            "interaction_mut must mark the tree dirty"
+        );
+        assert!(!tree.take_dirty());
+
+        // Animation-tick: a real mid-flight animation must report dirty
+        // via tick_all's own already-computed `any_active`, without a
+        // fresh mutation happening inside tick_all's own caller code.
+        tree.get_mut(id).unwrap().paint.opacity.animate_to(
+            0.0,
+            Duration::from_millis(100),
+            MotionCurve::Linear,
+            Instant::now(),
+        );
+        tree.take_dirty(); // consume the dirty bit the animate_to's own get_mut just set
+        let (any_active, _) = tree.tick_all(Instant::now() + Duration::from_millis(50));
+        assert!(
+            any_active,
+            "the animation must genuinely still be mid-flight"
+        );
+        assert!(
+            tree.take_dirty(),
+            "a mid-flight tick_all must mark the tree dirty"
+        );
+
+        let (any_active, _) = tree.tick_all(Instant::now() + Duration::from_millis(500));
+        assert!(!any_active, "the animation must have completed by now");
+        assert!(
+            !tree.take_dirty(),
+            "tick_all with nothing active must not mark the tree dirty"
+        );
     }
 
     #[test]
