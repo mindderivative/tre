@@ -11,7 +11,7 @@ use std::rc::Rc;
 use engine_core::{
     AccessNodeData, Action, Animated, CheckboxState, ContentFit, EventKind, IconState, ImageState,
     InputEvent, ItemExtent, Key, NodeId, NodeKind, PaintProperties, PointerButton, Role,
-    SliderState, SplitterState, TextFieldState, Tree, VirtualListState,
+    SliderState, SplitterState, TextFieldState, TextState, Tree, VirtualListState,
 };
 use engine_md3::DynamicTheme;
 use peniko::Color;
@@ -331,6 +331,66 @@ impl PyWindow {
         let mut tree = self.tree.borrow_mut();
         let id = tree.insert(
             NodeKind::Rect,
+            positioned_style(
+                Size {
+                    width: length(width),
+                    height: length(height),
+                },
+                x,
+                y,
+            ),
+            PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, id);
+        Node {
+            id,
+            tree: self.tree.clone(),
+            handlers: self.handlers.clone(),
+            context_menus: self.context_menus.clone(),
+            theme: self.theme.clone(),
+            completions: self.completions.clone(),
+        }
+    }
+
+    /// M27 Phase 2 (§5): a real, genuine gap found while building the
+    /// showcase demo's component gallery screen -- `NodeKind::Text` has
+    /// been fully real and renderable since §14 step 4 (`TextRenderer`,
+    /// `engine-render`), and declarative `kind: Text` in a `view.yaml`
+    /// has built it since §14 step 5, but `Window` (the imperative path)
+    /// had no way to create one at all, confirmed via grep before this
+    /// method existed. Mirrors `add_rect`'s own real shape exactly --
+    /// `background` is repurposed as the glyph color for a plain
+    /// `NodeKind::Text` (no visible box of its own), the identical real
+    /// convention `paint_node`'s own `NodeKind::Text` arm and the
+    /// declarative `required_background(..., "Text")` path both already
+    /// establish -- not a new convention invented here. `width`/`height`
+    /// are required, the same as every other `add_*` method except
+    /// `add_icon` (a single `size`) -- no measure-function/intrinsic-
+    /// sizing wiring exists for `Text` to lean on instead, confirmed
+    /// before choosing this shape rather than assumed.
+    #[pyo3(signature = (content, background, width, height, font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn add_text(
+        &self,
+        content: &str,
+        background: (u8, u8, u8, u8),
+        width: f32,
+        height: f32,
+        font_family: &str,
+        font_weight: f32,
+        font_size: f32,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> Node {
+        let (r, g, b, a) = background;
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::Text(TextState {
+                content: content.to_string(),
+                font_family: font_family.to_string(),
+                font_weight,
+                font_size,
+            }),
             positioned_style(
                 Size {
                     width: length(width),

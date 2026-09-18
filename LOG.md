@@ -1,75 +1,65 @@
-# Log: M27 Phase 1 — Shell & Navigation Scaffold
+# Log: M27 Phase 2 — MD3 Component & Theming Gallery Screen
 
-New `demo/showcase.py` (a fresh top-level location, not `examples/` --
-`examples/` is explicitly "one real mechanism" per script; this is the
-opposite, a consolidated multi-screen app growing one real screen per
-phase). `Window.build_shell(menu_bar=...)` for the chrome; a persistent
-left nav rail and a screen area both attached to `content`, laying out
-side by side for free (`content`'s own `Style::default()` is a real
-`Flex Row` in taffy 0.14.0 -- confirmed directly in its source before
-relying on it, not assumed). Navigation reuses `examples/navigation.py`'s
-own already-proven remove-old/build-new screen-swap pattern verbatim,
-not a new mechanism. Phase 1's own two screens are placeholders --
-Phases 2-4 replace them with real content via the same `SCREENS`
-registry.
+`demo/showcase.py`'s "components" placeholder replaced with a real
+gallery: `Checkbox`, `Slider`, `TextField`, `Image`, and `Icon` all
+live, plus a real seed-color/dark-mode theme picker exercising
+`Window.set_theme`'s own real live-re-theming path (confirmed:
+`set_theme` unconditionally calls both `Tree::set_all_interaction_tints`
+and `Tree::set_all_component_tints` on every call, retroactively
+re-tinting every already-built themed component, not just future ones
+— genuinely live re-theming, not just "new nodes pick up the new
+theme").
 
-**Two real, connected bugs found only by actually running the demo end
-to end, not assumed -- the same discipline this project holds itself
-to throughout:**
+**A real, genuine gap found while building this screen, not assumed:**
+`Window` had no way to create a plain `NodeKind::Text` label at all —
+`NodeKind::Text` has been fully real and renderable since §14 step 4,
+and a declarative `kind: Text` widget has built one since step 5, but
+no imperative `add_text` existed (confirmed via grep before writing
+any code). New `Window.add_text(content, background, width, height,
+font_family="Roboto", font_weight=400.0, font_size=16.0, x=None,
+y=None)`, mirroring `add_rect`'s own exact shape — `background` is
+repurposed as the glyph color, the identical real convention
+`paint_node`'s own `NodeKind::Text` arm and the declarative
+`required_background(..., "Text")` path already establish.
 
-1. **Handler arity.** `Node.set_on_click`/etc. call the registered
-   Python callback with **zero** arguments (confirmed in `dispatch.rs`),
-   but the first draft's nav-button handler was `lambda e, k=key: ...`
-   -- `TypeError: missing 1 required positional argument`, caught and
-   logged non-fatally by the engine's own "an uncaught handler
-   exception is non-fatal" policy, so it failed *silently* rather than
-   crashing. Fixed the demo's own handler. **Found the identical real
-   bug already shipped in the docs**: `docs/getting-started.md`'s own
-   `on_click(event):`, `docs/guide/components.md`'s two `lambda e: ...`,
-   and `docs/guide/imperative-api.md`'s four `lambda event: ...` --
-   every one would silently no-op for a real reader who copy-pasted
-   them. Reproduced the exact failure with a standalone script before
-   fixing, then reproduced success after. Fixed all six.
+**Two more real, connected bugs found only by actually running the
+gallery end to end:**
 
-2. **A genuine, structural `&mut self` over-restriction in `engine-py::
-   PyWindow`.** `Window.click`/`hover`/`scroll`/`right_click`/
-   `press_key`/`type_text`/`cut`/`paste`/`begin_container_transform`/
-   `end_container_transform`/`redraw_canvas`/`set_virtual_list_window`
-   and every real docking method (`add_dock_zone`/`dock_panel`/
-   `set_active_tab`/`set_dock_handle`/`set_drop_zone_highlight`/
-   `drag_panel_over`/`start_panel_drag`/`drop_panel_at`) were all
-   declared `&mut self` in Rust despite every one of them touching only
-   interior-mutable state (`Rc<RefCell<Tree>>`/`Rc<RefCell<DockState>>`/
-   read-only fields) -- none of them ever needed exclusive access,
-   confirmed by reading each body directly before changing anything.
-   PyO3 enforces Rust's aliasing rules on `#[pyclass]` instances at
-   runtime: a `&mut self` method holds an exclusive borrow on the
-   Python object for its whole call, including while it synchronously
-   invokes a registered Python callback -- so a `window.click()`-
-   triggered handler that itself called back into the *same* `window`
-   object (e.g. `window.add_rect(...)`, a completely ordinary,
-   realistic pattern any real click-driven UI needs) panicked with
-   `RuntimeError: Already mutably borrowed`. Converted all 19 real
-   methods to `&self` (a mechanical, scripted, verified-per-method
-   change -- confirmed via direct read that none of them write to the
-   two fields that genuinely still need `&mut self`: `materializers`/
-   `canvas_draws`, both plain `HashMap`s `add_virtual_list`/`add_canvas`
-   insert into, the *only* two `PyWindow` fields not already behind a
-   `RefCell`). `add_virtual_list`/`add_canvas` themselves correctly stay
-   `&mut self` -- a real, honestly-stated, narrower residual limitation:
-   a handler still can't call those two specifically from within
-   another `PyWindow` method's own call stack, which would need those
-   two fields moved behind their own `RefCell` too, real, separate,
-   larger work not needed by anything today.
+1. `Node.animate(property, value, duration_ms=0)` only *registers* the
+   animation — it snaps to the target the next time something ticks
+   the node, normally `App.run()`'s per-frame loop (already documented
+   in `view.rs::apply_binding_value`'s own doc comment, but not
+   something this demo's own first draft accounted for): a Slider
+   nudge attempted via `.animate("thumb_position", 0.9, duration_ms=0)`
+   before `app.run()` ever starts silently never landed. Fixed by
+   using the same real, already-proven mechanism `examples/slider.py`
+   established instead — a real Tab-focus + dispatched `ArrowRight`
+   key, which internally ticks immediately (unlike `animate()`).
+2. Tab order in the gallery screen starts *after* the two nav buttons
+   (built first, in `build_showcase`, before any screen's own content
+   exists) — a first draft's verification assumed the gallery's own
+   `Checkbox` was the first Tab stop; it's actually the third (two nav
+   buttons, then the checkbox). Fixed by accounting for the nav
+   buttons explicitly, confirmed by a standalone debug script isolating
+   the gallery screen alone (which needed only 2 Tabs, not 4) before
+   fixing the real script.
 
-Full `cargo test --workspace --release` (144 `engine-core` + every
-other crate's suite, all unmodified and passing -- widening `&self`
-can't break a test that never relied on exclusivity)/clippy
-`-D warnings`/fmt clean on the first run after the fix. `maturin
+Verification for the whole gallery avoids any new pixel-level readback
+(the definitive color-correctness proof stays in `engine-render`'s own
+tests, the same split every other example in this workspace already
+uses): `Checkbox.get_checked()` before/after a real toggle,
+`Slider.get("thumb_position")` before/after a real keyboard nudge,
+`TextField.get_text()` round-tripping real content, and every one of
+the 4 seed swatches plus the dark-mode toggle exercised through a real
+`Window.set_theme` call with no error.
+
+Full `cargo test --workspace --release` (all pre-existing suites
+unmodified and passing)/clippy `-D warnings`/fmt clean. `maturin
 develop --release` + `pytest tests/` (187 passed, unchanged, 1
-pre-existing skip) and all 33 pre-existing examples plus the new
-`demo/showcase.py` confirmed clean with the real display. `mkdocs
-build --strict` clean after the six doc fixes.
+pre-existing skip), all 33 pre-existing examples, and the updated demo
+confirmed clean with the real display. Updated `docs/api/python/
+window.md` with the new `add_text` method. `mkdocs build --strict`
+clean.
 
-M27 Phase 1 — Shell & Navigation Scaffold is now complete. M27 itself
-continues with Phase 2 (MD3 component & theming gallery screen).
+M27 Phase 2 — MD3 Component & Theming Gallery Screen is now complete.
+M27 continues with Phase 3 (motion & custom-drawing screen).

@@ -21,6 +21,17 @@ window = Window(width=400, height=200, title="My App")
 A plain colored rectangle. `background` is an `(r, g, b, a)` tuple of
 ints 0–255.
 
+### `add_text`
+
+**`add_text(content, background, width, height, font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None)`**
+
+A plain, non-editable text label — `background` is repurposed as the
+glyph color (a label has no visible box of its own), the same real
+convention a declarative `kind: Text` widget already uses. `width`/
+`height` are required (there's no intrinsic-sizing/measure-function
+support to size a label from its own content). For editable text, see
+[`add_text_field`](#add_text_field).
+
 ### `add_checkbox`
 
 **`add_checkbox(background, width, height, checked=False, x=None, y=None)`**
