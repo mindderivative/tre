@@ -665,6 +665,41 @@ const TOP_APP_BAR_HORIZONTAL_PADDING: f32 = 4.0;
 const TOP_APP_BAR_HEADLINE_START_PADDING: f32 = 16.0;
 const TOP_APP_BAR_TRAILING_ICON_GAP: f32 = 8.0;
 
+/// MD3's own real Tabs anatomy (M30 Phase 5 Step 4), the *Primary
+/// Navigation Tab* variant -- verified against Material Web's own
+/// token source before writing any code. **Real, confirmed finding:**
+/// MD3 has exactly two real Tab variants, each with its own separate
+/// token file (`_md-comp-primary-navigation-tab.scss`/`_md-comp-
+/// secondary-navigation-tab.scss`, confirmed via a real directory
+/// listing, the same discovery technique `Top App Bar` (Step 3) just
+/// used) -- Primary is this step's real scope, Secondary deliberately
+/// out of scope, matching this catalog's own "real per-variant
+/// investigation, not one guessed formula" discipline. Real container:
+/// `surface` fill, `corner-none`, `level0` elevation (flat, matching
+/// every other docked-chrome component found so far), 48dp height.
+/// Real active indicator: `primary` fill, 3dp height, real shape `(3px
+/// 3px 0px 0px)` -- rounded only on its own top corners, confirmed
+/// (not assumed symmetric like `corner-full`). Active label/icon:
+/// `primary`; inactive: `on_surface_variant`. Label type role is Title
+/// Small, **a real, confirmed numeric coincidence with Label Large
+/// worth stating, not conflating:** `title-small-size` (0.875rem =
+/// 14px) and `weight-medium` (500) are numerically identical to
+/// `BUTTON_LABEL_FONT_SIZE`/`_WEIGHT`, but a genuinely distinct real
+/// MD3 type role -- declared as its own constants below rather than
+/// silently reusing a different role's, even though today's numbers
+/// match. Icon (optional, "with-icon" token set): 24dp, same real
+/// active/inactive color pair as the label.
+const TAB_HEIGHT: f32 = 48.0;
+const TAB_LABEL_FONT_SIZE: f32 = 14.0;
+const TAB_LABEL_FONT_WEIGHT: f32 = 500.0;
+const TAB_ICON_SIZE: f32 = 24.0;
+const TAB_INDICATOR_HEIGHT: f32 = 3.0;
+const TAB_INDICATOR_CORNER_RADIUS: f64 = 3.0;
+/// Not a discrete token in the tab's own token file (confirmed by the
+/// same fetch) -- a reasonable, MD3-consistent value, the identical
+/// honest caveat `Dialog`'s own padding constants carry.
+const TAB_ICON_LABEL_GAP: f32 = 2.0;
+
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
 /// trailing icon -- that's `Icon Button`'s own separate anatomy, Phase
@@ -3517,6 +3552,238 @@ impl PyWindow {
 
         tree.add_child(self.root, bar);
         Ok((self.wrap_node(bar), leading, trailing))
+    }
+
+    /// M30 Phase 5 Step 4 (§5, §7): `Tabs`, MD3's real *Primary
+    /// Navigation Tab* variant (Secondary is its own separately-
+    /// tokened real variant, deliberately out of scope for this step
+    /// -- see the `TAB_*` constants above for the full real finding).
+    /// Real anatomy: a `surface`-filled, flat (`level0`) 48dp-tall row
+    /// divided evenly across `labels.len()` tabs, each a real 3dp
+    /// active-indicator bar (`primary` fill when active, rounded only
+    /// on its own top corners via `PaintProperties.corner_radii_
+    /// override` -- `Segmented Button`'s own already-real universal
+    /// capability) sitting at the tab's own bottom edge, below a
+    /// centered optional icon + Title Small label (active: `primary`;
+    /// inactive: `on_surface_variant`).
+    ///
+    /// **Real, deliberate architectural choice, the same real dividing
+    /// line `Segmented Button`/`Filter Chip`/`Navigation Rail`/
+    /// `Navigation Drawer` already established:** a tab's own "active"
+    /// state is app-owned group-select state (Design Principle 6), not
+    /// a new engine `NodeKind` -- returns `Vec<Node>` (`Segmented
+    /// Button`'s own exact real return shape), the row's own frame
+    /// never returned. **Real, confirmed repeat of `Navigation Rail`'s
+    /// own hit-test bug, caught live by this step's own click-
+    /// dispatch test, not avoided by geometry alone as first assumed:**
+    /// the 3dp indicator itself never overlaps a tab's own geometric
+    /// center, but the *content* wrapper around the icon/label (a
+    /// plain `Rect`, used purely for its own real flex-centering
+    /// layout) does -- and a plain `Rect` always independently claims
+    /// a hit exactly like `Navigation Rail`'s indicator did. Fixed the
+    /// identical real way: `Tree::set_hit_testable(content, false)`,
+    /// this milestone's second real use of the capability `Navigation
+    /// Rail` added, not a new one invented here.
+    #[pyo3(signature = (labels, icons=None, selected=None, width=None, x=None, y=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn add_tabs(
+        &self,
+        labels: Vec<String>,
+        icons: Option<Vec<String>>,
+        selected: Option<usize>,
+        width: Option<f32>,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<Vec<Node>> {
+        if labels.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "add_tabs needs at least 1 item",
+            ));
+        }
+        if let Some(icons) = &icons
+            && icons.len() != labels.len()
+        {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "add_tabs needs one icon per label when icons are given -- got {} labels and {} \
+                 icons",
+                labels.len(),
+                icons.len()
+            )));
+        }
+        if let Some(sel) = selected
+            && sel >= labels.len()
+        {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "selected index {sel} is out of range for {} items",
+                labels.len()
+            )));
+        }
+        let icon_paths: Option<Vec<_>> = icons
+            .map(|icons| {
+                icons
+                    .iter()
+                    .map(|name| resolve_icon_path(name))
+                    .collect::<PyResult<Vec<_>>>()
+            })
+            .transpose()?;
+
+        let (container_color, active_color, inactive_color) = {
+            let theme = self.theme.borrow();
+            let role = |name: &str, fallback: Color| -> Color {
+                if theme.is_set() {
+                    theme.role(name).unwrap_or(fallback)
+                } else {
+                    fallback
+                }
+            };
+            (
+                role("surface", Md3Baseline::SURFACE),
+                role("primary", Md3Baseline::PRIMARY),
+                role("on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT),
+            )
+        };
+
+        let mut tree = self.tree.borrow_mut();
+        let row_width = width.unwrap_or(self.width as f32);
+        let tab_width = row_width / labels.len() as f32;
+
+        let mut row_style = positioned_style(
+            Size {
+                width: length(row_width),
+                height: length(TAB_HEIGHT),
+            },
+            x,
+            y,
+        );
+        row_style.display = taffy::Display::Flex;
+        let row = tree.insert(
+            NodeKind::Rect,
+            row_style,
+            PaintProperties::new(container_color, 0.0, 0.0, 1.0),
+        );
+
+        let mut tabs = Vec::with_capacity(labels.len());
+        for (i, label) in labels.into_iter().enumerate() {
+            let is_active = selected == Some(i);
+            let color = if is_active {
+                active_color
+            } else {
+                inactive_color
+            };
+
+            let tab_style = Style {
+                size: Size {
+                    width: length(tab_width),
+                    height: length(TAB_HEIGHT),
+                },
+                display: taffy::Display::Flex,
+                flex_direction: taffy::FlexDirection::Column,
+                ..Default::default()
+            };
+            let tab = tree.insert(
+                NodeKind::Rect,
+                tab_style,
+                PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+            );
+
+            let content_style = Style {
+                flex_grow: 1.0,
+                size: Size {
+                    width: length(tab_width),
+                    height: auto(),
+                },
+                display: taffy::Display::Flex,
+                flex_direction: taffy::FlexDirection::Column,
+                justify_content: Some(JustifyContent::CENTER),
+                align_items: Some(AlignItems::CENTER),
+                gap: Size {
+                    width: length(0.0),
+                    height: length(TAB_ICON_LABEL_GAP),
+                },
+                ..Default::default()
+            };
+            let content = tree.insert(
+                NodeKind::Rect,
+                content_style,
+                PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+            );
+            // M30 Phase 5 Step 4 (§5, §7): a real, confirmed repeat of
+            // `Navigation Rail`'s own hit-test bug, caught live by
+            // this step's own click-dispatch test, not avoided by
+            // geometry alone as first assumed -- `content` is a
+            // purely decorative layout wrapper around the icon/label,
+            // and (like `Navigation Rail`'s indicator) a plain `Rect`
+            // always independently claims a hit, stealing every click
+            // meant for `tab`'s own registered handler. `Node.
+            // hit_testable`'s own doc comment has the full real
+            // finding this reuses a second time.
+            tree.set_hit_testable(content, false);
+
+            if let Some(paths) = &icon_paths {
+                let icon_id = tree.insert(
+                    NodeKind::Icon(IconState {
+                        path: paths[i].clone(),
+                        tint: color,
+                    }),
+                    Style {
+                        size: Size {
+                            width: length(TAB_ICON_SIZE),
+                            height: length(TAB_ICON_SIZE),
+                        },
+                        ..Default::default()
+                    },
+                    PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+                );
+                tree.add_child(content, icon_id);
+            }
+
+            let label_id = tree.insert(
+                NodeKind::Text(TextState {
+                    content: label,
+                    font_family: "Roboto".to_string(),
+                    font_weight: TAB_LABEL_FONT_WEIGHT,
+                    font_size: TAB_LABEL_FONT_SIZE,
+                    align: TextAlign::Center,
+                }),
+                Style {
+                    size: Size {
+                        width: length(tab_width),
+                        height: length(TAB_LABEL_FONT_SIZE + 4.0),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(color, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(content, label_id);
+            tree.add_child(tab, content);
+
+            let indicator_fill = if is_active { active_color } else { TRANSPARENT };
+            let mut indicator_paint = PaintProperties::new(indicator_fill, 0.0, 0.0, 1.0);
+            indicator_paint.corner_radii_override = Some([
+                TAB_INDICATOR_CORNER_RADIUS,
+                TAB_INDICATOR_CORNER_RADIUS,
+                0.0,
+                0.0,
+            ]);
+            let indicator = tree.insert(
+                NodeKind::Rect,
+                Style {
+                    size: Size {
+                        width: length(tab_width),
+                        height: length(TAB_INDICATOR_HEIGHT),
+                    },
+                    ..Default::default()
+                },
+                indicator_paint,
+            );
+            tree.add_child(tab, indicator);
+
+            tree.add_child(row, tab);
+            tabs.push(self.wrap_node(tab));
+        }
+
+        tree.add_child(self.root, row);
+        Ok(tabs)
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,

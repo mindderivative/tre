@@ -1,33 +1,42 @@
-# LOG — M30 Phase 5 Step 3: Top App Bar
+# LOG — M30 Phase 5 Step 4: Tabs
 
-- WebFetch against `_md-comp-top-app-bar.scss` 404'd. Fetched the
-  real GitHub directory listing for `tokens/versions/v0_192` and
-  found the real per-variant filenames:
-  `_md-comp-top-app-bar-small.scss`/`-medium.scss`/`-large.scss`/
-  `-small-centered.scss`.
-- Fetched the real Small-variant tokens: `surface` fill, `level0`
-  elevation, 64dp height, Title Large headline (`on_surface`), 24dp
-  leading icon (`on_surface`), 24dp trailing icon
-  (`on_surface_variant` -- a real, confirmed asymmetry from leading).
-- Traced Title Large's real numeric values: `title-large-size` =
-  1.375rem = 22px, `title-large-weight` = `weight-regular` = 400
-  (via `_md-sys-typescale.scss`/`_md-ref-typeface.scss`).
-- Designed to reuse Icon Button's own exact anatomy (Rect container +
-  centered, deferring Icon child) for leading/trailing actions,
-  avoiding any Navigation Rail-style hit-test risk by construction.
-- Implemented `add_top_app_bar` in
-  `crates/engine-py/src/window_factory.rs`. Cleaned up a redundant
-  `let bar_style = ...; let mut bar_style = bar_style;` shadow before
-  compiling.
+- Fetched the real GitHub directory listing for
+  `tokens/versions/v0_192` filtered to "tab" — found MD3 has exactly
+  two real Tab variants, each its own file:
+  `_md-comp-primary-navigation-tab.scss`/
+  `_md-comp-secondary-navigation-tab.scss`. Primary in scope,
+  Secondary deliberately out of scope.
+- Fetched the real Primary-variant tokens: `surface` fill,
+  `corner-none`, `level0`, 48dp height; active indicator `primary`
+  fill, 3dp height, real shape `(3px 3px 0px 0px)` (rounded only on
+  top corners); active label/icon `primary`, inactive
+  `on_surface_variant`; label type role Title Small.
+- Traced Title Small's real numeric values (0.875rem = 14px,
+  weight-medium = 500) — noted the real coincidence with Label
+  Large's own numbers but declared distinct `TAB_LABEL_FONT_SIZE`/
+  `_WEIGHT` constants rather than conflating the two roles.
+- Implemented `add_tabs` in `crates/engine-py/src/window_factory.rs`.
+  Cleaned up a redundant `row_style` shadow before compiling.
+- `tests/test_tabs.py`'s own independent-click test failed on first
+  run: assumed the 3dp indicator's own geometry (flush against the
+  tab's bottom edge) would avoid Navigation Rail's own hit-test bug,
+  but the `content` wrapper Rect around the icon/label (used purely
+  for its own flex-centering layout) intercepted the click instead —
+  a real, confirmed repeat of the same bug class, just from a
+  different decorative Rect.
+- Fixed identically to Navigation Rail:
+  `tree.set_hit_testable(content, false)` — a direct, real
+  confirmation the `Node.hit_testable` capability generalizes beyond
+  its original use case. Corrected the method's own doc comment,
+  which had prematurely claimed no opt-out was needed.
+- Re-ran `tests/test_tabs.py` after the fix — all 9 passed.
 - Added `.pyi` stub.
-- Wrote `tests/test_top_app_bar.py` (8 tests, all passed first run),
-  including independent-click proofs for the leading icon and each
-  trailing icon.
-- Wrote `examples/top_app_bar.py` (headless-CI-safe), ran clean,
-  `mypy --strict` clean on the first run.
+- Wrote `examples/tabs.py` (headless-CI-safe), applying the
+  `Callable` return-type annotation proactively — clean on the first
+  run (`mypy --strict` too).
 - Full verification: `cargo check`/`clippy -D warnings`/`fmt --check`
   clean, `cargo test --workspace --release` (43 binaries green,
-  unchanged), `maturin develop --release`, `pytest tests/` (355
-  passed, 1 skipped), all 49 examples clean, showcase demo clean.
+  unchanged), `maturin develop --release`, `pytest tests/` (364
+  passed, 1 skipped), all 50 examples clean, showcase demo clean.
 - Updated `BUILD_TRACKER.md`, regenerated and republished the Build
   Tracker artifact at https://claude.ai/artifact/CaPkWjpd91oR7YFbcqC9ty.

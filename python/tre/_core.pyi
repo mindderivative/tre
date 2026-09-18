@@ -563,6 +563,25 @@ class Window:
         window's own full width.
         """
         ...
+    def add_tabs(
+        self,
+        labels: list[str],
+        icons: list[str] | None = None,
+        selected: int | None = None,
+        width: float | None = None,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> list[Node]:
+        """Real MD3 tabs, the *Primary Navigation Tab* variant.
+        `icons`, if given, must be the same length as `labels`.
+        Returns one real, independently `enable_interaction()`-able
+        `Node` per tab, in order -- the row's own background frame is
+        never returned. `width` defaults to the window's own full
+        width, divided evenly across the tabs. Raises `ValueError` if
+        `labels` is empty, if `icons` is given with a mismatched
+        length, or if `selected` is out of range.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,
