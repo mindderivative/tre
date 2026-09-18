@@ -26,7 +26,7 @@ and a complete Python API reference — lives under [`docs/`](docs/),
 built with [MkDocs](https://www.mkdocs.org/):
 
 ```bash
-pip install '.[docs]'
+pip install mkdocs mkdocs-material
 mkdocs serve   # live preview at http://127.0.0.1:8000
 ```
 

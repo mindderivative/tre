@@ -43,7 +43,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install '.[docs]'
+      # Deliberately *not* `pip install '.[docs]'`: pip always builds the
+      # base package too when installing extras from a local pyproject.toml,
+      # which means compiling engine-py's real Rust extension -- this
+      # runner has no Rust toolchain and confirmed, via this exact
+      # workflow's own first real run, no `fontconfig` dev headers
+      # either (the same `libfontconfig1-dev` ci.yml's Linux job already
+      # documents needing). Installing the two doc-build packages
+      # directly needs none of that -- this job only ever runs
+      # `mkdocs build`, never imports `tre` itself.
+      - run: pip install mkdocs mkdocs-material
       - run: mkdocs build --strict
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -30,10 +30,17 @@ claims to, not just that the code compiles.
 ## Building this documentation site
 
 ```bash
-pip install '.[docs]'
+pip install mkdocs mkdocs-material
 mkdocs serve   # live preview at http://127.0.0.1:8000
 mkdocs build   # static site in site/
 ```
+
+!!! note
+    Don't use `pip install '.[docs]'` for this — installing extras from a
+    local `pyproject.toml` always builds the base package too (`tre`'s
+    real Rust extension), which needs a full Rust toolchain and
+    `fontconfig` dev headers you don't need just to build docs. The
+    plain install above only ever runs `mkdocs`, never imports `tre`.
 
 ## Project discipline
 
