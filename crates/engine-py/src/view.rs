@@ -51,7 +51,6 @@ use engine_spec::{
     parse_stylesheet, parse_view_with_includes,
 };
 use peniko::Color;
-use peniko::kurbo::Point;
 use pyo3::IntoPyObjectExt;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -59,7 +58,9 @@ use taffy::prelude::{AvailableSpace, Size};
 
 use crate::binding::PyViewModelResolver;
 use crate::dispatch::CompletionRegistry;
-use crate::dispatch::{HandlerMap, interaction_config, open_context_menu, run_dispatch_outcome};
+use crate::dispatch::{
+    HandlerMap, interaction_config, node_center, open_context_menu, run_dispatch_outcome,
+};
 use crate::node::Node;
 use crate::window::ThemeState;
 
@@ -90,6 +91,23 @@ fn begin_recording() {
 
 fn end_recording() -> Vec<Py<PyAny>> {
     RECORDING.with(|cell| cell.borrow_mut().take().unwrap_or_default())
+}
+
+/// Real review finding: `apply_binding_value` and `TwoWayCallback::
+/// __call__` each built an identical throwaway `Node` -- real `tree`/
+/// `id`, but empty/fresh `context_menus`/`theme`/`completions` (never
+/// exposed to Python beyond that one call, so nothing real is lost by
+/// sharing none of `View`'s own persistent ones) -- differing only in
+/// which `handlers` map to give it. Factored out once.
+fn throwaway_node(tree: &Rc<RefCell<Tree>>, id: NodeId, handlers: HandlerMap) -> Node {
+    Node {
+        id,
+        tree: tree.clone(),
+        handlers,
+        context_menus: Rc::new(RefCell::new(HashMap::new())),
+        theme: Rc::new(RefCell::new(ThemeState::default())),
+        completions: Rc::new(RefCell::new(CompletionRegistry::new())),
+    }
 }
 
 /// Applies a resolved binding value to `node_id`'s corresponding
@@ -137,14 +155,7 @@ fn apply_binding_value(
     // real `Change` through it (M14 Phase 3), so this reuses `View`'s
     // own persistent map, not a throwaway one, or a registered `on_
     // change` handler would never see a binding-applied `checked` value.
-    let temp_node = Node {
-        id: node_id,
-        tree: tree.clone(),
-        handlers: handlers.clone(),
-        context_menus: Rc::new(RefCell::new(HashMap::new())),
-        theme: Rc::new(RefCell::new(ThemeState::default())),
-        completions: Rc::new(RefCell::new(CompletionRegistry::new())),
-    };
+    let temp_node = throwaway_node(tree, node_id, handlers.clone());
 
     if let engine_spec::Value::Bool(checked) = value {
         return temp_node.set_checked(*checked, py);
@@ -252,14 +263,11 @@ struct TwoWayCallback {
 #[pymethods]
 impl TwoWayCallback {
     fn __call__(&self, py: Python<'_>) -> PyResult<()> {
-        let temp_node = Node {
-            id: self.node_id,
-            tree: self.tree.clone(),
-            handlers: Rc::new(RefCell::new(HashMap::new())),
-            context_menus: Rc::new(RefCell::new(HashMap::new())),
-            theme: Rc::new(RefCell::new(ThemeState::default())),
-            completions: Rc::new(RefCell::new(CompletionRegistry::new())),
-        };
+        let temp_node = throwaway_node(
+            &self.tree,
+            self.node_id,
+            Rc::new(RefCell::new(HashMap::new())),
+        );
         let value: Bound<'_, PyAny> = if self.property == "checked" {
             temp_node.get_checked()?.into_bound_py_any(py)?
         } else if self.property == "text" {
@@ -691,22 +699,15 @@ impl View {
     /// fires, not just that it validated.
     fn click(&mut self, node: PyRef<'_, Node>, py: Python<'_>) {
         let root = self.reconciler.root();
-        let point = {
-            let mut tree = self.tree.borrow_mut();
-            tree.compute_layout(
-                root,
-                Size {
-                    width: AvailableSpace::MaxContent,
-                    height: AvailableSpace::MaxContent,
-                },
-            );
-            let (x, y) = tree.absolute_position(node.id);
-            let layout = tree.layout(node.id);
-            Point::new(
-                x + f64::from(layout.size.width) / 2.0,
-                y + f64::from(layout.size.height) / 2.0,
-            )
-        };
+        let point = node_center(
+            &self.tree,
+            root,
+            Size {
+                width: AvailableSpace::MaxContent,
+                height: AvailableSpace::MaxContent,
+            },
+            node.id,
+        );
 
         let now = std::time::Instant::now();
         let config = interaction_config();
@@ -744,22 +745,15 @@ impl View {
     /// `handlers` map `_attach` wires into (above).
     fn hover(&mut self, node: PyRef<'_, Node>, py: Python<'_>) {
         let root = self.reconciler.root();
-        let point = {
-            let mut tree = self.tree.borrow_mut();
-            tree.compute_layout(
-                root,
-                Size {
-                    width: AvailableSpace::MaxContent,
-                    height: AvailableSpace::MaxContent,
-                },
-            );
-            let (x, y) = tree.absolute_position(node.id);
-            let layout = tree.layout(node.id);
-            Point::new(
-                x + f64::from(layout.size.width) / 2.0,
-                y + f64::from(layout.size.height) / 2.0,
-            )
-        };
+        let point = node_center(
+            &self.tree,
+            root,
+            Size {
+                width: AvailableSpace::MaxContent,
+                height: AvailableSpace::MaxContent,
+            },
+            node.id,
+        );
 
         let outcome = self.tree.borrow_mut().dispatch(
             root,
@@ -774,22 +768,15 @@ impl View {
     /// counterpart, mirroring `Window.right_click` exactly.
     fn right_click(&mut self, node: PyRef<'_, Node>, py: Python<'_>) {
         let root = self.reconciler.root();
-        let point = {
-            let mut tree = self.tree.borrow_mut();
-            tree.compute_layout(
-                root,
-                Size {
-                    width: AvailableSpace::MaxContent,
-                    height: AvailableSpace::MaxContent,
-                },
-            );
-            let (x, y) = tree.absolute_position(node.id);
-            let layout = tree.layout(node.id);
-            Point::new(
-                x + f64::from(layout.size.width) / 2.0,
-                y + f64::from(layout.size.height) / 2.0,
-            )
-        };
+        let point = node_center(
+            &self.tree,
+            root,
+            Size {
+                width: AvailableSpace::MaxContent,
+                height: AvailableSpace::MaxContent,
+            },
+            node.id,
+        );
 
         let now = std::time::Instant::now();
         let config = interaction_config();

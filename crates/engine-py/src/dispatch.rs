@@ -23,8 +23,10 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use engine_core::{CompletionHandle, DispatchOutcome, EventKind, InteractionConfig, NodeId};
+use engine_core::{CompletionHandle, DispatchOutcome, EventKind, InteractionConfig, NodeId, Tree};
+use peniko::kurbo::Point;
 use pyo3::prelude::*;
+use taffy::prelude::{AvailableSpace, Size};
 
 /// M16 Phase 2 (§3, §9) real finding, not anticipated in `PLAN.md`:
 /// `App::run`'s own top is *not* the one guaranteed place a `tracing`
@@ -137,6 +139,32 @@ impl CompletionRegistry {
 }
 
 pub(crate) type SharedCompletions = Rc<RefCell<CompletionRegistry>>;
+
+/// Real review finding: `window.rs`'s `click`/`hover`/`scroll`/
+/// `right_click` and `view.rs`'s `click`/`hover`/`right_click` each
+/// built this identical "compute layout, then find a node's real
+/// center point" block by hand -- 7 near-copies differing only in
+/// which root to lay out from and which `AvailableSpace` to lay out
+/// against (`Window`'s own real, fixed size vs. `View`'s own
+/// `MaxContent`, since it has no window size of its own). Factored
+/// out here, the same already-established real home for logic shared
+/// between `window.rs` and `view.rs` (`interaction_config`/
+/// `run_dispatch_outcome`/`open_context_menu`, all just below).
+pub(crate) fn node_center(
+    tree: &Rc<RefCell<Tree>>,
+    root: NodeId,
+    available: Size<AvailableSpace>,
+    node: NodeId,
+) -> Point {
+    let mut tree = tree.borrow_mut();
+    tree.compute_layout(root, available);
+    let (x, y) = tree.absolute_position(node);
+    let layout = tree.layout(node);
+    Point::new(
+        x + f64::from(layout.size.width) / 2.0,
+        y + f64::from(layout.size.height) / 2.0,
+    )
+}
 
 /// `Tree::dispatch`'s own MD3-value inputs (§1 Locked Decisions keeps
 /// `engine-core` itself MD3-agnostic, so these live at the real call

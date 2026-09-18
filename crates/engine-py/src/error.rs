@@ -57,12 +57,12 @@ pub enum EngineError {
 impl From<EngineError> for PyErr {
     fn from(e: EngineError) -> PyErr {
         match e {
-            EngineError::UnknownProperty { .. } => PyValueError::new_err(e.to_string()),
+            EngineError::UnknownProperty { .. }
+            | EngineError::NotAVirtualList
+            | EngineError::NotACanvas
+            | EngineError::CycleRejected
+            | EngineError::ForeignNode => PyValueError::new_err(e.to_string()),
             EngineError::TypeMismatch { .. } => PyTypeError::new_err(e.to_string()),
-            EngineError::NotAVirtualList => PyValueError::new_err(e.to_string()),
-            EngineError::NotACanvas => PyValueError::new_err(e.to_string()),
-            EngineError::CycleRejected => PyValueError::new_err(e.to_string()),
-            EngineError::ForeignNode => PyValueError::new_err(e.to_string()),
             EngineError::ImageLoadFailed { .. } => PyIOError::new_err(e.to_string()),
         }
     }

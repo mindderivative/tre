@@ -143,7 +143,7 @@ pub enum NodeKindSpec {
 /// paths (`include.rs`'s `resolve_confined`, reused rather than a
 /// second path-confinement scheme), not relative to the current
 /// working directory or the running process's own location.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ImageSpec {
     pub src: String,
@@ -188,7 +188,7 @@ fn default_font_weight() -> f32 {
 /// Row/Column only -- `taffy::style::FlexDirection` also has
 /// `RowReverse`/`ColumnReverse`, not exposed here since nothing in this
 /// step's own scope needs them; additive to add later.
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum FlexDirectionSpec {
     Row,
     Column,

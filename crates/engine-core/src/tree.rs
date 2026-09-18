@@ -860,7 +860,7 @@ impl Tree {
             _ => unreachable!("checked at the top of this function"),
         };
 
-        for idx in visible.clone() {
+        for idx in visible {
             if already_materialized.contains(&idx) {
                 continue;
             }
@@ -1398,8 +1398,7 @@ impl Tree {
                 let prev = state.content[..state.cursor]
                     .char_indices()
                     .next_back()
-                    .map(|(i, _)| i)
-                    .unwrap_or(0);
+                    .map_or(0, |(i, _)| i);
                 state.content.replace_range(prev..state.cursor, "");
                 state.cursor = prev;
                 Some(DispatchOutcome::Changed(field))
@@ -1414,8 +1413,7 @@ impl Tree {
                 let next = state.content[state.cursor..]
                     .char_indices()
                     .nth(1)
-                    .map(|(i, _)| state.cursor + i)
-                    .unwrap_or(state.content.len());
+                    .map_or(state.content.len(), |(i, _)| state.cursor + i);
                 state.content.replace_range(state.cursor..next, "");
                 Some(DispatchOutcome::Changed(field))
             }
@@ -1431,8 +1429,7 @@ impl Tree {
                     state.cursor = state.content[..state.cursor]
                         .char_indices()
                         .next_back()
-                        .map(|(i, _)| i)
-                        .unwrap_or(0);
+                        .map_or(0, |(i, _)| i);
                 }
                 Some(DispatchOutcome::None)
             }
@@ -1448,8 +1445,7 @@ impl Tree {
                     state.cursor = state.content[state.cursor..]
                         .char_indices()
                         .nth(1)
-                        .map(|(i, _)| state.cursor + i)
-                        .unwrap_or(state.content.len());
+                        .map_or(state.content.len(), |(i, _)| state.cursor + i);
                 }
                 Some(DispatchOutcome::None)
             }
@@ -4348,14 +4344,14 @@ mod tests {
         };
 
         let (k, s, p) = leaf(60.0, 60.0);
-        let mut absolute = s.clone();
+        let mut absolute = s;
         absolute.position = Position::Absolute;
         absolute.inset = zero_inset;
         let first = tree.insert(k, absolute, p);
         tree.add_child(root, first);
 
         let (k, s, p) = leaf(60.0, 60.0);
-        let mut absolute = s.clone();
+        let mut absolute = s;
         absolute.position = Position::Absolute;
         absolute.inset = zero_inset;
         let second = tree.insert(k, absolute, p);

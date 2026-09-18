@@ -22,7 +22,7 @@ use taffy::prelude::{AvailableSpace, Position, Rect as TaffyRect, Size, Style, a
 
 use crate::dispatch::{
     CompletionRegistry, HandlerMap, SharedCompletions, call_handler, interaction_config,
-    open_context_menu, run_dispatch_outcome,
+    node_center, open_context_menu, run_dispatch_outcome,
 };
 use crate::dock::{self, SharedDockState};
 use crate::error::EngineError;
@@ -250,6 +250,29 @@ pub struct PyWindow {
     pub(crate) completions: SharedCompletions,
 }
 
+/// Real review finding: every `add_*`/`build_shell` method below used
+/// to build an identical 6-field `Node` struct literal by hand (the
+/// same shared state every `Node` this `Window` hands out always
+/// carries) -- factored out once, so a future new shared field (the
+/// exact class of thing `completions`, M9 Phase 2, once was) only
+/// needs updating here, not at every one of the 11 call sites this
+/// used to be duplicated across. A plain, non-`#[pymethods]` `impl`
+/// block -- `pyo3` has no way to expose a method taking a raw
+/// `NodeId` as a Python-callable argument, and this helper is only
+/// ever called from Rust, never from Python.
+impl PyWindow {
+    fn wrap_node(&self, id: NodeId) -> Node {
+        Node {
+            id,
+            tree: self.tree.clone(),
+            handlers: self.handlers.clone(),
+            context_menus: self.context_menus.clone(),
+            theme: self.theme.clone(),
+            completions: self.completions.clone(),
+        }
+    }
+}
+
 #[pymethods]
 impl PyWindow {
     #[new]
@@ -352,14 +375,7 @@ impl PyWindow {
             PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
-        Node {
-            id,
-            tree: self.tree.clone(),
-            handlers: self.handlers.clone(),
-            context_menus: self.context_menus.clone(),
-            theme: self.theme.clone(),
-            completions: self.completions.clone(),
-        }
+        self.wrap_node(id)
     }
 
     /// M27 Phase 2 (§5): a real, genuine gap found while building the
@@ -412,14 +428,7 @@ impl PyWindow {
             PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
-        Node {
-            id,
-            tree: self.tree.clone(),
-            handlers: self.handlers.clone(),
-            context_menus: self.context_menus.clone(),
-            theme: self.theme.clone(),
-            completions: self.completions.clone(),
-        }
+        self.wrap_node(id)
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,
@@ -475,14 +484,7 @@ impl PyWindow {
             PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
-        Node {
-            id,
-            tree: self.tree.clone(),
-            handlers: self.handlers.clone(),
-            context_menus: self.context_menus.clone(),
-            theme: self.theme.clone(),
-            completions: self.completions.clone(),
-        }
+        self.wrap_node(id)
     }
 
     /// M14 Phase 2 (§5, §7.3): creates a real `NodeKind::Slider`,
@@ -546,14 +548,7 @@ impl PyWindow {
             AccessNodeData::new(Role::Slider).with_action(Action::Focus),
         );
         tree.add_child(self.root, id);
-        Node {
-            id,
-            tree: self.tree.clone(),
-            handlers: self.handlers.clone(),
-            context_menus: self.context_menus.clone(),
-            theme: self.theme.clone(),
-            completions: self.completions.clone(),
-        }
+        self.wrap_node(id)
     }
 
     /// M22 Phase 1 (§5): creates a real `NodeKind::Image`, loaded from
@@ -625,14 +620,7 @@ impl PyWindow {
             PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
-        Ok(Node {
-            id,
-            tree: self.tree.clone(),
-            handlers: self.handlers.clone(),
-            context_menus: self.context_menus.clone(),
-            theme: self.theme.clone(),
-            completions: self.completions.clone(),
-        })
+        Ok(self.wrap_node(id))
     }
 
     /// M23 Phase 1 (§1, §3): creates a real `NodeKind::Icon` from one
@@ -691,14 +679,7 @@ impl PyWindow {
             PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
-        Ok(Node {
-            id,
-            tree: self.tree.clone(),
-            handlers: self.handlers.clone(),
-            context_menus: self.context_menus.clone(),
-            theme: self.theme.clone(),
-            completions: self.completions.clone(),
-        })
+        Ok(self.wrap_node(id))
     }
 
     /// M15 Phase 1 (§5, §16.7): creates a real `NodeKind::TextField`,
@@ -762,14 +743,7 @@ impl PyWindow {
             AccessNodeData::new(Role::TextInput).with_action(Action::Focus),
         );
         tree.add_child(self.root, id);
-        Node {
-            id,
-            tree: self.tree.clone(),
-            handlers: self.handlers.clone(),
-            context_menus: self.context_menus.clone(),
-            theme: self.theme.clone(),
-            completions: self.completions.clone(),
-        }
+        self.wrap_node(id)
     }
 
     /// M13 Phase 1 (§11.2): a real, one-call way to build `AppShell`'s
@@ -864,14 +838,7 @@ impl PyWindow {
         }
 
         drop(tree);
-        Ok(Node {
-            id: content,
-            tree: self.tree.clone(),
-            handlers: self.handlers.clone(),
-            context_menus: self.context_menus.clone(),
-            theme: self.theme.clone(),
-            completions: self.completions.clone(),
-        })
+        Ok(self.wrap_node(content))
     }
 
     /// M4 Phase 3, step 2 (§11.5): the missing Python-facing half of
@@ -919,14 +886,7 @@ impl PyWindow {
             PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
-        Node {
-            id,
-            tree: self.tree.clone(),
-            handlers: self.handlers.clone(),
-            context_menus: self.context_menus.clone(),
-            theme: self.theme.clone(),
-            completions: self.completions.clone(),
-        }
+        self.wrap_node(id)
     }
 
     /// M7 Phase 5 (§7.6): starts a real container-transform choreography
@@ -1015,22 +975,15 @@ impl PyWindow {
     /// primary-button press+release pair at `node`'s own real center
     /// point -- exactly what a real mouse click there would produce.
     fn click(&self, node: PyRef<'_, Node>, py: Python<'_>) {
-        let point = {
-            let mut tree = self.tree.borrow_mut();
-            tree.compute_layout(
-                self.root,
-                Size {
-                    width: AvailableSpace::Definite(self.width as f32),
-                    height: AvailableSpace::Definite(self.height as f32),
-                },
-            );
-            let (x, y) = tree.absolute_position(node.id);
-            let layout = tree.layout(node.id);
-            Point::new(
-                x + f64::from(layout.size.width) / 2.0,
-                y + f64::from(layout.size.height) / 2.0,
-            )
-        };
+        let point = node_center(
+            &self.tree,
+            self.root,
+            Size {
+                width: AvailableSpace::Definite(self.width as f32),
+                height: AvailableSpace::Definite(self.height as f32),
+            },
+            node.id,
+        );
 
         let now = std::time::Instant::now();
         let config = interaction_config();
@@ -1071,22 +1024,15 @@ impl PyWindow {
     /// `enable_interaction()` -- §7.3's own text: the event fires
     /// regardless of whether the default MD3 visual is enabled.
     fn hover(&self, node: PyRef<'_, Node>, py: Python<'_>) {
-        let point = {
-            let mut tree = self.tree.borrow_mut();
-            tree.compute_layout(
-                self.root,
-                Size {
-                    width: AvailableSpace::Definite(self.width as f32),
-                    height: AvailableSpace::Definite(self.height as f32),
-                },
-            );
-            let (x, y) = tree.absolute_position(node.id);
-            let layout = tree.layout(node.id);
-            Point::new(
-                x + f64::from(layout.size.width) / 2.0,
-                y + f64::from(layout.size.height) / 2.0,
-            )
-        };
+        let point = node_center(
+            &self.tree,
+            self.root,
+            Size {
+                width: AvailableSpace::Definite(self.width as f32),
+                height: AvailableSpace::Definite(self.height as f32),
+            },
+            node.id,
+        );
 
         let outcome = self.tree.borrow_mut().dispatch(
             self.root,
@@ -1109,22 +1055,15 @@ impl PyWindow {
     /// -- `node` itself doesn't need to be the list; any of its real
     /// children work too, matching real scroll-wheel behavior.
     fn scroll(&self, node: PyRef<'_, Node>, delta_y: f64, py: Python<'_>) {
-        let point = {
-            let mut tree = self.tree.borrow_mut();
-            tree.compute_layout(
-                self.root,
-                Size {
-                    width: AvailableSpace::Definite(self.width as f32),
-                    height: AvailableSpace::Definite(self.height as f32),
-                },
-            );
-            let (x, y) = tree.absolute_position(node.id);
-            let layout = tree.layout(node.id);
-            Point::new(
-                x + f64::from(layout.size.width) / 2.0,
-                y + f64::from(layout.size.height) / 2.0,
-            )
-        };
+        let point = node_center(
+            &self.tree,
+            self.root,
+            Size {
+                width: AvailableSpace::Definite(self.width as f32),
+                height: AvailableSpace::Definite(self.height as f32),
+            },
+            node.id,
+        );
 
         let outcome = self.tree.borrow_mut().dispatch(
             self.root,
@@ -1145,22 +1084,15 @@ impl PyWindow {
     /// (`Node.set_context_menu`), opens it via `Tree::open_overlay`,
     /// exactly what a real right-click there would produce.
     fn right_click(&self, node: PyRef<'_, Node>, py: Python<'_>) {
-        let point = {
-            let mut tree = self.tree.borrow_mut();
-            tree.compute_layout(
-                self.root,
-                Size {
-                    width: AvailableSpace::Definite(self.width as f32),
-                    height: AvailableSpace::Definite(self.height as f32),
-                },
-            );
-            let (x, y) = tree.absolute_position(node.id);
-            let layout = tree.layout(node.id);
-            Point::new(
-                x + f64::from(layout.size.width) / 2.0,
-                y + f64::from(layout.size.height) / 2.0,
-            )
-        };
+        let point = node_center(
+            &self.tree,
+            self.root,
+            Size {
+                width: AvailableSpace::Definite(self.width as f32),
+                height: AvailableSpace::Definite(self.height as f32),
+            },
+            node.id,
+        );
 
         let now = std::time::Instant::now();
         let config = interaction_config();
@@ -1501,14 +1433,7 @@ impl PyWindow {
         }
         drop(tree);
         self.materializers.borrow_mut().insert(id, materialize);
-        Ok(Node {
-            id,
-            tree: self.tree.clone(),
-            handlers: self.handlers.clone(),
-            context_menus: self.context_menus.clone(),
-            theme: self.theme.clone(),
-            completions: self.completions.clone(),
-        })
+        Ok(self.wrap_node(id))
     }
 
     /// §14 step 15 (§11.7): the "materialize item N" FFI entry point --
@@ -1627,14 +1552,7 @@ impl PyWindow {
         tree.add_child(self.root, id);
         drop(tree);
         self.canvas_draws.borrow_mut().insert(id, draw);
-        Node {
-            id,
-            tree: self.tree.clone(),
-            handlers: self.handlers.clone(),
-            context_menus: self.context_menus.clone(),
-            theme: self.theme.clone(),
-            completions: self.completions.clone(),
-        }
+        self.wrap_node(id)
     }
 
     /// The real "draw callback" invocation entry point (§11.10/§11.11):

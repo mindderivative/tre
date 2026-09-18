@@ -72,7 +72,7 @@ pub enum Expression {
     BinaryOp(Box<Expression>, BinOp, Box<Expression>),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExpressionError {
     /// The raw binding string wasn't wrapped in `{{ ... }}` at all.
     NotABinding(String),
@@ -92,7 +92,7 @@ impl fmt::Display for ExpressionError {
 
 impl std::error::Error for ExpressionError {}
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolveError(pub String);
 
 impl fmt::Display for ResolveError {

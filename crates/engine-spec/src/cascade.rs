@@ -117,7 +117,7 @@ fn merge(base: &mut StyleSpec, overlay: &StyleSpec) {
         base.gap = overlay.gap;
     }
     if overlay.background.is_some() {
-        base.background = overlay.background.clone();
+        base.background.clone_from(&overlay.background);
     }
     if overlay.corner_radius.is_some() {
         base.corner_radius = overlay.corner_radius;

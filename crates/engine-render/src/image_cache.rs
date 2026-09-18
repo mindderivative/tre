@@ -22,7 +22,7 @@
 //! ever happens once per node -- the same "built once, not rebuilt
 //! per-frame" shape `Resources`' own glyph atlas already has.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use engine_core::{NodeId, Tree, node_id_as_u64};
 use vello_hybrid::{TextureBindings, TextureId};
@@ -54,6 +54,8 @@ impl ImageTextureCache {
     /// states: "a texture with the given `TextureId` must be supplied
     /// at render time").
     pub fn sync(&mut self, tree: &Tree, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let current: HashSet<NodeId> = tree.image_nodes().map(|(id, _)| id).collect();
+
         for (id, state) in tree.image_nodes() {
             if self.textures.contains_key(&id) {
                 continue;
@@ -111,6 +113,28 @@ impl ImageTextureCache {
             self.bindings.insert(texture_id_for(id), view);
             self.textures.insert(id, texture);
         }
+
+        // Real, confirmed bug found in review: this loop above was
+        // purely additive -- a node's own uploaded GPU texture (and
+        // its `TextureBindings` entry) was never freed once the node
+        // was removed from the tree (e.g. `Node.remove()` on an Image
+        // node, the real, documented way to swap images -- a gallery,
+        // a carousel, an avatar update, a virtualized image list),
+        // leaking VRAM and a growing `HashMap` entry for the life of
+        // the window. `sync` already walks the tree's current real
+        // image nodes every frame, so evicting anything no longer
+        // present is a direct, symmetric addition, not new state to
+        // track separately.
+        let removed: Vec<NodeId> = self
+            .textures
+            .keys()
+            .filter(|id| !current.contains(id))
+            .copied()
+            .collect();
+        for id in removed {
+            self.textures.remove(&id);
+            self.bindings.remove(texture_id_for(id));
+        }
     }
 }
 
@@ -121,4 +145,90 @@ impl ImageTextureCache {
 /// needing to look anything up in the other.
 pub(crate) fn texture_id_for(id: NodeId) -> TextureId {
     TextureId(node_id_as_u64(id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use engine_core::{ImageState, NodeKind, PaintProperties};
+    use peniko::Color;
+    use taffy::prelude::{Size, Style, length};
+
+    fn solid_2x2_image_data() -> peniko::ImageData {
+        let px = [0xFFu8, 0x00, 0x00, 0xFF];
+        let mut bytes = Vec::with_capacity(px.len() * 4);
+        for _ in 0..4 {
+            bytes.extend_from_slice(&px);
+        }
+        peniko::ImageData {
+            data: peniko::Blob::from(bytes),
+            format: peniko::ImageFormat::Rgba8,
+            alpha_type: peniko::ImageAlphaType::Alpha,
+            width: 2,
+            height: 2,
+        }
+    }
+
+    async fn device_and_queue() -> (wgpu::Device, wgpu::Queue) {
+        let instance = wgpu::Instance::default();
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                force_fallback_adapter: false,
+                compatible_surface: None,
+            })
+            .await
+            .expect("no wgpu adapter available in this environment");
+        adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("image_cache test device"),
+                required_features: wgpu::Features::empty(),
+                ..Default::default()
+            })
+            .await
+            .expect("failed to create wgpu device")
+    }
+
+    /// Real, regression coverage for the review-found leak: a removed
+    /// `Image` node's own uploaded GPU texture must actually be freed
+    /// on the next `sync`, not accumulate forever.
+    #[test]
+    fn sync_evicts_a_texture_for_a_node_removed_from_the_tree() {
+        pollster::block_on(async {
+            let (device, queue) = device_and_queue().await;
+
+            let mut tree = Tree::new();
+            let image_id = tree.insert(
+                NodeKind::Image(ImageState::new(solid_2x2_image_data())),
+                Style {
+                    size: Size {
+                        width: length(2.0),
+                        height: length(2.0),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            );
+
+            let mut cache = ImageTextureCache::new();
+            cache.sync(&tree, &device, &queue);
+            assert_eq!(
+                cache.textures.len(),
+                1,
+                "a real Image node must upload a real texture"
+            );
+            assert!(
+                cache.bindings.remove(texture_id_for(image_id)).is_some(),
+                "sync must have bound the new texture under its own deterministic TextureId"
+            );
+
+            tree.remove(image_id);
+            cache.sync(&tree, &device, &queue);
+
+            assert!(
+                cache.textures.is_empty(),
+                "sync must evict a texture whose node no longer exists in the tree, not leak it"
+            );
+        });
+    }
 }

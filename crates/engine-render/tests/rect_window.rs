@@ -140,8 +140,8 @@ impl GpuState {
                 display: taffy::Display::Flex,
                 flex_direction: FlexDirection::Column,
                 size: Size {
-                    width: length(width as f32),
-                    height: length(height as f32),
+                    width: length(f32::from(width)),
+                    height: length(f32::from(height)),
                 },
                 ..Default::default()
             },
@@ -164,7 +164,7 @@ impl GpuState {
                     height: length(GAP),
                 },
                 size: Size {
-                    width: length(width as f32),
+                    width: length(f32::from(width)),
                     height: length(RECTS_ROW_HEIGHT as f32),
                 },
                 ..Default::default()
@@ -210,7 +210,7 @@ impl GpuState {
                     height: length(TEXT_ROW_GAP),
                 },
                 size: Size {
-                    width: length(width as f32),
+                    width: length(f32::from(width)),
                     height: length(TEXT_BLOCK_HEIGHT as f32),
                 },
                 ..Default::default()
@@ -226,7 +226,7 @@ impl GpuState {
             }),
             Style {
                 size: Size {
-                    width: length(width as f32 - 2.0 * TEXT_BLOCK_PADDING),
+                    width: length(f32::from(width) - 2.0 * TEXT_BLOCK_PADDING),
                     height: length(BODY_ROW_HEIGHT),
                 },
                 ..Default::default()
@@ -242,7 +242,7 @@ impl GpuState {
             }),
             Style {
                 size: Size {
-                    width: length(width as f32 - 2.0 * TEXT_BLOCK_PADDING),
+                    width: length(f32::from(width) - 2.0 * TEXT_BLOCK_PADDING),
                     height: length(HEADLINE_ROW_HEIGHT),
                 },
                 ..Default::default()
@@ -258,7 +258,7 @@ impl GpuState {
             }),
             Style {
                 size: Size {
-                    width: length(width as f32 - 2.0 * TEXT_BLOCK_PADDING),
+                    width: length(f32::from(width) - 2.0 * TEXT_BLOCK_PADDING),
                     height: length(ARABIC_ROW_HEIGHT),
                 },
                 ..Default::default()
@@ -273,8 +273,8 @@ impl GpuState {
         tree.compute_layout(
             root,
             Size {
-                width: AvailableSpace::Definite(width as f32),
-                height: AvailableSpace::Definite(height as f32),
+                width: AvailableSpace::Definite(f32::from(width)),
+                height: AvailableSpace::Definite(f32::from(height)),
             },
         );
 
@@ -307,13 +307,13 @@ impl GpuState {
             },
         );
 
-        let output = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+        let (wgpu::CurrentSurfaceTexture::Success(output)
+        | wgpu::CurrentSurfaceTexture::Suboptimal(output)) = self.surface.get_current_texture()
+        else {
             // Not a real failure for a short-lived demo -- just skip the
             // frame rather than treat "window briefly occluded/resizing"
             // as fatal.
-            _ => return,
+            return;
         };
         let view = output
             .texture

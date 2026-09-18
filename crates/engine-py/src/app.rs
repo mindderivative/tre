@@ -290,8 +290,8 @@ impl App {
         let runtimes_for_frame = runtimes.clone();
         let runtimes_for_access = runtimes.clone();
         let runtimes_for_input = runtimes.clone();
-        let runtimes_for_access_action = runtimes.clone();
-        let setups_for_setup = setups.clone();
+        let runtimes_for_access_action = runtimes;
+        let setups_for_setup = setups;
 
         let result = run_windowed_multi(
             move |window_id, token, window| {
@@ -336,10 +336,11 @@ impl App {
                     },
                 );
 
-                let output = match runtime.gpu.surface.get_current_texture() {
-                    wgpu::CurrentSurfaceTexture::Success(t)
-                    | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-                    _ => return,
+                let (wgpu::CurrentSurfaceTexture::Success(output)
+                | wgpu::CurrentSurfaceTexture::Suboptimal(output)) =
+                    runtime.gpu.surface.get_current_texture()
+                else {
+                    return;
                 };
                 let view = output
                     .texture

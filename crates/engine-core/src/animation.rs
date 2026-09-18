@@ -104,14 +104,14 @@ impl CubicSegment {
     fn solve_y_for_x(&self, x: f64) -> f64 {
         let (mut lo, mut hi) = (0.0_f64, 1.0_f64);
         for _ in 0..40 {
-            let mid = (lo + hi) / 2.0;
+            let mid = f64::midpoint(lo, hi);
             if self.eval(mid).0 < x {
                 lo = mid;
             } else {
                 hi = mid;
             }
         }
-        self.eval((lo + hi) / 2.0).1
+        self.eval(f64::midpoint(lo, hi)).1
     }
 }
 

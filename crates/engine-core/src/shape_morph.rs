@@ -81,8 +81,10 @@ impl ShapeKey {
         let points = path
             .iter()
             .filter_map(|el| match el {
-                PathEl::MoveTo(p) | PathEl::LineTo(p) => Some(p),
-                PathEl::QuadTo(_, p) | PathEl::CurveTo(_, _, p) => Some(p),
+                PathEl::MoveTo(p)
+                | PathEl::LineTo(p)
+                | PathEl::QuadTo(_, p)
+                | PathEl::CurveTo(_, _, p) => Some(p),
                 PathEl::ClosePath => None,
             })
             .collect();
