@@ -329,6 +329,32 @@ class Window:
         supplied `width`.
         """
         ...
+    def add_linear_progress(
+        self,
+        width: float,
+        height: float = 4.0,
+        value: float = 0.0,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """A real MD3 linear progress indicator -- a track plus a
+        filled indicator, `value` clamped `0.0..=1.0`. Read/write the
+        current value via `Node.get("value")`/`Node.animate("value",
+        ...)`.
+        """
+        ...
+    def add_circular_progress(
+        self,
+        size: float = 48.0,
+        value: float = 0.0,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """`add_linear_progress`'s own real circular sibling -- a
+        stroked arc from 12 o'clock, sweeping clockwise by `value *
+        360°`. `value` clamped `0.0..=1.0`, read/write the same way.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,

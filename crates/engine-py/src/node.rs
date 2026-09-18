@@ -230,6 +230,27 @@ impl Node {
                     .into());
                 }
             },
+            // M30 Phase 3 Step 2 (§8): `thumb_position`'s own real
+            // arm, mirrored for both real progress indicators.
+            "value" => match &mut node.kind {
+                NodeKind::LinearProgress(state) => {
+                    let value = extract_f64(&to, property)?;
+                    let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                    animate_field(&mut state.value, value, duration, now, handle);
+                }
+                NodeKind::CircularProgress(state) => {
+                    let value = extract_f64(&to, property)?;
+                    let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                    animate_field(&mut state.value, value, duration, now, handle);
+                }
+                _ => {
+                    return Err(EngineError::UnknownProperty {
+                        kind,
+                        property: property.to_string(),
+                    }
+                    .into());
+                }
+            },
             _ => {
                 return Err(EngineError::UnknownProperty {
                     kind,
@@ -283,6 +304,15 @@ impl Node {
             },
             "toggle_progress" => match &node.kind {
                 NodeKind::Switch(state) => Ok(state.toggle_progress.current),
+                _ => Err(EngineError::UnknownProperty {
+                    kind,
+                    property: property.to_string(),
+                }
+                .into()),
+            },
+            "value" => match &node.kind {
+                NodeKind::LinearProgress(state) => Ok(state.value.current),
+                NodeKind::CircularProgress(state) => Ok(state.value.current),
                 _ => Err(EngineError::UnknownProperty {
                     kind,
                     property: property.to_string(),
@@ -726,6 +756,8 @@ fn kind_name(kind: &NodeKind) -> &'static str {
         NodeKind::Checkbox(_) => "Checkbox",
         NodeKind::RadioButton(_) => "RadioButton",
         NodeKind::Switch(_) => "Switch",
+        NodeKind::LinearProgress(_) => "LinearProgress",
+        NodeKind::CircularProgress(_) => "CircularProgress",
         NodeKind::Slider(_) => "Slider",
         NodeKind::TextField(_) => "TextField",
         NodeKind::Image(_) => "Image",

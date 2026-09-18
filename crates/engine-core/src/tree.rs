@@ -1065,6 +1065,19 @@ impl Tree {
             {
                 any_active = true;
             }
+            // M30 Phase 3 Step 2 (§7.3): `thumb_position`'s own real
+            // central-ticking need, mirrored for both real progress
+            // indicators' own `value`.
+            if let NodeKind::LinearProgress(state) = &mut node.kind
+                && state.value.tick(now, &mut completed)
+            {
+                any_active = true;
+            }
+            if let NodeKind::CircularProgress(state) = &mut node.kind
+                && state.value.tick(now, &mut completed)
+            {
+                any_active = true;
+            }
         }
         // M29 Phase 1 (§5, §6): a mid-flight animation is itself a real
         // reason to redraw next frame -- `any_active` was already the

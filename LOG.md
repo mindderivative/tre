@@ -1,34 +1,64 @@
-# Log: M30 Phase 3 Step 1 — Badge
+# Log: M30 Phase 3 Step 2 — Progress Indicator (Linear and Circular)
 
-Opens Phase 3 (Communication & Containment, Part 1) — the first
-component after M30's first two phases (Actions, Selection) closed.
+## `Slider`'s own real shape, mirrored
+
+`LinearProgressState`/`CircularProgressState` both carry `value:
+Animated<f64>` directly — the identical "the animated field is the
+value" precedent `SliderState.thumb_position` already establishes.
+The one real, deliberate anatomy difference: a progress indicator is
+never draggable, since it only ever displays a value the app computes
+elsewhere (a download percentage, a loading state), never something a
+user directly manipulates.
 
 ## Real MD3 data, verified before writing any code
 
-Checked Material Web's own real token source (`_md-comp-badge.scss`)
-directly: two real sizes, a 6dp dot (no label) and a 16dp labeled
-pill, both `error`-filled, `corner-full`. The labeled variant's real
-type role is Label Small (11sp/500 weight) — MD3's own smallest label
-size, genuinely smaller than every other component's Label Large
-(14sp) used in this catalog so far, confirmed from the real type
-scale rather than assumed to be the same size.
+Checked Material Web's own real token source for both shapes.
+Linear (`_md-comp-linear-progress-indicator.scss`): a flat,
+`corner-none` bar — genuinely not rounded, unlike almost every other
+shape this catalog has used so far — 4dp track (`surface_container_
+highest`) and a separate 4dp indicator (`primary`). Circular
+(`_md-comp-circular-progress-indicator.scss`): 48dp size, 4dp stroke,
+`primary`. **A real, confirmed finding:** no `track-color` token
+exists for the circular indicator at all — real MD3 genuinely paints
+no background ring behind the arc, unlike the linear indicator's own
+separate track. Confirmed rather than assumed consistent between the
+two shapes.
 
-## Deliberately no anchoring machinery
+## Real geometry, verified by a passing pixel test on the first try
 
-A real badge is always overlaid on the corner of some other real
-component (an icon, an avatar) — but this doesn't need any new
-positioning primitive. `add_badge` is a plain, caller-positioned node,
-the same `x`/`y` contract `add_rect` already establishes; the app
-picks the offset that overlays it correctly on whatever it's meant to
-decorate, matching `examples/badge.py`'s own demonstration against a
-real icon.
+The circular indicator's arc uses kurbo's own real `Arc` type
+(`center`, `radii`, `start_angle`, `sweep_angle`, `x_rotation`) —
+confirmed it implements the `Shape` trait before using it, so the
+existing `to_path`/`stroke_path` pipeline needed no new machinery.
+Start angle `-PI/2` (12 o'clock) with a positive sweep for clockwise
+motion in this engine's y-down screen coordinates — `progress_paint.
+rs`'s own quarter-value test (12 o'clock start, exactly reaching 3
+o'clock at a real 0.25 sweep, nothing at 6 o'clock) passed on the
+first run, confirming the angle-direction convention was correct
+without needing a second attempt.
+
+## A real ticking gap, checked for proactively this time
+
+`RadioButton` (Phase 2) found that `Tree::tick_all`'s per-`NodeKind`
+ticking uses `if let` arms, not an exhaustive `match` — a missing arm
+compiles clean and just silently never animates. Checked for this
+directly before considering either new `NodeKind` done this time,
+rather than finding it via a second failing test.
+
+## No accessibility mirror — checked, not an oversight
+
+`Checkbox`/`RadioButton`/`Switch` each got a `set_toggled` mirror.
+Checked `Slider`'s own real precedent for `thumb_position` first and
+found it has no accessibility mirror at all — so neither progress
+indicator gets one either, honest parity with the closest real
+analogue rather than a new, inconsistent gap.
 
 ## Verification
 
 `cargo check --workspace --all-targets`, `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo fmt --check` — all clean. `cargo
-test --workspace --release`: 42 binaries, all green, unchanged (a pure
-composition needed no new engine-render capability). `maturin develop
---release` rebuilt. `pytest tests/`: 278 passed, 1 skipped (5 new in
-`test_badge.py`, zero regressions). All 39 examples and the showcase
-demo re-run clean. `mypy --strict` clean against `examples/badge.py`.
+test --workspace --release`: 43 binaries, all green (`progress_paint.
+rs`'s 4 tests included). `maturin develop --release` rebuilt. `pytest
+tests/`: 286 passed, 1 skipped (8 new in `test_progress.py`, zero
+regressions). All 40 examples and the showcase demo re-run clean.
+`mypy --strict` clean against `examples/progress.py`.

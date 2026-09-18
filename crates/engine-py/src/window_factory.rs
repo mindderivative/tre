@@ -14,9 +14,9 @@
 use std::rc::Rc;
 
 use engine_core::{
-    AccessNodeData, Action, Animated, CheckboxState, ContentFit, IconState, ImageState, NodeKind,
-    OverlayMeta, PaintProperties, RadioButtonState, Role, SliderState, SplitterState, SwitchState,
-    TextAlign, TextFieldState, TextState,
+    AccessNodeData, Action, Animated, CheckboxState, CircularProgressState, ContentFit, IconState,
+    ImageState, LinearProgressState, NodeKind, OverlayMeta, PaintProperties, RadioButtonState,
+    Role, SliderState, SplitterState, SwitchState, TextAlign, TextFieldState, TextState,
 };
 use peniko::Color;
 use pyo3::prelude::*;
@@ -1567,6 +1567,94 @@ impl PyWindow {
         tree.add_child(container, label_id);
         tree.add_child(self.root, container);
         self.wrap_node(container)
+    }
+
+    /// M30 Phase 3 Step 2 (§5, §7): creates a real `NodeKind::
+    /// LinearProgress`, mirroring `add_slider`'s own real shape --
+    /// `value` seeds `LinearProgressState`'s own initial state
+    /// (clamped `0.0..=1.0`, `LinearProgressState::new`'s own real
+    /// contract). Colors always resolved here (through `theme.role`,
+    /// gated on `theme.is_set()`, else `Md3Baseline`'s own real
+    /// fallback), the same real reason `add_radio_button`/`add_switch`
+    /// have no caller-supplied `background` either -- there's no
+    /// independent "fill color" concept in real MD3 progress-
+    /// indicator anatomy. `height` defaults to MD3's own real 4dp
+    /// track/indicator height, verified against Material Web's own
+    /// token source.
+    #[pyo3(signature = (width, height=4.0, value=0.0, x=None, y=None))]
+    fn add_linear_progress(
+        &self,
+        width: f32,
+        height: f32,
+        value: f64,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> Node {
+        let mut state = LinearProgressState::new(value);
+        {
+            let theme = self.theme.borrow();
+            let role = |name: &str, fallback: Color| -> Color {
+                if theme.is_set() {
+                    theme.role(name).unwrap_or(fallback)
+                } else {
+                    fallback
+                }
+            };
+            state.track_tint = role(
+                "surface_container_highest",
+                Md3Baseline::SURFACE_CONTAINER_HIGHEST,
+            );
+            state.indicator_tint = role("primary", Md3Baseline::PRIMARY);
+        }
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::LinearProgress(state),
+            positioned_style(
+                Size {
+                    width: length(width),
+                    height: length(height),
+                },
+                x,
+                y,
+            ),
+            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, id);
+        self.wrap_node(id)
+    }
+
+    /// M30 Phase 3 Step 2 (§5, §7): `LinearProgress`'s own real
+    /// circular sibling -- `size` is a single square dimension (real
+    /// MD3 circular indicators are always a circle, the same real
+    /// "one dimension is the honest shape" reasoning `add_radio_
+    /// button`'s own `size` param already established), defaulting to
+    /// MD3's own real 48dp token.
+    #[pyo3(signature = (size=48.0, value=0.0, x=None, y=None))]
+    fn add_circular_progress(&self, size: f32, value: f64, x: Option<f32>, y: Option<f32>) -> Node {
+        let mut state = CircularProgressState::new(value);
+        {
+            let theme = self.theme.borrow();
+            state.indicator_tint = if theme.is_set() {
+                theme.role("primary").unwrap_or(Md3Baseline::PRIMARY)
+            } else {
+                Md3Baseline::PRIMARY
+            };
+        }
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::CircularProgress(state),
+            positioned_style(
+                Size {
+                    width: length(size),
+                    height: length(size),
+                },
+                x,
+                y,
+            ),
+            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, id);
+        self.wrap_node(id)
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,

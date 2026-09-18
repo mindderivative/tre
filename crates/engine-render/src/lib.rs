@@ -28,7 +28,7 @@ use engine_core::{
     ContentFit, DrawCommand, ICON_VIEWBOX_SIZE, Interpolate, NodeId, NodeKind, Tree,
 };
 use peniko::Color;
-use peniko::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Shape, Stroke};
+use peniko::kurbo::{Affine, Arc, BezPath, Circle, Point, Rect, RoundedRect, Shape, Stroke};
 use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
 pub use text::{TextPlacement, TextRenderer};
@@ -702,6 +702,61 @@ fn paint_node(
             let cx = h * 0.5 + t * (w - h);
             scene.set_paint(with_opacity(handle_color, node.paint.opacity.current));
             scene.fill_path(&Circle::new((cx, h / 2.0), handle_radius).to_path(0.1));
+        }
+        // M30 Phase 3 Step 2 (§5, §7): a real MD3 linear progress
+        // indicator -- the track (`track_tint`, spanning the node's
+        // own full width) painted first, then the indicator on top,
+        // its own real width `value.current * w` -- the identical
+        // real "value is a fraction of the node's own box" technique
+        // `NodeKind::Slider`'s own `thumb_position * w` already uses,
+        // just filling a growing bar instead of moving a fixed-size
+        // thumb. Real MD3 anatomy: `corner-none` on both (a flat
+        // rectangle, not rounded), confirmed from Material Web's own
+        // token source, not assumed rounded like most of this
+        // catalog's other shapes.
+        NodeKind::LinearProgress(state) => {
+            scene.set_paint(with_opacity(state.track_tint, node.paint.opacity.current));
+            scene.fill_path(&Rect::new(0.0, 0.0, w, h).to_path(0.1));
+
+            let indicator_width = state.value.current.clamp(0.0, 1.0) * w;
+            if indicator_width > 0.0 {
+                scene.set_paint(with_opacity(
+                    state.indicator_tint,
+                    node.paint.opacity.current,
+                ));
+                scene.fill_path(&Rect::new(0.0, 0.0, indicator_width, h).to_path(0.1));
+            }
+        }
+        // M30 Phase 3 Step 2 (§5, §7): `LinearProgress`'s own real
+        // circular sibling -- a stroked arc from real MD3's own
+        // 12-o'clock start (`-PI/2`), sweeping clockwise by `value *
+        // 2*PI`. No separate background track ring painted here --
+        // real MD3 anatomy genuinely has none for this indicator
+        // (`CircularProgressState`'s own doc comment has the real,
+        // confirmed finding). Stroke width is the real MD3 4dp/48dp
+        // ratio, scaled to whatever real size this node's own box is,
+        // the same proportional-to-own-box technique `RadioButton`'s
+        // ring/`Switch`'s track outline already use rather than a
+        // fixed literal px value.
+        NodeKind::CircularProgress(state) => {
+            let stroke_width = (w.min(h) * (4.0 / 48.0)).max(1.0);
+            let radius = (w.min(h) / 2.0) - stroke_width / 2.0;
+            let sweep = state.value.current.clamp(0.0, 1.0) * std::f64::consts::TAU;
+            if sweep > 0.0 {
+                let arc = Arc::new(
+                    (w / 2.0, h / 2.0),
+                    (radius.max(0.0), radius.max(0.0)),
+                    -std::f64::consts::FRAC_PI_2,
+                    sweep,
+                    0.0,
+                );
+                scene.set_paint(with_opacity(
+                    state.indicator_tint,
+                    node.paint.opacity.current,
+                ));
+                scene.set_stroke(Stroke::new(stroke_width));
+                scene.stroke_path(&arc.to_path(0.1));
+            }
         }
         // M14 Phase 2 (§5, §7.3): a real track (a thin bar spanning the
         // node's own full width, vertically centered) plus a real

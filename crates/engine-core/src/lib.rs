@@ -32,9 +32,10 @@ pub use input::{
 };
 pub use interaction::{InteractionState, RippleState};
 pub use node::{
-    CheckboxState, ContentFit, ICON_VIEWBOX_SIZE, IconState, ImageState, ItemExtent, Node, NodeId,
-    NodeKind, PaintProperties, RadioButtonState, SliderState, SplitterState, SwitchState,
-    TextAlign, TextFieldState, TextState, VirtualListState,
+    CheckboxState, CircularProgressState, ContentFit, ICON_VIEWBOX_SIZE, IconState, ImageState,
+    ItemExtent, LinearProgressState, Node, NodeId, NodeKind, PaintProperties, RadioButtonState,
+    SliderState, SplitterState, SwitchState, TextAlign, TextFieldState, TextState,
+    VirtualListState,
 };
 pub use overlay::OverlayMeta;
 pub use shape_morph::ShapeKey;

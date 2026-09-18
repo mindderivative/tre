@@ -158,6 +158,25 @@ pub enum NodeKind {
     /// verified anatomy (a track plus a handle that both slides *and*
     /// grows as it toggles).
     Switch(SwitchState),
+    /// M30 Phase 3 Step 2 (§5, §7): a real MD3 linear progress
+    /// indicator. `value` is plain, app-owned state (`0.0..=1.0`,
+    /// `SliderState.thumb_position`'s own real shape, except never
+    /// draggable -- a progress indicator only ever displays a value an
+    /// app computes elsewhere, it's never a real input control) --
+    /// `Animated<f64>` directly, the same "the animated field is the
+    /// value" precedent every progress-like field in this codebase
+    /// already uses, so a real app-triggered eased update (`Node.
+    /// animate("value", ...)`) works exactly like `thumb_position`'s
+    /// own real eased-move path.
+    LinearProgress(LinearProgressState),
+    /// M30 Phase 3 Step 2 (§5, §7): `LinearProgress`'s own real
+    /// circular sibling -- same real `value` shape, painted as a
+    /// stroked arc (`engine-render`'s own paint arm) instead of a
+    /// filled bar. Real MD3 anatomy has no separate background track
+    /// ring for the circular indicator (confirmed from Material Web's
+    /// own token source -- no `track-color` token exists for it,
+    /// unlike the linear indicator's real, separate `track-color`).
+    CircularProgress(CircularProgressState),
 }
 
 /// M15 Phase 1 (§5, §16.7): mirrors `TextState`'s own four font/content
@@ -486,6 +505,43 @@ impl SwitchState {
             track_outline_tint: Color::from_rgba8(0x00, 0x00, 0x00, 0xFF),
             handle_off_tint: Color::from_rgba8(0x00, 0x00, 0x00, 0xFF),
             handle_on_tint: Color::from_rgba8(0x00, 0x00, 0x00, 0xFF),
+        }
+    }
+}
+
+/// M30 Phase 3 Step 2 (§5, §7): see `NodeKind::LinearProgress`'s own
+/// doc comment. `track_tint` is the unfilled portion's real, separate
+/// color (`surface_container_highest` in real MD3) -- genuinely
+/// distinct from `indicator_tint` (`primary`), not the same role
+/// reused at reduced opacity.
+pub struct LinearProgressState {
+    pub value: Animated<f64>,
+    pub track_tint: Color,
+    pub indicator_tint: Color,
+}
+
+impl LinearProgressState {
+    pub fn new(value: f64) -> Self {
+        Self {
+            value: Animated::new(value.clamp(0.0, 1.0)),
+            track_tint: Color::from_rgba8(0x00, 0x00, 0x00, 0xFF),
+            indicator_tint: Color::from_rgba8(0x00, 0x00, 0x00, 0xFF),
+        }
+    }
+}
+
+/// M30 Phase 3 Step 2 (§5, §7): see `NodeKind::CircularProgress`'s own
+/// doc comment.
+pub struct CircularProgressState {
+    pub value: Animated<f64>,
+    pub indicator_tint: Color,
+}
+
+impl CircularProgressState {
+    pub fn new(value: f64) -> Self {
+        Self {
+            value: Animated::new(value.clamp(0.0, 1.0)),
+            indicator_tint: Color::from_rgba8(0x00, 0x00, 0x00, 0xFF),
         }
     }
 }
