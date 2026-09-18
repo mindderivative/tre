@@ -1282,6 +1282,19 @@ impl Tree {
             // `NodeKind`" precedent `Checkbox`/`Slider`/`TextField`
             // already establish, not a handler bolted onto bare `Text`.
             NodeKind::Text(_) => false,
+            // M30 Phase 1 (§5, §7): the identical real reasoning as
+            // `NodeKind::Text` above, applied to `Icon` for the same
+            // real reason -- `Icon Button`'s own anatomy (Step 2) is a
+            // `Rect` container with a centered `Icon` child, and that
+            // child's own box sits squarely inside the container's
+            // clickable area exactly the way `Button`'s label did.
+            // Confirmed via grep before this arm existed: `demo/
+            // showcase.py`'s only `add_icon` usage (its icon gallery)
+            // is purely decorative -- never `enable_interaction`/`set_
+            // on_click` on the icon node itself -- so nothing real
+            // relies on a standalone icon being independently
+            // clickable today.
+            NodeKind::Icon(_) => false,
             _ => rect_contains(layout, local_point),
         };
         hit.then_some((id, local_point))

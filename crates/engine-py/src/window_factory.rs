@@ -19,7 +19,7 @@ use engine_core::{
 };
 use peniko::Color;
 use pyo3::prelude::*;
-use taffy::prelude::{AlignItems, Size, Style, length};
+use taffy::prelude::{AlignItems, JustifyContent, Size, Style, length};
 
 use crate::error::EngineError;
 use crate::node::Node;
@@ -163,6 +163,10 @@ const BUTTON_LABEL_FONT_WEIGHT: f32 = 500.0;
 /// vertically center the label within, not zero room to move it at
 /// all.
 const BUTTON_LABEL_LINE_HEIGHT: f32 = 20.0;
+/// MD3's own real `Icon Button` anatomy constant: the icon glyph
+/// itself stays 24dp regardless of the container's own touch-target
+/// `size` (`add_icon_button`'s own doc comment).
+const ICON_BUTTON_ICON_SIZE: f32 = 24.0;
 
 #[pymethods]
 impl PyWindow {
@@ -323,6 +327,102 @@ impl PyWindow {
             PaintProperties::new(colors.label, 0.0, 0.0, 1.0),
         );
         tree.add_child(container, label_id);
+        tree.add_child(self.root, container);
+        Ok(self.wrap_node(container))
+    }
+
+    /// M30 Phase 1 (§5, §7): `Icon Button`, `Button`'s own real anatomy
+    /// (`add_button`'s doc comment) with a centered `Icon` child
+    /// (`Window.add_icon`'s own already-real curated icon set,
+    /// `engine_md3::icons`) instead of `Text`. Real MD3 spec's own
+    /// four variants -- Filled/Filled Tonal/Outlined/Standard, not
+    /// `Button`'s five -- there is no "Elevated Icon Button" in MD3's
+    /// own vocabulary, and MD3 calls its transparent variant
+    /// "Standard" here, not "Text" (`Button`'s own name for the
+    /// identical transparent-container/primary-tint anatomy). Reuses
+    /// `resolve_button_colors` for the actual paint (`"standard"`
+    /// translates to `resolve_button_colors`'s own `"text"` -- the two
+    /// names describe the same real colors, kept distinct only because
+    /// that's each component's own real MD3 terminology), rather than
+    /// a second, near-duplicate color table. `size` is the container's
+    /// own real touch-target box (MD3's own default is 40.0); the icon
+    /// itself stays a fixed real MD3 token (24dp) regardless of `size`,
+    /// centered on both axes via `justify_content`/`align_items`
+    /// (`TextAlign::Center`'s own icon-anatomy counterpart isn't
+    /// needed here -- an `Icon`'s own box is already exactly its own
+    /// glyph's bounds, so plain two-axis flex centering is the real,
+    /// sufficient answer, not a second alignment concept). Deliberately
+    /// does **not** auto-call `enable_interaction()`, matching every
+    /// other `add_*` precedent including `add_button` itself.
+    #[pyo3(signature = (icon, size=40.0, variant="standard", x=None, y=None))]
+    fn add_icon_button(
+        &self,
+        icon: &str,
+        size: f32,
+        variant: &str,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<Node> {
+        let resolved_variant = match variant {
+            "standard" => "text",
+            "filled" | "filled_tonal" | "outlined" => variant,
+            other => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "unknown icon button variant {other:?} -- expected one of \"filled\", \
+                     \"filled_tonal\", \"outlined\", \"standard\""
+                )));
+            }
+        };
+        let colors = resolve_button_colors(&self.theme.borrow(), resolved_variant)?;
+
+        let d = engine_md3::icons::path_for(icon).ok_or_else(|| {
+            let known: Vec<&str> = engine_md3::icons::names().collect();
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown icon {icon:?} -- expected one of {known:?}"
+            ))
+        })?;
+        let path = peniko::kurbo::BezPath::from_svg(d).unwrap_or_else(|e| {
+            panic!("engine_md3::icons's own curated path data for {icon:?} must parse: {e}")
+        });
+
+        let mut tree = self.tree.borrow_mut();
+
+        let mut container_paint = PaintProperties::new(
+            colors.container,
+            f64::from(size) / 2.0,
+            colors.elevation,
+            1.0,
+        );
+        container_paint.border_color = Animated::new(colors.border_color);
+        container_paint.border_width = Animated::new(colors.border_width);
+        let mut container_style = positioned_style(
+            Size {
+                width: length(size),
+                height: length(size),
+            },
+            x,
+            y,
+        );
+        container_style.display = taffy::Display::Flex;
+        container_style.justify_content = Some(JustifyContent::CENTER);
+        container_style.align_items = Some(AlignItems::CENTER);
+        let container = tree.insert(NodeKind::Rect, container_style, container_paint);
+
+        let icon_id = tree.insert(
+            NodeKind::Icon(IconState {
+                path,
+                tint: colors.label,
+            }),
+            Style {
+                size: Size {
+                    width: length(ICON_BUTTON_ICON_SIZE),
+                    height: length(ICON_BUTTON_ICON_SIZE),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(container, icon_id);
         tree.add_child(self.root, container);
         Ok(self.wrap_node(container))
     }

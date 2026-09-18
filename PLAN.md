@@ -1,65 +1,45 @@
-# Plan: M30 Phase 1 Step 1 — `Button`
+# Plan: M30 Phase 1 Step 2 — Icon Button
 
-Corresponds to `BUILD_TRACKER.md` M30 Phase 1 Step 1. Written
+Corresponds to `BUILD_TRACKER.md` M30 Phase 1 Step 2. Written
 retroactively alongside implementation — see `LOG.md` and
 `BUILD_TRACKER.md`'s own M30 Phase 1 entry for the complete real
 investigation, findings, and verification record. Rewritten (not
-accumulated) as each further M30 phase/step lands, matching this
-project's own established `PLAN.md`/`LOG.md` convention —
-`BUILD_TRACKER.md` is the durable accumulated record.
+accumulated) as each further M30 phase/step lands — `BUILD_TRACKER.md`
+is the durable accumulated record.
 
 ## What changed
 
-- `crates/engine-core/src/node.rs`: `PaintProperties` gained
-  `border_color: Animated<Color>` / `border_width: Animated<f64>`
-  (universal, true-no-op defaults). New `TextAlign` enum
-  (Start/Center/End, `#[default] Start`) and `TextState.align:
-  TextAlign`.
-- `crates/engine-render/src/lib.rs`: `paint_node`'s `Rect`/`Splitter`
-  arm now strokes a real border (inset by half its own width) when
-  `border_width > 0.0`.
-- `crates/engine-render/src/text.rs`: `shaped_layout`/`LayoutCacheKey`
-  widened with `align: TextAlign`, resolved to real
-  `parley::Alignment::{Start,Center,End}` instead of the old hardcoded
-  `Start`.
-- `crates/engine-core/src/tree.rs`: `Tree::hit_test_at` — a bare
-  `NodeKind::Text` never independently claims a hit any more, always
-  deferring to whatever's behind it. Real bug fix, not a design
-  preference — see `BUILD_TRACKER.md`'s own writeup.
-- `crates/engine-py/src/window.rs`: `ThemeState::role(&self, name:
-  &str) -> Option<Color>`, a general MD3 role resolver alongside the
-  existing `on_surface()`.
-- `crates/engine-py/src/window_factory.rs`: `Window.add_button(label,
-  width, height, variant="filled", x=None, y=None)`, MD3's five real
-  variants (elevated/filled/filled_tonal/outlined/text). Returns the
-  container `Node`; does not auto-`enable_interaction()`.
-- `python/tre/_core.pyi`: `add_button` stub added.
-- New tests: `engine-render/tests/border_paint.rs`,
-  `engine-render/tests/text_align.rs`, `tests/test_button.py`. New
-  example: `examples/button.py`.
+- `crates/engine-core/src/tree.rs`: `Tree::hit_test_at` — `NodeKind::
+  Icon(_) => false` added alongside the earlier `NodeKind::Text` arm,
+  proactively closing the identical hit-test gap before it could bite
+  Icon Button.
+- `crates/engine-py/src/window_factory.rs`: `Window.add_icon_button(
+  icon, size=40.0, variant="standard", x=None, y=None)`, MD3's four
+  real variants (filled/filled_tonal/outlined/standard). Reuses
+  `resolve_button_colors` (with `"standard"` translated to its own
+  `"text"` at the call site, not aliased inside it).
+- `python/tre/_core.pyi`: `add_icon_button` stub added.
+- New tests: `tests/test_icon_button.py`. New example:
+  `examples/icon_button.py`.
 
 ## Why
 
-`Button` was the one component this catalog's own M30 scoping
-confirmed was hand-composed from `Rect`+`Text`+ripple in every
-existing example — a real, first-class component was the whole point
-of Phase 1 Step 1. Two genuine engine gaps surfaced only by actually
-building it, not predicted up front: `engine-render` had no way to
-paint a border at all (needed for the Outlined variant) or to center
-text within its own box (needed for every variant's label) — both
-fixed as universal capabilities, not `Button`-specific hacks, matching
-how `elevation`/`shape`/`transform` were each added universally to
-`PaintProperties` when a real consumer first needed them. The
-hit-testing fix was a real, confirmed functional bug (a button's own
-click handler was unreachable), caught by `tests/test_button.py`'s own
-click-dispatch test, not designed in advance.
+Scoped explicitly by `BUILD_TRACKER.md`'s own M30 text as `Button`'s
+anatomy with an `Icon` child instead of `Text` — built directly on
+Step 1's own container/color machinery rather than a second,
+near-duplicate implementation. The hit-test fix was applied
+proactively this time (not found by a second failing test): Step 1's
+own real bug (a centered child silently eating clicks meant for its
+container) generalizes to any composite interactive node with a
+same-shaped child, and `Icon` was the next real instance, confirmed
+via grep before writing the fix that nothing relies on a standalone
+icon being independently clickable today.
 
 ## Verification
 
 Full chain, all green: `cargo check --workspace --all-targets`,
 `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt
 --check`, `cargo test --workspace --release` (39 binaries), `maturin
-develop --release`, `pytest tests/` (197 passed, 1 skipped, zero
-regressions), all 31 examples, the showcase demo, `mypy --strict`
-against `examples/button.py` plus a deliberate-error probe confirming
-the `.pyi` stub carries real type information.
+develop --release`, `pytest tests/` (207 passed, 1 skipped, zero
+regressions), all 32 examples, the showcase demo, `mypy --strict`
+against `examples/icon_button.py`.

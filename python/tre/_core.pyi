@@ -166,6 +166,22 @@ class Window:
         `enable_interaction()` for you.
         """
         ...
+    def add_icon_button(
+        self,
+        icon: str,
+        size: float = 40.0,
+        variant: str = "standard",
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """MD3's four real Icon Button variants: `"filled"`,
+        `"filled_tonal"`, `"outlined"`, `"standard"`. `icon` is a
+        Material Symbols icon name from this project's own curated
+        set, same as `add_icon`. Raises `ValueError` for an unknown
+        `variant` or `icon`. Returns the button's own container node,
+        the same real contract `add_button` establishes.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,
