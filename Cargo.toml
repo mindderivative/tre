@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 # No `rust-version` yet, deliberately -- see PLAN.md M3 Phase 1. Claiming
 # an MSRV floor before any real dependency exists to derive it from is
