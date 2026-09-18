@@ -6,7 +6,8 @@
 //! one built imperatively.
 
 use engine_core::{
-    CheckboxState, NodeId, NodeKind, PaintProperties, SliderState, TextFieldState, TextState, Tree,
+    CheckboxState, NodeId, NodeKind, PaintProperties, SliderState, TextAlign, TextFieldState,
+    TextState, Tree,
 };
 use engine_md3::ColorScheme;
 use peniko::Color;
@@ -314,6 +315,7 @@ fn node_kind_and_paint(
                     font_family: text_spec.font_family.clone(),
                     font_weight: text_spec.font_weight,
                     font_size: text_spec.font_size,
+                    align: TextAlign::Start,
                 }),
                 PaintProperties::new(background, corner_radius, 0.0, opacity),
             ))

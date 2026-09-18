@@ -15,11 +15,11 @@ use std::rc::Rc;
 
 use engine_core::{
     AccessNodeData, Action, Animated, CheckboxState, ContentFit, IconState, ImageState, NodeKind,
-    PaintProperties, Role, SliderState, SplitterState, TextFieldState, TextState,
+    PaintProperties, Role, SliderState, SplitterState, TextAlign, TextFieldState, TextState,
 };
 use peniko::Color;
 use pyo3::prelude::*;
-use taffy::prelude::{Size, Style, length};
+use taffy::prelude::{AlignItems, Size, Style, length};
 
 use crate::error::EngineError;
 use crate::node::Node;
@@ -38,6 +38,131 @@ fn parse_content_fit(fit: &str) -> PyResult<ContentFit> {
         ))),
     }
 }
+
+/// M30 Phase 1 (§5, §7): a fully transparent fill -- `Rect`'s own real
+/// "paint nothing" value (`border_paint.rs`'s own proof that `alpha:
+/// 0` genuinely paints no pixels applies identically to `background`),
+/// used by `Outlined`/`Text`'s real MD3 anatomy: neither variant has a
+/// filled container at all, only `Outlined`'s real 1dp stroke or (for
+/// `Text`) nothing but the label itself.
+const TRANSPARENT: Color = Color::from_rgba8(0, 0, 0, 0);
+
+/// M30 Phase 1 (§5, §7): real Material 3 baseline-scheme hex values
+/// (the same published baseline seed-color tokens Compose Material3's
+/// own default theme ships), used only as `Button`'s real un-themed
+/// fallback -- the identical "real historical default, not black"
+/// contract `CheckboxState`'s white mark / `SliderState`'s gray track
+/// already establish for a `Window` that never calls `set_theme`.
+/// Resolved role by role, not just "the whole light `ColorScheme`",
+/// since a themed `Window` resolves through `ThemeState::role` instead
+/// the moment `is_set()` is true.
+struct ButtonBaseline;
+impl ButtonBaseline {
+    const PRIMARY: Color = Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF);
+    const ON_PRIMARY: Color = Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF);
+    const SECONDARY_CONTAINER: Color = Color::from_rgba8(0xE8, 0xDE, 0xF8, 0xFF);
+    const ON_SECONDARY_CONTAINER: Color = Color::from_rgba8(0x1D, 0x19, 0x2B, 0xFF);
+    const SURFACE_CONTAINER_LOW: Color = Color::from_rgba8(0xF7, 0xF2, 0xFA, 0xFF);
+    const OUTLINE: Color = Color::from_rgba8(0x79, 0x74, 0x7E, 0xFF);
+}
+
+/// M30 Phase 1 (§5, §7): the real per-variant paint this button's own
+/// container/label/(optional) border resolve to -- `elevation` reuses
+/// `PaintProperties.elevation`'s own already-real drop-shadow (verified
+/// against Material Web's own `_elevation.scss` formula, §14 step 3),
+/// not a fake flat highlight; `Elevated`'s real MD3 rest-state level is
+/// 1 (1dp), every other variant's rest state is level 0.
+struct ButtonColors {
+    container: Color,
+    label: Color,
+    border_color: Color,
+    border_width: f64,
+    elevation: f64,
+}
+
+/// M30 Phase 1 (§5, §7): resolves `Window.add_button`'s real `variant:`
+/// string against MD3's five real button variants (Elevated/Filled/
+/// FilledTonal/Outlined/Text -- this catalog's own §5 scope), reading
+/// through `theme` exactly the way `add_checkbox`/`add_slider` already
+/// gate on `theme.is_set()` before ever reading a role, so an un-themed
+/// `Window` keeps painting `ButtonBaseline`'s own real historical
+/// default rather than silently going black.
+fn resolve_button_colors(
+    theme: &crate::window::ThemeState,
+    variant: &str,
+) -> PyResult<ButtonColors> {
+    let role = |name: &str, fallback: Color| -> Color {
+        if theme.is_set() {
+            theme.role(name).unwrap_or(fallback)
+        } else {
+            fallback
+        }
+    };
+    match variant {
+        "elevated" => Ok(ButtonColors {
+            container: role(
+                "surface_container_low",
+                ButtonBaseline::SURFACE_CONTAINER_LOW,
+            ),
+            label: role("primary", ButtonBaseline::PRIMARY),
+            border_color: TRANSPARENT,
+            border_width: 0.0,
+            elevation: 1.0,
+        }),
+        "filled" => Ok(ButtonColors {
+            container: role("primary", ButtonBaseline::PRIMARY),
+            label: role("on_primary", ButtonBaseline::ON_PRIMARY),
+            border_color: TRANSPARENT,
+            border_width: 0.0,
+            elevation: 0.0,
+        }),
+        "filled_tonal" => Ok(ButtonColors {
+            container: role("secondary_container", ButtonBaseline::SECONDARY_CONTAINER),
+            label: role(
+                "on_secondary_container",
+                ButtonBaseline::ON_SECONDARY_CONTAINER,
+            ),
+            border_color: TRANSPARENT,
+            border_width: 0.0,
+            elevation: 0.0,
+        }),
+        "outlined" => Ok(ButtonColors {
+            container: TRANSPARENT,
+            label: role("primary", ButtonBaseline::PRIMARY),
+            border_color: role("outline", ButtonBaseline::OUTLINE),
+            border_width: 1.0,
+            elevation: 0.0,
+        }),
+        "text" => Ok(ButtonColors {
+            container: TRANSPARENT,
+            label: role("primary", ButtonBaseline::PRIMARY),
+            border_color: TRANSPARENT,
+            border_width: 0.0,
+            elevation: 0.0,
+        }),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "unknown button variant {other:?} -- expected one of \"elevated\", \"filled\", \
+             \"filled_tonal\", \"outlined\", \"text\""
+        ))),
+    }
+}
+
+/// MD3's own real Button anatomy constants (M3 spec, Buttons component
+/// page): 24dp horizontal padding for a label-only button (no leading/
+/// trailing icon -- that's `Icon Button`'s own separate anatomy, Phase
+/// 1 Step 2, not this one), Label Large's real type role (14sp/500
+/// weight) for the button's own label.
+const BUTTON_HORIZONTAL_PADDING: f32 = 24.0;
+const BUTTON_LABEL_FONT_SIZE: f32 = 14.0;
+const BUTTON_LABEL_FONT_WEIGHT: f32 = 500.0;
+/// A real line-height a 14sp label comfortably fits inside without
+/// clipping ascenders/descenders (`text_align.rs`'s own real ink-
+/// presence proof used the same kind of generous, non-tight box) --
+/// deliberately smaller than the button's own `height`, so `align_
+/// items: Center` on the container has real cross-axis slack to
+/// vertically center the label within, not zero room to move it at
+/// all.
+const BUTTON_LABEL_LINE_HEIGHT: f32 = 20.0;
 
 #[pymethods]
 impl PyWindow {
@@ -110,6 +235,7 @@ impl PyWindow {
                 font_family: font_family.to_string(),
                 font_weight,
                 font_size,
+                align: TextAlign::Start,
             }),
             positioned_style(
                 Size {
@@ -123,6 +249,82 @@ impl PyWindow {
         );
         tree.add_child(self.root, id);
         self.wrap_node(id)
+    }
+
+    /// M30 Phase 1 (§5, §7): `Button`, MD3's five real variants --
+    /// the component this catalog's own research confirmed was, until
+    /// now, hand-composed from `Rect`+`Text`+ripple in every example
+    /// (`ripple_button.py`'s own real precedent), duplicated at every
+    /// call site instead of built once. Real anatomy: a `Rect`
+    /// container (background/border/elevation resolved by `variant`
+    /// through `resolve_button_colors`, corner radius `height / 2.0` --
+    /// MD3's own "Full" shape family every button variant uses) with
+    /// one centered `Text` child (`TextAlign::Center`, M30 Phase 1's
+    /// own new real capability -- see `engine-render/tests/text_align.
+    /// rs`) sized to the container's own inner content width, `align_
+    /// items: Center` giving the label real cross-axis room to center
+    /// vertically too. Returns the *container* `Node` -- the same real
+    /// thing every other `add_*` returns, so `set_on_click`/`enable_
+    /// interaction`/`animate` all work on a button exactly like any
+    /// other node, no new API surface needed for those. Deliberately
+    /// does **not** auto-call `enable_interaction()` -- Design
+    /// Principle 6's "only a node that opts in pays the cost" applies
+    /// here exactly as it does to every other node `add_checkbox`/
+    /// `add_slider`/etc already hand back un-interactive by default.
+    #[pyo3(signature = (label, width, height, variant="filled", x=None, y=None))]
+    fn add_button(
+        &self,
+        label: &str,
+        width: f32,
+        height: f32,
+        variant: &str,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<Node> {
+        let colors = resolve_button_colors(&self.theme.borrow(), variant)?;
+        let mut tree = self.tree.borrow_mut();
+
+        let mut container_paint = PaintProperties::new(
+            colors.container,
+            f64::from(height) / 2.0,
+            colors.elevation,
+            1.0,
+        );
+        container_paint.border_color = Animated::new(colors.border_color);
+        container_paint.border_width = Animated::new(colors.border_width);
+        let mut container_style = positioned_style(
+            Size {
+                width: length(width),
+                height: length(height),
+            },
+            x,
+            y,
+        );
+        container_style.display = taffy::Display::Flex;
+        container_style.align_items = Some(AlignItems::CENTER);
+        let container = tree.insert(NodeKind::Rect, container_style, container_paint);
+
+        let label_width = (width - 2.0 * BUTTON_HORIZONTAL_PADDING).max(0.0);
+        let label_id = tree.insert(
+            NodeKind::Text(TextState {
+                content: label.to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: BUTTON_LABEL_FONT_WEIGHT,
+                font_size: BUTTON_LABEL_FONT_SIZE,
+                align: TextAlign::Center,
+            }),
+            Style {
+                size: Size {
+                    width: length(label_width),
+                    height: length(BUTTON_LABEL_LINE_HEIGHT),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(colors.label, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(container, label_id);
+        tree.add_child(self.root, container);
+        Ok(self.wrap_node(container))
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,

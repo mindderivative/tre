@@ -1256,6 +1256,32 @@ impl Tree {
                 }
                 None => rect_contains(layout, local_point),
             },
+            // M30 Phase 1 (§5, §7): a real, confirmed bug this phase's
+            // own `Button` surfaced -- a bare `Text` label used to claim
+            // any click landing on its own box, even when it's purely
+            // decorative content inside a clickable parent (`Button`'s
+            // centered label, sized to fill the container's inner
+            // content width, sat directly over the container's own
+            // registered click handler and ate every click meant for
+            // it; `test_button.py`'s own real click-dispatch test
+            // caught this, not inferred). No child recursion loop
+            // anywhere in this codebase bubbles a hit up to an
+            // ancestor -- `dispatch` only ever looks at the exact node
+            // `hit_test` returns -- so a `Text` child silently owning
+            // the hit was a real, permanent dead end for its parent's
+            // handler, not a one-frame quirk. A bare label never has a
+            // legitimate independent reason to be its own click
+            // target (confirmed: no existing example or test anywhere
+            // registers `set_on_click`/`enable_interaction` directly
+            // on a plain `add_text` node) -- `TextField` is unaffected,
+            // a distinct `NodeKind` with its own real click-to-focus
+            // need. A future standalone clickable label (MD3's own
+            // `Link`, this catalog's own Phase 8 scope) gets its own
+            // dedicated `NodeKind` when that phase investigates it,
+            // the same "each interactive component is its own real
+            // `NodeKind`" precedent `Checkbox`/`Slider`/`TextField`
+            // already establish, not a handler bolted onto bare `Text`.
+            NodeKind::Text(_) => false,
             _ => rect_contains(layout, local_point),
         };
         hit.then_some((id, local_point))

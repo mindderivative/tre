@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use engine_core::{NodeId, TextFieldState, TextState, Tree};
+use engine_core::{NodeId, TextAlign, TextFieldState, TextState, Tree};
 use parley::fontique::{Collection, CollectionOptions};
 use parley::{
     Affinity, Alignment, AlignmentOptions, Cursor, FontContext, FontFamily, FontWeight,
@@ -36,6 +36,7 @@ struct LayoutCacheKey {
     font_weight: f32,
     font_size: f32,
     max_width: f32,
+    align: TextAlign,
 }
 
 struct CachedLayout {
@@ -103,6 +104,7 @@ impl TextRenderer {
     /// every input that can change a `Layout`'s shape is part of the
     /// key, so there's no separate "remember to invalidate" bookkeeping
     /// that a future change could forget to update.
+    #[allow(clippy::too_many_arguments)]
     fn shaped_layout(
         &mut self,
         node_id: NodeId,
@@ -111,6 +113,7 @@ impl TextRenderer {
         font_weight: f32,
         font_size: f32,
         max_width: f32,
+        align: TextAlign,
     ) -> &parley::Layout<[u8; 4]> {
         let key = LayoutCacheKey {
             content: content.to_string(),
@@ -118,6 +121,7 @@ impl TextRenderer {
             font_weight,
             font_size,
             max_width,
+            align,
         };
         let Self {
             font_cx,
@@ -134,7 +138,18 @@ impl TextRenderer {
             builder.push_default(StyleProperty::FontSize(font_size));
             let mut layout = builder.build(content);
             layout.break_all_lines(Some(max_width));
-            layout.align(Alignment::Start, AlignmentOptions::default());
+            // M30 Phase 1 (§5, §7): `parley::Alignment::Start`/`Center`/
+            // `End` map 1:1 onto `TextAlign`'s own three variants --
+            // real direction-aware behavior (`Start`/`End` respect BiDi,
+            // matching §14 step 4's own requirement) is preserved for
+            // every existing caller, which still passes `TextAlign::
+            // Start` unconditionally.
+            let parley_align = match align {
+                TextAlign::Start => Alignment::Start,
+                TextAlign::Center => Alignment::Center,
+                TextAlign::End => Alignment::End,
+            };
+            layout.align(parley_align, AlignmentOptions::default());
             layout_cache.insert(node_id, CachedLayout { key, layout });
         }
         &layout_cache
@@ -180,9 +195,9 @@ impl TextRenderer {
         // M28 Phase 1: `shaped_layout` reuses the prior frame's
         // `Layout` unchanged whenever nothing about this node's real
         // shaping inputs moved -- see its own doc comment. The
-        // direction-aware `Alignment::Start` pass (left for LTR, right
-        // for RTL, matching §14 step 4's own real BiDi requirement)
-        // only needs to run once, at build time, not on every reuse.
+        // direction-aware alignment pass (M30 Phase 1: `state.align`,
+        // previously always `Alignment::Start`) only needs to run once,
+        // at build time, not on every reuse.
         let layout = self.shaped_layout(
             node_id,
             &state.content,
@@ -190,6 +205,7 @@ impl TextRenderer {
             state.font_weight,
             state.font_size,
             at.max_width,
+            state.align,
         );
 
         scene.set_paint(at.color);
@@ -326,6 +342,7 @@ impl TextRenderer {
             state.font_weight,
             state.font_size,
             at.max_width,
+            TextAlign::Start,
         );
 
         // Selection highlight, painted first (behind the glyphs below).
@@ -476,6 +493,7 @@ mod tests {
                 font_family: "Roboto".to_string(),
                 font_weight: 400.0,
                 font_size: 16.0,
+                align: TextAlign::Start,
             }),
             Style {
                 size: Size {

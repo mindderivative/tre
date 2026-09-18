@@ -457,6 +457,29 @@ fn paint_node(
             } else {
                 scene.fill_path(&node.paint.shape.current.to_path());
             }
+            // M30 Phase 1 (§5, §7): a real stroked border -- MD3's
+            // Outlined button variant is the real consumer, but this is
+            // universal `PaintProperties`, not `Button`-specific, the
+            // same "any Rect/Splitter can use it" reach `background`/
+            // `corner_radius` already have. Inset by half the stroke
+            // width so the border paints entirely *inside* this node's
+            // own bounds (kurbo strokes are centered on the path by
+            // default) -- a border never grows past the node's own
+            // taffy-computed box the way a naive un-inset stroke would.
+            // Skipped entirely at `border_width <= 0.0`, the same
+            // "off unless a caller opts in" contract `elevation`
+            // already established.
+            let border_width = node.paint.border_width.current;
+            if border_width > 0.0 {
+                let inset = border_width / 2.0;
+                let radius = (node.paint.corner_radius.current - inset).max(0.0);
+                let border_rect = RoundedRect::new(inset, inset, w - inset, h - inset, radius);
+                let border_color =
+                    with_opacity(node.paint.border_color.current, node.paint.opacity.current);
+                scene.set_paint(border_color);
+                scene.set_stroke(Stroke::new(border_width));
+                scene.stroke_path(&border_rect.to_path(0.1));
+            }
         }
         NodeKind::Text(state) => {
             let color = with_opacity(node.paint.background.current, node.paint.opacity.current);

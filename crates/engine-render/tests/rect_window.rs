@@ -17,7 +17,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use engine_core::{MotionCurve, NodeId, NodeKind, PaintProperties, TextState, Tree};
+use engine_core::{MotionCurve, NodeId, NodeKind, PaintProperties, TextAlign, TextState, Tree};
 use engine_platform::{WindowConfig, run_windowed};
 use engine_render::{FrameRenderer, TextRenderer, build_tree_scene};
 use peniko::Color;
@@ -223,6 +223,7 @@ impl GpuState {
                 font_family: "Roboto".to_string(),
                 font_weight: 400.0,
                 font_size: BODY_FONT_SIZE,
+                align: TextAlign::Start,
             }),
             Style {
                 size: Size {
@@ -239,6 +240,7 @@ impl GpuState {
                 font_family: "Roboto".to_string(),
                 font_weight: 500.0,
                 font_size: HEADLINE_FONT_SIZE,
+                align: TextAlign::Start,
             }),
             Style {
                 size: Size {
@@ -255,6 +257,7 @@ impl GpuState {
                 font_family: "Noto Sans Arabic".to_string(),
                 font_weight: 400.0,
                 font_size: ARABIC_FONT_SIZE,
+                align: TextAlign::Start,
             }),
             Style {
                 size: Size {

@@ -149,6 +149,23 @@ class Window:
         color (no visible box of its own).
         """
         ...
+    def add_button(
+        self,
+        label: str,
+        width: float,
+        height: float,
+        variant: str = "filled",
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """MD3's five real button variants: `"elevated"`, `"filled"`,
+        `"filled_tonal"`, `"outlined"`, `"text"`. Raises `ValueError`
+        for any other `variant`. Returns the button's own container
+        node -- `set_on_click`/`enable_interaction`/`animate` all work
+        on it exactly like any other node; this does not call
+        `enable_interaction()` for you.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,

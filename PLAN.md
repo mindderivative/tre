@@ -1,74 +1,65 @@
-# Plan: M29 — Render Loop Dirty-Tracking
+# Plan: M30 Phase 1 Step 1 — `Button`
 
-Corresponds to `BUILD_TRACKER.md` M29 (both phases). Written
+Corresponds to `BUILD_TRACKER.md` M30 Phase 1 Step 1. Written
 retroactively alongside implementation — see `LOG.md` and
-`BUILD_TRACKER.md`'s own M29 entry for the complete real investigation,
-findings, and verification record.
+`BUILD_TRACKER.md`'s own M30 Phase 1 entry for the complete real
+investigation, findings, and verification record. Rewritten (not
+accumulated) as each further M30 phase/step lands, matching this
+project's own established `PLAN.md`/`LOG.md` convention —
+`BUILD_TRACKER.md` is the durable accumulated record.
 
 ## What changed
 
-- `crates/engine-core/src/tree.rs`: `Tree` gained a private `dirty:
-  bool` field (starting `true`) and `pub fn take_dirty(&mut self) ->
-  bool`. All 29 real mutating methods set it as their first statement
-  (mechanically inserted via a script against exact signature
-  boundaries); `tick_all` sets it whenever its own `any_active` is
-  `true`. New test `take_dirty_reports_true_after_each_real_mutation_
-  category_and_false_between`.
-- `crates/engine-py/src/app.rs`: `App::run`'s per-frame closure reads
-  `tree.take_dirty()` after `tick_all`/before `compute_layout`, skipping
-  layout/GPU work entirely when nothing changed. The closure now
-  returns `bool` (`tick_all`'s own `any_active`) at every exit point,
-  for `engine-platform`'s own polling decision.
-- `crates/engine-platform/src/lib.rs`: `run_windowed_multi`'s `on_frame`
-  bound widened to `FnMut(WindowId, u32) -> bool`. `PerWindow` gained
-  `animating: bool`. `RedrawRequested` sets `ControlFlow::Poll` while
-  any open window is animating, `ControlFlow::Wait` once all have
-  settled. Every real input-handling arm in `window_event`
-  (`CursorMoved`/`MouseInput`/`KeyboardInput`/`MouseWheel`/
-  `ThemeChanged`/`Ime`) now calls `request_redraw()` explicitly, as
-  does the AccessKit `ActionRequested` path in `user_event`.
-  `run_windowed`'s own public signature stayed unchanged — its internal
-  wrapper always reports `true`, preserving `rect_window.rs`/
-  `access_button.rs`'s pre-M29 behavior byte-for-byte.
-- `crates/engine-platform/tests/multi_window.rs`: updated its
-  `on_frame` closure to return `true` (same reasoning as
-  `run_windowed`'s wrapper).
+- `crates/engine-core/src/node.rs`: `PaintProperties` gained
+  `border_color: Animated<Color>` / `border_width: Animated<f64>`
+  (universal, true-no-op defaults). New `TextAlign` enum
+  (Start/Center/End, `#[default] Start`) and `TextState.align:
+  TextAlign`.
+- `crates/engine-render/src/lib.rs`: `paint_node`'s `Rect`/`Splitter`
+  arm now strokes a real border (inset by half its own width) when
+  `border_width > 0.0`.
+- `crates/engine-render/src/text.rs`: `shaped_layout`/`LayoutCacheKey`
+  widened with `align: TextAlign`, resolved to real
+  `parley::Alignment::{Start,Center,End}` instead of the old hardcoded
+  `Start`.
+- `crates/engine-core/src/tree.rs`: `Tree::hit_test_at` — a bare
+  `NodeKind::Text` never independently claims a hit any more, always
+  deferring to whatever's behind it. Real bug fix, not a design
+  preference — see `BUILD_TRACKER.md`'s own writeup.
+- `crates/engine-py/src/window.rs`: `ThemeState::role(&self, name:
+  &str) -> Option<Color>`, a general MD3 role resolver alongside the
+  existing `on_surface()`.
+- `crates/engine-py/src/window_factory.rs`: `Window.add_button(label,
+  width, height, variant="filled", x=None, y=None)`, MD3's five real
+  variants (elevated/filled/filled_tonal/outlined/text). Returns the
+  container `Node`; does not auto-`enable_interaction()`.
+- `python/tre/_core.pyi`: `add_button` stub added.
+- New tests: `engine-render/tests/border_paint.rs`,
+  `engine-render/tests/text_align.rs`, `tests/test_button.py`. New
+  example: `examples/button.py`.
 
-## Real bug found and fixed during implementation
+## Why
 
-A window opened with `max_frames: Some(_)` — this codebase's own
-dominant example/test pattern — hung indefinitely under the first real
-Phase 2 implementation: once `on_frame` reported "not animating,"
-nothing kept requesting its next redraw, so it never reached its own
-frame count. Caught by actually running every example against the
-change (several timed out), not assumed. Fixed by treating any window
-with `max_frames: Some(_)` as always-animating for `ControlFlow`
-purposes, regardless of what `on_frame` itself reports — only a
-genuinely unbounded window (`max_frames: None`) gets Phase 2's
-idle-CPU benefit. Documented in `run_windowed_multi`'s own doc comment.
-
-## What was deliberately not done
-
-- Window resize (`WindowEvent::Resized`/`ScaleFactorChanged`) handling
-  — confirmed via grep this codebase has no resize support anywhere
-  yet, a real, pre-existing, separate gap this milestone's own
-  investigation surfaced but didn't need to touch.
-- Partial/incremental repaint (redrawing only the changed screen
-  region) — a materially larger change to `engine-render`'s whole-tree
-  paint walk; this milestone's dirty flag is coarse (whole-frame
-  yes/no), matching the existing architecture.
+`Button` was the one component this catalog's own M30 scoping
+confirmed was hand-composed from `Rect`+`Text`+ripple in every
+existing example — a real, first-class component was the whole point
+of Phase 1 Step 1. Two genuine engine gaps surfaced only by actually
+building it, not predicted up front: `engine-render` had no way to
+paint a border at all (needed for the Outlined variant) or to center
+text within its own box (needed for every variant's label) — both
+fixed as universal capabilities, not `Button`-specific hacks, matching
+how `elevation`/`shape`/`transform` were each added universally to
+`PaintProperties` when a real consumer first needed them. The
+hit-testing fix was a real, confirmed functional bug (a button's own
+click handler was unreachable), caught by `tests/test_button.py`'s own
+click-dispatch test, not designed in advance.
 
 ## Verification
 
-Full `cargo check`/clippy `-D warnings`/fmt clean. `cargo test
---workspace --release` clean (`engine-core` 146, up from 145).
-`maturin develop --release` + pytest (187 passed, 1 pre-existing skip),
-all 29 examples (re-run twice — once before, once after the
-`max_frames` fix, to confirm the hang was genuinely resolved), and the
-showcase demo (real click/keyboard/drag interaction, not just a static
-scene) all clean with the real display. Empirical idle-CPU check: an
-unbounded static window settled to ~0.8–1.3% CPU over several real
-seconds (`ps -o pcpu`), consistent with `ControlFlow::Wait` genuinely
-taking effect.
-
-See `LOG.md` for the full narrative.
+Full chain, all green: `cargo check --workspace --all-targets`,
+`cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt
+--check`, `cargo test --workspace --release` (39 binaries), `maturin
+develop --release`, `pytest tests/` (197 passed, 1 skipped, zero
+regressions), all 31 examples, the showcase demo, `mypy --strict`
+against `examples/button.py` plus a deliberate-error probe confirming
+the `.pyi` stub carries real type information.

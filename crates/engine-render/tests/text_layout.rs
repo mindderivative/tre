@@ -16,7 +16,7 @@
 //! side of its box, not the left" (proves BiDi positioning actually
 //! took effect, not just that *a* glyph got drawn somewhere).
 
-use engine_core::{NodeKind, PaintProperties, TextState, Tree};
+use engine_core::{NodeKind, PaintProperties, TextAlign, TextState, Tree};
 use engine_render::{FrameRenderer, TextRenderer, build_tree_scene};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, FlexDirection, Size, Style, length};
@@ -77,6 +77,7 @@ fn type_roles_and_rtl_string_render_real_ink() {
                 font_family: "Roboto".to_string(),
                 font_weight: 400.0,
                 font_size: 16.0,
+                align: TextAlign::Start,
             }),
             Style {
                 size: Size {
@@ -93,6 +94,7 @@ fn type_roles_and_rtl_string_render_real_ink() {
                 font_family: "Roboto".to_string(),
                 font_weight: 500.0,
                 font_size: 32.0,
+                align: TextAlign::Start,
             }),
             Style {
                 size: Size {
@@ -109,6 +111,7 @@ fn type_roles_and_rtl_string_render_real_ink() {
                 font_family: "Noto Sans Arabic".to_string(),
                 font_weight: 400.0,
                 font_size: 24.0,
+                align: TextAlign::Start,
             }),
             Style {
                 size: Size {

@@ -1,93 +1,83 @@
-# Log: M29 — Render Loop Dirty-Tracking
+# Log: M30 Phase 1 Step 1 — `Button`
 
-Closed the one item M28 deliberately left open: `engine-platform`'s
-render loop redrew every frame unconditionally, regardless of whether
-anything actually changed.
+Scoped as the first real component of M30's 10-phase catalog: MD3's
+five real button variants (Elevated/Filled/Filled Tonal/Outlined/Text),
+the one component confirmed hand-composed from `Rect`+`Text`+ripple in
+every existing example.
 
-## Phase 1 — the dirty flag
+## Real anatomy chosen
 
-`Tree::nodes` is private, so every real mutation is already forced
-through one of `Tree`'s own public `&mut self` methods. Enumerated the
-full list precisely (grepping both single-line and multi-line
-signatures, since a naive single-line grep silently missed `insert`/
-`dispatch`/`open_overlay`/`set_virtual_list_window` — a real, near-miss
-found before it became a real gap): 29 methods, not the ~25 estimated
-while scoping.
+A `Rect` container (corner radius `height / 2.0` — MD3's own "Full"
+shape family) with one centered `Text` label child, matching the
+existing hand-composed pattern but built once, not per call site.
+Returns the container `Node` so `set_on_click`/`enable_interaction`/
+`animate` all work on it exactly like any other node — no new API
+surface needed for those.
 
-Wrote a small Python script to insert `self.dirty = true;` as the
-first statement of each target method's body, using exact paren-depth
-matching to find where each signature's `{` actually starts (handling
-multi-line parameter lists correctly). Mechanical insertion across 29
-methods by hand would have been the real risk here — a script that
-finds the exact same brace precisely every time removes that risk
-entirely, verified afterward by spot-checking a few multi-line
-signatures (`insert`, `dispatch`) landed the insertion in the right
-place.
+## Two real engine gaps, found only by actually building this
 
-`tick_all` needed its own conditional handling — it runs every frame
-regardless, so marking it dirty unconditionally would defeat Phase 1's
-whole purpose. Instead: `if any_active { self.dirty = true; }` at its
-return point, reusing the value it already computes.
+1. **No border capability at all.** `engine-render` had no way to
+   paint anything but a solid fill — the Outlined variant's real 1dp
+   stroke was impossible without new machinery. Added universally:
+   `PaintProperties.border_color`/`border_width` (true-no-op defaults,
+   confirmed no other file does direct `PaintProperties { ... }`
+   construction, so this is safe for all ~60 existing call sites),
+   painted in `paint_node` inset by half the stroke width so it never
+   expands the node's own layout box. Proven with a real headless
+   pixel-readback test (`border_paint.rs`): the border color inside
+   the stroke band, the fill still intact at the center, and
+   `border_width: 0.0` a genuine no-op across the whole surface.
 
-New regression test proves `take_dirty()` after each real mutation
-category (structural, paint-property via `get_mut`, interaction via
-`interaction_mut`, animation-tick via `tick_all`) and clean between
-read-only calls.
+2. **No text-alignment capability at all.** `text.rs` hardcoded
+   `parley::Alignment::Start` unconditionally — every button label
+   would have rendered flush-left, not centered. Added a universal
+   `TextState.align: TextAlign` (Start/Center/End), threaded through
+   `LayoutCacheKey` so the shaping cache correctly invalidates on
+   alignment change. Required touching every existing `TextState {
+   ... }` literal across the workspace (9 sites, no `::new()`
+   constructor exists) — mechanical, compiler-enforced, all kept at
+   `TextAlign::Start` to preserve exact prior behavior. Proven with a
+   real pixel-readback test (`text_align.rs`): `Center` genuinely
+   moves ink off the left edge toward the middle; `Start` still hugs
+   the left edge exactly as before.
 
-`App::run`'s per-frame closure (`app.rs`) then reads `tree.take_dirty()`
-once, right after `tick_all`, and returns early — skipping
-`compute_layout`/GPU texture sync/scene encoding/submit/present
-entirely — when nothing real happened. Checked whether window resize
-needed special handling here (the scoping doc flagged it): it doesn't,
-because this codebase has no resize support at all yet, confirmed via
-grep — a real, pre-existing, separate gap, not something this phase
-needed to preserve.
+## A real, confirmed bug — not a design choice
 
-## Phase 2 — true idle
+`tests/test_button.py`'s own click-dispatch test failed on first run:
+a real click on the button never reached its registered handler.
+Traced to `Tree::hit_test_at`: it recurses into children first with no
+ancestor bubbling anywhere in `dispatch`, so the button's own centered
+`Text` child — sized to fill the container's inner content width —
+silently claimed the hit and the container's handler was unreachable.
+Confirmed via grep first that no existing example or test anywhere
+relies on a standalone `add_text` node being independently clickable,
+then fixed at the root: a bare `NodeKind::Text` label never
+independently claims a hit any more, always deferring to whatever's
+behind it. A future standalone clickable label (MD3's own `Link`,
+Phase 8) gets its own dedicated `NodeKind` when that phase starts, the
+same "each interactive component is its own real `NodeKind`" precedent
+`Checkbox`/`Slider`/`TextField` already establish.
 
-Widened `run_windowed_multi`'s `on_frame` to return `bool` (still
-animating). `PerWindow` gained an `animating` field; `RedrawRequested`
-now sets the event loop's `ControlFlow` to `Poll` while any open window
-last reported animating, `Wait` once every window has settled
-(`ControlFlow` is event-loop-wide, not per-window). Every real
-input-handling arm in `window_event` now calls `request_redraw()`
-explicitly, since nothing else wakes a waiting loop.
+## Un-themed default
 
-Audited the one non-`WindowEvent` redraw trigger the scoping doc named:
-AccessKit's `ActionRequested` (a screen-reader-driven `Action::Focus`/
-`Action::Click`), delivered via `user_event`, had no redraw wiring at
-all — added one.
-
-**Real bug, caught only by actually running the whole example suite
-against this change, not assumed:** several examples hung indefinitely.
-Root cause: a window opened with `max_frames: Some(_)` — the pattern
-essentially every example and test in this workspace uses to run for a
-bounded number of frames and exit — relied on continuous polling to
-ever reach its own frame count. Once idle windows stopped
-auto-polling, a static example with no animation and no real human
-interacting with it never got another redraw request at all, so it sat
-at frame 1 forever. Fixed by treating `max_frames: Some(_)` as always-
-animating for `ControlFlow` purposes, independent of what `on_frame`
-itself reports. Re-ran the full example suite after the fix — all 29
-pass, this time genuinely (not just "didn't time out because the
-overall script timeout was generous").
-
-Empirically verified the actual idle-CPU claim, not just the code path:
-a scratch script opening an unbounded, non-animating window settled to
-under 1.5% CPU over several real seconds with a real display attached.
+Real Material 3 baseline hex tokens (`ButtonBaseline` in
+`window_factory.rs`), the same "real historical default, not black"
+contract `Checkbox`'s white mark / `Slider`'s gray track already
+establish for a `Window` that never calls `set_theme`. A themed
+`Window` resolves through the new general `ThemeState::role(name)`
+instead, widened beyond the old single-field `on_surface()`.
 
 ## Verification
 
-Full `cargo check`/clippy `-D warnings`/fmt clean. `cargo test
---workspace --release` clean, `engine-core` 146 (up from 145).
-`maturin develop --release` + pytest (187 passed, 1 pre-existing skip),
-all 29 examples, and the showcase demo (real click/keyboard/drag
-interaction throughout, not a static scene) all clean with the real
-display.
-
-M29 — Render Loop Dirty-Tracking is now complete. Both phases shipped
-together, not split into a separate go/no-go the way the original
-scoping proposed — Phase 1's own low-risk mechanical instrumentation
-gave enough confidence, and Phase 2's one real risk (a missed redraw
-path) was caught and fixed by actually running everything, the same
-discipline this project applies throughout.
+`cargo check --workspace --all-targets`, `cargo clippy --workspace
+--all-targets -- -D warnings`, `cargo fmt --check` — all clean. `cargo
+test --workspace --release`: 39 binaries, all green (`border_paint.rs`
+and `text_align.rs` included). `maturin develop --release` rebuilt.
+`pytest tests/`: 197 passed, 1 skipped (10 new in `test_button.py`,
+zero regressions from the hit-test change). All 31 examples and the
+showcase demo re-run clean. `mypy --strict` clean against
+`examples/button.py`, plus a separate deliberate-error probe (a wrong
+argument type and a missing required argument, both suppressed with
+`# type: ignore`) confirming `--warn-unused-ignores` stayed silent —
+proof the new `.pyi` stub entry carries real type information, not
+just a permissive stand-in.

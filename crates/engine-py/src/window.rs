@@ -67,6 +67,26 @@ impl ThemeState {
         }
     }
 
+    /// M30 Phase 1 (§5, §7): the general role resolver `Button`'s five
+    /// real MD3 variants need -- `on_surface()`'s own hardcoded single-
+    /// field read doesn't reach `primary`/`on_primary`/`secondary_
+    /// container`/`outline`/etc, and this project's own established
+    /// precedent (`checkbox_state.mark_tint = theme.on_surface()`, and
+    /// every sibling call site) always resolves a role name against
+    /// whichever scheme (`light`/`dark`) is actually active -- this is
+    /// that same resolution, generalized to any of `ColorScheme::role`'s
+    /// real token names instead of a single hardcoded field access.
+    /// Returns `None` both when no theme is set yet and when `name`
+    /// isn't a real MD3 role -- callers already gate on `is_set()`
+    /// before reading (the same real "un-themed default survives
+    /// untouched" contract `on_surface()`'s own callers already rely
+    /// on), so collapsing both cases to `None` costs nothing real.
+    pub(crate) fn role(&self, name: &str) -> Option<Color> {
+        let theme = self.theme.as_ref()?;
+        let scheme = if self.dark { &theme.dark } else { &theme.light };
+        scheme.role(name)
+    }
+
     /// M20 Phase 1 (§7.1, §7.3): whether a real theme has actually been
     /// set yet. Needed because `Checkbox`/`Slider`'s own real, pre-
     /// existing defaults (white checkmark, gray track) are genuinely

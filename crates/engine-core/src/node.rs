@@ -451,6 +451,28 @@ pub struct SplitterState {
     pub position: Animated<f64>,
 }
 
+/// M30 Phase 1 (§5, §7): a real horizontal text-alignment capability --
+/// `engine-render`'s own text-shaping pipeline (`text.rs`) hardcoded
+/// `parley::Alignment::Start` unconditionally until this phase, a real,
+/// verified gap (confirmed by direct read, not assumed) that blocks any
+/// correctly-rendered centered label -- MD3's `Button` is the first real
+/// consumer (its label must sit centered in the button's own box), but
+/// this lives on `TextState` itself rather than as Button-specific
+/// machinery, the identical "universal capability, not component-
+/// specific" precedent `PaintProperties.border_color`/`border_width`
+/// already established this same phase.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum TextAlign {
+    /// Left for LTR text, right for RTL -- byte-for-byte the same
+    /// direction-aware behavior every existing text node already had
+    /// before this field existed, so this is a true no-op default.
+    #[default]
+    Start,
+    Center,
+    /// Right for LTR text, left for RTL.
+    End,
+}
+
 /// A text node's content and shaping inputs -- everything `parley` needs
 /// to shape a run, and nothing about how it got styled (that's
 /// `engine_md3`'s future job, not this crate's -- `engine-core` stays
@@ -473,6 +495,8 @@ pub struct TextState {
     /// directly against Roboto's own name table, not assumed.
     pub font_weight: f32,
     pub font_size: f32,
+    /// M30 Phase 1 (§5, §7): see `TextAlign`'s own doc comment.
+    pub align: TextAlign,
 }
 
 /// Universal paint state every node has, regardless of `NodeKind`.
@@ -498,6 +522,16 @@ pub struct PaintProperties {
     /// `engine-core`, and not `engine-md3` (where it was originally
     /// built, M3 step 10).
     pub shape: Animated<crate::shape_morph::ShapeKey>,
+    /// M30 Phase 1 (§5, §7): a real stroked border, painted inside the
+    /// node's own fill edge (never expanding its layout box) -- MD3's
+    /// Outlined button variant is the real consumer that surfaced this
+    /// gap (a 1dp outline with no fill), but the field is universal
+    /// like every other `PaintProperties` field, not `Button`-specific.
+    /// `border_width.current <= 0.0` is a true no-op, the same
+    /// "off unless a caller opts in" contract `elevation`/`shape`
+    /// already establish.
+    pub border_color: Animated<Color>,
+    pub border_width: Animated<f64>,
 }
 
 impl PaintProperties {
@@ -509,6 +543,8 @@ impl PaintProperties {
             opacity: Animated::new(opacity),
             transform: Animated::new(peniko::kurbo::Affine::IDENTITY),
             shape: Animated::new(crate::shape_morph::ShapeKey::empty()),
+            border_color: Animated::new(Color::from_rgba8(0, 0, 0, 0)),
+            border_width: Animated::new(0.0),
         }
     }
 
@@ -528,7 +564,16 @@ impl PaintProperties {
         let opacity = self.opacity.tick(now, completed);
         let transform = self.transform.tick(now, completed);
         let shape = self.shape.tick(now, completed);
-        background || corner_radius || elevation || opacity || transform || shape
+        let border_color = self.border_color.tick(now, completed);
+        let border_width = self.border_width.tick(now, completed);
+        background
+            || corner_radius
+            || elevation
+            || opacity
+            || transform
+            || shape
+            || border_color
+            || border_width
     }
 }
 
