@@ -277,6 +277,42 @@ class Window:
         `icon`.
         """
         ...
+    def add_menu_item(
+        self,
+        label: str,
+        icon: str | None = None,
+        width: float = 200.0,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """One real MD3 menu row. Raises `ValueError` for an unknown
+        `icon`. Not shown anywhere on its own -- pass a list of these
+        to `build_menu`.
+        """
+        ...
+    def build_menu(self, items: Sequence[Node], width: float = 200.0) -> Node:
+        """Assembles `items` (each from `add_menu_item`) into one real
+        MD3 menu panel -- moves each item from wherever it currently
+        lives into the returned panel. Returns the panel **not yet
+        shown** -- pass it to `open_menu` to actually display it.
+        Raises `ValueError` for an empty `items`, or if any item
+        belongs to a different `Window`.
+        """
+        ...
+    def open_menu(self, anchor: Node, menu: Node) -> None:
+        """Opens `menu` (from `build_menu`) anchored just below
+        `anchor`, dismissed on an outside click or Escape -- the same
+        real overlay primitive `Node.set_context_menu`'s right-click
+        path uses, just triggered directly rather than gated behind a
+        right-click. A safe no-op if `menu` is already open. Raises
+        `ValueError` if `anchor`/`menu` belong to a different `Window`.
+        """
+        ...
+    def close_menu(self, menu: Node) -> None:
+        """Closes a menu opened via `open_menu`. Raises `ValueError`
+        if `menu` belongs to a different `Window`.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,

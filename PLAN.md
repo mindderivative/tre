@@ -1,39 +1,39 @@
-# Plan: M30 Phase 2 Step 3 — Chip
+# Plan: M30 Phase 2 Step 4 — Menu (closes Phase 2)
 
-Corresponds to `BUILD_TRACKER.md` M30 Phase 2 Step 3. Written
-retroactively alongside implementation — see `LOG.md` and
+Corresponds to `BUILD_TRACKER.md` M30 Phase 2 Step 4, closing Phase 2
+(Selection) entirely — Steps 1-4 plus the incrementally-satisfied Step
+5. Written retroactively alongside implementation — see `LOG.md` and
 `BUILD_TRACKER.md`'s own M30 Phase 2 entry for the complete real
 investigation, findings, and verification record.
 
 ## What changed
 
 - `crates/engine-py/src/window_factory.rs`: `Md3Baseline::
-  ON_SURFACE_VARIANT` added; new `resolve_chip_colors` helper;
-  `Window.add_chip(label, width, variant="assist", icon=None,
-  selected=False, removable=False, x=None, y=None)`.
-- `python/tre/_core.pyi`: stub added.
-- New tests: `tests/test_chip.py`. New example: `examples/chip.py`.
+  SURFACE_CONTAINER` added; `Window.add_menu_item(label, icon=None,
+  width=200.0, x=None, y=None)`, `Window.build_menu(items,
+  width=200.0)`, `Window.open_menu(anchor, menu)`, `Window.close_menu(
+  menu)`.
+- `python/tre/_core.pyi`: stubs added.
+- New tests: `tests/test_menu.py`. New example: `examples/menu.py`.
 
 ## Why
 
-Scoped by `BUILD_TRACKER.md`'s own M30 text as Phase 2's third
-Selection component, all four real variants. Deliberately built as a
-plain composition, not a new `NodeKind` — confirmed the real
-architectural dividing line this catalog already draws (`Segmented
-Button`'s own app-owned selection vs. `Checkbox`/`RadioButton`/
-`Switch`'s engine-owned state) before choosing which side Chip's own
-Filter variant belongs on, rather than defaulting to "give it a new
-NodeKind because it's stateful." Real MD3 tokens verified directly
-against Material Web's source before writing code — found a genuine,
-easy-to-miss shape distinction (Chips use `corner-small`, not the
-"Full" shape every other component in this catalog so far uses).
+Scoped by `BUILD_TRACKER.md`'s own M30 text as Phase 2's fourth and
+final Selection component, explicitly distinct from the existing
+right-click context-menu overlay mechanism. Reused `Tree::
+open_overlay`/`close_overlay` directly rather than building a second
+overlay primitive — `overlay.rs`'s own module doc comment already
+named dropdown menus as a real intended consumer of the same
+mechanism context menus use. The context-menu mechanism itself is
+completely untouched.
 
 ## Verification
 
 Full chain, all green: `cargo check --workspace --all-targets`,
 `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt
 --check`, `cargo test --workspace --release` (42 binaries, unchanged
-— no new engine-render capability needed), `maturin develop
---release`, `pytest tests/` (263 passed, 1 skipped, zero
-regressions), all 37 examples, the showcase demo, `mypy --strict`
-against `examples/chip.py`.
+— pure composition plus existing overlay primitives), `maturin
+develop --release`, `pytest tests/` (273 passed, 1 skipped, zero
+regressions, `test_context_menu.py` itself unmodified and still
+green), all 38 examples, the showcase demo, `mypy --strict` against
+`examples/menu.py`.

@@ -1,59 +1,67 @@
-# Log: M30 Phase 2 Step 3 — Chip
+# Log: M30 Phase 2 Step 4 — Menu (closes Phase 2)
 
-## The real architectural choice: composition, not a new NodeKind
+## Real, deliberate reuse, not a second overlay mechanism
 
-`Radio Button`/`Switch` each got a genuinely new, engine-owned,
-animated `NodeKind` this same phase. Chip's Filter variant is also
-stateful (selected/unselected) — the surface-level pattern-match would
-be "give it a NodeKind too." Checked the real precedent this catalog
-already established instead: `Segmented Button` (Phase 1's own last
-step) already answered this exact question for a structurally
-identical case — a group of toggleable pills whose *selected* meaning
-is fundamentally group/app state, not something the engine needs to
-own or coordinate. Filter Chip's own selection is the same shape.
-Built as a plain composition (`Rect` + optional leading `Icon` +
-`Text` + optional trailing `Icon`), the same real line `Button`/`Icon
-Button`/`FAB`/`Segmented Button` all already sit on.
-
-## No new hit-test fix needed — confirmed, not assumed
-
-Every one of `Button`, `Icon Button`, and `Extended FAB` needed (or
-proactively applied) a `Tree::hit_test_at` fix for their own `Text`/
-`Icon` children eating clicks meant for the container. Chip is the
-same composite shape. `tests/test_chip.py`'s own click-dispatch test
-passed on the first run, confirming those two earlier fixes (Phase 1)
-already cover this case completely — nothing new needed this step.
+`Tree::open_overlay`/`close_overlay` (§11.3, M3 step 13) already
+exist for exactly this: `overlay.rs`'s own module doc comment states
+"menu bars, dropdown menus, context menus, tooltips, and MD3 dialogs
+are all the same missing primitive." `open_menu` calls the identical
+primitive `dispatch::open_context_menu`'s own right-click path
+already uses (`open_overlay` with `dismiss_on_outside_click: true,
+dismiss_on_escape: true`), just exposed as a direct Python-callable
+method rather than gated behind synthetic secondary-button dispatch —
+a real dropdown menu opens on a plain click (or any app-chosen
+trigger), not a right-click. The existing context-menu mechanism is
+completely untouched — confirmed by `test_context_menu.py` passing
+unmodified, not just by not editing its file.
 
 ## Real MD3 data, verified before writing any code
 
-Checked Material Web's own real token source (`_md-comp-assist-chip.
-scss`/`_md-comp-filter-chip.scss`) directly: 32dp height, `corner-
-small` shape (8dp) — a real, easy-to-miss distinction from every other
-component in this catalog so far (`Button`/`Icon Button`/`FAB`/
-`Segmented Button` all use "Full," fully-rounded shape; Chips
-genuinely don't). Icon token is 18dp, smaller than every other
-component's 24dp. Assist Chip's own label role is `on_surface`,
-confirmed genuinely different from Filter/Input/Suggestion's shared
-`on_surface_variant` — not assumed to be the same role reused, or a
-typo waiting to happen. Filter Chip's real selected state reuses
-`Button`'s own Filled Tonal color pattern exactly (`secondary_
-container`/`on_secondary_container`).
+A direct fetch for `_md-comp-menu-item.scss` 404s — a real, confirmed
+finding, not an oversight: Material Web has no dedicated menu-item
+token file at all. A real MD3 menu genuinely reuses the plain List
+Item's own tokens for its rows (`_md-comp-list.scss`: 56dp height,
+24dp icon, 16dp leading space, `on_surface` label, `on_surface_
+variant` icon) — confirmed, not assumed consistent. The panel itself
+has its own real tokens (`_md-comp-menu.scss`): `surface_container`
+fill, `corner-extra-small` (4dp), real rest-state elevation (level 2).
 
-## Real MD3 behavior reproduced faithfully
+## Real re-parenting, mirroring `close_overlay`'s own established pattern
 
-A selected Filter Chip's real checkmark replaces any custom leading
-`icon` rather than showing both — real MD3 anatomy, not an engine
-simplification. `removable` (a trailing "close" icon) is independent
-of `variant`, since any chip can reasonably be made removable in a
-real app, not gated to the Input variant specifically.
+`build_menu` moves each item — `Tree::detach` then `add_child` — into
+the returned panel, which is itself returned genuinely unattached
+anywhere. `open_menu`'s own `open_overlay` call is what actually
+attaches it. This is the identical "detach, not destroy, ready for
+later `add_child`" contract `close_overlay`'s own doc comment already
+established for context-menu content, reused here for the same real
+reason rather than invented fresh.
+
+## A real finding, caught by a failing test, not predicted in advance
+
+`tests/test_menu.py`'s first draft of its click-dispatch test built a
+menu item, called `build_menu`, and immediately tried `window.click`
+on it — and it failed. Traced the real cause: the item's own subtree
+was re-parented under a panel that was itself never attached to the
+window's real root, so it was never part of any `compute_layout` pass
+— its hit-test box was stale/uncomputed, and the click missed. This
+is correct, not a bug: a menu item genuinely isn't on-screen, and so
+genuinely isn't clickable, until its menu is actually open. Fixed the
+test's own premise (call `open_menu` first), not the implementation —
+confirmed this really is the right behavior before "fixing" anything,
+the same discipline that kept the earlier `Tree::hit_test_at` finding
+(Phase 1) from being dismissed as a test bug instead of a real one.
 
 ## Verification
 
 `cargo check --workspace --all-targets`, `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo fmt --check` — all clean. `cargo
-test --workspace --release`: 42 binaries, all green, unchanged count
-(a pure composition needed no new engine-render capability or pixel
-test). `maturin develop --release` rebuilt. `pytest tests/`: 263
-passed, 1 skipped (12 new in `test_chip.py`, zero regressions). All 37
+test --workspace --release`: 42 binaries, all green, unchanged (pure
+composition plus existing overlay primitives, no new engine-render
+capability). `maturin develop --release` rebuilt. `pytest tests/`:
+273 passed, 1 skipped (10 new in `test_menu.py`, zero regressions,
+`test_context_menu.py` itself unmodified and still green). All 38
 examples and the showcase demo re-run clean. `mypy --strict` clean
-against `examples/chip.py`.
+against `examples/menu.py`.
+
+This closes M30 Phase 2 (Selection) entirely: `Radio Button`,
+`Switch`, `Chip`, `Menu`, all with paired `.pyi` stubs.

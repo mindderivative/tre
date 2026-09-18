@@ -15,8 +15,8 @@ use std::rc::Rc;
 
 use engine_core::{
     AccessNodeData, Action, Animated, CheckboxState, ContentFit, IconState, ImageState, NodeKind,
-    PaintProperties, RadioButtonState, Role, SliderState, SplitterState, SwitchState, TextAlign,
-    TextFieldState, TextState,
+    OverlayMeta, PaintProperties, RadioButtonState, Role, SliderState, SplitterState, SwitchState,
+    TextAlign, TextFieldState, TextState,
 };
 use peniko::Color;
 use pyo3::prelude::*;
@@ -89,6 +89,7 @@ impl Md3Baseline {
     const ON_SECONDARY_CONTAINER: Color = Color::from_rgba8(0x1D, 0x19, 0x2B, 0xFF);
     const TERTIARY_CONTAINER: Color = Color::from_rgba8(0xFF, 0xD8, 0xE4, 0xFF);
     const ON_TERTIARY_CONTAINER: Color = Color::from_rgba8(0x31, 0x11, 0x1D, 0xFF);
+    const SURFACE_CONTAINER: Color = Color::from_rgba8(0xF3, 0xED, 0xF7, 0xFF);
     const SURFACE_CONTAINER_LOW: Color = Color::from_rgba8(0xF7, 0xF2, 0xFA, 0xFF);
     const SURFACE_CONTAINER_HIGH: Color = Color::from_rgba8(0xEC, 0xE6, 0xF0, 0xFF);
     const SURFACE_CONTAINER_HIGHEST: Color = Color::from_rgba8(0xE6, 0xE0, 0xE9, 0xFF);
@@ -358,6 +359,27 @@ const CHIP_LEADING_PADDING_NO_ICON: f32 = 16.0;
 const CHIP_TRAILING_PADDING_WITH_ICON: f32 = 8.0;
 const CHIP_TRAILING_PADDING_NO_ICON: f32 = 16.0;
 const CHIP_ICON_GAP: f32 = 8.0;
+
+/// M30 Phase 2 Step 4 (§5, §7, §11.3): `Menu`'s real anatomy,
+/// verified against Material Web's own token source. **A real,
+/// confirmed finding, not assumed:** Material Web has no dedicated
+/// `_md-comp-menu-item.scss` token file at all (a direct fetch 404s)
+/// -- a real MD3 menu genuinely reuses the plain List Item's own
+/// tokens for its rows (`_md-comp-list.scss`: 56dp height, 24dp
+/// leading icon, 16dp leading space, `on-surface` label, `on-surface-
+/// variant` icon), not a separate menu-specific row shape. The panel
+/// itself has its own real tokens (`_md-comp-menu.scss`):
+/// `surface-container` fill, `corner-extra-small` (4dp), a real
+/// rest-state elevation (level 2). **One real number not found in
+/// either fetched token file, so not claimed as independently
+/// verified:** the icon-to-label gap within one row -- a real,
+/// reasonable MD3 value, stated honestly.
+const MENU_ITEM_HEIGHT: f32 = 56.0;
+const MENU_ITEM_ICON_SIZE: f32 = 24.0;
+const MENU_ITEM_LEADING_SPACE: f32 = 16.0;
+const MENU_ITEM_ICON_GAP: f32 = 12.0;
+const MENU_PANEL_CORNER_RADIUS: f64 = 4.0;
+const MENU_PANEL_ELEVATION: f64 = 2.0;
 
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
@@ -1207,6 +1229,230 @@ impl PyWindow {
 
         tree.add_child(self.root, container);
         Ok(self.wrap_node(container))
+    }
+
+    /// M30 Phase 2 Step 4 (§5, §7): one real MD3 menu row -- `Chip`'s
+    /// own real composition shape (`Rect` + optional leading `Icon` +
+    /// `Text`), reusing List Item's own real tokens (`add_menu_item`'s
+    /// own module-level doc comment has the real "Material Web has no
+    /// separate menu-item token file" finding). Not attached to a real
+    /// menu panel until `build_menu` moves it there -- returned already
+    /// attached to `self.root` like every other `add_*` node, the same
+    /// "detach, then re-attach elsewhere" real mechanism `Tree::detach`
+    /// already provides for exactly this kind of real re-parenting.
+    #[pyo3(signature = (label, icon=None, width=200.0, x=None, y=None))]
+    fn add_menu_item(
+        &self,
+        label: &str,
+        icon: Option<&str>,
+        width: f32,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<Node> {
+        let (label_color, icon_color) = {
+            let theme = self.theme.borrow();
+            let icon_color = if theme.is_set() {
+                theme
+                    .role("on_surface_variant")
+                    .unwrap_or(Md3Baseline::ON_SURFACE_VARIANT)
+            } else {
+                Md3Baseline::ON_SURFACE_VARIANT
+            };
+            (theme.on_surface(), icon_color)
+        };
+        let icon_path = icon.map(resolve_icon_path).transpose()?;
+
+        let mut tree = self.tree.borrow_mut();
+        let mut container_style = positioned_style(
+            Size {
+                width: length(width),
+                height: length(MENU_ITEM_HEIGHT),
+            },
+            x,
+            y,
+        );
+        container_style.display = taffy::Display::Flex;
+        container_style.align_items = Some(AlignItems::CENTER);
+        container_style.padding = TaffyRect {
+            left: length(MENU_ITEM_LEADING_SPACE),
+            right: length(MENU_ITEM_LEADING_SPACE),
+            top: zero(),
+            bottom: zero(),
+        };
+        container_style.gap = Size {
+            width: length(MENU_ITEM_ICON_GAP),
+            height: length(0.0),
+        };
+        let container = tree.insert(
+            NodeKind::Rect,
+            container_style,
+            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+
+        let mut icon_count = 0.0_f32;
+        if let Some(path) = icon_path {
+            icon_count = 1.0;
+            let icon_id = tree.insert(
+                NodeKind::Icon(IconState {
+                    path,
+                    tint: icon_color,
+                }),
+                Style {
+                    size: Size {
+                        width: length(MENU_ITEM_ICON_SIZE),
+                        height: length(MENU_ITEM_ICON_SIZE),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            );
+            tree.add_child(container, icon_id);
+        }
+
+        let label_width = (width
+            - 2.0 * MENU_ITEM_LEADING_SPACE
+            - icon_count * (MENU_ITEM_ICON_SIZE + MENU_ITEM_ICON_GAP))
+            .max(0.0);
+        let label_id = tree.insert(
+            NodeKind::Text(TextState {
+                content: label.to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: BUTTON_LABEL_FONT_WEIGHT,
+                font_size: BUTTON_LABEL_FONT_SIZE,
+                align: TextAlign::Start,
+            }),
+            Style {
+                size: Size {
+                    width: length(label_width),
+                    height: length(BUTTON_LABEL_LINE_HEIGHT),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(label_color, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(container, label_id);
+
+        tree.add_child(self.root, container);
+        Ok(self.wrap_node(container))
+    }
+
+    /// M30 Phase 2 Step 4 (§5, §7, §11.3): assembles `items` (each a
+    /// real node from `add_menu_item`) into one real MD3 menu panel --
+    /// `surface_container` fill, `corner-extra-small` (4dp), a real
+    /// rest-state elevation (level 2), all verified against Material
+    /// Web's own token source (`_md-comp-menu.scss`). Each item is
+    /// **moved**, not copied -- detached from wherever it currently
+    /// lives (`self.root`, if freshly created by `add_menu_item`) and
+    /// re-attached under the returned panel, the real `Tree::detach`-
+    /// then-`add_child` mechanism `Tree::close_overlay`'s own doc
+    /// comment already establishes as this codebase's real re-
+    /// parenting pattern. Returns the panel **not yet attached
+    /// anywhere** -- `open_menu` is what actually shows it (`Tree::
+    /// open_overlay`'s own real `add_child` call handles attachment at
+    /// that point, the identical real contract `close_overlay`'s
+    /// "detach, not destroy" leaves content ready for).
+    #[pyo3(signature = (items, width=200.0))]
+    fn build_menu(&self, items: Vec<PyRef<'_, Node>>, width: f32) -> PyResult<Node> {
+        if items.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "build_menu needs at least 1 item",
+            ));
+        }
+        for item in &items {
+            if !Rc::ptr_eq(&self.tree, &item.tree) {
+                return Err(EngineError::ForeignNode.into());
+            }
+        }
+        let panel_color = {
+            let theme = self.theme.borrow();
+            if theme.is_set() {
+                theme
+                    .role("surface_container")
+                    .unwrap_or(Md3Baseline::SURFACE_CONTAINER)
+            } else {
+                Md3Baseline::SURFACE_CONTAINER
+            }
+        };
+
+        let mut tree = self.tree.borrow_mut();
+        let height = items.len() as f32 * MENU_ITEM_HEIGHT;
+        let panel_style = Style {
+            display: taffy::Display::Flex,
+            flex_direction: taffy::FlexDirection::Column,
+            size: Size {
+                width: length(width),
+                height: length(height),
+            },
+            ..Default::default()
+        };
+        let panel = tree.insert(
+            NodeKind::Rect,
+            panel_style,
+            PaintProperties::new(
+                panel_color,
+                MENU_PANEL_CORNER_RADIUS,
+                MENU_PANEL_ELEVATION,
+                1.0,
+            ),
+        );
+
+        for item in items {
+            if let Some(parent) = tree.get(item.id).and_then(|node| node.parent) {
+                tree.detach(parent, item.id);
+            }
+            tree.add_child(panel, item.id);
+        }
+
+        Ok(self.wrap_node(panel))
+    }
+
+    /// M30 Phase 2 Step 4 (§11.3): opens `menu` (from `build_menu`)
+    /// anchored below `anchor`, via the real, already-existing `Tree::
+    /// open_overlay` -- the exact same primitive `Node.set_context_
+    /// menu`'s right-click path uses (`dispatch::open_context_menu`'s
+    /// own real template, mirrored here), just exposed as a direct
+    /// Python-callable method instead of gated behind synthetic
+    /// secondary-button dispatch, since a real dropdown menu opens on
+    /// a plain left click (or any app-chosen trigger), not a right-
+    /// click. **Deliberately does not touch the context-menu mechanism
+    /// itself at all** -- `overlay.rs`'s own module doc comment
+    /// already states both are real uses of the identical one
+    /// primitive ("menu bars, dropdown menus, context menus... are all
+    /// the same missing primitive"), so this reuses it rather than
+    /// building a second one. Same real reopen guard `open_context_
+    /// menu` already has (checked via `overlay_meta`, a safe no-op if
+    /// already open, not a double-`add_child`).
+    fn open_menu(&self, anchor: PyRef<'_, Node>, menu: PyRef<'_, Node>) -> PyResult<()> {
+        if !Rc::ptr_eq(&self.tree, &anchor.tree) || !Rc::ptr_eq(&self.tree, &menu.tree) {
+            return Err(EngineError::ForeignNode.into());
+        }
+        let mut tree = self.tree.borrow_mut();
+        if tree.overlay_meta(menu.id).is_some() {
+            return Ok(());
+        }
+        tree.open_overlay(
+            self.root,
+            anchor.id,
+            menu.id,
+            OverlayMeta {
+                anchor: anchor.id,
+                dismiss_on_outside_click: true,
+                dismiss_on_escape: true,
+            },
+        );
+        Ok(())
+    }
+
+    /// M30 Phase 2 Step 4 (§11.3): `open_menu`'s own real close
+    /// counterpart -- a thin wrapper over the already-real `Tree::
+    /// close_overlay` (detach, not destroy, the same real contract
+    /// context-menu dismissal already established).
+    fn close_menu(&self, menu: PyRef<'_, Node>) -> PyResult<()> {
+        if !Rc::ptr_eq(&self.tree, &menu.tree) {
+            return Err(EngineError::ForeignNode.into());
+        }
+        self.tree.borrow_mut().close_overlay(menu.id);
+        Ok(())
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,
