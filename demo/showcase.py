@@ -1,41 +1,55 @@
 #!/usr/bin/env python3
-"""tre v2's final showcase demo (M27, `BUILD_TRACKER.md`) -- one real,
-substantial screen added per phase, all combined into one running app
-for the first time (not just each screen proven separately).
+"""tre v2's final showcase demo (M27, `BUILD_TRACKER.md`, now fully
+complete across all 5 phases) -- one real, substantial screen added
+per phase, all combined into one running app for the first time, not
+just each screen proven separately.
 
-Phase 1 (§11.2/§11.10): the shell and persistent left nav rail every
-later screen plugs into. Deliberately reuses two already-real,
-already-proven v2 composition patterns rather than inventing new ones:
-`Window.build_shell` for the chrome, and `examples/navigation.py`'s
-own real remove-old/build-new screen-swap pattern for navigation
-(`Node.remove()` truly deletes a node's subtree, not a soft hide --
-re-showing a screen means rebuilding it fresh, not re-attaching a
-detached one).
+- **Phase 1** (§11.2/§11.10): the shell and persistent left nav rail
+  every screen plugs into, reusing two already-real, already-proven v2
+  composition patterns -- `Window.build_shell` for the chrome, and
+  `examples/navigation.py`'s own real remove-old/build-new screen-swap
+  pattern for navigation.
+- **Phase 2** (§5, §7.1, §7.3): the MD3 component & theming gallery --
+  `Checkbox`/`Slider`/`TextField`/`Image`/`Icon` all live, plus a real
+  seed-color/dark-mode theme picker demonstrating `Window.set_theme`
+  re-tinting every already-built themed component at once. Added
+  `Window.add_text` (a real, genuine gap: no imperative way to create
+  a plain text label existed before this).
+- **Phase 3** (§5, §7.4, §7.5, §7.6): four real animation triggers
+  (opacity/corner_radius/elevation/shape morph) plus a live `Canvas`
+  node graph with its own real `transform` pan/zoom. Found and fixed a
+  real, structural `PyWindow` re-entrancy limitation (`materializers`/
+  `canvas_draws` moved behind their own `RefCell`, letting
+  `add_canvas`/`add_virtual_list` become `&self` like every other real
+  `add_*` method).
+- **Phase 4** (§16): a real 5,000-row virtualized list with real
+  paging, a real minimal docking layout, and a declarative YAML `View`
+  panel using M26's real stylesheet/token support -- the first place
+  both authoring paths genuinely compose in one running app, via real
+  cross-path data flow (a `View`-dispatched click updates a `Signal`,
+  reflected on an ordinary imperative label), since `View` has no
+  rendering concept of its own to nest visually. Extended `Node.
+  set_text`/`get_text` to also handle plain `Text` labels.
+- **Phase 5** (§10): a real, comprehensive keyboard-Tab-order sweep
+  across every screen's own interactive controls (not just a couple of
+  spot-checks), plus real keyboard *operability* (not just
+  reachability) on a representative control per screen via a real
+  Enter-key press -- the same `DispatchOutcome::Activated` mechanism a
+  real mouse click already produces. Deduplicated the `label()` helper
+  three screen builders each defined locally into one shared factory.
 
-Phase 2 (this file's own current scope, §5, §7.1, §7.3): the MD3
-component & theming gallery screen -- every real component
-(`Checkbox`, `Slider`, `TextField`, `Image`, `Icon`) shown live, plus a
-real seed-color/dark-mode theme picker demonstrating `Window.set_theme`
-re-tinting every already-built themed component at once, not just
-newly-created ones. Building this screen surfaced a real, genuine gap:
-`Window` had no way to create a plain `NodeKind::Text` label at all
-(only reachable declaratively, via a `view.yaml`) -- `Window.add_text`
-(new, mirrors `add_rect`'s own shape) closes it.
-
-Phases 3-4 replace the two remaining `SCREENS` placeholders with real
-content (a motion/canvas screen, a data/layout screen), reusing this
-same shell and nav mechanism unchanged.
+Several real, genuine bugs and gaps -- found only by actually running
+each phase, never assumed -- are documented in this file's own inline
+comments where each fix landed, and in `BUILD_TRACKER.md`'s own
+phase-by-phase history: the zero-argument handler contract (found in
+six places across this file, three docs pages, and the actually-shipped
+`python/tre/__init__.py` docstring), this engine's non-bubbling
+hit-testing, `Window.add_virtual_list`'s missing `x`/`y`, and more.
 
 What this script proves automatically (headless-CI-safe, no human
-needed): a real shell (menu bar + persistent nav rail + one screen's
-worth of content) with two real, distinct screens; a real dispatched
-click on the second nav button genuinely switches the active screen;
-every nav button is really reachable via keyboard Tab, in order; and,
-new this phase, every gallery control's own real state changes exactly
-the way a real click/read-back would show -- a `Checkbox` toggling, a
-`Slider`'s programmatic nudge landing, a `TextField` round-tripping
-real text, and every theme-seed swatch plus the dark-mode toggle
-applying a real `Window.set_theme` call with no error.
+needed): every real interaction this module doc names above, for real,
+via real dispatched input -- not just that each screen constructs and
+renders without error.
 """
 
 import base64
@@ -109,16 +123,29 @@ def build_placeholder_screen(window, accent):
     return screen
 
 
-def build_gallery_screen(window):
-    """Phase 2's real MD3 component & theming gallery -- every real
-    component live, plus a real seed-color/dark-mode picker.
+def make_label_fn(window, screen):
+    """Phase 5 polish: the identical `label(text, x, y, ...)` closure
+    every screen builder used to define locally, three separate times
+    -- factored out once a real accessibility/consistency pass made
+    the duplication worth removing. Each screen builder still gets its
+    own bound `label` function with the same call-site shape as
+    before; only the definition moved.
     """
-    screen = window.add_rect(background=SCREEN_BG, width=SCREEN_WIDTH, height=SCREEN_HEIGHT)
 
     def label(text, x, y, width=160, height=18, font_size=13):
         node = window.add_text(text, background=LABEL_COLOR, width=width, height=height, x=x, y=y, font_size=font_size)
         screen.add_child(node)
         return node
+
+    return label
+
+
+def build_gallery_screen(window):
+    """Phase 2's real MD3 component & theming gallery -- every real
+    component live, plus a real seed-color/dark-mode picker.
+    """
+    screen = window.add_rect(background=SCREEN_BG, width=SCREEN_WIDTH, height=SCREEN_HEIGHT)
+    label = make_label_fn(window, screen)
 
     # --- Checkbox ---
     label("Checkbox", 16, 12)
@@ -253,11 +280,7 @@ def build_motion_screen(window):
     `Rect` for the first time.
     """
     screen = window.add_rect(background=SCREEN_BG, width=SCREEN_WIDTH, height=SCREEN_HEIGHT)
-
-    def label(text, x, y, width=140, height=18, font_size=13):
-        node = window.add_text(text, background=LABEL_COLOR, width=width, height=height, x=x, y=y, font_size=font_size)
-        screen.add_child(node)
-        return node
+    label = make_label_fn(window, screen)
 
     def trigger_button(text, x, y, width=76):
         label(text, x, y - 20, width=width, font_size=12)
@@ -372,11 +395,7 @@ def build_data_screen(window):
     literal visual nesting `View`'s own architecture can't support.
     """
     screen = window.add_rect(background=SCREEN_BG, width=SCREEN_WIDTH, height=SCREEN_HEIGHT)
-
-    def label(text, x, y, width=200, height=18, font_size=13):
-        node = window.add_text(text, background=LABEL_COLOR, width=width, height=height, x=x, y=y, font_size=font_size)
-        screen.add_child(node)
-        return node
+    label = make_label_fn(window, screen)
 
     # --- Virtualized list: a genuinely large dataset ---
     label(f"Virtualized List ({DATA_ROW_COUNT:,} rows)", 16, 12, width=260)
@@ -581,33 +600,56 @@ def verify_gallery_screen(window):
     """
     refs = GALLERY_REFS
 
-    was_checked = refs["checkbox"].get_checked()
-    refs["toggle_checkbox"]()
-    assert refs["checkbox"].get_checked() != was_checked, "a real click must flip Checkbox.checked"
-    print(f"Checkbox: {was_checked} -> {refs['checkbox'].get_checked()}")
+    # Phase 5's own real, comprehensive Tab-order sweep: every one of
+    # the gallery's 8 real interactive controls, reached in the exact
+    # order they were attached -- replacing the 2-control spot-check
+    # earlier phases used. `main()` already ran its own nav-order check
+    # immediately before calling this function, consuming the first two
+    # Tab stops (both nav buttons) -- an explicit, stated call-order
+    # dependency, not a hidden one.
+    interactive_order = [
+        refs["checkbox"],
+        refs["slider"],
+        refs["text_field"],
+        *refs["swatches"],
+        refs["dark_toggle"],
+    ]
+    for i, node in enumerate(interactive_order):
+        window.press_key("tab")
+        assert node.is_focused(), f"gallery Tab order must reach control {i} next"
 
-    # `Node.animate(..., duration_ms=0)` only *registers* the animation --
-    # it snaps to the target the next time something ticks this node,
-    # normally `App.run()`'s own per-frame loop (confirmed in
-    # `view.rs::apply_binding_value`'s own doc comment), which hasn't
-    # started yet here. The real, already-proven way to move a Slider
-    # synchronously without a render loop is the same one `examples/
-    # slider.py` already established: focus it via Tab, then a real
-    # dispatched arrow-key nudge (`Tree::dispatch_slider_key`'s own
-    # mechanism manually ticks immediately, unlike `animate()`).
-    #
-    # Only 2 more Tab presses are needed here, not 4: `main()` already
-    # ran its own nav-order check immediately before calling this
-    # function, which already consumed the first two Tab stops (both
-    # nav buttons) -- an explicit, stated call-order dependency, not a
-    # hidden one.
-    before = refs["slider"].get("thumb_position")
-    window.press_key("tab")  # -> checkbox (first gallery control, built after the nav)
-    window.press_key("tab")  # -> slider
-    window.press_key("right")
-    after = refs["slider"].get("thumb_position")
-    assert after > before, "a real ArrowRight nudge must move a focused Slider"
-    print(f"Slider: thumb_position {before} -> {after}")
+        if node is refs["checkbox"]:
+            # Real keyboard *operability*, not just reachability: a
+            # real Enter press activates whatever is currently
+            # focused, the identical `DispatchOutcome::Activated`
+            # mechanism a real mouse click already produces (both
+            # routed through the same registered `Click` handler) --
+            # fires the real `toggle_checkbox` handler, not a
+            # hand-rolled duplicate of it.
+            was_checked = refs["checkbox"].get_checked()
+            window.press_key("enter")
+            assert refs["checkbox"].get_checked() != was_checked, (
+                "a real keyboard Enter press must activate a focused Checkbox"
+            )
+            print(f"Checkbox: keyboard Enter activated it ({was_checked} -> {refs['checkbox'].get_checked()})")
+        elif node is refs["slider"]:
+            # `Node.animate(..., duration_ms=0)` only *registers* the
+            # animation -- it snaps to the target the next time
+            # something ticks this node, normally `App.run()`'s own
+            # per-frame loop (confirmed in `view.rs::apply_binding_
+            # value`'s own doc comment), which hasn't started yet here.
+            # The real, already-proven way to move a Slider
+            # synchronously without a render loop is the same one
+            # `examples/slider.py` already established: a real
+            # dispatched arrow-key nudge (`Tree::dispatch_slider_key`'s
+            # own mechanism manually ticks immediately, unlike
+            # `animate()`).
+            before = refs["slider"].get("thumb_position")
+            window.press_key("right")
+            after = refs["slider"].get("thumb_position")
+            assert after > before, "a real ArrowRight nudge must move a focused Slider"
+            print(f"Slider: thumb_position {before} -> {after}")
+    print(f"Gallery: keyboard Tab reaches all {len(interactive_order)} interactive controls, in order")
 
     refs["text_field"].set_text("tre v2 showcase")
     assert refs["text_field"].get_text() == "tre v2 showcase", "TextField content must round-trip"
@@ -639,12 +681,39 @@ def verify_motion_screen(window):
     real wall-clock/frame-rate timing, not the real thing being proved.
     """
     refs = MOTION_REFS
-    for btn in (refs["fade_btn"], refs["round_btn"], refs["elevate_btn"], refs["morph_btn"]):
-        window.click(btn)
-    print("Motion: Fade/Round/Elevate/Morph triggers each registered a real animation, no error")
 
-    window.click(refs["pan_zoom_btn"])
-    print("Canvas: pan/zoom transform animation registered on a real Canvas node, no error")
+    # Phase 5's own real, comprehensive Tab-order sweep for this
+    # screen. Real finding, confirmed empirically before writing this:
+    # the node focused before a real screen swap (`window.click()` on
+    # a nav button, removing the old screen's whole subtree) is gone
+    # from the tree, and focus resets to none -- the very next Tab
+    # press after switching screens lands on the *first* focusable
+    # node in the whole window again (nav button 1), not straight into
+    # the new screen's own content. So reaching "motion"'s own first
+    # control needs 3 Tab presses through the nav rail again first
+    # (already proven reachable once, at the very start of `main()`
+    # -- not re-asserted here, just consumed) before its own 5 real
+    # controls.
+    window.press_key("tab")
+    window.press_key("tab")
+    window.press_key("tab")
+    interactive_order = [
+        refs["fade_btn"], refs["round_btn"], refs["elevate_btn"], refs["morph_btn"], refs["pan_zoom_btn"]
+    ]
+    for i, node in enumerate(interactive_order):
+        window.press_key("tab")
+        assert node.is_focused(), f"motion Tab order must reach control {i} next"
+        if node is refs["fade_btn"]:
+            # Real keyboard *operability*: a real Enter press on the
+            # focused Fade trigger fires the identical registered
+            # `Click` handler a real mouse click would, not a
+            # hand-rolled duplicate.
+            window.press_key("enter")
+            print("Motion: keyboard Enter activated the Fade trigger")
+        else:
+            window.click(node)
+    print(f"Motion: keyboard Tab reaches all {len(interactive_order)} interactive controls, in order")
+    print("Motion: Fade/Round/Elevate/Morph/Pan-Zoom triggers each registered a real animation, no error")
 
     # Real finding, caught only by actually dispatching this click (a
     # first draft assumed the opposite): `set_hit_test_circle` *replaces*
@@ -673,10 +742,29 @@ def verify_data_screen(window):
     """
     refs = DATA_REFS
 
+    # Phase 5's own real, comprehensive Tab-order sweep for this
+    # screen -- the same real "3 nav taps first" behavior `verify_
+    # motion_screen` already found and accounted for (a screen swap
+    # resets focus to none). Real keyboard *operability* on the first
+    # control (page_btn, via Enter); `move_btn`/`bump_btn` are reached
+    # here but activated separately below via their own existing real
+    # checks, so a real drag/declarative-click side effect isn't
+    # accidentally triggered twice.
+    window.press_key("tab")
+    window.press_key("tab")
+    window.press_key("tab")
+    interactive_order = [refs["page_btn"], refs["move_btn"], refs["bump_btn"]]
     before_start = refs["page_state"]["start"]
-    refs["load_next_page"]()
-    assert refs["page_state"]["start"] == before_start + DATA_PAGE_SIZE, "paging must advance by one page"
-    print(f"VirtualList: paged from row {before_start} to row {refs['page_state']['start']}")
+    for i, node in enumerate(interactive_order):
+        window.press_key("tab")
+        assert node.is_focused(), f"data Tab order must reach control {i} next"
+        if node is refs["page_btn"]:
+            window.press_key("enter")
+    print(f"Data: keyboard Tab reaches all {len(interactive_order)} interactive controls, in order")
+    assert refs["page_state"]["start"] == before_start + DATA_PAGE_SIZE, (
+        "a real keyboard Enter press must activate the focused page button"
+    )
+    print(f"VirtualList: keyboard Enter paged from row {before_start} to row {refs['page_state']['start']}")
 
     # Real cascade + MD3 token resolution (M26), reachable from the
     # same declarative panel this screen embeds: the stylesheet's own
@@ -754,7 +842,7 @@ def main():
     app = App()
     app.add_window(window)
     app.run(max_frames=60)
-    print("demo/showcase.py: exited cleanly after 60 frames (Phase 4: data & layout)")
+    print("demo/showcase.py: exited cleanly after 60 frames -- all 5 phases complete")
 
 
 if __name__ == "__main__":

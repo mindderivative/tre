@@ -66,9 +66,17 @@ project's design decisions.
 - **[Architecture](architecture.md)** — the engine's crate layout and
   design principles.
 
+Looking for a single, all-in-one tour instead of the piece-by-piece
+guide? Run
+[`demo/showcase.py`](https://github.com/mindderivative/tre/blob/main/demo/showcase.py)
+from a source checkout — one running app combining MD3 components and
+live theming, real animation and custom `Canvas` drawing, a
+virtualized list, docking, and a declarative `View` panel, all
+keyboard-navigable.
+
 ## Project status
 
-25 milestones have been built against [`ARCHITECTURE.md`](architecture.md)
+27 milestones have been built against [`ARCHITECTURE.md`](architecture.md)
 as of `v0.2.0` — see
 [`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md)
 in the repository for the complete phase-by-phase build history. Every

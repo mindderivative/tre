@@ -82,6 +82,16 @@ view_composition.py` for declarative YAML composition):
 python examples/checkbox.py
 ```
 
+For a consolidated, all-in-one tour instead, run
+[`demo/showcase.py`](demo/showcase.py) — one running app combining MD3
+components and live theming, real animation and custom `Canvas`
+drawing, a virtualized list, docking, and a declarative `View` panel,
+all in one shell with keyboard navigation:
+
+```bash
+python demo/showcase.py
+```
+
 A minimal imperative app looks like this:
 
 ```python
