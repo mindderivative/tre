@@ -214,6 +214,22 @@ impl Node {
                     .into());
                 }
             },
+            // M30 Phase 2 Step 2 (§8): the same real arm, mirrored a
+            // third time for `Switch`.
+            "toggle_progress" => match &mut node.kind {
+                NodeKind::Switch(state) => {
+                    let value = extract_f64(&to, property)?;
+                    let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                    animate_field(&mut state.toggle_progress, value, duration, now, handle);
+                }
+                _ => {
+                    return Err(EngineError::UnknownProperty {
+                        kind,
+                        property: property.to_string(),
+                    }
+                    .into());
+                }
+            },
             _ => {
                 return Err(EngineError::UnknownProperty {
                     kind,
@@ -259,6 +275,14 @@ impl Node {
             },
             "select_progress" => match &node.kind {
                 NodeKind::RadioButton(state) => Ok(state.select_progress.current),
+                _ => Err(EngineError::UnknownProperty {
+                    kind,
+                    property: property.to_string(),
+                }
+                .into()),
+            },
+            "toggle_progress" => match &node.kind {
+                NodeKind::Switch(state) => Ok(state.toggle_progress.current),
                 _ => Err(EngineError::UnknownProperty {
                     kind,
                     property: property.to_string(),
@@ -505,6 +529,29 @@ impl Node {
         }
     }
 
+    /// M30 Phase 2 Step 2 (§8, §16.7): `set_checked`/`set_selected`'s
+    /// own real shape, mirrored a third time for `Switch`.
+    pub(crate) fn set_on(&self, on: bool, py: Python<'_>) -> PyResult<()> {
+        let mut tree = self.tree.borrow_mut();
+        let node = tree.get_mut(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        let kind = kind_name(&node.kind);
+        match &mut node.kind {
+            NodeKind::Switch(state) => {
+                state.on = on;
+                drop(tree);
+                call_handler(&self.handlers, self.id, EventKind::Change, py);
+                Ok(())
+            }
+            _ => Err(EngineError::UnknownProperty {
+                kind,
+                property: "on".to_string(),
+            }
+            .into()),
+        }
+    }
+
     /// M15 Phase 2 (§8, §16.7): the plain, non-animated, programmatic
     /// write `set_checked`'s own real shape mirrors exactly (including
     /// always firing a real `Change`, the same established convention
@@ -595,6 +642,23 @@ impl Node {
         }
     }
 
+    /// M30 Phase 2 Step 2 (§5, §16.7): `get_checked`/`get_selected`'s
+    /// own real shape, mirrored a third time for `Switch`.
+    pub(crate) fn get_on(&self) -> PyResult<bool> {
+        let tree = self.tree.borrow();
+        let node = tree.get(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        match &node.kind {
+            NodeKind::Switch(state) => Ok(state.on),
+            _ => Err(EngineError::UnknownProperty {
+                kind: kind_name(&node.kind),
+                property: "on".to_string(),
+            }
+            .into()),
+        }
+    }
+
     /// M15 Phase 1 (§5, §16.7): the real read-back getter for a
     /// `TextField`'s own current `content` -- mirrors `get_checked`'s
     /// own exact shape (rejecting a non-`TextField` node the same way).
@@ -661,6 +725,7 @@ fn kind_name(kind: &NodeKind) -> &'static str {
         NodeKind::Canvas(_) => "Canvas",
         NodeKind::Checkbox(_) => "Checkbox",
         NodeKind::RadioButton(_) => "RadioButton",
+        NodeKind::Switch(_) => "Switch",
         NodeKind::Slider(_) => "Slider",
         NodeKind::TextField(_) => "TextField",
         NodeKind::Image(_) => "Image",

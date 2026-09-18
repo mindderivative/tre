@@ -97,6 +97,9 @@ class Node:
         kind.
         """
         ...
+    def set_on(self, on: bool) -> None:
+        """`Switch`-only -- raises `ValueError` for any other kind."""
+        ...
     def set_text(self, content: str) -> None:
         """`TextField`/`Text`-only -- raises `ValueError` for any other
         kind.
@@ -109,6 +112,9 @@ class Node:
         """`RadioButton`-only -- raises `ValueError` for any other
         kind.
         """
+        ...
+    def get_on(self) -> bool:
+        """`Switch`-only -- raises `ValueError` for any other kind."""
         ...
     def get_text(self) -> str:
         """`TextField`/`Text`-only -- raises `ValueError` for any other
@@ -274,6 +280,21 @@ class Window:
         set_selected`/`Node.animate("select_progress", ...)` on each
         radio in a group), the same "application state, not
         engine-owned" design this catalog uses throughout.
+        """
+        ...
+    def add_switch(
+        self,
+        width: float = 52.0,
+        height: float = 32.0,
+        on: bool = False,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """A real MD3 switch -- a track plus a handle that both slides
+        and grows as it toggles, colors always resolved from the
+        active theme (or a real MD3 baseline default) rather than
+        caller-supplied, the same real contract `add_radio_button`
+        already establishes.
         """
         ...
     def add_slider(

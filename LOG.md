@@ -1,64 +1,66 @@
-# Log: M30 Phase 2 Step 1 — Radio Button
+# Log: M30 Phase 2 Step 2 — Switch
 
-## `CheckboxState`'s own real shape, mirrored
+## `RadioButtonState`'s own real shape, mirrored a third time
 
-`RadioButtonState { selected, select_progress: Animated<f64>,
-unselected_tint, selected_tint }` — `selected`/`select_progress` are
-the direct analogues of `checked`/`check_progress`, the same Design
-Principle 6 shape (the engine never toggles `selected` itself, only
-reflects it once the app writes it).
+`SwitchState { on, toggle_progress: Animated<f64>, track_off_tint,
+track_on_tint, track_outline_tint, handle_off_tint, handle_on_tint }`
+— `on`/`toggle_progress` are the direct analogues of `checked`/
+`check_progress` and `selected`/`select_progress`.
 
-## A real anatomy difference, not copied blindly
+## Real MD3 data, verified before writing any code
 
-MD3's real radio button is a stroked *ring*, not a filled box — and
-the ring's own color genuinely transitions between an unselected and
-selected tint as it toggles, unlike `Checkbox`'s box (a static fill,
-only the checkmark itself appears/disappears). `RadioButtonState`
-carries two plain tints rather than one, and `engine-render`'s paint
-arm interpolates between them using `select_progress` as the blend
-factor — `Interpolate for peniko::Color` was already real (§5's own
-animation core, `lerp_rect` under the hood), so this needed no new
-color-blending machinery, just calling the existing trait method
-directly outside the `Animated<T>` wrapper.
+Checked Material Web's own real token source (`tokens/versions/
+v0_192/_md-comp-switch.scss`) directly: track 52dp × 32dp, `corner-
+full`. Unselected track has a real *separate* stroke role
+(`outline`) distinct from its own fill role (`surface_container_
+highest`) — two different colors, not the same role reused. Selected
+track fills with `primary`, no stroke. The handle itself grows, not
+just changes color: 16dp unselected (`outline` tint) to 24dp selected
+(`on_primary` tint).
 
-## A real, easy-to-miss ticking gap, caught by checking precedent directly
+## The slide-and-grow formula, derived algebraically, not fitted
 
-`Tree::tick_all` doesn't use an exhaustive `match` for per-`NodeKind`
-ticking — it's a sequence of `if let NodeKind::X(state) = &mut
-node.kind` arms, one per kind that needs central ticking. This means
-the compiler's exhaustiveness check (which caught every other
-`NodeKind::RadioButton` match site automatically) would **not** have
-caught a missing `select_progress` tick arm — it would have compiled
-clean and simply never animated. Found by deliberately re-reading
-`Checkbox`'s/`Slider`'s own real precedent in this exact function
-before considering the ticking wired up, not by trusting the compiler
-to have already caught it. Added the mirror arm explicitly.
+Real MD3 padding-from-edge differs by state (8px unselected, 4px
+selected on a 32px track), and handle radius differs too (8px
+unselected, 12px selected) — naively this looks like two different
+formulas would be needed for the two ends of travel. Checked directly
+before writing the paint code: `padding + handle_radius` is `8+8=16`
+unselected and `4+12=16` selected — identical, `h*0.5` either way. That
+identity is what makes one clean symmetric `cx = h*0.5 + t*(w-h)`
+formula exact at both `t=0` and `t=1`, not an approximation that
+happens to look close. `handle_radius = h*(0.25 + 0.125*t)` comes
+directly from the same two real ratios (16/32=0.5 diameter unselected,
+i.e. 0.25 radius; 24/32=0.75 diameter selected, i.e. 0.375 radius).
 
-## Real, explicit scope limit on live re-theming
+## The outline's real fade
 
-`Tree::set_all_component_tints` (the mechanism `Window.set_theme`
-uses to retroactively re-tint already-created `Checkbox`/`Slider`/
-`TextField` nodes) takes one shared `Color` and pushes it to every
-matching component — its own already-documented real scope choice
-("reuses this exact same already-resolved on-surface tint rather than
-resolving a second, more specific MD3 role per component," `window.
-rs`'s own `set_theme` doc comment). A radio button genuinely needs two
-different real roles (`outline` for unselected, `primary` for
-selected), which that single-color mechanism can't express without
-contradicting its own stated simplification. Rather than force a bad
-fit or build a second, wider re-tint mechanism, this is stated as a
-real, honest limitation: a radio button created before `set_theme` is
-not retroactively re-tinted by a later call. Every radio button still
-starts correctly themed at construction time (the same real contract
-`add_button`/`add_fab`/etc already have), which is the common case.
+The track's own separate outline stroke needed to visually disappear
+as the switch turns on (real MD3 behavior: no visible outline once
+selected, since the primary fill alone reads as "on"). Rather than
+reuse the universal `PaintProperties.border_color`/`border_width`
+fields (`Button`'s Outlined variant's own mechanism), this is drawn as
+a plain conditional stroke inside `Switch`'s own paint arm, opacity
+scaled by `1.0 - toggle_progress` — the outline is genuinely a
+`Switch`-owned concept (a fifth real color no other component in this
+catalog needed), not something the shared border fields were built
+for.
+
+## The same real, honest live-re-theming scope limit, restated
+
+`Switch` needs five distinct real MD3 roles at once (`RadioButton`
+needed two) — even further from `Tree::set_all_component_tints`'s
+single-shared-tint design. The same real, stated limitation applies:
+a switch created before `Window.set_theme` is not retroactively
+re-tinted by a later call; every switch still starts correctly themed
+at construction.
 
 ## Verification
 
 `cargo check --workspace --all-targets`, `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo fmt --check` — all clean. `cargo
-test --workspace --release`: 41 binaries, all green (`radio_button_
-paint.rs` included, proving the ring's real color interpolation and
-the dot's real scale-in). `maturin develop --release` rebuilt. `pytest
-tests/`: 243 passed, 1 skipped (9 new in `test_radio_button.py`, zero
-regressions). All 35 examples and the showcase demo re-run clean.
-`mypy --strict` clean against `examples/radio_button.py`.
+test --workspace --release`: 42 binaries, all green (`switch_paint.rs`
+included, proving the track's real color transition, the outline's
+real fade, and the handle's real slide-and-grow). `maturin develop
+--release` rebuilt. `pytest tests/`: 251 passed, 1 skipped (8 new in
+`test_switch.py`, zero regressions). All 36 examples and the showcase
+demo re-run clean. `mypy --strict` clean against `examples/switch.py`.

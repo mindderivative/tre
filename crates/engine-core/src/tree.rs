@@ -1058,6 +1058,13 @@ impl Tree {
             {
                 any_active = true;
             }
+            // M30 Phase 2 Step 2 (§7.3): the identical real central-
+            // ticking need, mirrored a third time for `toggle_progress`.
+            if let NodeKind::Switch(state) = &mut node.kind
+                && state.toggle_progress.tick(now, &mut completed)
+            {
+                any_active = true;
+            }
         }
         // M29 Phase 1 (§5, §6): a mid-flight animation is itself a real
         // reason to redraw next frame -- `any_active` was already the
@@ -2220,6 +2227,12 @@ impl Tree {
         // source of truth, same as `checked` above.
         if let NodeKind::RadioButton(state) = &node.kind {
             access_node.set_toggled(state.selected.into());
+        }
+        // M30 Phase 2 Step 2: the identical real, automatic derivation,
+        // mirrored a third time for `Switch` -- `on` is the one real
+        // source of truth.
+        if let NodeKind::Switch(state) = &node.kind {
+            access_node.set_toggled(state.on.into());
         }
         // M15 Phase 1 (§5, §16.7): the same real, automatic derivation
         // -- `content` is the one real source of truth, never mirrored

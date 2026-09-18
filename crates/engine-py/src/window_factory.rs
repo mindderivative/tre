@@ -15,8 +15,8 @@ use std::rc::Rc;
 
 use engine_core::{
     AccessNodeData, Action, Animated, CheckboxState, ContentFit, IconState, ImageState, NodeKind,
-    PaintProperties, RadioButtonState, Role, SliderState, SplitterState, TextAlign, TextFieldState,
-    TextState,
+    PaintProperties, RadioButtonState, Role, SliderState, SplitterState, SwitchState, TextAlign,
+    TextFieldState, TextState,
 };
 use peniko::Color;
 use pyo3::prelude::*;
@@ -91,6 +91,7 @@ impl Md3Baseline {
     const ON_TERTIARY_CONTAINER: Color = Color::from_rgba8(0x31, 0x11, 0x1D, 0xFF);
     const SURFACE_CONTAINER_LOW: Color = Color::from_rgba8(0xF7, 0xF2, 0xFA, 0xFF);
     const SURFACE_CONTAINER_HIGH: Color = Color::from_rgba8(0xEC, 0xE6, 0xF0, 0xFF);
+    const SURFACE_CONTAINER_HIGHEST: Color = Color::from_rgba8(0xE6, 0xE0, 0xE9, 0xFF);
     const OUTLINE: Color = Color::from_rgba8(0x79, 0x74, 0x7E, 0xFF);
 }
 
@@ -1072,6 +1073,62 @@ impl PyWindow {
                 Size {
                     width: length(size),
                     height: length(size),
+                },
+                x,
+                y,
+            ),
+            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, id);
+        self.wrap_node(id)
+    }
+
+    /// M30 Phase 2 Step 2 (§5, §7.3): creates a real `NodeKind::
+    /// Switch`, mirroring `add_radio_button`'s own real shape --
+    /// every real color/shape token always resolved here (through
+    /// `theme.role`, gated on `theme.is_set()`, else `Md3Baseline`'s
+    /// own real fallback), never caller-supplied, the identical real
+    /// reason `add_radio_button` has no `background` parameter either.
+    /// `width`/`height` default to MD3's own real track dimensions
+    /// (52dp x 32dp, verified against Material Web's own token
+    /// source) -- unlike `add_radio_button`'s single `size`, a switch
+    /// track is genuinely non-square in real MD3, so two real
+    /// parameters is the honest shape here.
+    #[pyo3(signature = (width=52.0, height=32.0, on=false, x=None, y=None))]
+    fn add_switch(
+        &self,
+        width: f32,
+        height: f32,
+        on: bool,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> Node {
+        let mut switch_state = SwitchState::new(on);
+        {
+            let theme = self.theme.borrow();
+            let role = |name: &str, fallback: Color| -> Color {
+                if theme.is_set() {
+                    theme.role(name).unwrap_or(fallback)
+                } else {
+                    fallback
+                }
+            };
+            switch_state.track_off_tint = role(
+                "surface_container_highest",
+                Md3Baseline::SURFACE_CONTAINER_HIGHEST,
+            );
+            switch_state.track_on_tint = role("primary", Md3Baseline::PRIMARY);
+            switch_state.track_outline_tint = role("outline", Md3Baseline::OUTLINE);
+            switch_state.handle_off_tint = role("outline", Md3Baseline::OUTLINE);
+            switch_state.handle_on_tint = role("on_primary", Md3Baseline::ON_PRIMARY);
+        }
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::Switch(switch_state),
+            positioned_style(
+                Size {
+                    width: length(width),
+                    height: length(height),
                 },
                 x,
                 y,

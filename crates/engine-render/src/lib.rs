@@ -660,6 +660,49 @@ fn paint_node(
                 scene.fill_path(&Circle::new((w / 2.0, h / 2.0), dot_radius).to_path(0.1));
             }
         }
+        // M30 Phase 2 Step 2 (§5, §7.3): a real MD3 switch -- track
+        // fill (color-interpolated between `track_off_tint`/`track_
+        // on_tint`, `RadioButton`'s own real technique reused), a real
+        // fading outline stroke (only `track_outline_tint`, MD3's own
+        // real separate unselected-only role -- opacity scaled by
+        // `1.0 - toggle_progress`, so it's gone by the time the switch
+        // is fully on), and a handle that both slides *and* grows.
+        // `handle_radius`/`cx`'s own real formula: verified real MD3
+        // ratios (16dp/32dp track height unselected, 24dp/32dp
+        // selected, `(32-16)/2=8` unselected padding, `(32-24)/2=4`
+        // selected padding) collapse to one clean symmetric travel
+        // range, `h * 0.5` from each edge, at both ends -- not a
+        // coincidence: `handle_radius + padding` is `8+8=16=h*0.5`
+        // unselected and `12+4=16=h*0.5` selected, the same real
+        // total inset either way.
+        NodeKind::Switch(state) => {
+            let t = state.toggle_progress.current;
+            let track_color = state.track_off_tint.interpolate(&state.track_on_tint, t);
+            let track_radius = h / 2.0;
+            scene.set_paint(with_opacity(track_color, node.paint.opacity.current));
+            scene.fill_path(&RoundedRect::new(0.0, 0.0, w, h, track_radius).to_path(0.1));
+
+            if t < 1.0 {
+                let stroke_width = (h * 0.06).max(1.5);
+                let inset = stroke_width / 2.0;
+                let outline_radius = (track_radius - inset).max(0.0);
+                scene.set_paint(with_opacity(
+                    state.track_outline_tint,
+                    (1.0 - t) * node.paint.opacity.current,
+                ));
+                scene.set_stroke(Stroke::new(stroke_width));
+                scene.stroke_path(
+                    &RoundedRect::new(inset, inset, w - inset, h - inset, outline_radius)
+                        .to_path(0.1),
+                );
+            }
+
+            let handle_radius = h * (0.25 + 0.125 * t);
+            let handle_color = state.handle_off_tint.interpolate(&state.handle_on_tint, t);
+            let cx = h * 0.5 + t * (w - h);
+            scene.set_paint(with_opacity(handle_color, node.paint.opacity.current));
+            scene.fill_path(&Circle::new((cx, h / 2.0), handle_radius).to_path(0.1));
+        }
         // M14 Phase 2 (§5, §7.3): a real track (a thin bar spanning the
         // node's own full width, vertically centered) plus a real
         // thumb (a filled circle at `thumb_position * w`, the node's

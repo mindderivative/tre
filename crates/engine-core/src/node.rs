@@ -151,6 +151,13 @@ pub enum NodeKind {
     /// progress` already is. See `RadioButtonState`'s own doc comment
     /// for why the ring itself is animated color, not just the dot.
     RadioButton(RadioButtonState),
+    /// M30 Phase 2 Step 2 (§5, §7.3): a real MD3 switch. `on` is plain,
+    /// app-owned state, `toggle_progress` the engine-driven visual
+    /// consequence -- the identical `Checkbox`/`RadioButton` shape a
+    /// third time. See `SwitchState`'s own doc comment for its real,
+    /// verified anatomy (a track plus a handle that both slides *and*
+    /// grows as it toggles).
+    Switch(SwitchState),
 }
 
 /// M15 Phase 1 (§5, §16.7): mirrors `TextState`'s own four font/content
@@ -439,6 +446,46 @@ impl RadioButtonState {
             select_progress: Animated::new(if selected { 1.0 } else { 0.0 }),
             unselected_tint: Color::from_rgba8(0x00, 0x00, 0x00, 0xFF),
             selected_tint: Color::from_rgba8(0x00, 0x00, 0x00, 0xFF),
+        }
+    }
+}
+
+/// M30 Phase 2 Step 2 (§5, §7.3): `CheckboxState`/`RadioButtonState`'s
+/// own real shape, mirrored a third time -- `on`/`toggle_progress` are
+/// the direct analogues of `checked`/`check_progress` and `selected`/
+/// `select_progress`. Real MD3 anatomy, verified against Material
+/// Web's own token source (`tokens/versions/v0_192/_md-comp-switch.
+/// scss`) rather than assumed: the track fill genuinely changes color
+/// (`track_off_tint` -> `track_on_tint`) *and* the handle both
+/// **slides** (left to right, `engine-render`'s own paint arm) *and*
+/// **grows** as it toggles -- unselected handle is a real 16dp
+/// diameter, selected a real 24dp, not a fixed size that merely
+/// changes color the way `RadioButton`'s dot does. `track_outline_
+/// tint` is a real, separate role from `track_off_tint` (`outline`
+/// vs. `surface_container_highest`) -- MD3's real unselected track has
+/// both a fill *and* a distinct stroke, which fades out as the switch
+/// turns on (the primary fill alone reads as "on," no visible outline
+/// needed once selected).
+pub struct SwitchState {
+    pub on: bool,
+    pub toggle_progress: Animated<f64>,
+    pub track_off_tint: Color,
+    pub track_on_tint: Color,
+    pub track_outline_tint: Color,
+    pub handle_off_tint: Color,
+    pub handle_on_tint: Color,
+}
+
+impl SwitchState {
+    pub fn new(on: bool) -> Self {
+        Self {
+            on,
+            toggle_progress: Animated::new(if on { 1.0 } else { 0.0 }),
+            track_off_tint: Color::from_rgba8(0x00, 0x00, 0x00, 0xFF),
+            track_on_tint: Color::from_rgba8(0x00, 0x00, 0x00, 0xFF),
+            track_outline_tint: Color::from_rgba8(0x00, 0x00, 0x00, 0xFF),
+            handle_off_tint: Color::from_rgba8(0x00, 0x00, 0x00, 0xFF),
+            handle_on_tint: Color::from_rgba8(0x00, 0x00, 0x00, 0xFF),
         }
     }
 }
