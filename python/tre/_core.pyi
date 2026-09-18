@@ -214,6 +214,33 @@ class Window:
         `icon`.
         """
         ...
+    def add_segmented_button(
+        self,
+        labels: Sequence[str],
+        width: float,
+        selected: Sequence[bool] | None = None,
+        height: float = 40.0,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> list[Node]:
+        """MD3's real group-of-connected-segments anatomy -- one
+        shared outline frame, a real divider between each pair of
+        adjacent segments, per-segment selected/unselected paint (a
+        real checkmark shown on a selected segment). `labels` must
+        have at least 2 entries; `selected` (when given) must have the
+        same length as `labels`, defaulting to all unselected. Returns
+        one real `Node` per segment, in order -- **not** the frame or
+        dividers, which are pure decoration. Group-exclusivity
+        (deselecting sibling segments on a real single-select click)
+        is deliberately not built in here -- an app wires that up
+        itself with `set_on_click`/`Node.animate`/`Node.add_child`/
+        `Node.remove()` on the returned segments, the same "group-
+        exclusivity is application state, not engine-owned" design
+        this catalog's own future `Radio Button` also follows. Raises
+        `ValueError` for fewer than 2 labels, a length mismatch, or an
+        unknown icon (the checkmark's own curated name).
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,

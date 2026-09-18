@@ -451,8 +451,17 @@ fn paint_node(
             // node that never touches it renders byte-for-byte the
             // same `RoundedRect` fill as before this phase.
             if node.paint.shape.current.is_empty() {
-                let radius = node.paint.corner_radius.current;
-                let rect = RoundedRect::new(0.0, 0.0, w, h, radius);
+                // M30 Phase 1 Step 4 (§5, §7): `corner_radii_override`
+                // (`[top_left, top_right, bottom_right, bottom_left]`)
+                // wins when set -- `Segmented Button`'s own real need
+                // (a first/last segment rounded only on its outer
+                // edge). `None` (every node before this step) falls
+                // through to the identical uniform-scalar `RoundedRect`
+                // this arm always painted.
+                let rect = match node.paint.corner_radii_override {
+                    Some([tl, tr, br, bl]) => RoundedRect::new(0.0, 0.0, w, h, (tl, tr, br, bl)),
+                    None => RoundedRect::new(0.0, 0.0, w, h, node.paint.corner_radius.current),
+                };
                 scene.fill_path(&rect.to_path(0.1));
             } else {
                 scene.fill_path(&node.paint.shape.current.to_path());

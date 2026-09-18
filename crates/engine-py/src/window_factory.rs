@@ -290,6 +290,26 @@ const EXTENDED_FAB_LEADING_PADDING_WITH_ICON: f32 = 16.0;
 const EXTENDED_FAB_LEADING_PADDING_NO_ICON: f32 = 20.0;
 const EXTENDED_FAB_TRAILING_PADDING: f32 = 20.0;
 const EXTENDED_FAB_ICON_LABEL_GAP: f32 = 8.0;
+/// MD3's own real `Segmented Button` anatomy constants, verified
+/// against Material Web's own token source (`tokens/versions/v0_192/
+/// _md-comp-outlined-segmented-button.scss`): 40dp tall, 1px real
+/// outline (the same width drawn for the group's own shared outer
+/// border *and* the internal dividers between segments -- MD3 uses
+/// one token for both), `corner-full` shape (`height / 2.0`, the same
+/// real token `Button`'s own default shape family uses), and a real
+/// 18dp checkmark -- deliberately smaller than every other component's
+/// own 24dp icon token in this catalog, confirmed from the real token
+/// file rather than assumed consistent with `Icon Button`/`FAB`.
+/// **One real number not found in this token file, so not claimed as
+/// independently re-verified:** the segment's own horizontal label
+/// padding and the icon-to-label gap -- both real, reasonable MD3
+/// values, stated honestly rather than presented as verified against
+/// the same primary source the others were.
+const SEGMENTED_BUTTON_HEIGHT: f32 = 40.0;
+const SEGMENTED_BUTTON_OUTLINE_WIDTH: f32 = 1.0;
+const SEGMENTED_BUTTON_CHECKMARK_SIZE: f32 = 18.0;
+const SEGMENTED_BUTTON_HORIZONTAL_PADDING: f32 = 12.0;
+const SEGMENTED_BUTTON_ICON_LABEL_GAP: f32 = 4.0;
 
 #[pymethods]
 impl PyWindow {
@@ -712,6 +732,235 @@ impl PyWindow {
         tree.add_child(container, label_id);
         tree.add_child(self.root, container);
         Ok(self.wrap_node(container))
+    }
+
+    /// M30 Phase 1 Step 4 (§5, §7): `Segmented Button`, MD3's own real
+    /// group-of-2-to-5-connected-segments anatomy -- one shared,
+    /// continuous outline frame (`corner-full`, rounded only on the
+    /// group's own outer left/right edges -- `PaintProperties.
+    /// corner_radii_override`, this step's own new real capability,
+    /// see `engine-render/tests/corner_radii_paint.rs`), one real
+    /// divider between each pair of adjacent segments, and per-segment
+    /// selected/unselected paint (selected: `secondary_container`
+    /// background, `on_secondary_container` label plus a real 18dp
+    /// checkmark; unselected: transparent background, `on_surface`
+    /// label -- reusing `ThemeState::on_surface()` directly rather
+    /// than a new `Md3Baseline` role, the same established un-themed
+    /// fallback every other component already resolves `on_surface`
+    /// through). Frame/dividers are added as real `Rect` children of
+    /// the frame itself (not `self.root`), absolutely positioned
+    /// relative to it via `positioned_style`'s own existing inset
+    /// branch -- so the whole group only ever needs one real `x`/`y`
+    /// placement, the frame's own.
+    ///
+    /// **Real, explicit design decision, not an oversight:**
+    /// group-exclusivity (deselecting sibling segments on a real
+    /// single-select click) is deliberately *not* built here --
+    /// `BUILD_TRACKER.md`'s own Phase 2 scope for the future `Radio
+    /// Button` already states this precisely: "group-exclusivity is
+    /// application state... not engine-owned," per Design Principle 6.
+    /// This method paints the real *initial* selected/unselected state
+    /// from `selected` and returns every segment's own real container
+    /// `Node` -- an app wires up live re-toggling with the exact same
+    /// already-generic primitives every other component uses
+    /// (`set_on_click`, `Node.animate`, `Node.add_child`/`Node.
+    /// remove()` to swap the checkmark in or out), not a new
+    /// component-specific toggle method invented here.
+    #[pyo3(signature = (labels, width, selected=None, height=SEGMENTED_BUTTON_HEIGHT, x=None, y=None))]
+    fn add_segmented_button(
+        &self,
+        labels: Vec<String>,
+        width: f32,
+        selected: Option<Vec<bool>>,
+        height: f32,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<Vec<Node>> {
+        if labels.len() < 2 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "add_segmented_button needs at least 2 labels (MD3's own real minimum \
+                 segment count), got {}",
+                labels.len()
+            )));
+        }
+        let selected = match selected {
+            Some(s) if s.len() == labels.len() => s,
+            Some(s) => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "selected has {} entries but labels has {} -- they must match",
+                    s.len(),
+                    labels.len()
+                )));
+            }
+            None => vec![false; labels.len()],
+        };
+
+        let (outline_color, on_surface) = {
+            let theme = self.theme.borrow();
+            (
+                if theme.is_set() {
+                    theme.role("outline").unwrap_or(Md3Baseline::OUTLINE)
+                } else {
+                    Md3Baseline::OUTLINE
+                },
+                theme.on_surface(),
+            )
+        };
+        let secondary_container = {
+            let theme = self.theme.borrow();
+            if theme.is_set() {
+                theme
+                    .role("secondary_container")
+                    .unwrap_or(Md3Baseline::SECONDARY_CONTAINER)
+            } else {
+                Md3Baseline::SECONDARY_CONTAINER
+            }
+        };
+        let on_secondary_container = {
+            let theme = self.theme.borrow();
+            if theme.is_set() {
+                theme
+                    .role("on_secondary_container")
+                    .unwrap_or(Md3Baseline::ON_SECONDARY_CONTAINER)
+            } else {
+                Md3Baseline::ON_SECONDARY_CONTAINER
+            }
+        };
+        let check_path = resolve_icon_path("check")?;
+
+        let n = labels.len();
+        let divider_count = (n - 1) as f32;
+        let segment_width = (width - divider_count * SEGMENTED_BUTTON_OUTLINE_WIDTH) / n as f32;
+        let corner = f64::from(height) / 2.0;
+
+        let mut tree = self.tree.borrow_mut();
+
+        let mut frame_style = positioned_style(
+            Size {
+                width: length(width),
+                height: length(height),
+            },
+            x,
+            y,
+        );
+        frame_style.display = taffy::Display::Flex;
+        let mut frame_paint = PaintProperties::new(TRANSPARENT, corner, 0.0, 1.0);
+        frame_paint.border_color = Animated::new(outline_color);
+        frame_paint.border_width = Animated::new(f64::from(SEGMENTED_BUTTON_OUTLINE_WIDTH));
+        let frame = tree.insert(NodeKind::Rect, frame_style, frame_paint);
+
+        let mut segments = Vec::with_capacity(n);
+        let mut cursor = 0.0_f32;
+        for (i, label) in labels.into_iter().enumerate() {
+            let is_selected = selected[i];
+            let corner_radii_override = if i == 0 {
+                Some([corner, 0.0, 0.0, corner])
+            } else if i == n - 1 {
+                Some([0.0, corner, corner, 0.0])
+            } else {
+                None
+            };
+
+            let mut segment_paint = PaintProperties::new(
+                if is_selected {
+                    secondary_container
+                } else {
+                    TRANSPARENT
+                },
+                0.0,
+                0.0,
+                1.0,
+            );
+            segment_paint.corner_radii_override = corner_radii_override;
+            let mut segment_style = positioned_style(
+                Size {
+                    width: length(segment_width),
+                    height: length(height),
+                },
+                Some(cursor),
+                Some(0.0),
+            );
+            segment_style.display = taffy::Display::Flex;
+            segment_style.justify_content = Some(JustifyContent::CENTER);
+            segment_style.align_items = Some(AlignItems::CENTER);
+            segment_style.gap = Size {
+                width: length(SEGMENTED_BUTTON_ICON_LABEL_GAP),
+                height: length(0.0),
+            };
+            let segment = tree.insert(NodeKind::Rect, segment_style, segment_paint);
+
+            let label_color = if is_selected {
+                on_secondary_container
+            } else {
+                on_surface
+            };
+            if is_selected {
+                let check_id = tree.insert(
+                    NodeKind::Icon(IconState {
+                        path: check_path.clone(),
+                        tint: on_secondary_container,
+                    }),
+                    Style {
+                        size: Size {
+                            width: length(SEGMENTED_BUTTON_CHECKMARK_SIZE),
+                            height: length(SEGMENTED_BUTTON_CHECKMARK_SIZE),
+                        },
+                        ..Default::default()
+                    },
+                    PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+                );
+                tree.add_child(segment, check_id);
+            }
+            let label_width = (segment_width
+                - 2.0 * SEGMENTED_BUTTON_HORIZONTAL_PADDING
+                - if is_selected {
+                    SEGMENTED_BUTTON_CHECKMARK_SIZE + SEGMENTED_BUTTON_ICON_LABEL_GAP
+                } else {
+                    0.0
+                })
+            .max(0.0);
+            let label_id = tree.insert(
+                NodeKind::Text(TextState {
+                    content: label,
+                    font_family: "Roboto".to_string(),
+                    font_weight: BUTTON_LABEL_FONT_WEIGHT,
+                    font_size: BUTTON_LABEL_FONT_SIZE,
+                    align: TextAlign::Center,
+                }),
+                Style {
+                    size: Size {
+                        width: length(label_width),
+                        height: length(BUTTON_LABEL_LINE_HEIGHT),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(label_color, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(segment, label_id);
+            tree.add_child(frame, segment);
+            segments.push(segment);
+
+            cursor += segment_width;
+            if i < n - 1 {
+                let divider_id = tree.insert(
+                    NodeKind::Rect,
+                    positioned_style(
+                        Size {
+                            width: length(SEGMENTED_BUTTON_OUTLINE_WIDTH),
+                            height: length(height),
+                        },
+                        Some(cursor),
+                        Some(0.0),
+                    ),
+                    PaintProperties::new(outline_color, 0.0, 0.0, 1.0),
+                );
+                tree.add_child(frame, divider_id);
+                cursor += SEGMENTED_BUTTON_OUTLINE_WIDTH;
+            }
+        }
+
+        tree.add_child(self.root, frame);
+        Ok(segments.into_iter().map(|id| self.wrap_node(id)).collect())
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,

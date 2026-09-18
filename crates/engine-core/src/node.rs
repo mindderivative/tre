@@ -532,6 +532,23 @@ pub struct PaintProperties {
     /// already establish.
     pub border_color: Animated<Color>,
     pub border_width: Animated<f64>,
+    /// M30 Phase 1 Step 4 (§5, §7): a real per-corner radius override,
+    /// `[top_left, top_right, bottom_right, bottom_left]` -- kurbo's
+    /// own `RoundedRect::new` already accepts a 4-tuple of independent
+    /// corner radii natively (confirmed via direct source read of the
+    /// pinned `kurbo 0.13.1`, not assumed), so this is exposing an
+    /// existing real primitive, not inventing new geometry. `Segmented
+    /// Button`'s own real MD3 anatomy is the consumer that surfaced
+    /// the gap: a group's first/last segments are rounded only on
+    /// their outer edge, square on the edge touching the next
+    /// segment -- `corner_radius`'s own single scalar can't express
+    /// that. `None` (every existing node, unchanged) means "use the
+    /// uniform `corner_radius` scalar," the same true no-op contract
+    /// `border_width: 0.0` already establishes -- not `Animated`, a
+    /// deliberate, honest scope limit: nothing in this catalog yet
+    /// needs a *smooth transition* between two different corner-radii
+    /// shapes, only a static per-node choice made once at construction.
+    pub corner_radii_override: Option<[f64; 4]>,
 }
 
 impl PaintProperties {
@@ -545,6 +562,7 @@ impl PaintProperties {
             shape: Animated::new(crate::shape_morph::ShapeKey::empty()),
             border_color: Animated::new(Color::from_rgba8(0, 0, 0, 0)),
             border_width: Animated::new(0.0),
+            corner_radii_override: None,
         }
     }
 
