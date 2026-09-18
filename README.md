@@ -21,6 +21,15 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full design
 reference and [`BUILD_TRACKER.md`](BUILD_TRACKER.md) for a complete,
 phase-by-phase build history.
 
+Full documentation — overview, installation, getting started, guides,
+and a complete Python API reference — lives under [`docs/`](docs/),
+built with [MkDocs](https://www.mkdocs.org/):
+
+```bash
+pip install '.[docs]'
+mkdocs serve   # live preview at http://127.0.0.1:8000
+```
+
 ## What's built
 
 - **A real, retained node tree** — layout via `taffy`, a uniform,

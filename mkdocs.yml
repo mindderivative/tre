@@ -1,0 +1,68 @@
+site_name: tre
+site_description: >-
+  Python-facing GUI framework backend: Rust-native rendering, layout,
+  animation, and accessibility engine with Material Design 3 components.
+site_url: https://mindderivative.github.io/tre/
+repo_url: https://github.com/mindderivative/tre
+repo_name: mindderivative/tre
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: deep purple
+      accent: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: deep purple
+      accent: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+
+markdown_extensions:
+  - toc:
+      permalink: true
+  - tables
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+
+nav:
+  - Overview: index.md
+  - Installation: installation.md
+  - Getting Started: getting-started.md
+  - Guide:
+      - Imperative API: guide/imperative-api.md
+      - Declarative Views (YAML): guide/declarative-views.md
+      - MD3 Components: guide/components.md
+      - Docking & Shell Layout: guide/docking-and-shell.md
+      - Canvas & Virtualized Lists: guide/canvas-and-lists.md
+      - Theming & Accessibility: guide/theming-and-accessibility.md
+  - Python API Reference:
+      - Overview: api/python/index.md
+      - App: api/python/app.md
+      - Window: api/python/window.md
+      - Node: api/python/node.md
+      - View: api/python/view.md
+      - Signal & ViewModel: api/python/signal-and-viewmodel.md
+      - CanvasContext: api/python/canvas-context.md
+  - Rust Crates: api/rust.md
+  - Architecture: architecture.md
+  - Contributing: contributing.md
