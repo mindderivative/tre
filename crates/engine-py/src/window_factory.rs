@@ -840,6 +840,37 @@ const ACCORDION_CHEVRON_ICON: &str = "expand_more";
 /// not the app's own responsibility to fake with an invisible one.
 const TREE_NODE_INDENT_WIDTH: f32 = 24.0;
 
+/// `Date Picker`'s own real day-cell anatomy (M30 Phase 7 Step 1),
+/// verified against Material Web's own token source before writing
+/// any code (`_md-comp-date-picker-docked.scss` -- the real *docked*
+/// variant, this milestone's own desktop-adaptation choice over the
+/// mobile-oriented *modal* full dialog variant, the identical real
+/// "docked over full-screen" precedent `Search View` already made).
+/// **Real, deliberate scope, not a partial build:** only the day
+/// *cell* is this step's own real new anatomy -- a real calendar
+/// grid needs real date arithmetic (month lengths, weekday-of-month,
+/// leap years), which is genuinely application logic with zero real
+/// MD3-specific content, already trivially available via Python's own
+/// `datetime`/`calendar` modules; no engine-owned calendar primitive
+/// is invented for something that isn't actually a rendering/
+/// interaction concern, the identical real "engine gives primitives,
+/// app composes" contract every bare-container component in this
+/// catalog already has (`Card`, `Accordion`'s own content region).
+/// Real per-cell anatomy: 48×48dp, `corner-full` (24dp radius, a real
+/// circle). Selected: `primary` fill, `on_primary` label. Today (not
+/// selected): a real 1dp `primary` outline (`PaintProperties.
+/// border_color`/`border_width`, already-real since Phase 1 Step 1),
+/// `primary` label, no fill. Neither: no fill/border, `on_surface`
+/// label -- `on_surface_variant` instead for a real day belonging to
+/// an adjacent month (a real, confirmed distinct role, not assumed
+/// identical to the plain unselected case). Label reuses Body Large's
+/// own already-declared constants (`SEARCH_INPUT_FONT_SIZE`/
+/// `_WEIGHT`, the identical real MD3 type role `Search Bar`'s own
+/// input text already uses), not re-declared.
+const DATE_CELL_SIZE: f32 = 48.0;
+const DATE_CELL_CORNER_RADIUS: f64 = DATE_CELL_SIZE as f64 / 2.0;
+const DATE_TODAY_OUTLINE_WIDTH: f64 = 1.0;
+
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
 /// trailing icon -- that's `Icon Button`'s own separate anatomy, Phase
@@ -4692,6 +4723,97 @@ impl PyWindow {
 
         tree.add_child(self.root, header);
         Ok((self.wrap_node(header), chevron))
+    }
+
+    /// M30 Phase 7 Step 1 (§5, §7): `Date Picker`'s own real day cell
+    /// -- see the `DATE_CELL_*` constants above for the full real
+    /// finding, including this step's own deliberate scope (only the
+    /// cell, no engine-owned calendar arithmetic). Real, deliberate
+    /// state precedence, matching MD3's own real visual priority:
+    /// `selected` wins over `today` (a selected today still shows the
+    /// filled `primary` circle, not the outline) -- both are real,
+    /// independent booleans the app computes itself from its own real
+    /// date model, not mutually exclusive at the type level.
+    #[pyo3(signature = (day, selected=false, today=false, outside_month=false, x=None, y=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn add_date_picker_day(
+        &self,
+        day: u32,
+        selected: bool,
+        today: bool,
+        outside_month: bool,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> Node {
+        let (fill, border_color, border_width, label_color) = {
+            let theme = self.theme.borrow();
+            let role = |name: &str, fallback: Color| -> Color {
+                if theme.is_set() {
+                    theme.role(name).unwrap_or(fallback)
+                } else {
+                    fallback
+                }
+            };
+            let primary = role("primary", Md3Baseline::PRIMARY);
+            if selected {
+                (
+                    primary,
+                    TRANSPARENT,
+                    0.0,
+                    role("on_primary", Md3Baseline::ON_PRIMARY),
+                )
+            } else if today {
+                (TRANSPARENT, primary, DATE_TODAY_OUTLINE_WIDTH, primary)
+            } else if outside_month {
+                (
+                    TRANSPARENT,
+                    TRANSPARENT,
+                    0.0,
+                    role("on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT),
+                )
+            } else {
+                (TRANSPARENT, TRANSPARENT, 0.0, theme.on_surface())
+            }
+        };
+
+        let mut tree = self.tree.borrow_mut();
+        let mut cell_paint = PaintProperties::new(fill, DATE_CELL_CORNER_RADIUS, 0.0, 1.0);
+        cell_paint.border_color = Animated::new(border_color);
+        cell_paint.border_width = Animated::new(border_width);
+        let mut cell_style = positioned_style(
+            Size {
+                width: length(DATE_CELL_SIZE),
+                height: length(DATE_CELL_SIZE),
+            },
+            x,
+            y,
+        );
+        cell_style.display = taffy::Display::Flex;
+        cell_style.justify_content = Some(JustifyContent::CENTER);
+        cell_style.align_items = Some(AlignItems::CENTER);
+        let cell = tree.insert(NodeKind::Rect, cell_style, cell_paint);
+
+        let label_id = tree.insert(
+            NodeKind::Text(TextState {
+                content: day.to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: SEARCH_INPUT_FONT_WEIGHT,
+                font_size: SEARCH_INPUT_FONT_SIZE,
+                align: TextAlign::Center,
+            }),
+            Style {
+                size: Size {
+                    width: length(DATE_CELL_SIZE),
+                    height: length(SEARCH_INPUT_FONT_SIZE + 4.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(label_color, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(cell, label_id);
+
+        tree.add_child(self.root, cell);
+        self.wrap_node(cell)
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,

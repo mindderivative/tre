@@ -689,6 +689,24 @@ class Window:
         "transform", (0.0, 0.0, -1.0))`).
         """
         ...
+    def add_date_picker_day(
+        self,
+        day: int,
+        selected: bool = False,
+        today: bool = False,
+        outside_month: bool = False,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """A real MD3 date-picker day cell -- the *docked* variant's
+        own real anatomy (48x48dp, `corner-full`). `selected` wins
+        over `today` if both are `True` (a selected today still shows
+        the filled circle, not the outline). Deliberately scoped to
+        just the cell -- a real calendar grid needs real date
+        arithmetic, which belongs in the app (Python's own `datetime`/
+        `calendar` modules), not this engine.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,
