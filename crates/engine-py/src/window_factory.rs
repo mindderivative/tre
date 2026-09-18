@@ -95,6 +95,8 @@ impl Md3Baseline {
     const SURFACE_CONTAINER_HIGHEST: Color = Color::from_rgba8(0xE6, 0xE0, 0xE9, 0xFF);
     const OUTLINE: Color = Color::from_rgba8(0x79, 0x74, 0x7E, 0xFF);
     const ON_SURFACE_VARIANT: Color = Color::from_rgba8(0x49, 0x45, 0x4F, 0xFF);
+    const ERROR: Color = Color::from_rgba8(0xB3, 0x26, 0x1E, 0xFF);
+    const ON_ERROR: Color = Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF);
 }
 
 /// M30 Phase 1 (§5, §7): the real per-variant paint this button's own
@@ -380,6 +382,20 @@ const MENU_ITEM_LEADING_SPACE: f32 = 16.0;
 const MENU_ITEM_ICON_GAP: f32 = 12.0;
 const MENU_PANEL_CORNER_RADIUS: f64 = 4.0;
 const MENU_PANEL_ELEVATION: f64 = 2.0;
+
+/// M30 Phase 3 Step 1 (§5, §7): `Badge`'s real two real sizes,
+/// verified against Material Web's own token source (`_md-comp-
+/// badge.scss`): a real 6dp dot (no label at all) and a real 16dp
+/// labeled pill, both `error`-filled, `corner-full`. The labeled
+/// variant's own real type role is Label Small (11sp/500 weight,
+/// MD3's own smallest label size) -- genuinely smaller than every
+/// other component's Label Large (14sp) this catalog has used so
+/// far, confirmed from MD3's own real type scale, not assumed the
+/// same size fits.
+const BADGE_DOT_SIZE: f32 = 6.0;
+const BADGE_LABELED_HEIGHT: f32 = 16.0;
+const BADGE_LABEL_FONT_SIZE: f32 = 11.0;
+const BADGE_LABEL_FONT_WEIGHT: f32 = 500.0;
 
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
@@ -1453,6 +1469,104 @@ impl PyWindow {
         }
         self.tree.borrow_mut().close_overlay(menu.id);
         Ok(())
+    }
+
+    /// M30 Phase 3 Step 1 (§5, §7): `Badge`, MD3's real two-size
+    /// anatomy -- a plain `Rect` (no label: a real 6dp dot) or `Rect`
+    /// + centered `Text` (with a label: a real 16dp pill, `TextAlign::
+    /// Center` reused exactly the way `Button`'s own label already
+    /// established). Not positioned relative to any other node by
+    /// this method -- a real badge is always overlaid on a corner of
+    /// some other component (an icon, an avatar), which is purely a
+    /// caller-chosen `x`/`y` placement, the same real "absolute
+    /// positioning is the caller's job" contract `add_rect`'s own
+    /// `x`/`y` params already establish; no new overlay/anchoring
+    /// machinery needed for something this simple. `width` only
+    /// matters for the labeled variant (a dot ignores it, always
+    /// square) -- defaults to `height` (a circle), since MD3's own
+    /// real single-digit badge is exactly that; a real multi-digit
+    /// badge needs a wider caller-supplied `width`, the same "no
+    /// intrinsic text measurement anywhere in this engine" limitation
+    /// `add_text`/`add_button`/etc already state.
+    #[pyo3(signature = (label=None, width=None, x=None, y=None))]
+    fn add_badge(
+        &self,
+        label: Option<&str>,
+        width: Option<f32>,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> Node {
+        let (error_color, on_error_color) = {
+            let theme = self.theme.borrow();
+            let role = |name: &str, fallback: Color| -> Color {
+                if theme.is_set() {
+                    theme.role(name).unwrap_or(fallback)
+                } else {
+                    fallback
+                }
+            };
+            (
+                role("error", Md3Baseline::ERROR),
+                role("on_error", Md3Baseline::ON_ERROR),
+            )
+        };
+
+        let mut tree = self.tree.borrow_mut();
+        let Some(label) = label else {
+            let id = tree.insert(
+                NodeKind::Rect,
+                positioned_style(
+                    Size {
+                        width: length(BADGE_DOT_SIZE),
+                        height: length(BADGE_DOT_SIZE),
+                    },
+                    x,
+                    y,
+                ),
+                PaintProperties::new(error_color, f64::from(BADGE_DOT_SIZE) / 2.0, 0.0, 1.0),
+            );
+            tree.add_child(self.root, id);
+            return self.wrap_node(id);
+        };
+
+        let badge_width = width.unwrap_or(BADGE_LABELED_HEIGHT);
+        let mut container_style = positioned_style(
+            Size {
+                width: length(badge_width),
+                height: length(BADGE_LABELED_HEIGHT),
+            },
+            x,
+            y,
+        );
+        container_style.display = taffy::Display::Flex;
+        container_style.justify_content = Some(JustifyContent::CENTER);
+        container_style.align_items = Some(AlignItems::CENTER);
+        let container = tree.insert(
+            NodeKind::Rect,
+            container_style,
+            PaintProperties::new(error_color, f64::from(BADGE_LABELED_HEIGHT) / 2.0, 0.0, 1.0),
+        );
+
+        let label_id = tree.insert(
+            NodeKind::Text(TextState {
+                content: label.to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: BADGE_LABEL_FONT_WEIGHT,
+                font_size: BADGE_LABEL_FONT_SIZE,
+                align: TextAlign::Center,
+            }),
+            Style {
+                size: Size {
+                    width: length(badge_width),
+                    height: length(BADGE_LABEL_FONT_SIZE + 2.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(on_error_color, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(container, label_id);
+        tree.add_child(self.root, container);
+        self.wrap_node(container)
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,

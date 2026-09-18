@@ -313,6 +313,22 @@ class Window:
         if `menu` belongs to a different `Window`.
         """
         ...
+    def add_badge(
+        self,
+        label: str | None = None,
+        width: float | None = None,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """A real MD3 badge -- a 6dp dot with no `label`, or a 16dp
+        labeled pill with one. Always overlaid on a corner of some
+        other component via caller-chosen `x`/`y`; not positioned
+        relative to another node automatically. `width` only matters
+        for the labeled variant (defaults to a circle sized for one
+        digit) -- a real multi-digit badge needs a wider caller-
+        supplied `width`.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,
