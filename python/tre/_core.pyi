@@ -257,6 +257,26 @@ class Window:
         unknown icon (the checkmark's own curated name).
         """
         ...
+    def add_chip(
+        self,
+        label: str,
+        width: float,
+        variant: str = "assist",
+        icon: str | None = None,
+        selected: bool = False,
+        removable: bool = False,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """MD3's four real chip variants: `"assist"`, `"filter"`,
+        `"input"`, `"suggestion"`. `icon` is an optional leading icon
+        (`"filter"` shows a real checkmark instead when `selected`,
+        replacing any custom `icon`). `removable` adds a real trailing
+        close icon. `selected` only has a visual effect on
+        `"filter"`. Raises `ValueError` for an unknown `variant` or
+        `icon`.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,

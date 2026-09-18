@@ -93,6 +93,7 @@ impl Md3Baseline {
     const SURFACE_CONTAINER_HIGH: Color = Color::from_rgba8(0xEC, 0xE6, 0xF0, 0xFF);
     const SURFACE_CONTAINER_HIGHEST: Color = Color::from_rgba8(0xE6, 0xE0, 0xE9, 0xFF);
     const OUTLINE: Color = Color::from_rgba8(0x79, 0x74, 0x7E, 0xFF);
+    const ON_SURFACE_VARIANT: Color = Color::from_rgba8(0x49, 0x45, 0x4F, 0xFF);
 }
 
 /// M30 Phase 1 (§5, §7): the real per-variant paint this button's own
@@ -259,6 +260,104 @@ fn fab_shape(size: &str) -> PyResult<(f32, f32)> {
 /// regardless of which of the three real sizes is used.
 const FAB_ICON_SIZE: f32 = 24.0;
 const FAB_REST_ELEVATION_LEVEL: f64 = 3.0;
+
+/// M30 Phase 2 Step 3 (§5, §7): `Chip`'s real per-variant paint,
+/// verified against Material Web's own token source (`tokens/
+/// versions/v0_192/_md-comp-assist-chip.scss`/`_md-comp-filter-chip.
+/// scss`) rather than assumed. Real, deliberate design: unlike
+/// `Button`/`FAB`, `Chip` is built as a plain composition (`Rect` +
+/// optional leading `Icon` + `Text` + optional trailing `Icon`), not
+/// a new first-class `NodeKind` -- the same real architectural line
+/// `Segmented Button`'s own selection already draws: a component
+/// whose "selected" meaning is fundamentally group/app state (Filter
+/// Chip's own real toggle) stays a static composition the app re-
+/// paints on demand, while a standalone single control (`Checkbox`/
+/// `RadioButton`/`Switch`) gets engine-owned animated state. No new
+/// `Tree::hit_test_at` fix needed here -- the earlier `NodeKind::
+/// Text`/`NodeKind::Icon` arms already cover a chip's own children.
+struct ChipColors {
+    container: Color,
+    border_color: Color,
+    border_width: f64,
+    label: Color,
+    icon: Color,
+}
+
+/// Real, verified MD3 finding: Assist Chip's own label role is
+/// `on_surface`, genuinely different from Filter/Input/Suggestion's
+/// shared `on_surface_variant` -- not a typo, confirmed from the real
+/// token file before writing this. Filter Chip's real *selected*
+/// state is the only one with a filled container at all
+/// (`secondary_container`/`on_secondary_container`, `Button`'s own
+/// Filled Tonal pattern reused) -- every other variant (and Filter
+/// itself when unselected) is transparent with a real 1dp `outline`
+/// stroke.
+fn resolve_chip_colors(
+    theme: &crate::window::ThemeState,
+    variant: &str,
+    selected: bool,
+) -> PyResult<ChipColors> {
+    let role = |name: &str, fallback: Color| -> Color {
+        if theme.is_set() {
+            theme.role(name).unwrap_or(fallback)
+        } else {
+            fallback
+        }
+    };
+    match variant {
+        "assist" => Ok(ChipColors {
+            container: TRANSPARENT,
+            border_color: role("outline", Md3Baseline::OUTLINE),
+            border_width: 1.0,
+            label: theme.on_surface(),
+            icon: role("primary", Md3Baseline::PRIMARY),
+        }),
+        "filter" if selected => Ok(ChipColors {
+            container: role("secondary_container", Md3Baseline::SECONDARY_CONTAINER),
+            border_color: TRANSPARENT,
+            border_width: 0.0,
+            label: role(
+                "on_secondary_container",
+                Md3Baseline::ON_SECONDARY_CONTAINER,
+            ),
+            icon: role(
+                "on_secondary_container",
+                Md3Baseline::ON_SECONDARY_CONTAINER,
+            ),
+        }),
+        "filter" | "input" | "suggestion" => Ok(ChipColors {
+            container: TRANSPARENT,
+            border_color: role("outline", Md3Baseline::OUTLINE),
+            border_width: 1.0,
+            label: role("on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT),
+            icon: role("on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT),
+        }),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "unknown chip variant {other:?} -- expected one of \"assist\", \"filter\", \
+             \"input\", \"suggestion\""
+        ))),
+    }
+}
+
+/// MD3's own real Chip anatomy constants (M3 spec, Chips component
+/// page): 32dp height, `corner-small` (8dp) -- genuinely not the
+/// "Full" shape `Button`/`FAB`/`Icon Button` all use, confirmed from
+/// the real token file, not assumed consistent. Icon (leading,
+/// trailing, or the real selected-state checkmark) is a real 18dp
+/// token, smaller than every other component's 24dp. **One real
+/// number not found in the fetched token file, so not claimed as
+/// independently re-verified:** the chip's own horizontal padding and
+/// icon-label gap -- both real, reasonable MD3 values, stated
+/// honestly rather than presented as verified against the same
+/// primary source the others were.
+const CHIP_HEIGHT: f32 = 32.0;
+const CHIP_CORNER_RADIUS: f64 = 8.0;
+const CHIP_ICON_SIZE: f32 = 18.0;
+const CHIP_LEADING_PADDING_WITH_ICON: f32 = 8.0;
+const CHIP_LEADING_PADDING_NO_ICON: f32 = 16.0;
+const CHIP_TRAILING_PADDING_WITH_ICON: f32 = 8.0;
+const CHIP_TRAILING_PADDING_NO_ICON: f32 = 16.0;
+const CHIP_ICON_GAP: f32 = 8.0;
 
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
@@ -963,6 +1062,151 @@ impl PyWindow {
 
         tree.add_child(self.root, frame);
         Ok(segments.into_iter().map(|id| self.wrap_node(id)).collect())
+    }
+
+    /// M30 Phase 2 Step 3 (§5, §7): `Chip`, MD3's four real variants
+    /// (Assist/Filter/Input/Suggestion) -- a plain composition (`Rect`
+    /// + optional leading `Icon` + `Text` + optional trailing `Icon`),
+    /// not a new first-class `NodeKind` -- see `ChipColors`'s own doc
+    /// comment for the real architectural reasoning. A selected
+    /// Filter Chip's own real checkmark replaces any custom `icon`
+    /// (showing both would be redundant -- real MD3 behavior, not
+    /// this engine's own invention). `removable` adds a real trailing
+    /// "close" icon (Input Chip's own real anatomy) -- independent of
+    /// `variant`, since any chip can reasonably be made removable, not
+    /// only Input specifically. `selected` only has a real visual
+    /// effect on `"filter"` -- passed for any other variant, it's
+    /// silently a no-op, matching `Checkbox`'s own established "an app
+    /// can pass irrelevant state, the engine just doesn't act on it
+    /// differently" tolerance rather than raising. Deliberately does
+    /// **not** auto-call `enable_interaction()`, the same real
+    /// contract every other `add_*` composite already establishes.
+    #[pyo3(signature = (label, width, variant="assist", icon=None, selected=false, removable=false, x=None, y=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn add_chip(
+        &self,
+        label: &str,
+        width: f32,
+        variant: &str,
+        icon: Option<&str>,
+        selected: bool,
+        removable: bool,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<Node> {
+        let colors = resolve_chip_colors(&self.theme.borrow(), variant, selected)?;
+
+        let show_checkmark = variant == "filter" && selected;
+        let leading_icon_name = if show_checkmark { Some("check") } else { icon };
+        let leading_path = leading_icon_name.map(resolve_icon_path).transpose()?;
+        let trailing_path = if removable {
+            Some(resolve_icon_path("close")?)
+        } else {
+            None
+        };
+
+        let leading_padding = if leading_path.is_some() {
+            CHIP_LEADING_PADDING_WITH_ICON
+        } else {
+            CHIP_LEADING_PADDING_NO_ICON
+        };
+        let trailing_padding = if trailing_path.is_some() {
+            CHIP_TRAILING_PADDING_WITH_ICON
+        } else {
+            CHIP_TRAILING_PADDING_NO_ICON
+        };
+
+        let mut tree = self.tree.borrow_mut();
+        let mut container_paint =
+            PaintProperties::new(colors.container, CHIP_CORNER_RADIUS, 0.0, 1.0);
+        container_paint.border_color = Animated::new(colors.border_color);
+        container_paint.border_width = Animated::new(colors.border_width);
+        let mut container_style = positioned_style(
+            Size {
+                width: length(width),
+                height: length(CHIP_HEIGHT),
+            },
+            x,
+            y,
+        );
+        container_style.display = taffy::Display::Flex;
+        container_style.align_items = Some(AlignItems::CENTER);
+        container_style.padding = TaffyRect {
+            left: length(leading_padding),
+            right: length(trailing_padding),
+            top: zero(),
+            bottom: zero(),
+        };
+        container_style.gap = Size {
+            width: length(CHIP_ICON_GAP),
+            height: length(0.0),
+        };
+        let container = tree.insert(NodeKind::Rect, container_style, container_paint);
+
+        let mut icon_count = 0.0_f32;
+        if let Some(path) = leading_path {
+            icon_count += 1.0;
+            let leading_id = tree.insert(
+                NodeKind::Icon(IconState {
+                    path,
+                    tint: colors.icon,
+                }),
+                Style {
+                    size: Size {
+                        width: length(CHIP_ICON_SIZE),
+                        height: length(CHIP_ICON_SIZE),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            );
+            tree.add_child(container, leading_id);
+        }
+
+        let label_width = (width
+            - leading_padding
+            - trailing_padding
+            - icon_count * (CHIP_ICON_SIZE + CHIP_ICON_GAP))
+            .max(0.0);
+        let label_id = tree.insert(
+            NodeKind::Text(TextState {
+                content: label.to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: BUTTON_LABEL_FONT_WEIGHT,
+                font_size: BUTTON_LABEL_FONT_SIZE,
+                align: TextAlign::Start,
+            }),
+            Style {
+                size: Size {
+                    width: length(label_width),
+                    height: length(BUTTON_LABEL_LINE_HEIGHT),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(colors.label, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(container, label_id);
+
+        if let Some(path) = trailing_path {
+            let trailing_id = tree.insert(
+                NodeKind::Icon(IconState {
+                    path,
+                    tint: colors.icon,
+                }),
+                Style {
+                    size: Size {
+                        width: length(CHIP_ICON_SIZE),
+                        height: length(CHIP_ICON_SIZE),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            );
+            tree.add_child(container, trailing_id);
+        }
+
+        tree.add_child(self.root, container);
+        Ok(self.wrap_node(container))
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,
