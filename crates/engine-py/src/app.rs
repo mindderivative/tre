@@ -358,6 +358,13 @@ impl App {
                         &runtime.gpu.device,
                         &runtime.gpu.queue,
                     );
+                    // Review follow-through (M28 Phase 1, §5/§6): the
+                    // exact same per-frame GC `sync_image_textures`
+                    // already does for GPU textures, now also applied
+                    // to `TextRenderer`'s own per-node shaped-`Layout`
+                    // cache -- a text node removed from the tree must
+                    // not keep its stale shaping around forever.
+                    runtime.gpu.text_renderer.evict_stale_layouts(&tree_ref);
                     build_tree_scene(
                         &tree_ref,
                         runtime.root,

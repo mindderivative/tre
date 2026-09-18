@@ -9,9 +9,10 @@
 //! "get real signal on parley's current line-breaking/BiDi/font-fallback
 //! behavior before component work depends on it."
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use engine_core::{TextFieldState, TextState};
+use engine_core::{NodeId, TextFieldState, TextState, Tree};
 use parley::fontique::{Collection, CollectionOptions};
 use parley::{
     Affinity, Alignment, AlignmentOptions, Cursor, FontContext, FontFamily, FontWeight,
@@ -24,6 +25,23 @@ use vello_hybrid::{Resources, Scene};
 const ROBOTO_REGULAR: &[u8] = include_bytes!("../assets/fonts/Roboto-Regular.ttf");
 const ROBOTO_MEDIUM: &[u8] = include_bytes!("../assets/fonts/Roboto-Medium.ttf");
 const NOTO_SANS_ARABIC: &[u8] = include_bytes!("../assets/fonts/NotoSansArabic-Regular.ttf");
+
+/// The exact inputs a shaped `Layout` depends on -- equality here
+/// functionally determines the output, which is what makes caching by
+/// `NodeId` (below) safe without any separate invalidation logic.
+#[derive(PartialEq)]
+struct LayoutCacheKey {
+    content: String,
+    font_family: String,
+    font_weight: f32,
+    font_size: f32,
+    max_width: f32,
+}
+
+struct CachedLayout {
+    key: LayoutCacheKey,
+    layout: parley::Layout<[u8; 4]>,
+}
 
 /// Owns `parley`'s font/layout state across frames -- font discovery and
 /// registration are real, one-time costs that shouldn't repeat every
@@ -42,6 +60,15 @@ const NOTO_SANS_ARABIC: &[u8] = include_bytes!("../assets/fonts/NotoSansArabic-R
 pub struct TextRenderer {
     font_cx: FontContext,
     layout_cx: LayoutContext<[u8; 4]>,
+    /// M28 Phase 1 (review follow-through, §5/§6): one shaped `Layout`
+    /// per real `Text`/`TextField` node, reused across frames instead
+    /// of re-running font matching/line-breaking/BiDi on every single
+    /// paint regardless of whether anything changed -- the review's own
+    /// finding. Keyed by `NodeId` rather than by content string, so its
+    /// size tracks the tree's own text-node count, not how many
+    /// distinct strings a live-updating label has ever shown; see
+    /// `evict_stale_layouts`.
+    layout_cache: HashMap<NodeId, CachedLayout>,
 }
 
 impl Default for TextRenderer {
@@ -65,7 +92,68 @@ impl TextRenderer {
                 source_cache: Default::default(),
             },
             layout_cx: LayoutContext::new(),
+            layout_cache: HashMap::new(),
         }
+    }
+
+    /// Returns the already-shaped `Layout` for `node_id` if `content`/
+    /// `font_family`/`font_weight`/`font_size`/`max_width` still match
+    /// what it was last shaped with, otherwise re-shapes and replaces
+    /// it. Equality on `LayoutCacheKey` *is* the invalidation check --
+    /// every input that can change a `Layout`'s shape is part of the
+    /// key, so there's no separate "remember to invalidate" bookkeeping
+    /// that a future change could forget to update.
+    fn shaped_layout(
+        &mut self,
+        node_id: NodeId,
+        content: &str,
+        font_family: &str,
+        font_weight: f32,
+        font_size: f32,
+        max_width: f32,
+    ) -> &parley::Layout<[u8; 4]> {
+        let key = LayoutCacheKey {
+            content: content.to_string(),
+            font_family: font_family.to_string(),
+            font_weight,
+            font_size,
+            max_width,
+        };
+        let Self {
+            font_cx,
+            layout_cx,
+            layout_cache,
+        } = self;
+        let stale = layout_cache
+            .get(&node_id)
+            .is_none_or(|cached| cached.key != key);
+        if stale {
+            let mut builder = layout_cx.ranged_builder(font_cx, content, 1.0, true);
+            builder.push_default(StyleProperty::FontFamily(FontFamily::named(font_family)));
+            builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));
+            builder.push_default(StyleProperty::FontSize(font_size));
+            let mut layout = builder.build(content);
+            layout.break_all_lines(Some(max_width));
+            layout.align(Alignment::Start, AlignmentOptions::default());
+            layout_cache.insert(node_id, CachedLayout { key, layout });
+        }
+        &layout_cache
+            .get(&node_id)
+            .expect("just inserted above, or already present")
+            .layout
+    }
+
+    /// Mirrors `ImageTextureCache::sync`'s own real GPU-texture-leak fix
+    /// (the same review pass found this exact class of gap twice, in
+    /// two different per-node caches): a text node removed from the
+    /// tree left its shaped `Layout` cached here forever otherwise.
+    /// `NodeId` is a `slotmap` generational key (`image_cache.rs`'s own
+    /// established convention), so `tree.get` on a removed id is a
+    /// real, safe staleness check even if its slot has since been
+    /// reused by an unrelated new node. Call once per frame, alongside
+    /// `sync_image_textures`.
+    pub fn evict_stale_layouts(&mut self, tree: &Tree) {
+        self.layout_cache.retain(|id, _| tree.get(*id).is_some());
     }
 
     /// Shapes `state.content` at `state.font_family`/`state.font_size`,
@@ -76,34 +164,33 @@ impl TextRenderer {
     /// (`FrameRenderer::resources_mut`): glyph atlasing happens here,
     /// during scene construction, not inside `FrameRenderer::render`, so
     /// the same `Resources` instance has to be reachable at both points.
+    /// `node_id` is this text node's own real identity in the caller's
+    /// `Tree` (`paint_node`'s own `id`) -- `shaped_layout`'s cache key,
+    /// so the shaping pipeline itself only actually runs again when
+    /// something about `state`/`at.max_width` genuinely changed since
+    /// this node's last paint.
     pub fn draw(
         &mut self,
         scene: &mut Scene,
         resources: &mut Resources,
         state: &TextState,
         at: TextPlacement,
+        node_id: NodeId,
     ) {
-        let mut builder =
-            self.layout_cx
-                .ranged_builder(&mut self.font_cx, &state.content, 1.0, true);
-        builder.push_default(StyleProperty::FontFamily(FontFamily::named(
+        // M28 Phase 1: `shaped_layout` reuses the prior frame's
+        // `Layout` unchanged whenever nothing about this node's real
+        // shaping inputs moved -- see its own doc comment. The
+        // direction-aware `Alignment::Start` pass (left for LTR, right
+        // for RTL, matching §14 step 4's own real BiDi requirement)
+        // only needs to run once, at build time, not on every reuse.
+        let layout = self.shaped_layout(
+            node_id,
+            &state.content,
             &state.font_family,
-        )));
-        builder.push_default(StyleProperty::FontWeight(FontWeight::new(
             state.font_weight,
-        )));
-        builder.push_default(StyleProperty::FontSize(state.font_size));
-        let mut layout = builder.build(&state.content);
-        layout.break_all_lines(Some(at.max_width));
-        // `break_all_lines`'s glyph offsets alone don't account for
-        // paragraph direction -- an RTL run still starts near x=0 until
-        // an explicit alignment pass runs. `Alignment::Start` is
-        // direction-aware (left for LTR, right for RTL), matching what
-        // §14 step 4 actually needs to prove about `parley`'s BiDi
-        // handling: not just that RTL glyphs shape in the right visual
-        // order, but that the paragraph as a whole sits against the
-        // correct edge of its box.
-        layout.align(Alignment::Start, AlignmentOptions::default());
+            state.font_size,
+            at.max_width,
+        );
 
         scene.set_paint(at.color);
         for line in layout.lines() {
@@ -201,7 +288,11 @@ impl TextRenderer {
     /// theme-resolved MD3 color (`engine-render` doesn't depend on
     /// `engine-md3`, §4) -- both derive from `at.color`, the same
     /// "real but not yet theme-aware" scope `Checkbox`'s own hardcoded
-    /// white checkmark (M14 Phase 1) already established.
+    /// white checkmark (M14 Phase 1) already established. `node_id`
+    /// keys the same per-node shaping cache `draw` uses -- see its own
+    /// doc comment; keyed on `display_content` (below), so an active
+    /// IME composition -- which changes what's displayed every
+    /// keystroke -- still reshapes exactly when it should.
     pub fn draw_field(
         &mut self,
         scene: &mut Scene,
@@ -209,6 +300,7 @@ impl TextRenderer {
         state: &TextFieldState,
         at: TextPlacement,
         show_caret: bool,
+        node_id: NodeId,
     ) {
         // M17 Phase 2 (§8): a real, in-progress IME composition is
         // spliced into the *displayed* text at `cursor` -- purely for
@@ -227,7 +319,8 @@ impl TextRenderer {
             _ => (state.content.clone(), None, state.cursor),
         };
 
-        let layout = self.build_field_layout(
+        let layout = self.shaped_layout(
+            node_id,
             &display_content,
             &state.font_family,
             state.font_weight,
@@ -244,11 +337,11 @@ impl TextRenderer {
         if let Some(anchor) = state.selection_anchor
             && anchor != state.cursor
         {
-            let anchor_cursor = Cursor::from_byte_index(&layout, anchor, Affinity::Downstream);
-            let focus_cursor = Cursor::from_byte_index(&layout, state.cursor, Affinity::Downstream);
+            let anchor_cursor = Cursor::from_byte_index(layout, anchor, Affinity::Downstream);
+            let focus_cursor = Cursor::from_byte_index(layout, state.cursor, Affinity::Downstream);
             let selection = Selection::new(anchor_cursor, focus_cursor);
             scene.set_paint(crate::with_opacity(at.color, 0.3));
-            for (bounds, _line_idx) in selection.geometry(&layout) {
+            for (bounds, _line_idx) in selection.geometry(layout) {
                 let rect = Rect::new(
                     bounds.x0 + at.x,
                     bounds.y0 + at.y,
@@ -288,11 +381,11 @@ impl TextRenderer {
         // is the same shape either way; only a thin line at each rect's
         // own bottom edge, not a fill.
         if let Some(range) = preedit_range {
-            let start_cursor = Cursor::from_byte_index(&layout, range.start, Affinity::Downstream);
-            let end_cursor = Cursor::from_byte_index(&layout, range.end, Affinity::Downstream);
+            let start_cursor = Cursor::from_byte_index(layout, range.start, Affinity::Downstream);
+            let end_cursor = Cursor::from_byte_index(layout, range.end, Affinity::Downstream);
             let preedit_selection = Selection::new(start_cursor, end_cursor);
             scene.set_paint(at.color);
-            for (bounds, _line_idx) in preedit_selection.geometry(&layout) {
+            for (bounds, _line_idx) in preedit_selection.geometry(layout) {
                 let underline = Rect::new(
                     bounds.x0 + at.x,
                     bounds.y1 + at.y - 1.0,
@@ -309,8 +402,8 @@ impl TextRenderer {
         // `caret_at` is the real, in-progress composition's own end
         // while a preedit is active, `state.cursor` otherwise.
         if show_caret {
-            let cursor = Cursor::from_byte_index(&layout, caret_at, Affinity::Downstream);
-            let bounds = cursor.geometry(&layout, 1.5);
+            let cursor = Cursor::from_byte_index(layout, caret_at, Affinity::Downstream);
+            let bounds = cursor.geometry(layout, 1.5);
             let rect = Rect::new(
                 bounds.x0 + at.x,
                 bounds.y0 + at.y,
@@ -338,4 +431,145 @@ pub struct TextPlacement {
     /// The node's taffy-computed box width -- what `parley` wraps to.
     pub max_width: f32,
     pub color: Color,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::FrameRenderer;
+    use engine_core::{NodeKind, PaintProperties, Tree};
+    use taffy::prelude::{Size, Style, length};
+    use vello_hybrid::RenderTargetConfig;
+
+    async fn frame_renderer_for_test() -> FrameRenderer {
+        let instance = wgpu::Instance::default();
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::default(),
+                force_fallback_adapter: false,
+                compatible_surface: None,
+            })
+            .await
+            .expect("no wgpu adapter available in this environment");
+        let (device, _queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("text.rs layout-cache test device"),
+                required_features: wgpu::Features::empty(),
+                ..Default::default()
+            })
+            .await
+            .expect("failed to create wgpu device");
+        FrameRenderer::new(
+            &device,
+            &RenderTargetConfig {
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                width: 100,
+                height: 100,
+            },
+        )
+    }
+
+    fn text_node(tree: &mut Tree, content: &str) -> engine_core::NodeId {
+        tree.insert(
+            NodeKind::Text(TextState {
+                content: content.to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: 400.0,
+                font_size: 16.0,
+            }),
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(20.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        )
+    }
+
+    fn placement() -> TextPlacement {
+        TextPlacement {
+            x: 0.0,
+            y: 0.0,
+            max_width: 100.0,
+            color: Color::from_rgba8(255, 255, 255, 255),
+        }
+    }
+
+    /// Real regression coverage for the review-found gap: every
+    /// `Text`/`TextField` paint used to rebuild its `Layout` from
+    /// scratch every frame regardless of whether anything changed.
+    /// Proves the cache actually caches (repainting an unchanged node
+    /// doesn't grow it) and actually evicts (mirroring `image_cache.
+    /// rs`'s own already-established test for the identical class of
+    /// per-node-cache leak).
+    #[test]
+    fn shaped_layout_is_cached_per_node_and_evicted_on_removal() {
+        pollster::block_on(async {
+            let mut frame_renderer = frame_renderer_for_test().await;
+            let mut renderer = TextRenderer::new();
+            let mut scene = Scene::new(100, 100);
+            let mut tree = Tree::new();
+
+            let a = text_node(&mut tree, "hello");
+            let b = text_node(&mut tree, "world");
+
+            let NodeKind::Text(state_a) = &tree.get(a).unwrap().kind else {
+                panic!("expected Text");
+            };
+            renderer.draw(
+                &mut scene,
+                frame_renderer.resources_mut(),
+                state_a,
+                placement(),
+                a,
+            );
+            assert_eq!(renderer.layout_cache.len(), 1);
+
+            // Repainting the same node, completely unchanged, must not
+            // grow the cache -- it's keyed on the node's own identity,
+            // not on every draw call.
+            let NodeKind::Text(state_a) = &tree.get(a).unwrap().kind else {
+                panic!("expected Text");
+            };
+            renderer.draw(
+                &mut scene,
+                frame_renderer.resources_mut(),
+                state_a,
+                placement(),
+                a,
+            );
+            assert_eq!(
+                renderer.layout_cache.len(),
+                1,
+                "repainting an unchanged node must not create a second entry"
+            );
+
+            let NodeKind::Text(state_b) = &tree.get(b).unwrap().kind else {
+                panic!("expected Text");
+            };
+            renderer.draw(
+                &mut scene,
+                frame_renderer.resources_mut(),
+                state_b,
+                placement(),
+                b,
+            );
+            assert_eq!(
+                renderer.layout_cache.len(),
+                2,
+                "a genuinely different node must get its own entry"
+            );
+
+            tree.remove(a);
+            renderer.evict_stale_layouts(&tree);
+            assert_eq!(
+                renderer.layout_cache.len(),
+                1,
+                "a removed node's cached layout must be evicted, not kept forever"
+            );
+            assert!(renderer.layout_cache.contains_key(&b));
+        });
+    }
 }

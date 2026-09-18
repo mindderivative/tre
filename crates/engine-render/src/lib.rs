@@ -470,6 +470,7 @@ fn paint_node(
                     max_width: w as f32,
                     color,
                 },
+                id,
             );
         }
         // M15 Phase 1 (§5, §16.7): unlike `NodeKind::Text` (a plain
@@ -506,6 +507,7 @@ fn paint_node(
                     color: text_color,
                 },
                 tree.focused() == Some(id),
+                id,
             );
         }
         // A `VirtualList` container paints nothing itself, same as

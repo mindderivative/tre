@@ -1,54 +1,121 @@
-# Log: M27 Phase 5 — Accessibility Pass & Polish, closing M27
+# Log: M28 — Code Review Follow-Through
 
-A real, comprehensive keyboard-Tab-order sweep across every screen's
-own real interactive controls — replacing the partial spot-checks
-earlier phases individually did (gallery: 2 of 8 controls checked;
-motion/data: 0 checked) with a full sweep of all 8/5/3 real controls
-per screen, each confirmed to become focused in the exact order it was
-attached. Plus real keyboard *operability*, not just reachability, on
-one representative control per screen via a genuine `Enter` key press
-— the same `DispatchOutcome::Activated` mechanism a real mouse click
-already produces, routed through the identical registered `Click`
-handler (not a hand-rolled duplicate of it): the gallery's `Checkbox`,
-the motion screen's `Fade` trigger, the data screen's `Load next page`
-button.
+Fixed all 3 review findings that needed a human design call, following
+the trade-offs the review artifact itself proposed — plus one real
+correction to those trade-offs, found only by investigating further
+before implementing rather than executing the artifact's own framing
+verbatim.
 
-**Real finding, confirmed empirically before writing the sweep, not
-assumed:** the node focused before a real screen swap is gone once its
-whole screen is removed, and focus resets to none — the very next Tab
-press after switching screens lands on the *first* focusable node in
-the entire window again (nav button 1), not straight into the new
-screen's own content. Every screen's own sweep accounts for this by
-consuming the 3 nav-button Tab stops again first (not re-asserting
-them — already proven reachable once, at the very start of `main()`).
+## Text-shaping cache (Phase 1)
 
-**Real code-consistency polish:** the identical `label(text, x, y,
-...)` closure all three screen builders each defined locally,
-separately, was factored into one shared `make_label_fn(window,
-screen)` factory — real duplication removed, not just noticed.
+The review found `TextRenderer::draw`/`draw_field` re-running the full
+`parley` shaping pipeline — font matching, line-breaking, BiDi,
+alignment — from scratch on every single paint, every frame,
+regardless of whether the node's content or size had changed.
 
-**A real, honest correction:** M27's own Phase 5 scoping text (written
-before Phase 4's implementation settled) said "a final visual-
-consistency pass across all *four* content screens" — the demo
-actually has *three* (components, motion, data). Corrected here rather
-than silently left wrong.
+**Real finding that changed the plan, before writing any code:** the
+review's own report recommended dirty-gating the redraw loop first
+(framed as lower-risk) and a shaping cache second (framed as carrying
+real invalidation risk). Re-investigating both options directly showed
+the opposite. A shaping cache keyed on its own exact shaping inputs
+(`content`, `font_family`, `font_weight`, `font_size`, `max_width`)
+needs no separate invalidation logic at all — equality on the key *is*
+the invalidation check, so there's nothing a future change could
+forget to update. Gating the redraw loop correctly, by contrast, would
+need a real dirty flag threaded through every mutation path that can
+change what's on screen: `Tree::tick_all` already returns `any_active`
+covering every *animated* property, but that misses one-shot
+`Node.set()` writes, `TextField` typing, scroll, drag, focus changes,
+and every one of `engine-py`'s ~30–40 imperative `add_*`/`set_*`
+methods. That's a real architectural change to the core render loop
+every example and the showcase demo runs through — correctly left open
+rather than rushed (see "What was deliberately not done" in `PLAN.md`).
 
-Also made the finished demo discoverable — nothing in the public docs
-or README previously mentioned it existed: added a pointer in
-`README.md`'s own "Getting started" section and `docs/index.md`'s own
-"Where to go next" section, and corrected `docs/index.md`'s stale "25
-milestones" claim to the real current 27 (M26/M27 landed since that
-text was written).
+Implementation: `TextRenderer` gained a `HashMap<NodeId,
+CachedLayout>`. `shaped_layout` looks up by the node's own identity,
+rebuilding only when the key changed. `evict_stale_layouts(&tree)`
+mirrors `ImageTextureCache::sync`'s already-existing eviction pattern
+from the review's own autonomous fix — a `NodeId` no longer in the
+tree is a safe staleness check (slotmap generational keys), called
+once per frame from `App::run` right next to `sync_image_textures`.
 
-Full `cargo test --workspace --release`/clippy `-D warnings`/fmt clean
-(no Rust code changed this phase — pure Python + docs). `maturin
-develop --release` + `pytest tests/` (187 passed, unchanged, 1
-pre-existing skip), all 33 pre-existing examples, and the updated
-demo — run 5 times in a row to rule out any flakiness in the new
-keyboard-focus logic — all confirmed clean with the real display.
-`mkdocs build --strict` clean.
+`text.rs`'s own module is private (only `TextRenderer`/`TextPlacement`
+are re-exported), so an external integration test can't reach the
+cache's internals — a new `#[cfg(test)] mod tests` inside `text.rs`
+itself proves: repainting an unchanged node doesn't grow the cache, a
+genuinely different node gets its own entry, and removing a node from
+the tree evicts its cached layout.
 
-M27 Phase 5 — Accessibility Pass & Polish is now complete, closing
-Milestone 27 entirely. All 5 phases (shell & nav, MD3 gallery, motion
-& custom drawing, data & layout, accessibility & polish) are real,
-tested, and composed into one running showcase app.
+## Overlay-cleanup leak (Phase 1)
+
+Small, contained: `Tree::remove` never cleared `self.overlays` for a
+removed node that happened to be open overlay content — only
+`close_overlay` did. A caller removing that same content through the
+general-purpose `remove` (or removing one of its ancestors, reached
+via `remove`'s own recursive descent) left a permanently orphaned
+`OverlayMeta` entry. Fixed with one line (`self.overlays.remove(&id)`
+right after `self.nodes.remove(id)`), a no-op for the common case of a
+node that was never overlay content. New test covers both the
+direct-removal and removed-ancestor cases.
+
+## `window.rs` split (Phase 2)
+
+The review flagged `engine-py/src/window.rs` (1712 lines) for mixing
+four largely-independent responsibilities: node-factory methods,
+synthetic input dispatch, docking delegation, and virtual-list/canvas
+plumbing — sharing one file only because that's where each was added
+at the time.
+
+**Verified the mechanism before committing to the plan, not assumed:**
+`PyWindow`'s `#[pymethods] impl` block can't itself span multiple
+files without pyo3's `multiple-pymethods` Cargo feature — confirmed by
+reading the vendored pyo3 source directly (its own doc comment: the
+real cost is `inventory`-based registration not supporting Wasm, which
+this desktop winit/wgpu project never targets). Enabled it in
+`engine-py/Cargo.toml`.
+
+Split into `window.rs` (construction, theming, GC lifecycle — kept),
+`window_factory.rs` (`add_rect`/`add_text`/`add_checkbox`/
+`add_slider`/`add_image`/`add_icon`/`add_text_field`/`build_shell`/
+`add_splitter`), `window_input.rs` (`click`/`hover`/`scroll`/
+`right_click`/`press_key`/`type_text`/`copy`/`cut`/`paste`/container-
+transform), `window_docking.rs` (the 8 thin `dock.rs` wrappers), and
+`window_virtual_canvas.rs` (`add_virtual_list`/
+`set_virtual_list_window`/`add_canvas`/`redraw_canvas`). Every
+method's real body moved verbatim — a Python script did the line-range
+extraction against exactly grep-verified boundaries, not hand-retyped,
+to rule out transcription drift. Each new file's `use` block was built
+from a first pass, then corrected entirely by the compiler's own
+missing/unused-import diagnostics.
+
+`positioned_style` (needed by both `window_factory.rs` and
+`window_virtual_canvas.rs`) stays `pub(crate)` in `window.rs` itself;
+`parse_content_fit` and `ResolvedItemHeights` (each needed by exactly
+one of the new files) moved there entirely instead. `wrap_node` and
+the `materializers`/`canvas_draws` fields widened from private to
+`pub(crate)` — the minimum visibility change the split needed,
+extending `PyWindow`'s own already-established field-level
+`pub(crate)` convention rather than inventing a new one.
+
+Zero behavior change: every Python-visible method name, signature, and
+body is byte-for-byte the same code, just relocated. The full pytest
+suite, every example, and the showcase demo all pass unmodified — the
+real proof that pyo3 genuinely merges all 5 `#[pymethods]` blocks into
+one Python-visible `Window` class, not five separate ones.
+
+## Verification
+
+Full `cargo check --workspace --all-targets`/`cargo clippy --workspace
+--all-targets -- -D warnings`/`cargo fmt --check` clean across all
+changed files. `cargo test --workspace --release` clean, including
+both new regression tests (`engine-core` 145 tests, up from 144;
+`engine-render` 3 unit tests, up from 2). `maturin develop --release`
++ `pytest tests/` (187 passed, unchanged, 1 pre-existing skip), all 29
+examples, and `demo/showcase.py` all confirmed clean with the real
+display.
+
+M28 — Code Review Follow-Through is now complete. All 5 review
+findings that needed either an autonomous fix or a human design call
+are resolved; the redraw-loop half of the performance finding is
+correctly re-scoped and left open, its real scope now sharper than the
+review artifact's own original framing.

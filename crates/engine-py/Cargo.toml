@@ -26,7 +26,14 @@ engine-spec = { path = "../engine-spec" }
 # pyproject.toml's own comment. `cargo build`/`cargo test` build this
 # crate without it (linkable standalone); maturin's actual wheel build
 # passes `--features pyo3/extension-module` itself.
-pyo3 = { version = "0.29.2", features = ["macros"] }
+# "multiple-pymethods" (review follow-through, M28 Phase 2, §4/§8): lets
+# `PyWindow`'s real `#[pymethods]` split across multiple files by
+# responsibility (`window.rs` itself, `window_factory.rs`, `window_
+# input.rs`, `window_docking.rs`, `window_virtual_canvas.rs`) instead of
+# one ~1700-line block -- pyo3's own doc comment states its only real
+# cost is `inventory`-based registration not supporting Wasm, which this
+# desktop-only project (winit/wgpu throughout) never targets.
+pyo3 = { version = "0.29.2", features = ["macros", "multiple-pymethods"] }
 thiserror = "2.0.20"
 # `App::run` builds and drives its own GPU/window state directly (§8's
 # PyApp.run(), Design Principle 1's one blocking call) -- Rust doesn't

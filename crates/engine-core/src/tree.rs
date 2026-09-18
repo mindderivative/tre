@@ -295,6 +295,15 @@ impl Tree {
             let _ = self.taffy.remove(taffy_node);
         }
         self.nodes.remove(id);
+        // Review follow-through (M28 Phase 1, §11.3): `close_overlay` is
+        // the only other place that ever cleared a `self.overlays`
+        // entry -- a caller removing the same content through this
+        // general-purpose method instead (or removing one of its
+        // ancestors, reached via the recursion above) left it behind
+        // forever. A plain `HashMap::remove` is a no-op for the (vast
+        // majority of) ids that were never overlay content, so this
+        // costs nothing on the common path.
+        self.overlays.remove(&id);
         if self.focused == Some(id) {
             self.focused = None;
         }
@@ -2628,6 +2637,78 @@ mod tests {
         assert!(
             !tree.close_overlay(menu),
             "closing an already-closed overlay must report false"
+        );
+    }
+
+    #[test]
+    fn remove_drops_overlay_metadata_for_removed_overlay_content() {
+        // Real regression coverage for the review-found gap: unlike
+        // `close_overlay`, `Tree::remove` never cleared `self.overlays`
+        // for a removed node that happened to be open overlay content.
+        let mut tree = Tree::new();
+        let root_style = Style {
+            size: Size {
+                width: length(300.0),
+                height: length(300.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+        let (k, s, p) = leaf(80.0, 20.0);
+        let anchor = tree.insert(k, s, p);
+        tree.add_child(root, anchor);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+
+        let (k, s, p) = leaf(120.0, 60.0);
+        let menu = tree.insert(k, s, p);
+        tree.open_overlay(
+            root,
+            anchor,
+            menu,
+            OverlayMeta {
+                anchor,
+                dismiss_on_outside_click: true,
+                dismiss_on_escape: true,
+            },
+        );
+        assert!(tree.overlay_meta(menu).is_some());
+
+        assert!(tree.remove(menu));
+        assert!(
+            tree.overlay_meta(menu).is_none(),
+            "removing overlay content directly (not through close_overlay) must still drop \
+             its metadata, or a future NodeId reusing that slot would inherit stale overlay \
+             bookkeeping"
+        );
+
+        // Same real gap, one level up: removing an *ancestor* of open
+        // overlay content must reach it too, since `remove` recurses
+        // into `root`'s own children first.
+        let (k, s, p) = leaf(120.0, 60.0);
+        let menu2 = tree.insert(k, s, p);
+        tree.open_overlay(
+            root,
+            anchor,
+            menu2,
+            OverlayMeta {
+                anchor,
+                dismiss_on_outside_click: true,
+                dismiss_on_escape: true,
+            },
+        );
+        assert!(tree.overlay_meta(menu2).is_some());
+
+        assert!(tree.remove(root));
+        assert!(
+            tree.overlay_meta(menu2).is_none(),
+            "removing an ancestor of open overlay content must drop its metadata too"
         );
     }
 

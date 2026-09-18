@@ -15,6 +15,10 @@ mod error;
 mod node;
 mod view;
 mod window;
+mod window_docking;
+mod window_factory;
+mod window_input;
+mod window_virtual_canvas;
 
 use pyo3::prelude::*;
 
