@@ -150,8 +150,18 @@ def parse_percentages(lines: list[str]) -> dict[str, int]:
 
 def parse_narrative(text: str) -> tuple[str, str, list[str]]:
     def _grab(label: str) -> str:
-        m = re.search(rf"\*\*{label}:\*\*\s*(.+?)(?=\n\n|\Z)", text, re.S)
-        return m.group(1).strip() if m else ""
+        # Real bug found 2026-09-18: every closed milestone writes its own
+        # "**Just closed:**"/"**Up next:**" pair at its own point in the
+        # file (established convention since ~M6), so `re.search`'s first
+        # match was always the *oldest* one in the file (M6/M7-era),
+        # silently frozen there for 20+ milestones regardless of how much
+        # further the project moved -- the Top Metrics table and full
+        # milestone sections stayed current the whole time, only this one
+        # highlight box didn't. The most recent pair (closest to the
+        # bottom of the file) is the one that actually answers "what's
+        # the current status" -- take the last match, not the first.
+        matches = list(re.finditer(rf"\*\*{label}:\*\*\s*(.+?)(?=\n\n|\Z)", text, re.S))
+        return matches[-1].group(1).strip() if matches else ""
 
     just_closed = _grab("Just closed")
     up_next = _grab("Up next")
