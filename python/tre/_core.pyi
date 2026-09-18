@@ -397,6 +397,27 @@ class Window:
         `open_menu`/`close_menu`.
         """
         ...
+    def add_dialog(self, headline: str, text: str, width: float, height: float) -> Node:
+        """A real MD3 modal dialog -- a full-window scrim with the
+        panel (headline + supporting text) centered inside it.
+        Deliberately has no `x`/`y` -- a real dialog is always
+        centered. Returns the **scrim** node, not yet attached
+        anywhere -- pass it to `open_dialog` to actually show it.
+        """
+        ...
+    def open_dialog(self, dialog: Node) -> None:
+        """Opens `dialog` (from `add_dialog`) as a real modal --
+        blocks interaction with everything behind it (does not
+        dismiss on an outside click; dismisses on Escape). A safe
+        no-op if `dialog` is already open. Raises `ValueError` if
+        `dialog` belongs to a different `Window`.
+        """
+        ...
+    def close_dialog(self, dialog: Node) -> None:
+        """Closes a dialog opened via `open_dialog`. Raises
+        `ValueError` if `dialog` belongs to a different `Window`.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,

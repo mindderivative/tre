@@ -257,6 +257,7 @@ pub(crate) fn open_context_menu(
             anchor,
             dismiss_on_outside_click: true,
             dismiss_on_escape: true,
+            modal: false,
         },
     );
 }

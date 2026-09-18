@@ -603,6 +603,24 @@ impl Tree {
         dismissed_any
     }
 
+    /// M30 Phase 4 Step 1 (§11.3): `dismiss_overlays_outside`'s own
+    /// real sibling for the other real half of "outside interaction"
+    /// -- a press outside a real modal overlay (`OverlayMeta.modal`)
+    /// must never reach the background, whether or not it also
+    /// dismisses the overlay. Read-only (unlike `dismiss_overlays_
+    /// outside`, which mutates `self.overlays`/detaches content) --
+    /// this only ever *reports* whether the press should be consumed;
+    /// `dispatch`'s own `PointerPressed` arm is what actually consumes
+    /// it, the same real split that arm already has for the dismiss
+    /// case.
+    fn press_blocked_by_modal_overlay(&self, point: Point) -> bool {
+        self.overlays.iter().any(|(&content, meta)| {
+            meta.modal
+                && self.hit_test(content, point).is_none()
+                && self.hit_test(meta.anchor, point).is_none()
+        })
+    }
+
     /// M10 Phase 1 (§11.3): closes every currently-open overlay whose
     /// own `OverlayMeta.dismiss_on_escape` is true, unconditionally --
     /// `Key::Escape` always means "close it," no position check needed,
@@ -1887,6 +1905,17 @@ impl Tree {
                     self.pressed = None;
                     return DispatchOutcome::None;
                 }
+                // M30 Phase 4 Step 1 (§11.3): the real modal-blocking
+                // half `dismiss_overlays_outside` alone can't express
+                // -- a press outside a real modal overlay is consumed
+                // here even when it doesn't also dismiss anything,
+                // the same real "skip the normal hit/ripple
+                // registration below entirely" outcome the dismiss
+                // case already has.
+                if self.press_blocked_by_modal_overlay(position) {
+                    self.pressed = None;
+                    return DispatchOutcome::None;
+                }
                 let hit = self.hit_test(root, position);
                 if let Some(node) = hit {
                     self.pressed = Some((button, node));
@@ -2703,6 +2732,7 @@ mod tests {
                 anchor,
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
+                modal: false,
             },
         );
 
@@ -2825,6 +2855,7 @@ mod tests {
                 anchor,
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
+                modal: false,
             },
         );
 
@@ -2889,6 +2920,7 @@ mod tests {
                 anchor,
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
+                modal: false,
             },
         );
         assert!(tree.overlay_meta(menu).is_some());
@@ -2914,6 +2946,7 @@ mod tests {
                 anchor,
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
+                modal: false,
             },
         );
         assert!(tree.overlay_meta(menu2).is_some());
@@ -2964,6 +2997,7 @@ mod tests {
                 anchor,
                 dismiss_on_outside_click,
                 dismiss_on_escape,
+                modal: false,
             },
         );
         tree.compute_layout(
@@ -3085,6 +3119,166 @@ mod tests {
         );
     }
 
+    /// M30 Phase 4 Step 1 (§11.3): the real, confirmed gap this
+    /// milestone's own scoping text named, now proven fixed -- before
+    /// `OverlayMeta.modal` existed, `dismiss_on_outside_click: false`
+    /// meant an outside press fell all the way through to `hit_test`
+    /// on the background, exactly like no overlay were open at all.
+    /// A real modal dialog needs the opposite: never dismiss on an
+    /// outside press, but never let it reach the background either.
+    #[test]
+    fn a_press_outside_a_modal_overlay_is_consumed_without_dismissing_it() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            size: Size {
+                width: length(300.0),
+                height: length(300.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        // A real background button, positioned squarely at the point
+        // this test presses -- if the press reached it, `tree.pressed`
+        // would be `Some((_, background))`, the real, observable proof
+        // a modal overlay failed to block it.
+        let (k, s, p) = leaf(40.0, 40.0);
+        let background = tree.insert(k, s, p);
+        tree.add_child(root, background);
+
+        let (k, s, p) = leaf(80.0, 20.0);
+        let anchor = tree.insert(k, s, p);
+        tree.add_child(root, anchor);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+
+        let (k, s, p) = leaf(120.0, 60.0);
+        let dialog = tree.insert(k, s, p);
+        tree.open_overlay(
+            root,
+            anchor,
+            dialog,
+            OverlayMeta {
+                anchor,
+                dismiss_on_outside_click: false,
+                dismiss_on_escape: true,
+                modal: true,
+            },
+        );
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+
+        // The background button's own real center -- well outside the
+        // dialog's own real bounds (anchored near the top-left).
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(20.0, 20.0),
+                button: PointerButton::Primary,
+            },
+            &dispatch_config(),
+            Instant::now(),
+        );
+
+        assert_eq!(
+            outcome,
+            DispatchOutcome::None,
+            "a press outside a modal overlay must report no outcome, not reach the background"
+        );
+        assert!(
+            tree.pressed.is_none(),
+            "a press outside a modal overlay must never register as a real press on the \
+             background node underneath it"
+        );
+        assert!(
+            tree.overlay_meta(dialog).is_some(),
+            "modal: true with dismiss_on_outside_click: false must not dismiss the overlay"
+        );
+    }
+
+    /// `modal`'s own real no-op default, proven directly -- every
+    /// overlay before this step (context menus, dropdown menus,
+    /// tooltips) must keep letting an outside press reach the
+    /// background exactly as it always did, when `dismiss_on_outside_
+    /// click` is also `false`.
+    #[test]
+    fn modal_false_still_lets_an_outside_press_reach_the_background() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            size: Size {
+                width: length(300.0),
+                height: length(300.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let (k, s, p) = leaf(40.0, 40.0);
+        let background = tree.insert(k, s, p);
+        tree.add_child(root, background);
+
+        let (k, s, p) = leaf(80.0, 20.0);
+        let anchor = tree.insert(k, s, p);
+        tree.add_child(root, anchor);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+
+        let (k, s, p) = leaf(120.0, 60.0);
+        let menu = tree.insert(k, s, p);
+        tree.open_overlay(
+            root,
+            anchor,
+            menu,
+            OverlayMeta {
+                anchor,
+                dismiss_on_outside_click: false,
+                dismiss_on_escape: true,
+                modal: false,
+            },
+        );
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(20.0, 20.0),
+                button: PointerButton::Primary,
+            },
+            &dispatch_config(),
+            Instant::now(),
+        );
+
+        assert_eq!(
+            tree.pressed,
+            Some((PointerButton::Primary, background)),
+            "modal: false must still let an outside press reach the real background node, \
+             the exact real behavior every overlay had before this step"
+        );
+    }
+
     #[test]
     fn a_real_escape_dispatch_closes_every_dismiss_on_escape_overlay() {
         let (mut tree, root, _, menu) = overlay_scene(true, true);
@@ -3158,6 +3352,7 @@ mod tests {
                 anchor,
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
+                modal: false,
             },
         );
 
@@ -4738,6 +4933,7 @@ mod tests {
                 anchor,
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
+                modal: false,
             },
         );
         tree.compute_layout(

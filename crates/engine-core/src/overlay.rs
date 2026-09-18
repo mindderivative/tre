@@ -23,4 +23,22 @@ pub struct OverlayMeta {
     pub anchor: NodeId,
     pub dismiss_on_outside_click: bool,
     pub dismiss_on_escape: bool,
+    /// M30 Phase 4 Step 1 (§11.3): a real, confirmed gap this
+    /// milestone's own scoping text already named -- a real modal
+    /// dialog must block interaction with everything behind it, which
+    /// `dismiss_on_outside_click` alone can't express: `Tree::
+    /// dispatch`'s own `PointerPressed` arm only ever consumes a
+    /// press outside an overlay when `dismiss_overlays_outside`
+    /// actually dismissed something, so a real dialog that wants
+    /// "don't dismiss on scrim click, but never let the click reach
+    /// the background either" (a real, common MD3 dialog behavior)
+    /// had no way to express that combination before this field --
+    /// confirmed by reading `dismiss_overlays_outside`'s own real
+    /// filter (`meta.dismiss_on_outside_click && ...`) and its one
+    /// real call site directly, not assumed from the existing
+    /// dismiss-only behavior. `false` (every overlay before this
+    /// step -- context menus, dropdown menus, tooltips) is a true
+    /// no-op: a press outside a non-modal overlay still falls through
+    /// to normal hit-testing exactly as it always has.
+    pub modal: bool,
 }
