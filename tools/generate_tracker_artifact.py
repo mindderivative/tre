@@ -1,23 +1,31 @@
 #!/usr/bin/env python3
-"""Generate the Build Tracker artifact's HTML from BUILD_TRACKER.md.
+"""Generate a Build Tracker artifact's HTML from BUILD_TRACKER.md.
 
 Regenerates the *source file* for the interactive Build Tracker artifact
-by parsing BUILD_TRACKER.md deterministically -- no more hand-transcribing
-markdown edits into matching HTML (which is how the empty-progress-bar bug
-happened the first time).
+by parsing BUILD_TRACKER.md deterministically -- no hand-transcribing
+markdown edits into matching HTML by eye (that mismatch is exactly how
+this script's own first version came to exist).
 
 This script cannot publish anything itself: there is no API a script can
 call to push a page to claude.ai, only Claude's own Artifact tool can do
-that, inside a conversation. The intended workflow is:
+that, inside a conversation. The intended workflow (see the
+`build-tracker` skill this file ships with for the full process):
 
     1. Edit BUILD_TRACKER.md as usual.
     2. Run this script -> writes the regenerated HTML to --out.
-    3. Ask Claude to republish that file to the existing artifact URL
-       (or have Claude run this script itself and do the same).
+    3. Publish that file to the existing artifact URL (same URL every
+       time -- never a fresh publish once one exists for this project).
 
 Usage:
     python3 tools/generate_tracker_artifact.py
     python3 tools/generate_tracker_artifact.py --md BUILD_TRACKER.md --out /tmp/tracker.html
+    python3 tools/generate_tracker_artifact.py --project "My Project"
+
+This file is project-agnostic. Copy it verbatim into any repo at
+`<repo>/tools/generate_tracker_artifact.py` (sibling to a
+`BUILD_TRACKER.md` at the repo root) -- do not hand-edit a per-project
+copy; if the format needs to change, change it here (the skill's own
+copy) and re-copy it into each project that uses it.
 """
 
 from __future__ import annotations
@@ -150,16 +158,13 @@ def parse_percentages(lines: list[str]) -> dict[str, int]:
 
 def parse_narrative(text: str) -> tuple[str, str, list[str]]:
     def _grab(label: str) -> str:
-        # Real bug found 2026-09-18: every closed milestone writes its own
+        # Every closed milestone conventionally writes its own
         # "**Just closed:**"/"**Up next:**" pair at its own point in the
-        # file (established convention since ~M6), so `re.search`'s first
-        # match was always the *oldest* one in the file (M6/M7-era),
-        # silently frozen there for 20+ milestones regardless of how much
-        # further the project moved -- the Top Metrics table and full
-        # milestone sections stayed current the whole time, only this one
-        # highlight box didn't. The most recent pair (closest to the
-        # bottom of the file) is the one that actually answers "what's
-        # the current status" -- take the last match, not the first.
+        # file, so a plain `re.search` would always find the *oldest*
+        # one, frozen there forever regardless of how far the project
+        # moves. The most recent pair (closest to the bottom of the
+        # file) is the one that actually answers "what's the current
+        # status" -- take the last match, not the first.
         matches = list(re.finditer(rf"\*\*{label}:\*\*\s*(.+?)(?=\n\n|\Z)", text, re.S))
         return matches[-1].group(1).strip() if matches else ""
 
@@ -227,15 +232,14 @@ def parse_milestones(lines: list[str], percentages: dict[str, int]) -> list[Mile
             i += 1
             continue
 
-        # Real bug found 2026-09-18: a `- Step N:`/`- Stage N:` line that
-        # doesn't match ITEM_RE (missing "— <icon>" marker, or an
-        # unbalanced trailing note paren) used to fall straight through
-        # to the plain `i += 1` below with no signal at all -- silently
-        # dropping that step's entire real content from the artifact.
-        # Caught only because a human noticed two whole steps render
-        # with no text. Fail loudly instead: a markdown-formatting slip
-        # here is exactly the "hand-transcribing" class of bug this
-        # script's own module doc comment says it exists to prevent.
+        # A `- Step N:`/`- Stage N:` line that doesn't match ITEM_RE
+        # (missing "— <icon>" marker, or an unbalanced trailing note
+        # paren) would otherwise fall straight through with no signal
+        # at all -- silently dropping that step's entire real content
+        # from the rendered artifact. Fail loudly instead: a markdown-
+        # formatting slip here is exactly the "hand-transcribing" class
+        # of bug this script exists to prevent. See the `build-tracker`
+        # skill's own "Exact format" section for the required grammar.
         if current_phase is not None and re.match(r"^- (Stage|Step)\b", line.strip()):
             raise SystemExit(
                 f"generate_tracker_artifact.py: line {i + 1} looks like a Step/Stage "
@@ -339,7 +343,7 @@ def render_gap(gap: str) -> str:
     return f"<li>{inline_md(gap)}</li>"
 
 
-PAGE_TEMPLATE = """<title>Build Tracker</title>
+PAGE_TEMPLATE = """<title>{project} Build Tracker</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&display=swap');
 
@@ -455,8 +459,8 @@ PAGE_TEMPLATE = """<title>Build Tracker</title>
 <div class="page">
   <header class="top">
     <div>
-      <h1>Build Tracker</h1>
-      <p>tre v2 — synced with <span class="mono">BUILD_TRACKER.md</span> @ <span class="mono">{commit}</span> — generated, not hand-edited</p>
+      <h1>{project} Build Tracker</h1>
+      <p>synced with <span class="mono">BUILD_TRACKER.md</span> @ <span class="mono">{commit}</span> — generated, not hand-edited</p>
     </div>
     <div class="controls">
       <button class="btn" id="expandAll">Expand all</button>
@@ -503,7 +507,7 @@ PAGE_TEMPLATE = """<title>Build Tracker</title>
 """
 
 
-def render_html(tracker: Tracker) -> str:
+def render_html(tracker: Tracker, project: str) -> str:
     gaps_html = "\n".join(f"        {render_gap(g)}" for g in tracker.known_gaps)
 
     overview_rows = "\n".join(
@@ -524,6 +528,7 @@ def render_html(tracker: Tracker) -> str:
     )
 
     return PAGE_TEMPLATE.format(
+        project=html.escape(project, quote=False),
         commit=tracker.commit,
         just_closed=inline_md(tracker.just_closed),
         up_next=inline_md(tracker.up_next),
@@ -566,16 +571,35 @@ def git_short_hash(md_path: Path) -> str:
         return "unknown"
 
 
+def default_project_name(md_path: Path) -> str:
+    """Best-effort project name when --project isn't given: the repo
+    root's own directory name, title-cased word-by-word only if it
+    looks like a plain slug (avoids mangling something like "tre-v2"
+    into "Tre V2" -- kept as-is if it already has any uppercase)."""
+    root = md_path.resolve().parent
+    name = root.name
+    if name and name == name.lower():
+        name = name.replace("-", " ").replace("_", " ").title()
+    return name or "Project"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--md", type=Path, default=DEFAULT_MD, help="Path to BUILD_TRACKER.md")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help="Output HTML path")
+    parser.add_argument(
+        "--project",
+        type=str,
+        default=None,
+        help="Project name shown in the artifact header (default: derived from the repo directory name)",
+    )
     args = parser.parse_args()
 
     if not args.md.exists():
         print(f"error: {args.md} not found", file=sys.stderr)
         return 1
 
+    project = args.project or default_project_name(args.md)
     md_text = args.md.read_text(encoding="utf-8")
     commit = git_short_hash(args.md)
     tracker = parse_tracker(md_text, commit)
@@ -585,7 +609,7 @@ def main() -> int:
               "check the heading/status-line regexes in this script", file=sys.stderr)
         return 1
 
-    html_out = render_html(tracker)
+    html_out = render_html(tracker, project)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(html_out, encoding="utf-8")
 
