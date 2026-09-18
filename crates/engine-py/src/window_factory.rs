@@ -19,11 +19,30 @@ use engine_core::{
 };
 use peniko::Color;
 use pyo3::prelude::*;
-use taffy::prelude::{AlignItems, JustifyContent, Size, Style, length};
+use taffy::prelude::{AlignItems, JustifyContent, Rect as TaffyRect, Size, Style, length, zero};
 
 use crate::error::EngineError;
 use crate::node::Node;
 use crate::window::{PyWindow, positioned_style};
+
+/// M30 Phase 1 Step 3 (§5, §7): `add_icon`'s own real curated-icon-
+/// name-to-`BezPath` lookup (`engine_md3::icons::path_for`), factored
+/// out once it gained a second real caller (`add_icon_button`) and a
+/// third (`add_fab`/`add_extended_fab`, this step) -- the same real
+/// "duplicated at 2+ call sites, worth a shared helper" threshold
+/// `positioned_style`/`wrap_node` already established in this file and
+/// `window.rs` respectively, not a new convention invented here.
+fn resolve_icon_path(name: &str) -> PyResult<peniko::kurbo::BezPath> {
+    let d = engine_md3::icons::path_for(name).ok_or_else(|| {
+        let known: Vec<&str> = engine_md3::icons::names().collect();
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "unknown icon {name:?} -- expected one of {known:?}"
+        ))
+    })?;
+    Ok(peniko::kurbo::BezPath::from_svg(d).unwrap_or_else(|e| {
+        panic!("engine_md3::icons's own curated path data for {name:?} must parse: {e}")
+    }))
+}
 
 /// M22 Phase 2 (§16.1): `Window.add_image`'s own real `fit:` string
 /// vocabulary -- `parse_dock_side`'s own established pattern
@@ -49,20 +68,28 @@ const TRANSPARENT: Color = Color::from_rgba8(0, 0, 0, 0);
 
 /// M30 Phase 1 (§5, §7): real Material 3 baseline-scheme hex values
 /// (the same published baseline seed-color tokens Compose Material3's
-/// own default theme ships), used only as `Button`'s real un-themed
-/// fallback -- the identical "real historical default, not black"
-/// contract `CheckboxState`'s white mark / `SliderState`'s gray track
-/// already establish for a `Window` that never calls `set_theme`.
-/// Resolved role by role, not just "the whole light `ColorScheme`",
-/// since a themed `Window` resolves through `ThemeState::role` instead
-/// the moment `is_set()` is true.
-struct ButtonBaseline;
-impl ButtonBaseline {
+/// own default theme ships), used as every `Button`/`FAB` variant's
+/// real un-themed fallback -- the identical "real historical default,
+/// not black" contract `CheckboxState`'s white mark / `SliderState`'s
+/// gray track already establish for a `Window` that never calls
+/// `set_theme`. Resolved role by role, not just "the whole light
+/// `ColorScheme`", since a themed `Window` resolves through
+/// `ThemeState::role` instead the moment `is_set()` is true. Named
+/// `Md3Baseline`, not `ButtonBaseline` -- widened at Step 3 (`FAB`)
+/// beyond `Button`'s own original subset, so the name no longer
+/// pointed at just one consumer.
+struct Md3Baseline;
+impl Md3Baseline {
     const PRIMARY: Color = Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF);
     const ON_PRIMARY: Color = Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF);
+    const PRIMARY_CONTAINER: Color = Color::from_rgba8(0xEA, 0xDD, 0xFF, 0xFF);
+    const ON_PRIMARY_CONTAINER: Color = Color::from_rgba8(0x21, 0x00, 0x5D, 0xFF);
     const SECONDARY_CONTAINER: Color = Color::from_rgba8(0xE8, 0xDE, 0xF8, 0xFF);
     const ON_SECONDARY_CONTAINER: Color = Color::from_rgba8(0x1D, 0x19, 0x2B, 0xFF);
+    const TERTIARY_CONTAINER: Color = Color::from_rgba8(0xFF, 0xD8, 0xE4, 0xFF);
+    const ON_TERTIARY_CONTAINER: Color = Color::from_rgba8(0x31, 0x11, 0x1D, 0xFF);
     const SURFACE_CONTAINER_LOW: Color = Color::from_rgba8(0xF7, 0xF2, 0xFA, 0xFF);
+    const SURFACE_CONTAINER_HIGH: Color = Color::from_rgba8(0xEC, 0xE6, 0xF0, 0xFF);
     const OUTLINE: Color = Color::from_rgba8(0x79, 0x74, 0x7E, 0xFF);
 }
 
@@ -85,7 +112,7 @@ struct ButtonColors {
 /// FilledTonal/Outlined/Text -- this catalog's own §5 scope), reading
 /// through `theme` exactly the way `add_checkbox`/`add_slider` already
 /// gate on `theme.is_set()` before ever reading a role, so an un-themed
-/// `Window` keeps painting `ButtonBaseline`'s own real historical
+/// `Window` keeps painting `Md3Baseline`'s own real historical
 /// default rather than silently going black.
 fn resolve_button_colors(
     theme: &crate::window::ThemeState,
@@ -100,27 +127,24 @@ fn resolve_button_colors(
     };
     match variant {
         "elevated" => Ok(ButtonColors {
-            container: role(
-                "surface_container_low",
-                ButtonBaseline::SURFACE_CONTAINER_LOW,
-            ),
-            label: role("primary", ButtonBaseline::PRIMARY),
+            container: role("surface_container_low", Md3Baseline::SURFACE_CONTAINER_LOW),
+            label: role("primary", Md3Baseline::PRIMARY),
             border_color: TRANSPARENT,
             border_width: 0.0,
             elevation: 1.0,
         }),
         "filled" => Ok(ButtonColors {
-            container: role("primary", ButtonBaseline::PRIMARY),
-            label: role("on_primary", ButtonBaseline::ON_PRIMARY),
+            container: role("primary", Md3Baseline::PRIMARY),
+            label: role("on_primary", Md3Baseline::ON_PRIMARY),
             border_color: TRANSPARENT,
             border_width: 0.0,
             elevation: 0.0,
         }),
         "filled_tonal" => Ok(ButtonColors {
-            container: role("secondary_container", ButtonBaseline::SECONDARY_CONTAINER),
+            container: role("secondary_container", Md3Baseline::SECONDARY_CONTAINER),
             label: role(
                 "on_secondary_container",
-                ButtonBaseline::ON_SECONDARY_CONTAINER,
+                Md3Baseline::ON_SECONDARY_CONTAINER,
             ),
             border_color: TRANSPARENT,
             border_width: 0.0,
@@ -128,14 +152,14 @@ fn resolve_button_colors(
         }),
         "outlined" => Ok(ButtonColors {
             container: TRANSPARENT,
-            label: role("primary", ButtonBaseline::PRIMARY),
-            border_color: role("outline", ButtonBaseline::OUTLINE),
+            label: role("primary", Md3Baseline::PRIMARY),
+            border_color: role("outline", Md3Baseline::OUTLINE),
             border_width: 1.0,
             elevation: 0.0,
         }),
         "text" => Ok(ButtonColors {
             container: TRANSPARENT,
-            label: role("primary", ButtonBaseline::PRIMARY),
+            label: role("primary", Md3Baseline::PRIMARY),
             border_color: TRANSPARENT,
             border_width: 0.0,
             elevation: 0.0,
@@ -146,6 +170,93 @@ fn resolve_button_colors(
         ))),
     }
 }
+
+/// M30 Phase 1 Step 3 (§5, §7): `FAB`/`Extended FAB` share one real
+/// color-variant system, distinct from `Button`'s own -- Surface (the
+/// real MD3 default)/Primary/Secondary/Tertiary, not Elevated/Filled/
+/// Filled Tonal/Outlined/Text. Verified against Material Web's own
+/// real component token source (`tokens/versions/v0_192/_md-comp-fab-
+/// surface.scss` and `_md-comp-fab-primary.scss`, the same reference
+/// implementation this crate's `_elevation.scss` verification already
+/// trusted) rather than assumed from memory: Surface resolves
+/// `container` from `surface-container-high`/`icon` from `primary`;
+/// Primary resolves `container` from `primary-container`/`icon` from
+/// `on-primary-container`; Secondary/Tertiary follow the identical
+/// `<name>-container`/`on-<name>-container` pattern MD3 uses
+/// everywhere else in the spec (`Button`'s own Filled Tonal variant
+/// included). `FAB` has no border/outline variant in real MD3 at all
+/// -- `resolve_fab_colors` returns none, unlike `ButtonColors`.
+struct FabColors {
+    container: Color,
+    icon: Color,
+}
+
+fn resolve_fab_colors(theme: &crate::window::ThemeState, variant: &str) -> PyResult<FabColors> {
+    let role = |name: &str, fallback: Color| -> Color {
+        if theme.is_set() {
+            theme.role(name).unwrap_or(fallback)
+        } else {
+            fallback
+        }
+    };
+    match variant {
+        "surface" => Ok(FabColors {
+            container: role(
+                "surface_container_high",
+                Md3Baseline::SURFACE_CONTAINER_HIGH,
+            ),
+            icon: role("primary", Md3Baseline::PRIMARY),
+        }),
+        "primary" => Ok(FabColors {
+            container: role("primary_container", Md3Baseline::PRIMARY_CONTAINER),
+            icon: role("on_primary_container", Md3Baseline::ON_PRIMARY_CONTAINER),
+        }),
+        "secondary" => Ok(FabColors {
+            container: role("secondary_container", Md3Baseline::SECONDARY_CONTAINER),
+            icon: role(
+                "on_secondary_container",
+                Md3Baseline::ON_SECONDARY_CONTAINER,
+            ),
+        }),
+        "tertiary" => Ok(FabColors {
+            container: role("tertiary_container", Md3Baseline::TERTIARY_CONTAINER),
+            icon: role("on_tertiary_container", Md3Baseline::ON_TERTIARY_CONTAINER),
+        }),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "unknown FAB variant {other:?} -- expected one of \"surface\", \"primary\", \
+             \"secondary\", \"tertiary\""
+        ))),
+    }
+}
+
+/// M30 Phase 1 Step 3 (§5, §7): `FAB`'s three real MD3 sizes -- each
+/// pairs its own real container size with its own real, independently
+/// specified shape-corner token (Small: 40dp container/`corner-
+/// medium` 12dp; Default: 56dp/`corner-large` 16dp; Large: 96dp/
+/// `corner-extra-large` 28dp) -- verified against Material Web's own
+/// token source, not a single proportional formula guessed from one
+/// data point (the three real ratios -- 12/40, 16/56, 28/96 -- are
+/// close but not identical, so a formula would have been a fabricated
+/// approximation, not real fidelity).
+fn fab_shape(size: &str) -> PyResult<(f32, f32)> {
+    match size {
+        "small" => Ok((40.0, 12.0)),
+        "default" => Ok((56.0, 16.0)),
+        "large" => Ok((96.0, 28.0)),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "unknown FAB size {other:?} -- expected one of \"small\", \"default\", \"large\""
+        ))),
+    }
+}
+
+/// MD3's own real FAB anatomy constants, verified against Material
+/// Web's own token source: a real MD3 FAB is elevated at rest (level
+/// 3 -- `PaintProperties.elevation`'s own real level-index scale, not
+/// literal dp, matching `Button`'s own `Elevated` variant's real
+/// rest-state level 1), and its icon is a fixed real 24dp token
+/// regardless of which of the three real sizes is used.
+const FAB_ICON_SIZE: f32 = 24.0;
+const FAB_REST_ELEVATION_LEVEL: f64 = 3.0;
 
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
@@ -167,6 +278,18 @@ const BUTTON_LABEL_LINE_HEIGHT: f32 = 20.0;
 /// itself stays 24dp regardless of the container's own touch-target
 /// `size` (`add_icon_button`'s own doc comment).
 const ICON_BUTTON_ICON_SIZE: f32 = 24.0;
+/// MD3's own real `Extended FAB` anatomy constants, verified against
+/// Material Web's own token source (`fab/internal/_fab.scss`'s real
+/// CSS: `padding-inline: 16px 20px` with an icon slotted, `20px` both
+/// sides without one) -- `Extended FAB` has exactly one real size
+/// (unlike plain `FAB`'s three), 56dp tall with `corner-large` (16dp,
+/// the same real token plain `FAB`'s own `"default"` size uses).
+const EXTENDED_FAB_HEIGHT: f32 = 56.0;
+const EXTENDED_FAB_CORNER_RADIUS: f64 = 16.0;
+const EXTENDED_FAB_LEADING_PADDING_WITH_ICON: f32 = 16.0;
+const EXTENDED_FAB_LEADING_PADDING_NO_ICON: f32 = 20.0;
+const EXTENDED_FAB_TRAILING_PADDING: f32 = 20.0;
+const EXTENDED_FAB_ICON_LABEL_GAP: f32 = 8.0;
 
 #[pymethods]
 impl PyWindow {
@@ -374,16 +497,7 @@ impl PyWindow {
             }
         };
         let colors = resolve_button_colors(&self.theme.borrow(), resolved_variant)?;
-
-        let d = engine_md3::icons::path_for(icon).ok_or_else(|| {
-            let known: Vec<&str> = engine_md3::icons::names().collect();
-            pyo3::exceptions::PyValueError::new_err(format!(
-                "unknown icon {icon:?} -- expected one of {known:?}"
-            ))
-        })?;
-        let path = peniko::kurbo::BezPath::from_svg(d).unwrap_or_else(|e| {
-            panic!("engine_md3::icons's own curated path data for {icon:?} must parse: {e}")
-        });
+        let path = resolve_icon_path(icon)?;
 
         let mut tree = self.tree.borrow_mut();
 
@@ -423,6 +537,179 @@ impl PyWindow {
             PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
         );
         tree.add_child(container, icon_id);
+        tree.add_child(self.root, container);
+        Ok(self.wrap_node(container))
+    }
+
+    /// M30 Phase 1 Step 3 (§5, §7): `FAB` (Floating Action Button),
+    /// MD3's own real three sizes (`fab_shape`) and four color
+    /// variants (`resolve_fab_colors`) -- `Icon Button`'s own anatomy
+    /// (a `Rect` container, one centered `Icon` child) with the size/
+    /// shape pairing and color system that are genuinely `FAB`'s own,
+    /// not reused from `Button`/`Icon Button` (confirmed against
+    /// Material Web's own token source before writing this, not
+    /// assumed transferable). Unlike `Icon Button`, every real `FAB`
+    /// variant carries a real rest-state elevation (level 3) --
+    /// `FAB` is inherently an elevated component in MD3, `Icon
+    /// Button` is not. Deliberately does **not** auto-call `enable_
+    /// interaction()`, the same real contract `add_button`/`add_icon_
+    /// button` already establish.
+    #[pyo3(signature = (icon, size="default", variant="surface", x=None, y=None))]
+    fn add_fab(
+        &self,
+        icon: &str,
+        size: &str,
+        variant: &str,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<Node> {
+        let (container_size, corner_radius) = fab_shape(size)?;
+        let colors = resolve_fab_colors(&self.theme.borrow(), variant)?;
+        let path = resolve_icon_path(icon)?;
+
+        let mut tree = self.tree.borrow_mut();
+        let container_paint = PaintProperties::new(
+            colors.container,
+            f64::from(corner_radius),
+            FAB_REST_ELEVATION_LEVEL,
+            1.0,
+        );
+        let mut container_style = positioned_style(
+            Size {
+                width: length(container_size),
+                height: length(container_size),
+            },
+            x,
+            y,
+        );
+        container_style.display = taffy::Display::Flex;
+        container_style.justify_content = Some(JustifyContent::CENTER);
+        container_style.align_items = Some(AlignItems::CENTER);
+        let container = tree.insert(NodeKind::Rect, container_style, container_paint);
+
+        let icon_id = tree.insert(
+            NodeKind::Icon(IconState {
+                path,
+                tint: colors.icon,
+            }),
+            Style {
+                size: Size {
+                    width: length(FAB_ICON_SIZE),
+                    height: length(FAB_ICON_SIZE),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(container, icon_id);
+        tree.add_child(self.root, container);
+        Ok(self.wrap_node(container))
+    }
+
+    /// M30 Phase 1 Step 3 (§5, §7): `Extended FAB`, `FAB`'s own real
+    /// color/elevation system (`resolve_fab_colors`, level-3 rest
+    /// elevation) with a real icon-plus-label anatomy instead of an
+    /// icon alone -- one real MD3 size (56dp tall, `corner-large`
+    /// 16dp, no small/large variants -- those are plain `FAB`-only
+    /// concepts, confirmed against Material Web's own token source).
+    /// `icon` is optional, matching real MD3's own label-only Extended
+    /// FAB -- the real, verified padding actually changes between the
+    /// two cases (16dp leading with an icon, 20dp without), not just a
+    /// visual difference this implementation invented. No intrinsic
+    /// text measurement exists anywhere in this engine (`add_text`'s
+    /// own stated limitation), so `width` is a required real caller
+    /// input, the same shape every other `add_*` method already uses.
+    #[pyo3(signature = (label, width, icon=None, variant="primary", x=None, y=None))]
+    fn add_extended_fab(
+        &self,
+        label: &str,
+        width: f32,
+        icon: Option<&str>,
+        variant: &str,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<Node> {
+        let colors = resolve_fab_colors(&self.theme.borrow(), variant)?;
+        let icon_path = icon.map(resolve_icon_path).transpose()?;
+
+        let leading_padding = if icon_path.is_some() {
+            EXTENDED_FAB_LEADING_PADDING_WITH_ICON
+        } else {
+            EXTENDED_FAB_LEADING_PADDING_NO_ICON
+        };
+
+        let mut tree = self.tree.borrow_mut();
+        let container_paint = PaintProperties::new(
+            colors.container,
+            EXTENDED_FAB_CORNER_RADIUS,
+            FAB_REST_ELEVATION_LEVEL,
+            1.0,
+        );
+        let mut container_style = positioned_style(
+            Size {
+                width: length(width),
+                height: length(EXTENDED_FAB_HEIGHT),
+            },
+            x,
+            y,
+        );
+        container_style.display = taffy::Display::Flex;
+        container_style.align_items = Some(AlignItems::CENTER);
+        container_style.padding = TaffyRect {
+            left: length(leading_padding),
+            right: length(EXTENDED_FAB_TRAILING_PADDING),
+            top: zero(),
+            bottom: zero(),
+        };
+        container_style.gap = Size {
+            width: length(EXTENDED_FAB_ICON_LABEL_GAP),
+            height: length(0.0),
+        };
+        let container = tree.insert(NodeKind::Rect, container_style, container_paint);
+
+        if let Some(path) = icon_path {
+            let icon_id = tree.insert(
+                NodeKind::Icon(IconState {
+                    path,
+                    tint: colors.icon,
+                }),
+                Style {
+                    size: Size {
+                        width: length(FAB_ICON_SIZE),
+                        height: length(FAB_ICON_SIZE),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            );
+            tree.add_child(container, icon_id);
+        }
+
+        let icon_and_gap = if icon.is_some() {
+            FAB_ICON_SIZE + EXTENDED_FAB_ICON_LABEL_GAP
+        } else {
+            0.0
+        };
+        let label_width =
+            (width - leading_padding - icon_and_gap - EXTENDED_FAB_TRAILING_PADDING).max(0.0);
+        let label_id = tree.insert(
+            NodeKind::Text(TextState {
+                content: label.to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: BUTTON_LABEL_FONT_WEIGHT,
+                font_size: BUTTON_LABEL_FONT_SIZE,
+                align: TextAlign::Start,
+            }),
+            Style {
+                size: Size {
+                    width: length(label_width),
+                    height: length(BUTTON_LABEL_LINE_HEIGHT),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(colors.icon, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(container, label_id);
         tree.add_child(self.root, container);
         Ok(self.wrap_node(container))
     }
@@ -647,15 +934,7 @@ impl PyWindow {
         x: Option<f32>,
         y: Option<f32>,
     ) -> PyResult<Node> {
-        let d = engine_md3::icons::path_for(name).ok_or_else(|| {
-            let known: Vec<&str> = engine_md3::icons::names().collect();
-            pyo3::exceptions::PyValueError::new_err(format!(
-                "unknown icon {name:?} -- expected one of {known:?}"
-            ))
-        })?;
-        let path = peniko::kurbo::BezPath::from_svg(d).unwrap_or_else(|e| {
-            panic!("engine_md3::icons's own curated path data for {name:?} must parse: {e}")
-        });
+        let path = resolve_icon_path(name)?;
         let (r, g, b, a) = color;
 
         let mut tree = self.tree.borrow_mut();

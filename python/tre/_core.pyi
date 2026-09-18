@@ -182,6 +182,38 @@ class Window:
         the same real contract `add_button` establishes.
         """
         ...
+    def add_fab(
+        self,
+        icon: str,
+        size: str = "default",
+        variant: str = "surface",
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """MD3's three real FAB sizes (`"small"`, `"default"`,
+        `"large"`) and four real color variants (`"surface"`,
+        `"primary"`, `"secondary"`, `"tertiary"`). Raises `ValueError`
+        for an unknown `size`, `variant`, or `icon`. Returns the
+        button's own container node -- a real FAB carries a genuine
+        rest-state elevation shadow, unlike `add_icon_button`.
+        """
+        ...
+    def add_extended_fab(
+        self,
+        label: str,
+        width: float,
+        icon: str | None = None,
+        variant: str = "primary",
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """`add_fab`'s own real color/elevation system with a real
+        icon-plus-label anatomy -- one MD3 size (56dp tall). `icon` is
+        optional, matching real MD3's own label-only Extended FAB
+        variant. Raises `ValueError` for an unknown `variant` or
+        `icon`.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,

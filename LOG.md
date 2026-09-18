@@ -1,49 +1,67 @@
-# Log: M30 Phase 1 Step 2 — Icon Button
+# Log: M30 Phase 1 Step 3 — FAB and Extended FAB
 
-`Button`'s own anatomy (Step 1) with a centered `Icon` child instead
-of `Text` — the exact framing `BUILD_TRACKER.md`'s own M30 scope text
-used before this step started.
+## Real MD3 data, verified rather than assumed
 
-## Anatomy and color reuse
+`FAB`'s own color-variant system was checked directly against
+Material Web's real component token source before any code was
+written — `tokens/versions/v0_192/_md-comp-fab-surface.scss` (the real
+default: `container-color` → `surface-container-high`, `icon-color` →
+`primary`, `container-shape` → `corner-large`, 56×56px, 24px icon) and
+`_md-comp-fab-primary.scss` (`container-color` → `primary-container`,
+`icon-color` → `on-primary-container`). Secondary/Tertiary follow the
+identical `<name>-container`/`on-<name>-container` pattern MD3 uses
+everywhere else in the spec (`Button`'s own Filled Tonal variant
+included), not independently re-verified per variant.
 
-A `Rect` container (corner radius `size / 2.0`) with one centered
-`Icon` child, sized to a fixed real MD3 token (24dp) regardless of the
-container's own `size` (MD3's own default touch target is 40dp).
-Centered on both axes via plain `justify_content`/`align_items` flex —
-no `TextAlign`-equivalent needed, since an `Icon`'s own box is already
-exactly its glyph's bounds, unlike `Text` which needed real alignment
-machinery to center within a box wider than its own content.
+`FAB`'s three real sizes each carry their own independently-specified
+shape token — Small (40dp/`corner-medium` 12dp), Default (56dp/
+`corner-large` 16dp), Large (96dp/`corner-extra-large` 28dp). The
+three real ratios (12/40, 16/56, 28/96) are close but not identical —
+a single proportional formula would have been a fabricated
+approximation, not real fidelity, so `fab_shape` is a real lookup over
+the three canonical sizes, matching `resolve_button_colors`'s own
+"validate real vocabulary, raise `ValueError` on unknown" pattern
+rather than accepting an arbitrary float.
 
-Reused `resolve_button_colors` verbatim rather than a second,
-near-duplicate color table — but kept real MD3 naming fidelity at the
-boundary: Icon Button's four real variants are Filled/Filled
-Tonal/Outlined/**Standard**, not `Button`'s five (there's no "Elevated
-Icon Button" in MD3's own vocabulary), and MD3 calls the transparent
-variant "Standard" here, not "Text". `"standard"` is translated to
-`resolve_button_colors`'s own `"text"` at the `add_icon_button` call
-site, not aliased inside `resolve_button_colors` itself — so
-`add_button`'s own error message still only ever lists names that are
-real for `Button`.
+`Extended FAB`'s real padding was also verified directly:
+`fab/internal/_fab.scss`'s own real CSS comment states `padding-inline:
+20px` with no icon slotted vs. `padding-inline: 16px 20px` with one —
+both now real constants (`EXTENDED_FAB_LEADING_PADDING_WITH_ICON`/
+`_NO_ICON`), not a single value applied to both cases.
 
-## The hit-test fix, applied proactively this time
+## Anatomy
 
-Step 1's own real, confirmed bug (a centered child silently eating
-clicks meant for its container) is not `Text`-specific — it's a
-property of `Tree::hit_test_at`'s no-bubbling recursion applied to any
-composite interactive node with a same-shaped child. `Icon Button` is
-the next real instance of that same shape, so `NodeKind::Icon(_) =>
-false` was added to `hit_test_at` *before* writing
-`test_icon_button.py`'s own click-dispatch test, not after it failed.
-Confirmed first via grep that `demo/showcase.py`'s only `add_icon`
-usage (its icon gallery) is purely decorative, never independently
-clicked — the click-dispatch test passed on the first run.
+`FAB`: `Rect` container + one centered `Icon` child, `Icon Button`'s
+own anatomy shape with `FAB`'s own real size/shape/color system.
+`Extended FAB`: `Rect` container with real `padding`/`gap` (taffy's
+own flex primitives, not manual per-child positioning) holding an
+optional `Icon` child plus a `Text` label — real MD3 label-only
+Extended FAB supported by making `icon` `Option<&str>`.
+
+## Real, small refactor along the way
+
+`add_icon`'s own curated-icon-name-to-`BezPath` lookup had already
+been duplicated once (`add_icon_button`, Step 2); `add_fab`/
+`add_extended_fab` needing it a third and fourth time crossed this
+project's own established "2+ call sites, worth a shared helper"
+threshold — factored into `resolve_icon_path`, all four real call
+sites now share it, including `add_icon` itself (updated in place,
+not left duplicated).
+
+## Proactive hit-test regression coverage
+
+`Extended FAB` is the first real composite with both an `Icon` and a
+`Text` child on the same container at once — `test_fab.py`'s own
+click-dispatch test for it is the real combined proof that `Tree::
+hit_test_at`'s two earlier fixes (`NodeKind::Text` from Step 1,
+`NodeKind::Icon` from Step 2) both correctly defer to their shared
+container, not just independently.
 
 ## Verification
 
 `cargo check --workspace --all-targets`, `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo fmt --check` — all clean. `cargo
 test --workspace --release`: 39 binaries, all green. `maturin develop
---release` rebuilt. `pytest tests/`: 207 passed, 1 skipped (10 new in
-`test_icon_button.py`, zero regressions). All 32 examples and the
-showcase demo re-run clean. `mypy --strict` clean against
-`examples/icon_button.py`.
+--release` rebuilt. `pytest tests/`: 227 passed, 1 skipped (20 new in
+`test_fab.py`, zero regressions). All 33 examples and the showcase
+demo re-run clean. `mypy --strict` clean against `examples/fab.py`.
