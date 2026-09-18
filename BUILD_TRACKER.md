@@ -37,6 +37,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M27 — Final Showcase Demo | `██████████` 100% | ✅ Complete — all 5 phases done (2026-09-18) |
 | M28 — Code Review Follow-Through | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-18) |
 | M29 — Render Loop Dirty-Tracking (§5, §6) | `██████████` 100% | ✅ Complete — both phases done (2026-09-18) |
+| M30 — MD3 + Desktop Component Catalog (§5, §7, §8) | `⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜` 0% | ⬜ Scoped, not started (2026-09-18) |
 
 **Just closed:** M6 Phase 4 — `Tree::absolute_position` transform-awareness (§8), **closing M6 entirely (all 4 phases)**. The post-M5 code review finding: `absolute_position` never composed `PaintProperties.transform`, so `open_overlay`'s anchor placement, `splitter_geometry`'s drag math, and every `engine-py` synthetic-point entry point silently computed the wrong canvas position for a node inside a panned/zoomed `Container`. Every real caller enumerated via grep first (two in `engine-core`, six in `engine-py`) — a small, fully enumerated set where *every* caller wants the transform-aware answer, unlike `add_child`'s ~80 or `hit_test`'s hot per-frame path, so this rewrites `absolute_position` in place rather than adding a parallel checked method the way M6 Phase 1/M5 Phase 2 did. Composes the identical `parent * translate(layout.location) * own_transform` product `paint_node`/`hit_test_at` already compose, walking the chain root-to-node (the order an `Affine` composes correctly in) rather than the old bottom-up accumulation. New `engine-core` test proves a node under a real ancestor transform reports its real position; the full pre-existing suite (every overlay/splitter-drag/docking pixel test) passed unmodified, confirming the no-op-for-identity-transform claim. New pytest test proves `Window.click(node)` still finds a node after `Node.animate("transform", ...)` has moved it — would have failed before this fix. Full `cargo test --workspace` (`engine-core` 51, up from 50)/clippy `-D warnings`/fmt clean; full pytest suite (78 passed, up from 77, 1 skipped) and all ten examples confirmed clean. See `PLAN.md`/`LOG.md`.
 
@@ -705,4 +706,93 @@ Split into two phases by risk, not by feature, since they're genuinely separable
 
 ---
 
-**Just closed:** M29 — Render Loop Dirty-Tracking (both phases): a centralized `Tree`-level dirty flag skipping real per-frame layout/GPU work on idle frames (Phase 1), and a genuine switch to `ControlFlow::Wait` when no window is animating, with explicit redraw-request wiring at every real input path plus the AccessKit action path (Phase 2) -- closing the one item M28 deliberately left open, with a real `max_frames`-hang bug found and fixed along the way and an empirical idle-CPU measurement confirming the real-world effect, not just the code review. **Up next:** nothing currently scoped -- awaiting the user's own next direction.
+**Just closed:** M29 — Render Loop Dirty-Tracking (both phases): a centralized `Tree`-level dirty flag skipping real per-frame layout/GPU work on idle frames (Phase 1), and a genuine switch to `ControlFlow::Wait` when no window is animating, with explicit redraw-request wiring at every real input path plus the AccessKit action path (Phase 2) -- closing the one item M28 deliberately left open, with a real `max_frames`-hang bug found and fixed along the way and an empirical idle-CPU measurement confirming the real-world effect, not just the code review.
+
+Real, separate finding made while scoping a proposed M30 around three specific gaps (overlay dismissal, `VirtualList` scroll wiring, a cross-window `Rc::ptr_eq` guard): direct verification found all three already real and working (overlay dismissal and the drop-zone highlight since M10, scroll dispatch already wired, both cross-window guards already present since M6/M10) -- this file's own Known Gaps section had drifted, corrected above rather than scoping a milestone for work that didn't need doing.
+
+---
+
+## Milestone 30 — MD3 + Desktop Component Catalog (§5, §7, §8)
+
+**Status: ⬜ Scoped, not started (2026-09-18).** User-directed: "Scope the component catalog and I want the full MD3 list and desktop only components identified in tre v1[/pyCopper]. Additionally, pair the Python type stubs for pyo3 API with each component... there are components that are mobile only. Do not include these components as this is a desktop only framework." PyPI publishing is explicitly *not* part of this milestone -- per the user's own direction it's deferred to be the very last thing done, once the Tesserae UI Framework itself is considered complete.
+
+**Real research this scope is built on, not re-derived from scratch:** the mobile-vs-desktop component question was already answered with real, verified work in the sibling `pyCopper` project (`/home/phil/pyDev/projects/pyCopper`) -- a GPU-accelerated declarative desktop GUI framework for Python by the same author, with the identical explicit desktop-only design goal TRE v2 already commits to (§2's own Design Principles), which independently built a real MD3 widget catalog (58 `WidgetKind`s) and recorded its own findings in this session's memory graph. Reused directly rather than re-investigated: **bottom-anchored navigation (Navigation Bar, Bottom App Bar) and Bottom Sheet are explicitly mobile patterns in M3's own catalogue** -- Navigation Rail/Navigation Drawer and Side Sheet are the real desktop counterparts, kept in scope in their place. Desktop-adaptation rules that apply to every component below, not a phase of their own: pointer-precise hit targets, not MD3's 48dp minimum touch target; click-origin ripple, not touch-origin; no compact `<600dp` breakpoint; hover, focus rings and keyboard traversal, right-click context menus, cursor shape, visible scrollbars, and mouse text selection are first-class desktop affordances MD3 itself treats as secondary.
+
+**Already real, not rebuilt by this milestone:** `Checkbox`, `Slider`, `TextField`, `Image`, `Icon`, `Canvas`, `VirtualList`, `Splitter` (all real `NodeKind`s already), and real 5-zone docking with live drag-and-drop (M4 Phase 9) -- already substantially more capable than pyCopper's own static-only `Dock`, nothing to add there. No dedicated `Button` exists yet -- today's examples hand-compose `Rect`+`Text`+ripple for anything button-shaped, a real gap Phase 1 closes.
+
+**Real, important caveat found while researching pyCopper's own history, not assumed to transfer unchanged:** several of pyCopper's own "engine prerequisite" blockers (no diagonal-line primitive beyond a circular arc, no overlay/portal layer) were specific to *its own* custom SDF-shader renderer's real limitations. TRE v2's renderer (`vello_hybrid`/`kurbo`, real arbitrary bezier path and stroke support already) does not obviously share those constraints -- each phase below still needs its own real "does this need new engine-core/engine-render machinery" investigation when it's actually implemented, the same discipline every prior milestone in this file has already applied, not an assumption inherited from a different renderer's own history.
+
+**Type stub convention, applies to every phase below:** each phase that adds real `Window.add_*`/`Node` methods or new state also updates `python/tre/__init__.pyi` with matching signatures in the *same* phase -- paired per phase per the user's own explicit instruction, not a separate end-of-milestone pass. Phase 0 below establishes the stub file and `py.typed` marker (confirmed via direct check: neither exists anywhere in `python/` today) against the *current* real API surface first, so every later phase extends an established file rather than inventing its own stub-authoring approach.
+
+### Phase 0 — Type Stub Infrastructure ⬜
+- Step 1: `python/tre/py.typed` (PEP 561 marker) plus a first `python/tre/__init__.pyi` covering every real, currently-shipped `Window`/`Node`/`App`/`View` method and class — ⬜ (establishes the baseline convention -- real signatures, real docstrings summarized, `Optional`/overload shapes matching each method's actual `#[pyo3(signature = ...)]` -- every later phase extends this file instead of each inventing its own approach. Verify with a real IDE-facing check, not just `python -c "import tre"`: `mypy --strict` (or equivalent) against a small script exercising the stubbed surface.)
+
+### Phase 1 — Actions ⬜
+- Step 1: `Button`, MD3's five real variants (Elevated/Filled/Filled Tonal/Outlined/Text) — ⬜ (the one component this catalog's own research confirmed is currently hand-composed from `Rect`+`Text`+ripple in every example; a real, first-class component replaces that duplication the same way `wrap_node`/`positioned_style`/`node_center` already replaced other duplication this project found and fixed directly.)
+- Step 2: Icon Button — ⬜ (`Icon` already real; this is `Button`'s own anatomy with an `Icon` child instead of `Text`.)
+- Step 3: FAB and Extended FAB — ⬜
+- Step 4: Segmented Button — ⬜ (real precedent already exists in this codebase's own docking tab anatomy to check against before inventing new anatomy from scratch.)
+- Step 5: `.pyi` stubs for every method/class Steps 1-4 add — ⬜
+
+### Phase 2 — Selection ⬜
+- Step 1: Radio Button — ⬜ (mirrors `Checkbox`'s own real shape closely; the real new part is group-exclusivity, which is application state per Design Principle 6, not engine-owned.)
+- Step 2: Switch — ⬜
+- Step 3: Chip, all four real MD3 variants (Assist/Filter/Input/Suggestion) — ⬜
+- Step 4: Menu (a real dropdown/select list, distinct from the existing right-click context-menu overlay mechanism, which stays exactly as it is) — ⬜
+- Step 5: `.pyi` stubs for every method/class Steps 1-4 add — ⬜
+
+### Phase 3 — Communication & Containment, Part 1 ⬜
+- Step 1: Badge — ⬜
+- Step 2: Progress Indicator, both Linear and Circular — ⬜
+- Step 3: Card — ⬜
+- Step 4: Divider — ⬜
+- Step 5: Tooltip — ⬜
+- Step 6: `.pyi` stubs for every method/class Steps 1-5 add — ⬜
+
+### Phase 4 — Overlay-Dependent: Dialog, Snackbar, Side Sheet ⬜
+- Step 1: Dialog, a real modal — ⬜ (distinct from today's context-menu-style overlay: a real modal blocks interaction with everything behind it, which `open_overlay`'s own current dismiss-on-outside-click model does not do today -- real, scoped engine-core investigation needed when this step starts, not assumed solved by the existing overlay mechanism as-is.)
+- Step 2: Snackbar — ⬜
+- Step 3: Side Sheet (the real desktop counterpart to Bottom Sheet, which stays excluded as a mobile pattern per this milestone's own scope) — ⬜
+- Step 4: `.pyi` stubs for every method/class Steps 1-3 add — ⬜
+
+### Phase 5 — Navigation ⬜
+- Step 1: Navigation Rail — ⬜ (the real desktop counterpart to Navigation Bar, which stays excluded as a mobile pattern per this milestone's own scope.)
+- Step 2: Navigation Drawer — ⬜ (the real desktop counterpart to Bottom App Bar's own navigation role.)
+- Step 3: Top App Bar — ⬜
+- Step 4: Tabs — ⬜
+- Step 5: Search, bar and view — ⬜
+- Step 6: `.pyi` stubs for every method/class Steps 1-5 add — ⬜
+
+### Phase 6 — Lists & Disclosure ⬜
+- Step 1: List / ListItem — ⬜ (real relationship to `VirtualList`, already real, needs stating explicitly when this step starts: a plain, non-virtualized `List` for small real collections vs. `VirtualList` for large ones, not two unrelated mechanisms.)
+- Step 2: Accordion — ⬜ (no official M3 component page -- confirmed by pyCopper's own real research against the full M3 reference library, not re-checked here since the finding transfers directly; grounded instead in the Lists guideline's own "expand and collapse in a folder-like manner" text, the same real grounding pyCopper used.)
+- Step 3: Tree View — ⬜ (the identical grounding as Accordion, applied recursively.)
+- Step 4: `.pyi` stubs for every method/class Steps 1-3 add — ⬜
+
+### Phase 7 — Date & Time ⬜
+- Step 1: Date Picker — ⬜
+- Step 2: Time Picker — ⬜
+- Step 3: `.pyi` stubs for both — ⬜
+
+### Phase 8 — Desktop Specialty (no official M3 page, real pyCopper precedent) ⬜
+- Step 1: Popover — ⬜ (pyCopper's own real grounding: M3's persistent rich tooltip anatomy, quoted directly from its own component library -- reused rather than re-researched.)
+- Step 2: Link — ⬜
+- Step 3: SpinBox, a numeric increment control — ⬜ (deliberately not named "Stepper" -- pyCopper's own real naming-risk finding: M3's own vocabulary already uses "Stepper" for a multi-step flow indicator, a completely different control; naming this correctly from the start avoids the same collision pyCopper caught and had to rename around mid-build.)
+- Step 4: Pagination — ⬜
+- Step 5: Status Bar — ⬜
+- Step 6: Main Menu submenus — ⬜ (extends the existing context-menu overlay mechanism this codebase already has real since M4 Phase 7, not a new overlay kind.)
+- Step 7: `.pyi` stubs for every method/class Steps 1-6 add — ⬜
+
+### Phase 9 — Content Specialty ⬜
+- Step 1: Video — ⬜
+- Step 2: Node Graph — ⬜ (real groundwork already exists, M5 Phase 4's own node-graph/chart validation work -- this phase brings it to a real, first-class authored component rather than a proof of composition.)
+- Step 3: Code Editor — ⬜
+- Step 4: Terminal — ⬜
+- Step 5: Carousel — ⬜
+- Step 6: `.pyi` stubs for every method/class Steps 1-5 add — ⬜
+
+**Not scoped by this milestone:** PyPI publishing, per the user's own explicit direction -- the very last thing done, once the whole Tesserae UI Framework is complete. Real per-component engine-core/engine-render design (exact `NodeKind` payload shape, exact paint logic) for anything past Phase 0/1 -- each phase gets its own real investigation when it starts, the same discipline this file already applies throughout, not designed exhaustively up front for 30+ components at once.
+
+---
+
+**Just closed:** M29 — Render Loop Dirty-Tracking, plus 4 stale `BUILD_TRACKER.md` corrections found while scoping what turned out not to be a real M30. **Up next:** M30 — MD3 + Desktop Component Catalog, scoped above across 10 phases (Phase 0 infrastructure + 9 component waves), not yet started.
