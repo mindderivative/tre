@@ -198,6 +198,22 @@ impl Node {
                     .into());
                 }
             },
+            // M30 Phase 2 Step 1 (§8): `check_progress`'s own real
+            // arm, mirrored for `RadioButton`.
+            "select_progress" => match &mut node.kind {
+                NodeKind::RadioButton(state) => {
+                    let value = extract_f64(&to, property)?;
+                    let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                    animate_field(&mut state.select_progress, value, duration, now, handle);
+                }
+                _ => {
+                    return Err(EngineError::UnknownProperty {
+                        kind,
+                        property: property.to_string(),
+                    }
+                    .into());
+                }
+            },
             _ => {
                 return Err(EngineError::UnknownProperty {
                     kind,
@@ -235,6 +251,14 @@ impl Node {
             },
             "thumb_position" => match &node.kind {
                 NodeKind::Slider(state) => Ok(state.thumb_position.current),
+                _ => Err(EngineError::UnknownProperty {
+                    kind,
+                    property: property.to_string(),
+                }
+                .into()),
+            },
+            "select_progress" => match &node.kind {
+                NodeKind::RadioButton(state) => Ok(state.select_progress.current),
                 _ => Err(EngineError::UnknownProperty {
                     kind,
                     property: property.to_string(),
@@ -456,6 +480,31 @@ impl Node {
         }
     }
 
+    /// M30 Phase 2 Step 1 (§8, §16.7): `set_checked`'s own real shape,
+    /// mirrored exactly -- the engine never toggles `selected` itself
+    /// (Design Principle 6), only reflects it once the app writes it,
+    /// and always fires a real `Change` the same way.
+    pub(crate) fn set_selected(&self, selected: bool, py: Python<'_>) -> PyResult<()> {
+        let mut tree = self.tree.borrow_mut();
+        let node = tree.get_mut(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        let kind = kind_name(&node.kind);
+        match &mut node.kind {
+            NodeKind::RadioButton(state) => {
+                state.selected = selected;
+                drop(tree);
+                call_handler(&self.handlers, self.id, EventKind::Change, py);
+                Ok(())
+            }
+            _ => Err(EngineError::UnknownProperty {
+                kind,
+                property: "selected".to_string(),
+            }
+            .into()),
+        }
+    }
+
     /// M15 Phase 2 (§8, §16.7): the plain, non-animated, programmatic
     /// write `set_checked`'s own real shape mirrors exactly (including
     /// always firing a real `Change`, the same established convention
@@ -529,6 +578,23 @@ impl Node {
         }
     }
 
+    /// M30 Phase 2 Step 1 (§5, §16.7): `get_checked`'s own real shape,
+    /// mirrored exactly.
+    pub(crate) fn get_selected(&self) -> PyResult<bool> {
+        let tree = self.tree.borrow();
+        let node = tree.get(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        match &node.kind {
+            NodeKind::RadioButton(state) => Ok(state.selected),
+            _ => Err(EngineError::UnknownProperty {
+                kind: kind_name(&node.kind),
+                property: "selected".to_string(),
+            }
+            .into()),
+        }
+    }
+
     /// M15 Phase 1 (§5, §16.7): the real read-back getter for a
     /// `TextField`'s own current `content` -- mirrors `get_checked`'s
     /// own exact shape (rejecting a non-`TextField` node the same way).
@@ -594,6 +660,7 @@ fn kind_name(kind: &NodeKind) -> &'static str {
         NodeKind::VirtualList(_) => "VirtualList",
         NodeKind::Canvas(_) => "Canvas",
         NodeKind::Checkbox(_) => "Checkbox",
+        NodeKind::RadioButton(_) => "RadioButton",
         NodeKind::Slider(_) => "Slider",
         NodeKind::TextField(_) => "TextField",
         NodeKind::Image(_) => "Image",

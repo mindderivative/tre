@@ -1047,6 +1047,17 @@ impl Tree {
             {
                 any_active = true;
             }
+            // M30 Phase 2 Step 1 (§7.3): `check_progress`'s own real
+            // central-ticking need, mirrored for `select_progress` --
+            // the identical real reason `Checkbox` needed this above:
+            // without it, a real `Node.animate("select_progress", ...)`
+            // call would set an active animation that silently never
+            // progresses.
+            if let NodeKind::RadioButton(state) = &mut node.kind
+                && state.select_progress.tick(now, &mut completed)
+            {
+                any_active = true;
+            }
         }
         // M29 Phase 1 (§5, §6): a mid-flight animation is itself a real
         // reason to redraw next frame -- `any_active` was already the
@@ -2203,6 +2214,12 @@ impl Tree {
         // would just be two copies of the same fact that could drift.
         if let NodeKind::Checkbox(state) = &node.kind {
             access_node.set_toggled(state.checked.into());
+        }
+        // M30 Phase 2 Step 1: the identical real, automatic derivation,
+        // mirrored for `RadioButton` -- `selected` is the one real
+        // source of truth, same as `checked` above.
+        if let NodeKind::RadioButton(state) = &node.kind {
+            access_node.set_toggled(state.selected.into());
         }
         // M15 Phase 1 (§5, §16.7): the same real, automatic derivation
         // -- `content` is the one real source of truth, never mirrored

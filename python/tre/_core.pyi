@@ -92,6 +92,11 @@ class Node:
     def set_checked(self, checked: bool) -> None:
         """`Checkbox`-only -- raises `ValueError` for any other kind."""
         ...
+    def set_selected(self, selected: bool) -> None:
+        """`RadioButton`-only -- raises `ValueError` for any other
+        kind.
+        """
+        ...
     def set_text(self, content: str) -> None:
         """`TextField`/`Text`-only -- raises `ValueError` for any other
         kind.
@@ -99,6 +104,11 @@ class Node:
         ...
     def get_checked(self) -> bool:
         """`Checkbox`-only -- raises `ValueError` for any other kind."""
+        ...
+    def get_selected(self) -> bool:
+        """`RadioButton`-only -- raises `ValueError` for any other
+        kind.
+        """
         ...
     def get_text(self) -> str:
         """`TextField`/`Text`-only -- raises `ValueError` for any other
@@ -250,6 +260,22 @@ class Window:
         x: float | None = None,
         y: float | None = None,
     ) -> Node: ...
+    def add_radio_button(
+        self,
+        size: float = 20.0,
+        selected: bool = False,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """A real MD3 radio button -- a stroked ring plus a scaling
+        inner dot, colors always resolved from the active theme (or a
+        real MD3 baseline default) rather than caller-supplied.
+        Group-exclusivity is the app's own responsibility (`Node.
+        set_selected`/`Node.animate("select_progress", ...)` on each
+        radio in a group), the same "application state, not
+        engine-owned" design this catalog uses throughout.
+        """
+        ...
     def add_slider(
         self,
         background: Color,

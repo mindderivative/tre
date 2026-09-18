@@ -24,7 +24,9 @@
 mod image_cache;
 mod text;
 
-use engine_core::{ContentFit, DrawCommand, ICON_VIEWBOX_SIZE, NodeId, NodeKind, Tree};
+use engine_core::{
+    ContentFit, DrawCommand, ICON_VIEWBOX_SIZE, Interpolate, NodeId, NodeKind, Tree,
+};
 use peniko::Color;
 use peniko::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Shape, Stroke};
 use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
@@ -628,6 +630,34 @@ fn paint_node(
                 ));
                 scene.set_stroke(Stroke::new((w.min(h) * 0.12).max(1.0)));
                 scene.stroke_path(&mark);
+            }
+        }
+        // M30 Phase 2 Step 1 (§5, §7.3): `Checkbox`'s own real anatomy,
+        // mirrored -- a stroked ring (not a filled box, MD3's real
+        // radio-button shape) plus a real filled dot that scales in
+        // with `select_progress`. The ring's own color rides the same
+        // `select_progress` timeline via `Interpolate for peniko::
+        // Color` (real since §5's own animation core, `lerp_rect`
+        // under the hood) rather than snapping instantly between
+        // `unselected_tint`/`selected_tint` -- a real, smooth color
+        // transition, not two disconnected static states.
+        NodeKind::RadioButton(state) => {
+            let ring_color = state
+                .unselected_tint
+                .interpolate(&state.selected_tint, state.select_progress.current);
+            let stroke_width = (w.min(h) * 0.1).max(2.0);
+            let ring_radius = (w.min(h) / 2.0) - stroke_width / 2.0;
+            scene.set_paint(with_opacity(ring_color, node.paint.opacity.current));
+            scene.set_stroke(Stroke::new(stroke_width));
+            scene.stroke_path(&Circle::new((w / 2.0, h / 2.0), ring_radius.max(0.0)).to_path(0.1));
+
+            if state.select_progress.current > 0.0 {
+                let dot_radius = (w.min(h) / 2.0) * 0.5 * state.select_progress.current;
+                scene.set_paint(with_opacity(
+                    state.selected_tint,
+                    state.select_progress.current * node.paint.opacity.current,
+                ));
+                scene.fill_path(&Circle::new((w / 2.0, h / 2.0), dot_radius).to_path(0.1));
             }
         }
         // M14 Phase 2 (§5, §7.3): a real track (a thin bar spanning the

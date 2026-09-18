@@ -141,6 +141,16 @@ pub enum NodeKind {
     /// solid-`tint` `BezPath` fill -- see `IconState`'s own doc
     /// comment for the real crate-boundary reasoning.
     Icon(IconState),
+    /// M30 Phase 2 Step 1 (§5, §7.3): a real MD3 radio button.
+    /// `selected` is plain, app-owned state -- the identical Design
+    /// Principle 6 shape `CheckboxState.checked` already establishes
+    /// (the engine never toggles it on click itself); `select_
+    /// progress` is the engine-driven visual consequence, animated
+    /// toward `1.0`/`0.0` whenever the app sets `selected`, the same
+    /// real "the animated field is the value" precedent `check_
+    /// progress` already is. See `RadioButtonState`'s own doc comment
+    /// for why the ring itself is animated color, not just the dot.
+    RadioButton(RadioButtonState),
 }
 
 /// M15 Phase 1 (§5, §16.7): mirrors `TextState`'s own four font/content
@@ -397,6 +407,38 @@ impl CheckboxState {
             checked,
             check_progress: Animated::new(if checked { 1.0 } else { 0.0 }),
             mark_tint: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF),
+        }
+    }
+}
+
+/// M30 Phase 2 Step 1 (§5, §7.3): `CheckboxState`'s own real shape,
+/// mirrored -- `selected`/`select_progress` are the direct analogues
+/// of `checked`/`check_progress`. One real, necessary difference: a
+/// radio button's own outer *ring* changes color between its
+/// unselected and selected state (MD3's real anatomy -- an unchecked
+/// checkbox's box is a plain neutral fill either way, only the
+/// checkmark itself appears/disappears), so this carries *two* plain
+/// tints (`unselected_tint`/`selected_tint`) rather than `mark_tint`'s
+/// single color -- `engine-render`'s own paint arm interpolates
+/// between them using `select_progress.current` as the blend factor
+/// (`Interpolate for peniko::Color`, already real since §5's own
+/// animation core), so the ring's own color transition rides the
+/// identical timeline the inner dot's scale-in already does, not a
+/// second, independently-timed animation.
+pub struct RadioButtonState {
+    pub selected: bool,
+    pub select_progress: Animated<f64>,
+    pub unselected_tint: Color,
+    pub selected_tint: Color,
+}
+
+impl RadioButtonState {
+    pub fn new(selected: bool) -> Self {
+        Self {
+            selected,
+            select_progress: Animated::new(if selected { 1.0 } else { 0.0 }),
+            unselected_tint: Color::from_rgba8(0x00, 0x00, 0x00, 0xFF),
+            selected_tint: Color::from_rgba8(0x00, 0x00, 0x00, 0xFF),
         }
     }
 }

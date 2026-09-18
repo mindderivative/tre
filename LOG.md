@@ -1,78 +1,64 @@
-# Log: M30 Phase 1 Step 4 — Segmented Button (closes Phase 1)
+# Log: M30 Phase 2 Step 1 — Radio Button
 
-## The scoped precedent didn't transfer — checked, not assumed
+## `CheckboxState`'s own real shape, mirrored
 
-`BUILD_TRACKER.md`'s own Step 4 scope text pointed at "this codebase's
-own docking tab anatomy" as a precedent to check before inventing new
-anatomy. Checked directly: `dock.rs`'s `set_active_tab` is purely
-logical panel-visibility switching within a dock zone — no real
-shared-border, divider, or per-corner-shape visual anatomy exists
-anywhere in docking to reuse. This is exactly the kind of finding the
-milestone's own scope note already allowed for ("each phase gets its
-own real investigation when it starts"), not a failure of the earlier
-scoping pass — genuine, independent anatomy design was the real next
-step.
+`RadioButtonState { selected, select_progress: Animated<f64>,
+unselected_tint, selected_tint }` — `selected`/`select_progress` are
+the direct analogues of `checked`/`check_progress`, the same Design
+Principle 6 shape (the engine never toggles `selected` itself, only
+reflects it once the app writes it).
 
-## The real engine gap: no per-corner radius control
+## A real anatomy difference, not copied blindly
 
-MD3's real Segmented Button anatomy rounds a group's first segment
-only on its own outer-left edge and the last segment only on its
-outer-right edge — both square on the edge touching a neighbor. The
-existing `PaintProperties.corner_radius: Animated<f64>` is a single
-uniform scalar, unable to express this. Checked kurbo's own real API
-before assuming new geometry was needed: `RoundedRect::new` already
-accepts `impl Into<RoundedRectRadii>`, with a real `From<(f64,f64,f64,
-f64)>` impl for independent per-corner radii (confirmed via direct
-source read of the pinned `kurbo 0.13.1`). Added a purely-additive
-`corner_radii_override: Option<[f64; 4]>` (true no-op default,
-`paint_node` falls through to the existing uniform-scalar path when
-`None`) rather than widening `corner_radius` itself, which would have
-been a breaking change to `PaintProperties::new`'s ~60 existing call
-sites. Proven with a real pixel-readback test
-(`corner_radii_paint.rs`): a 30px top-left-only override genuinely
-clears a pixel 2px from that corner while the other three corners
-(radius 0.0 in the same override) stay filled right up to their own
-edges.
+MD3's real radio button is a stroked *ring*, not a filled box — and
+the ring's own color genuinely transitions between an unselected and
+selected tint as it toggles, unlike `Checkbox`'s box (a static fill,
+only the checkmark itself appears/disappears). `RadioButtonState`
+carries two plain tints rather than one, and `engine-render`'s paint
+arm interpolates between them using `select_progress` as the blend
+factor — `Interpolate for peniko::Color` was already real (§5's own
+animation core, `lerp_rect` under the hood), so this needed no new
+color-blending machinery, just calling the existing trait method
+directly outside the `Animated<T>` wrapper.
 
-## Real MD3 data, verified rather than assumed
+## A real, easy-to-miss ticking gap, caught by checking precedent directly
 
-Checked directly against Material Web's own real token source
-(`tokens/versions/v0_192/_md-comp-outlined-segmented-button.scss`)
-before writing any code: 40dp container height, 1px outline width (the
-same token draws both the group's shared outer border and the internal
-dividers between segments), `corner-full` shape, and — a real, easy-to-
-get-wrong number — an 18dp checkmark, not the 24dp icon token every
-other component in this catalog uses. Selected-state colors
-(`secondary_container`/`on_secondary_container`) and unselected-state
-color (`on_surface`) both confirmed from the same file. Segment
-padding/icon-label gap were not found in this particular token file —
-stated honestly as real, reasonable values, not re-presented as
-independently verified the way the others were.
+`Tree::tick_all` doesn't use an exhaustive `match` for per-`NodeKind`
+ticking — it's a sequence of `if let NodeKind::X(state) = &mut
+node.kind` arms, one per kind that needs central ticking. This means
+the compiler's exhaustiveness check (which caught every other
+`NodeKind::RadioButton` match site automatically) would **not** have
+caught a missing `select_progress` tick arm — it would have compiled
+clean and simply never animated. Found by deliberately re-reading
+`Checkbox`'s/`Slider`'s own real precedent in this exact function
+before considering the ticking wired up, not by trusting the compiler
+to have already caught it. Added the mirror arm explicitly.
 
-## Real, explicit design decision: no group-exclusivity here
+## Real, explicit scope limit on live re-theming
 
-`BUILD_TRACKER.md`'s own Phase 2 scope for the future `Radio Button`
-already states the principle this component reuses verbatim:
-group-exclusivity is application state, not engine-owned (Design
-Principle 6). `add_segmented_button` paints only the real *initial*
-selected state from its `selected` argument and returns every
-segment's own real container `Node` — an app wires up live
-re-toggling with the exact same already-generic primitives every
-other component in this catalog uses (`set_on_click`, `Node.animate`),
-demonstrated end to end in `examples/segmented_button.py` (clicking a
-segment animates the previously-selected segment's background out and
-the newly-selected one in).
+`Tree::set_all_component_tints` (the mechanism `Window.set_theme`
+uses to retroactively re-tint already-created `Checkbox`/`Slider`/
+`TextField` nodes) takes one shared `Color` and pushes it to every
+matching component — its own already-documented real scope choice
+("reuses this exact same already-resolved on-surface tint rather than
+resolving a second, more specific MD3 role per component," `window.
+rs`'s own `set_theme` doc comment). A radio button genuinely needs two
+different real roles (`outline` for unselected, `primary` for
+selected), which that single-color mechanism can't express without
+contradicting its own stated simplification. Rather than force a bad
+fit or build a second, wider re-tint mechanism, this is stated as a
+real, honest limitation: a radio button created before `set_theme` is
+not retroactively re-tinted by a later call. Every radio button still
+starts correctly themed at construction time (the same real contract
+`add_button`/`add_fab`/etc already have), which is the common case.
 
 ## Verification
 
 `cargo check --workspace --all-targets`, `cargo clippy --workspace
 --all-targets -- -D warnings`, `cargo fmt --check` — all clean. `cargo
-test --workspace --release`: 40 binaries, all green (`corner_radii_
-paint.rs` included). `maturin develop --release` rebuilt. `pytest
-tests/`: 234 passed, 1 skipped (7 new in `test_segmented_button.py`,
-zero regressions). All 34 examples and the showcase demo re-run clean.
-`mypy --strict` clean against `examples/segmented_button.py`.
-
-This closes M30 Phase 1 (Actions) entirely: `Button`, `Icon Button`,
-`FAB`/`Extended FAB`, `Segmented Button`, all with paired `.pyi`
-stubs.
+test --workspace --release`: 41 binaries, all green (`radio_button_
+paint.rs` included, proving the ring's real color interpolation and
+the dot's real scale-in). `maturin develop --release` rebuilt. `pytest
+tests/`: 243 passed, 1 skipped (9 new in `test_radio_button.py`, zero
+regressions). All 35 examples and the showcase demo re-run clean.
+`mypy --strict` clean against `examples/radio_button.py`.

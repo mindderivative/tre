@@ -15,7 +15,8 @@ use std::rc::Rc;
 
 use engine_core::{
     AccessNodeData, Action, Animated, CheckboxState, ContentFit, IconState, ImageState, NodeKind,
-    PaintProperties, Role, SliderState, SplitterState, TextAlign, TextFieldState, TextState,
+    PaintProperties, RadioButtonState, Role, SliderState, SplitterState, TextAlign, TextFieldState,
+    TextState,
 };
 use peniko::Color;
 use pyo3::prelude::*;
@@ -1014,6 +1015,68 @@ impl PyWindow {
                 y,
             ),
             PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, id);
+        self.wrap_node(id)
+    }
+
+    /// M30 Phase 2 Step 1 (§5, §7.3): creates a real `NodeKind::
+    /// RadioButton`, mirroring `add_checkbox`'s own real shape --
+    /// `selected` seeds `RadioButtonState`'s own initial state (and
+    /// its `select_progress` starting already at the matching
+    /// `1.0`/`0.0`, `RadioButtonState::new`'s own real contract). One
+    /// real, necessary difference from `add_checkbox`: there is no
+    /// caller-supplied `background` -- a radio button's whole real
+    /// visual comes from `unselected_tint`/`selected_tint`, always
+    /// resolved here (through `theme.role`, gated on `theme.is_set()`
+    /// exactly like every other themed component, else `Md3Baseline`'s
+    /// own real fallback) rather than left as caller-supplied paint,
+    /// since (unlike `Checkbox`'s box) there is no independent "fill
+    /// color" concept in real MD3 radio-button anatomy at all. `size`
+    /// is a single square dimension (MD3's own real circle is 20dp by
+    /// default) -- `Checkbox`'s own separate `width`/`height` params
+    /// would only ever be called equal in practice for a real radio
+    /// button, so one real parameter is the honest shape, not two that
+    /// invite an inconsistent oval. **Real, explicit scope limit, not
+    /// an oversight:** unlike `Checkbox`/`Slider`/`TextField`, a radio
+    /// button created *before* `Window.set_theme` is **not**
+    /// retroactively re-tinted by a later `set_theme` call --
+    /// `Tree::set_all_component_tints` deliberately reuses one shared
+    /// `on_surface` tint across every component it touches (its own
+    /// stated scope choice, `window.rs`'s `set_theme` doc comment), but
+    /// a radio button genuinely needs two *different* real roles
+    /// (`outline`/`primary`), which that single-`Color`-parameter
+    /// mechanism can't express without contradicting its own already-
+    /// documented simplification. Every radio button still starts
+    /// correctly themed at construction time, the same real contract
+    /// `add_button`/`add_fab`/etc already have.
+    #[pyo3(signature = (size=20.0, selected=false, x=None, y=None))]
+    fn add_radio_button(&self, size: f32, selected: bool, x: Option<f32>, y: Option<f32>) -> Node {
+        let mut radio_state = RadioButtonState::new(selected);
+        {
+            let theme = self.theme.borrow();
+            let role = |name: &str, fallback: Color| -> Color {
+                if theme.is_set() {
+                    theme.role(name).unwrap_or(fallback)
+                } else {
+                    fallback
+                }
+            };
+            radio_state.unselected_tint = role("outline", Md3Baseline::OUTLINE);
+            radio_state.selected_tint = role("primary", Md3Baseline::PRIMARY);
+        }
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::RadioButton(radio_state),
+            positioned_style(
+                Size {
+                    width: length(size),
+                    height: length(size),
+                },
+                x,
+                y,
+            ),
+            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
         self.wrap_node(id)
