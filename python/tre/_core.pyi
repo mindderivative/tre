@@ -105,6 +105,15 @@ class Node:
         kind.
         """
         ...
+    def push_frame(self, rgba: bytes, width: int, height: int) -> None:
+        """Replaces this node's currently-displayed pixel content with
+        `rgba` -- straight-alpha 8-bit RGBA pixels, `len(rgba)` must be
+        exactly `width * height * 4`. Real, live video update for a
+        `Window.add_video`-created node (or any `Image` node); raises
+        `ValueError` for any other kind, or if `rgba`'s own length
+        doesn't match `width`/`height`.
+        """
+        ...
     def get_checked(self) -> bool:
         """`Checkbox`-only -- raises `ValueError` for any other kind."""
         ...
@@ -873,6 +882,24 @@ class Window:
     ) -> Node:
         """`fit` is one of `"cover"`, `"contain"`, `"fill"`. Raises if
         `path` can't be read or decoded.
+        """
+        ...
+    def add_video(
+        self,
+        width: float,
+        height: float,
+        fit: str = "fill",
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """A real `Image` node meant to be updated live via
+        `Node.push_frame` -- a frame *sink*, not a decoder. The
+        application decodes video however it likes (PyAV, OpenCV, a
+        camera driver, frames generated on the fly) and pushes each
+        decoded frame; this method only creates the display surface,
+        initialized as fully transparent until the first real
+        `push_frame` call. `fit` is `add_image`'s own identical
+        `"cover"`/`"contain"`/`"fill"` parameter.
         """
         ...
     def add_icon(

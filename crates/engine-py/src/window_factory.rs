@@ -6057,6 +6057,61 @@ impl PyWindow {
         Ok(self.wrap_node(id))
     }
 
+    /// M30 Phase 9 Step 1 (§5): creates a real `NodeKind::Image` node
+    /// meant to be updated live via `Node.push_frame` -- see that
+    /// method's own doc comment for the full real design (a "frame
+    /// sink," not a decoder, directly grounded in the sibling
+    /// `pyCopper` project's own real `Video` widget). No official MD3
+    /// page exists for Video (confirmed via the same real directory-
+    /// listing technique this milestone already uses throughout), and
+    /// unlike `add_image` there is no file to load or decode here at
+    /// all -- `width`/`height` are the node's own real, fixed box
+    /// (exactly `add_image`'s own contract), initialized with a single
+    /// fully-transparent placeholder pixel so the node paints as
+    /// genuinely empty until the app's own first real `push_frame`
+    /// call, the same real "nothing to show yet" contract `add_image`
+    /// would have for pixel data if it allowed loading nothing. `fit`
+    /// (`"cover"`/`"contain"`/`"fill"`, default `"fill"`) is `add_image`'s
+    /// own identical real `ContentFit` parameter, reused verbatim --
+    /// a pushed frame's own resolution is resolved against this node's
+    /// fixed box the exact same way a loaded image's is.
+    #[pyo3(signature = (width, height, fit="fill", x=None, y=None))]
+    fn add_video(
+        &self,
+        width: f32,
+        height: f32,
+        fit: &str,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<Node> {
+        let content_fit = parse_content_fit(fit)?;
+        let placeholder = peniko::ImageData {
+            data: peniko::Blob::from(vec![0u8, 0, 0, 0]),
+            format: peniko::ImageFormat::Rgba8,
+            alpha_type: peniko::ImageAlphaType::Alpha,
+            width: 1,
+            height: 1,
+        };
+        let mut image_state = ImageState::new(placeholder);
+        image_state.content_fit = content_fit;
+
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::Image(image_state),
+            positioned_style(
+                Size {
+                    width: length(width),
+                    height: length(height),
+                },
+                x,
+                y,
+            ),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, id);
+        Ok(self.wrap_node(id))
+    }
+
     /// M23 Phase 1 (§1, §3): creates a real `NodeKind::Icon` from one
     /// of this project's own real curated Material Symbols icons
     /// (`engine_md3::icons::path_for`) -- deliberately takes one

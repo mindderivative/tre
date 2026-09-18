@@ -633,6 +633,83 @@ impl Node {
         }
     }
 
+    /// M30 Phase 9 Step 1 (§5): `Video`'s own real update, on whatever
+    /// `Window.add_video`-created `Node` the app is displaying a live
+    /// stream through. **Real, deliberate reuse of `NodeKind::Image`
+    /// directly, not a new `NodeKind`** -- grounded in real, directly-
+    /// applicable precedent from the sibling `pyCopper` project's own
+    /// `Video` widget (same author, same explicit desktop-only design
+    /// goal, confirmed via direct source read): `Video` is a **frame
+    /// sink**, not a decoder -- nothing in this codebase depends on a
+    /// codec library, and adding one (realistically PyAV, wrapping
+    /// FFmpeg) would mean taking on its install size and licensing
+    /// considerations for every TRE application, not just the ones
+    /// that show video. The application decodes however it likes
+    /// (PyAV, OpenCV, a camera driver, frames generated on the fly)
+    /// and calls `push_frame(rgba, width, height)` at whatever cadence
+    /// it decides; this method only replaces what the node currently
+    /// displays. `rgba` is straight-alpha 8-bit RGBA pixels, the
+    /// identical real convention `Window.add_image`'s own `image::
+    /// open(...).to_rgba8()` already produces -- `len` must be exactly
+    /// `width * height * 4`, a real, clear `PyValueError` otherwise
+    /// (`add_icon`'s own established "fail loudly on pure validation,
+    /// no I/O involved" convention, not routed through `EngineError`).
+    ///
+    /// **Real, confirmed architecture gap found and fixed alongside
+    /// this method, not silently missed:** `engine-render`'s own
+    /// `ImageTextureCache::sync` originally uploaded a real `Image`
+    /// node's GPU texture exactly once, keyed only on node presence --
+    /// correct when `add_image`'s own pixel data never changed after
+    /// creation (true before this phase), but would have silently kept
+    /// painting a video's very first frame forever otherwise. Fixed at
+    /// the render layer (`image_cache.rs`'s own doc comment) to key
+    /// re-upload on real content identity instead.
+    ///
+    /// Unlike pyCopper's own `Video` (which lays out `0x0` until the
+    /// first frame arrives, since its own `Image` intrinsically sizes
+    /// to its decoded pixel dimensions), a TRE `Image`/`Video` node's
+    /// box is always the real, fixed `width`/`height` `add_video` was
+    /// given -- `ImageState.content_fit` already resolves any mismatch
+    /// between that box and a pushed frame's own real pixel dimensions
+    /// at paint time, so a resolution change between frames needs no
+    /// layout involvement at all here, only a real, ordinary content
+    /// replacement.
+    fn push_frame(&self, rgba: Vec<u8>, width: u32, height: u32) -> PyResult<()> {
+        let expected_len = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|pixels| pixels.checked_mul(4));
+        if expected_len != Some(rgba.len()) {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "push_frame: rgba has {} bytes, but a {width}x{height} RGBA8 frame needs {}",
+                rgba.len(),
+                expected_len.map_or("too many to represent".to_string(), |n| n.to_string()),
+            )));
+        }
+
+        let mut tree = self.tree.borrow_mut();
+        let node = tree.get_mut(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        let kind = kind_name(&node.kind);
+        match &mut node.kind {
+            NodeKind::Image(state) => {
+                state.image = peniko::ImageData {
+                    data: peniko::Blob::from(rgba),
+                    format: peniko::ImageFormat::Rgba8,
+                    alpha_type: peniko::ImageAlphaType::Alpha,
+                    width,
+                    height,
+                };
+                Ok(())
+            }
+            _ => Err(EngineError::UnknownProperty {
+                kind,
+                property: "push_frame".to_string(),
+            }
+            .into()),
+        }
+    }
+
     /// M14 Phase 3 (§16.7): the missing read-back half of `set_checked`
     /// -- real two-way binding sugar needs to read a `Checkbox`'s own
     /// current `checked` to write it back into a bound `Signal` on a

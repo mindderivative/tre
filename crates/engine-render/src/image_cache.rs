@@ -17,10 +17,38 @@
 //! (`engine_core::node_id_as_u64`, the identical id scheme
 //! `to_access_id` already established for a different foreign-handle
 //! consumer), reused every subsequent frame rather than re-uploaded.
-//! An `Image` node's pixel data never changes after `Window.add_image`
-//! this phase (no swap-the-image API is scoped), so a real upload only
-//! ever happens once per node -- the same "built once, not rebuilt
-//! per-frame" shape `Resources`' own glyph atlas already has.
+//!
+//! M30 Phase 9 Step 1 (§5): `Video`'s own real "frame sink" design --
+//! reusing `NodeKind::Image` directly rather than a new `NodeKind`,
+//! see `Node.push_frame`'s own doc comment -- means an `Image` node's
+//! pixel data genuinely *can* change after creation now, real, live,
+//! at whatever cadence the app decides. `sync`'s own original re-
+//! upload guard (`if self.textures.contains_key(&id) { continue; }`)
+//! predates this and would silently keep painting a video's very
+//! first frame forever. Fixed by keying re-upload on real content
+//! identity, not node presence: `ImageState.image.data` is a
+//! `peniko::Blob<u8>`, whose own `PartialEq`/`id()` are a cheap O(1)
+//! comparison against a real, unique, monotonically-assigned `u64` --
+//! confirmed by direct source read of the vendored
+//! `linebender_resource_handle` crate, not assumed -- never a byte-
+//! level memcmp of the pixel buffer itself, which would be a real,
+//! meaningful per-frame cost at video resolutions. `push_frame`
+//! constructs a genuinely new `Blob` every call (the same "resolved
+//! ahead of time" decode-elsewhere split `add_image` already
+//! established), so a fresh id here always means fresh content, and
+//! an unchanged id always means the same frame still showing --
+//! `sync` re-uploads exactly when, and only when, that id changes.
+//! **Real, deliberate scope simplification, not silently missed:** a
+//! changed frame always recreates the whole GPU texture (rather than
+//! reusing the existing one via `write_texture` alone when the
+//! resolution is unchanged) -- correct for both same-size and resized
+//! frames uniformly, at the real cost of a full texture allocation on
+//! every pushed frame rather than only on a resolution change.
+//! `Video`'s own scope (a frame sink for whatever cadence the app
+//! feeds it, not a real-time decode pipeline this codebase has no
+//! codec dependency for) doesn't need the incremental fast path yet
+//! -- the same "don't build ahead of need" discipline this codebase
+//! applies throughout.
 
 use std::collections::{HashMap, HashSet};
 
@@ -34,6 +62,10 @@ use vello_hybrid::{TextureBindings, TextureId};
 pub struct ImageTextureCache {
     textures: HashMap<NodeId, wgpu::Texture>,
     bindings: TextureBindings,
+    /// The real `peniko::Blob<u8>` content id last uploaded for each
+    /// node -- `sync`'s own real re-upload guard, see this module's
+    /// own doc comment.
+    uploaded: HashMap<NodeId, u64>,
 }
 
 impl ImageTextureCache {
@@ -57,7 +89,8 @@ impl ImageTextureCache {
         let current: HashSet<NodeId> = tree.image_nodes().map(|(id, _)| id).collect();
 
         for (id, state) in tree.image_nodes() {
-            if self.textures.contains_key(&id) {
+            let blob_id = state.image.data.id();
+            if self.uploaded.get(&id) == Some(&blob_id) {
                 continue;
             }
 
@@ -112,6 +145,7 @@ impl ImageTextureCache {
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
             self.bindings.insert(texture_id_for(id), view);
             self.textures.insert(id, texture);
+            self.uploaded.insert(id, blob_id);
         }
 
         // Real, confirmed bug found in review: this loop above was
@@ -134,6 +168,7 @@ impl ImageTextureCache {
         for id in removed {
             self.textures.remove(&id);
             self.bindings.remove(texture_id_for(id));
+            self.uploaded.remove(&id);
         }
     }
 }
@@ -228,6 +263,87 @@ mod tests {
             assert!(
                 cache.textures.is_empty(),
                 "sync must evict a texture whose node no longer exists in the tree, not leak it"
+            );
+        });
+    }
+
+    fn solid_2x2_image_data_tinted(byte: u8) -> peniko::ImageData {
+        let px = [byte, 0x00, 0x00, 0xFF];
+        let mut bytes = Vec::with_capacity(px.len() * 4);
+        for _ in 0..4 {
+            bytes.extend_from_slice(&px);
+        }
+        peniko::ImageData {
+            data: peniko::Blob::from(bytes),
+            format: peniko::ImageFormat::Rgba8,
+            alpha_type: peniko::ImageAlphaType::Alpha,
+            width: 2,
+            height: 2,
+        }
+    }
+
+    /// M30 Phase 9 Step 1 (§5): direct, dedicated coverage for the real
+    /// `Video`-driven re-upload fix, this module's own doc comment --
+    /// `sync`'s original guard only ever checked whether a texture
+    /// already existed for a node, so a real, live content change
+    /// (`Node.push_frame`) would silently keep painting the very first
+    /// frame forever. Proves the fix directly by real content identity,
+    /// not node presence: replacing a node's own `ImageState.image`
+    /// with a genuinely new `Blob` (a different real `id()`, `peniko`'s
+    /// own content-identity, not a byte-level pixel comparison) must
+    /// trigger a real re-upload, tracked in `ImageTextureCache`'s own
+    /// `uploaded` map.
+    #[test]
+    fn sync_reuploads_a_texture_when_its_own_node_content_genuinely_changes() {
+        pollster::block_on(async {
+            let (device, queue) = device_and_queue().await;
+
+            let mut tree = Tree::new();
+            let frame1 = solid_2x2_image_data_tinted(0xFF);
+            let frame1_blob_id = frame1.data.id();
+            let image_id = tree.insert(
+                NodeKind::Image(ImageState::new(frame1)),
+                Style {
+                    size: Size {
+                        width: length(2.0),
+                        height: length(2.0),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            );
+
+            let mut cache = ImageTextureCache::new();
+            cache.sync(&tree, &device, &queue);
+            assert_eq!(
+                cache.uploaded.get(&image_id),
+                Some(&frame1_blob_id),
+                "the first real sync must upload the first frame's own real content id"
+            );
+
+            let frame2 = solid_2x2_image_data_tinted(0x00);
+            let frame2_blob_id = frame2.data.id();
+            assert_ne!(
+                frame1_blob_id, frame2_blob_id,
+                "sanity: every real peniko::Blob::from call gets its own unique id"
+            );
+            match &mut tree.get_mut(image_id).expect("just inserted above").kind {
+                NodeKind::Image(state) => state.image = frame2,
+                _ => panic!("expected NodeKind::Image"),
+            }
+
+            cache.sync(&tree, &device, &queue);
+            assert_eq!(
+                cache.uploaded.get(&image_id),
+                Some(&frame2_blob_id),
+                "a real content change (Node.push_frame's own real effect) must trigger a \
+                 real re-upload, not keep the stale first frame's own id forever"
+            );
+            assert_eq!(
+                cache.textures.len(),
+                1,
+                "a re-uploaded node must still have exactly one real texture, not a second \
+                 one accumulating alongside it"
             );
         });
     }
