@@ -461,6 +461,13 @@ fn resolve_card_colors(theme: &crate::window::ThemeState, variant: &str) -> PyRe
 
 const CARD_CORNER_RADIUS: f64 = 12.0;
 
+/// M30 Phase 3 Step 4 (§5, §7): `Divider`'s real anatomy, verified
+/// against Material Web's own token source (`_md-comp-divider.scss`):
+/// a real 1dp line, `outline_variant` -- the identical real role
+/// `Card`'s own Outlined variant already resolves (`Md3Baseline::
+/// OUTLINE_VARIANT`), reused here rather than a second lookup.
+const DIVIDER_THICKNESS: f32 = 1.0;
+
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
 /// trailing icon -- that's `Icon Button`'s own separate anatomy, Phase
@@ -1759,6 +1766,49 @@ impl PyWindow {
         );
         tree.add_child(self.root, id);
         Ok(self.wrap_node(id))
+    }
+
+    /// M30 Phase 3 Step 4 (§5, §7): `Divider`, MD3's real 1dp
+    /// separator line -- a plain `Rect`, `outline_variant`-colored,
+    /// no shape/elevation/interaction of its own (a divider is purely
+    /// decorative, never clickable in real MD3). `length`/`vertical`
+    /// together give the real horizontal-or-vertical anatomy: a
+    /// horizontal divider is `length` wide and `DIVIDER_THICKNESS`
+    /// tall, a vertical one the reverse -- the same real single-
+    /// dimension-plus-orientation shape a line naturally has, not two
+    /// separate methods for what's really one real component.
+    #[pyo3(signature = (length, vertical=false, x=None, y=None))]
+    fn add_divider(&self, length: f32, vertical: bool, x: Option<f32>, y: Option<f32>) -> Node {
+        let color = {
+            let theme = self.theme.borrow();
+            if theme.is_set() {
+                theme
+                    .role("outline_variant")
+                    .unwrap_or(Md3Baseline::OUTLINE_VARIANT)
+            } else {
+                Md3Baseline::OUTLINE_VARIANT
+            }
+        };
+        let (width, height) = if vertical {
+            (DIVIDER_THICKNESS, length)
+        } else {
+            (length, DIVIDER_THICKNESS)
+        };
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::Rect,
+            positioned_style(
+                Size {
+                    width: taffy::prelude::length(width),
+                    height: taffy::prelude::length(height),
+                },
+                x,
+                y,
+            ),
+            PaintProperties::new(color, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, id);
+        self.wrap_node(id)
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,

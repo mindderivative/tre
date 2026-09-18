@@ -369,6 +369,18 @@ class Window:
         `variant`.
         """
         ...
+    def add_divider(
+        self,
+        length: float,
+        vertical: bool = False,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """A real MD3 1dp divider line -- `length` wide and 1dp tall
+        when horizontal (the default), or the reverse when
+        `vertical=True`.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,
