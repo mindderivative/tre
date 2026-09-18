@@ -505,6 +505,47 @@ class Window:
         or if `selected` is out of range.
         """
         ...
+    def add_navigation_drawer(
+        self,
+        labels: list[str],
+        icons: list[str],
+        selected: int | None = None,
+        modal: bool = False,
+        width: float = ...,
+        height: float | None = None,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> tuple[Node, list[Node]]:
+        """A real MD3 navigation drawer, docked to the left edge.
+        Returns `(container, items)`: one real, independently
+        `enable_interaction()`-able `Node` per destination, in order.
+        When `modal` is `False` (the default, real *Standard*
+        variant): `container` is already attached -- re-parent it
+        into your own layout or dock it. When `modal` is `True` (real
+        *Modal* variant): `container` is the scrim, returned
+        **unattached** -- pass it to `open_navigation_drawer` to show
+        it. `height` defaults to the window's own full height. Raises
+        `ValueError` if `labels`/`icons` lengths mismatch, if empty,
+        or if `selected` is out of range.
+        """
+        ...
+    def open_navigation_drawer(self, drawer: Node) -> None:
+        """Opens a **modal** `drawer` (from `add_navigation_drawer(...,
+        modal=True)`) -- blocks interaction with everything behind
+        it, dismisses on Escape but not an outside click. A real,
+        explicit no-op for a standard (`modal=False`) drawer, which
+        has no overlay lifecycle at all. A safe no-op if already
+        open. Raises `ValueError` if `drawer` belongs to a different
+        `Window`.
+        """
+        ...
+    def close_navigation_drawer(self, drawer: Node) -> None:
+        """Closes a modal navigation drawer opened via
+        `open_navigation_drawer`. A real, explicit no-op for a
+        standard (`modal=False`) drawer. Raises `ValueError` if
+        `drawer` belongs to a different `Window`.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,

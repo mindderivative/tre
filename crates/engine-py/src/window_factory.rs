@@ -21,7 +21,7 @@ use engine_core::{
 use peniko::Color;
 use pyo3::prelude::*;
 use taffy::prelude::{
-    AlignItems, JustifyContent, Rect as TaffyRect, Size, Style, auto, length, zero,
+    AlignItems, JustifyContent, Position, Rect as TaffyRect, Size, Style, auto, length, zero,
 };
 
 use crate::error::EngineError;
@@ -600,6 +600,39 @@ const NAV_RAIL_LABEL_WEIGHT_ACTIVE: f32 = 700.0;
 const NAV_RAIL_ITEM_GAP: f32 = 4.0;
 const NAV_RAIL_ITEM_SPACING: f32 = 12.0;
 const NAV_RAIL_TOP_PADDING: f32 = 44.0;
+
+/// MD3's own real Navigation Drawer item/destination anatomy (M30
+/// Phase 5 Step 2), verified against Material Web's own token source
+/// (`_md-comp-navigation-drawer.scss`) before writing any code --
+/// the container tokens themselves are identical to `Side Sheet`'s
+/// own (`SIDE_SHEET_*`, reused directly below, both real values come
+/// from this same source file, confirmed by direct re-fetch, not
+/// assumed to still match from memory) since Material Web has no
+/// separate side-sheet token file at all (Phase 4 Step 3's own real
+/// finding). Real per-item anatomy: active indicator 336×56dp,
+/// `corner-full` (28dp), `secondary_container` fill; active icon/
+/// label `on_secondary_container`, inactive `on_surface_variant`;
+/// label Label Large (14sp) with the identical real active/inactive
+/// weight pair `Navigation Rail` already found (500/`weight-medium`
+/// inactive, 700/`weight-bold` active -- `NAV_RAIL_LABEL_WEIGHT_*`
+/// reused directly, not re-declared). Leading space/icon gap reuse
+/// `Menu`'s own already-verified List Item tokens (`MENU_ITEM_*`) --
+/// Navigation Drawer's real item height (56dp) matches List Item's
+/// own real height exactly, a real, confirmed coincidence worth
+/// reusing rather than re-declaring duplicate constants for the
+/// identical real MD3 value.
+const NAV_DRAWER_INDICATOR_WIDTH: f32 = 336.0;
+const NAV_DRAWER_INDICATOR_CORNER_RADIUS: f64 = MENU_ITEM_HEIGHT as f64 / 2.0;
+/// The indicator's own real 336dp width centers itself inside the
+/// panel's real 360dp width via plain flex `align_items: CENTER` --
+/// `(360 - 336) / 2.0 = 12.0dp` on each side, a real, derived value,
+/// not a discrete token, needing no explicit margin constant of its
+/// own to express.
+/// Not discrete tokens in the drawer's own token file (confirmed by
+/// the same fetch) -- reasonable, MD3-consistent values, the
+/// identical honest caveat `Dialog`'s own padding constants carry.
+const NAV_DRAWER_ITEM_SPACING: f32 = 4.0;
+const NAV_DRAWER_TOP_PADDING: f32 = 12.0;
 
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
@@ -2915,6 +2948,338 @@ impl PyWindow {
 
         tree.add_child(self.root, frame);
         Ok(items)
+    }
+
+    /// M30 Phase 5 Step 2 (§5, §7, §11.3): `Navigation Drawer`, the
+    /// real desktop counterpart to Bottom App Bar's own navigation
+    /// role. Real container anatomy: identical to `Side Sheet`'s own
+    /// (`SIDE_SHEET_*` constants, both real values come from this
+    /// same `_md-comp-navigation-drawer.scss` source), mirrored to
+    /// dock the real *left* edge instead of the right -- `corner-
+    /// large-end` rounds the two corners away from the docked edge,
+    /// so this reverses `Side Sheet`'s own `corner_radii_override`
+    /// left-right (square on the left, touching the screen boundary;
+    /// rounded on the right). Real per-item anatomy: see the
+    /// `NAV_DRAWER_*` constants above for the full real finding.
+    ///
+    /// **Real, deliberate design avoiding a repeat of `Navigation
+    /// Rail`'s own real hit-test bug, not found the hard way a second
+    /// time:** each destination's active-indicator pill (336×56dp)
+    /// already spans the item's *entire* real clickable anatomy
+    /// (icon and label sit side by side *inside* it, not stacked with
+    /// the indicator as a smaller decorative layer the way `Navigation
+    /// Rail`'s taller icon-over-label item needed) -- so the indicator
+    /// itself is directly what gets returned and made interactive, no
+    /// separate outer wrapper competing for the same click point, and
+    /// no `Tree::set_hit_testable` opt-out needed here at all.
+    ///
+    /// **Real, deliberate behavioral fork by variant, the identical
+    /// real shape `Side Sheet` already established:** `Standard`
+    /// (`modal=false`, the default) attaches immediately to `self.
+    /// root` (`Card`'s own real precedent, optional `x`/`y`) -- no
+    /// scrim, no blocking, no open/close lifecycle. `Modal` (`modal=
+    /// true`) genuinely floats over content -- reuses `Dialog`'s own
+    /// real full-window scrim and `OverlayMeta.modal` capability,
+    /// left-aligned via flex `justify_content: FLEX_START` instead of
+    /// `Side Sheet`'s own `FLEX_END`, with the identical real origin-
+    /// anchored `open_overlay` technique `open_dialog`/`open_side_
+    /// sheet` already use (the scrim's own flex does the real
+    /// alignment work, so the synthetic anchor only ever needs to
+    /// resolve the scrim's own inset to `(0, 0)`, not a docked-edge-
+    /// specific offset). Returns `(container, items)` -- `Segmented
+    /// Button`'s own real `Vec<Node>` shape for the destinations,
+    /// `Dialog`'s own real single-`Node` shape for the container/
+    /// scrim, combined the same real way `Snackbar`'s own multi-node
+    /// return already did for a different reason.
+    #[pyo3(signature = (labels, icons, selected=None, modal=false, width=SIDE_SHEET_WIDTH, height=None, x=None, y=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn add_navigation_drawer(
+        &self,
+        labels: Vec<String>,
+        icons: Vec<String>,
+        selected: Option<usize>,
+        modal: bool,
+        width: f32,
+        height: Option<f32>,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<(Node, Vec<Node>)> {
+        if labels.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "add_navigation_drawer needs at least 1 item",
+            ));
+        }
+        if labels.len() != icons.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "add_navigation_drawer needs one icon per label -- got {} labels and {} icons",
+                labels.len(),
+                icons.len()
+            )));
+        }
+        if let Some(sel) = selected
+            && sel >= labels.len()
+        {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "selected index {sel} is out of range for {} items",
+                labels.len()
+            )));
+        }
+        let icon_paths: Vec<_> = icons
+            .iter()
+            .map(|name| resolve_icon_path(name))
+            .collect::<PyResult<Vec<_>>>()?;
+
+        let (container_color, indicator_color, active_color, inactive_color, scrim_color) = {
+            let theme = self.theme.borrow();
+            let role = |name: &str, fallback: Color| -> Color {
+                if theme.is_set() {
+                    theme.role(name).unwrap_or(fallback)
+                } else {
+                    fallback
+                }
+            };
+            let container = if modal {
+                role("surface_container_low", Md3Baseline::SURFACE_CONTAINER_LOW)
+            } else {
+                role("surface", Md3Baseline::SURFACE)
+            };
+            (
+                container,
+                role("secondary_container", Md3Baseline::SECONDARY_CONTAINER),
+                role(
+                    "on_secondary_container",
+                    Md3Baseline::ON_SECONDARY_CONTAINER,
+                ),
+                role("on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT),
+                role("scrim", Md3Baseline::SCRIM),
+            )
+        };
+        let elevation = if modal {
+            SIDE_SHEET_MODAL_ELEVATION
+        } else {
+            SIDE_SHEET_STANDARD_ELEVATION
+        };
+
+        let mut tree = self.tree.borrow_mut();
+        let panel_height = height.unwrap_or(self.height as f32);
+
+        let mut panel_paint = PaintProperties::new(container_color, 0.0, elevation, 1.0);
+        panel_paint.corner_radii_override =
+            Some([0.0, SIDE_SHEET_CORNER_RADIUS, SIDE_SHEET_CORNER_RADIUS, 0.0]);
+
+        let mut panel_style = Style {
+            size: Size {
+                width: length(width),
+                height: length(panel_height),
+            },
+            display: taffy::Display::Flex,
+            flex_direction: taffy::FlexDirection::Column,
+            align_items: Some(AlignItems::CENTER),
+            padding: TaffyRect {
+                left: zero(),
+                right: zero(),
+                top: length(NAV_DRAWER_TOP_PADDING),
+                bottom: zero(),
+            },
+            gap: Size {
+                width: length(0.0),
+                height: length(NAV_DRAWER_ITEM_SPACING),
+            },
+            ..Default::default()
+        };
+        if !modal && (x.is_some() || y.is_some()) {
+            panel_style.position = Position::Absolute;
+            panel_style.inset = TaffyRect {
+                left: length(x.unwrap_or(0.0)),
+                top: length(y.unwrap_or(0.0)),
+                right: auto(),
+                bottom: auto(),
+            };
+        }
+        let panel = tree.insert(NodeKind::Rect, panel_style, panel_paint);
+
+        let mut items = Vec::with_capacity(labels.len());
+        for (i, (label, path)) in labels.into_iter().zip(icon_paths).enumerate() {
+            let is_active = selected == Some(i);
+            let fill = if is_active {
+                indicator_color
+            } else {
+                TRANSPARENT
+            };
+            let label_color = if is_active {
+                active_color
+            } else {
+                inactive_color
+            };
+            let icon_color = if is_active {
+                active_color
+            } else {
+                inactive_color
+            };
+            let label_weight = if is_active {
+                NAV_RAIL_LABEL_WEIGHT_ACTIVE
+            } else {
+                NAV_RAIL_LABEL_WEIGHT_INACTIVE
+            };
+
+            let indicator_style = Style {
+                size: Size {
+                    width: length(NAV_DRAWER_INDICATOR_WIDTH),
+                    height: length(MENU_ITEM_HEIGHT),
+                },
+                display: taffy::Display::Flex,
+                align_items: Some(AlignItems::CENTER),
+                padding: TaffyRect {
+                    left: length(MENU_ITEM_LEADING_SPACE),
+                    right: length(MENU_ITEM_LEADING_SPACE),
+                    top: zero(),
+                    bottom: zero(),
+                },
+                gap: Size {
+                    width: length(MENU_ITEM_ICON_GAP),
+                    height: length(0.0),
+                },
+                ..Default::default()
+            };
+            let indicator = tree.insert(
+                NodeKind::Rect,
+                indicator_style,
+                PaintProperties::new(fill, NAV_DRAWER_INDICATOR_CORNER_RADIUS, 0.0, 1.0),
+            );
+
+            let icon_id = tree.insert(
+                NodeKind::Icon(IconState {
+                    path,
+                    tint: icon_color,
+                }),
+                Style {
+                    size: Size {
+                        width: length(MENU_ITEM_ICON_SIZE),
+                        height: length(MENU_ITEM_ICON_SIZE),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(indicator, icon_id);
+
+            let label_width = (NAV_DRAWER_INDICATOR_WIDTH
+                - 2.0 * MENU_ITEM_LEADING_SPACE
+                - MENU_ITEM_ICON_SIZE
+                - MENU_ITEM_ICON_GAP)
+                .max(0.0);
+            let label_id = tree.insert(
+                NodeKind::Text(TextState {
+                    content: label,
+                    font_family: "Roboto".to_string(),
+                    font_weight: label_weight,
+                    font_size: BUTTON_LABEL_FONT_SIZE,
+                    align: TextAlign::Start,
+                }),
+                Style {
+                    size: Size {
+                        width: length(label_width),
+                        height: length(BUTTON_LABEL_LINE_HEIGHT),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(label_color, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(indicator, label_id);
+
+            tree.add_child(panel, indicator);
+            items.push(self.wrap_node(indicator));
+        }
+
+        let container = if modal {
+            let scrim_style = Style {
+                size: Size {
+                    width: length(self.width as f32),
+                    height: length(self.height as f32),
+                },
+                display: taffy::Display::Flex,
+                justify_content: Some(JustifyContent::FLEX_START),
+                ..Default::default()
+            };
+            let scrim = tree.insert(
+                NodeKind::Rect,
+                scrim_style,
+                PaintProperties::new(scrim_color, 0.0, 0.0, DIALOG_SCRIM_OPACITY),
+            );
+            tree.add_child(scrim, panel);
+            self.wrap_node(scrim)
+        } else {
+            tree.add_child(self.root, panel);
+            self.wrap_node(panel)
+        };
+
+        Ok((container, items))
+    }
+
+    /// M30 Phase 5 Step 2 (§11.3): opens a real *modal* navigation
+    /// drawer (from `add_navigation_drawer(..., modal=True)`) --
+    /// identical real contract to `open_side_sheet` (`modal: true`,
+    /// `dismiss_on_escape: true`, `dismiss_on_outside_click: false`,
+    /// the same real origin-anchored `open_overlay` technique -- the
+    /// scrim's own `justify_content: FLEX_START` already does the
+    /// real left-alignment work). A real, explicit no-op if `drawer`
+    /// was built with `modal=False` -- a standard drawer has no
+    /// overlay lifecycle at all, already attached to `self.root` by
+    /// `add_navigation_drawer` itself.
+    fn open_navigation_drawer(&self, drawer: PyRef<'_, Node>) -> PyResult<()> {
+        if !Rc::ptr_eq(&self.tree, &drawer.tree) {
+            return Err(EngineError::ForeignNode.into());
+        }
+        let mut tree = self.tree.borrow_mut();
+        if tree.overlay_meta(drawer.id).is_some() {
+            return Ok(());
+        }
+        if tree.get(drawer.id).and_then(|node| node.parent).is_some() {
+            return Ok(());
+        }
+        let anchor_style = positioned_style(
+            Size {
+                width: length(0.0),
+                height: length(0.0),
+            },
+            Some(0.0),
+            Some(0.0),
+        );
+        let anchor = tree.insert(
+            NodeKind::Rect,
+            anchor_style,
+            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, anchor);
+        tree.open_overlay(
+            self.root,
+            anchor,
+            drawer.id,
+            OverlayMeta {
+                anchor,
+                dismiss_on_outside_click: false,
+                dismiss_on_escape: true,
+                modal: true,
+            },
+        );
+        Ok(())
+    }
+
+    /// M30 Phase 5 Step 2 (§11.3): `open_navigation_drawer`'s own real
+    /// close counterpart -- identical real contract to `close_side_
+    /// sheet`. A real, explicit no-op for a standard (`modal=False`)
+    /// drawer, the same real reason `open_navigation_drawer` is.
+    fn close_navigation_drawer(&self, drawer: PyRef<'_, Node>) -> PyResult<()> {
+        if !Rc::ptr_eq(&self.tree, &drawer.tree) {
+            return Err(EngineError::ForeignNode.into());
+        }
+        let mut tree = self.tree.borrow_mut();
+        let anchor = tree.overlay_meta(drawer.id).map(|meta| meta.anchor);
+        tree.close_overlay(drawer.id);
+        if let Some(anchor) = anchor {
+            tree.remove(anchor);
+        }
+        Ok(())
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,
