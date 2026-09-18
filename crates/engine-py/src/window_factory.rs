@@ -1049,6 +1049,25 @@ const PAGE_ITEM_SIZE: f32 = SEARCH_ICON_BUTTON_SIZE;
 const PAGE_ITEM_CORNER_RADIUS: f64 = PAGE_ITEM_SIZE as f64 / 2.0;
 const PAGE_ITEM_GAP: f32 = 4.0;
 
+/// `Status Bar` (M30 Phase 8 Step 5) -- MD3 has no official page
+/// (confirmed via the same real per-directory-listing technique this
+/// whole milestone already uses). Real, honest anatomy, not
+/// independently token-verified: a real, deliberate design reusing
+/// `AppShell`'s own already-real `status_bar` region -- `build_shell`
+/// (§14 step 13) already accepts any pre-built `Node` for it (a thin
+/// bottom row in its own real flex-column layout), confirmed by
+/// direct re-read before writing this step's own code; no new shell-
+/// level wiring needed, only the real, styled bar *content* this step
+/// actually builds. Thin (24dp, a genuine desktop convention, shorter
+/// than every other bar in this catalog), `surface_container` fill --
+/// the same real subtle-chrome role `Menu`'s own panel already uses.
+/// Status text reuses Label Small's own already-declared constants
+/// (`BADGE_LABEL_FONT_SIZE`/`_WEIGHT`, the identical real MD3 type
+/// role `Badge`'s own labeled variant already found, Phase 3 Step 1),
+/// `on_surface_variant`.
+const STATUS_BAR_HEIGHT: f32 = 24.0;
+const STATUS_BAR_PADDING: f32 = 8.0;
+
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
 /// trailing icon -- that's `Icon Button`'s own separate anatomy, Phase
@@ -5609,6 +5628,82 @@ impl PyWindow {
         );
 
         Ok((self.wrap_node(previous), pages, self.wrap_node(next)))
+    }
+
+    /// M30 Phase 8 Step 5 (§5, §7, §11.2): `Status Bar`'s own real,
+    /// styled content -- see the `STATUS_BAR_*` constants above for
+    /// the full real finding, including the real reuse of `AppShell`
+    /// (`build_shell`)'s own already-real `status_bar` region -- pass
+    /// the returned `Node` directly to `build_shell`'s own existing
+    /// `status_bar` parameter, no new shell-level wiring needed.
+    #[pyo3(signature = (text, width=None))]
+    fn add_status_bar(&self, text: &str, width: Option<f32>) -> Node {
+        let (container_color, text_color) = {
+            let theme = self.theme.borrow();
+            let container = if theme.is_set() {
+                theme
+                    .role("surface_container")
+                    .unwrap_or(Md3Baseline::SURFACE_CONTAINER)
+            } else {
+                Md3Baseline::SURFACE_CONTAINER
+            };
+            let on_surface_variant = if theme.is_set() {
+                theme
+                    .role("on_surface_variant")
+                    .unwrap_or(Md3Baseline::ON_SURFACE_VARIANT)
+            } else {
+                Md3Baseline::ON_SURFACE_VARIANT
+            };
+            (container, on_surface_variant)
+        };
+
+        let mut tree = self.tree.borrow_mut();
+        let bar_width = width.unwrap_or(self.width as f32);
+
+        let mut bar_style = Style {
+            size: Size {
+                width: length(bar_width),
+                height: length(STATUS_BAR_HEIGHT),
+            },
+            display: taffy::Display::Flex,
+            align_items: Some(AlignItems::CENTER),
+            padding: TaffyRect {
+                left: length(STATUS_BAR_PADDING),
+                right: length(STATUS_BAR_PADDING),
+                top: zero(),
+                bottom: zero(),
+            },
+            ..Default::default()
+        };
+        bar_style.flex_shrink = 0.0;
+        let bar = tree.insert(
+            NodeKind::Rect,
+            bar_style,
+            PaintProperties::new(container_color, 0.0, 0.0, 1.0),
+        );
+
+        let label_width = (bar_width - 2.0 * STATUS_BAR_PADDING).max(0.0);
+        let label_id = tree.insert(
+            NodeKind::Text(TextState {
+                content: text.to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: BADGE_LABEL_FONT_WEIGHT,
+                font_size: BADGE_LABEL_FONT_SIZE,
+                align: TextAlign::Start,
+            }),
+            Style {
+                size: Size {
+                    width: length(label_width),
+                    height: length(BADGE_LABEL_FONT_SIZE + 2.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(text_color, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(bar, label_id);
+
+        tree.add_child(self.root, bar);
+        self.wrap_node(bar)
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,

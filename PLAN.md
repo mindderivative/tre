@@ -1,35 +1,31 @@
-# PLAN — M30 Phase 8 Step 4: Pagination
+# PLAN — M30 Phase 8 Step 5: Status Bar
 
 ## Goal
-Add `Window.add_pagination` — MD3 has no official page; a plain
-composition of page-number indicators plus prev/next controls.
+Add `Window.add_status_bar` — MD3 has no official page. Real,
+deliberate reuse of AppShell's own already-real `status_bar` region
+(build_shell, §14 step 13) rather than new shell-level wiring.
 
 ## Steps
-1. Confirm no official MD3 Pagination page.
-2. Check curated icons: only "arrow_back" exists, no "forward". Fetch
-   the real "arrow_forward" SVG path data verbatim from Google's CDN,
-   add as the eleventh curated icon.
-3. Design: page items reuse the 40dp circular footprint
-   (SEARCH_ICON_BUTTON_SIZE), selected = primary/on_primary (Date
-   Picker's own pattern), unselected = transparent/on_surface_variant
-   (Segmented Button/Chip/Nav Rail's own pattern). Prev/next reuse
-   Icon Button's own anatomy.
-4. Implement `add_pagination` in `window_factory.rs`.
-5. Fix a real borrow-checker error: a tree-capturing closure shared
-   across two call sites with intervening code between them (the
-   pages loop) -- converted to a plain, non-capturing fn taking
-   &mut Tree explicitly.
-6. Add `.pyi` stub.
-7. Write `tests/test_pagination.py`, including independent-click
-   tests for pages and prev/next.
-8. Write `examples/pagination.py`, headless-CI-safe.
-9. Full verification chain: cargo check/clippy/fmt/test, maturin
+1. Confirm no official MD3 Status Bar page.
+2. Confirm build_shell's own status_bar parameter already exists and
+   accepts a pre-built Node directly (re-read its signature).
+3. Design: thin 24dp bar, surface_container fill, Label Small text
+   (reuse BADGE_LABEL_FONT_SIZE/_WEIGHT from Badge's own earlier
+   finding).
+4. Implement `add_status_bar` in `window_factory.rs`.
+5. Add `.pyi` stub.
+6. Write `tests/test_status_bar.py`, including a real test proving
+   the returned Node passes directly into build_shell's own status_bar
+   parameter with no adapter.
+7. Write `examples/status_bar.py`, composing a real menu bar, toolbar,
+   and status bar together into one AppShell.
+8. Full verification chain: cargo check/clippy/fmt/test, maturin
    develop, pytest (full suite), all examples, showcase demo, mypy
    --strict.
-10. Update `BUILD_TRACKER.md` (Top Metrics row, step line), regenerate
-    + republish the Build Tracker artifact.
-11. Update memory, commit, push.
+9. Update `BUILD_TRACKER.md` (Top Metrics row, step line), regenerate
+   + republish the Build Tracker artifact.
+10. Update memory, commit, push.
 
 ## Status
-Complete. All steps done; full verification chain green (436 pytest
-passed/1 skipped, 60 examples, showcase demo, 43 Rust test binaries).
+Complete. All steps done; full verification chain green (440 pytest
+passed/1 skipped, 61 examples, showcase demo, 43 Rust test binaries).

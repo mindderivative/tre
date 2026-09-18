@@ -1,39 +1,30 @@
-# LOG — M30 Phase 8 Step 4: Pagination
+# LOG — M30 Phase 8 Step 5: Status Bar
 
-- Confirmed no official MD3 Pagination page exists via the same
-  directory-listing technique used throughout this milestone.
-- Checked the curated icon set — only "arrow_back" existed, no
-  "forward" glyph. Fetched the real "arrow_forward" SVG path data
-  verbatim from Google's own CDN (viewBox `0 -960 960 960`, matching
-  every other curated icon), added as the eleventh curated icon in
-  `crates/engine-md3/src/icons.rs`.
-- Designed: page items reuse the 40dp circular footprint
-  (`SEARCH_ICON_BUTTON_SIZE`), selected = `primary`/`on_primary`
-  (Date Picker's own pattern), unselected =
-  `transparent`/`on_surface_variant` (Segmented Button/Chip/Nav
-  Rail's own pattern). Prev/next reuse Icon Button's own anatomy.
-- Implemented `add_pagination` in
-  `crates/engine-py/src/window_factory.rs`.
-- Hit a real Rust borrow-checker error (`E0499`) before compiling
-  clean: a first draft shared one `tree`-capturing closure across the
-  `previous` and `next` call sites, but real code (the `pages` loop)
-  ran between those two calls and conflicted with the closure's own
-  held mutable borrow. Fixed by converting the closure into a plain,
-  non-capturing `fn` taking `&mut Tree`/`NodeId` explicitly as
-  parameters — required adding `Tree`/`NodeId` to this file's own
-  `engine_core` import list for the first time.
+- Confirmed no official MD3 Status Bar page via the same directory-
+  listing technique used throughout this milestone.
+- Re-read `build_shell`'s real signature and found it already accepts
+  a pre-built `status_bar: Option<PyRef<'_, Node>>` (since §14 step
+  13, AppShell) — no new shell-level wiring needed, only real, styled
+  bar content.
+- Designed: 24dp thin bar, `surface_container` fill, Label Small text
+  reusing `BADGE_LABEL_FONT_SIZE`/`_WEIGHT` (Badge's own earlier real
+  finding, Phase 3 Step 1).
+- Implemented `add_status_bar` in
+  `crates/engine-py/src/window_factory.rs`, including
+  `flex_shrink: 0.0` so the fixed-height bar doesn't shrink inside
+  `build_shell`'s own flex-column layout.
 - Added `.pyi` stub.
-- Wrote `tests/test_pagination.py` (7 tests) — all passed on the
-  first run, including independent-click tests for individual pages
-  and for previous/next.
-- Wrote `examples/pagination.py` (headless-CI-safe, using the
-  established factory-function pattern for lambdas) — clean on the
-  first run, `mypy --strict` clean too.
+- Wrote `tests/test_status_bar.py` (4 tests) — all passed on the
+  first run, including a real test proving the returned Node passes
+  directly into `build_shell`'s own `status_bar` parameter.
+- Wrote `examples/status_bar.py` — revised a first draft that used a
+  pointless "harmless no-op animate call" as its own proof; replaced
+  with a real, honest demonstration composing a menu bar, toolbar,
+  and status bar together into one real AppShell. Clean on the first
+  run, `mypy --strict` clean too.
 - Full verification: `cargo check`/`clippy -D warnings`/`fmt --check`
   clean, `cargo test --workspace --release` (43 binaries green,
-  unchanged — confirming the new "arrow_forward" icon's real path
-  data parses correctly), `maturin develop --release`, `pytest
-  tests/` (436 passed, 1 skipped), all 60 examples clean, showcase
-  demo clean.
+  unchanged), `maturin develop --release`, `pytest tests/` (440
+  passed, 1 skipped), all 61 examples clean, showcase demo clean.
 - Updated `BUILD_TRACKER.md`, regenerated and republished the Build
   Tracker artifact at https://claude.ai/artifact/CaPkWjpd91oR7YFbcqC9ty.

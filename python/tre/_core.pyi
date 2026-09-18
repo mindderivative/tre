@@ -796,6 +796,14 @@ class Window:
         is `0` or `current` is out of range.
         """
         ...
+    def add_status_bar(self, text: str, width: float | None = None) -> Node:
+        """A real, styled status bar (24dp, `surface_container`,
+        Label Small text). Pass the returned `Node` directly to
+        `build_shell`'s own already-real `status_bar` parameter --
+        no new shell-level wiring, just the real content. `width`
+        defaults to the window's own full width.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,
