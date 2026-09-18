@@ -227,6 +227,22 @@ def parse_milestones(lines: list[str], percentages: dict[str, int]) -> list[Mile
             i += 1
             continue
 
+        # Real bug found 2026-09-18: a `- Step N:`/`- Stage N:` line that
+        # doesn't match ITEM_RE (missing "— <icon>" marker, or an
+        # unbalanced trailing note paren) used to fall straight through
+        # to the plain `i += 1` below with no signal at all -- silently
+        # dropping that step's entire real content from the artifact.
+        # Caught only because a human noticed two whole steps render
+        # with no text. Fail loudly instead: a markdown-formatting slip
+        # here is exactly the "hand-transcribing" class of bug this
+        # script's own module doc comment says it exists to prevent.
+        if current_phase is not None and re.match(r"^- (Stage|Step)\b", line.strip()):
+            raise SystemExit(
+                f"generate_tracker_artifact.py: line {i + 1} looks like a Step/Stage "
+                f"item but doesn't match ITEM_RE (needs '— ✅/⬜/🚧' at the end, "
+                f"optionally followed by a balanced '(...)' note):\n  {line.strip()!r}"
+            )
+
         i += 1
 
     return milestones
