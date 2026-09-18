@@ -28,7 +28,7 @@ plain `signal.get()` in ordinary Python code costs one cheap call and
 nothing else.
 """
 
-from tre._core import App, Node, View, Window, _record_read
+from tre._core import App, CanvasContext, Node, View, Window, _record_read
 
 
 class Signal:
@@ -119,4 +119,4 @@ class ViewModel:
         view._attach(self)
 
 
-__all__ = ["App", "Node", "View", "Window", "Signal", "ViewModel"]
+__all__ = ["App", "CanvasContext", "Node", "View", "Window", "Signal", "ViewModel"]
