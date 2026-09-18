@@ -780,6 +780,22 @@ class Window:
         `+`/`-1` logic itself.
         """
         ...
+    def add_pagination(
+        self,
+        page_count: int,
+        current: int = 0,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> tuple[Node, list[Node], Node]:
+        """A real MD3 pagination control. Returns `(previous, pages,
+        next)`: `pages` is one real, independently `enable_
+        interaction()`-able `Node` per page (`1`-indexed labels),
+        `previous`/`next` each a real prev/next-page `Node` --
+        "which page is current" is app-owned state, the app drives
+        real re-selection itself. Raises `ValueError` if `page_count`
+        is `0` or `current` is out of range.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,

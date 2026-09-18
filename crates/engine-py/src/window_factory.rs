@@ -15,8 +15,9 @@ use std::rc::Rc;
 
 use engine_core::{
     AccessNodeData, Action, Animated, CheckboxState, CircularProgressState, ContentFit, IconState,
-    ImageState, LinearProgressState, NodeKind, OverlayMeta, PaintProperties, RadioButtonState,
-    Role, SliderState, SplitterState, SwitchState, TextAlign, TextFieldState, TextState,
+    ImageState, LinearProgressState, NodeId, NodeKind, OverlayMeta, PaintProperties,
+    RadioButtonState, Role, SliderState, SplitterState, SwitchState, TextAlign, TextFieldState,
+    TextState, Tree,
 };
 use peniko::Color;
 use peniko::kurbo::Affine;
@@ -1025,6 +1026,28 @@ const SPIN_BOX_FIELD_WIDTH: f32 = 64.0;
 const SPIN_BOX_FIELD_HEIGHT: f32 = 40.0;
 const SPIN_BOX_BUTTON_SIZE: f32 = SEARCH_ICON_BUTTON_SIZE;
 const SPIN_BOX_GAP: f32 = 4.0;
+
+/// `Pagination` (M30 Phase 8 Step 4) -- MD3 has no official page
+/// (confirmed via the same real per-directory-listing technique this
+/// whole milestone already uses; no `_md-comp-pagination*` file
+/// exists). Real, honest anatomy, not independently token-verified:
+/// each page indicator reuses the identical real 40dp circular
+/// footprint `Search Bar`/`Top App Bar`/`SpinBox` already settled on
+/// (`SEARCH_ICON_BUTTON_SIZE`, `corner_radius = size / 2.0`).
+/// Selected: `primary` fill, `on_primary` label -- the identical real
+/// selected-state pair `Date Picker`'s own day cell already uses (a
+/// real, closely related "which one of these is active" affordance).
+/// Unselected: transparent fill, `on_surface_variant` label -- the
+/// same real convention `Segmented Button`/`Chip`/`Navigation Rail`
+/// already established for their own unselected states. Prev/next
+/// reuse `Icon Button`'s own exact real anatomy a fourth time this
+/// catalog already has, with the newly curated `arrow_forward` glyph
+/// pairing the already-curated `arrow_back` -- the eleventh curated
+/// icon, the identical real "additive... when a real need asks for
+/// more" growth `expand_more`/`remove` already established.
+const PAGE_ITEM_SIZE: f32 = SEARCH_ICON_BUTTON_SIZE;
+const PAGE_ITEM_CORNER_RADIUS: f64 = PAGE_ITEM_SIZE as f64 / 2.0;
+const PAGE_ITEM_GAP: f32 = 4.0;
 
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
@@ -5414,6 +5437,178 @@ impl PyWindow {
             self.wrap_node(decrement),
             self.wrap_node(increment),
         ))
+    }
+
+    /// M30 Phase 8 Step 4 (§5, §7): `Pagination` -- see the `PAGE_
+    /// ITEM_*` constants above for the full real finding. Real,
+    /// deliberate architectural choice, the same real dividing line
+    /// `Segmented Button`/`Filter Chip`/`Navigation Rail`/`Tabs`
+    /// already established: "which page is current" is app-owned
+    /// state (Design Principle 6), not a new engine `NodeKind` --
+    /// returns `(previous, pages, next)`, `pages` a `Vec<Node>`
+    /// (`Segmented Button`'s own exact real return shape) one per
+    /// real page indicator, `previous`/`next` each `Icon Button`'s
+    /// own exact real anatomy reused a fourth time this catalog
+    /// already has.
+    #[pyo3(signature = (page_count, current=0, x=None, y=None))]
+    fn add_pagination(
+        &self,
+        page_count: usize,
+        current: usize,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<(Node, Vec<Node>, Node)> {
+        if page_count == 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "add_pagination needs at least 1 page",
+            ));
+        }
+        if current >= page_count {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "current page {current} is out of range for {page_count} pages"
+            )));
+        }
+        let back_path = resolve_icon_path("arrow_back")?;
+        let forward_path = resolve_icon_path("arrow_forward")?;
+
+        let (selected_fill, selected_label, unselected_label, icon_color) = {
+            let theme = self.theme.borrow();
+            let role = |name: &str, fallback: Color| -> Color {
+                if theme.is_set() {
+                    theme.role(name).unwrap_or(fallback)
+                } else {
+                    fallback
+                }
+            };
+            let on_surface_variant = role("on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT);
+            (
+                role("primary", Md3Baseline::PRIMARY),
+                role("on_primary", Md3Baseline::ON_PRIMARY),
+                on_surface_variant,
+                on_surface_variant,
+            )
+        };
+
+        // A plain, non-capturing `fn` rather than a closure -- shared
+        // across this method's own three real call sites (`previous`,
+        // each page item's own label-less sibling would need it too,
+        // `next`) without the closure-borrow conflict a `tree`-
+        // capturing closure would hit once real code runs *between*
+        // calls (`pages`'s own loop, in between `previous` and
+        // `next`).
+        fn build_icon_button(
+            tree: &mut Tree,
+            root: NodeId,
+            path: peniko::kurbo::BezPath,
+            icon_color: Color,
+            base_x: f32,
+            base_y: f32,
+            offset_x: f32,
+        ) -> NodeId {
+            let mut style = positioned_style(
+                Size {
+                    width: length(PAGE_ITEM_SIZE),
+                    height: length(PAGE_ITEM_SIZE),
+                },
+                Some(base_x + offset_x),
+                Some(base_y),
+            );
+            style.display = taffy::Display::Flex;
+            style.justify_content = Some(JustifyContent::CENTER);
+            style.align_items = Some(AlignItems::CENTER);
+            let button = tree.insert(
+                NodeKind::Rect,
+                style,
+                PaintProperties::new(TRANSPARENT, PAGE_ITEM_CORNER_RADIUS, 0.0, 1.0),
+            );
+            let icon_id = tree.insert(
+                NodeKind::Icon(IconState {
+                    path,
+                    tint: icon_color,
+                }),
+                Style {
+                    size: Size {
+                        width: length(MENU_ITEM_ICON_SIZE),
+                        height: length(MENU_ITEM_ICON_SIZE),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(button, icon_id);
+            tree.add_child(root, button);
+            button
+        }
+
+        let mut tree = self.tree.borrow_mut();
+        let base_x = x.unwrap_or(0.0);
+        let base_y = y.unwrap_or(0.0);
+
+        let previous = build_icon_button(
+            &mut tree, self.root, back_path, icon_color, base_x, base_y, 0.0,
+        );
+
+        let mut pages = Vec::with_capacity(page_count);
+        for i in 0..page_count {
+            let is_selected = i == current;
+            let offset_x =
+                PAGE_ITEM_SIZE + PAGE_ITEM_GAP + i as f32 * (PAGE_ITEM_SIZE + PAGE_ITEM_GAP);
+            let (fill, label_color) = if is_selected {
+                (selected_fill, selected_label)
+            } else {
+                (TRANSPARENT, unselected_label)
+            };
+            let mut item_style = positioned_style(
+                Size {
+                    width: length(PAGE_ITEM_SIZE),
+                    height: length(PAGE_ITEM_SIZE),
+                },
+                Some(base_x + offset_x),
+                Some(base_y),
+            );
+            item_style.display = taffy::Display::Flex;
+            item_style.justify_content = Some(JustifyContent::CENTER);
+            item_style.align_items = Some(AlignItems::CENTER);
+            let item = tree.insert(
+                NodeKind::Rect,
+                item_style,
+                PaintProperties::new(fill, PAGE_ITEM_CORNER_RADIUS, 0.0, 1.0),
+            );
+            let label_id = tree.insert(
+                NodeKind::Text(TextState {
+                    content: (i + 1).to_string(),
+                    font_family: "Roboto".to_string(),
+                    font_weight: BUTTON_LABEL_FONT_WEIGHT,
+                    font_size: BUTTON_LABEL_FONT_SIZE,
+                    align: TextAlign::Center,
+                }),
+                Style {
+                    size: Size {
+                        width: length(PAGE_ITEM_SIZE),
+                        height: length(BUTTON_LABEL_LINE_HEIGHT),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(label_color, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(item, label_id);
+            tree.add_child(self.root, item);
+            pages.push(self.wrap_node(item));
+        }
+
+        let next_offset =
+            PAGE_ITEM_SIZE + PAGE_ITEM_GAP + page_count as f32 * (PAGE_ITEM_SIZE + PAGE_ITEM_GAP);
+        let next = build_icon_button(
+            &mut tree,
+            self.root,
+            forward_path,
+            icon_color,
+            base_x,
+            base_y,
+            next_offset,
+        );
+
+        Ok((self.wrap_node(previous), pages, self.wrap_node(next)))
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,

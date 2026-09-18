@@ -73,6 +73,17 @@ const ICONS: &[(&str, &str)] = &[
     // growing this set exactly the way its own doc comment says it
     // will, "when a real need asks for more."
     ("remove", "M200-440v-80h560v80H200Z"),
+    // M30 Phase 8 Step 4 (§1, §3): a real, confirmed need --
+    // `Pagination` needs a real "next page" glyph to pair with the
+    // already-curated `arrow_back` ("previous page"). Fetched
+    // directly from the identical real CDN this module's own doc
+    // comment already cites, not invented or approximated -- the
+    // eleventh curated icon, growing this set exactly the way its
+    // own doc comment says it will, "when a real need asks for more."
+    (
+        "arrow_forward",
+        "M647-440H160v-80h487L423-744l57-56 320 320-320 320-57-56 224-224Z",
+    ),
 ];
 
 /// The real, verbatim `d=` SVG path data for a curated icon `name`, or
