@@ -634,6 +634,37 @@ const NAV_DRAWER_INDICATOR_CORNER_RADIUS: f64 = MENU_ITEM_HEIGHT as f64 / 2.0;
 const NAV_DRAWER_ITEM_SPACING: f32 = 4.0;
 const NAV_DRAWER_TOP_PADDING: f32 = 12.0;
 
+/// MD3's own real Top App Bar anatomy (M30 Phase 5 Step 3), the
+/// *Small* variant -- verified against Material Web's own token
+/// source before writing any code. **Real, confirmed finding: this
+/// component's real token file isn't named the way every prior
+/// component's was** -- `_md-comp-top-app-bar.scss` 404s; MD3's four
+/// real variants (Small/Medium/Large/Small-Centered) each get their
+/// own separate file (`_md-comp-top-app-bar-small.scss`, confirmed
+/// via a real GitHub directory listing before guessing a filename a
+/// second time), the same real per-variant-file shape `Chip`'s own
+/// Assist/Filter split already established. Real values: `surface`
+/// fill, `level0` elevation (flat, matching every other docked-chrome
+/// component this catalog has found), 64dp height. Headline: Title
+/// Large (22sp/400 weight -- traced through `_md-sys-typescale.scss`
+/// into `_md-ref-typeface.scss`'s real `weight-regular` = 400,
+/// `title-large-size` = `1.375rem` = 22px), `on_surface`. Leading
+/// icon 24dp `on_surface`; trailing icon(s) 24dp `on_surface_variant`
+/// -- a real, confirmed asymmetry (leading uses the plain `on_surface`
+/// role, trailing the variant), not assumed identical.
+const TOP_APP_BAR_HEIGHT: f32 = 64.0;
+const TOP_APP_BAR_ICON_SIZE: f32 = 24.0;
+const TOP_APP_BAR_HEADLINE_FONT_SIZE: f32 = 22.0;
+const TOP_APP_BAR_HEADLINE_FONT_WEIGHT: f32 = 400.0;
+/// Not discrete tokens in the small-variant's own token file
+/// (confirmed by the same fetch) -- reasonable, MD3-consistent
+/// values, the identical honest caveat `Dialog`'s own padding
+/// constants carry.
+const TOP_APP_BAR_ICON_BUTTON_SIZE: f32 = 40.0;
+const TOP_APP_BAR_HORIZONTAL_PADDING: f32 = 4.0;
+const TOP_APP_BAR_HEADLINE_START_PADDING: f32 = 16.0;
+const TOP_APP_BAR_TRAILING_ICON_GAP: f32 = 8.0;
+
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
 /// trailing icon -- that's `Icon Button`'s own separate anatomy, Phase
@@ -3282,9 +3313,214 @@ impl PyWindow {
         Ok(())
     }
 
+    /// M30 Phase 5 Step 3 (§5, §7): `Top App Bar`, MD3's real *Small*
+    /// variant (Medium/Large/Small-Centered are out of scope for this
+    /// step -- each is its own real, separately-tokened variant, per
+    /// this catalog's own established "real per-variant investigation,
+    /// not one guessed formula" discipline; a future step can add them
+    /// if needed). Real anatomy: see the `TOP_APP_BAR_*` constants
+    /// above for the full real finding, including this step's own
+    /// real filename-discovery correction (`_md-comp-top-app-bar.scss`
+    /// 404s -- each variant has its own separate real token file).
+    ///
+    /// **Real, deliberate design reusing `Icon Button`'s own exact
+    /// real anatomy for leading/trailing actions, not inventing a new
+    /// shape:** each icon button is a small `Rect` container (`Icon
+    /// Button`'s own real precedent, Phase 1 Step 2) with a centered
+    /// `Icon` child -- the container itself is what's returned and
+    /// made interactive, the `Icon` child correctly defers (Phase 1's
+    /// own real fix), so no decorative intermediate layer and no
+    /// `Navigation Rail`-style hit-test risk here either. Returns
+    /// `(bar, leading, trailing)`: `leading` is `None` unless
+    /// `leading_icon` was given; `trailing` is a `Vec<Node>`, one per
+    /// requested trailing icon, empty if none -- the identical real
+    /// "independently interactive sub-elements get their own real
+    /// `Node`s" shape `Snackbar` already established for its own
+    /// action/close.
+    #[pyo3(signature = (title, leading_icon=None, trailing_icons=None, width=None, x=None, y=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn add_top_app_bar(
+        &self,
+        title: &str,
+        leading_icon: Option<&str>,
+        trailing_icons: Option<Vec<String>>,
+        width: Option<f32>,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<(Node, Option<Node>, Vec<Node>)> {
+        let trailing_icons = trailing_icons.unwrap_or_default();
+        let leading_path = leading_icon.map(resolve_icon_path).transpose()?;
+        let trailing_paths: Vec<_> = trailing_icons
+            .iter()
+            .map(|name| resolve_icon_path(name))
+            .collect::<PyResult<Vec<_>>>()?;
+
+        let (container_color, headline_color, leading_icon_color, trailing_icon_color) = {
+            let theme = self.theme.borrow();
+            let role = |name: &str, fallback: Color| -> Color {
+                if theme.is_set() {
+                    theme.role(name).unwrap_or(fallback)
+                } else {
+                    fallback
+                }
+            };
+            (
+                role("surface", Md3Baseline::SURFACE),
+                theme.on_surface(),
+                theme.on_surface(),
+                role("on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT),
+            )
+        };
+
+        let mut tree = self.tree.borrow_mut();
+        let bar_width = width.unwrap_or(self.width as f32);
+
+        let mut bar_style = positioned_style(
+            Size {
+                width: length(bar_width),
+                height: length(TOP_APP_BAR_HEIGHT),
+            },
+            x,
+            y,
+        );
+        bar_style.display = taffy::Display::Flex;
+        bar_style.align_items = Some(AlignItems::CENTER);
+        bar_style.padding = TaffyRect {
+            left: length(TOP_APP_BAR_HORIZONTAL_PADDING),
+            right: length(TOP_APP_BAR_HORIZONTAL_PADDING),
+            top: zero(),
+            bottom: zero(),
+        };
+        let bar = tree.insert(
+            NodeKind::Rect,
+            bar_style,
+            PaintProperties::new(container_color, 0.0, 0.0, 1.0),
+        );
+
+        let leading = if let Some(path) = leading_path {
+            let leading_container = tree.insert(
+                NodeKind::Rect,
+                Style {
+                    size: Size {
+                        width: length(TOP_APP_BAR_ICON_BUTTON_SIZE),
+                        height: length(TOP_APP_BAR_ICON_BUTTON_SIZE),
+                    },
+                    display: taffy::Display::Flex,
+                    justify_content: Some(JustifyContent::CENTER),
+                    align_items: Some(AlignItems::CENTER),
+                    ..Default::default()
+                },
+                PaintProperties::new(
+                    TRANSPARENT,
+                    TOP_APP_BAR_ICON_BUTTON_SIZE as f64 / 2.0,
+                    0.0,
+                    1.0,
+                ),
+            );
+            let icon_id = tree.insert(
+                NodeKind::Icon(IconState {
+                    path,
+                    tint: leading_icon_color,
+                }),
+                Style {
+                    size: Size {
+                        width: length(TOP_APP_BAR_ICON_SIZE),
+                        height: length(TOP_APP_BAR_ICON_SIZE),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(leading_container, icon_id);
+            tree.add_child(bar, leading_container);
+            Some(self.wrap_node(leading_container))
+        } else {
+            None
+        };
+
+        let headline_style = Style {
+            flex_grow: 1.0,
+            size: Size {
+                width: auto(),
+                height: length(TOP_APP_BAR_HEADLINE_FONT_SIZE + 4.0),
+            },
+            margin: TaffyRect {
+                left: length(if leading.is_some() {
+                    0.0
+                } else {
+                    TOP_APP_BAR_HEADLINE_START_PADDING
+                }),
+                right: zero(),
+                top: zero(),
+                bottom: zero(),
+            },
+            ..Default::default()
+        };
+        let headline_id = tree.insert(
+            NodeKind::Text(TextState {
+                content: title.to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: TOP_APP_BAR_HEADLINE_FONT_WEIGHT,
+                font_size: TOP_APP_BAR_HEADLINE_FONT_SIZE,
+                align: TextAlign::Start,
+            }),
+            headline_style,
+            PaintProperties::new(headline_color, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(bar, headline_id);
+
+        let mut trailing = Vec::with_capacity(trailing_paths.len());
+        for path in trailing_paths {
+            let trailing_container = tree.insert(
+                NodeKind::Rect,
+                Style {
+                    size: Size {
+                        width: length(TOP_APP_BAR_ICON_BUTTON_SIZE),
+                        height: length(TOP_APP_BAR_ICON_BUTTON_SIZE),
+                    },
+                    display: taffy::Display::Flex,
+                    justify_content: Some(JustifyContent::CENTER),
+                    align_items: Some(AlignItems::CENTER),
+                    margin: TaffyRect {
+                        left: length(TOP_APP_BAR_TRAILING_ICON_GAP),
+                        right: zero(),
+                        top: zero(),
+                        bottom: zero(),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(
+                    TRANSPARENT,
+                    TOP_APP_BAR_ICON_BUTTON_SIZE as f64 / 2.0,
+                    0.0,
+                    1.0,
+                ),
+            );
+            let icon_id = tree.insert(
+                NodeKind::Icon(IconState {
+                    path,
+                    tint: trailing_icon_color,
+                }),
+                Style {
+                    size: Size {
+                        width: length(TOP_APP_BAR_ICON_SIZE),
+                        height: length(TOP_APP_BAR_ICON_SIZE),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(trailing_container, icon_id);
+            tree.add_child(bar, trailing_container);
+            trailing.push(self.wrap_node(trailing_container));
+        }
+
+        tree.add_child(self.root, bar);
+        Ok((self.wrap_node(bar), leading, trailing))
+    }
+
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,
     /// mirroring `add_rect`'s own real shape exactly -- `background`
-    /// is the box's own real fill color (universal `PaintProperties`,
     /// same as any other node), `checked` seeds `CheckboxState`'s own
     /// initial state (and its `check_progress` starting already at the
     /// matching `1.0`/`0.0`, `CheckboxState::new`'s own real contract).

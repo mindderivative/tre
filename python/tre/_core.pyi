@@ -546,6 +546,23 @@ class Window:
         `drawer` belongs to a different `Window`.
         """
         ...
+    def add_top_app_bar(
+        self,
+        title: str,
+        leading_icon: str | None = None,
+        trailing_icons: list[str] | None = None,
+        width: float | None = None,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> tuple[Node, Node | None, list[Node]]:
+        """A real MD3 top app bar, the *Small* variant. Returns `(bar,
+        leading, trailing)`: `leading` is `None` unless `leading_icon`
+        was given; `trailing` is one real, independently
+        `enable_interaction()`-able `Node` per entry in
+        `trailing_icons`, empty if none. `width` defaults to the
+        window's own full width.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,

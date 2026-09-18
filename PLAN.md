@@ -1,44 +1,34 @@
-# PLAN — M30 Phase 5 Step 2: Navigation Drawer
+# PLAN — M30 Phase 5 Step 3: Top App Bar
 
 ## Goal
-Add `Window.add_navigation_drawer`/`open_navigation_drawer`/
-`close_navigation_drawer` — the real desktop counterpart to Bottom
-App Bar's navigation role, docked to the left edge, in Standard and
-Modal variants (Side Sheet's own real behavioral fork).
+Add `Window.add_top_app_bar` — MD3's real Small Top App Bar variant,
+a 64dp header with an optional leading icon and zero-or-more trailing
+icons.
 
 ## Steps
-1. Verify real Navigation Drawer item/destination tokens via WebFetch
-   (container tokens already known from Side Sheet's own earlier
-   investigation, since both share the same source file).
-2. Trace Label Large's real active/inactive weights through
-   `_md-sys-typescale.scss`/`_md-ref-typeface.scss` — confirm they
-   match Navigation Rail's own already-found 500/700 pair.
-3. Design to proactively avoid Navigation Rail's own hit-test bug:
-   make the indicator pill itself the returned, interactive node
-   (icon+label side by side inside it), not a decorative layer nested
-   inside a separate outer item wrapper.
-4. Implement `add_navigation_drawer` (reusing SIDE_SHEET_* container
-   constants, mirrored corner rounding for the left-docked edge) and
-   `open_navigation_drawer`/`close_navigation_drawer` (Side Sheet's
-   own exact lifecycle pattern).
-5. Add `.pyi` stubs for all three methods.
-6. Write `tests/test_navigation_drawer.py`, including a third
-   independent OverlayMeta.modal proof and an independent-click test
-   for destinations (watching whether it passes first try, unlike
-   Navigation Rail's).
-7. Write `examples/navigation_drawer.py`, headless-CI-safe,
-   demonstrating both variants — apply the Callable return-type
-   annotation proactively this time (Navigation Rail's own mypy
-   finding).
-8. Full verification chain: cargo check/clippy/fmt/test, maturin
+1. Verify real Top App Bar tokens via WebFetch — 404 on the naive
+   filename; found the real per-variant filenames via a GitHub
+   directory listing (`_md-comp-top-app-bar-small.scss` etc).
+2. Fetch the real Small-variant tokens: surface/level0/64dp/Title
+   Large headline/leading+trailing icon colors.
+3. Trace Title Large's real numeric size/weight through
+   `_md-sys-typescale.scss`/`_md-ref-typeface.scss`.
+4. Design: reuse Icon Button's own exact anatomy for leading/trailing
+   actions (Rect container + centered Icon child) to avoid any
+   Navigation Rail-style hit-test risk by construction.
+5. Implement `add_top_app_bar` in `window_factory.rs`.
+6. Add `.pyi` stub.
+7. Write `tests/test_top_app_bar.py`, including independent-click
+   proofs for leading and trailing icons.
+8. Write `examples/top_app_bar.py`, headless-CI-safe.
+9. Full verification chain: cargo check/clippy/fmt/test, maturin
    develop, pytest (full suite), all examples, showcase demo, mypy
    --strict.
-9. Update `BUILD_TRACKER.md` (Top Metrics row, step line), regenerate
-   + republish the Build Tracker artifact.
-10. Update memory, commit, push.
+10. Update `BUILD_TRACKER.md` (Top Metrics row, step line), regenerate
+    + republish the Build Tracker artifact.
+11. Update memory, commit, push.
 
 ## Status
-Complete. All steps done; full verification chain green (347 pytest
-passed/1 skipped, 48 examples, showcase demo, 43 Rust test binaries).
-The proactive design avoided Navigation Rail's hit-test bug entirely
--- the independent-click test passed on the first run.
+Complete. All steps done; full verification chain green (355 pytest
+passed/1 skipped, 49 examples, showcase demo, 43 Rust test binaries).
+Both independent-click tests passed on the first run.
