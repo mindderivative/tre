@@ -488,6 +488,23 @@ class Window:
         different `Window`.
         """
         ...
+    def add_navigation_rail(
+        self,
+        labels: list[str],
+        icons: list[str],
+        selected: int | None = None,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> list[Node]:
+        """A real MD3 navigation rail, the desktop counterpart to
+        Navigation Bar. `labels`/`icons` must be the same length (one
+        icon per item) and non-empty. Returns one real, independently
+        `enable_interaction()`-able `Node` per item, in order -- the
+        rail's own background frame is never returned. Raises
+        `ValueError` if `labels`/`icons` lengths mismatch, if empty,
+        or if `selected` is out of range.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,

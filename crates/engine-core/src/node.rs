@@ -756,4 +756,21 @@ pub struct Node {
     /// (plain rects, text, containers) never touch this and pay nothing
     /// for it.
     pub interaction: Option<crate::interaction::InteractionState>,
+    /// M30 Phase 5 Step 1 (§5, §7): a real, confirmed gap this step's
+    /// own `Navigation Rail` surfaced -- `Tree::hit_test_at`'s own
+    /// "children checked first, no ancestor bubbling" contract (M30
+    /// Phase 1's own `NodeKind::Text`/`NodeKind::Icon` fix already
+    /// documents this) meant a decorative interior `Rect` (the active-
+    /// indicator pill behind a nav item's icon) permanently ate every
+    /// click meant for its own interactive parent, since a plain
+    /// `Rect` always independently claims a hit and nothing bubbles
+    /// back out. Text/Icon got a hardcoded per-`NodeKind` exemption;
+    /// a `Rect` genuinely can't (it's the real click target for
+    /// `Button`/`Card`/`Chip`/every other composite in this catalog),
+    /// so this generalizes the same real exemption into a purely
+    /// additive, opt-in per-node flag instead. `true` (every existing
+    /// node, via `Tree::insert`'s own single real construction site)
+    /// is a true no-op -- only `Tree::set_hit_testable(id, false)`
+    /// changes anything.
+    pub hit_testable: bool,
 }

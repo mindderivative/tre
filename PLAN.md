@@ -1,40 +1,38 @@
-# PLAN — M30 Phase 4 Step 3: Side Sheet (closes Phase 4)
+# PLAN — M30 Phase 5 Step 1: Navigation Rail
 
 ## Goal
-Add `Window.add_side_sheet`/`open_side_sheet`/`close_side_sheet` —
-the real desktop counterpart to Bottom Sheet, in Standard (embedded,
-non-overlay) and Modal (floating, blocking) variants.
+Add `Window.add_navigation_rail` — the real desktop counterpart to
+Navigation Bar. Built as a plain composition (app-owned selection
+state), returning one real Node per item.
 
 ## Steps
-1. Verify real MD3 Side Sheet tokens via WebFetch — 404, confirming
-   no dedicated token file exists (matching Menu's own earlier
-   finding). Fall back to Navigation Drawer's own real tokens, the
-   structurally closest MD3 component.
-2. Decide the real behavioral fork: Standard is a plain layout
-   participant (Card's own precedent — attach immediately, optional
-   x/y), Modal is a real blocking overlay (Dialog's own precedent —
-   scrim + OverlayMeta.modal, unattached until opened).
-3. Implement `add_side_sheet` (builds both variants from one method,
-   corner_radii_override for the real corner-large-end shape) and
-   `open_side_sheet`/`close_side_sheet` (modal-only lifecycle,
-   real explicit no-op for standard sheets).
-4. Add `.pyi` stubs for all three methods.
-5. Write `tests/test_side_sheet.py`, including a real click-dispatch
-   proof that the modal variant blocks background clicks (reusing
-   Dialog's own OverlayMeta.modal capability against a second,
-   independently-built overlay) and a real re-parenting proof for the
-   standard variant.
-6. Write `examples/side_sheet.py`, headless-CI-safe, demonstrating
-   both variants.
-7. Full verification chain: cargo check/clippy/fmt/test, maturin
-   develop, pytest (full suite), all examples, showcase demo, mypy
-   --strict.
-8. Update `BUILD_TRACKER.md` (Top Metrics row, Phase 4 heading now
-   ✅, step line, Step 4 .pyi-stubs line), regenerate + republish the
-   Build Tracker artifact. Closes Phase 4 entirely.
-9. Update memory, commit, push.
+1. Verify real MD3 Navigation Rail tokens via WebFetch against
+   Material Web's own `_md-comp-navigation-rail.scss`.
+2. Catch and correct a self-made error: re-verify container-color
+   with a second, more targeted fetch after the first summary looked
+   suspicious (misattributed the indicator's own color to the
+   container).
+3. Trace Label Medium's real numeric weights (500/700) through
+   `_md-sys-typescale.scss` and `_md-ref-typeface.scss`.
+4. Decide architecture: plain composition (Segmented Button/Filter
+   Chip precedent), returns `Vec<Node>` (Segmented Button precedent).
+5. Implement `add_navigation_rail` in `window_factory.rs`.
+6. Write `tests/test_navigation_rail.py` — hits a real, confirmed
+   click-dispatch bug: the decorative indicator pill (an interior
+   Rect) eats clicks meant for its parent item.
+7. Investigate and fix the real engine-core gap: add
+   `Node.hit_testable: bool` (purely additive) + `Tree::
+   set_hit_testable`, generalizing Phase 1's Text/Icon hit-test
+   exemption. Add a direct `engine-core` unit test proving it.
+8. Add `.pyi` stub.
+9. Write `examples/navigation_rail.py`, headless-CI-safe.
+10. Full verification chain: cargo check/clippy/fmt/test, maturin
+    develop, pytest (full suite), all examples, showcase demo, mypy
+    --strict.
+11. Update `BUILD_TRACKER.md` (Top Metrics row, Phase 5 heading now
+    🚧, step line), regenerate + republish the Build Tracker artifact.
+12. Update memory, commit, push.
 
 ## Status
-Complete. All steps done; full verification chain green (327 pytest
-passed/1 skipped, 46 examples, showcase demo, 43 Rust test binaries).
-Phase 4 (Overlay-Dependent) is now fully complete, all 4 steps.
+Complete. All steps done; full verification chain green (335 pytest
+passed/1 skipped, 47 examples, showcase demo, engine-core 149 tests).

@@ -173,9 +173,26 @@ impl Tree {
             paint,
             access: AccessNodeData::default(),
             interaction: None,
+            hit_testable: true,
         });
         self.taffy_nodes.insert(id, taffy_node);
         id
+    }
+
+    /// M30 Phase 5 Step 1 (§5, §7): opts `id` out of independently
+    /// claiming a hit in `hit_test_at` -- `Node.hit_testable`'s own
+    /// doc comment has the full real finding this generalizes
+    /// (`NodeKind::Text`/`NodeKind::Icon`'s own hardcoded exemption,
+    /// widened into an opt-in flag for a decorative `Rect` layer like
+    /// `Navigation Rail`'s own active-indicator pill). A no-op call
+    /// (`id` already at `hit_testable`) is harmless; panics if `id` is
+    /// stale/foreign to this `Tree`, the same real contract every
+    /// other single-node setter here already has.
+    pub fn set_hit_testable(&mut self, id: NodeId, hit_testable: bool) {
+        self.nodes
+            .get_mut(id)
+            .expect("set_hit_testable: NodeId not found in this Tree")
+            .hit_testable = hit_testable;
     }
 
     /// Attaches `child` under `parent` in both structures at once, so
@@ -1291,60 +1308,71 @@ impl Tree {
         // transform (M5 Phase 1).
         let local_point = composed.inverse() * point;
 
-        let hit = match &node.kind {
-            NodeKind::Canvas(state) => match &state.hit_test {
-                Some(CustomHitTest::Circle { cx, cy, radius }) => {
-                    (local_point - Point::new(*cx, *cy)).hypot() <= *radius
-                }
-                Some(CustomHitTest::Path { path, tolerance }) => {
-                    path.segments()
-                        .map(|seg| seg.nearest(local_point, 0.1).distance_sq)
-                        .fold(f64::INFINITY, f64::min)
-                        .sqrt()
-                        <= *tolerance
-                }
-                None => rect_contains(layout, local_point),
-            },
-            // M30 Phase 1 (§5, §7): a real, confirmed bug this phase's
-            // own `Button` surfaced -- a bare `Text` label used to claim
-            // any click landing on its own box, even when it's purely
-            // decorative content inside a clickable parent (`Button`'s
-            // centered label, sized to fill the container's inner
-            // content width, sat directly over the container's own
-            // registered click handler and ate every click meant for
-            // it; `test_button.py`'s own real click-dispatch test
-            // caught this, not inferred). No child recursion loop
-            // anywhere in this codebase bubbles a hit up to an
-            // ancestor -- `dispatch` only ever looks at the exact node
-            // `hit_test` returns -- so a `Text` child silently owning
-            // the hit was a real, permanent dead end for its parent's
-            // handler, not a one-frame quirk. A bare label never has a
-            // legitimate independent reason to be its own click
-            // target (confirmed: no existing example or test anywhere
-            // registers `set_on_click`/`enable_interaction` directly
-            // on a plain `add_text` node) -- `TextField` is unaffected,
-            // a distinct `NodeKind` with its own real click-to-focus
-            // need. A future standalone clickable label (MD3's own
-            // `Link`, this catalog's own Phase 8 scope) gets its own
-            // dedicated `NodeKind` when that phase investigates it,
-            // the same "each interactive component is its own real
-            // `NodeKind`" precedent `Checkbox`/`Slider`/`TextField`
-            // already establish, not a handler bolted onto bare `Text`.
-            NodeKind::Text(_) => false,
-            // M30 Phase 1 (§5, §7): the identical real reasoning as
-            // `NodeKind::Text` above, applied to `Icon` for the same
-            // real reason -- `Icon Button`'s own anatomy (Step 2) is a
-            // `Rect` container with a centered `Icon` child, and that
-            // child's own box sits squarely inside the container's
-            // clickable area exactly the way `Button`'s label did.
-            // Confirmed via grep before this arm existed: `demo/
-            // showcase.py`'s only `add_icon` usage (its icon gallery)
-            // is purely decorative -- never `enable_interaction`/`set_
-            // on_click` on the icon node itself -- so nothing real
-            // relies on a standalone icon being independently
-            // clickable today.
-            NodeKind::Icon(_) => false,
-            _ => rect_contains(layout, local_point),
+        // M30 Phase 5 Step 1 (§5, §7): `Node.hit_testable`'s own real
+        // opt-out, checked before the per-`NodeKind` match below --
+        // `false` short-circuits straight to "no hit" here exactly the
+        // way `NodeKind::Text`/`NodeKind::Icon` already do unconditionally,
+        // generalized to any node a caller has explicitly opted out
+        // (children were already checked above, so this only ever
+        // affects whether *this* node itself claims the point).
+        let hit = if !node.hit_testable {
+            false
+        } else {
+            match &node.kind {
+                NodeKind::Canvas(state) => match &state.hit_test {
+                    Some(CustomHitTest::Circle { cx, cy, radius }) => {
+                        (local_point - Point::new(*cx, *cy)).hypot() <= *radius
+                    }
+                    Some(CustomHitTest::Path { path, tolerance }) => {
+                        path.segments()
+                            .map(|seg| seg.nearest(local_point, 0.1).distance_sq)
+                            .fold(f64::INFINITY, f64::min)
+                            .sqrt()
+                            <= *tolerance
+                    }
+                    None => rect_contains(layout, local_point),
+                },
+                // M30 Phase 1 (§5, §7): a real, confirmed bug this phase's
+                // own `Button` surfaced -- a bare `Text` label used to claim
+                // any click landing on its own box, even when it's purely
+                // decorative content inside a clickable parent (`Button`'s
+                // centered label, sized to fill the container's inner
+                // content width, sat directly over the container's own
+                // registered click handler and ate every click meant for
+                // it; `test_button.py`'s own real click-dispatch test
+                // caught this, not inferred). No child recursion loop
+                // anywhere in this codebase bubbles a hit up to an
+                // ancestor -- `dispatch` only ever looks at the exact node
+                // `hit_test` returns -- so a `Text` child silently owning
+                // the hit was a real, permanent dead end for its parent's
+                // handler, not a one-frame quirk. A bare label never has a
+                // legitimate independent reason to be its own click
+                // target (confirmed: no existing example or test anywhere
+                // registers `set_on_click`/`enable_interaction` directly
+                // on a plain `add_text` node) -- `TextField` is unaffected,
+                // a distinct `NodeKind` with its own real click-to-focus
+                // need. A future standalone clickable label (MD3's own
+                // `Link`, this catalog's own Phase 8 scope) gets its own
+                // dedicated `NodeKind` when that phase investigates it,
+                // the same "each interactive component is its own real
+                // `NodeKind`" precedent `Checkbox`/`Slider`/`TextField`
+                // already establish, not a handler bolted onto bare `Text`.
+                NodeKind::Text(_) => false,
+                // M30 Phase 1 (§5, §7): the identical real reasoning as
+                // `NodeKind::Text` above, applied to `Icon` for the same
+                // real reason -- `Icon Button`'s own anatomy (Step 2) is a
+                // `Rect` container with a centered `Icon` child, and that
+                // child's own box sits squarely inside the container's
+                // clickable area exactly the way `Button`'s label did.
+                // Confirmed via grep before this arm existed: `demo/
+                // showcase.py`'s only `add_icon` usage (its icon gallery)
+                // is purely decorative -- never `enable_interaction`/`set_
+                // on_click` on the icon node itself -- so nothing real
+                // relies on a standalone icon being independently
+                // clickable today.
+                NodeKind::Icon(_) => false,
+                _ => rect_contains(layout, local_point),
+            }
         };
         hit.then_some((id, local_point))
     }
@@ -7035,5 +7063,74 @@ mod tests {
         };
         assert_eq!(state.path, path);
         assert_eq!(state.tint, tint);
+    }
+
+    /// M30 Phase 5 Step 1 (§5, §7): real, direct coverage of the new
+    /// `Node.hit_testable` opt-out -- proves it actually changes what
+    /// `hit_test` returns, not just that it compiles. First asserts
+    /// the real bug this step found (a decorative inner `Rect`
+    /// permanently steals a hit from its own ancestor), then that
+    /// `set_hit_testable(id, false)` fixes exactly that.
+    #[test]
+    fn hit_testable_false_makes_a_node_defer_to_its_own_ancestor() {
+        let mut tree = Tree::new();
+        let root = tree.insert(
+            NodeKind::Container,
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(100.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+
+        let (kind, mut outer_style, paint) = leaf(100.0, 100.0);
+        outer_style.position = Position::Absolute;
+        outer_style.inset = TaffyRect {
+            left: length(0.0),
+            top: length(0.0),
+            right: auto(),
+            bottom: auto(),
+        };
+        let outer = tree.insert(kind, outer_style, paint);
+        tree.add_child(root, outer);
+
+        // A decorative inner Rect, absolutely positioned to overlap
+        // `outer`'s own center point (50, 50).
+        let (inner_kind, mut inner_style, inner_paint) = leaf(20.0, 20.0);
+        inner_style.position = Position::Absolute;
+        inner_style.inset = TaffyRect {
+            left: length(40.0),
+            top: length(40.0),
+            right: auto(),
+            bottom: auto(),
+        };
+        let inner = tree.insert(inner_kind, inner_style, inner_paint);
+        tree.add_child(outer, inner);
+
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+
+        let point = Point::new(50.0, 50.0);
+        assert_eq!(
+            tree.hit_test(root, point),
+            Some(inner),
+            "before opting out, the decorative inner Rect must claim the hit -- the real bug \
+             this step found"
+        );
+
+        tree.set_hit_testable(inner, false);
+        assert_eq!(
+            tree.hit_test(root, point),
+            Some(outer),
+            "after opting out, the same point must resolve to the ancestor instead"
+        );
     }
 }

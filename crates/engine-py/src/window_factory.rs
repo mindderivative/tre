@@ -564,6 +564,43 @@ const SIDE_SHEET_CORNER_RADIUS: f64 = 16.0;
 const SIDE_SHEET_STANDARD_ELEVATION: f64 = 0.0;
 const SIDE_SHEET_MODAL_ELEVATION: f64 = 1.0;
 
+/// MD3's own real Navigation Rail anatomy (M30 Phase 5 Step 1),
+/// verified against Material Web's own token source before writing
+/// any code (`_md-comp-navigation-rail.scss`): `container-color`
+/// `surface` (a real, confirmed re-fetch correction -- a first pass
+/// misattributed the active-indicator's own `secondary_container`
+/// color to the rail's container instead, caught by asking the
+/// second fetch for the container-color line verbatim, not assumed
+/// from the first summary), `container-width` 80px,
+/// `container-elevation` `level0` (flat, no shadow -- a rail is
+/// always docked flush to the screen edge, never floating),
+/// `container-shape` `corner-none` (genuinely square, the first
+/// component in this whole catalog with zero rounding anywhere).
+/// Active indicator: `secondary_container` fill, 56×32dp,
+/// `corner-full` (a real pill, `height / 2.0`). Icon: 24dp,
+/// `on_secondary_container` active / `on_surface_variant` inactive.
+/// Label: Label Medium (12sp, traced through `_md-sys-typescale.scss`
+/// to `_md-ref-typeface.scss` for the real numeric weights --
+/// `weight-medium` = 500 inactive, `weight-bold` = 700 for the
+/// active/"prominent" variant, a real, genuine *weight* difference
+/// between active/inactive, not just a color change like every prior
+/// component in this catalog), `on_surface` active / `on_surface_
+/// variant` inactive.
+const NAV_RAIL_WIDTH: f32 = 80.0;
+const NAV_RAIL_ICON_SIZE: f32 = 24.0;
+const NAV_RAIL_INDICATOR_WIDTH: f32 = 56.0;
+const NAV_RAIL_INDICATOR_HEIGHT: f32 = 32.0;
+const NAV_RAIL_INDICATOR_CORNER_RADIUS: f64 = NAV_RAIL_INDICATOR_HEIGHT as f64 / 2.0;
+const NAV_RAIL_LABEL_FONT_SIZE: f32 = 12.0;
+const NAV_RAIL_LABEL_WEIGHT_INACTIVE: f32 = 500.0;
+const NAV_RAIL_LABEL_WEIGHT_ACTIVE: f32 = 700.0;
+/// Not a discrete token in the rail's own token file (confirmed by
+/// the same fetch) -- reasonable, MD3-consistent values, the
+/// identical honest caveat `Dialog`'s own padding constants carry.
+const NAV_RAIL_ITEM_GAP: f32 = 4.0;
+const NAV_RAIL_ITEM_SPACING: f32 = 12.0;
+const NAV_RAIL_TOP_PADDING: f32 = 44.0;
+
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
 /// trailing icon -- that's `Icon Button`'s own separate anatomy, Phase
@@ -2639,6 +2676,245 @@ impl PyWindow {
             tree.remove(anchor);
         }
         Ok(())
+    }
+
+    /// M30 Phase 5 Step 1 (§5, §7): `Navigation Rail`, the real
+    /// desktop counterpart to Navigation Bar (excluded as a mobile
+    /// pattern, this milestone's own scope). Real anatomy verified
+    /// against Material Web's own token source: see the `NAV_RAIL_*`
+    /// constants above for the full real finding, including a real
+    /// self-caught correction (a first token fetch misattributed the
+    /// active-indicator's own color to the rail's container) and a
+    /// real, genuine active/inactive *weight* difference in the label
+    /// (500 vs. 700), not just a color change like every prior
+    /// component in this catalog.
+    ///
+    /// **Real, deliberate architectural choice, not an oversight:**
+    /// built as a plain composition (one `Rect` frame, `corner-none`
+    /// per-item `Rect` containers each with an indicator `Rect` +
+    /// `Icon` + `Text` label), not a new first-class `NodeKind` --
+    /// the same real dividing line `Segmented Button`/`Filter Chip`
+    /// already established (Phase 1 Step 4/Phase 2 Step 3): a rail's
+    /// own "active item" is fundamentally the same group/app-owned
+    /// single-select state as a segment's own, per Design Principle 6
+    /// ("group-exclusivity is application state... not engine-
+    /// owned"), not a new engine-owned toggle. Returns every item's
+    /// own real container `Node` (`Vec<Node>`, `Segmented Button`'s
+    /// own exact real return shape) -- the rail's own background
+    /// frame is never returned, the identical real "frame stays
+    /// internal" contract `Segmented Button`'s own frame/dividers
+    /// already have. An app wires up live re-toggling with the same
+    /// already-generic primitives every other component uses
+    /// (`set_on_click`, `Node.animate`), not a new component-specific
+    /// toggle method invented here.
+    #[pyo3(signature = (labels, icons, selected=None, x=None, y=None))]
+    fn add_navigation_rail(
+        &self,
+        labels: Vec<String>,
+        icons: Vec<String>,
+        selected: Option<usize>,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<Vec<Node>> {
+        if labels.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "add_navigation_rail needs at least 1 item",
+            ));
+        }
+        if labels.len() != icons.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "add_navigation_rail needs one icon per label -- got {} labels and {} icons",
+                labels.len(),
+                icons.len()
+            )));
+        }
+        if let Some(sel) = selected
+            && sel >= labels.len()
+        {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "selected index {sel} is out of range for {} items",
+                labels.len()
+            )));
+        }
+        let icon_paths: Vec<_> = icons
+            .iter()
+            .map(|name| resolve_icon_path(name))
+            .collect::<PyResult<Vec<_>>>()?;
+
+        let (
+            container_color,
+            indicator_color,
+            active_icon_color,
+            inactive_icon_color,
+            active_label_color,
+            inactive_label_color,
+        ) = {
+            let theme = self.theme.borrow();
+            let role = |name: &str, fallback: Color| -> Color {
+                if theme.is_set() {
+                    theme.role(name).unwrap_or(fallback)
+                } else {
+                    fallback
+                }
+            };
+            let on_surface_variant = role("on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT);
+            (
+                role("surface", Md3Baseline::SURFACE),
+                role("secondary_container", Md3Baseline::SECONDARY_CONTAINER),
+                role(
+                    "on_secondary_container",
+                    Md3Baseline::ON_SECONDARY_CONTAINER,
+                ),
+                on_surface_variant,
+                theme.on_surface(),
+                on_surface_variant,
+            )
+        };
+
+        let mut tree = self.tree.borrow_mut();
+        let item_height =
+            NAV_RAIL_INDICATOR_HEIGHT + NAV_RAIL_ITEM_GAP + NAV_RAIL_LABEL_FONT_SIZE + 4.0;
+        let rail_height = NAV_RAIL_TOP_PADDING
+            + (labels.len() as f32) * item_height
+            + (labels.len().saturating_sub(1) as f32) * NAV_RAIL_ITEM_SPACING;
+
+        let mut frame_style = positioned_style(
+            Size {
+                width: length(NAV_RAIL_WIDTH),
+                height: length(rail_height),
+            },
+            x,
+            y,
+        );
+        frame_style.display = taffy::Display::Flex;
+        frame_style.flex_direction = taffy::FlexDirection::Column;
+        frame_style.align_items = Some(AlignItems::CENTER);
+        frame_style.padding = TaffyRect {
+            left: zero(),
+            right: zero(),
+            top: length(NAV_RAIL_TOP_PADDING),
+            bottom: zero(),
+        };
+        frame_style.gap = Size {
+            width: length(0.0),
+            height: length(NAV_RAIL_ITEM_SPACING),
+        };
+        let frame = tree.insert(
+            NodeKind::Rect,
+            frame_style,
+            PaintProperties::new(container_color, 0.0, 0.0, 1.0),
+        );
+
+        let mut items = Vec::with_capacity(labels.len());
+        for (i, (label, path)) in labels.into_iter().zip(icon_paths).enumerate() {
+            let is_active = selected == Some(i);
+
+            let item_style = Style {
+                size: Size {
+                    width: length(NAV_RAIL_WIDTH),
+                    height: length(item_height),
+                },
+                display: taffy::Display::Flex,
+                flex_direction: taffy::FlexDirection::Column,
+                align_items: Some(AlignItems::CENTER),
+                gap: Size {
+                    width: length(0.0),
+                    height: length(NAV_RAIL_ITEM_GAP),
+                },
+                ..Default::default()
+            };
+            let item = tree.insert(
+                NodeKind::Rect,
+                item_style,
+                PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+            );
+
+            let indicator_fill = if is_active {
+                indicator_color
+            } else {
+                TRANSPARENT
+            };
+            let indicator_style = Style {
+                size: Size {
+                    width: length(NAV_RAIL_INDICATOR_WIDTH),
+                    height: length(NAV_RAIL_INDICATOR_HEIGHT),
+                },
+                display: taffy::Display::Flex,
+                justify_content: Some(JustifyContent::CENTER),
+                align_items: Some(AlignItems::CENTER),
+                ..Default::default()
+            };
+            let indicator = tree.insert(
+                NodeKind::Rect,
+                indicator_style,
+                PaintProperties::new(indicator_fill, NAV_RAIL_INDICATOR_CORNER_RADIUS, 0.0, 1.0),
+            );
+            // M30 Phase 5 Step 1 (§5, §7): the real, confirmed gap this
+            // component surfaced -- the indicator pill sits squarely
+            // over `item`'s own geometric center, and a plain `Rect`
+            // always independently claims a hit (unlike `Text`/`Icon`),
+            // permanently stealing every click meant for `item`'s own
+            // registered handler. `Node.hit_testable`'s own doc comment
+            // has the full real finding.
+            tree.set_hit_testable(indicator, false);
+
+            let icon_color = if is_active {
+                active_icon_color
+            } else {
+                inactive_icon_color
+            };
+            let icon_id = tree.insert(
+                NodeKind::Icon(IconState {
+                    path,
+                    tint: icon_color,
+                }),
+                Style {
+                    size: Size {
+                        width: length(NAV_RAIL_ICON_SIZE),
+                        height: length(NAV_RAIL_ICON_SIZE),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(indicator, icon_id);
+            tree.add_child(item, indicator);
+
+            let label_color = if is_active {
+                active_label_color
+            } else {
+                inactive_label_color
+            };
+            let label_weight = if is_active {
+                NAV_RAIL_LABEL_WEIGHT_ACTIVE
+            } else {
+                NAV_RAIL_LABEL_WEIGHT_INACTIVE
+            };
+            let label_id = tree.insert(
+                NodeKind::Text(TextState {
+                    content: label,
+                    font_family: "Roboto".to_string(),
+                    font_weight: label_weight,
+                    font_size: NAV_RAIL_LABEL_FONT_SIZE,
+                    align: TextAlign::Center,
+                }),
+                Style {
+                    size: Size {
+                        width: length(NAV_RAIL_WIDTH),
+                        height: length(NAV_RAIL_LABEL_FONT_SIZE + 4.0),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(label_color, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(item, label_id);
+
+            tree.add_child(frame, item);
+            items.push(self.wrap_node(item));
+        }
+
+        tree.add_child(self.root, frame);
+        Ok(items)
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,
