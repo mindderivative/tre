@@ -738,6 +738,17 @@ class Window:
         `ValueError` if `selected` isn't `"AM"` or `"PM"`.
         """
         ...
+    def add_popover(self, subhead: str, text: str, width: float, height: float) -> Node:
+        """A real MD3 popover, grounded in MD3's own Rich Tooltip
+        anatomy (`surface_container`, real `corner-medium` shape, a
+        subhead + supporting text). Genuinely *persistent* -- unlike
+        the plain `add_tooltip`, it stays open until dismissed.
+        Returned genuinely unattached anywhere -- show/hide it via
+        the existing `Window.open_menu`/`close_menu` (the same real
+        reuse `add_tooltip`'s own panel already has), not a new
+        dedicated open/close pair.
+        """
+        ...
     def add_checkbox(
         self,
         background: Color,

@@ -919,6 +919,45 @@ const PERIOD_SELECTOR_WIDTH: f32 = 52.0;
 const PERIOD_SELECTOR_HEIGHT: f32 = 72.0;
 const PERIOD_OPTION_HEIGHT: f32 = PERIOD_SELECTOR_HEIGHT / 2.0;
 
+/// `Popover` (M30 Phase 8 Step 1), grounded in MD3's own real *Rich
+/// Tooltip* anatomy -- `BUILD_TRACKER.md`'s own scope text already
+/// names this real grounding (pyCopper's own prior research, reused
+/// rather than re-derived); the exact real token values below were
+/// still directly re-verified against Material Web's own token
+/// source (`_md-comp-rich-tooltip.scss`), not assumed to still match
+/// from pyCopper's own different codebase. Real, confirmed anatomy:
+/// `surface_container` fill, real `corner-medium` shape -- the
+/// identical real 12dp value `Card`'s own `CARD_CORNER_RADIUS`
+/// already confirmed for the same real token, reused directly -- a
+/// real rest-state elevation (level 2, the identical real value
+/// `Menu`'s own panel, `MENU_PANEL_ELEVATION`, already uses). Subhead
+/// is Title Small (`on_surface_variant`) -- the identical real
+/// numeric coincidence `Tabs`'s own `TAB_LABEL_FONT_SIZE`/`_WEIGHT`
+/// already found and declared distinct constants for, reused here a
+/// second time. Supporting text is Body Medium (`on_surface_variant`,
+/// `DIALOG_BODY_FONT_SIZE`/`_WEIGHT` reused directly, the identical
+/// real role `Dialog`'s own body text already uses).
+///
+/// **Real, deliberate reuse of `Window.open_menu`/`close_menu`
+/// directly, the identical real design `Tooltip`/`Search View`
+/// already established, not new dedicated methods:** a real Popover
+/// is genuinely *persistent* -- unlike the already-real Plain
+/// `Tooltip` (Phase 3 Step 5), which dismisses automatically on
+/// hover-exit, a Rich Tooltip stays open until the user interacts
+/// elsewhere or explicitly dismisses it, exactly the real behavior
+/// `open_menu`'s own `dismiss_on_outside_click: true` already gives
+/// for free -- no new persistence mechanism needed.
+const POPOVER_CORNER_RADIUS: f64 = CARD_CORNER_RADIUS;
+const POPOVER_ELEVATION: f64 = MENU_PANEL_ELEVATION;
+const POPOVER_SUBHEAD_FONT_SIZE: f32 = TAB_LABEL_FONT_SIZE;
+const POPOVER_SUBHEAD_FONT_WEIGHT: f32 = TAB_LABEL_FONT_WEIGHT;
+/// Not a discrete token in the rich-tooltip's own token file
+/// (confirmed by the same fetch) -- a reasonable, MD3-consistent
+/// value, the identical honest caveat `Dialog`'s own padding
+/// constants carry.
+const POPOVER_PADDING: f32 = 16.0;
+const POPOVER_SUBHEAD_GAP: f32 = 8.0;
+
 /// MD3's own real Button anatomy constants (M3 spec, Buttons component
 /// page): 24dp horizontal padding for a label-only button (no leading/
 /// trailing icon -- that's `Icon Button`'s own separate anatomy, Phase
@@ -5020,6 +5059,123 @@ impl PyWindow {
         let pm = build_option("PM", selected == "PM", PERIOD_OPTION_HEIGHT);
 
         Ok((self.wrap_node(am), self.wrap_node(pm)))
+    }
+
+    /// M30 Phase 8 Step 1 (§11.3): `Popover`, grounded in MD3's own
+    /// real Rich Tooltip anatomy -- see the `POPOVER_*` constants
+    /// above for the full real finding, including the real reuse of
+    /// `Window.open_menu`/`close_menu` for its own genuinely
+    /// *persistent* show/hide lifecycle, not a new dedicated method
+    /// pair. Real anatomy: `surface_container` fill, real `corner-
+    /// medium` shape, a real rest-state elevation (level 2); a
+    /// subhead (Title Small, `on_surface_variant`) and supporting
+    /// text (Body Medium, `on_surface_variant`) stacked in a padded
+    /// column, the identical real layout shape `Dialog`'s own panel
+    /// already established (headline + body). Returned genuinely
+    /// unattached anywhere -- the same real contract `add_dialog`/
+    /// `add_tooltip`'s own panels already have; pass it to `Window.
+    /// open_menu(anchor, popover)` to actually show it.
+    #[pyo3(signature = (subhead, text, width, height))]
+    fn add_popover(&self, subhead: &str, text: &str, width: f32, height: f32) -> Node {
+        let (subhead_color, body_color) = {
+            let theme = self.theme.borrow();
+            let on_surface_variant = if theme.is_set() {
+                theme
+                    .role("on_surface_variant")
+                    .unwrap_or(Md3Baseline::ON_SURFACE_VARIANT)
+            } else {
+                Md3Baseline::ON_SURFACE_VARIANT
+            };
+            (on_surface_variant, on_surface_variant)
+        };
+        let container_color = {
+            let theme = self.theme.borrow();
+            if theme.is_set() {
+                theme
+                    .role("surface_container")
+                    .unwrap_or(Md3Baseline::SURFACE_CONTAINER)
+            } else {
+                Md3Baseline::SURFACE_CONTAINER
+            }
+        };
+
+        let mut tree = self.tree.borrow_mut();
+
+        let panel_style = Style {
+            size: Size {
+                width: length(width),
+                height: length(height),
+            },
+            display: taffy::Display::Flex,
+            flex_direction: taffy::FlexDirection::Column,
+            padding: TaffyRect {
+                left: length(POPOVER_PADDING),
+                right: length(POPOVER_PADDING),
+                top: length(POPOVER_PADDING),
+                bottom: length(POPOVER_PADDING),
+            },
+            gap: Size {
+                width: length(0.0),
+                height: length(POPOVER_SUBHEAD_GAP),
+            },
+            ..Default::default()
+        };
+        let panel = tree.insert(
+            NodeKind::Rect,
+            panel_style,
+            PaintProperties::new(
+                container_color,
+                POPOVER_CORNER_RADIUS,
+                POPOVER_ELEVATION,
+                1.0,
+            ),
+        );
+
+        let content_width = (width - 2.0 * POPOVER_PADDING).max(0.0);
+        let subhead_id = tree.insert(
+            NodeKind::Text(TextState {
+                content: subhead.to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: POPOVER_SUBHEAD_FONT_WEIGHT,
+                font_size: POPOVER_SUBHEAD_FONT_SIZE,
+                align: TextAlign::Start,
+            }),
+            Style {
+                size: Size {
+                    width: length(content_width),
+                    height: length(POPOVER_SUBHEAD_FONT_SIZE + 4.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(subhead_color, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(panel, subhead_id);
+
+        let body_height = (height
+            - 2.0 * POPOVER_PADDING
+            - POPOVER_SUBHEAD_GAP
+            - (POPOVER_SUBHEAD_FONT_SIZE + 4.0))
+            .max(0.0);
+        let body_id = tree.insert(
+            NodeKind::Text(TextState {
+                content: text.to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: DIALOG_BODY_FONT_WEIGHT,
+                font_size: DIALOG_BODY_FONT_SIZE,
+                align: TextAlign::Start,
+            }),
+            Style {
+                size: Size {
+                    width: length(content_width),
+                    height: length(body_height),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(body_color, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(panel, body_id);
+
+        self.wrap_node(panel)
     }
 
     /// M14 Phase 1 (§5, §7.3): creates a real `NodeKind::Checkbox`,
