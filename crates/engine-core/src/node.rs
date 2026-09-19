@@ -1083,6 +1083,25 @@ pub struct PaintProperties {
     /// needs a *smooth transition* between two different corner-radii
     /// shapes, only a static per-node choice made once at construction.
     pub corner_radii_override: Option<[f64; 4]>,
+    /// M32 Phase 3 (§5, §7, §11.7/§11.8): the real, general form of the
+    /// clip `VirtualList`/`Carousel` each already bake into their own
+    /// paint -- confirmed via direct read of `engine-render::paint_node`
+    /// before adding this that no other `NodeKind` clips its own
+    /// children at all, the exact gap this catalog's own "no `NodeKind`
+    /// besides `VirtualList` clips today" note names. `false` (every
+    /// existing node, unchanged) is a true no-op, the same "off unless
+    /// a caller opts in" contract every other additive field here
+    /// already follows -- a child painted past this node's own box
+    /// stays exactly as visible as it always was. **Real, stated v1
+    /// scope limit:** clipping only -- unlike `VirtualList`, opting a
+    /// plain node into this does not give it a real scroll offset or
+    /// wheel-input wiring of its own; content still simply extends
+    /// past the box, just genuinely hidden there instead of visibly
+    /// spilling out. Not `Animated`, the identical deliberate choice
+    /// `corner_radii_override` already made just above: nothing in
+    /// this catalog needs a *smooth transition* into/out of clipping,
+    /// only a static per-node choice.
+    pub clip_children: bool,
 }
 
 impl PaintProperties {
@@ -1097,6 +1116,7 @@ impl PaintProperties {
             border_color: Animated::new(Color::from_rgba8(0, 0, 0, 0)),
             border_width: Animated::new(0.0),
             corner_radii_override: None,
+            clip_children: false,
         }
     }
 

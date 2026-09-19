@@ -998,6 +998,27 @@ impl Node {
             .into()),
         }
     }
+
+    /// M32 Phase 3 (§5, §7, §11.7/§11.8): opts this node into clipping
+    /// its own real children to its own box -- the real, general form
+    /// of the clip `VirtualList`/`Carousel` each already have built
+    /// into their own paint, closing "no `NodeKind` besides
+    /// `VirtualList` clips its own children today" (`Code Editor`'s
+    /// own stated gap, M30 Phase 9 Step 3). Universal, not `NodeKind`-
+    /// specific, unlike `set_syntax_spans`/`set_folded_ranges` just
+    /// above -- `PaintProperties.clip_children` lives on every real
+    /// node already, the identical "no per-kind rejection needed"
+    /// shape `set_corner_radius`/`set_border` already have. **Real,
+    /// honest v1 limit, not silently glossed over:** clipping only --
+    /// this does not give a container real scroll input or a scroll
+    /// offset of its own; content past the box is genuinely hidden,
+    /// not scrollable into view, the identical real limit `PaintProperties.
+    /// clip_children`'s own Rust doc comment states.
+    fn set_clip_children(&self, clip: bool) {
+        self.tree.borrow_mut().get_mut(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        ).paint.clip_children = clip;
+    }
 }
 
 /// M9 Phase 2 (§5): `animate()`'s own shared "start this field

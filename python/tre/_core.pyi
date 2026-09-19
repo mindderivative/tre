@@ -187,6 +187,19 @@ class Node:
         Raises `ValueError` for any other kind.
         """
         ...
+    def set_clip_children(self, clip: bool) -> None:
+        """Opts this node into clipping its own real children to its
+        own box -- the real, general form of the clip `VirtualList`/
+        `Carousel` already have built in, closing "no `NodeKind`
+        besides `VirtualList` clips its own children today". Universal,
+        not kind-specific, unlike `set_syntax_spans`/`set_folded_
+        ranges` above. `False` (every node, by default) is a true
+        no-op. Real, honest v1 limit: clipping only -- this does not
+        give a container a real scroll offset or wheel-input wiring of
+        its own; content past the box is genuinely hidden, not
+        scrollable into view.
+        """
+        ...
 
 class Window:
     """One real OS window and the node tree painted into it. Add one or

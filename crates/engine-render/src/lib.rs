@@ -999,7 +999,7 @@ fn paint_node(
         }
 
         scene.pop_layer();
-    } else if matches!(node.kind, NodeKind::Carousel(_)) {
+    } else if matches!(node.kind, NodeKind::Carousel(_)) || node.paint.clip_children {
         // M30 Phase 9 Step 5 (§5, §7, §11.7): the real MD3 "clip items
         // to the strip, so one scrolled off does not spill out" anatomy
         // (pyCopper's own real `CLIPS_CHILDREN = True`) -- the identical
@@ -1011,6 +1011,15 @@ fn paint_node(
         // is already correct -- the same real design choice that keeps
         // hit-testing and paint from ever disagreeing (`sync_carousel_
         // layouts`'s own doc comment).
+        //
+        // M32 Phase 3 (§5, §7, §11.7/§11.8): `Carousel` always takes
+        // this branch (its own real MD3 anatomy, not an opt-in); any
+        // other `NodeKind` takes it only when `PaintProperties.clip_
+        // children` is genuinely set -- the real, general form of this
+        // same clip, closing "no `NodeKind` besides `VirtualList` clips
+        // today." No scroll-offset translation for the general case
+        // either, the identical real v1 limit `clip_children`'s own doc
+        // comment states: clipping only, not a new scroll mechanism.
         let clip_radius = node.paint.corner_radius.current;
         let clip = RoundedRect::new(0.0, 0.0, w, h, clip_radius).to_path(0.1);
         scene.push_layer(Some(&clip), None, None, None, None);
