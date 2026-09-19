@@ -10,7 +10,7 @@
 //! render-to-texture-then-readback discipline as `layout_tree.rs`/
 //! `text_layout.rs`.
 
-use engine_render::{FrameRenderer, TextRenderer, build_tree_scene};
+use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
 use engine_spec::load_view;
 use vello_hybrid::{RenderSize, RenderTargetConfig};
 
@@ -86,6 +86,7 @@ fn a_real_view_yaml_renders_through_the_real_pipeline() {
             },
         );
         let mut text_renderer = TextRenderer::new();
+        let mut geometry_cache = GeometryCache::new();
         let scene = build_tree_scene(
             &tree,
             root,
@@ -93,6 +94,7 @@ fn a_real_view_yaml_renders_through_the_real_pipeline() {
             HEIGHT,
             frame_renderer.resources_mut(),
             &mut text_renderer,
+            &mut geometry_cache,
         );
         let render_size = RenderSize {
             width: u32::from(WIDTH),

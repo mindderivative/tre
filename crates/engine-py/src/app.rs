@@ -26,7 +26,7 @@ use std::time::Instant;
 
 use engine_core::{EventKind, InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
 use engine_platform::{WindowConfig, WindowRequest, run_windowed_multi};
-use engine_render::{FrameRenderer, TextPlacement, TextRenderer, build_tree_scene};
+use engine_render::{FrameRenderer, GeometryCache, TextPlacement, TextRenderer, build_tree_scene};
 use peniko::kurbo::Point;
 use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
@@ -155,6 +155,11 @@ struct GpuState {
     queue: wgpu::Queue,
     frame_renderer: FrameRenderer,
     text_renderer: TextRenderer,
+    /// M34 Phase 1 (§5, §8): the real, per-node tessellated-path cache
+    /// for `Rect`/`Splitter`'s own fill/border paths -- the identical
+    /// "long-lived, caller-owned, not rebuilt per call" shape `text_
+    /// renderer` already has (`GeometryCache`'s own doc comment).
+    geometry_cache: GeometryCache,
 }
 
 impl GpuState {
@@ -207,6 +212,7 @@ impl GpuState {
             queue,
             frame_renderer,
             text_renderer: TextRenderer::new(),
+            geometry_cache: GeometryCache::new(),
         }
     }
 
@@ -500,6 +506,10 @@ impl App {
                     // cache -- a text node removed from the tree must
                     // not keep its stale shaping around forever.
                     runtime.gpu.text_renderer.evict_stale_layouts(&tree_ref);
+                    // M34 Phase 1 (§5, §8): the identical real per-
+                    // frame GC `text_renderer`'s own cache already
+                    // gets, now applied to `geometry_cache` too.
+                    runtime.gpu.geometry_cache.evict_stale(&tree_ref);
                     build_tree_scene(
                         &tree_ref,
                         runtime.root,
@@ -507,6 +517,7 @@ impl App {
                         runtime.height.get() as u16,
                         runtime.gpu.frame_renderer.resources_mut(),
                         &mut runtime.gpu.text_renderer,
+                        &mut runtime.gpu.geometry_cache,
                     )
                 };
                 let render_size = RenderSize {

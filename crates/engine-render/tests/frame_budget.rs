@@ -39,7 +39,7 @@
 use std::time::{Duration, Instant};
 
 use engine_core::{MotionCurve, NodeKind, PaintProperties, Tree};
-use engine_render::{FrameRenderer, TextRenderer, build_tree_scene};
+use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, FlexWrap, Size, Style, length};
 use vello_hybrid::{RenderSize, RenderTargetConfig};
@@ -159,6 +159,7 @@ fn frame_pipeline_fits_the_16_6ms_budget() {
         };
 
         let mut text_renderer = TextRenderer::new();
+        let mut geometry_cache = GeometryCache::new();
         let mut run_one_frame = |tree: &mut Tree| {
             let now = Instant::now();
             tree.tick_all(now);
@@ -170,6 +171,7 @@ fn frame_pipeline_fits_the_16_6ms_budget() {
                 HEIGHT,
                 frame_renderer.resources_mut(),
                 &mut text_renderer,
+                &mut geometry_cache,
             );
             let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });

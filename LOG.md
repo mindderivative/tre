@@ -1,87 +1,99 @@
-# LOG — M33 Phase 2: Live, Shared PyWindow Dimensions
+# LOG — M34 Phase 1: `Rect`/`Splitter` Tessellated-Path Cache
 
-- Confirmed via grep before designing anything, not assumed: `self.
-  width`/`self.height` are read at 34 real call sites across `window_
-  factory.rs`/`window_input.rs`/`window_docking.rs`/`window_virtual_
-  canvas.rs` -- wider than the 27-site estimate from M33's own
-  scoping note, which missed the latter two files. Confirmed
-  exhaustively by the compiler itself once the field type changed
-  (`cargo check`'s own error list), not by grep alone.
-- Added `window::SharedSize = Rc<Cell<u32>>` -- the identical real
-  sharing shape `SharedTheme`/`HandlerMap`/`context_menus`/`dock`
-  already establish for cross-`Node`/cross-runtime shared state,
-  `Cell` instead of `RefCell` since `u32` is `Copy` and every real
-  access here is a plain get/set, never a borrow needing to outlive
-  one statement.
-- Changed `PyWindow.width`/`height` from plain `u32` to `SharedSize`.
-  `PyWindow::new`'s own public, Python-facing constructor signature is
-  completely unchanged (still `fn new(width: u32, height: u32, ...)`)
-  -- only the internal storage representation changed, a real, zero-
-  API-surface-impact refactor.
-- Fixed all 34 real call sites using the compiler as the exhaustive
-  worklist: `self.width as f32` -> `self.width.get() as f32` (and the
-  `height` sibling) at every real `AvailableSpace`/`length()`/plain-
-  arithmetic read site; `Window.resize`'s own `self.width = width` ->
-  `self.width.set(width)`.
-- Widened `WindowSetup`/`WindowRuntime` (`app.rs`) to hold the
-  identical `SharedSize` -- extracted via `.clone()` (a cheap `Rc`
-  clone sharing the exact same cell) instead of copying the `u32`
-  value, so `App::run`'s own live `InputEvent::Resized` handler's
-  `.set()` call is now immediately visible on `PyWindow`'s own fields
-  too, and vice versa. Fixed the remaining call sites needing a plain
-  `u32` value (`GpuState::new`'s own construction args, `RenderSize`,
-  `WindowConfig`, `build_tree_scene`'s own `u16` args) with `.get()`.
-- Updated two doc comments that explicitly named the real v1 limit
-  this phase closes (`window_input.rs`'s own `resize` method, `app.rs`
-  's own `InputEvent::Resized` match arm) -- both corrected to state
-  the real fix directly rather than left describing a gap that no
-  longer exists, the same discipline this whole session applies
-  whenever a stated gap actually closes.
-- Full Rust verification chain green on the first pass after all 34
-  fixes: `cargo check`/`clippy -D warnings`/`fmt --check` clean, no
-  further real errors beyond the compiler's own original exhaustive
-  list.
-- Rebuilt the Python extension. Ran a real, direct empirical script
-  before writing any pytest: confirmed the synthetic `Window.resize()`
-  path plus a subsequent interactive `add_dialog`/`open_dialog` call
-  still works correctly after a resize -- a real regression check.
-  **Real, honest verification limit, stated directly, not glossed
-  over:** the specific NEW capability this phase adds (a genuine
-  *live*, winit-driven resize reaching `PyWindow`'s own fields) can't
-  itself be scripted or empirically proven end to end -- there is no
-  way to trigger a real OS window resize event from this project's
-  existing headless testing surface, the same established limit every
-  other winit-only real behavior in this whole project already
-  accepts. Verified instead by the `Rc<Cell<u32>>` sharing itself
-  being a real, compile-time-enforced guarantee (both `WindowSetup`/
-  `WindowRuntime` hold a real `.clone()` of the identical `Rc`,
-  confirmed by direct code review and successful type-checking, not a
-  runtime behavior that could silently regress the way a plain `u32`
-  copy could).
-- Also discovered along the way, real and worth noting: `Node.set_on_
-  click` on a modal `Dialog`'s own scrim doesn't reach the handler via
-  a synthetic `Window.click()` call (the scrim's own real modal-
-  blocking semantics, M30 Phase 4 Step 1's own real "block interaction
-  with everything behind it" feature, appears to intercept it) -- a
-  real, pre-existing, unrelated behavior surfaced while writing this
-  phase's own pytest coverage, not a regression this phase introduced;
-  the new test was adjusted to prove the real "doesn't raise" flow
-  instead, since no Python-level getter exists to assert on a node's
-  own real pixel box directly anyway (a real, separate, pre-existing
-  gap, out of this phase's own scope).
-- Extended `tests/test_resize.py` with a new test proving the exact
-  real scenario the prior phase's own doc comment named as broken: an
-  interactive `add_dialog`/`open_dialog` call after a real resize
-  still builds and opens correctly, not silently against stale
-  construction-time dimensions.
-- Full verification: `cargo check`/`clippy -D warnings`/`fmt --check`
-  clean, `cargo test --release` all green (unchanged counts -- this
-  phase is a pure internal storage-representation refactor, no new
-  pure-logic surface), `maturin develop --release`, `pytest tests/`
-  527 passed/1 skipped (1 new, up from 526, zero regressions), all 71
+- Direct source read of the vendored `vello_hybrid = "0.2.0"` before
+  designing anything: true GPU-level scissored/partial redraw is not
+  achievable as shipped. `Renderer::render`'s own public signature has
+  no scissor/dirty-rect parameter; `render()` hardcodes `clear = true`,
+  running a full-target `LoadOp::Clear` pass with no scissor on every
+  call. `Scene` itself has no public sub-fragment record/replay/merge
+  API -- every field, including its own `CommandRecorder`, is
+  `pub(crate)`. The one real region-limited path that exists
+  (`clear_atlas_region`, genuinely uses `LoadOp::Load` + a scissor
+  rect) is private and targets atlas layers, not the user-facing view.
+- Checked the sibling `pyCopper` project's own real precedent (the
+  established discipline for every prior real capability this session
+  has built): it also redraws its whole GPU target every frame -- its
+  real optimization is CPU-side, a `_needs_paint` dirty flag plus a
+  numpy memcpy splice of cached per-subtree draw-list instances back
+  into a fresh display list. Real, measured in their own numbers
+  (0.002ms splice vs 3.27ms rebuild). Not portable to `vello_hybrid`'s
+  `Scene` directly -- no equivalent splice API exists there.
+- First `AskUserQuestion` (matching the Code Folding/Terminal Mouse
+  Selection precedent for a genuinely novel capability with no real
+  reference implementation): presented the real findings above. User
+  chose "CPU-side subtree paint caching (Recommended)."
+- Real benchmark before committing to a specific design: a scratch
+  Rust test (1000 static Rect + 200 Text nodes, release build,
+  `#[ignore]`d, removed after use) measured `build_tree_scene` at
+  ~2.7-2.9ms/frame. Text nodes contributed negligible cost (already
+  cached by `shaped_layout` since M28 Phase 1). A follow-up isolation
+  benchmark -- filling the same 1000 rects from a fresh `BezPath` each
+  time vs one tessellated once and reused -- found only ~20% of the
+  cost (2.48ms -> 1.99ms) comes from `RoundedRect::to_path(0.1)`'s own
+  tessellation; the remaining ~80% is `Scene::fill_path`'s own
+  internal strip-generation cost, paid regardless of path freshness,
+  unavoidable without forking vello_hybrid (confirmed no splice API).
+- **Real, honest correction surfaced mid-implementation, not glossed
+  over:** the first `AskUserQuestion`'s own framing ("CPU-side
+  subtree caching... drops toward zero") turned out wrong once real
+  numbers came in -- the achievable ceiling here is ~20%, not
+  dramatic, since `Scene` can't skip re-emitting into itself the way
+  pyCopper's own sliceable format can. Presented this reversal
+  directly via a second `AskUserQuestion` rather than silently
+  building against a disproven premise. User chose "Build the real
+  ~20% win anyway (Recommended)."
+- New `engine_render::GeometryCache` (`geometry_cache.rs`), mirroring
+  `TextRenderer::shaped_layout`'s own equality-keyed cache pattern
+  exactly: a `RectPathParams` enum (`Uniform`/`PerCorner`/`Border`) is
+  the real invalidation check -- no separate "remember to invalidate"
+  bookkeeping. Two separate `HashMap<NodeId, (RectPathParams,
+  BezPath)>` maps (fill, border), not one shared map, since a single
+  bordered `Rect` needs both cached independently.
+- `paint_node`'s `Rect`/`Splitter` arm now calls `geometry.
+  rounded_rect_fill`/`rounded_rect_fill_per_corner`/
+  `rounded_rect_border` instead of building a fresh `RoundedRect::
+  to_path(0.1)` inline every frame. `build_tree_scene`/`paint_node`
+  both gained a new `geometry: &mut GeometryCache` parameter, the
+  identical caller-owned cross-frame threading `resources`/`text`
+  already establish.
+- `GeometryCache::evict_stale(&tree)` mirrors `evict_stale_layouts`'s
+  own established per-node-cache-leak fix. Wired into `engine-py::
+  app.rs`'s real per-frame block alongside the existing calls;
+  `GpuState` gained a `geometry_cache: GeometryCache` field.
+- All 31 real `build_tree_scene` call sites in `engine-render`'s own
+  integration tests, plus the standalone `rect_window.rs` example's
+  own local `GpuState`, updated to thread the new parameter -- found
+  and fixed exhaustively via `cargo check`'s own error list, the
+  identical reliable-worklist technique M33 Phase 2 already
+  established (script-patched 30 of 31 files mechanically; one file
+  used `&mut self.text_renderer` through a struct field the script
+  couldn't parse, fixed by hand).
+- No Python-facing API change at all -- confirmed via `git diff
+  --stat crates/engine-py/`: only `app.rs` touched, no `#[pymethods]`/
+  `#[pyclass]` signature changed. No new `.pyi` stub, no new example.
+- Four new real Rust unit tests (`geometry_cache.rs`): an unchanged
+  node reuses the exact same cached `BezPath` (proven by pointer
+  identity on its backing storage, since `BezPath` has no
+  `PartialEq`); a changed `radius` invalidates the cache and produces
+  a genuinely different path; fill and border caches for the same
+  node don't collide; a removed node's cached paths are evicted.
+- Real end-to-end verification (a second scratch benchmark, removed
+  after use): the same 1000-Rect static tree through the real,
+  now-cached `build_tree_scene` across 200 repeated frames -- 2.34ms/
+  frame, down from the 2.69ms/frame elevation-0 baseline measured
+  during scoping, a real ~13% end-to-end reduction (below the ~20%
+  isolated figure, since the full walk also spends time on bounds/
+  culling math the isolated test excluded).
+- Full verification: `cargo check --all-targets`/`cargo clippy
+  --all-targets -D warnings`/`cargo fmt --check` clean (all 32 real
+  `build_tree_scene` call sites compiling), `cargo test --workspace
+  --release` clean (4 new `geometry_cache` tests, zero regressions,
+  unchanged non-geometry_cache counts confirming additive-only),
+  `maturin develop --release` rebuilt, `pytest tests/` 527 passed/1
+  skipped (unchanged -- pure internal Rust optimization), all 71
   examples and the showcase demo re-run clean.
-- Updated `BUILD_TRACKER.md` (Top Metrics row, Phase 2 heading, and
-  M33's own closing status -- both phases) -- verified the parser's
-  own reported item count before/after, regenerated and republished
-  the Build Tracker artifact. **This closes M33 Phase 2 and, with it,
-  M33 itself, both phases.**
+- Updated `BUILD_TRACKER.md` (new M34, 1 phase, Top Metrics row) --
+  verified the parser's own reported item count before/after (33/109/
+  199 -> 34/110/200, exactly +1/+1/+1 matching the single new phase),
+  regenerated and republished the Build Tracker artifact. **This
+  closes M34 Phase 1 and, with it, M34 itself, its 1 phase.**

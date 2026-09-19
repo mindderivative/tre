@@ -12,7 +12,7 @@
 //!    right edge, genuinely different from claim 1's position.
 
 use engine_core::{NodeKind, PaintProperties, SliderState, Tree};
-use engine_render::{FrameRenderer, TextRenderer, build_tree_scene};
+use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, Size, Style, length};
 use vello_hybrid::{RenderSize, RenderTargetConfig};
@@ -64,6 +64,7 @@ async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16)
         },
     );
     let mut text_renderer = TextRenderer::new();
+    let mut geometry_cache = GeometryCache::new();
     let scene = build_tree_scene(
         tree,
         root,
@@ -71,6 +72,7 @@ async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16)
         height,
         frame_renderer.resources_mut(),
         &mut text_renderer,
+        &mut geometry_cache,
     );
     let render_size = RenderSize {
         width: u32::from(width),

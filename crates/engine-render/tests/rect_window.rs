@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use engine_core::{MotionCurve, NodeId, NodeKind, PaintProperties, TextAlign, TextState, Tree};
 use engine_platform::{WindowConfig, run_windowed};
-use engine_render::{FrameRenderer, TextRenderer, build_tree_scene};
+use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, FlexDirection, Size, Style, length};
 use vello_hybrid::{RenderSize, RenderTargetConfig};
@@ -66,6 +66,7 @@ struct GpuState {
     queue: wgpu::Queue,
     frame_renderer: FrameRenderer,
     text_renderer: TextRenderer,
+    geometry_cache: GeometryCache,
     width: u16,
     height: u16,
     tree: Tree,
@@ -117,6 +118,7 @@ impl GpuState {
         );
 
         let text_renderer = TextRenderer::new();
+        let geometry_cache = GeometryCache::new();
 
         let animation_start = Instant::now();
         // §14 step 3: `Node`/`Tree`/`taffy` replace step 2's hand-ticked
@@ -287,6 +289,7 @@ impl GpuState {
             queue,
             frame_renderer,
             text_renderer,
+            geometry_cache,
             width,
             height,
             tree,
@@ -329,6 +332,7 @@ impl GpuState {
             self.height,
             self.frame_renderer.resources_mut(),
             &mut self.text_renderer,
+            &mut self.geometry_cache,
         );
         let render_size = RenderSize {
             width: u32::from(self.width),

@@ -21,6 +21,7 @@
 //! over a `wgpu::Device`/`Queue`/`TextureView` the caller already has,
 //! matching §4's crate-boundary rule.
 
+mod geometry_cache;
 mod image_cache;
 mod text;
 
@@ -31,6 +32,7 @@ use peniko::Color;
 use peniko::kurbo::{Affine, Arc, BezPath, Circle, Point, Rect, RoundedRect, Shape, Stroke};
 use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
+pub use geometry_cache::GeometryCache;
 pub use text::{MONOSPACE_FONT_FAMILY, TextPlacement, TextRenderer};
 
 /// MD3 seed-adjacent purple (#6750A4) -- an arbitrary but deliberate
@@ -162,6 +164,9 @@ pub fn build_ripple_scene(
 /// glyph atlasing (`resources`) and font/shaping state (`text`) both
 /// need to persist across frames, so they're the caller's, not built
 /// fresh per call -- see `TextRenderer`'s own doc comment for why.
+/// `geometry` (M34 Phase 1, §5, §8) is the identical kind of caller-
+/// owned, cross-frame cache, for `Rect`/`Splitter`'s own tessellated
+/// fill/border paths -- see `GeometryCache`'s own doc comment.
 pub fn build_tree_scene(
     tree: &Tree,
     root: NodeId,
@@ -169,6 +174,7 @@ pub fn build_tree_scene(
     height: u16,
     resources: &mut Resources,
     text: &mut TextRenderer,
+    geometry: &mut GeometryCache,
 ) -> Scene {
     let mut scene = Scene::new(width, height);
     scene.set_transform(Affine::IDENTITY);
@@ -186,6 +192,7 @@ pub fn build_tree_scene(
         &mut scene,
         resources,
         text,
+        geometry,
     );
     scene
 }
@@ -342,6 +349,7 @@ fn image_sample_rect(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_node(
     tree: &Tree,
     id: NodeId,
@@ -350,6 +358,7 @@ fn paint_node(
     scene: &mut Scene,
     resources: &mut Resources,
     text: &mut TextRenderer,
+    geometry: &mut GeometryCache,
 ) {
     let node = tree
         .get(id)
@@ -460,11 +469,17 @@ fn paint_node(
                 // edge). `None` (every node before this step) falls
                 // through to the identical uniform-scalar `RoundedRect`
                 // this arm always painted.
-                let rect = match node.paint.corner_radii_override {
-                    Some([tl, tr, br, bl]) => RoundedRect::new(0.0, 0.0, w, h, (tl, tr, br, bl)),
-                    None => RoundedRect::new(0.0, 0.0, w, h, node.paint.corner_radius.current),
+                // M34 Phase 1 (§5, §8): the real path itself comes from
+                // `geometry` now -- re-tessellated only when this
+                // node's own `w`/`h`/radius genuinely changed since its
+                // last paint, not rebuilt from scratch every frame
+                // (`GeometryCache`'s own doc comment has the real,
+                // measured motivation).
+                let path = match node.paint.corner_radii_override {
+                    Some(radii) => geometry.rounded_rect_fill_per_corner(id, w, h, radii),
+                    None => geometry.rounded_rect_fill(id, w, h, node.paint.corner_radius.current),
                 };
-                scene.fill_path(&rect.to_path(0.1));
+                scene.fill_path(path);
             } else {
                 scene.fill_path(&node.paint.shape.current.to_path());
             }
@@ -484,12 +499,15 @@ fn paint_node(
             if border_width > 0.0 {
                 let inset = border_width / 2.0;
                 let radius = (node.paint.corner_radius.current - inset).max(0.0);
-                let border_rect = RoundedRect::new(inset, inset, w - inset, h - inset, radius);
+                // M34 Phase 1 (§5, §8): the real border path also comes
+                // from `geometry` now -- same real motivation as the
+                // fill path above.
+                let border_path = geometry.rounded_rect_border(id, w, h, radius, inset);
                 let border_color =
                     with_opacity(node.paint.border_color.current, node.paint.opacity.current);
                 scene.set_paint(border_color);
                 scene.set_stroke(Stroke::new(border_width));
-                scene.stroke_path(&border_rect.to_path(0.1));
+                scene.stroke_path(border_path);
             }
         }
         NodeKind::Text(state) | NodeKind::Link(state) => {
@@ -995,7 +1013,9 @@ fn paint_node(
         // not just visually hidden behind the clip pushed above.
         let narrowed = visible.intersect(bounds);
         for &child in &node.children {
-            paint_node(tree, child, scrolled, narrowed, scene, resources, text);
+            paint_node(
+                tree, child, scrolled, narrowed, scene, resources, text, geometry,
+            );
         }
 
         scene.pop_layer();
@@ -1026,13 +1046,17 @@ fn paint_node(
 
         let narrowed = visible.intersect(bounds);
         for &child in &node.children {
-            paint_node(tree, child, composed, narrowed, scene, resources, text);
+            paint_node(
+                tree, child, composed, narrowed, scene, resources, text, geometry,
+            );
         }
 
         scene.pop_layer();
     } else {
         for &child in &node.children {
-            paint_node(tree, child, composed, visible, scene, resources, text);
+            paint_node(
+                tree, child, composed, visible, scene, resources, text, geometry,
+            );
         }
     }
 }

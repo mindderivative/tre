@@ -17,7 +17,7 @@
 //!    never touch this field at all.
 
 use engine_core::{NodeKind, PaintProperties, Tree};
-use engine_render::{FrameRenderer, TextRenderer, build_tree_scene};
+use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
 use peniko::Color;
 use taffy::prelude::{Size, Style, length};
 use vello_hybrid::{RenderSize, RenderTargetConfig};
@@ -94,6 +94,7 @@ async fn render(border_width: f64) -> (Vec<u8>, u32) {
         },
     );
     let mut text_renderer = TextRenderer::new();
+    let mut geometry_cache = GeometryCache::new();
     let scene = build_tree_scene(
         &tree,
         root,
@@ -101,6 +102,7 @@ async fn render(border_width: f64) -> (Vec<u8>, u32) {
         SIZE,
         frame_renderer.resources_mut(),
         &mut text_renderer,
+        &mut geometry_cache,
     );
     let render_size = RenderSize {
         width: u32::from(SIZE),

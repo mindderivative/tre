@@ -20,7 +20,7 @@ use engine_core::{
     CanvasState, CustomHitTest, DrawCommand, ItemExtent, NodeKind, PaintProperties, Tree,
     VirtualListState,
 };
-use engine_render::{FrameRenderer, TextRenderer, build_tree_scene};
+use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
 use peniko::Color;
 use peniko::kurbo::{Affine, BezPath, Point};
 use taffy::prelude::{AvailableSpace, Position, Rect as TaffyRect, Size, Style, auto, length};
@@ -92,6 +92,7 @@ async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16)
         },
     );
     let mut text_renderer = TextRenderer::new();
+    let mut geometry_cache = GeometryCache::new();
     let scene = build_tree_scene(
         tree,
         root,
@@ -99,6 +100,7 @@ async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16)
         height,
         frame_renderer.resources_mut(),
         &mut text_renderer,
+        &mut geometry_cache,
     );
     let render_size = RenderSize {
         width: u32::from(width),

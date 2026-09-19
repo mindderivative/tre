@@ -10,7 +10,7 @@
 //! doc comment for why that formula is exact, not approximated.
 
 use engine_core::{NodeKind, PaintProperties, SwitchState, Tree};
-use engine_render::{FrameRenderer, TextRenderer, build_tree_scene};
+use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, Size, Style, length};
 use vello_hybrid::{RenderSize, RenderTargetConfig};
@@ -68,6 +68,7 @@ async fn render(tree: &Tree, root: engine_core::NodeId) -> (Vec<u8>, u32) {
         },
     );
     let mut text_renderer = TextRenderer::new();
+    let mut geometry_cache = GeometryCache::new();
     let scene = build_tree_scene(
         tree,
         root,
@@ -75,6 +76,7 @@ async fn render(tree: &Tree, root: engine_core::NodeId) -> (Vec<u8>, u32) {
         HEIGHT,
         frame_renderer.resources_mut(),
         &mut text_renderer,
+        &mut geometry_cache,
     );
     let render_size = RenderSize {
         width: u32::from(WIDTH),
