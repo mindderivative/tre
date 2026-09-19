@@ -654,6 +654,31 @@ class Window:
         window's own full width.
         """
         ...
+    def add_toolbar(
+        self,
+        variant: str = "docked",
+        orientation: str | None = None,
+        color: str | None = None,
+        width: float | None = None,
+        height: float | None = None,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """A real MD3 Toolbar -- `variant` is `"docked"` (spans the
+        full window width by default, square corners) or `"floating"`
+        (hugs its own content by default, always fully rounded, real
+        elevation). `orientation` (`"horizontal"`/`"vertical"`) only
+        applies to a floating toolbar -- a docked toolbar is always
+        horizontal and raises `ValueError` if asked for vertical.
+        `color` is `"standard"` (`surface_container` fill) or
+        `"vibrant"` (`primary_container` fill). A real "container with
+        configurable slots" per MD3's own anatomy: populate the
+        returned node with any already-built node (a `Button`, `Icon
+        Button`, `TextField`, etc.) via the existing, generic
+        `Node.add_child` -- there is no specialized children-list
+        parameter here.
+        """
+        ...
     def add_tabs(
         self,
         labels: list[str],

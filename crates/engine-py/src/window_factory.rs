@@ -690,6 +690,19 @@ const TOP_APP_BAR_HORIZONTAL_PADDING: f32 = 4.0;
 const TOP_APP_BAR_HEADLINE_START_PADDING: f32 = 16.0;
 const TOP_APP_BAR_TRAILING_ICON_GAP: f32 = 8.0;
 
+/// M35 Phase 1 (§5, §7): real MD3 Toolbar anatomy (`add_toolbar`'s own
+/// doc comment has the full real verification/scope note) --
+/// `COMPONENT_TOOLBARS.md`'s own "By default all toolbars are 64dp
+/// high" applies to both the docked and floating variants alike.
+/// `TOOLBAR_PADDING` is the spec's own real "minimum outside padding
+/// of 16dp"; `TOOLBAR_ITEM_GAP` its own real "equal padding between
+/// items" default (32dp) -- both apply identically to either
+/// orientation's own main axis (this constant flips onto whichever
+/// `taffy::FlexDirection` `add_toolbar` picks).
+const TOOLBAR_HEIGHT: f32 = 64.0;
+const TOOLBAR_PADDING: f32 = 16.0;
+const TOOLBAR_ITEM_GAP: f32 = 32.0;
+
 /// MD3's own real Tabs anatomy (M30 Phase 5 Step 4), the *Primary
 /// Navigation Tab* variant -- verified against Material Web's own
 /// token source before writing any code. **Real, confirmed finding:**
@@ -3985,6 +3998,175 @@ impl PyWindow {
 
         tree.add_child(self.root, bar);
         Ok((self.wrap_node(bar), leading, trailing))
+    }
+
+    /// M35 Phase 1 (§5, §7): a real MD3 Toolbar -- "docked" (spans the
+    /// full window width by default, square corners -- real MD3
+    /// anatomy explicitly warns against rounding a docked toolbar's
+    /// corners, "can imply the container expands... upon interaction")
+    /// or "floating" (hugs its own content by default, always fully
+    /// rounded, real elevation, horizontal or vertical). Real anatomy
+    /// verified directly against the local MD3 spec mirror
+    /// (`COMPONENT_TOOLBARS.md`) before writing any code: 64dp height
+    /// for both variants (`TOOLBAR_HEIGHT`), `surface_container` fill
+    /// for the "standard" color config, `primary_container` for
+    /// "vibrant" -- the identical two real container roles the spec's
+    /// own "1. Surface container" / "1. Primary container" color
+    /// diagrams name. **Real, honest gap, stated directly:** the
+    /// scraped spec names "Floating toolbars have elevation by
+    /// default" but the elevation *level* itself isn't a discrete
+    /// token anywhere in the mirrored pages (the identical honest
+    /// caveat `TOP_APP_BAR_ICON_BUTTON_SIZE`'s own doc comment already
+    /// states for a different constant) -- reuses `FAB_REST_ELEVATION_
+    /// LEVEL` (3.0), this catalog's own closest real, already-verified
+    /// "floating, elevated chrome" reference point, rather than
+    /// guessing a new number.
+    ///
+    /// A real "container with configurable slots" per MD3's own
+    /// anatomy section, verbatim -- deliberately not a specialized
+    /// children-list parameter: the caller populates the returned
+    /// `Node` with any already-built `Button`/`IconButton`/`TextField`/
+    /// etc. node via the existing, generic `Node.add_child` (M6 Phase
+    /// 1), the identical real "engine provides the primitive, app
+    /// composes" split this catalog's own `clip_children` (M32 Phase
+    /// 3) already established for an analogous "don't invent a new
+    /// mechanism when composition already covers it" case. `width`/
+    /// `height` follow every other `add_*` method's own established
+    /// meaning (a literal override of that axis), just with real,
+    /// per-variant/orientation defaults: a docked toolbar defaults its
+    /// width to the whole window (`self.width`, matching `add_top_app_
+    /// bar`'s own convention) and its height to 64dp; a floating
+    /// toolbar defaults its *length* axis (width if horizontal, height
+    /// if vertical) to `auto()` -- hugging whatever real children the
+    /// caller adds, matching `Button Group`'s own real "the container
+    /// hugs the width of the buttons inside" anatomy -- and its
+    /// *thickness* axis to 64dp, which also doubles as the real corner
+    /// radius input for "fully rounded" (`thickness / 2.0`, the
+    /// identical `SIZE / 2.0` pill-shape convention `FAB`/`Chip`/`Icon
+    /// Button` already establish elsewhere in this catalog).
+    #[pyo3(signature = (variant="docked", orientation=None, color=None, width=None, height=None, x=None, y=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn add_toolbar(
+        &self,
+        variant: &str,
+        orientation: Option<&str>,
+        color: Option<&str>,
+        width: Option<f32>,
+        height: Option<f32>,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<Node> {
+        let is_floating = match variant {
+            "docked" => false,
+            "floating" => true,
+            other => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "unknown toolbar variant {other:?} -- expected one of \"docked\", \
+                     \"floating\""
+                )));
+            }
+        };
+        let vertical = match orientation.unwrap_or("horizontal") {
+            "horizontal" => false,
+            "vertical" => true,
+            other => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "unknown toolbar orientation {other:?} -- expected one of \"horizontal\", \
+                     \"vertical\""
+                )));
+            }
+        };
+        if vertical && !is_floating {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "a docked toolbar is always horizontal -- MD3's own real anatomy has no \
+                 vertical docked variant; pass variant=\"floating\" for a vertical toolbar",
+            ));
+        }
+
+        let container_color = {
+            let theme = self.theme.borrow();
+            let role = |name: &str, fallback: Color| -> Color {
+                if theme.is_set() {
+                    theme.role(name).unwrap_or(fallback)
+                } else {
+                    fallback
+                }
+            };
+            match color.unwrap_or("standard") {
+                "standard" => role("surface_container", Md3Baseline::SURFACE_CONTAINER),
+                "vibrant" => role("primary_container", Md3Baseline::PRIMARY_CONTAINER),
+                other => {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "unknown toolbar color {other:?} -- expected one of \"standard\", \
+                         \"vibrant\""
+                    )));
+                }
+            }
+        };
+
+        let mut tree = self.tree.borrow_mut();
+
+        let size = if is_floating {
+            if vertical {
+                Size {
+                    width: length(width.unwrap_or(TOOLBAR_HEIGHT)),
+                    height: height.map(length).unwrap_or_else(auto),
+                }
+            } else {
+                Size {
+                    width: width.map(length).unwrap_or_else(auto),
+                    height: length(height.unwrap_or(TOOLBAR_HEIGHT)),
+                }
+            }
+        } else {
+            Size {
+                width: length(width.unwrap_or(self.width.get() as f32)),
+                height: length(height.unwrap_or(TOOLBAR_HEIGHT)),
+            }
+        };
+
+        let corner_radius = if is_floating {
+            f64::from(if vertical {
+                width.unwrap_or(TOOLBAR_HEIGHT)
+            } else {
+                height.unwrap_or(TOOLBAR_HEIGHT)
+            }) / 2.0
+        } else {
+            0.0
+        };
+        let elevation = if is_floating {
+            FAB_REST_ELEVATION_LEVEL
+        } else {
+            0.0
+        };
+
+        let mut bar_style = positioned_style(size, x, y);
+        bar_style.display = taffy::Display::Flex;
+        bar_style.flex_direction = if vertical {
+            taffy::FlexDirection::Column
+        } else {
+            taffy::FlexDirection::Row
+        };
+        bar_style.align_items = Some(AlignItems::CENTER);
+        bar_style.justify_content = Some(JustifyContent::CENTER);
+        bar_style.padding = TaffyRect {
+            left: length(TOOLBAR_PADDING),
+            right: length(TOOLBAR_PADDING),
+            top: length(TOOLBAR_PADDING),
+            bottom: length(TOOLBAR_PADDING),
+        };
+        bar_style.gap = Size {
+            width: length(if vertical { 0.0 } else { TOOLBAR_ITEM_GAP }),
+            height: length(if vertical { TOOLBAR_ITEM_GAP } else { 0.0 }),
+        };
+
+        let bar = tree.insert(
+            NodeKind::Rect,
+            bar_style,
+            PaintProperties::new(container_color, corner_radius, elevation, 1.0),
+        );
+        tree.add_child(self.root, bar);
+        Ok(self.wrap_node(bar))
     }
 
     /// M30 Phase 5 Step 4 (§5, §7): `Tabs`, MD3's real *Primary

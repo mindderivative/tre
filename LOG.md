@@ -1,99 +1,86 @@
-# LOG — M34 Phase 1: `Rect`/`Splitter` Tessellated-Path Cache
+# LOG — M35 Phase 1: Toolbars
 
-- Direct source read of the vendored `vello_hybrid = "0.2.0"` before
-  designing anything: true GPU-level scissored/partial redraw is not
-  achievable as shipped. `Renderer::render`'s own public signature has
-  no scissor/dirty-rect parameter; `render()` hardcodes `clear = true`,
-  running a full-target `LoadOp::Clear` pass with no scissor on every
-  call. `Scene` itself has no public sub-fragment record/replay/merge
-  API -- every field, including its own `CommandRecorder`, is
-  `pub(crate)`. The one real region-limited path that exists
-  (`clear_atlas_region`, genuinely uses `LoadOp::Load` + a scissor
-  rect) is private and targets atlas layers, not the user-facing view.
-- Checked the sibling `pyCopper` project's own real precedent (the
-  established discipline for every prior real capability this session
-  has built): it also redraws its whole GPU target every frame -- its
-  real optimization is CPU-side, a `_needs_paint` dirty flag plus a
-  numpy memcpy splice of cached per-subtree draw-list instances back
-  into a fresh display list. Real, measured in their own numbers
-  (0.002ms splice vs 3.27ms rebuild). Not portable to `vello_hybrid`'s
-  `Scene` directly -- no equivalent splice API exists there.
-- First `AskUserQuestion` (matching the Code Folding/Terminal Mouse
-  Selection precedent for a genuinely novel capability with no real
-  reference implementation): presented the real findings above. User
-  chose "CPU-side subtree paint caching (Recommended)."
-- Real benchmark before committing to a specific design: a scratch
-  Rust test (1000 static Rect + 200 Text nodes, release build,
-  `#[ignore]`d, removed after use) measured `build_tree_scene` at
-  ~2.7-2.9ms/frame. Text nodes contributed negligible cost (already
-  cached by `shaped_layout` since M28 Phase 1). A follow-up isolation
-  benchmark -- filling the same 1000 rects from a fresh `BezPath` each
-  time vs one tessellated once and reused -- found only ~20% of the
-  cost (2.48ms -> 1.99ms) comes from `RoundedRect::to_path(0.1)`'s own
-  tessellation; the remaining ~80% is `Scene::fill_path`'s own
-  internal strip-generation cost, paid regardless of path freshness,
-  unavoidable without forking vello_hybrid (confirmed no splice API).
-- **Real, honest correction surfaced mid-implementation, not glossed
-  over:** the first `AskUserQuestion`'s own framing ("CPU-side
-  subtree caching... drops toward zero") turned out wrong once real
-  numbers came in -- the achievable ceiling here is ~20%, not
-  dramatic, since `Scene` can't skip re-emitting into itself the way
-  pyCopper's own sliceable format can. Presented this reversal
-  directly via a second `AskUserQuestion` rather than silently
-  building against a disproven premise. User chose "Build the real
-  ~20% win anyway (Recommended)."
-- New `engine_render::GeometryCache` (`geometry_cache.rs`), mirroring
-  `TextRenderer::shaped_layout`'s own equality-keyed cache pattern
-  exactly: a `RectPathParams` enum (`Uniform`/`PerCorner`/`Border`) is
-  the real invalidation check -- no separate "remember to invalidate"
-  bookkeeping. Two separate `HashMap<NodeId, (RectPathParams,
-  BezPath)>` maps (fill, border), not one shared map, since a single
-  bordered `Rect` needs both cached independently.
-- `paint_node`'s `Rect`/`Splitter` arm now calls `geometry.
-  rounded_rect_fill`/`rounded_rect_fill_per_corner`/
-  `rounded_rect_border` instead of building a fresh `RoundedRect::
-  to_path(0.1)` inline every frame. `build_tree_scene`/`paint_node`
-  both gained a new `geometry: &mut GeometryCache` parameter, the
-  identical caller-owned cross-frame threading `resources`/`text`
-  already establish.
-- `GeometryCache::evict_stale(&tree)` mirrors `evict_stale_layouts`'s
-  own established per-node-cache-leak fix. Wired into `engine-py::
-  app.rs`'s real per-frame block alongside the existing calls;
-  `GpuState` gained a `geometry_cache: GeometryCache` field.
-- All 31 real `build_tree_scene` call sites in `engine-render`'s own
-  integration tests, plus the standalone `rect_window.rs` example's
-  own local `GpuState`, updated to thread the new parameter -- found
-  and fixed exhaustively via `cargo check`'s own error list, the
-  identical reliable-worklist technique M33 Phase 2 already
-  established (script-patched 30 of 31 files mechanically; one file
-  used `&mut self.text_renderer` through a struct field the script
-  couldn't parse, fixed by hand).
-- No Python-facing API change at all -- confirmed via `git diff
-  --stat crates/engine-py/`: only `app.rs` touched, no `#[pymethods]`/
-  `#[pyclass]` signature changed. No new `.pyi` stub, no new example.
-- Four new real Rust unit tests (`geometry_cache.rs`): an unchanged
-  node reuses the exact same cached `BezPath` (proven by pointer
-  identity on its backing storage, since `BezPath` has no
-  `PartialEq`); a changed `radius` invalidates the cache and produces
-  a genuinely different path; fill and border caches for the same
-  node don't collide; a removed node's cached paths are evicted.
-- Real end-to-end verification (a second scratch benchmark, removed
-  after use): the same 1000-Rect static tree through the real,
-  now-cached `build_tree_scene` across 200 repeated frames -- 2.34ms/
-  frame, down from the 2.69ms/frame elevation-0 baseline measured
-  during scoping, a real ~13% end-to-end reduction (below the ~20%
-  isolated figure, since the full walk also spends time on bounds/
-  culling math the isolated test excluded).
+- User instruction "Start on the next milestone" was ambiguous
+  (the vello_hybrid fork documented last turn was the only concrete
+  candidate on the tracker) -- clarified via `AskUserQuestion` before
+  acting: the user wanted a genuinely fresh milestone, not the fork.
+- Real investigation, the same discipline M30/M32 were originally
+  scoped with: delegated research cross-referenced TRE's existing
+  52-method `add_*` catalog against MD3's own current official
+  catalog (local scraped mirror at `/home/phil/pyDev/projects/
+  pyCopper/M3-References/*.md` -- `m3.material.io` itself is
+  JS-rendered, unreachable via WebFetch) and pyCopper's own real
+  widget set. Ruled out three false candidates: Navigation Bar/Bottom
+  Sheet/Bottom App Bar (M30 already deliberately excluded these,
+  mobile-only patterns); a Menu container (already exists, `build_
+  menu`/`open_menu`); a full Date Picker container (the day-cell
+  primitive + grid math already exist, only chrome missing). Five
+  real ranked gaps remained; presented via `AskUserQuestion`. User
+  chose Button Groups + Split Button + Toolbars.
+- Real anatomy read directly from the local spec mirror before
+  designing anything: `COMPONENT_TOOLBARS.md`, `COMPONENT_SPLIT_
+  BUTTONS.md`, `COMPONENT_BUTTON_GROUPS.md`. Real, honest phase
+  ordering established: Toolbars first (pure composition, direct
+  sibling of the already-built `add_top_app_bar`), Split Button
+  second (composes existing Button/build_menu, reuses the existing
+  shape-morph (M7 Phase 4) + Animated<Affine> transform (M5 Phase 1)
+  mechanisms), Button Groups last (the Standard variant's real
+  "one button's state reflows its siblings' widths" mechanic is
+  novel at the UI level but has a real, directly reusable
+  architectural precedent -- `Tree::sync_carousel_layouts`, M30 Phase
+  9 Step 5's "container state drives every child's real layout_style"
+  shape) -- avoided a genuinely-novel-capability `AskUserQuestion`
+  pause since a real, concrete precedent exists to ground the design
+  in, mirroring M33's own precedent for when NOT to pause.
+- Implemented `Window.add_toolbar` in `window_factory.rs`, directly
+  after `add_top_app_bar` -- read that function first as the real
+  structural template: `resolve_fab_colors`'s own `match variant {
+  ... other => Err(PyValueError) }` pattern, `role(name, fallback)`
+  theme-resolution closure, `positioned_style` construction. Real
+  color tokens confirmed present via grep before use:
+  `surface_container`/`primary_container` both real, already-verified
+  MD3 roles in `engine_md3::color`.
+- Real, deliberate API design: no specialized children-list parameter
+  -- `add_toolbar` returns a plain container `Node`; the caller
+  composes any already-built node in via the existing, generic `Node.
+  add_child` (M6 Phase 1), matching MD3's own real "a container with
+  configurable slots" anatomy verbatim and the same "engine provides
+  the primitive, app composes" split `clip_children` (M32 Phase 3)
+  established.
+- Real, honest gap stated directly in the doc comment: the spec names
+  "floating toolbars have elevation by default" with no discrete
+  numeric token anywhere in the scraped pages -- reused `FAB_REST_
+  ELEVATION_LEVEL` (3.0), this catalog's own closest real "floating,
+  elevated chrome" reference, rather than inventing a number.
+- One real, deliberate rejection: a vertical *docked* toolbar raises
+  a clear `ValueError` instead of silently ignoring `orientation` --
+  MD3's own anatomy has no such variant (docked toolbars are always
+  full-width and horizontal).
+- Compiled clean on the first `cargo check` attempt. One real clippy
+  fix needed: `f64::from(FAB_REST_ELEVATION_LEVEL)` was a useless
+  conversion since the constant is already `f64` -- fixed by removing
+  the wrapper.
+- Real, direct empirical script run before writing any pytest: docked
+  default, floating/vertical/vibrant, composing an already-built
+  `Button` in via `add_child`, and all three real validation errors
+  (unknown variant/orientation/color) plus the vertical-docked
+  rejection -- all passed on the first run.
+- Wrote `tests/test_toolbar.py` (10 tests, modeled on `test_top_app_
+  bar.py`'s own established style) and `examples/toolbar.py` -- both
+  checked for filename collisions first (none).
 - Full verification: `cargo check --all-targets`/`cargo clippy
-  --all-targets -D warnings`/`cargo fmt --check` clean (all 32 real
-  `build_tree_scene` call sites compiling), `cargo test --workspace
-  --release` clean (4 new `geometry_cache` tests, zero regressions,
-  unchanged non-geometry_cache counts confirming additive-only),
-  `maturin develop --release` rebuilt, `pytest tests/` 527 passed/1
-  skipped (unchanged -- pure internal Rust optimization), all 71
-  examples and the showcase demo re-run clean.
-- Updated `BUILD_TRACKER.md` (new M34, 1 phase, Top Metrics row) --
-  verified the parser's own reported item count before/after (33/109/
-  199 -> 34/110/200, exactly +1/+1/+1 matching the single new phase),
-  regenerated and republished the Build Tracker artifact. **This
-  closes M34 Phase 1 and, with it, M34 itself, its 1 phase.**
+  --all-targets -D warnings`/`cargo fmt --check` clean, `cargo test
+  --workspace --release` clean (unchanged counts -- pure engine-py
+  composition, no new engine-core/engine-render pure-logic surface),
+  `maturin develop --release` rebuilt, `pytest tests/` 537 passed/1
+  skipped (10 new, up from 527, zero regressions), all 72 examples
+  (including the new `examples/toolbar.py`) and the showcase demo
+  re-run clean, `mypy --strict` clean against `examples/toolbar.py`.
+- Updated `BUILD_TRACKER.md` (M35 scoped with all 3 phases; Phase 1
+  closed; Top Metrics row updated to 33%/in-progress) -- verified the
+  parser's own reported item count before/after (34/110/200 ->
+  35/113/203 when scoping, unchanged when closing Phase 1 since that
+  only flips an existing item's own status marker), regenerated and
+  republished the Build Tracker artifact. **This closes M35 Phase 1
+  only -- M35 itself stays open, Phase 2 (Split Button) and Phase 3
+  (Button Groups) remain.**

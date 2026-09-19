@@ -1,68 +1,54 @@
-# PLAN — M34 Phase 1: `Rect`/`Splitter` Tessellated-Path Cache
+# PLAN — M35 Phase 1: Toolbars
 
 ## Goal
-Scope and implement the "partial/incremental repaint" gap M29's own
-trailer named ("only redrawing the changed region of the screen") as
-the next milestone, per the user's explicit "Scope the partial/
-incremental repaint as the next milestone and start it."
+Scope and start the next milestone, per the user's "Start on the next
+milestone." Investigated for a genuinely fresh milestone (the vello_
+hybrid fork stays pure future work, per the prior turn's own explicit
+scope choice) the same way M30/M32 were originally scoped: cross-
+referenced TRE's existing 52-method `add_*` catalog against MD3's own
+current official catalog (local scraped mirror, `m3.material.io`
+itself being JS-rendered) and pyCopper's own real widget set. Five
+real, ranked gaps found; user chose Button Groups + Split Button +
+Toolbars -- the coherent, composition-only trio with real pyCopper
+precedent and no new `NodeKind`.
 
-## Investigation (before any design)
-1. Direct source read of vendored `vello_hybrid = "0.2.0"`: true
-   GPU-level scissored/partial redraw is not achievable as shipped --
-   `Renderer::render` has no scissor/dirty-rect param, hardcodes a
-   full-target clear every call, and `Scene` has no public sub-
-   fragment splice/merge API (every field `pub(crate)`).
-2. Checked sibling `pyCopper`'s own real precedent: also redraws its
-   whole GPU target every frame; its real win is a CPU-side display-
-   list splice (numpy memcpy of cached subtree instances) -- not
-   portable to `vello_hybrid`'s `Scene`, which has no equivalent API.
-3. First `AskUserQuestion`: presented the real findings above; user
-   chose "CPU-side subtree paint caching."
-4. Real scratch benchmark (1000-Rect tree, release build): build_tree_
-   scene ~2.7-2.9ms/frame. Isolation benchmark: caching tessellated
-   BezPath geometry only saves ~20% (2.48ms -> 1.99ms) -- the other
-   ~80% is Scene::fill_path's own internal strip-generation cost,
-   unavoidable without forking vello_hybrid.
-5. Second `AskUserQuestion`, presenting this real ceiling (a
-   correction to the premise the first answer was chosen under): user
-   chose "Build the real ~20% win anyway."
-
-## Steps
-1. New `engine_render::GeometryCache` (`geometry_cache.rs`) -- mirrors
-   `TextRenderer::shaped_layout`'s own equality-keyed cache pattern.
-   `RectPathParams` enum (`Uniform`/`PerCorner`/`Border`) is the real
-   invalidation check. Two separate `HashMap<NodeId, (params, BezPath)>`
-   maps (fill, border) so a bordered Rect's two paths don't collide.
-2. `paint_node`'s `Rect`/`Splitter` arm now calls `geometry.
-   rounded_rect_fill`/`rounded_rect_fill_per_corner`/
-   `rounded_rect_border` instead of building a fresh `to_path(0.1)`
-   inline. `build_tree_scene`/`paint_node` gained a new `geometry:
-   &mut GeometryCache` parameter.
-3. `GeometryCache::evict_stale(&tree)` mirrors `evict_stale_layouts`;
-   wired into `engine-py::app.rs`'s real per-frame block alongside the
-   existing `text_renderer`/`sync_image_textures` calls. `GpuState`
-   gained a `geometry_cache` field.
-4. All 31 real `build_tree_scene` call sites in engine-render's own
-   integration tests, plus `rect_window.rs`'s own local `GpuState`,
-   updated to thread the new parameter -- found exhaustively via
-   `cargo check`'s own error list (the M33 Phase 2 precedent).
-5. Four new real Rust unit tests: cache-hit reuses the identical
-   BezPath (pointer identity), cache-miss on a changed radius produces
-   a genuinely different path, fill/border caches don't collide,
-   eviction removes a removed node's cached paths.
-6. Real end-to-end verification benchmark (removed after use): the
-   same 1000-Rect tree through the real cached build_tree_scene,
-   2.34ms/frame vs the 2.69ms/frame baseline -- a real ~13% end-to-end
-   win.
-7. Full verification chain: cargo check/clippy/fmt/test, maturin
-   develop, pytest (full suite, unchanged count -- pure internal Rust
-   change, no Python-facing surface), all examples, showcase demo.
-8. `BUILD_TRACKER.md` (new M34, 1 phase), artifact republish, memory
-   update, commit (no push yet per "push after every milestone" --
-   this closes the milestone, so push follows).
+## Steps (Phase 1 — Toolbars)
+1. Real anatomy verified directly from the local MD3 spec mirror
+   (`COMPONENT_TOOLBARS.md`) before designing anything: 64dp height
+   both variants; docked = full window width, square corners,
+   `surface_container`/`primary_container` fill; floating = hugs
+   content, fully rounded, real elevation, horizontal or vertical.
+2. Read the existing `add_top_app_bar` (M30 Phase 5 Step 3) as the
+   direct structural precedent to follow -- same `resolve_*_colors`
+   pattern (`resolve_fab_colors`), same `role(name, fallback)` theme
+   closure, same `positioned_style` construction.
+3. Implemented `Window.add_toolbar(variant, orientation, color, width,
+   height, x, y) -> Node` in `window_factory.rs`, right after `add_
+   top_app_bar`. Real validation: unknown variant/orientation/color
+   each raise a clear `ValueError`; a vertical *docked* toolbar
+   (a real MD3 anatomy that doesn't exist) also raises rather than
+   silently ignoring the param.
+4. A real "container with configurable slots" per MD3's own anatomy,
+   verbatim -- no specialized children-list parameter; the caller
+   composes already-built nodes in via the existing, generic `Node.
+   add_child` (M6 Phase 1), the same split `clip_children` (M32 Phase
+   3) already established.
+5. New constants: `TOOLBAR_HEIGHT` (64.0), `TOOLBAR_PADDING` (16.0,
+   the spec's own "minimum outside padding"), `TOOLBAR_ITEM_GAP`
+   (32.0, the spec's own "equal padding between items" default).
+   Elevation reuses `FAB_REST_ELEVATION_LEVEL` (3.0) -- a real, honest
+   gap stated directly: no discrete numeric elevation token exists in
+   the scraped spec for "floating toolbars have elevation by default."
+6. Full verification chain: cargo check/clippy/fmt/test, maturin
+   develop, a real empirical script before any pytest, `tests/
+   test_toolbar.py` (10 tests), `examples/toolbar.py`, full pytest
+   suite, all examples, showcase demo, mypy --strict.
+7. `BUILD_TRACKER.md` (M35 scoped, Phase 1 closed), artifact
+   republish, memory update, commit (holding push -- M35 has two more
+   phases before the milestone closes).
 
 ## Status
-Complete. All steps done; full verification chain green (`pytest
-tests/` 527 passed/1 skipped, unchanged, zero Python-facing change).
-**M34 -- Per-Node Tessellated-Path Caching is now fully complete, its
-1 phase.**
+Phase 1 complete. Full verification chain green (`pytest tests/` 537
+passed/1 skipped, 10 new, zero regressions; all 72 examples + showcase
+demo clean; mypy --strict clean). **M35 is not yet closed -- Phase 2
+(Split Button) and Phase 3 (Button Groups) remain.**
