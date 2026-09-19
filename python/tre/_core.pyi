@@ -700,6 +700,28 @@ class Window:
         state change" split `Checkbox.checked` already uses).
         """
         ...
+    def add_button_group(
+        self,
+        labels: list[str],
+        width: float,
+        height: float,
+        variant: str = "filled",
+        x: float | None = None,
+        y: float | None = None,
+    ) -> tuple[Node, list[Node]]:
+        """A real MD3 Standard Button Group -- an invisible container
+        holding `len(labels)` real `add_button`-built buttons (all the
+        same `variant`/`width`/`height`, real MD3 anatomy's own
+        default), spaced with a real gap. Pressing one live-reflows its
+        own width and its immediate neighbors' -- real MD3's own
+        distinctive "pressing a button also affects the width of
+        adjacent buttons" mechanic, driven entirely by the engine, no
+        app-side wiring needed. Returns `(group, buttons)`. There is no
+        `Connected Button Group` variant here -- MD3's own spec states
+        it directly replaces the already-built `add_segmented_button`,
+        which already covers that real anatomy.
+        """
+        ...
     def add_tabs(
         self,
         labels: list[str],

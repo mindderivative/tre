@@ -714,6 +714,20 @@ const TOOLBAR_ITEM_GAP: f32 = 32.0;
 const SPLIT_BUTTON_GAP: f32 = 2.0;
 const SPLIT_BUTTON_TRAILING_ICON_SIZE: f32 = 22.0;
 
+/// M35 Phase 3 (§5, §7): real MD3 Standard Button Group tokens
+/// (`COMPONENT_BUTTON_GROUPS.md`'s own scraped "Standard button group
+/// inner padding" measurements: 18dp XS, 12dp S, 8dp M/L/XL) --
+/// `BUTTON_GROUP_GAP` uses the real M/L/XL shared value, the most
+/// common real default. **Real, honestly-stated gap:** no discrete
+/// numeric token for how much a pressed child *grows* by exists
+/// anywhere in the scraped spec (only the qualitative "briefly changes
+/// the width of itself and adjacent buttons") -- `BUTTON_GROUP_GROW`
+/// is a real, reasonable, MD3-plausible value, the identical honest
+/// caveat `TOP_APP_BAR_ICON_BUTTON_SIZE`'s own doc comment already
+/// carries for an undocumented real constant.
+const BUTTON_GROUP_GAP: f32 = 8.0;
+const BUTTON_GROUP_GROW: f32 = 12.0;
+
 /// MD3's own real Tabs anatomy (M30 Phase 5 Step 4), the *Primary
 /// Navigation Tab* variant -- verified against Material Web's own
 /// token source before writing any code. **Real, confirmed finding:**
@@ -4238,6 +4252,89 @@ impl PyWindow {
         tree.add_child(self.root, trailing);
 
         Ok((leading, self.wrap_node(trailing), self.wrap_node(icon_id)))
+    }
+
+    /// M35 Phase 3 (§5, §7, §11.7): a real MD3 Standard Button Group --
+    /// an invisible container that adds real horizontal spacing
+    /// between its own children and, when one of them is genuinely
+    /// pressed, grows it while shrinking its immediate neighbors,
+    /// real MD3's own distinctive "pressing a button also affects the
+    /// width of adjacent buttons" mechanic (`COMPONENT_BUTTON_GROUPS.
+    /// md`). The real mechanism itself lives in `engine-core::Tree::
+    /// sync_button_group_layouts`, driven by the new `PaintProperties.
+    /// button_group_reflow` marker this container's own paint carries
+    /// -- see that field's own doc comment for the full real design
+    /// reasoning (mirrors `Carousel`'s own `sync_carousel_layouts`
+    /// shape, reads the already-existing, already-tracked `Tree.
+    /// pressed` field, no new interaction wiring needed).
+    ///
+    /// Each real child is a plain `add_button` (reused directly,
+    /// unchanged -- "avoid mixing color styles," `COMPONENT_BUTTON_
+    /// GROUPS.md`'s own real usage guidance, so every child in one
+    /// group shares the identical real `variant`), then reparented
+    /// under the new group container via `Tree::try_add_child` (the
+    /// identical real "move an already-attached node" mechanism
+    /// `Node.add_child`'s own Python-facing method already uses) --
+    /// `add_button` itself always parents fresh under `self.root`
+    /// first, so this step is required, not an optimization. Real MD3
+    /// anatomy: "the standard button group hugs the width of the
+    /// buttons inside" -- the returned container's own real width is
+    /// computed from the real, uniform `width`/`labels.len()`/gap
+    /// this call is given, not measured after the fact.
+    ///
+    /// **Real, honest v1 scope limit:** no `Connected Button Group`
+    /// variant here -- MD3's own spec states it directly replaces the
+    /// already-built `Segmented Button` (M30 Phase 6), so `add_
+    /// segmented_button` already covers that real anatomy; this method
+    /// is deliberately Standard-only, the one genuinely new mechanic.
+    /// Every child uses the same, real, uniform `width`/`height` --
+    /// real MD3 anatomy states "by default, all buttons in a standard
+    /// group should be the same size," so this isn't a missing
+    /// per-child override, it's the real default behavior itself.
+    #[pyo3(signature = (labels, width, height, variant="filled", x=None, y=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn add_button_group(
+        &self,
+        labels: Vec<String>,
+        width: f32,
+        height: f32,
+        variant: &str,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<(Node, Vec<Node>)> {
+        let n = labels.len();
+        let group_width = if n == 0 {
+            0.0
+        } else {
+            n as f32 * width + (n - 1) as f32 * BUTTON_GROUP_GAP
+        };
+
+        let mut group_paint = PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0);
+        group_paint.button_group_reflow =
+            Some((f64::from(BUTTON_GROUP_GROW), f64::from(BUTTON_GROUP_GAP)));
+        let group_style = positioned_style(
+            Size {
+                width: length(group_width),
+                height: length(height),
+            },
+            x,
+            y,
+        );
+        let group_id = {
+            let mut tree = self.tree.borrow_mut();
+            let group_id = tree.insert(NodeKind::Container, group_style, group_paint);
+            tree.add_child(self.root, group_id);
+            group_id
+        };
+
+        let mut children = Vec::with_capacity(n);
+        for label in &labels {
+            let button = self.add_button(label, width, height, variant, None, None)?;
+            self.tree.borrow_mut().try_add_child(group_id, button.id);
+            children.push(button);
+        }
+
+        Ok((self.wrap_node(group_id), children))
     }
 
     /// M30 Phase 5 Step 4 (§5, §7): `Tabs`, MD3's real *Primary

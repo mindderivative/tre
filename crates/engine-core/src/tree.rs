@@ -395,6 +395,19 @@ impl Tree {
                 .compute_layout(root_taffy, available_space)
                 .expect("compute_layout: taffy layout computation failed (carousel sync pass)");
         }
+        // M35 Phase 3 (§5, §7, §11.7): the identical real "container-
+        // level state drives every child's own real layout_style, then
+        // taffy runs once more so it actually lands" shape the carousel
+        // sync above already establishes, applied to a real Standard
+        // Button Group's own live press-driven width reflow. A no-op
+        // call (`false`) whenever no node has `PaintProperties.
+        // button_group_reflow` set -- every other real `compute_layout`
+        // caller pays nothing extra.
+        if self.sync_button_group_layouts() {
+            self.taffy
+                .compute_layout(root_taffy, available_space)
+                .expect("compute_layout: taffy layout computation failed (button group sync pass)");
+        }
     }
 
     /// M30 Phase 9 Step 5 (§5, §7, §11.7): the real per-frame item-
@@ -498,6 +511,100 @@ impl Tree {
                     height: length(item_height as f32),
                 };
                 self.set_layout_style(child, style);
+            }
+        }
+        true
+    }
+
+    /// M35 Phase 3 (§5, §7, §11.7): the real Standard Button Group's
+    /// own distinctive mechanic -- "pressing a button also affects the
+    /// width of adjacent buttons" (`COMPONENT_BUTTON_GROUPS.md`).
+    /// Mirrors `sync_carousel_layouts`'s own exact shape: a container-
+    /// level marker (`PaintProperties.button_group_reflow`, its own
+    /// doc comment has the full real design reasoning) drives every
+    /// child's own real `layout_style`, pushed via `Tree::
+    /// set_layout_style` so it actually lands. **Real, deliberately
+    /// simple formula, since no discrete numeric token for the reflow
+    /// amount exists in the scraped spec (stated honestly, not
+    /// invented as if verified):** the currently-pressed child (read
+    /// from the already-existing, already-tracked `self.pressed`
+    /// field -- no new interaction wiring needed) grows by its own
+    /// group's real `grow` value; that amount is split evenly back out
+    /// of its immediate left/right neighbors (clamped at `0.0`), so
+    /// the row's own total width stays constant -- a real, bounded
+    /// reflow, matching MD3's own stated "briefly changes the width of
+    /// itself and adjacent buttons," not raw growth with no
+    /// compensation. A group with fewer than 2 real children is a true
+    /// no-op (nothing to reflow against).
+    fn sync_button_group_layouts(&mut self) -> bool {
+        let groups: Vec<NodeId> = self
+            .nodes
+            .iter()
+            .filter(|(_, node)| node.paint.button_group_reflow.is_some())
+            .map(|(id, _)| id)
+            .collect();
+        if groups.is_empty() {
+            return false;
+        }
+        let pressed_id = self.pressed.map(|(_, id)| id);
+
+        for group in groups {
+            let children = self.nodes[group].children.clone();
+            if children.len() < 2 {
+                continue;
+            }
+            let (grow, gap) = self.nodes[group]
+                .paint
+                .button_group_reflow
+                .expect("checked by the filter above");
+
+            let resting: Vec<f64> = children
+                .iter()
+                .map(|&c| {
+                    self.nodes[c]
+                        .layout_style
+                        .size
+                        .width
+                        .into_option()
+                        .map(f64::from)
+                        .unwrap_or(0.0)
+                })
+                .collect();
+
+            let widths = match pressed_id.and_then(|id| children.iter().position(|&c| c == id)) {
+                Some(idx) => {
+                    let n = children.len();
+                    let mut w = resting.clone();
+                    w[idx] += grow;
+                    let neighbors: Vec<usize> =
+                        [idx.checked_sub(1), (idx + 1 < n).then_some(idx + 1)]
+                            .into_iter()
+                            .flatten()
+                            .collect();
+                    if !neighbors.is_empty() {
+                        let shrink_each = grow / neighbors.len() as f64;
+                        for &j in &neighbors {
+                            w[j] = (w[j] - shrink_each).max(0.0);
+                        }
+                    }
+                    w
+                }
+                None => resting,
+            };
+
+            let mut cursor = 0.0f32;
+            for (i, &child) in children.iter().enumerate() {
+                let mut style = self.nodes[child].layout_style.clone();
+                style.position = Position::Absolute;
+                style.inset = TaffyRect {
+                    left: length(cursor),
+                    top: length(0.0),
+                    right: auto(),
+                    bottom: auto(),
+                };
+                style.size.width = length(widths[i] as f32);
+                self.set_layout_style(child, style);
+                cursor += widths[i] as f32 + gap as f32;
             }
         }
         true
@@ -8770,6 +8877,125 @@ mod tests {
             (state.scroll_x - 764.0).abs() < 0.01,
             "scroll must clamp to the real content-extent-minus-viewport max, got {}",
             state.scroll_x
+        );
+    }
+
+    /// M35 Phase 3 (§5, §7, §11.7): real regression coverage for the
+    /// Standard Button Group's own real "nothing pressed" case -- every
+    /// child must keep its own real, unmodified resting width.
+    #[test]
+    fn sync_button_group_layouts_leaves_widths_unchanged_when_nothing_is_pressed() {
+        let mut tree = Tree::new();
+        let mut group_paint = PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0);
+        group_paint.button_group_reflow = Some((12.0, 8.0));
+        let group = tree.insert(
+            NodeKind::Container,
+            Style {
+                size: Size {
+                    width: length(300.0),
+                    height: length(40.0),
+                },
+                ..Default::default()
+            },
+            group_paint,
+        );
+        let (a_kind, a_style, a_paint) = leaf(80.0, 40.0);
+        let a = tree.insert(a_kind, a_style, a_paint);
+        let (b_kind, b_style, b_paint) = leaf(80.0, 40.0);
+        let b = tree.insert(b_kind, b_style, b_paint);
+        let (c_kind, c_style, c_paint) = leaf(80.0, 40.0);
+        let c = tree.insert(c_kind, c_style, c_paint);
+        tree.add_child(group, a);
+        tree.add_child(group, b);
+        tree.add_child(group, c);
+
+        let available = Size {
+            width: AvailableSpace::Definite(300.0),
+            height: AvailableSpace::Definite(40.0),
+        };
+        tree.compute_layout(group, available);
+
+        for (id, expected) in [(a, 80.0), (b, 80.0), (c, 80.0)] {
+            assert!(
+                (tree.layout(id).size.width - expected).abs() < 0.01,
+                "with nothing pressed, every real child must keep its own resting width, \
+                 got {} for expected {expected}",
+                tree.layout(id).size.width
+            );
+        }
+    }
+
+    /// M35 Phase 3 (§5, §7, §11.7): the real, decisive proof of the
+    /// Standard Button Group's own distinctive mechanic -- pressing a
+    /// child grows it by the group's own real `grow` amount, and
+    /// shrinks its real immediate neighbors by an even split of that
+    /// same amount, so the row's own total width is provably
+    /// unchanged (real MD3's own stated "briefly changes the width of
+    /// itself and adjacent buttons," a bounded reflow, not raw
+    /// growth).
+    #[test]
+    fn sync_button_group_layouts_grows_the_pressed_child_and_shrinks_its_real_neighbors() {
+        let mut tree = Tree::new();
+        let mut group_paint = PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0);
+        group_paint.button_group_reflow = Some((12.0, 8.0));
+        let group = tree.insert(
+            NodeKind::Container,
+            Style {
+                size: Size {
+                    width: length(300.0),
+                    height: length(40.0),
+                },
+                ..Default::default()
+            },
+            group_paint,
+        );
+        let (a_kind, a_style, a_paint) = leaf(80.0, 40.0);
+        let a = tree.insert(a_kind, a_style, a_paint);
+        let (b_kind, b_style, b_paint) = leaf(80.0, 40.0);
+        let b = tree.insert(b_kind, b_style, b_paint);
+        let (c_kind, c_style, c_paint) = leaf(80.0, 40.0);
+        let c = tree.insert(c_kind, c_style, c_paint);
+        tree.add_child(group, a);
+        tree.add_child(group, b);
+        tree.add_child(group, c);
+
+        // Press the middle child directly -- the real, already-tracked
+        // interaction state `sync_button_group_layouts` reads, the
+        // identical technique a real `PointerPressed` dispatch would
+        // set, without needing a full synthetic hit-test round trip
+        // for this pure layout-math test.
+        tree.pressed = Some((PointerButton::Primary, b));
+
+        let available = Size {
+            width: AvailableSpace::Definite(300.0),
+            height: AvailableSpace::Definite(40.0),
+        };
+        tree.compute_layout(group, available);
+
+        let a_width = tree.layout(a).size.width;
+        let b_width = tree.layout(b).size.width;
+        let c_width = tree.layout(c).size.width;
+
+        assert!(
+            (b_width - 92.0).abs() < 0.01,
+            "the pressed middle child must grow by the real grow amount (80 + 12 = 92), got \
+             {b_width}"
+        );
+        assert!(
+            (a_width - 74.0).abs() < 0.01,
+            "the pressed child's real left neighbor must shrink by its even share (80 - 6 = \
+             74), got {a_width}"
+        );
+        assert!(
+            (c_width - 74.0).abs() < 0.01,
+            "the pressed child's real right neighbor must shrink by its even share (80 - 6 = \
+             74), got {c_width}"
+        );
+        assert!(
+            (a_width + b_width + c_width - 240.0).abs() < 0.01,
+            "the row's own real total width must stay constant (a bounded reflow, not raw \
+             growth) -- got {}",
+            a_width + b_width + c_width
         );
     }
 }

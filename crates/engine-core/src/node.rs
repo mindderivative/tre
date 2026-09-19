@@ -1151,6 +1151,33 @@ pub struct PaintProperties {
     /// this catalog needs a *smooth transition* into/out of clipping,
     /// only a static per-node choice.
     pub clip_children: bool,
+    /// M35 Phase 3 (§5, §7, §11.7): the real MD3 Standard Button
+    /// Group's own distinctive mechanic -- "pressing a button also
+    /// affects the width of adjacent buttons" (`COMPONENT_BUTTON_
+    /// GROUPS.md`) -- `None` (every existing node, unchanged) is a
+    /// true no-op; `Some((grow_px, gap_px))` marks this node as a real
+    /// button-group container and gives `Tree::
+    /// sync_button_group_layouts` (mirroring `Carousel`'s own `sync_
+    /// carousel_layouts` shape: a container-level marker driving every
+    /// child's own real `layout_style`, recomputed and pushed via
+    /// `Tree::set_layout_style` each layout pass) the two real numbers
+    /// it needs: `grow_px` is how much the currently-pressed child
+    /// (read from the already-existing, already-tracked `Tree.
+    /// pressed` field, the identical real "read live interaction
+    /// state to drive computed layout" technique `update_slider_drag`/
+    /// `update_splitter_drag` already establish) grows by, split
+    /// evenly back out of its own immediate neighbors so the row's own
+    /// total width stays constant -- real MD3's own stated behavior
+    /// ("briefly changes the width of itself and adjacent buttons"),
+    /// not raw growth with no compensation; `gap_px` is the real,
+    /// constant horizontal gap between every child, MD3's own "inner
+    /// padding" anatomy. A plain `PaintProperties` field, not a new
+    /// `NodeKind`, since (unlike `Carousel`) a button group needs no
+    /// other real per-instance data -- the identical "a universal flag
+    /// any `NodeKind` can opt into" shape `clip_children` already
+    /// establishes just above, not `Carousel`'s heavier dedicated-
+    /// `NodeKind` pattern.
+    pub button_group_reflow: Option<(f64, f64)>,
 }
 
 impl PaintProperties {
@@ -1166,6 +1193,7 @@ impl PaintProperties {
             border_width: Animated::new(0.0),
             corner_radii_override: None,
             clip_children: false,
+            button_group_reflow: None,
         }
     }
 

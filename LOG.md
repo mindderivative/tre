@@ -1,100 +1,90 @@
-# LOG — M35 Phase 2: Split Button
+# LOG — M35 Phase 3: Button Groups, closing M35
 
-- Real anatomy read directly from `COMPONENT_SPLIT_BUTTONS.md` before
-  writing any code: leading button + trailing menu button (always
-  `expand_more`), real xsmall tokens (between-space 2dp, trailing-
-  button icon size 22dp), "the menu button rotates inwards 180° when
-  opened and closed" (standard, non-expressive motion scheme).
-- **Real, load-bearing correction, found and fixed before writing any
-  Split Button code, not after:** the M35 scoping note (written last
-  phase) assumed the trailing icon's rotation could reuse the existing
-  `PaintProperties.transform` (`Animated<Affine>`) mechanism at zero
-  new engine-core cost. Checked directly and found this false:
-  `Interpolate for Affine` (`animation.rs:34-59`) is a plain
-  componentwise coefficient lerp, its own doc comment already stating
-  it's wrong for rotation ("would look like a non-circular morph");
-  kurbo's real `Affine::svd()` (rotation-aware) is `pub(crate)`, not
-  exported -- confirmed via direct source read. Corrected the earlier
-  BUILD_TRACKER.md claim honestly rather than letting it stand.
-- Real fix: new `IconState.rotation: Animated<f64>` -- a plain scalar
-  degrees value, avoiding the whole Affine-interpolation correctness
-  problem entirely (a scalar lerp is exact), mirroring the identical
-  "scalar progress value drives real paint geometry" shape
-  `CheckboxState.check_progress`/`RadioButtonState.select_progress`/
-  `SwitchState.toggle_progress` already establish.
-- `IconState` could no longer derive `Clone`/`Debug`/`PartialEq` once
-  it carried an `Animated<f64>` (`Animated<T>` implements none of
-  those) -- found the exact real precedent already in this codebase:
-  `NodeKind`'s own doc comment states the identical fact for
-  `Splitter`, confirming via grep first that nothing actually clones/
-  prints/compares an `IconState` value directly before removing the
-  derive.
-- New `IconState::new(path, tint)` constructor. Migrated all 23 real
-  `IconState { path, tint }` struct-literal sites (22 in
-  `window_factory.rs`, 1 in `tree.rs`) via a Python regex script --
-  22 matched cleanly on the first pass; the 23rd (`tint: Color::
-  from_rgba8(r, g, b, a)`) had internal commas the regex's `[^\n,]+`
-  capture group split on, silently leaving it unmatched -- caught by
-  `cargo check`'s own next error, fixed by hand. The identical
-  "compiler's own exhaustive error list as the final real worklist"
-  technique M33 Phase 2/M34 Phase 1 already established.
-- New `Tree::tick_all` arm for `IconState.rotation` (mirrors
-  `select_progress`/`toggle_progress`, `tree.rs`); new `Node.
-  animate("rotation", ...)` match arm (`engine-py::node.rs`),
-  resolving only on `NodeKind::Icon`.
-- `engine-render`'s `NodeKind::Icon` paint arm now composes a fresh
-  `Affine::rotate(state.rotation.current.to_radians())` every frame,
-  in local node space around the icon's own real center (`w/2, h/2`),
-  before the existing viewBox-to-local `icon_transform` -- so the icon
-  visually spins in place regardless of its own internal viewBox
-  geometry.
-- Real, decisive pixel-diff test added to `icon_paint.rs`, reusing the
-  file's own existing asymmetric left-half test icon: a real 180°
-  rotation paints the node's own *right* half instead of the left --
-  a real, meaningful geometric proof, not "doesn't panic." Passed on
-  the first run.
-- Implemented `Window.add_split_button` by calling `self.add_button
-  (...)` directly for the leading button (a plain Rust method call
-  within the same `impl PyWindow` block -- `#[pymethods]` doesn't
-  block ordinary same-crate calls), reusing all of its own already-
-  verified color/token logic rather than reimplementing it. Built the
-  trailing button/icon manually, mirroring `add_top_app_bar`'s own
-  icon-button construction pattern, so the real icon `Node` itself
-  (not a wrapper) is exposed for the app to animate directly.
-- Real, deliberate design: `add_split_button` returns `(leading,
-  trailing, trailing_icon)` with no wrapping container node at all --
-  checked the spec's own anatomy diagram first: it lists exactly
-  "Leading button, Icon, Label text, Trailing button," unlike
-  `Toolbar`/`Button Group`, both of which do have a real container
-  element. Design Principle 6's own "engine provides the mechanism,
-  app decides the real state change" split: the engine never
-  opens/closes a menu or rotates the icon on its own.
-- Real, honest v1 scope limit stated directly: the inner corners' own
-  real hover/press shape-tightening is not implemented -- both
-  buttons paint fully rounded always, a deliberate simplification of
-  MD3's own asymmetric-corner anatomy this component's real function
-  doesn't strictly need.
-- Compiled clean on the first `cargo check`/`cargo clippy` attempt
-  after the mechanical migration (one straggler fixed by hand, above).
-- Real, direct empirical script run before writing any pytest: real
-  split button construction, independent leading/trailing clicks, and
-  real rotation animation round-tripping 0°→180°→0° -- all passed on
-  the first run.
-- Wrote `tests/test_split_button.py` (6 tests) and `examples/
-  split_button.py` -- both checked for filename collisions first
-  (none).
+- Real anatomy read directly from `COMPONENT_BUTTON_GROUPS.md` before
+  writing any code: Standard variant reflows adjacent buttons' widths
+  when one is pressed; Connected variant explicitly, per the spec's
+  own words, replaces the already-built `Segmented Button` -- ruled
+  out of this phase's own scope immediately, no duplicate work needed.
+- Investigated the real architectural precedent this phase's own
+  M35-scoping note promised before writing any code: `Tree::sync_
+  carousel_layouts` (M30 Phase 9 Step 5) already does exactly the
+  needed shape -- a container-level marker recomputes every child's
+  own real `layout_style`, pushed via `Tree::set_layout_style`, with
+  `compute_layout` running `taffy` a second time so the new absolute
+  insets actually land in `self.layout(child)`.
+- Real, load-bearing confirmation before designing the reflow trigger:
+  `Tree.pressed: Option<(PointerButton, NodeId)>` already exists and
+  is already tracked by `Tree::dispatch`'s own `PointerPressed`/
+  `PointerReleased` handling -- meaning the new sync function needs
+  zero new interaction wiring, just a read of an already-live field,
+  the identical real "read live interaction state to drive computed
+  layout" technique `update_slider_drag`/`update_splitter_drag`
+  already establish.
+- New `PaintProperties.button_group_reflow: Option<(f64, f64)>`
+  (grow_px, gap_px) -- deliberately a plain field, not a new
+  `NodeKind`, since (unlike `Carousel`) a button group needs no other
+  real per-instance data. Confirmed via grep first that `PaintProperties
+  ::new` is the sole real construction path everywhere (no raw struct
+  literals to migrate), so this addition was safe and mechanical.
+- New `Tree::sync_button_group_layouts`, wired into `compute_layout`
+  right after the existing carousel sync call. Real, deliberately
+  simple, honestly-stated formula: no discrete numeric token for the
+  "grow" amount exists anywhere in the scraped spec, only the
+  qualitative "briefly changes the width of itself and adjacent
+  buttons" -- the pressed child grows by the group's own real
+  `grow_px`; that amount is split evenly back out of its immediate
+  left/right neighbors (clamped at 0.0), so the row's own total width
+  provably stays constant, a real bounded reflow rather than raw
+  uncompensated growth.
+- Two real, decisive Rust unit tests added directly in `tree.rs`'s own
+  test module (private-field access to `tree.pressed` used directly,
+  no synthetic dispatch round-trip needed for this pure layout-math
+  proof): with nothing pressed, every child keeps its own exact
+  resting width; with the middle of three 80px buttons pressed
+  (grow=12), the pressed child grows to exactly 92px and each real
+  neighbor shrinks to exactly 74px, with the row's own real total
+  width (240px) provably unchanged before and after -- both passed on
+  the first run, no bugs found in the reflow math.
+- Implemented `Window.add_button_group` by building each real child
+  via a direct `self.add_button(...)` call (a plain Rust method call
+  within the same `impl PyWindow` block, the identical technique
+  Phase 2's own `add_split_button` already established for its
+  leading button), then reparenting each one under the new group
+  container via `Tree::try_add_child` -- confirmed its real signature
+  first (`fn try_add_child(&mut self, parent: NodeId, child: NodeId)
+  -> bool`, moves an already-attached node), since `add_button` itself
+  always parents fresh under `self.root` first.
+- Real MD3 tokens used as flat constants, matching `add_button`/`add_
+  split_button`'s own established convention: `BUTTON_GROUP_GAP`
+  (8.0, the real, scraped M/L/XL "inner padding" token) and `BUTTON_
+  GROUP_GROW` (12.0, a real, reasonable, honestly-stated-as-
+  undocumented value -- no discrete grow token exists in the spec).
+- Compiled clean on the first `cargo check`/`cargo clippy` attempt.
+- Real, direct empirical script run before writing any pytest: a real
+  3-button group, independent per-button clicks, and a themed
+  2-button group -- all passed on the first run.
+- Wrote `tests/test_button_group.py` (6 tests) and `examples/
+  button_group.py` -- both checked for filename collisions first
+  (none). `mypy --strict` caught one real issue in the new example: a
+  nested nested handler-factory function missing its own return-type
+  annotation -- fixed directly (added `Callable[[], None]`), not
+  glossed over.
 - Full verification: `cargo check --all-targets`/`cargo clippy
   --all-targets -D warnings`/`cargo fmt --check` clean, `cargo test
-  --workspace --release` clean (`engine-render` +1 new rotation
-  pixel-diff test, unchanged elsewhere -- additive only), `maturin
-  develop --release` rebuilt, `pytest tests/` 543 passed/1 skipped
-  (6 new, up from 537, zero regressions), all 73 examples (including
-  the new `examples/split_button.py`) and the showcase demo re-run
-  clean, `mypy --strict` clean against `examples/split_button.py`.
-- Updated `BUILD_TRACKER.md` (Phase 2 closed; Top Metrics row updated
-  to 67%/2-of-3; corrected the earlier scoping note's own "zero new
-  engine-core capability" claim to state the real finding honestly)
-  -- verified the parser's own reported item count unchanged (only an
-  existing item's status flipped), regenerated and republished the
-  Build Tracker artifact. **This closes M35 Phase 2 only -- M35 itself
-  stays open, Phase 3 (Button Groups) remains.**
+  --workspace --release` clean (`engine-core` +2 new reflow-math
+  tests, up from 176 to 178, unchanged elsewhere), `maturin develop
+  --release` rebuilt, `pytest tests/` 549 passed/1 skipped (6 new, up
+  from 543, zero regressions), all 74 examples (including the new
+  `examples/button_group.py`) and the showcase demo re-run clean,
+  `mypy --strict` clean against `examples/button_group.py`.
+- Updated `BUILD_TRACKER.md` (Phase 3 closed; M35 itself closed, all
+  3 phases; Top Metrics row at 100%; a real "Not scoped" trailer note
+  added naming Loading Indicator/Time Picker Dial as the two real
+  gaps this milestone's own scoping investigation found but the user
+  didn't select, plus Split Button's own inner-corner shape-tightening
+  and Button Group's own per-child shape change on press, both
+  deliberate v1 scope cuts stated directly) -- verified the parser's
+  own reported item count unchanged (only existing items' status
+  flipped, no new step bullets), regenerated and republished the
+  Build Tracker artifact. **This closes M35 Phase 3 and, with it, M35
+  itself, all 3 phases.**
