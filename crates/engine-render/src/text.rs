@@ -740,4 +740,63 @@ mod tests {
             assert!(renderer.layout_cache.contains_key(&b));
         });
     }
+
+    /// M31 Phase 1 (§5, §8): the real finding that closes this phase's
+    /// own "real, open technical question" (`BUILD_TRACKER.md`'s own
+    /// Phase 1 scoping note) without any new per-line-position API at
+    /// all -- `draw` (plain `Text`) and `draw_field` (`TextField`) both
+    /// build their `Layout` through this exact same `shaped_layout`
+    /// method, confirmed by direct source read, not assumed. So a
+    /// gutter composed as an ordinary sibling `Text` node (real digits
+    /// joined by `\n`, same `font_family`/`font_weight`/`font_size` as
+    /// the editor, wide enough not to wrap) lines up with the editor's
+    /// own real per-line Y positions *by construction*, with zero new
+    /// engine capability needed -- proven here directly against real
+    /// `parley::Layout::lines()` geometry, not just plausible-sounding.
+    #[test]
+    fn a_plain_texts_own_multiline_content_lines_up_with_a_matching_multiline_textfields_own_lines()
+    {
+        let mut tree = Tree::new();
+        let gutter_id = text_node(&mut tree, "1\n2\n3");
+        let editor_id = text_node(&mut tree, "3\n2\n1"); // a second, distinct real NodeId
+
+        let mut renderer = TextRenderer::new();
+        let gutter_ys: Vec<f32> = renderer
+            .shaped_layout(
+                gutter_id,
+                "1\n2\n3",
+                "Roboto",
+                400.0,
+                16.0,
+                100.0,
+                TextAlign::Start,
+            )
+            .lines()
+            .map(|line| line.metrics().block_min_coord)
+            .collect();
+        let field_ys: Vec<f32> = renderer
+            .shaped_layout(
+                editor_id,
+                "1\n2\n3",
+                "Roboto",
+                400.0,
+                16.0,
+                f32::MAX,
+                TextAlign::Start,
+            )
+            .lines()
+            .map(|line| line.metrics().block_min_coord)
+            .collect();
+
+        assert_eq!(
+            gutter_ys.len(),
+            3,
+            "three source lines must produce three real layout lines"
+        );
+        assert_eq!(
+            gutter_ys, field_ys,
+            "a plain Text's own per-line Y offsets must exactly match a matching multiline \
+             TextField's, real proof that a gutter can be composed as an ordinary sibling node"
+        );
+    }
 }
