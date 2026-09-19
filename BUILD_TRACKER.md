@@ -45,6 +45,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M35 — MD3 Expressive Catalog: Toolbars, Split Button, Button Groups (§5, §7) | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-19) |
 | M36 — General Scrollable Container (§5, §7, §11.7) | `██████████` 100% | ✅ Complete — 1 phase done (2026-09-19) |
 | M37 — Fix: `VirtualList` Hit-Test-After-Scroll (§5, §7, §11.7) | `██████████` 100% | ✅ Complete — 1 phase done (2026-09-19) |
+| M38 — Hardening II: Closing the Remaining Stated v1 Gaps (§5, §7, §8) | `█░░░░░░░░░` 14% | 🚧 Phase 1 of 7 done |
 
 **Just closed:** M6 Phase 4 — `Tree::absolute_position` transform-awareness (§8), **closing M6 entirely (all 4 phases)**. The post-M5 code review finding: `absolute_position` never composed `PaintProperties.transform`, so `open_overlay`'s anchor placement, `splitter_geometry`'s drag math, and every `engine-py` synthetic-point entry point silently computed the wrong canvas position for a node inside a panned/zoomed `Container`. Every real caller enumerated via grep first (two in `engine-core`, six in `engine-py`) — a small, fully enumerated set where *every* caller wants the transform-aware answer, unlike `add_child`'s ~80 or `hit_test`'s hot per-frame path, so this rewrites `absolute_position` in place rather than adding a parallel checked method the way M6 Phase 1/M5 Phase 2 did. Composes the identical `parent * translate(layout.location) * own_transform` product `paint_node`/`hit_test_at` already compose, walking the chain root-to-node (the order an `Affine` composes correctly in) rather than the old bottom-up accumulation. New `engine-core` test proves a node under a real ancestor transform reports its real position; the full pre-existing suite (every overlay/splitter-drag/docking pixel test) passed unmodified, confirming the no-op-for-identity-transform claim. New pytest test proves `Window.click(node)` still finds a node after `Node.animate("transform", ...)` has moved it — would have failed before this fix. Full `cargo test --workspace` (`engine-core` 51, up from 50)/clippy `-D warnings`/fmt clean; full pytest suite (78 passed, up from 77, 1 skipped) and all ten examples confirmed clean. See `PLAN.md`/`LOG.md`.
 
@@ -978,7 +979,36 @@ Real, separate finding made while scoping a proposed M30 around three specific g
 
 **Not scoped by this milestone:** a real scrollbar/visual affordance for `VirtualList` (never had one, unrelated to this fix); migrating `VirtualList`'s own recycling/materialization model to anything closer to `ScrollView`'s single-child design (a real, much larger, unrelated architectural change -- `VirtualList`'s whole point is windowed materialization of a small visible subset, which `ScrollView` deliberately does not do).
 
-**M37 — Fix: `VirtualList` Hit-Test-After-Scroll is now fully complete, its 1 phase.** No new milestone is scoped yet; the next real work is whatever the user directs next.
+**M37 — Fix: `VirtualList` Hit-Test-After-Scroll is now fully complete, its 1 phase.** Begun directly after, per the user's own "Let's knock out the known gaps" -- scoped below as M38.
+
+---
+
+## Milestone 38 — Hardening II: Closing the Remaining Stated v1 Gaps (§5, §7, §8)
+
+**Status: 🚧 In progress — Phase 1 of 7 done.** User-directed: "Let's knock out the known gaps." Scoped via a real investigation pass across every existing `**Not scoped**` note in this file (mirroring exactly how M32, the first hardening pass, was scoped) -- seven real, still-open, currently-verified gaps found (confirmed each is still real via direct source read, not from memory): permanent exclusions (PyPI publishing, multi-cursor/minimap/LSP, the vello_hybrid fork, `Connected Button Group`) and already-closed items (bundled monospace font, general clipping, Terminal resize, `VirtualList`'s own hit-test bug) were excluded. Presented the real list via `AskUserQuestion`; the user chose all seven.
+
+**Real, honest ordering, cheapest/most-grounded first -- the identical discipline every prior multi-phase milestone here already established:** Phase 1 (tessellated-path caching for the remaining `NodeKind`s) is pure mechanical extension of M34's own already-proven `GeometryCache` pattern, zero new design questions. Phases 2-3 (goal-column memory, fold-aware cursor navigation) are small, bounded fixes to already-real, already-tested cursor-movement logic. Phases 4-5 (Split Button/Button Group shape-tightening on hover/press) reuse two already-real mechanisms wholesale -- the existing shape-morph machinery (`PaintProperties.shape`, M7 Phase 4) and the already-tracked `Tree.hovered`/`Tree.pressed` live interaction state (the identical technique this milestone's own scoping confirmed Button Group's Standard-variant reflow, M35 Phase 3, already established for reading live press state with zero new wiring). Phase 6 (a real `ScrollView` scrollbar thumb) has a full, detailed real reference implementation already read directly from the sibling `pyCopper` project (`widgets/scroll.py`'s own `thumb_geometry`/`thumb_rect`/`on_pointer_down`/`on_pointer_move`) during M36's own scoping. Phase 7 (real scroll+clip for Code Editor, with caret-follows-viewport) is ordered last as the most novel -- composing the already-built `ScrollView` (M36) around the already-built `TextField`/Code Editor is grounded, but making the caret automatically scroll into view as it moves is a genuinely new interaction (no existing precedent in this catalog); if that turns out to need real, undetermined design decisions once investigated, this phase gets its own `AskUserQuestion` pause before implementation, the same precedent every prior genuinely novel capability in this project has followed.
+
+### Phase 1 — Tessellated-Path Caching for Remaining Shapes ✅
+- Step 1: extend `GeometryCache` to `RadioButton`/`Switch`/`CircularProgress`/`Checkbox`/`Terminal`'s own curve-tessellating paths — ✅ (new `circle_primary`/`circle_secondary`/`arc` cache methods; also found and cached two further sites the scoping note missed — `TextField`'s box fill and the universal interaction-state-layer/clip paths; see `LOG.md`)
+
+### Phase 2 — Code Editor Goal-Column Memory ⬜
+- Step 1: real goal-column tracking across consecutive `ArrowUp`/`ArrowDown` moves — ⬜ (scoped, not started)
+
+### Phase 3 — Fold-Aware Cursor Navigation ⬜
+- Step 1: `Home`/`End`/`ArrowUp`/`ArrowDown` skip folded ranges instead of moving into invisible content — ⬜ (scoped, not started)
+
+### Phase 4 — Split Button Inner-Corner Shape-Tightening ⬜
+- Step 1: real hover/press-driven inner-corner shape morph — ⬜ (scoped, not started)
+
+### Phase 5 — Button Group Per-Child Shape Change on Press/Select ⬜
+- Step 1: real press/select-driven shape morph alongside the existing width reflow — ⬜ (scoped, not started)
+
+### Phase 6 — Real `ScrollView` Scrollbar Thumb ⬜
+- Step 1: real visual thumb + real drag-to-scroll, grounded in pyCopper's own `ScrollViewElement` — ⬜ (scoped, not started)
+
+### Phase 7 — Real Scroll+Clip for Code Editor ⬜
+- Step 1: compose `ScrollView` around `TextField`/Code Editor with real caret-follows-viewport behavior — ⬜ (scoped, not started)
 
 ---
 

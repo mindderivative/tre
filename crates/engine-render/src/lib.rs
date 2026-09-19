@@ -29,7 +29,7 @@ use engine_core::{
     ContentFit, DrawCommand, ICON_VIEWBOX_SIZE, Interpolate, NodeId, NodeKind, Tree,
 };
 use peniko::Color;
-use peniko::kurbo::{Affine, Arc, BezPath, Circle, Point, Rect, RoundedRect, Shape, Stroke};
+use peniko::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Shape, Stroke};
 use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
 pub use geometry_cache::GeometryCache;
@@ -575,7 +575,7 @@ fn paint_node(
             let radius = node.paint.corner_radius.current;
             let bg = with_opacity(node.paint.background.current, node.paint.opacity.current);
             scene.set_paint(bg);
-            scene.fill_path(&RoundedRect::new(0.0, 0.0, w, h, radius).to_path(0.1));
+            scene.fill_path(geometry.rounded_rect_fill(id, w, h, radius));
 
             let cursor_color = with_opacity(
                 peniko::Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF),
@@ -679,8 +679,11 @@ fn paint_node(
             let color = with_opacity(node.paint.background.current, node.paint.opacity.current);
             scene.set_paint(color);
             let radius = node.paint.corner_radius.current;
-            let rect = RoundedRect::new(0.0, 0.0, w, h, radius);
-            scene.fill_path(&rect.to_path(0.1));
+            // M38 Phase 1 (§5, §7, §8): the real box path is byte-for-
+            // byte the same geometry `Rect`'s own fill already caches
+            // -- reuses `GeometryCache::rounded_rect_fill` directly
+            // rather than a second, parallel Checkbox-only cache slot.
+            scene.fill_path(geometry.rounded_rect_fill(id, w, h, radius));
 
             if state.check_progress.current > 0.0 {
                 let mut mark = BezPath::new();
@@ -721,7 +724,11 @@ fn paint_node(
             let ring_radius = (w.min(h) / 2.0) - stroke_width / 2.0;
             scene.set_paint(with_opacity(ring_color, node.paint.opacity.current));
             scene.set_stroke(Stroke::new(stroke_width));
-            scene.stroke_path(&Circle::new((w / 2.0, h / 2.0), ring_radius.max(0.0)).to_path(0.1));
+            // M38 Phase 1 (§5, §7, §8): the real ring/dot paths, now
+            // cached -- see `GeometryCache::circle_primary`/
+            // `circle_secondary`'s own doc comments for why a single
+            // node needs two independent real circle cache slots.
+            scene.stroke_path(geometry.circle_primary(id, w / 2.0, h / 2.0, ring_radius.max(0.0)));
 
             if state.select_progress.current > 0.0 {
                 let dot_radius = (w.min(h) / 2.0) * 0.5 * state.select_progress.current;
@@ -729,7 +736,7 @@ fn paint_node(
                     state.selected_tint,
                     state.select_progress.current * node.paint.opacity.current,
                 ));
-                scene.fill_path(&Circle::new((w / 2.0, h / 2.0), dot_radius).to_path(0.1));
+                scene.fill_path(geometry.circle_secondary(id, w / 2.0, h / 2.0, dot_radius));
             }
         }
         // M30 Phase 2 Step 2 (§5, §7.3): a real MD3 switch -- track
@@ -752,7 +759,15 @@ fn paint_node(
             let track_color = state.track_off_tint.interpolate(&state.track_on_tint, t);
             let track_radius = h / 2.0;
             scene.set_paint(with_opacity(track_color, node.paint.opacity.current));
-            scene.fill_path(&RoundedRect::new(0.0, 0.0, w, h, track_radius).to_path(0.1));
+            // M38 Phase 1 (§5, §7, §8): the real track/outline/handle
+            // paths, now cached -- the track and outline are byte-for-
+            // byte the same real geometry `Rect`'s own fill/border
+            // already cache (reused directly, not a parallel Switch-
+            // only cache slot); the handle shares `circle_primary`
+            // with `RadioButton`'s own ring, since neither kind ever
+            // has both a `circle_primary` and a `RadioButton`-style
+            // ring/dot pair at once.
+            scene.fill_path(geometry.rounded_rect_fill(id, w, h, track_radius));
 
             if t < 1.0 {
                 let stroke_width = (h * 0.06).max(1.5);
@@ -763,17 +778,14 @@ fn paint_node(
                     (1.0 - t) * node.paint.opacity.current,
                 ));
                 scene.set_stroke(Stroke::new(stroke_width));
-                scene.stroke_path(
-                    &RoundedRect::new(inset, inset, w - inset, h - inset, outline_radius)
-                        .to_path(0.1),
-                );
+                scene.stroke_path(geometry.rounded_rect_border(id, w, h, outline_radius, inset));
             }
 
             let handle_radius = h * (0.25 + 0.125 * t);
             let handle_color = state.handle_off_tint.interpolate(&state.handle_on_tint, t);
             let cx = h * 0.5 + t * (w - h);
             scene.set_paint(with_opacity(handle_color, node.paint.opacity.current));
-            scene.fill_path(&Circle::new((cx, h / 2.0), handle_radius).to_path(0.1));
+            scene.fill_path(geometry.circle_primary(id, cx, h / 2.0, handle_radius));
         }
         // M30 Phase 3 Step 2 (§5, §7): a real MD3 linear progress
         // indicator -- the track (`track_tint`, spanning the node's
@@ -815,19 +827,22 @@ fn paint_node(
             let radius = (w.min(h) / 2.0) - stroke_width / 2.0;
             let sweep = state.value.current.clamp(0.0, 1.0) * std::f64::consts::TAU;
             if sweep > 0.0 {
-                let arc = Arc::new(
-                    (w / 2.0, h / 2.0),
-                    (radius.max(0.0), radius.max(0.0)),
+                // M38 Phase 1 (§5, §7, §8): the real arc path, now
+                // cached -- see `GeometryCache::arc`'s own doc comment.
+                let arc_path = geometry.arc(
+                    id,
+                    w / 2.0,
+                    h / 2.0,
+                    radius.max(0.0),
                     -std::f64::consts::FRAC_PI_2,
                     sweep,
-                    0.0,
                 );
                 scene.set_paint(with_opacity(
                     state.indicator_tint,
                     node.paint.opacity.current,
                 ));
                 scene.set_stroke(Stroke::new(stroke_width));
-                scene.stroke_path(&arc.to_path(0.1));
+                scene.stroke_path(arc_path);
             }
         }
         // M14 Phase 2 (§5, §7.3): a real track (a thin bar spanning the
@@ -968,7 +983,7 @@ fn paint_node(
     // `0.0`, not a special-cased skip.
     if let Some(interaction) = &node.interaction {
         let radius = node.paint.corner_radius.current;
-        let bounds = RoundedRect::new(0.0, 0.0, w, h, radius).to_path(0.1);
+        let bounds = geometry.rounded_rect_fill(id, w, h, radius);
 
         // M25 Phase 2 (§5, §6): a real, previously-missing compounding
         // -- both the hover overlay and each ripple (below) multiplied
@@ -981,7 +996,7 @@ fn paint_node(
             interaction.tint,
             interaction.hover_opacity.current * node.paint.opacity.current,
         ));
-        scene.fill_path(&bounds);
+        scene.fill_path(bounds);
 
         for ripple in &interaction.ripples {
             // `ripple.origin` is a real pointer coordinate captured by
@@ -1005,7 +1020,7 @@ fn paint_node(
                 None,
             );
             scene.set_paint(interaction.tint);
-            scene.fill_path(&bounds);
+            scene.fill_path(bounds);
             scene.pop_layer();
         }
     }
@@ -1061,8 +1076,8 @@ fn paint_node(
         // `VirtualList` alone is gone: `composed` alone is now already
         // correct for it too, exactly like `Carousel`/`ScrollView`.
         let clip_radius = node.paint.corner_radius.current;
-        let clip = RoundedRect::new(0.0, 0.0, w, h, clip_radius).to_path(0.1);
-        scene.push_layer(Some(&clip), None, None, None, None);
+        let clip = geometry.rounded_rect_fill(id, w, h, clip_radius);
+        scene.push_layer(Some(clip), None, None, None, None);
 
         let narrowed = visible.intersect(bounds);
         for &child in &node.children {

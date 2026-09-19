@@ -17,18 +17,30 @@
 //! API it doesn't have (confirmed via direct source read, `PLAN.md`).
 //! So this cache is a real, honest, modest win -- skips the real ~20%
 //! tessellation share of an already-cheap total, not a dramatic one --
-//! deliberately scoped to `Rect`/`Splitter`'s own plain (non-shape-
-//! morph) fill/border paths, the single most common real paint call in
-//! any app (every button/card/panel/dialog background), rather than
-//! chasing the same modest win across every other curve-tessellating
-//! `NodeKind` (`RadioButton`'s ring, `CircularProgress`'s arc, etc.) for
-//! comparatively little additional real benefit -- a real, deliberate
-//! v1 scope limit, not an oversight.
+//! deliberately scoped, at first (M34 Phase 1), to `Rect`/`Splitter`'s
+//! own plain (non-shape-morph) fill/border paths, the single most
+//! common real paint call in any app (every button/card/panel/dialog
+//! background), leaving every other curve-tessellating `NodeKind`
+//! uncached as a real, deliberate v1 scope limit.
+//!
+//! **M38 Phase 1 (§5, §7, §8):** extends the identical real cache to
+//! `RadioButton`'s ring/dot, `Switch`'s track/outline/handle,
+//! `CircularProgress`'s arc, and `Checkbox`'s box (the latter two
+//! reuse the existing rounded-rect/border methods directly, since
+//! their real generating geometry is byte-for-byte identical to
+//! `Rect`'s own). Deliberately still does **not** cache `Terminal`'s
+//! own per-cell/selection/cursor rects -- those are plain, axis-
+//! aligned `Rect::to_path` calls, not curve tessellation, and M34's
+//! own real benchmark already found the tessellation share of the
+//! real per-frame cost is concentrated in curved shapes (rounded
+//! rects, circles, arcs); a plain rect's own `to_path` is already
+//! near-free by comparison, so caching it here would add real
+//! bookkeeping cost for negligible real benefit.
 
 use std::collections::HashMap;
 
 use engine_core::{NodeId, Tree};
-use peniko::kurbo::{BezPath, RoundedRect, Shape};
+use peniko::kurbo::{Arc, BezPath, Circle, RoundedRect, Shape};
 
 /// The exact inputs a tessellated rounded-rect path depends on --
 /// equality here *is* the invalidation check, the identical technique
@@ -57,16 +69,48 @@ enum RectPathParams {
     },
 }
 
+/// M38 Phase 1 (§5, §7, §8): the real generating inputs of a
+/// tessellated circle path -- `RadioButton`'s own real ring (a stroke)
+/// and dot (a fill) are geometrically the *same* real shape a `Circle`
+/// produces (stroke vs fill is a paint-time choice, not a path-
+/// generation one), so one params type covers both; each still gets
+/// its own real cache slot below (`circle_primary`/`circle_secondary`)
+/// since a single node can have two real, independent circles at once
+/// (`RadioButton`'s ring *and* dot).
+#[derive(Clone, Copy, PartialEq)]
+struct CircleParams {
+    cx: f64,
+    cy: f64,
+    radius: f64,
+}
+
+/// M38 Phase 1 (§5, §7, §8): `CircularProgress`'s own real generating
+/// inputs -- `start`/`sweep` in radians, matching `peniko::kurbo::Arc`'s
+/// own real constructor arguments directly.
+#[derive(Clone, Copy, PartialEq)]
+struct ArcParams {
+    cx: f64,
+    cy: f64,
+    radius: f64,
+    start: f64,
+    sweep: f64,
+}
+
 /// Owns every real, currently-cached tessellated `BezPath` across
 /// frames -- built once and threaded through every `build_tree_scene`
 /// call, the identical "long-lived state, not built fresh per call"
 /// shape `TextRenderer`/`Resources` already establish (see their own
 /// doc comments for why). Fill and border paths live in separate maps,
 /// not one shared map keyed by `NodeId` alone, since a single real
-/// bordered `Rect` needs both at once.
+/// bordered `Rect` needs both at once -- the identical real reason
+/// `circle_primary`/`circle_secondary` (M38 Phase 1) are two separate
+/// maps too, for `RadioButton`'s own real ring-plus-dot.
 pub struct GeometryCache {
     fill_paths: HashMap<NodeId, (RectPathParams, BezPath)>,
     border_paths: HashMap<NodeId, (RectPathParams, BezPath)>,
+    circle_primary: HashMap<NodeId, (CircleParams, BezPath)>,
+    circle_secondary: HashMap<NodeId, (CircleParams, BezPath)>,
+    arc_paths: HashMap<NodeId, (ArcParams, BezPath)>,
 }
 
 impl Default for GeometryCache {
@@ -80,6 +124,9 @@ impl GeometryCache {
         Self {
             fill_paths: HashMap::new(),
             border_paths: HashMap::new(),
+            circle_primary: HashMap::new(),
+            circle_secondary: HashMap::new(),
+            arc_paths: HashMap::new(),
         }
     }
 
@@ -136,10 +183,58 @@ impl GeometryCache {
         })
     }
 
-    fn get_or_build(
-        cache: &mut HashMap<NodeId, (RectPathParams, BezPath)>,
+    /// M38 Phase 1 (§5, §7, §8): the real ring path -- `RadioButton`'s
+    /// stroked outer ring, or `Switch`'s own real sliding handle (a
+    /// plain filled circle) -- whichever real "primary" circle a node
+    /// has. Reused across both kinds since neither ever has both at
+    /// once (a real `NodeKind`-level exclusivity, not a coincidence).
+    pub fn circle_primary(&mut self, id: NodeId, cx: f64, cy: f64, radius: f64) -> &BezPath {
+        let params = CircleParams { cx, cy, radius };
+        Self::get_or_build(&mut self.circle_primary, id, params, || {
+            Circle::new((cx, cy), radius).to_path(0.1)
+        })
+    }
+
+    /// M38 Phase 1 (§5, §7, §8): `RadioButton`'s own real second
+    /// circle -- the filled dot that scales in with `select_progress`,
+    /// needing its own real, independent cache slot alongside
+    /// `circle_primary`'s own ring for the same node.
+    pub fn circle_secondary(&mut self, id: NodeId, cx: f64, cy: f64, radius: f64) -> &BezPath {
+        let params = CircleParams { cx, cy, radius };
+        Self::get_or_build(&mut self.circle_secondary, id, params, || {
+            Circle::new((cx, cy), radius).to_path(0.1)
+        })
+    }
+
+    /// M38 Phase 1 (§5, §7, §8): `CircularProgress`'s own real stroked
+    /// arc -- `start`/`sweep` in radians, matching `peniko::kurbo::Arc`'s
+    /// own real constructor directly.
+    #[allow(clippy::too_many_arguments)]
+    pub fn arc(
+        &mut self,
         id: NodeId,
-        params: RectPathParams,
+        cx: f64,
+        cy: f64,
+        radius: f64,
+        start: f64,
+        sweep: f64,
+    ) -> &BezPath {
+        let params = ArcParams {
+            cx,
+            cy,
+            radius,
+            start,
+            sweep,
+        };
+        Self::get_or_build(&mut self.arc_paths, id, params, || {
+            Arc::new((cx, cy), (radius, radius), start, sweep, 0.0).to_path(0.1)
+        })
+    }
+
+    fn get_or_build<P: PartialEq>(
+        cache: &mut HashMap<NodeId, (P, BezPath)>,
+        id: NodeId,
+        params: P,
         build: impl FnOnce() -> BezPath,
     ) -> &BezPath {
         let stale = cache
@@ -163,6 +258,10 @@ impl GeometryCache {
     pub fn evict_stale(&mut self, tree: &Tree) {
         self.fill_paths.retain(|id, _| tree.get(*id).is_some());
         self.border_paths.retain(|id, _| tree.get(*id).is_some());
+        self.circle_primary.retain(|id, _| tree.get(*id).is_some());
+        self.circle_secondary
+            .retain(|id, _| tree.get(*id).is_some());
+        self.arc_paths.retain(|id, _| tree.get(*id).is_some());
     }
 }
 
@@ -267,5 +366,105 @@ mod tests {
             "a removed node's cached fill path must be evicted, not kept forever"
         );
         assert!(cache.fill_paths.contains_key(&b));
+    }
+
+    /// M38 Phase 1 (§5, §7, §8): the identical real cache-hit/cache-
+    /// miss proof `an_unchanged_node_reuses_its_cached_fill_path_
+    /// without_rebuilding`/`a_changed_radius_invalidates_the_cached_
+    /// fill_path` already establish, applied to the new circle cache.
+    #[test]
+    fn circle_primary_reuses_an_unchanged_path_and_rebuilds_a_changed_one() {
+        let mut tree = Tree::new();
+        let id = rect_node(&mut tree);
+        let mut cache = GeometryCache::new();
+
+        let first_ptr = cache
+            .circle_primary(id, 25.0, 25.0, 10.0)
+            .elements()
+            .as_ptr();
+        let second_ptr = cache
+            .circle_primary(id, 25.0, 25.0, 10.0)
+            .elements()
+            .as_ptr();
+        assert_eq!(
+            first_ptr, second_ptr,
+            "identical (cx, cy, radius) must reuse the exact same cached BezPath"
+        );
+
+        let before = cache.circle_primary(id, 25.0, 25.0, 10.0).clone();
+        let after = cache.circle_primary(id, 25.0, 25.0, 20.0).clone();
+        assert_ne!(
+            before.bounding_box(),
+            after.bounding_box(),
+            "a genuinely different radius must produce a genuinely different real path"
+        );
+    }
+
+    /// M38 Phase 1 (§5, §7, §8): `RadioButton`'s own real ring-plus-dot
+    /// need -- both circles on the same node must not collide.
+    #[test]
+    fn circle_primary_and_circle_secondary_for_the_same_node_do_not_collide() {
+        let mut tree = Tree::new();
+        let id = rect_node(&mut tree);
+        let mut cache = GeometryCache::new();
+
+        let ring = cache.circle_primary(id, 25.0, 25.0, 20.0).clone();
+        let dot = cache.circle_secondary(id, 25.0, 25.0, 8.0).clone();
+        assert_ne!(
+            ring.bounding_box(),
+            dot.bounding_box(),
+            "the ring and dot must be genuinely distinct real cached paths"
+        );
+    }
+
+    /// M38 Phase 1 (§5, §7, §8): the identical real cache-hit/cache-
+    /// miss proof applied to the new arc cache -- a changed `sweep`
+    /// (the real, most commonly-animating input) must invalidate it.
+    #[test]
+    fn arc_reuses_an_unchanged_path_and_rebuilds_on_a_changed_sweep() {
+        let mut tree = Tree::new();
+        let id = rect_node(&mut tree);
+        let mut cache = GeometryCache::new();
+
+        let first_ptr = cache
+            .arc(id, 25.0, 25.0, 20.0, 0.0, 1.0)
+            .elements()
+            .as_ptr();
+        let second_ptr = cache
+            .arc(id, 25.0, 25.0, 20.0, 0.0, 1.0)
+            .elements()
+            .as_ptr();
+        assert_eq!(
+            first_ptr, second_ptr,
+            "identical arc params must reuse the exact same cached BezPath"
+        );
+
+        let before = cache.arc(id, 25.0, 25.0, 20.0, 0.0, 1.0).clone();
+        let after = cache.arc(id, 25.0, 25.0, 20.0, 0.0, 3.0).clone();
+        assert_ne!(
+            before.bounding_box(),
+            after.bounding_box(),
+            "a genuinely different sweep must produce a genuinely different real path"
+        );
+    }
+
+    /// M38 Phase 1 (§5, §7, §8): the circle/arc caches must be evicted
+    /// alongside the fill/border caches, the identical real per-node-
+    /// cache-leak fix.
+    #[test]
+    fn evict_stale_also_removes_circle_and_arc_paths() {
+        let mut tree = Tree::new();
+        let a = rect_node(&mut tree);
+        let mut cache = GeometryCache::new();
+
+        cache.circle_primary(a, 25.0, 25.0, 10.0);
+        cache.circle_secondary(a, 25.0, 25.0, 5.0);
+        cache.arc(a, 25.0, 25.0, 10.0, 0.0, 1.0);
+
+        tree.remove(a);
+        cache.evict_stale(&tree);
+        assert!(cache.circle_primary.is_empty());
+        assert!(cache.circle_secondary.is_empty());
+        assert!(cache.arc_paths.is_empty());
     }
 }
