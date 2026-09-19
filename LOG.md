@@ -1,80 +1,116 @@
-# LOG — M30 Phase 9 Step 1: Video
+# LOG — M30 Phase 9 Step 2: Node Graph
 
-- Confirmed no official MD3 Video page via the same directory-listing
-  technique used throughout this milestone.
-- Read the sibling `pyCopper` project's own real `Video` widget
-  directly (`/home/phil/pyDev/projects/pyCopper/src/pycopper/widgets/
-  video.py`, an additional working directory this session already has
-  access to) rather than assuming a design from memory. Real, directly
-  applicable finding: `Video` there is a *frame sink*, not a decoder —
-  nothing decodes `.mp4`/`.webm` in that project either (only Pillow
-  for still images), and the application (not the framework) owns the
-  decode loop, pushing frames via `push_frame(rgba)`. Reused this
-  exact design and naming for TRE.
-- Investigated whether TRE's own render pipeline supports an `Image`
-  node's pixel content changing after creation, by reading `engine-
-  render/src/image_cache.rs` directly rather than assuming. **Found a
-  real, confirmed gap**: its own doc comment stated plainly "an Image
-  node's pixel data never changes after Window.add_image... a real
-  upload only ever happens once per node," and `sync`'s own guard
-  (`if self.textures.contains_key(&id) { continue; }`) checked only
-  node presence, never content. A live video stream would have
-  silently kept painting its very first frame forever.
-- Investigated whether `peniko::ImageData`/`Blob<u8>`'s own `PartialEq`
-  would make a content-equality check affordable per frame at video
-  resolutions — read the vendored `linebender_resource_handle` crate's
-  own `Blob` source directly. Real, confirmed finding: `Blob<T>`
-  carries a real, unique, monotonically-assigned `u64` `id()` set at
-  construction (`Blob::new`/`Blob::from`), and its own `PartialEq`
-  compares *only* that id — a cheap O(1) comparison, never a byte-
-  level memcmp of the pixel buffer itself. This made the whole fix
-  affordable without any new complexity.
-- Fixed `ImageTextureCache`: added `uploaded: HashMap<NodeId, u64>`
-  tracking each node's last-uploaded blob id; `sync`'s guard now
-  compares the current blob id against the tracked one, re-uploading
-  (recreating the whole GPU texture, a real, deliberate scope
-  simplification over an incremental `write_texture`-only fast path)
-  whenever they differ; the existing node-removal eviction loop also
-  clears the tracked id.
-- Wrote a new, dedicated `engine-render` unit test,
-  `sync_reuploads_a_texture_when_its_own_node_content_genuinely_
-  changes`: builds a real two-frame scene (a genuinely different
-  `Blob` the second time), asserts the cache's own tracked content id
-  actually changes on the second `sync`, and that exactly one texture
-  exists throughout (no leak/duplicate). Passed on the first run.
-- Implemented `Window.add_video(width, height, fit="fill", x=None,
-  y=None)` in `crates/engine-py/src/window_factory.rs`, right after
-  `add_image` — mirrors its exact contract (fixed box, `content_fit`
-  param) minus the file-decode step, replaced with a single fully-
-  transparent 1x1 placeholder pixel.
-- Implemented `Node.push_frame(rgba, width, height)` in `crates/
-  engine-py/src/node.rs`, right after `set_text` — reuses its exact
-  established chokepoint pattern (`tree.get_mut` + `NodeKind` match,
-  `EngineError::UnknownProperty` for any non-`Image` node). Validates
-  `rgba.len() == width * height * 4` with a real, clear `PyValueError`
-  (`add_icon`'s own "fail loudly on pure validation, no I/O involved"
-  convention).
-- Added `.pyi` stubs for both.
-- Wrote `tests/test_video.py` (11 tests) — all passed on the first
-  run: `add_video` returns a `Node`, positions like every other `add_*`
-  method, accepts each real `fit` value and rejects an unknown one,
-  `push_frame` accepts a correctly-sized buffer and rejects a wrong-
-  sized one or a non-`Image` node, repeated pushes (a synthetic live
-  stream) never raise, and a mid-stream resolution change is accepted.
-- Wrote `examples/video.py` — a real synthetic decode loop pushing 5
-  distinct frames (including a mid-stream resolution renegotiation)
-  before `app.run`, the same "decode happens before the render loop,
-  then app.run proves the full pipeline runs clean" structure
-  `examples/image.py` already established (noted honestly in this
-  script's own doc comment: `App.run` has no real per-frame Python
-  hook today, confirmed via direct check of `_core.pyi`). Clean on the
-  first run, `mypy --strict` clean too.
+- Read pyCopper's own real `NodeGraph` widget directly
+  (`/home/phil/pyDev/projects/pyCopper/src/pycopper/widgets/
+  nodegraph.py`, an additional working directory this session already
+  has access to): draggable title-bar nodes, named ports, declared
+  edges drawn as segments each paint, panning via scroll-offset --
+  zoom deliberately excluded from its own v1 scope ("would distort
+  glyph rasterisation... a real second feature").
+- Read TRE's own real M5 Phase 4/M6 Phase 3 history directly in
+  `BUILD_TRACKER.md` before designing anything: M5 Phase 4 found
+  Python had no way to position a `Node` independently at all, so its
+  own `examples/node_graph.py` drew the whole graph as `DrawCommand`s
+  inside one `Canvas`. M6 Phase 3 closed that real gap (`x`/`y` on
+  `add_rect`/`add_canvas`) and built `examples/positioned_graph.py` --
+  real, independently-positioned, clickable nodes -- but still with
+  interchangeable circles, no real node anatomy, no reparent/position
+  automation an app didn't hand-roll itself.
+- Investigated whether TRE's own machinery could support real,
+  pannable/zoomable graph nodes without new engine-core/engine-render
+  work. Confirmed via direct source read: `Node.add_child` (M6 Phase
+  1) genuinely reparents (detach-then-attach via `Tree::try_add_child`)
+  without touching the child's own `layout_style` -- so its existing
+  `Position::Absolute` inset should re-resolve relative to its real
+  new parent on the next layout pass, by ordinary taffy/CSS semantics.
+  **Verified empirically before relying on it**, using the exact same
+  real overlap-and-click hit-test technique `test_position.py` already
+  established (a probe at the window's own default flow position, a
+  child positioned to land exactly on that probe only if reparenting
+  re-resolves its inset correctly) -- confirmed true on the first try.
+- Investigated whether an ancestor's own `transform` composes into a
+  reparented descendant's real `absolute_position`. A first attempt to
+  verify this empirically via a synchronous Python script (no real
+  render loop) gave a confusing negative result -- traced to a real,
+  separate finding: `Node.animate(..., duration_ms=0)` does *not*
+  apply synchronously at call time (`Animated::animate_to` only ever
+  sets a pending `ActiveAnimation`, never writes `current` directly);
+  it only takes effect on the *next* real `Tree::tick_all` pass, which
+  only ever runs inside `App.run()`'s own render loop or `View`'s own
+  reload path -- confirmed via grep, no other Python-facing call ticks
+  it. Correctly resolved by trusting the already-existing, already-
+  passing engine-core test `absolute_position_follows_an_ancestor_
+  transform` (M6 Phase 4) instead, which proves the real composition
+  directly at the Rust level, bypassing the animation-tick indirection
+  entirely.
+- Confirmed via direct source read: no general "clip children to this
+  container's own bounds" mechanism exists for any `NodeKind` besides
+  `VirtualList` (hardcoded, `engine-render/src/lib.rs`) -- a real,
+  stated scope boundary for this step, not silently worked around:
+  nodes/edges panned outside the graph's own viewport overflow
+  visually, not clipped.
+- Confirmed via direct source read: no Python-facing `PointerMoved`-
+  while-pressed hook exists anywhere (`set_on_click`/`set_on_hover_*`
+  are the only generic input hooks) -- a real, stated scope boundary:
+  no drag-to-move mouse gesture, the same real constraint `Docking`'s
+  own M4 Phase 9 "press+release only" scope boundary already found and
+  documented for an analogous reason. `node.animate("transform", ...)`
+  remains the real, available repositioning mechanism.
+- Implemented `Window.add_node_graph(width, height, x, y)` in
+  `crates/engine-py/src/window_factory.rs` -- a `surface_container_low`
+  themed viewport, mechanically identical to `add_rect`.
+- Implemented `Window.add_graph_node(graph, label, x, y, width,
+  height)` -- a real composed node (a `surface_container` body under a
+  `surface_container_high` title strip, `CARD_CORNER_RADIUS`, Title
+  Small label reusing `TAB_LABEL_FONT_SIZE`/`_WEIGHT`), attached
+  directly under `graph` (not `self.root`, a deliberate departure from
+  every other `add_*` method's own convention, documented explicitly).
+  Reused `open_menu`'s own `Rc::ptr_eq` cross-window safety check.
+- **Ran a real empirical end-to-end check before writing any tests --
+  it genuinely FAILED**: a click on a graph node's own real center
+  point did not reach its own registered handler. Root-caused
+  immediately (a repeat of an already-solved bug class this session):
+  the title bar's own full-width `Rect` sits directly over the node's
+  own vertical center (a 60dp-tall node's own center falls inside its
+  own 32dp title band), so `hit_test_at`'s "recurse into children
+  first" behavior let the title bar claim the click before the
+  wrapper's own handler ever ran. Fixed with `tree.set_hit_testable(
+  title_bar, false)`, the exact same real fix `Navigation Rail`'s
+  active-indicator pill and `Tabs`'s content wrapper already applied
+  this milestone. Re-verified empirically after the fix -- passed.
+- Added `.pyi` stubs for both new methods.
+- Wrote `tests/test_node_graph.py` (8 tests) -- all passed on the
+  first run, including the real click-through proof (mirroring `test_
+  position.py`'s own established technique) and a cross-window
+  `ForeignNode` rejection test.
+- Wrote a new example demonstrating four real graph nodes, a real
+  edges `Canvas` reparented into the graph, a real graph-wide pan, and
+  one node's own real reposition, all via `Node.animate("transform",
+  ...)`.
+- **Caught and corrected a real self-inflicted mistake**: the first
+  draft of that example was written to `examples/node_graph.py` --
+  which already existed (M5 Phase 4's own real, still-valid Canvas +
+  `CustomHitTest::Circle` composition validation, committed at
+  `28ce282`) -- silently overwriting it. Caught via `git status`
+  showing the file as modified rather than new, before any commit.
+  Restored the original byte-for-byte (`git show 28ce282:examples/
+  node_graph.py`, rewritten back via Write after a required Read), and
+  gave the new demonstration its own distinct name, `examples/
+  graph_editor.py`. Both scripts re-run clean afterward.
+- Fixed two real `mypy --strict` findings in `graph_editor.py`: an
+  untyped `draw_edges(ctx)` callback parameter (annotated `ctx:
+  CanvasContext`) and an unfixable lambda-default-argument type
+  inference (replaced with a small named closure factory,
+  `_make_click_handler`).
 - Full verification: `cargo check`/`clippy -D warnings`/`fmt --check`
   clean, `cargo test --workspace --release` (44 binaries green,
-  `engine-render` 4 up from 3), `maturin develop --release`, `pytest
-  tests/` (457 passed, 1 skipped, up from 446), all 63 examples clean,
+  unchanged -- this step is a pure `engine-py` composition, needing no
+  new Rust unit test), `maturin develop --release`, `mypy --strict`
+  clean against `examples/graph_editor.py`, `pytest tests/` (465
+  passed, 1 skipped, up from 457), all 64 examples clean (including
+  confirming the restored `examples/node_graph.py` still runs clean),
   showcase demo clean.
-- Updated `BUILD_TRACKER.md` (Top Metrics row now 92%, Phase 9 heading
-  icon, Step 1 line, "Just closed"/"Up next" trailer), regenerated and
-  republished the Build Tracker artifact at
+- Updated `BUILD_TRACKER.md` (Top Metrics row now 93%, Step 2 line,
+  "Just closed"/"Up next" trailer), regenerated and republished the
+  Build Tracker artifact at
   https://claude.ai/artifact/CaPkWjpd91oR7YFbcqC9ty.

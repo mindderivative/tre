@@ -902,6 +902,42 @@ class Window:
         `"cover"`/`"contain"`/`"fill"` parameter.
         """
         ...
+    def add_node_graph(
+        self,
+        width: float,
+        height: float,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """The pannable/zoomable viewport half of a Node Graph -- pass
+        the returned `Node` as `add_graph_node`'s own `graph` parameter.
+        Pan/zoom the whole graph via `graph.animate("transform", (dx,
+        dy, scale), ...)`, the same mechanism every other transform-
+        animated node already uses.
+        """
+        ...
+    def add_graph_node(
+        self,
+        graph: Node,
+        label: str,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+    ) -> Node:
+        """A real, styled node (a title bar over a body) for a Node
+        Graph, attached directly under `graph` (not the window root)
+        so it pans/zooms together with it -- `x`/`y` are local to
+        `graph`'s own origin. Move it later via `node.animate(
+        "transform", (dx, dy, 1.0), ...)`. No dedicated edges API and
+        no drag-to-move mouse gesture -- see the Rust source's own doc
+        comment for the real, stated reasons (this codebase has no
+        Python-facing pointer-move-while-pressed hook yet); draw edges
+        with an `add_canvas` node reparented into `graph` alongside its
+        nodes instead. Raises if `graph` belongs to a different
+        `Window`.
+        """
+        ...
     def add_icon(
         self,
         name: str,

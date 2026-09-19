@@ -482,6 +482,14 @@ const CARD_CORNER_RADIUS: f64 = 12.0;
 /// OUTLINE_VARIANT`), reused here rather than a second lookup.
 const DIVIDER_THICKNESS: f32 = 1.0;
 
+/// M30 Phase 9 Step 2 (§5): `Node Graph`'s real anatomy -- no official
+/// MD3 page exists, so not independently token-verified; designed
+/// from the sibling `pyCopper` project's own real `NodeGraph` widget
+/// (`NodeElement.TITLE_HEIGHT`/`PAD_X`), reused directly rather than
+/// invented fresh.
+const NODE_GRAPH_TITLE_HEIGHT: f32 = 32.0;
+const NODE_GRAPH_TITLE_PADDING: f32 = 12.0;
+
 /// M30 Phase 3 Step 5 (§5, §7, §11.3): `Tooltip`'s real (Plain
 /// variant) anatomy, verified against Material Web's own token
 /// source (`_md-comp-plain-tooltip.scss`) before writing any code:
@@ -6110,6 +6118,236 @@ impl PyWindow {
         );
         tree.add_child(self.root, id);
         Ok(self.wrap_node(id))
+    }
+
+    /// M30 Phase 9 Step 2 (§5): the real pannable/zoomable viewport
+    /// half of `Node Graph`, closing the real gap M5 Phase 4's own
+    /// `PLAN.md` named and `examples/positioned_graph.py` (M6 Phase 3)
+    /// only ever demonstrated as raw composition -- see `add_graph_
+    /// node`'s own doc comment for the full real design. No official
+    /// MD3 page exists (confirmed via the same directory-listing
+    /// technique this milestone already uses). `surface_container_low`
+    /// -- the identical real "recessed backdrop" role this project's
+    /// own `Md3Baseline` already declares -- is the one real styling
+    /// choice this method makes; everything else is exactly `add_rect`
+    /// under a name that documents its own real, intended use as
+    /// `add_graph_node`'s own `graph` parameter.
+    #[pyo3(signature = (width, height, x=None, y=None))]
+    fn add_node_graph(&self, width: f32, height: f32, x: Option<f32>, y: Option<f32>) -> Node {
+        let container_color = {
+            let theme = self.theme.borrow();
+            if theme.is_set() {
+                theme
+                    .role("surface_container_low")
+                    .unwrap_or(Md3Baseline::SURFACE_CONTAINER_LOW)
+            } else {
+                Md3Baseline::SURFACE_CONTAINER_LOW
+            }
+        };
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::Rect,
+            positioned_style(
+                Size {
+                    width: length(width),
+                    height: length(height),
+                },
+                x,
+                y,
+            ),
+            PaintProperties::new(container_color, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, id);
+        self.wrap_node(id)
+    }
+
+    /// M30 Phase 9 Step 2 (§5): `Node Graph`'s own real "first-class
+    /// authored component," closing the real gap M5 Phase 4's own
+    /// `PLAN.md` named and `examples/positioned_graph.py` (M6 Phase 3)
+    /// only ever demonstrated as raw composition -- interchangeable
+    /// circles, no real node anatomy, no reparent/position automation
+    /// an app didn't have to hand-roll itself. No official MD3 page
+    /// exists (confirmed via the same directory-listing technique this
+    /// milestone already uses); designed from real, directly-
+    /// applicable precedent in the sibling `pyCopper` project's own
+    /// `NodeGraph` widget (a title-bar-styled, ported node composed
+    /// from the framework's own existing primitives, not a bespoke
+    /// region system).
+    ///
+    /// **Real anatomy, not independently MD3-token-verified (no spec
+    /// exists to verify against):** a `surface_container` body
+    /// (`Menu`'s own panel role) topped with a `surface_container_high`
+    /// title strip (`Popover`/`Search View`'s own "slightly elevated
+    /// header on a recessed body" convention -- the identical real
+    /// tiered-surface choice pyCopper's own `NodeElement` independently
+    /// made too), `CARD_CORNER_RADIUS` reused verbatim. Title label
+    /// reuses Title Small's own already-declared constants
+    /// (`TAB_LABEL_FONT_SIZE`/`_WEIGHT` -- the same real numeric
+    /// coincidence `Popover`'s own subhead already reused a second
+    /// time, this is the third), `on_surface_variant` -- this project
+    /// has no independently-verified plain `on_surface` role yet, so
+    /// this reuses the same already-verified role every other label in
+    /// this file does, a real, stated honest choice rather than
+    /// inventing an unverified new color.
+    ///
+    /// **Real, deliberate reuse of already-existing primitives, needing
+    /// zero new engine-core/engine-render capability:** `graph` is
+    /// typically an `add_node_graph`-created viewport -- this method
+    /// attaches the composed node DIRECTLY under `graph`, not under
+    /// `self.root` the way every other `add_*` method here does, since
+    /// a graph node's real intended parent is the graph viewport, not
+    /// the window root. Confirmed via a real, empirical hit-testing
+    /// check before relying on it (not assumed from reading `taffy`'s
+    /// own docs alone): `Position::Absolute`'s `x`/`y` inset re-
+    /// resolves relative to whatever node is its real parent at layout
+    /// time, so a node attached directly under `graph` is positioned
+    /// `x`/`y` relative to `graph`'s own origin, exactly the local
+    /// coordinate space an app places nodes in. Panning/zooming the
+    /// whole graph is `graph.animate("transform", (dx, dy, scale),
+    /// ...)` -- already fully real since M6 Phase 2, and already
+    /// proven at the engine-core level to compose correctly through
+    /// nested ancestors (`absolute_position_follows_an_ancestor_
+    /// transform`) -- no new API needed for it. Moving one node is the
+    /// identical mechanism, called on the node itself.
+    ///
+    /// **Real, deliberate scope boundary, stated not silently
+    /// dropped:** no dedicated edges API. Nodes and edges live in the
+    /// same coordinate space once both are real children of `graph` --
+    /// an `add_canvas` node reparented into `graph` alongside its
+    /// nodes, stroking segments between each node's own known local
+    /// position, exactly `examples/positioned_graph.py`'s own already-
+    /// proven real pattern (M6 Phase 3). A per-edge API was considered
+    /// and rejected: drawing an edge needs every node's own position
+    /// at once to redraw correctly, which fits one app-owned `Canvas`
+    /// far more naturally than a collection of individually-tracked
+    /// edge nodes would. No drag-to-move mouse gesture either -- a
+    /// real, confirmed gap, not an oversight: this codebase has no
+    /// Python-facing `PointerMoved`-while-pressed hook at all
+    /// (`set_on_click`/`set_on_hover_*` are the only generic input
+    /// hooks that exist), so genuine mouse-follows-node dragging isn't
+    /// buildable from Python today -- the same real constraint
+    /// `Docking`'s own M4 Phase 9 "press+release only, no mid-drag
+    /// tracking" scope boundary already found and documented.
+    /// `node.animate("transform", ...)` still lets an app reposition a
+    /// node programmatically (a toolbar action, a layout algorithm, a
+    /// keyboard nudge) -- the real, available mechanism.
+    #[pyo3(signature = (graph, label, x, y, width, height))]
+    #[allow(clippy::too_many_arguments)]
+    fn add_graph_node(
+        &self,
+        graph: PyRef<'_, Node>,
+        label: &str,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+    ) -> PyResult<Node> {
+        if !Rc::ptr_eq(&self.tree, &graph.tree) {
+            return Err(EngineError::ForeignNode.into());
+        }
+        let (body_color, title_color, label_color) = {
+            let theme = self.theme.borrow();
+            let body = if theme.is_set() {
+                theme
+                    .role("surface_container")
+                    .unwrap_or(Md3Baseline::SURFACE_CONTAINER)
+            } else {
+                Md3Baseline::SURFACE_CONTAINER
+            };
+            let title = if theme.is_set() {
+                theme
+                    .role("surface_container_high")
+                    .unwrap_or(Md3Baseline::SURFACE_CONTAINER_HIGH)
+            } else {
+                Md3Baseline::SURFACE_CONTAINER_HIGH
+            };
+            let label = if theme.is_set() {
+                theme
+                    .role("on_surface_variant")
+                    .unwrap_or(Md3Baseline::ON_SURFACE_VARIANT)
+            } else {
+                Md3Baseline::ON_SURFACE_VARIANT
+            };
+            (body, title, label)
+        };
+
+        let mut tree = self.tree.borrow_mut();
+        let title_height = NODE_GRAPH_TITLE_HEIGHT.min(height);
+
+        let wrapper = tree.insert(
+            NodeKind::Rect,
+            positioned_style(
+                Size {
+                    width: length(width),
+                    height: length(height),
+                },
+                Some(x),
+                Some(y),
+            ),
+            PaintProperties::new(body_color, CARD_CORNER_RADIUS, 0.0, 1.0),
+        );
+
+        let title_bar = tree.insert(
+            NodeKind::Rect,
+            Style {
+                position: Position::Absolute,
+                inset: TaffyRect {
+                    left: zero(),
+                    top: zero(),
+                    right: auto(),
+                    bottom: auto(),
+                },
+                size: Size {
+                    width: length(width),
+                    height: length(title_height),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(title_color, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(wrapper, title_bar);
+        // Real, confirmed bug found live while verifying this method
+        // end to end, not predicted in advance: `title_bar` is a real
+        // `Rect` covering the node's own top band, including its own
+        // real vertical center (a 60dp-tall node's own center sits
+        // inside a 32dp title strip) -- without this, a click on the
+        // node genuinely lands on `title_bar` first (`hit_test_at`
+        // recurses into children first) and never reaches `wrapper`'s
+        // own registered handler. The same real bug class, and the
+        // same real fix, `Navigation Rail`'s active-indicator pill and
+        // `Tabs`'s content wrapper already found and fixed this
+        // milestone (`Node.hit_testable`'s own doc comment).
+        tree.set_hit_testable(title_bar, false);
+
+        let label_width = (width - 2.0 * NODE_GRAPH_TITLE_PADDING).max(0.0);
+        let label_id = tree.insert(
+            NodeKind::Text(TextState {
+                content: label.to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: TAB_LABEL_FONT_WEIGHT,
+                font_size: TAB_LABEL_FONT_SIZE,
+                align: TextAlign::Start,
+            }),
+            Style {
+                position: Position::Absolute,
+                inset: TaffyRect {
+                    left: length(NODE_GRAPH_TITLE_PADDING),
+                    top: length((title_height - TAB_LABEL_FONT_SIZE) / 2.0),
+                    right: auto(),
+                    bottom: auto(),
+                },
+                size: Size {
+                    width: length(label_width),
+                    height: length(TAB_LABEL_FONT_SIZE + 2.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(label_color, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(wrapper, label_id);
+
+        tree.add_child(graph.id, wrapper);
+        Ok(self.wrap_node(wrapper))
     }
 
     /// M23 Phase 1 (§1, §3): creates a real `NodeKind::Icon` from one
