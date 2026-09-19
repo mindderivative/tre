@@ -766,6 +766,113 @@ impl Node {
         }
     }
 
+    /// M30 Phase 9 Step 5 (§5, §7, §11.7): moves a real `NodeKind::
+    /// Carousel` to `index`, starting (or retargeting) its own real
+    /// eased snap -- a thin real wrapper around `Tree::set_carousel_
+    /// index`, the same "engine-core owns the mechanism, this is just
+    /// the real Python entry point" shape `set_splitter_position`'s own
+    /// real Python callers already use elsewhere. `index` is a plain
+    /// `usize`, not an `f64` `Animated<T>` value -- the identical real
+    /// reason `checked`/`selected`/`on` each needed their own dedicated
+    /// setter instead of the generic `Node.animate()`.
+    pub(crate) fn set_carousel_index(&self, index: usize) -> PyResult<()> {
+        let mut tree = self.tree.borrow_mut();
+        let kind = kind_name(&tree.get(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        ).kind);
+        if !matches!(
+            tree.get(self.id).map(|n| &n.kind),
+            Some(NodeKind::Carousel(_))
+        ) {
+            return Err(EngineError::UnknownProperty {
+                kind,
+                property: "index".to_string(),
+            }
+            .into());
+        }
+        tree.set_carousel_index(self.id, index, Instant::now());
+        Ok(())
+    }
+
+    /// `set_carousel_index`'s own real read-back getter -- the item the
+    /// carousel is *settling on* (its real destination, not necessarily
+    /// where it's currently drawn mid-snap; see `get_carousel_position`
+    /// for that).
+    pub(crate) fn get_carousel_index(&self) -> PyResult<usize> {
+        let tree = self.tree.borrow();
+        let node = tree.get(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        match &node.kind {
+            NodeKind::Carousel(state) => Ok(state.index),
+            _ => Err(EngineError::UnknownProperty {
+                kind: kind_name(&node.kind),
+                property: "index".to_string(),
+            }
+            .into()),
+        }
+    }
+
+    /// The real, currently-animating strip position -- an integer at
+    /// rest, fractional mid-snap. Exposed for the same real reason
+    /// `thumb_position` is readable via `Node.get`: `position` isn't a
+    /// plain `f64` `Animated<T>` field reachable through that generic
+    /// mechanism here (it's `CarouselState`-specific, not universal),
+    /// so it gets its own dedicated getter instead, matching `get_
+    /// checked`'s own real precedent for a kind-specific field.
+    pub(crate) fn get_carousel_position(&self) -> PyResult<f64> {
+        let tree = self.tree.borrow();
+        let node = tree.get(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        match &node.kind {
+            NodeKind::Carousel(state) => Ok(state.position.current),
+            _ => Err(EngineError::UnknownProperty {
+                kind: kind_name(&node.kind),
+                property: "position".to_string(),
+            }
+            .into()),
+        }
+    }
+
+    /// `Uncontained`'s own real free-scroll counterpart to `set_
+    /// carousel_index` -- a thin wrapper around `Tree::set_carousel_
+    /// scroll`.
+    pub(crate) fn set_carousel_scroll(&self, value: f64) -> PyResult<()> {
+        let mut tree = self.tree.borrow_mut();
+        let kind = kind_name(&tree.get(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        ).kind);
+        if !matches!(
+            tree.get(self.id).map(|n| &n.kind),
+            Some(NodeKind::Carousel(_))
+        ) {
+            return Err(EngineError::UnknownProperty {
+                kind,
+                property: "scroll_x".to_string(),
+            }
+            .into());
+        }
+        tree.set_carousel_scroll(self.id, value);
+        Ok(())
+    }
+
+    /// `set_carousel_scroll`'s own real read-back getter.
+    pub(crate) fn get_carousel_scroll(&self) -> PyResult<f64> {
+        let tree = self.tree.borrow();
+        let node = tree.get(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        match &node.kind {
+            NodeKind::Carousel(state) => Ok(state.scroll_x),
+            _ => Err(EngineError::UnknownProperty {
+                kind: kind_name(&node.kind),
+                property: "scroll_x".to_string(),
+            }
+            .into()),
+        }
+    }
+
     /// M15 Phase 1 (§5, §16.7): the real read-back getter for a
     /// `TextField`'s own current `content` -- mirrors `get_checked`'s
     /// own exact shape (rejecting a non-`TextField` node the same way).
@@ -858,6 +965,7 @@ fn kind_name(kind: &NodeKind) -> &'static str {
         NodeKind::Icon(_) => "Icon",
         NodeKind::Link(_) => "Link",
         NodeKind::Terminal(_) => "Terminal",
+        NodeKind::Carousel(_) => "Carousel",
     }
 }
 

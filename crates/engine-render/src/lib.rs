@@ -583,7 +583,17 @@ fn paint_node(
         // below already only ever sees `VirtualListState::materialized`'s
         // small real subset, never `item_count`, with zero changes
         // needed here (§14 step 15, §11.7).
-        NodeKind::Container | NodeKind::VirtualList(_) => {}
+        // M30 Phase 9 Step 5 (§5, §7, §11.7): a `Carousel` paints
+        // nothing of its own beyond the generic background/corner-
+        // radius box every `NodeKind` already gets above -- the
+        // identical real "exists purely to give `taffy` something to
+        // lay its children out against" shape `Container`/`VirtualList`
+        // already have. Real item geometry (position/width) is already
+        // fully baked into each child's own `layout_style` by `Tree::
+        // sync_carousel_layouts`, so nothing kind-specific is needed
+        // here at all; the clip below is this kind's only other real
+        // paint-time behavior.
+        NodeKind::Container | NodeKind::VirtualList(_) | NodeKind::Carousel(_) => {}
         // M5 Phase 3 (§11.10, §11.11): replays `state.commands`, already
         // resolved ahead of time by `engine-py::Window.redraw_canvas`
         // (`canvas.rs`'s own module doc comment) -- every coordinate is
@@ -986,6 +996,28 @@ fn paint_node(
         let narrowed = visible.intersect(bounds);
         for &child in &node.children {
             paint_node(tree, child, scrolled, narrowed, scene, resources, text);
+        }
+
+        scene.pop_layer();
+    } else if matches!(node.kind, NodeKind::Carousel(_)) {
+        // M30 Phase 9 Step 5 (§5, §7, §11.7): the real MD3 "clip items
+        // to the strip, so one scrolled off does not spill out" anatomy
+        // (pyCopper's own real `CLIPS_CHILDREN = True`) -- the identical
+        // real clip mechanism `VirtualList` above already uses. No
+        // scroll-offset translation needed here, unlike `VirtualList`:
+        // `Tree::sync_carousel_layouts` already bakes every real item's
+        // shifted position straight into its own `layout_style`, so
+        // `composed` alone (each child's own real `Layout::location`)
+        // is already correct -- the same real design choice that keeps
+        // hit-testing and paint from ever disagreeing (`sync_carousel_
+        // layouts`'s own doc comment).
+        let clip_radius = node.paint.corner_radius.current;
+        let clip = RoundedRect::new(0.0, 0.0, w, h, clip_radius).to_path(0.1);
+        scene.push_layer(Some(&clip), None, None, None, None);
+
+        let narrowed = visible.intersect(bounds);
+        for &child in &node.children {
+            paint_node(tree, child, composed, narrowed, scene, resources, text);
         }
 
         scene.pop_layer();

@@ -1,128 +1,106 @@
-# LOG — M30 Phase 9 Step 4: Terminal
+# LOG — M30 Phase 9 Step 5: Carousel
 
-- Checked with the user before starting: Terminal needed two new
-  external Rust crates and a whole second, non-text-flow rendering
-  pipeline, an order of magnitude bigger than Video/Node Graph/Code
-  Editor. Presented the real gap (no PTY spawning, no VT/ANSI parser,
-  no cell-grid rendering exist in this codebase at all) via
-  AskUserQuestion; user chose "full real terminal" over a scoped-down
-  frame-sink v1.
-- Read pyCopper's own real `Terminal` widget directly
-  (`/home/phil/pyDev/projects/pyCopper/src/pycopper/widgets/
-  terminal.py`): real PTY spawning via `pexpect`, real VT/ANSI parsing
-  via `bittty`, real hard-won findings already made live there --
-  `TERM` falling back to "dumb" corrupts real shell plugin redraw
-  sequences (fixed by defaulting `TERM`, `env.get(..., default)` so an
-  app's own explicit value still wins); no PTY mutation off the engine
-  thread (ARCHITECTURE.md's own "the engine thread owns everything
-  mutable"); a `repeat=True` animation to guarantee a repaint since a
-  background PTY thread has no other way to wake an idle app.
-- Chose real Rust crates: `portable-pty` 0.9.0 (wezterm's own real,
-  actively-maintained PTY-spawning crate) and `vt100` 0.16.2 (a small,
-  widely-used pure-Rust VT100/ANSI parser). Verified their real APIs
-  directly from vendored source (`portable_pty::examples::bash.rs`,
-  `vt100::Parser`/`Screen`/`Cell`'s own real public methods) before
-  designing around them, not assumed from crate names alone.
-- Designed the real crate-boundary split: `NodeKind::Terminal
-  (TerminalState)` in engine-core holds only the already-VT-
-  interpreted cell grid (inert data, the identical real
-  `TextFieldState` precedent); `engine-render` gets a new
-  `TextRenderer::draw_terminal`; `engine-py` gets a new `terminal.rs`
-  module owning the real PTY session.
-- Implemented `TerminalState`/`TerminalCell` in `engine-core::node.rs`,
-  plus a shared `terminal_cell_size(font_size)` helper (both
-  `engine-render` and `engine-py` derive the identical analytic grid
-  from it, avoiding any risk of drift between the two).
-- Implemented `TextRenderer::draw_terminal` in `engine-render::
-  text.rs` -- real background/glyph *runs* (a contiguous span of
-  cells sharing one bg, or one fg/bold pair), not one draw call per
-  character, the identical real precedent `bittty` already
-  established. Real ANSI color: the conventional 16-color palette
-  reused directly from pyCopper's own real, already-tuned values
-  (converted from their own sRGB floats to real 0-255 u8 triples), plus
-  the real, standard xterm 256-color formula (6x6x6 cube, then a
-  grayscale ramp) for indices 16-255.
-- Implemented `TerminalSession` in a new `engine-py::terminal.rs`
-  module: `spawn` opens a real PTY, sets `TERM`/`COLUMNS`/`LINES`,
-  spawns the shell, and starts a background thread whose only job is
-  appending raw bytes to a lock-guarded `Vec<u8>`; `drain_into` (called
-  from the engine thread only) feeds those bytes to a real
-  `vt100::Parser` and rebuilds the Tree's own `TerminalState`
-  wholesale via `Tree::get_mut` (M29's own real dirty-marking
-  chokepoint); `write_input` writes real bytes to the shell's stdin.
-- Wired the per-frame drain into `app.rs`'s own render loop, alongside
-  `sync_image_textures`/`evict_stale_layouts`. Widened the per-frame
-  closure's own `any_active` return to also mean "a real terminal
-  session is still alive" -- the identical real fix pyCopper's own
-  `Terminal` already needed for the same real problem (a background
-  PTY thread producing new output has no other way to wake an
-  otherwise-idle `ControlFlow::Wait` event loop, M29 Phase 2).
-- Wired real keyboard routing: a new shared `terminal::
-  input_bytes_for(event)` translates `InputEvent` into real terminal
-  bytes (`\r` for Enter, `\x7f` for Backspace, real standard xterm CSI
-  sequences for arrows/Home/End) -- reused by *both* the real winit
-  path (`app.rs`'s own `on_input` closure, inspecting the raw event
-  directly, the identical "meaning-dependent, not routed through
-  DispatchOutcome" precedent `Docking`'s own real wiring already
-  established) and the synthetic, no-window-needed testing path
-  (`Window.press_key`/`type_text`, `window_input.rs`, via a new shared
-  `route_to_terminal` helper).
-- Real, deliberately deferred v1 gap, found and stated while designing
-  keyboard routing, not silently missed: no Ctrl+C/SIGINT or any other
-  Ctrl+letter shortcut -- `InputEvent` carries no real modifier state
-  for a plain keypress; `engine_platform::translate_clipboard_
-  shortcut`'s own real Ctrl-key detection happens earlier, at the raw
-  winit layer, and today only ever produces `Copy`/`Cut`/`Paste`.
-- Implemented `Window.add_terminal` in `window_factory.rs`; extended
-  `Node.get_text()` with a new `NodeKind::Terminal` arm (rows joined
-  by `\n`, each trimmed) -- the load-bearing read-back this step's own
-  test suite needed to prove anything beyond "didn't crash."
-- Full Rust verification chain green on the first pass after wiring
-  everything: `cargo check`/`clippy -D warnings`/`fmt --check`/`cargo
-  test --workspace --release` all clean, 44 binaries.
+- Read pyCopper's own real `Carousel` widget in full: three layouts
+  (`uncontained` — free pixel scroll, items keep their own width;
+  `hero`/`multi_browse` — items automatically resize and snap into
+  place), the real `_item_width` interpolation formula (position is a
+  continuous animated float, so an item promoted from medium to large
+  grows *as it travels*, not on arrival), and real dimension constants
+  (some MD3-sourced, some pyCopper's own honest unsourced choices —
+  `MEDIUM=112dp`, `HEIGHT=160dp`, `DRAG_INDEX_THRESHOLD=60px`).
+- Confirmed with the user via `AskUserQuestion` before starting, given
+  the real scope: "full real MD3 carousel" over a scoped-down v1.
+- Investigated the step's own hardest open question directly, before
+  writing any code: does TRE's `Animated<T>`/`Tree::tick_all` design
+  support an animated value that also invalidates *layout*, not just
+  paint? Found this already works for free — `tick_all` already sets
+  `Tree.dirty` whenever any animation is active, and `app.rs`'s own
+  per-frame loop already calls `compute_layout` unconditionally on a
+  dirty frame. No new central-ticking mechanism needed at all, unlike
+  pyCopper's own framework, which needed an explicit
+  `invalidates="layout"` opt-in.
+- Investigated real wheel/drag precedent, found both already reusable
+  rather than needing to be built from scratch: `InputEvent::Scroll`'s
+  own dispatch arm already hit-tests and walks the parent chain to the
+  nearest scrollable ancestor (M8 Phase 3, for `VirtualList`); `Tree::
+  dispatch`'s own real `self.dragging` mechanism (`Splitter`/`Slider`)
+  is a real, generic press/move/release drag pattern. Both widened with
+  a `NodeKind::Carousel` branch.
+- Designed real item positioning: taffy has no "measure my children
+  after my own size is known" hook the way pyCopper's own custom
+  `perform_layout` does. Chose real, precedented `Position::Absolute`
+  insets (`open_overlay`/`add_rect`'s own real shape), computed by hand
+  every layout pass exactly like pyCopper's own manual `positions`/
+  `shift` math — a real, deliberate design choice: both paint and
+  hit-testing read the identical real `Layout::location`, unlike
+  `VirtualList`'s own scroll offset (composed only at paint time, so
+  its own hit-testing never actually accounts for it). One extra
+  `compute_layout` pass per frame while a carousel exists is genuinely
+  unavoidable with taffy's single-pass API — a real, stated v1 cost.
+- Implemented `CarouselState`/`CarouselLayout` in `engine-core::
+  node.rs`, plus shared `pub const` dimension constants (the same
+  anti-drift precedent `terminal_cell_size` established).
+- Implemented `Tree::sync_carousel_layouts` (called from `compute_
+  layout`, real per-frame item-geometry sync), `set_carousel_index`/
+  `set_carousel_scroll`, `carousel_on_wheel`/`update_carousel_drag`,
+  wired into `tick_all` (position needs real central ticking, the
+  identical `thumb_position` precedent) and `dispatch`'s
+  `PointerPressed`/`PointerMoved`/`PointerReleased`/`Scroll` arms.
+- Implemented the `engine-render` paint arm: background/corner radius
+  via the existing universal path, a real clip (MD3's own real
+  `CLIPS_CHILDREN` anatomy) — no paint-time translation needed, per the
+  positioning design above.
+- Implemented `Window.add_carousel` and `Node.set_carousel_index`/
+  `get_carousel_index`/`get_carousel_position`/`set_carousel_scroll`/
+  `get_carousel_scroll` in `engine-py` — dedicated typed accessors, the
+  established `get_checked`/`get_selected` precedent, not the generic
+  `Node.animate`/`get` (index/position aren't universal `f64` fields).
+- Full Rust verification chain green on the first pass: `cargo check`/
+  `clippy -D warnings`/`fmt --check`/`cargo test --release` all clean.
+- Wrote 5 real Rust unit tests: hero items at rest match the real
+  `_item_width` formula; a real halfway-ticked snap proves items resize
+  continuously mid-travel, not on arrival; a wheel notch landing on an
+  item (not the carousel's own body) snaps via the real parent-walk; a
+  real drag crossing the threshold commits exactly one index and
+  release clears its own per-gesture bookkeeping; Uncontained keeps
+  each item's own real width and clamps scroll to its real content
+  extent. All 5 passed on the first run (`engine-core` 163, up from
+  158).
 - Rebuilt the Python extension. **Ran a real, direct empirical
-  end-to-end test before writing any pytest suite** (spawn `/bin/sh`,
-  click, type "echo HELLO_FROM_TERMINAL", press Enter, run real
-  frames, read the cell grid back) -- the shell's own real prompt
-  ("sh-5.3$") arrived correctly, but the typed command genuinely never
-  reached the shell: `is_focused()` returned `False` even after a real
-  click.
-- Root-caused directly, not guessed: `Tree::dispatch`'s own real
-  click-to-focus (M18 Phase 1) was deliberately scoped to `TextField`
-  only, confirmed via direct source read of its own real doc comment.
-  Fixed by widening the check to `TextField | Terminal`. Re-ran the
-  exact same empirical test -- passed for real: `is_focused()` became
-  `True`, and the shell's own real response ("HELLO_FROM_TERMINAL")
-  appeared in the returned cell-grid text.
-- Wrote `tests/test_terminal.py` (8 tests) -- checked for a filename
-  collision first (`ls`/`git status`, applying the lesson from M30
-  Phase 9 Step 2's own mistake). All passed on the first run,
-  including a real end-to-end shell-response proof (not a mock).
-- Wrote `examples/terminal.py` -- a real two-command live shell
-  session (a plain echo plus a `printf` with real ANSI color escape
-  codes), also checked for a filename collision first. Clean on the
-  first run: real command echoing, real line-wrapping at the terminal's
-  own 48-column width, and real ANSI red/green color codes correctly
-  parsed and stripped from the returned text. `mypy --strict` initially
-  failed (missing `.pyi` stub, fixed by adding it) then passed clean.
+  end-to-end script before writing any pytest suite**: a real wheel
+  notch synchronously moves the destination index (no tick needed); a
+  real `App.run()` genuinely ticks `position` toward it across real
+  frames; real Uncontained scroll clamps to its own real content
+  extent. All passed.
+- Wrote `tests/test_carousel.py` — checked for a filename collision
+  first. **A real, confirmed pytest-suite hazard found live, not
+  predicted in advance:** a first draft's own `App().run(max_frames=
+  30)` call (added to prove `position` ticks across real frames) made
+  `test_terminal.py`'s own real shell-response test fail every time it
+  ran afterward in the same pytest process — reproduced down to just
+  those two tests. Root cause: a second real event-loop invocation
+  within one process, the identical "not a supported, tested pattern"
+  fragility `test_terminal.py`'s own module doc comment already flags
+  for calling `App.run()` twice on the *same* `App`. Removed rather
+  than worked around — the real "does a tick actually move it" claim
+  is already proven for real at the Rust level (the halfway-ticked
+  test above), matching the identical division of labor
+  `test_checkbox.py`'s own doc comment already establishes.
+- Wrote `examples/carousel.py` — also checked for a filename collision
+  first. Clean on the first run: a real wheel notch snaps the hero
+  strip, real Uncontained scroll clamps correctly, a real `App.run()`
+  ticks the snap across real frames.
 - Full verification: `cargo check`/`clippy -D warnings`/`fmt --check`
-  clean, `cargo test --workspace --release` (44 binaries green),
-  `maturin develop --release`, `pytest tests/` (482 passed, 1 skipped,
-  up from 474), all 66 examples clean, showcase demo clean, `mypy
-  --strict` clean against `examples/terminal.py`.
-- Updating `BUILD_TRACKER.md`: **hit a real parser bug** -- a first
-  draft's multi-paragraph writeup (blank lines between real findings)
-  made `tools/generate_tracker_artifact.py` silently drop the whole
-  bullet (caught only by comparing the printed "Parsed N items" count
-  before/after, an established discipline). Merged into one unbroken
-  line; a second mistake in the same edit swallowed the *next* bullet
-  (`Step 5: Carousel`) onto the same line for lack of a newline, and
-  the merge itself left the parens unbalanced by one (no final closing
-  `)`) -- both caught the same way, both fixed, both re-verified by
-  grepping the regenerated HTML for each step's own distinct text.
-  Recorded as a new memory, `feedback_build_tracker_balanced_parens`,
-  for future large writeups.
-- Updated `BUILD_TRACKER.md` (Top Metrics row now 97%, Step 4 line,
-  "Just closed"/"Up next" trailer), regenerated and republished the
-  Build Tracker artifact at
+  clean, `cargo test --release` (`engine-core` 163, up from 158),
+  `maturin develop --release`, `pytest tests/` (494 passed, 1 skipped,
+  up from 482 — 12 new, zero regressions after removing the real
+  cross-test `App.run()` hazard above), all 67 examples (including the
+  new `examples/carousel.py`) and the showcase demo re-run clean,
+  `mypy --strict` clean against `examples/carousel.py`.
+- Updated `BUILD_TRACKER.md` (Top Metrics row now 100%, Step 5 and
+  Step 6 both marked done, Phase 9 heading ✅, closing M30 itself, all
+  10 phases) — verified the parser's own reported item count
+  before/after (191, unchanged, since no bullets were added or
+  removed, only existing ones filled in), regenerated and republished
+  the Build Tracker artifact at
   https://claude.ai/artifact/CaPkWjpd91oR7YFbcqC9ty.

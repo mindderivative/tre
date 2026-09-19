@@ -26,9 +26,13 @@ use crate::canvas::CanvasState;
 use crate::canvas::{CustomHitTest, DrawCommand};
 use crate::input::{DispatchOutcome, InputEvent, Key, PointerButton, ScrollDelta};
 use crate::interaction::InteractionState;
+use crate::node::{
+    CAROUSEL_DRAG_INDEX_THRESHOLD, CAROUSEL_GAP, CAROUSEL_PAD_X, CAROUSEL_PAD_Y,
+    CAROUSEL_UNCONTAINED_WIDTH, ImageState, Node, NodeId, NodeKind, PaintProperties,
+    TextFieldState,
+};
 #[cfg(test)]
 use crate::node::{CheckboxState, IconState, ItemExtent, SliderState, VirtualListState};
-use crate::node::{ImageState, Node, NodeId, NodeKind, PaintProperties, TextFieldState};
 use crate::overlay::OverlayMeta;
 #[cfg(test)]
 use peniko::kurbo::BezPath;
@@ -370,6 +374,317 @@ impl Tree {
         self.taffy
             .compute_layout(root_taffy, available_space)
             .expect("compute_layout: taffy layout computation failed");
+        // M30 Phase 9 Step 5 (§5, §7, §11.7): a real `NodeKind::Carousel`
+        // item's own width depends on the carousel's own *resolved*
+        // width (only known after the pass above) and its own real
+        // animated `position` -- `taffy` has no "measure my children
+        // after my own size is known" hook the way pyCopper's own
+        // custom `perform_layout` does, so this sets each item's real
+        // absolute inset/size by hand from what the pass above just
+        // resolved, then asks `taffy` to lay out again so those new
+        // insets actually land in `self.layout(child)` -- the real,
+        // stated v1 cost this step's own investigation found
+        // unavoidable with `taffy`'s single-pass API. A no-op call
+        // (`false`) whenever no `NodeKind::Carousel` exists anywhere in
+        // this `Tree` -- every other real `compute_layout` caller pays
+        // nothing extra.
+        if self.sync_carousel_layouts() {
+            self.taffy
+                .compute_layout(root_taffy, available_space)
+                .expect("compute_layout: taffy layout computation failed (carousel sync pass)");
+        }
+    }
+
+    /// M30 Phase 9 Step 5 (§5, §7, §11.7): the real per-frame item-
+    /// geometry sync every `NodeKind::Carousel` needs, called from
+    /// `compute_layout` itself (never a public method -- there is no
+    /// real reason for a caller to run this on its own, the same
+    /// "internal step of a bigger real operation" shape `update_drag`
+    /// already has). Returns whether it changed anything real (i.e.
+    /// whether a second `taffy` pass is actually needed) -- `false` the
+    /// instant no `NodeKind::Carousel` exists in this `Tree` at all, so
+    /// every unrelated `compute_layout` call anywhere in this codebase
+    /// keeps paying nothing extra.
+    ///
+    /// Every item is positioned `Position::Absolute` with an explicit,
+    /// hand-computed `inset`/`size` -- mirrors pyCopper's own real
+    /// manual `positions`/`shift` math (`perform_layout`) exactly,
+    /// rather than leaning on `taffy`'s own automatic flex placement,
+    /// since an item's width here genuinely depends on where the whole
+    /// strip currently sits, not just its own content. A deliberate,
+    /// real side benefit of computing this by hand: `Tree::hit_test_at`
+    /// and `engine-render`'s own paint walk both already read a node's
+    /// real `Layout::location` directly with no special-casing anywhere
+    /// -- unlike `VirtualList`'s own scroll offset (composed only at
+    /// paint time, never into `layout_style`), a carousel's real click/
+    /// drag hit-testing and its real paint position can never drift
+    /// apart, because both read the exact same real computed inset.
+    fn sync_carousel_layouts(&mut self) -> bool {
+        let carousels: Vec<NodeId> = self
+            .nodes
+            .iter()
+            .filter(|(_, node)| matches!(node.kind, NodeKind::Carousel(_)))
+            .map(|(id, _)| id)
+            .collect();
+        if carousels.is_empty() {
+            return false;
+        }
+        for carousel in carousels {
+            let outer = self.layout(carousel);
+            let width = f64::from(outer.size.width);
+            let height = f64::from(outer.size.height);
+            let item_height = (height - 2.0 * f64::from(CAROUSEL_PAD_Y)).max(0.0);
+            let available = (width - 2.0 * f64::from(CAROUSEL_PAD_X)).max(0.0);
+
+            let children = self.nodes[carousel].children.clone();
+            if children.is_empty() {
+                continue;
+            }
+
+            let NodeKind::Carousel(state) = &self.nodes[carousel].kind else {
+                unreachable!("checked by the filter above")
+            };
+            let layout = state.layout;
+
+            let widths: Vec<f64> = if layout.snaps() {
+                let large = layout.large_width(available);
+                let where_ = state.position.current;
+                (0..children.len())
+                    .map(|j| state.item_width(j as f64 - where_, large))
+                    .collect()
+            } else {
+                children
+                    .iter()
+                    .map(
+                        |&child| match self.nodes[child].layout_style.size.width.into_option() {
+                            Some(px) => f64::from(px),
+                            None => f64::from(CAROUSEL_UNCONTAINED_WIDTH),
+                        },
+                    )
+                    .collect()
+            };
+
+            let mut positions = Vec::with_capacity(widths.len());
+            let mut cursor = f64::from(CAROUSEL_PAD_X);
+            for &w in &widths {
+                positions.push(cursor);
+                cursor += w + f64::from(CAROUSEL_GAP);
+            }
+
+            let shift = if layout.snaps() {
+                let n = children.len();
+                let where_ = state.position.current.clamp(0.0, (n - 1) as f64);
+                let low = (where_ as usize).min(n - 1);
+                let high = (low + 1).min(n - 1);
+                let t = where_ - low as f64;
+                positions[low] * (1.0 - t) + positions[high] * t - f64::from(CAROUSEL_PAD_X)
+            } else {
+                state.scroll_x
+            };
+
+            for (i, &child) in children.iter().enumerate() {
+                let mut style = self.nodes[child].layout_style.clone();
+                style.position = Position::Absolute;
+                style.inset = TaffyRect {
+                    left: length((positions[i] - shift) as f32),
+                    top: length(CAROUSEL_PAD_Y),
+                    right: auto(),
+                    bottom: auto(),
+                };
+                style.size = Size {
+                    width: length(widths[i] as f32),
+                    height: length(item_height as f32),
+                };
+                self.set_layout_style(child, style);
+            }
+        }
+        true
+    }
+
+    /// The real total content extent of an `Uncontained` carousel's own
+    /// items -- every item's width plus every gap between them, read
+    /// from each child's own real, most-recently-computed `Layout`
+    /// (one frame stale at worst, the same real "read last frame's
+    /// layout synchronously during dispatch" precedent `update_slider_
+    /// drag`/`update_splitter_drag` already establish). `None` if `id`
+    /// isn't a real `NodeKind::Carousel` in this `Tree`, or has no
+    /// children yet.
+    fn carousel_content_extent(&self, id: NodeId) -> Option<f64> {
+        let node = self.nodes.get(id)?;
+        if !matches!(node.kind, NodeKind::Carousel(_)) {
+            return None;
+        }
+        if node.children.is_empty() {
+            return None;
+        }
+        let mut extent = f64::from(CAROUSEL_PAD_X) * 2.0;
+        for (i, &child) in node.children.iter().enumerate() {
+            extent += f64::from(self.layout(child).size.width);
+            if i + 1 < node.children.len() {
+                extent += f64::from(CAROUSEL_GAP);
+            }
+        }
+        Some(extent)
+    }
+
+    /// An `Uncontained` carousel's own real max scroll offset -- `0.0`
+    /// once every item already fits, the same clamp shape `VirtualList
+    /// State`'s own real content-extent-minus-viewport math already
+    /// uses elsewhere.
+    fn carousel_max_scroll(&self, id: NodeId) -> f64 {
+        let Some(extent) = self.carousel_content_extent(id) else {
+            return 0.0;
+        };
+        let width = f64::from(self.layout(id).size.width);
+        (extent - width).max(0.0)
+    }
+
+    /// §14-step-15-shaped public API (§11.7): moves a `NodeKind::
+    /// Carousel` to `index`, clamped to its real child count, starting
+    /// (or retargeting) a real eased snap toward it -- mirrors
+    /// pyCopper's own real `set_index` exactly, including its own real
+    /// "returns whether it actually moved" contract. A true no-op for
+    /// an `Uncontained` carousel (nothing calls this for one; wheel/
+    /// drag dispatch route it to `set_carousel_scroll` instead), and
+    /// for a carousel with fewer than 2 children (nothing to move to).
+    /// `MD3`'s own real "medium2"/"standard" motion-token choice
+    /// (`SNAP_DURATION`/`SNAP_CURVE`, pyCopper's own real, reasoned
+    /// pick -- 500ms Emphasized "would queue up behind itself" under
+    /// rapid wheel-notch snapping) is hardcoded here rather than
+    /// threaded through as a parameter: `engine-core` stays MD3-
+    /// agnostic in *name* (§1 Locked Decisions) but a snap's own real
+    /// duration/curve is this mechanism's, not a per-call choice any
+    /// real caller in this codebase actually varies (`Splitter`/
+    /// `Slider` drags already hardcode their own real motion shape the
+    /// identical way).
+    pub fn set_carousel_index(&mut self, id: NodeId, index: usize, now: Instant) -> bool {
+        self.dirty = true;
+        let child_count = self
+            .nodes
+            .get(id)
+            .expect("set_carousel_index: NodeId not found in this Tree")
+            .children
+            .len();
+        let NodeKind::Carousel(state) = &mut self
+            .nodes
+            .get_mut(id)
+            .expect("set_carousel_index: NodeId not found in this Tree")
+            .kind
+        else {
+            panic!("set_carousel_index: {id:?} is not a NodeKind::Carousel");
+        };
+        if child_count == 0 {
+            return false;
+        }
+        let clamped = index.min(child_count - 1);
+        if clamped == state.index {
+            return false;
+        }
+        state.index = clamped;
+        state.position.animate_to(
+            clamped as f64,
+            Duration::from_millis(300),
+            MotionCurve::Standard,
+            now,
+        );
+        true
+    }
+
+    /// `Uncontained`'s own real free pixel scroll -- mirrors pyCopper's
+    /// own real `set_scroll` exactly (clamped, immediate, paint-only:
+    /// no `layout_style` mutation happens here directly, but the next
+    /// `compute_layout`'s own `sync_carousel_layouts` pass reads the
+    /// new `scroll_x` and bakes it into every item's real `inset.left`,
+    /// so it still needs `self.dirty = true` to actually get there).
+    pub fn set_carousel_scroll(&mut self, id: NodeId, value: f64) -> bool {
+        self.dirty = true;
+        let max_scroll = self.carousel_max_scroll(id);
+        let NodeKind::Carousel(state) = &mut self
+            .nodes
+            .get_mut(id)
+            .expect("set_carousel_scroll: NodeId not found in this Tree")
+            .kind
+        else {
+            panic!("set_carousel_scroll: {id:?} is not a NodeKind::Carousel");
+        };
+        let clamped = value.clamp(0.0, max_scroll);
+        if clamped == state.scroll_x {
+            return false;
+        }
+        state.scroll_x = clamped;
+        true
+    }
+
+    /// A real wheel notch/tick over a `NodeKind::Carousel` -- mirrors
+    /// pyCopper's own real `on_wheel` exactly: either scroll axis
+    /// counts (most desktop mice only have a vertical wheel, so
+    /// requiring a horizontal one would leave the carousel unusable for
+    /// most users), one index per notch for a snapping layout, half the
+    /// raw pixel delta for `Uncontained` (pyCopper's own real, stated
+    /// `* 0.5` damping).
+    fn carousel_on_wheel(&mut self, id: NodeId, delta_x: f64, delta_y: f64, now: Instant) {
+        let delta = if delta_x != 0.0 { delta_x } else { delta_y };
+        if delta == 0.0 {
+            return;
+        }
+        let Some(NodeKind::Carousel(state)) = self.nodes.get(id).map(|n| &n.kind) else {
+            return;
+        };
+        if state.layout.snaps() {
+            let index = state.index;
+            let step: i64 = if delta > 0.0 { 1 } else { -1 };
+            let next = (index as i64 + step).max(0) as usize;
+            self.set_carousel_index(id, next, now);
+        } else {
+            let scroll_x = state.scroll_x;
+            self.set_carousel_scroll(id, scroll_x + delta * 0.5);
+        }
+    }
+
+    /// The real drag-in-progress half of `carousel_on_wheel`'s own
+    /// gesture -- mirrors pyCopper's own real `on_pointer_move` exactly:
+    /// additive to the wheel, since MD3's own guidelines describe moving
+    /// through a carousel as swiping, and a pointer's direct-
+    /// manipulation equivalent of a swipe is a drag, not a wheel notch.
+    /// A snapping carousel accumulates drag distance and commits one
+    /// index per `CAROUSEL_DRAG_INDEX_THRESHOLD` crossed (so one long
+    /// drag can step through several items, the same way a fast real
+    /// swipe would); `Uncontained` scrolls 1:1 with the pointer, since
+    /// it's already free scrolling and has no items to snap to.
+    fn update_carousel_drag(&mut self, id: NodeId, point: Point, now: Instant) {
+        let Some(NodeKind::Carousel(state)) = self.nodes.get(id).map(|n| &n.kind) else {
+            return;
+        };
+        let Some(last_x) = state.drag_last_x else {
+            return;
+        };
+        let dx = point.x - last_x;
+        if !state.layout.snaps() {
+            let scroll_x = state.scroll_x;
+            if let NodeKind::Carousel(state) = &mut self.nodes[id].kind {
+                state.drag_last_x = Some(point.x);
+            }
+            self.set_carousel_scroll(id, scroll_x - dx);
+            return;
+        }
+
+        let index = state.index;
+        let mut accum = state.drag_accum + dx;
+        let mut next = index as i64;
+        while accum <= -CAROUSEL_DRAG_INDEX_THRESHOLD {
+            next += 1;
+            accum += CAROUSEL_DRAG_INDEX_THRESHOLD;
+        }
+        while accum >= CAROUSEL_DRAG_INDEX_THRESHOLD {
+            next -= 1;
+            accum -= CAROUSEL_DRAG_INDEX_THRESHOLD;
+        }
+        self.set_carousel_index(id, next.max(0) as usize, now);
+        let NodeKind::Carousel(state) = &mut self.nodes[id].kind else {
+            unreachable!("checked above")
+        };
+        state.drag_last_x = Some(point.x);
+        state.drag_accum = accum;
     }
 
     /// The computed box for `id`, after `compute_layout` has run for a
@@ -869,6 +1184,16 @@ impl Tree {
         match &self.nodes[dragging].kind {
             NodeKind::Splitter(_) => self.update_splitter_drag(dragging, point, now),
             NodeKind::Slider(_) => self.update_slider_drag(dragging, point, now),
+            // M30 Phase 9 Step 5 (§5, §7, §11.7): widens the same real
+            // generic drag mechanism `Splitter`/`Slider` already use --
+            // `point` here is `PointerMoved`'s own absolute canvas-space
+            // position, so this passes `point.x` straight through
+            // rather than re-deriving a local coordinate the way
+            // `update_splitter_drag`/`update_slider_drag` do (a
+            // carousel's own real drag math only ever needs a raw delta
+            // between consecutive points, not a position along a fixed
+            // track).
+            NodeKind::Carousel(_) => self.update_carousel_drag(dragging, point, now),
             _ => {}
         }
     }
@@ -1136,6 +1461,20 @@ impl Tree {
             }
             if let NodeKind::CircularProgress(state) = &mut node.kind
                 && state.value.tick(now, &mut completed)
+            {
+                any_active = true;
+            }
+            // M30 Phase 9 Step 5 (§5, §7, §11.7): `CarouselState.
+            // position`'s own real central-ticking need -- unlike
+            // `SplitterState.position`/`VirtualListState.scroll_offset`
+            // (driven directly, never eased), `Tree::set_carousel_
+            // index` starts a real `animate_to` snap the same way
+            // `SliderState.thumb_position`'s own app-triggered eased
+            // move does (M14 Phase 2's own identical real finding),
+            // so without this it would set an active animation that
+            // silently never progresses.
+            if let NodeKind::Carousel(state) = &mut node.kind
+                && state.position.tick(now, &mut completed)
             {
                 any_active = true;
             }
@@ -2108,6 +2447,36 @@ impl Tree {
                     {
                         self.dragging = Some(node);
                     }
+                    // M30 Phase 9 Step 5 (§5, §7, §11.7): a real
+                    // carousel's own drag-to-scroll must start no
+                    // matter which real item within it was actually
+                    // hit (pyCopper's own real `on_pointer_down` is
+                    // bound to the whole strip, not each item
+                    // individually) -- unlike `Splitter`/`Slider`
+                    // above, which only ever *are* the hit node, so
+                    // this walks up `node`'s own real parent chain to
+                    // find the nearest `NodeKind::Carousel` ancestor,
+                    // the identical real "a scroll gesture can land on
+                    // any materialized child" walk `InputEvent::
+                    // Scroll`'s own dispatch arm already does for
+                    // `VirtualList` (M8 Phase 3). `self.pressed` above
+                    // still records the literal hit (so a real item's
+                    // own click handler keeps working); `self.dragging`
+                    // is a separate field, so the two never conflict.
+                    if button == PointerButton::Primary {
+                        let mut current = Some(node);
+                        while let Some(id) = current {
+                            if matches!(self.nodes[id].kind, NodeKind::Carousel(_)) {
+                                self.dragging = Some(id);
+                                if let NodeKind::Carousel(state) = &mut self.nodes[id].kind {
+                                    state.drag_last_x = Some(position.x);
+                                    state.drag_accum = 0.0;
+                                }
+                                break;
+                            }
+                            current = self.nodes[id].parent;
+                        }
+                    }
                     // M18 Phase 1 (§8, §10): a real click-to-focus,
                     // scoped specifically to `TextField` -- before this,
                     // `PointerPressed` never touched `self.focused` at
@@ -2209,6 +2578,19 @@ impl Tree {
                 // still track it until release, matching real OS drag
                 // semantics).
                 if button == PointerButton::Primary {
+                    // M30 Phase 9 Step 5 (§5, §7, §11.7): a real
+                    // carousel's own drag bookkeeping is genuinely per-
+                    // gesture (`drag_last_x`/`drag_accum`) -- mirrors
+                    // pyCopper's own real `on_pointer_up`, which clears
+                    // the identical two fields. Checked before `self.
+                    // dragging` is cleared below, the same ordering
+                    // `Slider`'s own real drag-end check above uses.
+                    if let Some(dragging) = self.dragging
+                        && let NodeKind::Carousel(state) = &mut self.nodes[dragging].kind
+                    {
+                        state.drag_last_x = None;
+                        state.drag_accum = 0.0;
+                    }
                     self.dragging = None;
                 }
                 outcome
@@ -2357,6 +2739,20 @@ impl Tree {
                                 ScrollDelta::Pixels(_, y) => y,
                             };
                             self.scroll_virtual_list_by(id, delta_y);
+                            break;
+                        }
+                        // M30 Phase 9 Step 5 (§5, §7, §11.7): widens
+                        // this same real "walk up to the nearest
+                        // scrollable ancestor" mechanism to `Carousel`
+                        // -- a real wheel notch over any item bubbles
+                        // to its own carousel exactly the way one over
+                        // a `VirtualList` row already bubbles above.
+                        if matches!(node.kind, NodeKind::Carousel(_)) {
+                            let (delta_x, delta_y) = match delta {
+                                ScrollDelta::Lines(x, y) => (x * 20.0, y * 20.0),
+                                ScrollDelta::Pixels(x, y) => (x, y),
+                            };
+                            self.carousel_on_wheel(id, delta_x, delta_y, now);
                             break;
                         }
                         current = node.parent;
@@ -7689,6 +8085,266 @@ mod tests {
             tree.hit_test(root, point),
             Some(link_child),
             "a Link child must independently claim the hit, unlike Text at the identical geometry"
+        );
+    }
+
+    // -------------------------------------------------------------
+    // M30 Phase 9 Step 5 (§5, §7, §11.7): Carousel
+    // -------------------------------------------------------------
+
+    /// A root containing one `NodeKind::Carousel` of `layout`, `root`
+    /// wide, `CAROUSEL_HEIGHT` tall, with `item_count` plain `Rect`
+    /// children (100x100 -- their own real width/height is irrelevant
+    /// for `Hero`/`MultiBrowse`, since `sync_carousel_layouts` always
+    /// overwrites it; only `Uncontained`'s own tests rely on it).
+    fn carousel_scene(
+        layout: crate::node::CarouselLayout,
+        item_count: usize,
+        root_width: f32,
+    ) -> (Tree, NodeId, NodeId, Vec<NodeId>, Size<AvailableSpace>) {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            size: Size {
+                width: length(root_width),
+                height: length(crate::node::CAROUSEL_HEIGHT),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let carousel = tree.insert(
+            NodeKind::Carousel(crate::node::CarouselState::new(layout)),
+            Style {
+                size: Size {
+                    width: length(root_width),
+                    height: length(crate::node::CAROUSEL_HEIGHT),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(root, carousel);
+
+        let items: Vec<NodeId> = (0..item_count)
+            .map(|_| {
+                let (k, s, p) = leaf(100.0, 100.0);
+                let item = tree.insert(k, s, p);
+                tree.add_child(carousel, item);
+                item
+            })
+            .collect();
+
+        let available = Size {
+            width: AvailableSpace::Definite(root_width),
+            height: AvailableSpace::Definite(crate::node::CAROUSEL_HEIGHT),
+        };
+        tree.compute_layout(root, available);
+        (tree, root, carousel, items, available)
+    }
+
+    #[test]
+    fn carousel_hero_items_are_large_small_small_at_rest_on_index_zero() {
+        // available = 400 - 2*16 = 368; large = 368 - SMALL_MAX(56) -
+        // GAP(8) = 304 (Hero's own pattern is [Large, Small], and every
+        // slot past the pattern's own end repeats its last entry).
+        let (tree, _root, _carousel, items, _) =
+            carousel_scene(crate::node::CarouselLayout::Hero, 3, 400.0);
+        assert!((tree.layout(items[0]).size.width - 304.0).abs() < 0.01);
+        assert!((tree.layout(items[1]).size.width - 56.0).abs() < 0.01);
+        assert!((tree.layout(items[2]).size.width - 56.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn carousel_hero_item_widths_resize_continuously_as_position_animates() {
+        // The real, distinctive MD3 behavior this step's whole
+        // investigation was about: an item promoted from small to
+        // large grows *while the snap is still travelling*, not on
+        // arrival -- proven by ticking the real `Animated<f64>`
+        // `position` to exactly its own halfway point and re-syncing,
+        // rather than only checking the two at-rest endpoints.
+        let (mut tree, root, carousel, items, available) =
+            carousel_scene(crate::node::CarouselLayout::Hero, 3, 400.0);
+        let start = Instant::now();
+        tree.set_carousel_index(carousel, 1, start);
+        // Halfway through the real 300ms snap duration.
+        tree.tick_all(start + Duration::from_millis(150));
+        tree.compute_layout(root, available);
+
+        // At index 1, item 0 -- the one item[0]/j-position slot 0 -
+        // 1 = -1 -- would land on the real "already scrolled past the
+        // leading edge" SMALL_MAX clamp, while item 1 becomes the new
+        // large item. Halfway there, item 1's own width must sit
+        // strictly between its own two real endpoints (56 at rest on
+        // index 0, 304 once fully snapped to index 1) -- neither one.
+        let w1 = tree.layout(items[1]).size.width;
+        assert!(
+            w1 > 56.5 && w1 < 303.5,
+            "item 1's own width must be strictly between its two real \
+             endpoints mid-snap, got {w1}"
+        );
+    }
+
+    #[test]
+    fn carousel_wheel_over_a_hero_item_snaps_to_the_next_index() {
+        let (mut tree, root, carousel, items, _available) =
+            carousel_scene(crate::node::CarouselLayout::Hero, 3, 400.0);
+        let config = dispatch_config();
+        let now = Instant::now();
+        // A wheel notch landing on item 0 itself, not the carousel's
+        // own body -- proves the real hit-test-then-walk-up-to-the-
+        // nearest-Carousel mechanism (mirroring `VirtualList`'s own).
+        let point = {
+            let (x, y) = tree.absolute_position(items[0]);
+            Point::new(x + 1.0, y + 1.0)
+        };
+        tree.dispatch(
+            root,
+            InputEvent::Scroll {
+                delta: ScrollDelta::Lines(0.0, 1.0),
+                position: point,
+            },
+            &config,
+            now,
+        );
+        let NodeKind::Carousel(state) = &tree.get(carousel).unwrap().kind else {
+            panic!("expected a Carousel node");
+        };
+        assert_eq!(
+            state.index, 1,
+            "one wheel notch must move exactly one index"
+        );
+        assert!(
+            state.position.active.is_some(),
+            "the real move must start a real eased snap, not jump instantly"
+        );
+    }
+
+    #[test]
+    fn carousel_drag_across_the_threshold_commits_one_index() {
+        let (mut tree, root, carousel, items, _available) =
+            carousel_scene(crate::node::CarouselLayout::Hero, 3, 400.0);
+        let config = dispatch_config();
+        let now = Instant::now();
+        let (item_x, item_y) = tree.absolute_position(items[0]);
+        let start = Point::new(item_x + 5.0, item_y + 5.0);
+
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: start,
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        assert_eq!(
+            tree.dragging,
+            Some(carousel),
+            "pressing anywhere on a real item must start dragging its own carousel ancestor"
+        );
+
+        // Past CAROUSEL_DRAG_INDEX_THRESHOLD (60px) leftward -- mirrors
+        // a real leftward swipe, which advances the index (pyCopper's
+        // own real `on_pointer_move` sign convention).
+        let moved = Point::new(start.x - 65.0, start.y);
+        tree.dispatch(
+            root,
+            InputEvent::PointerMoved { position: moved },
+            &config,
+            now,
+        );
+
+        let NodeKind::Carousel(state) = &tree.get(carousel).unwrap().kind else {
+            panic!("expected a Carousel node");
+        };
+        assert_eq!(
+            state.index, 1,
+            "a drag crossing exactly one threshold must commit exactly one index"
+        );
+
+        tree.dispatch(
+            root,
+            InputEvent::PointerReleased {
+                position: moved,
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        assert_eq!(tree.dragging, None, "release must end the drag");
+        let NodeKind::Carousel(state) = &tree.get(carousel).unwrap().kind else {
+            panic!("expected a Carousel node");
+        };
+        assert_eq!(
+            state.drag_last_x, None,
+            "release must clear the real per-gesture drag bookkeeping, \
+             mirroring pyCopper's own on_pointer_up"
+        );
+    }
+
+    #[test]
+    fn carousel_uncontained_items_keep_their_own_width_and_scroll_clamps_to_the_real_max() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            size: Size {
+                width: length(300.0),
+                height: length(crate::node::CAROUSEL_HEIGHT),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+        let carousel = tree.insert(
+            NodeKind::Carousel(crate::node::CarouselState::new(
+                crate::node::CarouselLayout::Uncontained,
+            )),
+            Style {
+                size: Size {
+                    width: length(300.0),
+                    height: length(crate::node::CAROUSEL_HEIGHT),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(root, carousel);
+        // Five real, explicitly-widthed 200px items -- a real total
+        // content extent far wider than the 300px carousel itself, so
+        // scrolling has genuine real room to clamp against.
+        let items: Vec<NodeId> = (0..5)
+            .map(|_| {
+                let (k, s, p) = leaf(200.0, 100.0);
+                let item = tree.insert(k, s, p);
+                tree.add_child(carousel, item);
+                item
+            })
+            .collect();
+        let available = Size {
+            width: AvailableSpace::Definite(300.0),
+            height: AvailableSpace::Definite(crate::node::CAROUSEL_HEIGHT),
+        };
+        tree.compute_layout(root, available);
+
+        assert!(
+            (tree.layout(items[0]).size.width - 200.0).abs() < 0.01,
+            "an Uncontained item keeps its own real explicit width, unlike Hero/MultiBrowse"
+        );
+
+        let moved = tree.set_carousel_scroll(carousel, 100_000.0);
+        assert!(
+            moved,
+            "a huge scroll request must still move the real offset (up to the clamp)"
+        );
+        let NodeKind::Carousel(state) = &tree.get(carousel).unwrap().kind else {
+            panic!("expected a Carousel node");
+        };
+        // Real extent: 2*PAD_X(16) + 5*200 + 4*GAP(8) = 1064; clamped
+        // max scroll = 1064 - 300 = 764.
+        assert!(
+            (state.scroll_x - 764.0).abs() < 0.01,
+            "scroll must clamp to the real content-extent-minus-viewport max, got {}",
+            state.scroll_x
         );
     }
 }

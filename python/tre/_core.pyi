@@ -132,6 +132,34 @@ class Node:
         rows joined by `"\\n"`), not just one line.
         """
         ...
+    def set_carousel_index(self, index: int) -> None:
+        """`Carousel`-only -- raises `ValueError` for any other kind.
+        Moves to `index` (clamped to the real child count), starting a
+        real eased snap toward it. A no-op if already there.
+        """
+        ...
+    def get_carousel_index(self) -> int:
+        """`Carousel`-only -- raises `ValueError` for any other kind.
+        The item the carousel is *settling on* -- its real destination,
+        not necessarily where it's currently drawn mid-snap (see
+        `get_carousel_position`).
+        """
+        ...
+    def get_carousel_position(self) -> float:
+        """`Carousel`-only -- raises `ValueError` for any other kind.
+        The real, currently-animating strip position: an integer at
+        rest, fractional while a snap is still travelling.
+        """
+        ...
+    def set_carousel_scroll(self, value: float) -> None:
+        """`Carousel`-only (meaningful for `layout="uncontained"`) --
+        raises `ValueError` for any other kind. Sets the real free
+        pixel scroll offset, clamped to `[0, max_scroll]`.
+        """
+        ...
+    def get_carousel_scroll(self) -> float:
+        """`Carousel`-only -- raises `ValueError` for any other kind."""
+        ...
     def is_focused(self) -> bool:
         """Whether this is the `Tree`'s own current keyboard-focused
         node.
@@ -1008,6 +1036,24 @@ class Window:
         selection, no Ctrl+C/SIGINT or any other Ctrl+letter shortcut,
         no real resize-with-window, and POSIX only. Raises `OSError` if
         `shell` can't be spawned on a real PTY.
+        """
+        ...
+    def add_carousel(
+        self,
+        layout: str,
+        width: float,
+        height: float,
+        background: Color,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """A real MD3 carousel. `layout` is one of `"uncontained"`
+        (items keep their own width, scroll by raw pixels),
+        `"hero"`, or `"multi_browse"` (items automatically resize and
+        snap into place -- `Node.set_carousel_index`/real wheel/drag
+        input move it). Raises `ValueError` for an unknown `layout`.
+        Returns an empty strip -- add real items the same generic way
+        any other container's children are added, via `Node.add_child`.
         """
         ...
     def build_shell(

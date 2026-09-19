@@ -32,10 +32,13 @@ pub use input::{
 };
 pub use interaction::{InteractionState, RippleState};
 pub use node::{
-    CheckboxState, CircularProgressState, ContentFit, ICON_VIEWBOX_SIZE, IconState, ImageState,
-    ItemExtent, LinearProgressState, Node, NodeId, NodeKind, PaintProperties, RadioButtonState,
-    SliderState, SplitterState, SwitchState, TerminalCell, TerminalState, TextAlign,
-    TextFieldState, TextState, VirtualListState, terminal_cell_size,
+    CAROUSEL_DRAG_INDEX_THRESHOLD, CAROUSEL_GAP, CAROUSEL_HEIGHT, CAROUSEL_ITEM_RADIUS,
+    CAROUSEL_MEDIUM, CAROUSEL_PAD_X, CAROUSEL_PAD_Y, CAROUSEL_SMALL_MAX,
+    CAROUSEL_UNCONTAINED_WIDTH, CarouselLayout, CarouselState, CheckboxState,
+    CircularProgressState, ContentFit, ICON_VIEWBOX_SIZE, IconState, ImageState, ItemExtent,
+    LinearProgressState, Node, NodeId, NodeKind, PaintProperties, RadioButtonState, SliderState,
+    SplitterState, SwitchState, TerminalCell, TerminalState, TextAlign, TextFieldState, TextState,
+    VirtualListState, terminal_cell_size,
 };
 pub use overlay::OverlayMeta;
 pub use shape_morph::ShapeKey;

@@ -200,6 +200,12 @@ pub enum NodeKind {
     /// already established, extended to a whole cell grid instead of
     /// one string).
     Terminal(TerminalState),
+    /// M30 Phase 9 Step 5 (§5, §7, §11.7): a real MD3 carousel -- see
+    /// `CarouselState`'s own doc comment for its real, distinctive
+    /// "an animated value that also invalidates layout, not just
+    /// paint" shape, and `Tree::sync_carousel_layouts` for how that's
+    /// actually made real against `taffy`.
+    Carousel(CarouselState),
 }
 
 /// M30 Phase 9 Step 4 (§5, §8, §10): one real, already-VT-interpreted
@@ -311,6 +317,207 @@ impl TerminalState {
 /// ~1.3em), not measured from any specific installed font.
 pub fn terminal_cell_size(font_size: f32) -> (f32, f32) {
     (font_size * 0.6, font_size * 1.3)
+}
+
+/// M30 Phase 9 Step 5 (§5, §7, §11.7): which of MD3's three real
+/// carousel layouts a `NodeKind::Carousel` is -- verified directly
+/// against `COMPONENT_CAROUSEL.md` (via the sibling `pyCopper`
+/// project's own already-built, already-cited real widget) rather than
+/// assumed. `Uncontained` items "don't change size" and scroll by raw
+/// pixels; `Hero`/`MultiBrowse` items "automatically change size and
+/// snap into place," which is the real, distinctive behavior that
+/// makes a carousel a carousel rather than a styled horizontal list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CarouselLayout {
+    Uncontained,
+    Hero,
+    MultiBrowse,
+}
+
+impl CarouselLayout {
+    /// True for the two layouts whose items resize continuously and
+    /// snap to a whole index (`Hero`/`MultiBrowse`); false for
+    /// `Uncontained`, which scrolls freely by pixel instead -- the same
+    /// real split pyCopper's own `snaps` property already draws.
+    pub fn snaps(self) -> bool {
+        !matches!(self, CarouselLayout::Uncontained)
+    }
+
+    /// The real per-slot width pattern past the leading keyline, for
+    /// the two layouts that have one -- `None` for `Uncontained`
+    /// (`snaps()` is false, so nothing ever calls this for it).
+    /// Quoted directly from pyCopper's own real `PATTERNS` constant,
+    /// itself grounded in `COMPONENT_CAROUSEL.md`.
+    fn slot_pattern(self) -> &'static [CarouselSlot] {
+        use CarouselSlot::{Large, Medium, Small};
+        match self {
+            CarouselLayout::Uncontained => &[],
+            CarouselLayout::Hero => &[Large, Small],
+            CarouselLayout::MultiBrowse => &[Large, Medium, Small],
+        }
+    }
+
+    /// Whatever the fixed slots leave over, which is MD3's own
+    /// "dynamic" large-item width -- mirrors pyCopper's own real
+    /// `_large_width` exactly.
+    pub fn large_width(self, available: f64) -> f64 {
+        let pattern = self.slot_pattern();
+        let fixed: f64 = pattern
+            .iter()
+            .filter(|slot| !matches!(slot, CarouselSlot::Large))
+            .map(|slot| match slot {
+                CarouselSlot::Medium => f64::from(CAROUSEL_MEDIUM),
+                _ => f64::from(CAROUSEL_SMALL_MAX),
+            })
+            .sum();
+        let gaps = f64::from(CAROUSEL_GAP) * (pattern.len().saturating_sub(1)) as f64;
+        (available - fixed - gaps).max(f64::from(CAROUSEL_SMALL_MAX))
+    }
+}
+
+/// One slot in a snapping layout's own `slot_pattern` -- see
+/// `CarouselLayout::slot_pattern`'s own doc comment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CarouselSlot {
+    Large,
+    Medium,
+    Small,
+}
+
+/// Item corner radius -- "Item corner radius | 28dp" (`COMPONENT_
+/// CAROUSEL.md`, quoted verbatim in pyCopper's own real widget).
+pub const CAROUSEL_ITEM_RADIUS: f32 = 28.0;
+/// Leading/trailing padding -- "16dp".
+pub const CAROUSEL_PAD_X: f32 = 16.0;
+/// Top/bottom padding -- "8dp".
+pub const CAROUSEL_PAD_Y: f32 = 8.0;
+/// Padding between elements -- "8dp".
+pub const CAROUSEL_GAP: f32 = 8.0;
+/// Small item width's own real upper bound -- "40-56dp"; only the max
+/// is used (the real interpolated width formula below only ever needs
+/// one concrete "small" figure, the same real simplification pyCopper's
+/// own `SMALL_MAX` already makes).
+pub const CAROUSEL_SMALL_MAX: f32 = 56.0;
+/// **Not sourced** -- MD3 calls the medium item "dynamic" and gives no
+/// figure (`COMPONENT_CAROUSEL.md`'s own size tables are images, not
+/// real text this codebase can quote a number from). Twice the largest
+/// small item, the identical real, stated choice pyCopper's own
+/// `MEDIUM` constant already makes, reused verbatim rather than
+/// re-guessed independently.
+pub const CAROUSEL_MEDIUM: f32 = 112.0;
+/// **Not sourced**, the identical real reason `CAROUSEL_MEDIUM` isn't.
+/// Reused verbatim from pyCopper's own `HEIGHT`.
+pub const CAROUSEL_HEIGHT: f32 = 160.0;
+/// Width of an `Uncontained` item that doesn't request its own.
+pub const CAROUSEL_UNCONTAINED_WIDTH: f32 = 200.0;
+/// Drag distance, in logical px, a snapping carousel needs before it
+/// commits to the next/previous item. **Not sourced** -- MD3's own
+/// guidelines describe "swipe through one item at a time" but give no
+/// pixel threshold for a pointer's equivalent of a touch swipe, the
+/// identical real gap pyCopper's own `DRAG_INDEX_THRESHOLD` already
+/// states; reused verbatim.
+pub const CAROUSEL_DRAG_INDEX_THRESHOLD: f64 = 60.0;
+
+/// M30 Phase 9 Step 5 (§5, §7, §11.7): a real, live carousel's own
+/// inert state -- `engine-core` holds only this; the real per-frame
+/// item-geometry math it drives (`Tree::sync_carousel_layouts`) and the
+/// real wheel/drag dispatch that mutates it both live in `tree.rs`
+/// alongside every other kind-specific `Tree::dispatch` arm, the same
+/// "engine-core owns the mechanism, this struct just owns the value"
+/// split `SplitterState`/`SliderState` already establish.
+///
+/// The real, distinctive finding this step's own investigation made:
+/// `position` is a genuinely *layout*-invalidating animated value, not
+/// a paint-only one like every other `Animated<T>` field in this
+/// codebase (`PaintProperties.opacity`, `SliderState.thumb_position`,
+/// etc.) -- an item promoted from medium to large must actually grow
+/// *as it travels*, which only real per-frame relayout can produce.
+/// Confirmed via direct read of `Tree::tick_all`/`app.rs`'s own per-
+/// frame loop that this already works for free: *every* active
+/// animation already sets `Tree.dirty`, and a dirty frame already calls
+/// `compute_layout` unconditionally -- so `position` needs no new
+/// central-ticking mechanism at all, just a real per-frame consumer of
+/// its current value (`sync_carousel_layouts`), unlike pyCopper's own
+/// framework, which needed an explicit `invalidates="layout"` opt-in
+/// because *most* of its own animated values are paint-only by default.
+///
+/// No `#[derive(...)]` here at all -- the identical real reason
+/// `SplitterState` (also carrying a bare `Animated<f64>`) has none
+/// either: `Animated<T>` itself implements neither `Clone`, `Debug`,
+/// nor `PartialEq`.
+pub struct CarouselState {
+    pub layout: CarouselLayout,
+    /// The item the carousel is settling on. Only meaningful when
+    /// `layout.snaps()` -- mirrors pyCopper's own real `index`.
+    pub index: usize,
+    /// Where the strip actually is, between items, mid-snap -- an
+    /// integer while at rest, fractional while travelling. Every real
+    /// item width this step's own `sync_carousel_layouts` computes is
+    /// derived from this, which is what makes items resize *as they
+    /// move* rather than jumping on arrival. Only meaningful when
+    /// `layout.snaps()`.
+    pub position: Animated<f64>,
+    /// Free pixel scroll offset, for `Uncontained` only -- driven
+    /// directly (like a scrollbar being dragged), never eased, the same
+    /// real `Animated<f64>`-free precedent `VirtualListState::scroll_
+    /// offset`'s own doc comment already establishes for `SplitterState
+    /// ::position`.
+    pub scroll_x: f64,
+    /// The pointer's own last-seen local x while a real drag (`Tree::
+    /// dragging`) is active on this node -- `None` when not dragging.
+    /// Mirrors pyCopper's own `carousel_drag_x`.
+    pub drag_last_x: Option<f64>,
+    /// Accumulated drag distance since the last committed index, for
+    /// `layout.snaps()` carousels -- mirrors pyCopper's own real
+    /// `carousel_drag_accum`.
+    pub drag_accum: f64,
+}
+
+impl CarouselState {
+    pub fn new(layout: CarouselLayout) -> Self {
+        Self {
+            layout,
+            index: 0,
+            position: Animated::new(0.0),
+            scroll_x: 0.0,
+            drag_last_x: None,
+            drag_accum: 0.0,
+        }
+    }
+
+    /// Width of the keyline slot `slot_index` places past the leading
+    /// edge -- mirrors pyCopper's own real `_slot_width` exactly,
+    /// including its own real "already scrolled past the leading edge"
+    /// clamp for a negative `slot_index`.
+    fn slot_width(&self, slot_index: i64, large: f64) -> f64 {
+        if slot_index < 0 {
+            return f64::from(CAROUSEL_SMALL_MAX);
+        }
+        let pattern = self.layout.slot_pattern();
+        if pattern.is_empty() {
+            return large;
+        }
+        let idx = (slot_index as usize).min(pattern.len() - 1);
+        match pattern[idx] {
+            CarouselSlot::Large => large,
+            CarouselSlot::Medium => f64::from(CAROUSEL_MEDIUM),
+            CarouselSlot::Small => f64::from(CAROUSEL_SMALL_MAX),
+        }
+    }
+
+    /// Width for an item sitting `position` slots past the leading
+    /// keyline -- mirrors pyCopper's own real `_item_width` exactly:
+    /// `position` is fractional mid-snap, so the width is interpolated
+    /// between the two slots it lies between. That interpolation *is*
+    /// the whole real "items resize as they travel" behavior.
+    pub fn item_width(&self, position: f64, large: f64) -> f64 {
+        let low = position.floor() as i64;
+        let t = position - position.floor();
+        if t == 0.0 {
+            return self.slot_width(low, large);
+        }
+        self.slot_width(low, large) * (1.0 - t) + self.slot_width(low + 1, large) * t
+    }
 }
 
 /// M15 Phase 1 (§5, §16.7): mirrors `TextState`'s own four font/content

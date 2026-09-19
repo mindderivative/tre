@@ -64,6 +64,19 @@ fn parse_content_fit(fit: &str) -> PyResult<ContentFit> {
     }
 }
 
+/// M30 Phase 9 Step 5 (§5, §7, §11.7): `parse_content_fit`'s own real
+/// shape, mirrored for MD3's three real carousel layouts.
+fn parse_carousel_layout(layout: &str) -> PyResult<engine_core::CarouselLayout> {
+    match layout {
+        "uncontained" => Ok(engine_core::CarouselLayout::Uncontained),
+        "hero" => Ok(engine_core::CarouselLayout::Hero),
+        "multi_browse" => Ok(engine_core::CarouselLayout::MultiBrowse),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "unknown carousel layout {other:?} -- expected one of \"uncontained\", \"hero\", \"multi_browse\""
+        ))),
+    }
+}
+
 /// M30 Phase 1 (§5, §7): a fully transparent fill -- `Rect`'s own real
 /// "paint nothing" value (`border_paint.rs`'s own proof that `alpha:
 /// 0` genuinely paints no pixels applies identically to `background`),
@@ -6626,6 +6639,45 @@ impl PyWindow {
         drop(tree);
 
         self.terminals.borrow_mut().insert(id, session);
+        Ok(self.wrap_node(id))
+    }
+
+    /// M30 Phase 9 Step 5 (§5, §7, §11.7): a real MD3 carousel --
+    /// mirrors `add_rect`'s own real shape (an explicit `width`/
+    /// `height`, the same real convention every other MD3 component
+    /// factory here already follows, since a `NodeKind::Carousel`'s
+    /// own children are absolutely positioned and so contribute nothing
+    /// to its real auto-sizing, confirmed by `Tree::sync_carousel_
+    /// layouts`'s own doc comment). Returns an empty strip -- real
+    /// items are added the same generic way any other container's
+    /// children are, via the already-real `Node.add_child` (M4 Phase 1
+    /// step 3), not a bespoke "carousel item" factory of its own.
+    #[pyo3(signature = (layout, width, height, background, x=None, y=None))]
+    fn add_carousel(
+        &self,
+        layout: &str,
+        width: f32,
+        height: f32,
+        background: (u8, u8, u8, u8),
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<Node> {
+        let carousel_layout = parse_carousel_layout(layout)?;
+        let (r, g, b, a) = background;
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::Carousel(engine_core::CarouselState::new(carousel_layout)),
+            positioned_style(
+                Size {
+                    width: length(width),
+                    height: length(height),
+                },
+                x,
+                y,
+            ),
+            PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, id);
         Ok(self.wrap_node(id))
     }
 
