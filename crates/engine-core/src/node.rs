@@ -572,6 +572,21 @@ pub struct ScrollViewState {
     /// single-axis scope pyCopper's own `ScrollViewElement.axis`
     /// already settled on, not a limitation this phase introduces.
     pub horizontal: bool,
+    /// M38 Phase 6 (§5, §7, §11.7): `Some((pointer_coord, scroll_at_
+    /// start))`, set the instant a real thumb drag begins and cleared
+    /// when it ends -- `Tree::update_scroll_view_thumb_drag`'s own
+    /// real anchor, ported directly from pyCopper's own `state.data
+    /// ["drag_from"]`/`["drag_scroll"]` (`widgets/scroll.py`'s own
+    /// `on_pointer_down`/`on_pointer_move`). A *relative*-delta anchor,
+    /// not an absolute pointer-to-scroll mapping: grabbing the thumb
+    /// anywhere along its own length must not snap it so that point
+    /// jumps under the pointer, the identical real UX pyCopper's own
+    /// design already chose and this ports verbatim. Lives on this
+    /// state (not `Tree` itself) the same way `CarouselState.drag_
+    /// last_x`/`drag_accum` already establish: kind-specific drag
+    /// anchor data belongs to the kind, `Tree.dragging` alone only
+    /// ever names *which* node is being dragged.
+    pub thumb_drag_anchor: Option<(f64, f64)>,
 }
 
 impl ScrollViewState {
@@ -579,9 +594,64 @@ impl ScrollViewState {
         Self {
             scroll: Animated::new(0.0),
             horizontal,
+            thumb_drag_anchor: None,
         }
     }
+
+    /// M38 Phase 6 (§5, §7, §11.7): real thumb geometry `(track, thumb,
+    /// along)` -- ported directly from pyCopper's own real
+    /// `ScrollViewElement.thumb_geometry` (`widgets/scroll.py`), shared
+    /// by painting (`engine-render::paint_node`) and hit-testing/
+    /// dragging (`Tree::grabs_scroll_view_thumb`/`update_scroll_view_
+    /// thumb_drag`) so the two can never drift -- the identical real
+    /// "one function, every real caller" discipline `VirtualListState::
+    /// offset_of`/`Tree::splitter_geometry` already establish.
+    /// `viewport_extent`/`content_extent` are the real, live measured
+    /// sizes along this view's own scroll axis (`Tree::sync_scroll_
+    /// view_layouts`'s own already-computed values, recomputed here
+    /// too rather than cached, since neither crate can hold the
+    /// other's own cross-frame state).
+    pub fn thumb_geometry(&self, viewport_extent: f64, content_extent: f64) -> (f64, f64, f64) {
+        let track = viewport_extent - SCROLLBAR_MARGIN * 2.0;
+        if track <= 0.0 {
+            return (0.0, 0.0, 0.0);
+        }
+        let max_scroll = (content_extent - viewport_extent).max(0.0);
+        let thumb = if content_extent > 0.0 {
+            (track * (viewport_extent / content_extent)).max(SCROLLBAR_MIN_LENGTH)
+        } else {
+            track
+        };
+        let thumb = thumb.min(track);
+        let progress = if max_scroll > 0.0 {
+            self.scroll.current / max_scroll
+        } else {
+            0.0
+        };
+        let along = SCROLLBAR_MARGIN + (track - thumb) * progress;
+        (track, thumb, along)
+    }
 }
+
+/// M38 Phase 6 (§5, §7, §11.7): real scrollbar geometry tokens -- M3
+/// has no real scrollbar spec at all (pyCopper's own `scroll.py`
+/// module doc comment states this directly: "the catalogue mentions
+/// only that a scrolling menu 'shows a persistent scrollbar'"), so
+/// these are pyCopper's own real, cited values, ported verbatim rather
+/// than presented as an MD3 token. `SCROLLBAR_THICKNESS`/`SCROLLBAR_
+/// GRAB_SLOP` live here (not `engine-render`) because `Tree::grabs_
+/// scroll_view_thumb`'s own real hit-test needs them too, not just
+/// paint -- `SCROLLBAR_MARGIN`/`SCROLLBAR_MIN_LENGTH` are used by
+/// `thumb_geometry` above directly, the shared real geometry both
+/// painting and hit-testing read.
+pub const SCROLLBAR_THICKNESS: f64 = 4.0;
+pub const SCROLLBAR_MARGIN: f64 = 2.0;
+pub const SCROLLBAR_MIN_LENGTH: f64 = 32.0;
+/// How far either side of the real thumb still counts as grabbing it
+/// -- a 4dp target is unusable with a real mouse, let alone a
+/// trackpad (pyCopper's own real reasoning, `THUMB_GRAB_SLOP`'s own
+/// doc comment, quoted directly).
+pub const SCROLLBAR_GRAB_SLOP: f64 = 6.0;
 
 /// M15 Phase 1 (§5, §16.7): mirrors `TextState`'s own four font/content
 /// fields exactly (so `engine-render`'s own layout-building code can be

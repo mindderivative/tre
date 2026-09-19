@@ -248,3 +248,81 @@ fn scrolling_moves_the_real_marker_into_view() {
         );
     });
 }
+
+/// M38 Phase 6 (§5, §7, §11.7): the real pixel-level proof `engine-
+/// render::paint_scroll_view_thumb` actually paints -- a 100x100 view
+/// over 400px of real content: `ScrollViewState::thumb_geometry(100.0,
+/// 400.0)` (proven directly at the Rust level, `tree.rs`'s own `thumb_
+/// geometry_computes_the_real_track_thumb_and_along_values`) puts the
+/// real thumb at absolute x in [94, 98], y in [2, 34] -- this checks a
+/// point squarely inside that rect is genuinely non-transparent (not
+/// matching an exact color byte-for-byte, since the real alpha-
+/// blending result onto a transparent target depends on the renderer's
+/// own blend semantics; *something painted there at all* is the real,
+/// decisive claim this phase's own thumb-paint code exists to prove).
+#[test]
+fn a_scrollable_scroll_view_paints_a_real_thumb_pixel_at_the_expected_position() {
+    pollster::block_on(async {
+        let (tree, view) = build_scene(0.0);
+        let (data, bpr) = render(&tree, view).await;
+        let at_thumb = pixel_at(&data, bpr, 96, 18);
+        assert_ne!(
+            at_thumb, UNCOVERED,
+            "a real point inside the real thumb's own computed rect must be genuinely \
+             painted, not left fully transparent"
+        );
+    });
+}
+
+/// The real other half: a `ScrollView` with nothing to scroll must not
+/// paint a thumb at all -- `paint_scroll_view_thumb`'s own real
+/// `content_extent <= viewport_extent` guard, mirroring pyCopper's own
+/// real `self.scrollable` gate on `paint_foreground`.
+#[test]
+fn a_scroll_view_that_fits_its_own_content_paints_no_thumb() {
+    pollster::block_on(async {
+        let mut tree = Tree::new();
+        let view = tree.insert(
+            NodeKind::ScrollView(ScrollViewState::new(false)),
+            Style {
+                size: Size {
+                    width: length(f32::from(WIDTH)),
+                    height: length(f32::from(HEIGHT)),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        // Content exactly as tall as the viewport -- nothing to scroll.
+        let content = tree.insert(
+            NodeKind::Container,
+            Style {
+                size: Size {
+                    width: length(f32::from(WIDTH)),
+                    height: length(f32::from(HEIGHT)),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(view, content);
+        tree.compute_layout(
+            view,
+            Size {
+                width: AvailableSpace::Definite(f32::from(WIDTH)),
+                height: AvailableSpace::Definite(f32::from(HEIGHT)),
+            },
+        );
+
+        let (data, bpr) = render(&tree, view).await;
+        // Where a real thumb would sit if this view were scrollable
+        // (the same real x/y this file's own scrollable-case test just
+        // checked) must show nothing painted.
+        let at_would_be_thumb = pixel_at(&data, bpr, 96, 18);
+        assert_eq!(
+            at_would_be_thumb, UNCOVERED,
+            "a ScrollView with nothing to scroll must not paint a thumb at all, got \
+             {at_would_be_thumb:?}"
+        );
+    });
+}

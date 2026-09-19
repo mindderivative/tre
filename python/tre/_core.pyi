@@ -1217,7 +1217,10 @@ class Window:
         every other `add_*` factory's own children). `horizontal=False`
         (the default) scrolls vertically; `True` scrolls horizontally
         -- never both at once. Real wheel scrolling and `Window.scroll`
-        both already work with no further setup.
+        both already work with no further setup, and so does a real
+        mouse drag on the scrollbar thumb the engine now paints and
+        drags automatically whenever there's real overflow content --
+        no further setup needed there either.
         """
         ...
     def build_shell(

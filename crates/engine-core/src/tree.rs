@@ -29,7 +29,7 @@ use crate::interaction::InteractionState;
 use crate::node::{
     CAROUSEL_DRAG_INDEX_THRESHOLD, CAROUSEL_GAP, CAROUSEL_PAD_X, CAROUSEL_PAD_Y,
     CAROUSEL_UNCONTAINED_WIDTH, ImageState, Node, NodeId, NodeKind, PaintProperties,
-    TextFieldState,
+    SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN, SCROLLBAR_THICKNESS, TextFieldState,
 };
 #[cfg(test)]
 use crate::node::{
@@ -816,6 +816,119 @@ impl Tree {
         state.scroll.current = (state.scroll.current + delta).clamp(0.0, max_scroll);
     }
 
+    /// M38 Phase 6 (§5, §7, §11.7): a real `ScrollView`'s own live
+    /// `(viewport_extent, content_extent)` along its own configured
+    /// scroll axis -- the identical real measurement `scroll_scroll_
+    /// view_by`/`sync_scroll_view_layouts` each already compute
+    /// inline, factored out once a third real caller (the thumb
+    /// hit-test/drag methods below) needed the identical values.
+    /// `None` if `id` isn't a real `NodeKind::ScrollView` in this
+    /// `Tree`, or has no children yet.
+    fn scroll_view_extents(&self, id: NodeId) -> Option<(bool, f64, f64)> {
+        let node = self.nodes.get(id)?;
+        let NodeKind::ScrollView(state) = &node.kind else {
+            return None;
+        };
+        let horizontal = state.horizontal;
+        let &child = node.children.first()?;
+        let viewport = f64::from(if horizontal {
+            self.layout(id).size.width
+        } else {
+            self.layout(id).size.height
+        });
+        let content = f64::from(if horizontal {
+            self.layout(child).size.width
+        } else {
+            self.layout(child).size.height
+        });
+        Some((horizontal, viewport, content))
+    }
+
+    /// M38 Phase 6 (§5, §7, §11.7): whether a real press at `point`
+    /// (absolute canvas coordinates, the same space `PointerPressed`'s
+    /// own `position` already arrives in) grabs `view`'s own real
+    /// scrollbar thumb -- ported directly from pyCopper's own real
+    /// `ScrollViewElement.grabs_thumb` (`widgets/scroll.py`), including
+    /// its own real `SCROLLBAR_GRAB_SLOP` tolerance on every side (a
+    /// real, bare `SCROLLBAR_THICKNESS`-wide target is unusable with a
+    /// mouse). `false` for a `ScrollView` with nothing to scroll (the
+    /// identical real "no scrollbar painted at all" condition `engine-
+    /// render::paint_node`'s own thumb-paint arm uses) or no real
+    /// children yet.
+    fn grabs_scroll_view_thumb(&self, view: NodeId, point: Point) -> bool {
+        let Some((horizontal, viewport, content)) = self.scroll_view_extents(view) else {
+            return false;
+        };
+        if content <= viewport {
+            return false;
+        }
+        let NodeKind::ScrollView(state) = &self.nodes[view].kind else {
+            return false;
+        };
+        let (track, thumb, along) = state.thumb_geometry(viewport, content);
+        if track <= 0.0 {
+            return false;
+        }
+        let (ox, oy) = self.absolute_position(view);
+        let size = self.layout(view).size;
+        let slop = SCROLLBAR_GRAB_SLOP;
+        if horizontal {
+            let tx = ox + along;
+            let ty = oy + f64::from(size.height) - SCROLLBAR_THICKNESS - SCROLLBAR_MARGIN;
+            (tx - slop..=tx + thumb + slop).contains(&point.x)
+                && (ty - slop..=ty + SCROLLBAR_THICKNESS + slop).contains(&point.y)
+        } else {
+            let tx = ox + f64::from(size.width) - SCROLLBAR_THICKNESS - SCROLLBAR_MARGIN;
+            let ty = oy + along;
+            (tx - slop..=tx + SCROLLBAR_THICKNESS + slop).contains(&point.x)
+                && (ty - slop..=ty + thumb + slop).contains(&point.y)
+        }
+    }
+
+    /// M38 Phase 6 (§5, §7, §11.7): live-follows-the-cursor thumb drag,
+    /// `update_drag`'s own real `ScrollView` arm -- ported directly
+    /// from pyCopper's own real `ScrollViewElement.on_pointer_move`
+    /// (`widgets/scroll.py`): thumb travel (`track - thumb`) maps to
+    /// scroll travel (`max_scroll`) 1:1 by ratio, so the content keeps
+    /// pace with the pointer instead of running ahead of or behind it.
+    /// A relative-delta computation from `state.thumb_drag_anchor` (set
+    /// by `PointerPressed`'s own dispatch arm below), not an absolute
+    /// pointer-to-scroll mapping -- preserves wherever along the
+    /// thumb's own length the real press actually grabbed it, the
+    /// identical real UX pyCopper's own design already chose. A true
+    /// no-op if the drag anchor is missing (defensive: `update_drag`'s
+    /// own caller already guarantees `self.dragging == Some(view)`
+    /// only after a real successful grab set it) or the real track has
+    /// no room to travel.
+    fn update_scroll_view_thumb_drag(&mut self, view: NodeId, point: Point, _now: Instant) {
+        let Some((horizontal, viewport, content)) = self.scroll_view_extents(view) else {
+            return;
+        };
+        let max_scroll = (content - viewport).max(0.0);
+        let NodeKind::ScrollView(state) = &self.nodes[view].kind else {
+            return;
+        };
+        let Some((anchor_coord, anchor_scroll)) = state.thumb_drag_anchor else {
+            return;
+        };
+        let (track, thumb, _along) = state.thumb_geometry(viewport, content);
+        let travel = track - thumb;
+        if travel <= 0.0 {
+            return;
+        }
+        let coord = if horizontal { point.x } else { point.y };
+        let moved = coord - anchor_coord;
+        let target = (anchor_scroll + moved * (max_scroll / travel)).clamp(0.0, max_scroll);
+        let NodeKind::ScrollView(state) = &mut self.nodes[view].kind else {
+            unreachable!("checked above")
+        };
+        // A real, direct write, not `animate_to` -- the identical
+        // "driven directly, never eased" precedent `ScrollViewState.
+        // scroll`'s own doc comment already establishes for every
+        // other real scroll mutation (`scroll_scroll_view_by`).
+        state.scroll.current = target;
+    }
+
     /// The real total content extent of an `Uncontained` carousel's own
     /// items -- every item's width plus every gap between them, read
     /// from each child's own real, most-recently-computed `Layout`
@@ -1509,6 +1622,13 @@ impl Tree {
             // between consecutive points, not a position along a fixed
             // track).
             NodeKind::Carousel(_) => self.update_carousel_drag(dragging, point, now),
+            // M38 Phase 6 (§5, §7, §11.7): a real scrollbar-thumb drag
+            // -- `PointerPressed`'s own dispatch arm only ever sets
+            // `self.dragging = Some(view)` after a real `grabs_scroll_
+            // view_thumb` check already passed, mirroring `Splitter`/
+            // `Slider`/`Carousel`'s own identical "only start a drag on
+            // a genuine grab" contract.
+            NodeKind::ScrollView(_) => self.update_scroll_view_thumb_drag(dragging, point, now),
             _ => {}
         }
     }
@@ -3005,6 +3125,48 @@ impl Tree {
                     return DispatchOutcome::None;
                 }
                 let hit = self.hit_test(root, position);
+                // M38 Phase 6 (§5, §7, §11.7): a real scrollbar-thumb
+                // grab takes priority over the ordinary hit -- the
+                // thumb is a paint-only overlay drawn *over* the real
+                // scrolled content (`engine-render::paint_node`'s own
+                // `NodeKind::ScrollView` arm, mirroring pyCopper's own
+                // `paint_foreground` running after children), so a real
+                // point-based `hit_test` resolves to whatever content
+                // sits underneath, not the thumb itself -- the exact
+                // real problem pyCopper's own module doc comment names
+                // directly ("the press lands on whatever row is
+                // underneath"; it solves this with real event capture,
+                // an architecture this codebase doesn't have, so this
+                // instead walks the hit node's own ancestor chain for a
+                // real `ScrollView` whose thumb the press genuinely
+                // grabs, the identical real "walk up looking for the
+                // right kind of ancestor" technique the carousel-drag
+                // detection just below already establishes). A real
+                // grab starts the drag and consumes the press entirely
+                // -- the content underneath must not also register a
+                // ripple/click for the same real press.
+                if button == PointerButton::Primary {
+                    let mut current = hit;
+                    while let Some(id) = current {
+                        if matches!(self.nodes[id].kind, NodeKind::ScrollView(_))
+                            && self.grabs_scroll_view_thumb(id, position)
+                        {
+                            let (horizontal, ..) = self
+                                .scroll_view_extents(id)
+                                .expect("checked by grabs_scroll_view_thumb above");
+                            let coord = if horizontal { position.x } else { position.y };
+                            let NodeKind::ScrollView(state) = &mut self.nodes[id].kind else {
+                                unreachable!("checked above")
+                            };
+                            let scroll = state.scroll.current;
+                            state.thumb_drag_anchor = Some((coord, scroll));
+                            self.dragging = Some(id);
+                            self.set_pressed(None, config.hover_duration, now);
+                            return DispatchOutcome::None;
+                        }
+                        current = self.nodes[id].parent;
+                    }
+                }
                 if let Some(node) = hit {
                     self.set_pressed(Some((button, node)), config.hover_duration, now);
                     // M4 Phase 3 (§11.5), widened M14 Phase 2 (§7.3):
@@ -3162,6 +3324,18 @@ impl Tree {
                     {
                         state.drag_last_x = None;
                         state.drag_accum = 0.0;
+                    }
+                    // M38 Phase 6 (§5, §7, §11.7): a real scrollbar
+                    // thumb's own drag bookkeeping is genuinely per-
+                    // gesture too, the identical real shape `Carousel`'s
+                    // own `drag_last_x`/`drag_accum` clearing just above
+                    // establishes -- mirrors pyCopper's own real `on_
+                    // pointer_up`, which pops the identical `drag_from`/
+                    // `drag_scroll` state.
+                    if let Some(dragging) = self.dragging
+                        && let NodeKind::ScrollView(state) = &mut self.nodes[dragging].kind
+                    {
+                        state.thumb_drag_anchor = None;
                     }
                     self.dragging = None;
                 }
@@ -9799,6 +9973,87 @@ mod tests {
         assert_eq!(
             state.scroll.current, 0.0,
             "must clamp at the real lower bound too, not go negative"
+        );
+    }
+
+    #[test]
+    fn thumb_geometry_computes_the_real_track_thumb_and_along_values() {
+        // M38 Phase 6 (§5, §7, §11.7): 100px viewport, 400px content --
+        // pyCopper's own real `thumb_geometry` math, ported directly.
+        // track = 100 - 2*2 (margin) = 96. thumb = max(96*(100/400),
+        // 32 (min length)) = max(24, 32) = 32.
+        let (mut tree, view, _content) = scrollable_view(false);
+        let NodeKind::ScrollView(state) = &tree.get(view).unwrap().kind else {
+            panic!("expected a ScrollView");
+        };
+        assert_eq!(
+            state.thumb_geometry(100.0, 400.0),
+            (96.0, 32.0, 2.0),
+            "at scroll 0, `along` must sit at the real starting margin"
+        );
+
+        tree.scroll_scroll_view_by(view, 150.0); // half of max_scroll (300)
+        let NodeKind::ScrollView(state) = &tree.get(view).unwrap().kind else {
+            panic!("expected a ScrollView");
+        };
+        let (track, thumb, along) = state.thumb_geometry(100.0, 400.0);
+        assert_eq!(
+            (track, thumb),
+            (96.0, 32.0),
+            "track/thumb don't depend on scroll position"
+        );
+        assert!(
+            (along - 34.0).abs() < 0.001,
+            "at half scroll, `along` must sit halfway across the real (track - thumb) = 64px \
+             of travel (2 + 64*0.5 = 34), got {along}"
+        );
+    }
+
+    #[test]
+    fn grabs_scroll_view_thumb_is_true_only_within_the_real_thumb_plus_slop() {
+        // Vertical view: thumb sits on the right edge, x in
+        // [100-4-2, 100-2] = [94, 98], y in [2, 34] at scroll 0
+        // (`thumb_geometry_computes_the_real_track_thumb_and_along_
+        // values`'s own proof above).
+        let (tree, view, _content) = scrollable_view(false);
+        assert!(
+            tree.grabs_scroll_view_thumb(view, Point::new(96.0, 18.0)),
+            "a point squarely inside the real thumb rect must grab it"
+        );
+        assert!(
+            tree.grabs_scroll_view_thumb(view, Point::new(94.0 - 5.0, 18.0)),
+            "a point just within the real SCROLLBAR_GRAB_SLOP tolerance must still grab it"
+        );
+        assert!(
+            !tree.grabs_scroll_view_thumb(view, Point::new(10.0, 10.0)),
+            "a point nowhere near the real thumb (e.g. over the scrolled content) must not grab it"
+        );
+    }
+
+    #[test]
+    fn update_scroll_view_thumb_drag_moves_the_scroll_offset_proportionally_to_pointer_travel() {
+        let (mut tree, view, _content) = scrollable_view(false);
+        // Start a real drag exactly the way `PointerPressed`'s own
+        // dispatch arm does: anchor the current pointer coordinate and
+        // scroll offset, then mark the view as the live drag target.
+        let NodeKind::ScrollView(state) = &mut tree.get_mut(view).unwrap().kind else {
+            panic!("expected a ScrollView");
+        };
+        state.thumb_drag_anchor = Some((18.0, 0.0));
+        tree.dragging = Some(view);
+
+        // track - thumb = 96 - 32 = 64px of real thumb travel maps to
+        // the real 300px of max_scroll -- moving the pointer down by
+        // 32px (half the real travel) must move scroll by half of
+        // max_scroll (150).
+        tree.update_scroll_view_thumb_drag(view, Point::new(0.0, 50.0), Instant::now());
+        let NodeKind::ScrollView(state) = &tree.get(view).unwrap().kind else {
+            panic!("expected a ScrollView");
+        };
+        assert!(
+            (state.scroll.current - 150.0).abs() < 0.001,
+            "half the real thumb travel must move scroll by half of max_scroll, got {}",
+            state.scroll.current
         );
     }
 

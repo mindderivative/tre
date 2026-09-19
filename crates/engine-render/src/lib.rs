@@ -26,7 +26,8 @@ mod image_cache;
 mod text;
 
 use engine_core::{
-    ContentFit, DrawCommand, ICON_VIEWBOX_SIZE, Interpolate, NodeId, NodeKind, Tree,
+    ContentFit, DrawCommand, ICON_VIEWBOX_SIZE, Interpolate, NodeId, NodeKind, SCROLLBAR_MARGIN,
+    SCROLLBAR_THICKNESS, ScrollViewState, Tree,
 };
 use peniko::Color;
 use peniko::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Shape, Stroke};
@@ -1108,6 +1109,19 @@ fn paint_node(
         }
 
         scene.pop_layer();
+
+        // M38 Phase 6 (§5, §7, §11.7): a real `ScrollView`'s own real
+        // scrollbar thumb -- painted here, *after* every real child
+        // (mirrors pyCopper's own real `paint_foreground`, which runs
+        // after children for exactly this reason: the thumb sits over
+        // the scrolled content, not under it). `scene`'s own ambient
+        // transform is whatever the last painted child left it at, not
+        // necessarily `composed` any more -- reset it explicitly first,
+        // the same real discipline every other paint call in this
+        // function already follows.
+        if let NodeKind::ScrollView(state) = &node.kind {
+            paint_scroll_view_thumb(tree, id, state, w, h, composed, scene);
+        }
     } else {
         for &child in &node.children {
             paint_node(
@@ -1116,6 +1130,92 @@ fn paint_node(
         }
     }
 }
+
+/// M38 Phase 6 (§5, §7, §11.7): a real `ScrollView`'s own real
+/// scrollbar thumb -- paints only when there is genuinely something to
+/// scroll (`content_extent > viewport_extent`, the identical real
+/// `self.scrollable` gate pyCopper's own `paint_foreground` already
+/// uses), reading `ScrollViewState::thumb_geometry`'s own real,
+/// shared geometry (the identical values `Tree::grabs_scroll_view_
+/// thumb`/`update_scroll_view_thumb_drag` already compute, so paint
+/// and hit-testing/dragging can never drift). **Real, honest v1 scope
+/// choice, stated directly:** a fixed, literal color (real MD3
+/// baseline `outline_variant`, `0xCAC4D0`) at pyCopper's own real
+/// `BAR_OPACITY` (0.55) -- `engine-render` has no `engine-md3`
+/// dependency to resolve a real live theme token from (§4), the
+/// identical "real but not yet theme-aware" scope `TextField`'s own
+/// hardcoded caret color already established. Uncached (no
+/// `GeometryCache` entry): the thumb's own position changes on every
+/// real scroll tick, so a per-frame cache would rarely hit anyway,
+/// and it's a genuinely small shape (`SCROLLBAR_THICKNESS` = 4px
+/// wide) -- not worth the bookkeeping this catalog's own established
+/// "cache only where it measurably helps" discipline (M34 Phase 1's
+/// own real benchmark) already requires justifying.
+fn paint_scroll_view_thumb(
+    tree: &Tree,
+    view: NodeId,
+    state: &ScrollViewState,
+    viewport_w: f64,
+    viewport_h: f64,
+    composed: Affine,
+    scene: &mut Scene,
+) {
+    let Some(node) = tree.get(view) else {
+        return;
+    };
+    let Some(&child) = node.children.first() else {
+        return;
+    };
+    let child_layout = tree.layout(child);
+    let (viewport_extent, content_extent) = if state.horizontal {
+        (viewport_w, f64::from(child_layout.size.width))
+    } else {
+        (viewport_h, f64::from(child_layout.size.height))
+    };
+    if content_extent <= viewport_extent {
+        return;
+    }
+    let (track, thumb, along) = state.thumb_geometry(viewport_extent, content_extent);
+    if track <= 0.0 {
+        return;
+    }
+
+    let (x, y, w, h) = if state.horizontal {
+        (
+            along,
+            viewport_h - SCROLLBAR_THICKNESS - SCROLLBAR_MARGIN,
+            thumb,
+            SCROLLBAR_THICKNESS,
+        )
+    } else {
+        (
+            viewport_w - SCROLLBAR_THICKNESS - SCROLLBAR_MARGIN,
+            along,
+            SCROLLBAR_THICKNESS,
+            thumb,
+        )
+    };
+
+    scene.set_transform(composed);
+    let color = with_opacity(
+        Color::from_rgba8(0xCA, 0xC4, 0xD0, 0xFF),
+        SCROLLBAR_THUMB_OPACITY,
+    );
+    scene.set_paint(color);
+    scene.fill_path(&RoundedRect::new(x, y, x + w, y + h, SCROLLBAR_THUMB_RADIUS).to_path(0.1));
+}
+
+/// M38 Phase 6 (§5, §7, §11.7): pure-paint scrollbar tokens -- ported
+/// directly from pyCopper's own real `BAR_RADIUS`/`BAR_OPACITY`
+/// (`widgets/scroll.py`). Live here, not `engine-core`, since neither
+/// `Tree::grabs_scroll_view_thumb` nor `update_scroll_view_thumb_drag`
+/// needs a fill radius or an opacity to do real hit-testing/dragging --
+/// the identical real "geometry constants both crates need live in
+/// `engine-core`, pure-paint ones stay in `engine-render`" split
+/// `SCROLLBAR_THICKNESS`/`SCROLLBAR_MARGIN`'s own doc comment already
+/// states for the reverse case.
+const SCROLLBAR_THUMB_RADIUS: f64 = 2.0;
+const SCROLLBAR_THUMB_OPACITY: f64 = 0.55;
 
 /// Thin wrapper around `vello_hybrid::Renderer` -- it needs a mutable
 /// `Resources` alongside it for every render call, which is easy to get
