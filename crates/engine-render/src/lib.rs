@@ -448,12 +448,20 @@ fn paint_node(
     }
 
     match &node.kind {
-        NodeKind::Rect | NodeKind::Splitter(_) => {
+        NodeKind::Rect | NodeKind::Splitter(_) | NodeKind::LoadingIndicator(_) => {
             // A splitter's own visible grip/handle paints exactly like
             // a Rect -- `SplitterState` carries only the mechanism's
             // animatable position (§11.5), no separate appearance data,
             // since the universal `PaintProperties` every node already
             // has is all a divider's own background/corner-radius needs.
+            // M39 Phase 2 (§5, §7): a real `LoadingIndicator` joins this
+            // same arm too -- its own real appearance is entirely
+            // `PaintProperties.shape` (`Tree::tick_all`'s own new
+            // per-`LoadingIndicator` case keeps it perpetually non-
+            // empty from the very first tick onward), so the identical
+            // real "active shape morph paints the current silhouette"
+            // branch just below already paints it correctly with zero
+            // new paint code.
             let color = with_opacity(node.paint.background.current, node.paint.opacity.current);
             scene.set_paint(color);
             // M7 Phase 4 (§7.4): a real, active shape morph (`node.

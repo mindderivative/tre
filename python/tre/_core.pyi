@@ -446,6 +446,27 @@ class Window:
         360°`. `value` clamped `0.0..=1.0`, read/write the same way.
         """
         ...
+    def add_loading_indicator(
+        self,
+        size: float = 48.0,
+        color: Color | None = None,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """A real, perpetually-looping MD3 Expressive-style loading
+        spinner -- morphs between four real shapes (Pentagon, Pill,
+        Cookie, Oval) with no app-side wiring needed at all; it starts
+        looping the instant it's constructed and never stops. `size`
+        is a single square dimension, the same real convention `add_
+        circular_progress`'s own `size` param already establishes.
+        `color` defaults to the current theme's own real `primary`
+        role (or a fixed baseline before `Window.set_theme`). **Real,
+        honest v1 simplification:** this is a real, recognizable
+        subset of MD3 Expressive's own actual seven-shape sequence,
+        morphed with plain easing rather than genuine spring physics
+        -- not a pixel-for-pixel spec match.
+        """
+        ...
     def add_card(
         self,
         width: float,

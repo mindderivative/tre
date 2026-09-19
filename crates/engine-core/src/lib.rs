@@ -36,10 +36,10 @@ pub use node::{
     CAROUSEL_MEDIUM, CAROUSEL_PAD_X, CAROUSEL_PAD_Y, CAROUSEL_SMALL_MAX,
     CAROUSEL_UNCONTAINED_WIDTH, CarouselLayout, CarouselState, CheckboxState,
     CircularProgressState, ContentFit, ICON_VIEWBOX_SIZE, IconState, ImageState, ItemExtent,
-    LinearProgressState, Node, NodeId, NodeKind, PaintProperties, RadioButtonState,
-    SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN, SCROLLBAR_MIN_LENGTH, SCROLLBAR_THICKNESS,
-    ScrollViewState, SliderState, SplitterState, SwitchState, TerminalCell, TerminalState,
-    TextAlign, TextFieldState, TextState, VirtualListState,
+    LinearProgressState, LoadingIndicatorState, Node, NodeId, NodeKind, PaintProperties,
+    RadioButtonState, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN, SCROLLBAR_MIN_LENGTH,
+    SCROLLBAR_THICKNESS, ScrollViewState, SliderState, SplitterState, SwitchState, TerminalCell,
+    TerminalState, TextAlign, TextFieldState, TextState, VirtualListState,
 };
 pub use overlay::OverlayMeta;
 pub use shape_morph::ShapeKey;

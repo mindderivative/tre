@@ -15,9 +15,9 @@ use std::rc::Rc;
 
 use engine_core::{
     AccessNodeData, Action, Animated, CheckboxState, CircularProgressState, ContentFit, IconState,
-    ImageState, LinearProgressState, NodeId, NodeKind, OverlayMeta, PaintProperties,
-    RadioButtonState, Role, ShapeKey, SliderState, SplitterState, SwitchState, TextAlign,
-    TextFieldState, TextState, Tree,
+    ImageState, LinearProgressState, LoadingIndicatorState, NodeId, NodeKind, OverlayMeta,
+    PaintProperties, RadioButtonState, Role, ShapeKey, SliderState, SplitterState, SwitchState,
+    TextAlign, TextFieldState, TextState, Tree,
 };
 use engine_render::{MONOSPACE_FONT_FAMILY, TextRenderer};
 use peniko::Color;
@@ -2444,6 +2444,66 @@ impl PyWindow {
                 y,
             ),
             PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, id);
+        self.wrap_node(id)
+    }
+
+    /// M39 Phase 2 (§5, §7): a real, perpetually-looping MD3
+    /// Expressive-style loading spinner -- see `engine_core::
+    /// LoadingIndicatorState`'s own doc comment for the full real
+    /// design (four real, procedurally-generated shapes, `Animated<
+    /// ShapeKey>` morph, `Tree::tick_all`'s own automatic advance, no
+    /// app-side wiring needed at all once constructed). `size` is a
+    /// single square dimension, the identical real "one dimension is
+    /// the honest shape" convention `add_circular_progress`'s own
+    /// `size` param already establishes, defaulting to the same real
+    /// MD3 48dp token. **Real, stated v1 simplification, on top of the
+    /// simplified-shapes choice already scoped via `AskUserQuestion`:**
+    /// the real shapes fill the whole `size x size` box directly, not
+    /// MD3's own real "38dp shape inset within a 48dp container" ratio
+    /// -- a minor visual refinement, not essential to the real "loops
+    /// forever, morphs between real shapes" behavior this step exists
+    /// for.
+    #[pyo3(signature = (size=48.0, color=None, x=None, y=None))]
+    fn add_loading_indicator(
+        &self,
+        size: f32,
+        color: Option<(u8, u8, u8, u8)>,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> Node {
+        let tint = match color {
+            Some((r, g, b, a)) => Color::from_rgba8(r, g, b, a),
+            None => {
+                let theme = self.theme.borrow();
+                if theme.is_set() {
+                    theme.role("primary").unwrap_or(Md3Baseline::PRIMARY)
+                } else {
+                    Md3Baseline::PRIMARY
+                }
+            }
+        };
+        let state = LoadingIndicatorState::new(f64::from(size), f64::from(size));
+        let mut paint = PaintProperties::new(tint, 0.0, 0.0, 1.0);
+        // M38 Phase 4's own established real precedent: initialize
+        // `shape` directly to the first real shape at construction,
+        // not left at `ShapeKey::empty()` -- otherwise the very first
+        // real tick would morph *from* nothing, a real, visible flash
+        // bug.
+        paint.shape = Animated::new(state.shapes[0].clone());
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::LoadingIndicator(state),
+            positioned_style(
+                Size {
+                    width: length(size),
+                    height: length(size),
+                },
+                x,
+                y,
+            ),
+            paint,
         );
         tree.add_child(self.root, id);
         self.wrap_node(id)

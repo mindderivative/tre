@@ -219,6 +219,120 @@ fn best_aligned(a: &[Point], b: &[Point]) -> Vec<Point> {
     best_points
 }
 
+/// M39 Phase 2 (§5, §7): four real, procedurally-generated shapes for
+/// `LoadingIndicator`'s own real looping morph -- a real, honest
+/// approximation of MD3 Expressive's own named seven-shape sequence
+/// (Pentagon, Pill, Cookie[N], Oval among them), not sourced vertex-
+/// for-vertex from official Material Design SVG assets (scoped via
+/// `AskUserQuestion`: that would need a real asset-acquisition
+/// pipeline this codebase has no precedent for). Built directly to a
+/// real `w x h` box (not normalized/rescaled later) since `ShapeKey`
+/// itself has no scale transform -- the caller (`engine-py::add_
+/// loading_indicator`) already knows its own real size at construction
+/// time, the identical real "resolve real geometry once, not every
+/// frame" precedent every other real MD3 component factory already
+/// follows.
+pub mod loading_indicator_shapes {
+    use std::f64::consts::{FRAC_PI_2, PI};
+
+    use peniko::kurbo::{Ellipse, Point, RoundedRect, Shape};
+
+    use super::ShapeKey;
+
+    /// A regular pentagon, point-up, inscribed in the real `w x h`
+    /// box's own bounding circle.
+    pub fn pentagon(w: f64, h: f64) -> ShapeKey {
+        let (cx, cy) = (w / 2.0, h / 2.0);
+        let r = cx.min(cy);
+        ShapeKey::from_path(&ngon_path(cx, cy, r, r, 5, 1.0))
+    }
+
+    /// A real pill -- fully rounded on both ends, matching `Split
+    /// Button`'s own real "relaxed" corner shape (M38 Phase 4).
+    pub fn pill(w: f64, h: f64) -> ShapeKey {
+        let radius = h / 2.0;
+        // A looser real tessellation tolerance than the fill-path
+        // default (`0.1`) deliberately -- a smoother curve produces
+        // many more real vertices, which would badly outnumber the
+        // other three shapes' own small, hand-authored vertex counts
+        // and skew `ShapeKey::interpolate`'s own real "pad the shorter
+        // list" correspondence search toward a poor visual morph.
+        ShapeKey::from_path(&RoundedRect::new(0.0, 0.0, w, h, radius).to_path(1.0))
+    }
+
+    /// A real "cookie" -- a soft, scalloped shape, alternating between
+    /// a real outer and a real, slightly smaller inner radius around
+    /// six real real points (twelve total vertices).
+    pub fn cookie(w: f64, h: f64) -> ShapeKey {
+        let (cx, cy) = (w / 2.0, h / 2.0);
+        let r = cx.min(cy);
+        ShapeKey::from_path(&scalloped_path(cx, cy, r, 6, 0.82))
+    }
+
+    /// A real oval -- wider than tall, the identical real proportions
+    /// (2:1) MD3 Expressive's own real "Oval" shape has.
+    pub fn oval(w: f64, h: f64) -> ShapeKey {
+        let (cx, cy) = (w / 2.0, h / 2.0);
+        let r = cx.min(cy);
+        // The same real, looser tessellation tolerance `pill` already
+        // uses, for the identical real reason.
+        ShapeKey::from_path(&Ellipse::new((cx, cy), (r, r * 0.5), 0.0).to_path(1.0))
+    }
+
+    /// A real, regular N-gon -- `pentagon`'s own shared real generator,
+    /// `rx`/`ry` independent so a future real caller could build an
+    /// elongated one without a second function.
+    fn ngon_path(
+        cx: f64,
+        cy: f64,
+        rx: f64,
+        ry: f64,
+        sides: usize,
+        scale: f64,
+    ) -> peniko::kurbo::BezPath {
+        let mut path = peniko::kurbo::BezPath::new();
+        for i in 0..sides {
+            let angle = -FRAC_PI_2 + i as f64 * (2.0 * PI / sides as f64);
+            let p = Point::new(cx + rx * scale * angle.cos(), cy + ry * scale * angle.sin());
+            if i == 0 {
+                path.move_to(p);
+            } else {
+                path.line_to(p);
+            }
+        }
+        path.close_path();
+        path
+    }
+
+    /// A real, soft scalloped shape -- `scallops` real outer points,
+    /// each real pair separated by one real, slightly-closer-in inner
+    /// point (`inner_ratio` of the real outer radius), `2 * scallops`
+    /// vertices total.
+    fn scalloped_path(
+        cx: f64,
+        cy: f64,
+        r: f64,
+        scallops: usize,
+        inner_ratio: f64,
+    ) -> peniko::kurbo::BezPath {
+        let mut path = peniko::kurbo::BezPath::new();
+        let points = scallops * 2;
+        let inner_r = r * inner_ratio;
+        for i in 0..points {
+            let angle = -FRAC_PI_2 + i as f64 * (2.0 * PI / points as f64);
+            let radius = if i % 2 == 0 { r } else { inner_r };
+            let p = Point::new(cx + radius * angle.cos(), cy + radius * angle.sin());
+            if i == 0 {
+                path.move_to(p);
+            } else {
+                path.line_to(p);
+            }
+        }
+        path.close_path();
+        path
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

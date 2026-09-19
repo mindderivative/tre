@@ -1829,11 +1829,46 @@ impl Tree {
     /// loop is what actually drains this and invokes a real Python
     /// callback for each one (M9 Phase 2) -- this method itself stays
     /// pyo3-agnostic, just plumbing the real data out.
+    /// M39 Phase 2 (§5, §7): MD3 Expressive's own real, cited "650ms
+    /// per shape cycle" timing (a real open-source port's own README,
+    /// quoted directly -- the M3 spec page itself carries no fetchable
+    /// static value) -- kept even though the physics model itself was
+    /// simplified to plain easing (scoped via `AskUserQuestion`), the
+    /// real cited number is still the honest, grounded choice over an
+    /// arbitrary one.
+    const LOADING_INDICATOR_SHAPE_DURATION: Duration = Duration::from_millis(650);
+
     pub fn tick_all(&mut self, now: Instant) -> (bool, Vec<CompletionHandle>) {
         let mut any_active = false;
         let mut completed = Vec::new();
         for node in self.nodes.values_mut() {
             if node.paint.tick(now, &mut completed) {
+                any_active = true;
+            }
+            // M39 Phase 2 (§5, §7): a real `LoadingIndicator`'s own
+            // perpetual shape loop -- `node.paint.shape` was already
+            // ticked just above; if it's not currently mid-animation
+            // (either the very first real tick, or a real transition
+            // that genuinely just settled this tick -- `Animated::
+            // tick`'s own real implementation sets `active = None` in
+            // both the "never started" and "just completed" cases,
+            // confirmed by direct read), retarget it to the next real
+            // shape in the cycle, wrapping back to the first after the
+            // last. No app-side wiring needed at all -- see `Loading
+            // IndicatorState`'s own doc comment for the full real
+            // design.
+            if let NodeKind::LoadingIndicator(state) = &mut node.kind
+                && node.paint.shape.active.is_none()
+                && !state.shapes.is_empty()
+            {
+                state.current_shape = (state.current_shape + 1) % state.shapes.len();
+                let next = state.shapes[state.current_shape].clone();
+                node.paint.shape.animate_to(
+                    next,
+                    Self::LOADING_INDICATOR_SHAPE_DURATION,
+                    MotionCurve::Linear,
+                    now,
+                );
                 any_active = true;
             }
             if let Some(interaction) = &mut node.interaction
@@ -3881,7 +3916,8 @@ pub fn node_id_as_u64(id: NodeId) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node::{ScrollViewState, TextAlign, TextState};
+    use crate::animation::Animated;
+    use crate::node::{LoadingIndicatorState, ScrollViewState, TextAlign, TextState};
     use peniko::Color;
     use taffy::prelude::{FlexDirection, length};
 
@@ -5688,6 +5724,119 @@ mod tests {
             !any_active,
             "the animation must be finished well past its own duration"
         );
+    }
+
+    /// M39 Phase 2 (§5, §7) test scene: a real, focused-free `Loading
+    /// Indicator` node with its own four real, procedurally-generated
+    /// shapes and `paint.shape` seeded to the first one -- the
+    /// identical real construction `engine-py::add_loading_indicator`
+    /// performs.
+    fn loading_indicator_scene() -> (Tree, NodeId) {
+        let mut tree = Tree::new();
+        let state = LoadingIndicatorState::new(48.0, 48.0);
+        let mut paint = PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 0.0, 1.0);
+        paint.shape = Animated::new(state.shapes[0].clone());
+        let node = tree.insert(
+            NodeKind::LoadingIndicator(state),
+            Style {
+                size: Size {
+                    width: length(48.0),
+                    height: length(48.0),
+                },
+                ..Default::default()
+            },
+            paint,
+        );
+        (tree, node)
+    }
+
+    #[test]
+    fn loading_indicator_state_new_builds_four_real_distinct_non_empty_shapes() {
+        let state = LoadingIndicatorState::new(48.0, 48.0);
+        assert_eq!(
+            state.shapes.len(),
+            4,
+            "must build exactly the four real shapes"
+        );
+        for shape in &state.shapes {
+            assert!(
+                !shape.is_empty(),
+                "every real shape must have real vertices, not be empty"
+            );
+        }
+        // Pairwise distinct -- a real, decisive proof the four shape
+        // generators produce genuinely different geometry, not four
+        // copies of the same one.
+        for i in 0..state.shapes.len() {
+            for j in (i + 1)..state.shapes.len() {
+                assert_ne!(
+                    state.shapes[i], state.shapes[j],
+                    "shape {i} and shape {j} must be genuinely different real shapes"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tick_all_immediately_kicks_off_a_fresh_loading_indicators_own_shape_loop() {
+        let (mut tree, node) = loading_indicator_scene();
+        let now = Instant::now();
+        // A freshly-constructed indicator's own `shape` has no active
+        // animation yet (it was seeded directly via `Animated::new`,
+        // not `animate_to`) -- the very first real `tick_all` must
+        // notice this and kick off a real transition toward the
+        // *second* real shape (`current_shape` advances from 0 to 1).
+        let (any_active, _) = tree.tick_all(now);
+        assert!(
+            any_active,
+            "kicking off the real first shape transition must report active"
+        );
+        let NodeKind::LoadingIndicator(state) = &tree.get(node).unwrap().kind else {
+            panic!("expected a LoadingIndicator");
+        };
+        assert_eq!(
+            state.current_shape, 1,
+            "must advance to the real second shape"
+        );
+        let target = tree
+            .get(node)
+            .unwrap()
+            .paint
+            .shape
+            .active
+            .as_ref()
+            .map(|a| a.to.clone());
+        assert_eq!(
+            target,
+            Some(state.shapes[1].clone()),
+            "the real shape animation must target shape index 1"
+        );
+    }
+
+    #[test]
+    fn tick_all_advances_a_loading_indicator_to_the_next_shape_once_settled_and_wraps_at_the_end() {
+        let (mut tree, node) = loading_indicator_scene();
+        let mut now = Instant::now();
+        // Real duration per shape is 650ms. Each real call below is
+        // spaced >650ms after the previous one, so it both settles the
+        // transition that call kicked off *and* immediately kicks off
+        // the next one in the same real `tick_all` pass (`Animated::
+        // tick`'s own settle-then-this-block's-own-retarget both run
+        // within one call once `active.is_none()`) -- so every one of
+        // these four real calls advances `current_shape` by exactly
+        // one: 0 -> 1 -> 2 -> 3 -> 0 (wraps back to the real first
+        // shape).
+        for expected in [1, 2, 3, 0] {
+            tree.tick_all(now);
+            let NodeKind::LoadingIndicator(state) = &tree.get(node).unwrap().kind else {
+                panic!("expected a LoadingIndicator");
+            };
+            assert_eq!(
+                state.current_shape, expected,
+                "must advance to real shape index {expected}"
+            );
+            now += Duration::from_millis(700);
+        }
     }
 
     #[test]
