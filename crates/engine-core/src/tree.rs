@@ -2257,6 +2257,15 @@ impl Tree {
         let NodeKind::TextField(state) = &mut self.nodes[field].kind else {
             return None;
         };
+        // M38 Phase 2 (§5, §8): every key except `ArrowUp`/`ArrowDown`
+        // itself ends a real goal-column sequence -- those two arms
+        // manage `goal_column` themselves (seed it on the first hop,
+        // leave it alone on every further one), matching real desktop-
+        // editor behavior: only a *consecutive* run of vertical moves
+        // remembers the original column.
+        if !matches!(key, Key::ArrowUp | Key::ArrowDown) {
+            state.goal_column = None;
+        }
         match key {
             Key::Backspace => {
                 if Self::delete_selection(state) {
@@ -2370,12 +2379,16 @@ impl Tree {
                 }
                 if !shift && let Some(anchor) = state.selection_anchor.take() {
                     state.cursor = state.cursor.min(anchor);
+                    state.goal_column = None;
                     return Some(DispatchOutcome::None);
                 }
                 if shift {
                     state.selection_anchor.get_or_insert(state.cursor);
                 }
-                if let Some(target) = Self::move_to_line(&state.content, state.cursor, true) {
+                let goal = *state
+                    .goal_column
+                    .get_or_insert_with(|| Self::real_column(&state.content, state.cursor));
+                if let Some(target) = Self::move_to_line(&state.content, state.cursor, true, goal) {
                     state.cursor = target;
                 }
                 Some(DispatchOutcome::None)
@@ -2386,12 +2399,17 @@ impl Tree {
                 }
                 if !shift && let Some(anchor) = state.selection_anchor.take() {
                     state.cursor = state.cursor.max(anchor);
+                    state.goal_column = None;
                     return Some(DispatchOutcome::None);
                 }
                 if shift {
                     state.selection_anchor.get_or_insert(state.cursor);
                 }
-                if let Some(target) = Self::move_to_line(&state.content, state.cursor, false) {
+                let goal = *state
+                    .goal_column
+                    .get_or_insert_with(|| Self::real_column(&state.content, state.cursor));
+                if let Some(target) = Self::move_to_line(&state.content, state.cursor, false, goal)
+                {
                     state.cursor = target;
                 }
                 Some(DispatchOutcome::None)
@@ -2513,6 +2531,7 @@ impl Tree {
         state.content.replace_range(start..end, "");
         state.cursor = start;
         state.selection_anchor = None;
+        state.goal_column = None;
         true
     }
 
@@ -2533,18 +2552,34 @@ impl Tree {
             .map_or(content.len(), |i| cursor + i)
     }
 
+    /// A cursor's own real *character* column (not byte offset) on
+    /// whatever line it currently sits on -- the fresh-each-call
+    /// computation `move_to_line` used before M38 Phase 2, now also
+    /// used to *seed* `TextFieldState::goal_column` the first time a
+    /// real `ArrowUp`/`ArrowDown` sequence begins.
+    fn real_column(content: &str, cursor: usize) -> usize {
+        let line_start = Self::line_start(content, cursor);
+        content[line_start..cursor].chars().count()
+    }
+
     /// `Key::ArrowUp`/`ArrowDown`'s own real line-navigation logic:
     /// moves `cursor` to the adjacent line (`up`, or the next one),
-    /// preserving its own real *character* column (not byte offset --
-    /// UTF-8-safe the same way `ArrowLeft`/`ArrowRight`'s own `char_
-    /// indices` stepping already is), clamped to the target line's own
-    /// real length if it's shorter -- the same real "land at end of a
+    /// landing at `goal_column` (a real *character* column, UTF-8-safe
+    /// the same way `ArrowLeft`/`ArrowRight`'s own `char_indices`
+    /// stepping already is), clamped to the target line's own real
+    /// length if it's shorter -- the same real "land at end of a
     /// shorter line" convention every desktop text editor already has.
+    /// M38 Phase 2 (§5, §8): `goal_column` is the caller's own real
+    /// "goal column" memory (`TextFieldState::goal_column`), not
+    /// necessarily `cursor`'s own current column -- a consecutive
+    /// `ArrowUp`/`ArrowDown` sequence keeps landing at the *original*
+    /// column even after an intermediate shorter line clamped the
+    /// real cursor to something smaller, the real behavior a fuller
+    /// desktop editor already has and this v1 didn't track before.
     /// Returns `None` (a true no-op) at the buffer's own first/last
     /// line, where there's genuinely nowhere to go.
-    fn move_to_line(content: &str, cursor: usize, up: bool) -> Option<usize> {
+    fn move_to_line(content: &str, cursor: usize, up: bool, goal_column: usize) -> Option<usize> {
         let line_start = Self::line_start(content, cursor);
-        let column = content[line_start..cursor].chars().count();
         let (target_start, target_end) = if up {
             if line_start == 0 {
                 return None;
@@ -2562,7 +2597,7 @@ impl Tree {
         Some(
             content[target_start..target_end]
                 .char_indices()
-                .nth(column)
+                .nth(goal_column)
                 .map_or(target_end, |(i, _)| target_start + i),
         )
     }
@@ -2636,6 +2671,7 @@ impl Tree {
         };
         state.cursor = Self::char_boundary(&state.content, offset);
         state.selection_anchor = None;
+        state.goal_column = None;
         true
     }
 
@@ -2675,6 +2711,7 @@ impl Tree {
             state.selection_anchor = Some(state.cursor);
         }
         state.cursor = Self::char_boundary(&state.content, offset);
+        state.goal_column = None;
         true
     }
 
@@ -3137,6 +3174,7 @@ impl Tree {
                 Self::delete_selection(state);
                 state.content.insert_str(state.cursor, &text);
                 state.cursor += text.len();
+                state.goal_column = None;
                 // M17 Phase 2 (§8): a real insertion -- whether from a
                 // plain keypress or a real IME `Commit` (both reach
                 // this same arm) -- always clears any stale preedit.
@@ -7848,25 +7886,90 @@ mod tests {
             "ArrowUp must land on \"hi\"'s own end (column 5 clamped to its real length 2), \
              byte offset 6 (line start after first '\\n') + 2 = 8"
         );
-        // Real, deliberate v1 simplification, not a bug: `move_to_line`
-        // re-derives its own real column fresh from wherever the
-        // cursor currently sits each call -- it does not remember the
-        // original column 5 from before the first hop landed it on
-        // "hi"'s own shorter line, the same real "goal column" memory
-        // a fuller desktop editor would keep. A second ArrowUp here
-        // therefore preserves "hi"'s own real column 2, not 5.
+        dispatch_key(&mut tree, root, Key::ArrowDown);
+        assert_eq!(
+            field_state(&tree, field).cursor,
+            14,
+            "ArrowDown must move back down to \"world\", recalling the real goal column 5 \
+             remembered from before the ArrowUp (M38 Phase 2) -- landing exactly back at \
+             the original starting position, not \"hi\"'s own clamped column 2"
+        );
+    }
+
+    #[test]
+    fn arrow_up_and_down_remember_a_real_goal_column_through_a_shorter_line() {
+        // M38 Phase 2 (§5, §8): real goal-column memory -- a
+        // consecutive run of ArrowUp/ArrowDown must keep landing at
+        // the *original* column even after an intermediate shorter
+        // line clamps the real cursor to something smaller, not
+        // silently adopt that clamped column as the new goal.
+        let (mut tree, root, field) = multiline_field_scene("alphabet\nhi\nbanana");
+        // Cursor starts at content's own end -- inside "banana", real
+        // column 6 ("banana".chars().count()).
+        let start = field_state(&tree, field).cursor;
+        assert_eq!(start, 18, "sanity: cursor starts at content's own end");
+
         dispatch_key(&mut tree, root, Key::ArrowUp);
         assert_eq!(
             field_state(&tree, field).cursor,
-            2,
-            "ArrowUp again must preserve the real column 2 the previous hop actually landed \
-             at, not a remembered original column this v1 doesn't track"
+            11,
+            "ArrowUp must land on \"hi\"'s own end (column 6 clamped to its real length 2)"
+        );
+        dispatch_key(&mut tree, root, Key::ArrowUp);
+        assert_eq!(
+            field_state(&tree, field).cursor,
+            6,
+            "a second, consecutive ArrowUp must recall the real *original* goal column 6 \
+             from \"banana\" -- landing on \"alphabet\"'s own real column 6 ('e') -- not \
+             \"hi\"'s own clamped column 2 (which would land on 'p', byte 2, instead)"
         );
         dispatch_key(&mut tree, root, Key::ArrowDown);
         assert_eq!(
             field_state(&tree, field).cursor,
-            8,
-            "ArrowDown must move back down to \"hi\"'s own end (column 2 fits inside it)"
+            11,
+            "ArrowDown must move back down to \"hi\"'s own end (the remembered goal 6 still \
+             clamps to \"hi\"'s own real length 2)"
+        );
+        dispatch_key(&mut tree, root, Key::ArrowDown);
+        assert_eq!(
+            field_state(&tree, field).cursor,
+            start,
+            "a second, consecutive ArrowDown must recall the same real goal column 6 and \
+             land exactly back on the original starting position in \"banana\" -- a full \
+             up-up-down-down round trip through a shorter line returns to where it began"
+        );
+    }
+
+    #[test]
+    fn a_non_vertical_move_resets_the_remembered_goal_column() {
+        // M38 Phase 2 (§5, §8): only a genuinely *consecutive* run of
+        // ArrowUp/ArrowDown remembers a goal column -- any other
+        // cursor-moving key in between must reset it, so the next
+        // vertical move derives a fresh goal from wherever the cursor
+        // now really sits, not a stale one from before the interrupt.
+        let (mut tree, root, field) = multiline_field_scene("alphabet\nhi\nbanana");
+        dispatch_key(&mut tree, root, Key::ArrowUp);
+        assert_eq!(
+            field_state(&tree, field).cursor,
+            11,
+            "sanity: first ArrowUp lands on \"hi\"'s own end, same as the memory test above"
+        );
+        // A single ArrowLeft is an ordinary horizontal move -- it must
+        // reset the goal column even though it doesn't leave "hi".
+        dispatch_key(&mut tree, root, Key::ArrowLeft);
+        assert_eq!(
+            field_state(&tree, field).cursor,
+            10,
+            "sanity: now between 'h' and 'i' in \"hi\", real column 1"
+        );
+        dispatch_key(&mut tree, root, Key::ArrowUp);
+        assert_eq!(
+            field_state(&tree, field).cursor,
+            1,
+            "ArrowUp after an intervening ArrowLeft must derive a *fresh* goal column (1, \
+             \"hi\"'s own real column after the ArrowLeft) rather than recalling \"banana\"'s \
+             own stale column 6 from before the interrupt -- landing on 'l' in \"alphabet\" \
+             (byte 1), not 'e' (byte 6)"
         );
     }
 

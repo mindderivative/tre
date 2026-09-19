@@ -687,6 +687,20 @@ pub struct TextFieldState {
     /// to right after the nearest fold marker in that case, rather
     /// than drawing it somewhere genuinely invisible.
     pub folded_ranges: Vec<std::ops::Range<usize>>,
+    /// M38 Phase 2 (§5, §8): real "goal column" memory for consecutive
+    /// `ArrowUp`/`ArrowDown` moves -- `Some(column)` while such a
+    /// sequence is in progress, set to the cursor's own real column
+    /// the *first* time either key fires after any other cursor-
+    /// moving action, then left untouched by further `ArrowUp`/
+    /// `ArrowDown` in the same sequence (even through a shorter line
+    /// that clamps the real cursor to a smaller column) so a later
+    /// hop back onto a long-enough line lands back at the original
+    /// column -- the same real behavior every desktop text editor
+    /// already has. `None` (the default, and what every other cursor-
+    /// moving action resets it to -- `ArrowLeft`/`Right`, `Home`/
+    /// `End`, a click, typing, a delete) means "no goal yet, derive it
+    /// fresh from wherever the cursor currently sits."
+    pub goal_column: Option<usize>,
 }
 
 impl TextFieldState {
@@ -714,6 +728,7 @@ impl TextFieldState {
             show_whitespace: false,
             syntax_spans: Vec::new(),
             folded_ranges: Vec::new(),
+            goal_column: None,
         }
     }
 }

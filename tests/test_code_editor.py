@@ -127,6 +127,52 @@ def test_arrow_down_navigates_to_the_next_line():
     assert editor.get_text() == "line1\nXline2\nline3"
 
 
+def test_arrow_up_and_down_remember_a_real_goal_column_through_a_shorter_line():
+    """M38 Phase 2 (§5, §8): real goal-column memory -- a consecutive
+    run of ArrowUp presses must keep landing at the *original* column
+    even after an intermediate shorter line clamps the real cursor to
+    something smaller, not silently adopt that clamped column as a new
+    goal. Uses the same real `type_text`-then-`get_text()` positional
+    probe `test_arrow_up_navigates_to_the_previous_line` already
+    establishes -- there is no Python-level getter for a TextField's
+    own raw cursor offset, so where a typed marker character lands is
+    the real, observable proof.
+    """
+    window = Window(width=400, height=300)
+    editor = window.add_code_editor(
+        content="alphabet\nhi\nbanana", background=(255, 255, 255, 255), width=300, height=150
+    )
+    window.click(editor)
+    # Cursor starts at content's own end, inside "banana" -- real
+    # column 6. One ArrowUp clamps onto "hi" (only 2 real columns);
+    # a second, consecutive ArrowUp must recall the real *original*
+    # column 6, landing right before "alphabet"'s own 'e' (index 6),
+    # not "hi"'s own clamped column 2 (which would land before 'p').
+    window.press_key("up")
+    window.press_key("up")
+    window.type_text("X")
+    assert editor.get_text() == "alphabXet\nhi\nbanana"
+
+
+def test_a_non_vertical_move_resets_the_remembered_goal_column():
+    """M38 Phase 2 (§5, §8): only a genuinely *consecutive* run of
+    ArrowUp/ArrowDown remembers a goal column -- an ArrowLeft in
+    between must reset it, so the next ArrowUp derives a fresh goal
+    from wherever the cursor now really sits, not a stale one from
+    before the interrupt.
+    """
+    window = Window(width=400, height=300)
+    editor = window.add_code_editor(
+        content="alphabet\nhi\nbanana", background=(255, 255, 255, 255), width=300, height=150
+    )
+    window.click(editor)
+    window.press_key("up")  # lands on "hi"'s own end (clamped from column 6 to 2)
+    window.press_key("left")  # ordinary horizontal move -- real column now 1
+    window.press_key("up")
+    window.type_text("X")
+    assert editor.get_text() == "aXlphabet\nhi\nbanana"
+
+
 def test_tab_inserts_a_real_tab_character_instead_of_moving_focus():
     """M31 Phase 2 (§5, §8, §10): a focused Code Editor claims Tab for
     real indentation now, rather than falling through to ordinary
