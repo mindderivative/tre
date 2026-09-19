@@ -410,3 +410,35 @@ def test_navigating_and_editing_still_works_correctly_in_a_genuinely_overflowing
     assert len(editor.get_text()) == len(before) + 1, (
         "a real click after scrolling must still focus and insert at a real, valid position"
     )
+
+
+def test_navigating_horizontally_still_works_correctly_in_a_genuinely_overflowing_line():
+    """M39 Phase 1 (§5, §8): the identical real horizontal sibling of
+    M38 Phase 7's own vertical overflow test above -- there is no
+    Python getter for `horizontal_scroll_offset` itself, the same
+    real verification-surface limit; the exact real scroll math is
+    proven directly at the Rust level (`crates/engine-core/src/
+    tree.rs`'s own `scroll_text_field_caret_into_view_scrolls_right_*`/
+    `..._scrolls_back_left_*` tests) and the real clip/paint effect at
+    the pixel level (`crates/engine-render/tests/text_field_paint.rs`'s
+    own `a_nonzero_horizontal_scroll_offset_paints_genuinely_different_
+    pixels_than_unscrolled`). This proves the real, full FFI surface
+    still resolves correctly for a single real line much wider than
+    the box.
+    """
+    content = "a" * 60
+    window = Window(width=400, height=300)
+    editor = window.add_code_editor(
+        content=content, background=(255, 255, 255, 255), width=100, height=80
+    )
+    window.click(editor)
+    # Cursor starts at content's own real end (column 60) -- far past
+    # the real ~10-character visible viewport at font_size 14. 60
+    # ArrowLefts walks all the way back to column 0.
+    for _ in range(60):
+        window.press_key("left")
+    window.type_text("X")
+    assert editor.get_text().startswith("X"), (
+        "typing at the real line start after scrolling far past the visible horizontal "
+        "viewport must still land at the real, correct column"
+    )

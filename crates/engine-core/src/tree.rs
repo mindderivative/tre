@@ -2443,6 +2443,19 @@ impl Tree {
     /// not an exact metric.
     const CODE_EDITOR_LINE_HEIGHT_RATIO: f64 = 1.35;
 
+    /// M39 Phase 1 (§5, §8): a real, cited monospace character-advance-
+    /// width estimate for the horizontal half of caret-follow, for the
+    /// identical real reason `CODE_EDITOR_LINE_HEIGHT_RATIO` exists --
+    /// `engine-core` has no font-shaping access to measure one exactly
+    /// (§4). Not an external citation this time: this codebase's own
+    /// real, historical precedent (found via `git log -p` on `engine-
+    /// render/src/text.rs`, predating M32 Phase 1's switch to real
+    /// measured `monospace_cell_size`) already used exactly this ratio
+    /// for `Terminal`'s own analytic cell-width estimate before a real
+    /// bundled monospace face existed to measure -- reused verbatim
+    /// rather than re-derived.
+    const CODE_EDITOR_CHAR_WIDTH_RATIO: f64 = 0.6;
+
     /// M38 Phase 7 (§5, §8): real caret-follow -- if `field`'s own real
     /// caret would currently sit outside its own visible viewport
     /// (given its current `scroll_offset`), scrolls just enough to
@@ -2497,10 +2510,42 @@ impl Tree {
         }
         let scroll = scroll.clamp(0.0, max_scroll);
 
+        // M39 Phase 1 (§5, §8): the identical real "scroll just enough
+        // to reveal the caret" logic as the vertical case just above,
+        // along the horizontal axis instead -- `engine-render::text::
+        // field_max_width` never wraps a `multiline` field's own real
+        // lines, so a long line can overflow the box horizontally the
+        // same way tall content overflows it vertically.
+        let viewport_width = f64::from(self.layout(field).size.width);
+        let char_width = f64::from(state.font_size) * Self::CODE_EDITOR_CHAR_WIDTH_RATIO;
+        let h_scroll = if char_width <= 0.0 {
+            0.0
+        } else {
+            let caret_column = Self::real_column(&state.content, state.cursor) as f64;
+            let longest_line = state
+                .content
+                .split('\n')
+                .map(|line| line.chars().count())
+                .max()
+                .unwrap_or(0) as f64;
+            let max_h_scroll = (longest_line * char_width - viewport_width).max(0.0);
+            let caret_left = caret_column * char_width;
+            let caret_right = caret_left + char_width;
+
+            let mut h_scroll = state.horizontal_scroll_offset.current;
+            if caret_left < h_scroll {
+                h_scroll = caret_left;
+            } else if caret_right > h_scroll + viewport_width {
+                h_scroll = caret_right - viewport_width;
+            }
+            h_scroll.clamp(0.0, max_h_scroll)
+        };
+
         let NodeKind::TextField(state) = &mut self.nodes[field].kind else {
             unreachable!("checked above")
         };
         state.scroll_offset.current = scroll;
+        state.horizontal_scroll_offset.current = h_scroll;
     }
 
     fn dispatch_text_field_key(
@@ -9120,11 +9165,23 @@ mod tests {
     /// 200x100 viewport, `font_size = 14.0` matching `Tree::CODE_
     /// EDITOR_LINE_HEIGHT_RATIO`'s own real 1.35 multiplier for a
     /// real, hand-verifiable `line_height = 18.9`.
+    ///
+    /// M39 Phase 1 (§5, §8): the field is its own real `compute_
+    /// layout` root now -- real debugging while writing this phase's
+    /// own new horizontal scene found a real, latent bug in the
+    /// original wrapping-`Container`-root pattern this helper used to
+    /// have: `leaf(0.0, 0.0)`'s own explicit zero-width root style
+    /// puts the field inside a real, explicit *zero-width* flex-row
+    /// parent, and taffy's own default `flex_shrink: 1.0` genuinely
+    /// shrinks the field's own main-axis (width) size to fit that
+    /// zero available space -- real, silently wrong `layout(field).
+    /// size.width`, invisible only because no test here ever read it
+    /// (height survives, since it's the cross axis, where an explicit
+    /// size is honored directly rather than stretched). Mirrors
+    /// `scrollable_view`'s own already-correct pattern (`tree.rs`, M38
+    /// Phase 6).
     fn caret_follow_scene() -> (Tree, NodeId, NodeId) {
         let mut tree = Tree::new();
-        let (_, root_style, root_paint) = leaf(0.0, 0.0);
-        let root = tree.insert(NodeKind::Container, root_style, root_paint);
-
         let content = (0..20)
             .map(|i| format!("line{i}"))
             .collect::<Vec<_>>()
@@ -9142,16 +9199,15 @@ mod tests {
             },
             PaintProperties::new(Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF), 0.0, 0.0, 1.0),
         );
-        tree.add_child(root, field);
         tree.compute_layout(
-            root,
+            field,
             Size {
                 width: AvailableSpace::Definite(200.0),
                 height: AvailableSpace::Definite(100.0),
             },
         );
         tree.set_focus_to(field, 1.0, Duration::ZERO, Instant::now());
-        (tree, root, field)
+        (tree, field, field)
     }
 
     #[test]
@@ -9203,6 +9259,94 @@ mod tests {
             field_state(&tree, field).scroll_offset.current,
             0.0,
             "a single-line field's own scroll_offset must never move"
+        );
+    }
+
+    /// M39 Phase 1 (§5, §8) test scene: a real, laid-out, focused
+    /// multiline field with three real lines -- "short", 30 real
+    /// ASCII 'a' characters (genuinely wider than the real 100px
+    /// viewport at `font_size = 14.0`, `char_width = 14.0 * 0.6 =
+    /// 8.4`, so 30 chars = 252px), and "short2". Line 1 (the long
+    /// one) starts at real byte 6 ("short\n" is 6 bytes), so column
+    /// `N` on it sits at byte `6 + N` (every char is single-byte
+    /// ASCII).
+    fn horizontal_caret_follow_scene() -> (Tree, NodeId, NodeId) {
+        // The field is its own real `compute_layout` root -- the
+        // identical real pattern `scrollable_view` already proves
+        // (`tree.rs`'s own M38 Phase 6 scene helper): a wrapping
+        // `Container` root with an explicit `leaf(0.0, 0.0)` style
+        // (every *vertical* caret-follow scene's own pattern) puts the
+        // field inside a real, explicit *zero-width* flex-row parent
+        // -- real, found by direct debugging before writing this fix,
+        // not assumed -- so taffy's own default `flex_shrink: 1.0`
+        // genuinely shrinks the field's own main-axis (width) size
+        // down to fit that zero available space, even though its own
+        // `Style` asks for a real 100px. Height survives only because
+        // it's the cross axis, where an explicit (non-`Auto`) size is
+        // honored directly rather than stretched. Skipping the wrapper
+        // root avoids the whole issue: an `Auto`-or-explicit-sized
+        // top-level `compute_layout` root takes its own real size
+        // straight from the available-space argument, no flex
+        // algorithm involved.
+        let mut tree = Tree::new();
+        let content = format!("short\n{}\nshort2", "a".repeat(30));
+        let mut state = TextFieldState::new(content, "Monospace", 400.0, 14.0);
+        state.multiline = true;
+        let field = tree.insert(
+            NodeKind::TextField(state),
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(100.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF), 0.0, 0.0, 1.0),
+        );
+        tree.compute_layout(
+            field,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+        tree.set_focus_to(field, 1.0, Duration::ZERO, Instant::now());
+        (tree, field, field)
+    }
+
+    #[test]
+    fn scroll_text_field_caret_into_view_scrolls_right_to_reveal_a_caret_past_the_viewport() {
+        let (mut tree, _root, field) = horizontal_caret_follow_scene();
+        // Column 20 on the long line: caret_left = 20 * 8.4 = 168.0,
+        // caret_right = 176.4 -- past the real 100px viewport (h-
+        // scroll starts at 0), so this must scroll right exactly
+        // enough to reveal it: 176.4 - 100 = 76.4.
+        tree.set_text_field_cursor(field, 26);
+        let h_scroll = field_state(&tree, field).horizontal_scroll_offset.current;
+        assert!(
+            (h_scroll - 76.4).abs() < 0.01,
+            "must scroll right exactly enough to reveal column 20's own real right edge, got \
+             {h_scroll}"
+        );
+    }
+
+    #[test]
+    fn scroll_text_field_caret_into_view_scrolls_back_left_to_reveal_a_caret_before_the_viewport() {
+        let (mut tree, _root, field) = horizontal_caret_follow_scene();
+        // First scroll right to a real, deep column (column 25).
+        tree.set_text_field_cursor(field, 31);
+        assert!(
+            field_state(&tree, field).horizontal_scroll_offset.current > 0.0,
+            "sanity: scrolled right for column 25"
+        );
+        // Then jump the cursor back to the real line start (column 0,
+        // byte 6) -- caret_left = 0.0, below any positive h-scroll, so
+        // this must scroll all the way back to exactly 0.0.
+        tree.set_text_field_cursor(field, 6);
+        let h_scroll = field_state(&tree, field).horizontal_scroll_offset.current;
+        assert_eq!(
+            h_scroll, 0.0,
+            "must scroll all the way back left to reveal column 0, got {h_scroll}"
         );
     }
 

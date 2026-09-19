@@ -796,6 +796,19 @@ pub struct TextFieldState {
     /// ever eased. `0.0` (the default) is a true no-op for every
     /// existing single-line/non-overflowing field, unchanged.
     pub scroll_offset: Animated<f64>,
+    /// M39 Phase 1 (§5, §8): `scroll_offset`'s own real horizontal
+    /// sibling -- a genuinely overflowing real line (`engine-render::
+    /// text::field_max_width` shapes every `multiline` field at
+    /// `f32::MAX`, confirmed by direct read: no line ever wraps, it
+    /// simply extends right, clipped since M38 Phase 7 but not
+    /// scrollable until this field). Identical real contract to
+    /// `scroll_offset`: a real pixel offset, driven directly by
+    /// `Tree::scroll_text_field_caret_into_view` and `engine-render`'s
+    /// own paint code, never through `animate_field`/central ticking.
+    /// `0.0` (the default) is a true no-op for every existing single-
+    /// line field and every multiline field whose own longest real
+    /// line still fits the box, unchanged.
+    pub horizontal_scroll_offset: Animated<f64>,
 }
 
 impl TextFieldState {
@@ -825,6 +838,7 @@ impl TextFieldState {
             folded_ranges: Vec::new(),
             goal_column: None,
             scroll_offset: Animated::new(0.0),
+            horizontal_scroll_offset: Animated::new(0.0),
         }
     }
 }

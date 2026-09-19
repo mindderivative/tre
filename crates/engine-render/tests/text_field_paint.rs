@@ -745,3 +745,66 @@ fn a_nonzero_scroll_offset_paints_genuinely_different_pixels_than_unscrolled() {
         );
     });
 }
+
+/// M39 Phase 1 (§5, §8): `horizontal_scroll_offset`'s own real pixel-
+/// level proof, the identical real "genuinely different pixels" shape
+/// `a_nonzero_scroll_offset_paints_genuinely_different_pixels_than_
+/// unscrolled` already establishes for the vertical case, just along
+/// the horizontal axis -- a field with one real 40-character line (far
+/// wider than the real 100px box) must paint differently once scrolled
+/// right.
+#[test]
+fn a_nonzero_horizontal_scroll_offset_paints_genuinely_different_pixels_than_unscrolled() {
+    pollster::block_on(async {
+        fn scene(h_scroll: f64) -> (Tree, engine_core::NodeId) {
+            let mut state = TextFieldState::new("a".repeat(40), "Roboto", 400.0, 14.0);
+            state.multiline = true;
+            state.horizontal_scroll_offset.current = h_scroll;
+
+            let mut tree = Tree::new();
+            let root = tree.insert(
+                NodeKind::Rect,
+                Style {
+                    size: Size {
+                        width: length(100.0),
+                        height: length(40.0),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+            );
+            let field = tree.insert(
+                NodeKind::TextField(state),
+                Style {
+                    size: Size {
+                        width: length(100.0),
+                        height: length(40.0),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(FIELD_COLOR, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(root, field);
+            tree.compute_layout(
+                root,
+                Size {
+                    width: AvailableSpace::Definite(100.0),
+                    height: AvailableSpace::Definite(40.0),
+                },
+            );
+            (tree, root)
+        }
+
+        let (unscrolled_tree, unscrolled_root) = scene(0.0);
+        let (data_unscrolled, _) = render(&unscrolled_tree, unscrolled_root, 100, 40).await;
+
+        let (scrolled_tree, scrolled_root) = scene(100.0);
+        let (data_scrolled, _) = render(&scrolled_tree, scrolled_root, 100, 40).await;
+
+        assert!(
+            data_scrolled != data_unscrolled,
+            "a real nonzero horizontal_scroll_offset must paint genuinely different pixels than \
+             the same content unscrolled -- the two renders were pixel-identical"
+        );
+    });
+}

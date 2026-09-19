@@ -1128,8 +1128,9 @@ class Window:
         monospace face (M32 Phase 1, `"Hack Nerd Font Mono"`) --
         `font_family` isn't exposed here, since any other name would
         defeat a genuinely monospace editor's own point. Content
-        taller than the box scrolls and clips automatically, and the
-        caret auto-scrolls into view as it moves -- no app-side
+        taller or a line wider than the box both scroll and clip
+        automatically, and the caret auto-scrolls into view (both
+        vertically and horizontally) as it moves -- no app-side
         wiring needed.
         """
         ...

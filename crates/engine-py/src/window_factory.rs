@@ -6970,13 +6970,12 @@ impl PyWindow {
     /// mechanism, not `ScrollView` wrapping -- scoped via
     /// `AskUserQuestion` since that would need real `taffy` measure-
     /// function integration this codebase has no precedent for).
-    /// **Real, stated v1 limit still open, not silently dropped:**
-    /// horizontal scroll for a line wider than the box is not part of
-    /// this -- a real, separate, genuinely different problem (this
-    /// phase's own scope was the box's *vertical* overflow, matching
-    /// real code-editor use, where lines are usually wrapped or kept
-    /// short rather than scrolled sideways) left for a future phase if
-    /// it turns out to be a real, load-bearing need.
+    /// **M39 Phase 1 (§5, §8): real horizontal scroll+clip for a line
+    /// wider than the box, with real horizontal caret-follow, closes
+    /// the real, separate gap this doc comment used to name here
+    /// too.** `TextFieldState.horizontal_scroll_offset`'s own doc
+    /// comment has the full real design -- the identical dedicated-
+    /// mechanism shape, parallel to `scroll_offset`'s own vertical one.
     ///
     /// **M32 Phase 1 (§5, §8, §10):** always shapes with the real
     /// bundled monospace face (`engine_render::MONOSPACE_FONT_FAMILY`,

@@ -594,8 +594,14 @@ fn paint_node(
             // horizontal overflow behavior is unaffected, a real,
             // deliberate v1 scope match to this phase's own "Code
             // Editor" title, not a general text-overflow feature.
+            // M39 Phase 1 (§5, §8): `horizontal_scroll_offset`'s own
+            // real paint-time shift, the identical real mechanism
+            // `scroll_offset`'s own `y` shift just above already
+            // establishes -- `0.0` for every field that never sets it
+            // (every single-line field, and every multiline field
+            // whose own longest real line still fits the box).
             let text_at = TextPlacement {
-                x: 0.0,
+                x: -state.horizontal_scroll_offset.current,
                 y: -state.scroll_offset.current,
                 max_width: w as f32,
                 color: text_color,
