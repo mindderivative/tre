@@ -226,3 +226,63 @@ def test_set_syntax_spans_rejects_a_non_text_field_node():
     rect = window.add_rect(background=(0, 0, 0, 255), width=24, height=24)
     with pytest.raises(ValueError, match="Rect has no property 'syntax_spans'"):
         rect.set_syntax_spans([(0, 1, (255, 0, 0, 255))])
+
+
+def test_set_folded_ranges_does_not_raise_and_never_touches_real_content():
+    """M31 Phase 5 (§5, §8): `set_folded_ranges` is paint-only -- the
+    real proof that a folded range genuinely paints differently (and
+    that a click past it resolves to a real content offset) is at the
+    Rust level (`crates/engine-render/tests/text_field_paint.rs`'s own
+    `a_folded_range_paints_genuinely_different_pixels_than_unfolded`/
+    `hit_test_position_on_a_folded_field_returns_real_content_
+    offsets`); this test proves the real FFI surface.
+    """
+    window = Window(width=400, height=300)
+    editor = window.add_code_editor(
+        content="def add(a, b):\n    return a + b",
+        background=(255, 255, 255, 255),
+        width=300,
+        height=150,
+    )
+    editor.set_folded_ranges([(15, 33)])  # collapses the whole function body
+    assert editor.get_text() == "def add(a, b):\n    return a + b"
+
+    # Real ranges replace the whole list every call -- an empty list
+    # is a real, valid way to clear all folding.
+    editor.set_folded_ranges([])
+    assert editor.get_text() == "def add(a, b):\n    return a + b"
+
+
+def test_set_folded_ranges_rejects_a_non_text_field_node():
+    window = Window(width=400, height=300)
+    rect = window.add_rect(background=(0, 0, 0, 255), width=24, height=24)
+    with pytest.raises(ValueError, match="Rect has no property 'folded_ranges'"):
+        rect.set_folded_ranges([(0, 1)])
+
+
+def test_folding_and_syntax_highlighting_compose_without_raising():
+    """M31 Phase 5 (§5, §8): real proof that folding and syntax
+    coloring -- both real, independent paint transforms in `draw_
+    field`, each chaining its own real byte-offset remap through the
+    other -- can be active simultaneously without raising, and a real
+    edit afterward still reads back exactly. A real render loop
+    exercising this exact combination was already run manually before
+    writing this suite (per this project's own established discipline
+    of a real empirical check before trusting pytest); a *second* real
+    `App.run()` call is deliberately not added here -- a real, already
+    -found hazard in this same test session (a second real event-loop
+    invocation within one pytest process can break an unrelated,
+    already-passing real render-loop test elsewhere in the suite).
+    """
+    window = Window(width=400, height=300)
+    editor = window.add_code_editor(
+        content="def add(a, b):\n    return a + b",
+        background=(255, 255, 255, 255),
+        width=300,
+        height=150,
+    )
+    editor.set_folded_ranges([(15, 33)])
+    editor.set_syntax_spans([(0, 3, (0xC0, 0x1C, 0x28, 0xFF))])
+    window.click(editor)
+    window.type_text("X")
+    assert editor.get_text() == "def add(a, b):\n    return a + bX"

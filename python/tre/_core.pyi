@@ -176,6 +176,17 @@ class Node:
         (app-side only). Raises `ValueError` for any other kind.
         """
         ...
+    def set_folded_ranges(self, ranges: Sequence[tuple[int, int]]) -> None:
+        """`TextField`-only: collapses each `(start, end)` real byte
+        range of `get_text()`'s own content into one visible "⋯"
+        marker at paint time. Replaces the whole list every call.
+        Real, deliberate v1 limitation: cursor navigation (`Home`/
+        `End`/`ArrowUp`/`ArrowDown`) is not fold-aware -- a real
+        cursor can still move into a folded region; the *displayed*
+        caret clamps to right after the nearest marker in that case.
+        Raises `ValueError` for any other kind.
+        """
+        ...
 
 class Window:
     """One real OS window and the node tree painted into it. Add one or

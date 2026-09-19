@@ -961,6 +961,43 @@ impl Node {
             .into()),
         }
     }
+
+    /// M31 Phase 5 (§5, §8): sets a Code Editor's own real, paint-only
+    /// content folding -- `ranges` is a list of `(start, end)` tuples,
+    /// each naming a real byte range of `get_text()`'s own content to
+    /// collapse into one visible "⋯" marker. `TextField`-only, the
+    /// identical real contract `set_syntax_spans` already has.
+    /// Replaces the whole list on every call; `engine-core` never
+    /// interprets these ranges itself -- deciding *which* real lines
+    /// are foldable/currently folded is the app's own concern (this
+    /// codebase has no code-structure awareness of its own to decide
+    /// that itself), the identical real "app's own concern" split
+    /// `set_syntax_spans` already has for overlapping/out-of-order
+    /// input. **Real, deliberate v1 limitation, stated directly:**
+    /// this never makes cursor navigation fold-aware -- a real cursor
+    /// can still move into a folded region via `Home`/`End`/`ArrowUp`/
+    /// `ArrowDown`; `engine-render`'s own paint code clamps the
+    /// *displayed* caret to right after the nearest fold marker in
+    /// that case (`TextFieldState.folded_ranges`'s own doc comment has
+    /// the full real reasoning).
+    pub(crate) fn set_folded_ranges(&self, ranges: Vec<(usize, usize)>) -> PyResult<()> {
+        let mut tree = self.tree.borrow_mut();
+        let node = tree.get_mut(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        let kind = kind_name(&node.kind);
+        match &mut node.kind {
+            NodeKind::TextField(state) => {
+                state.folded_ranges = ranges.into_iter().map(|(start, end)| start..end).collect();
+                Ok(())
+            }
+            _ => Err(EngineError::UnknownProperty {
+                kind,
+                property: "folded_ranges".to_string(),
+            }
+            .into()),
+        }
+    }
 }
 
 /// M9 Phase 2 (§5): `animate()`'s own shared "start this field

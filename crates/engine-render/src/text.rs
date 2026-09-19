@@ -325,16 +325,20 @@ impl TextRenderer {
         at: TextPlacement,
         point: Point,
     ) -> usize {
-        // M31 Phase 3 (§5, §8): a real click resolves against whatever
-        // is actually *painted* -- when whitespace indicators are on,
-        // that's the substituted glyphs, so the layout built here must
-        // match, and the real display-space byte offset `Cursor::
-        // from_point` returns must be mapped back into `state.
-        // content`'s own real byte space before this returns it.
+        // M31 Phase 5 (§5, §8) then M31 Phase 3 (§5, §8): a real click
+        // resolves against whatever is actually *painted* -- folded
+        // ranges collapsed to a marker, then whitespace substituted on
+        // top of that -- so the layout built here must match the
+        // identical real chain `draw_field` builds, and the real
+        // display-space byte offset `Cursor::from_point` returns has
+        // to be mapped back through *both* steps, in reverse order,
+        // into `state.content`'s own real byte space before this
+        // returns it.
+        let folded_content = elide_folded_ranges(&state.content, &state.folded_ranges);
         let content = if state.show_whitespace {
-            substitute_whitespace(&state.content)
+            substitute_whitespace(&folded_content)
         } else {
-            state.content.clone()
+            folded_content.clone()
         };
         let layout = self.build_field_layout(
             &content,
@@ -345,11 +349,12 @@ impl TextRenderer {
         );
         let display_offset =
             Cursor::from_point(&layout, (point.x - at.x) as f32, (point.y - at.y) as f32).index();
-        if state.show_whitespace {
-            from_display_offset(&state.content, display_offset)
+        let folded_offset = if state.show_whitespace {
+            from_display_offset(&folded_content, display_offset)
         } else {
             display_offset
-        }
+        };
+        from_display_offset_folded(state.content.len(), &state.folded_ranges, folded_offset)
     }
 
     /// M15 Phase 1 (§5, §16.7): `draw`'s own real editable-field
@@ -397,57 +402,56 @@ impl TextRenderer {
             _ => (state.content.clone(), None, state.cursor),
         };
 
-        // M31 Phase 3 (§5, §8): real, paint-only visible glyphs for
-        // space/tab -- applied only while no real preedit is active
-        // (skipped during a live IME composition, a vanishingly rare
-        // combination in practice; the preedit splice above keeps its
-        // own already-correct byte offsets unsubstituted in that
-        // case). Substituting changes `display_content`'s own byte
-        // layout relative to `state.content` (`·`/`→` are multi-byte,
-        // space/tab are one byte each), so every real byte offset used
-        // below to query the substituted `layout` has to be mapped
-        // through `to_display_offset` first.
-        let (display_content, cursor_for_layout, anchor_for_layout, caret_at) =
-            if state.show_whitespace && preedit_range.is_none() {
-                (
-                    substitute_whitespace(&display_content),
-                    to_display_offset(&state.content, state.cursor),
-                    state
-                        .selection_anchor
-                        .map(|anchor| to_display_offset(&state.content, anchor)),
-                    to_display_offset(&state.content, caret_at),
-                )
+        // M31 Phase 5 (§5, §8) then M31 Phase 3 (§5, §8): two real,
+        // paint-only transforms, chained in this order -- content
+        // folding first (collapsing whole real byte ranges to one
+        // marker), then visible whitespace glyphs on whatever real
+        // text that folding left behind. Both are skipped while a
+        // real preedit is active (a vanishingly rare combination in
+        // practice; the preedit splice above keeps its own already-
+        // correct byte offsets untouched in that case). Each real
+        // offset used below to query the final `layout` has to be
+        // mapped through *both* steps, in the same order, or cursor/
+        // selection/caret/spans would silently desync from what's
+        // actually painted.
+        let folded_content = elide_folded_ranges(&state.content, &state.folded_ranges);
+        let to_display = |offset: usize| -> usize {
+            if preedit_range.is_some() {
+                return offset;
+            }
+            let folded =
+                to_display_offset_folded(state.content.len(), &state.folded_ranges, offset);
+            if state.show_whitespace {
+                to_display_offset(&folded_content, folded)
             } else {
-                (
-                    display_content,
-                    state.cursor,
-                    state.selection_anchor,
-                    caret_at,
-                )
-            };
+                folded
+            }
+        };
+
+        let display_content = if preedit_range.is_none() {
+            if state.show_whitespace {
+                substitute_whitespace(&folded_content)
+            } else {
+                folded_content.clone()
+            }
+        } else {
+            display_content
+        };
+
+        let cursor_for_layout = to_display(state.cursor);
+        let anchor_for_layout = state.selection_anchor.map(to_display);
+        let caret_at = to_display(caret_at);
 
         // M31 Phase 4 (§5, §8): the app's own real syntax spans,
-        // remapped through the identical real byte-offset map whenever
-        // whitespace substitution also shifted `display_content`'s own
-        // byte layout (M31 Phase 3) -- both real features address the
-        // same real `display_content`, so both real offset spaces have
-        // to agree.
-        let display_spans: Vec<(Range<usize>, Color)> =
-            if state.show_whitespace && preedit_range.is_none() {
-                state
-                    .syntax_spans
-                    .iter()
-                    .map(|(range, color)| {
-                        (
-                            to_display_offset(&state.content, range.start)
-                                ..to_display_offset(&state.content, range.end),
-                            *color,
-                        )
-                    })
-                    .collect()
-            } else {
-                state.syntax_spans.clone()
-            };
+        // remapped through the identical real chained offset map
+        // whenever folding/whitespace substitution shifted `display_
+        // content`'s own byte layout -- every real feature addressing
+        // the same real `display_content` has to agree on its offsets.
+        let display_spans: Vec<(Range<usize>, Color)> = state
+            .syntax_spans
+            .iter()
+            .map(|(range, color)| (to_display(range.start)..to_display(range.end), *color))
+            .collect();
 
         let layout = self.shaped_layout(
             node_id,
@@ -783,6 +787,127 @@ fn from_display_offset(content: &str, display_offset: usize) -> usize {
     content.len()
 }
 
+/// M31 Phase 5 (§5, §8): real, paint-only content folding -- the real
+/// visible marker a folded range collapses to (`⋯`, U+22EF MIDLINE
+/// HORIZONTAL ELLIPSIS, the same real "something is hidden here" glyph
+/// convention VS Code/Sublime Text both use, not a silent vanish).
+const FOLD_MARKER: char = '\u{22EF}';
+
+/// One real stretch of `content` on the real content-to-display
+/// mapping every fold-aware function below walks identically --
+/// either passed through byte-for-byte (`Verbatim`) or collapsed to
+/// one real `FOLD_MARKER` glyph (`Folded`). Factored out once so
+/// `elide_folded_ranges`/`to_display_offset_folded`/`from_display_
+/// offset_folded` can never silently disagree about where a fold's
+/// own real boundaries fall.
+enum FoldSegment {
+    Verbatim(Range<usize>),
+    Folded(Range<usize>),
+}
+
+/// Real, defensive normalization of `folded` against `content_len` --
+/// `engine-core` never validates `TextFieldState.folded_ranges`
+/// itself (`syntax_spans`'s own identical real "the app's own
+/// concern" contract), so a malformed real range (out of order,
+/// overlapping, out of bounds) is skipped here rather than corrupting
+/// every real offset computed downstream of it.
+fn fold_segments(content_len: usize, folded: &[Range<usize>]) -> Vec<FoldSegment> {
+    let mut segments = Vec::new();
+    let mut cursor = 0;
+    for range in folded {
+        if range.start < cursor || range.end <= range.start || range.end > content_len {
+            continue;
+        }
+        if range.start > cursor {
+            segments.push(FoldSegment::Verbatim(cursor..range.start));
+        }
+        segments.push(FoldSegment::Folded(range.clone()));
+        cursor = range.end;
+    }
+    if cursor < content_len {
+        segments.push(FoldSegment::Verbatim(cursor..content_len));
+    }
+    segments
+}
+
+/// `draw_field`'s own real, paint-only transform -- `state.content`
+/// itself is never touched (`TextFieldState.folded_ranges`'s own doc
+/// comment); every real folded byte range collapses into one real
+/// `FOLD_MARKER` glyph.
+fn elide_folded_ranges(content: &str, folded: &[Range<usize>]) -> String {
+    let mut out = String::with_capacity(content.len());
+    for segment in fold_segments(content.len(), folded) {
+        match segment {
+            FoldSegment::Verbatim(range) => out.push_str(&content[range]),
+            FoldSegment::Folded(_) => out.push(FOLD_MARKER),
+        }
+    }
+    out
+}
+
+/// Maps a real byte offset into `content` to the corresponding byte
+/// offset into `elide_folded_ranges(content, folded)`. A real,
+/// deliberate v1 clamp for an offset landing *inside* a real folded
+/// range (this codebase doesn't make cursor navigation fold-aware --
+/// a real, stated v1 simplification, the user's own explicit choice
+/// when scoping this phase): resolves to right after that fold's own
+/// real marker, the same "can't usefully distinguish a position
+/// inside genuinely hidden content" reasoning `to_display_offset`'s
+/// own real one-char-in-one-char-out design never has to make.
+fn to_display_offset_folded(content_len: usize, folded: &[Range<usize>], offset: usize) -> usize {
+    let mut display = 0;
+    for segment in fold_segments(content_len, folded) {
+        match segment {
+            FoldSegment::Verbatim(range) => {
+                if offset <= range.end {
+                    return display + offset.saturating_sub(range.start);
+                }
+                display += range.end - range.start;
+            }
+            FoldSegment::Folded(range) => {
+                if offset < range.end {
+                    return display + FOLD_MARKER.len_utf8();
+                }
+                display += FOLD_MARKER.len_utf8();
+            }
+        }
+    }
+    display
+}
+
+/// `to_display_offset_folded`'s own real inverse -- `hit_test_
+/// position`'s own real need, translating a real click's resolved
+/// *display*-space byte offset (against the real folded/elided
+/// layout) back into `content`'s own real byte space. A click
+/// resolving inside a real marker's own glyph lands at that fold's
+/// own real start byte -- clicking a collapsed "⋯" is a real,
+/// reasonable place to land a caret right before what it hides.
+fn from_display_offset_folded(
+    content_len: usize,
+    folded: &[Range<usize>],
+    display_offset: usize,
+) -> usize {
+    let mut display = 0;
+    for segment in fold_segments(content_len, folded) {
+        match segment {
+            FoldSegment::Verbatim(range) => {
+                let len = range.end - range.start;
+                if display_offset <= display + len {
+                    return range.start + (display_offset - display);
+                }
+                display += len;
+            }
+            FoldSegment::Folded(range) => {
+                if display_offset < display + FOLD_MARKER.len_utf8() {
+                    return range.start;
+                }
+                display += FOLD_MARKER.len_utf8();
+            }
+        }
+    }
+    content_len
+}
+
 /// Where and how wide to draw one text node -- bundled so
 /// `TextRenderer::draw` stays under clippy's argument-count lint without
 /// losing any of these genuinely-distinct-per-call values.
@@ -1037,6 +1162,88 @@ mod tests {
             substitute_whitespace("café"),
             "café",
             "a real non-whitespace character must never be substituted"
+        );
+    }
+
+    #[test]
+    #[allow(clippy::single_range_in_vec_init)]
+    fn elide_folded_ranges_collapses_each_real_range_to_one_marker() {
+        // "0123456789" with 3..6 ("345") folded.
+        assert_eq!(
+            elide_folded_ranges("0123456789", &[3..6]),
+            "012\u{22EF}6789"
+        );
+        // Two real, non-adjacent folds.
+        assert_eq!(
+            elide_folded_ranges("0123456789", &[1..3, 7..9]),
+            "0\u{22EF}3456\u{22EF}9"
+        );
+        // No real folds at all -- byte-for-byte unchanged.
+        assert_eq!(elide_folded_ranges("hello", &[]), "hello");
+    }
+
+    #[test]
+    #[allow(clippy::single_range_in_vec_init)]
+    fn elide_folded_ranges_skips_a_real_malformed_range_rather_than_corrupting_output() {
+        // Out of order (starts before the previous fold's own end),
+        // inverted (end <= start), and out of bounds -- each must be
+        // skipped, not panic or corrupt the real unfolded remainder.
+        assert_eq!(
+            elide_folded_ranges("0123456789", &[3..6, 4..5]),
+            "012\u{22EF}6789"
+        );
+        assert_eq!(elide_folded_ranges("0123456789", &[5..5]), "0123456789");
+        assert_eq!(elide_folded_ranges("0123456789", &[8..100]), "0123456789");
+    }
+
+    #[test]
+    #[allow(clippy::single_range_in_vec_init)]
+    fn folded_display_offset_mapping_round_trips_every_real_char_boundary_outside_a_fold() {
+        let content = "0123456789";
+        let folded = [3..6];
+        for (byte_offset, _) in content.char_indices() {
+            if (3..6).contains(&byte_offset) {
+                continue; // real, deliberate v1 clamp -- tested separately below.
+            }
+            let display = to_display_offset_folded(content.len(), &folded, byte_offset);
+            let back = from_display_offset_folded(content.len(), &folded, display);
+            assert_eq!(
+                back, byte_offset,
+                "byte offset {byte_offset} outside any real fold must round-trip unchanged, \
+                 got {back} (via display offset {display})"
+            );
+        }
+    }
+
+    #[test]
+    #[allow(clippy::single_range_in_vec_init)]
+    fn folded_display_offset_clamps_a_real_offset_inside_a_fold_to_just_after_its_marker() {
+        let content = "0123456789";
+        let folded = [3..6];
+        // Every real offset strictly inside the fold (4, 5) must clamp
+        // to the identical real display position -- right after the
+        // one real marker glyph -- the same real "can't usefully
+        // distinguish a position inside genuinely hidden content"
+        // reasoning `to_display_offset_folded`'s own doc comment
+        // states.
+        let at_3 = to_display_offset_folded(content.len(), &folded, 3);
+        let at_4 = to_display_offset_folded(content.len(), &folded, 4);
+        let at_5 = to_display_offset_folded(content.len(), &folded, 5);
+        assert_eq!(at_4, at_3 + FOLD_MARKER.len_utf8());
+        assert_eq!(at_5, at_3 + FOLD_MARKER.len_utf8());
+    }
+
+    #[test]
+    #[allow(clippy::single_range_in_vec_init)]
+    fn from_folded_display_offset_inside_the_marker_lands_at_the_folds_own_real_start() {
+        let content = "0123456789";
+        let folded = [3..6];
+        let marker_start = to_display_offset_folded(content.len(), &folded, 3);
+        assert_eq!(
+            from_display_offset_folded(content.len(), &folded, marker_start),
+            3,
+            "a real display offset landing on the marker's own glyph must resolve to the \
+             fold's own real start byte"
         );
     }
 }

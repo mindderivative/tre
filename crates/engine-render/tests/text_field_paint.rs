@@ -548,3 +548,64 @@ fn syntax_spans_color_only_their_own_real_byte_range() {
         );
     });
 }
+
+/// M31 Phase 5 (§5, §8): the real, definitive proof a folded range
+/// genuinely paints differently than its own real unfolded content --
+/// a real render of `"hello world"` with `"llo wor"` (bytes 2..9)
+/// folded must produce genuinely different pixels than the same real
+/// content painted unfolded, the same diff-based proof this file's
+/// own hard-to-pin-exact-pixel claims already use.
+#[test]
+#[allow(clippy::single_range_in_vec_init)]
+fn a_folded_range_paints_genuinely_different_pixels_than_unfolded() {
+    pollster::block_on(async {
+        let unfolded_state = TextFieldState::new("hello world", "Roboto", 400.0, 16.0);
+        let (tree_unfolded, root_unfolded, _) = build_tree_with_state(unfolded_state);
+        let (data_unfolded, _) = render(&tree_unfolded, root_unfolded, 100, 24).await;
+
+        let mut folded_state = TextFieldState::new("hello world", "Roboto", 400.0, 16.0);
+        folded_state.folded_ranges = vec![2..9];
+        let (tree_folded, root_folded, _) = build_tree_with_state(folded_state);
+        let (data_folded, _) = render(&tree_folded, root_folded, 100, 24).await;
+
+        assert!(
+            data_folded != data_unfolded,
+            "a real folded range must paint genuinely different pixels than the same content \
+             unfolded -- the two renders were pixel-identical"
+        );
+    });
+}
+
+/// M31 Phase 5 (§5, §8): `hit_test_position`'s own real proof that a
+/// click past a real folded range resolves to a real, valid offset
+/// into `state.content` (not the longer, unfolded content's own
+/// length, and not the shorter, marker-collapsed display length --
+/// exactly the class of bug a broken fold-aware remap would produce,
+/// the identical real shape `hit_test_position_on_a_field_with_
+/// visible_whitespace_returns_real_content_offsets` already proves
+/// for whitespace substitution).
+#[test]
+#[allow(clippy::single_range_in_vec_init)]
+fn hit_test_position_on_a_folded_field_returns_real_content_offsets() {
+    let mut renderer = TextRenderer::new();
+    let state = {
+        let mut s = TextFieldState::new("hello world", "Roboto", 400.0, 16.0);
+        s.folded_ranges = vec![2..9]; // collapses "llo wor" to one marker
+        s
+    };
+    let placement = TextPlacement {
+        x: 0.0,
+        y: 0.0,
+        max_width: 200.0,
+        color: Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF),
+    };
+
+    let far_right = renderer.hit_test_position(&state, placement, Point::new(1000.0, 4.0));
+    assert_eq!(
+        far_right,
+        state.content.len(),
+        "a click far past a folded field's own end must resolve to state.content's own real \
+         length (11), neither the shorter marker-collapsed display length nor an out-of-bounds \
+         offset"
+    );
+}

@@ -1,58 +1,63 @@
-# PLAN — M31 Phase 4: Syntax Highlighting
+# PLAN — M31 Phase 5: Code Folding
 
 ## Goal
-Real per-token coloring for `Window.add_code_editor`, via
-`RangedBuilder::push(StyleProperty::Brush(color), range)`. App-side
-tokenization only — no engine-bundled lexer.
+Real code folding for `Window.add_code_editor`. Flagged in its own
+scoping note as "the most speculative phase in this milestone" — no
+real reference implementation existed to design it from.
 
 ## Steps
-1. Investigated the real open technical question the scoping note
-   left: whether `vello_hybrid` reads per-style-run brush data
-   directly, or whether `draw_field`'s paint loop needed
-   restructuring. Resolved by direct source read: `vello_hybrid`'s own
-   `Scene::glyph_run`/`fill_glyphs` never reads a brush at all (color
-   stays the existing `scene.set_paint` mechanism) — but the real,
-   load-bearing finding was that a `parley::Run` does *not* necessarily
-   split at every style boundary; each individual `parley::Glyph`
-   instead carries its own real `style_index` into `Layout::styles()`.
-2. Added `TextFieldState.syntax_spans: Vec<(Range<usize>, Color)>`
-   (empty default), and `Node.set_syntax_spans` in engine-py.
-3. Extended `shaped_layout` to push a real default `Brush` (`at.color`)
-   covering the whole content, then a real per-span override for each
-   real syntax span — both now part of the real shaping-cache key.
-4. **First design attempt was wrong, caught live by the very first
-   pixel test written for this phase:** matched color per-*run* via
-   `Run::text_range()`, assuming the `Brush` push always forced a run
-   split. A real three-way pixel-diff test (no spans / whole-content
-   span / first-character-only span) failed immediately — "half" and
-   "whole" rendered pixel-identical. Root-caused via `parley::Cluster::
-   first_style`'s own real source and fixed by reading each glyph's own
-   real `style_index` directly instead, batching consecutive
-   same-color glyphs into one `fill_glyphs` call (mirrors
-   `draw_terminal`'s own real run-batching). The test then passed.
-5. Wired the real per-span offset remapping through the identical
-   `to_display_offset` machinery M31 Phase 3 already built, so
-   whitespace substitution and syntax highlighting stay correct
-   together.
-6. Ran a real, direct empirical script before writing any pytest: real
-   spans set without raising, `get_text()` stays unsubstituted, a
-   non-`TextField` node correctly rejects the call.
-7. Extended `tests/test_code_editor.py` (2 new tests) and
-   `examples/code_editor.py` (a real, minimal app-side keyword
-   tokenizer) rather than new files.
-8. Full verification chain: cargo check/clippy/fmt/test, maturin
-   develop, pytest (full suite), all 68 examples, showcase demo, mypy
+1. Checked pyCopper's own real `CodeEditor` before designing anything
+   and confirmed it explicitly excludes code folding too ("code
+   folding... out of scope for this pass"). Paused and asked the user
+   directly via `AskUserQuestion`, matching the established discipline
+   for genuinely large, ungrounded builds (Terminal, Carousel). The
+   user chose "Full real folding (Recommended)."
+2. Designed real content-hiding by reusing the identical `display_
+   content`-splice pattern IME preedit (M17 Phase 2) already
+   established: each real folded byte range collapses into one
+   visible "⋯" (U+22EF) marker (`engine-render::text::
+   elide_folded_ranges`).
+3. Designed a real, segment-based bidirectional byte-offset map
+   (`to_display_offset_folded`/`from_display_offset_folded`) — a
+   deliberate, real v1 clamp for an offset landing inside a fold
+   (resolves to right after that fold's own marker).
+4. Restructured `draw_field`'s own offset handling into one shared
+   `to_display` closure that chains folding, then whitespace
+   substitution (M31 Phase 3) — so cursor/selection/caret/syntax spans
+   (M31 Phase 4) all stay correct together, whichever real combination
+   of the three paint transforms is active.
+5. Added `TextFieldState.folded_ranges: Vec<Range<usize>>` (empty
+   default) and `Node.set_folded_ranges` in engine-py, the identical
+   real contract `set_syntax_spans` already has.
+6. Wrote 5 new `engine-render` unit tests (elision, malformed-range
+   skipping, round-trip mapping, in-fold clamping, marker-click
+   resolution) and 2 new integration tests (a real pixel-diff proof
+   folded content paints differently; `hit_test_position` past a fold
+   resolves to a real content offset) — all passed on the first run.
+7. Ran a real, direct empirical script before writing any pytest: real
+   fold ranges set without raising, content stays unsubstituted, a
+   non-`TextField` node rejects the call, and folding + syntax
+   highlighting + whitespace indicators compose cleanly through a real
+   render loop.
+8. Extended `tests/test_code_editor.py` (4 new tests) and added
+   `examples/code_editor_folding.py` (a real gutter toggle affordance,
+   composed entirely from existing primitives, folding/unfolding a
+   real function body through two real clicks) — both checked for
+   filename collisions first.
+9. Full verification chain: cargo check/clippy/fmt/test, maturin
+   develop, pytest (full suite), all 69 examples, showcase demo, mypy
    --strict.
-9. Update `BUILD_TRACKER.md` — verified the parser's own reported item
-   count before/after (191, unchanged), regenerate + republish the
-   Build Tracker artifact.
-10. Update memory, commit, push.
+10. Update `BUILD_TRACKER.md` — verified the parser's own reported
+    item count before/after (191, unchanged), regenerate + republish
+    the Build Tracker artifact.
+11. Update memory, commit, push.
 
 ## Status
 Complete. All steps done; full verification chain green (`engine-render`
-7 unit tests unchanged, 11 tests in `text_field_paint.rs` up from 10 —
-including the real pixel-diff test that caught and proved the fix for
-a genuine bug, not merely plausible-sounding code — `pytest tests/`
-503 passed/1 skipped up from 501, all 68 examples, showcase demo). Real
-per-token syntax coloring genuinely paints only its own real byte
-range, confirmed by direct pixel comparison, not assumed.
+12 unit tests up from 7, 13 tests in `text_field_paint.rs` up from 11,
+`pytest tests/` 506 passed/1 skipped up from 503, all 69 examples,
+showcase demo). Real content folding genuinely hides folded text and
+shows a real "⋯" marker instead, with cursor/selection/syntax-span
+byte offsets all staying correct against the real display layout,
+confirmed by direct Rust-level and pixel-diff tests, not assumed. A
+real, stated v1 limitation: cursor navigation is not fold-aware.

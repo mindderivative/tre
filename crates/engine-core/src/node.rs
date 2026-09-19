@@ -604,6 +604,26 @@ pub struct TextFieldState {
     /// substitution -- `engine-render`'s own `draw_field` remaps both
     /// through the identical real byte-offset map.
     pub syntax_spans: Vec<(std::ops::Range<usize>, Color)>,
+    /// M31 Phase 5 (§5, §8): real, paint-only content folding -- each
+    /// `Range<usize>` names real bytes in `content` (the user's own
+    /// explicit "full real folding" scope choice) collapsed into one
+    /// visible "⋯" marker (`engine-render`'s own `elide_folded_
+    /// ranges`). `content` itself is never touched; `engine-core`
+    /// never interprets these ranges either (the identical real
+    /// "app's own concern" split `syntax_spans` already has -- an app
+    /// decides *which* real lines are foldable/currently folded, this
+    /// codebase has no code-structure awareness of its own to decide
+    /// that itself). Empty (the default) paints every existing field
+    /// exactly as before this phase. **Real, deliberate v1
+    /// simplification, not silently glossed over:** cursor navigation
+    /// (`Tree::dispatch_text_field_key`'s own `Home`/`End`/`ArrowUp`/
+    /// `ArrowDown`) is not fold-aware -- it still moves through
+    /// `content`'s own real, unfolded bytes, so a real cursor can move
+    /// into a folded region even though nothing there is visible;
+    /// `engine-render`'s own paint code clamps the *displayed* caret
+    /// to right after the nearest fold marker in that case, rather
+    /// than drawing it somewhere genuinely invisible.
+    pub folded_ranges: Vec<std::ops::Range<usize>>,
 }
 
 impl TextFieldState {
@@ -630,6 +650,7 @@ impl TextFieldState {
             multiline: false,
             show_whitespace: false,
             syntax_spans: Vec::new(),
+            folded_ranges: Vec::new(),
         }
     }
 }
