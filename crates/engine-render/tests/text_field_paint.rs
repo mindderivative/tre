@@ -430,6 +430,46 @@ fn a_multiline_fields_own_newline_produces_a_real_second_layout_line() {
     );
 }
 
+/// M31 Phase 3 (§5, §8): the real, definitive proof
+/// `show_whitespace`'s own byte-offset remapping is correct, not just
+/// plausible -- `·`/`→` are wider, multi-byte substitutes for a
+/// single-byte space/tab, so a naive implementation could easily
+/// return a *display*-space byte offset (out of bounds, or landing
+/// mid-character) instead of a real, valid offset into `state.
+/// content`. A click far past the end of a short, substituted field
+/// must resolve to `state.content.len()` -- exactly 3 for `"a b"`, not
+/// 4 (`"a\u{B7}b"`'s own real substituted length).
+#[test]
+fn hit_test_position_on_a_field_with_visible_whitespace_returns_real_content_offsets() {
+    let mut renderer = TextRenderer::new();
+    let state = {
+        let mut s = TextFieldState::new("a b", "Roboto", 400.0, 16.0);
+        s.show_whitespace = true;
+        s
+    };
+    let placement = || TextPlacement {
+        x: 0.0,
+        y: 0.0,
+        max_width: 200.0,
+        color: Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF),
+    };
+
+    let start = renderer.hit_test_position(&state, placement(), Point::new(0.0, 4.0));
+    assert_eq!(
+        start, 0,
+        "a click at the field's own start must resolve to real byte 0"
+    );
+
+    let far_right = renderer.hit_test_position(&state, placement(), Point::new(1000.0, 4.0));
+    assert_eq!(
+        far_right,
+        state.content.len(),
+        "a click far past the end must resolve to state.content's own real length (3), not the \
+         longer substituted string's own length (4) -- a broken remap would return an invalid, \
+         out-of-bounds byte offset here"
+    );
+}
+
 /// M20 Phase 2 (§7.1, §7.3): the real, definitive proof `text_tint` is
 /// genuinely read at paint time, not just stored -- the same real diff
 /// -based proof `a_composing_preedit_paints_a_real_underline_distinct_

@@ -576,6 +576,18 @@ pub struct TextFieldState {
     /// buffer, and `ArrowUp`/`ArrowDown` move by line -- see `Tree::
     /// dispatch_text_field_key`'s own real logic for each.
     pub multiline: bool,
+    /// M31 Phase 3 (§5, §8): `false` (the default, every existing
+    /// construction site's own byte-for-byte unchanged behavior) never
+    /// substitutes anything. `true` (set directly, the identical plain
+    /// `pub` field write `multiline` already established -- no `new()`
+    /// signature change needed) is `Code Editor`'s own real need: a
+    /// real space/tab in `content` paints as a visible middle-dot/
+    /// arrow glyph instead (`engine-render`'s own `draw_field`/`hit_
+    /// test_position`), purely at paint time -- `content` itself is
+    /// never touched, the identical "engine-core holds the real value,
+    /// engine-render decides how it looks" split every other paint-
+    /// only field in this codebase already has.
+    pub show_whitespace: bool,
 }
 
 impl TextFieldState {
@@ -600,6 +612,7 @@ impl TextFieldState {
             preedit: None,
             text_tint: Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF),
             multiline: false,
+            show_whitespace: false,
         }
     }
 }

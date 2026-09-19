@@ -280,14 +280,31 @@ impl TextRenderer {
         at: TextPlacement,
         point: Point,
     ) -> usize {
+        // M31 Phase 3 (§5, §8): a real click resolves against whatever
+        // is actually *painted* -- when whitespace indicators are on,
+        // that's the substituted glyphs, so the layout built here must
+        // match, and the real display-space byte offset `Cursor::
+        // from_point` returns must be mapped back into `state.
+        // content`'s own real byte space before this returns it.
+        let content = if state.show_whitespace {
+            substitute_whitespace(&state.content)
+        } else {
+            state.content.clone()
+        };
         let layout = self.build_field_layout(
-            &state.content,
+            &content,
             &state.font_family,
             state.font_weight,
             state.font_size,
             field_max_width(state, at.max_width),
         );
-        Cursor::from_point(&layout, (point.x - at.x) as f32, (point.y - at.y) as f32).index()
+        let display_offset =
+            Cursor::from_point(&layout, (point.x - at.x) as f32, (point.y - at.y) as f32).index();
+        if state.show_whitespace {
+            from_display_offset(&state.content, display_offset)
+        } else {
+            display_offset
+        }
     }
 
     /// M15 Phase 1 (§5, §16.7): `draw`'s own real editable-field
@@ -335,6 +352,35 @@ impl TextRenderer {
             _ => (state.content.clone(), None, state.cursor),
         };
 
+        // M31 Phase 3 (§5, §8): real, paint-only visible glyphs for
+        // space/tab -- applied only while no real preedit is active
+        // (skipped during a live IME composition, a vanishingly rare
+        // combination in practice; the preedit splice above keeps its
+        // own already-correct byte offsets unsubstituted in that
+        // case). Substituting changes `display_content`'s own byte
+        // layout relative to `state.content` (`·`/`→` are multi-byte,
+        // space/tab are one byte each), so every real byte offset used
+        // below to query the substituted `layout` has to be mapped
+        // through `to_display_offset` first.
+        let (display_content, cursor_for_layout, anchor_for_layout, caret_at) =
+            if state.show_whitespace && preedit_range.is_none() {
+                (
+                    substitute_whitespace(&display_content),
+                    to_display_offset(&state.content, state.cursor),
+                    state
+                        .selection_anchor
+                        .map(|anchor| to_display_offset(&state.content, anchor)),
+                    to_display_offset(&state.content, caret_at),
+                )
+            } else {
+                (
+                    display_content,
+                    state.cursor,
+                    state.selection_anchor,
+                    caret_at,
+                )
+            };
+
         let layout = self.shaped_layout(
             node_id,
             &display_content,
@@ -350,12 +396,15 @@ impl TextRenderer {
         // exclusive in practice (an IME owns keyboard input entirely
         // while composing, confirmed via direct source read of
         // `winit::window::Window::set_ime_allowed`'s own doc comment),
-        // so this stays keyed on `state.cursor` unconditionally.
-        if let Some(anchor) = state.selection_anchor
-            && anchor != state.cursor
+        // so this stays keyed on `cursor_for_layout` unconditionally --
+        // `state.cursor` itself, remapped through `to_display_offset`
+        // whenever whitespace substitution is active (M31 Phase 3).
+        if let Some(anchor) = anchor_for_layout
+            && anchor != cursor_for_layout
         {
             let anchor_cursor = Cursor::from_byte_index(layout, anchor, Affinity::Downstream);
-            let focus_cursor = Cursor::from_byte_index(layout, state.cursor, Affinity::Downstream);
+            let focus_cursor =
+                Cursor::from_byte_index(layout, cursor_for_layout, Affinity::Downstream);
             let selection = Selection::new(anchor_cursor, focus_cursor);
             scene.set_paint(crate::with_opacity(at.color, 0.3));
             for (bounds, _line_idx) in selection.geometry(layout) {
@@ -583,6 +632,58 @@ fn field_max_width(state: &TextFieldState, max_width: f32) -> f32 {
     if state.multiline { f32::MAX } else { max_width }
 }
 
+/// M31 Phase 3 (§5, §8): the real substitute for each whitespace
+/// character `TextFieldState.show_whitespace` asks to make visible --
+/// middle dot for space (`·`, U+00B7) and a rightward arrow for tab
+/// (`→`, U+2192), the same real convention VS Code/Sublime Text use.
+/// A real, honest v1 simplification: a tab paints as one arrow glyph,
+/// not a real glyph spanning to the next tab stop's own column (this
+/// codebase tracks no tab-stop width anywhere).
+fn whitespace_glyph(c: char) -> char {
+    match c {
+        ' ' => '\u{B7}',
+        '\t' => '\u{2192}',
+        other => other,
+    }
+}
+
+/// `draw_field`'s own real, paint-only transform -- `content` itself
+/// is never touched (`TextFieldState.show_whitespace`'s own doc
+/// comment); this only ever changes what gets shaped and painted.
+fn substitute_whitespace(content: &str) -> String {
+    content.chars().map(whitespace_glyph).collect()
+}
+
+/// Maps a real byte offset into `content` to the corresponding byte
+/// offset into `substitute_whitespace(content)` -- correct because the
+/// substitution is exactly one real char in for one real char out,
+/// even though `·`/`→` are multi-byte in UTF-8 while the space/tab
+/// they replace are one byte each, so `content`'s own real cursor/
+/// selection byte offsets can't be used against the substituted
+/// `Layout` directly without this.
+fn to_display_offset(content: &str, original_offset: usize) -> usize {
+    content
+        .char_indices()
+        .take_while(|&(i, _)| i < original_offset)
+        .map(|(_, c)| whitespace_glyph(c).len_utf8())
+        .sum()
+}
+
+/// `to_display_offset`'s own real inverse -- `hit_test_position`'s own
+/// real need, translating a real click's resolved *display*-space byte
+/// offset back into `content`'s real byte space before it's stored as
+/// `TextFieldState.cursor`.
+fn from_display_offset(content: &str, display_offset: usize) -> usize {
+    let mut acc = 0;
+    for (i, c) in content.char_indices() {
+        if acc >= display_offset {
+            return i;
+        }
+        acc += whitespace_glyph(c).len_utf8();
+    }
+    content.len()
+}
+
 /// Where and how wide to draw one text node -- bundled so
 /// `TextRenderer::draw` stays under clippy's argument-count lint without
 /// losing any of these genuinely-distinct-per-call values.
@@ -797,6 +898,42 @@ mod tests {
             gutter_ys, field_ys,
             "a plain Text's own per-line Y offsets must exactly match a matching multiline \
              TextField's, real proof that a gutter can be composed as an ordinary sibling node"
+        );
+    }
+
+    /// M31 Phase 3 (§5, §8): white-box proof of the real offset-mapping
+    /// machinery `hit_test_position`'s own integration test (`crates/
+    /// engine-render/tests/text_field_paint.rs`) only exercises
+    /// end-to-end -- every real char boundary in a mixed ASCII/space/
+    /// tab/multi-byte string must round-trip through `to_display_
+    /// offset`/`from_display_offset` exactly, not just at the two
+    /// endpoints.
+    #[test]
+    fn display_offset_mapping_round_trips_every_real_char_boundary() {
+        let content = "a b\tcafé d";
+        for (byte_offset, _) in content.char_indices() {
+            let display = to_display_offset(content, byte_offset);
+            let back = from_display_offset(content, display);
+            assert_eq!(
+                back, byte_offset,
+                "byte offset {byte_offset} in {content:?} must round-trip through the real \
+                 display-offset mapping unchanged, got {back} (via display offset {display})"
+            );
+        }
+        // And the real, whole-string end, the same real off-by-one-prone
+        // edge `from_display_offset`'s own `content.len()` fallback
+        // guards.
+        let end_display = to_display_offset(content, content.len());
+        assert_eq!(from_display_offset(content, end_display), content.len());
+    }
+
+    #[test]
+    fn substitute_whitespace_replaces_only_space_and_tab_with_real_visible_glyphs() {
+        assert_eq!(substitute_whitespace("a b\tc"), "a\u{B7}b\u{2192}c");
+        assert_eq!(
+            substitute_whitespace("café"),
+            "café",
+            "a real non-whitespace character must never be substituted"
         );
     }
 }

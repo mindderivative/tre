@@ -11,7 +11,11 @@ operate on the current line rather than the whole buffer, and
 `ArrowUp`/`ArrowDown` navigate by line, preserving the caret's own
 real column. M31 Phase 1 (Line-Number Gutter, `examples/code_editor_
 gutter.py`) and M31 Phase 2 (Tab-Key Indentation Capture, demonstrated
-below) have since closed two of those real gaps.
+below) have since closed two of those real gaps. M31 Phase 3
+(Tab/Space Indicators) closed a third: `add_code_editor` now shows
+real space/tab characters as visible `·`/`→` glyphs at paint time --
+purely visual, `get_text()` always reads back the real, unsubstituted
+content, proven below.
 
 What this script proves automatically (headless-CI-safe, no human
 needed): a real click focuses the editor; a real `Enter` keypress
@@ -19,13 +23,18 @@ splits one line into two; `Home` targets the current line, not byte 0;
 `ArrowUp`/`ArrowDown` genuinely move between lines (proven by typing
 after navigating and checking exactly which line received the new
 text); a real `Tab` keypress inserts a genuine `\\t` rather than moving
-focus away (M31 Phase 2); and a real render loop paints the whole
-multiline buffer over actual frames without crashing. The definitive
-proof that a real `\\n` produces a real, vertically-stacked second
-layout line (not just accepted into `content` with no visual effect)
-is `crates/engine-render/tests/text_field_paint.rs::
-a_multiline_fields_own_newline_produces_a_real_second_layout_line`,
-not this script.
+focus away (M31 Phase 2), and reads back unsubstituted despite the
+real visible `→` glyph it paints as (M31 Phase 3); and a real render
+loop paints the whole multiline buffer -- whitespace indicators
+included -- over actual frames without crashing. The definitive proof
+that a real `\\n` produces a real, vertically-stacked second layout
+line (not just accepted into `content` with no visual effect) is
+`crates/engine-render/tests/text_field_paint.rs::
+a_multiline_fields_own_newline_produces_a_real_second_layout_line`;
+the definitive proof of the real space/tab byte-offset remapping is
+`crates/engine-render/src/text.rs::
+display_offset_mapping_round_trips_every_real_char_boundary` -- not
+this script.
 """
 
 from tre import App, Window

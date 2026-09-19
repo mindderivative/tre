@@ -6544,6 +6544,13 @@ impl PyWindow {
         let (r, g, b, a) = background;
         let mut text_field_state = TextFieldState::new(content, "Roboto", font_weight, font_size);
         text_field_state.multiline = true;
+        // M31 Phase 3 (§5, §8): a real Code Editor shows space/tab as
+        // visible glyphs by default -- the same real convention every
+        // real code editor (VS Code, Sublime Text) already has for
+        // this exact widget class, unlike an ordinary `add_text_field`
+        // form input, where a visible indicator would be real, unasked-
+        // for visual noise.
+        text_field_state.show_whitespace = true;
         {
             let theme = self.theme.borrow();
             if theme.is_set() {

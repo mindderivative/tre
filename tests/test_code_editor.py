@@ -162,3 +162,30 @@ def test_tab_still_moves_focus_away_from_a_single_line_text_field():
     window.press_key("tab")
     assert not field.is_focused(), "Tab on a single-line field must still move focus away"
     assert field.get_text() == "ab", "Tab must not insert anything into a single-line field"
+
+
+def test_whitespace_indicators_never_touch_the_real_content():
+    """M31 Phase 3 (§5, §8): `show_whitespace` is paint-only -- a real
+    space/tab in a Code Editor's own content must read back exactly as
+    typed via `get_text()`, never as the substituted `·`/`→` glyphs
+    `engine-render`'s own `draw_field` paints instead. The real
+    substitution/byte-offset-remapping claim itself is proven at the
+    Rust level (`crates/engine-render/src/text.rs`'s own
+    `display_offset_mapping_round_trips_every_real_char_boundary`, and
+    `crates/engine-render/tests/text_field_paint.rs`'s own
+    `hit_test_position_on_a_field_with_visible_whitespace_returns_
+    real_content_offsets`); this test proves the real FFI-level
+    guarantee pytest actually can prove without a live render loop.
+    """
+    window = Window(width=400, height=300)
+    editor = window.add_code_editor(
+        content="a b\tc", background=(255, 255, 255, 255), width=300, height=150
+    )
+    assert editor.get_text() == "a b\tc"
+
+    window.click(editor)
+    window.type_text(" x\ty")
+    assert editor.get_text() == "a b\tc x\ty", (
+        "typing more spaces/tabs into a whitespace-indicator-showing editor "
+        "must still land in get_text() completely unsubstituted"
+    )
