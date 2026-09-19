@@ -588,6 +588,22 @@ pub struct TextFieldState {
     /// engine-render decides how it looks" split every other paint-
     /// only field in this codebase already has.
     pub show_whitespace: bool,
+    /// M31 Phase 4 (§5, §8): the app's own real per-byte-range syntax
+    /// coloring, supplied by tokenization the app performs itself
+    /// (Design Principle 6, the same real "app-side tokenization
+    /// only, no engine-bundled lexer" split pyCopper's own optional-
+    /// Pygments design already established) -- `engine-core` never
+    /// interprets these ranges itself, and literal RGBA is the real,
+    /// deliberate color representation (not a palette-token name):
+    /// MD3 only has four real color roles (primary/secondary/
+    /// tertiary/error) against the roughly ten categories a real
+    /// syntax theme needs, so no semantic role exists to map the rest
+    /// onto (pyCopper's own real, stated reasoning, quoted directly).
+    /// Empty (the default) paints every existing field exactly as
+    /// before this phase; ranges may freely overlap `show_whitespace`
+    /// substitution -- `engine-render`'s own `draw_field` remaps both
+    /// through the identical real byte-offset map.
+    pub syntax_spans: Vec<(std::ops::Range<usize>, Color)>,
 }
 
 impl TextFieldState {
@@ -613,6 +629,7 @@ impl TextFieldState {
             text_tint: Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF),
             multiline: false,
             show_whitespace: false,
+            syntax_spans: Vec::new(),
         }
     }
 }

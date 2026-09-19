@@ -1,60 +1,58 @@
-# PLAN — M31 Phase 3: Tab/Space Indicators
+# PLAN — M31 Phase 4: Syntax Highlighting
 
 ## Goal
-Real, visible glyphs for space/tab in `Window.add_code_editor`, at
-paint time only — `state.content` itself never touched.
+Real per-token coloring for `Window.add_code_editor`, via
+`RangedBuilder::push(StyleProperty::Brush(color), range)`. App-side
+tokenization only — no engine-bundled lexer.
 
 ## Steps
-1. Confirmed the real design constraint before writing any code: a
-   naive character substitution (`·`/`→` for space/tab) would desync
-   `state.cursor`/`selection_anchor`'s own real byte offsets from the
-   substituted `Layout`'s byte space, since the replacement glyphs are
-   multi-byte in UTF-8 while space/tab are one byte each — a real
-   correctness bug (broken caret/selection, or an out-of-bounds/
-   mid-character byte offset reaching `Tree::dispatch`), not just a
-   cosmetic detail.
-2. Designed a real, deterministic bidirectional byte-offset map
-   (`to_display_offset`/`from_display_offset`, `engine-render::text`)
-   — correct because the substitution is exactly one real char in for
-   one real char out, never expanding/collapsing multiple characters.
-3. Added `TextFieldState.show_whitespace: bool` (default `false`,
-   `multiline`'s own exact precedent), set `true` specifically by
-   `Window.add_code_editor` — not exposed on `add_text_field`.
-4. Wired `TextRenderer::draw_field` to remap `state.cursor`/`anchor`/
-   `caret_at` through the map before querying the substituted
-   `Layout` (skipped while a real IME preedit is simultaneously
-   active, a vanishingly rare combination — the preedit splice keeps
-   its own already-correct unsubstituted offsets then).
-5. Wired `TextRenderer::hit_test_position` to build the identical
-   substituted `Layout` for a real click and map the *returned*
-   display-space byte offset back into real content-space before
-   returning it.
-6. Wrote 2 new `engine-render` unit tests (a real round-trip of every
-   char boundary in a mixed ASCII/space/tab/multi-byte string; a
-   direct substitution-formula check) and 1 new integration test
-   (`hit_test_position` on a substituted field resolves a far-right
-   click to the real, short content length, not the longer substituted
-   one — exactly the bug class a broken remap would produce).
-7. Ran a real, direct empirical script before writing any pytest:
-   `get_text()` on a code editor with live-typed spaces/tabs stays
-   completely unsubstituted.
-8. Extended `tests/test_code_editor.py` (1 new test) and
-   `examples/code_editor.py` (docstring + a real render-loop re-run
-   now exercising the substitution paint path with live content)
-   rather than new files.
-9. Full verification chain: cargo check/clippy/fmt/test, maturin
+1. Investigated the real open technical question the scoping note
+   left: whether `vello_hybrid` reads per-style-run brush data
+   directly, or whether `draw_field`'s paint loop needed
+   restructuring. Resolved by direct source read: `vello_hybrid`'s own
+   `Scene::glyph_run`/`fill_glyphs` never reads a brush at all (color
+   stays the existing `scene.set_paint` mechanism) — but the real,
+   load-bearing finding was that a `parley::Run` does *not* necessarily
+   split at every style boundary; each individual `parley::Glyph`
+   instead carries its own real `style_index` into `Layout::styles()`.
+2. Added `TextFieldState.syntax_spans: Vec<(Range<usize>, Color)>`
+   (empty default), and `Node.set_syntax_spans` in engine-py.
+3. Extended `shaped_layout` to push a real default `Brush` (`at.color`)
+   covering the whole content, then a real per-span override for each
+   real syntax span — both now part of the real shaping-cache key.
+4. **First design attempt was wrong, caught live by the very first
+   pixel test written for this phase:** matched color per-*run* via
+   `Run::text_range()`, assuming the `Brush` push always forced a run
+   split. A real three-way pixel-diff test (no spans / whole-content
+   span / first-character-only span) failed immediately — "half" and
+   "whole" rendered pixel-identical. Root-caused via `parley::Cluster::
+   first_style`'s own real source and fixed by reading each glyph's own
+   real `style_index` directly instead, batching consecutive
+   same-color glyphs into one `fill_glyphs` call (mirrors
+   `draw_terminal`'s own real run-batching). The test then passed.
+5. Wired the real per-span offset remapping through the identical
+   `to_display_offset` machinery M31 Phase 3 already built, so
+   whitespace substitution and syntax highlighting stay correct
+   together.
+6. Ran a real, direct empirical script before writing any pytest: real
+   spans set without raising, `get_text()` stays unsubstituted, a
+   non-`TextField` node correctly rejects the call.
+7. Extended `tests/test_code_editor.py` (2 new tests) and
+   `examples/code_editor.py` (a real, minimal app-side keyword
+   tokenizer) rather than new files.
+8. Full verification chain: cargo check/clippy/fmt/test, maturin
    develop, pytest (full suite), all 68 examples, showcase demo, mypy
    --strict.
-10. Update `BUILD_TRACKER.md` — verified the parser's own reported
-    item count before/after (191, unchanged), regenerate + republish
-    the Build Tracker artifact.
-11. Update memory, commit, push.
+9. Update `BUILD_TRACKER.md` — verified the parser's own reported item
+   count before/after (191, unchanged), regenerate + republish the
+   Build Tracker artifact.
+10. Update memory, commit, push.
 
 ## Status
 Complete. All steps done; full verification chain green (`engine-render`
-7 unit tests up from 5, 10 tests in `text_field_paint.rs` up from 9,
-`pytest tests/` 501 passed/1 skipped up from 500, all 68 examples,
-showcase demo). Real space/tab characters genuinely paint as visible
-`·`/`→` glyphs while `state.content`/cursor/selection/click-to-position
-all stay byte-for-byte correct against the original content, proven
-by direct round-trip and out-of-bounds-resolution tests, not assumed.
+7 unit tests unchanged, 11 tests in `text_field_paint.rs` up from 10 —
+including the real pixel-diff test that caught and proved the fix for
+a genuine bug, not merely plausible-sounding code — `pytest tests/`
+503 passed/1 skipped up from 501, all 68 examples, showcase demo). Real
+per-token syntax coloring genuinely paints only its own real byte
+range, confirmed by direct pixel comparison, not assumed.

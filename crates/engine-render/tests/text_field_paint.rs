@@ -497,3 +497,54 @@ fn a_themed_text_field_paints_genuinely_different_pixels_than_the_default() {
         );
     });
 }
+
+/// M31 Phase 4 (§5, §8): the real, definitive proof `syntax_spans`
+/// genuinely colors *only* the real byte range it names, not the
+/// whole field (which a bug in the real run-to-span matching could
+/// easily produce) and not nothing at all (which a bug in the real
+/// `Brush`-push-forces-a-run-split reasoning could equally produce).
+/// Three real renders of the same two-character content, diffed
+/// pairwise the identical way `a_themed_text_field_paints_genuinely_
+/// different_pixels_than_the_default` already proves a hard-to-pin-
+/// exact-pixel claim: no spans at all; one span covering the whole
+/// content; one span covering only the first real character. All
+/// three must be pixel-distinct from each other -- if the "half"
+/// render matched the "whole" one, coloring leaked past its own real
+/// span; if it matched "none", the span was silently ignored.
+#[test]
+fn syntax_spans_color_only_their_own_real_byte_range() {
+    pollster::block_on(async {
+        let none_state = TextFieldState::new("ab", "Roboto", 400.0, 16.0);
+        let (tree_none, root_none, _) = build_tree_with_state(none_state);
+        let (data_none, _) = render(&tree_none, root_none, 100, 24).await;
+
+        let red = Color::from_rgba8(0xFF, 0x00, 0x00, 0xFF);
+
+        let mut whole_state = TextFieldState::new("ab", "Roboto", 400.0, 16.0);
+        whole_state.syntax_spans = vec![(0..2, red)];
+        let (tree_whole, root_whole, _) = build_tree_with_state(whole_state);
+        let (data_whole, _) = render(&tree_whole, root_whole, 100, 24).await;
+
+        let mut half_state = TextFieldState::new("ab", "Roboto", 400.0, 16.0);
+        half_state.syntax_spans = vec![(0..1, red)];
+        let (tree_half, root_half, _) = build_tree_with_state(half_state);
+        let (data_half, _) = render(&tree_half, root_half, 100, 24).await;
+
+        assert!(
+            data_whole != data_none,
+            "a real syntax span covering the whole field must paint genuinely different \
+             pixels than no spans at all"
+        );
+        assert!(
+            data_half != data_whole,
+            "a real syntax span covering only the first character must paint genuinely \
+             different pixels than one covering the whole field -- coloring leaked past its \
+             own real byte range"
+        );
+        assert!(
+            data_half != data_none,
+            "a real syntax span covering only the first character must still paint genuinely \
+             different pixels than no spans at all -- the span was silently ignored"
+        );
+    });
+}

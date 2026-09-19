@@ -21,6 +21,8 @@ focusable `Node`; `Enter` inserts a real newline; `Home` jumps to the
 line.
 """
 
+import pytest
+
 from tre import Node, Window
 
 
@@ -189,3 +191,38 @@ def test_whitespace_indicators_never_touch_the_real_content():
         "typing more spaces/tabs into a whitespace-indicator-showing editor "
         "must still land in get_text() completely unsubstituted"
     )
+
+
+def test_set_syntax_spans_does_not_raise_and_never_touches_real_content():
+    """M31 Phase 4 (§5, §8): `set_syntax_spans` is paint-only -- the
+    real per-run-color proof itself is at the Rust level
+    (`crates/engine-render/tests/text_field_paint.rs`'s own
+    `syntax_spans_color_only_their_own_real_byte_range`, a real pixel-
+    diff proof no spans leak past their own byte range); this test
+    proves the real FFI surface: real spans can be set without
+    raising, and `get_text()` still reads back exactly what was typed.
+    """
+    window = Window(width=400, height=300)
+    editor = window.add_code_editor(
+        content="if x:\n    y", background=(255, 255, 255, 255), width=300, height=150
+    )
+    editor.set_syntax_spans(
+        [
+            (0, 2, (0xC0, 0x1C, 0x28, 0xFF)),  # "if" -- keyword-red
+            (6, 10, (0x21, 0x6D, 0xFF, 0xFF)),  # the indent -- irrelevant-blue
+        ]
+    )
+    assert editor.get_text() == "if x:\n    y"
+
+    # Real spans replace the whole list every call, matching a real
+    # re-tokenize-on-every-edit app pattern -- an empty list is a real,
+    # valid way to clear all coloring.
+    editor.set_syntax_spans([])
+    assert editor.get_text() == "if x:\n    y"
+
+
+def test_set_syntax_spans_rejects_a_non_text_field_node():
+    window = Window(width=400, height=300)
+    rect = window.add_rect(background=(0, 0, 0, 255), width=24, height=24)
+    with pytest.raises(ValueError, match="Rect has no property 'syntax_spans'"):
+        rect.set_syntax_spans([(0, 1, (255, 0, 0, 255))])

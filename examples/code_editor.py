@@ -15,7 +15,10 @@ below) have since closed two of those real gaps. M31 Phase 3
 (Tab/Space Indicators) closed a third: `add_code_editor` now shows
 real space/tab characters as visible `·`/`→` glyphs at paint time --
 purely visual, `get_text()` always reads back the real, unsubstituted
-content, proven below.
+content, proven below. M31 Phase 4 (Syntax Highlighting) closed a
+fourth: `Node.set_syntax_spans` paints real per-byte-range colors --
+app-side tokenization only (Design Principle 6, this script's own
+tiny keyword tokenizer below), no engine-bundled lexer.
 
 What this script proves automatically (headless-CI-safe, no human
 needed): a real click focuses the editor; a real `Enter` keypress
@@ -91,6 +94,28 @@ assert editor.get_text() == (
     "def add(a, b):\n>>    # adds two numbers\n\t    return a + b  # end"
 )
 assert editor.is_focused(), "claiming Tab for indentation must never lose focus over it"
+
+# M31 Phase 4: a real, minimal app-side tokenizer (no engine-bundled
+# lexer -- Design Principle 6) colors every real "def"/"return" keyword
+# occurrence; everything else keeps the editor's own default text color.
+KEYWORD_COLOR = (0xC0, 0x1C, 0x28, 0xFF)
+
+
+def keyword_spans(text: str) -> list[tuple[int, int, tuple[int, int, int, int]]]:
+    spans = []
+    for keyword in ("def", "return"):
+        start = 0
+        while (found := text.find(keyword, start)) != -1:
+            spans.append((found, found + len(keyword), KEYWORD_COLOR))
+            start = found + len(keyword)
+    return spans
+
+
+editor.set_syntax_spans(keyword_spans(editor.get_text()))
+print(f"real syntax spans for the current buffer: {keyword_spans(editor.get_text())}")
+assert editor.get_text() == (
+    "def add(a, b):\n>>    # adds two numbers\n\t    return a + b  # end"
+), "set_syntax_spans must never touch the real content it colors"
 
 app = App()
 app.add_window(window)

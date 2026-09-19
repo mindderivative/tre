@@ -165,6 +165,17 @@ class Node:
         node.
         """
         ...
+    def set_syntax_spans(
+        self, spans: Sequence[tuple[int, int, tuple[int, int, int, int]]]
+    ) -> None:
+        """`TextField`-only: sets real syntax coloring for byte ranges
+        of `get_text()`'s own content. Each `(start, end, (r, g, b,
+        a))` names a range and the color to paint it. Replaces the
+        whole list every call -- re-tokenize and call again after each
+        real edit; `engine-core` performs no tokenization of its own
+        (app-side only). Raises `ValueError` for any other kind.
+        """
+        ...
 
 class Window:
     """One real OS window and the node tree painted into it. Add one or

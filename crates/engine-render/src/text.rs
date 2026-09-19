@@ -10,6 +10,7 @@
 //! behavior before component work depends on it."
 
 use std::collections::HashMap;
+use std::ops::Range;
 use std::sync::Arc;
 
 use engine_core::{NodeId, TerminalState, TextAlign, TextFieldState, TextState, Tree};
@@ -37,6 +38,21 @@ struct LayoutCacheKey {
     font_size: f32,
     max_width: f32,
     align: TextAlign,
+    /// M31 Phase 4 (§5, §8): real per-byte-range syntax coloring, part
+    /// of the real cache-invalidation key for the identical reason
+    /// every other shaping input already is -- a different real
+    /// `StyleProperty::Brush` push changes what `Glyph::style_index`
+    /// (and, through it, `Layout::styles()[..].brush`) each real glyph
+    /// resolves to, which `draw_field`'s own paint loop reads directly
+    /// (`shaped_layout`'s own real build below).
+    spans: Vec<(Range<usize>, Color)>,
+    /// M31 Phase 4 (§5, §8): the real default brush every glyph
+    /// outside every real span resolves to -- without pushing this
+    /// explicitly, an un-spanned glyph's own real `style_index` would
+    /// point at `Style::default()`'s own `[u8; 4]::default()` brush
+    /// (`[0, 0, 0, 0]`, fully transparent), not `at.color`. Part of
+    /// the cache key since a real theme change changes it.
+    default_color: Color,
 }
 
 struct CachedLayout {
@@ -114,6 +130,8 @@ impl TextRenderer {
         font_size: f32,
         max_width: f32,
         align: TextAlign,
+        spans: &[(Range<usize>, Color)],
+        default_color: Color,
     ) -> &parley::Layout<[u8; 4]> {
         let key = LayoutCacheKey {
             content: content.to_string(),
@@ -122,6 +140,8 @@ impl TextRenderer {
             font_size,
             max_width,
             align,
+            spans: spans.to_vec(),
+            default_color,
         };
         let Self {
             font_cx,
@@ -136,6 +156,29 @@ impl TextRenderer {
             builder.push_default(StyleProperty::FontFamily(FontFamily::named(font_family)));
             builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));
             builder.push_default(StyleProperty::FontSize(font_size));
+            // M31 Phase 4 (§5, §8): a real default brush covering the
+            // *whole* content, then a real per-range override for each
+            // real syntax span -- `draw_field`'s own paint loop reads
+            // each individual glyph's own real, resolved brush back via
+            // `Glyph::style_index`/`Layout::styles()` (confirmed real,
+            // public API via direct source read: `parley::Cluster::
+            // first_style` reads the identical way), so every glyph
+            // needs a real, meaningful brush value, not just the ones
+            // inside a real span.
+            let default_rgba = default_color.to_rgba8();
+            builder.push_default(StyleProperty::Brush([
+                default_rgba.r,
+                default_rgba.g,
+                default_rgba.b,
+                default_rgba.a,
+            ]));
+            for (range, color) in spans {
+                let rgba = color.to_rgba8();
+                builder.push(
+                    StyleProperty::Brush([rgba.r, rgba.g, rgba.b, rgba.a]),
+                    range.clone(),
+                );
+            }
             let mut layout = builder.build(content);
             layout.break_all_lines(Some(max_width));
             // M30 Phase 1 (§5, §7): `parley::Alignment::Start`/`Center`/
@@ -206,6 +249,8 @@ impl TextRenderer {
             state.font_size,
             at.max_width,
             state.align,
+            &[],
+            at.color,
         );
 
         scene.set_paint(at.color);
@@ -381,6 +426,29 @@ impl TextRenderer {
                 )
             };
 
+        // M31 Phase 4 (§5, §8): the app's own real syntax spans,
+        // remapped through the identical real byte-offset map whenever
+        // whitespace substitution also shifted `display_content`'s own
+        // byte layout (M31 Phase 3) -- both real features address the
+        // same real `display_content`, so both real offset spaces have
+        // to agree.
+        let display_spans: Vec<(Range<usize>, Color)> =
+            if state.show_whitespace && preedit_range.is_none() {
+                state
+                    .syntax_spans
+                    .iter()
+                    .map(|(range, color)| {
+                        (
+                            to_display_offset(&state.content, range.start)
+                                ..to_display_offset(&state.content, range.end),
+                            *color,
+                        )
+                    })
+                    .collect()
+            } else {
+                state.syntax_spans.clone()
+            };
+
         let layout = self.shaped_layout(
             node_id,
             &display_content,
@@ -389,6 +457,8 @@ impl TextRenderer {
             state.font_size,
             field_max_width(state, at.max_width),
             TextAlign::Start,
+            &display_spans,
+            at.color,
         );
 
         // Selection highlight, painted first (behind the glyphs below).
@@ -418,7 +488,6 @@ impl TextRenderer {
             }
         }
 
-        scene.set_paint(at.color);
         for line in layout.lines() {
             for item in line.items() {
                 let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
@@ -427,15 +496,45 @@ impl TextRenderer {
                 let run = glyph_run.run();
                 let font = run.font();
                 let font_size = run.font_size();
-                let glyphs = glyph_run.positioned_glyphs().map(|g| glifo::Glyph {
-                    id: g.id,
-                    x: g.x + at.x as f32,
-                    y: g.y + at.y as f32,
-                });
-                scene
-                    .glyph_run(resources, font)
-                    .font_size(font_size)
-                    .fill_glyphs(glyphs);
+                // M31 Phase 4 (§5, §8): real per-glyph syntax coloring
+                // -- each real `parley::Glyph` (from `positioned_
+                // glyphs()`) carries its own real `style_index` into
+                // `layout.styles()`, confirmed via direct source read
+                // (the identical real lookup `parley::Cluster::first_
+                // style` itself does; no public per-run brush read-back
+                // exists, so this reads it per-glyph instead). Batches
+                // consecutive glyphs that resolve to the same real
+                // color into one real `fill_glyphs` call -- mirrors the
+                // identical real "background/glyph run" batching
+                // `TextRenderer::draw_terminal` already uses, not one
+                // draw call per glyph.
+                let styles = layout.styles();
+                let mut batch: Vec<glifo::Glyph> = Vec::new();
+                let mut batch_color = at.color;
+                for g in glyph_run.positioned_glyphs() {
+                    let [r, gr, b, a] = styles[g.style_index as usize].brush;
+                    let color = Color::from_rgba8(r, gr, b, a);
+                    if !batch.is_empty() && color != batch_color {
+                        scene.set_paint(batch_color);
+                        scene
+                            .glyph_run(resources, font)
+                            .font_size(font_size)
+                            .fill_glyphs(std::mem::take(&mut batch).into_iter());
+                    }
+                    batch_color = color;
+                    batch.push(glifo::Glyph {
+                        id: g.id,
+                        x: g.x + at.x as f32,
+                        y: g.y + at.y as f32,
+                    });
+                }
+                if !batch.is_empty() {
+                    scene.set_paint(batch_color);
+                    scene
+                        .glyph_run(resources, font)
+                        .font_size(font_size)
+                        .fill_glyphs(batch.into_iter());
+                }
             }
         }
 
@@ -871,6 +970,8 @@ mod tests {
                 16.0,
                 100.0,
                 TextAlign::Start,
+                &[],
+                Color::from_rgba8(0, 0, 0, 255),
             )
             .lines()
             .map(|line| line.metrics().block_min_coord)
@@ -884,6 +985,8 @@ mod tests {
                 16.0,
                 f32::MAX,
                 TextAlign::Start,
+                &[],
+                Color::from_rgba8(0, 0, 0, 255),
             )
             .lines()
             .map(|line| line.metrics().block_min_coord)

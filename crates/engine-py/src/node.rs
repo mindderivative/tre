@@ -34,6 +34,11 @@ use crate::dispatch::{HandlerMap, SharedCompletions, call_handler};
 use crate::error::EngineError;
 use crate::window::SharedTheme;
 
+/// `set_syntax_spans`'s own real `(start, end, (r, g, b, a))` element
+/// type, named purely to keep that signature under clippy's type-
+/// complexity lint -- not a real domain concept reused anywhere else.
+type SyntaxSpanInput = (usize, usize, (u8, u8, u8, u8));
+
 #[pyclass(unsendable)]
 pub struct Node {
     pub(crate) id: NodeId,
@@ -921,6 +926,40 @@ impl Node {
     /// precedent `Tree::activate`/`set_focus_to` already state.
     fn is_focused(&self) -> bool {
         self.tree.borrow().focused() == Some(self.id)
+    }
+
+    /// M31 Phase 4 (§5, §8): sets a Code Editor's own real per-byte-
+    /// range syntax coloring -- `spans` is a list of `(start, end,
+    /// (r, g, b, a))` tuples, each naming a real byte range into
+    /// `get_text()`'s own content and the real color to paint it.
+    /// `TextField`-only, mirroring `set_checked`'s own real "raises
+    /// for any other kind" contract. Replaces the whole list on every
+    /// call -- an app re-tokenizing its own buffer on every real
+    /// `Change` (Design Principle 6: app-side tokenization only, no
+    /// engine-bundled lexer) is expected to call this again with the
+    /// new spans each time, not diff them; `engine-core` never
+    /// interprets these ranges itself, so overlapping or out-of-order
+    /// spans are the app's own concern, not validated here.
+    pub(crate) fn set_syntax_spans(&self, spans: Vec<SyntaxSpanInput>) -> PyResult<()> {
+        let mut tree = self.tree.borrow_mut();
+        let node = tree.get_mut(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        let kind = kind_name(&node.kind);
+        match &mut node.kind {
+            NodeKind::TextField(state) => {
+                state.syntax_spans = spans
+                    .into_iter()
+                    .map(|(start, end, (r, g, b, a))| (start..end, Color::from_rgba8(r, g, b, a)))
+                    .collect();
+                Ok(())
+            }
+            _ => Err(EngineError::UnknownProperty {
+                kind,
+                property: "syntax_spans".to_string(),
+            }
+            .into()),
+        }
     }
 }
 
