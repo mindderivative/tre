@@ -138,27 +138,37 @@ fn translate_key(logical_key: &WinitKey) -> Option<Key> {
     }
 }
 
-/// M17 Phase 1 (§8): the real Ctrl+C/Ctrl+X/Ctrl+V vocabulary --
-/// checked only when the real `ModifiersState::control_key()` is held
-/// (the caller's own job), since `logical_key` alone is Ctrl-blind
-/// (confirmed via direct source read of `winit`'s own `event.rs`:
-/// "This value is affected by all modifiers except Ctrl"). Case-
-/// insensitive (`Character("C")` for a real Ctrl+Shift+C press is the
-/// identical real shortcut, not a different one) -- every other
-/// character produces `None`, no `InputEvent` at all, the same
-/// deliberately minimal vocabulary `translate_key` already keeps.
+/// M17 Phase 1 (§8), widened M32 Phase 4 (§4, §8): the real Ctrl+
+/// `<letter>` vocabulary -- checked only when the real `ModifiersState::
+/// control_key()` is held (the caller's own job), since `logical_key`
+/// alone is Ctrl-blind (confirmed via direct source read of `winit`'s
+/// own `event.rs`: "This value is affected by all modifiers except
+/// Ctrl"). Case-insensitive (`Character("C")` for a real Ctrl+Shift+C
+/// press is the identical real shortcut, not a different one).
+/// `c`/`x`/`v` keep their own real `Copy`/`Cut`/`PasteRequested`
+/// meaning, unchanged since M17 Phase 1; every other single ASCII
+/// letter now produces the new `InputEvent::ControlChar` (M32 Phase 4)
+/// instead of `None` -- `engine-py`'s own `on_input` decides what a
+/// real Ctrl+`<letter>` means downstream (a focused `Terminal`'s own
+/// real control byte, or nothing at all). A multi-character `Character`
+/// payload (a real, if rare, possibility for some IME/dead-key
+/// sequences) or any non-alphabetic character still produces `None`,
+/// the same deliberately minimal-vocabulary contract this function
+/// always had.
 fn translate_clipboard_shortcut(logical_key: &WinitKey) -> Option<InputEvent> {
     let WinitKey::Character(c) = logical_key else {
         return None;
     };
-    if c.eq_ignore_ascii_case("c") {
-        Some(InputEvent::Copy)
-    } else if c.eq_ignore_ascii_case("x") {
-        Some(InputEvent::Cut)
-    } else if c.eq_ignore_ascii_case("v") {
-        Some(InputEvent::PasteRequested)
-    } else {
-        None
+    let mut chars = c.chars();
+    let ch = chars.next()?;
+    if chars.next().is_some() || !ch.is_ascii_alphabetic() {
+        return None;
+    }
+    match ch.to_ascii_lowercase() {
+        'c' => Some(InputEvent::Copy),
+        'x' => Some(InputEvent::Cut),
+        'v' => Some(InputEvent::PasteRequested),
+        letter => Some(InputEvent::ControlChar(letter)),
     }
 }
 
@@ -962,14 +972,37 @@ mod tests {
     }
 
     #[test]
-    fn translate_clipboard_shortcut_ignores_every_other_character_and_named_key() {
-        assert_eq!(
-            translate_clipboard_shortcut(&WinitKey::Character("a".into())),
-            None
-        );
+    fn translate_clipboard_shortcut_ignores_a_named_key_and_a_non_alphabetic_character() {
         assert_eq!(
             translate_clipboard_shortcut(&WinitKey::Named(NamedKey::Enter)),
             None
+        );
+        assert_eq!(
+            translate_clipboard_shortcut(&WinitKey::Character("1".into())),
+            None
+        );
+        // A real, if rare, multi-character `Character` payload (some
+        // IME/dead-key sequences) is not a single real Ctrl+<letter>
+        // shortcut -- must not panic or silently pick the first char.
+        assert_eq!(
+            translate_clipboard_shortcut(&WinitKey::Character("ab".into())),
+            None
+        );
+    }
+
+    /// M32 Phase 4 (§4, §8): every letter besides `c`/`x`/`v` now
+    /// produces the new `ControlChar`, not `None` -- the real fix this
+    /// phase exists for.
+    #[test]
+    fn translate_clipboard_shortcut_maps_every_other_letter_to_control_char() {
+        assert_eq!(
+            translate_clipboard_shortcut(&WinitKey::Character("a".into())),
+            Some(InputEvent::ControlChar('a'))
+        );
+        assert_eq!(
+            translate_clipboard_shortcut(&WinitKey::Character("Z".into())),
+            Some(InputEvent::ControlChar('z')),
+            "case-insensitive, the same real convention c/x/v already established"
         );
     }
 

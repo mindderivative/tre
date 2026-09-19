@@ -1205,6 +1205,17 @@ class Window:
         whichever node currently has focus.
         """
         ...
+    def press_ctrl(self, letter: str) -> bool:
+        """Sends a real Ctrl+`<letter>` control byte to the currently
+        focused `Terminal` -- `letter="c"` sends the real SIGINT byte
+        (`0x03`), the same as pressing Ctrl+C in any real terminal
+        emulator. `letter` must be exactly one ASCII letter (case-
+        insensitive), or raises `ValueError`. Returns whether a
+        `Terminal` was actually focused to receive it -- `False`
+        touches nothing else (never a `TextField`'s own clipboard
+        state; use `copy`/`cut`/`paste` below for that).
+        """
+        ...
     def copy(self) -> str | None:
         """Returns the current selection's text, or `None` if nothing
         is selected -- does not touch the system clipboard.

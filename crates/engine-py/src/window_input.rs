@@ -362,6 +362,42 @@ impl PyWindow {
         run_dispatch_outcome(&self.handlers, outcome, py);
     }
 
+    /// M32 Phase 4 (§4, §8): the real, no-live-window-needed synthetic
+    /// entry point for a real Ctrl+`<letter>` press reaching a focused
+    /// `Terminal` -- SIGINT (`"c"`) included, the headline real
+    /// capability this phase exists for. Mirrors `press_key`/`type_
+    /// text`'s own real terminal-routing precedent above, but scoped
+    /// deliberately narrower: unlike those two (which fall through to
+    /// ordinary `Tree::dispatch` when nothing terminal-shaped is
+    /// focused), this method only ever does terminal routing -- when no
+    /// `Terminal` is focused, it returns `False` and touches nothing
+    /// else (never a `TextField`'s own clipboard state; `copy`/`cut`/
+    /// `paste` below already own that real, separate, hermetic surface).
+    /// `letter` must be exactly one ASCII letter (`a`-`z`, case-
+    /// insensitive, the same real convention `Copy`/`Cut`/
+    /// `PasteRequested` already established) -- raises `ValueError`
+    /// otherwise, matching `press_key`'s own "unknown key" contract.
+    fn press_ctrl(&self, letter: &str) -> PyResult<bool> {
+        let mut chars = letter.chars();
+        let (Some(ch), None) = (chars.next(), chars.next()) else {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "press_ctrl: {letter:?} must be exactly one ASCII letter"
+            )));
+        };
+        if !ch.is_ascii_alphabetic() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "press_ctrl: {letter:?} must be exactly one ASCII letter"
+            )));
+        }
+        let event = match ch.to_ascii_lowercase() {
+            'c' => InputEvent::Copy,
+            'x' => InputEvent::Cut,
+            'v' => InputEvent::PasteRequested,
+            other => InputEvent::ControlChar(other),
+        };
+        Ok(route_control_char_to_terminal(self, &event))
+    }
+
     /// M17 Phase 1 (§8): the real, no-live-window-needed synthetic
     /// entry point for "what a Ctrl+C press would copy" -- deliberately
     /// **hermetic**, unlike the real `winit`-driven path (`engine-
@@ -438,6 +474,34 @@ fn route_to_terminal(window: &PyWindow, event: &InputEvent) -> bool {
     };
     if let Some(session) = window.terminals.borrow_mut().get_mut(&terminal_id) {
         session.write_input(&bytes);
+    }
+    true
+}
+
+/// M32 Phase 4 (§4, §8): `route_to_terminal`'s own real Ctrl+`<letter>`
+/// sibling -- the identical real "translate, then write straight to a
+/// focused terminal's own PTY" shape, using `terminal::control_byte_for`
+/// instead of `input_bytes_for`. Mirrors `app.rs`'s own real `on_input`
+/// closure's new `control_byte_for` handling exactly, so `Window.
+/// press_ctrl` behaves identically to a genuine Ctrl+`<letter>` keypress.
+fn route_control_char_to_terminal(window: &PyWindow, event: &InputEvent) -> bool {
+    let Some(byte) = crate::terminal::control_byte_for(event) else {
+        return false;
+    };
+    let focused_terminal = {
+        let tree = window.tree.borrow();
+        tree.focused().filter(|&id| {
+            matches!(
+                tree.get(id).map(|node| &node.kind),
+                Some(engine_core::NodeKind::Terminal(_))
+            )
+        })
+    };
+    let Some(terminal_id) = focused_terminal else {
+        return false;
+    };
+    if let Some(session) = window.terminals.borrow_mut().get_mut(&terminal_id) {
+        session.write_input(&[byte]);
     }
     true
 }

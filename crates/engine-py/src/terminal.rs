@@ -49,16 +49,12 @@ use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 /// "one real translation, two real callers" shape this codebase
 /// already uses throughout for input handling.
 ///
-/// **Real, deliberately deferred v1 gap, not silently missed:** no
-/// Ctrl+C SIGINT (or any other Ctrl+letter shortcut) -- `engine_core::
-/// InputEvent` carries no real modifier-key state for a plain
-/// `KeyPressed`/`TextInput` at all (`engine_platform::translate_
-/// clipboard_shortcut`'s own real Ctrl+C/X/V detection happens earlier,
-/// at the raw `winit` layer, before an `InputEvent` even exists, and
-/// today only ever produces `InputEvent::Copy`/`Cut`/`Paste`, never a
-/// real terminal-bound byte) -- reaching a focused terminal today
-/// requires a real, separate change to that earlier translation layer,
-/// out of this step's own scope.
+/// **M32 Phase 4 (§4, §8) closes the real gap this doc comment used to
+/// state here:** Ctrl+`<letter>` shortcuts (SIGINT included) now reach
+/// a focused terminal too -- see `control_byte_for` below, the sibling
+/// function this phase adds once `engine_platform::translate_clipboard_
+/// shortcut` was widened to report every real Ctrl+`<letter>` press,
+/// not just `c`/`x`/`v`.
 pub(crate) fn input_bytes_for(event: &InputEvent) -> Option<Vec<u8>> {
     match event {
         InputEvent::TextInput(text) => Some(text.as_bytes().to_vec()),
@@ -82,6 +78,33 @@ pub(crate) fn input_bytes_for(event: &InputEvent) -> Option<Vec<u8>> {
         ),
         _ => None,
     }
+}
+
+/// M32 Phase 4 (§4, §8): the real Ctrl+`<letter>` -> ASCII control-code
+/// mapping every real terminal emulator uses (`Ctrl+A` = `0x01` through
+/// `Ctrl+Z` = `0x1A`, the letter's own 1-indexed position in the
+/// alphabet -- Ctrl+C's own real `0x03` is `ETX`, the byte a real shell
+/// interprets as `SIGINT`). `Copy`/`Cut`/`PasteRequested` map to their
+/// own real underlying letters (`c`/`x`/`v`) here too: **a real,
+/// deliberate v1 choice, not an oversight** -- when a `Terminal` is
+/// genuinely focused, Ctrl+C/X/V mean their own real terminal-control
+/// bytes (SIGINT included), not clipboard copy/cut/paste, matching
+/// every real terminal emulator's own actual behavior (a bare Ctrl+C
+/// inside a real terminal has never meant "copy" in any of them); when
+/// no terminal is focused, `app.rs`'s own `on_input` never calls this
+/// at all for those three, so ordinary `TextField` copy/cut/paste stays
+/// completely unaffected. `None` for anything else -- pointer/scroll/
+/// theme events all fall through, the same minimal-vocabulary contract
+/// `input_bytes_for` above already keeps.
+pub(crate) fn control_byte_for(event: &InputEvent) -> Option<u8> {
+    let letter = match event {
+        InputEvent::ControlChar(ch) => *ch,
+        InputEvent::Copy => 'c',
+        InputEvent::Cut => 'x',
+        InputEvent::PasteRequested => 'v',
+        _ => return None,
+    };
+    Some((letter.to_ascii_uppercase() as u8) - b'A' + 1)
 }
 
 /// A real, live terminal session.
@@ -260,8 +283,8 @@ impl TerminalSession {
     }
 
     /// Writes real bytes to the shell's own stdin -- keystrokes
-    /// translated by `input_bytes_for_key`/`input_bytes_for_text`
-    /// below, or a real Ctrl+C SIGINT byte.
+    /// translated by `input_bytes_for` above, or a real Ctrl+`<letter>`
+    /// control byte (SIGINT included) from `control_byte_for`.
     pub(crate) fn write_input(&mut self, bytes: &[u8]) {
         // A closed/dead PTY write failing is a real, unremarkable
         // "the shell already exited" condition, not a bug to surface
@@ -376,4 +399,63 @@ fn ansi_index_to_color(index: u8) -> Color {
     let level = 8 + (index - 232) as u16 * 10;
     let level = level.min(255) as u8;
     Color::from_rgba8(level, level, level, 0xFF)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// M32 Phase 4 (§4, §8): the real, load-bearing claim this phase
+    /// exists for -- Ctrl+C maps to the real `0x03` (`ETX`) byte a real
+    /// shell interprets as `SIGINT`, not some other value.
+    #[test]
+    fn control_byte_for_maps_ctrl_c_to_the_real_sigint_byte() {
+        assert_eq!(control_byte_for(&InputEvent::Copy), Some(0x03));
+    }
+
+    #[test]
+    fn control_byte_for_covers_the_full_real_ctrl_letter_a_through_z_range() {
+        assert_eq!(
+            control_byte_for(&InputEvent::ControlChar('a')),
+            Some(0x01),
+            "Ctrl+A is the real, standard first control byte"
+        );
+        assert_eq!(
+            control_byte_for(&InputEvent::ControlChar('z')),
+            Some(0x1A),
+            "Ctrl+Z is the real, standard last control byte"
+        );
+        // Case-insensitive, the identical real convention `Copy`/`Cut`/
+        // `PasteRequested` already established -- `ControlChar` itself
+        // is always produced lowercase (`engine_platform::translate_
+        // clipboard_shortcut`'s own doc comment), but this function
+        // must not silently depend on that upstream normalization.
+        assert_eq!(control_byte_for(&InputEvent::ControlChar('A')), Some(0x01));
+    }
+
+    #[test]
+    fn control_byte_for_maps_cut_and_paste_to_their_own_real_letters() {
+        assert_eq!(
+            control_byte_for(&InputEvent::Cut),
+            Some(0x18),
+            "Ctrl+X's own real control byte (CAN)"
+        );
+        assert_eq!(
+            control_byte_for(&InputEvent::PasteRequested),
+            Some(0x16),
+            "Ctrl+V's own real control byte (SYN)"
+        );
+    }
+
+    #[test]
+    fn control_byte_for_is_none_for_anything_that_isnt_a_real_ctrl_letter_press() {
+        assert_eq!(control_byte_for(&InputEvent::TextInput("c".into())), None);
+        assert_eq!(
+            control_byte_for(&InputEvent::KeyPressed {
+                key: Key::Enter,
+                shift: false,
+            }),
+            None
+        );
+    }
 }

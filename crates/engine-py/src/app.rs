@@ -38,7 +38,7 @@ use crate::dispatch::{
     run_completions, run_dispatch_outcome,
 };
 use crate::dock::{self, SharedDockState};
-use crate::terminal::{TerminalSession, input_bytes_for};
+use crate::terminal::{TerminalSession, control_byte_for, input_bytes_for};
 use crate::window::{PyWindow, SharedTheme};
 
 #[pyclass(unsendable)]
@@ -535,23 +535,44 @@ impl App {
                 // completion-triggering byte. When a focused node is a
                 // real `Terminal`, this claims the keystroke entirely --
                 // the generic dispatch below never runs for it.
-                if let Some(bytes) = input_bytes_for(&event) {
-                    let focused_terminal = {
-                        let tree_ref = runtime.tree.borrow();
-                        tree_ref.focused().filter(|&id| {
-                            matches!(
-                                tree_ref.get(id).map(|node| &node.kind),
-                                Some(NodeKind::Terminal(_))
-                            )
-                        })
-                    };
-                    if let Some(terminal_id) = focused_terminal {
-                        if let Some(session) = runtime.terminals.borrow_mut().get_mut(&terminal_id)
-                        {
-                            session.write_input(&bytes);
-                        }
-                        return;
+                let focused_terminal = {
+                    let tree_ref = runtime.tree.borrow();
+                    tree_ref.focused().filter(|&id| {
+                        matches!(
+                            tree_ref.get(id).map(|node| &node.kind),
+                            Some(NodeKind::Terminal(_))
+                        )
+                    })
+                };
+                if let Some(bytes) = input_bytes_for(&event)
+                    && let Some(terminal_id) = focused_terminal
+                {
+                    if let Some(session) = runtime.terminals.borrow_mut().get_mut(&terminal_id) {
+                        session.write_input(&bytes);
                     }
+                    return;
+                }
+                // M32 Phase 4 (§4, §8): the real point of this phase --
+                // a real Ctrl+`<letter>` reaching a focused `Terminal`
+                // is its own real ASCII control byte (SIGINT for Ctrl+C
+                // included), not `Tree::dispatch`'s own generic (and,
+                // for `Copy`/`Cut`/`PasteRequested`, clipboard-bound)
+                // handling below. **Deliberately checked only when a
+                // real `Terminal` is genuinely focused:** when it isn't,
+                // `control_byte_for` is never even called here, so
+                // ordinary `TextField` copy/cut/paste (the match arms
+                // below) and every other unclaimed Ctrl+`<letter>`
+                // (a true no-op via `Tree::dispatch`'s own new plumbing-
+                // only `ControlChar` arm) stay completely unaffected --
+                // zero behavior change for the non-terminal case this
+                // phase doesn't touch.
+                if let Some(terminal_id) = focused_terminal
+                    && let Some(byte) = control_byte_for(&event)
+                {
+                    if let Some(session) = runtime.terminals.borrow_mut().get_mut(&terminal_id) {
+                        session.write_input(&[byte]);
+                    }
+                    return;
                 }
                 let outcome = runtime.tree.borrow_mut().dispatch(
                     runtime.root,

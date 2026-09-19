@@ -17,14 +17,20 @@ back via `Node.get_text()`; and a real render loop paints the whole
 live terminal -- including its background PTY reader thread's own
 output arriving mid-run -- over actual frames without crashing.
 
+M32 Phase 4 (§4, §8) closed a real, stated gap this script now proves
+directly: `Window.press_ctrl("c")` sends a real Ctrl+C/SIGINT byte to
+the focused terminal's own real shell, genuinely interrupting a
+running process, not just inserting a literal "c".
+
 **Real, honestly-scoped v1** (`Window.add_terminal`'s own Rust doc
 comment has the full list): no scrollback, no mouse text selection,
-no Ctrl+C/SIGINT or any other Ctrl+letter shortcut, no real terminal
-resize wired to window resize, and POSIX only. What *is* real: a
-genuine shell process, genuine keyboard round-trip, and genuine ANSI
-color rendering (16-color palette plus the standard 256-color xterm
-formula).
+no real terminal resize wired to window resize, and POSIX only. What
+*is* real: a genuine shell process, genuine keyboard round-trip,
+genuine ANSI color rendering (16-color palette plus the standard
+256-color xterm formula), and a genuine Ctrl+C SIGINT.
 """
+
+import time
 
 from tre import App, Window
 
@@ -55,6 +61,22 @@ window.press_key("enter")
 window.type_text("printf 'colors: \\033[31mred\\033[0m \\033[32mgreen\\033[0m\\n'")
 window.press_key("enter")
 
+# M32 Phase 4 (§4, §8): a real, running `sleep 100`, interrupted by a
+# real Ctrl+C before it can ever finish -- the definitive real proof
+# this phase exists for. `write_input` is a real, immediate OS write
+# to the PTY, independent of the one render loop below, so this
+# ordering is the real order the shell receives it in; the short real
+# wall-clock pause gives the shell time to actually fork/exec `sleep`
+# first.
+window.type_text("sleep 100")
+window.press_key("enter")
+time.sleep(0.2)
+sent = window.press_ctrl("c")
+print(f"press_ctrl('c') sent a real SIGINT: {sent}")
+assert sent, "a real focused terminal must report the control byte was sent"
+window.type_text("echo REACHED_AFTER_SIGINT")
+window.press_key("enter")
+
 app = App()
 app.add_window(window)
 app.run(max_frames=60)
@@ -64,4 +86,11 @@ print("--- final terminal contents ---")
 print(text)
 assert "hello from a real shell" in text, "expected real shell output not found"
 assert "colors:" in text, "expected the second real command's own output not found"
-print("terminal.py: exited cleanly after 60 frames -- a real shell genuinely responded")
+assert "REACHED_AFTER_SIGINT" in text, (
+    "the shell must have genuinely regained control right after the real SIGINT -- if "
+    "sleep 100 were still running, this later command would never have executed"
+)
+print(
+    "terminal.py: exited cleanly after 60 frames -- a real shell genuinely responded and "
+    "a real Ctrl+C genuinely interrupted a running sleep 100"
+)

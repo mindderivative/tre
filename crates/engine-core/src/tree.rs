@@ -2837,6 +2837,12 @@ impl Tree {
             InputEvent::Copy | InputEvent::Cut | InputEvent::PasteRequested => {
                 DispatchOutcome::None
             }
+            // M32 Phase 4 (§4, §8): the identical plumbing-only shape
+            // just above -- `engine-core` has no PTY/terminal access at
+            // all (§4), so deciding whether a focused `Terminal` exists
+            // to send this letter's own real ASCII control byte to
+            // happens in `engine-py`'s own raw-event handling.
+            InputEvent::ControlChar(_) => DispatchOutcome::None,
             // M17 Phase 2 (§8): a real, mechanical mutation (unlike
             // Copy/Cut/PasteRequested above, this needs no OS access --
             // `engine-platform` already extracted the real preedit text

@@ -1,68 +1,98 @@
-# LOG — M32 Phase 3: Real Scroll/Clip for Oversized Content
+# LOG — M32 Phase 4: Terminal Ctrl+C / SIGINT and Ctrl-Letter Shortcuts
 
-- Re-read the exact prior wording of this gap before scoping anything:
-  "no `NodeKind` besides `VirtualList` clips **its own children**
-  today" -- confirmed via grep this is specifically about a node
-  clipping its real node-tree children, not a leaf's own internal
-  painted overflow (a `TextField`'s glyphs have no children at all, so
-  a children-clip mechanism alone doesn't touch that case). Scoped
-  Phase 3 to exactly what the gap actually says: general children
-  clipping, letting an app *compose* a clipping wrapper around
-  anything oversized (the same "app composes, engine provides the
-  primitive" split the gutter/fold toggle already established), not a
-  new TextField-internal scroll mechanism.
-- Added `PaintProperties.clip_children: bool` (`engine-core::node.rs`),
-  default `false`, a true no-op for every one of this codebase's
-  existing nodes -- not `Animated`, the identical deliberate choice
-  `corner_radii_override` already made (a static per-node choice, not
-  something anything here needs to smoothly transition into/out of).
-  No call-site breakage anywhere: every real `PaintProperties`
-  construction already goes through `::new()`, confirmed via grep
-  before adding the field (zero direct struct-literal sites exist
-  outside the definition itself).
-- Generalized `engine-render::paint_node`'s existing `VirtualList`/
-  `Carousel`-specific clip branching rather than adding a third,
-  parallel branch: `Carousel` still always clips (unconditional, its
-  own real MD3 anatomy); the same branch now also fires for any other
-  `NodeKind` when `node.paint.clip_children` is genuinely set, reusing
-  the identical real clip-path-plus-narrowed-visibility logic already
-  there. No scroll-offset translation for the general case -- the
-  real, stated v1 limit: clipping only, not a new scroll mechanism.
-- Added `Node.set_clip_children(bool)` (`engine-py::node.rs`) --
-  deliberately universal (mutates `PaintProperties` directly, no
-  `NodeKind` match/rejection), the real, deliberate contrast with
-  `set_syntax_spans`/`set_folded_ranges` just above it in the same
-  file, which reject any node that isn't a `TextField`.
-- Full Rust verification chain green on the first pass: `cargo check`/
-  `clippy -D warnings`/`fmt --check` clean.
-- Wrote a real, dedicated pixel-diff integration test
-  (`crates/engine-render/tests/clip_children.rs`, modeled directly on
-  `virtual_list_scroll.rs`'s own render-to-texture-then-readback
-  pattern): a 50x50 parent with a single 50x200 child (four times its
-  own parent's real height). Two tests -- `clip_children: true`
-  genuinely hides the overflow past y=50 (checked at y=90, well inside
-  the child's own real height); `clip_children: false` (the default)
-  is a true no-op, the oversized child still paints past the parent
-  exactly as it always did, a real regression guard for every existing
-  node's own unchanged behavior. Both passed on the very first run --
-  no bug this time (unlike M32 Phase 2's own `Tree::set_layout_style`
-  catch), the generalization of already-proven `Carousel`/`VirtualList`
-  logic held up directly.
+- Confirmed the exact real gap via direct read of `terminal.rs`'s own
+  `input_bytes_for` doc comment (written at M30 Phase 9 Step 4, stating
+  the gap honestly rather than silently dropping it): `engine_
+  platform::translate_clipboard_shortcut`'s own real Ctrl+C/X/V
+  detection happens at the raw winit layer, before an `InputEvent`
+  even exists, today only ever producing `Copy`/`Cut`/`PasteRequested`
+  -- never a real terminal-bound byte.
+- Added `InputEvent::ControlChar(char)` (`engine-core::input.rs`) for
+  every real Ctrl+`<letter>` press besides c/x/v (unchanged, still
+  `Copy`/`Cut`/`PasteRequested`). Plumbing only in `Tree::dispatch`,
+  the identical shape `Copy`/`Cut`/`PasteRequested` already established
+  (`engine-core` has zero PTY access, §4).
+- Widened `translate_clipboard_shortcut` (`engine-platform`) to the
+  full ASCII alphabet -- restructured to extract exactly one char from
+  the `Character` payload (guarding against a real, if rare, multi-
+  char IME/dead-key sequence, which now correctly still produces
+  `None` rather than silently picking the first char). c/x/v keep
+  their own exact real behavior; every other letter now produces
+  `ControlChar` instead of `None`. Updated the one pre-existing test
+  that asserted `Character("a") -> None` (now `Some(ControlChar('a'))`
+  -- the real fix this phase exists for) and added 2 new tests.
+- Added `terminal::control_byte_for` (`engine-py`): the real Ctrl+
+  `<letter>` -> ASCII control-code mapping (`letter - 'A' + 1`, the
+  identical real formula every terminal emulator uses -- Ctrl+A=0x01
+  through Ctrl+Z=0x1A, Ctrl+C=0x03=`ETX`/SIGINT). **Real, deliberate
+  design decision, not an accident:** mapped `Copy`/`Cut`/
+  `PasteRequested` to their own real underlying letters here too, so
+  when a `Terminal` is genuinely focused, Ctrl+C/X/V mean their own
+  real terminal-control bytes, not clipboard ops -- matching every
+  real terminal emulator's own actual behavior (none of them treat a
+  bare Ctrl+C as "copy"). When no terminal is focused, this function
+  is simply never reached for those three (the call sites below only
+  invoke it after confirming a real `Terminal` is focused), so
+  ordinary `TextField` copy/cut/paste stays completely unaffected --
+  zero regression risk for the non-terminal case.
+- Wired `control_byte_for` into `app.rs`'s `on_input` closure --
+  extended the existing real terminal-keyboard-routing block
+  (`input_bytes_for`'s own early-return check) with a parallel one for
+  the new function, sharing one `focused_terminal` lookup between both
+  (`NodeId: Copy`, confirmed via a successful compile with no move
+  errors). Added the identical real routing to the synthetic, no-live-
+  window testing path (`window_input.rs`): a new `route_control_char_
+  to_terminal` helper mirroring `route_to_terminal`'s own shape, and a
+  new `Window.press_ctrl(letter: str) -> bool` pymethod -- deliberately
+  narrower in scope than `press_key`/`type_text` (never falls through
+  to ordinary `Tree::dispatch`; when no terminal is focused it just
+  returns `False`, touching nothing else, since `copy`/`cut`/`paste`
+  already own the separate, hermetic `TextField`-clipboard surface).
+- Real Rust unit tests: `engine-py::terminal.rs` gained its first-ever
+  `#[cfg(test)] mod tests` (this file had none before), 4 new tests for
+  `control_byte_for` (the real SIGINT byte value, the full a-z range,
+  Cut/Paste's own real letters, and a real negative case for non-
+  control-char events). `engine-platform` gained 2 new tests for the
+  widened `translate_clipboard_shortcut`. All passed on the first run
+  -- no bugs found this phase.
+- Full Rust verification chain green: `cargo check`/`clippy -D
+  warnings`/`fmt --check` clean (one real clippy fix needed: a
+  collapsible-if in `app.rs`, folded into a single `if let ... &&`
+  chain matching this file's own established style elsewhere).
 - Rebuilt the Python extension. Ran a real, direct empirical script
-  before writing any pytest: `set_clip_children(True)` on a plain
-  `Rect` with a real oversized child attached doesn't raise.
-- Added `tests/test_clip_children.py` (3 new tests, checked for a
-  filename collision first: none -- `test_clipboard.py` is unrelated)
-  and `examples/clip_children.py` (checked for a collision first: none
-  -- `clipboard.py` is unrelated) -- a real "read more" card whose real
-  content is taller than its own 80px preview box, clipped cleanly
-  instead of spilling out.
+  before writing any pytest -- the definitive real proof this whole
+  phase exists for: spawned a real shell, ran a genuine `sleep 100`,
+  waited 0.2s real wall-clock time for the shell to actually fork/exec
+  it, called `press_ctrl("c")`, then queued a distinguishable follow-up
+  command. The terminal's own final text showed the real `^C` echo and
+  the follow-up command's own real output -- proof `sleep 100` was
+  genuinely killed, not merely that the call didn't raise. Passed on
+  the first run.
+- **Respected the established "only one real `App.run()` call across
+  the whole pytest process" rule**
+  ([[feedback_no_second_app_run_in_pytest]]): rather than adding a new
+  test function with its own `App.run()` call, extended `test_
+  terminal.py`'s own existing real-shell test to also queue the sleep/
+  Ctrl+C/echo-after sequence before its one shared `App.run()` call.
+  Added 3 new synchronous (no `App.run()` needed) tests for `press_
+  ctrl`'s own return-value contract (`False` with nothing focused,
+  `True` with a real terminal focused, `ValueError` for anything that
+  isn't exactly one ASCII letter). Ran `pytest tests/` for the whole
+  suite (not just this file) to confirm zero cross-test pollution, the
+  same concrete check that memory's own "how to apply" section
+  recommends.
+- Extended `examples/terminal.py` with the identical real sleep/
+  Ctrl+C/echo-after proof (its own separate process when run standalone
+  -- no pytest cross-test concern there) and removed its own now-stale
+  "no Ctrl+C/SIGINT" line from the module doc comment.
 - Full verification: `cargo check`/`clippy -D warnings`/`fmt --check`
-  clean, `cargo test --release` (`engine-render` +2 pixel-diff tests),
-  `maturin develop --release`, `pytest tests/` 514 passed/1 skipped (3
-  new, up from 511, zero regressions), all 71 examples (including the
-  new `examples/clip_children.py`) and the showcase demo re-run clean,
-  `mypy --strict` clean against `examples/clip_children.py`.
-- Updated `BUILD_TRACKER.md` (Top Metrics row, Phase 3 heading and Step
+  clean, `cargo test --release` (`engine-py` +4 unit tests -- its first
+  ever, `engine-platform` +2), `maturin develop --release`, `pytest
+  tests/` 517 passed/1 skipped (3 new, up from 514, zero regressions,
+  confirmed no cross-test pollution from the extended real-shell test),
+  all 71 examples (including the updated `examples/terminal.py`) and
+  the showcase demo re-run clean, `mypy --strict` clean against
+  `examples/terminal.py`.
+- Updated `BUILD_TRACKER.md` (Top Metrics row, Phase 4 heading and Step
   1) -- verified the parser's own reported item count before/after,
   regenerated and republished the Build Tracker artifact.

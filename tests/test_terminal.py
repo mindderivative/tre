@@ -23,6 +23,7 @@ this file: a real second call silently never re-opened the window).
 """
 
 import sys
+import time
 
 import pytest
 
@@ -84,6 +85,13 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
     on a real PTY, receiving real keystrokes and producing real
     output that lands in the rendered cell grid -- not a mock, not a
     simulation.
+
+    M32 Phase 4 (§4, §8) extends this exact test (rather than adding a
+    new one with its own `App.run()` call) to also prove a real
+    Ctrl+C/SIGINT genuinely interrupts a running process --
+    [[feedback_no_second_app_run_in_pytest]]'s own real, confirmed
+    finding means this file's one `App.run()` call must stay the only
+    one across the whole pytest process, so both real claims share it.
     """
     window = Window(width=420, height=200)
     term = window.add_terminal(shell="/bin/sh", cols=40, rows=10, background=(0, 0, 0, 255))
@@ -93,12 +101,32 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
     window.type_text("echo HELLO_FROM_TERMINAL")
     window.press_key("enter")
 
+    # M32 Phase 4: a real, running `sleep 100`, interrupted by a real
+    # Ctrl+C before it can ever finish -- `write_input` is a real,
+    # immediate OS write to the PTY (not deferred to a render loop), so
+    # this ordering is the real order the shell receives it in,
+    # independent of `App.run()` below. A short real wall-clock pause
+    # gives the shell time to actually fork/exec `sleep` first -- the
+    # identical real timing this phase's own empirical check needed.
+    window.type_text("sleep 100")
+    window.press_key("enter")
+    time.sleep(0.2)
+    sent = window.press_ctrl("c")
+    assert sent is True, "a real focused terminal must report the control byte was sent"
+    window.type_text("echo REACHED_AFTER_SIGINT")
+    window.press_key("enter")
+
     app = App()
     app.add_window(window)
     app.run(max_frames=60)
 
     text = term.get_text()
     assert "HELLO_FROM_TERMINAL" in text, f"expected real shell output not found in {text!r}"
+    assert "REACHED_AFTER_SIGINT" in text, (
+        f"the shell must have genuinely regained control right after the real SIGINT -- if "
+        f"sleep 100 were still running, this later command would never have executed, got "
+        f"{text!r}"
+    )
 
 
 def test_get_monospace_cell_size_returns_real_positive_values_that_scale_with_font_size():
@@ -128,3 +156,34 @@ def test_press_key_without_a_focused_terminal_falls_through_harmlessly():
     # No window.click(term) -- nothing is focused.
     window.press_key("enter")
     window.type_text("hello")
+
+
+def test_press_ctrl_returns_false_without_a_focused_terminal():
+    """M32 Phase 4 (§4, §8): the real, deliberate scope boundary
+    `press_ctrl`'s own doc comment states -- unlike `press_key`/
+    `type_text`, it never falls through to `Tree::dispatch`, it just
+    reports nothing was sent.
+    """
+    window = Window(width=400, height=300)
+    window.add_terminal(shell="/bin/sh", cols=40, rows=10, background=(0, 0, 0, 255))
+    assert window.press_ctrl("c") is False
+
+
+def test_press_ctrl_returns_true_for_a_real_focused_terminal():
+    window = Window(width=400, height=300)
+    term = window.add_terminal(shell="/bin/sh", cols=40, rows=10, background=(0, 0, 0, 255))
+    window.click(term)
+    assert window.press_ctrl("c") is True
+    assert window.press_ctrl("z") is True, "every real Ctrl+<letter>, not just c/x/v"
+
+
+def test_press_ctrl_rejects_anything_that_isnt_exactly_one_ascii_letter():
+    window = Window(width=400, height=300)
+    term = window.add_terminal(shell="/bin/sh", cols=40, rows=10, background=(0, 0, 0, 255))
+    window.click(term)
+    with pytest.raises(ValueError):
+        window.press_ctrl("")
+    with pytest.raises(ValueError):
+        window.press_ctrl("cc")
+    with pytest.raises(ValueError):
+        window.press_ctrl("1")

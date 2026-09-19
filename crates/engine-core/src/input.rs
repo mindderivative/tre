@@ -148,6 +148,26 @@ pub enum InputEvent {
     /// paste," and `engine-py`'s own real handling supplies the actual
     /// text afterward via the already-real `TextInput` mechanism above.
     PasteRequested,
+    /// M32 Phase 4 (§4, §8): a real Ctrl+`<letter>` press for any
+    /// letter besides `c`/`x`/`v` (already `Copy`/`Cut`/`PasteRequested`
+    /// above, unchanged) -- `engine_platform::translate_clipboard_
+    /// shortcut`'s own real detection widened to the full alphabet,
+    /// the identical real fix `crates/engine-py/src/terminal.rs`'s own
+    /// `input_bytes_for` doc comment already named as this exact,
+    /// stated gap ("`engine_core::InputEvent` carries no real
+    /// modifier-key state... reaching a focused terminal today
+    /// requires a real, separate change to that earlier translation
+    /// layer"). Always lowercase (case-insensitive, the identical real
+    /// "a real Ctrl+Shift+`<letter>` press is the same shortcut"
+    /// convention `Copy`/`Cut`/`PasteRequested` already established).
+    /// Deliberately carries no PTY byte of its own: `engine-core` has
+    /// zero OS/platform access (§4), so turning a letter into its own
+    /// real ASCII control code (and deciding whether a focused
+    /// `Terminal` even exists to send it to) is `engine-py`'s own real
+    /// job, the identical "pure intent signal, meaning-dependent
+    /// handling downstream" split `Copy`/`Cut`/`PasteRequested`
+    /// already use.
+    ControlChar(char),
     /// M17 Phase 2 (§8): a real IME composition preview update --
     /// mirrors `winit::event::Ime::Preedit`'s own text (dropping its
     /// real sub-cursor-range detail, a stated simplification -- see
