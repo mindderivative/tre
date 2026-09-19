@@ -791,6 +791,27 @@ where
                 );
                 win.window.request_redraw();
             }
+            // M32 Phase 2 (§4, §5): the real gap this phase closes --
+            // "nothing resizes any node's box when its window resizes."
+            // `winit`'s own `PhysicalSize<u32>` fields are handed
+            // through as plain `f32`s, the identical "no DPI-scaling
+            // conversion" convention `CursorMoved`'s own translation
+            // above already established for this codebase. The real
+            // GPU-surface reconfiguration this also requires (`engine-
+            // platform` has no GPU knowledge at all, §4) is `engine-
+            // py`'s own `on_input` closure's job, the same "translate
+            // the raw event, let the real handler decide what it means"
+            // split `ThemeChanged` above already follows.
+            WindowEvent::Resized(size) => {
+                on_input(
+                    window_id,
+                    InputEvent::Resized {
+                        width: size.width as f32,
+                        height: size.height as f32,
+                    },
+                );
+                win.window.request_redraw();
+            }
             // M17 Phase 2 (§8): real IME composition, reachable only
             // because `resumed`'s own window creation now calls
             // `Window::set_ime_allowed(true)` -- see that call site's

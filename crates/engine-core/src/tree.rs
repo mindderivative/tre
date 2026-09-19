@@ -2798,6 +2798,37 @@ impl Tree {
             // this directly on the raw event, the same way it already
             // does for dock-drag `PointerPressed`/`PointerReleased`.
             InputEvent::ThemeChanged { .. } => DispatchOutcome::None,
+            // M32 Phase 2 (§4, §5): unlike `ThemeChanged`, a real
+            // mutation happens right here -- `root`'s own `layout_
+            // style.size` is a pure taffy concern `engine-core` fully
+            // owns (no MD3/platform knowledge needed), so there's no
+            // reason to defer this to `engine-py` the way `ThemeChanged`
+            // has to. `self.dirty` is already set unconditionally at
+            // the top of this function, which is exactly what a real
+            // resize needs: the next `compute_layout` call picks up
+            // this new size and lays out fresh, the identical dirty-
+            // tracking mechanism every other real mutation here already
+            // rides for free. **Real bug this phase's own first test
+            // caught, not predicted in advance:** an initial draft
+            // mutated `node.layout_style` directly -- `Tree::layout`
+            // still reported the stale size after a fresh `compute_
+            // layout`, because taffy keeps its own internal copy of
+            // every node's style (fed once at `insert` time) and never
+            // reads `Node::layout_style` back out of the tree on its
+            // own. Fixed by going through the real, existing `Tree::
+            // set_layout_style` -- its own doc comment states plainly
+            // that it's "the only place after `insert` that's allowed
+            // to touch `layout_style`" for exactly this reason.
+            InputEvent::Resized { width, height } => {
+                if let Some(mut style) = self.get(root).map(|node| node.layout_style.clone()) {
+                    style.size = Size {
+                        width: length(width),
+                        height: length(height),
+                    };
+                    self.set_layout_style(root, style);
+                }
+                DispatchOutcome::None
+            }
             // M17 Phase 1 (§8): plumbing only, the identical shape --
             // `engine-core` has no clipboard access at all, so the real
             // work (reading `Tree::text_field_selected_text`/`cut_
@@ -5559,6 +5590,68 @@ mod tests {
             "Tree::dispatch itself must never touch a tint on ThemeChanged -- that's \
              engine-py's own job, via set_all_interaction_tints"
         );
+    }
+
+    /// M32 Phase 2 (§4, §5): the real gap this phase closes -- "nothing
+    /// resizes any node's box when its window resizes." Unlike
+    /// `ThemeChanged`, `Tree::dispatch` genuinely mutates `root`'s own
+    /// `layout_style.size` here (a pure taffy concern `engine-core`
+    /// fully owns), and a subsequent `compute_layout` call must
+    /// actually reflect it -- not just that the style field changed,
+    /// but that a real fresh layout pass produces the new real size.
+    #[test]
+    fn resized_grows_the_roots_own_layout_box_and_a_fresh_layout_reflects_it() {
+        let mut tree = Tree::new();
+        let (kind, style, paint) = leaf(100.0, 100.0);
+        let root = tree.insert(kind, style, paint);
+
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+        assert_eq!(tree.layout(root).size.width, 100.0);
+        assert_eq!(tree.layout(root).size.height, 100.0);
+
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::Resized {
+                width: 300.0,
+                height: 250.0,
+            },
+            &config,
+            Instant::now(),
+        );
+        assert_eq!(outcome, DispatchOutcome::None);
+        assert_eq!(
+            tree.get(root).unwrap().layout_style.size.width,
+            length(300.0)
+        );
+
+        // The real point: a fresh `compute_layout` after the resize
+        // must genuinely produce the new size, not the stale one --
+        // proving the mutation is real taffy `Style`, not a field
+        // `compute_layout` itself ignores.
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(250.0),
+            },
+        );
+        assert_eq!(tree.layout(root).size.width, 300.0);
+        assert_eq!(tree.layout(root).size.height, 250.0);
     }
 
     /// A 100x100 root with two overlapping 60x60 children at the same

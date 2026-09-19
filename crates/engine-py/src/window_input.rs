@@ -175,6 +175,38 @@ impl PyWindow {
         run_dispatch_outcome(&self.handlers, outcome, py);
     }
 
+    /// M32 Phase 2 (§4, §5): a direct, programmatic "resize this
+    /// window" entry point -- the same no-live-window-needed proof
+    /// pattern `click`/`hover` already establish (a real resize has
+    /// nowhere else to originate outside a live window either).
+    /// Updates both `self.width`/`self.height` -- which every other
+    /// synthetic method here (`click`/`hover`/`scroll`, plus every
+    /// interactive `add_*` factory method in `window_factory.rs`) reads
+    /// for its own `compute_layout` call -- and dispatches the real
+    /// `InputEvent::Resized` (`Tree::dispatch` mutates `root`'s own
+    /// `layout_style.size` directly for this event, see its own doc
+    /// comment). This method's own real reach is actually broader than
+    /// the live winit-driven path in `engine-py::app.rs`: that path's
+    /// own `WindowRuntime.width`/`height` are a separate, non-shared
+    /// copy from this `PyWindow`'s own fields (a real, stated v1 limit
+    /// -- see `app.rs`'s own `InputEvent::Resized` arm), so a live OS
+    /// resize never reaches these fields at all, only `root`'s own
+    /// layout box.
+    fn resize(&mut self, width: u32, height: u32, py: Python<'_>) {
+        self.width = width;
+        self.height = height;
+        let outcome = self.tree.borrow_mut().dispatch(
+            self.root,
+            InputEvent::Resized {
+                width: width as f32,
+                height: height as f32,
+            },
+            &interaction_config(),
+            std::time::Instant::now(),
+        );
+        run_dispatch_outcome(&self.handlers, outcome, py);
+    }
+
     /// M8 Phase 3 (§11.7): `click()`/`hover()`'s own scroll counterpart
     /// -- the same no-live-window-needed proof pattern, dispatching a
     /// real `InputEvent::Scroll` at `node`'s own real center point,

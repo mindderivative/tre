@@ -117,6 +117,14 @@ fn text_field_hit_offset(
 
 struct GpuState {
     surface: wgpu::Surface<'static>,
+    /// M32 Phase 2 (§4, §5): kept around (not just consumed inside
+    /// `new`) specifically so `resize` below can reconfigure the
+    /// surface again later with the identical real `usage`/`present_
+    /// mode`/`alpha_mode`/`view_formats` this adapter's own `get_
+    /// default_config` chose at construction -- mutating just `width`/
+    /// `height` on a stored config, the standard real wgpu resize
+    /// recipe, not re-deriving those choices from scratch.
+    surface_config: wgpu::SurfaceConfiguration,
     device: wgpu::Device,
     queue: wgpu::Queue,
     frame_renderer: FrameRenderer,
@@ -168,11 +176,38 @@ impl GpuState {
 
         Self {
             surface,
+            surface_config: config,
             device,
             queue,
             frame_renderer,
             text_renderer: TextRenderer::new(),
         }
+    }
+
+    /// M32 Phase 2 (§4, §5): reconfigures the real wgpu surface to a
+    /// genuinely new client-area size -- the textbook real wgpu resize
+    /// recipe (mutate the stored config's own `width`/`height`, then
+    /// `surface.configure` again), not something this crate invents.
+    /// **Real, confirmed finding before writing this:** `FrameRenderer`/
+    /// `vello_hybrid::Renderer` need no matching reconstruction at all
+    /// -- direct read of the vendored `vello_hybrid = "0.2.0"` source
+    /// confirms its own `Renderer::render` already calls a private
+    /// `maybe_update_config_buffer` every frame, which recreates its
+    /// own internal depth texture whenever the `RenderSize` passed to
+    /// `render` genuinely differs from the previous call -- real,
+    /// existing resize-safety this phase only needed to rely on, not
+    /// build. A 0-sized dimension (a real, possible transient value on
+    /// some platforms while a window is being minimized) is skipped
+    /// entirely -- `surface.configure` panics on a zero-sized
+    /// `SurfaceConfiguration`, a real, known wgpu gotcha, not a
+    /// hypothetical one.
+    fn resize(&mut self, width: u32, height: u32) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        self.surface_config.width = width;
+        self.surface_config.height = height;
+        self.surface.configure(&self.device, &self.surface_config);
     }
 }
 
@@ -652,6 +687,37 @@ impl App {
                         // component colors too, the identical way
                         // `Window.set_theme` itself already does.
                         tree.set_all_component_tints(tint);
+                    }
+                    // M32 Phase 2 (§4, §5): the real, winit-driven
+                    // window resize -- `Tree::dispatch` (called just
+                    // above, unconditionally, for every real
+                    // `InputEvent`) already resized `runtime.root`'s
+                    // own `layout_style.size` directly (`engine-core`
+                    // fully owns that, no need to defer it here); this
+                    // arm handles the two things only `engine-py` can
+                    // (real GPU surface access, and `runtime.width`/
+                    // `height`, which every per-frame `compute_layout`/
+                    // `build_tree_scene`/`RenderSize` call already
+                    // reads fresh -- see `RedrawRequested` above).
+                    // **Real, stated v1 limit:** `PyWindow`'s own
+                    // `width`/`height` fields (read by every
+                    // interactive `Window.add_*`/`click`/`hover`
+                    // factory method for their own `compute_layout`
+                    // calls) are a separate, non-shared copy from this
+                    // `WindowRuntime`'s -- they still reflect the
+                    // window's size at construction time, not a live
+                    // resize. Keeping those live too needs `PyWindow`'s
+                    // own fields to become genuinely shared, mutable
+                    // state threaded through the runtime -- a real,
+                    // separate, deeper change this phase doesn't take
+                    // on; an app that calls e.g. `add_dialog` from a
+                    // live click handler after a real resize still
+                    // sizes that dialog's own full-window scrim against
+                    // the window's original construction-time size.
+                    InputEvent::Resized { width, height } => {
+                        runtime.width = width as u32;
+                        runtime.height = height as u32;
+                        runtime.gpu.resize(runtime.width, runtime.height);
                     }
                     // M17 Phase 1 (§8): the real, winit-driven Ctrl+C
                     // path -- `Tree::text_field_selected_text` is a pure

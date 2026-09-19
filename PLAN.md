@@ -1,65 +1,84 @@
-# PLAN — M32 Phase 1: Bundled Monospace Font
+# PLAN — M32 Phase 2: Window Resize Handling
 
 ## Goal
-Replace the fixed analytic `terminal_cell_size` estimate (`font_size *
-0.6`/`* 1.3`) with real, measured monospace font metrics for both
-`Terminal` and `Code Editor`, by bundling a real, already-vetted
-monospace face rather than continuing to approximate with `Roboto`.
+Close the real, stated v1 gap M29's own trailer named: "nothing
+resizes any node's box when its window resizes." A real
+`WindowEvent::Resized` must genuinely resize the root node's own
+layout box and reconfigure the real GPU surface, not silently no-op.
 
 ## Steps
-1. Located a real, directly reusable asset: the sibling `pyCopper`
-   project already bundles `HackNerdFontMono-Regular.ttf` (MIT
-   License, Hack project, 2018 Source Foundry Authors) for its own
-   `Terminal` widget, for the identical real reason (broad glyph
-   coverage avoiding "tofu" in TUI/prompt content).
-2. Confirmed the font's own real embedded family name via direct read
-   of its `name` table (`fontTools.ttLib`), not assumed from the
-   filename: "Hack Nerd Font Mono".
-3. Copied the font + its license file into
-   `crates/engine-render/assets/fonts/`, documented in that
-   directory's own README alongside the three existing fonts.
-4. Registered it in `TextRenderer::new()` (`include_bytes!` +
-   `collection.register_fonts`), added `MONOSPACE_FONT_FAMILY` const.
-5. Added `TextRenderer::monospace_cell_size(font_family, font_size)`:
-   shapes a single "M" glyph through the existing `build_field_layout`
-   (zero new shaping logic) and reads back real `Layout::width()`/
-   `height()` — for a genuinely monospace face this gives the exact
-   real per-cell width/height. Memoized by `(font_family, font_size)`.
-6. `draw_terminal` now calls this instead of `engine_core::
-   terminal_cell_size`.
-7. Removed `engine_core::terminal_cell_size` entirely (both real call
-   sites migrated off it, would otherwise be dead code) — `engine-core`
-   stays font-agnostic per the crate-boundary rule (§4); the real
-   metric now lives where real font access actually exists
-   (`engine-render`), which `engine-py` already depends on.
-8. `engine-py::add_terminal`/`add_code_editor` now build a throwaway
-   `TextRenderer` to measure real cell/line metrics at node-creation
-   time (a real, one-time cost per call, not a per-frame one) and both
-   always shape with the real bundled monospace face instead of
-   `"Roboto"`.
-9. Added `Window.get_monospace_cell_size(font_size) -> (f32, f32)`,
-   exposing the same real metric to Python app code — replacing
-   `examples/code_editor_folding.py`'s own `FONT_SIZE * 1.3`
-   approximation with the real measured value, and fixing both
-   gutter examples' sibling `Text` node to use the real
-   `MONOSPACE_FONT_FAMILY` (now exported from the `tre` package)
-   instead of `"Roboto"`, preserving M31 Phase 1's "lines up by
-   construction" invariant now that Code Editor's own real font
-   changed.
-10. Real Rust unit tests: proved the bundled face has genuinely
-    uniform glyph advance (unlike Roboto, a real contrast case) and
-    that `monospace_cell_size` scales with `font_size` and is cached.
-11. Real, direct empirical script before pytest: `get_monospace_cell_size`
-    scales correctly, a real terminal spawns and a real code editor's
-    content round-trips with the new font.
+1. Confirmed via direct grep that `WindowEvent::Resized` had no arm at
+   all in `engine-platform`'s own match -- fell through the existing
+   `_ => {}` catch-all.
+2. Added `InputEvent::Resized { width, height }` (`engine-core::
+   input.rs`) in window-client-pixel space, no DPI conversion, matching
+   `PointerMoved`'s own established convention.
+3. Unlike `ThemeChanged` (plumbing only, deferred to `engine-py` since
+   `engine-core` has no MD3 knowledge), `Tree::dispatch` handles
+   `Resized` directly: a window resize is a pure taffy concern
+   `engine-core` fully owns. Uses the existing `Tree::set_layout_style`
+   (not a direct field mutation) to keep taffy's own internal copy in
+   sync.
+4. `engine-platform::window_event` translates `WindowEvent::Resized`
+   into the new `InputEvent`, requests a redraw -- the same "translate
+   the raw event, let engine-py decide what it means" split
+   `ThemeChanged` already established.
+5. Investigated whether `FrameRenderer`/`vello_hybrid::Renderer` need
+   reconstruction on resize: direct source read of the vendored
+   `vello_hybrid = "0.2.0"` confirmed `Renderer::render` already calls
+   a private `maybe_update_config_buffer` every frame, recreating its
+   own internal depth texture whenever `RenderSize` genuinely differs
+   from the previous call -- real, existing resize-safety, no new
+   reconstruction needed.
+6. Added `GpuState::resize` (`engine-py::app.rs`): the textbook wgpu
+   resize recipe -- mutate a stored `SurfaceConfiguration`'s own
+   `width`/`height`, then `surface.configure` again. Skips 0-sized
+   dimensions (a real wgpu panic otherwise, a real transient value on
+   some platforms while minimizing).
+7. `on_input`'s own `InputEvent::Resized` arm updates `runtime.width`/
+   `height` (u32, read by every per-frame `compute_layout`/
+   `build_tree_scene`/`RenderSize` call already) and calls `GpuState::
+   resize`. `Tree::dispatch` (called unconditionally just above for
+   every real `InputEvent`) already resized the root's own box.
+8. Added `Window.resize(width, height)`: the synthetic, no-live-window-
+   needed testing entry point, the identical pattern `click`/`hover`
+   already establish -- updates `self.width`/`height` too (this
+   object's own fields, unlike `WindowRuntime`'s separate copy the live
+   path touches) and dispatches the real `InputEvent::Resized`.
+9. Real Rust unit test caught a real bug on the first run: an initial
+   draft mutated `node.layout_style` directly, bypassing
+   `Tree::set_layout_style` -- a fresh `compute_layout` after the
+   resize still reported the stale size, because taffy keeps its own
+   internal copy of every node's style, never reading `Node::
+   layout_style` back out on its own. Fixed by going through the real,
+   existing `set_layout_style` method instead.
+10. Real, direct empirical script before pytest: `Window.resize`
+    doesn't raise, a click dispatched after it still reaches its own
+    handler.
+11. Added `tests/test_resize.py` (4 tests) and `examples/resize.py`.
 12. Full verification chain: cargo check/clippy/fmt/test, maturin
-    develop, pytest (full suite), all 69 examples, showcase demo,
-    mypy --strict on the three touched examples.
-13. Update `BUILD_TRACKER.md` (parser count verified), regenerate +
-    republish the Build Tracker artifact, update memory, commit.
+    develop, pytest (full suite), all 70 examples, showcase demo,
+    mypy --strict.
+13. **Real, stated v1 limit, not glossed over:** a live OS-driven
+    resize reaches `WindowRuntime`'s own `width`/`height` (governing
+    per-frame rendering) and the tree's own root box, but *not*
+    `PyWindow`'s own `width`/`height` fields -- a separate, non-shared
+    copy read by every interactive `add_*` factory method
+    (Dialog/Snackbar/Side Sheet/Navigation Drawer/etc.) for their own
+    layout. An app that calls one of those from a live click handler
+    after a real resize still sizes against the window's construction-
+    time dimensions. Making `PyWindow`'s own fields genuinely shared,
+    live state is a real, separate, deeper change, out of this phase's
+    scope. Also real, stated: exercising a *live* OS-driven resize end
+    to end isn't reachable through this project's existing headless
+    testing surface (no way to script an actual window-manager resize),
+    so this path is verified by code review plus `vello_hybrid`'s own
+    existing resize-safety mechanism, not a dedicated empirical test.
+14. Update `BUILD_TRACKER.md`, regenerate + republish the artifact,
+    update memory, commit.
 
 ## Status
-Complete. All steps done; full verification chain green (`engine-render`
-gains 2 new unit tests, `pytest tests/` 507 passed/1 skipped, up from
-506, all 69 examples, showcase demo, mypy --strict clean on the three
-touched examples).
+Complete. All steps done; full verification chain green (`engine-core`
+gains 1 new unit test that caught and drove a real fix, `pytest tests/`
+511 passed/1 skipped, up from 507, all 70 examples, showcase demo,
+mypy --strict clean).

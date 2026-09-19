@@ -184,6 +184,20 @@ pub enum InputEvent {
     ThemeChanged {
         dark: bool,
     },
+    /// M32 Phase 2 (§4, §5): the OS-level window client area genuinely
+    /// changed size -- `winit::WindowEvent::Resized`, translated in
+    /// `engine-platform`, in the same window-client-pixel space every
+    /// other real `InputEvent` here already uses (no DPI-scaling
+    /// conversion, matching `PointerMoved`'s own established
+    /// precedent). Unlike `ThemeChanged`, `Tree::dispatch` is *not* a
+    /// no-op here: resizing `root`'s own `layout_style.size` is a pure
+    /// taffy/layout concern `engine-core` fully owns already (no MD3
+    /// or platform knowledge needed), so the real mutation happens
+    /// directly in `dispatch`'s own match, not deferred to `engine-py`.
+    Resized {
+        width: f32,
+        height: f32,
+    },
 }
 
 /// M4 Phase 6 (§16.2): the small, real vocabulary of named events a
