@@ -16,12 +16,12 @@ use std::rc::Rc;
 use engine_core::{
     AccessNodeData, Action, Animated, CheckboxState, CircularProgressState, ContentFit, IconState,
     ImageState, LinearProgressState, NodeId, NodeKind, OverlayMeta, PaintProperties,
-    RadioButtonState, Role, SliderState, SplitterState, SwitchState, TextAlign, TextFieldState,
-    TextState, Tree,
+    RadioButtonState, Role, ShapeKey, SliderState, SplitterState, SwitchState, TextAlign,
+    TextFieldState, TextState, Tree,
 };
 use engine_render::{MONOSPACE_FONT_FAMILY, TextRenderer};
 use peniko::Color;
-use peniko::kurbo::Affine;
+use peniko::kurbo::{Affine, RoundedRect, Shape};
 use pyo3::prelude::*;
 use taffy::prelude::{
     AlignItems, JustifyContent, Position, Rect as TaffyRect, Size, Style, auto, length, zero,
@@ -713,6 +713,15 @@ const TOOLBAR_ITEM_GAP: f32 = 32.0;
 /// with a caller-chosen container size.
 const SPLIT_BUTTON_GAP: f32 = 2.0;
 const SPLIT_BUTTON_TRAILING_ICON_SIZE: f32 = 22.0;
+/// M38 Phase 4 (§5, §7): the real MD3 shape-scale "small" step -- the
+/// exact real value confirmed via `material-components-android`'s own
+/// `docs/components/ButtonGroup.md` ("8dp inner corners") for a
+/// connected group's own inner corners while interacting, the closest
+/// real documented anatomy to Split Button's own "the inner corners
+/// change shape for hovered, focused, and pressed states"
+/// (`COMPONENT_SPLIT_BUTTONS.md`) -- the M3 spec's own JS-rendered
+/// split-button spec page carries no fetchable static value.
+const SPLIT_BUTTON_INNER_CORNER_RADIUS: f64 = 8.0;
 
 /// M35 Phase 3 (§5, §7): real MD3 Standard Button Group tokens
 /// (`COMPONENT_BUTTON_GROUPS.md`'s own scraped "Standard button group
@@ -4184,20 +4193,24 @@ impl PyWindow {
     /// `engine_md3::icons`) -- "the trailing button should always have
     /// the expand and collapse icon... avoid modifying the icon."
     ///
-    /// **Real, honest v1 scope limit, stated directly:** the inner
-    /// corners' own real hover/press shape-tightening
-    /// (`COMPONENT_SPLIT_BUTTONS.md`'s own "the inner corners change
-    /// shape for hovered, focused, and pressed states") is not
-    /// implemented -- both buttons paint fully rounded (`corner_radius
-    /// = height / 2.0`) always, a real, deliberate simplification of
-    /// MD3's own real asymmetric-corner anatomy rather than wiring a
-    /// new hover/press-driven shape-morph state machine, which this
-    /// component's own real function doesn't strictly need. The real
-    /// per-size `xsmall` token set is used directly (`SPLIT_BUTTON_
-    /// GAP`/`SPLIT_BUTTON_TRAILING_ICON_SIZE`) rather than a discrete
-    /// XS/S/M/L/XL size-class parameter, matching `add_button`'s own
-    /// existing convention of always taking a literal real `width`/
-    /// `height`, never a size enum.
+    /// M38 Phase 4 (§5, §7): the inner corners' own real hover-driven
+    /// shape-tightening (`COMPONENT_SPLIT_BUTTONS.md`'s own "the inner
+    /// corners change shape for hovered, focused, and pressed states")
+    /// -- each of `leading`/`trailing` gets a real `PaintProperties.
+    /// interactive_shape` pair (relaxed fully-round pill, tightened to
+    /// `SPLIT_BUTTON_INNER_CORNER_RADIUS` on their own facing corners
+    /// only), so `Tree::update_hover` morphs the real, already-general
+    /// `shape: Animated<ShapeKey>` mechanism (M7 Phase 4) automatically
+    /// while either button is hovered. **Real, deliberate v1 scope
+    /// choice, stated directly:** tied to `hovered` only, not `focused`/
+    /// `pressed` separately -- see `PaintProperties.interactive_shape`'s
+    /// own doc comment for the full real reasoning (a mouse press can
+    /// only ever land on an already-hovered node). The real per-size
+    /// `xsmall` token set is used directly (`SPLIT_BUTTON_GAP`/
+    /// `SPLIT_BUTTON_TRAILING_ICON_SIZE`/`SPLIT_BUTTON_INNER_CORNER_
+    /// RADIUS`) rather than a discrete XS/S/M/L/XL size-class parameter,
+    /// matching `add_button`'s own existing convention of always taking
+    /// a literal real `width`/`height`, never a size enum.
     #[pyo3(signature = (label, width, height, variant="filled", x=None, y=None))]
     fn add_split_button(
         &self,
@@ -4216,6 +4229,40 @@ impl PyWindow {
 
         let mut tree = self.tree.borrow_mut();
 
+        // M38 Phase 4 (§5, §7): real inner-corner shape-tightening --
+        // `leading`'s own two right corners (facing the trailing
+        // button across `SPLIT_BUTTON_GAP`) tighten to `SPLIT_BUTTON_
+        // INNER_CORNER_RADIUS` on hover; its two left (outer) corners
+        // stay fully round always. `[top_left, top_right, bottom_
+        // right, bottom_left]`, `PaintProperties.corner_radii_
+        // override`'s own real ordering -- `RoundedRect::new`'s 4-tuple
+        // corner-radii constructor takes the identical order (confirmed
+        // via `GeometryCache::rounded_rect_fill_per_corner`'s own real
+        // call, `geometry_cache.rs`).
+        let h = f64::from(height);
+        let leading_w = f64::from(width);
+        let leading_relaxed =
+            ShapeKey::from_path(&RoundedRect::new(0.0, 0.0, leading_w, h, h / 2.0).to_path(0.1));
+        let leading_tightened = ShapeKey::from_path(
+            &RoundedRect::new(
+                0.0,
+                0.0,
+                leading_w,
+                h,
+                (
+                    h / 2.0,
+                    SPLIT_BUTTON_INNER_CORNER_RADIUS,
+                    SPLIT_BUTTON_INNER_CORNER_RADIUS,
+                    h / 2.0,
+                ),
+            )
+            .to_path(0.1),
+        );
+        if let Some(leading_node) = tree.get_mut(leading.id) {
+            leading_node.paint.shape = Animated::new(leading_relaxed.clone());
+            leading_node.paint.interactive_shape = Some((leading_relaxed, leading_tightened));
+        }
+
         let mut trailing_paint = PaintProperties::new(
             colors.container,
             f64::from(height) / 2.0,
@@ -4224,6 +4271,28 @@ impl PyWindow {
         );
         trailing_paint.border_color = Animated::new(colors.border_color);
         trailing_paint.border_width = Animated::new(colors.border_width);
+        // M38 Phase 4 (§5, §7): `trailing`'s own real inner-corner
+        // sibling -- its two *left* corners face `leading` across the
+        // same gap, so they tighten instead of the right ones.
+        let trailing_relaxed =
+            ShapeKey::from_path(&RoundedRect::new(0.0, 0.0, h, h, h / 2.0).to_path(0.1));
+        let trailing_tightened = ShapeKey::from_path(
+            &RoundedRect::new(
+                0.0,
+                0.0,
+                h,
+                h,
+                (
+                    SPLIT_BUTTON_INNER_CORNER_RADIUS,
+                    h / 2.0,
+                    h / 2.0,
+                    SPLIT_BUTTON_INNER_CORNER_RADIUS,
+                ),
+            )
+            .to_path(0.1),
+        );
+        trailing_paint.shape = Animated::new(trailing_relaxed.clone());
+        trailing_paint.interactive_shape = Some((trailing_relaxed, trailing_tightened));
         let mut trailing_style = positioned_style(
             Size {
                 width: length(height),

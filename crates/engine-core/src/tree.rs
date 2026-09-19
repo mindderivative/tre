@@ -2109,6 +2109,30 @@ impl Tree {
                 .hover_opacity
                 .animate_to(hover_opacity, duration, MotionCurve::Linear, now);
         }
+        // M38 Phase 4 (§5, §7): `PaintProperties.interactive_shape`'s
+        // own real "shape tightens while hovered" retarget -- the
+        // identical shape (pun intended) as `hover_opacity`'s own two
+        // blocks just above, just targeting `shape` back to `relaxed`
+        // for the node losing hover and to `tightened` for the one
+        // gaining it, both real `ShapeKey`s already cloned once at
+        // construction rather than rebuilt from a `BezPath` every
+        // hover transition.
+        if let Some(old) = self.hovered
+            && let Some(node) = self.nodes.get_mut(old)
+            && let Some((relaxed, _)) = node.paint.interactive_shape.clone()
+        {
+            node.paint
+                .shape
+                .animate_to(relaxed, duration, MotionCurve::Linear, now);
+        }
+        if let Some(new) = hit
+            && let Some(node) = self.nodes.get_mut(new)
+            && let Some((_, tightened)) = node.paint.interactive_shape.clone()
+        {
+            node.paint
+                .shape
+                .animate_to(tightened, duration, MotionCurve::Linear, now);
+        }
         self.hovered = hit;
         hit
     }
@@ -6818,6 +6842,95 @@ mod tests {
         assert!(
             (b_hover - 0.08).abs() < 0.001,
             "B must have faded in to the real hover target, got {b_hover}"
+        );
+    }
+
+    #[test]
+    fn update_hover_retargets_a_real_interactive_shape_toward_tightened_then_relaxed() {
+        // M38 Phase 4 (§5, §7): `PaintProperties.interactive_shape`'s
+        // own real hover-driven retarget -- `Split Button`'s own inner-
+        // corner shape-tightening. Proven directly at the `Tree` level
+        // (mirrors `update_hover_fades_the_old_node_out_and_the_new_
+        // one_in_on_a_real_change`'s own exact shape, just for `shape`
+        // instead of `hover_opacity`), not via the Python FFI: there is
+        // no Python getter for a `Node`'s own raw `shape` animation
+        // target, the same real verification-surface limit M37/M38
+        // Phase 2/3 already established for other cases.
+        use std::time::Duration;
+
+        use peniko::kurbo::Shape;
+
+        use crate::shape_morph::ShapeKey;
+
+        let mut tree = Tree::new();
+        let root_style = Style {
+            display: taffy::Display::Flex,
+            size: Size {
+                width: length(100.0),
+                height: length(50.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let relaxed = ShapeKey::from_path(&Rect::new(0.0, 0.0, 50.0, 50.0).to_path(0.1));
+        let tightened = ShapeKey::from_path(&Rect::new(4.0, 4.0, 46.0, 46.0).to_path(0.1));
+        let (k, s, mut p) = leaf(50.0, 50.0);
+        p.interactive_shape = Some((relaxed.clone(), tightened.clone()));
+        let node = tree.insert(k, s, p);
+        tree.add_child(root, node);
+
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(50.0),
+            },
+        );
+
+        let now = Instant::now();
+        tree.update_hover(
+            root,
+            Point::new(25.0, 25.0),
+            0.08,
+            Duration::from_millis(100),
+            now,
+        );
+        let target = tree
+            .get(node)
+            .unwrap()
+            .paint
+            .shape
+            .active
+            .as_ref()
+            .map(|a| a.to.clone());
+        assert_eq!(
+            target,
+            Some(tightened),
+            "hovering a node with a real interactive_shape must retarget its own shape \
+             animation toward the tightened silhouette"
+        );
+
+        tree.update_hover(
+            root,
+            Point::new(75.0, 25.0),
+            0.08,
+            Duration::from_millis(100),
+            now + Duration::from_millis(200),
+        );
+        let target = tree
+            .get(node)
+            .unwrap()
+            .paint
+            .shape
+            .active
+            .as_ref()
+            .map(|a| a.to.clone());
+        assert_eq!(
+            target,
+            Some(relaxed),
+            "moving the pointer away must retarget shape back toward the relaxed silhouette"
         );
     }
 

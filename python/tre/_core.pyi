@@ -697,7 +697,9 @@ class Window:
         `"rotation"` property (0.0 to 180.0 degrees) when your own menu
         opens/closes; the engine never does this automatically (the
         same "engine provides the mechanism, app decides the real
-        state change" split `Checkbox.checked` already uses).
+        state change" split `Checkbox.checked` already uses). The two
+        buttons' own facing inner corners automatically tighten while
+        either is hovered, then relax back -- no app-side wiring needed.
         """
         ...
     def add_button_group(

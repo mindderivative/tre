@@ -67,6 +67,21 @@ enum RectPathParams {
         radius: f64,
         inset: f64,
     },
+    /// M38 Phase 4 (§5, §7): `Border`'s own real per-corner sibling --
+    /// a real, previously-dormant gap `corner_radii_override`'s own
+    /// border stroke had since M30 Phase 1 Step 4 (it only ever fed
+    /// the fill path, never the border, confirmed by direct grep
+    /// before this phase): a bordered `Rect` with a real per-corner
+    /// override painted its stroke at the plain uniform `corner_
+    /// radius` regardless, a mismatch invisible until Split Button's
+    /// own outlined variant became the first real consumer to combine
+    /// a nonzero border with per-corner geometry.
+    PerCornerBorder {
+        w: f64,
+        h: f64,
+        radii: [f64; 4],
+        inset: f64,
+    },
 }
 
 /// M38 Phase 1 (§5, §7, §8): the real generating inputs of a
@@ -180,6 +195,29 @@ impl GeometryCache {
         };
         Self::get_or_build(&mut self.border_paths, id, params, || {
             RoundedRect::new(inset, inset, w - inset, h - inset, radius).to_path(0.1)
+        })
+    }
+
+    /// M38 Phase 4 (§5, §7): `rounded_rect_border`'s own real per-
+    /// corner sibling, closing the dormant `corner_radii_override`
+    /// border gap `RectPathParams::PerCornerBorder`'s own doc comment
+    /// names -- each of the four real radii is inset by the identical
+    /// `inset` (half the stroke width) `rounded_rect_border` already
+    /// subtracts from its own single scalar, clamped at `0.0` the same
+    /// way (a corner whose radius is smaller than the inset degrades
+    /// to a square corner rather than going negative).
+    pub fn rounded_rect_border_per_corner(
+        &mut self,
+        id: NodeId,
+        w: f64,
+        h: f64,
+        radii: [f64; 4],
+        inset: f64,
+    ) -> &BezPath {
+        let params = RectPathParams::PerCornerBorder { w, h, radii, inset };
+        Self::get_or_build(&mut self.border_paths, id, params, || {
+            let [tl, tr, br, bl] = radii.map(|r| (r - inset).max(0.0));
+            RoundedRect::new(inset, inset, w - inset, h - inset, (tl, tr, br, bl)).to_path(0.1)
         })
     }
 
@@ -311,19 +349,28 @@ mod tests {
 
     /// The real other half: a genuinely changed input (here, `radius`)
     /// must invalidate the cache and produce a real, different path.
+    /// M38 Phase 4 (§5, §7): switched from a `bounding_box()`
+    /// comparison to the path's own real starting point -- direct,
+    /// real inspection while writing this phase's own per-corner
+    /// border tests found `bounding_box()` reports byte-for-byte the
+    /// *same* box for any valid radius on a given `w`/`h` (a rounded
+    /// rect's tight curve bounds always touch all four nominal edges
+    /// regardless of corner radius), so this assertion was previously
+    /// passing only by incidental floating-point tessellation noise
+    /// between the two radii, not by genuinely proving the radius
+    /// reached the geometry.
     #[test]
     fn a_changed_radius_invalidates_the_cached_fill_path() {
         let mut tree = Tree::new();
         let id = rect_node(&mut tree);
         let mut cache = GeometryCache::new();
 
-        let first = cache.rounded_rect_fill(id, 50.0, 50.0, 8.0).clone();
-        let second = cache.rounded_rect_fill(id, 50.0, 50.0, 20.0).clone();
+        let first = cache.rounded_rect_fill(id, 50.0, 50.0, 8.0).elements()[0];
+        let second = cache.rounded_rect_fill(id, 50.0, 50.0, 20.0).elements()[0];
         assert_ne!(
-            first.bounding_box(),
-            second.bounding_box(),
-            "a genuinely different corner radius must produce a genuinely different real path, \
-             not silently reuse the stale one"
+            first, second,
+            "a genuinely different corner radius must move the path's own real starting \
+             point, not silently reuse the stale one"
         );
     }
 
@@ -341,6 +388,107 @@ mod tests {
             fill.bounding_box(),
             border.bounding_box(),
             "the fill (full box) and the inset border path must be genuinely distinct real paths"
+        );
+    }
+
+    /// M38 Phase 4 (§5, §7): the identical real cache-hit/cache-miss
+    /// proof the fill-path tests above already establish, applied to
+    /// the new per-corner border method.
+    #[test]
+    fn an_unchanged_node_reuses_its_cached_per_corner_border_path_without_rebuilding() {
+        let mut tree = Tree::new();
+        let id = rect_node(&mut tree);
+        let mut cache = GeometryCache::new();
+
+        let first_ptr = cache
+            .rounded_rect_border_per_corner(id, 50.0, 50.0, [8.0, 2.0, 2.0, 8.0], 1.0)
+            .elements()
+            .as_ptr();
+        let second_ptr = cache
+            .rounded_rect_border_per_corner(id, 50.0, 50.0, [8.0, 2.0, 2.0, 8.0], 1.0)
+            .elements()
+            .as_ptr();
+        assert_eq!(
+            first_ptr, second_ptr,
+            "identical (w, h, radii, inset) must reuse the exact same cached BezPath"
+        );
+    }
+
+    #[test]
+    fn a_changed_radii_invalidates_the_cached_per_corner_border_path() {
+        let mut tree = Tree::new();
+        let id = rect_node(&mut tree);
+        let mut cache = GeometryCache::new();
+
+        // `bounding_box()` is *not* a reliable radius-vs-radius probe
+        // here -- a rounded rect's own tight curve bounding box always
+        // touches all four nominal edges regardless of corner radius
+        // (confirmed by direct, real inspection before writing this:
+        // two same-box, different-radius `RoundedRect::to_path()`
+        // calls reported byte-for-byte the same `bounding_box()`).
+        // `elements()[0]`, the path's own real starting `MoveTo`, is
+        // the real, deterministic signal instead -- kurbo's own
+        // `RoundedRect::to_path()` starts at `(x0, y0 + top_left_
+        // radius)`, so its own y-coordinate directly reflects the
+        // real top-left radius that generated it.
+        let first = cache
+            .rounded_rect_border_per_corner(id, 50.0, 50.0, [8.0, 2.0, 2.0, 8.0], 1.0)
+            .elements()[0];
+        let second = cache
+            .rounded_rect_border_per_corner(id, 50.0, 50.0, [20.0, 2.0, 2.0, 8.0], 1.0)
+            .elements()[0];
+        assert_ne!(
+            first, second,
+            "a genuinely different top-left radius must move the path's own real starting \
+             point, not silently reuse the stale cached path"
+        );
+    }
+
+    /// The real point Split Button's own outlined variant needed fixed:
+    /// a per-corner border must actually paint a *different* top-left
+    /// corner than the plain (non-per-corner) uniform border built
+    /// from that same corner's own radius -- proven by comparing the
+    /// path's own real starting point (see the comment above for why
+    /// `bounding_box()` can't tell these apart).
+    #[test]
+    fn per_corner_border_produces_asymmetric_geometry_distinct_from_a_uniform_border() {
+        let mut tree = Tree::new();
+        let id = rect_node(&mut tree);
+        let mut cache = GeometryCache::new();
+
+        let per_corner = cache
+            .rounded_rect_border_per_corner(id, 50.0, 50.0, [25.0, 8.0, 8.0, 25.0], 1.0)
+            .elements()[0];
+        let uniform = cache
+            .rounded_rect_border(id, 50.0, 50.0, 8.0, 1.0)
+            .elements()[0];
+        assert_ne!(
+            per_corner, uniform,
+            "a real top-left radius of 25.0 (per-corner) must start the path at a genuinely \
+             different point than a uniform border built from radius 8.0 -- proving the \
+             per-corner radii genuinely reached the generated geometry, not just the cache key"
+        );
+    }
+
+    /// A corner whose radius is smaller than the real inset must clamp
+    /// to a square corner (`0.0`), the identical real defensive clamp
+    /// `rounded_rect_border`'s own single-scalar radius already has --
+    /// proven by an inset so large it would otherwise go negative.
+    #[test]
+    fn per_corner_border_clamps_a_radius_smaller_than_the_inset_to_zero() {
+        let mut tree = Tree::new();
+        let id = rect_node(&mut tree);
+        let mut cache = GeometryCache::new();
+
+        // Every real radius (2.0) is smaller than the real inset
+        // (5.0) -- must not panic or produce a negative-radius
+        // `RoundedRect` (kurbo's own real precondition), and must
+        // still yield a real, well-formed, non-empty path.
+        let path = cache.rounded_rect_border_per_corner(id, 50.0, 50.0, [2.0, 2.0, 2.0, 2.0], 5.0);
+        assert!(
+            path.elements().len() > 1,
+            "clamping every corner to 0.0 must still produce a real, well-formed square-corner \
+             border path, not an empty or degenerate one"
         );
     }
 

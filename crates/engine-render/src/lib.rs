@@ -498,16 +498,37 @@ fn paint_node(
             let border_width = node.paint.border_width.current;
             if border_width > 0.0 {
                 let inset = border_width / 2.0;
-                let radius = (node.paint.corner_radius.current - inset).max(0.0);
-                // M34 Phase 1 (§5, §8): the real border path also comes
-                // from `geometry` now -- same real motivation as the
-                // fill path above.
-                let border_path = geometry.rounded_rect_border(id, w, h, radius, inset);
+                // M38 Phase 4 (§5, §7): the border path now matches
+                // whichever real fill geometry this node actually used
+                // just above, closing a real, previously-dormant gap --
+                // `RectPathParams::PerCornerBorder`'s own doc comment
+                // has the full story (`geometry_cache.rs`).
+                let border_path: std::borrow::Cow<'_, BezPath> =
+                    if !node.paint.shape.current.is_empty() {
+                        // A real, active shape morph: stroke its own
+                        // silhouette directly, centered (no inset) --
+                        // a raw vertex path has no per-corner radius to
+                        // shrink, so this is a real, stated v1
+                        // simplification (a border may sit up to half
+                        // its own width outside the fill's own edge)
+                        // rather than inventing a general path-offset
+                        // operation nothing else in this codebase needs.
+                        std::borrow::Cow::Owned(node.paint.shape.current.to_path())
+                    } else if let Some(radii) = node.paint.corner_radii_override {
+                        std::borrow::Cow::Borrowed(
+                            geometry.rounded_rect_border_per_corner(id, w, h, radii, inset),
+                        )
+                    } else {
+                        let radius = (node.paint.corner_radius.current - inset).max(0.0);
+                        std::borrow::Cow::Borrowed(
+                            geometry.rounded_rect_border(id, w, h, radius, inset),
+                        )
+                    };
                 let border_color =
                     with_opacity(node.paint.border_color.current, node.paint.opacity.current);
                 scene.set_paint(border_color);
                 scene.set_stroke(Stroke::new(border_width));
-                scene.stroke_path(border_path);
+                scene.stroke_path(&border_path);
             }
         }
         NodeKind::Text(state) | NodeKind::Link(state) => {

@@ -1257,6 +1257,28 @@ pub struct PaintProperties {
     /// establishes just above, not `Carousel`'s heavier dedicated-
     /// `NodeKind` pattern.
     pub button_group_reflow: Option<(f64, f64)>,
+    /// M38 Phase 4 (§5, §7): real MD3 "the shape changes while
+    /// hovered/pressed" behavior (`Split Button`'s own real inner-
+    /// corner shape-tightening being the first real consumer) --
+    /// `Some((relaxed, tightened))` opts this node into `Tree::
+    /// update_hover` automatically retargeting `shape` (already a
+    /// real, general `Animated<ShapeKey>` field, M7 Phase 4) to
+    /// `tightened` while this node is the currently-hovered one, and
+    /// back to `relaxed` otherwise -- the identical real "read live
+    /// interaction state to drive a paint property" technique
+    /// `hover_opacity`'s own transition in that same method already
+    /// establishes, just targeting `shape` instead of an opacity
+    /// scalar. `None` (every existing node, unchanged) is a true
+    /// no-op. **Real, deliberate v1 scope choice, stated directly:**
+    /// tied to `hovered` only, not `focused`/`pressed` separately --
+    /// a real mouse press can only ever land on an already-hovered
+    /// node (`Tree::hit_test`'s own contract), so `hovered` already
+    /// covers the entire press gesture for this purely cosmetic
+    /// corner effect; keyboard-only focus is intentionally left out,
+    /// since this catalog's own dedicated `focus_ring` mechanism
+    /// already signals keyboard focus distinctly and doesn't need a
+    /// second, redundant visual cue riding along with it.
+    pub interactive_shape: Option<(crate::shape_morph::ShapeKey, crate::shape_morph::ShapeKey)>,
 }
 
 impl PaintProperties {
@@ -1273,6 +1295,7 @@ impl PaintProperties {
             corner_radii_override: None,
             clip_children: false,
             button_group_reflow: None,
+            interactive_shape: None,
         }
     }
 

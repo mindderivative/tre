@@ -1,68 +1,81 @@
-# PLAN — M38 Phase 3: Fold-Aware Cursor Navigation
+# PLAN — M38 Phase 4: Split Button Inner-Corner Shape-Tightening
 
 ## Goal
-Close the real, previously-documented v1 gap: `Tree::dispatch_text_
-field_key`'s `Home`/`End`/`ArrowUp`/`ArrowDown` moved through
-`TextFieldState.content`'s own real, unfolded bytes with no awareness
-of `folded_ranges` at all, so a real cursor could land somewhere
-genuinely invisible (inside a collapsed "⋯" region) -- `folded_
-ranges`'s own doc comment named this exact gap directly, four times
-across the codebase (`engine-core::node`, `engine-render::text`,
-`engine-py::node`, `python/tre/_core.pyi`).
+Close the real, previously-stated v1 scope limit: Split Button's two
+buttons always painted fully rounded, never tightening their own
+facing inner corners on hover/press the way real MD3 anatomy
+("the inner corners change shape for hovered, focused, and pressed
+states," `COMPONENT_SPLIT_BUTTONS.md`) calls for.
 
 ## Steps
-1. Confirmed the exact existing paint-time precedent to mirror:
-   `engine-render::text::to_display_offset_folded`'s own doc comment
-   already states the real convention for "an offset lands inside a
-   fold": resolve to right after that fold's own real marker (i.e.
-   the fold's own `range.end`). Cursor navigation should apply the
-   identical rule, not invent a second one.
-2. New `Tree::snap_out_of_fold(cursor, content, folded) -> usize`
-   (`crates/engine-core/src/tree.rs`): walks `folded_ranges` with the
-   same defensive normalization `engine-render`'s own `fold_segments`
-   already applies (skip malformed/overlapping/out-of-bounds ranges,
-   `engine-core` never validates `folded_ranges` itself); if the
-   candidate cursor position falls *strictly* inside a real range
-   (`range.start < cursor < range.end`), returns `range.end`; a
-   position exactly at a fold's own `start` or `end` is left alone
-   (both are real, visible boundaries).
-3. Wired into all four real landing computations in `dispatch_text_
-   field_key`: `Home`, `End`, and the `move_to_line` result inside
-   both `ArrowUp`/`ArrowDown` -- each now passes its own computed
-   target through `snap_out_of_fold` before assigning `state.cursor`.
-4. Corrected four now-stale doc comments that explicitly named "cursor
-   navigation is not fold-aware" as a real, deliberate v1 limitation:
-   `TextFieldState.folded_ranges` (`node.rs`), `to_display_offset_
-   folded` (`engine-render/src/text.rs` -- noted the paint-time clamp
-   is still a genuinely necessary fallback for other paths like mouse
-   click, not made redundant), `engine-py::node::set_folded_ranges`,
-   and its pyo3 stub in `python/tre/_core.pyi`.
-5. Added three new decisive Rust tests: a real `ArrowDown` landing
-   strictly inside a deliberately non-line-aligned fold that snaps
-   forward; `Home`/`End` both snapping out of a fold from a cursor
-   already inside it; a real boundary case proving a landing exactly
-   at a fold's own `start` is left alone, not force-moved.
-6. Checked the Python API for a real reproduction path before
-   assuming one didn't exist (the correct process this session's own
-   M37 case first established, applied properly this time rather than
-   skipped): `Node.set_folded_ranges` is a real, existing pyo3
-   binding -- reused the same `type_text`-after-navigation-then-
-   `get_text()` positional probe the goal-column tests already use.
-   One new pytest test added to `tests/test_code_editor.py`.
-7. Full verification chain: `cargo check`/`clippy -D warnings`/`fmt`/
+1. Real spec value research (the M3 site's own split-button spec page
+   is JS-rendered, no static content to fetch): confirmed via
+   `material-components-android`'s own real `docs/components/
+   ButtonGroup.md` -- connected groups tighten their own inner corners
+   to a real 8dp, outer corners stay fully round.
+2. Paused via `AskUserQuestion` -- no existing internal precedent for
+   auto-driving a shape animation from interaction state (only
+   `hover_opacity`/`focus_ring`/`ripple` opacity are engine-core-auto-
+   driven today; `shape: Animated<ShapeKey>`, M7 Phase 4, has only
+   ever been app-driven via `Node.animate("shape", ...)`). User chose
+   the real "Animated smooth morph" approach over an instant, non-
+   animated `corner_radii_override` swap.
+3. New `PaintProperties.interactive_shape: Option<(ShapeKey,
+   ShapeKey)>` (`relaxed`, `tightened`) -- `None` (every existing
+   node) is a true no-op. Wired into `Tree::update_hover` alongside
+   its own existing `hover_opacity` retarget: the node losing hover
+   animates `shape` back to `relaxed`, the node gaining it animates
+   toward `tightened`.
+4. **Real, deliberate v1 scope choice, stated directly:** tied to
+   `hovered` only, not `focused`/`pressed` separately -- a real mouse
+   press can only ever land on an already-hovered node (`hit_test`'s
+   own contract), so `hovered` already covers the whole press gesture
+   for this purely cosmetic corner effect; keyboard focus already has
+   its own dedicated `focus_ring` signal and doesn't need a second,
+   redundant visual cue. Kept the whole new mechanism confined to one
+   call site (`update_hover`) rather than touching the ~6 separate
+   real `pressed`-mutation sites across `dispatch`, most of which
+   don't have a `duration`/`now` cleanly available.
+5. `add_split_button` (`engine-py::window_factory.rs`): built the two
+   real static `ShapeKey`s per button (leading's own two *right*
+   corners tighten, facing the trailing button; trailing's own two
+   *left* corners tighten, facing leading), using kurbo's real 4-tuple
+   per-corner `RoundedRect` constructor -- the identical real technique
+   `GeometryCache::rounded_rect_fill_per_corner` already established.
+   New `SPLIT_BUTTON_INNER_CORNER_RADIUS: f64 = 8.0` constant.
+6. **Real, previously-dormant gap found and fixed along the way:**
+   `paint_node`'s own border-stroke path (`engine-render/src/lib.rs`)
+   always used the plain uniform `corner_radius`, completely ignoring
+   both `corner_radii_override` (M30 Phase 1 Step 4) and the new
+   `shape` morph -- invisible until Split Button's own `"outlined"`
+   variant (the only real caller combining a nonzero border with
+   per-corner geometry) made it a real, visible bug. Fixed: the border
+   now matches whichever real fill geometry the node used (shape-morph
+   silhouette stroked directly/centered when active, new `Geometry
+   Cache::rounded_rect_border_per_corner` when `corner_radii_override`
+   is set, the original uniform path otherwise).
+7. Real tests: `geometry_cache.rs` gained per-corner-border cache-hit/
+   miss/asymmetry/clamp tests, plus fixed a discovered fragile
+   pre-existing test (`bounding_box()` can't distinguish different
+   corner radii on the same box -- switched to the path's own real
+   starting point). `tree.rs` gained a direct `update_hover` retarget
+   test. Two new Python-level tests reusing `Window.hover` (real
+   pointer-moved dispatch) -- no Python getter exists for the raw
+   `shape` animation target, so these prove the real end-to-end
+   dispatch-through-paint path runs clean, including the outlined-
+   variant border-fix regression case.
+8. Full verification chain: `cargo check`/`clippy -D warnings`/`fmt`/
    `test --workspace --release`, `maturin develop --release`, full
    `pytest tests/`, all 75 examples, showcase demo.
-8. `BUILD_TRACKER.md` Phase 3 flipped to done (terse step-bullet note,
-   full writeup here in `PLAN.md`/`LOG.md`), Top Metrics row updated
-   to 3-of-7, artifact regenerated (38/122/212, unchanged) and
-   republished.
+9. `BUILD_TRACKER.md` Phase 4 flipped to done, Top Metrics updated to
+   4-of-7, artifact regenerated (38/122/212, unchanged) and republished.
 
 ## Status
 Complete. Full verification chain green (`cargo test --workspace
---release`: `engine-core` 188 passed, up from 185, +3 new tests;
-`pytest tests/`: 559 passed/1 skipped, up from 558, +1 new test; all
-75 examples + showcase demo clean). **M38 Phase 3 -- Fold-Aware
-Cursor Navigation is now complete. M38 itself remains open: 4 phases
-remain (Split Button inner-corner shape-tightening, Button Group
-per-child shape change, ScrollView scrollbar thumb, real scroll+clip
-for Code Editor).**
+--release`: `engine-core` 189 passed (+1), `engine-render` 28 passed
+(+4, the new geometry_cache tests); `pytest tests/`: 561 passed/1
+skipped, up from 559, +2 new tests; all 75 examples + showcase demo
+clean). **M38 Phase 4 -- Split Button Inner-Corner Shape-Tightening
+is now complete. M38 itself remains open: 3 phases remain (Button
+Group per-child shape change, ScrollView scrollbar thumb, real
+scroll+clip for Code Editor).**
