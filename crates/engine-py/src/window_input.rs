@@ -438,6 +438,20 @@ impl PyWindow {
         self.tree.borrow().text_field_selected_text(field)
     }
 
+    /// M32 Phase 6 (§4, §5, §8): `copy`'s own real `Terminal` sibling
+    /// -- the identical real hermetic scope boundary (never touches
+    /// the actual OS clipboard, only the real, pure `Tree::terminal_
+    /// selected_text` read); a real Ctrl+Shift+C only ever originates
+    /// from an actual OS-level keyboard event, the same real "no
+    /// synthetic way to drive that specific path" gap `copy`'s own doc
+    /// comment already states for Ctrl+C. Reads whichever `Terminal`
+    /// is currently focused -- use `Node.set_terminal_selection` first
+    /// to seed a real selection without a live mouse drag.
+    fn copy_terminal_selection(&self) -> Option<String> {
+        let terminal = self.tree.borrow().focused()?;
+        self.tree.borrow().terminal_selected_text(terminal)
+    }
+
     /// `copy`'s own real Cut sibling -- same real scope boundary
     /// (hermetic, no real OS clipboard touched), reusing the real,
     /// pure `Tree::cut_text_field_selection`.

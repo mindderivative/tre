@@ -200,6 +200,16 @@ class Node:
         scrollable into view.
         """
         ...
+    def set_terminal_selection(
+        self, start_row: int, start_col: int, end_row: int, end_col: int
+    ) -> None:
+        """`Terminal`-only: seeds a real cell-range selection directly,
+        without a live mouse drag -- a real linear (reading-order)
+        selection, the same convention every terminal emulator uses.
+        `start == end` (both coordinates equal) reads as no selection
+        at all. Raises `ValueError` for any other kind.
+        """
+        ...
 
 class Window:
     """One real OS window and the node tree painted into it. Add one or
@@ -1073,10 +1083,12 @@ class Window:
         press_key`/`type_text`/`press_ctrl`/a real platform keyboard
         event alike. `scrollback_lines` real lines of history are
         retained (`0` for none); `Window.scroll` on this node, or a
-        real mouse wheel over it, moves the viewport into it. Real,
-        honestly-scoped v1: no mouse text selection, no real resize-
-        with-window, and POSIX only. Raises `OSError` if `shell` can't
-        be spawned on a real PTY.
+        real mouse wheel over it, moves the viewport into it. A real
+        mouse drag (or `Node.set_terminal_selection`) selects real
+        text; `Window.copy_terminal_selection`/a genuine Ctrl+Shift+C
+        reads/copies it. Real, honestly-scoped v1: no real resize-with-
+        window, and POSIX only. Raises `OSError` if `shell` can't be
+        spawned on a real PTY.
         """
         ...
     def get_monospace_cell_size(self, font_size: float) -> tuple[float, float]:
@@ -1240,6 +1252,15 @@ class Window:
     def paste(self, text: str) -> None:
         """Inserts `text` at the current cursor position, replacing any
         selection.
+        """
+        ...
+    def copy_terminal_selection(self) -> str | None:
+        """`copy()`'s own real `Terminal` sibling -- returns the
+        currently focused terminal's own selected text (seed one with
+        `Node.set_terminal_selection` or a real mouse drag), or `None`
+        if nothing is focused, the focused node isn't a `Terminal`, or
+        its selection is empty. Does not touch the system clipboard --
+        the real live path is a genuine Ctrl+Shift+C.
         """
         ...
 

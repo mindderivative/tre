@@ -1,70 +1,76 @@
-# PLAN — M32 Phase 5: Terminal Scrollback
+# PLAN — M32 Phase 6: Terminal Mouse Text Selection
 
 ## Goal
 Close the real, stated v1 gap M30 Phase 9 Step 4 (Terminal) named: no
-scrollback. A user must be able to scroll a terminal's own viewport
-back into history and see real, previously-scrolled-off output.
+mouse text selection or copy. This closes M32 itself, all 6 phases.
 
 ## Steps
-1. Investigated the vendored `vt100 = "0.16.2"` source directly before
-   writing any code: it already has a real, built-in scrollback buffer
-   (`Grid.scrollback: VecDeque<Row>`, `Parser::new`'s own third
-   `scrollback_len` parameter, `Screen::set_scrollback`/`scrollback()`)
-   -- simply never turned on (`Parser::new(rows, cols, 0)`). `Screen::
-   cell`/`rows()` already read from the current real `scrollback_offset`
-   internally, and a new line pushed while scrolled back auto-adjusts
-   the offset to keep the viewer's own position stable (confirmed via
-   direct source read of `Grid`'s own row-push logic) -- both real,
-   already-correct behaviors this phase only needed to expose, not
-   build.
-2. `TerminalSession::spawn` gained a real `scrollback_lines: usize`
-   parameter, threaded through to `vt100::Parser::new`. `add_terminal`
-   gained the matching `scrollback_lines: usize = 1000` parameter.
-3. Refactored `drain_into`'s cell-extraction logic into a shared
-   `sync_state` helper (`TerminalSession`) -- a real scroll changes
-   what `Screen::cell` returns with zero new PTY bytes involved, so it
-   needs its own real sync call, not just `drain_into`'s own "only
-   when new bytes arrived" gate.
-4. Added `TerminalSession::scroll_by(tree, node_id, delta_lines)`:
-   moves the real scrollback position and immediately re-syncs
-   `TerminalState`. The position arithmetic itself is a pure,
-   dedicated `scrollback_target` free function (unit-testable without
-   a real PTY).
-5. Wired real scrolling into both real input paths: `app.rs`'s
-   `on_input` (a real mouse wheel over a `Terminal`, hit-tested at the
-   wheel's own position -- `Tree::dispatch`'s own `VirtualList`/
-   `Carousel` wheel-bubbling already ran harmlessly for this same
-   event, a true no-op for a `Terminal` with neither ancestor) and the
-   synthetic, no-live-window `Window.scroll(node, delta_y)` (checks if
-   `node` is itself a `Terminal` first, bypassing `Tree::dispatch`
-   entirely for that case).
-6. Real Rust unit tests (`scrollback_target`): positive delta moves
-   further into history, negative moves back toward the bottom, never
-   underflows past `0`.
-7. Real, direct empirical script before pytest: generated more real
-   shell output than a 5-row terminal's viewport could hold, confirmed
-   the bottom view showed only recent lines, then confirmed `Window.
-   scroll` revealed the real, previously-scrolled-off first lines --
-   and discovered along the way that **no second `App.run()` call is
-   needed at all**, since `scroll_by` re-syncs state synchronously.
-8. Extended `test_terminal.py`'s own sole `App.run()`-based test again
-   (now proving three real claims: shell response, Ctrl+C/SIGINT,
-   scrollback) plus 2 new synchronous (no `App.run()`) tests.
-9. Extended `examples/terminal.py` with the identical real scrollback
-   proof, updating its own module doc comment (removed the stale "no
-   scrollback" line). Also fixed a separately-noticed stale "no
-   scrollback, no Ctrl+C" line in `add_terminal`'s own `.pyi` docstring
-   (missed during Phase 4, corrected here since already touching this
-   exact text) and updated `Window.scroll`'s own `.pyi` docstring.
-10. Full verification chain: cargo check/clippy/fmt/test, maturin
-    develop, pytest (full suite, checked for cross-test pollution),
-    all 71 examples, showcase demo, mypy --strict.
-11. Update `BUILD_TRACKER.md`, regenerate + republish the artifact,
-    update memory, commit.
+1. Checked the sibling `pyCopper` project's own real `Terminal` widget
+   (the reference every prior Terminal phase this session grounded
+   itself in) and confirmed it explicitly excludes mouse selection too
+   -- "deliberately out of scope for this pass... since there is
+   nothing to copy without a selection." No real reference
+   implementation existed anywhere to design this from, the identical
+   real situation M31 Phase 5 (Code Folding) was in. Paused and asked
+   the user directly via `AskUserQuestion`; the user chose "Full real
+   selection + clipboard copy."
+2. Added `TerminalState.selection_start`/`selection_end: Option<(u16,
+   u16)>` (real `(row, col)` cell coordinates, `engine-core`).
+3. New `Tree` methods: `set_terminal_selection_start`/`extend_
+   terminal_selection` (mutation, the identical real "collapse on
+   press, grow on drag" shape `set_text_field_cursor`/`extend_text_
+   field_selection` already established) and `terminal_selected_text`
+   (a pure read -- real *linear*, reading-order selection, each row's
+   own trailing whitespace trimmed, matching `Node.get_text()`'s own
+   established convention).
+4. Added `engine-render::TextRenderer::terminal_hit_cell`: turns a
+   real local point into its real `(row, col)` cell via the identical
+   `monospace_cell_size` metrics `draw_terminal` already positions
+   every cell on -- much simpler than `TextField`'s own per-glyph
+   `hit_test_position` (a uniform grid needs only plain division).
+   `draw_terminal` paints a real selection highlight (`with_opacity(
+   at.color, 0.3)`, the identical real convention `TextField`'s own
+   selection painting already uses).
+5. Wired real mouse-drag selection into `app.rs`'s `on_input` closure
+   -- a new `runtime.terminal_drag: Option<NodeId>` field mirrors
+   `text_drag`'s own exact shape for `PointerPressed`/`PointerMoved`/
+   `PointerReleased`.
+6. Added the real Ctrl+Shift+C copy shortcut: widened `translate_
+   clipboard_shortcut` to take an explicit `shift: bool` (a real
+   correctness fix -- inferring Shift from `Character` case would have
+   conflated it with Caps Lock) and produce the new `InputEvent::
+   TerminalCopyRequested` for Ctrl+Shift+C specifically. **Real,
+   deliberate design:** a bare Ctrl+C on a focused terminal still means
+   SIGINT (M32 Phase 4, unchanged); Ctrl+Shift+C is the separate real
+   shortcut that copies, matching every real terminal emulator's own
+   actual convention.
+7. Real Rust unit tests: 10 for the selection model (`engine-core`),
+   2 pixel-diff tests proving the selection highlight genuinely paints
+   (`engine-render`), 2 for `terminal_hit_cell`'s own geometry, 2 new
+   for the widened `translate_clipboard_shortcut`.
+8. Added `Node.set_terminal_selection`/`Window.copy_terminal_selection`
+   -- the real, hermetic, no-live-window-needed synthetic entry points,
+   mirroring `Window.copy()`'s own established scope boundary (real
+   mouse drag and real Ctrl+Shift+C stay winit-only, the identical real
+   limitation `Window.copy()`'s own doc comment already states for a
+   plain Ctrl+C).
+9. Real, direct empirical script before pytest: seeded a real
+   selection over genuinely echoed shell output and read it back.
+10. Extended `test_terminal.py`'s own sole `App.run()`-based test a
+    fourth time (now proving shell response, Ctrl+C/SIGINT,
+    scrollback, and selection together) plus 4 new synchronous tests.
+11. Extended `examples/terminal.py` with the identical real selection
+    proof.
+12. Full verification chain: cargo check/clippy/fmt/test, maturin
+    develop, pytest (full suite), all 71 examples, showcase demo,
+    mypy --strict.
+13. Update `BUILD_TRACKER.md` (closing Phase 6 and M32 itself),
+    regenerate + republish the artifact, update memory, commit, push
+    (a full milestone closing).
 
 ## Status
-Complete. All steps done; full verification chain green (`engine-py`
-gains 3 new unit tests, `pytest tests/` 519 passed/1 skipped, up from
-517, all 71 examples, showcase demo, mypy --strict clean). A real
-5-row terminal's own scrolled-off history was genuinely revealed by a
-real scroll, not simulated.
+Complete. All steps done; full verification chain green (`engine-core`
++10 tests, `engine-render` +4, `engine-platform` +2, `pytest tests/`
+523 passed/1 skipped, up from 519, all 71 examples, showcase demo,
+mypy --strict clean). **M32 -- Hardening: Closing Stated v1 Gaps is
+now fully complete, all 6 phases.**

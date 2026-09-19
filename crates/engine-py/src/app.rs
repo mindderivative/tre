@@ -115,6 +115,28 @@ fn text_field_hit_offset(
     Some(text_renderer.hit_test_position(&state, at, local_point))
 }
 
+/// M32 Phase 6 (§4, §5, §8): `text_field_hit_offset`'s own real
+/// `Terminal` sibling -- turns a real local click/drag point into the
+/// exact real `(row, col)` cell it lands on, via `engine-render`'s own
+/// `terminal_hit_cell` (real font metrics only that crate has, §4).
+/// `None` for anything that isn't a real, present `Terminal`, the
+/// identical "not the kind this needs" contract `text_field_hit_offset`
+/// already has.
+fn terminal_hit_cell(
+    tree: &Rc<RefCell<Tree>>,
+    text_renderer: &mut TextRenderer,
+    hit: NodeId,
+    local_point: Point,
+) -> Option<(u16, u16)> {
+    let tree_ref = tree.borrow();
+    match tree_ref.get(hit).map(|n| &n.kind) {
+        Some(NodeKind::Terminal(state)) => {
+            Some(text_renderer.terminal_hit_cell(state, local_point))
+        }
+        _ => None,
+    }
+}
+
 struct GpuState {
     surface: wgpu::Surface<'static>,
     /// M32 Phase 2 (§4, §5): kept around (not just consumed inside
@@ -233,6 +255,13 @@ struct WindowRuntime {
     /// `engine-render` can do (§4) -- `engine-core` structurally can't
     /// own this drag's own per-frame tracking.
     text_drag: Option<NodeId>,
+    /// M32 Phase 6 (§4, §5, §8): `text_drag`'s own real `Terminal`
+    /// sibling -- which terminal (if any) a real press-and-drag is
+    /// currently extending a real cell-range selection in. A separate
+    /// field, not a shared one, since a single real press can only
+    /// ever hit one real `NodeKind` at a time (`text_field_hit_offset`/
+    /// `terminal_hit_cell` are mutually exclusive per node).
+    terminal_drag: Option<NodeId>,
     /// M30 Phase 9 Step 4 (§5, §8, §10): the same real, shared session
     /// table `PyWindow.terminals` owns -- see `WindowSetup.terminals`'s
     /// own doc comment.
@@ -357,6 +386,7 @@ impl App {
                         theme: setup.theme.clone(),
                         completions: setup.completions.clone(),
                         text_drag: None,
+                        terminal_drag: None,
                         terminals: setup.terminals.clone(),
                     },
                 );
@@ -634,6 +664,23 @@ impl App {
                                 // `None` exactly as `set_text_field_
                                 // cursor` already left it.
                                 runtime.text_drag = Some(hit);
+                            } else if let Some((row, col)) = terminal_hit_cell(
+                                &runtime.tree,
+                                &mut runtime.gpu.text_renderer,
+                                hit,
+                                local_point,
+                            ) {
+                                // M32 Phase 6 (§4, §5, §8): a real press
+                                // on a `Terminal` -- the identical real
+                                // "collapsed selection, arm drag
+                                // tracking" shape `TextField`'s own
+                                // press handling just above already
+                                // has.
+                                runtime
+                                    .tree
+                                    .borrow_mut()
+                                    .set_terminal_selection_start(hit, row, col);
+                                runtime.terminal_drag = Some(hit);
                             }
                         }
                     }
@@ -673,6 +720,25 @@ impl App {
                                 .borrow_mut()
                                 .extend_text_field_selection(hit, offset);
                         }
+                        // M32 Phase 6 (§4, §5, §8): `text_drag`'s own
+                        // real `Terminal` sibling -- the identical real
+                        // "still over the same node, extend" shape.
+                        if let Some(terminal) = runtime.terminal_drag
+                            && let Some((hit, local_point)) =
+                                runtime.tree.borrow().hit_test_local(runtime.root, position)
+                            && hit == terminal
+                            && let Some((row, col)) = terminal_hit_cell(
+                                &runtime.tree,
+                                &mut runtime.gpu.text_renderer,
+                                hit,
+                                local_point,
+                            )
+                        {
+                            runtime
+                                .tree
+                                .borrow_mut()
+                                .extend_terminal_selection(hit, row, col);
+                        }
                     }
                     InputEvent::PointerReleased {
                         position,
@@ -687,6 +753,12 @@ impl App {
                         // dragging = None` already established for
                         // Splitter/Slider (M4 Phase 3).
                         runtime.text_drag = None;
+                        // M32 Phase 6 (§4, §5, §8): `text_drag`'s own
+                        // real `Terminal` sibling -- the real selection
+                        // itself stays visible (`TerminalState.
+                        // selection_start`/`end` are untouched here),
+                        // only the drag-tracking itself ends.
+                        runtime.terminal_drag = None;
                     }
                     // M7 Phase 3 (§7.1, Step 3): the real, winit-driven
                     // live theme switch -- `Window.set_theme`'s own
@@ -760,6 +832,38 @@ impl App {
                                 Ok(()) => {}
                                 Err(err) => {
                                     tracing::warn!(%err, "failed to write to the real OS clipboard");
+                                }
+                            }
+                        }
+                    }
+                    // M32 Phase 6 (§4, §5, §8): `Copy`'s own real
+                    // Terminal-specific sibling -- a genuine Ctrl+
+                    // Shift+C (`engine_platform::translate_clipboard_
+                    // shortcut`'s own real one exception to "shift
+                    // doesn't change the shortcut"). Reads whichever
+                    // `Terminal`'s own real mouse-drag selection is
+                    // currently set (`Tree::terminal_selected_text`, a
+                    // pure read -- `engine-core` never touches a real
+                    // clipboard, §4) and writes it to the real OS
+                    // clipboard, the identical real write path `Copy`
+                    // just above already uses. A true no-op if nothing
+                    // is currently focused, the focused node isn't a
+                    // `Terminal`, or its own selection is empty/
+                    // collapsed.
+                    InputEvent::TerminalCopyRequested => {
+                        let selected = runtime
+                            .tree
+                            .borrow()
+                            .focused()
+                            .and_then(|id| runtime.tree.borrow().terminal_selected_text(id));
+                        if let Some(text) = selected {
+                            match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
+                                Ok(()) => {}
+                                Err(err) => {
+                                    tracing::warn!(
+                                        %err,
+                                        "failed to write the real terminal selection to the OS clipboard"
+                                    );
                                 }
                             }
                         }

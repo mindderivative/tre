@@ -138,24 +138,31 @@ fn translate_key(logical_key: &WinitKey) -> Option<Key> {
     }
 }
 
-/// M17 Phase 1 (§8), widened M32 Phase 4 (§4, §8): the real Ctrl+
-/// `<letter>` vocabulary -- checked only when the real `ModifiersState::
-/// control_key()` is held (the caller's own job), since `logical_key`
-/// alone is Ctrl-blind (confirmed via direct source read of `winit`'s
-/// own `event.rs`: "This value is affected by all modifiers except
-/// Ctrl"). Case-insensitive (`Character("C")` for a real Ctrl+Shift+C
-/// press is the identical real shortcut, not a different one).
-/// `c`/`x`/`v` keep their own real `Copy`/`Cut`/`PasteRequested`
-/// meaning, unchanged since M17 Phase 1; every other single ASCII
-/// letter now produces the new `InputEvent::ControlChar` (M32 Phase 4)
-/// instead of `None` -- `engine-py`'s own `on_input` decides what a
-/// real Ctrl+`<letter>` means downstream (a focused `Terminal`'s own
-/// real control byte, or nothing at all). A multi-character `Character`
-/// payload (a real, if rare, possibility for some IME/dead-key
-/// sequences) or any non-alphabetic character still produces `None`,
-/// the same deliberately minimal-vocabulary contract this function
-/// always had.
-fn translate_clipboard_shortcut(logical_key: &WinitKey) -> Option<InputEvent> {
+/// M17 Phase 1 (§8), widened M32 Phase 4 (§4, §8) and M32 Phase 6 (§4,
+/// §5, §8): the real Ctrl+`<letter>` vocabulary -- checked only when
+/// the real `ModifiersState::control_key()` is held (the caller's own
+/// job), since `logical_key` alone is Ctrl-blind (confirmed via direct
+/// source read of `winit`'s own `event.rs`: "This value is affected by
+/// all modifiers except Ctrl"). Case-insensitive for the letter itself
+/// (`Character("C")`/`Character("c")` are the identical real shortcut),
+/// but `shift` is now taken as a real, explicit `bool` (the caller's
+/// own already-computed `ModifiersState::shift_key()`), not inferred
+/// from the character's own case -- a real, deliberate correctness fix
+/// this phase made: relying on `Character` case to detect Shift would
+/// conflate a real Shift press with Caps Lock, a genuinely different
+/// real modifier `winit`'s own `logical_key` does not distinguish for
+/// a letter key. `c`/`x`/`v` keep their own real `Copy`/`Cut`/
+/// `PasteRequested` meaning when `shift` is false, unchanged since M17
+/// Phase 1; `c` with `shift` true produces the new `TerminalCopyRequested`
+/// instead (M32 Phase 6) -- the one real, stated exception to "shift
+/// doesn't change the shortcut." Every other single ASCII letter
+/// produces `InputEvent::ControlChar` (M32 Phase 4) instead of `None`
+/// -- `engine-py`'s own `on_input` decides what a real Ctrl+`<letter>`
+/// means downstream. A multi-character `Character` payload (a real, if
+/// rare, possibility for some IME/dead-key sequences) or any non-
+/// alphabetic character still produces `None`, the same deliberately
+/// minimal-vocabulary contract this function always had.
+fn translate_clipboard_shortcut(logical_key: &WinitKey, shift: bool) -> Option<InputEvent> {
     let WinitKey::Character(c) = logical_key else {
         return None;
     };
@@ -165,6 +172,7 @@ fn translate_clipboard_shortcut(logical_key: &WinitKey) -> Option<InputEvent> {
         return None;
     }
     match ch.to_ascii_lowercase() {
+        'c' if shift => Some(InputEvent::TerminalCopyRequested),
         'c' => Some(InputEvent::Copy),
         'x' => Some(InputEvent::Cut),
         'v' => Some(InputEvent::PasteRequested),
@@ -740,8 +748,10 @@ where
                     on_input(window_id, event);
                 } else if key_event.state == ElementState::Pressed
                     && win.modifiers.control_key()
-                    && let Some(clipboard_event) =
-                        translate_clipboard_shortcut(&key_event.logical_key)
+                    && let Some(clipboard_event) = translate_clipboard_shortcut(
+                        &key_event.logical_key,
+                        win.modifiers.shift_key(),
+                    )
                 {
                     // M17 Phase 1 (§8), checked *before* the `TextInput`
                     // fallback below -- real, load-bearing ordering, not
@@ -948,25 +958,28 @@ mod tests {
     #[test]
     fn translate_clipboard_shortcut_maps_the_real_copy_cut_paste_vocabulary() {
         assert_eq!(
-            translate_clipboard_shortcut(&WinitKey::Character("c".into())),
+            translate_clipboard_shortcut(&WinitKey::Character("c".into()), false),
             Some(InputEvent::Copy)
         );
         assert_eq!(
-            translate_clipboard_shortcut(&WinitKey::Character("x".into())),
+            translate_clipboard_shortcut(&WinitKey::Character("x".into()), false),
             Some(InputEvent::Cut)
         );
         assert_eq!(
-            translate_clipboard_shortcut(&WinitKey::Character("v".into())),
+            translate_clipboard_shortcut(&WinitKey::Character("v".into()), false),
             Some(InputEvent::PasteRequested)
         );
     }
 
     #[test]
-    fn translate_clipboard_shortcut_is_case_insensitive() {
-        // A real Ctrl+Shift+C press produces the uppercase character --
-        // the identical real shortcut, not a different one.
+    fn translate_clipboard_shortcut_is_case_insensitive_for_the_letter_itself() {
+        // Real, deliberate: an uppercase `Character` (Caps Lock, say,
+        // with no real Shift held) must still read as a plain Ctrl+C,
+        // not the real Ctrl+Shift+C-only `TerminalCopyRequested` --
+        // `shift` is a separate, explicit real `bool` now, never
+        // inferred from the character's own case.
         assert_eq!(
-            translate_clipboard_shortcut(&WinitKey::Character("C".into())),
+            translate_clipboard_shortcut(&WinitKey::Character("C".into()), false),
             Some(InputEvent::Copy)
         );
     }
@@ -974,18 +987,18 @@ mod tests {
     #[test]
     fn translate_clipboard_shortcut_ignores_a_named_key_and_a_non_alphabetic_character() {
         assert_eq!(
-            translate_clipboard_shortcut(&WinitKey::Named(NamedKey::Enter)),
+            translate_clipboard_shortcut(&WinitKey::Named(NamedKey::Enter), false),
             None
         );
         assert_eq!(
-            translate_clipboard_shortcut(&WinitKey::Character("1".into())),
+            translate_clipboard_shortcut(&WinitKey::Character("1".into()), false),
             None
         );
         // A real, if rare, multi-character `Character` payload (some
         // IME/dead-key sequences) is not a single real Ctrl+<letter>
         // shortcut -- must not panic or silently pick the first char.
         assert_eq!(
-            translate_clipboard_shortcut(&WinitKey::Character("ab".into())),
+            translate_clipboard_shortcut(&WinitKey::Character("ab".into()), false),
             None
         );
     }
@@ -996,13 +1009,38 @@ mod tests {
     #[test]
     fn translate_clipboard_shortcut_maps_every_other_letter_to_control_char() {
         assert_eq!(
-            translate_clipboard_shortcut(&WinitKey::Character("a".into())),
+            translate_clipboard_shortcut(&WinitKey::Character("a".into()), false),
             Some(InputEvent::ControlChar('a'))
         );
         assert_eq!(
-            translate_clipboard_shortcut(&WinitKey::Character("Z".into())),
+            translate_clipboard_shortcut(&WinitKey::Character("Z".into()), false),
             Some(InputEvent::ControlChar('z')),
             "case-insensitive, the same real convention c/x/v already established"
+        );
+    }
+
+    /// M32 Phase 6 (§4, §5, §8): the one real exception to "shift
+    /// doesn't change the shortcut" -- a genuine Ctrl+Shift+C produces
+    /// `TerminalCopyRequested`, not `Copy`; every other letter (including
+    /// `x`/`v`) stays completely unaffected by `shift`.
+    #[test]
+    fn translate_clipboard_shortcut_shift_c_is_terminal_copy_requested() {
+        assert_eq!(
+            translate_clipboard_shortcut(&WinitKey::Character("c".into()), true),
+            Some(InputEvent::TerminalCopyRequested)
+        );
+        assert_eq!(
+            translate_clipboard_shortcut(&WinitKey::Character("x".into()), true),
+            Some(InputEvent::Cut),
+            "shift must not change any other real shortcut's own meaning"
+        );
+        assert_eq!(
+            translate_clipboard_shortcut(&WinitKey::Character("v".into()), true),
+            Some(InputEvent::PasteRequested)
+        );
+        assert_eq!(
+            translate_clipboard_shortcut(&WinitKey::Character("a".into()), true),
+            Some(InputEvent::ControlChar('a'))
         );
     }
 

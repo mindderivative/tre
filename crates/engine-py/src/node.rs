@@ -1019,6 +1019,42 @@ impl Node {
             "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
         ).paint.clip_children = clip;
     }
+
+    /// M32 Phase 6 (§4, §5, §8): a real, direct way to seed a
+    /// `Terminal`'s own selection without a live mouse drag -- the
+    /// identical "raw setter, no event simulation needed" shape
+    /// `set_syntax_spans`/`set_folded_ranges` above already establish
+    /// for `TextField`. `(start_row, start_col)`/`(end_row, end_col)`
+    /// are real cell coordinates, normalized/clamped by `Tree::
+    /// terminal_selected_text`/`draw_terminal` themselves -- this
+    /// setter performs no validation of its own, mirroring `set_
+    /// syntax_spans`'s own real "app's own concern" contract. Raises
+    /// `ValueError` for any other kind.
+    pub(crate) fn set_terminal_selection(
+        &self,
+        start_row: u16,
+        start_col: u16,
+        end_row: u16,
+        end_col: u16,
+    ) -> PyResult<()> {
+        let mut tree = self.tree.borrow_mut();
+        let node = tree.get_mut(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        let kind = kind_name(&node.kind);
+        match &mut node.kind {
+            NodeKind::Terminal(state) => {
+                state.selection_start = Some((start_row, start_col));
+                state.selection_end = Some((end_row, end_col));
+                Ok(())
+            }
+            _ => Err(EngineError::UnknownProperty {
+                kind,
+                property: "terminal_selection".to_string(),
+            }
+            .into()),
+        }
+    }
 }
 
 /// M9 Phase 2 (§5): `animate()`'s own shared "start this field

@@ -160,6 +160,16 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
         "be in view"
     )
 
+    # M32 Phase 6 (§4, §5, §8): a real selection over genuinely echoed
+    # shell output -- `HELLO_FROM_TERMINAL` is still in view after the
+    # scroll above (the real point of the assertion just above), so its
+    # own real byte range can be selected and read back hermetically.
+    line = next(line for line in scrolled_text.split("\n") if "HELLO_FROM_TERMINAL" in line)
+    col = line.index("HELLO_FROM_TERMINAL")
+    row = scrolled_text.split("\n").index(line)
+    term.set_terminal_selection(row, col, row, col + len("HELLO_FROM_TERMINAL"))
+    assert window.copy_terminal_selection() == "HELLO_FROM_TERMINAL"
+
 
 def test_scroll_on_a_terminal_with_no_content_does_not_raise():
     """M32 Phase 5 (§4, §8): a real, synchronous edge case -- scrolling
@@ -188,6 +198,48 @@ def test_scroll_on_a_non_terminal_node_still_bubbles_to_a_virtual_list():
         height=100,
     )
     window.scroll(items, 50.0)
+
+
+def test_set_terminal_selection_and_copy_terminal_selection_round_trip():
+    """M32 Phase 6 (§4, §5, §8): the real hermetic FFI path -- seeds a
+    real selection directly (no live mouse drag needed) and reads it
+    back via `Window.copy_terminal_selection`, the identical real
+    "never touches the actual OS clipboard" scope boundary `Window.
+    copy()` already established for `TextField`.
+    """
+    window = Window(width=400, height=300)
+    term = window.add_terminal(shell="/bin/sh", cols=10, rows=1, background=(0, 0, 0, 255))
+    window.click(term)
+    assert term.is_focused()
+    assert window.copy_terminal_selection() is None, "no real selection exists yet"
+
+    term.set_terminal_selection(0, 0, 0, 3)
+    selected = window.copy_terminal_selection()
+    # A freshly spawned terminal has no real echoed content yet -- every
+    # cell is a real blank space, trimmed to an empty real string.
+    assert selected == "", f"a real, if blank, selection must still read back, got {selected!r}"
+
+
+def test_set_terminal_selection_collapsed_reads_as_no_selection():
+    window = Window(width=400, height=300)
+    term = window.add_terminal(shell="/bin/sh", cols=10, rows=1, background=(0, 0, 0, 255))
+    window.click(term)
+    term.set_terminal_selection(0, 2, 0, 2)
+    assert window.copy_terminal_selection() is None
+
+
+def test_copy_terminal_selection_without_a_focused_terminal_is_none():
+    window = Window(width=400, height=300)
+    window.add_terminal(shell="/bin/sh", cols=10, rows=1, background=(0, 0, 0, 255))
+    # No window.click(term) -- nothing is focused.
+    assert window.copy_terminal_selection() is None
+
+
+def test_set_terminal_selection_on_a_non_terminal_node_raises():
+    window = Window(width=400, height=300)
+    rect = window.add_rect(background=(255, 0, 0, 255), width=50, height=50)
+    with pytest.raises(ValueError):
+        rect.set_terminal_selection(0, 0, 0, 1)
 
 
 def test_get_monospace_cell_size_returns_real_positive_values_that_scale_with_font_size():

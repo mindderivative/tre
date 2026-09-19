@@ -271,6 +271,22 @@ pub struct TerminalState {
     pub cursor_visible: bool,
     pub font_family: String,
     pub font_size: f32,
+    /// M32 Phase 6 (§4, §5, §8): a real mouse-drag text selection over
+    /// this terminal's own cell grid -- `(row, col)`, the anchor where
+    /// a real press started. `None` (every terminal, until a real
+    /// press) means no selection, the same "off unless a caller opts
+    /// in" contract every other additive field in this catalog already
+    /// follows. `engine-core` never interprets these coordinates itself
+    /// beyond clamping/normalizing (`Tree::terminal_selected_text`) --
+    /// deciding *where* a real pointer press landed needs real font
+    /// metrics only `engine-render` has (§4), so `engine-py` is the one
+    /// place that ever writes a real value here.
+    pub selection_start: Option<(u16, u16)>,
+    /// The other real endpoint of the drag -- moves with every real
+    /// `PointerMoved` while the drag is active; stays put once a real
+    /// `PointerReleased` ends it, so the selection visibly persists
+    /// until a new press starts one (or clears it).
+    pub selection_end: Option<(u16, u16)>,
 }
 
 impl TerminalState {
@@ -291,6 +307,8 @@ impl TerminalState {
             cursor_visible: true,
             font_family: font_family.into(),
             font_size,
+            selection_start: None,
+            selection_end: None,
         }
     }
 

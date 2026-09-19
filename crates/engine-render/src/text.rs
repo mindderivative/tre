@@ -675,6 +675,16 @@ impl TextRenderer {
         let cell_width = f64::from(cell_width);
         let cell_height = f64::from(cell_height);
 
+        // M32 Phase 6 (§4, §5, §8): the real, normalized selection
+        // range (if any) -- computed once, outside the row loop, the
+        // identical real "collapsed (start == end) means no real
+        // selection" contract `Tree::terminal_selected_text` already
+        // established.
+        let selection = match (state.selection_start, state.selection_end) {
+            (Some(a), Some(b)) if a != b => Some(if a <= b { (a, b) } else { (b, a) }),
+            _ => None,
+        };
+
         for row in 0..state.rows {
             // Real background runs: a contiguous span of cells sharing
             // one real bg color, painted as one rect -- `TRANSPARENT`
@@ -701,6 +711,37 @@ impl TextRenderer {
                     scene.fill_path(&rect.to_path(0.1));
                 }
                 col = end;
+            }
+
+            // M32 Phase 6 (§4, §5, §8): the real selection highlight
+            // for this row, painted after real cell backgrounds (so it
+            // genuinely tints them, the same real "highlight over
+            // whatever's already there" layering `draw_field`'s own
+            // selection painting already established) but before the
+            // glyph runs below (so real text still reads on top of it,
+            // matching `draw_field`'s own explicit real stacking
+            // order). Real *linear* selection: the middle row of a
+            // multi-row range highlights its own whole width; the
+            // first/last rows highlight only their own real column
+            // span.
+            if let Some(((start_row, start_col), (end_row, end_col))) = selection
+                && row >= start_row
+                && row <= end_row
+            {
+                let col_start = if row == start_row { start_col } else { 0 };
+                let col_end = if row == end_row { end_col } else { state.cols };
+                if col_end > col_start {
+                    let x0 = at.x + f64::from(col_start) * cell_width;
+                    let y0 = at.y + f64::from(row) * cell_height;
+                    let rect = Rect::new(
+                        x0,
+                        y0,
+                        x0 + f64::from(col_end - col_start) * cell_width,
+                        y0 + cell_height,
+                    );
+                    scene.set_paint(crate::with_opacity(at.color, 0.3));
+                    scene.fill_path(&rect.to_path(0.1));
+                }
             }
 
             // Real glyph runs: a contiguous span of cells sharing one
@@ -774,6 +815,34 @@ impl TextRenderer {
             scene.set_paint(crate::with_opacity(at.color, 0.5));
             scene.fill_path(&rect.to_path(0.1));
         }
+    }
+
+    /// M32 Phase 6 (§4, §5, §8): the real, pure-geometry half of mouse
+    /// text selection -- turns a real local point (the same local
+    /// coordinate space `draw_terminal`'s own `at.x`/`at.y` place a
+    /// terminal's own painted origin at) into the real `(row, col)`
+    /// cell it lands on, using the identical real `monospace_cell_size`
+    /// metrics `draw_terminal` positions every cell on -- so a real
+    /// click always resolves to the exact cell it's visually over, by
+    /// construction, never a coordinate space that could drift from
+    /// what's actually painted. Much simpler than `TextField`'s own
+    /// per-glyph `hit_test_position`: every real cell in this grid
+    /// shares one uniform width/height, so this is plain division, not
+    /// a real `parley::Cursor::from_point` shaping-aware lookup.
+    /// Clamps to the real, valid `0..rows`/`0..cols` range -- a real
+    /// click/drag past a terminal's own edge (a real, plausible drag
+    /// overshoot) still resolves to its nearest real edge cell, the
+    /// same real "clamp, don't reject" contract `hit_test_position`'s
+    /// own far-past-the-end case already established for `TextField`.
+    pub fn terminal_hit_cell(&mut self, state: &TerminalState, point: Point) -> (u16, u16) {
+        let (cell_width, cell_height) =
+            self.monospace_cell_size(&state.font_family, state.font_size);
+        let col = (point.x / f64::from(cell_width)).floor().max(0.0) as u16;
+        let row = (point.y / f64::from(cell_height)).floor().max(0.0) as u16;
+        (
+            row.min(state.rows.saturating_sub(1)),
+            col.min(state.cols.saturating_sub(1)),
+        )
     }
 }
 
@@ -1368,6 +1437,44 @@ mod tests {
             (w14_again, h14_again),
             "a repeat call at the identical (font_family, font_size) must return the identical \
              cached value, not reshape and silently drift"
+        );
+    }
+
+    /// M32 Phase 6 (§4, §5, §8): `terminal_hit_cell`'s own real
+    /// contract -- a point inside a given real cell's own box resolves
+    /// to that exact `(row, col)`, using the identical real metrics
+    /// `draw_terminal` positions every cell on.
+    #[test]
+    fn terminal_hit_cell_resolves_a_point_to_its_own_real_cell() {
+        let mut renderer = TextRenderer::new();
+        let state = engine_core::TerminalState::new(10, 5, MONOSPACE_FONT_FAMILY, 16.0);
+        let (cell_width, cell_height) = renderer.monospace_cell_size(MONOSPACE_FONT_FAMILY, 16.0);
+
+        assert_eq!(
+            renderer.terminal_hit_cell(&state, Point::new(0.0, 0.0)),
+            (0, 0),
+            "the real top-left origin must resolve to the real first cell"
+        );
+        // The real center of cell (row 2, col 3).
+        let x = f64::from(cell_width) * 3.5;
+        let y = f64::from(cell_height) * 2.5;
+        assert_eq!(renderer.terminal_hit_cell(&state, Point::new(x, y)), (2, 3));
+    }
+
+    #[test]
+    fn terminal_hit_cell_clamps_a_real_point_past_the_grids_own_edge() {
+        let mut renderer = TextRenderer::new();
+        let state = engine_core::TerminalState::new(10, 5, MONOSPACE_FONT_FAMILY, 16.0);
+        assert_eq!(
+            renderer.terminal_hit_cell(&state, Point::new(10_000.0, 10_000.0)),
+            (4, 9),
+            "a real point far past the grid's own edge (a plausible drag overshoot) must clamp \
+             to the nearest real edge cell, not panic or return an out-of-bounds index"
+        );
+        assert_eq!(
+            renderer.terminal_hit_cell(&state, Point::new(-5.0, -5.0)),
+            (0, 0),
+            "a real point before the grid's own origin must clamp to the first real cell"
         );
     }
 }

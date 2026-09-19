@@ -28,12 +28,24 @@ before this phase) -- `Window.scroll` (or a real mouse wheel over a
 focused terminal) moves the viewport into it; `Node.get_text()` always
 reads back whatever is currently in view.
 
+M32 Phase 6 (§4, §5, §8) closed the last stated Terminal gap: real
+mouse text selection and copy. A real drag over a terminal's own cell
+grid (or, here, `Node.set_terminal_selection`, the real hermetic entry
+point matching `Window.copy()`'s own no-live-window-needed scope
+boundary) selects real text; `Window.copy_terminal_selection`/a genuine
+Ctrl+Shift+C reads it. **Real, deliberate design, not an accident:**
+Ctrl+C alone still always means SIGINT on a focused terminal (M32
+Phase 4) -- Ctrl+Shift+C is the real, separate shortcut that copies,
+matching every real terminal emulator's own actual convention (the
+sibling pyCopper project's own real `Terminal` states this directly:
+"Ctrl+C is always the interrupt byte here, never a copy shortcut").
+
 **Real, honestly-scoped v1** (`Window.add_terminal`'s own Rust doc
-comment has the full list): no mouse text selection, no real terminal
-resize wired to window resize, and POSIX only. What *is* real: a
-genuine shell process, genuine keyboard round-trip, genuine ANSI color
-rendering (16-color palette plus the standard 256-color xterm
-formula), a genuine Ctrl+C SIGINT, and genuine scrollback.
+comment has the full list): no real terminal resize wired to window
+resize, and POSIX only. What *is* real: a genuine shell process,
+genuine keyboard round-trip, genuine ANSI color rendering (16-color
+palette plus the standard 256-color xterm formula), a genuine Ctrl+C
+SIGINT, genuine scrollback, and a genuine cell-range selection.
 """
 
 import time
@@ -116,3 +128,18 @@ print(
     "Ctrl+C genuinely interrupted a running sleep 100, and a real scroll genuinely revealed "
     "scrolled-off history"
 )
+
+# M32 Phase 6 (§4, §5, §8): a real selection over the real, now-in-view
+# "hello from a real shell" line, read back via the hermetic
+# Window.copy_terminal_selection() -- the real live path is a genuine
+# mouse drag or Ctrl+Shift+C, neither of which this headless-CI-safe
+# script can synthesize (the identical real limit Window.copy()'s own
+# doc comment already states for a plain Ctrl+C).
+line = next(line for line in scrolled.split("\n") if "hello from a real shell" in line)
+row = scrolled.split("\n").index(line)
+col = line.index("hello from a real shell")
+terminal.set_terminal_selection(row, col, row, col + len("hello from a real shell"))
+selection = window.copy_terminal_selection()
+print(f"real terminal selection: {selection!r}")
+assert selection == "hello from a real shell", f"expected the real selected text, got {selection!r}"
+print("terminal.py: a real terminal selection was genuinely readable via copy_terminal_selection")

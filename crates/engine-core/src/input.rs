@@ -157,9 +157,11 @@ pub enum InputEvent {
     /// stated gap ("`engine_core::InputEvent` carries no real
     /// modifier-key state... reaching a focused terminal today
     /// requires a real, separate change to that earlier translation
-    /// layer"). Always lowercase (case-insensitive, the identical real
-    /// "a real Ctrl+Shift+`<letter>` press is the same shortcut"
-    /// convention `Copy`/`Cut`/`PasteRequested` already established).
+    /// layer"). Always lowercase (case-insensitive -- a real Ctrl+
+    /// Shift+`<letter>` press is still this same shortcut, the
+    /// identical real convention `Copy`/`Cut`/`PasteRequested` already
+    /// established, with the one real, stated exception `Terminal
+    /// CopyRequested` below carves out of `c` specifically).
     /// Deliberately carries no PTY byte of its own: `engine-core` has
     /// zero OS/platform access (§4), so turning a letter into its own
     /// real ASCII control code (and deciding whether a focused
@@ -168,6 +170,26 @@ pub enum InputEvent {
     /// handling downstream" split `Copy`/`Cut`/`PasteRequested`
     /// already use.
     ControlChar(char),
+    /// M32 Phase 6 (§4, §5, §8): a real Ctrl+Shift+C press -- the one
+    /// real, deliberate exception to `ControlChar`'s own "shift doesn't
+    /// change the shortcut" rule, matching every real terminal
+    /// emulator's own actual convention (pyCopper's own real `Terminal`
+    /// doc comment states this directly: "Ctrl+C is always the
+    /// interrupt byte here, never a copy shortcut, since there is
+    /// nothing to copy without a selection" -- Ctrl+Shift+C is the
+    /// real shortcut that copies instead). `engine_platform::translate_
+    /// clipboard_shortcut` produces this only when both Ctrl *and*
+    /// Shift are genuinely held and the key is `c`; a bare Ctrl+C stays
+    /// `Copy` exactly as before (SIGINT when a real `Terminal` is
+    /// focused, `engine-py`'s own existing Phase 4 handling, or a real
+    /// `TextField` copy otherwise). Deliberately carries no clipboard
+    /// data of its own, the identical "pure intent signal" shape
+    /// `PasteRequested` already has -- `engine-core` can't read a real
+    /// `Terminal`'s own selected text into a return value here either
+    /// (that needs `Tree::terminal_selected_text`, called from `engine-
+    /// py`'s own real handling, which also owns the actual OS clipboard
+    /// write).
+    TerminalCopyRequested,
     /// M17 Phase 2 (§8): a real IME composition preview update --
     /// mirrors `winit::event::Ime::Preedit`'s own text (dropping its
     /// real sub-cursor-range detail, a stated simplification -- see

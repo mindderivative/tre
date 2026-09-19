@@ -32,7 +32,9 @@ use crate::node::{
     TextFieldState,
 };
 #[cfg(test)]
-use crate::node::{CheckboxState, IconState, ItemExtent, SliderState, VirtualListState};
+use crate::node::{
+    CheckboxState, IconState, ItemExtent, SliderState, TerminalState, VirtualListState,
+};
 use crate::overlay::OverlayMeta;
 #[cfg(test)]
 use peniko::kurbo::BezPath;
@@ -2355,6 +2357,88 @@ impl Tree {
         true
     }
 
+    /// M32 Phase 6 (§4, §5, §8): a real press on a `Terminal`'s own
+    /// cell grid -- sets both `selection_start`/`selection_end` to the
+    /// same real `(row, col)`, the identical "a plain click collapses
+    /// any active selection" real semantics `set_text_field_cursor`
+    /// already established (a collapsed `start == end` is treated as
+    /// "no real selection" by `terminal_selected_text` below, mirroring
+    /// `text_field_selected_text`'s own `anchor == cursor -> None`).
+    /// Whether this turns into a real drag-selection depends entirely
+    /// on a genuine `PointerMoved` to a different cell following before
+    /// release, the identical real shape `TextField`'s own drag-select
+    /// already has. Returns whether `id` was actually a real `Terminal`
+    /// -- a no-op on any other kind or a stale/missing `NodeId`.
+    pub fn set_terminal_selection_start(&mut self, id: NodeId, row: u16, col: u16) -> bool {
+        self.dirty = true;
+        let Some(NodeKind::Terminal(state)) = self.nodes.get_mut(id).map(|n| &mut n.kind) else {
+            return false;
+        };
+        state.selection_start = Some((row, col));
+        state.selection_end = Some((row, col));
+        true
+    }
+
+    /// `set_terminal_selection_start`'s own real drag-extend sibling --
+    /// moves only `selection_end`, growing the real selection instead
+    /// of collapsing it, the identical real split `extend_text_field_
+    /// selection` already has from `set_text_field_cursor`.
+    pub fn extend_terminal_selection(&mut self, id: NodeId, row: u16, col: u16) -> bool {
+        self.dirty = true;
+        let Some(NodeKind::Terminal(state)) = self.nodes.get_mut(id).map(|n| &mut n.kind) else {
+            return false;
+        };
+        if state.selection_start.is_none() {
+            state.selection_start = Some((row, col));
+        }
+        state.selection_end = Some((row, col));
+        true
+    }
+
+    /// M32 Phase 6 (§4, §5, §8): a pure, real read of a `Terminal`'s
+    /// own currently selected text -- `None` if `id` isn't a real,
+    /// present `Terminal`, or its selection is empty/collapsed (`start
+    /// == end`), the identical "not a real selection" definition
+    /// `text_field_selected_text` already uses. Never touches a real OS
+    /// clipboard itself (`engine-core` has no platform access at all,
+    /// §4) -- this only ever answers "what text a real copy would
+    /// grab." Real *linear* selection (reading order: row by row, left
+    /// to right within each row), the same real default every terminal
+    /// emulator uses, not a rectangular block-select. Each real row's
+    /// own trailing whitespace is trimmed, joined by `"\n"` -- the
+    /// identical real convention `Node.get_text()`'s own Terminal arm
+    /// already established for the exact same reason (a real fixed-
+    /// width grid pads every row with blanks that were never really
+    /// "selected" text).
+    pub fn terminal_selected_text(&self, id: NodeId) -> Option<String> {
+        let NodeKind::Terminal(state) = &self.nodes.get(id)?.kind else {
+            return None;
+        };
+        let start = state.selection_start?;
+        let end = state.selection_end?;
+        if start == end {
+            return None;
+        }
+        let (start, end) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
+        let (start_row, start_col) = start;
+        let (end_row, end_col) = end;
+
+        let mut lines = Vec::with_capacity(usize::from(end_row - start_row) + 1);
+        for row in start_row..=end_row {
+            let col_start = if row == start_row { start_col } else { 0 };
+            let col_end = if row == end_row { end_col } else { state.cols };
+            let line: String = (col_start..col_end)
+                .map(|col| state.cell(row, col).ch)
+                .collect();
+            lines.push(line.trim_end().to_string());
+        }
+        Some(lines.join("\n"))
+    }
+
     /// M4 Phase 2 (§10): the direct, non-`InputEvent` counterpart to a
     /// mouse click's own `Activated` outcome -- what `accesskit::
     /// Action::Click` from a platform accessibility client actually
@@ -2843,6 +2927,12 @@ impl Tree {
             // to send this letter's own real ASCII control byte to
             // happens in `engine-py`'s own raw-event handling.
             InputEvent::ControlChar(_) => DispatchOutcome::None,
+            // M32 Phase 6 (§4, §5, §8): the identical plumbing-only
+            // shape -- reading a focused `Terminal`'s own real selected
+            // text (`Tree::terminal_selected_text`) and writing it to
+            // the real OS clipboard both happen in `engine-py`'s own
+            // raw-event handling.
+            InputEvent::TerminalCopyRequested => DispatchOutcome::None,
             // M17 Phase 2 (§8): a real, mechanical mutation (unlike
             // Copy/Cut/PasteRequested above, this needs no OS access --
             // `engine-platform` already extracted the real preedit text
@@ -7990,6 +8080,162 @@ mod tests {
         let (k, s, p) = leaf(100.0, 100.0);
         let root = tree.insert(k, s, p);
         assert!(!tree.extend_text_field_selection(root, 0));
+    }
+
+    /// M32 Phase 6 (§4, §5, §8): a real 3-row terminal seeded with
+    /// distinct real per-row content ("hello"/"world"/"tre!!"), padded
+    /// to `cols` with real blank cells -- mirrors `text_field_scene`'s
+    /// own role for the new `Terminal` selection tests below.
+    fn terminal_scene(rows: &[&str]) -> (Tree, NodeId) {
+        let cols = rows.iter().map(|r| r.len()).max().unwrap_or(0) as u16;
+        let mut tree = Tree::new();
+        let mut state = TerminalState::new(cols, rows.len() as u16, "Roboto", 14.0);
+        for (row_idx, row) in rows.iter().enumerate() {
+            for (col_idx, ch) in row.chars().enumerate() {
+                let idx = row_idx * usize::from(cols) + col_idx;
+                state.cells[idx].ch = ch;
+            }
+        }
+        let terminal = tree.insert(
+            NodeKind::Terminal(state),
+            Style::default(),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0xFF), 0.0, 0.0, 1.0),
+        );
+        (tree, terminal)
+    }
+
+    #[test]
+    fn set_terminal_selection_start_seeds_a_collapsed_selection_at_the_real_cell() {
+        let (mut tree, term) = terminal_scene(&["hello"]);
+        assert!(tree.set_terminal_selection_start(term, 0, 2));
+        let NodeKind::Terminal(state) = &tree.get(term).unwrap().kind else {
+            unreachable!()
+        };
+        assert_eq!(state.selection_start, Some((0, 2)));
+        assert_eq!(
+            state.selection_end,
+            Some((0, 2)),
+            "a plain press with no drag yet must leave a collapsed (start == end) selection"
+        );
+    }
+
+    #[test]
+    fn set_terminal_selection_start_on_a_non_terminal_is_a_true_no_op() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(100.0, 100.0);
+        let root = tree.insert(k, s, p);
+        assert!(!tree.set_terminal_selection_start(root, 0, 0));
+    }
+
+    #[test]
+    fn extend_terminal_selection_grows_the_real_end_without_moving_the_start() {
+        let (mut tree, term) = terminal_scene(&["hello"]);
+        tree.set_terminal_selection_start(term, 0, 1);
+        assert!(tree.extend_terminal_selection(term, 0, 3));
+        let NodeKind::Terminal(state) = &tree.get(term).unwrap().kind else {
+            unreachable!()
+        };
+        assert_eq!(
+            state.selection_start,
+            Some((0, 1)),
+            "the real anchor must not move"
+        );
+        assert_eq!(state.selection_end, Some((0, 3)));
+    }
+
+    #[test]
+    fn extend_terminal_selection_seeds_the_start_if_none_was_set_yet() {
+        // Real, defensive parity with `extend_text_field_selection`'s
+        // own `get_or_insert`-at-first-move shape, even though every
+        // real caller (`app.rs`'s own PointerMoved handling) only ever
+        // extends after a real press already set the anchor.
+        let (mut tree, term) = terminal_scene(&["hello"]);
+        assert!(tree.extend_terminal_selection(term, 0, 3));
+        let NodeKind::Terminal(state) = &tree.get(term).unwrap().kind else {
+            unreachable!()
+        };
+        assert_eq!(state.selection_start, Some((0, 3)));
+    }
+
+    #[test]
+    fn terminal_selected_text_reads_a_real_single_row_range() {
+        let (mut tree, term) = terminal_scene(&["hello"]);
+        tree.set_terminal_selection_start(term, 0, 0);
+        tree.extend_terminal_selection(term, 0, 3);
+        assert_eq!(tree.terminal_selected_text(term), Some("hel".to_string()));
+    }
+
+    #[test]
+    fn terminal_selected_text_reads_real_linear_selection_across_multiple_rows() {
+        let (mut tree, term) = terminal_scene(&["hello", "world", "tre!!"]);
+        tree.set_terminal_selection_start(term, 0, 3);
+        tree.extend_terminal_selection(term, 2, 2);
+        assert_eq!(
+            tree.terminal_selected_text(term),
+            Some("lo\nworld\ntr".to_string()),
+            "real linear (reading-order) selection: the rest of row 0 from col 3, all of row \
+             1, row 2 up to (not including) col 2"
+        );
+    }
+
+    #[test]
+    fn terminal_selected_text_normalizes_a_real_selection_dragged_backward() {
+        // A real drag from bottom-right back up to top-left must read
+        // identically to the same real range selected forward --
+        // `text_field_selected_text`'s own `anchor`/`cursor` ordering
+        // establishes the identical real precedent.
+        let (mut tree, term) = terminal_scene(&["hello", "world"]);
+        tree.set_terminal_selection_start(term, 1, 2);
+        tree.extend_terminal_selection(term, 0, 1);
+        assert_eq!(
+            tree.terminal_selected_text(term),
+            Some("ello\nwo".to_string())
+        );
+    }
+
+    #[test]
+    fn terminal_selected_text_is_none_for_a_collapsed_or_absent_selection() {
+        let (mut tree, term) = terminal_scene(&["hello"]);
+        assert_eq!(
+            tree.terminal_selected_text(term),
+            None,
+            "a freshly created terminal has no real selection at all"
+        );
+        tree.set_terminal_selection_start(term, 0, 2);
+        assert_eq!(
+            tree.terminal_selected_text(term),
+            None,
+            "a collapsed (start == end) selection reads as no real selection, the identical \
+             real convention text_field_selected_text already established"
+        );
+    }
+
+    #[test]
+    fn terminal_selected_text_is_none_for_a_non_terminal_node() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let rect = tree.insert(k, s, p);
+        assert_eq!(tree.terminal_selected_text(rect), None);
+    }
+
+    #[test]
+    fn terminal_selected_text_trims_real_trailing_blank_cells_per_row() {
+        // "hello" seeded into a 10-wide grid pads columns 5-9 with real
+        // blank space cells -- selecting the whole row must not
+        // include that real, never-actually-there padding.
+        let mut tree = Tree::new();
+        let mut state = TerminalState::new(10, 1, "Roboto", 14.0);
+        for (col, ch) in "hello".chars().enumerate() {
+            state.cells[col].ch = ch;
+        }
+        let term = tree.insert(
+            NodeKind::Terminal(state),
+            Style::default(),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0xFF), 0.0, 0.0, 1.0),
+        );
+        tree.set_terminal_selection_start(term, 0, 0);
+        tree.extend_terminal_selection(term, 0, 10);
+        assert_eq!(tree.terminal_selected_text(term), Some("hello".to_string()));
     }
 
     /// M20 Phase 1 (§7.1, §7.3): `set_all_component_tints`'s own real
