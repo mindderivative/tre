@@ -1,144 +1,93 @@
-# LOG — M39 Phase 2 Step 2: Time Picker Dial (closes Phase 2)
+# LOG — M39 Phase 3: Shape-Morphed Border Inset Fix
 
-- User's own explicit instruction: "Start" continued into M39 Phase
-  2's own second step, per the earlier `AskUserQuestion` answer for
-  this exact item: "Build it now, honest approximation."
-- Real investigation first, delegated to an Explore subagent, then
-  personally spot-checked against the live source before writing any
-  code: confirmed no existing drag primitive in this codebase does
-  angle-based math (`Splitter`/`Slider`/`Carousel`/`ScrollView` are
-  all linear -- zero real hits for `atan2` anywhere in `engine-core`/
-  `engine-render`), and confirmed circular hit-testing only exists for
-  `NodeKind::Canvas` via `CustomHitTest::Circle` (M5 Phase 3) -- not
-  reused here; the dial deliberately uses the ordinary rectangular
-  hit-test (its own whole bounding box), the identical real simplicity
-  `Slider`'s own whole-track-width hit region already uses rather than
-  a pixel-exact thumb hit box, stated as a real, deliberate v1 choice
-  in `TimePickerDialState`'s own doc comment.
-- Traced the real, full call path a `Splitter`/`Slider` drag takes,
-  start to finish, before writing anything: a raw winit event ->
-  `engine-py::app.rs`'s single real dispatch chokepoint -> `Tree::
-  dispatch`'s `PointerPressed`/`PointerMoved`/`PointerReleased` arms ->
-  `update_drag` -> a kind-specific `update_*_drag` -> the real public
-  setter. The dial reuses this exact shape end to end -- one real
-  mechanism, extended, not a second one invented in parallel.
-- New `NodeKind::TimePickerDial(TimePickerDialState)` (`node.rs`) --
-  `hour: u8` (real 24-hour value, `0..=23`), `minute: u8` (`0..=59`),
-  `mode: TimePickerDialMode` (`Hour`/`Minute`, selects which hand a
-  drag moves), `face_tint`/`hand_tint: Color`. `hour`/`minute` are
-  plain, driven-directly fields, not `Animated<f64>` -- the identical
-  real "driven directly, like a scrollbar being dragged, never eased"
-  precedent `CarouselState::scroll_x`'s own doc comment already
-  establishes: a clock hand snapping instantly to wherever the
-  pointer is IS the correct real behavior.
-- **Real, stated v1 simplifications** (all in `TimePickerDialState`'s
-  own doc comment): no digit labels around the face (plain tick marks
-  stand in -- painting real text needs `engine-render`'s own
-  text-shaping pipeline, real added plumbing this v1 skips); no AM/PM
-  toggle or digital-input dialog chrome (this is the real circular
-  drag *primitive* MD3's own Time Picker dialog is built from, not the
-  whole dialog -- `Window.add_time_input_field`/`add_period_selector`,
-  M30 Phase 7 Step 2's own separate digital variant, already exist and
-  are unaffected).
-- `Tree::update_time_picker_dial_drag` (`tree.rs`): `atan2(dy, dx)`
-  from the node's own real box center, rotated so 12 o'clock is the
-  real zero point and wrapped into `0.0..TAU` via `rem_euclid` (not
-  plain `%`, which would leave a real negative remainder just
-  counter-clockwise of 12). This is byte-for-byte the same real angle
-  convention `engine-render`'s own pre-existing `CircularProgress`
-  paint arm already established (`-PI/2` start, `+angle` clockwise) --
-  confirmed both directions agree by hand-tracing all four cardinal
-  points against where they actually render. Hour mode: `round(
-  fraction * 12) % 12`, then re-adds whichever 12-hour period `hour`
-  was already in (`+12` if it was already PM) -- dragging the hour
-  hand alone must never silently flip AM/PM, since this widget has no
-  toggle of its own. Minute mode: `round(fraction * 60)` snapped to
-  the nearest multiple of 5 via `((raw + 2) / 5 * 5) % 60` (integer
-  rounding-to-nearest-5, hand-verified against several boundary
-  values).
-- Wired into the same three real chokepoints `Splitter`/`Slider`
-  already use: `update_drag`'s match gains a `TimePickerDial` arm;
-  `dispatch`'s `PointerPressed` arm widens its "start a drag" check to
-  include `TimePickerDial`; `PointerReleased`'s "a drag ending is a
-  real, meaningful edit" `Changed` outcome widens the same way. New
-  `Tree::set_time_picker_dial_time`/`set_time_picker_dial_mode` public
-  setters for a programmatic (non-drag) move, mirroring `set_slider_
-  position`'s own shape.
-- `engine-render`'s new `NodeKind::TimePickerDial` paint arm: filled
-  face (`face_tint`), 12 real tick-dot positions at 40% opacity (the
-  honest stand-in for real digit labels), an hour hand and a longer
-  minute hand (real `Line` strokes from center, `hand_tint`), a real
-  selector dot at whichever hand `mode` currently makes draggable
-  (MD3's own real "which hand is active" indicator), and a small
-  center hub -- the same real anatomy a physical analog clock face
-  has.
-- `Window.add_time_picker_dial(hour, minute, size, x, y) -> Node`
-  (`engine-py::window_factory.rs`): themes `face_tint`/`hand_tint`
-  from `surface_container_highest`/`primary`, the identical real
-  pattern `add_linear_progress` already established for its own two
-  colors (`track_tint`/`indicator_tint`). `size` defaults to `256.0` --
-  a practical, legible default, explicitly **not** cited as a verified
-  MD3 dp token (this phase's own research located the dial's real
-  anatomy and interaction model, not a confirmed default diameter from
-  an authoritative source, so this doc comment says so plainly rather
-  than presenting an unverified number as fact).
-- New dedicated `Node.set_time_picker_dial_time`/`get_time_picker_
-  dial_time`/`set_time_picker_dial_mode`/`get_time_picker_dial_mode`
-  (`engine-py::node.rs`) -- `hour`/`minute` are plain values, not
-  `Animated<f64>`, so they can't go through the generic `Node.animate(
-  )`/`Node.get()` f64-only dispatch; mirrors `set_carousel_index`/
-  `get_carousel_index`'s own already-established real precedent for
-  exactly this situation. `mode` is a `"hour"`/`"minute"` string, the
-  identical vocabulary convention `parse_content_fit`/`parse_dock_
-  side` already establish for a small, closed Rust enum exposed to
-  Python (no dedicated pyo3-native enum type built for just two
-  variants).
-- **Real bug found and fixed in my own first draft of the drag tests
-  -- the same "verify, don't assume" discipline this whole project has
-  already applied repeatedly to its own code, not just the engine's:**
-  the first four-quadrant hour-drag test dispatched only a single
-  `PointerPressed` at each target point and asserted the resulting
-  hour directly. It happened to "pass" for the very first case (12
-  o'clock -> hour 0) purely by coincidence -- `TimePickerDialState::
-  new(0, 0)`'s own default hour already IS 0, so an inert press proved
-  nothing. The second case failed loudly (expected 3, got 0), which is
-  what actually surfaced the real bug: `PointerPressed` alone only
-  ever *starts* a drag (`self.dragging = Some(node)`) -- the value
-  itself only moves on the real `PointerMoved` that follows, the
-  identical real shape `slider_scene`'s own existing drag tests
-  already use and which I initially failed to mirror. Fixed by
-  redesigning every drag test to press at a neutral point first, then
-  move to the real target point before asserting.
-- Also found while writing the same tests: `rect_contains`'s own real
-  `Rect::contains` (kurbo's standard convention) is exclusive on the
-  box's max edge -- a test point exactly on the dial's own right/
-  bottom edge (`x == width` or `y == height`) misses the hit-test
-  entirely and never starts a drag at all. Fixed by moving every such
-  test point fractionally inside the box (`199.0` rather than the
-  exact `200.0` edge) rather than exactly on it.
+- User's own explicit instruction: "Start" continued into M39 Phase 3
+  (item 3 from the gap-sweep answer, third in the user's own chosen
+  order): the shape-morphed border inset gap M38 Phase 4's own stated
+  v1 simplification left open.
+- Real investigation first, per this phase's own scoping note in
+  `BUILD_TRACKER.md`: does `kurbo` already expose a polygon-inset/
+  offset operation, before writing anything by hand? Direct source
+  read of the vendored `kurbo = "0.13.1"` crate found a real `offset.
+  rs` module -- but its one public function, `offset_cubic(c: CubicBez,
+  d: f64, tolerance: f64, result: &mut BezPath)`, offsets a single
+  cubic Bézier curve. `ShapeKey`'s own shapes (`shape_morph.rs`'s own
+  module doc comment) are always straight-line segments between
+  vertices, never curves -- `offset_cubic` is genuinely the wrong
+  tool for this shape, not merely an unused one. Confirmed via grep:
+  zero hits for any polygon-offset/inset operation anywhere in this
+  codebase's own kurbo usage, so this phase writes real, new,
+  self-contained geometry rather than reusing something that already
+  existed.
+- New `ShapeKey::inset_path(amount) -> BezPath` (`shape_morph.rs`): the
+  classic real "offset each edge inward along its own normal, then
+  re-intersect adjacent offset edges" polygon-shrink algorithm (a real
+  miter join at each vertex). Which of an edge's two perpendicular
+  normals is "inward" is resolved per-edge against the real polygon
+  centroid (whichever normal points toward it) rather than assuming a
+  fixed CW/CCW winding order -- `ShapeKey::from_path` extracts
+  vertices from whatever `BezPath` a caller supplied with no
+  guaranteed winding, and `interpolate`'s own real alignment search
+  (this module's own existing doc comment) can reorder them further,
+  so a fixed-winding assumption would have been a real, silent
+  correctness bug for at least one real caller eventually. New private
+  `line_intersection` helper solves `p1 + t*d1 == p2 + s*d2`, returning
+  `None` (falls back to the offset edge's own start point) for two
+  near-parallel adjacent edges rather than propagating a near-infinite
+  value.
+- **Real, stated v1 scope limit, written directly into the doc
+  comment rather than glossed over:** correct for the real border
+  widths this codebase actually uses (MD3's own 1-4dp outline range)
+  against MD3-scale shapes -- not proven robust for an inset large
+  enough to invert a polygon's own edges or force two non-adjacent
+  offset edges to cross, a real, harder self-intersection-avoidance
+  problem no real caller here needs solved.
+- `engine-render`'s border block (`lib.rs`) now strokes `node.paint.
+  shape.current.inset_path(inset)` for the real "active shape morph"
+  branch, replacing the old `.to_path()` (raw silhouette, centered,
+  the exact real bug this phase closes) -- a one-line real change once
+  the actual geometry primitive existed; the fill path itself was
+  already correct and untouched.
+- **Hand-verification before trusting the algorithm, the same "verify,
+  don't assume" discipline this whole project already applies:**
+  traced `inset_path`'s own real math by hand against the existing
+  `square(0, false)` test helper's own 10x10 corners before writing a
+  single assertion -- worked through each of the four edges' own real
+  inward normal, each offset line, and each of the four real vertex
+  intersections by hand, landing on exactly `(2,2)-(8,2)-(8,8)-(2,8)`
+  for a `2.0` inset. Wrote the test to assert that exact, independently
+  -derived result, not simply run the code once and copy whatever it
+  produced.
+- Real tests: 4 new `engine-core` unit tests (the hand-derived square
+  case above; a reversed-winding twin proving the centroid-based
+  normal resolution is winding-independent, landing every corner
+  strictly inside `2..8` either way; a `0.0`-amount true no-op; a
+  degenerate 2-point shape true no-op). New real pixel-readback
+  integration test, `engine-render/tests/shape_morph_paint.rs`'s own
+  `a_border_on_a_real_active_shape_morph_stays_inside_the_fills_own_
+  edge`: a 60x60 shape (`20..80`) centered in a 100x100 box with a
+  real 20px border (`inset=10`) -- before this phase, the border would
+  have stroked the raw `20..80` edge centered, covering `10..30`, a
+  real 10px bleed past the shape's own edge into plain background;
+  after, the border strokes the real inset `30..70` edge centered,
+  covering `20..40`, entirely inside. The test asserts all three real
+  zones directly: the pre-fix bleed zone is now plain background, the
+  real inset border band genuinely is the border color, and the
+  shape's own interior is unaffected.
 - Full verification chain, all green: `cargo check --workspace --all-
-  targets`; `cargo clippy --workspace --all-targets -- -D warnings`
-  (one real doc-comment lint fix needed along the way: a new paragraph
-  directly following a bulleted list without a blank `///` separator
-  reads as an unindented list continuation, `clippy::doc_lazy_
-  continuation`); `cargo fmt` + `cargo fmt --check`; `cargo test
-  --workspace --release` (`engine-core`: 208 passed, +7 from this
-  step); `maturin develop --release`; `pytest tests/` (581 passed, 1
-  skipped, up from 569, +12 new tests in `tests/test_time_picker_dial.
-  py`, explicitly checked for filename collisions first and confirmed
-  distinct from the pre-existing digital-variant `test_time_picker.
-  py`); all 77 examples including the new `examples/time_picker_dial.
-  py` (constructs two dials, moves one via the direct setter and the
-  other via mode-switch-then-setter, round-trips both through the real
-  getters, runs a real 60-frame live loop); showcase demo.
-- `python/tre/_core.pyi` given a full, paired `add_time_picker_dial`
-  factory stub plus all four new `Node` method stubs.
-- `BUILD_TRACKER.md` Phase 2's own heading, Step 2's own bullet, the
-  milestone status line ("Phase 2 of 5 done", up from "Phase 1"), and
-  the Top Metrics row (40%, up from 20%) all updated together --
-  unlike Step 1 alone, which only ever touched its own bullet, this
-  closes the whole real phase. Parser re-confirmed balanced (39
-  milestones, 127 phases, 218 items, unchanged); artifact regenerated
-  and republished. **M39 Phase 2 is now fully complete. Phases 3-5
-  remain: Shape-Morphed Border Inset Fix, Terminal Cell Text
+  targets`; `cargo clippy --workspace --all-targets -- -D warnings`;
+  `cargo fmt` + `cargo fmt --check`; `cargo test --workspace --
+  release` (`engine-core`: 212 passed, +4; `engine-render`'s
+  `shape_morph_paint` suite: 3 passed, +1); `maturin develop --release`
+  (no Python-facing API changed this phase -- rebuilt anyway per the
+  standing verification chain); `pytest tests/` (581 passed, 1
+  skipped, unchanged from the prior step, as expected); all 77
+  examples + showcase demo clean.
+- `BUILD_TRACKER.md` Phase 3's own heading, step bullet, milestone
+  status line ("Phase 3 of 5 done", up from "Phase 2"), and Top
+  Metrics row (60%, up from 40%) all updated together, mirroring
+  Phase 2's own precedent for a single-step phase (unlike Phase 2's
+  own two-step shape, which updated the whole-phase lines only once
+  both steps closed). Parser re-confirmed balanced (39 milestones, 127
+  phases, 218 items, unchanged); artifact regenerated and republished.
+  **M39 Phase 3 is now complete. Phases 4-5 remain: Terminal Cell Text
   Attributes, `Tree::tick_all` Active-Set Optimization.**

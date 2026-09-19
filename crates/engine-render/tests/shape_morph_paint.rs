@@ -24,6 +24,7 @@ use vello_hybrid::{RenderSize, RenderTargetConfig};
 
 const BACKGROUND: Color = Color::from_rgba8(0x11, 0x11, 0x11, 0xFF);
 const CHIP: Color = Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF);
+const BORDER: Color = Color::from_rgba8(0x00, 0xFF, 0x00, 0xFF);
 
 async fn render(tree: &Tree, root: engine_core::NodeId, width: u16, height: u16) -> (Vec<u8>, u32) {
     let instance = wgpu::Instance::default();
@@ -228,6 +229,102 @@ fn a_real_active_shape_paints_the_morphed_silhouette_not_the_plain_rect() {
             [0xFF, 0xFF, 0xFF, 0xFF],
             "a point genuinely inside the triangle must still be the chip's own fill color, \
              got {inside:?}"
+        );
+    });
+}
+
+/// M39 Phase 3 (§5, §7): the real regression test for `ShapeKey::
+/// inset_path` -- a border stroked while a real shape morph is active
+/// must sit *inside* the fill's own edge, never bleeding past it.
+///
+/// A 60x60 square shape (`20..80` on both axes) centered in a 100x100
+/// box, with a real 20px border (`inset = 10`). Before this phase, the
+/// border stroked the raw `20..80` square edge centered, covering
+/// `10..30` on the left edge -- a real, visible 10px bleed past the
+/// shape's own `x=20` edge into what should be plain background.
+/// After the fix, the border strokes the real *inset* `30..70` square
+/// centered, covering `20..40` -- entirely inside the shape's own
+/// `20..80` bounds.
+#[test]
+fn a_border_on_a_real_active_shape_morph_stays_inside_the_fills_own_edge() {
+    pollster::block_on(async {
+        let mut path = BezPath::new();
+        path.move_to(Point::new(20.0, 20.0));
+        path.line_to(Point::new(80.0, 20.0));
+        path.line_to(Point::new(80.0, 80.0));
+        path.line_to(Point::new(20.0, 80.0));
+        path.close_path();
+        let shape = ShapeKey::from_path(&path);
+
+        let mut tree = Tree::new();
+        let root = tree.insert(
+            NodeKind::Rect,
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(100.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+        );
+        let chip = tree.insert(
+            NodeKind::Rect,
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(100.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(CHIP, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(root, chip);
+        {
+            let node = tree.get_mut(chip).unwrap();
+            node.paint.shape.current = shape;
+            node.paint.border_width.current = 20.0;
+            node.paint.border_color.current = BORDER;
+        }
+        let available = Size {
+            width: AvailableSpace::Definite(100.0),
+            height: AvailableSpace::Definite(100.0),
+        };
+        tree.compute_layout(root, available);
+
+        let (data, bpr) = render(&tree, root, 100, 100).await;
+
+        // x=15, mid-height: within the real pre-fix bleed zone
+        // (10..30) but outside the shape's own real `x=20` edge --
+        // must be plain background now, never the border color.
+        let bled_zone = pixel_at(&data, bpr, 15, 50);
+        assert_eq!(
+            bled_zone,
+            [0x11, 0x11, 0x11, 0xFF],
+            "a point outside the shape's own real edge must never be the border color -- \
+             the border must not bleed past the fill, got {bled_zone:?}"
+        );
+
+        // x=25, mid-height: inside the real post-fix border band
+        // (20..40) -- must genuinely be the border color, proving the
+        // border still paints *something* real, not just "nothing
+        // ever bleeds."
+        let real_border = pixel_at(&data, bpr, 25, 50);
+        assert_eq!(
+            real_border,
+            [0x00, 0xFF, 0x00, 0xFF],
+            "a point inside the real, inset border band must be the border color, \
+             got {real_border:?}"
+        );
+
+        // Dead center: well inside the inset fill area, must be the
+        // chip's own plain fill, not border.
+        let center = pixel_at(&data, bpr, 50, 50);
+        assert_eq!(
+            center,
+            [0xFF, 0xFF, 0xFF, 0xFF],
+            "the shape's own real interior must still be the chip's fill color, \
+             got {center:?}"
         );
     });
 }

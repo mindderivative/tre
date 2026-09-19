@@ -514,15 +514,16 @@ fn paint_node(
                 // has the full story (`geometry_cache.rs`).
                 let border_path: std::borrow::Cow<'_, BezPath> =
                     if !node.paint.shape.current.is_empty() {
-                        // A real, active shape morph: stroke its own
-                        // silhouette directly, centered (no inset) --
-                        // a raw vertex path has no per-corner radius to
-                        // shrink, so this is a real, stated v1
-                        // simplification (a border may sit up to half
-                        // its own width outside the fill's own edge)
-                        // rather than inventing a general path-offset
-                        // operation nothing else in this codebase needs.
-                        std::borrow::Cow::Owned(node.paint.shape.current.to_path())
+                        // M39 Phase 3 (§5, §7): a real, active shape
+                        // morph now strokes a real *inset* polygon
+                        // (`ShapeKey::inset_path`'s own doc comment has
+                        // the full real algorithm and its stated scope
+                        // limit) instead of the raw silhouette centered
+                        // -- closes M38 Phase 4's own real, previously-
+                        // stated v1 gap where a shape-morphed border
+                        // could sit up to half its own width outside
+                        // the fill's own edge.
+                        std::borrow::Cow::Owned(node.paint.shape.current.inset_path(inset))
                     } else if let Some(radii) = node.paint.corner_radii_override {
                         std::borrow::Cow::Borrowed(
                             geometry.rounded_rect_border_per_corner(id, w, h, radii, inset),

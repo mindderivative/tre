@@ -106,6 +106,131 @@ impl ShapeKey {
         }
         path
     }
+
+    /// M39 Phase 3 (§5, §7): a real, general straight-edge polygon
+    /// inset -- `engine-render`'s own border-paint code needs this to
+    /// stroke a real, active shape morph's own border *inside* its
+    /// fill's edge, the identical real "inset by half the stroke
+    /// width" contract `RoundedRect`-based borders already get via
+    /// `corner_radius - inset` (M30 Phase 1). A raw vertex polygon has
+    /// no per-corner radius to shrink the way a `RoundedRect` does, so
+    /// this shrinks the polygon itself instead: offsets each real edge
+    /// inward along its own normal by `amount`, then finds each new
+    /// vertex as the intersection of its two adjacent offset edges (a
+    /// real miter join, the same technique any 2D vector-graphics
+    /// polygon-offset implementation uses). Confirmed via direct
+    /// source read before writing this: `kurbo = "0.13.1"`'s own
+    /// `offset.rs` module offsets a single cubic Bézier curve, not a
+    /// closed straight-edge polygon -- genuinely the wrong tool for
+    /// `ShapeKey`'s own vertices-only shape, not merely unused; no
+    /// general polygon-inset operation exists anywhere in this
+    /// codebase's own kurbo usage (confirmed via grep), so this is
+    /// real, new, self-contained geometry.
+    ///
+    /// Which of an edge's two perpendicular normals points "inward" is
+    /// resolved per-edge by comparing against the real polygon
+    /// centroid (whichever normal points toward it), not by assuming a
+    /// fixed winding order -- `ShapeKey::from_path` extracts vertices
+    /// straight from whatever `BezPath` a caller supplied, with no
+    /// guaranteed winding direction, and `interpolate`'s own real
+    /// alignment search (this module's own doc comment) can reorder
+    /// them further, so this can't assume CW/CCW the way a purpose-
+    /// built polygon type could.
+    ///
+    /// **Real, stated v1 scope limit:** correct for the real border
+    /// widths this codebase actually uses (MD3's own 1-4dp outline
+    /// range) against MD3-scale shapes -- not proven robust for an
+    /// inset large enough to invert a polygon's own edges or force two
+    /// non-adjacent offset edges to cross (a real, harder self-
+    /// intersection-avoidance problem no real caller here needs
+    /// solved). Two exactly parallel adjacent offset edges (a genuine
+    /// straight run across a "vertex" the caller's own path never
+    /// actually turned at) fall back to that edge's own offset start
+    /// point, rather than an undefined line intersection.
+    pub fn inset_path(&self, amount: f64) -> BezPath {
+        let n = self.points.len();
+        if n < 3 || amount <= 0.0 {
+            return self.to_path();
+        }
+
+        let centroid = {
+            let (sum_x, sum_y) = self
+                .points
+                .iter()
+                .fold((0.0, 0.0), |(sx, sy), p| (sx + p.x, sy + p.y));
+            Point::new(sum_x / n as f64, sum_y / n as f64)
+        };
+
+        // One offset line (a point on it, plus its unit direction) per
+        // real edge `i -> i+1`.
+        let offset_lines: Vec<(Point, peniko::kurbo::Vec2)> = (0..n)
+            .map(|i| {
+                let p0 = self.points[i];
+                let p1 = self.points[(i + 1) % n];
+                let edge = p1 - p0;
+                let dir = if edge.hypot() > 1e-9 {
+                    edge.normalize()
+                } else {
+                    // A real, degenerate zero-length edge -- none of
+                    // this module's own real generated shapes ever
+                    // produce one, so this is a defensive fallback
+                    // (avoids a NaN normal), not a handled real case.
+                    peniko::kurbo::Vec2::new(1.0, 0.0)
+                };
+                let normal = peniko::kurbo::Vec2::new(-dir.y, dir.x);
+                let midpoint = p0.lerp(p1, 0.5);
+                let inward = if normal.x * (centroid.x - midpoint.x)
+                    + normal.y * (centroid.y - midpoint.y)
+                    > 0.0
+                {
+                    normal
+                } else {
+                    -normal
+                };
+                (p0 + inward * amount, dir)
+            })
+            .collect();
+
+        let inset_points: Vec<Point> = (0..n)
+            .map(|i| {
+                let (p_prev, d_prev) = offset_lines[(i + n - 1) % n];
+                let (p_curr, d_curr) = offset_lines[i];
+                line_intersection(p_prev, d_prev, p_curr, d_curr).unwrap_or(p_curr)
+            })
+            .collect();
+
+        let mut path = BezPath::new();
+        let mut points = inset_points.into_iter();
+        if let Some(first) = points.next() {
+            path.move_to(first);
+            for p in points {
+                path.line_to(p);
+            }
+            path.close_path();
+        }
+        path
+    }
+}
+
+/// `ShapeKey::inset_path`'s own real line-line intersection helper --
+/// solves `p1 + t*d1 == p2 + s*d2` for `t`, returning `None` when the
+/// two lines are parallel (or near enough that the solve would blow up
+/// numerically), the identical "return `None` rather than propagate a
+/// near-infinite value" contract every other real geometry helper in
+/// this codebase already uses for a degenerate input.
+fn line_intersection(
+    p1: Point,
+    d1: peniko::kurbo::Vec2,
+    p2: Point,
+    d2: peniko::kurbo::Vec2,
+) -> Option<Point> {
+    let denom = d1.x * d2.y - d1.y * d2.x;
+    if denom.abs() < 1e-9 {
+        return None;
+    }
+    let diff = p2 - p1;
+    let t = (diff.x * d2.y - diff.y * d2.x) / denom;
+    Some(p1 + d1 * t)
 }
 
 impl Interpolate for ShapeKey {
@@ -503,5 +628,82 @@ mod tests {
             "expected the new point at the midpoint of a long (length-100) edge, \
              got points {points:?}"
         );
+    }
+
+    /// M39 Phase 3 (§5, §7): a real, hand-verified case -- `square`'s
+    /// own 10x10 corners, inset by 2.0, must produce exactly the
+    /// 6x6 square `(2,2)-(8,2)-(8,8)-(2,8)` a real ruler-and-compass
+    /// shrink of every edge by 2 units would give. Hand-traced through
+    /// `inset_path`'s own real per-edge-normal-then-intersect math
+    /// before writing this assertion, not just picked because it
+    /// looked plausible.
+    #[test]
+    fn inset_path_of_a_square_shrinks_every_side_by_the_real_amount() {
+        let key = ShapeKey {
+            points: square(0, false),
+        };
+        let inset = key.inset_path(2.0);
+        let points: Vec<Point> = inset
+            .iter()
+            .filter_map(|el| match el {
+                PathEl::MoveTo(p) | PathEl::LineTo(p) => Some(p),
+                _ => None,
+            })
+            .collect();
+        let expected = [
+            Point::new(2.0, 2.0),
+            Point::new(8.0, 2.0),
+            Point::new(8.0, 8.0),
+            Point::new(2.0, 8.0),
+        ];
+        assert_eq!(points.len(), expected.len());
+        for (p, e) in points.iter().zip(expected.iter()) {
+            assert!(
+                p.distance(*e) < 1e-9,
+                "expected inset corner ~{e:?}, got {p:?}"
+            );
+        }
+    }
+
+    /// The reversed-winding twin of the test above -- `inset_path`
+    /// resolves each edge's own inward normal via the real polygon
+    /// centroid (not an assumed CW/CCW winding), so a reversed vertex
+    /// order must shrink identically, not outward or not at all.
+    #[test]
+    fn inset_path_shrinks_inward_regardless_of_winding_direction() {
+        let key = ShapeKey {
+            points: square(0, true),
+        };
+        let inset = key.inset_path(2.0);
+        let points: Vec<Point> = inset
+            .iter()
+            .filter_map(|el| match el {
+                PathEl::MoveTo(p) | PathEl::LineTo(p) => Some(p),
+                _ => None,
+            })
+            .collect();
+        for p in &points {
+            assert!(
+                (2.0..=8.0).contains(&p.x) && (2.0..=8.0).contains(&p.y),
+                "every inset corner of a reversed-winding square must still land \
+                 strictly inside the original 0..10 bounds, got {p:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn inset_path_with_zero_amount_is_the_same_as_to_path() {
+        let key = ShapeKey {
+            points: square(0, false),
+        };
+        assert_eq!(key.inset_path(0.0).elements(), key.to_path().elements());
+    }
+
+    #[test]
+    fn inset_path_of_a_degenerate_two_point_shape_is_a_true_no_op() {
+        let key = ShapeKey {
+            points: vec![Point::new(0.0, 0.0), Point::new(10.0, 0.0)],
+        };
+        assert_eq!(key.inset_path(2.0).elements(), key.to_path().elements());
     }
 }
