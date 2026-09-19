@@ -406,18 +406,34 @@ impl LoadingIndicatorState {
 /// foreground/background color and bold attribute, the identical real
 /// "what a genuine VT/ANSI parser hands back" shape the sibling
 /// `pyCopper` project's own real `Terminal` widget (grounded in
-/// `bittty`'s own `Cell` type) already established. Deliberately
-/// narrower than a full real terminal cell's real attribute set --
-/// underline/strikethrough/italic/dim/inverse are real, stated v1
-/// omissions, the identical real scope pyCopper's own `Terminal`
-/// already chose ("underline and strikethrough rendering... out of
-/// scope for this pass").
+/// `bittty`'s own `Cell` type) already established.
+///
+/// **M39 Phase 4 (§5, §7): widened with `dim`/`italic`/`underline`/
+/// `inverse`** -- direct source read of the vendored `vt100 = "0.16.2"`
+/// crate confirmed `vt100::Cell` already exposes all four as real,
+/// already-parsed booleans (`bold()`/`dim()`/`italic()`/`underline()`/
+/// `inverse()`), so this is pure plumbing: `engine-py::terminal.rs`'s
+/// own real VT-to-`TerminalCell` translation now reads them too.
+/// **Strikethrough stays a real, stated v1 omission, not an oversight**
+/// -- confirmed via grep that `vt100`'s own source has zero real
+/// strikethrough support anywhere (no such attribute is even parsed
+/// from the byte stream), a genuine constraint of the vendored VT
+/// parser itself, not an engine-side choice; the identical real scope
+/// pyCopper's own `Terminal` already chose for the same real reason
+/// ("underline and strikethrough rendering... out of scope for this
+/// pass" -- pyCopper's own comment predates this project's own direct
+/// confirmation that strikethrough specifically has no real source
+/// data to render in the first place).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TerminalCell {
     pub ch: char,
     pub fg: Color,
     pub bg: Color,
     pub bold: bool,
+    pub dim: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub inverse: bool,
 }
 
 impl TerminalCell {
@@ -435,6 +451,10 @@ impl TerminalCell {
             fg: Color::TRANSPARENT,
             bg: Color::TRANSPARENT,
             bold: false,
+            dim: false,
+            italic: false,
+            underline: false,
+            inverse: false,
         }
     }
 }

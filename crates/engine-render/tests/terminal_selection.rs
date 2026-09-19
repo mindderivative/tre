@@ -142,6 +142,10 @@ fn build_scene(with_selection: bool) -> (Tree, engine_core::NodeId) {
             fg: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF),
             bg: Color::TRANSPARENT,
             bold: false,
+            dim: false,
+            italic: false,
+            underline: false,
+            inverse: false,
         };
     }
     if with_selection {

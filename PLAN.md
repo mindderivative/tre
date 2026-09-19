@@ -1,70 +1,70 @@
-# PLAN — M39 Phase 3: Shape-Morphed Border Inset Fix
+# PLAN — M39 Phase 4: Terminal Cell Text Attributes
 
 ## Goal
-Fix M38 Phase 4's own stated v1 gap: a border stroked while a real
-shape morph is active strokes the raw vertex silhouette centered, no
-inset, so it can sit up to half its own width outside the fill's own
-edge.
+Close a real, previously-stated v1 gap: `TerminalCell` only ever
+carried `bold` -- underline/italic/dim/inverse were real, named
+omissions since M30 Phase 9 Step 4. `vt100::Cell` already parses all
+four; this phase plumbs them through and paints each for real.
 
 ## Steps
-1. Real investigation first: does `kurbo` already expose a polygon-
-   inset/offset operation? Direct source read of `kurbo = "0.13.1"`'s
-   own vendored `offset.rs` found `pub fn offset_cubic(c: CubicBez,
-   d: f64, tolerance: f64, result: &mut BezPath)` -- a single-cubic
-   Bézier offset-curve algorithm, genuinely the wrong tool for
-   `ShapeKey`'s own vertices-only straight-line-segment shapes (`shape_
-   morph.rs`'s own module doc comment: "always straight-line segments
-   between the interpolated vertices"), not merely unused. Confirmed
-   via grep: no general polygon-offset/inset operation exists
-   anywhere in this codebase's own kurbo usage.
-2. New `ShapeKey::inset_path(amount) -> BezPath` (`shape_morph.rs`): a
-   real, new, self-contained straight-edge polygon inset. For each
-   real edge, computes its inward normal (resolved per-edge by
-   comparing against the real polygon centroid, not an assumed CW/CCW
-   winding -- `ShapeKey`'s own vertices can come from any caller-
-   supplied path with no guaranteed winding, and `interpolate`'s own
-   alignment search can reorder them further), offsets the edge line
-   by `amount`, then finds each new vertex as the real intersection of
-   its two adjacent offset edges (a real miter join). New private
-   `line_intersection` helper. Real, stated v1 scope limit: correct
-   for the real border widths this codebase actually uses against
-   MD3-scale shapes, not proven robust against a self-intersecting
-   inset.
-3. `engine-render`'s border block (`lib.rs`) now strokes `node.paint.
-   shape.current.inset_path(inset)` instead of `.to_path()` for the
-   real "active shape morph" branch -- the fill geometry itself is
-   untouched, only the border path changed.
-4. Real tests: 4 new `engine-core` unit tests in `shape_morph.rs` --
-   a hand-derived case (a 10x10 square inset by 2.0 must produce
-   exactly `(2,2)-(8,2)-(8,8)-(2,8)`, independently traced by hand
-   through the real algorithm before the assertion was written, not
-   just picked because it looked plausible), a reversed-winding twin
-   proving the centroid-based normal resolution doesn't depend on
-   winding direction, a zero-amount true-no-op case, and a degenerate
-   2-point case. New real pixel-readback test in `engine-render/tests/
-   shape_morph_paint.rs` -- a 20px border on a 60x60 shape centered in
-   a 100x100 box: before this phase, the border would have bled 10px
-   past the shape's own `x=20` edge (empirically the exact real bug);
-   after, a point in that bled zone is proven plain background, a
-   point in the real inset border band is proven the border color, and
-   the shape's own interior is proven unaffected.
-5. Full verification chain: `cargo check`/`clippy -D warnings`/`fmt`/
+1. Real verification first: direct source read of the vendored `vt100
+   = "0.16.2"` crate confirmed `vt100::Cell::dim()/italic()/
+   underline()/inverse()` all exist as real, already-parsed booleans
+   (`~/.cargo/registry/.../vt100-0.16.2/src/cell.rs`), and confirmed
+   via grep that the crate has zero real strikethrough support
+   anywhere -- strikethrough stays a real, stated v1 omission, not an
+   oversight.
+2. `TerminalCell` (`node.rs`) widened with `dim`/`italic`/`underline`/
+   `inverse: bool`; `blank()` defaults all four `false`.
+3. `engine-py::terminal.rs`'s `screen_cell_to_terminal_cell` reads all
+   four straight off the real `vt100::Cell`.
+4. `engine-render::text.rs`'s `draw_terminal`, real per-attribute
+   paint logic:
+   - New `terminal_cell_effective_colors(cell) -> (fg, bg)` helper --
+     resolves a real `inverse` cell's fg/bg swap once, shared by both
+     the background-run loop and the glyph-run loop. Real, stated v1
+     fallback: a swapped foreground landing on `Color::TRANSPARENT`
+     (the cell's own background was never set) falls back to
+     `Color::BLACK` rather than a genuinely invisible glyph.
+   - `dim` folded directly into the glyph run's own effective ink
+     color (`with_opacity(fg, 0.6)`), so it naturally breaks a run
+     from an adjacent non-dim cell rather than needing a separate
+     run-grouping key field.
+   - `italic`: real investigation found `kurbo::Affine::skew` plus
+     `glifo::GlyphRunBuilder::glyph_transform` -- that builder method's
+     own doc comment literally says "Use `Affine::skew` with a
+     horizontal-only skew to simulate italic text," the bundled
+     monospace face's own real answer to having no italic variant.
+     20° (kurbo's own doc example angle), sign flipped for this
+     codebase's own real y-down screen space.
+   - `underline`: a real, analytic drawn rule near the row's own
+     bottom (`0.85 * cell_height`), a real, stated v1 approximation of
+     the font's own true underline-position metric, not a
+     `skrifa`-derived exact one.
+5. Real tests: 1 new `engine-core` unit test (`TerminalCell::blank()`'s
+   four new fields all default `false`); 5 new real pixel-readback
+   tests, `engine-render/tests/terminal_cell_attributes.rs` (dim,
+   italic, underline, and inverse's own two real cases -- unset
+   background falling back to legible ink, and an explicit background
+   swapping cleanly), mirroring `terminal_selection.rs`'s own
+   established render-to-texture-then-readback harness verbatim.
+   **Found and fixed two real bugs in my own first test draft** -- see
+   `LOG.md`.
+6. Full verification chain: `cargo check`/`clippy -D warnings`/`fmt`/
    `test --workspace --release`, `maturin develop --release` (no
-   Python-facing API changed this phase, rebuilt anyway per the
-   standing chain), full `pytest tests/`, all 77 examples, showcase
-   demo.
-6. `BUILD_TRACKER.md` Phase 3 flipped fully to done (heading, step
-   bullet, milestone status line, Top Metrics row all updated
-   together, matching Phase 2's own precedent for a single-step
-   phase). Artifact regenerated (39/127/218, unchanged) and
-   republished.
+   Python-facing API changed this phase), full `pytest tests/`, all 77
+   examples, showcase demo.
+7. `BUILD_TRACKER.md` Phase 4 flipped fully to done (heading, step
+   bullet, milestone status line, Top Metrics row). Artifact
+   regenerated (39/127/218, unchanged) and republished.
 
 ## Status
 Complete. Full verification chain green (`cargo test --workspace
---release`: `engine-core` 212 passed, +4 from this step;
-`engine-render`'s `shape_morph_paint` integration suite 3 passed, +1;
-`pytest tests/`: 581 passed/1 skipped, unchanged -- no Python-facing
-API touched this phase; all 77 examples + showcase demo clean).
-**M39 Phase 3 -- Shape-Morphed Border Inset Fix -- is now complete.
-Phases 4-5 of M39 remain: Terminal Cell Text Attributes, `Tree::
-tick_all` Active-Set Optimization.**
+--release`: `engine-core` 213 passed, +1; `engine-render`'s new
+`terminal_cell_attributes` suite 5 passed; pre-existing
+`terminal_selection` suite unaffected, 2 passed; `pytest tests/`: 581
+passed/1 skipped, unchanged -- no Python-facing API touched this
+phase; all 77 examples + showcase demo clean). **M39 Phase 4 --
+Terminal Cell Text Attributes -- is now complete. Phase 5 of M39
+remains: `Tree::tick_all` Active-Set Optimization (the milestone's own
+final phase).**

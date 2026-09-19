@@ -13,13 +13,15 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
-use engine_core::{NodeId, TerminalState, TextAlign, TextFieldState, TextState, Tree};
+use engine_core::{
+    NodeId, TerminalCell, TerminalState, TextAlign, TextFieldState, TextState, Tree,
+};
 use parley::fontique::{Collection, CollectionOptions};
 use parley::{
     Affinity, Alignment, AlignmentOptions, Cursor, FontContext, FontFamily, FontWeight,
     LayoutContext, PositionedLayoutItem, Selection, StyleProperty,
 };
-use peniko::kurbo::{Point, Rect, Shape};
+use peniko::kurbo::{Affine, Point, Rect, Shape};
 use peniko::{Blob, Color};
 use vello_hybrid::{Resources, Scene};
 
@@ -687,15 +689,20 @@ impl TextRenderer {
 
         for row in 0..state.rows {
             // Real background runs: a contiguous span of cells sharing
-            // one real bg color, painted as one rect -- `TRANSPARENT`
-            // (`TerminalCell::blank`'s own real default) is skipped
-            // entirely, the same "don't paint a real default" every
-            // other `NodeKind` arm here already does.
+            // one real *effective* bg color, painted as one rect --
+            // `TRANSPARENT` (`TerminalCell::blank`'s own real default)
+            // is skipped entirely, the same "don't paint a real
+            // default" every other `NodeKind` arm here already does.
+            // M39 Phase 4 (§5, §7): "effective" now accounts for a
+            // real `inverse` cell -- see `terminal_cell_effective_
+            // colors`'s own doc comment.
             let mut col = 0u16;
             while col < state.cols {
-                let bg = state.cell(row, col).bg;
+                let bg = terminal_cell_effective_colors(state.cell(row, col)).1;
                 let mut end = col + 1;
-                while end < state.cols && state.cell(row, end).bg == bg {
+                while end < state.cols
+                    && terminal_cell_effective_colors(state.cell(row, end)).1 == bg
+                {
                     end += 1;
                 }
                 if bg != Color::TRANSPARENT {
@@ -745,20 +752,40 @@ impl TextRenderer {
             }
 
             // Real glyph runs: a contiguous span of cells sharing one
-            // real (fg, bold) pair, shaped and painted as one string --
-            // a blank cell's own real transparent `fg` (`TerminalCell::
-            // blank`'s own default) never reaches `build_field_layout`
-            // at all (an empty/whitespace-only run has no real glyphs
-            // to paint), so a genuinely empty terminal costs nothing
-            // beyond the background loop above.
+            // real (effective ink color, bold, italic, underline)
+            // tuple, shaped and painted as one string -- a blank
+            // cell's own real transparent effective foreground
+            // (`TerminalCell::blank`'s own default) never reaches
+            // `build_field_layout` at all (an empty/whitespace-only
+            // run has no real glyphs to paint), so a genuinely empty
+            // terminal costs nothing beyond the background loop above.
+            // M39 Phase 4 (§5, §7): "effective ink color" now folds in
+            // both `inverse` (via `terminal_cell_effective_colors`)
+            // and `dim` (a real, reduced-opacity tint applied once
+            // here, so two adjacent cells that only differ by `dim`
+            // naturally break into separate runs -- their resolved
+            // colors are simply no longer equal).
+            let ink = |cell: &TerminalCell| -> Color {
+                let fg = terminal_cell_effective_colors(cell).0;
+                if cell.dim {
+                    crate::with_opacity(fg, 0.6)
+                } else {
+                    fg
+                }
+            };
             let mut col = 0u16;
             while col < state.cols {
                 let first = state.cell(row, col);
-                let (fg, bold) = (first.fg, first.bold);
+                let fg = ink(first);
+                let (bold, italic, underline) = (first.bold, first.italic, first.underline);
                 let mut end = col + 1;
                 while end < state.cols {
                     let next = state.cell(row, end);
-                    if next.fg != fg || next.bold != bold {
+                    if ink(next) != fg
+                        || next.bold != bold
+                        || next.italic != italic
+                        || next.underline != underline
+                    {
                         break;
                     }
                     end += 1;
@@ -789,11 +816,56 @@ impl TextRenderer {
                                 x: g.x + x0 as f32,
                                 y: g.y + y0 as f32,
                             });
-                            scene
-                                .glyph_run(resources, font)
-                                .font_size(font_size)
-                                .fill_glyphs(glyphs);
+                            let mut builder = scene.glyph_run(resources, font).font_size(font_size);
+                            if italic {
+                                // M39 Phase 4 (§5, §7): a real synthetic-
+                                // italic shear -- the bundled monospace
+                                // face (`Hack Nerd Font Mono`) has no
+                                // real italic variant of its own, so
+                                // this leans the glyph outlines directly
+                                // instead, `glifo::GlyphRunBuilder::
+                                // glyph_transform`'s own doc comment's
+                                // exact sanctioned technique ("Use
+                                // `Affine::skew` with a horizontal-only
+                                // skew to simulate italic text"). 20
+                                // degrees is `kurbo::Affine::skew`'s own
+                                // doc example angle; negated on the x
+                                // axis for this codebase's own real
+                                // y-down screen space (that doc example
+                                // assumes Y-up) -- a positive shear
+                                // there leans the glyph's *top* right,
+                                // which in y-down space needs a negative
+                                // `skew_x` to lean the same visual
+                                // direction (smaller/negative `y` is
+                                // "up" here).
+                                let shear = -(20f64.to_radians().tan());
+                                builder = builder.glyph_transform(Affine::skew(shear, 0.0));
+                            }
+                            builder.fill_glyphs(glyphs);
                         }
+                    }
+                    if underline {
+                        // A real, analytic underline rule -- positioned
+                        // as a fixed fraction of the real measured
+                        // `cell_height` (near the row's own bottom,
+                        // roughly where a monospace face's own real
+                        // baseline sits), not derived from the font's
+                        // own true underline-position/thickness metrics
+                        // (`skrifa`'s `OS/2`/`post` tables would have
+                        // that) -- a real, stated v1 approximation, the
+                        // same "analytic grid, not exact font metrics"
+                        // scope this whole function's own cell grid
+                        // already operates at for backgrounds/cursor.
+                        let underline_y = y0 + cell_height * 0.85;
+                        let underline_h = (cell_height * 0.06).max(1.0);
+                        let rule = Rect::new(
+                            x0,
+                            underline_y,
+                            x0 + f64::from(end - col) * cell_width,
+                            underline_y + underline_h,
+                        );
+                        scene.set_paint(fg);
+                        scene.fill_path(&rule.to_path(0.1));
                     }
                 }
                 col = end;
@@ -858,6 +930,38 @@ impl TextRenderer {
 /// the two real call sites that know `state.multiline`.
 fn field_max_width(state: &TextFieldState, max_width: f32) -> f32 {
     if state.multiline { f32::MAX } else { max_width }
+}
+
+/// M39 Phase 4 (§5, §7): `draw_terminal`'s own real `inverse`
+/// resolution -- a real `vt100` "reverse video" cell paints with its
+/// own foreground and background swapped, real MD3-neutral terminal
+/// emulator behavior this function makes real for both the background-
+/// run loop and the glyph-run loop (both need the identical swap, so
+/// this is the one real place it's computed, not duplicated).
+///
+/// **Real, stated v1 simplification:** a swapped foreground can land on
+/// `Color::TRANSPARENT` when the cell's own real background was never
+/// set (`TerminalCell`'s own `vt100::Color::Default` sentinel,
+/// `engine-py::terminal.rs`'s own `screen_cell_to_terminal_cell`) --
+/// painting a genuinely invisible glyph there would be a real, visible
+/// bug (inverse text silently vanishing), not a defensible edge case,
+/// so this falls back to `Color::BLACK` instead: always legible against
+/// whatever the swapped-in background block now is, even though it
+/// isn't a true theme-aware resolution of "the terminal's own real
+/// background color" (`engine-core` has no theme awareness at all,
+/// §4, and threading the container's own `PaintProperties.background`
+/// through this per-cell path is real, further plumbing this pass
+/// doesn't need for a real, legible result).
+fn terminal_cell_effective_colors(cell: &TerminalCell) -> (Color, Color) {
+    if !cell.inverse {
+        return (cell.fg, cell.bg);
+    }
+    let fg = if cell.bg == Color::TRANSPARENT {
+        Color::BLACK
+    } else {
+        cell.bg
+    };
+    (fg, cell.fg)
 }
 
 /// M31 Phase 3 (§5, §8): the real substitute for each whitespace

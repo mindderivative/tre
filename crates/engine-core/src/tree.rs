@@ -33,8 +33,8 @@ use crate::node::{
 };
 #[cfg(test)]
 use crate::node::{
-    CheckboxState, IconState, ItemExtent, SliderState, TerminalState, TimePickerDialState,
-    VirtualListState,
+    CheckboxState, IconState, ItemExtent, SliderState, TerminalCell, TerminalState,
+    TimePickerDialState, VirtualListState,
 };
 use crate::overlay::OverlayMeta;
 #[cfg(test)]
@@ -10084,6 +10084,22 @@ mod tests {
             "a collapsed (start == end) selection reads as no real selection, the identical \
              real convention text_field_selected_text already established"
         );
+    }
+
+    /// M39 Phase 4 (§5, §7): a real blank cell's own four new
+    /// attribute fields must default `false` -- `TerminalCell::blank`
+    /// is the real value every never-written grid cell starts as
+    /// (`TerminalState::new`'s own `vec![TerminalCell::blank(); ...]`),
+    /// so a stray `true` default here would falsely style an entire
+    /// freshly-constructed terminal.
+    #[test]
+    fn terminal_cell_blank_defaults_every_new_attribute_to_false() {
+        let cell = TerminalCell::blank();
+        assert!(!cell.bold);
+        assert!(!cell.dim);
+        assert!(!cell.italic);
+        assert!(!cell.underline);
+        assert!(!cell.inverse);
     }
 
     #[test]

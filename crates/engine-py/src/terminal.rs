@@ -415,6 +415,15 @@ fn screen_cell_to_terminal_cell(cell: Option<&vt100::Cell>) -> TerminalCell {
         fg: vt100_color_to_peniko(cell.fgcolor(), DEFAULT_FG),
         bg: vt100_color_to_peniko(cell.bgcolor(), Color::TRANSPARENT),
         bold: cell.bold(),
+        // M39 Phase 4 (§5, §7): `vt100::Cell`'s own real, already-
+        // parsed attributes -- confirmed via direct source read
+        // (`~/.cargo/registry/.../vt100-0.16.2/src/cell.rs`) before
+        // this phase wrote anything, the same "verify, don't assume"
+        // discipline this whole project already applies.
+        dim: cell.dim(),
+        italic: cell.italic(),
+        underline: cell.underline(),
+        inverse: cell.inverse(),
     }
 }
 
