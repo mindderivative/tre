@@ -6604,7 +6604,11 @@ impl PyWindow {
     /// the app. **Real, confirmed POSIX-only v1**, the identical real
     /// scope pyCopper's own `Terminal` already chose for the same
     /// stated reason (`terminal.rs`'s own doc comment).
-    #[pyo3(signature = (shell, cols, rows, background, font_size=14.0, x=None, y=None))]
+    ///
+    /// M32 Phase 5 (§4, §8): `scrollback_lines` is a real, retained
+    /// history length (`0` for none) -- `Node.scroll_terminal`/a real
+    /// mouse wheel over a focused terminal move the viewport into it.
+    #[pyo3(signature = (shell, cols, rows, background, font_size=14.0, scrollback_lines=1000, x=None, y=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_terminal(
         &self,
@@ -6613,15 +6617,17 @@ impl PyWindow {
         rows: u16,
         background: (u8, u8, u8, u8),
         font_size: f32,
+        scrollback_lines: usize,
         x: Option<f32>,
         y: Option<f32>,
     ) -> PyResult<Node> {
-        let session = TerminalSession::spawn(shell, cols, rows).map_err(|reason| {
-            EngineError::TerminalSpawnFailed {
-                shell: shell.to_string(),
-                reason,
-            }
-        })?;
+        let session =
+            TerminalSession::spawn(shell, cols, rows, scrollback_lines).map_err(|reason| {
+                EngineError::TerminalSpawnFailed {
+                    shell: shell.to_string(),
+                    reason,
+                }
+            })?;
 
         let (r, g, b, a) = background;
         // M32 Phase 1 (§5, §8, §10): a throwaway `TextRenderer` solely

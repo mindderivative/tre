@@ -218,7 +218,27 @@ impl PyWindow {
     /// whatever's hit to the nearest `NodeKind::VirtualList` ancestor)
     /// -- `node` itself doesn't need to be the list; any of its real
     /// children work too, matching real scroll-wheel behavior.
+    ///
+    /// M32 Phase 5 (§4, §8): if `node` is itself a real `Terminal`,
+    /// this moves its own real viewport into scrollback instead --
+    /// mirrors `app.rs`'s own real winit `MouseWheel` handling, but
+    /// simpler: `node` names the target explicitly, no hit-test needed.
     fn scroll(&self, node: PyRef<'_, Node>, delta_y: f64, py: Python<'_>) {
+        let is_terminal = matches!(
+            self.tree.borrow().get(node.id).map(|n| &n.kind),
+            Some(engine_core::NodeKind::Terminal(_))
+        );
+        if is_terminal {
+            if let Some(session) = self.terminals.borrow_mut().get_mut(&node.id) {
+                session.scroll_by(
+                    &mut self.tree.borrow_mut(),
+                    node.id,
+                    (delta_y / 20.0) as i64,
+                );
+            }
+            return;
+        }
+
         let point = node_center(
             &self.tree,
             self.root,

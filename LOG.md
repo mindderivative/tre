@@ -1,98 +1,97 @@
-# LOG — M32 Phase 4: Terminal Ctrl+C / SIGINT and Ctrl-Letter Shortcuts
+# LOG — M32 Phase 5: Terminal Scrollback
 
-- Confirmed the exact real gap via direct read of `terminal.rs`'s own
-  `input_bytes_for` doc comment (written at M30 Phase 9 Step 4, stating
-  the gap honestly rather than silently dropping it): `engine_
-  platform::translate_clipboard_shortcut`'s own real Ctrl+C/X/V
-  detection happens at the raw winit layer, before an `InputEvent`
-  even exists, today only ever producing `Copy`/`Cut`/`PasteRequested`
-  -- never a real terminal-bound byte.
-- Added `InputEvent::ControlChar(char)` (`engine-core::input.rs`) for
-  every real Ctrl+`<letter>` press besides c/x/v (unchanged, still
-  `Copy`/`Cut`/`PasteRequested`). Plumbing only in `Tree::dispatch`,
-  the identical shape `Copy`/`Cut`/`PasteRequested` already established
-  (`engine-core` has zero PTY access, §4).
-- Widened `translate_clipboard_shortcut` (`engine-platform`) to the
-  full ASCII alphabet -- restructured to extract exactly one char from
-  the `Character` payload (guarding against a real, if rare, multi-
-  char IME/dead-key sequence, which now correctly still produces
-  `None` rather than silently picking the first char). c/x/v keep
-  their own exact real behavior; every other letter now produces
-  `ControlChar` instead of `None`. Updated the one pre-existing test
-  that asserted `Character("a") -> None` (now `Some(ControlChar('a'))`
-  -- the real fix this phase exists for) and added 2 new tests.
-- Added `terminal::control_byte_for` (`engine-py`): the real Ctrl+
-  `<letter>` -> ASCII control-code mapping (`letter - 'A' + 1`, the
-  identical real formula every terminal emulator uses -- Ctrl+A=0x01
-  through Ctrl+Z=0x1A, Ctrl+C=0x03=`ETX`/SIGINT). **Real, deliberate
-  design decision, not an accident:** mapped `Copy`/`Cut`/
-  `PasteRequested` to their own real underlying letters here too, so
-  when a `Terminal` is genuinely focused, Ctrl+C/X/V mean their own
-  real terminal-control bytes, not clipboard ops -- matching every
-  real terminal emulator's own actual behavior (none of them treat a
-  bare Ctrl+C as "copy"). When no terminal is focused, this function
-  is simply never reached for those three (the call sites below only
-  invoke it after confirming a real `Terminal` is focused), so
-  ordinary `TextField` copy/cut/paste stays completely unaffected --
-  zero regression risk for the non-terminal case.
-- Wired `control_byte_for` into `app.rs`'s `on_input` closure --
-  extended the existing real terminal-keyboard-routing block
-  (`input_bytes_for`'s own early-return check) with a parallel one for
-  the new function, sharing one `focused_terminal` lookup between both
-  (`NodeId: Copy`, confirmed via a successful compile with no move
-  errors). Added the identical real routing to the synthetic, no-live-
-  window testing path (`window_input.rs`): a new `route_control_char_
-  to_terminal` helper mirroring `route_to_terminal`'s own shape, and a
-  new `Window.press_ctrl(letter: str) -> bool` pymethod -- deliberately
-  narrower in scope than `press_key`/`type_text` (never falls through
-  to ordinary `Tree::dispatch`; when no terminal is focused it just
-  returns `False`, touching nothing else, since `copy`/`cut`/`paste`
-  already own the separate, hermetic `TextField`-clipboard surface).
-- Real Rust unit tests: `engine-py::terminal.rs` gained its first-ever
-  `#[cfg(test)] mod tests` (this file had none before), 4 new tests for
-  `control_byte_for` (the real SIGINT byte value, the full a-z range,
-  Cut/Paste's own real letters, and a real negative case for non-
-  control-char events). `engine-platform` gained 2 new tests for the
-  widened `translate_clipboard_shortcut`. All passed on the first run
-  -- no bugs found this phase.
+- Investigated the vendored `vt100 = "0.16.2"` source directly before
+  designing anything: real, built-in scrollback already exists
+  (`Grid.scrollback: VecDeque<Row>`, `Parser::new`'s own third
+  `scrollback_len` param, `Screen::set_scrollback`/`scrollback()`) --
+  `TerminalSession::spawn` was simply calling `vt100::Parser::new(rows,
+  cols, 0)`, always zero. `Screen::cell`/`rows()` already read from the
+  current real `scrollback_offset` internally (confirmed via direct
+  read of `Grid`'s own row-lookup logic), and pushing a new line while
+  scrolled back auto-increments the offset to keep the viewer's own
+  position stable rather than jumping to the bottom -- both real,
+  already-correct behaviors, not something this phase needed to build.
+- `TerminalSession::spawn` gained a real `scrollback_lines: usize`
+  parameter, threaded to `vt100::Parser::new`. `add_terminal` gained
+  the matching `scrollback_lines: usize = 1000` parameter (a real,
+  sensible default, not a hardcoded internal-only choice).
+- Refactored `drain_into`'s cell-extraction logic (rebuilding
+  `TerminalState` from the parser's current `Screen`) into a shared
+  `sync_state` private method -- a real scroll changes what `Screen::
+  cell` returns with zero new PTY bytes involved, so it needs its own
+  real sync call independent of `drain_into`'s own "only when new
+  bytes arrived" early-return gate.
+- Added `TerminalSession::scroll_by(tree, node_id, delta_lines)`. The
+  real position arithmetic itself (`current` + signed `delta_lines`,
+  clamped at the lower bound since `usize` can't go negative) was
+  extracted as a pure, dedicated `scrollback_target(current, delta)`
+  free function specifically so it's unit-testable without spawning a
+  real PTY/shell -- the identical "Rust proves the pure logic, a real
+  script/pytest proves the live integration" split this whole session
+  already established for `test_checkbox.py`'s own precedent.
+  `vt100::Screen::set_scrollback`'s own real clamping (confirmed via
+  direct source read: "clamped to the actual size of the scrollback")
+  covers the upper bound, so `scrollback_target` only needed the lower
+  one.
+- Wired real scrolling into both real input paths: `app.rs`'s
+  `on_input` closure gained a new `InputEvent::Scroll` arm -- hit-tests
+  at the wheel's own real position, checks whether the hit node is a
+  `Terminal`, and if so calls `scroll_by` directly. `Tree::dispatch`'s
+  own existing `VirtualList`/`Carousel` wheel-bubbling already ran
+  harmlessly for this same event just above (a true no-op for a
+  `Terminal`, which has neither ancestor kind) -- no interference. The
+  synthetic, no-live-window `Window.scroll(node, delta_y)`
+  (`window_input.rs`) got the identical real check: if `node` is
+  itself a `Terminal`, bypass `Tree::dispatch` entirely and call
+  `scroll_by` directly (simpler than the live path -- no hit-test
+  needed, `node` names the target explicitly).
+- Real Rust unit tests (`scrollback_target`, 3 new): positive delta
+  moves further into history, negative moves back toward the bottom,
+  a pathological huge negative delta and an already-at-bottom scroll
+  both clamp to `0` rather than underflowing. All passed on the first
+  run.
 - Full Rust verification chain green: `cargo check`/`clippy -D
-  warnings`/`fmt --check` clean (one real clippy fix needed: a
-  collapsible-if in `app.rs`, folded into a single `if let ... &&`
-  chain matching this file's own established style elsewhere).
+  warnings`/`fmt --check` clean.
 - Rebuilt the Python extension. Ran a real, direct empirical script
-  before writing any pytest -- the definitive real proof this whole
-  phase exists for: spawned a real shell, ran a genuine `sleep 100`,
-  waited 0.2s real wall-clock time for the shell to actually fork/exec
-  it, called `press_ctrl("c")`, then queued a distinguishable follow-up
-  command. The terminal's own final text showed the real `^C` echo and
-  the follow-up command's own real output -- proof `sleep 100` was
-  genuinely killed, not merely that the call didn't raise. Passed on
-  the first run.
-- **Respected the established "only one real `App.run()` call across
-  the whole pytest process" rule**
-  ([[feedback_no_second_app_run_in_pytest]]): rather than adding a new
-  test function with its own `App.run()` call, extended `test_
-  terminal.py`'s own existing real-shell test to also queue the sleep/
-  Ctrl+C/echo-after sequence before its one shared `App.run()` call.
-  Added 3 new synchronous (no `App.run()` needed) tests for `press_
-  ctrl`'s own return-value contract (`False` with nothing focused,
-  `True` with a real terminal focused, `ValueError` for anything that
-  isn't exactly one ASCII letter). Ran `pytest tests/` for the whole
-  suite (not just this file) to confirm zero cross-test pollution, the
-  same concrete check that memory's own "how to apply" section
-  recommends.
-- Extended `examples/terminal.py` with the identical real sleep/
-  Ctrl+C/echo-after proof (its own separate process when run standalone
-  -- no pytest cross-test concern there) and removed its own now-stale
-  "no Ctrl+C/SIGINT" line from the module doc comment.
+  before writing any pytest: a real 5-row terminal, filled with more
+  real shell output than its viewport could hold -- confirmed the
+  bottom (unscrolled) view showed only the most recent lines, then
+  confirmed a real `Window.scroll` call revealed the real, previously-
+  scrolled-off first lines. **Real, useful discovery made along the
+  way, not assumed in advance:** no second `App.run()` call was needed
+  at all to prove this -- `scroll_by` re-syncs `TerminalState`
+  synchronously (`sync_state`'s own real, immediate call), so
+  `get_text()` reflects a scroll the instant `Window.scroll` returns,
+  no live render loop required. This meant the real scrollback pytest
+  coverage could share the file's own single already-existing
+  `App.run()` call (used to generate real PTY content) without needing
+  a second one at all -- fully compatible with [[feedback_no_second_app_run_in_pytest]]
+  by construction, not by careful avoidance.
+- Extended `test_terminal.py`'s own sole `App.run()`-based test a third
+  time (now proving shell response, Ctrl+C/SIGINT, and scrollback
+  together) -- required reordering the typed commands so each real
+  claim stays independently checkable against a small, deliberately
+  narrow 5-row viewport without earlier assertions getting pushed out
+  of view by later ones (a real, iterative fix: the first two drafts
+  failed for exactly that reason, caught immediately by running the
+  test, not discovered later). Added 2 new synchronous (no `App.run()`
+  needed) tests: scrolling an empty terminal doesn't raise, and
+  `Window.scroll` on a non-`Terminal` node still bubbles to
+  `VirtualList` exactly as before this phase (a real regression guard).
+- Extended `examples/terminal.py` with the identical real scrollback
+  proof and removed its own now-stale "no scrollback" doc-comment line.
+  Also fixed a separately-noticed stale "no scrollback, no Ctrl+C"
+  line in `add_terminal`'s own `.pyi` docstring -- missed during Phase
+  4's own pass, corrected here while already editing this exact text
+  for the real `scrollback_lines` parameter -- and updated `Window.
+  scroll`'s own previously-undocumented `.pyi` stub.
 - Full verification: `cargo check`/`clippy -D warnings`/`fmt --check`
-  clean, `cargo test --release` (`engine-py` +4 unit tests -- its first
-  ever, `engine-platform` +2), `maturin develop --release`, `pytest
-  tests/` 517 passed/1 skipped (3 new, up from 514, zero regressions,
-  confirmed no cross-test pollution from the extended real-shell test),
-  all 71 examples (including the updated `examples/terminal.py`) and
-  the showcase demo re-run clean, `mypy --strict` clean against
-  `examples/terminal.py`.
-- Updated `BUILD_TRACKER.md` (Top Metrics row, Phase 4 heading and Step
+  clean, `cargo test --release` (`engine-py` +3 unit tests),
+  `maturin develop --release`, `pytest tests/` 519 passed/1 skipped (2
+  new, up from 517, zero regressions, confirmed no cross-test
+  pollution), all 71 examples (including the updated `examples/
+  terminal.py`) and the showcase demo re-run clean, `mypy --strict`
+  clean against `examples/terminal.py`.
+- Updated `BUILD_TRACKER.md` (Top Metrics row, Phase 5 heading and Step
   1) -- verified the parser's own reported item count before/after,
   regenerated and republished the Build Tracker artifact.

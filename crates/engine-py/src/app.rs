@@ -825,6 +825,47 @@ impl App {
                             }
                         }
                     }
+                    // M32 Phase 5 (§4, §8): a real mouse wheel over a
+                    // `Terminal` moves its own real viewport into
+                    // scrollback -- the identical real "hit-test at the
+                    // wheel's own position" mechanism `Tree::dispatch`'s
+                    // own `Scroll` handling already uses for `VirtualList`
+                    // /`Carousel` (that handling already ran, harmlessly,
+                    // for this same event just above: a `Terminal` has no
+                    // `VirtualList`/`Carousel` ancestor to find, so it's a
+                    // true no-op there). `engine-core` has no real notion
+                    // of a `vt100::Screen` to scroll (§4), so this is the
+                    // one place both a live hit-test and real terminal
+                    // access exist together.
+                    InputEvent::Scroll { delta, position } => {
+                        let hit_terminal = {
+                            let tree_ref = runtime.tree.borrow();
+                            tree_ref.hit_test(runtime.root, position).filter(|&id| {
+                                matches!(
+                                    tree_ref.get(id).map(|node| &node.kind),
+                                    Some(NodeKind::Terminal(_))
+                                )
+                            })
+                        };
+                        if let Some(terminal_id) = hit_terminal {
+                            let delta_y = match delta {
+                                engine_core::ScrollDelta::Lines(_, y) => y,
+                                engine_core::ScrollDelta::Pixels(_, y) => y / 20.0,
+                            };
+                            // A real wheel "up" (away from the user, a
+                            // positive `y`) reveals older history --
+                            // `scroll_by`'s own real sign convention.
+                            if let Some(session) =
+                                runtime.terminals.borrow_mut().get_mut(&terminal_id)
+                            {
+                                session.scroll_by(
+                                    &mut runtime.tree.borrow_mut(),
+                                    terminal_id,
+                                    delta_y.round() as i64,
+                                );
+                            }
+                        }
+                    }
                     _ => {}
                 }
             },

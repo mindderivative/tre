@@ -22,12 +22,18 @@ directly: `Window.press_ctrl("c")` sends a real Ctrl+C/SIGINT byte to
 the focused terminal's own real shell, genuinely interrupting a
 running process, not just inserting a literal "c".
 
+M32 Phase 5 (§4, §8) closed another: real scrollback. `vt100::Parser`
+already had a built-in, real history buffer (just never turned on
+before this phase) -- `Window.scroll` (or a real mouse wheel over a
+focused terminal) moves the viewport into it; `Node.get_text()` always
+reads back whatever is currently in view.
+
 **Real, honestly-scoped v1** (`Window.add_terminal`'s own Rust doc
-comment has the full list): no scrollback, no mouse text selection,
-no real terminal resize wired to window resize, and POSIX only. What
-*is* real: a genuine shell process, genuine keyboard round-trip,
-genuine ANSI color rendering (16-color palette plus the standard
-256-color xterm formula), and a genuine Ctrl+C SIGINT.
+comment has the full list): no mouse text selection, no real terminal
+resize wired to window resize, and POSIX only. What *is* real: a
+genuine shell process, genuine keyboard round-trip, genuine ANSI color
+rendering (16-color palette plus the standard 256-color xterm
+formula), a genuine Ctrl+C SIGINT, and genuine scrollback.
 """
 
 import time
@@ -77,20 +83,36 @@ assert sent, "a real focused terminal must report the control byte was sent"
 window.type_text("echo REACHED_AFTER_SIGINT")
 window.press_key("enter")
 
+# M32 Phase 5 (§4, §8): more real lines than the 12-row viewport can
+# hold, pushing "hello from a real shell" off the bottom -- a real
+# scroll below reveals it again.
+window.type_text("for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo FILLER_LINE_$i; done")
+window.press_key("enter")
+
 app = App()
 app.add_window(window)
 app.run(max_frames=60)
 
 text = terminal.get_text()
-print("--- final terminal contents ---")
+print("--- terminal contents at rest (bottom of scrollback) ---")
 print(text)
-assert "hello from a real shell" in text, "expected real shell output not found"
-assert "colors:" in text, "expected the second real command's own output not found"
-assert "REACHED_AFTER_SIGINT" in text, (
+assert "hello from a real shell" not in text, "the real first line must have scrolled off by now"
+assert "FILLER_LINE_12" in text, "the most recent filler line must be visible at rest"
+
+# No second App.run() needed: Window.scroll resyncs the terminal's own
+# state synchronously.
+window.scroll(terminal, 400.0)
+scrolled = terminal.get_text()
+print("--- terminal contents after a real scroll into history ---")
+print(scrolled)
+assert "hello from a real shell" in scrolled, "a real scroll must reveal real scrolled-off history"
+assert "colors:" in scrolled, "expected the second real command's own output not found"
+assert "REACHED_AFTER_SIGINT" in scrolled, (
     "the shell must have genuinely regained control right after the real SIGINT -- if "
     "sleep 100 were still running, this later command would never have executed"
 )
 print(
-    "terminal.py: exited cleanly after 60 frames -- a real shell genuinely responded and "
-    "a real Ctrl+C genuinely interrupted a running sleep 100"
+    "terminal.py: exited cleanly after 60 frames -- a real shell genuinely responded, a real "
+    "Ctrl+C genuinely interrupted a running sleep 100, and a real scroll genuinely revealed "
+    "scrolled-off history"
 )

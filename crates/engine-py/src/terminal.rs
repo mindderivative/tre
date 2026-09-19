@@ -107,6 +107,29 @@ pub(crate) fn control_byte_for(event: &InputEvent) -> Option<u8> {
     Some((letter.to_ascii_uppercase() as u8) - b'A' + 1)
 }
 
+/// M32 Phase 5 (§4, §8): `TerminalSession::scroll_by`'s own real
+/// scrollback-position arithmetic, factored out as a pure function so
+/// it's directly unit-testable without spawning a real PTY/shell --
+/// the identical real "Rust proves the pure logic, a live empirical
+/// script/pytest proves the real end-to-end `vt100` integration"
+/// split this codebase already uses throughout (`test_checkbox.py`'s
+/// own doc comment states the general principle). `current`/the
+/// result are `vt100::Screen::scrollback`'s own real, unsigned "lines
+/// back from the bottom" unit; `delta_lines` is signed (positive =
+/// further into history, matching a real wheel-up notch) since
+/// `usize` alone can't express "move back toward the bottom."
+/// `vt100::Screen::set_scrollback` already clamps the real upper bound
+/// (confirmed via direct source read: "clamped to the actual size of
+/// the scrollback"), so this only needs to guard the lower bound
+/// (never negative) and a pathological huge negative delta.
+fn scrollback_target(current: usize, delta_lines: i64) -> usize {
+    if delta_lines >= 0 {
+        current.saturating_add(delta_lines as usize)
+    } else {
+        current.saturating_sub(delta_lines.unsigned_abs() as usize)
+    }
+}
+
 /// A real, live terminal session.
 pub(crate) struct TerminalSession {
     master: Box<dyn MasterPty + Send>,
@@ -142,7 +165,23 @@ impl TerminalSession {
     /// "architected for, not built, since nothing here could verify
     /// it rather than guess" choice pyCopper's own real `Terminal`
     /// already made for Windows/ConPTY.
-    pub(crate) fn spawn(shell: &str, cols: u16, rows: u16) -> Result<Self, String> {
+    ///
+    /// M32 Phase 5 (§4, §8): `scrollback_lines` was always `0` before
+    /// this phase -- real, already-built history retention `vt100::
+    /// Parser::new`'s own third parameter exists for (confirmed via
+    /// direct source read of the vendored `vt100 = "0.16.2"`), simply
+    /// never turned on. `Screen::rows`/`cell` (what `sync_state` below
+    /// reads) already account for a real, current `scrollback_offset`
+    /// internally, so plumbing a real, non-zero value through here is
+    /// this phase's own entire real "does the parser retain history at
+    /// all" half -- `scroll_by` below is the "can the app move the
+    /// viewport into it" half.
+    pub(crate) fn spawn(
+        shell: &str,
+        cols: u16,
+        rows: u16,
+        scrollback_lines: usize,
+    ) -> Result<Self, String> {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -217,7 +256,7 @@ impl TerminalSession {
             master: pair.master,
             writer,
             _child: child,
-            parser: vt100::Parser::new(rows, cols, 0),
+            parser: vt100::Parser::new(rows, cols, scrollback_lines),
             incoming,
             waker,
         })
@@ -244,6 +283,19 @@ impl TerminalSession {
             std::mem::take(&mut *guard)
         };
         self.parser.process(&bytes);
+        self.sync_state(tree, node_id);
+        true
+    }
+
+    /// M32 Phase 5 (§4, §8): the shared real "rebuild `TerminalState`
+    /// from the parser's own current `Screen`" logic `drain_into`
+    /// always had -- factored out so `scroll_by` below can reuse it
+    /// too. A real scroll changes what `Screen::cell` returns (`vt100`
+    /// already reads from the current real `scrollback_offset`
+    /// internally) without any new PTY bytes ever arriving, so it
+    /// needs its own real sync call, not just `drain_into`'s own
+    /// "only when new bytes showed up" gate.
+    fn sync_state(&self, tree: &mut Tree, node_id: NodeId) {
         let screen = self.parser.screen();
         let (rows, cols) = screen.size();
         let mut cells = Vec::with_capacity(usize::from(rows) * usize::from(cols));
@@ -265,7 +317,26 @@ impl TerminalSession {
             state.cursor_row = cursor_row;
             state.cursor_visible = cursor_visible;
         }
-        true
+    }
+
+    /// M32 Phase 5 (§4, §8): moves the real viewport into (a positive
+    /// `delta_lines`) or out of (negative) scrollback -- a real mouse
+    /// wheel notch's own natural direction: scrolling "up" (away from
+    /// the user) reveals older history, the identical real convention
+    /// every terminal emulator uses. `vt100::Screen::set_scrollback`
+    /// already clamps to `[0, real scrollback length]` internally
+    /// (confirmed via direct source read: "clamped to the actual size
+    /// of the scrollback"), so this needs no clamping of its own for
+    /// the upper bound; `saturating_add_signed`/`saturating_sub` below
+    /// handle the lower bound (never negative, `usize`) and a
+    /// pathological huge negative delta alike. Immediately re-syncs
+    /// `TerminalState` (`sync_state`) -- unlike `drain_into`, this is
+    /// the *only* way this particular state change ever reaches the
+    /// `Tree`, since no new PTY bytes are involved at all.
+    pub(crate) fn scroll_by(&mut self, tree: &mut Tree, node_id: NodeId, delta_lines: i64) {
+        let target = scrollback_target(self.parser.screen().scrollback(), delta_lines);
+        self.parser.screen_mut().set_scrollback(target);
+        self.sync_state(tree, node_id);
     }
 
     /// M31 Phase 6 (§5, §6): registers the real handle this session's
@@ -456,6 +527,32 @@ mod tests {
                 shift: false,
             }),
             None
+        );
+    }
+
+    #[test]
+    fn scrollback_target_moves_further_into_history_for_a_positive_delta() {
+        assert_eq!(scrollback_target(0, 3), 3);
+        assert_eq!(scrollback_target(5, 2), 7);
+    }
+
+    #[test]
+    fn scrollback_target_moves_back_toward_the_bottom_for_a_negative_delta() {
+        assert_eq!(scrollback_target(5, -2), 3);
+        assert_eq!(scrollback_target(5, -5), 0);
+    }
+
+    #[test]
+    fn scrollback_target_never_goes_negative_real_usize_cant_anyway() {
+        assert_eq!(
+            scrollback_target(0, -1),
+            0,
+            "already at the bottom -- a real scroll-down further must clamp, not underflow"
+        );
+        assert_eq!(
+            scrollback_target(2, -1000),
+            0,
+            "a pathological huge negative delta clamps too"
         );
     }
 }

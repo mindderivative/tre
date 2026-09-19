@@ -88,17 +88,27 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
 
     M32 Phase 4 (§4, §8) extends this exact test (rather than adding a
     new one with its own `App.run()` call) to also prove a real
-    Ctrl+C/SIGINT genuinely interrupts a running process --
+    Ctrl+C/SIGINT genuinely interrupts a running process, and M32
+    Phase 5 (§4, §8) extends it again to prove real scrollback --
     [[feedback_no_second_app_run_in_pytest]]'s own real, confirmed
     finding means this file's one `App.run()` call must stay the only
-    one across the whole pytest process, so both real claims share it.
+    one across the whole pytest process, so all three real claims
+    share it.
     """
     window = Window(width=420, height=200)
-    term = window.add_terminal(shell="/bin/sh", cols=40, rows=10, background=(0, 0, 0, 255))
+    term = window.add_terminal(
+        shell="/bin/sh", cols=40, rows=5, background=(0, 0, 0, 255), scrollback_lines=200
+    )
     window.click(term)
     assert term.is_focused() is True
 
     window.type_text("echo HELLO_FROM_TERMINAL")
+    window.press_key("enter")
+
+    # M32 Phase 5: real output lines typed early, before everything
+    # below -- more than the 5-row viewport can hold at once, forcing
+    # real scrollback content the later `window.scroll` call reveals.
+    window.type_text("for i in 1 2 3 4 5 6 7 8; do echo SCROLLBACK_LINE_$i; done")
     window.press_key("enter")
 
     # M32 Phase 4: a real, running `sleep 100`, interrupted by a real
@@ -108,6 +118,9 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
     # independent of `App.run()` below. A short real wall-clock pause
     # gives the shell time to actually fork/exec `sleep` first -- the
     # identical real timing this phase's own empirical check needed.
+    # Typed last/most-recently, so its own real output stays in the
+    # bottom (unscrolled) viewport even after the scrollback-generating
+    # loop above.
     window.type_text("sleep 100")
     window.press_key("enter")
     time.sleep(0.2)
@@ -121,12 +134,60 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
     app.run(max_frames=60)
 
     text = term.get_text()
-    assert "HELLO_FROM_TERMINAL" in text, f"expected real shell output not found in {text!r}"
     assert "REACHED_AFTER_SIGINT" in text, (
         f"the shell must have genuinely regained control right after the real SIGINT -- if "
         f"sleep 100 were still running, this later command would never have executed, got "
         f"{text!r}"
     )
+    assert "HELLO_FROM_TERMINAL" not in text, (
+        "the real first line typed must have already scrolled off a 5-row viewport by now"
+    )
+
+    # M32 Phase 5: no second `App.run()` needed -- `Window.scroll`
+    # resyncs `TerminalState` synchronously (`TerminalSession::scroll_
+    # by`'s own real `sync_state` call), no live render loop required.
+    # A deliberately huge scroll clamps to the real top of history
+    # (`vt100::Screen::set_scrollback`'s own real clamping), revealing
+    # the very first real line typed -- and pushing the most recent one
+    # back out of view.
+    window.scroll(term, 400.0)
+    scrolled_text = term.get_text()
+    assert "HELLO_FROM_TERMINAL" in scrolled_text, (
+        f"a real scroll must reveal real, previously-scrolled-off history, got {scrolled_text!r}"
+    )
+    assert "REACHED_AFTER_SIGINT" not in scrolled_text, (
+        "scrolled all the way to the real top of history, the most recent line must no longer "
+        "be in view"
+    )
+
+
+def test_scroll_on_a_terminal_with_no_content_does_not_raise():
+    """M32 Phase 5 (§4, §8): a real, synchronous edge case -- scrolling
+    a freshly spawned terminal with zero real scrollback yet must not
+    panic or raise, just clamp to `0` (`vt100::Screen::set_scrollback`'s
+    own real clamping).
+    """
+    window = Window(width=400, height=300)
+    term = window.add_terminal(shell="/bin/sh", cols=40, rows=10, background=(0, 0, 0, 255))
+    window.scroll(term, 100.0)
+    window.scroll(term, -100.0)
+
+
+def test_scroll_on_a_non_terminal_node_still_bubbles_to_a_virtual_list():
+    """M32 Phase 5 (§4, §8): `Window.scroll`'s new `Terminal` branch
+    must be a true no-op for every other real `NodeKind` -- the
+    existing `VirtualList` scroll-bubbling behavior stays exactly as
+    it was before this phase.
+    """
+    window = Window(width=400, height=300)
+    items = window.add_virtual_list(
+        item_count=10,
+        materialize=lambda _i: (255, 255, 255, 255),
+        item_extent=20.0,
+        width=200,
+        height=100,
+    )
+    window.scroll(items, 50.0)
 
 
 def test_get_monospace_cell_size_returns_real_positive_values_that_scale_with_font_size():

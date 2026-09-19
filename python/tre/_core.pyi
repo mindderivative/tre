@@ -1059,6 +1059,7 @@ class Window:
         rows: int,
         background: Color,
         font_size: float = 14.0,
+        scrollback_lines: int = 1000,
         x: float | None = None,
         y: float | None = None,
     ) -> Node:
@@ -1067,12 +1068,15 @@ class Window:
         `width`/`height` are computed from `cols`/`rows`, not given
         directly. Read its current contents back via `Node.get_text()`
         (each row's own trailing whitespace trimmed, rows joined by
-        `"\\n"`); a focused terminal receives real keystrokes through
-        `Window.press_key`/`type_text`/a real platform keyboard event
-        alike. Real, honestly-scoped v1: no scrollback, no mouse text
-        selection, no Ctrl+C/SIGINT or any other Ctrl+letter shortcut,
-        no real resize-with-window, and POSIX only. Raises `OSError` if
-        `shell` can't be spawned on a real PTY.
+        `"\\n"`, reflecting whatever is currently scrolled into view);
+        a focused terminal receives real keystrokes through `Window.
+        press_key`/`type_text`/`press_ctrl`/a real platform keyboard
+        event alike. `scrollback_lines` real lines of history are
+        retained (`0` for none); `Window.scroll` on this node, or a
+        real mouse wheel over it, moves the viewport into it. Real,
+        honestly-scoped v1: no mouse text selection, no real resize-
+        with-window, and POSIX only. Raises `OSError` if `shell` can't
+        be spawned on a real PTY.
         """
         ...
     def get_monospace_cell_size(self, font_size: float) -> tuple[float, float]:
@@ -1192,7 +1196,16 @@ class Window:
         still sizes against the window's construction-time dimensions.
         """
         ...
-    def scroll(self, node: Node, delta_y: float) -> None: ...
+    def scroll(self, node: Node, delta_y: float) -> None:
+        """Dispatches a real wheel scroll at `node`'s own center point
+        -- bubbles up to the nearest `VirtualList`/`Carousel` ancestor,
+        the same real "scroll bubbling" behavior a genuine mouse wheel
+        already has. If `node` is itself a real `Terminal`, this moves
+        its own real viewport into scrollback instead (positive
+        `delta_y` reveals older history, matching a real wheel-up
+        notch).
+        """
+        ...
     def right_click(self, node: Node) -> None: ...
     def press_key(self, key: str, shift: bool = False) -> None:
         """`key` is one of `"Tab"`, `"Enter"`, `"Space"`, `"Escape"`,
