@@ -1901,9 +1901,11 @@ impl Tree {
     /// 's own richer job, deliberately not reused here (`engine-core`
     /// has no `parley` dependency at all, §4).
     ///
-    /// Returns `None` for a key this method doesn't claim (`Tab`/
-    /// `Escape`) -- the caller falls through to the generic handling
-    /// for those. Every other key returns `Some`: `Changed(field)` for
+    /// Returns `None` for a key this method doesn't claim (`Escape`
+    /// always; `Tab` only for a *single-line* field -- M31 Phase 2
+    /// widens a *multiline* field to claim `Tab` too, inserting a real
+    /// `\t`) -- the caller falls through to the generic handling for
+    /// those. Every other key returns `Some`: `Changed(field)` for
     /// a real content edit, `None` (the outcome, not the `Option`) for
     /// pure cursor movement or a genuine no-op (e.g. `Backspace` at
     /// `cursor == 0`) -- `EventKind::Change` (M14 Phase 3) only ever
@@ -2101,7 +2103,33 @@ impl Tree {
                     Some(DispatchOutcome::None)
                 }
             }
-            Key::Tab | Key::Escape => None,
+            // M31 Phase 2 (§8, §10): a focused *multiline* field claims
+            // `Tab` first -- the identical real "first refusal, `None`
+            // means not mine" contract every other key in this method
+            // already establishes, not a second, differently-shaped
+            // mechanism. Inserts a literal `\t`, not N spaces:
+            // tabs-vs-spaces is real app-level policy (Design Principle
+            // 6), not engine-core's to decide. A single-line field
+            // still returns `None` here, byte-for-byte its own prior
+            // real behavior -- `Tab` on a single-line `TextField`
+            // remains ordinary focus traversal, matching real desktop
+            // form convention (a single-line input was never a place a
+            // real indentation character belongs). `Escape` stays the
+            // real, unconditional way out of a focused field either
+            // way, mirroring pyCopper's own real "Escape still
+            // defocuses before per-element delivery" precedent, so Tab
+            // capture never traps the keyboard.
+            Key::Tab => {
+                if state.multiline {
+                    Self::delete_selection(state);
+                    state.content.insert(state.cursor, '\t');
+                    state.cursor += 1;
+                    Some(DispatchOutcome::Changed(field))
+                } else {
+                    None
+                }
+            }
+            Key::Escape => None,
         }
     }
 
@@ -2600,12 +2628,17 @@ impl Tree {
                 // first refusal on most keys -- its own real "Enter"/
                 // "Space" meaning (insert a character) is genuinely
                 // different from the generic button-activation meaning
-                // below, so this can't simply run after it. `Tab`/
-                // `Escape` still fall through unchanged (`dispatch_
-                // text_field_key` returns `None` for those two,
-                // meaning "not mine to handle") -- a focused field must
-                // still lose focus on Tab and still dismiss overlays on
-                // Escape, the same as any other focused node.
+                // below, so this can't simply run after it. `Escape`
+                // still falls through unchanged (`dispatch_text_field_
+                // key` always returns `None` for it, meaning "not mine
+                // to handle") -- a focused field must still dismiss
+                // overlays on Escape, the same as any other focused
+                // node. M31 Phase 2 (§8, §10): `Tab` used to be in that
+                // same "always falls through" group too -- now only a
+                // *single-line* field still loses focus on Tab; a
+                // *multiline* field claims it first and inserts a real
+                // `\t` instead (`dispatch_text_field_key`'s own doc
+                // comment has the real reasoning).
                 if let Some(field) = self.focused
                     && matches!(
                         self.nodes.get(field).map(|n| &n.kind),
@@ -7133,6 +7166,48 @@ mod tests {
             "Enter on a multiline TextField must be a real inserted newline, not consumed"
         );
         assert_eq!(field_state(&tree, field).content, "a\nb");
+    }
+
+    /// M31 Phase 2 (§8, §10): the real, new capability this phase adds
+    /// -- a focused *multiline* field claims `Tab` first and inserts a
+    /// real `\t`, rather than falling through to focus traversal the
+    /// way `tab_still_moves_focus_away_from_a_focused_text_field`'s own
+    /// single-line scene still does (unchanged, proven separately).
+    #[test]
+    fn tab_on_a_multiline_field_inserts_a_real_tab_character_instead_of_moving_focus() {
+        let (mut tree, root, field) = multiline_field_scene("ab");
+        dispatch_key(&mut tree, root, Key::Home);
+        dispatch_key(&mut tree, root, Key::ArrowRight);
+        let outcome = dispatch_key(&mut tree, root, Key::Tab);
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Changed(field),
+            "Tab on a multiline TextField must be a real inserted \\t, not consumed as a no-op"
+        );
+        assert_eq!(field_state(&tree, field).content, "a\tb");
+        assert_eq!(
+            tree.focused(),
+            Some(field),
+            "a multiline field claiming Tab for indentation must never lose focus over it"
+        );
+    }
+
+    #[test]
+    fn tab_on_a_multiline_field_with_a_real_selection_replaces_it_instead_of_inserting_beside_it() {
+        // The same real `delete_selection`-then-insert shape `Space`/
+        // `Enter` already have for an active selection -- Tab is a
+        // real inserted character too, not a special case.
+        let (mut tree, root, field) = multiline_field_scene("abcd");
+        dispatch_key(&mut tree, root, Key::Home);
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight);
+        dispatch_shift_key(&mut tree, root, Key::ArrowRight); // selects "ab" (0..2)
+        let outcome = dispatch_key(&mut tree, root, Key::Tab);
+        assert_eq!(outcome, DispatchOutcome::Changed(field));
+        assert_eq!(
+            field_state(&tree, field).content,
+            "\tcd",
+            "Tab must replace a real active selection, not insert beside it"
+        );
     }
 
     #[test]

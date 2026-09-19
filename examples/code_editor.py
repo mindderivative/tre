@@ -3,24 +3,29 @@
 genuinely multiline `TextField` (`Window.add_code_editor`), closing
 the real, stated single-line-only gap `TextField` always had. Real,
 honestly-scoped v1 -- see `add_code_editor`'s own Rust doc comment for
-the full list of deliberately deferred pieces (syntax highlighting,
-a line-number gutter, scroll/clip past the box's own edges, a bundled
-monospace font, Tab-key indentation capture); what *is* real here:
-`Enter` inserts a genuine newline, `Home`/`End` operate on the current
-line rather than the whole buffer, and `ArrowUp`/`ArrowDown` navigate
-by line, preserving the caret's own real column.
+the full list of deliberately deferred pieces at the time (syntax
+highlighting, a line-number gutter, scroll/clip past the box's own
+edges, a bundled monospace font, Tab-key indentation capture); what
+*is* real here: `Enter` inserts a genuine newline, `Home`/`End`
+operate on the current line rather than the whole buffer, and
+`ArrowUp`/`ArrowDown` navigate by line, preserving the caret's own
+real column. M31 Phase 1 (Line-Number Gutter, `examples/code_editor_
+gutter.py`) and M31 Phase 2 (Tab-Key Indentation Capture, demonstrated
+below) have since closed two of those real gaps.
 
 What this script proves automatically (headless-CI-safe, no human
 needed): a real click focuses the editor; a real `Enter` keypress
 splits one line into two; `Home` targets the current line, not byte 0;
 `ArrowUp`/`ArrowDown` genuinely move between lines (proven by typing
 after navigating and checking exactly which line received the new
-text); and a real render loop paints the whole multiline buffer over
-actual frames without crashing. The definitive proof that a real `\\n`
-produces a real, vertically-stacked second layout line (not just
-accepted into `content` with no visual effect) is `crates/engine-
-render/tests/text_field_paint.rs::a_multiline_fields_own_newline_
-produces_a_real_second_layout_line`, not this script.
+text); a real `Tab` keypress inserts a genuine `\\t` rather than moving
+focus away (M31 Phase 2); and a real render loop paints the whole
+multiline buffer over actual frames without crashing. The definitive
+proof that a real `\\n` produces a real, vertically-stacked second
+layout line (not just accepted into `content` with no visual effect)
+is `crates/engine-render/tests/text_field_paint.rs::
+a_multiline_fields_own_newline_produces_a_real_second_layout_line`,
+not this script.
 """
 
 from tre import App, Window
@@ -66,6 +71,17 @@ print(f"after ArrowDown + End + typing:\n{editor.get_text()}")
 assert editor.get_text() == (
     "def add(a, b):\n>>    # adds two numbers\n    return a + b  # end"
 )
+
+# M31 Phase 2: a real Tab keypress indents in place -- the cursor is
+# still on the "return" line just typed on; Home first so the inserted
+# tab lands at the real line's own start, not mid-word.
+window.press_key("home")
+window.press_key("tab")
+print(f"after Tab-key indentation:\n{editor.get_text()}")
+assert editor.get_text() == (
+    "def add(a, b):\n>>    # adds two numbers\n\t    return a + b  # end"
+)
+assert editor.is_focused(), "claiming Tab for indentation must never lose focus over it"
 
 app = App()
 app.add_window(window)

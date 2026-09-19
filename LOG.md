@@ -1,65 +1,55 @@
-# LOG — M31 Phase 1: Line-Number Gutter
+# LOG — M31 Phase 2: Tab-Key Indentation Capture
 
-- Read pyCopper's own real `CodeEditor` widget in full — a genuinely
-  more advanced widget than TRE's own current multiline `TextField`
-  approach (its own dedicated engine-level class, bundled monospace
-  font, real Pygments syntax highlighting, built-in gutter). Confirmed
-  the real "never wraps" property TRE's own `field_max_width` already
-  gives multiline mode (`f32::MAX`), the load-bearing fact this whole
-  phase's own design leans on.
-- Investigated the real open question the scoping note left ("a real
-  per-line Y-offset read-back or an assumed fixed line-height") by
-  direct source read, before writing any code: `TextRenderer::draw`
-  (plain `Text`) and `TextRenderer::draw_field` (`TextField`) both
-  build their real `parley::Layout` through the exact same private
-  `shaped_layout` method — confirmed via direct read, not assumed.
-  This means a gutter composed as an ordinary sibling `Text` node
-  (same font settings as the editor, wide enough never to wrap) lines
-  up with the editor's own real per-line Y positions *by construction*.
-  No new engine-py/engine-core capability needed at all.
-- Also confirmed the "fixed line-height assumed in the app" concern
-  isn't actually fragile here: since multiline mode never wraps, every
-  real line shares the identical font-metric line height by
-  definition (a real, exact property, not an approximation) — there is
-  no per-line variance a fixed assumption could get wrong.
-- Proved the claim precisely, not just plausibly, with a new
-  `engine-render` unit test comparing real `parley::Layout::lines()`'s
-  own `block_min_coord` geometry between a Text-shaped and a
-  TextField-shaped layout built from the same content/font — the two
-  are byte-for-byte identical, confirmed by direct assertion against
-  real `Layout` data, white-box (inside `text.rs`'s own `#[cfg(test)]`
-  module, calling the private `shaped_layout` both node kinds share).
-  Passed on the first run.
-- Wired the real live-update half: `editor.set_on_change(...)`
-  (already real and Python-facing since M14 Phase 3) recomputes the
-  gutter's own content from `editor.get_text().count("\n") + 1` on
-  every real keystroke edit — a plain Python callback, no new
-  dispatch mechanism needed.
+- Located the real existing chokepoint before writing any code:
+  `Tree::dispatch_text_field_key`'s own `Key::Tab | Key::Escape =>
+  None` catch-all arm -- the identical real "first refusal, `None`
+  means not mine" contract already established for `ArrowLeft`/
+  `ArrowRight`/`Home`/`End`/`Enter`, confirmed via direct read rather
+  than assumed to need a new mechanism.
+- Split it into a real `Key::Tab` arm: a *multiline* field inserts a
+  literal `\t` (via `Self::delete_selection(state)` first, the same
+  shared helper `Space`/`Enter` already use for an active selection,
+  then `state.content.insert(state.cursor, '\t')`), returning
+  `Some(Changed(field))`; a single-line field returns `None`
+  unchanged, falling through to the existing `move_focus` handling
+  exactly as before. `Escape` kept its own separate, always-`None`
+  arm.
+- Updated two stale doc comments that described Tab as *always*
+  falling through to focus traversal: `dispatch_text_field_key`'s own
+  doc comment and `Tree::dispatch`'s `KeyPressed` call-site comment.
 - Full Rust verification chain green on the first pass: `cargo check`/
-  `clippy -D warnings`/`fmt --check`/`cargo test --release` all clean
-  (`engine-render` 5, up from 4).
-- Rebuilt the Python extension (no Rust-level engine-py/engine-core
-  changes were needed for this phase, only the new `engine-render`
-  proof test — rebuilt anyway to be safe).
-- Wrote `tests/test_code_editor_gutter.py` (4 tests: single-line/
-  multi-line seeding, a real Enter growing the gutter live, a real
-  Backspace merging two lines and shrinking it live) — checked for a
-  filename collision first. All 4 passed on the first run.
-- Wrote `examples/code_editor_gutter.py` — also checked for a filename
-  collision first. Clean on the first run: a real 2-line buffer seeds
-  the gutter at "1\n2", a real Enter mid-buffer grows it live to
-  "1\n2\n3".
+  `clippy -D warnings`/`fmt --check`/`cargo test --release` all clean.
+- Wrote 2 new engine-core unit tests: a real Tab keypress on a
+  multiline field inserts `\t` and keeps focus; a real Tab keypress
+  with an active selection replaces it rather than inserting beside
+  it. Both passed on the first run, alongside the pre-existing
+  single-line "Tab still moves focus" test, re-confirmed unchanged
+  (`engine-core` 165, up from 163).
+- Rebuilt the Python extension. **Ran a real, direct empirical
+  end-to-end script before writing any pytest suite**: a real Tab
+  keypress on a focused multiline Code Editor inserts `\t` and stays
+  focused; the identical keypress on a focused single-line `TextField`
+  still moves focus away. Both passed.
+- Extended `tests/test_code_editor.py` with 2 new tests (multiline Tab
+  indents in place and keeps focus; single-line `TextField` still
+  loses focus on Tab and inserts nothing) -- a second-focusable-node
+  fixture was needed for the single-line case (a lone focusable node
+  trivially wraps focus back onto itself, a real test-fixture finding,
+  not an implementation bug). Both passed after that fix.
+- Extended `examples/code_editor.py` with a real Tab-key indentation
+  step appended to its existing live-edit sequence, rather than a new
+  example file -- a real enhancement to Code Editor's own existing
+  coverage. Clean on the first run once the expected text (a real `\t`
+  lands *before* the line's own existing leading spaces, not replacing
+  them) was corrected.
 - Full verification: `cargo check`/`clippy -D warnings`/`fmt --check`
-  clean, `cargo test --release` (`engine-render` 5, up from 4),
-  `maturin develop --release`, `pytest tests/` (498 passed, 1 skipped,
-  up from 494 — 4 new, zero regressions, no second real `App.run()`
-  introduced anywhere in this phase's own test suite, the real hazard
-  M30 Phase 9 Step 5's own investigation found), all 68 examples
-  (including the new `examples/code_editor_gutter.py`) and the
-  showcase demo re-run clean, `mypy --strict` clean against
-  `examples/code_editor_gutter.py`.
-- Updated `BUILD_TRACKER.md` (Top Metrics row now 17%, Phase 1 heading
-  ✅, Step 1 marked done) — verified the parser's own reported item
+  clean, `cargo test --release` (`engine-core` 165, up from 163),
+  `maturin develop --release`, `pytest tests/` (500 passed, 1 skipped,
+  up from 498 -- 2 new, zero regressions), all 68 examples (including
+  the updated `examples/code_editor.py`) and the showcase demo re-run
+  clean, `mypy --strict` clean against `examples/code_editor.py`.
+- Updated `BUILD_TRACKER.md` (Top Metrics row now 33%, Phase 2 heading
+  ✅, Step 1 marked done) -- verified the parser's own reported item
   count before/after (191, unchanged, since no bullets were added or
   removed, only an existing one filled in), regenerated and
   republished the Build Tracker artifact at

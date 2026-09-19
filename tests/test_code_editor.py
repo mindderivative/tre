@@ -123,3 +123,42 @@ def test_arrow_down_navigates_to_the_next_line():
     window.press_key("home")
     window.type_text("X")
     assert editor.get_text() == "line1\nXline2\nline3"
+
+
+def test_tab_inserts_a_real_tab_character_instead_of_moving_focus():
+    """M31 Phase 2 (§5, §8, §10): a focused Code Editor claims Tab for
+    real indentation now, rather than falling through to ordinary
+    focus traversal the way every other node (and a single-line
+    TextField, proven below) still does.
+    """
+    window = Window(width=400, height=300)
+    editor = window.add_code_editor(
+        content="ab", background=(255, 255, 255, 255), width=300, height=150
+    )
+    window.click(editor)
+    assert editor.is_focused()
+    window.press_key("home")
+    window.press_key("right")
+    window.press_key("tab")
+    assert editor.get_text() == "a\tb"
+    assert editor.is_focused(), "claiming Tab for indentation must never lose focus over it"
+
+
+def test_tab_still_moves_focus_away_from_a_single_line_text_field():
+    """The real, deliberate scope boundary: Tab-as-indentation is
+    Code-Editor-specific (multiline only) -- an ordinary single-line
+    `TextField` must keep its own prior real behavior, byte-for-byte.
+    """
+    window = Window(width=400, height=300)
+    field = window.add_text_field(
+        content="ab", background=(255, 255, 255, 255), width=200, height=30
+    )
+    # A second focusable node, so Tab genuinely has somewhere else to
+    # land -- with only one focusable node in the tree, focus
+    # traversal would trivially wrap back onto itself either way.
+    window.add_text_field(content="", background=(255, 255, 255, 255), width=200, height=30)
+    window.click(field)
+    assert field.is_focused()
+    window.press_key("tab")
+    assert not field.is_focused(), "Tab on a single-line field must still move focus away"
+    assert field.get_text() == "ab", "Tab must not insert anything into a single-line field"
