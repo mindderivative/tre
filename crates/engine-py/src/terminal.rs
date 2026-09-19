@@ -365,16 +365,28 @@ impl TerminalSession {
         let _ = self.writer.write_all(bytes);
     }
 
-    /// Resizes both the real kernel-level PTY (so the shell's own
-    /// `SIGWINCH`-driven reflow, e.g. a wrapped `$PS1`, sees the real
-    /// new size) and the VT100 parser's own screen buffer. **Real,
-    /// stated v1 gap, not wired up yet:** nothing in this codebase
-    /// resizes any node's own box when its window resizes today (a
-    /// real, separate, un-scoped capability no other component in
-    /// this catalog has either) -- kept as a real, available method
-    /// for when that real need arrives, not dead speculative API.
-    #[allow(dead_code)]
-    pub(crate) fn resize(&mut self, cols: u16, rows: u16) {
+    /// M33 Phase 1 (§4, §5, §8): resizes both the real kernel-level PTY
+    /// (so the shell's own real `SIGWINCH`-driven reflow, e.g. a
+    /// wrapped `$PS1`, sees the real new size -- `portable_pty::
+    /// MasterPty::resize`, confirmed real via direct source read of
+    /// the vendored `portable-pty = "0.9.0"`) and the VT100 parser's
+    /// own screen buffer (`vt100::Screen::set_size`, the identical real
+    /// API `scroll_by` above already uses the sibling `set_scrollback`
+    /// half of). Immediately re-syncs `TerminalState` (`sync_state`),
+    /// the identical real "no new PTY bytes are involved, so this is
+    /// the only way the change reaches the `Tree`" shape `scroll_by`
+    /// already established. **Real, honest v1 note, not glossed over:**
+    /// a real resize *after* the shell has already drawn a full prompt
+    /// at the old width can leave that shell's own redraw corrupted for
+    /// some shells (zsh-syntax-highlighting among them) -- a real,
+    /// reproduced, inherent PTY/shell-level phenomenon (confirmed
+    /// directly in the sibling `pyCopper` project's own real `Terminal`
+    /// doc comment, reproduced there with no pyCopper code even
+    /// involved), not a bug this method could fix by resizing
+    /// differently. A closed/dead PTY failing to resize is the
+    /// identical real "unremarkable, the shell already exited"
+    /// condition `write_input` above already treats as non-fatal.
+    pub(crate) fn resize(&mut self, tree: &mut Tree, node_id: NodeId, cols: u16, rows: u16) {
         let _ = self.master.resize(PtySize {
             rows,
             cols,
@@ -382,6 +394,7 @@ impl TerminalSession {
             pixel_height: 0,
         });
         self.parser.screen_mut().set_size(rows, cols);
+        self.sync_state(tree, node_id);
     }
 }
 

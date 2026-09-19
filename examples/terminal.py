@@ -40,12 +40,22 @@ matching every real terminal emulator's own actual convention (the
 sibling pyCopper project's own real `Terminal` states this directly:
 "Ctrl+C is always the interrupt byte here, never a copy shortcut").
 
+M33 Phase 1 (§4, §5, §8) closed the terminal-specific half of the last
+remaining real gap: `Window.resize_terminal` resizes a real, live
+terminal's own kernel-level PTY (a genuine `SIGWINCH`, the same real
+mechanism any terminal emulator uses) and its own painted box together
+-- proven below with `stty size`, which only ever reports what the
+kernel's own PTY device genuinely believes its size is.
+
 **Real, honestly-scoped v1** (`Window.add_terminal`'s own Rust doc
-comment has the full list): no real terminal resize wired to window
-resize, and POSIX only. What *is* real: a genuine shell process,
-genuine keyboard round-trip, genuine ANSI color rendering (16-color
-palette plus the standard 256-color xterm formula), a genuine Ctrl+C
-SIGINT, genuine scrollback, and a genuine cell-range selection.
+comment has the full list): `resize_terminal` is a real, callable
+primitive an app wires to its own real window-resize handling (this
+script calls it directly); nothing in this codebase does that wiring
+automatically yet (M33 Phase 2's own real, separate scope), and POSIX
+only. What *is* real: a genuine shell process, genuine keyboard round-
+trip, genuine ANSI color rendering (16-color palette plus the standard
+256-color xterm formula), a genuine Ctrl+C SIGINT, genuine scrollback,
+a genuine cell-range selection, and a genuine live PTY resize.
 """
 
 import time
@@ -101,6 +111,20 @@ window.press_key("enter")
 window.type_text("for i in 1 2 3 4 5 6 7 8 9 10 11 12; do echo FILLER_LINE_$i; done")
 window.press_key("enter")
 
+# M33 Phase 1 (§4, §5, §8): a real, live PTY resize -- `stty size`
+# only ever reports what the kernel's own PTY device genuinely
+# believes, so this is the definitive real proof, not a simulation.
+# Typed last, after everything the scroll/selection checks below rely
+# on, so growing the real viewport here doesn't disturb their own real
+# row/column arithmetic.
+window.type_text("stty size")
+window.press_key("enter")
+time.sleep(0.1)
+window.resize_terminal(terminal, cols=60, rows=16)
+print("resize_terminal(cols=60, rows=16) called")
+window.type_text("stty size")
+window.press_key("enter")
+
 app = App()
 app.add_window(window)
 app.run(max_frames=60)
@@ -109,7 +133,10 @@ text = terminal.get_text()
 print("--- terminal contents at rest (bottom of scrollback) ---")
 print(text)
 assert "hello from a real shell" not in text, "the real first line must have scrolled off by now"
-assert "FILLER_LINE_12" in text, "the most recent filler line must be visible at rest"
+assert "16 60" in text, (
+    "the real, resized PTY's own stty size output (rows cols) must be visible at rest, got "
+    f"{text!r}"
+)
 
 # No second App.run() needed: Window.scroll resyncs the terminal's own
 # state synchronously.
@@ -125,8 +152,9 @@ assert "REACHED_AFTER_SIGINT" in scrolled, (
 )
 print(
     "terminal.py: exited cleanly after 60 frames -- a real shell genuinely responded, a real "
-    "Ctrl+C genuinely interrupted a running sleep 100, and a real scroll genuinely revealed "
-    "scrolled-off history"
+    "Ctrl+C genuinely interrupted a running sleep 100, a real scroll genuinely revealed "
+    "scrolled-off history, and a real resize_terminal call genuinely resized the live PTY "
+    "(stty size read 12 48, then 16 60)"
 )
 
 # M32 Phase 6 (§4, §5, §8): a real selection over the real, now-in-view

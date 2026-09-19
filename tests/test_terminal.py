@@ -242,6 +242,41 @@ def test_set_terminal_selection_on_a_non_terminal_node_raises():
         rect.set_terminal_selection(0, 0, 0, 1)
 
 
+def test_resize_terminal_updates_terminal_state_synchronously():
+    """M33 Phase 1 (§4, §5, §8): no `App.run()` needed to observe this
+    -- `TerminalSession::resize` calls `sync_state` the identical real,
+    synchronous way `scroll_by` already does (M32 Phase 5), so
+    `get_text()` reflects the real new grid shape the instant `Window.
+    resize_terminal` returns. The real kernel-level PTY resize itself
+    (a live shell's own `stty size` genuinely reporting the new size)
+    is proven by a real, direct empirical script instead -- combining
+    it into this file's one shared `App.run()`-based test below would
+    add a fourth real content generator to an already-dense 5-row
+    viewport already proven fragile to reorder twice this session.
+    """
+    window = Window(width=600, height=400)
+    term = window.add_terminal(shell="/bin/sh", cols=10, rows=3, background=(0, 0, 0, 255))
+    assert len(term.get_text().split("\n")) == 3
+
+    window.resize_terminal(term, cols=20, rows=6)
+    assert len(term.get_text().split("\n")) == 6, "resize_terminal must resync TerminalState"
+
+
+def test_resize_terminal_on_a_non_terminal_node_raises():
+    window = Window(width=400, height=300)
+    rect = window.add_rect(background=(255, 0, 0, 255), width=50, height=50)
+    with pytest.raises(ValueError):
+        window.resize_terminal(rect, cols=10, rows=5)
+
+
+def test_resize_terminal_on_a_foreign_node_raises():
+    window_a = Window(width=400, height=300)
+    window_b = Window(width=400, height=300)
+    term = window_a.add_terminal(shell="/bin/sh", cols=10, rows=3, background=(0, 0, 0, 255))
+    with pytest.raises(ValueError):
+        window_b.resize_terminal(term, cols=20, rows=6)
+
+
 def test_get_monospace_cell_size_returns_real_positive_values_that_scale_with_font_size():
     """M32 Phase 1 (§5, §8, §10): the real per-font-size measured cell
     size `add_terminal`/`add_code_editor` themselves size against

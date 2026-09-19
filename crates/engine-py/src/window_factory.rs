@@ -6687,6 +6687,56 @@ impl PyWindow {
         TextRenderer::new().monospace_cell_size(MONOSPACE_FONT_FAMILY, font_size)
     }
 
+    /// M33 Phase 1 (§4, §5, §8): resizes a real, live `Terminal`'s own
+    /// grid -- the real capability `TerminalSession::resize` (spawned
+    /// at M30 Phase 9 Step 4, kept `#[allow(dead_code)]` until this
+    /// phase actually needed it) always had, finally given a real
+    /// caller. Resizes the real kernel-level PTY and the `vt100`
+    /// parser's own screen buffer (`TerminalSession::resize`'s own doc
+    /// comment has the full real reasoning, including the one real,
+    /// honest shell-redraw caveat), then recomputes this node's own
+    /// real box from `cols`/`rows` the identical way `add_terminal`
+    /// itself does at construction time, via `Tree::set_layout_style`
+    /// (the one real, correct way to push a style update back into
+    /// `taffy`, confirmed the hard way by M32 Phase 2's own real bug:
+    /// mutating `layout_style` directly desyncs taffy's own internal
+    /// copy). Raises `ValueError` if `node` isn't a real `Terminal`
+    /// this `Window` created.
+    fn resize_terminal(&self, node: PyRef<'_, Node>, cols: u16, rows: u16) -> PyResult<()> {
+        if !Rc::ptr_eq(&self.tree, &node.tree) {
+            return Err(EngineError::ForeignNode.into());
+        }
+        let (font_family, font_size) = {
+            let tree = self.tree.borrow();
+            match tree.get(node.id).map(|n| &n.kind) {
+                Some(NodeKind::Terminal(state)) => (state.font_family.clone(), state.font_size),
+                _ => return Err(EngineError::NotATerminal.into()),
+            }
+        };
+        if !self.terminals.borrow().contains_key(&node.id) {
+            return Err(EngineError::NotATerminal.into());
+        }
+
+        let (cell_width, cell_height) =
+            TextRenderer::new().monospace_cell_size(&font_family, font_size);
+        let width = cell_width * f32::from(cols);
+        let height = cell_height * f32::from(rows);
+        {
+            let mut tree = self.tree.borrow_mut();
+            let mut style = tree.get(node.id).unwrap().layout_style.clone();
+            style.size = Size {
+                width: length(width),
+                height: length(height),
+            };
+            tree.set_layout_style(node.id, style);
+        }
+
+        if let Some(session) = self.terminals.borrow_mut().get_mut(&node.id) {
+            session.resize(&mut self.tree.borrow_mut(), node.id, cols, rows);
+        }
+        Ok(())
+    }
+
     /// M30 Phase 9 Step 5 (§5, §7, §11.7): a real MD3 carousel --
     /// mirrors `add_rect`'s own real shape (an explicit `width`/
     /// `height`, the same real convention every other MD3 component

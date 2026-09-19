@@ -32,6 +32,13 @@ pub enum EngineError {
     /// callback for it) -- the exact same shape as `NotAVirtualList`.
     #[error("this Node is not a Canvas added via Window.add_canvas on this Window")]
     NotACanvas,
+    /// M33 Phase 1 (§4, §5, §8): `Window.resize_terminal` was called on
+    /// a `Node` that either isn't a `Terminal` at all, or is one this
+    /// particular `Window` didn't create (so it has no recorded real
+    /// `TerminalSession` for it) -- the exact same shape as `NotA
+    /// VirtualList`/`NotACanvas`.
+    #[error("this Node is not a Terminal added via Window.add_terminal on this Window")]
+    NotATerminal,
     /// M6 Phase 1 (§8): `Node.add_child` would attach a node as a child
     /// of its own descendant -- `Tree::try_add_child` rejected it rather
     /// than corrupting the tree into a cycle. Message verbatim from
@@ -67,6 +74,7 @@ impl From<EngineError> for PyErr {
             EngineError::UnknownProperty { .. }
             | EngineError::NotAVirtualList
             | EngineError::NotACanvas
+            | EngineError::NotATerminal
             | EngineError::CycleRejected
             | EngineError::ForeignNode => PyValueError::new_err(e.to_string()),
             EngineError::TypeMismatch { .. } => PyTypeError::new_err(e.to_string()),

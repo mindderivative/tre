@@ -1100,6 +1100,20 @@ class Window:
         with the identical real grid, instead of an approximation.
         """
         ...
+    def resize_terminal(self, node: Node, cols: int, rows: int) -> None:
+        """Resizes a real, live `Terminal`'s own grid -- the real
+        kernel-level PTY (so the shell's own `SIGWINCH`-driven reflow
+        sees the real new size) and the underlying VT100 parser's own
+        screen buffer, then this node's own real box (matching the
+        exact real cell-size formula `add_terminal` itself used at
+        construction). Real, honest note: resizing *after* the shell
+        has already drawn a full prompt at the old width can leave that
+        shell's own redraw looking corrupted for some shells -- a real,
+        inherent PTY/shell-level phenomenon, not something this method
+        can fix by resizing differently. Raises `ValueError` if `node`
+        isn't a real `Terminal` this `Window` created.
+        """
+        ...
     def add_carousel(
         self,
         layout: str,
