@@ -39,7 +39,7 @@ use crate::dispatch::{
 };
 use crate::dock::{self, SharedDockState};
 use crate::terminal::{TerminalSession, control_byte_for, input_bytes_for};
-use crate::window::{PyWindow, SharedTheme};
+use crate::window::{PyWindow, SharedSize, SharedTheme};
 
 #[pyclass(unsendable)]
 pub struct App {
@@ -60,8 +60,12 @@ struct WindowSetup {
     tree: Rc<RefCell<Tree>>,
     root: NodeId,
     title: String,
-    width: u32,
-    height: u32,
+    /// M33 Phase 2 (§4, §5, §8): the real, shared `Rc<Cell<u32>>`
+    /// clone of `PyWindow`'s own field, not a plain `u32` copy -- see
+    /// `window::SharedSize`'s own doc comment for the full real
+    /// reasoning.
+    width: SharedSize,
+    height: SharedSize,
     handlers: HandlerMap,
     /// M4 Phase 7 (§11.3): `anchor NodeId -> content NodeId`, plain
     /// data (no `Py<PyAny>`), extracted the same way `handlers` is.
@@ -236,8 +240,16 @@ impl GpuState {
 struct WindowRuntime {
     tree: Rc<RefCell<Tree>>,
     root: NodeId,
-    width: u32,
-    height: u32,
+    /// M33 Phase 2 (§4, §5, §8): the real, shared `Rc<Cell<u32>>` --
+    /// `.get()` at every real per-frame read site below (a plain,
+    /// cheap `Cell::get()`, negligible next to the real GPU/text work
+    /// each frame already does) instead of a plain, separate `u32`
+    /// copy, so `InputEvent::Resized`'s own `.set()` call is
+    /// immediately visible to `PyWindow`'s own fields too, and vice
+    /// versa (`window::SharedSize`'s own doc comment has the full real
+    /// reasoning).
+    width: SharedSize,
+    height: SharedSize,
     gpu: GpuState,
     handlers: HandlerMap,
     context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
@@ -317,8 +329,8 @@ impl App {
                     tree: window.tree.clone(),
                     root: window.root,
                     title: window.title.clone(),
-                    width: window.width,
-                    height: window.height,
+                    width: window.width.clone(),
+                    height: window.height.clone(),
                     handlers: window.handlers.clone(),
                     context_menus: window.context_menus.clone(),
                     dock: window.dock.clone(),
@@ -371,14 +383,14 @@ impl App {
         let result = run_windowed_multi(
             move |window_id, token, window| {
                 let setup = &setups_for_created[token as usize];
-                let gpu = GpuState::new(window, setup.width, setup.height);
+                let gpu = GpuState::new(window, setup.width.get(), setup.height.get());
                 runtimes_for_created.borrow_mut().insert(
                     window_id,
                     WindowRuntime {
                         tree: setup.tree.clone(),
                         root: setup.root,
-                        width: setup.width,
-                        height: setup.height,
+                        width: setup.width.clone(),
+                        height: setup.height.clone(),
                         gpu,
                         handlers: setup.handlers.clone(),
                         context_menus: setup.context_menus.clone(),
@@ -454,8 +466,8 @@ impl App {
                 runtime.tree.borrow_mut().compute_layout(
                     runtime.root,
                     Size {
-                        width: AvailableSpace::Definite(runtime.width as f32),
-                        height: AvailableSpace::Definite(runtime.height as f32),
+                        width: AvailableSpace::Definite(runtime.width.get() as f32),
+                        height: AvailableSpace::Definite(runtime.height.get() as f32),
                     },
                 );
 
@@ -491,15 +503,15 @@ impl App {
                     build_tree_scene(
                         &tree_ref,
                         runtime.root,
-                        runtime.width as u16,
-                        runtime.height as u16,
+                        runtime.width.get() as u16,
+                        runtime.height.get() as u16,
                         runtime.gpu.frame_renderer.resources_mut(),
                         &mut runtime.gpu.text_renderer,
                     )
                 };
                 let render_size = RenderSize {
-                    width: runtime.width,
-                    height: runtime.height,
+                    width: runtime.width.get(),
+                    height: runtime.height.get(),
                 };
                 let mut encoder = runtime
                     .gpu
@@ -792,25 +804,24 @@ impl App {
                     // `height`, which every per-frame `compute_layout`/
                     // `build_tree_scene`/`RenderSize` call already
                     // reads fresh -- see `RedrawRequested` above).
-                    // **Real, stated v1 limit:** `PyWindow`'s own
-                    // `width`/`height` fields (read by every
-                    // interactive `Window.add_*`/`click`/`hover`
-                    // factory method for their own `compute_layout`
-                    // calls) are a separate, non-shared copy from this
-                    // `WindowRuntime`'s -- they still reflect the
-                    // window's size at construction time, not a live
-                    // resize. Keeping those live too needs `PyWindow`'s
-                    // own fields to become genuinely shared, mutable
-                    // state threaded through the runtime -- a real,
-                    // separate, deeper change this phase doesn't take
-                    // on; an app that calls e.g. `add_dialog` from a
-                    // live click handler after a real resize still
-                    // sizes that dialog's own full-window scrim against
-                    // the window's original construction-time size.
+                    //
+                    // M33 Phase 2 (§4, §5, §8) closed the real, stated
+                    // v1 limit this comment used to name here:
+                    // `runtime.width`/`height` are now the identical
+                    // real, shared `Rc<Cell<u32>>` `PyWindow`'s own
+                    // fields are (`window::SharedSize`), so this `.set()`
+                    // call is immediately visible there too -- an app
+                    // that calls e.g. `add_dialog` from a live click
+                    // handler after a real resize now sizes that
+                    // dialog's own full-window scrim against the
+                    // window's real *current* dimensions, not its
+                    // construction-time ones.
                     InputEvent::Resized { width, height } => {
-                        runtime.width = width as u32;
-                        runtime.height = height as u32;
-                        runtime.gpu.resize(runtime.width, runtime.height);
+                        runtime.width.set(width as u32);
+                        runtime.height.set(height as u32);
+                        runtime
+                            .gpu
+                            .resize(runtime.width.get(), runtime.height.get());
                     }
                     // M17 Phase 1 (§8): the real, winit-driven Ctrl+C
                     // path -- `Tree::text_field_selected_text` is a pure
@@ -1013,8 +1024,8 @@ impl App {
                     opener.open_window(WindowRequest {
                         config: WindowConfig {
                             title: setup.title.clone(),
-                            width: setup.width,
-                            height: setup.height,
+                            width: setup.width.get(),
+                            height: setup.height.get(),
                             max_frames,
                         },
                         token: index as u64,

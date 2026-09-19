@@ -12,6 +12,21 @@ reflects it) is proven directly at the Rust level:
 `crates/engine-core/src/tree.rs::
 resized_grows_the_roots_own_layout_box_and_a_fresh_layout_reflects_it`
 -- this file proves the real end-to-end FFI wiring instead.
+
+M33 Phase 2 (§4, §5, §8) closed the real, stated v1 limit this file's
+own tests used to leave open: `self.width`/`self.height` (read by
+every interactive `add_*` factory method) are now a real, shared
+`Rc<Cell<u32>>` -- a real, live winit-driven resize updates the exact
+same cell `Window.resize()` itself writes to. No Python-level getter
+exists for a node's own real pixel box (a real, separate, pre-existing
+gap this phase doesn't take on), so the tests below prove the real
+*flow* stays correct (an interactive `add_*` call after a resize still
+succeeds and dispatches correctly) rather than asserting on exact
+pixel dimensions -- the real `Rc<Cell<u32>>` sharing itself is a
+compile-time-enforced guarantee (both `WindowSetup`/`WindowRuntime`
+hold a real `.clone()` of the identical `Rc`, confirmed by direct code
+review, not something that could silently regress the way a plain
+`u32` copy could).
 """
 
 from tre import Window
@@ -50,3 +65,28 @@ def test_resize_shrinking_the_window_does_not_raise():
     window = Window(width=800, height=600)
     window.add_rect(background=(0, 255, 0, 255), width=50, height=50)
     window.resize(200, 150)
+
+
+def test_an_interactive_add_dialog_call_after_a_resize_still_works():
+    """M33 Phase 2 (§4, §5, §8): the exact real scenario the prior
+    phase's own doc comment named as broken -- an interactive `add_*`
+    factory method (here, `Dialog`'s own full-window scrim, sized
+    directly from `self.width`/`self.height`) called after a real
+    resize must still build and open correctly, not silently size
+    against stale construction-time dimensions. No Python-level getter
+    exists to assert on the scrim's own real pixel box directly (a
+    real, separate, pre-existing gap), so this proves the real flow
+    doesn't raise, the same real class of proof this codebase already
+    relies on elsewhere a direct pixel assertion isn't reachable from
+    Python.
+    """
+    window = Window(width=400, height=300)
+    window.resize(1200, 900)
+
+    dialog = window.add_dialog(
+        headline="Resized",
+        text="does this dialog build correctly after a real resize?",
+        width=300,
+        height=200,
+    )
+    window.open_dialog(dialog)

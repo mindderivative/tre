@@ -95,8 +95,8 @@ impl PyWindow {
             tree.compute_layout(
                 self.root,
                 Size {
-                    width: AvailableSpace::Definite(self.width as f32),
-                    height: AvailableSpace::Definite(self.height as f32),
+                    width: AvailableSpace::Definite(self.width.get() as f32),
+                    height: AvailableSpace::Definite(self.height.get() as f32),
                 },
             );
         }
@@ -124,8 +124,8 @@ impl PyWindow {
             tree.compute_layout(
                 self.root,
                 Size {
-                    width: AvailableSpace::Definite(self.width as f32),
-                    height: AvailableSpace::Definite(self.height as f32),
+                    width: AvailableSpace::Definite(self.width.get() as f32),
+                    height: AvailableSpace::Definite(self.height.get() as f32),
                 },
             );
         }

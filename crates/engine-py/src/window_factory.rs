@@ -2592,8 +2592,8 @@ impl PyWindow {
 
         let scrim_style = Style {
             size: Size {
-                width: length(self.width as f32),
-                height: length(self.height as f32),
+                width: length(self.width.get() as f32),
+                height: length(self.height.get() as f32),
             },
             display: taffy::Display::Flex,
             justify_content: Some(JustifyContent::CENTER),
@@ -2971,7 +2971,7 @@ impl PyWindow {
             return Ok(());
         }
         let anchor_x = SNACKBAR_LEFT_MARGIN;
-        let anchor_y = self.height as f32 - SNACKBAR_BOTTOM_MARGIN - SNACKBAR_HEIGHT;
+        let anchor_y = self.height.get() as f32 - SNACKBAR_BOTTOM_MARGIN - SNACKBAR_HEIGHT;
         let anchor_style = positioned_style(
             Size {
                 width: length(0.0),
@@ -3085,7 +3085,7 @@ impl PyWindow {
         };
 
         let mut tree = self.tree.borrow_mut();
-        let panel_height = height.unwrap_or(self.height as f32);
+        let panel_height = height.unwrap_or(self.height.get() as f32);
 
         let mut panel_paint = PaintProperties::new(container_color, 0.0, elevation, 1.0);
         panel_paint.corner_radii_override =
@@ -3094,8 +3094,8 @@ impl PyWindow {
         if modal {
             let scrim_style = Style {
                 size: Size {
-                    width: length(self.width as f32),
-                    height: length(self.height as f32),
+                    width: length(self.width.get() as f32),
+                    height: length(self.height.get() as f32),
                 },
                 display: taffy::Display::Flex,
                 justify_content: Some(JustifyContent::FLEX_END),
@@ -3560,7 +3560,7 @@ impl PyWindow {
         };
 
         let mut tree = self.tree.borrow_mut();
-        let panel_height = height.unwrap_or(self.height as f32);
+        let panel_height = height.unwrap_or(self.height.get() as f32);
 
         let mut panel_paint = PaintProperties::new(container_color, 0.0, elevation, 1.0);
         panel_paint.corner_radii_override =
@@ -3693,8 +3693,8 @@ impl PyWindow {
         let container = if modal {
             let scrim_style = Style {
                 size: Size {
-                    width: length(self.width as f32),
-                    height: length(self.height as f32),
+                    width: length(self.width.get() as f32),
+                    height: length(self.height.get() as f32),
                 },
                 display: taffy::Display::Flex,
                 justify_content: Some(JustifyContent::FLEX_START),
@@ -3841,7 +3841,7 @@ impl PyWindow {
         };
 
         let mut tree = self.tree.borrow_mut();
-        let bar_width = width.unwrap_or(self.width as f32);
+        let bar_width = width.unwrap_or(self.width.get() as f32);
 
         let mut bar_style = positioned_style(
             Size {
@@ -4077,7 +4077,7 @@ impl PyWindow {
         };
 
         let mut tree = self.tree.borrow_mut();
-        let row_width = width.unwrap_or(self.width as f32);
+        let row_width = width.unwrap_or(self.width.get() as f32);
         let tab_width = row_width / labels.len() as f32;
 
         let mut row_style = positioned_style(
@@ -5723,7 +5723,7 @@ impl PyWindow {
         };
 
         let mut tree = self.tree.borrow_mut();
-        let bar_width = width.unwrap_or(self.width as f32);
+        let bar_width = width.unwrap_or(self.width.get() as f32);
 
         let mut bar_style = Style {
             size: Size {
@@ -6824,8 +6824,8 @@ impl PyWindow {
                 display: taffy::Display::Flex,
                 flex_direction: taffy::FlexDirection::Column,
                 size: Size {
-                    width: length(self.width as f32),
-                    height: length(self.height as f32),
+                    width: length(self.width.get() as f32),
+                    height: length(self.height.get() as f32),
                 },
                 ..Default::default()
             },

@@ -59,8 +59,8 @@ impl PyWindow {
         tree.compute_layout(
             self.root,
             Size {
-                width: AvailableSpace::Definite(self.width as f32),
-                height: AvailableSpace::Definite(self.height as f32),
+                width: AvailableSpace::Definite(self.width.get() as f32),
+                height: AvailableSpace::Definite(self.height.get() as f32),
             },
         );
         let config = engine_md3::ContainerTransformConfig {
@@ -111,8 +111,8 @@ impl PyWindow {
             &self.tree,
             self.root,
             Size {
-                width: AvailableSpace::Definite(self.width as f32),
-                height: AvailableSpace::Definite(self.height as f32),
+                width: AvailableSpace::Definite(self.width.get() as f32),
+                height: AvailableSpace::Definite(self.height.get() as f32),
             },
             node.id,
         );
@@ -160,8 +160,8 @@ impl PyWindow {
             &self.tree,
             self.root,
             Size {
-                width: AvailableSpace::Definite(self.width as f32),
-                height: AvailableSpace::Definite(self.height as f32),
+                width: AvailableSpace::Definite(self.width.get() as f32),
+                height: AvailableSpace::Definite(self.height.get() as f32),
             },
             node.id,
         );
@@ -185,16 +185,18 @@ impl PyWindow {
     /// for its own `compute_layout` call -- and dispatches the real
     /// `InputEvent::Resized` (`Tree::dispatch` mutates `root`'s own
     /// `layout_style.size` directly for this event, see its own doc
-    /// comment). This method's own real reach is actually broader than
-    /// the live winit-driven path in `engine-py::app.rs`: that path's
-    /// own `WindowRuntime.width`/`height` are a separate, non-shared
-    /// copy from this `PyWindow`'s own fields (a real, stated v1 limit
-    /// -- see `app.rs`'s own `InputEvent::Resized` arm), so a live OS
-    /// resize never reaches these fields at all, only `root`'s own
-    /// layout box.
+    /// comment).
+    ///
+    /// M33 Phase 2 (§4, §5, §8) closed the real, stated v1 limit this
+    /// doc comment used to state here: `self.width`/`height` are now a
+    /// real, shared `SharedSize` (`Rc<Cell<u32>>`, `window.rs`'s own
+    /// doc comment has the full real reasoning) -- `App::run`'s own
+    /// `WindowRuntime` clones the identical `Rc`, so a real live
+    /// winit-driven resize's own `.set()` call (`app.rs`'s `InputEvent::
+    /// Resized` arm) is immediately visible here too, and vice versa.
     fn resize(&mut self, width: u32, height: u32, py: Python<'_>) {
-        self.width = width;
-        self.height = height;
+        self.width.set(width);
+        self.height.set(height);
         let outcome = self.tree.borrow_mut().dispatch(
             self.root,
             InputEvent::Resized {
@@ -243,8 +245,8 @@ impl PyWindow {
             &self.tree,
             self.root,
             Size {
-                width: AvailableSpace::Definite(self.width as f32),
-                height: AvailableSpace::Definite(self.height as f32),
+                width: AvailableSpace::Definite(self.width.get() as f32),
+                height: AvailableSpace::Definite(self.height.get() as f32),
             },
             node.id,
         );
@@ -272,8 +274,8 @@ impl PyWindow {
             &self.tree,
             self.root,
             Size {
-                width: AvailableSpace::Definite(self.width as f32),
-                height: AvailableSpace::Definite(self.height as f32),
+                width: AvailableSpace::Definite(self.width.get() as f32),
+                height: AvailableSpace::Definite(self.height.get() as f32),
             },
             node.id,
         );

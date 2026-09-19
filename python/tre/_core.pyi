@@ -1214,12 +1214,11 @@ class Window:
         `compute_layout` reflects the new size) and updates `self.
         width`/`height`, which every other synthetic method here and
         every interactive `add_*` factory method reads for its own
-        layout. A real, live OS window resize also resizes the same
-        real layout box, through a separate path -- real, stated v1
-        limit: a live resize does *not* reach this `Window` object's
-        own `width`/`height` fields (a separate copy inside the running
-        `App`), so an interactive `add_*` call made after a live resize
-        still sizes against the window's construction-time dimensions.
+        layout. A real, live OS window resize also updates the same
+        real, shared `width`/`height` -- an interactive `add_*` call
+        made from a live click handler after a real resize sizes
+        against the window's real current dimensions, not its
+        construction-time ones.
         """
         ...
     def scroll(self, node: Node, delta_y: float) -> None:

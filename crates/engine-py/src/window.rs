@@ -4,7 +4,7 @@
 //! everything `App::new`/`App::add_rect` used to hold directly, now per
 //! window instead of assumed singular.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -111,6 +111,20 @@ impl ThemeState {
 /// scope: only `Window`-created nodes ever see a real theme.
 pub(crate) type SharedTheme = Rc<RefCell<ThemeState>>;
 
+/// M33 Phase 2 (§4, §5, §8): a `Window`'s own real width/height,
+/// shared the identical way `SharedTheme`/`HandlerMap`/`context_menus`
+/// already are -- `Cell`, not `RefCell`, since `u32` is `Copy` and
+/// every real access is a plain get/set, never a borrow that could
+/// outlive a single statement. Closes the real, stated v1 limit M32
+/// Phase 2 left open: a live, winit-driven resize used to reach only
+/// `WindowRuntime`'s own separate, non-shared `u32` copy, never this
+/// `PyWindow`'s own fields -- `App::run`'s own `WindowSetup`/
+/// `WindowRuntime` now clone this same `Rc<Cell<u32>>` instead of
+/// copying its value once at startup, so a real resize's own `.set()`
+/// call is immediately visible to every interactive `add_*` factory
+/// method's own `self.width`/`self.height` read, live.
+pub(crate) type SharedSize = Rc<Cell<u32>>;
+
 /// M6 Phase 3 (§8): the real `Position::Absolute` + `taffy::Rect` inset
 /// shape every Rust-level pixel test already uses internally
 /// (`overlay_menu.rs`/`transform_composition.rs`/etc.'s own `absolute()`
@@ -182,8 +196,8 @@ pub struct PyWindow {
     pub(crate) tree: Rc<RefCell<Tree>>,
     pub(crate) root: NodeId,
     pub(crate) title: String,
-    pub(crate) width: u32,
-    pub(crate) height: u32,
+    pub(crate) width: SharedSize,
+    pub(crate) height: SharedSize,
     /// M27 Phase 3: wrapped in a `RefCell` (previously a plain
     /// `HashMap`) so `add_virtual_list` can be `&self` like every other
     /// `add_*` method -- the real, concrete need Phase 1's own stated
@@ -288,8 +302,8 @@ impl PyWindow {
             tree: Rc::new(RefCell::new(tree)),
             root,
             title: title.to_string(),
-            width,
-            height,
+            width: Rc::new(Cell::new(width)),
+            height: Rc::new(Cell::new(height)),
             materializers: RefCell::new(HashMap::new()),
             canvas_draws: RefCell::new(HashMap::new()),
             handlers: Rc::new(RefCell::new(HashMap::new())),

@@ -134,8 +134,8 @@ impl PyWindow {
             NodeKind::VirtualList(VirtualListState::new(item_count, extent)),
             Style {
                 size: Size {
-                    width: length(width.unwrap_or(self.width as f32)),
-                    height: length(height.unwrap_or(self.height as f32)),
+                    width: length(width.unwrap_or(self.width.get() as f32)),
+                    height: length(height.unwrap_or(self.height.get() as f32)),
                 },
                 ..Default::default()
             },
