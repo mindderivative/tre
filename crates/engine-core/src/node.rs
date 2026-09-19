@@ -1279,6 +1279,23 @@ pub struct PaintProperties {
     /// already signals keyboard focus distinctly and doesn't need a
     /// second, redundant visual cue riding along with it.
     pub interactive_shape: Option<(crate::shape_morph::ShapeKey, crate::shape_morph::ShapeKey)>,
+    /// M38 Phase 5 (§5, §7): `interactive_shape`'s own real `pressed`-
+    /// driven sibling -- real MD3 Expressive "buttons reshape as you
+    /// press them" (`Button Group`'s own per-child press morph being
+    /// the first real consumer, distinct from Split Button's hover-
+    /// driven *inner-corner* tightening, M38 Phase 4). `Some((relaxed,
+    /// tightened))` opts this node into `Tree::set_pressed` (the
+    /// single real chokepoint every `self.pressed` mutation now goes
+    /// through) retargeting `shape` toward `tightened` while this node
+    /// is the currently-pressed one, back to `relaxed` otherwise --
+    /// deliberately a *separate* field from `interactive_shape` rather
+    /// than one field reacting to both `hovered`/`pressed`: a real
+    /// Button Group child must not visually tighten on a mere hover,
+    /// only a genuine press, the opposite real trigger Split Button's
+    /// own inner corners need. `None` (every existing node) is a true
+    /// no-op.
+    pub press_interactive_shape:
+        Option<(crate::shape_morph::ShapeKey, crate::shape_morph::ShapeKey)>,
 }
 
 impl PaintProperties {
@@ -1296,6 +1313,7 @@ impl PaintProperties {
             clip_children: false,
             button_group_reflow: None,
             interactive_shape: None,
+            press_interactive_shape: None,
         }
     }
 

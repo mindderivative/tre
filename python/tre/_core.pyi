@@ -715,13 +715,13 @@ class Window:
         holding `len(labels)` real `add_button`-built buttons (all the
         same `variant`/`width`/`height`, real MD3 anatomy's own
         default), spaced with a real gap. Pressing one live-reflows its
-        own width and its immediate neighbors' -- real MD3's own
-        distinctive "pressing a button also affects the width of
-        adjacent buttons" mechanic, driven entirely by the engine, no
-        app-side wiring needed. Returns `(group, buttons)`. There is no
-        `Connected Button Group` variant here -- MD3's own spec states
-        it directly replaces the already-built `add_segmented_button`,
-        which already covers that real anatomy.
+        own width and its immediate neighbors' *and* reshapes toward a
+        real, per-size "square" corner radius (MD3 Expressive's own
+        "buttons reshape as you press them"), both driven entirely by
+        the engine, no app-side wiring needed. Returns `(group,
+        buttons)`. There is no `Connected Button Group` variant here --
+        MD3's own spec states it directly replaces the already-built
+        `add_segmented_button`, which already covers that real anatomy.
         """
         ...
     def add_tabs(

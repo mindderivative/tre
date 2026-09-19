@@ -2137,6 +2137,48 @@ impl Tree {
         hit
     }
 
+    /// M38 Phase 5 (§5, §7): the single real chokepoint every real
+    /// `self.pressed` mutation now goes through -- mirrors `update_
+    /// hover`'s own real shape-retarget shape just above, keyed on
+    /// `pressed` instead of `hovered` and `press_interactive_shape`
+    /// instead of `interactive_shape`: the node losing press animates
+    /// `shape` back to relaxed, the one gaining it animates toward
+    /// tightened. Compares by `NodeId` alone (not the full `(button,
+    /// node)` pair) -- a same-node press with a *different* button
+    /// (a real, if rare, case: e.g. a right-click landing while a
+    /// left-click is somehow still recorded) is not a real visual
+    /// press *transition* for this node, so it must not needlessly
+    /// restart the shape animation.
+    fn set_pressed(
+        &mut self,
+        new: Option<(PointerButton, NodeId)>,
+        duration: Duration,
+        now: Instant,
+    ) {
+        let old = self.pressed;
+        if old.map(|(_, id)| id) == new.map(|(_, id)| id) {
+            self.pressed = new;
+            return;
+        }
+        if let Some((_, old_id)) = old
+            && let Some(node) = self.nodes.get_mut(old_id)
+            && let Some((relaxed, _)) = node.paint.press_interactive_shape.clone()
+        {
+            node.paint
+                .shape
+                .animate_to(relaxed, duration, MotionCurve::Linear, now);
+        }
+        if let Some((_, new_id)) = new
+            && let Some(node) = self.nodes.get_mut(new_id)
+            && let Some((_, tightened)) = node.paint.press_interactive_shape.clone()
+        {
+            node.paint
+                .shape
+                .animate_to(tightened, duration, MotionCurve::Linear, now);
+        }
+        self.pressed = new;
+    }
+
     /// §10's own minimal keyboard focus model: Tab/Shift-Tab moves
     /// `focused` in tree order, wrapping at both ends. "Interactive"
     /// means `access.actions` is non-empty -- the real, already-existing
@@ -2948,7 +2990,7 @@ impl Tree {
                 // Android's own real "outside touch dismisses, doesn't
                 // pass through" convention (`PLAN.md`).
                 if self.dismiss_overlays_outside(position) {
-                    self.pressed = None;
+                    self.set_pressed(None, config.hover_duration, now);
                     return DispatchOutcome::None;
                 }
                 // M30 Phase 4 Step 1 (§11.3): the real modal-blocking
@@ -2959,12 +3001,12 @@ impl Tree {
                 // registration below entirely" outcome the dismiss
                 // case already has.
                 if self.press_blocked_by_modal_overlay(position) {
-                    self.pressed = None;
+                    self.set_pressed(None, config.hover_duration, now);
                     return DispatchOutcome::None;
                 }
                 let hit = self.hit_test(root, position);
                 if let Some(node) = hit {
-                    self.pressed = Some((button, node));
+                    self.set_pressed(Some((button, node)), config.hover_duration, now);
                     // M4 Phase 3 (§11.5), widened M14 Phase 2 (§7.3):
                     // pressing a splitter or a slider with the primary
                     // button starts a real drag -- reuses this same
@@ -3055,7 +3097,7 @@ impl Tree {
                         );
                     }
                 } else {
-                    self.pressed = None;
+                    self.set_pressed(None, config.hover_duration, now);
                 }
                 DispatchOutcome::None
             }
@@ -3082,7 +3124,7 @@ impl Tree {
                     }
                     _ => DispatchOutcome::None,
                 };
-                self.pressed = None;
+                self.set_pressed(None, config.hover_duration, now);
 
                 // M14 Phase 3 (§16.7): a real `Slider` drag genuinely
                 // ending is this node's own real, meaningful edit --
@@ -6931,6 +6973,73 @@ mod tests {
             target,
             Some(relaxed),
             "moving the pointer away must retarget shape back toward the relaxed silhouette"
+        );
+    }
+
+    #[test]
+    fn set_pressed_retargets_a_real_press_interactive_shape_toward_tightened_then_relaxed() {
+        // M38 Phase 5 (§5, §7): `PaintProperties.press_interactive_
+        // shape`'s own real press-driven retarget -- `Button Group`'s
+        // own per-child press morph, the real `set_pressed` sibling of
+        // `update_hover_retargets_a_real_interactive_shape_toward_
+        // tightened_then_relaxed` just above. `set_pressed` is a
+        // private `Tree` method, directly callable here since `mod
+        // tests` is a child module of the one that declares it --
+        // exercised directly rather than through a full `dispatch`
+        // event, the identical "test the real mechanism, not its
+        // dispatch plumbing" shape `update_hover`'s own test already
+        // uses (it also isn't reached through `dispatch` there).
+        use std::time::Duration;
+
+        use peniko::kurbo::Shape;
+
+        use crate::shape_morph::ShapeKey;
+
+        let mut tree = Tree::new();
+        let relaxed = ShapeKey::from_path(&Rect::new(0.0, 0.0, 50.0, 50.0).to_path(0.1));
+        let tightened = ShapeKey::from_path(&Rect::new(6.0, 6.0, 44.0, 44.0).to_path(0.1));
+        let (k, s, mut p) = leaf(50.0, 50.0);
+        p.press_interactive_shape = Some((relaxed.clone(), tightened.clone()));
+        let node = tree.insert(k, s, p);
+
+        let now = Instant::now();
+        tree.set_pressed(
+            Some((PointerButton::Primary, node)),
+            Duration::from_millis(100),
+            now,
+        );
+        let target = tree
+            .get(node)
+            .unwrap()
+            .paint
+            .shape
+            .active
+            .as_ref()
+            .map(|a| a.to.clone());
+        assert_eq!(
+            target,
+            Some(tightened),
+            "pressing a node with a real press_interactive_shape must retarget its own shape \
+             animation toward the tightened silhouette"
+        );
+
+        tree.set_pressed(
+            None,
+            Duration::from_millis(100),
+            now + Duration::from_millis(200),
+        );
+        let target = tree
+            .get(node)
+            .unwrap()
+            .paint
+            .shape
+            .active
+            .as_ref()
+            .map(|a| a.to.clone());
+        assert_eq!(
+            target,
+            Some(relaxed),
+            "releasing the press must retarget shape back toward the relaxed silhouette"
         );
     }
 

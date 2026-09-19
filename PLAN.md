@@ -1,81 +1,71 @@
-# PLAN — M38 Phase 4: Split Button Inner-Corner Shape-Tightening
+# PLAN — M38 Phase 5: Button Group Per-Child Shape Change on Press
 
 ## Goal
-Close the real, previously-stated v1 scope limit: Split Button's two
-buttons always painted fully rounded, never tightening their own
-facing inner corners on hover/press the way real MD3 anatomy
-("the inner corners change shape for hovered, focused, and pressed
-states," `COMPONENT_SPLIT_BUTTONS.md`) calls for.
+Add real MD3 Expressive "buttons reshape as you press them" to
+Standard Button Group's own children -- each of a group's real
+buttons should morph from a fully-round pill down to a real, per-size
+"square" corner radius while genuinely pressed, alongside the existing
+width-reflow mechanic (M35 Phase 3), then relax back on release.
 
 ## Steps
-1. Real spec value research (the M3 site's own split-button spec page
-   is JS-rendered, no static content to fetch): confirmed via
-   `material-components-android`'s own real `docs/components/
-   ButtonGroup.md` -- connected groups tighten their own inner corners
-   to a real 8dp, outer corners stay fully round.
-2. Paused via `AskUserQuestion` -- no existing internal precedent for
-   auto-driving a shape animation from interaction state (only
-   `hover_opacity`/`focus_ring`/`ripple` opacity are engine-core-auto-
-   driven today; `shape: Animated<ShapeKey>`, M7 Phase 4, has only
-   ever been app-driven via `Node.animate("shape", ...)`). User chose
-   the real "Animated smooth morph" approach over an instant, non-
-   animated `corner_radii_override` swap.
-3. New `PaintProperties.interactive_shape: Option<(ShapeKey,
-   ShapeKey)>` (`relaxed`, `tightened`) -- `None` (every existing
-   node) is a true no-op. Wired into `Tree::update_hover` alongside
-   its own existing `hover_opacity` retarget: the node losing hover
-   animates `shape` back to `relaxed`, the node gaining it animates
-   toward `tightened`.
-4. **Real, deliberate v1 scope choice, stated directly:** tied to
-   `hovered` only, not `focused`/`pressed` separately -- a real mouse
-   press can only ever land on an already-hovered node (`hit_test`'s
-   own contract), so `hovered` already covers the whole press gesture
-   for this purely cosmetic corner effect; keyboard focus already has
-   its own dedicated `focus_ring` signal and doesn't need a second,
-   redundant visual cue. Kept the whole new mechanism confined to one
-   call site (`update_hover`) rather than touching the ~6 separate
-   real `pressed`-mutation sites across `dispatch`, most of which
-   don't have a `duration`/`now` cleanly available.
-5. `add_split_button` (`engine-py::window_factory.rs`): built the two
-   real static `ShapeKey`s per button (leading's own two *right*
-   corners tighten, facing the trailing button; trailing's own two
-   *left* corners tighten, facing leading), using kurbo's real 4-tuple
-   per-corner `RoundedRect` constructor -- the identical real technique
-   `GeometryCache::rounded_rect_fill_per_corner` already established.
-   New `SPLIT_BUTTON_INNER_CORNER_RADIUS: f64 = 8.0` constant.
-6. **Real, previously-dormant gap found and fixed along the way:**
-   `paint_node`'s own border-stroke path (`engine-render/src/lib.rs`)
-   always used the plain uniform `corner_radius`, completely ignoring
-   both `corner_radii_override` (M30 Phase 1 Step 4) and the new
-   `shape` morph -- invisible until Split Button's own `"outlined"`
-   variant (the only real caller combining a nonzero border with
-   per-corner geometry) made it a real, visible bug. Fixed: the border
-   now matches whichever real fill geometry the node used (shape-morph
-   silhouette stroked directly/centered when active, new `Geometry
-   Cache::rounded_rect_border_per_corner` when `corner_radii_override`
-   is set, the original uniform path otherwise).
-7. Real tests: `geometry_cache.rs` gained per-corner-border cache-hit/
-   miss/asymmetry/clamp tests, plus fixed a discovered fragile
-   pre-existing test (`bounding_box()` can't distinguish different
-   corner radii on the same box -- switched to the path's own real
-   starting point). `tree.rs` gained a direct `update_hover` retarget
-   test. Two new Python-level tests reusing `Window.hover` (real
-   pointer-moved dispatch) -- no Python getter exists for the raw
-   `shape` animation target, so these prove the real end-to-end
-   dispatch-through-paint path runs clean, including the outlined-
-   variant border-fix regression case.
-8. Full verification chain: `cargo check`/`clippy -D warnings`/`fmt`/
+1. Real spec-value research (the M3 buttons spec page is JS-rendered,
+   no fetchable static content, the identical real finding M38 Phase
+   4's own Split Button research already made): found the real per-
+   size pressed-corner-radius table via a real, cited open-source MD3
+   Expressive implementation instead (`callstack/react-native-paper`
+   PR #5097): 8dp for XS/S, 12dp for M, 16dp for L/XL. Mapped onto
+   this codebase's own literal `height` parameter (no size-class enum,
+   matching `add_button`/`add_split_button`'s own established
+   convention) using MD3's real published button-size scale (XS 32dp/
+   S 36dp/M 40dp/L 48dp/XL 56dp), placing tier boundaries at the
+   honest midpoints (38dp, 44dp) between adjacent tiers.
+2. **Real scope narrowing, stated directly:** `BUILD_TRACKER.md`'s own
+   Phase 5 title said "press/select" -- Standard Button Group has no
+   real selection concept in MD3 anatomy at all (it's a row of
+   independent action buttons, not a segmented/choice control; that's
+   `Segmented Button`'s own real anatomy, already built, M30 Phase 6).
+   Scoped to press only, matching what's actually real.
+3. New `PaintProperties.press_interactive_shape: Option<(ShapeKey,
+   ShapeKey)>` (`node.rs`) -- deliberately a *separate* field from M38
+   Phase 4's own `interactive_shape`, not a shared one reacting to
+   both `hovered`/`pressed`: a Button Group child must not tighten on
+   a mere hover, only a genuine press, the opposite real trigger Split
+   Button's own inner corners need.
+4. New `Tree::set_pressed` (`tree.rs`) -- the single real chokepoint
+   every one of the 5 real `self.pressed` mutation sites across
+   `dispatch` now goes through (refactored, not duplicated), mirroring
+   `update_hover`'s own exact shape-retarget pattern for `shape`/
+   `interactive_shape`. Ran the full `engine-core` test suite
+   immediately after this refactor alone (before adding any new real
+   feature) to confirm zero behavioral regression from touching a
+   fairly central dispatch mechanism -- all 189 pre-existing tests
+   passed unmodified.
+5. `add_button_group` (`engine-py::window_factory.rs`): new
+   `button_group_pressed_corner_radius(height)` pure function (the
+   real tier table above); every child's own `shape`/`press_
+   interactive_shape` set right after `add_button` constructs it (the
+   same "initialize shape non-empty from construction, not left at
+   `ShapeKey::empty()`" discipline Phase 4 already established, to
+   avoid a first-press flash-from-empty bug).
+6. Real tests: `tree.rs` gained a direct `set_pressed` retarget test
+   (mirrors Phase 4's own `update_hover` test exactly, calling the
+   private method directly since `mod tests` is a child module).
+   `window_factory.rs` has no Rust unit-test module (this codebase's
+   own established convention: `engine-py` factory functions are
+   tested at the Python/pytest FFI level, not with Rust unit tests) --
+   two new pytest tests instead, reusing `Window.click` (a real
+   primary press+release) to exercise the full dispatch-through-paint
+   path for both the default and `"outlined"` variants.
+7. Full verification chain: `cargo check`/`clippy -D warnings`/`fmt`/
    `test --workspace --release`, `maturin develop --release`, full
    `pytest tests/`, all 75 examples, showcase demo.
-9. `BUILD_TRACKER.md` Phase 4 flipped to done, Top Metrics updated to
-   4-of-7, artifact regenerated (38/122/212, unchanged) and republished.
+8. `BUILD_TRACKER.md` Phase 5 flipped to done, Top Metrics updated to
+   5-of-7, artifact regenerated (38/122/212, unchanged) and republished.
 
 ## Status
 Complete. Full verification chain green (`cargo test --workspace
---release`: `engine-core` 189 passed (+1), `engine-render` 28 passed
-(+4, the new geometry_cache tests); `pytest tests/`: 561 passed/1
-skipped, up from 559, +2 new tests; all 75 examples + showcase demo
-clean). **M38 Phase 4 -- Split Button Inner-Corner Shape-Tightening
-is now complete. M38 itself remains open: 3 phases remain (Button
-Group per-child shape change, ScrollView scrollbar thumb, real
-scroll+clip for Code Editor).**
+--release`: `engine-core` 190 passed (+1); `pytest tests/`: 562
+passed/1 skipped, up from 561, +1 new test; all 75 examples + showcase
+demo clean). **M38 Phase 5 -- Button Group Per-Child Shape Change is
+now complete. M38 itself remains open: 2 phases remain (ScrollView
+scrollbar thumb, real scroll+clip for Code Editor).**

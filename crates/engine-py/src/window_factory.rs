@@ -737,6 +737,38 @@ const SPLIT_BUTTON_INNER_CORNER_RADIUS: f64 = 8.0;
 const BUTTON_GROUP_GAP: f32 = 8.0;
 const BUTTON_GROUP_GROW: f32 = 12.0;
 
+/// M38 Phase 5 (§5, §7): real MD3 Expressive "buttons reshape as you
+/// press them" -- a per-child press morph is genuinely distinct from
+/// Split Button's own hover-driven *inner-corner* tightening (M38
+/// Phase 4): every one of a pressed button's own four corners
+/// uniformly tighten from the full pill down to a real, per-size
+/// "square" radius, not just the two corners facing a neighbor.
+/// **Real, cited value, the same honest-sourcing discipline
+/// `BUTTON_GROUP_GROW`'s own doc comment already established for an
+/// undocumented constant:** the M3 site's own buttons spec page is
+/// JS-rendered (no fetchable static content, confirmed the same way
+/// M38 Phase 4's own research already found for Split Button); the
+/// real per-size pressed-corner-radius table instead comes from a
+/// real, cited open-source MD3 Expressive button implementation
+/// (`callstack/react-native-paper` PR #5097): 8dp for XS/S, 12dp for
+/// M, 16dp for L/XL. This codebase has no discrete size-class
+/// parameter (`add_button`'s own established convention: a literal
+/// `height`, never a size enum, the identical real choice `add_
+/// split_button`'s own doc comment already states) -- `button_group_
+/// pressed_corner_radius` maps a literal `height` onto that same real
+/// three-tier table instead, using MD3's own published button-size
+/// scale (XS 32dp/S 36dp/M 40dp/L 48dp/XL 56dp) to place the real
+/// tier boundaries at the honest midpoints between adjacent tiers.
+fn button_group_pressed_corner_radius(height: f64) -> f64 {
+    if height <= 38.0 {
+        8.0
+    } else if height <= 44.0 {
+        12.0
+    } else {
+        16.0
+    }
+}
+
 /// MD3's own real Tabs anatomy (M30 Phase 5 Step 4), the *Primary
 /// Navigation Tab* variant -- verified against Material Web's own
 /// token source before writing any code. **Real, confirmed finding:**
@@ -4396,10 +4428,37 @@ impl PyWindow {
             group_id
         };
 
+        // M38 Phase 5 (§5, §7): the real, uniform relaxed/tightened
+        // shapes every child shares -- built once outside the loop
+        // since every real Standard Button Group child uses the
+        // identical `width`/`height` (real MD3 anatomy, `add_button_
+        // group`'s own doc comment above).
+        let group_h = f64::from(height);
+        let group_w = f64::from(width);
+        let child_relaxed = ShapeKey::from_path(
+            &RoundedRect::new(0.0, 0.0, group_w, group_h, group_h / 2.0).to_path(0.1),
+        );
+        let child_tightened = ShapeKey::from_path(
+            &RoundedRect::new(
+                0.0,
+                0.0,
+                group_w,
+                group_h,
+                button_group_pressed_corner_radius(group_h),
+            )
+            .to_path(0.1),
+        );
+
         let mut children = Vec::with_capacity(n);
         for label in &labels {
             let button = self.add_button(label, width, height, variant, None, None)?;
-            self.tree.borrow_mut().try_add_child(group_id, button.id);
+            let mut tree = self.tree.borrow_mut();
+            tree.try_add_child(group_id, button.id);
+            if let Some(node) = tree.get_mut(button.id) {
+                node.paint.shape = Animated::new(child_relaxed.clone());
+                node.paint.press_interactive_shape =
+                    Some((child_relaxed.clone(), child_tightened.clone()));
+            }
             children.push(button);
         }
 
