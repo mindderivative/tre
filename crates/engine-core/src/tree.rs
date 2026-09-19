@@ -2434,6 +2434,75 @@ impl Tree {
     /// -- replacing the selection, the same real behavior every desktop
     /// text editor has, not `engine-core` inventing a special case per
     /// key.
+    /// M38 Phase 7 (§5, §8): VS Code's own real, cited default line-
+    /// height multiplier (`editor.lineHeight`: `0` means "compute from
+    /// `fontSize`", real default `fontSize * 1.35` on non-macOS) --
+    /// `engine-core` has no real font-shaping access to measure an
+    /// exact value itself (§4's crate-boundary rule), so this is a
+    /// real, honest approximation for the caret-follow heuristic below,
+    /// not an exact metric.
+    const CODE_EDITOR_LINE_HEIGHT_RATIO: f64 = 1.35;
+
+    /// M38 Phase 7 (§5, §8): real caret-follow -- if `field`'s own real
+    /// caret would currently sit outside its own visible viewport
+    /// (given its current `scroll_offset`), scrolls just enough to
+    /// bring it back in, the same real "the editor auto-scrolls to
+    /// keep the cursor visible" behavior every real code editor
+    /// already has. A true no-op for a single-line field (never
+    /// scrolls at all, `scroll_offset` stays `0.0` forever) or one
+    /// whose real content already fits its own viewport.
+    ///
+    /// **Real, honest v1 approximation, stated directly:** the real
+    /// per-line pixel height used here (`Self::CODE_EDITOR_LINE_
+    /// HEIGHT_RATIO * state.font_size`) is an estimate, not an exact
+    /// measured value -- `engine-core` cannot load a real font to
+    /// measure one (§4). This can leave the caret slightly closer to
+    /// (or further from) the real viewport edge than an exactly-
+    /// measured line height would land it -- a real, acceptable
+    /// imprecision in a heuristic, not a correctness bug: whatever
+    /// `scroll_offset` this computes is applied identically to both
+    /// the real clip and the real glyph positions at paint time
+    /// (`engine-render::draw_field`), so the actually-*painted* result
+    /// stays internally consistent regardless of how precisely this
+    /// guessed the ideal scroll target.
+    fn scroll_text_field_caret_into_view(&mut self, field: NodeId) {
+        let Some(node) = self.nodes.get(field) else {
+            return;
+        };
+        let NodeKind::TextField(state) = &node.kind else {
+            return;
+        };
+        if !state.multiline {
+            return;
+        }
+        let viewport_height = f64::from(self.layout(field).size.height);
+        let NodeKind::TextField(state) = &self.nodes[field].kind else {
+            unreachable!("checked above")
+        };
+        let line_height = f64::from(state.font_size) * Self::CODE_EDITOR_LINE_HEIGHT_RATIO;
+        if line_height <= 0.0 {
+            return;
+        }
+        let caret_line = state.content[..state.cursor].matches('\n').count() as f64;
+        let total_lines = state.content.matches('\n').count() as f64 + 1.0;
+        let max_scroll = (total_lines * line_height - viewport_height).max(0.0);
+        let caret_top = caret_line * line_height;
+        let caret_bottom = caret_top + line_height;
+
+        let mut scroll = state.scroll_offset.current;
+        if caret_top < scroll {
+            scroll = caret_top;
+        } else if caret_bottom > scroll + viewport_height {
+            scroll = caret_bottom - viewport_height;
+        }
+        let scroll = scroll.clamp(0.0, max_scroll);
+
+        let NodeKind::TextField(state) = &mut self.nodes[field].kind else {
+            unreachable!("checked above")
+        };
+        state.scroll_offset.current = scroll;
+    }
+
     fn dispatch_text_field_key(
         &mut self,
         field: NodeId,
@@ -2894,6 +2963,7 @@ impl Tree {
         state.cursor = Self::char_boundary(&state.content, offset);
         state.selection_anchor = None;
         state.goal_column = None;
+        self.scroll_text_field_caret_into_view(field);
         true
     }
 
@@ -2934,6 +3004,7 @@ impl Tree {
         }
         state.cursor = Self::char_boundary(&state.content, offset);
         state.goal_column = None;
+        self.scroll_text_field_caret_into_view(field);
         true
     }
 
@@ -3364,6 +3435,18 @@ impl Tree {
                     )
                     && let Some(outcome) = self.dispatch_text_field_key(field, key, shift)
                 {
+                    // M38 Phase 7 (§5, §8): real caret-follow -- runs
+                    // after every real key this field claimed
+                    // (`dispatch_text_field_key` returning `Some` at
+                    // all, regardless of which of its own many early-
+                    // return arms produced it), the one chokepoint
+                    // every real call reaches regardless of internal
+                    // control flow, rather than auditing and touching
+                    // each of that method's own ~15 individual arms.
+                    // A true no-op key still calls this harmlessly (the
+                    // caret hasn't moved, so there's nothing to scroll
+                    // to).
+                    self.scroll_text_field_caret_into_view(field);
                     return outcome;
                 }
                 // M24 Phase 1 (§10): a focused `Slider`'s own real
@@ -3460,6 +3543,7 @@ impl Tree {
                 // `None` here in practice, but a real commit is exactly
                 // the moment composition ends either way.
                 state.preedit = None;
+                self.scroll_text_field_caret_into_view(field);
                 DispatchOutcome::Changed(field)
             }
             // M4 Phase 8 (§11.7/§11.8 groundwork): a true no-op today,
@@ -9027,6 +9111,99 @@ mod tests {
         let (mut tree, _root, field) = text_field_scene("hi");
         assert!(tree.set_text_field_cursor(field, 999));
         assert_eq!(field_state(&tree, field).cursor, 2);
+    }
+
+    /// M38 Phase 7 (§5, §8) test scene: a real, laid-out, focused
+    /// multiline field with 20 real lines ("line0".."line19"), each
+    /// exactly 6 real bytes ("lineN\n") so a target line's own real
+    /// byte offset is simply `line_index * 6` -- a real, bounded
+    /// 200x100 viewport, `font_size = 14.0` matching `Tree::CODE_
+    /// EDITOR_LINE_HEIGHT_RATIO`'s own real 1.35 multiplier for a
+    /// real, hand-verifiable `line_height = 18.9`.
+    fn caret_follow_scene() -> (Tree, NodeId, NodeId) {
+        let mut tree = Tree::new();
+        let (_, root_style, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let content = (0..20)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut state = TextFieldState::new(content, "Monospace", 400.0, 14.0);
+        state.multiline = true;
+        let field = tree.insert(
+            NodeKind::TextField(state),
+            Style {
+                size: Size {
+                    width: length(200.0),
+                    height: length(100.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(root, field);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+        tree.set_focus_to(field, 1.0, Duration::ZERO, Instant::now());
+        (tree, root, field)
+    }
+
+    #[test]
+    fn scroll_text_field_caret_into_view_scrolls_down_to_reveal_a_caret_below_the_viewport() {
+        let (mut tree, _root, field) = caret_follow_scene();
+        // Line 5's own real start: 5 lines * 6 real bytes ("lineN\n")
+        // each = byte 30. caret_top = 5 * 18.9 = 94.5, caret_bottom =
+        // 113.4 -- past the real 100px viewport (scroll starts at 0),
+        // so this must scroll down to `caret_bottom - viewport_height`
+        // = 113.4 - 100 = 13.4.
+        tree.set_text_field_cursor(field, 30);
+        let scroll = field_state(&tree, field).scroll_offset.current;
+        assert!(
+            (scroll - 13.4).abs() < 0.01,
+            "must scroll down exactly enough to reveal line 5's own real bottom edge, got {scroll}"
+        );
+    }
+
+    #[test]
+    fn scroll_text_field_caret_into_view_scrolls_back_up_to_reveal_a_caret_above_the_viewport() {
+        let (mut tree, _root, field) = caret_follow_scene();
+        // First scroll down to a real, deep position (line 15).
+        tree.set_text_field_cursor(field, 90);
+        assert!(
+            field_state(&tree, field).scroll_offset.current > 0.0,
+            "sanity: scrolled down for line 15"
+        );
+        // Then jump the cursor back to the real content start (line 0)
+        // -- caret_top = 0.0, below any positive scroll, so this must
+        // scroll all the way back to exactly 0.0.
+        tree.set_text_field_cursor(field, 0);
+        let scroll = field_state(&tree, field).scroll_offset.current;
+        assert_eq!(
+            scroll, 0.0,
+            "must scroll all the way back up to reveal line 0, got {scroll}"
+        );
+    }
+
+    #[test]
+    fn scroll_text_field_caret_into_view_is_a_true_no_op_for_a_single_line_field() {
+        // A single-line field never scrolls at all, regardless of how
+        // long its own real content is or where the cursor lands --
+        // `Tree::scroll_text_field_caret_into_view`'s own real
+        // `!state.multiline` guard.
+        let (mut tree, root, field) = text_field_scene("a very long single line of real text");
+        dispatch_key(&mut tree, root, Key::Home);
+        dispatch_key(&mut tree, root, Key::End);
+        assert_eq!(
+            field_state(&tree, field).scroll_offset.current,
+            0.0,
+            "a single-line field's own scroll_offset must never move"
+        );
     }
 
     #[test]

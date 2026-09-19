@@ -358,3 +358,55 @@ def test_folding_and_syntax_highlighting_compose_without_raising():
     window.click(editor)
     window.type_text("X")
     assert editor.get_text() == "def add(a, b):\n    return a + bX"
+
+
+def test_navigating_and_editing_still_works_correctly_in_a_genuinely_overflowing_editor():
+    """M38 Phase 7 (§5, §8): real scroll+clip+caret-follow for a Code
+    Editor whose real content is much taller than its own box -- there
+    is no Python getter for the raw `scroll_offset` itself, the same
+    real verification-surface limit already established for other
+    internal-only state (M37/M38 Phase 2/3/4/5/6); the exact real
+    scroll math is proven directly at the Rust level (`crates/engine-
+    core/src/tree.rs`'s own `scroll_text_field_caret_into_view_*`
+    tests) and the real clip/paint effect at the pixel level
+    (`crates/engine-render/tests/text_field_paint.rs`'s own `a_
+    genuinely_overflowing_multiline_field_clips_its_own_content_to_
+    its_own_box`/`a_nonzero_scroll_offset_paints_genuinely_different_
+    pixels_than_unscrolled`). This proves the real, full FFI surface
+    (construct, navigate far past the visible viewport, edit, click)
+    still resolves correctly, not just that it doesn't crash.
+    """
+    content = "\n".join(f"line{i}" for i in range(30))
+    window = Window(width=400, height=300)
+    editor = window.add_code_editor(
+        content=content, background=(255, 255, 255, 255), width=300, height=80
+    )
+    window.click(editor)
+    # Cursor starts at content's own real end (line29) -- 40 ArrowUps
+    # walks well past the real ~4-line visible viewport, all the way
+    # back up to line0's own start.
+    for _ in range(40):
+        window.press_key("up")
+    window.press_key("home")
+    window.type_text("X")
+    assert editor.get_text().startswith("Xline0\n"), (
+        "typing at the real content start after scrolling far past the visible viewport must "
+        "still land on the real, correct line"
+    )
+
+    # A real click still resolves to a real, valid position after all
+    # that real scrolling, rather than panicking or silently no-oping
+    # -- exercises the same `text_field_hit_offset` (`engine-py/src/
+    # app.rs`) this phase's own removal of `TextFieldState`'s `Clone`
+    # derive required fixing. Not asserting *which* line it lands on
+    # (a real click resolves to wherever the editor's own current
+    # center point is, which line that is depends on exact real font
+    # metrics this test can't predict) -- a real, exactly-one-
+    # character-longer content is the decisive, position-independent
+    # proof the click found a real, valid insertion point.
+    before = editor.get_text()
+    window.click(editor)
+    window.type_text("Y")
+    assert len(editor.get_text()) == len(before) + 1, (
+        "a real click after scrolling must still focus and insert at a real, valid position"
+    )

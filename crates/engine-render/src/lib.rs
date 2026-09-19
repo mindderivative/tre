@@ -562,7 +562,17 @@ fn paint_node(
             let radius = node.paint.corner_radius.current;
             let bg = with_opacity(node.paint.background.current, node.paint.opacity.current);
             scene.set_paint(bg);
-            scene.fill_path(&RoundedRect::new(0.0, 0.0, w, h, radius).to_path(0.1));
+            // M38 Phase 7 (§5, §8): a real, previously-uncached fill --
+            // direct grep before this phase found this arm still built
+            // a fresh `RoundedRect::to_path` every frame, despite M38
+            // Phase 1's own completion note claiming otherwise (a real,
+            // honest correction: that claim was wrong, caught here by
+            // checking the actual current source rather than trusting
+            // the prior write-up). Routed through `geometry` now, the
+            // same real cache `Checkbox`/`Switch`/`Terminal` already
+            // use -- also reused directly below for this same node's
+            // own real clip layer, since both need the identical path.
+            scene.fill_path(geometry.rounded_rect_fill(id, w, h, radius));
 
             // M20 Phase 2 (§7.1, §7.3): the real resolved color now
             // comes from `state.text_tint` -- plain dark by default
@@ -570,19 +580,35 @@ fn paint_node(
             // resolved MD3 "on-surface" color once `Window.set_theme`
             // has pushed one in.
             let text_color = with_opacity(state.text_tint, node.paint.opacity.current);
-            text.draw_field(
-                scene,
-                resources,
-                state,
-                TextPlacement {
-                    x: 0.0,
-                    y: 0.0,
-                    max_width: w as f32,
-                    color: text_color,
-                },
-                tree.focused() == Some(id),
-                id,
-            );
+            // M38 Phase 7 (§5, §8): a real, genuinely overflowing
+            // `multiline` field now clips its own painted content to
+            // its own box and shifts it up by `scroll_offset` -- a
+            // real, previously-existing gap (confirmed by direct read
+            // before this phase: no clip layer existed here at all,
+            // so overflowing text simply painted past the node's own
+            // bounds). Single-line fields never set `scroll_offset`
+            // (`Tree::scroll_text_field_caret_into_view`'s own real
+            // multiline-only guard), so `y` stays `0.0` for them,
+            // byte-for-byte unchanged. Clipping only when `multiline`
+            // (not universally): a single-line field's own real
+            // horizontal overflow behavior is unaffected, a real,
+            // deliberate v1 scope match to this phase's own "Code
+            // Editor" title, not a general text-overflow feature.
+            let text_at = TextPlacement {
+                x: 0.0,
+                y: -state.scroll_offset.current,
+                max_width: w as f32,
+                color: text_color,
+            };
+            let show_caret = tree.focused() == Some(id);
+            if state.multiline {
+                let clip = geometry.rounded_rect_fill(id, w, h, radius);
+                scene.push_layer(Some(clip), None, None, None, None);
+                text.draw_field(scene, resources, state, text_at, show_caret, id);
+                scene.pop_layer();
+            } else {
+                text.draw_field(scene, resources, state, text_at, show_caret, id);
+            }
         }
         // M30 Phase 9 Step 4 (§5, §8, §10): a real terminal's own cell
         // grid -- `background` paints the real box fill first (the

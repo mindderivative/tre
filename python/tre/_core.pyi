@@ -1127,9 +1127,10 @@ class Window:
         and line numbers. Always shapes with the real bundled
         monospace face (M32 Phase 1, `"Hack Nerd Font Mono"`) --
         `font_family` isn't exposed here, since any other name would
-        defeat a genuinely monospace editor's own point. Real,
-        honestly-scoped v1 gap still open: no scroll/clip for content
-        past the box's own edges.
+        defeat a genuinely monospace editor's own point. Content
+        taller than the box scrolls and clips automatically, and the
+        caret auto-scrolls into view as it moves -- no app-side
+        wiring needed.
         """
         ...
     def add_terminal(

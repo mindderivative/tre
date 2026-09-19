@@ -663,7 +663,11 @@ pub const SCROLLBAR_GRAB_SLOP: f64 = 6.0;
 /// itself never validates this beyond what those std APIs already
 /// guarantee, since `content` is never sliced at an arbitrary offset
 /// here, only ever at boundaries `char_indices` itself produced.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// M38 Phase 7 (§5, §8): no longer derives `Clone`/`Debug`/`PartialEq`
+/// -- `scroll_offset: Animated<f64>` implements none of those, the
+/// identical real reason `ScrollViewState`/`Splitter`/`Icon`'s own
+/// doc comments already state for their own `Animated<T>` fields.
 pub struct TextFieldState {
     pub content: String,
     pub font_family: String,
@@ -775,6 +779,23 @@ pub struct TextFieldState {
     /// `End`, a click, typing, a delete) means "no goal yet, derive it
     /// fresh from wherever the cursor currently sits."
     pub goal_column: Option<usize>,
+    /// M38 Phase 7 (§5, §8): real vertical scroll for a genuinely
+    /// overflowing `multiline` field (`Code Editor`'s own real need,
+    /// scoped via `AskUserQuestion` to a dedicated mechanism rather
+    /// than wrapping `TextField` in a real `ScrollView`, since that
+    /// would need real `taffy` measure-function integration -- a
+    /// genuinely new capability with no precedent anywhere in this
+    /// codebase, confirmed by direct grep before choosing this path).
+    /// A real pixel offset, driven directly by `Tree::scroll_text_
+    /// field_caret_into_view` and `engine-render`'s own paint code --
+    /// not through `animate_field`/central ticking, the identical
+    /// real precedent `ScrollViewState.scroll`/`VirtualListState.
+    /// scroll_offset`'s own doc comments already establish for every
+    /// other real per-`NodeKind` scroll value. `Animated<f64>` purely
+    /// for its own `.current` convenience, not because this value is
+    /// ever eased. `0.0` (the default) is a true no-op for every
+    /// existing single-line/non-overflowing field, unchanged.
+    pub scroll_offset: Animated<f64>,
 }
 
 impl TextFieldState {
@@ -803,6 +824,7 @@ impl TextFieldState {
             syntax_spans: Vec::new(),
             folded_ranges: Vec::new(),
             goal_column: None,
+            scroll_offset: Animated::new(0.0),
         }
     }
 }

@@ -103,20 +103,26 @@ fn text_field_hit_offset(
     hit: NodeId,
     local_point: Point,
 ) -> Option<usize> {
-    let (state, width) = {
-        let tree = tree.borrow();
-        match tree.get(hit).map(|n| &n.kind) {
-            Some(NodeKind::TextField(state)) => (state.clone(), tree.layout(hit).size.width),
-            _ => return None,
-        }
+    // M38 Phase 7 (§5, §8): no longer clones `state` out of the borrow
+    // -- `TextFieldState` stopped deriving `Clone` once it gained a
+    // real `Animated<f64>` field (`scroll_offset`), the identical real
+    // reason `ScrollViewState`/`Splitter`/`Icon` never derived it
+    // either. Holds `tree.borrow()` for this whole function's body
+    // instead, released when it returns, before either real caller's
+    // own subsequent `borrow_mut()`.
+    let tree = tree.borrow();
+    let node = tree.get(hit)?;
+    let NodeKind::TextField(state) = &node.kind else {
+        return None;
     };
+    let width = tree.layout(hit).size.width;
     let at = TextPlacement {
         x: 0.0,
         y: 0.0,
         max_width: width,
         color: peniko::Color::TRANSPARENT,
     };
-    Some(text_renderer.hit_test_position(&state, at, local_point))
+    Some(text_renderer.hit_test_position(state, at, local_point))
 }
 
 /// M32 Phase 6 (§4, §5, §8): `text_field_hit_offset`'s own real

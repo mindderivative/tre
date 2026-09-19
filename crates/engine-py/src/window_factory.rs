@@ -6956,18 +6956,27 @@ impl PyWindow {
     /// application-layer concern, not a hard engine dependency); no
     /// line-number gutter (a real, separate compositional layer, the
     /// same "app composes, engine provides the primitive" split
-    /// `AppShell`'s own chrome regions already establish); no real
-    /// vertical/horizontal scroll+clip for content taller/wider than
-    /// the box (confirmed via direct source read: no `NodeKind` besides
-    /// `VirtualList` clips its own children today, the identical real
-    /// gap `Node Graph`, Step 2, already found and stated) -- content
-    /// past the box's own edges simply isn't visible, a real v1
-    /// limit, not silently worked around; and no Tab-key indentation
-    /// capture (`Tab` remains generic focus traversal engine-wide,
-    /// `Tree::dispatch`'s own top-level match, confirmed via direct
-    /// read -- pyCopper's own real equivalent needed a new dispatcher-
-    /// level opt-in flag, `CAPTURES_TAB`, a real, separate capability
-    /// this step doesn't add).
+    /// `AppShell`'s own chrome regions already establish); and no
+    /// Tab-key indentation capture (`Tab` remains generic focus
+    /// traversal engine-wide, `Tree::dispatch`'s own top-level match,
+    /// confirmed via direct read -- pyCopper's own real equivalent
+    /// needed a new dispatcher-level opt-in flag, `CAPTURES_TAB`, a
+    /// real, separate capability this step doesn't add).
+    ///
+    /// **M38 Phase 7 (§5, §8): real vertical scroll+clip for content
+    /// taller than the box, with real caret-follow, closes the gap
+    /// this doc comment used to name here.** `TextFieldState.scroll_
+    /// offset`'s own doc comment has the full real design (a dedicated
+    /// mechanism, not `ScrollView` wrapping -- scoped via
+    /// `AskUserQuestion` since that would need real `taffy` measure-
+    /// function integration this codebase has no precedent for).
+    /// **Real, stated v1 limit still open, not silently dropped:**
+    /// horizontal scroll for a line wider than the box is not part of
+    /// this -- a real, separate, genuinely different problem (this
+    /// phase's own scope was the box's *vertical* overflow, matching
+    /// real code-editor use, where lines are usually wrapped or kept
+    /// short rather than scrolled sideways) left for a future phase if
+    /// it turns out to be a real, load-bearing need.
     ///
     /// **M32 Phase 1 (§5, §8, §10):** always shapes with the real
     /// bundled monospace face (`engine_render::MONOSPACE_FONT_FAMILY`,

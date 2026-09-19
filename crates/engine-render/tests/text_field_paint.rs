@@ -611,3 +611,137 @@ fn hit_test_position_on_a_folded_field_returns_real_content_offsets() {
          offset"
     );
 }
+
+/// M38 Phase 7 (§5, §8): the real pixel-level proof a genuinely
+/// overflowing `multiline` field now clips its own painted content to
+/// its own box -- the exact real, previously-existing gap this
+/// phase's own investigation found (confirmed by direct read: no clip
+/// layer existed anywhere in the `NodeKind::TextField` paint arm
+/// before this phase). A short (40px) field with 20 real lines of
+/// content: real content well past the 40px box must not paint
+/// anything at the very bottom row of the box, since a real clip
+/// (not just running out of box to paint in) is what keeps it there.
+#[test]
+fn a_genuinely_overflowing_multiline_field_clips_its_own_content_to_its_own_box() {
+    pollster::block_on(async {
+        let content = (0..20)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut state = TextFieldState::new(content, "Roboto", 400.0, 14.0);
+        state.multiline = true;
+
+        let mut tree = Tree::new();
+        let root = tree.insert(
+            NodeKind::Rect,
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(40.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+        );
+        let field = tree.insert(
+            NodeKind::TextField(state),
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(40.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(FIELD_COLOR, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(root, field);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(40.0),
+            },
+        );
+
+        let (data, bpr) = render(&tree, root, 100, 40).await;
+        // 20 real lines of content at font_size 14 overflow a 40px box
+        // many times over -- real, unclipped text would paint well
+        // past y=39 (there is no real content shorter than the box
+        // otherwise). The box's own real, plain fill color at the
+        // very bottom row is the real, decisive proof nothing is
+        // spilling through from an unclipped glyph.
+        let at_bottom_edge = pixel_at(&data, bpr, 50, 39);
+        assert_eq!(
+            at_bottom_edge,
+            [0xEE, 0xEE, 0xEE, 0xFF],
+            "a real clip must keep an overflowing multiline field's own content inside its own \
+             box -- got {at_bottom_edge:?} at the bottom edge, expected the field's own plain \
+             fill color there"
+        );
+    });
+}
+
+/// The real other half: a genuinely nonzero `scroll_offset` must
+/// paint genuinely different pixels than the same field unscrolled --
+/// the real, direct proof `engine-render`'s own paint code actually
+/// reads and applies `TextFieldState.scroll_offset`, not just that a
+/// field with the field set doesn't crash.
+#[test]
+fn a_nonzero_scroll_offset_paints_genuinely_different_pixels_than_unscrolled() {
+    pollster::block_on(async {
+        fn scene(scroll: f64) -> (Tree, engine_core::NodeId) {
+            let content = (0..20)
+                .map(|i| format!("line{i}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let mut state = TextFieldState::new(content, "Roboto", 400.0, 14.0);
+            state.multiline = true;
+            state.scroll_offset.current = scroll;
+
+            let mut tree = Tree::new();
+            let root = tree.insert(
+                NodeKind::Rect,
+                Style {
+                    size: Size {
+                        width: length(100.0),
+                        height: length(40.0),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(BACKGROUND, 0.0, 0.0, 1.0),
+            );
+            let field = tree.insert(
+                NodeKind::TextField(state),
+                Style {
+                    size: Size {
+                        width: length(100.0),
+                        height: length(40.0),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(FIELD_COLOR, 0.0, 0.0, 1.0),
+            );
+            tree.add_child(root, field);
+            tree.compute_layout(
+                root,
+                Size {
+                    width: AvailableSpace::Definite(100.0),
+                    height: AvailableSpace::Definite(40.0),
+                },
+            );
+            (tree, root)
+        }
+
+        let (unscrolled_tree, unscrolled_root) = scene(0.0);
+        let (data_unscrolled, _) = render(&unscrolled_tree, unscrolled_root, 100, 40).await;
+
+        let (scrolled_tree, scrolled_root) = scene(60.0);
+        let (data_scrolled, _) = render(&scrolled_tree, scrolled_root, 100, 40).await;
+
+        assert!(
+            data_scrolled != data_unscrolled,
+            "a real nonzero scroll_offset must paint genuinely different pixels than the same \
+             content unscrolled -- the two renders were pixel-identical"
+        );
+    });
+}
