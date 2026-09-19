@@ -7096,6 +7096,54 @@ impl PyWindow {
         Ok(self.wrap_node(id))
     }
 
+    /// M36 Phase 1 (§5, §7, §11.7): a real, general scrollable viewport
+    /// over exactly one child -- see `ScrollViewState`'s own doc
+    /// comment for the full real design (grounded directly in the
+    /// sibling `pyCopper` project's own `ScrollViewElement`). Returns
+    /// a plain container `Node`; the caller composes their own real
+    /// content in via the existing, generic `Node.add_child` (M6
+    /// Phase 1), the identical real "engine provides the primitive,
+    /// app composes" split `add_toolbar` (M35 Phase 1) already
+    /// established for the same real reason -- a real content node
+    /// (often a flex column of many rows) needs its own real, explicit
+    /// size on the scroll axis matching its own true content extent,
+    /// the same "caller supplies a real explicit size" convention
+    /// every other `add_*` factory in this codebase already has; this
+    /// call has no opinion about what that content actually is.
+    /// `horizontal=false` (the default) scrolls vertically; `true`
+    /// scrolls horizontally -- never both at once, the identical
+    /// single-axis-at-a-time real scope `ScrollViewState`'s own doc
+    /// comment already states. Real wheel scrolling and `Window.
+    /// scroll` both already work with zero other changes: `ScrollView`
+    /// joins `Tree::dispatch`'s existing "walk up to the nearest
+    /// scrollable ancestor" mechanism the same way `VirtualList`/
+    /// `Carousel` already do.
+    #[pyo3(signature = (width, height, horizontal=false, x=None, y=None))]
+    fn add_scroll_view(
+        &self,
+        width: f32,
+        height: f32,
+        horizontal: bool,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<Node> {
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::ScrollView(engine_core::ScrollViewState::new(horizontal)),
+            positioned_style(
+                Size {
+                    width: length(width),
+                    height: length(height),
+                },
+                x,
+                y,
+            ),
+            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(self.root, id);
+        Ok(self.wrap_node(id))
+    }
+
     /// M13 Phase 1 (§11.2): a real, one-call way to build `AppShell`'s
     /// own named regions -- `self.root` itself stays a plain `Flex Row`
     /// (every other `add_*` method's own implicit flow depends on that,

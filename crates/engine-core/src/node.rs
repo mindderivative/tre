@@ -206,6 +206,14 @@ pub enum NodeKind {
     /// paint" shape, and `Tree::sync_carousel_layouts` for how that's
     /// actually made real against `taffy`.
     Carousel(CarouselState),
+    /// M36 Phase 1 (§5, §7, §11.7): a real, general scrollable
+    /// viewport over one oversized child -- see `ScrollViewState`'s
+    /// own doc comment for the real design (grounded directly in the
+    /// sibling `pyCopper` project's own `ScrollViewElement`) and
+    /// `Tree::sync_scroll_view_layouts` for how the real scroll offset
+    /// is made real against `taffy` without the hit-test-after-scroll
+    /// gap this phase's own investigation found in `VirtualList`.
+    ScrollView(ScrollViewState),
 }
 
 /// M30 Phase 9 Step 4 (§5, §8, §10): one real, already-VT-interpreted
@@ -520,6 +528,58 @@ impl CarouselState {
             return self.slot_width(low, large);
         }
         self.slot_width(low, large) * (1.0 - t) + self.slot_width(low + 1, large) * t
+    }
+}
+
+/// M36 Phase 1 (§5, §7, §11.7): a real, general scrollable viewport
+/// over exactly one child, grounded directly in the sibling `pyCopper`
+/// project's own real `ScrollViewElement` (`widgets/scroll.py`) --
+/// single-axis (never simultaneous 2D scroll, the identical real
+/// scope pyCopper's own design already settled on), the child
+/// measured against unbounded space on that one axis so it reports
+/// its own true content extent, and the real scroll offset applied as
+/// a pure "where does the content start" value.
+///
+/// **Real, deliberate design choice, not accidental:** unlike
+/// `VirtualListState::scroll_offset` (applied only as an extra
+/// `engine-render::paint_node` translate, never reflected back into
+/// `layout_style` -- this phase's own investigation found that gives
+/// a real, previously undiscovered hit-test-after-scroll bug, a real
+/// point at a scrolled item's own genuine post-scroll screen position
+/// resolves to the wrong node), `scroll` here is turned into a real,
+/// baked-in absolute `layout_style.inset` by `Tree::sync_scroll_view_
+/// layouts` every frame -- the identical bug-free pattern `Carousel`'s
+/// own `sync_carousel_layouts` already established, which both
+/// `engine-render::paint_node` and `Tree::hit_test_at` read correctly
+/// by construction, since neither needs a second, separate transform
+/// to agree with. Plain `Animated<f64>`, driven directly (never
+/// through `animate_field`/central ticking), the identical real
+/// precedent `VirtualListState::scroll_offset`'s own doc comment
+/// already establishes -- confirmed there via a direct read of `Tree::
+/// tick_all`: no kind-specific `Animated<T>` field is ever ticked
+/// centrally, only by its own dedicated mechanism (`Tree::
+/// scroll_scroll_view_by`, mirroring `scroll_virtual_list_by`), so
+/// this follows that same real precedent rather than inventing a new
+/// one; `Animated<f64>` is used here purely for its own `.current`/
+/// `Interpolate` convenience, not because this value is ever eased.
+/// No `#[derive(Clone, Debug, PartialEq)]` -- `Animated<T>`
+/// implements none of those, the same real reason `NodeKind`/
+/// `IconState` already state for `Splitter`/`Icon`.
+pub struct ScrollViewState {
+    pub scroll: Animated<f64>,
+    /// `false` (the default) scrolls vertically; `true` scrolls
+    /// horizontally. Never both at once -- the identical real
+    /// single-axis scope pyCopper's own `ScrollViewElement.axis`
+    /// already settled on, not a limitation this phase introduces.
+    pub horizontal: bool,
+}
+
+impl ScrollViewState {
+    pub fn new(horizontal: bool) -> Self {
+        Self {
+            scroll: Animated::new(0.0),
+            horizontal,
+        }
     }
 }
 

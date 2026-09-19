@@ -1120,6 +1120,7 @@ fn kind_name(kind: &NodeKind) -> &'static str {
         NodeKind::Link(_) => "Link",
         NodeKind::Terminal(_) => "Terminal",
         NodeKind::Carousel(_) => "Carousel",
+        NodeKind::ScrollView(_) => "ScrollView",
     }
 }
 

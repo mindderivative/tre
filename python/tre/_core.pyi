@@ -1200,6 +1200,24 @@ class Window:
         any other container's children are added, via `Node.add_child`.
         """
         ...
+    def add_scroll_view(
+        self,
+        width: float,
+        height: float,
+        horizontal: bool = False,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """A real, general scrollable viewport over exactly one child.
+        Returns an empty container -- compose your own real content in
+        via `Node.add_child` (it needs a real, explicit size on the
+        scroll axis matching its own true content extent, same as
+        every other `add_*` factory's own children). `horizontal=False`
+        (the default) scrolls vertically; `True` scrolls horizontally
+        -- never both at once. Real wheel scrolling and `Window.scroll`
+        both already work with no further setup.
+        """
+        ...
     def build_shell(
         self,
         menu_bar: Node | None = None,
@@ -1289,14 +1307,16 @@ class Window:
         construction-time ones.
         """
         ...
-    def scroll(self, node: Node, delta_y: float) -> None:
+    def scroll(self, node: Node, delta_y: float, delta_x: float = 0.0) -> None:
         """Dispatches a real wheel scroll at `node`'s own center point
-        -- bubbles up to the nearest `VirtualList`/`Carousel` ancestor,
-        the same real "scroll bubbling" behavior a genuine mouse wheel
-        already has. If `node` is itself a real `Terminal`, this moves
-        its own real viewport into scrollback instead (positive
-        `delta_y` reveals older history, matching a real wheel-up
-        notch).
+        -- bubbles up to the nearest `VirtualList`/`Carousel`/
+        `ScrollView` ancestor, the same real "scroll bubbling" behavior
+        a genuine mouse wheel already has. If `node` is itself a real
+        `Terminal`, this moves its own real viewport into scrollback
+        instead (positive `delta_y` reveals older history, matching a
+        real wheel-up notch; `delta_x` is ignored there). `delta_x` is
+        for a real horizontal `ScrollView` -- ignored by every other
+        real scrollable kind, which stay vertical-only.
         """
         ...
     def right_click(self, node: Node) -> None: ...

@@ -611,7 +611,18 @@ fn paint_node(
         // sync_carousel_layouts`, so nothing kind-specific is needed
         // here at all; the clip below is this kind's only other real
         // paint-time behavior.
-        NodeKind::Container | NodeKind::VirtualList(_) | NodeKind::Carousel(_) => {}
+        // M36 Phase 1 (§5, §7, §11.7): `ScrollView` paints nothing of
+        // its own either, the identical real shape -- its one real
+        // child's own absolute position is already baked into `layout_
+        // style` by `Tree::sync_scroll_view_layouts`, so the ordinary
+        // recursive walk below (composed transform only, no extra
+        // paint-time offset) already paints it in the right place; the
+        // unconditional clip below is this kind's only other real
+        // paint-time behavior, mirroring `Carousel`'s own.
+        NodeKind::Container
+        | NodeKind::VirtualList(_)
+        | NodeKind::Carousel(_)
+        | NodeKind::ScrollView(_) => {}
         // M5 Phase 3 (§11.10, §11.11): replays `state.commands`, already
         // resolved ahead of time by `engine-py::Window.redraw_canvas`
         // (`canvas.rs`'s own module doc comment) -- every coordinate is
@@ -1036,7 +1047,9 @@ fn paint_node(
         }
 
         scene.pop_layer();
-    } else if matches!(node.kind, NodeKind::Carousel(_)) || node.paint.clip_children {
+    } else if matches!(node.kind, NodeKind::Carousel(_) | NodeKind::ScrollView(_))
+        || node.paint.clip_children
+    {
         // M30 Phase 9 Step 5 (§5, §7, §11.7): the real MD3 "clip items
         // to the strip, so one scrolled off does not spill out" anatomy
         // (pyCopper's own real `CLIPS_CHILDREN = True`) -- the identical
@@ -1057,6 +1070,17 @@ fn paint_node(
         // today." No scroll-offset translation for the general case
         // either, the identical real v1 limit `clip_children`'s own doc
         // comment states: clipping only, not a new scroll mechanism.
+        //
+        // M36 Phase 1 (§5, §7, §11.7): `ScrollView` also always takes
+        // this branch (its own real anatomy always clips, matching
+        // `Carousel`, not an opt-in) -- and, like `Carousel`, needs no
+        // scroll-offset translation here either: `Tree::sync_scroll_
+        // view_layouts` already bakes its one real child's own current
+        // scroll-shifted position into `layout_style` every frame, the
+        // identical bug-avoiding "paint and hit-test read the same real
+        // position, by construction" design this phase's own
+        // investigation found `VirtualList`'s separate paint-time-only
+        // translate above does not actually have.
         let clip_radius = node.paint.corner_radius.current;
         let clip = RoundedRect::new(0.0, 0.0, w, h, clip_radius).to_path(0.1);
         scene.push_layer(Some(&clip), None, None, None, None);

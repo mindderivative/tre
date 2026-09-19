@@ -408,6 +408,19 @@ impl Tree {
                 .compute_layout(root_taffy, available_space)
                 .expect("compute_layout: taffy layout computation failed (button group sync pass)");
         }
+        // M36 Phase 1 (§5, §7, §11.7): the identical real "container-
+        // level state drives one real child's own real layout_style,
+        // then taffy runs once more so it actually lands" shape the
+        // carousel/button-group syncs above already establish, applied
+        // to a real, general `ScrollView`'s own scroll offset. A no-op
+        // call (`false`) whenever no `NodeKind::ScrollView` exists
+        // anywhere in this `Tree` -- every other real `compute_layout`
+        // caller pays nothing extra.
+        if self.sync_scroll_view_layouts() {
+            self.taffy
+                .compute_layout(root_taffy, available_space)
+                .expect("compute_layout: taffy layout computation failed (scroll view sync pass)");
+        }
     }
 
     /// M30 Phase 9 Step 5 (§5, §7, §11.7): the real per-frame item-
@@ -608,6 +621,130 @@ impl Tree {
             }
         }
         true
+    }
+
+    /// M36 Phase 1 (§5, §7, §11.7): the real, general scrollable-
+    /// viewport mechanism, grounded directly in the sibling `pyCopper`
+    /// project's own `ScrollViewElement.perform_layout`/`child_origin`.
+    /// Mirrors `sync_carousel_layouts`'s own exact shape -- and, unlike
+    /// `VirtualList`'s own separate paint-time-only translate, bakes
+    /// the one real child's own current scroll-shifted position
+    /// directly into `layout_style` every frame, so `Tree::hit_test_at`
+    /// (which reads `self.layout(child)`, not a second paint-only
+    /// transform) agrees with `engine-render::paint_node` by
+    /// construction -- this phase's own real investigation found that
+    /// guarantee does *not* hold for `VirtualList` today (a real, pre-
+    /// existing, separate bug this milestone surfaces but does not
+    /// fix). A `ScrollView` with no real children yet, or whose one
+    /// real child was just removed, is a true no-op for that node --
+    /// nothing to scroll.
+    fn sync_scroll_view_layouts(&mut self) -> bool {
+        let views: Vec<NodeId> = self
+            .nodes
+            .iter()
+            .filter(|(_, node)| matches!(node.kind, NodeKind::ScrollView(_)))
+            .map(|(id, _)| id)
+            .collect();
+        if views.is_empty() {
+            return false;
+        }
+        for view in views {
+            let Some(&child) = self.nodes[view].children.first() else {
+                continue;
+            };
+
+            let outer = self.layout(view);
+            let viewport_w = f64::from(outer.size.width);
+            let viewport_h = f64::from(outer.size.height);
+            let child_layout = self.layout(child);
+            let content_w = f64::from(child_layout.size.width);
+            let content_h = f64::from(child_layout.size.height);
+
+            let NodeKind::ScrollView(state) = &self.nodes[view].kind else {
+                unreachable!("checked by the filter above")
+            };
+            let horizontal = state.horizontal;
+            let max_scroll = if horizontal {
+                (content_w - viewport_w).max(0.0)
+            } else {
+                (content_h - viewport_h).max(0.0)
+            };
+            // Real, honest re-clamp on every real layout pass, the
+            // identical "content may have shrunk since last frame"
+            // discipline pyCopper's own `_clamped_scroll` already
+            // applies on every real `perform_layout` call -- a hot-
+            // reload or app-driven content change that shortens the
+            // real scrollable extent must not leave a stale offset
+            // pointing past the new real end.
+            let clamped = state.scroll.current.clamp(0.0, max_scroll);
+            if let NodeKind::ScrollView(state) = &mut self.nodes[view].kind {
+                state.scroll.current = clamped;
+            }
+
+            let mut style = self.nodes[child].layout_style.clone();
+            style.position = Position::Absolute;
+            style.inset = if horizontal {
+                TaffyRect {
+                    left: length(-clamped as f32),
+                    top: length(0.0),
+                    right: auto(),
+                    bottom: auto(),
+                }
+            } else {
+                TaffyRect {
+                    left: length(0.0),
+                    top: length(-clamped as f32),
+                    right: auto(),
+                    bottom: auto(),
+                }
+            };
+            self.set_layout_style(child, style);
+        }
+        true
+    }
+
+    /// M36 Phase 1 (§5, §7, §11.7): moves `id`'s own real `ScrollView`
+    /// scroll position by `delta` real pixels along its own configured
+    /// axis, clamped to `[0.0, max_scroll]` -- the identical real
+    /// clamp-on-write shape `scroll_virtual_list_by` already
+    /// establishes, except `max_scroll` here comes from the one real
+    /// child's own measured content size (`sync_scroll_view_layouts`'s
+    /// own doc comment), not an item-count formula. A positive `delta`
+    /// increases the offset (content moves toward its own end), the
+    /// identical real convention `scroll_virtual_list_by` already
+    /// states. Panics if `id` isn't a real `NodeKind::ScrollView` in
+    /// this `Tree`, the same "internal bug, not a runtime condition"
+    /// contract every other direct scroll method here already uses.
+    pub fn scroll_scroll_view_by(&mut self, id: NodeId, delta: f64) {
+        self.dirty = true;
+        let node = self
+            .nodes
+            .get(id)
+            .expect("scroll_scroll_view_by: NodeId not found in this Tree");
+        let NodeKind::ScrollView(state) = &node.kind else {
+            panic!("scroll_scroll_view_by: {id:?} is not a NodeKind::ScrollView");
+        };
+        let horizontal = state.horizontal;
+        let Some(&child) = node.children.first() else {
+            return;
+        };
+
+        let viewport = f64::from(if horizontal {
+            self.layout(id).size.width
+        } else {
+            self.layout(id).size.height
+        });
+        let content = f64::from(if horizontal {
+            self.layout(child).size.width
+        } else {
+            self.layout(child).size.height
+        });
+        let max_scroll = (content - viewport).max(0.0);
+
+        let NodeKind::ScrollView(state) = &mut self.nodes[id].kind else {
+            unreachable!("checked above")
+        };
+        state.scroll.current = (state.scroll.current + delta).clamp(0.0, max_scroll);
     }
 
     /// The real total content extent of an `Uncontained` carousel's own
@@ -2987,6 +3124,33 @@ impl Tree {
                             self.carousel_on_wheel(id, delta_x, delta_y, now);
                             break;
                         }
+                        // M36 Phase 1 (§5, §7, §11.7): the identical
+                        // real "walk up to the nearest scrollable
+                        // ancestor" widening, a third time, for a real
+                        // general `ScrollView` -- a wheel notch over
+                        // any of its scrolled content bubbles to it
+                        // exactly the way one over a `VirtualList` row
+                        // or a `Carousel` item already does above.
+                        if let NodeKind::ScrollView(state) = &node.kind {
+                            let delta_along = match delta {
+                                ScrollDelta::Lines(x, y) => {
+                                    if state.horizontal {
+                                        x * 20.0
+                                    } else {
+                                        y * 20.0
+                                    }
+                                }
+                                ScrollDelta::Pixels(x, y) => {
+                                    if state.horizontal {
+                                        x
+                                    } else {
+                                        y
+                                    }
+                                }
+                            };
+                            self.scroll_scroll_view_by(id, delta_along);
+                            break;
+                        }
                         current = node.parent;
                     }
                 }
@@ -3205,7 +3369,7 @@ pub fn node_id_as_u64(id: NodeId) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node::{TextAlign, TextState};
+    use crate::node::{ScrollViewState, TextAlign, TextState};
     use peniko::Color;
     use taffy::prelude::{FlexDirection, length};
 
@@ -8997,5 +9161,215 @@ mod tests {
              growth) -- got {}",
             a_width + b_width + c_width
         );
+    }
+
+    /// M36 Phase 1 (§5, §7, §11.7): a real `ScrollView` (100px viewport)
+    /// with a single 400px-tall child, the same real "explicit content
+    /// height the caller supplies" convention every other `add_*`
+    /// factory in this codebase already establishes.
+    fn scrollable_view(horizontal: bool) -> (Tree, NodeId, NodeId) {
+        let mut tree = Tree::new();
+        let (view_w, view_h) = if horizontal {
+            (100.0, 50.0)
+        } else {
+            (100.0, 100.0)
+        };
+        let view = tree.insert(
+            NodeKind::ScrollView(ScrollViewState::new(horizontal)),
+            Style {
+                size: Size {
+                    width: length(view_w),
+                    height: length(view_h),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        let (content_w, content_h) = if horizontal {
+            (400.0, 50.0)
+        } else {
+            (100.0, 400.0)
+        };
+        let (k, s, p) = leaf(content_w, content_h);
+        let content = tree.insert(k, s, p);
+        tree.add_child(view, content);
+        tree.compute_layout(
+            view,
+            Size {
+                width: AvailableSpace::Definite(view_w),
+                height: AvailableSpace::Definite(view_h),
+            },
+        );
+        (tree, view, content)
+    }
+
+    #[test]
+    fn scroll_scroll_view_by_moves_and_clamps_the_offset_at_both_ends() {
+        // 400px of real content in a 100px viewport -- max_scroll =
+        // 400 - 100 = 300.0, the identical real clamp math
+        // `scroll_virtual_list_by`'s own sibling test already proves.
+        let (mut tree, view, _content) = scrollable_view(false);
+
+        tree.scroll_scroll_view_by(view, 50.0);
+        let NodeKind::ScrollView(state) = &tree.get(view).unwrap().kind else {
+            panic!("expected a ScrollView");
+        };
+        assert_eq!(state.scroll.current, 50.0);
+
+        tree.scroll_scroll_view_by(view, 1000.0);
+        let NodeKind::ScrollView(state) = &tree.get(view).unwrap().kind else {
+            panic!("expected a ScrollView");
+        };
+        assert_eq!(
+            state.scroll.current, 300.0,
+            "must clamp to the real content-extent-minus-viewport max, not overshoot"
+        );
+
+        tree.scroll_scroll_view_by(view, -10_000.0);
+        let NodeKind::ScrollView(state) = &tree.get(view).unwrap().kind else {
+            panic!("expected a ScrollView");
+        };
+        assert_eq!(
+            state.scroll.current, 0.0,
+            "must clamp at the real lower bound too, not go negative"
+        );
+    }
+
+    #[test]
+    fn a_scroll_view_shorter_than_its_own_content_has_zero_max_scroll_content_extent_only_this_deep()
+     {
+        let mut tree = Tree::new();
+        let view = tree.insert(
+            NodeKind::ScrollView(ScrollViewState::new(false)),
+            Style {
+                size: Size {
+                    width: length(100.0),
+                    height: length(500.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        let (k, s, p) = leaf(100.0, 200.0);
+        let content = tree.insert(k, s, p);
+        tree.add_child(view, content);
+        tree.compute_layout(
+            view,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(500.0),
+            },
+        );
+
+        tree.scroll_scroll_view_by(view, 50.0);
+        let NodeKind::ScrollView(state) = &tree.get(view).unwrap().kind else {
+            panic!("expected a ScrollView");
+        };
+        assert_eq!(
+            state.scroll.current, 0.0,
+            "content shorter than its own viewport can't scroll at all, correctly"
+        );
+    }
+
+    #[test]
+    fn dispatch_scroll_over_a_scroll_views_child_updates_its_real_scroll_offset() {
+        let (mut tree, view, content) = scrollable_view(false);
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let _ = content;
+        // A real wheel notch over the scrolled content itself (not the
+        // view's own root pixel) must still bubble up to the view's own
+        // scroll offset, the identical real proof `VirtualList`'s own
+        // sibling test already establishes.
+        let outcome = tree.dispatch(
+            view,
+            InputEvent::Scroll {
+                delta: ScrollDelta::Lines(0.0, 2.0),
+                position: Point::new(50.0, 50.0),
+            },
+            &config,
+            Instant::now(),
+        );
+        assert_eq!(outcome, DispatchOutcome::None);
+        let NodeKind::ScrollView(state) = &tree.get(view).unwrap().kind else {
+            panic!("expected a ScrollView");
+        };
+        assert_eq!(
+            state.scroll.current, 40.0,
+            "2.0 lines * this crate's own 20px-per-line convention == 40.0px"
+        );
+    }
+
+    /// M36 Phase 1 (§5, §7, §11.7): the real, decisive proof this whole
+    /// phase's own design choice exists for -- unlike `VirtualList`
+    /// (this phase's own investigation found a real, previously
+    /// undiscovered hit-test-after-scroll bug there), a real, specific
+    /// grandchild inside a `ScrollView`'s scrolled content must
+    /// resolve correctly to a point at its own current, post-scroll
+    /// screen position, and *not* to a point at its own stale,
+    /// pre-scroll position -- a genuinely decisive proof (unlike
+    /// testing the single content child alone, whose own full 400px
+    /// local extent would trivially contain almost any in-viewport
+    /// point regardless of whether scroll were ever subtracted at
+    /// all).
+    #[test]
+    fn hit_test_after_a_real_scroll_resolves_a_real_grandchild_at_its_own_post_scroll_position() {
+        let (mut tree, view, content) = scrollable_view(false);
+        // A real, narrow marker grandchild at content-local y 200..220
+        // -- the identical real `Position::Absolute` + `inset`
+        // technique every other precisely-positioned node in this
+        // codebase already uses.
+        let (k, s, p) = leaf(100.0, 20.0);
+        let marker = tree.insert(k, s, p);
+        let mut marker_style = tree.get(marker).unwrap().layout_style.clone();
+        marker_style.position = Position::Absolute;
+        marker_style.inset = TaffyRect {
+            left: length(0.0),
+            top: length(200.0),
+            right: auto(),
+            bottom: auto(),
+        };
+        tree.set_layout_style(marker, marker_style);
+        tree.add_child(content, marker);
+
+        tree.scroll_scroll_view_by(view, 150.0);
+        tree.compute_layout(
+            view,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+
+        // After scrolling by 150, the marker's own real content-local
+        // slot (200..220) now sits at real screen y (200-150)..(220-150)
+        // = 50..70 -- a point there must hit the marker specifically.
+        let hit_post_scroll = tree.hit_test(view, Point::new(50.0, 60.0));
+        assert_eq!(
+            hit_post_scroll,
+            Some(marker),
+            "a real point at the marker's own genuine post-scroll screen position must hit it"
+        );
+
+        // The marker's own *stale*, pre-scroll screen position (as if
+        // scroll had never been subtracted, real screen y 200..220) is
+        // now entirely past the real 100px viewport -- `VirtualList`'s
+        // own real gap would have kept resolving there; this design
+        // must not.
+        let hit_stale = tree.hit_test(view, Point::new(50.0, 210.0));
+        assert_ne!(
+            hit_stale,
+            Some(marker),
+            "a real point at the marker's own stale, pre-scroll position must not still \
+             resolve to it -- that's the exact real bug this phase's own design avoids"
+        );
+        let _ = content;
     }
 }

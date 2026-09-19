@@ -225,7 +225,14 @@ impl PyWindow {
     /// this moves its own real viewport into scrollback instead --
     /// mirrors `app.rs`'s own real winit `MouseWheel` handling, but
     /// simpler: `node` names the target explicitly, no hit-test needed.
-    fn scroll(&self, node: PyRef<'_, Node>, delta_y: f64, py: Python<'_>) {
+    ///
+    /// M36 Phase 1 (§5, §7, §11.7): `delta_x`, real pixels, real,
+    /// additive widening for a real horizontal `ScrollView` -- ignored
+    /// by the `VirtualList`/`Carousel`/`Terminal` branches above,
+    /// which stay vertical-only (a real, stated, pre-existing scope,
+    /// not touched by this phase).
+    #[pyo3(signature = (node, delta_y, delta_x=0.0))]
+    fn scroll(&self, node: PyRef<'_, Node>, delta_y: f64, delta_x: f64, py: Python<'_>) {
         let is_terminal = matches!(
             self.tree.borrow().get(node.id).map(|n| &n.kind),
             Some(engine_core::NodeKind::Terminal(_))
@@ -254,7 +261,7 @@ impl PyWindow {
         let outcome = self.tree.borrow_mut().dispatch(
             self.root,
             InputEvent::Scroll {
-                delta: engine_core::ScrollDelta::Pixels(0.0, delta_y),
+                delta: engine_core::ScrollDelta::Pixels(delta_x, delta_y),
                 position: point,
             },
             &interaction_config(),
