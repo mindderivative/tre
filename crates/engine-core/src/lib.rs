@@ -38,7 +38,7 @@ pub use node::{
     CircularProgressState, ContentFit, ICON_VIEWBOX_SIZE, IconState, ImageState, ItemExtent,
     LinearProgressState, Node, NodeId, NodeKind, PaintProperties, RadioButtonState, SliderState,
     SplitterState, SwitchState, TerminalCell, TerminalState, TextAlign, TextFieldState, TextState,
-    VirtualListState, terminal_cell_size,
+    VirtualListState,
 };
 pub use overlay::OverlayMeta;
 pub use shape_morph::ShapeKey;

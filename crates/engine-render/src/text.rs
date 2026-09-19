@@ -26,6 +26,16 @@ use vello_hybrid::{Resources, Scene};
 const ROBOTO_REGULAR: &[u8] = include_bytes!("../assets/fonts/Roboto-Regular.ttf");
 const ROBOTO_MEDIUM: &[u8] = include_bytes!("../assets/fonts/Roboto-Medium.ttf");
 const NOTO_SANS_ARABIC: &[u8] = include_bytes!("../assets/fonts/NotoSansArabic-Regular.ttf");
+/// M32 Phase 1 (§5, §8, §10): the real bundled monospace face --
+/// `assets/fonts/README.md` has the full real attribution. Real family
+/// name confirmed by direct read of the font's own `name` table (Python
+/// `fontTools.ttLib.TTFont(...)['name']`, nameID 1), not assumed from
+/// the filename: `"Hack Nerd Font Mono"` (below).
+const HACK_NERD_FONT_MONO: &[u8] = include_bytes!("../assets/fonts/HackNerdFontMono-Regular.ttf");
+/// The real family name `Hack Nerd Font Mono`'s own `name` table
+/// reports -- what every `FontFamily::named(...)` call below must pass
+/// to actually resolve to this bundled face.
+pub const MONOSPACE_FONT_FAMILY: &str = "Hack Nerd Font Mono";
 
 /// The exact inputs a shaped `Layout` depends on -- equality here
 /// functionally determines the output, which is what makes caching by
@@ -86,6 +96,15 @@ pub struct TextRenderer {
     /// distinct strings a live-updating label has ever shown; see
     /// `evict_stale_layouts`.
     layout_cache: HashMap<NodeId, CachedLayout>,
+    /// M32 Phase 1 (§5, §8, §10): real per-`(font_family, font_size)`
+    /// monospace cell metrics, memoized -- see `monospace_cell_size`.
+    /// Unbounded like `layout_cache` was before `evict_stale_layouts`
+    /// existed, but real, honest, and low-risk here: keyed by a font
+    /// size in bits, not a `NodeId`, so its size tracks how many
+    /// distinct `(family, size)` combinations an app has ever actually
+    /// used -- a handful in practice (an app doesn't animate its own
+    /// terminal's font size every frame), never one entry per node.
+    monospace_cell_cache: HashMap<(String, u32), (f32, f32)>,
 }
 
 impl Default for TextRenderer {
@@ -100,7 +119,12 @@ impl TextRenderer {
             shared: false,
             system_fonts: false,
         });
-        for bytes in [ROBOTO_REGULAR, ROBOTO_MEDIUM, NOTO_SANS_ARABIC] {
+        for bytes in [
+            ROBOTO_REGULAR,
+            ROBOTO_MEDIUM,
+            NOTO_SANS_ARABIC,
+            HACK_NERD_FONT_MONO,
+        ] {
             collection.register_fonts(Blob::new(Arc::new(bytes.to_vec())), None);
         }
         Self {
@@ -110,7 +134,37 @@ impl TextRenderer {
             },
             layout_cx: LayoutContext::new(),
             layout_cache: HashMap::new(),
+            monospace_cell_cache: HashMap::new(),
         }
+    }
+
+    /// M32 Phase 1 (§5, §8, §10): the real per-font-size monospace cell
+    /// size `draw_terminal` positions every cell on, replacing the old
+    /// `engine_core::terminal_cell_size` analytic estimate (`font_size *
+    /// 0.6`/`* 1.3`) now that a real bundled monospace face exists to
+    /// measure. Shapes a single `"M"` glyph through the exact same
+    /// `build_field_layout` every other real text path in this module
+    /// already uses (zero new shaping logic) and reads back its real
+    /// `Layout::width()`/`Layout::height()` -- for a genuinely monospace
+    /// face every glyph shares one real advance width, so measuring any
+    /// single glyph gives the exact real per-cell width, and shaping a
+    /// single line gives the exact real per-cell height (ascent +
+    /// descent + line gap, the same real metrics a terminal emulator's
+    /// own cell grid is built from). Cached by `(font_family, font_size)`
+    /// -- `draw_terminal` calls this every frame, and re-shaping `"M"`
+    /// on every single frame for a value that only changes when the app
+    /// changes `font_size`/`font_family` would be real, avoidable work,
+    /// the identical "cache what a frame doesn't need to redo" reasoning
+    /// `layout_cache` above already established.
+    pub fn monospace_cell_size(&mut self, font_family: &str, font_size: f32) -> (f32, f32) {
+        let key = (font_family.to_string(), font_size.to_bits());
+        if let Some(&size) = self.monospace_cell_cache.get(&key) {
+            return size;
+        }
+        let layout = self.build_field_layout("M", font_family, 400.0, font_size, f32::MAX);
+        let size = (layout.width(), layout.height());
+        self.monospace_cell_cache.insert(key, size);
+        size
     }
 
     /// Returns the already-shaped `Layout` for `node_id` if `content`/
@@ -147,6 +201,7 @@ impl TextRenderer {
             font_cx,
             layout_cx,
             layout_cache,
+            monospace_cell_cache: _,
         } = self;
         let stale = layout_cache
             .get(&node_id)
@@ -590,14 +645,14 @@ impl TextRenderer {
     /// positioned analytically, glyphs inside a run of same-styled
     /// cells shaped with the text engine's ordinary shaping" split the
     /// sibling `pyCopper` project's own real `Terminal` widget already
-    /// established, reused here directly. **Real, honest v1
-    /// limitation, not silently glossed over:** `cell_width`/`cell_
-    /// height` are a fixed analytic estimate from `state.font_size`
-    /// (this project bundles no real monospace font yet, `Code
-    /// Editor`'s own already-stated gap, M30 Phase 9 Step 3) -- glyphs
-    /// shaped from a proportional face won't land exactly on this
-    /// grid, the identical real drift `Code Editor`'s own missing-
-    /// monospace-font gap already causes there.
+    /// established, reused here directly. **M32 Phase 1 (§5, §8, §10):**
+    /// `cell_width`/`cell_height` are now the real per-`state.font_
+    /// family`/`state.font_size` measured monospace metrics
+    /// (`monospace_cell_size`, cached), not the old fixed `font_size *
+    /// 0.6`/`* 1.3` analytic estimate -- a genuinely monospace bundled
+    /// face (`Hack Nerd Font Mono`) means every glyph really does share
+    /// one advance width, so the grid glyphs are shaped onto now
+    /// reflects the real font actually being painted, not a guess.
     ///
     /// Each row's own cells are grouped into real runs (a contiguous
     /// span sharing one background, or one foreground/bold pair) so a
@@ -615,7 +670,8 @@ impl TextRenderer {
         show_caret: bool,
         _node_id: NodeId,
     ) {
-        let (cell_width, cell_height) = engine_core::terminal_cell_size(state.font_size);
+        let (cell_width, cell_height) =
+            self.monospace_cell_size(&state.font_family, state.font_size);
         let cell_width = f64::from(cell_width);
         let cell_height = f64::from(cell_height);
 
@@ -1244,6 +1300,74 @@ mod tests {
             3,
             "a real display offset landing on the marker's own glyph must resolve to the \
              fold's own real start byte"
+        );
+    }
+
+    /// M32 Phase 1 (§5, §8, §10): the real, load-bearing claim this
+    /// phase exists to prove -- the bundled `MONOSPACE_FONT_FAMILY` face
+    /// genuinely has one uniform advance width across visually
+    /// different-width glyphs ("M" wide, "i" narrow), unlike a real
+    /// proportional face (`Roboto`, already bundled), which does not.
+    /// If the family name failed to resolve to the real bundled font
+    /// (a typo'd string, a registration bug), this would either fall
+    /// back to a real proportional fallback face (this test would then
+    /// fail the same way the `Roboto` half already does) or shape with
+    /// zero real glyphs -- either way a real, meaningful failure, not a
+    /// vacuous pass.
+    #[test]
+    fn the_bundled_monospace_face_has_uniform_advance_unlike_a_real_proportional_face() {
+        let mut renderer = TextRenderer::new();
+        let m_width = renderer
+            .build_field_layout("M", MONOSPACE_FONT_FAMILY, 400.0, 16.0, f32::MAX)
+            .width();
+        let i_width = renderer
+            .build_field_layout("i", MONOSPACE_FONT_FAMILY, 400.0, 16.0, f32::MAX)
+            .width();
+        assert!(
+            (m_width - i_width).abs() < 0.01,
+            "a genuinely monospace face must give \"M\" and \"i\" the identical real advance \
+             width, got M={m_width} i={i_width}"
+        );
+
+        let roboto_m_width = renderer
+            .build_field_layout("M", "Roboto", 400.0, 16.0, f32::MAX)
+            .width();
+        let roboto_i_width = renderer
+            .build_field_layout("i", "Roboto", 400.0, 16.0, f32::MAX)
+            .width();
+        assert!(
+            (roboto_m_width - roboto_i_width).abs() > 1.0,
+            "the real contrast case: Roboto is genuinely proportional, so its own \"M\"/\"i\" \
+             advances must differ by a real, visible amount, got M={roboto_m_width} \
+             i={roboto_i_width} -- if this ever fails, the contrast this test relies on to \
+             prove the monospace claim meaningful no longer holds"
+        );
+    }
+
+    /// Real, direct coverage of `monospace_cell_size`'s own stated
+    /// contract: a real per-font-size measurement (scales with
+    /// `font_size`, not a constant), and a real cache that returns the
+    /// identical value on a repeat call rather than silently drifting.
+    #[test]
+    fn monospace_cell_size_scales_with_font_size_and_is_cached() {
+        let mut renderer = TextRenderer::new();
+        let (w14, h14) = renderer.monospace_cell_size(MONOSPACE_FONT_FAMILY, 14.0);
+        let (w28, h28) = renderer.monospace_cell_size(MONOSPACE_FONT_FAMILY, 28.0);
+        assert!(
+            w14 > 0.0 && h14 > 0.0,
+            "a real font's own measured cell size must be strictly positive"
+        );
+        assert!(
+            w28 > w14 && h28 > h14,
+            "doubling font_size must genuinely grow both real measured dimensions, got \
+             14pt=({w14}, {h14}) 28pt=({w28}, {h28})"
+        );
+        let (w14_again, h14_again) = renderer.monospace_cell_size(MONOSPACE_FONT_FAMILY, 14.0);
+        assert_eq!(
+            (w14, h14),
+            (w14_again, h14_again),
+            "a repeat call at the identical (font_family, font_size) must return the identical \
+             cached value, not reshape and silently drift"
         );
     }
 }

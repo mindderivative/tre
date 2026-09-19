@@ -23,7 +23,7 @@ FFI behavior: the gutter's own content tracks the editor's real line
 count live, on every real edit.
 """
 
-from tre import App, Window
+from tre import MONOSPACE_FONT_FAMILY, App, Window
 
 window = Window(width=460, height=280, title="tre v2 -- code editor gutter")
 window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), dark=False)
@@ -50,7 +50,12 @@ gutter = window.add_text(
     background=(0x49, 0x45, 0x4F, 0xFF),  # on-surface-variant-ish grey
     width=GUTTER_WIDTH,
     height=200,
-    font_family="Roboto",
+    # M32 Phase 1 (§5, §8, §10): `add_code_editor` now always shapes
+    # with the real bundled monospace face -- the gutter's own sibling
+    # `Text` node must match that exact `font_family`, not `Roboto`,
+    # or the "lines up by construction" claim above (identical
+    # `shaped_layout` inputs) no longer holds.
+    font_family=MONOSPACE_FONT_FAMILY,
     font_weight=FONT_WEIGHT,
     font_size=FONT_SIZE,
     x=20,

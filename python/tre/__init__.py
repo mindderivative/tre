@@ -30,6 +30,15 @@ nothing else.
 
 from tre._core import App, CanvasContext, Node, View, Window, _record_read
 
+#: M32 Phase 1 (§5, §8, §10): the real bundled monospace face
+#: `Window.add_terminal`/`add_code_editor` themselves always shape
+#: with internally (`engine_render::MONOSPACE_FONT_FAMILY`, "Hack
+#: Nerd Font Mono") -- exported here so app-composed siblings (a
+#: gutter's own `Text` node, a fold toggle) that must line up with the
+#: real editor grid can match its exact real font_family rather than
+#: guessing or drifting out of sync with it.
+MONOSPACE_FONT_FAMILY = "Hack Nerd Font Mono"
+
 
 class Signal:
     """A minimal reactive value cell (§16.2). `.get()` records a
@@ -119,4 +128,13 @@ class ViewModel:
         view._attach(self)
 
 
-__all__ = ["App", "CanvasContext", "Node", "View", "Window", "Signal", "ViewModel"]
+__all__ = [
+    "App",
+    "CanvasContext",
+    "MONOSPACE_FONT_FAMILY",
+    "Node",
+    "View",
+    "Window",
+    "Signal",
+    "ViewModel",
+]

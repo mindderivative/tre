@@ -19,6 +19,7 @@ use engine_core::{
     RadioButtonState, Role, SliderState, SplitterState, SwitchState, TextAlign, TextFieldState,
     TextState, Tree,
 };
+use engine_render::{MONOSPACE_FONT_FAMILY, TextRenderer};
 use peniko::Color;
 use peniko::kurbo::Affine;
 use pyo3::prelude::*;
@@ -6513,21 +6514,22 @@ impl PyWindow {
     /// `VirtualList` clips its own children today, the identical real
     /// gap `Node Graph`, Step 2, already found and stated) -- content
     /// past the box's own edges simply isn't visible, a real v1
-    /// limit, not silently worked around; no bundled monospace font
-    /// (this catalog's only registered fonts are Roboto Regular/
-    /// Medium and Noto Sans Arabic, confirmed via direct read of
-    /// `TextRenderer::new`, whose own "system font discovery is
-    /// deliberately OFF" doc comment means an arbitrary `font_family`
-    /// string wouldn't resolve to a real installed face anyway) --
-    /// bundling one is real, separate asset/licensing work this step
-    /// doesn't take on, so `font_family` isn't exposed as a param at
-    /// all here (unlike `add_text_field`), avoiding the false
-    /// impression that any name would work; and no Tab-key indentation
+    /// limit, not silently worked around; and no Tab-key indentation
     /// capture (`Tab` remains generic focus traversal engine-wide,
     /// `Tree::dispatch`'s own top-level match, confirmed via direct
     /// read -- pyCopper's own real equivalent needed a new dispatcher-
     /// level opt-in flag, `CAPTURES_TAB`, a real, separate capability
     /// this step doesn't add).
+    ///
+    /// **M32 Phase 1 (§5, §8, §10):** always shapes with the real
+    /// bundled monospace face (`engine_render::MONOSPACE_FONT_FAMILY`,
+    /// "Hack Nerd Font Mono") rather than the general-purpose `Roboto`
+    /// this step originally had to fall back to -- a genuinely monospace
+    /// editor at last, not an approximation. `font_family` still isn't
+    /// exposed as a param here (unlike `add_text_field`): a code editor
+    /// composed from a proportional face would defeat the whole point
+    /// of this widget class, so there is still only one real correct
+    /// choice, now a bundled one rather than an absent one.
     #[pyo3(signature = (content, background, width, height, font_weight=400.0, font_size=14.0, x=None, y=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_code_editor(
@@ -6542,7 +6544,8 @@ impl PyWindow {
         y: Option<f32>,
     ) -> Node {
         let (r, g, b, a) = background;
-        let mut text_field_state = TextFieldState::new(content, "Roboto", font_weight, font_size);
+        let mut text_field_state =
+            TextFieldState::new(content, MONOSPACE_FONT_FAMILY, font_weight, font_size);
         text_field_state.multiline = true;
         // M31 Phase 3 (§5, §8): a real Code Editor shows space/tab as
         // visible glyphs by default -- the same real convention every
@@ -6591,9 +6594,11 @@ impl PyWindow {
     /// No official MD3 page exists (confirmed via the same directory-
     /// listing technique this milestone already uses).
     ///
-    /// `width`/`height` are computed from `cols`/`rows` via the real,
-    /// shared `engine_core::terminal_cell_size` formula -- the
-    /// identical real analytic grid `engine-render`'s own `draw_
+    /// `width`/`height` are computed from `cols`/`rows` via the real
+    /// bundled monospace face's own measured cell size (M32 Phase 1,
+    /// §5, §8, §10: `TextRenderer::monospace_cell_size`, replacing the
+    /// old `engine_core::terminal_cell_size` analytic estimate) -- the
+    /// identical real per-cell grid `engine-render`'s own `draw_
     /// terminal` positions every cell on, so the node's own box always
     /// exactly fits its own real grid, no manual size bookkeeping for
     /// the app. **Real, confirmed POSIX-only v1**, the identical real
@@ -6619,14 +6624,26 @@ impl PyWindow {
         })?;
 
         let (r, g, b, a) = background;
-        let (cell_width, cell_height) = engine_core::terminal_cell_size(font_size);
+        // M32 Phase 1 (§5, §8, §10): a throwaway `TextRenderer` solely
+        // to measure the real bundled monospace face -- a real, one-
+        // time cost per `add_terminal` call (font registration, not a
+        // per-frame cost), the identical real "font discovery is a
+        // one-time cost" reasoning `TextRenderer::new`'s own doc comment
+        // already states, just paid here rather than amortized across
+        // an app's whole lifetime the way the real render-loop's own
+        // `TextRenderer` instance is.
+        let (cell_width, cell_height) =
+            TextRenderer::new().monospace_cell_size(MONOSPACE_FONT_FAMILY, font_size);
         let width = cell_width * f32::from(cols);
         let height = cell_height * f32::from(rows);
 
         let mut tree = self.tree.borrow_mut();
         let id = tree.insert(
             NodeKind::Terminal(engine_core::TerminalState::new(
-                cols, rows, "Roboto", font_size,
+                cols,
+                rows,
+                MONOSPACE_FONT_FAMILY,
+                font_size,
             )),
             positioned_style(
                 Size {
@@ -6647,6 +6664,21 @@ impl PyWindow {
 
         self.terminals.borrow_mut().insert(id, session);
         Ok(self.wrap_node(id))
+    }
+
+    /// M32 Phase 1 (§5, §8, §10): the real per-`font_size` cell size
+    /// (`width`, `height`) of the bundled monospace face (`Hack Nerd
+    /// Font Mono`) that `add_terminal`/`add_code_editor` themselves now
+    /// use internally -- exposed here so app-level layout code (a
+    /// gutter's own per-line click target, `examples/code_editor_
+    /// folding.py`'s own toggle affordance) can size against the exact
+    /// real value actually painted, rather than reaching for its own
+    /// approximation the way `LINE_HEIGHT = FONT_SIZE * 1.3` (that
+    /// example's own prior real placeholder, `terminal_cell_size`'s own
+    /// now-removed doc comment) had to before a real font existed to
+    /// measure.
+    fn get_monospace_cell_size(&self, font_size: f32) -> (f32, f32) {
+        TextRenderer::new().monospace_cell_size(MONOSPACE_FONT_FAMILY, font_size)
     }
 
     /// M30 Phase 9 Step 5 (§5, §7, §11.7): a real MD3 carousel --

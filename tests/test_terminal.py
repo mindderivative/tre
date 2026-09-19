@@ -101,6 +101,22 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
     assert "HELLO_FROM_TERMINAL" in text, f"expected real shell output not found in {text!r}"
 
 
+def test_get_monospace_cell_size_returns_real_positive_values_that_scale_with_font_size():
+    """M32 Phase 1 (§5, §8, §10): the real per-font-size measured cell
+    size `add_terminal`/`add_code_editor` themselves size against
+    internally, exposed here so app-level layout code can match it --
+    proven real (positive, genuinely scales with `font_size`, not a
+    fixed placeholder) rather than just "doesn't raise".
+    """
+    window = Window(width=400, height=300)
+    width_14, height_14 = window.get_monospace_cell_size(font_size=14.0)
+    width_28, height_28 = window.get_monospace_cell_size(font_size=28.0)
+    assert width_14 > 0.0
+    assert height_14 > 0.0
+    assert width_28 > width_14
+    assert height_28 > height_14
+
+
 def test_press_key_without_a_focused_terminal_falls_through_harmlessly():
     """`press_key`/`type_text`'s own real terminal-routing check must
     be a true no-op when nothing terminal-shaped is focused -- proven

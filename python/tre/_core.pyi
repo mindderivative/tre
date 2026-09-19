@@ -1027,14 +1027,16 @@ class Window:
     ) -> Node:
         """A real, genuinely multiline `TextField` (`Enter` inserts a
         newline, `Home`/`End` operate on the current line, `ArrowUp`/
-        `ArrowDown` navigate by line preserving column) -- a real,
-        honestly-scoped v1, not a full IDE-grade editor: no syntax
-        highlighting, no line-number gutter, no scroll/clip for
-        content past the box's own edges, no bundled monospace font
-        (always renders in `"Roboto"`, this catalog's own only
-        registered face -- `font_family` isn't exposed here since no
-        other name would actually resolve), and no Tab-key indentation
-        capture (`Tab` still moves focus).
+        `ArrowDown` navigate by line preserving column, `Tab` inserts
+        real indentation). Composes with `Node.set_syntax_spans`,
+        `Node.set_folded_ranges`, and an app-composed sibling gutter
+        (M31 Phases 1-5) for real syntax highlighting, code folding,
+        and line numbers. Always shapes with the real bundled
+        monospace face (M32 Phase 1, `"Hack Nerd Font Mono"`) --
+        `font_family` isn't exposed here, since any other name would
+        defeat a genuinely monospace editor's own point. Real,
+        honestly-scoped v1 gap still open: no scroll/clip for content
+        past the box's own edges.
         """
         ...
     def add_terminal(
@@ -1058,6 +1060,15 @@ class Window:
         selection, no Ctrl+C/SIGINT or any other Ctrl+letter shortcut,
         no real resize-with-window, and POSIX only. Raises `OSError` if
         `shell` can't be spawned on a real PTY.
+        """
+        ...
+    def get_monospace_cell_size(self, font_size: float) -> tuple[float, float]:
+        """The real `(width, height)` cell size of the bundled
+        monospace face (`"Hack Nerd Font Mono"`) at `font_size` --
+        the exact real metrics `add_terminal`/`add_code_editor`
+        themselves size against, for app-level layout code (a gutter's
+        own per-line click target, a fold toggle) that needs to line up
+        with the identical real grid, instead of an approximation.
         """
         ...
     def add_carousel(

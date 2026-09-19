@@ -304,21 +304,6 @@ impl TerminalState {
     }
 }
 
-/// M30 Phase 9 Step 4 (§5, §8, §10): the real analytic cell size
-/// `engine-render`'s own `TextRenderer::draw_terminal` positions every
-/// cell background/glyph/cursor on, and `engine-py`'s own `Window.
-/// add_terminal` sizes a fresh terminal node's own real box from --
-/// declared once, here, rather than duplicated in both crates where a
-/// future change to one could silently drift out of sync with the
-/// other. Real, honest v1 approximation, not a precise font metric
-/// (this project bundles no real monospace font yet, `Code Editor`'s
-/// own already-stated gap, M30 Phase 9 Step 3): a widely-used real
-/// monospace aspect-ratio estimate (advance width ~0.6em, line height
-/// ~1.3em), not measured from any specific installed font.
-pub fn terminal_cell_size(font_size: f32) -> (f32, f32) {
-    (font_size * 0.6, font_size * 1.3)
-}
-
 /// M30 Phase 9 Step 5 (§5, §7, §11.7): which of MD3's three real
 /// carousel layouts a `NodeKind::Carousel` is -- verified directly
 /// against `COMPONENT_CAROUSEL.md` (via the sibling `pyCopper`

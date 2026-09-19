@@ -9,11 +9,12 @@ available to design it from.
 
 Composes a real gutter toggle affordance with M31 Phase 1's own real
 line-number gutter pattern: a small clickable `Rect` per foldable
-line, positioned using the identical real line-height estimate
-`engine_core::terminal_cell_size`'s own doc comment already states
-honestly as an approximation (`font_size * 1.3`) -- no new engine
-capability needed for the affordance itself, the same real "compose
-from existing primitives" outcome Phase 1 already reached.
+line, positioned using the real measured line height M32 Phase 1's
+own `Window.get_monospace_cell_size` now provides (this script used a
+`font_size * 1.3` approximation before that real font/metric existed)
+-- no new engine capability needed for the affordance itself, the
+same real "compose from existing primitives" outcome Phase 1 already
+reached.
 
 **Real, deliberate v1 limitation, stated directly, not glossed over:**
 cursor navigation is not fold-aware -- `set_folded_ranges`'s own Rust
@@ -26,7 +27,7 @@ own `a_folded_range_paints_genuinely_different_pixels_than_unfolded`/
 not this script.
 """
 
-from tre import Window
+from tre import MONOSPACE_FONT_FAMILY, Window
 
 window = Window(width=460, height=300, title="tre v2 -- code folding")
 window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), dark=False)
@@ -35,12 +36,12 @@ FONT_WEIGHT = 400.0
 FONT_SIZE = 14.0
 GUTTER_WIDTH = 32.0
 TOGGLE_WIDTH = 16.0
-# The identical real, honest line-height approximation
-# `engine_core::terminal_cell_size` already documents (`font_size *
-# 1.3`) -- only the toggle affordance's own click target needs this;
-# the gutter's own line-number text stays pixel-perfect via the Phase
-# 1 "matching sibling Text node" trick, which needs no Y math at all.
-LINE_HEIGHT = FONT_SIZE * 1.3
+# M32 Phase 1 (§5, §8, §10): the real measured line height of the
+# bundled monospace face at FONT_SIZE -- only the toggle affordance's
+# own click target needs this; the gutter's own line-number text stays
+# pixel-perfect via the Phase 1 "matching sibling Text node" trick,
+# which needs no Y math at all.
+_, LINE_HEIGHT = window.get_monospace_cell_size(font_size=FONT_SIZE)
 
 content = "def add(a, b):\n    return a + b\n\ndef sub(a, b):\n    return a - b"
 # Byte range of "def add"'s own real body (the "    return a + b"
@@ -64,7 +65,10 @@ gutter = window.add_text(
     background=(0x49, 0x45, 0x4F, 0xFF),
     width=GUTTER_WIDTH,
     height=220,
-    font_family="Roboto",
+    # M32 Phase 1 (§5, §8, §10): must match `add_code_editor`'s own
+    # real bundled monospace face for the "lines up by construction"
+    # claim to hold -- see `code_editor_gutter.py`'s identical note.
+    font_family=MONOSPACE_FONT_FAMILY,
     font_weight=FONT_WEIGHT,
     font_size=FONT_SIZE,
     x=20 + TOGGLE_WIDTH,

@@ -18,7 +18,11 @@ purely visual, `get_text()` always reads back the real, unsubstituted
 content, proven below. M31 Phase 4 (Syntax Highlighting) closed a
 fourth: `Node.set_syntax_spans` paints real per-byte-range colors --
 app-side tokenization only (Design Principle 6, this script's own
-tiny keyword tokenizer below), no engine-bundled lexer.
+tiny keyword tokenizer below), no engine-bundled lexer. M32 Phase 1
+(§5, §8, §10) closed the fifth: `add_code_editor` now always shapes
+with a real bundled monospace face ("Hack Nerd Font Mono") instead of
+falling back to the general-purpose `Roboto` this step originally had
+to use -- a genuinely monospace editor at last.
 
 What this script proves automatically (headless-CI-safe, no human
 needed): a real click focuses the editor; a real `Enter` keypress

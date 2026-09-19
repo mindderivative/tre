@@ -1,59 +1,65 @@
-# PLAN — M31 Phase 6: Real Event-Loop Wake (EventLoopProxy)
+# PLAN — M32 Phase 1: Bundled Monospace Font
 
 ## Goal
-A real, generic wake mechanism for `App.run`'s own idle event loop,
-closing the real, stated v1 cost M30 Phase 9 Step 4 (Terminal) left
-open (continuously widening `any_active` to keep polling instead of
-genuinely waking on new PTY output). This closes M31 itself, all 6
-phases.
+Replace the fixed analytic `terminal_cell_size` estimate (`font_size *
+0.6`/`* 1.3`) with real, measured monospace font metrics for both
+`Terminal` and `Code Editor`, by bundling a real, already-vetted
+monospace face rather than continuing to approximate with `Roboto`.
 
 ## Steps
-1. Confirmed the real, existing precedent via direct source read
-   before designing anything: `engine-platform::run_windowed_multi`
-   already owns a real `EventLoopProxy<PlatformEvent>`, already used
-   for AccessKit's own cross-thread event delivery and `WindowOpener`'s
-   own "request a window" mechanism.
-2. Widened the private `PlatformEvent` enum with a real, untargeted
-   `Wake` variant (no `WindowId` payload — confirmed the correct v1
-   answer the scoping note left open: redraws every open window, the
-   same whole-loop shape `any_active` already had).
-3. Added a new public `EventLoopWaker` handle (`Send` + `Clone`,
-   wrapping the identical `EventLoopProxy`), exposed via
-   `run_windowed_multi`'s own `setup` closure alongside the existing
-   `WindowOpener` — the one real place able to reach a fresh proxy and
-   hand a clone to an already-constructed background producer.
-4. Confirmed every real `add_terminal` call happens before `App.run()`
-   starts, so every real `TerminalSession` already exists by the time
-   `setup` runs — no need to thread the waker through construction.
-5. Added `TerminalSession::set_waker`; the waker is shared with the
-   session's own background PTY reader thread via the identical
-   `Arc<Mutex<...>>` pattern `incoming` already uses, so a waker
-   registered later is still visible to an already-running thread.
-   The reader thread now calls `waker.wake()` the instant real new PTY
-   bytes arrive.
-6. Removed the old `any_active` widening in `engine-py::app.rs` (the
-   real point of this phase, not an optional cleanup) — a window with
-   a genuinely quiet live terminal can now go fully idle.
-7. Wrote a new, dedicated `engine-platform` integration test
-   (`wake_event.rs`): a genuinely separate OS thread holding only a
-   waker clone calls `wake()` three times while a real event loop
-   runs; the window still completes its own real `max_frames` cleanly.
-8. Ran a real, direct empirical script re-confirming the terminal's
-   own real shell-response behavior survives the `any_active` removal,
-   then the full pytest suite (3x, checking stability).
-9. Full verification chain: cargo check/clippy/fmt/test, maturin
-   develop, pytest (full suite), all 69 examples, showcase demo.
-10. Update `BUILD_TRACKER.md` — verified the parser's own reported
-    item count before/after (191, unchanged), regenerate + republish
-    the Build Tracker artifact. Closes M31 itself, all 6 phases.
-11. Update memory, commit, push.
+1. Located a real, directly reusable asset: the sibling `pyCopper`
+   project already bundles `HackNerdFontMono-Regular.ttf` (MIT
+   License, Hack project, 2018 Source Foundry Authors) for its own
+   `Terminal` widget, for the identical real reason (broad glyph
+   coverage avoiding "tofu" in TUI/prompt content).
+2. Confirmed the font's own real embedded family name via direct read
+   of its `name` table (`fontTools.ttLib`), not assumed from the
+   filename: "Hack Nerd Font Mono".
+3. Copied the font + its license file into
+   `crates/engine-render/assets/fonts/`, documented in that
+   directory's own README alongside the three existing fonts.
+4. Registered it in `TextRenderer::new()` (`include_bytes!` +
+   `collection.register_fonts`), added `MONOSPACE_FONT_FAMILY` const.
+5. Added `TextRenderer::monospace_cell_size(font_family, font_size)`:
+   shapes a single "M" glyph through the existing `build_field_layout`
+   (zero new shaping logic) and reads back real `Layout::width()`/
+   `height()` — for a genuinely monospace face this gives the exact
+   real per-cell width/height. Memoized by `(font_family, font_size)`.
+6. `draw_terminal` now calls this instead of `engine_core::
+   terminal_cell_size`.
+7. Removed `engine_core::terminal_cell_size` entirely (both real call
+   sites migrated off it, would otherwise be dead code) — `engine-core`
+   stays font-agnostic per the crate-boundary rule (§4); the real
+   metric now lives where real font access actually exists
+   (`engine-render`), which `engine-py` already depends on.
+8. `engine-py::add_terminal`/`add_code_editor` now build a throwaway
+   `TextRenderer` to measure real cell/line metrics at node-creation
+   time (a real, one-time cost per call, not a per-frame one) and both
+   always shape with the real bundled monospace face instead of
+   `"Roboto"`.
+9. Added `Window.get_monospace_cell_size(font_size) -> (f32, f32)`,
+   exposing the same real metric to Python app code — replacing
+   `examples/code_editor_folding.py`'s own `FONT_SIZE * 1.3`
+   approximation with the real measured value, and fixing both
+   gutter examples' sibling `Text` node to use the real
+   `MONOSPACE_FONT_FAMILY` (now exported from the `tre` package)
+   instead of `"Roboto"`, preserving M31 Phase 1's "lines up by
+   construction" invariant now that Code Editor's own real font
+   changed.
+10. Real Rust unit tests: proved the bundled face has genuinely
+    uniform glyph advance (unlike Roboto, a real contrast case) and
+    that `monospace_cell_size` scales with `font_size` and is cached.
+11. Real, direct empirical script before pytest: `get_monospace_cell_size`
+    scales correctly, a real terminal spawns and a real code editor's
+    content round-trips with the new font.
+12. Full verification chain: cargo check/clippy/fmt/test, maturin
+    develop, pytest (full suite), all 69 examples, showcase demo,
+    mypy --strict on the three touched examples.
+13. Update `BUILD_TRACKER.md` (parser count verified), regenerate +
+    republish the Build Tracker artifact, update memory, commit.
 
 ## Status
-Complete. All steps done; full verification chain green (`engine-platform`
-gains 1 new integration test binary, `pytest tests/` 506 passed/1
-skipped unchanged, all 69 examples, showcase demo). A real background
-PTY thread genuinely wakes an idle event loop via a real cross-thread
-`EventLoopProxy` send, confirmed by a dedicated test exercising a real
-separate OS thread against a real running loop, not assumed. **M31 —
-Code Editor: Real IDE Functionality (Second Pass) is now fully
-complete, all 6 phases.**
+Complete. All steps done; full verification chain green (`engine-render`
+gains 2 new unit tests, `pytest tests/` 507 passed/1 skipped, up from
+506, all 69 examples, showcase demo, mypy --strict clean on the three
+touched examples).
