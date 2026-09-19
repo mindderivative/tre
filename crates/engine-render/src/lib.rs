@@ -1016,39 +1016,10 @@ fn paint_node(
     // visual clip today, confirmed via direct read before this change,
     // so narrowing `visible` for any of them would wrongly cull
     // legitimately-overflowing content nothing here actually hides).
-    if let NodeKind::VirtualList(state) = &node.kind {
-        // The real clip: a local `(0, 0)-(w, h)` path, pushed under
-        // this node's own `composed` transform (already active via
-        // `scene.set_transform(composed)` above) -- `Scene::push_layer`
-        // bakes its own `clip_path` into absolute strips at the moment
-        // it's called (confirmed by reading `vello_hybrid`'s own
-        // source), so it stays correctly anchored even though each
-        // child below goes on to set its own transform.
-        let clip_radius = node.paint.corner_radius.current;
-        let clip = RoundedRect::new(0.0, 0.0, w, h, clip_radius).to_path(0.1);
-        scene.push_layer(Some(&clip), None, None, None, None);
-
-        // The real scroll offset: composed into the transform children
-        // recurse with, not `layout_style` -- their own taffy layout
-        // never changes, only where they're painted does. Vertical
-        // only, a real, stated v1 scope limit (`PLAN.md`).
-        let scrolled = composed * Affine::translate((0.0, -state.scroll_offset.current));
-
-        // Reuses `bounds` (this node's own real composed absolute box,
-        // already computed above for its own Phase 1 culling check) to
-        // narrow `visible` for its children -- a materialized child
-        // sitting outside the clip is now genuinely engine-culled too,
-        // not just visually hidden behind the clip pushed above.
-        let narrowed = visible.intersect(bounds);
-        for &child in &node.children {
-            paint_node(
-                tree, child, scrolled, narrowed, scene, resources, text, geometry,
-            );
-        }
-
-        scene.pop_layer();
-    } else if matches!(node.kind, NodeKind::Carousel(_) | NodeKind::ScrollView(_))
-        || node.paint.clip_children
+    if matches!(
+        node.kind,
+        NodeKind::VirtualList(_) | NodeKind::Carousel(_) | NodeKind::ScrollView(_)
+    ) || node.paint.clip_children
     {
         // M30 Phase 9 Step 5 (§5, §7, §11.7): the real MD3 "clip items
         // to the strip, so one scrolled off does not spill out" anatomy
@@ -1079,8 +1050,16 @@ fn paint_node(
         // scroll-shifted position into `layout_style` every frame, the
         // identical bug-avoiding "paint and hit-test read the same real
         // position, by construction" design this phase's own
-        // investigation found `VirtualList`'s separate paint-time-only
-        // translate above does not actually have.
+        // investigation found `VirtualList` did *not* actually have.
+        //
+        // M37 (§5, §7, §11.7): `VirtualList` now joins this same
+        // branch too, closing that real gap directly -- `Tree::sync_
+        // virtual_list_layouts` bakes every real materialized item's
+        // own current scroll-adjusted position into `layout_style`
+        // every frame, the identical fix, so the separate paint-time-
+        // only `Affine::translate` this branch used to need for
+        // `VirtualList` alone is gone: `composed` alone is now already
+        // correct for it too, exactly like `Carousel`/`ScrollView`.
         let clip_radius = node.paint.corner_radius.current;
         let clip = RoundedRect::new(0.0, 0.0, w, h, clip_radius).to_path(0.1);
         scene.push_layer(Some(&clip), None, None, None, None);

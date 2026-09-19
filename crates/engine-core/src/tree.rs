@@ -421,6 +421,17 @@ impl Tree {
                 .compute_layout(root_taffy, available_space)
                 .expect("compute_layout: taffy layout computation failed (scroll view sync pass)");
         }
+        // M37 (§5, §7, §11.7): the real fix for the hit-test-after-
+        // scroll bug M36's own investigation found in `VirtualList` --
+        // the identical real "bake into layout_style, then taffy runs
+        // once more" shape every sync above already establishes. A
+        // no-op call (`false`) whenever no `NodeKind::VirtualList` has
+        // anything materialized yet.
+        if self.sync_virtual_list_layouts() {
+            self.taffy
+                .compute_layout(root_taffy, available_space)
+                .expect("compute_layout: taffy layout computation failed (virtual list sync pass)");
+        }
     }
 
     /// M30 Phase 9 Step 5 (§5, §7, §11.7): the real per-frame item-
@@ -699,6 +710,64 @@ impl Tree {
                 }
             };
             self.set_layout_style(child, style);
+        }
+        true
+    }
+
+    /// M37 (§5, §7, §11.7): the real fix for a genuine, previously
+    /// undiscovered bug M36's own investigation found (documented in
+    /// `BUILD_TRACKER.md`'s own M36 trailer): `VirtualList`'s real
+    /// scroll offset used to be applied *only* as an extra
+    /// `engine-render::paint_node` translate, never reflected back
+    /// into `layout_style` -- so a real point-based hit-test at a
+    /// materialized item's own genuine post-scroll screen position
+    /// resolved to the *wrong* item, silently never caught because
+    /// `Window.click(node)`'s own synthetic helper computed its target
+    /// from the identical stale, pre-scroll `self.layout(node)` `Tree::
+    /// hit_test_at` itself reads, so the two coincidentally agreed
+    /// without either reflecting the real, live, post-scroll visual
+    /// position. Mirrors `sync_carousel_layouts`/`sync_scroll_view_
+    /// layouts`'s own exact bug-free shape: bakes each real
+    /// materialized child's own current scroll-adjusted position
+    /// directly into `layout_style.inset.top` every frame, which both
+    /// `engine-render::paint_node` and `Tree::hit_test_at` now read
+    /// correctly, by construction, with zero second, separate
+    /// transform either has to independently agree with. A `VirtualList`
+    /// with nothing materialized yet is a true no-op.
+    fn sync_virtual_list_layouts(&mut self) -> bool {
+        let lists: Vec<NodeId> = self
+            .nodes
+            .iter()
+            .filter(|(_, node)| matches!(node.kind, NodeKind::VirtualList(_)))
+            .map(|(id, _)| id)
+            .collect();
+        if lists.is_empty() {
+            return false;
+        }
+        for list in lists {
+            let NodeKind::VirtualList(state) = &self.nodes[list].kind else {
+                unreachable!("checked by the filter above")
+            };
+            let scroll = state.scroll_offset.current;
+            let materialized: Vec<(usize, NodeId)> =
+                state.materialized.iter().map(|(&i, &id)| (i, id)).collect();
+
+            for (idx, child) in materialized {
+                let NodeKind::VirtualList(state) = &self.nodes[list].kind else {
+                    unreachable!("checked by the filter above")
+                };
+                let top = state.offset_of(idx) - scroll;
+
+                let mut style = self.nodes[child].layout_style.clone();
+                style.position = Position::Absolute;
+                style.inset = TaffyRect {
+                    left: length(0.0),
+                    top: length(top as f32),
+                    right: auto(),
+                    bottom: auto(),
+                };
+                self.set_layout_style(child, style);
+            }
         }
         true
     }
@@ -5735,6 +5804,57 @@ mod tests {
         assert_eq!(
             state.scroll_offset.current, 40.0,
             "2.0 lines * this crate's own 20px-per-line convention == 40.0px"
+        );
+    }
+
+    /// M37 (§5, §7, §11.7): the real, decisive regression proof this
+    /// whole fix exists for -- a real point-based hit-test at a
+    /// materialized item's own genuine post-scroll screen position
+    /// must now resolve to that exact item, not a stale, wrong one.
+    /// Mirrors the exact scratch investigation M36's own scoping ran
+    /// (removed after use there): a real 20-item `VirtualList`,
+    /// `set_virtual_list_window(0..5, ...)`, scrolled by 40px (two
+    /// full item-slots) -- item index 2's own real content-relative
+    /// slot (y 40..60) now paints at real screen y 0..20, and item
+    /// index 4's own real content-relative slot (y 80..100) now paints
+    /// at real screen y 40..60. Before this fix, hit-testing still
+    /// used each item's stale, un-adjusted `layout_style` position, so
+    /// a real point at item 2's own genuine post-scroll screen
+    /// position (y=10) would have resolved to item 4 (whose own real,
+    /// stale, un-adjusted slot -- 80..100 -- has no overlap with y=10
+    /// at all, so it would actually have resolved to *nothing*, an
+    /// even more direct proof of the real bug this closes).
+    #[test]
+    fn hit_test_after_a_real_scroll_resolves_the_materialized_items_own_genuine_post_scroll_position()
+     {
+        let (mut tree, list) = scrollable_list(20);
+        tree.set_virtual_list_window(list, 0..5, virtual_list_materializer);
+        tree.compute_layout(
+            list,
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+        tree.scroll_virtual_list_by(list, 40.0);
+        tree.compute_layout(
+            list,
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+
+        let item2 = match &tree.get(list).unwrap().kind {
+            NodeKind::VirtualList(state) => *state.materialized.get(&2).unwrap(),
+            _ => panic!("expected VirtualList"),
+        };
+        let hit = tree.hit_test(list, Point::new(100.0, 10.0));
+        assert_eq!(
+            hit,
+            Some(item2),
+            "a real point at item 2's own genuine post-scroll screen position must hit it, \
+             not a stale item or nothing at all"
         );
     }
 

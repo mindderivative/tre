@@ -1,54 +1,57 @@
-# PLAN — M36 Phase 1: ScrollView Core Mechanism, closing M36
+# PLAN — M37: Fix VirtualList Hit-Test-After-Scroll
 
 ## Goal
-Build a real, general scrollable container -- today only VirtualList/
-Carousel/Terminal scroll, each bespoke; `clip_children`'s own stated
-v1 limit explicitly names this as the real, separate gap.
+Fix the real, confirmed bug M36's own investigation found and left
+open: a real point-based hit-test at a `VirtualList` materialized
+item's own genuine post-scroll screen position resolves to the wrong
+item, since the scroll offset is applied only as a paint-time
+translate, never reflected back into `layout_style`.
 
 ## Steps
-1. Real precedent read directly from the sibling pyCopper project's
-   own `ScrollViewElement` (`widgets/scroll.py`) before designing
-   anything: single child, measured unbounded on the scroll axis,
-   scrolling as a pure paint-time translation, real clipping, real
-   wheel handling that only stops propagating if the viewport moved.
-2. **Real, load-bearing investigation before copying VirtualList's own
-   scroll pattern:** a dedicated scratch Rust test confirmed a real,
-   previously undiscovered bug -- hit-testing after a real VirtualList
-   scroll resolves the WRONG item, since the scroll offset is applied
-   only as an extra paint-time transform, never reflected back into
-   layout_style that hit_test_at reads. Confirmed Carousel's own
-   sync_carousel_layouts does NOT have this flaw (bakes real position
-   into layout_style every frame). Decided: ScrollView follows
-   Carousel's bug-free pattern, not VirtualList's flawed one.
-3. New `NodeKind::ScrollView(ScrollViewState { scroll: Animated<f64>,
-   horizontal: bool })`. New `Tree::sync_scroll_view_layouts` (mirrors
-   sync_carousel_layouts), wired into compute_layout. New `Tree::
-   scroll_scroll_view_by` (mirrors scroll_virtual_list_by). ScrollView
-   joins Tree::dispatch's existing wheel-bubbling loop and paint_node's
-   existing no-op/clip branches.
-4. `Window.add_scroll_view(width, height, horizontal, x, y) -> Node`
-   -- caller composes real content via the existing, generic Node.
-   add_child, matching add_toolbar's own established "engine provides
-   the primitive" split.
-5. Widened `Window.scroll` with an optional `delta_x: f64 = 0.0` for
-   real horizontal ScrollView testability -- backward-compatible.
-6. Real, decisive tests at three levels: Rust unit tests (scroll-clamp
-   math, and a genuine grandchild marker proving hit-test-after-scroll
-   resolves the RIGHT node at its real post-scroll position, not its
-   stale one); a real pixel-diff integration test proving genuine
-   clip + scroll-shift; a real empirical script before any pytest.
+1. Investigated the two real fix options M36's own trailer named:
+   (a) a narrower, VirtualList-specific correction inside `Tree::
+   hit_test_at` itself, or (b) migrate VirtualList to the same "bake
+   position into layout_style" pattern Carousel/ScrollView already
+   use. Chose (b): a second, independent implementation in hit_test_at
+   would have to stay in sync with paint_node's own transform by hand
+   forever -- the exact class of bug that caused this in the first
+   place. Baking into layout_style makes paint and hit-test agree by
+   construction.
+2. New `Tree::sync_virtual_list_layouts` (mirrors sync_carousel_
+   layouts/sync_scroll_view_layouts exactly), wired into compute_
+   layout right after the scroll-view sync: writes each materialized
+   item's own `layout_style.inset.top = offset_of(idx) - scroll_
+   offset.current` every frame.
+3. `engine-render::paint_node`'s own VirtualList-only branch (clip +
+   a separate paint-time Affine::translate) merged directly into the
+   existing Carousel/ScrollView unconditional-clip branch -- the
+   separate scroll-offset translate deleted entirely.
+4. Real, decisive regression test added at the Rust level: a real
+   20-item list, scrolled by 40px, a real point at item 2's own
+   genuine post-scroll screen position now resolves to item 2 itself
+   -- mirrors the exact scratch investigation M36's own scoping ran.
+5. Two pre-existing pixel-diff tests in virtual_list_scroll.rs broke
+   as a real, correct consequence (they mutated scroll_offset.current
+   directly without a following compute_layout call, which the new
+   design correctly requires -- the identical requirement Carousel/
+   ScrollView already have). Fixed both; strengthened one whose own
+   assertion had been coincidentally passing for the wrong reason.
+6. Real, honest verification-surface limit confirmed: add_virtual_
+   list's own Python API returns only a flat per-row color and never
+   exposes a materialized row's own Node handle, so no equivalent
+   Python-level reproduction of this specific bug is constructible --
+   verified at the Rust level instead, the same precedent M31P6/M32P2
+   already established for other cases.
 7. Full verification chain: cargo check/clippy/fmt/test, maturin
-   develop, `tests/test_scroll_view.py` (7 tests), `examples/
-   scroll_view.py`, full pytest suite, all examples, showcase demo,
-   mypy --strict (one real fix: a loop-capturing lambda needed a named
-   handler factory, matching top_app_bar.py's own established pattern).
-8. `BUILD_TRACKER.md` (Phase 1 closed, M36 itself closed, its 1 phase;
-   the real VirtualList bug documented as a real, separate,
-   not-fixed-here finding), artifact republish, memory update, commit,
-   push (the full milestone now closes).
+   develop, full pytest suite (unchanged, pure internal fix), all
+   examples, showcase demo.
+8. BUILD_TRACKER.md (new M37, 1 phase, documenting the real fix and
+   the real design choice made), artifact republish, memory update,
+   commit, push (a full milestone closes).
 
 ## Status
-Complete. Full verification chain green (`pytest tests/` 556 passed/1
-skipped, 7 new, zero regressions; all 75 examples + showcase demo
-clean; mypy --strict clean). **M36 -- General Scrollable Container is
-now fully complete, its 1 phase.**
+Complete. Full verification chain green (`cargo test --workspace
+--release` 183 passed up from 182, 2 pre-existing tests fixed; `pytest
+tests/` 556 passed/1 skipped unchanged; all 75 examples + showcase
+demo clean). **M37 -- Fix: VirtualList Hit-Test-After-Scroll is now
+fully complete, its 1 phase.**

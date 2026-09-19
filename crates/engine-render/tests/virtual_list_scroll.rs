@@ -189,6 +189,22 @@ fn a_real_scroll_offset_shifts_materialized_children_up_by_that_many_pixels() {
         if let NodeKind::VirtualList(state) = &mut tree.get_mut(list).unwrap().kind {
             state.scroll_offset.current = 10.0;
         }
+        // M37 (§5, §7, §11.7): the real scroll offset is now baked
+        // into each materialized item's own `layout_style` by `Tree::
+        // sync_virtual_list_layouts`, which only runs inside `Tree::
+        // compute_layout` -- the identical real requirement `Carousel`/
+        // `ScrollView` already have (a direct field mutation needs a
+        // fresh layout pass to take visual effect; a real app's own
+        // per-frame loop always calls `compute_layout` before painting
+        // regardless, so this is invisible in real usage). Fixes the
+        // real hit-test-after-scroll bug this same paint-time-only
+        // translate used to cause (`BUILD_TRACKER.md`'s own M36
+        // trailer has the full real investigation).
+        let available = Size {
+            width: AvailableSpace::Definite(f32::from(WIDTH)),
+            height: AvailableSpace::Definite(f32::from(HEIGHT)),
+        };
+        tree.compute_layout(list, available);
 
         let (data, bpr) = render(&tree, list, WIDTH, HEIGHT).await;
 
@@ -228,6 +244,19 @@ fn scrolled_content_outside_the_lists_own_bounds_is_genuinely_clipped_not_just_m
         if let NodeKind::VirtualList(state) = &mut tree.get_mut(list).unwrap().kind {
             state.scroll_offset.current = 1000.0;
         }
+        // M37 (§5, §7, §11.7): a fresh layout pass, the same real
+        // requirement the sibling test above now states -- without
+        // this, the item's own real `layout_style` would still hold
+        // its stale, unscrolled position (item 0's own real slot,
+        // y 0..20, still well inside this 100px-tall viewport), which
+        // would make this test's own real assertion below pass for the
+        // wrong reason (a static item that was never near y=50 anyway)
+        // rather than genuinely proving the real 1000px scroll clip.
+        let available = Size {
+            width: AvailableSpace::Definite(f32::from(WIDTH)),
+            height: AvailableSpace::Definite(f32::from(HEIGHT)),
+        };
+        tree.compute_layout(list, available);
 
         let (data, bpr) = render(&tree, list, WIDTH, HEIGHT).await;
         let anywhere_in_list = pixel_at(&data, bpr, 100, 50);
