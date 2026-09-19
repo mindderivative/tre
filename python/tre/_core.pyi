@@ -180,11 +180,11 @@ class Node:
         """`TextField`-only: collapses each `(start, end)` real byte
         range of `get_text()`'s own content into one visible "⋯"
         marker at paint time. Replaces the whole list every call.
-        Real, deliberate v1 limitation: cursor navigation (`Home`/
-        `End`/`ArrowUp`/`ArrowDown`) is not fold-aware -- a real
-        cursor can still move into a folded region; the *displayed*
-        caret clamps to right after the nearest marker in that case.
-        Raises `ValueError` for any other kind.
+        `Home`/`End`/`ArrowUp`/`ArrowDown` are fold-aware (M38 Phase
+        3): a real cursor move that would land strictly inside a
+        folded range snaps forward to right after that fold's own
+        real marker instead, matching the *displayed* caret's own
+        identical clamp. Raises `ValueError` for any other kind.
         """
         ...
     def set_clip_children(self, clip: bool) -> None:

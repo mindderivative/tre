@@ -2340,11 +2340,12 @@ impl Tree {
                 } else {
                     state.selection_anchor = None;
                 }
-                state.cursor = if state.multiline {
+                let target = if state.multiline {
                     Self::line_start(&state.content, state.cursor)
                 } else {
                     0
                 };
+                state.cursor = Self::snap_out_of_fold(target, &state.content, &state.folded_ranges);
                 Some(DispatchOutcome::None)
             }
             Key::End => {
@@ -2353,11 +2354,12 @@ impl Tree {
                 } else {
                     state.selection_anchor = None;
                 }
-                state.cursor = if state.multiline {
+                let target = if state.multiline {
                     Self::line_end(&state.content, state.cursor)
                 } else {
                     state.content.len()
                 };
+                state.cursor = Self::snap_out_of_fold(target, &state.content, &state.folded_ranges);
                 Some(DispatchOutcome::None)
             }
             // M30 Phase 9 Step 3 (§8, §10): a true no-op for a single-
@@ -2389,7 +2391,8 @@ impl Tree {
                     .goal_column
                     .get_or_insert_with(|| Self::real_column(&state.content, state.cursor));
                 if let Some(target) = Self::move_to_line(&state.content, state.cursor, true, goal) {
-                    state.cursor = target;
+                    state.cursor =
+                        Self::snap_out_of_fold(target, &state.content, &state.folded_ranges);
                 }
                 Some(DispatchOutcome::None)
             }
@@ -2410,7 +2413,8 @@ impl Tree {
                     .get_or_insert_with(|| Self::real_column(&state.content, state.cursor));
                 if let Some(target) = Self::move_to_line(&state.content, state.cursor, false, goal)
                 {
-                    state.cursor = target;
+                    state.cursor =
+                        Self::snap_out_of_fold(target, &state.content, &state.folded_ranges);
                 }
                 Some(DispatchOutcome::None)
             }
@@ -2550,6 +2554,38 @@ impl Tree {
         content[cursor..]
             .find('\n')
             .map_or(content.len(), |i| cursor + i)
+    }
+
+    /// M38 Phase 3 (§5, §8): a real cursor position, after `Home`/
+    /// `End`/`ArrowUp`/`ArrowDown` compute where it would land,
+    /// snapped out of any real folded range it would otherwise land
+    /// strictly inside -- mirrors `engine-render::text::to_display_
+    /// offset_folded`'s own identical "resolves to right after that
+    /// fold's own real marker" convention (its own doc comment), so
+    /// cursor navigation and paint now agree on what landing inside a
+    /// genuinely hidden region really means, closing the real,
+    /// previously-stated v1 gap `TextFieldState.folded_ranges`'s own
+    /// doc comment named directly. A position exactly *at* a fold's
+    /// own `start` or `end` is left alone -- both are real, visible
+    /// boundaries, not hidden content. Malformed ranges (out of
+    /// order, overlapping, out of `content`'s own bounds) are skipped,
+    /// the same real defensive normalization `engine-render`'s own
+    /// `fold_segments` already applies -- `engine-core` never
+    /// validates `folded_ranges` itself.
+    fn snap_out_of_fold(cursor: usize, content: &str, folded: &[std::ops::Range<usize>]) -> usize {
+        let content_len = content.len();
+        let mut result = cursor;
+        let mut consumed = 0;
+        for range in folded {
+            if range.start < consumed || range.end <= range.start || range.end > content_len {
+                continue;
+            }
+            if range.start < result && result < range.end {
+                result = range.end;
+            }
+            consumed = range.end;
+        }
+        result
     }
 
     /// A cursor's own real *character* column (not byte offset) on
@@ -7970,6 +8006,92 @@ mod tests {
              \"hi\"'s own real column after the ArrowLeft) rather than recalling \"banana\"'s \
              own stale column 6 from before the interrupt -- landing on 'l' in \"alphabet\" \
              (byte 1), not 'e' (byte 6)"
+        );
+    }
+
+    /// M38 Phase 3 (§5, §8) test scene helper: a real fold, set directly
+    /// on `field`'s own `TextFieldState.folded_ranges` (this file's own
+    /// private-field access, visible to `mod tests` as a child module of
+    /// the module that declares `Tree.nodes` -- the same real access
+    /// every other direct-state test setup in this file already uses).
+    fn set_folded_ranges(tree: &mut Tree, field: NodeId, range: std::ops::Range<usize>) {
+        if let NodeKind::TextField(state) = &mut tree.nodes[field].kind {
+            state.folded_ranges = vec![range];
+        }
+    }
+
+    #[test]
+    fn arrow_down_snaps_the_cursor_out_of_a_folded_range_it_would_otherwise_land_inside() {
+        // "one\ntwo\nthree\nfour", folded 4..15 ("two\nthree\nfo",
+        // deliberately not real-line-aligned -- folds are arbitrary
+        // app-supplied byte ranges, §31 Phase 5's own real "no code-
+        // structure awareness" contract, so this is a real case this
+        // codebase must handle correctly, not just the tidy aligned one).
+        let (mut tree, root, field) = multiline_field_scene("one\ntwo\nthree\nfour");
+        set_folded_ranges(&mut tree, field, 4..15);
+        // Position the cursor inside "one" at real column 2 (byte 2,
+        // between 'n' and 'e') so ArrowDown's own natural per-real-line
+        // landing computes byte 6 -- strictly inside the fold.
+        if let NodeKind::TextField(state) = &mut tree.nodes[field].kind {
+            state.cursor = 2;
+        }
+        dispatch_key(&mut tree, root, Key::ArrowDown);
+        assert_eq!(
+            field_state(&tree, field).cursor,
+            15,
+            "ArrowDown's own natural landing (byte 6, real column 2 into \"two\") sits \
+             strictly inside the fold 4..15 -- the cursor must snap forward to byte 15, \
+             right after the fold's own real marker, not land somewhere genuinely invisible"
+        );
+    }
+
+    #[test]
+    fn home_and_end_also_snap_the_cursor_out_of_a_folded_range() {
+        let (mut tree, root, field) = multiline_field_scene("one\ntwo\nthree\nfour");
+        set_folded_ranges(&mut tree, field, 4..15);
+        // Cursor inside "three" (byte 10), itself already inside the
+        // fold -- Home's own natural per-real-line landing (byte 8,
+        // "three"'s own real start) is also strictly inside 4..15.
+        if let NodeKind::TextField(state) = &mut tree.nodes[field].kind {
+            state.cursor = 10;
+        }
+        dispatch_key(&mut tree, root, Key::Home);
+        assert_eq!(
+            field_state(&tree, field).cursor,
+            15,
+            "Home's own natural landing (byte 8, \"three\"'s own real line start) sits \
+             strictly inside the fold -- must snap forward to byte 15"
+        );
+        if let NodeKind::TextField(state) = &mut tree.nodes[field].kind {
+            state.cursor = 10;
+        }
+        dispatch_key(&mut tree, root, Key::End);
+        assert_eq!(
+            field_state(&tree, field).cursor,
+            15,
+            "End's own natural landing (byte 13, \"three\"'s own real line end) also sits \
+             strictly inside the fold -- must snap forward to byte 15 too"
+        );
+    }
+
+    #[test]
+    fn landing_exactly_at_a_folds_own_boundary_is_left_alone() {
+        // A narrower fold, real-line-aligned this time (4..7, just
+        // "two") -- ArrowDown's own natural landing at real column 0
+        // lands exactly on the fold's own start (byte 4), a real,
+        // visible boundary position (right where the "⋯" marker itself
+        // sits), not hidden content. Must NOT be force-moved elsewhere.
+        let (mut tree, root, field) = multiline_field_scene("one\ntwo\nthree\nfour");
+        set_folded_ranges(&mut tree, field, 4..7);
+        if let NodeKind::TextField(state) = &mut tree.nodes[field].kind {
+            state.cursor = 0;
+        }
+        dispatch_key(&mut tree, root, Key::ArrowDown);
+        assert_eq!(
+            field_state(&tree, field).cursor,
+            4,
+            "landing exactly at a fold's own start boundary is a real, visible position -- \
+             must be left alone, not snapped forward to the fold's own end"
         );
     }
 

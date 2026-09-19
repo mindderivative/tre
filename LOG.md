@@ -1,115 +1,106 @@
-# LOG — M38 Phase 2: Code Editor Goal-Column Memory
+# LOG — M38 Phase 3: Fold-Aware Cursor Navigation
 
 - User's own explicit instruction: "Let's knock out the known gaps"
-  -- M38's own second, still-cheap/bounded phase, per the milestone's
-  own scoping order.
-- Confirmed the real gap by direct source read before writing any
-  code: `Tree::move_to_line` (`crates/engine-core/src/tree.rs`)
-  re-derived its own real *column* fresh from `content[line_start..
-  cursor]` on every call -- it never remembered the original column
-  from before an intermediate hop landed on a shorter line. The
-  file's own pre-existing test explicitly labeled this "a real,
-  deliberate v1 simplification, not a bug," matching exactly what
-  `BUILD_TRACKER.md`'s own M38 scoping note named as Phase 2's real
-  target.
-- Added `TextFieldState.goal_column: Option<usize>` (`crates/engine-
-  core/src/node.rs`): `Some(column)` while a consecutive `ArrowUp`/
-  `ArrowDown` run is in progress, `None` otherwise (the default, set
-  in `TextFieldState::new`).
-- New `Tree::real_column(content, cursor)` helper -- the exact old
-  fresh-every-call computation, kept as a real, named function since
-  it's still needed to *seed* `goal_column` the first time a sequence
-  begins. `Tree::move_to_line` itself changed from computing its own
-  `column` internally to taking a `goal_column: usize` parameter --
-  the caller now decides which column to land at.
-- `ArrowUp`/`ArrowDown` arms in `dispatch_text_field_key`: `let goal
-  = *state.goal_column.get_or_insert_with(|| Self::real_column(&state.
-  content, state.cursor));` seeds the goal only the first time (when
-  `None`), then reads the same already-set value on every further
-  consecutive hop -- `move_to_line` receives `goal`, never `state.
-  cursor`'s own current column directly. Compiled clean on the first
-  `cargo check` -- confirmed Rust's disjoint closure field capture
-  (the closure borrows `state.content`/`state.cursor` while the
-  method receiver mutably borrows the separate `state.goal_column`
-  field, both of the same `state: &mut TextFieldState`) works exactly
-  as expected here, no workaround needed.
-- Reset `goal_column` everywhere else a cursor genuinely moves for a
-  reason other than a consecutive vertical hop -- enumerated by
-  direct grep for every real `state.cursor = `/`+=` site in `tree.rs`
-  before writing any reset, not guessed:
-  1. A blanket `if !matches!(key, Key::ArrowUp | Key::ArrowDown) {
-     state.goal_column = None; }` at the very top of `dispatch_text_
-     field_key`, before the real per-key `match` -- covers
-     `Backspace`/`Delete`/`ArrowLeft`/`ArrowRight`/`Home`/`End`/
-     `Space`/`Enter`/`Tab` in one place rather than nine separate
-     edits.
-  2. Inside the shared `delete_selection` helper (only on its real
-     "a selection actually existed and was removed" `true` path) --
-     covers `Backspace`/`Delete`/`Space`/`TextInput`'s own selection-
-     replace path, and `cut_text_field_selection`, the one real
-     caller that doesn't route through `dispatch_text_field_key` at
-     all (a separate public method), previously missed by the
-     blanket reset above.
-  3. `set_text_field_cursor`/`extend_text_field_selection` (real
-     mouse click/drag-select) and the `InputEvent::TextInput`
-     dispatch arm (a real inserted character/IME commit) -- both
-     mutate `state.cursor` outside `dispatch_text_field_key` entirely.
-  4. The "collapse an active selection" branch inside `ArrowUp`/
-     `ArrowDown` themselves (pressing an unshifted arrow while a
-     selection is active) -- a selection collapse is a real, distinct
-     cursor move, not part of a continuous vertical-navigation
-     sequence, so it resets the goal too rather than inheriting
-     whatever was set before the selection existed.
-- Rewrote the existing test (`arrow_up_and_down_move_the_cursor_by_
-  line_preserving_its_own_real_column`): removed its own second
-  `ArrowUp` step and its comment explicitly asserting the old "not a
-  bug" behavior; its final `ArrowDown` assertion changed from `8`
-  (the old buggy landing) to `14` (a full round trip back to the
-  exact original starting cursor position, since the real goal column
-  5 is now correctly remembered through "hi"'s own shorter line).
-- Added two new, decisive Rust tests directly proving the fix:
-  `arrow_up_and_down_remember_a_real_goal_column_through_a_shorter_
-  line` -- a genuine up-up-down-down round trip through
-  "alphabet\nhi\nbanana" that lands back on the *exact* original
-  starting byte offset, with an explicit contrast in its own
-  assertion message showing what byte the old buggy behavior would
-  have produced instead (2, landing on 'p') versus the real fix (6,
-  landing on 'e'); `a_non_vertical_move_resets_the_remembered_goal_
-  column` -- proves an `ArrowLeft` in the middle of a vertical run
-  forces the next `ArrowUp` to derive a genuinely fresh goal (1) from
-  wherever the cursor now sits, not the stale original (6).
-- Real, honest verification-surface check done properly this time,
-  unlike the reflexive "no Python API exposes this" assumption M37
-  made for `VirtualList` (which turned out to be correct there, but
-  only after checking): grepped `python/tre/_core.pyi` for a cursor
-  getter first -- confirmed none exists, so `state.cursor` itself
-  can't be read directly from Python. But the *effect* of where the
-  cursor landed is still observable: `test_code_editor.py`'s own pre-
-  existing `test_arrow_up_navigates_to_the_previous_line` already
-  proves this exact technique (navigate, then `type_text` a marker,
-  then read `get_text()` to see exactly where it landed). Reused it
-  for two new real Python-level tests: `test_arrow_up_and_down_
-  remember_a_real_goal_column_through_a_shorter_line` (asserts
-  `get_text() == "alphabXet\nhi\nbanana"`, proving the marker landed
-  at "alphabet"'s own real column 6, not "hi"'s clamped column 2's
-  equivalent position `"alXphabet..."`) and `test_a_non_vertical_
-  move_resets_the_remembered_goal_column` (asserts `"aXlphabet\nhi\n
-  banana"` after an interrupting `ArrowLeft`). Both passed on the
-  first run.
+  -- M38's own third phase, per the milestone's own scoping order.
+- Confirmed the real gap and its own already-established real
+  convention before writing any code: `TextFieldState.folded_ranges`'s
+  own doc comment (`crates/engine-core/src/node.rs`) explicitly named
+  "cursor navigation is not fold-aware" as a real, deliberate v1
+  simplification -- four separate doc comments across the codebase
+  (`engine-core::node`, `engine-render::text`, `engine-py::node`,
+  `python/tre/_core.pyi`) all repeated this same stated gap.
+  `engine-render::text::to_display_offset_folded`'s own doc comment
+  already states the real convention this phase needed to mirror for
+  cursor navigation too: an offset landing inside a fold resolves to
+  right after that fold's own real marker (`range.end`).
+- New `Tree::snap_out_of_fold(cursor, content, folded) -> usize`
+  (`tree.rs`): the same defensive normalization `engine-render`'s own
+  `fold_segments` already applies (skip malformed/overlapping/out-of-
+  bounds ranges via a `consumed` watermark, mirroring `fold_segments`'
+  own `cursor` watermark) -- if the candidate position falls strictly
+  inside a real range, returns `range.end`; a position exactly at a
+  fold's own `start` or `end` is left alone (both real, visible
+  boundaries, not hidden content).
+- Wired into all four real landing computations in `dispatch_text_
+  field_key`: `Home`'s and `End`'s own `target` (both the multiline
+  and single-line branches, though single-line fields rarely carry
+  folds in practice) now route through `snap_out_of_fold` before
+  assignment; `ArrowUp`/`ArrowDown`'s own `move_to_line` result does
+  too. `goal_column` itself is deliberately left unmodified by the
+  snap -- the user's own intended column persists even when the
+  actual landing had to move, the identical "goal survives a real
+  detour" reasoning Phase 2's own shorter-line clamp already
+  established.
+- Corrected four now-stale doc comments claiming "cursor navigation is
+  not fold-aware" as a real, permanent v1 limitation, since it no
+  longer is: `TextFieldState.folded_ranges` (`node.rs`) now documents
+  the real M38 Phase 3 fix directly; `engine-render::text::to_
+  display_offset_folded`'s own comment (`text.rs`) explicitly notes
+  its own clamp is *not* made redundant by this -- it's still a real,
+  necessary fallback for every path that doesn't go through `Tree::
+  snap_out_of_fold` (a real click via `Tree::set_text_field_cursor`'s
+  own hit-test, deliberately unchanged, per Phase 3's own scoping
+  naming only `Home`/`End`/`ArrowUp`/`ArrowDown`); `engine-py::node::
+  set_folded_ranges`'s own doc comment and its `python/tre/_core.pyi`
+  stub both updated to match.
+- Added three new, decisive Rust tests to `tree.rs`, using a new
+  `set_folded_ranges` test-scene helper (direct private-field access
+  via `mod tests` being a child module of `tree.rs`'s own top-level
+  module -- the same real access every other direct-state test setup
+  in this file already uses):
+  1. `arrow_down_snaps_the_cursor_out_of_a_folded_range_it_would_
+     otherwise_land_inside` -- "one\ntwo\nthree\nfour" with a
+     deliberately non-real-line-aligned fold `4..15` ("two\nthree\nfo"
+     -- folds are arbitrary app-supplied byte ranges with no line-
+     alignment guarantee per `folded_ranges`'s own doc comment, so
+     this is a real case, not just the tidy aligned one). `ArrowDown`
+     from real column 2 in "one" lands naturally on byte 6 (strictly
+     inside the fold) and must snap to byte 15.
+  2. `home_and_end_also_snap_the_cursor_out_of_a_folded_range` -- from
+     a cursor already inside the fold (byte 10, inside "three"), both
+     `Home`'s own natural landing (byte 8) and `End`'s own natural
+     landing (byte 13) are each strictly inside `4..15` and must both
+     snap to byte 15.
+  3. `landing_exactly_at_a_folds_own_boundary_is_left_alone` -- a
+     narrower, real-line-aligned fold `4..7` (just "two"); `ArrowDown`
+     from real column 0 lands exactly on the fold's own start
+     boundary (byte 4) and must be left there, not force-moved.
+  Hit one real clippy issue while writing these: `vec![4..15]`/
+  `vec![4..7]` (and `Vec::from([...])`, tried as a first fix) both
+  trip `clippy::single_range_in_vec_init` (a real lint catching the
+  common `vec![a..b]` typo for `(a..b).collect()`) -- fixed properly
+  by changing `set_folded_ranges`'s own test-helper signature from
+  `Vec<Range<usize>>` to a plain `Range<usize>` parameter (every real
+  call site only ever needed one range anyway), wrapping it in
+  `vec![range]` *inside* the helper where `range` is a variable, not
+  a literal `a..b`, which the lint doesn't fire on.
+- Real, honest verification-surface check done properly this time
+  (the same discipline Phase 2 established, not reverting to the
+  reflexive "assume no Python path exists" default): checked `python/
+  tre/_core.pyi` first and found `Node.set_folded_ranges` is a real,
+  already-existing pyo3 binding (`engine-py/src/node.rs:1004`) --
+  reused the identical `type_text`-after-navigation-then-`get_text()`
+  positional probe the goal-column tests already established. One new
+  pytest test, `test_arrow_down_snaps_the_cursor_out_of_a_folded_
+  range_it_would_otherwise_land_inside` (`tests/test_code_editor.py`),
+  reusing the exact same "one\ntwo\nthree\nfour" / fold `(4, 15)`
+  scene as the Rust-level test for direct cross-checking -- asserts
+  `get_text() == "one\ntwo\nthree\nfXour"` (the marker landing right
+  after 'f', at byte 15, mirroring the Rust test's own byte-15 proof).
+  Passed on the first run.
 - Full verification: `cargo check --workspace --all-targets`/`cargo
   clippy --workspace --all-targets -D warnings`/`cargo fmt --check`
-  clean; `cargo test --workspace --release` clean (`engine-core` 185
-  passed, up from 183, exactly the 2 new tests, zero regressions);
-  `maturin develop --release` rebuilt; `pytest tests/` 558 passed/1
-  skipped, up from 556, exactly the 2 new tests; all 75 examples and
+  clean; `cargo test --workspace --release` clean (`engine-core` 188
+  passed, up from 185, exactly the 3 new tests, zero regressions);
+  `maturin develop --release` rebuilt; `pytest tests/` 559 passed/1
+  skipped, up from 558, exactly the 1 new test; all 75 examples and
   the showcase demo re-run clean.
-- Updated `BUILD_TRACKER.md`: Phase 2 flipped `⬜` -> `✅` with a
+- Updated `BUILD_TRACKER.md`: Phase 3 flipped `⬜` -> `✅` with a
   terse step-bullet note; milestone status line and Top Metrics row
-  updated to "Phase 2 of 7 done" / 29%. Verified the parser's own
+  updated to "Phase 3 of 7 done" / 43%. Verified the parser's own
   reported item count unchanged before/after (38/122/212 both times).
   Regenerated and republished the Build Tracker artifact.
-  **This closes M38 Phase 2. M38 itself remains open -- 5 phases
-  remain (fold-aware cursor navigation, Split Button inner-corner
-  shape-tightening, Button Group per-child shape change on
-  press/select, ScrollView scrollbar thumb, real scroll+clip for Code
-  Editor with caret-follow).**
+  **This closes M38 Phase 3. M38 itself remains open -- 4 phases
+  remain (Split Button inner-corner shape-tightening, Button Group
+  per-child shape change on press/select, ScrollView scrollbar thumb,
+  real scroll+clip for Code Editor with caret-follow).**

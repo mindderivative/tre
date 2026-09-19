@@ -672,20 +672,24 @@ pub struct TextFieldState {
     /// explicit "full real folding" scope choice) collapsed into one
     /// visible "⋯" marker (`engine-render`'s own `elide_folded_
     /// ranges`). `content` itself is never touched; `engine-core`
-    /// never interprets these ranges either (the identical real
-    /// "app's own concern" split `syntax_spans` already has -- an app
-    /// decides *which* real lines are foldable/currently folded, this
+    /// never *validates* these ranges (the identical real "app's own
+    /// concern" split `syntax_spans` already has -- an app decides
+    /// *which* real lines are foldable/currently folded, this
     /// codebase has no code-structure awareness of its own to decide
-    /// that itself). Empty (the default) paints every existing field
-    /// exactly as before this phase. **Real, deliberate v1
-    /// simplification, not silently glossed over:** cursor navigation
-    /// (`Tree::dispatch_text_field_key`'s own `Home`/`End`/`ArrowUp`/
-    /// `ArrowDown`) is not fold-aware -- it still moves through
-    /// `content`'s own real, unfolded bytes, so a real cursor can move
-    /// into a folded region even though nothing there is visible;
-    /// `engine-render`'s own paint code clamps the *displayed* caret
-    /// to right after the nearest fold marker in that case, rather
-    /// than drawing it somewhere genuinely invisible.
+    /// that itself, and a malformed range is defensively skipped
+    /// rather than trusted). Empty (the default) paints every
+    /// existing field exactly as before this phase.
+    ///
+    /// M38 Phase 3 (§5, §8): `engine-core` *does* now interpret these
+    /// ranges for one real purpose -- `Tree::dispatch_text_field_key`'s
+    /// own `Home`/`End`/`ArrowUp`/`ArrowDown` snap a cursor that would
+    /// otherwise land strictly inside a real folded range forward to
+    /// right after that fold's own real marker (`Tree::snap_out_of_
+    /// fold`), closing the real gap this comment used to name -- a
+    /// cursor can no longer move into a folded region and end up
+    /// somewhere genuinely invisible. Mirrors `engine-render::text::
+    /// to_display_offset_folded`'s own identical "resolves to right
+    /// after the fold" convention, so navigation and paint now agree.
     pub folded_ranges: Vec<std::ops::Range<usize>>,
     /// M38 Phase 2 (§5, §8): real "goal column" memory for consecutive
     /// `ArrowUp`/`ArrowDown` moves -- `Some(column)` while such a

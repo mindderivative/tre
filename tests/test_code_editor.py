@@ -306,6 +306,32 @@ def test_set_folded_ranges_rejects_a_non_text_field_node():
         rect.set_folded_ranges([(0, 1)])
 
 
+def test_arrow_down_snaps_the_cursor_out_of_a_folded_range_it_would_otherwise_land_inside():
+    """M38 Phase 3 (§5, §8): real Python-level proof that `Home`/`End`/
+    `ArrowUp`/`ArrowDown` are fold-aware -- the same real
+    `type_text`-after-navigation-then-`get_text()` positional probe
+    the goal-column tests above already establish (there is no Python
+    getter for the raw cursor offset, so where a typed marker lands is
+    the real, observable proof).
+    """
+    window = Window(width=400, height=300)
+    editor = window.add_code_editor(
+        content="one\ntwo\nthree\nfour", background=(255, 255, 255, 255), width=300, height=150
+    )
+    editor.set_folded_ranges([(4, 15)])  # "two\nthree\nfo" folded away
+    window.click(editor)
+    for _ in range(len("one\ntwo\nthree\nfour")):
+        window.press_key("left")
+    window.press_key("right")
+    window.press_key("right")  # cursor now at real column 2, inside "one"
+    # ArrowDown's own natural landing (real column 2 into "two", byte 6)
+    # sits strictly inside the fold 4..15 -- must snap forward to byte
+    # 15, right after the fold's own real marker, into "four".
+    window.press_key("down")
+    window.type_text("X")
+    assert editor.get_text() == "one\ntwo\nthree\nfXour"
+
+
 def test_folding_and_syntax_highlighting_compose_without_raising():
     """M31 Phase 5 (§5, §8): real proof that folding and syntax
     coloring -- both real, independent paint transforms in `draw_

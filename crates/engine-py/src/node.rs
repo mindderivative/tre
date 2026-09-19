@@ -989,18 +989,18 @@ impl Node {
     /// collapse into one visible "⋯" marker. `TextField`-only, the
     /// identical real contract `set_syntax_spans` already has.
     /// Replaces the whole list on every call; `engine-core` never
-    /// interprets these ranges itself -- deciding *which* real lines
+    /// validates these ranges itself -- deciding *which* real lines
     /// are foldable/currently folded is the app's own concern (this
     /// codebase has no code-structure awareness of its own to decide
     /// that itself), the identical real "app's own concern" split
     /// `set_syntax_spans` already has for overlapping/out-of-order
-    /// input. **Real, deliberate v1 limitation, stated directly:**
-    /// this never makes cursor navigation fold-aware -- a real cursor
-    /// can still move into a folded region via `Home`/`End`/`ArrowUp`/
-    /// `ArrowDown`; `engine-render`'s own paint code clamps the
-    /// *displayed* caret to right after the nearest fold marker in
-    /// that case (`TextFieldState.folded_ranges`'s own doc comment has
-    /// the full real reasoning).
+    /// input. `Home`/`End`/`ArrowUp`/`ArrowDown` are fold-aware (M38
+    /// Phase 3): a real cursor move that would land strictly inside a
+    /// folded range snaps forward to right after that fold's own real
+    /// marker instead, the identical clamp `engine-render`'s own paint
+    /// code already applies to the *displayed* caret
+    /// (`TextFieldState.folded_ranges`'s own doc comment has the full
+    /// real reasoning).
     pub(crate) fn set_folded_ranges(&self, ranges: Vec<(usize, usize)>) -> PyResult<()> {
         let mut tree = self.tree.borrow_mut();
         let node = tree.get_mut(self.id).expect(

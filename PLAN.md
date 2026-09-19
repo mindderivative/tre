@@ -1,80 +1,68 @@
-# PLAN — M38 Phase 2: Code Editor Goal-Column Memory
+# PLAN — M38 Phase 3: Fold-Aware Cursor Navigation
 
 ## Goal
 Close the real, previously-documented v1 gap: `Tree::dispatch_text_
-field_key`'s `ArrowUp`/`ArrowDown` re-derived a `TextFieldState`'s
-own real *column* fresh from wherever the cursor currently sat each
-call, rather than remembering the original column across a
-consecutive run of vertical moves -- so hopping up through a shorter
-line permanently lost the original column, unlike every real desktop
-text editor.
+field_key`'s `Home`/`End`/`ArrowUp`/`ArrowDown` moved through
+`TextFieldState.content`'s own real, unfolded bytes with no awareness
+of `folded_ranges` at all, so a real cursor could land somewhere
+genuinely invisible (inside a collapsed "⋯" region) -- `folded_
+ranges`'s own doc comment named this exact gap directly, four times
+across the codebase (`engine-core::node`, `engine-render::text`,
+`engine-py::node`, `python/tre/_core.pyi`).
 
 ## Steps
-1. Confirmed the exact gap by direct source read: `move_to_line`
-   computed `column` fresh from `content[line_start..cursor]` every
-   call; `crates/engine-core/src/tree.rs`'s own pre-existing test
-   (`arrow_up_and_down_move_the_cursor_by_line_preserving_its_own_
-   real_column`) explicitly documented this as "a real, deliberate
-   v1 simplification, not a bug."
-2. Added `TextFieldState.goal_column: Option<usize>` (`node.rs`):
-   `Some(column)` while a consecutive `ArrowUp`/`ArrowDown` sequence
-   is in progress, `None` otherwise. Defaulted to `None` in
-   `TextFieldState::new`.
-3. New `Tree::real_column` helper (the old fresh-every-call
-   computation, now also used to *seed* `goal_column` the first time
-   a sequence begins). `Tree::move_to_line` gained a `goal_column:
-   usize` parameter (replacing its own internal `column` variable) --
-   the caller decides which column to land at, not the callee.
-4. `ArrowUp`/`ArrowDown` arms in `dispatch_text_field_key`: seed
-   `goal_column` via `get_or_insert_with(|| Self::real_column(...))`
-   on first use, read (not clear) it on every further hop in the same
-   sequence, pass it straight to `move_to_line`.
-5. Reset `goal_column` everywhere else a cursor genuinely moves for a
-   different reason: a blanket `if !matches!(key, ArrowUp | ArrowDown)
-   { state.goal_column = None }` at the top of `dispatch_text_field_
-   key` (covers Backspace/Delete/ArrowLeft/Right/Home/End/Space/
-   Enter/Tab in one place); inside the shared `delete_selection`
-   helper (covers Backspace/Delete/Space/TextInput/`cut_text_field_
-   selection`, the last of which doesn't route through `dispatch_
-   text_field_key` at all); `set_text_field_cursor`/`extend_text_
-   field_selection` (mouse click/drag); the `InputEvent::TextInput`
-   dispatch arm (typing). Also reset on the "collapse an active
-   selection" branch inside `ArrowUp`/`ArrowDown` themselves -- a
-   selection collapse isn't part of a continuous vertical-navigation
-   sequence.
-6. Rewrote the existing test to assert the new, corrected round-trip
-   behavior (single ArrowUp then ArrowDown now returns exactly to the
-   starting cursor position, recalling the real goal column, instead
-   of the old test's explicit "not a bug" assertion of the opposite).
-   Added two new dedicated Rust tests: a full up-up-down-down round
-   trip through a genuinely shorter line proving the goal survives
-   the whole sequence and returns to the exact start; a non-vertical-
-   move-resets-the-goal test proving an ArrowLeft in between forces
-   the next ArrowUp to derive a fresh goal instead of reusing a stale
-   one.
-7. Constructed a real Python-level reproduction too (checked the
-   Python API first rather than assuming none exists, unlike M37's
-   VirtualList case where the API genuinely had no path): no Python
-   getter exists for a `TextField`'s own raw cursor offset, but the
-   same `type_text`-after-navigation-then-`get_text()` positional
-   probe this file's own pre-existing `test_arrow_up_navigates_to_
-   the_previous_line` already uses can observe it indirectly. Two new
-   pytest tests added to `tests/test_code_editor.py`, mirroring the
-   two new Rust tests.
-8. Full verification chain: `cargo check`/`clippy -D warnings`/`fmt`/
+1. Confirmed the exact existing paint-time precedent to mirror:
+   `engine-render::text::to_display_offset_folded`'s own doc comment
+   already states the real convention for "an offset lands inside a
+   fold": resolve to right after that fold's own real marker (i.e.
+   the fold's own `range.end`). Cursor navigation should apply the
+   identical rule, not invent a second one.
+2. New `Tree::snap_out_of_fold(cursor, content, folded) -> usize`
+   (`crates/engine-core/src/tree.rs`): walks `folded_ranges` with the
+   same defensive normalization `engine-render`'s own `fold_segments`
+   already applies (skip malformed/overlapping/out-of-bounds ranges,
+   `engine-core` never validates `folded_ranges` itself); if the
+   candidate cursor position falls *strictly* inside a real range
+   (`range.start < cursor < range.end`), returns `range.end`; a
+   position exactly at a fold's own `start` or `end` is left alone
+   (both are real, visible boundaries).
+3. Wired into all four real landing computations in `dispatch_text_
+   field_key`: `Home`, `End`, and the `move_to_line` result inside
+   both `ArrowUp`/`ArrowDown` -- each now passes its own computed
+   target through `snap_out_of_fold` before assigning `state.cursor`.
+4. Corrected four now-stale doc comments that explicitly named "cursor
+   navigation is not fold-aware" as a real, deliberate v1 limitation:
+   `TextFieldState.folded_ranges` (`node.rs`), `to_display_offset_
+   folded` (`engine-render/src/text.rs` -- noted the paint-time clamp
+   is still a genuinely necessary fallback for other paths like mouse
+   click, not made redundant), `engine-py::node::set_folded_ranges`,
+   and its pyo3 stub in `python/tre/_core.pyi`.
+5. Added three new decisive Rust tests: a real `ArrowDown` landing
+   strictly inside a deliberately non-line-aligned fold that snaps
+   forward; `Home`/`End` both snapping out of a fold from a cursor
+   already inside it; a real boundary case proving a landing exactly
+   at a fold's own `start` is left alone, not force-moved.
+6. Checked the Python API for a real reproduction path before
+   assuming one didn't exist (the correct process this session's own
+   M37 case first established, applied properly this time rather than
+   skipped): `Node.set_folded_ranges` is a real, existing pyo3
+   binding -- reused the same `type_text`-after-navigation-then-
+   `get_text()` positional probe the goal-column tests already use.
+   One new pytest test added to `tests/test_code_editor.py`.
+7. Full verification chain: `cargo check`/`clippy -D warnings`/`fmt`/
    `test --workspace --release`, `maturin develop --release`, full
    `pytest tests/`, all 75 examples, showcase demo.
-9. `BUILD_TRACKER.md` Phase 2 flipped to done (terse step-bullet note,
+8. `BUILD_TRACKER.md` Phase 3 flipped to done (terse step-bullet note,
    full writeup here in `PLAN.md`/`LOG.md`), Top Metrics row updated
-   to 2-of-7, artifact regenerated (38/122/212, unchanged) and
+   to 3-of-7, artifact regenerated (38/122/212, unchanged) and
    republished.
 
 ## Status
 Complete. Full verification chain green (`cargo test --workspace
---release`: `engine-core` 185 passed, up from 183, +2 new tests;
-`pytest tests/`: 558 passed/1 skipped, up from 556, +2 new tests; all
-75 examples + showcase demo clean). **M38 Phase 2 -- Code Editor
-Goal-Column Memory is now complete. M38 itself remains open: 5 phases
-remain (fold-aware cursor navigation, Split Button inner-corner
-shape-tightening, Button Group per-child shape change, ScrollView
-scrollbar thumb, real scroll+clip for Code Editor).**
+--release`: `engine-core` 188 passed, up from 185, +3 new tests;
+`pytest tests/`: 559 passed/1 skipped, up from 558, +1 new test; all
+75 examples + showcase demo clean). **M38 Phase 3 -- Fold-Aware
+Cursor Navigation is now complete. M38 itself remains open: 4 phases
+remain (Split Button inner-corner shape-tightening, Button Group
+per-child shape change, ScrollView scrollbar thumb, real scroll+clip
+for Code Editor).**

@@ -971,14 +971,20 @@ fn elide_folded_ranges(content: &str, folded: &[Range<usize>]) -> String {
 }
 
 /// Maps a real byte offset into `content` to the corresponding byte
-/// offset into `elide_folded_ranges(content, folded)`. A real,
-/// deliberate v1 clamp for an offset landing *inside* a real folded
-/// range (this codebase doesn't make cursor navigation fold-aware --
-/// a real, stated v1 simplification, the user's own explicit choice
-/// when scoping this phase): resolves to right after that fold's own
-/// real marker, the same "can't usefully distinguish a position
-/// inside genuinely hidden content" reasoning `to_display_offset`'s
-/// own real one-char-in-one-char-out design never has to make.
+/// offset into `elide_folded_ranges(content, folded)`. A real clamp
+/// for an offset landing *inside* a real folded range: resolves to
+/// right after that fold's own real marker, the same "can't usefully
+/// distinguish a position inside genuinely hidden content" reasoning
+/// `to_display_offset`'s own real one-char-in-one-char-out design
+/// never has to make. M38 Phase 3 (§5, §8): `engine-core`'s own
+/// `Tree::snap_out_of_fold` now applies the identical convention
+/// directly to `TextFieldState.cursor` for `Home`/`End`/`ArrowUp`/
+/// `ArrowDown`, so this clamp is no longer the *only* real defense --
+/// but it's still a genuinely necessary fallback for every other path
+/// that can still place `cursor` inside a fold (a real click via
+/// `Tree::set_text_field_cursor`'s own hit-test, a programmatic move,
+/// or a future caller this file can't see), not dead code once those
+/// four keys became fold-aware.
 fn to_display_offset_folded(content_len: usize, folded: &[Range<usize>], offset: usize) -> usize {
     let mut display = 0;
     for segment in fold_segments(content_len, folded) {
