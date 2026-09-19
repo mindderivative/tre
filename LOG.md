@@ -1,95 +1,79 @@
-# LOG — M31 Phase 5: Code Folding
+# LOG — M31 Phase 6: Real Event-Loop Wake (EventLoopProxy)
 
-- Checked pyCopper's own real `CodeEditor` before designing anything,
-  the same real discipline every prior phase this milestone already
-  used -- confirmed it explicitly excludes code folding too ("code
-  folding... out of scope for this pass"), the first phase this whole
-  milestone with no real reference implementation to design from.
-- Paused and asked the user directly via `AskUserQuestion`, matching
-  the established discipline for genuinely large, ungrounded builds
-  (Terminal, Carousel). The user chose "Full real folding
-  (Recommended)" -- a real fold-state model, a real gutter toggle
-  affordance, and real content-hiding.
-- Designed real content-hiding by reusing the identical `display_
-  content`-splice pattern IME preedit (M17 Phase 2) already
-  established: each real folded byte range collapses into one visible
-  "⋯" (U+22EF MIDLINE HORIZONTAL ELLIPSIS) marker -- the same real
-  "something is hidden here" convention VS Code/Sublime Text both use,
-  never a silent vanish.
-- Designed a real, segment-based bidirectional byte-offset map
-  (`to_display_offset_folded`/`from_display_offset_folded`,
-  `engine-render::text`) -- a real, deliberate v1 clamp for a real
-  offset landing strictly inside a fold: resolves to right after that
-  fold's own real marker, since a position inside genuinely hidden
-  content can't be usefully distinguished.
-- Restructured `draw_field`'s own offset handling into one shared
-  `to_display` closure chaining folding first, then whitespace
-  substitution (M31 Phase 3) -- so cursor/selection/caret/syntax spans
-  (M31 Phase 4) all stay correct together, whichever real combination
-  of the three real paint transforms is active. Mirrored the identical
-  reverse chain in `hit_test_position`.
-- Added `TextFieldState.folded_ranges: Vec<Range<usize>>` to
-  `engine-core::node` (empty default, every existing construction site
-  unchanged) -- `engine-core` never interprets the ranges itself,
-  deciding which real lines are foldable/currently folded is the app's
-  own concern, the identical real split `syntax_spans` already has.
+- Confirmed the real, existing precedent before designing anything, by
+  direct source read: `engine-platform::run_windowed_multi` already
+  owns a real `EventLoopProxy<PlatformEvent>` (`event_loop.
+  create_proxy()`), already used for `accesskit_winit::Adapter::
+  with_event_loop_proxy`'s own cross-thread `AccessKit` event delivery
+  and `WindowOpener`'s own "request a new window" mechanism.
+- Widened the private `PlatformEvent` enum (`AccessKit`/`OpenWindow`)
+  with a real, third, untargeted `Wake` variant -- no `WindowId`
+  payload, resolving the phase's own left-open design question: redraw
+  every real open window on a wake, matching `any_active`'s own real
+  "whole-loop signal, not per-window" shape.
+- Added a new public `EventLoopWaker` handle (`#[derive(Clone)]`,
+  wrapping the identical `EventLoopProxy<PlatformEvent>` `WindowOpener`
+  already wraps) with one real method, `wake()`, mirroring
+  `WindowOpener::open_window`'s own real "silently no-op via `let _ =
+  ...` if the loop has already exited" error-handling convention
+  verbatim.
+- Widened `run_windowed_multi`'s own `setup: S` bound from `FnOnce(&
+  WindowOpener)` to `FnOnce(&WindowOpener, &EventLoopWaker)` -- a real,
+  source-breaking signature change, fixed at all three real call sites
+  (`engine-py::app.rs`'s own `App.run()`, `engine-platform::
+  run_windowed`'s internal wrapper, and `multi_window.rs`'s own
+  integration test).
+- Handled `PlatformEvent::Wake` in `user_event`: requests a real
+  redraw on every currently open window.
+- Confirmed via direct read that every real `Window.add_terminal` call
+  happens before `App.run()` ever starts, so every real
+  `TerminalSession` already exists by the time `setup` runs -- no need
+  to thread the waker through `TerminalSession::spawn` itself.
+- Added `TerminalSession::set_waker`, called once per real session
+  from `engine-py::app.rs`'s own `setup` closure (the one real place
+  able to reach a fresh `EventLoopWaker` at all). The waker is shared
+  with the session's own background PTY reader thread via the
+  identical `Arc<Mutex<Option<EventLoopWaker>>>` pattern `incoming`
+  (`Arc<Mutex<Vec<u8>>>`) already uses -- a waker registered *after*
+  the thread started is still visible to it. The reader thread now
+  calls `waker.wake()` the instant real new PTY bytes actually arrive,
+  not on any polling interval.
+- **Removed the old `any_active` widening entirely** in `engine-py::
+  app.rs` (`if !terminals.is_empty() { any_active = true; }`) -- the
+  real point of this phase, not an optional cleanup left for later. A
+  window with a real but genuinely quiet live terminal can now go
+  fully idle exactly like any other window, closing the real, stated
+  v1 cost M30 Phase 9 Step 4 (Terminal) left open.
 - Full Rust verification chain green on the first pass: `cargo check`/
-  `clippy -D warnings`/`fmt --check`/`cargo test --release` all clean
-  (after adding `#[allow(clippy::single_range_in_vec_init)]` to the
-  handful of real single-element-range test fixtures clippy correctly
-  flagged as ambiguous-looking, a real, minor lint, not a bug).
-- Wrote 5 new `engine-render` unit tests: real elision collapses each
-  range to one marker; a real malformed/overlapping/out-of-bounds
-  range is skipped rather than corrupting output; the real fold-aware
-  offset map round-trips every real char boundary outside a fold; a
-  real offset strictly inside a fold clamps to the identical real
-  display position; a real display offset landing on the marker itself
-  resolves back to the fold's own real start. All 5 passed on the
-  first run (`engine-render` 12 unit tests, up from 7).
-- Wrote 2 new integration tests in `text_field_paint.rs`: a real
-  folded range paints genuinely different pixels than unfolded (the
-  same diff-based proof this file's own hard-to-pin-exact-pixel claims
-  already use); a real click far past a folded field's own end
-  resolves to `state.content`'s own real length, neither the shorter
-  marker-collapsed display length nor an out-of-bounds offset. Both
-  passed on the first run (13 tests, up from 11) -- unlike M31 Phase
-  4's own first attempt, this design was correct on the first try,
-  verified by these same real tests before trusting it.
-- Added `Node.set_folded_ranges([(start, end), ...])` to `engine-py`
-  -- replaces the whole list every call, the identical real contract
-  `set_syntax_spans` already has.
+  `clippy -D warnings`/`fmt --check`/`cargo test --release` all clean.
+- Wrote a new, dedicated `engine-platform` integration test
+  (`wake_event.rs`, `harness = false`, the identical real
+  main-thread-only requirement `access_button.rs`/`multi_window.rs`
+  already have): a genuinely separate OS thread, holding only a clone
+  of the real waker and nothing else this crate owns, calls `wake()`
+  three times while a real `winit` event loop is genuinely running --
+  the window still completes its own real `max_frames` (10) cleanly,
+  with no panic and no hang. Passed on the first run.
 - Rebuilt the Python extension. **Ran a real, direct empirical
-  end-to-end script before writing any pytest suite**: real fold
-  ranges set on a Code Editor without raising; `get_text()` stays
-  completely unsubstituted; a plain `Rect` node correctly rejects the
-  call; folding + syntax highlighting + whitespace indicators compose
-  cleanly through a real `App.run()` render loop with no crash. All
-  passed.
-- Extended `tests/test_code_editor.py` with 4 new tests (real ranges
-  don't raise and never touch content; a non-`TextField` node rejects
-  the call; folding and syntax highlighting compose without raising).
-  Deliberately did *not* add a real `App.run()` call to this new test
-  -- the real cross-test hazard M30 Phase 9 Step 5's own investigation
-  already found and recorded as a durable memory. All 4 passed on the
-  first run.
-- Wrote `examples/code_editor_folding.py` -- a real gutter toggle
-  affordance, composed entirely from existing primitives (a small
-  clickable `Rect` per foldable line, positioned using the identical
-  real line-height approximation `engine_core::terminal_cell_size`
-  already documents), folding/unfolding a real function body through
-  two real clicks. Checked for a filename collision first. Clean on
-  the first run.
+  end-to-end script re-confirming the terminal's own real shell-
+  response behavior survives the `any_active` removal**: spawned a
+  real shell, typed a real command, ran 60 real frames -- the real
+  response still appeared in the returned cell-grid text. Passed.
+- Ran the full pytest suite three times in a row to check for any new
+  timing-related flakiness from the real behavioral change (wake-driven
+  instead of continuously-polled redraws) -- stable at 506 passed/1
+  skipped every time, unchanged from before this phase (a pure
+  internal wiring change needed no new/removed tests at the Python
+  layer).
 - Full verification: `cargo check`/`clippy -D warnings`/`fmt --check`
-  clean, `cargo test --release` (`engine-render` 12 unit tests up from
-  7, 13 in `text_field_paint.rs` up from 11), `maturin develop
-  --release`, `pytest tests/` (506 passed, 1 skipped, up from 503 --
-  4 new, zero regressions, no second real `App.run()` introduced), all
-  69 examples (including the new `examples/code_editor_folding.py`)
-  and the showcase demo re-run clean, `mypy --strict` clean against
-  `examples/code_editor_folding.py`.
-- Updated `BUILD_TRACKER.md` (Top Metrics row now 83%, Phase 5 heading
-  ✅, Step 1 marked done) -- verified the parser's own reported item
-  count before/after (191, unchanged, since no bullets were added or
-  removed, only an existing one filled in), regenerated and
-  republished the Build Tracker artifact at
-  https://claude.ai/artifact/CaPkWjpd91oR7YFbcqC9ty.
+  clean, `cargo test --release` (`engine-platform` +1 real integration
+  test binary), `maturin develop --release`, `pytest tests/` (506
+  passed, 1 skipped, unchanged), all 69 examples (including
+  `examples/terminal.py`, now exercised through the new wake path) and
+  the showcase demo re-run clean.
+- Updated `BUILD_TRACKER.md` (Top Metrics row now 100%, Phase 6
+  heading ✅, Step 1 marked done, M31 itself marked fully complete) --
+  verified the parser's own reported item count before/after (191,
+  unchanged, since no bullets were added or removed, only an existing
+  one filled in), regenerated and republished the Build Tracker
+  artifact at https://claude.ai/artifact/CaPkWjpd91oR7YFbcqC9ty.

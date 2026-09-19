@@ -36,3 +36,7 @@ harness = false
 [[test]]
 name = "multi_window"
 harness = false
+
+[[test]]
+name = "wake_event"
+harness = false

@@ -1,63 +1,59 @@
-# PLAN — M31 Phase 5: Code Folding
+# PLAN — M31 Phase 6: Real Event-Loop Wake (EventLoopProxy)
 
 ## Goal
-Real code folding for `Window.add_code_editor`. Flagged in its own
-scoping note as "the most speculative phase in this milestone" — no
-real reference implementation existed to design it from.
+A real, generic wake mechanism for `App.run`'s own idle event loop,
+closing the real, stated v1 cost M30 Phase 9 Step 4 (Terminal) left
+open (continuously widening `any_active` to keep polling instead of
+genuinely waking on new PTY output). This closes M31 itself, all 6
+phases.
 
 ## Steps
-1. Checked pyCopper's own real `CodeEditor` before designing anything
-   and confirmed it explicitly excludes code folding too ("code
-   folding... out of scope for this pass"). Paused and asked the user
-   directly via `AskUserQuestion`, matching the established discipline
-   for genuinely large, ungrounded builds (Terminal, Carousel). The
-   user chose "Full real folding (Recommended)."
-2. Designed real content-hiding by reusing the identical `display_
-   content`-splice pattern IME preedit (M17 Phase 2) already
-   established: each real folded byte range collapses into one
-   visible "⋯" (U+22EF) marker (`engine-render::text::
-   elide_folded_ranges`).
-3. Designed a real, segment-based bidirectional byte-offset map
-   (`to_display_offset_folded`/`from_display_offset_folded`) — a
-   deliberate, real v1 clamp for an offset landing inside a fold
-   (resolves to right after that fold's own marker).
-4. Restructured `draw_field`'s own offset handling into one shared
-   `to_display` closure that chains folding, then whitespace
-   substitution (M31 Phase 3) — so cursor/selection/caret/syntax spans
-   (M31 Phase 4) all stay correct together, whichever real combination
-   of the three paint transforms is active.
-5. Added `TextFieldState.folded_ranges: Vec<Range<usize>>` (empty
-   default) and `Node.set_folded_ranges` in engine-py, the identical
-   real contract `set_syntax_spans` already has.
-6. Wrote 5 new `engine-render` unit tests (elision, malformed-range
-   skipping, round-trip mapping, in-fold clamping, marker-click
-   resolution) and 2 new integration tests (a real pixel-diff proof
-   folded content paints differently; `hit_test_position` past a fold
-   resolves to a real content offset) — all passed on the first run.
-7. Ran a real, direct empirical script before writing any pytest: real
-   fold ranges set without raising, content stays unsubstituted, a
-   non-`TextField` node rejects the call, and folding + syntax
-   highlighting + whitespace indicators compose cleanly through a real
-   render loop.
-8. Extended `tests/test_code_editor.py` (4 new tests) and added
-   `examples/code_editor_folding.py` (a real gutter toggle affordance,
-   composed entirely from existing primitives, folding/unfolding a
-   real function body through two real clicks) — both checked for
-   filename collisions first.
+1. Confirmed the real, existing precedent via direct source read
+   before designing anything: `engine-platform::run_windowed_multi`
+   already owns a real `EventLoopProxy<PlatformEvent>`, already used
+   for AccessKit's own cross-thread event delivery and `WindowOpener`'s
+   own "request a window" mechanism.
+2. Widened the private `PlatformEvent` enum with a real, untargeted
+   `Wake` variant (no `WindowId` payload — confirmed the correct v1
+   answer the scoping note left open: redraws every open window, the
+   same whole-loop shape `any_active` already had).
+3. Added a new public `EventLoopWaker` handle (`Send` + `Clone`,
+   wrapping the identical `EventLoopProxy`), exposed via
+   `run_windowed_multi`'s own `setup` closure alongside the existing
+   `WindowOpener` — the one real place able to reach a fresh proxy and
+   hand a clone to an already-constructed background producer.
+4. Confirmed every real `add_terminal` call happens before `App.run()`
+   starts, so every real `TerminalSession` already exists by the time
+   `setup` runs — no need to thread the waker through construction.
+5. Added `TerminalSession::set_waker`; the waker is shared with the
+   session's own background PTY reader thread via the identical
+   `Arc<Mutex<...>>` pattern `incoming` already uses, so a waker
+   registered later is still visible to an already-running thread.
+   The reader thread now calls `waker.wake()` the instant real new PTY
+   bytes arrive.
+6. Removed the old `any_active` widening in `engine-py::app.rs` (the
+   real point of this phase, not an optional cleanup) — a window with
+   a genuinely quiet live terminal can now go fully idle.
+7. Wrote a new, dedicated `engine-platform` integration test
+   (`wake_event.rs`): a genuinely separate OS thread holding only a
+   waker clone calls `wake()` three times while a real event loop
+   runs; the window still completes its own real `max_frames` cleanly.
+8. Ran a real, direct empirical script re-confirming the terminal's
+   own real shell-response behavior survives the `any_active` removal,
+   then the full pytest suite (3x, checking stability).
 9. Full verification chain: cargo check/clippy/fmt/test, maturin
-   develop, pytest (full suite), all 69 examples, showcase demo, mypy
-   --strict.
+   develop, pytest (full suite), all 69 examples, showcase demo.
 10. Update `BUILD_TRACKER.md` — verified the parser's own reported
     item count before/after (191, unchanged), regenerate + republish
-    the Build Tracker artifact.
+    the Build Tracker artifact. Closes M31 itself, all 6 phases.
 11. Update memory, commit, push.
 
 ## Status
-Complete. All steps done; full verification chain green (`engine-render`
-12 unit tests up from 7, 13 tests in `text_field_paint.rs` up from 11,
-`pytest tests/` 506 passed/1 skipped up from 503, all 69 examples,
-showcase demo). Real content folding genuinely hides folded text and
-shows a real "⋯" marker instead, with cursor/selection/syntax-span
-byte offsets all staying correct against the real display layout,
-confirmed by direct Rust-level and pixel-diff tests, not assumed. A
-real, stated v1 limitation: cursor navigation is not fold-aware.
+Complete. All steps done; full verification chain green (`engine-platform`
+gains 1 new integration test binary, `pytest tests/` 506 passed/1
+skipped unchanged, all 69 examples, showcase demo). A real background
+PTY thread genuinely wakes an idle event loop via a real cross-thread
+`EventLoopProxy` send, confirmed by a dedicated test exercising a real
+separate OS thread against a real running loop, not assumed. **M31 —
+Code Editor: Real IDE Functionality (Second Pass) is now fully
+complete, all 6 phases.**

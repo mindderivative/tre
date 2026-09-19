@@ -209,12 +209,25 @@ pub struct WindowRequest {
 }
 
 /// The winit user-event type this crate's `EventLoop` is built with --
-/// exists purely to carry `accesskit_winit::Event` and window-open
-/// requests across the proxy boundary (see the module doc comment for
-/// why `with_event_loop_proxy`, not the direct-handler API).
+/// exists purely to carry `accesskit_winit::Event`, window-open
+/// requests, and real cross-thread wake requests across the proxy
+/// boundary (see the module doc comment for why `with_event_loop_
+/// proxy`, not the direct-handler API).
 enum PlatformEvent {
     AccessKit(accesskit_winit::Event),
     OpenWindow(WindowRequest),
+    /// M31 Phase 6 (§5, §6): a real, generic "something changed
+    /// outside the event loop's own thread, redraw" signal -- closes
+    /// the real, stated v1 cost M30 Phase 9 Step 4 (Terminal) found
+    /// and left open (a background PTY reader thread producing new
+    /// output had no other way to wake an otherwise-idle
+    /// `ControlFlow::Wait` loop, so that step widened `any_active` to
+    /// keep continuously polling instead). Deliberately untargeted
+    /// (no `WindowId` payload) -- redraws every real open window, the
+    /// same real "whole-loop signal, not per-window" shape `any_active`
+    /// itself already has, confirmed as the simpler, still-correct v1
+    /// answer this phase's own scoping note left as an open question.
+    Wake,
 }
 
 impl From<accesskit_winit::Event> for PlatformEvent {
@@ -234,6 +247,37 @@ pub struct WindowOpener {
 impl WindowOpener {
     pub fn open_window(&self, request: WindowRequest) {
         let _ = self.proxy.send_event(PlatformEvent::OpenWindow(request));
+    }
+}
+
+/// M31 Phase 6 (§5, §6): a real, `Send` + `Clone` handle any background
+/// producer can hold onto (unlike `WindowOpener`, whose own doc comment
+/// states it's valid only inside `setup`) -- `run_windowed_multi`'s
+/// `setup` closure is the one real place to hand a clone of this to
+/// whatever already-constructed background thread needs it (e.g. a
+/// real `TerminalSession`'s own PTY reader thread), since nothing
+/// dynamically created later during the loop's own run has a way to
+/// reach back into `setup` again (the identical real "no mid-session
+/// window-opening yet" limitation `WindowOpener`'s own doc comment
+/// already states, for the same underlying reason: `setup` runs
+/// exactly once). `EventLoopProxy` is real, confirmed `Send` (why
+/// `accesskit_winit`'s own cross-thread wiring already relies on it)
+/// and `Clone`, so this wrapper costs nothing beyond what the proxy
+/// itself already provides.
+#[derive(Clone)]
+pub struct EventLoopWaker {
+    proxy: EventLoopProxy<PlatformEvent>,
+}
+
+impl EventLoopWaker {
+    /// Requests a real redraw of every currently open window --
+    /// silently, safely no-ops if the loop has already exited, the
+    /// identical real error-handling convention `WindowOpener::
+    /// open_window`'s own body already establishes (`let _ = ...`).
+    /// Safe to call from any thread, any number of times, before or
+    /// after the loop itself has started or stopped.
+    pub fn wake(&self) {
+        let _ = self.proxy.send_event(PlatformEvent::Wake);
     }
 }
 
@@ -301,6 +345,15 @@ impl WindowOpener {
 /// `request.target_node` back to one needs `engine_core::
 /// from_access_id`, which only a caller that already depends on
 /// `engine-core` for everything else can call.
+///
+/// M31 Phase 6 (§5, §6): `setup` now also receives a real
+/// [`EventLoopWaker`] handle -- unlike the `WindowOpener` it already
+/// received (valid only inside this one, single call), a caller may
+/// clone the waker out to any already-constructed background producer
+/// that needs to wake a genuinely idle `ControlFlow::Wait` loop later
+/// (a real, live PTY reader thread, for one) -- `setup` is the one
+/// real place able to reach both a fresh proxy and any real,
+/// already-built per-window state to wire it into.
 pub fn run_windowed_multi<C, F, A, S, N, X>(
     on_window_created: C,
     on_frame: F,
@@ -315,15 +368,20 @@ where
     A: FnMut(WindowId) -> accesskit::TreeUpdate,
     N: FnMut(WindowId, InputEvent),
     X: FnMut(WindowId, accesskit::ActionRequest),
-    S: FnOnce(&WindowOpener),
+    S: FnOnce(&WindowOpener, &EventLoopWaker),
 {
     let event_loop = EventLoop::<PlatformEvent>::with_user_event().build()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let proxy = event_loop.create_proxy();
 
-    setup(&WindowOpener {
-        proxy: proxy.clone(),
-    });
+    setup(
+        &WindowOpener {
+            proxy: proxy.clone(),
+        },
+        &EventLoopWaker {
+            proxy: proxy.clone(),
+        },
+    );
 
     let mut app = MultiWindowApp {
         windows: HashMap::new(),
@@ -379,7 +437,7 @@ where
         // contract.
         |_id, _event| {},
         |_id, _request| {},
-        |opener| {
+        |opener, _waker| {
             opener.open_window(WindowRequest { config, token: 0 });
         },
     )
@@ -526,6 +584,21 @@ where
                 // a gap this step leaves open.
                 accesskit_winit::WindowEvent::AccessibilityDeactivated => {}
             },
+            // M31 Phase 6 (§5, §6): a real cross-thread wake -- just
+            // sending this event already woke a genuinely idle
+            // `ControlFlow::Wait` loop far enough to run this handler
+            // at all; requesting a real redraw of every open window is
+            // what actually gets `on_frame` (and, through it, a real
+            // background producer's own new output) painted. Real,
+            // deliberately whole-loop, not scoped to whichever window
+            // the real change happened to originate in -- the same
+            // real "whole-loop signal" shape `any_active` itself
+            // already has.
+            PlatformEvent::Wake => {
+                for win in self.windows.values() {
+                    win.window.request_redraw();
+                }
+            }
         }
     }
 

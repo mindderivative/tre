@@ -53,7 +53,7 @@ fn main() {
         // separate unit test (M4 Phase 2).
         |_window_id, _event| {},
         |_window_id, _request| {},
-        |opener| {
+        |opener, _waker| {
             opener.open_window(WindowRequest {
                 config: WindowConfig {
                     title: "tre v2 -- §14 step 14 spike: window A".to_string(),

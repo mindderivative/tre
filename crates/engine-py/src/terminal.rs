@@ -32,6 +32,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use engine_core::{InputEvent, Key, NodeId, NodeKind, TerminalCell, Tree};
+use engine_platform::EventLoopWaker;
 use peniko::Color;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 
@@ -96,6 +97,20 @@ pub(crate) struct TerminalSession {
     /// read from the PTY, appended there, drained (and cleared) here
     /// on the engine thread only.
     incoming: Arc<Mutex<Vec<u8>>>,
+    /// M31 Phase 6 (§5, §6): shared with the background reader thread
+    /// the identical real way `incoming` already is, so a real waker
+    /// registered later (`set_waker`, called from `run_windowed_
+    /// multi`'s own `setup` closure -- the one real place able to
+    /// reach a fresh `EventLoopWaker`, `engine-platform`'s own doc
+    /// comment) is still visible to a thread that was already running
+    /// before it existed (a `TerminalSession` is always spawned by a
+    /// real `add_terminal` call, which always happens before `App.
+    /// run()` -- and therefore before any real `EventLoopWaker` exists
+    /// -- in every real caller this codebase has). `None` until `set_
+    /// waker` runs -- the real, honest "no live loop to wake yet"
+    /// state a synthetic, no-`App.run()`-needed test correctly stays
+    /// in forever.
+    waker: Arc<Mutex<Option<EventLoopWaker>>>,
 }
 
 impl TerminalSession {
@@ -143,6 +158,8 @@ impl TerminalSession {
 
         let incoming = Arc::new(Mutex::new(Vec::new()));
         let incoming_for_thread = Arc::clone(&incoming);
+        let waker: Arc<Mutex<Option<EventLoopWaker>>> = Arc::new(Mutex::new(None));
+        let waker_for_thread = Arc::clone(&waker);
         thread::spawn(move || {
             let mut reader = reader;
             let mut buf = [0u8; 4096];
@@ -154,6 +171,19 @@ impl TerminalSession {
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner);
                         guard.extend_from_slice(&buf[..n]);
+                        drop(guard);
+                        // M31 Phase 6 (§5, §6): a real new PTY byte
+                        // arriving is exactly the real event this whole
+                        // phase exists to wake an idle event loop for
+                        // -- a no-op (`None`) until a real `App.run()`
+                        // has registered one via `set_waker`.
+                        if let Some(waker) = waker_for_thread
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .as_ref()
+                        {
+                            waker.wake();
+                        }
                     }
                     Err(_) => break,
                 }
@@ -166,6 +196,7 @@ impl TerminalSession {
             _child: child,
             parser: vt100::Parser::new(rows, cols, 0),
             incoming,
+            waker,
         })
     }
 
@@ -212,6 +243,20 @@ impl TerminalSession {
             state.cursor_visible = cursor_visible;
         }
         true
+    }
+
+    /// M31 Phase 6 (§5, §6): registers the real handle this session's
+    /// own background reader thread uses to wake an idle event loop
+    /// the moment real new PTY bytes arrive, closing the real, stated
+    /// v1 cost M30 Phase 9 Step 4 left open (continuously widening
+    /// `any_active` instead). Called once per real session from `App.
+    /// run()`'s own `setup` closure -- the one real place able to
+    /// reach a fresh `EventLoopWaker` at all.
+    pub(crate) fn set_waker(&self, waker: EventLoopWaker) {
+        *self
+            .waker
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(waker);
     }
 
     /// Writes real bytes to the shell's own stdin -- keystrokes

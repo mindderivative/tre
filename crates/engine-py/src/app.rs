@@ -346,25 +346,22 @@ impl App {
                 // the `Tree` -- `drain_into` itself goes through `Tree::
                 // get_mut`, M29's own real dirty-marking chokepoint, so
                 // a genuine content change here already makes `take_
-                // dirty` below see it. `any_active` is widened to also
-                // mean "a real terminal session is still alive" -- the
-                // identical real fix the sibling `pyCopper` project's
-                // own `Terminal` already needed for the same real
-                // problem (a background PTY reader thread producing new
-                // output has no other way to wake an otherwise-idle
-                // event loop, M29 Phase 2's own `ControlFlow::Wait`):
-                // its own module doc comment states it "keeps a
-                // repeat=True animation running purely to guarantee a
-                // repaint... regardless of focus." A real, honest v1
-                // cost, not silently hidden: a window with a live
-                // terminal never goes fully idle the way M29's own
-                // "genuinely idle window" case does.
-                let mut any_active = any_active;
+                // dirty` below see it.
+                //
+                // M31 Phase 6 (§5, §6): `any_active` no longer needs
+                // widening just because a real terminal session exists
+                // -- each session's own background reader thread now
+                // wakes this window directly (`EventLoopWaker::wake`,
+                // registered via `TerminalSession::set_waker` in this
+                // run's own real `setup` closure) the moment real new
+                // PTY bytes actually arrive, closing the real, stated
+                // v1 cost that widening was. A window with a live but
+                // genuinely quiet terminal (nothing typed, nothing
+                // printed) can now go fully idle exactly like any other
+                // window, the identical real win M29 Phase 2 already
+                // gave every other case.
                 {
                     let mut terminals = runtime.terminals.borrow_mut();
-                    if !terminals.is_empty() {
-                        any_active = true;
-                    }
                     let mut tree = runtime.tree.borrow_mut();
                     for (&node_id, session) in terminals.iter_mut() {
                         session.drain_into(&mut tree, node_id);
@@ -779,7 +776,7 @@ impl App {
                     _ => {}
                 }
             },
-            move |opener| {
+            move |opener, waker| {
                 for (index, setup) in setups_for_setup.iter().enumerate() {
                     opener.open_window(WindowRequest {
                         config: WindowConfig {
@@ -790,6 +787,17 @@ impl App {
                         },
                         token: index as u64,
                     });
+                    // M31 Phase 6 (§5, §6): every real `Terminal` this
+                    // window already has (a real `add_terminal` call
+                    // always happens before `App.run()`, so every real
+                    // session already exists by the time `setup` runs
+                    // here) gets a real clone of this run's own fresh
+                    // waker -- the one real place able to reach it at
+                    // all, closing the real, stated v1 cost M30 Phase 9
+                    // Step 4 left open.
+                    for session in setup.terminals.borrow().values() {
+                        session.set_waker(waker.clone());
+                    }
                 }
             },
         );
