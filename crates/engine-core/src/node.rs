@@ -729,10 +729,41 @@ pub const ICON_VIEWBOX_SIZE: f64 = 960.0;
 /// GPU texture involved at all (unlike `ImageState`, §5), since a
 /// vector path fill is exactly what `vello_hybrid::Scene::fill_path`
 /// already does for every other `NodeKind`'s own shape.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// M35 Phase 2 (§5, §8): `rotation` is a real, new animatable degrees-
+/// of-clockwise-rotation value, `Split Button`'s own real "the menu
+/// icon rotates inwards 180° when opened and closed" need
+/// (`COMPONENT_SPLIT_BUTTONS.md`) -- deliberately a plain scalar
+/// `Animated<f64>`, not routed through `PaintProperties.transform`
+/// (`Interpolate for Affine`'s own doc comment already states why: a
+/// componentwise coefficient lerp between two *rotated* affines
+/// produces a non-circular morph, not a true sweep through the
+/// correct arc). A scalar angle has no such problem -- `Interpolate
+/// for f64` is already exact -- and `engine-render`'s own paint arm
+/// constructs a fresh `Affine::rotate` from it each frame, the
+/// identical "a scalar progress value drives real paint geometry"
+/// shape `CheckboxState.check_progress`/`RadioButtonState.select_
+/// progress`/`SwitchState.toggle_progress` already establish. No
+/// longer derives `Clone`/`Debug`/`PartialEq` now that `Icon` carries
+/// an `Animated<f64>` -- `Animated<T>` implements none of those (the
+/// identical real reason `NodeKind`'s own doc comment already states
+/// for `Splitter`); nothing in this codebase actually cloned,
+/// printed, or compared an `IconState` value directly (checked
+/// directly via grep, not assumed), so this costs nothing real.
 pub struct IconState {
     pub path: peniko::kurbo::BezPath,
     pub tint: Color,
+    pub rotation: Animated<f64>,
+}
+
+impl IconState {
+    pub fn new(path: peniko::kurbo::BezPath, tint: Color) -> Self {
+        Self {
+            path,
+            tint,
+            rotation: Animated::new(0.0),
+        }
+    }
 }
 
 /// §11.7's own struct sketch, unchanged in shape (`item_count`,

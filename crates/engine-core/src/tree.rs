@@ -1466,6 +1466,14 @@ impl Tree {
             {
                 any_active = true;
             }
+            // M35 Phase 2 (§5, §8): `Icon.rotation`'s own real central-
+            // ticking need, mirrored a fourth time -- `Split Button`'s
+            // own real "menu icon rotates inwards 180°" need.
+            if let NodeKind::Icon(state) = &mut node.kind
+                && state.rotation.tick(now, &mut completed)
+            {
+                any_active = true;
+            }
             // M30 Phase 9 Step 5 (§5, §7, §11.7): `CarouselState.
             // position`'s own real central-ticking need -- unlike
             // `SplitterState.position`/`VirtualListState.scroll_offset`
@@ -8327,10 +8335,7 @@ mod tests {
         let tint = Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF);
         let (_, style, paint) = leaf(24.0, 24.0);
         let id = tree.insert(
-            NodeKind::Icon(IconState {
-                path: path.clone(),
-                tint,
-            }),
+            NodeKind::Icon(IconState::new(path.clone(), tint)),
             style,
             paint,
         );

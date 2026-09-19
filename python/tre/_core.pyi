@@ -679,6 +679,27 @@ class Window:
         parameter here.
         """
         ...
+    def add_split_button(
+        self,
+        label: str,
+        width: float,
+        height: float,
+        variant: str = "filled",
+        x: float | None = None,
+        y: float | None = None,
+    ) -> tuple[Node, Node, Node]:
+        """A real MD3 Split Button -- a leading button (the same real
+        color variants as `add_button`: `"elevated"`/`"filled"`/
+        `"filled_tonal"`/`"outlined"`/`"text"`) plus a separate
+        trailing menu-icon button, joined by a small real gap. Returns
+        `(leading, trailing, trailing_icon)`: `trailing_icon` is the
+        real `expand_more` icon node itself -- animate its own
+        `"rotation"` property (0.0 to 180.0 degrees) when your own menu
+        opens/closes; the engine never does this automatically (the
+        same "engine provides the mechanism, app decides the real
+        state change" split `Checkbox.checked` already uses).
+        """
+        ...
     def add_tabs(
         self,
         labels: list[str],

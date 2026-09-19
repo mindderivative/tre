@@ -219,6 +219,27 @@ impl Node {
                     .into());
                 }
             },
+            // M35 Phase 2 (§8): `Split Button`'s own real trailing-icon
+            // rotation -- degrees of clockwise rotation, the identical
+            // "a scalar progress value" shape `check_progress`/`select_
+            // progress`/`toggle_progress` already establish. Only
+            // resolves on a real `Icon` (`IconState`'s own doc comment
+            // has the full real reason this isn't routed through the
+            // universal `"transform"` arm above).
+            "rotation" => match &mut node.kind {
+                NodeKind::Icon(state) => {
+                    let value = extract_f64(&to, property)?;
+                    let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                    animate_field(&mut state.rotation, value, duration, now, handle);
+                }
+                _ => {
+                    return Err(EngineError::UnknownProperty {
+                        kind,
+                        property: property.to_string(),
+                    }
+                    .into());
+                }
+            },
             // M30 Phase 2 Step 2 (§8): the same real arm, mirrored a
             // third time for `Switch`.
             "toggle_progress" => match &mut node.kind {

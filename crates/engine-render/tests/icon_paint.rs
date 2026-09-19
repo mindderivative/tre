@@ -167,10 +167,7 @@ fn build_tree() -> (Tree, engine_core::NodeId) {
     );
 
     let icon = tree.insert(
-        NodeKind::Icon(IconState {
-            path: left_half_square(),
-            tint: TINT,
-        }),
+        NodeKind::Icon(IconState::new(left_half_square(), TINT)),
         Style {
             size: Size {
                 width: length(100.0),
@@ -214,6 +211,50 @@ fn an_icon_node_paints_only_its_own_real_left_half() {
             right,
             [0x11, 0x11, 0x11, 0xFF],
             "the node's own right half must show only plain background, got {right:?}"
+        );
+    });
+}
+
+/// M35 Phase 2 (§5, §8): the real, decisive pixel-level proof
+/// `IconState.rotation` actually rotates the painted output, not just
+/// that the field compiles -- reuses the identical asymmetric left-
+/// half icon above, so a real 180° rotation must paint the *right*
+/// half instead of the left, the same "a wrong transform paints
+/// neither half, not the wrong half" decisive-proof discipline the
+/// un-rotated test above already established.
+#[test]
+fn a_rotated_icon_node_paints_its_own_real_right_half_instead() {
+    pollster::block_on(async {
+        let (mut tree, root) = build_tree();
+        let icon = tree
+            .get(root)
+            .expect("root must exist")
+            .children
+            .first()
+            .copied()
+            .expect("root must have the real icon child");
+        let node = tree.get_mut(icon).expect("icon node must exist");
+        let NodeKind::Icon(state) = &mut node.kind else {
+            panic!("expected NodeKind::Icon");
+        };
+        state.rotation.current = 180.0;
+
+        let (data, bpr) = render(&tree, root, 100, 100).await;
+
+        let left = pixel_at(&data, bpr, 20, 50);
+        assert_eq!(
+            left,
+            [0x11, 0x11, 0x11, 0xFF],
+            "after a real 180° rotation, the node's own left half must show only plain \
+             background, got {left:?}"
+        );
+
+        let right = pixel_at(&data, bpr, 80, 50);
+        assert_eq!(
+            right,
+            [0x1C, 0x1B, 0x1F, 0xFF],
+            "after a real 180° rotation, the icon's own tint must land on the node's own \
+             right half instead, got {right:?}"
         );
     });
 }

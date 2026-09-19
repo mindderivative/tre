@@ -1,86 +1,100 @@
-# LOG — M35 Phase 1: Toolbars
+# LOG — M35 Phase 2: Split Button
 
-- User instruction "Start on the next milestone" was ambiguous
-  (the vello_hybrid fork documented last turn was the only concrete
-  candidate on the tracker) -- clarified via `AskUserQuestion` before
-  acting: the user wanted a genuinely fresh milestone, not the fork.
-- Real investigation, the same discipline M30/M32 were originally
-  scoped with: delegated research cross-referenced TRE's existing
-  52-method `add_*` catalog against MD3's own current official
-  catalog (local scraped mirror at `/home/phil/pyDev/projects/
-  pyCopper/M3-References/*.md` -- `m3.material.io` itself is
-  JS-rendered, unreachable via WebFetch) and pyCopper's own real
-  widget set. Ruled out three false candidates: Navigation Bar/Bottom
-  Sheet/Bottom App Bar (M30 already deliberately excluded these,
-  mobile-only patterns); a Menu container (already exists, `build_
-  menu`/`open_menu`); a full Date Picker container (the day-cell
-  primitive + grid math already exist, only chrome missing). Five
-  real ranked gaps remained; presented via `AskUserQuestion`. User
-  chose Button Groups + Split Button + Toolbars.
-- Real anatomy read directly from the local spec mirror before
-  designing anything: `COMPONENT_TOOLBARS.md`, `COMPONENT_SPLIT_
-  BUTTONS.md`, `COMPONENT_BUTTON_GROUPS.md`. Real, honest phase
-  ordering established: Toolbars first (pure composition, direct
-  sibling of the already-built `add_top_app_bar`), Split Button
-  second (composes existing Button/build_menu, reuses the existing
-  shape-morph (M7 Phase 4) + Animated<Affine> transform (M5 Phase 1)
-  mechanisms), Button Groups last (the Standard variant's real
-  "one button's state reflows its siblings' widths" mechanic is
-  novel at the UI level but has a real, directly reusable
-  architectural precedent -- `Tree::sync_carousel_layouts`, M30 Phase
-  9 Step 5's "container state drives every child's real layout_style"
-  shape) -- avoided a genuinely-novel-capability `AskUserQuestion`
-  pause since a real, concrete precedent exists to ground the design
-  in, mirroring M33's own precedent for when NOT to pause.
-- Implemented `Window.add_toolbar` in `window_factory.rs`, directly
-  after `add_top_app_bar` -- read that function first as the real
-  structural template: `resolve_fab_colors`'s own `match variant {
-  ... other => Err(PyValueError) }` pattern, `role(name, fallback)`
-  theme-resolution closure, `positioned_style` construction. Real
-  color tokens confirmed present via grep before use:
-  `surface_container`/`primary_container` both real, already-verified
-  MD3 roles in `engine_md3::color`.
-- Real, deliberate API design: no specialized children-list parameter
-  -- `add_toolbar` returns a plain container `Node`; the caller
-  composes any already-built node in via the existing, generic `Node.
-  add_child` (M6 Phase 1), matching MD3's own real "a container with
-  configurable slots" anatomy verbatim and the same "engine provides
-  the primitive, app composes" split `clip_children` (M32 Phase 3)
-  established.
-- Real, honest gap stated directly in the doc comment: the spec names
-  "floating toolbars have elevation by default" with no discrete
-  numeric token anywhere in the scraped pages -- reused `FAB_REST_
-  ELEVATION_LEVEL` (3.0), this catalog's own closest real "floating,
-  elevated chrome" reference, rather than inventing a number.
-- One real, deliberate rejection: a vertical *docked* toolbar raises
-  a clear `ValueError` instead of silently ignoring `orientation` --
-  MD3's own anatomy has no such variant (docked toolbars are always
-  full-width and horizontal).
-- Compiled clean on the first `cargo check` attempt. One real clippy
-  fix needed: `f64::from(FAB_REST_ELEVATION_LEVEL)` was a useless
-  conversion since the constant is already `f64` -- fixed by removing
-  the wrapper.
-- Real, direct empirical script run before writing any pytest: docked
-  default, floating/vertical/vibrant, composing an already-built
-  `Button` in via `add_child`, and all three real validation errors
-  (unknown variant/orientation/color) plus the vertical-docked
-  rejection -- all passed on the first run.
-- Wrote `tests/test_toolbar.py` (10 tests, modeled on `test_top_app_
-  bar.py`'s own established style) and `examples/toolbar.py` -- both
-  checked for filename collisions first (none).
+- Real anatomy read directly from `COMPONENT_SPLIT_BUTTONS.md` before
+  writing any code: leading button + trailing menu button (always
+  `expand_more`), real xsmall tokens (between-space 2dp, trailing-
+  button icon size 22dp), "the menu button rotates inwards 180° when
+  opened and closed" (standard, non-expressive motion scheme).
+- **Real, load-bearing correction, found and fixed before writing any
+  Split Button code, not after:** the M35 scoping note (written last
+  phase) assumed the trailing icon's rotation could reuse the existing
+  `PaintProperties.transform` (`Animated<Affine>`) mechanism at zero
+  new engine-core cost. Checked directly and found this false:
+  `Interpolate for Affine` (`animation.rs:34-59`) is a plain
+  componentwise coefficient lerp, its own doc comment already stating
+  it's wrong for rotation ("would look like a non-circular morph");
+  kurbo's real `Affine::svd()` (rotation-aware) is `pub(crate)`, not
+  exported -- confirmed via direct source read. Corrected the earlier
+  BUILD_TRACKER.md claim honestly rather than letting it stand.
+- Real fix: new `IconState.rotation: Animated<f64>` -- a plain scalar
+  degrees value, avoiding the whole Affine-interpolation correctness
+  problem entirely (a scalar lerp is exact), mirroring the identical
+  "scalar progress value drives real paint geometry" shape
+  `CheckboxState.check_progress`/`RadioButtonState.select_progress`/
+  `SwitchState.toggle_progress` already establish.
+- `IconState` could no longer derive `Clone`/`Debug`/`PartialEq` once
+  it carried an `Animated<f64>` (`Animated<T>` implements none of
+  those) -- found the exact real precedent already in this codebase:
+  `NodeKind`'s own doc comment states the identical fact for
+  `Splitter`, confirming via grep first that nothing actually clones/
+  prints/compares an `IconState` value directly before removing the
+  derive.
+- New `IconState::new(path, tint)` constructor. Migrated all 23 real
+  `IconState { path, tint }` struct-literal sites (22 in
+  `window_factory.rs`, 1 in `tree.rs`) via a Python regex script --
+  22 matched cleanly on the first pass; the 23rd (`tint: Color::
+  from_rgba8(r, g, b, a)`) had internal commas the regex's `[^\n,]+`
+  capture group split on, silently leaving it unmatched -- caught by
+  `cargo check`'s own next error, fixed by hand. The identical
+  "compiler's own exhaustive error list as the final real worklist"
+  technique M33 Phase 2/M34 Phase 1 already established.
+- New `Tree::tick_all` arm for `IconState.rotation` (mirrors
+  `select_progress`/`toggle_progress`, `tree.rs`); new `Node.
+  animate("rotation", ...)` match arm (`engine-py::node.rs`),
+  resolving only on `NodeKind::Icon`.
+- `engine-render`'s `NodeKind::Icon` paint arm now composes a fresh
+  `Affine::rotate(state.rotation.current.to_radians())` every frame,
+  in local node space around the icon's own real center (`w/2, h/2`),
+  before the existing viewBox-to-local `icon_transform` -- so the icon
+  visually spins in place regardless of its own internal viewBox
+  geometry.
+- Real, decisive pixel-diff test added to `icon_paint.rs`, reusing the
+  file's own existing asymmetric left-half test icon: a real 180°
+  rotation paints the node's own *right* half instead of the left --
+  a real, meaningful geometric proof, not "doesn't panic." Passed on
+  the first run.
+- Implemented `Window.add_split_button` by calling `self.add_button
+  (...)` directly for the leading button (a plain Rust method call
+  within the same `impl PyWindow` block -- `#[pymethods]` doesn't
+  block ordinary same-crate calls), reusing all of its own already-
+  verified color/token logic rather than reimplementing it. Built the
+  trailing button/icon manually, mirroring `add_top_app_bar`'s own
+  icon-button construction pattern, so the real icon `Node` itself
+  (not a wrapper) is exposed for the app to animate directly.
+- Real, deliberate design: `add_split_button` returns `(leading,
+  trailing, trailing_icon)` with no wrapping container node at all --
+  checked the spec's own anatomy diagram first: it lists exactly
+  "Leading button, Icon, Label text, Trailing button," unlike
+  `Toolbar`/`Button Group`, both of which do have a real container
+  element. Design Principle 6's own "engine provides the mechanism,
+  app decides the real state change" split: the engine never
+  opens/closes a menu or rotates the icon on its own.
+- Real, honest v1 scope limit stated directly: the inner corners' own
+  real hover/press shape-tightening is not implemented -- both
+  buttons paint fully rounded always, a deliberate simplification of
+  MD3's own asymmetric-corner anatomy this component's real function
+  doesn't strictly need.
+- Compiled clean on the first `cargo check`/`cargo clippy` attempt
+  after the mechanical migration (one straggler fixed by hand, above).
+- Real, direct empirical script run before writing any pytest: real
+  split button construction, independent leading/trailing clicks, and
+  real rotation animation round-tripping 0°→180°→0° -- all passed on
+  the first run.
+- Wrote `tests/test_split_button.py` (6 tests) and `examples/
+  split_button.py` -- both checked for filename collisions first
+  (none).
 - Full verification: `cargo check --all-targets`/`cargo clippy
   --all-targets -D warnings`/`cargo fmt --check` clean, `cargo test
-  --workspace --release` clean (unchanged counts -- pure engine-py
-  composition, no new engine-core/engine-render pure-logic surface),
-  `maturin develop --release` rebuilt, `pytest tests/` 537 passed/1
-  skipped (10 new, up from 527, zero regressions), all 72 examples
-  (including the new `examples/toolbar.py`) and the showcase demo
-  re-run clean, `mypy --strict` clean against `examples/toolbar.py`.
-- Updated `BUILD_TRACKER.md` (M35 scoped with all 3 phases; Phase 1
-  closed; Top Metrics row updated to 33%/in-progress) -- verified the
-  parser's own reported item count before/after (34/110/200 ->
-  35/113/203 when scoping, unchanged when closing Phase 1 since that
-  only flips an existing item's own status marker), regenerated and
-  republished the Build Tracker artifact. **This closes M35 Phase 1
-  only -- M35 itself stays open, Phase 2 (Split Button) and Phase 3
-  (Button Groups) remain.**
+  --workspace --release` clean (`engine-render` +1 new rotation
+  pixel-diff test, unchanged elsewhere -- additive only), `maturin
+  develop --release` rebuilt, `pytest tests/` 543 passed/1 skipped
+  (6 new, up from 537, zero regressions), all 73 examples (including
+  the new `examples/split_button.py`) and the showcase demo re-run
+  clean, `mypy --strict` clean against `examples/split_button.py`.
+- Updated `BUILD_TRACKER.md` (Phase 2 closed; Top Metrics row updated
+  to 67%/2-of-3; corrected the earlier scoping note's own "zero new
+  engine-core capability" claim to state the real finding honestly)
+  -- verified the parser's own reported item count unchanged (only an
+  existing item's status flipped), regenerated and republished the
+  Build Tracker artifact. **This closes M35 Phase 2 only -- M35 itself
+  stays open, Phase 3 (Button Groups) remains.**

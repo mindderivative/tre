@@ -703,6 +703,17 @@ const TOOLBAR_HEIGHT: f32 = 64.0;
 const TOOLBAR_PADDING: f32 = 16.0;
 const TOOLBAR_ITEM_GAP: f32 = 32.0;
 
+/// M35 Phase 2 (§5, §7): real MD3 Split Button tokens, the `xsmall`
+/// size class (`COMPONENT_SPLIT_BUTTONS.md`'s own scraped token
+/// table: `md.comp.split-button.xsmall.between-space` = 2dp,
+/// `...xsmall.trailing-button.icon.size` = 22dp) -- used as flat
+/// constants regardless of the caller's own chosen `height`, the
+/// identical real precedent `TOP_APP_BAR_ICON_SIZE` already
+/// established for a fixed real MD3 token value that doesn't scale
+/// with a caller-chosen container size.
+const SPLIT_BUTTON_GAP: f32 = 2.0;
+const SPLIT_BUTTON_TRAILING_ICON_SIZE: f32 = 22.0;
+
 /// MD3's own real Tabs anatomy (M30 Phase 5 Step 4), the *Primary
 /// Navigation Tab* variant -- verified against Material Web's own
 /// token source before writing any code. **Real, confirmed finding:**
@@ -1389,10 +1400,7 @@ impl PyWindow {
         let container = tree.insert(NodeKind::Rect, container_style, container_paint);
 
         let icon_id = tree.insert(
-            NodeKind::Icon(IconState {
-                path,
-                tint: colors.label,
-            }),
+            NodeKind::Icon(IconState::new(path, colors.label)),
             Style {
                 size: Size {
                     width: length(ICON_BUTTON_ICON_SIZE),
@@ -1454,10 +1462,7 @@ impl PyWindow {
         let container = tree.insert(NodeKind::Rect, container_style, container_paint);
 
         let icon_id = tree.insert(
-            NodeKind::Icon(IconState {
-                path,
-                tint: colors.icon,
-            }),
+            NodeKind::Icon(IconState::new(path, colors.icon)),
             Style {
                 size: Size {
                     width: length(FAB_ICON_SIZE),
@@ -1535,10 +1540,7 @@ impl PyWindow {
 
         if let Some(path) = icon_path {
             let icon_id = tree.insert(
-                NodeKind::Icon(IconState {
-                    path,
-                    tint: colors.icon,
-                }),
+                NodeKind::Icon(IconState::new(path, colors.icon)),
                 Style {
                     size: Size {
                         width: length(FAB_ICON_SIZE),
@@ -1742,10 +1744,7 @@ impl PyWindow {
             };
             if is_selected {
                 let check_id = tree.insert(
-                    NodeKind::Icon(IconState {
-                        path: check_path.clone(),
-                        tint: on_secondary_container,
-                    }),
+                    NodeKind::Icon(IconState::new(check_path.clone(), on_secondary_container)),
                     Style {
                         size: Size {
                             width: length(SEGMENTED_BUTTON_CHECKMARK_SIZE),
@@ -1892,10 +1891,7 @@ impl PyWindow {
         if let Some(path) = leading_path {
             icon_count += 1.0;
             let leading_id = tree.insert(
-                NodeKind::Icon(IconState {
-                    path,
-                    tint: colors.icon,
-                }),
+                NodeKind::Icon(IconState::new(path, colors.icon)),
                 Style {
                     size: Size {
                         width: length(CHIP_ICON_SIZE),
@@ -1934,10 +1930,7 @@ impl PyWindow {
 
         if let Some(path) = trailing_path {
             let trailing_id = tree.insert(
-                NodeKind::Icon(IconState {
-                    path,
-                    tint: colors.icon,
-                }),
+                NodeKind::Icon(IconState::new(path, colors.icon)),
                 Style {
                     size: Size {
                         width: length(CHIP_ICON_SIZE),
@@ -2034,10 +2027,7 @@ impl PyWindow {
         if let Some(path) = icon_path {
             icon_count = 1.0;
             let icon_id = tree.insert(
-                NodeKind::Icon(IconState {
-                    path,
-                    tint: icon_color,
-                }),
+                NodeKind::Icon(IconState::new(path, icon_color)),
                 Style {
                     size: Size {
                         width: length(MENU_ITEM_ICON_SIZE),
@@ -2081,10 +2071,7 @@ impl PyWindow {
 
         if let Some(path) = chevron_path {
             let chevron_id = tree.insert(
-                NodeKind::Icon(IconState {
-                    path,
-                    tint: icon_color,
-                }),
+                NodeKind::Icon(IconState::new(path, icon_color)),
                 Style {
                     size: Size {
                         width: length(MENU_ITEM_ICON_SIZE),
@@ -2927,10 +2914,7 @@ impl PyWindow {
                 PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
             );
             let icon_id = tree.insert(
-                NodeKind::Icon(IconState {
-                    path: close_path,
-                    tint: icon_color,
-                }),
+                NodeKind::Icon(IconState::new(close_path, icon_color)),
                 Style {
                     size: Size {
                         width: length(SNACKBAR_ICON_SIZE),
@@ -3409,10 +3393,7 @@ impl PyWindow {
                 inactive_icon_color
             };
             let icon_id = tree.insert(
-                NodeKind::Icon(IconState {
-                    path,
-                    tint: icon_color,
-                }),
+                NodeKind::Icon(IconState::new(path, icon_color)),
                 Style {
                     size: Size {
                         width: length(NAV_RAIL_ICON_SIZE),
@@ -3660,10 +3641,7 @@ impl PyWindow {
             );
 
             let icon_id = tree.insert(
-                NodeKind::Icon(IconState {
-                    path,
-                    tint: icon_color,
-                }),
+                NodeKind::Icon(IconState::new(path, icon_color)),
                 Style {
                     size: Size {
                         width: length(MENU_ITEM_ICON_SIZE),
@@ -3899,10 +3877,7 @@ impl PyWindow {
                 ),
             );
             let icon_id = tree.insert(
-                NodeKind::Icon(IconState {
-                    path,
-                    tint: leading_icon_color,
-                }),
+                NodeKind::Icon(IconState::new(path, leading_icon_color)),
                 Style {
                     size: Size {
                         width: length(TOP_APP_BAR_ICON_SIZE),
@@ -3978,10 +3953,7 @@ impl PyWindow {
                 ),
             );
             let icon_id = tree.insert(
-                NodeKind::Icon(IconState {
-                    path,
-                    tint: trailing_icon_color,
-                }),
+                NodeKind::Icon(IconState::new(path, trailing_icon_color)),
                 Style {
                     size: Size {
                         width: length(TOP_APP_BAR_ICON_SIZE),
@@ -4169,6 +4141,105 @@ impl PyWindow {
         Ok(self.wrap_node(bar))
     }
 
+    /// M35 Phase 2 (§5, §7, §8): a real MD3 Split Button -- a leading
+    /// button (reuses `add_button` directly, unchanged, since a real
+    /// Split Button's own leading button "uses the same color schemes
+    /// as standard buttons," `COMPONENT_SPLIT_BUTTONS.md`'s own words)
+    /// plus a real, separate trailing menu-icon button, joined by the
+    /// real xsmall `between-space` token (`SPLIT_BUTTON_GAP`). Real
+    /// anatomy has no separate "container" element at all (unlike
+    /// `Toolbar`/`Button Group`) -- the spec's own anatomy diagram
+    /// lists exactly "1. Leading button, 2. Icon, 3. Label text, 4.
+    /// Trailing button," so this returns `(leading, trailing,
+    /// trailing_icon)` with no wrapping node, matching that real
+    /// anatomy exactly rather than inventing an unneeded container.
+    ///
+    /// `trailing_icon` is the real, individual `NodeKind::Icon` node
+    /// itself, not its own button wrapper -- the one thing this
+    /// component needs to expose beyond what `add_button`/`add_top_
+    /// app_bar`'s own leading/trailing icons already return, since the
+    /// real "spins 180° when opened and closed" behavior (`Node.
+    /// animate("rotation", ...)`, this phase's own new `IconState.
+    /// rotation` field) is something the caller drives directly --
+    /// Design Principle 6's own "engine provides the mechanism, app
+    /// decides when a real state change happens" split, the identical
+    /// real shape `Checkbox.checked`/`RadioButton.selected` already
+    /// establish (the engine never toggles either on click itself).
+    /// The trailing icon is always real MD3's own required
+    /// `expand_more` (already a real, curated icon in this catalog,
+    /// `engine_md3::icons`) -- "the trailing button should always have
+    /// the expand and collapse icon... avoid modifying the icon."
+    ///
+    /// **Real, honest v1 scope limit, stated directly:** the inner
+    /// corners' own real hover/press shape-tightening
+    /// (`COMPONENT_SPLIT_BUTTONS.md`'s own "the inner corners change
+    /// shape for hovered, focused, and pressed states") is not
+    /// implemented -- both buttons paint fully rounded (`corner_radius
+    /// = height / 2.0`) always, a real, deliberate simplification of
+    /// MD3's own real asymmetric-corner anatomy rather than wiring a
+    /// new hover/press-driven shape-morph state machine, which this
+    /// component's own real function doesn't strictly need. The real
+    /// per-size `xsmall` token set is used directly (`SPLIT_BUTTON_
+    /// GAP`/`SPLIT_BUTTON_TRAILING_ICON_SIZE`) rather than a discrete
+    /// XS/S/M/L/XL size-class parameter, matching `add_button`'s own
+    /// existing convention of always taking a literal real `width`/
+    /// `height`, never a size enum.
+    #[pyo3(signature = (label, width, height, variant="filled", x=None, y=None))]
+    fn add_split_button(
+        &self,
+        label: &str,
+        width: f32,
+        height: f32,
+        variant: &str,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<(Node, Node, Node)> {
+        let leading = self.add_button(label, width, height, variant, x, y)?;
+
+        let colors = resolve_button_colors(&self.theme.borrow(), variant)?;
+        let trailing_path = resolve_icon_path("expand_more")?;
+        let trailing_x = x.map(|x| x + width + SPLIT_BUTTON_GAP);
+
+        let mut tree = self.tree.borrow_mut();
+
+        let mut trailing_paint = PaintProperties::new(
+            colors.container,
+            f64::from(height) / 2.0,
+            colors.elevation,
+            1.0,
+        );
+        trailing_paint.border_color = Animated::new(colors.border_color);
+        trailing_paint.border_width = Animated::new(colors.border_width);
+        let mut trailing_style = positioned_style(
+            Size {
+                width: length(height),
+                height: length(height),
+            },
+            trailing_x,
+            y,
+        );
+        trailing_style.display = taffy::Display::Flex;
+        trailing_style.justify_content = Some(JustifyContent::CENTER);
+        trailing_style.align_items = Some(AlignItems::CENTER);
+        let trailing = tree.insert(NodeKind::Rect, trailing_style, trailing_paint);
+
+        let icon_id = tree.insert(
+            NodeKind::Icon(IconState::new(trailing_path, colors.label)),
+            Style {
+                size: Size {
+                    width: length(SPLIT_BUTTON_TRAILING_ICON_SIZE),
+                    height: length(SPLIT_BUTTON_TRAILING_ICON_SIZE),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+        tree.add_child(trailing, icon_id);
+        tree.add_child(self.root, trailing);
+
+        Ok((leading, self.wrap_node(trailing), self.wrap_node(icon_id)))
+    }
+
     /// M30 Phase 5 Step 4 (§5, §7): `Tabs`, MD3's real *Primary
     /// Navigation Tab* variant (Secondary is its own separately-
     /// tokened real variant, deliberately out of scope for this step
@@ -4336,10 +4407,7 @@ impl PyWindow {
 
             if let Some(paths) = &icon_paths {
                 let icon_id = tree.insert(
-                    NodeKind::Icon(IconState {
-                        path: paths[i].clone(),
-                        tint: color,
-                    }),
+                    NodeKind::Icon(IconState::new(paths[i].clone(), color)),
                     Style {
                         size: Size {
                             width: length(TAB_ICON_SIZE),
@@ -4497,10 +4565,7 @@ impl PyWindow {
                 PaintProperties::new(TRANSPARENT, SEARCH_ICON_BUTTON_SIZE as f64 / 2.0, 0.0, 1.0),
             );
             let icon_id = tree.insert(
-                NodeKind::Icon(IconState {
-                    path,
-                    tint: leading_icon_color,
-                }),
+                NodeKind::Icon(IconState::new(path, leading_icon_color)),
                 Style {
                     size: Size {
                         width: length(SEARCH_ICON_SIZE),
@@ -4575,10 +4640,7 @@ impl PyWindow {
                 PaintProperties::new(TRANSPARENT, SEARCH_ICON_BUTTON_SIZE as f64 / 2.0, 0.0, 1.0),
             );
             let icon_id = tree.insert(
-                NodeKind::Icon(IconState {
-                    path,
-                    tint: trailing_icon_color,
-                }),
+                NodeKind::Icon(IconState::new(path, trailing_icon_color)),
                 Style {
                     size: Size {
                         width: length(SEARCH_ICON_SIZE),
@@ -4728,10 +4790,7 @@ impl PyWindow {
         if let Some(path) = leading_path {
             side_width += MENU_ITEM_ICON_SIZE + MENU_ITEM_ICON_GAP;
             let icon_id = tree.insert(
-                NodeKind::Icon(IconState {
-                    path,
-                    tint: icon_color,
-                }),
+                NodeKind::Icon(IconState::new(path, icon_color)),
                 Style {
                     size: Size {
                         width: length(MENU_ITEM_ICON_SIZE),
@@ -4826,10 +4885,7 @@ impl PyWindow {
 
         if let Some(path) = trailing_path {
             let icon_id = tree.insert(
-                NodeKind::Icon(IconState {
-                    path,
-                    tint: icon_color,
-                }),
+                NodeKind::Icon(IconState::new(path, icon_color)),
                 Style {
                     size: Size {
                         width: length(MENU_ITEM_ICON_SIZE),
@@ -5015,10 +5071,7 @@ impl PyWindow {
             chevron_paint.transform = Animated::new(Affine::scale(-1.0));
         }
         let chevron = tree.insert(
-            NodeKind::Icon(IconState {
-                path: chevron_path,
-                tint: chevron_color,
-            }),
+            NodeKind::Icon(IconState::new(chevron_path, chevron_color)),
             Style {
                 size: Size {
                     width: length(MENU_ITEM_ICON_SIZE),
@@ -5126,10 +5179,7 @@ impl PyWindow {
                 chevron_paint.transform = Animated::new(Affine::scale(-1.0));
             }
             let id = tree.insert(
-                NodeKind::Icon(IconState {
-                    path,
-                    tint: chevron_color,
-                }),
+                NodeKind::Icon(IconState::new(path, chevron_color)),
                 Style {
                     size: Size {
                         width: length(MENU_ITEM_ICON_SIZE),
@@ -5645,10 +5695,7 @@ impl PyWindow {
                 PaintProperties::new(TRANSPARENT, SPIN_BOX_BUTTON_SIZE as f64 / 2.0, 0.0, 1.0),
             );
             let icon_id = tree.insert(
-                NodeKind::Icon(IconState {
-                    path,
-                    tint: icon_color,
-                }),
+                NodeKind::Icon(IconState::new(path, icon_color)),
                 Style {
                     size: Size {
                         width: length(MENU_ITEM_ICON_SIZE),
@@ -5788,10 +5835,7 @@ impl PyWindow {
                 PaintProperties::new(TRANSPARENT, PAGE_ITEM_CORNER_RADIUS, 0.0, 1.0),
             );
             let icon_id = tree.insert(
-                NodeKind::Icon(IconState {
-                    path,
-                    tint: icon_color,
-                }),
+                NodeKind::Icon(IconState::new(path, icon_color)),
                 Style {
                     size: Size {
                         width: length(MENU_ITEM_ICON_SIZE),
@@ -6580,10 +6624,7 @@ impl PyWindow {
 
         let mut tree = self.tree.borrow_mut();
         let id = tree.insert(
-            NodeKind::Icon(IconState {
-                path,
-                tint: Color::from_rgba8(r, g, b, a),
-            }),
+            NodeKind::Icon(IconState::new(path, Color::from_rgba8(r, g, b, a))),
             positioned_style(
                 Size {
                     width: length(size),

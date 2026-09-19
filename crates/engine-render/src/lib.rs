@@ -914,7 +914,24 @@ fn paint_node(
             let icon_scale = 1.0 / ICON_VIEWBOX_SIZE;
             let icon_transform = Affine::scale_non_uniform(w * icon_scale, h * icon_scale)
                 * Affine::translate((0.0, ICON_VIEWBOX_SIZE));
-            scene.set_transform(composed * icon_transform);
+            // M35 Phase 2 (§5, §8): `Split Button`'s own real trailing-
+            // icon rotation -- a real, fresh `Affine::rotate` built
+            // straight from `state.rotation.current` (degrees) every
+            // frame, composed in *local* node space (around this
+            // node's own real center, `(w/2, h/2)`) before the fixed
+            // viewBox-to-local `icon_transform` above, so the icon
+            // visually spins in place regardless of its own internal
+            // viewBox geometry. `IconState`'s own doc comment has the
+            // full real reason this is a dedicated scalar field, not
+            // routed through `PaintProperties.transform`.
+            let rotation = if state.rotation.current != 0.0 {
+                Affine::translate((w / 2.0, h / 2.0))
+                    * Affine::rotate(state.rotation.current.to_radians())
+                    * Affine::translate((-w / 2.0, -h / 2.0))
+            } else {
+                Affine::IDENTITY
+            };
+            scene.set_transform(composed * rotation * icon_transform);
             scene.set_paint(with_opacity(state.tint, node.paint.opacity.current));
             scene.fill_path(&state.path);
             scene.set_transform(composed);
