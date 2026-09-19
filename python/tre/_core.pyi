@@ -962,6 +962,29 @@ class Window:
         x: float | None = None,
         y: float | None = None,
     ) -> Node: ...
+    def add_code_editor(
+        self,
+        content: str,
+        background: Color,
+        width: float,
+        height: float,
+        font_weight: float = 400.0,
+        font_size: float = 14.0,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """A real, genuinely multiline `TextField` (`Enter` inserts a
+        newline, `Home`/`End` operate on the current line, `ArrowUp`/
+        `ArrowDown` navigate by line preserving column) -- a real,
+        honestly-scoped v1, not a full IDE-grade editor: no syntax
+        highlighting, no line-number gutter, no scroll/clip for
+        content past the box's own edges, no bundled monospace font
+        (always renders in `"Roboto"`, this catalog's own only
+        registered face -- `font_family` isn't exposed here since no
+        other name would actually resolve), and no Tab-key indentation
+        capture (`Tab` still moves focus).
+        """
+        ...
     def build_shell(
         self,
         menu_bar: Node | None = None,

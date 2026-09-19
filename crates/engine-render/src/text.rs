@@ -285,7 +285,7 @@ impl TextRenderer {
             &state.font_family,
             state.font_weight,
             state.font_size,
-            at.max_width,
+            field_max_width(state, at.max_width),
         );
         Cursor::from_point(&layout, (point.x - at.x) as f32, (point.y - at.y) as f32).index()
     }
@@ -341,7 +341,7 @@ impl TextRenderer {
             &state.font_family,
             state.font_weight,
             state.font_size,
-            at.max_width,
+            field_max_width(state, at.max_width),
             TextAlign::Start,
         );
 
@@ -431,6 +431,20 @@ impl TextRenderer {
             scene.fill_path(&rect.to_path(0.1));
         }
     }
+}
+
+/// M30 Phase 9 Step 3 (§5): `Code Editor`'s own real "never wraps"
+/// layout need (this module's own doc comment already states the
+/// established convention -- a hard `\n` always starts a new `Layout`
+/// line regardless of wrapping, `Layout::break_all_lines`'s own real
+/// contract, confirmed via direct source read) -- `Some(f32::MAX)`
+/// and `None` are the identical real no-wrap value to `break_all_
+/// lines` (`max_advance.unwrap_or(f32::MAX)`), so this needs no new
+/// `Option`-typed plumbing through `shaped_layout`/`build_field_
+/// layout`'s own existing `f32` parameter, just the right value at
+/// the two real call sites that know `state.multiline`.
+fn field_max_width(state: &TextFieldState, max_width: f32) -> f32 {
+    if state.multiline { f32::MAX } else { max_width }
 }
 
 /// Where and how wide to draw one text node -- bundled so

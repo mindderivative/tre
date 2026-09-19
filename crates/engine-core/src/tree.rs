@@ -1655,13 +1655,23 @@ impl Tree {
                 }
                 Some(DispatchOutcome::None)
             }
+            // M30 Phase 9 Step 3 (§8, §10): `Home`/`End` jump to the
+            // whole buffer's own start/end for a single-line field
+            // (real, unchanged, byte-for-byte), but to the *current
+            // line's* own start/end for `Code Editor`'s real multiline
+            // mode -- the real, expected desktop-editor convention, not
+            // "jump to the file's own start" every keystroke.
             Key::Home => {
                 if shift {
                     state.selection_anchor.get_or_insert(state.cursor);
                 } else {
                     state.selection_anchor = None;
                 }
-                state.cursor = 0;
+                state.cursor = if state.multiline {
+                    Self::line_start(&state.content, state.cursor)
+                } else {
+                    0
+                };
                 Some(DispatchOutcome::None)
             }
             Key::End => {
@@ -1670,7 +1680,56 @@ impl Tree {
                 } else {
                     state.selection_anchor = None;
                 }
-                state.cursor = state.content.len();
+                state.cursor = if state.multiline {
+                    Self::line_end(&state.content, state.cursor)
+                } else {
+                    state.content.len()
+                };
+                Some(DispatchOutcome::None)
+            }
+            // M30 Phase 9 Step 3 (§8, §10): a true no-op for a single-
+            // line field (consumed, matching `Enter`'s own established
+            // "consumed but no-op" precedent just below) -- `Code
+            // Editor`'s own real, load-bearing need: move by line,
+            // preserving the caret's own real *character* column
+            // (`Self::move_to_line`), the correct, expected behavior
+            // for a genuinely monospace editor, not a pixel-accurate
+            // approximation (this codebase has no bundled monospace
+            // font yet, a real, separate, stated gap -- `add_code_
+            // editor`'s own doc comment). Mirrors `ArrowLeft`/`Right`'s
+            // own established "collapse an active selection, don't
+            // also move further" convention for consistency, not a
+            // second, differently-shaped rule.
+            Key::ArrowUp => {
+                if !state.multiline {
+                    return Some(DispatchOutcome::None);
+                }
+                if !shift && let Some(anchor) = state.selection_anchor.take() {
+                    state.cursor = state.cursor.min(anchor);
+                    return Some(DispatchOutcome::None);
+                }
+                if shift {
+                    state.selection_anchor.get_or_insert(state.cursor);
+                }
+                if let Some(target) = Self::move_to_line(&state.content, state.cursor, true) {
+                    state.cursor = target;
+                }
+                Some(DispatchOutcome::None)
+            }
+            Key::ArrowDown => {
+                if !state.multiline {
+                    return Some(DispatchOutcome::None);
+                }
+                if !shift && let Some(anchor) = state.selection_anchor.take() {
+                    state.cursor = state.cursor.max(anchor);
+                    return Some(DispatchOutcome::None);
+                }
+                if shift {
+                    state.selection_anchor.get_or_insert(state.cursor);
+                }
+                if let Some(target) = Self::move_to_line(&state.content, state.cursor, false) {
+                    state.cursor = target;
+                }
                 Some(DispatchOutcome::None)
             }
             // A real space keypress reaches `KeyPressed` (`Key::Space`,
@@ -1689,7 +1748,20 @@ impl Tree {
             // matching `Space`'s own reasoning above) but deliberately
             // doesn't insert a newline either -- real, stated,
             // single-line scope, not a general multiline text area.
-            Key::Enter => Some(DispatchOutcome::None),
+            // M30 Phase 9 Step 3 (§8, §10): `Code Editor`'s own real
+            // multiline mode inserts a genuine `\n` instead, the same
+            // real `delete_selection`-then-insert shape `Space` above
+            // already establishes.
+            Key::Enter => {
+                if state.multiline {
+                    Self::delete_selection(state);
+                    state.content.insert(state.cursor, '\n');
+                    state.cursor += 1;
+                    Some(DispatchOutcome::Changed(field))
+                } else {
+                    Some(DispatchOutcome::None)
+                }
+            }
             Key::Tab | Key::Escape => None,
         }
     }
@@ -1752,6 +1824,57 @@ impl Tree {
         state.cursor = start;
         state.selection_anchor = None;
         true
+    }
+
+    /// M30 Phase 9 Step 3 (§8, §10): the byte offset of `cursor`'s own
+    /// current line's start -- just past the nearest `\n` before it,
+    /// or `0` at the buffer's own real start. Shared by `Key::Home`'s
+    /// own multiline arm and `move_to_line` below.
+    fn line_start(content: &str, cursor: usize) -> usize {
+        content[..cursor].rfind('\n').map_or(0, |i| i + 1)
+    }
+
+    /// `line_start`'s own real end-of-line sibling -- the nearest
+    /// `\n`'s own byte offset at or after `cursor`, or `content.len()`
+    /// at the buffer's own real end.
+    fn line_end(content: &str, cursor: usize) -> usize {
+        content[cursor..]
+            .find('\n')
+            .map_or(content.len(), |i| cursor + i)
+    }
+
+    /// `Key::ArrowUp`/`ArrowDown`'s own real line-navigation logic:
+    /// moves `cursor` to the adjacent line (`up`, or the next one),
+    /// preserving its own real *character* column (not byte offset --
+    /// UTF-8-safe the same way `ArrowLeft`/`ArrowRight`'s own `char_
+    /// indices` stepping already is), clamped to the target line's own
+    /// real length if it's shorter -- the same real "land at end of a
+    /// shorter line" convention every desktop text editor already has.
+    /// Returns `None` (a true no-op) at the buffer's own first/last
+    /// line, where there's genuinely nowhere to go.
+    fn move_to_line(content: &str, cursor: usize, up: bool) -> Option<usize> {
+        let line_start = Self::line_start(content, cursor);
+        let column = content[line_start..cursor].chars().count();
+        let (target_start, target_end) = if up {
+            if line_start == 0 {
+                return None;
+            }
+            let prev_end = line_start - 1;
+            (Self::line_start(content, prev_end), prev_end)
+        } else {
+            let line_end = Self::line_end(content, cursor);
+            if line_end == content.len() {
+                return None;
+            }
+            let next_start = line_end + 1;
+            (next_start, Self::line_end(content, next_start))
+        };
+        Some(
+            content[target_start..target_end]
+                .char_indices()
+                .nth(column)
+                .map_or(target_end, |(i, _)| target_start + i),
+        )
     }
 
     /// M17 Phase 1 (§8): a pure, real read of a `TextField`'s own
@@ -2150,10 +2273,16 @@ impl Tree {
                     // also real when a `Slider` is focused instead,
                     // handled above via `dispatch_slider_key`. Reaching
                     // here means neither is focused, a true no-op.
+                    // `ArrowUp`/`ArrowDown` (M30 Phase 9 Step 3, §10)
+                    // join the same real "only meaningful when a
+                    // TextField is focused" group -- also handled above
+                    // via `dispatch_text_field_key` when one is.
                     Key::Backspace
                     | Key::Delete
                     | Key::ArrowLeft
                     | Key::ArrowRight
+                    | Key::ArrowUp
+                    | Key::ArrowDown
                     | Key::Home
                     | Key::End => DispatchOutcome::None,
                 }
@@ -6571,6 +6700,171 @@ mod tests {
         let outcome = dispatch_key(&mut tree, root, Key::Backspace);
         assert_eq!(outcome, DispatchOutcome::Changed(field));
         assert_eq!(field_state(&tree, field).content, "caf");
+    }
+
+    /// M30 Phase 9 Step 3 (§8, §10): `text_field_scene`'s own real
+    /// `multiline: true` sibling -- `Code Editor`'s own real scene,
+    /// every multiline test below builds on this.
+    fn multiline_field_scene(content: &str) -> (Tree, NodeId, NodeId) {
+        let (mut tree, root, field) = text_field_scene(content);
+        let NodeKind::TextField(state) = &mut tree.get_mut(field).unwrap().kind else {
+            panic!("expected a TextField node");
+        };
+        state.multiline = true;
+        (tree, root, field)
+    }
+
+    #[test]
+    fn enter_on_a_multiline_field_inserts_a_real_newline() {
+        let (mut tree, root, field) = multiline_field_scene("ab");
+        dispatch_key(&mut tree, root, Key::Home);
+        dispatch_key(&mut tree, root, Key::ArrowRight);
+        let outcome = dispatch_key(&mut tree, root, Key::Enter);
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Changed(field),
+            "Enter on a multiline TextField must be a real inserted newline, not consumed"
+        );
+        assert_eq!(field_state(&tree, field).content, "a\nb");
+    }
+
+    #[test]
+    fn home_and_end_on_a_multiline_field_jump_to_the_current_line_not_the_whole_buffer() {
+        let (mut tree, root, field) = multiline_field_scene("one\ntwo\nthree");
+        // Real cursor starts at content's own end (inside "three") --
+        // Home/End here must only ever reach "three"'s own real start/
+        // end, never byte 0 or the whole buffer's own real end.
+        dispatch_key(&mut tree, root, Key::Home);
+        assert_eq!(
+            field_state(&tree, field).cursor,
+            8,
+            "Home on a multiline field must land at the current line's own start (after the \
+             second '\\n'), not the whole buffer's start"
+        );
+        dispatch_key(&mut tree, root, Key::End);
+        assert_eq!(
+            field_state(&tree, field).cursor,
+            13,
+            "End on a multiline field must land at the current line's own end (content.len(), \
+             since 'three' is the last line), matching the whole-buffer case here by coincidence"
+        );
+    }
+
+    #[test]
+    fn home_on_the_first_line_of_a_multiline_field_still_lands_at_byte_zero() {
+        let (mut tree, root, field) = multiline_field_scene("one\ntwo");
+        // Move the cursor into the first line explicitly, since a
+        // fresh field starts at content's own end (inside "two").
+        for _ in 0..4 {
+            dispatch_key(&mut tree, root, Key::ArrowLeft);
+        }
+        assert_eq!(
+            field_state(&tree, field).cursor,
+            3,
+            "sanity: cursor now right after \"one\""
+        );
+        dispatch_key(&mut tree, root, Key::Home);
+        assert_eq!(field_state(&tree, field).cursor, 0);
+    }
+
+    #[test]
+    fn arrow_up_and_down_move_the_cursor_by_line_preserving_its_own_real_column() {
+        let (mut tree, root, field) = multiline_field_scene("hello\nhi\nworld");
+        // Cursor starts at content's own end -- inside "world", column 5.
+        dispatch_key(&mut tree, root, Key::ArrowUp);
+        assert_eq!(
+            field_state(&tree, field).cursor,
+            8,
+            "ArrowUp must land on \"hi\"'s own end (column 5 clamped to its real length 2), \
+             byte offset 6 (line start after first '\\n') + 2 = 8"
+        );
+        // Real, deliberate v1 simplification, not a bug: `move_to_line`
+        // re-derives its own real column fresh from wherever the
+        // cursor currently sits each call -- it does not remember the
+        // original column 5 from before the first hop landed it on
+        // "hi"'s own shorter line, the same real "goal column" memory
+        // a fuller desktop editor would keep. A second ArrowUp here
+        // therefore preserves "hi"'s own real column 2, not 5.
+        dispatch_key(&mut tree, root, Key::ArrowUp);
+        assert_eq!(
+            field_state(&tree, field).cursor,
+            2,
+            "ArrowUp again must preserve the real column 2 the previous hop actually landed \
+             at, not a remembered original column this v1 doesn't track"
+        );
+        dispatch_key(&mut tree, root, Key::ArrowDown);
+        assert_eq!(
+            field_state(&tree, field).cursor,
+            8,
+            "ArrowDown must move back down to \"hi\"'s own end (column 2 fits inside it)"
+        );
+    }
+
+    #[test]
+    fn arrow_down_at_the_last_line_is_a_true_no_op() {
+        // A fresh field's own real cursor already starts at content's
+        // own end (`TextFieldState::new`'s own contract) -- already on
+        // the last line, no extra navigation needed to set this up.
+        let (mut tree, root, field) = multiline_field_scene("one\ntwo");
+        dispatch_key(&mut tree, root, Key::ArrowDown);
+        assert_eq!(
+            field_state(&tree, field).cursor,
+            7,
+            "ArrowDown at the buffer's own last line must be a true no-op"
+        );
+    }
+
+    #[test]
+    fn arrow_up_at_the_first_line_is_a_true_no_op() {
+        let (mut tree, root, field) = multiline_field_scene("one\ntwo");
+        // Walk the real cursor all the way back to byte 0 via plain
+        // ArrowLeft (already proven correct, clamps at 0) -- genuinely
+        // on the first line, not `Home`, which (correctly, for
+        // multiline) only ever jumps to the *current* line's own
+        // start, still "two"'s own, not "one"'s.
+        for _ in 0.."one\ntwo".len() {
+            dispatch_key(&mut tree, root, Key::ArrowLeft);
+        }
+        assert_eq!(
+            field_state(&tree, field).cursor,
+            0,
+            "sanity: cursor now at byte 0"
+        );
+        dispatch_key(&mut tree, root, Key::ArrowUp);
+        assert_eq!(
+            field_state(&tree, field).cursor,
+            0,
+            "ArrowUp at the buffer's own first line must be a true no-op"
+        );
+    }
+
+    #[test]
+    fn arrow_up_down_home_end_and_enter_are_true_no_ops_for_a_non_multiline_field() {
+        // The real backward-compatibility claim: every existing,
+        // already-real `TextField` (multiline defaults to `false`)
+        // must stay byte-for-byte unchanged by this step.
+        let (mut tree, root, field) = text_field_scene("one\ntwo");
+        let before = field_state(&tree, field).cursor;
+        assert_eq!(
+            dispatch_key(&mut tree, root, Key::ArrowUp),
+            DispatchOutcome::None
+        );
+        assert_eq!(
+            dispatch_key(&mut tree, root, Key::ArrowDown),
+            DispatchOutcome::None
+        );
+        assert_eq!(
+            field_state(&tree, field).cursor,
+            before,
+            "ArrowUp/ArrowDown must be true no-ops on a single-line field"
+        );
+        let outcome = dispatch_key(&mut tree, root, Key::Enter);
+        assert_eq!(outcome, DispatchOutcome::None);
+        assert_eq!(
+            field_state(&tree, field).content,
+            "one\ntwo",
+            "Enter must still never insert a newline into a single-line field"
+        );
     }
 
     #[test]

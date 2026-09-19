@@ -116,8 +116,10 @@ fn translate_pointer_button(button: MouseButton) -> Option<PointerButton> {
 /// below, M15 Phase 2). Matched against `winit::keyboard::Key::Named`,
 /// verified directly against `winit`'s own `keyboard.rs` (`NamedKey::
 /// {Tab, Enter, Space, Escape, Backspace, Delete, ArrowLeft,
-/// ArrowRight, Home, End}` all real, confirmed variants) before
-/// writing this.
+/// ArrowRight, ArrowUp, ArrowDown, Home, End}` all real, confirmed
+/// variants) before writing this. `ArrowUp`/`ArrowDown` (M30 Phase 9
+/// Step 3, §10): `Code Editor`'s own real multiline line-navigation
+/// need.
 fn translate_key(logical_key: &WinitKey) -> Option<Key> {
     match logical_key {
         WinitKey::Named(NamedKey::Tab) => Some(Key::Tab),
@@ -128,6 +130,8 @@ fn translate_key(logical_key: &WinitKey) -> Option<Key> {
         WinitKey::Named(NamedKey::Delete) => Some(Key::Delete),
         WinitKey::Named(NamedKey::ArrowLeft) => Some(Key::ArrowLeft),
         WinitKey::Named(NamedKey::ArrowRight) => Some(Key::ArrowRight),
+        WinitKey::Named(NamedKey::ArrowUp) => Some(Key::ArrowUp),
+        WinitKey::Named(NamedKey::ArrowDown) => Some(Key::ArrowDown),
         WinitKey::Named(NamedKey::Home) => Some(Key::Home),
         WinitKey::Named(NamedKey::End) => Some(Key::End),
         _ => None,
@@ -808,6 +812,16 @@ mod tests {
             translate_key(&WinitKey::Named(NamedKey::ArrowRight)),
             Some(Key::ArrowRight)
         );
+        // M30 Phase 9 Step 3 (§10): the real named keys `Code Editor`'s
+        // own multiline line-navigation added to the vocabulary.
+        assert_eq!(
+            translate_key(&WinitKey::Named(NamedKey::ArrowUp)),
+            Some(Key::ArrowUp)
+        );
+        assert_eq!(
+            translate_key(&WinitKey::Named(NamedKey::ArrowDown)),
+            Some(Key::ArrowDown)
+        );
         assert_eq!(
             translate_key(&WinitKey::Named(NamedKey::Home)),
             Some(Key::Home)
@@ -824,7 +838,7 @@ mod tests {
         // this codebase has yet (this module's own doc comment); a
         // named key this minimal model simply doesn't assign meaning to.
         assert_eq!(translate_key(&WinitKey::Character("a".into())), None);
-        assert_eq!(translate_key(&WinitKey::Named(NamedKey::ArrowDown)), None);
+        assert_eq!(translate_key(&WinitKey::Named(NamedKey::PageDown)), None);
     }
 
     #[test]

@@ -390,6 +390,46 @@ fn hit_test_position_accounts_for_the_placements_own_local_offset() {
     assert_eq!(offset, 0);
 }
 
+/// M30 Phase 9 Step 3 (§5, §8, §10): `Code Editor`'s own real,
+/// load-bearing multiline claim -- a genuine `\n` in a multiline
+/// field's own content produces real, vertically-stacked `parley`
+/// layout lines, not one squashed/ignored line. Proven the identical
+/// real, GPU-free way `hit_test_position`'s own claim above already
+/// is: a click well below the first line's own height must resolve
+/// inside the *second* line's own real content ("cd", bytes 3..5),
+/// never back into the first ("ab", bytes 0..2) -- the real,
+/// observable consequence of two real lines existing at all.
+#[test]
+fn a_multiline_fields_own_newline_produces_a_real_second_layout_line() {
+    let mut renderer = TextRenderer::new();
+    let mut state = TextFieldState::new("ab\ncd", "Roboto", 400.0, 16.0);
+    state.multiline = true;
+    let placement = || TextPlacement {
+        x: 0.0,
+        y: 0.0,
+        max_width: 200.0,
+        color: Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF),
+    };
+
+    let first_line_offset = renderer.hit_test_position(&state, placement(), Point::new(0.0, 4.0));
+    assert!(
+        first_line_offset <= 2,
+        "a click near the field's own top-left must resolve inside \"ab\" (bytes 0..2), got \
+         byte {first_line_offset}"
+    );
+
+    // Comfortably below any real 16px line's own height (parley's real
+    // line metrics are never anywhere near this tall) -- unambiguously
+    // the *second* real line if one genuinely exists, the last real
+    // line otherwise (there are only two here either way).
+    let second_line_offset = renderer.hit_test_position(&state, placement(), Point::new(0.0, 60.0));
+    assert!(
+        second_line_offset >= 3,
+        "a click well below the first line must resolve inside \"cd\" (bytes 3..5), on a real \
+         second layout line, not fall back into \"ab\", got byte {second_line_offset}"
+    );
+}
+
 /// M20 Phase 2 (§7.1, §7.3): the real, definitive proof `text_tint` is
 /// genuinely read at paint time, not just stored -- the same real diff
 /// -based proof `a_composing_preedit_paints_a_real_underline_distinct_

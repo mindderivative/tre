@@ -1,70 +1,72 @@
-# PLAN — M30 Phase 9 Step 2: Node Graph
+# PLAN — M30 Phase 9 Step 3: Code Editor
 
 ## Goal
-Add `Window.add_node_graph`/`Window.add_graph_node` — closing the real
-gap M5 Phase 4's own `PLAN.md` named and `examples/positioned_graph.py`
-(M6 Phase 3) only ever demonstrated as raw composition (interchangeable
-circles, no real node anatomy, no reparent/position automation).
+Add `Window.add_code_editor` — closing the real, stated single-line-
+only gap `TextField` always had (`Enter` consumed, never inserted a
+newline), so a genuinely multiline editing surface exists.
 
 ## Steps
-1. Read pyCopper's own real `NodeGraph` widget
-   (`src/pycopper/widgets/nodegraph.py`) directly for its real design:
-   title-bar-styled draggable nodes, named ports, declared edges,
-   panning via scroll-offset (zoom explicitly out of its own v1 scope).
-2. Read TRE's own real M5 Phase 4/M6 Phase 3 history directly in
-   `BUILD_TRACKER.md` (the durable record) to understand exactly what
-   groundwork already exists (`x`/`y` positioning, `transform`
-   animation) and what gap remains (a real, styled, reusable node
-   component; reparent-into-a-pannable-viewport automation).
-3. Investigate whether `Node.add_child` (M6 Phase 1) genuinely
-   re-resolves a node's own `Position::Absolute` inset relative to its
-   new parent after reparenting -- confirmed empirically via the same
-   real overlap-and-click hit-test technique `test_position.py`
-   established, not assumed.
-4. Investigate whether an ancestor's own `transform` already composes
-   correctly into a descendant's `absolute_position` -- confirmed via
-   direct read of an already-existing, already-passing engine-core
-   test (`absolute_position_follows_an_ancestor_transform`, M6 Phase
-   4), not a new empirical check.
-5. Confirmed via direct source read: no general clipping mechanism
-   exists for any container besides `VirtualList` -- a real, stated
-   scope boundary for this step (nodes/edges panned outside the
-   viewport overflow visually, not clipped).
-6. Confirmed via direct source read: no Python-facing
-   `PointerMoved`-while-pressed hook exists -- a real, stated scope
-   boundary (no drag-to-move mouse gesture; `node.animate("transform",
-   ...)` is the real, available repositioning mechanism).
-7. Implement `Window.add_node_graph(width, height, x, y)` in
-   `window_factory.rs` -- a themed `surface_container_low` viewport,
-   mechanically identical to `add_rect`.
-8. Implement `Window.add_graph_node(graph, label, x, y, width,
-   height)` -- a real composed node (title bar + body), attached
-   directly under `graph` (not `self.root`), reusing `add_status_bar`'s
-   own theme-resolution pattern and `open_menu`'s own `Rc::ptr_eq`
-   cross-window safety check.
-9. **Found a real, confirmed bug live while verifying end to end**:
-   the title bar's own `Rect` intercepted clicks meant for the node.
-   Fixed with `tree.set_hit_testable(title_bar, false)`, the same
-   established fix `Navigation Rail`/`Tabs` already used.
-10. Add `.pyi` stubs for both.
-11. Write `tests/test_node_graph.py` and a new example.
-12. **Found and corrected a real self-inflicted mistake**: a first
-    draft of the example silently overwrote the pre-existing
-    `examples/node_graph.py` (M5 Phase 4's own Canvas/`CustomHitTest`
-    example) -- caught via `git status` before committing, restored
-    byte-for-byte, and the new demonstration renamed to
-    `examples/graph_editor.py`.
-13. Full verification chain: cargo check/clippy/fmt/test, maturin
+1. Read pyCopper's own real `CodeEditor` widget for its real design
+   (line-number gutter, syntax highlighting via optional Pygments,
+   monospace font default, never-wraps layout, Tab-capture for
+   indentation) and its own stated v1 deferrals.
+2. Confirmed via direct source read: `TextField` is deliberately
+   single-line only (`Tree::dispatch_text_field_key`'s own
+   `Key::Enter => Some(DispatchOutcome::None)` comment).
+3. Design: reuse `NodeKind::TextField` directly with a new
+   `TextFieldState.multiline: bool` field (default `false`), not a
+   new `NodeKind` -- `engine-core`'s own editing model has no M3
+   chrome to strip, unlike pyCopper's own real reason for building
+   alongside `TextFieldElement` rather than subclassing it.
+4. Confirmed via direct source read: `engine_core::Key` has no
+   `ArrowUp`/`ArrowDown` variants at all -- real, load-bearing new
+   infrastructure needed for line navigation, not just new match arms.
+5. Design line navigation as pure string/column logic (no `parley`
+   access needed, respecting §4's crate boundary) rather than real
+   pixel-based cursor geometry -- correct for a genuinely monospace
+   editor, though this codebase has no bundled monospace font yet (a
+   real, separate, stated gap).
+6. Add `Key::ArrowUp`/`ArrowDown` to the enum; thread through
+   `engine_platform::translate_key` (real winit mapping) and
+   `Window.press_key` (synthetic-testing string vocabulary); fix the
+   two exhaustive `match key` compile errors this raised.
+7. Implement `Enter` (multiline: insert `\n`), `Home`/`End` (multiline:
+   per-line via `Tree::line_start`/`line_end`), and `ArrowUp`/`Down`
+   (multiline: `Tree::move_to_line`, column-preserving) in
+   `dispatch_text_field_key`.
+8. Write 7 new `engine-core` unit tests -- caught and fixed one real
+   math error in the process (a second consecutive `ArrowUp` does NOT
+   preserve the original column across an intervening shorter line,
+   since this v1 has no persistent goal-column memory; verified via a
+   Python simulation before trusting the Rust assertion).
+9. Fix `engine-render`'s own layout: `break_all_lines(Some(f32::MAX))`
+   and `None` are the identical real no-wrap value (confirmed via
+   direct source read) -- new `field_max_width` helper picks it when
+   `state.multiline`, at the two real call sites (`draw_field`/
+   `hit_test_position`).
+10. Write a new, GPU-free `engine-render` test using
+    `hit_test_position` proving a real `\n` produces a real second,
+    vertically-stacked layout line.
+11. Implement `Window.add_code_editor` in `window_factory.rs`, reusing
+    `add_text_field`'s exact real pattern (theme resolution, access
+    role) plus `multiline: true` -- deliberately does NOT expose
+    `font_family` (this catalog's only registered fonts are Roboto/
+    Noto Sans Arabic, confirmed via direct source read of
+    `TextRenderer::new`'s "system font discovery is deliberately OFF").
+12. Add `.pyi` stub.
+13. Write `tests/test_code_editor.py` and `examples/code_editor.py` --
+    checked for a filename collision first this time
+    ([[feedback_check_before_new_example_file]]).
+14. Full verification chain: cargo check/clippy/fmt/test, maturin
     develop, pytest (full suite), all examples, showcase demo, mypy
     --strict.
-14. Update `BUILD_TRACKER.md` (Top Metrics row, Step 2 line,
+15. Update `BUILD_TRACKER.md` (Top Metrics row, Step 3 line,
     "Just closed"/"Up next" trailer), regenerate + republish the
     Build Tracker artifact.
-15. Update memory, commit, push.
+16. Update memory, commit, push.
 
 ## Status
-Complete. All steps done; full verification chain green (465 pytest
-passed/1 skipped up from 457, all 64 examples, showcase demo, 44 Rust
-test binaries — unchanged, this step needed no new Rust unit test
-since it's a pure engine-py composition, verified through direct
-source reads and empirical hit-testing instead).
+Complete. All steps done; full verification chain green (`engine-core`
+158 up from 151, `engine-render` `text_field_paint` 9 up from 8, 474
+pytest passed/1 skipped up from 465, all 65 examples, showcase demo,
+44 Rust test binaries).

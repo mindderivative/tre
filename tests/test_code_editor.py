@@ -1,0 +1,125 @@
+"""M30 Phase 9 Step 3 (§5, §8, §10): real, repeatable coverage of
+`Window.add_code_editor` -- a real, genuinely multiline `TextField`
+(`TextFieldState.multiline = true`), closing the real, stated
+single-line-only gap `TextField` always had (`Tree::dispatch_text_
+field_key`'s own original "Enter is consumed but never inserts a
+newline... real, stated, single-line scope" comment, predating this
+step).
+
+The definitive proof that a real `\\n` genuinely produces a second,
+vertically-stacked `parley` layout line (not just accepted into
+`content` without visual effect) is `crates/engine-render/tests/
+text_field_paint.rs`'s own `a_multiline_fields_own_newline_produces_a_
+real_second_layout_line`, not this file -- the same "FFI wiring only"
+split `test_text_field.py`'s own module doc comment already
+established. This file proves, through real keyboard dispatch (the
+same `press_key`/`type_text`/`get_text` round-trip `test_text_field.py`
+already uses): `add_code_editor` returns a real, usable, click-
+focusable `Node`; `Enter` inserts a real newline; `Home` jumps to the
+*current line's* own start, not the whole buffer's; `ArrowUp`/
+`ArrowDown` navigate by line, landing typed text on the real, expected
+line.
+"""
+
+from tre import Node, Window
+
+
+def test_add_code_editor_returns_a_node():
+    window = Window(width=400, height=300)
+    node = window.add_code_editor(content="", background=(255, 255, 255, 255), width=300, height=150)
+    assert isinstance(node, Node)
+
+
+def test_add_code_editor_seeds_the_real_initial_content():
+    window = Window(width=400, height=300)
+    node = window.add_code_editor(
+        content="def f():\n    pass", background=(255, 255, 255, 255), width=300, height=150
+    )
+    assert node.get_text() == "def f():\n    pass"
+
+
+def test_a_themed_code_editor_does_not_raise():
+    window = Window(width=400, height=300)
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), dark=False)
+    node = window.add_code_editor(content="", background=(255, 255, 255, 255), width=300, height=150)
+    assert isinstance(node, Node)
+
+
+def test_a_click_focuses_the_code_editor():
+    window = Window(width=400, height=300)
+    editor = window.add_code_editor(content="x", background=(255, 255, 255, 255), width=300, height=150)
+    assert editor.is_focused() is False
+    window.click(editor)
+    assert editor.is_focused() is True
+
+
+def test_enter_inserts_a_real_newline_not_consumed_like_a_plain_text_field():
+    window = Window(width=400, height=300)
+    editor = window.add_code_editor(content="ab", background=(255, 255, 255, 255), width=300, height=150)
+    window.click(editor)
+    window.press_key("home")
+    window.press_key("right")
+    window.press_key("enter")
+    assert editor.get_text() == "a\nb", (
+        "Enter on a real Code Editor must insert a genuine newline, unlike a plain "
+        f"single-line TextField, got {editor.get_text()!r}"
+    )
+
+
+def test_home_jumps_to_the_current_line_not_the_whole_buffer():
+    window = Window(width=400, height=300)
+    editor = window.add_code_editor(
+        content="one\ntwo\nthree", background=(255, 255, 255, 255), width=300, height=150
+    )
+    window.click(editor)
+    # A fresh field's own real cursor starts at content's own end,
+    # inside "three" -- Home here must only ever reach "three"'s own
+    # real start, never byte 0.
+    window.press_key("home")
+    window.type_text("X")
+    assert editor.get_text() == "one\ntwo\nXthree"
+
+
+def test_end_jumps_to_the_current_lines_own_end():
+    window = Window(width=400, height=300)
+    editor = window.add_code_editor(
+        content="one\ntwo\nthree", background=(255, 255, 255, 255), width=300, height=150
+    )
+    window.click(editor)
+    for _ in range(len("one\ntwo\nthree")):
+        window.press_key("left")
+    window.press_key("right")
+    window.press_key("right")
+    window.press_key("right")  # cursor now right after "one"
+    window.press_key("end")
+    window.type_text("X")
+    assert editor.get_text() == "oneX\ntwo\nthree"
+
+
+def test_arrow_up_navigates_to_the_previous_line():
+    window = Window(width=400, height=300)
+    editor = window.add_code_editor(
+        content="line1\nline2\nline3", background=(255, 255, 255, 255), width=300, height=150
+    )
+    window.click(editor)
+    # Cursor starts at content's own end, inside "line3" -- two real
+    # ArrowUp presses must land somewhere on "line1".
+    window.press_key("up")
+    window.press_key("up")
+    window.press_key("home")
+    window.type_text("X")
+    assert editor.get_text() == "Xline1\nline2\nline3"
+
+
+def test_arrow_down_navigates_to_the_next_line():
+    window = Window(width=400, height=300)
+    editor = window.add_code_editor(
+        content="line1\nline2\nline3", background=(255, 255, 255, 255), width=300, height=150
+    )
+    window.click(editor)
+    for _ in range(len("line1\nline2\nline3")):
+        window.press_key("left")
+    window.press_key("down")
+    window.press_key("home")
+    window.type_text("X")
+    assert editor.get_text() == "line1\nXline2\nline3"

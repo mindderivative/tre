@@ -6465,6 +6465,98 @@ impl PyWindow {
         self.wrap_node(id)
     }
 
+    /// M30 Phase 9 Step 3 (§5, §8, §10): `Code Editor`, a real
+    /// multiline `NodeKind::TextField` -- reuses `add_text_field`'s
+    /// own exact real shape verbatim, differing only in `TextField
+    /// State.multiline = true` (this step's own new field). No
+    /// official MD3 page exists (confirmed via the same directory-
+    /// listing technique this milestone already uses); designed from
+    /// pyCopper's own real `CodeEditor` widget, checked directly, not
+    /// assumed -- its own doc comment names the real reasons a genuine
+    /// code editor is built alongside `TextField`/`TextFieldElement`
+    /// rather than as a thin subclass of it (M3-specific chrome a code
+    /// surface has none of), the same real split this step's own
+    /// `multiline` flag honors instead by staying inside the one
+    /// shared `NodeKind`, since `engine-core`'s own real editing model
+    /// (cursor/selection/undo-free keyboard mutation) is already
+    /// exactly what both need, unlike pyCopper's own M3-styled paint
+    /// chrome, which this codebase's `TextField` doesn't have either.
+    ///
+    /// **Real, honestly-scoped v1, not a full IDE-grade editor:**
+    /// closes the one genuinely load-bearing gap (real multiline
+    /// editing: `Enter` inserts `\n`, `Home`/`End` operate per-line,
+    /// `ArrowUp`/`ArrowDown` navigate by line preserving column --
+    /// `TextFieldState.multiline`'s own doc comment, `Tree::dispatch_
+    /// text_field_key`'s own real logic). Real, stated, deliberately
+    /// deferred, not silently dropped: no syntax highlighting (pyCopper
+    /// itself treats this as optional/Pygments-based, a real
+    /// application-layer concern, not a hard engine dependency); no
+    /// line-number gutter (a real, separate compositional layer, the
+    /// same "app composes, engine provides the primitive" split
+    /// `AppShell`'s own chrome regions already establish); no real
+    /// vertical/horizontal scroll+clip for content taller/wider than
+    /// the box (confirmed via direct source read: no `NodeKind` besides
+    /// `VirtualList` clips its own children today, the identical real
+    /// gap `Node Graph`, Step 2, already found and stated) -- content
+    /// past the box's own edges simply isn't visible, a real v1
+    /// limit, not silently worked around; no bundled monospace font
+    /// (this catalog's only registered fonts are Roboto Regular/
+    /// Medium and Noto Sans Arabic, confirmed via direct read of
+    /// `TextRenderer::new`, whose own "system font discovery is
+    /// deliberately OFF" doc comment means an arbitrary `font_family`
+    /// string wouldn't resolve to a real installed face anyway) --
+    /// bundling one is real, separate asset/licensing work this step
+    /// doesn't take on, so `font_family` isn't exposed as a param at
+    /// all here (unlike `add_text_field`), avoiding the false
+    /// impression that any name would work; and no Tab-key indentation
+    /// capture (`Tab` remains generic focus traversal engine-wide,
+    /// `Tree::dispatch`'s own top-level match, confirmed via direct
+    /// read -- pyCopper's own real equivalent needed a new dispatcher-
+    /// level opt-in flag, `CAPTURES_TAB`, a real, separate capability
+    /// this step doesn't add).
+    #[pyo3(signature = (content, background, width, height, font_weight=400.0, font_size=14.0, x=None, y=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn add_code_editor(
+        &self,
+        content: &str,
+        background: (u8, u8, u8, u8),
+        width: f32,
+        height: f32,
+        font_weight: f32,
+        font_size: f32,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> Node {
+        let (r, g, b, a) = background;
+        let mut text_field_state = TextFieldState::new(content, "Roboto", font_weight, font_size);
+        text_field_state.multiline = true;
+        {
+            let theme = self.theme.borrow();
+            if theme.is_set() {
+                text_field_state.text_tint = theme.on_surface();
+            }
+        }
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::TextField(text_field_state),
+            positioned_style(
+                Size {
+                    width: length(width),
+                    height: length(height),
+                },
+                x,
+                y,
+            ),
+            PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
+        );
+        tree.set_access(
+            id,
+            AccessNodeData::new(Role::TextInput).with_action(Action::Focus),
+        );
+        tree.add_child(self.root, id);
+        self.wrap_node(id)
+    }
+
     /// M13 Phase 1 (§11.2): a real, one-call way to build `AppShell`'s
     /// own named regions -- `self.root` itself stays a plain `Flex Row`
     /// (every other `add_*` method's own implicit flow depends on that,

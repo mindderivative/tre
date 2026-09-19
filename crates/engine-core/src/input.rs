@@ -41,6 +41,11 @@ pub enum PointerButton {
 /// dispatch` through the sibling `InputEvent::TextInput(String)`
 /// variant instead (mirroring `winit::event::KeyEvent`'s own real
 /// split between `logical_key`/`text`), not through this enum.
+/// `ArrowUp`/`ArrowDown` (M30 Phase 9 Step 3, §10): `Code Editor`'s own
+/// real, load-bearing need -- multiline text genuinely can't be
+/// navigated by line without them, unlike a single-line `TextField`,
+/// which had no real use for either until now (confirmed via grep:
+/// no consumer anywhere referenced them before this).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key {
     Tab,
@@ -51,6 +56,8 @@ pub enum Key {
     Delete,
     ArrowLeft,
     ArrowRight,
+    ArrowUp,
+    ArrowDown,
     Home,
     End,
 }

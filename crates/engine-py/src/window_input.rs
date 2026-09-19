@@ -256,9 +256,11 @@ impl PyWindow {
     /// Python-facing entry point before this. `key` is one of `"tab"`/
     /// `"enter"`/`"space"`/`"escape"`/`"backspace"`/`"delete"`/
     /// `"left"`/`"right"`/`"home"`/`"end"` (the latter six added M15
-    /// Phase 2, §8/§10, for real `TextField` editing) -- `engine_core::
-    /// Key`'s own deliberately minimal vocabulary, not a general
-    /// key-code mapping nothing here needs yet.
+    /// Phase 2, §8/§10, for real `TextField` editing) plus `"up"`/
+    /// `"down"` (M30 Phase 9 Step 3, §8/§10, `Code Editor`'s own real
+    /// multiline line-navigation) -- `engine_core::Key`'s own
+    /// deliberately minimal vocabulary, not a general key-code mapping
+    /// nothing here needs yet.
     #[pyo3(signature = (key, shift=false))]
     fn press_key(&self, key: &str, shift: bool, py: Python<'_>) -> PyResult<()> {
         let key = match key {
@@ -270,13 +272,15 @@ impl PyWindow {
             "delete" => Key::Delete,
             "left" => Key::ArrowLeft,
             "right" => Key::ArrowRight,
+            "up" => Key::ArrowUp,
+            "down" => Key::ArrowDown,
             "home" => Key::Home,
             "end" => Key::End,
             other => {
                 return Err(pyo3::exceptions::PyValueError::new_err(format!(
                     "press_key: unknown key {other:?} -- expected one of \"tab\", \"enter\", \
                      \"space\", \"escape\", \"backspace\", \"delete\", \"left\", \"right\", \
-                     \"home\", \"end\""
+                     \"up\", \"down\", \"home\", \"end\""
                 )));
             }
         };

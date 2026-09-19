@@ -240,6 +240,17 @@ pub struct TextFieldState {
     /// the historical hardcoded `0x1C1B1F` `engine-render`'s own
     /// `TextField` paint used before this phase.
     pub text_tint: Color,
+    /// M30 Phase 9 Step 3 (§8, §10): `false` (the default, every
+    /// existing construction site's own byte-for-byte unchanged
+    /// behavior) is the original real, stated single-line scope --
+    /// `Enter` is consumed but never inserts a newline. `true` (set
+    /// directly, a plain `pub` field write -- no `new()` signature
+    /// change needed, so every existing caller stays untouched) is
+    /// `Code Editor`'s own real need: `Enter` inserts `\n`, `Home`/
+    /// `End` operate on the current line rather than the whole
+    /// buffer, and `ArrowUp`/`ArrowDown` move by line -- see `Tree::
+    /// dispatch_text_field_key`'s own real logic for each.
+    pub multiline: bool,
 }
 
 impl TextFieldState {
@@ -263,6 +274,7 @@ impl TextFieldState {
             selection_anchor: None,
             preedit: None,
             text_tint: Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF),
+            multiline: false,
         }
     }
 }
