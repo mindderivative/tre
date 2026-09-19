@@ -34,8 +34,8 @@ pub use interaction::{InteractionState, RippleState};
 pub use node::{
     CheckboxState, CircularProgressState, ContentFit, ICON_VIEWBOX_SIZE, IconState, ImageState,
     ItemExtent, LinearProgressState, Node, NodeId, NodeKind, PaintProperties, RadioButtonState,
-    SliderState, SplitterState, SwitchState, TextAlign, TextFieldState, TextState,
-    VirtualListState,
+    SliderState, SplitterState, SwitchState, TerminalCell, TerminalState, TextAlign,
+    TextFieldState, TextState, VirtualListState, terminal_cell_size,
 };
 pub use overlay::OverlayMeta;
 pub use shape_morph::ShapeKey;

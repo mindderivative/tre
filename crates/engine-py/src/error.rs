@@ -52,6 +52,13 @@ pub enum EngineError {
     /// maps to `PyIOError` rather than `PyValueError`/`PyTypeError`.
     #[error("failed to load image '{path}': {reason}")]
     ImageLoadFailed { path: String, reason: String },
+    /// M30 Phase 9 Step 4 (§5, §8, §10): `Window.add_terminal` couldn't
+    /// open a real PTY or spawn `shell` on it -- a real process/OS-
+    /// integration failure, the same real "not a value/type mismatch"
+    /// shape `ImageLoadFailed` already established for a different
+    /// real I/O failure.
+    #[error("failed to start terminal shell '{shell}': {reason}")]
+    TerminalSpawnFailed { shell: String, reason: String },
 }
 
 impl From<EngineError> for PyErr {
@@ -63,7 +70,9 @@ impl From<EngineError> for PyErr {
             | EngineError::CycleRejected
             | EngineError::ForeignNode => PyValueError::new_err(e.to_string()),
             EngineError::TypeMismatch { .. } => PyTypeError::new_err(e.to_string()),
-            EngineError::ImageLoadFailed { .. } => PyIOError::new_err(e.to_string()),
+            EngineError::ImageLoadFailed { .. } | EngineError::TerminalSpawnFailed { .. } => {
+                PyIOError::new_err(e.to_string())
+            }
         }
     }
 }

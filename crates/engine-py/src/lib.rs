@@ -13,6 +13,7 @@ mod dispatch;
 mod dock;
 mod error;
 mod node;
+mod terminal;
 mod view;
 mod window;
 mod window_docking;

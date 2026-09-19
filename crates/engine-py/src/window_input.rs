@@ -284,9 +284,21 @@ impl PyWindow {
                 )));
             }
         };
+        let event = InputEvent::KeyPressed { key, shift };
+        // M30 Phase 9 Step 4 (§5, §8, §10): the identical real terminal-
+        // keyboard-routing check `app.rs`'s own real `on_input` closure
+        // already applies to a genuine `winit` keypress -- see its own
+        // doc comment (`input_bytes_for`, `terminal.rs`) for the full
+        // real reasoning. `press_key`/`type_text` exist specifically to
+        // mirror what a real platform event would do without a live
+        // window, so a focused `Terminal` must behave identically here
+        // too, not just when a real window is open.
+        if route_to_terminal(self, &event) {
+            return Ok(());
+        }
         let outcome = self.tree.borrow_mut().dispatch(
             self.root,
-            InputEvent::KeyPressed { key, shift },
+            event,
             &interaction_config(),
             std::time::Instant::now(),
         );
@@ -303,9 +315,15 @@ impl PyWindow {
     /// currently focused node (a true no-op otherwise, `Tree::dispatch`
     /// 's own real behavior).
     fn type_text(&self, text: &str, py: Python<'_>) {
+        let event = InputEvent::TextInput(text.to_string());
+        // M30 Phase 9 Step 4 (§5, §8, §10): see `press_key`'s own
+        // identical real terminal-routing comment just above.
+        if route_to_terminal(self, &event) {
+            return;
+        }
         let outcome = self.tree.borrow_mut().dispatch(
             self.root,
-            InputEvent::TextInput(text.to_string()),
+            event,
             &interaction_config(),
             std::time::Instant::now(),
         );
@@ -360,4 +378,34 @@ impl PyWindow {
     fn paste(&self, text: &str, py: Python<'_>) {
         self.type_text(text, py);
     }
+}
+
+/// M30 Phase 9 Step 4 (§5, §8, §10): `press_key`/`type_text`'s own
+/// shared real terminal-keyboard check -- if `window`'s own currently
+/// focused node is a real `Terminal`, `event` is translated
+/// (`terminal::input_bytes_for`) and written straight to its own PTY,
+/// returning `true` (the caller's own "already handled, don't also
+/// call `Tree::dispatch`" signal). Mirrors `app.rs`'s own real
+/// `on_input` closure exactly, so a synthetic keystroke behaves
+/// identically to a genuine platform one.
+fn route_to_terminal(window: &PyWindow, event: &InputEvent) -> bool {
+    let Some(bytes) = crate::terminal::input_bytes_for(event) else {
+        return false;
+    };
+    let focused_terminal = {
+        let tree = window.tree.borrow();
+        tree.focused().filter(|&id| {
+            matches!(
+                tree.get(id).map(|node| &node.kind),
+                Some(engine_core::NodeKind::Terminal(_))
+            )
+        })
+    };
+    let Some(terminal_id) = focused_terminal else {
+        return false;
+    };
+    if let Some(session) = window.terminals.borrow_mut().get_mut(&terminal_id) {
+        session.write_input(&bytes);
+    }
+    true
 }

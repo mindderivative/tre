@@ -1,72 +1,68 @@
-# PLAN — M30 Phase 9 Step 3: Code Editor
+# PLAN — M30 Phase 9 Step 4: Terminal
 
 ## Goal
-Add `Window.add_code_editor` — closing the real, stated single-line-
-only gap `TextField` always had (`Enter` consumed, never inserted a
-newline), so a genuinely multiline editing surface exists.
+Add `Window.add_terminal` — a real, live pseudo-terminal. The single
+largest step in this catalog: needed two new external Rust crates
+(real PTY spawning, real VT/ANSI parsing) and a whole second,
+non-text-flow rendering pipeline. Explicitly checked with the user
+before starting, given the scale; the user chose "full real terminal"
+over a scoped-down frame-sink v1.
 
 ## Steps
-1. Read pyCopper's own real `CodeEditor` widget for its real design
-   (line-number gutter, syntax highlighting via optional Pygments,
-   monospace font default, never-wraps layout, Tab-capture for
-   indentation) and its own stated v1 deferrals.
-2. Confirmed via direct source read: `TextField` is deliberately
-   single-line only (`Tree::dispatch_text_field_key`'s own
-   `Key::Enter => Some(DispatchOutcome::None)` comment).
-3. Design: reuse `NodeKind::TextField` directly with a new
-   `TextFieldState.multiline: bool` field (default `false`), not a
-   new `NodeKind` -- `engine-core`'s own editing model has no M3
-   chrome to strip, unlike pyCopper's own real reason for building
-   alongside `TextFieldElement` rather than subclassing it.
-4. Confirmed via direct source read: `engine_core::Key` has no
-   `ArrowUp`/`ArrowDown` variants at all -- real, load-bearing new
-   infrastructure needed for line navigation, not just new match arms.
-5. Design line navigation as pure string/column logic (no `parley`
-   access needed, respecting §4's crate boundary) rather than real
-   pixel-based cursor geometry -- correct for a genuinely monospace
-   editor, though this codebase has no bundled monospace font yet (a
-   real, separate, stated gap).
-6. Add `Key::ArrowUp`/`ArrowDown` to the enum; thread through
-   `engine_platform::translate_key` (real winit mapping) and
-   `Window.press_key` (synthetic-testing string vocabulary); fix the
-   two exhaustive `match key` compile errors this raised.
-7. Implement `Enter` (multiline: insert `\n`), `Home`/`End` (multiline:
-   per-line via `Tree::line_start`/`line_end`), and `ArrowUp`/`Down`
-   (multiline: `Tree::move_to_line`, column-preserving) in
-   `dispatch_text_field_key`.
-8. Write 7 new `engine-core` unit tests -- caught and fixed one real
-   math error in the process (a second consecutive `ArrowUp` does NOT
-   preserve the original column across an intervening shorter line,
-   since this v1 has no persistent goal-column memory; verified via a
-   Python simulation before trusting the Rust assertion).
-9. Fix `engine-render`'s own layout: `break_all_lines(Some(f32::MAX))`
-   and `None` are the identical real no-wrap value (confirmed via
-   direct source read) -- new `field_max_width` helper picks it when
-   `state.multiline`, at the two real call sites (`draw_field`/
-   `hit_test_position`).
-10. Write a new, GPU-free `engine-render` test using
-    `hit_test_position` proving a real `\n` produces a real second,
-    vertically-stacked layout line.
-11. Implement `Window.add_code_editor` in `window_factory.rs`, reusing
-    `add_text_field`'s exact real pattern (theme resolution, access
-    role) plus `multiline: true` -- deliberately does NOT expose
-    `font_family` (this catalog's only registered fonts are Roboto/
-    Noto Sans Arabic, confirmed via direct source read of
-    `TextRenderer::new`'s "system font discovery is deliberately OFF").
-12. Add `.pyi` stub.
-13. Write `tests/test_code_editor.py` and `examples/code_editor.py` --
-    checked for a filename collision first this time
+1. Read pyCopper's own real `Terminal` widget for its real design and
+   every real, hard-won finding it already made live (TERM fallback,
+   deferred spawn until real layout size known, no PTY mutation off
+   the engine thread, a repeat animation to wake an idle event loop).
+2. Choose real Rust crates: `portable-pty` (0.9.0, wezterm's own PTY
+   crate) for spawning, `vt100` (0.16.2, a small pure-Rust VT100
+   parser) for interpreting the byte stream — verified their real
+   APIs directly from vendored source before designing around them.
+3. Design: `NodeKind::Terminal(TerminalState)` in engine-core holds
+   only the already-VT-interpreted cell grid (inert data, the
+   TextFieldState precedent); `engine-render` gets a new
+   `draw_terminal` painting real background/glyph runs on an analytic
+   grid; `engine-py` gets a new `terminal.rs` module owning the real
+   PTY session, background reader thread, and VT100 parser.
+4. Implement `TerminalSession` (spawn, drain_into, write_input,
+   resize) — compiled and unit-verified in isolation before wiring.
+5. Wire the per-frame drain into `app.rs`'s own render loop, widening
+   `any_active` so a live terminal keeps the event loop ticking (the
+   same real fix pyCopper's own `Terminal` already needed for the
+   identical "background thread can't otherwise wake an idle loop"
+   problem).
+6. Wire real keyboard routing: a shared `terminal::input_bytes_for`
+   translates `InputEvent` into real terminal bytes, reused by both
+   the genuine winit path (`app.rs`) and the synthetic testing path
+   (`Window.press_key`/`type_text`, `window_input.rs`).
+7. Add `Window.add_terminal` in `window_factory.rs`; extend
+   `Node.get_text()` to read a Terminal's own cell grid back as plain
+   text (needed for any real test beyond "didn't crash").
+8. Full Rust verification chain (check/clippy/fmt/test), rebuild the
+   Python extension.
+9. **Ran a real, direct empirical end-to-end test before writing any
+   pytest suite** (spawn `/bin/sh`, click, type a command, run real
+   frames, read back the cell grid) — it genuinely failed: the typed
+   command never reached the shell.
+10. Root-caused: click-to-focus (M18 Phase 1) was deliberately scoped
+    to `TextField` only. Fixed by widening it to include `Terminal`;
+    re-ran the same empirical test, which then passed for real.
+11. Write `tests/test_terminal.py` and `examples/terminal.py` —
+    checked for filename collisions first
     ([[feedback_check_before_new_example_file]]).
-14. Full verification chain: cargo check/clippy/fmt/test, maturin
+12. Full verification chain: cargo check/clippy/fmt/test, maturin
     develop, pytest (full suite), all examples, showcase demo, mypy
     --strict.
-15. Update `BUILD_TRACKER.md` (Top Metrics row, Step 3 line,
-    "Just closed"/"Up next" trailer), regenerate + republish the
-    Build Tracker artifact.
-16. Update memory, commit, push.
+13. Update `BUILD_TRACKER.md` — hit a real parser bug while doing so
+    (a multi-paragraph writeup broke the generator's own balanced-
+    parens requirement; fixed and recorded as a new memory,
+    [[feedback_build_tracker_balanced_parens]]), regenerate + republish
+    the Build Tracker artifact.
+14. Update memory, commit, push.
 
 ## Status
 Complete. All steps done; full verification chain green (`engine-core`
-158 up from 151, `engine-render` `text_field_paint` 9 up from 8, 474
-pytest passed/1 skipped up from 465, all 65 examples, showcase demo,
-44 Rust test binaries).
+158 tests unchanged in count but with a real widened click-to-focus
+match, 482 pytest passed/1 skipped up from 474, all 66 examples,
+showcase demo, 44 Rust test binaries). A real, live shell process
+genuinely responds to real typed input, ANSI color escapes included,
+confirmed by direct observation of the returned cell-grid text.

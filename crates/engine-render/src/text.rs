@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use engine_core::{NodeId, TextAlign, TextFieldState, TextState, Tree};
+use engine_core::{NodeId, TerminalState, TextAlign, TextFieldState, TextState, Tree};
 use parley::fontique::{Collection, CollectionOptions};
 use parley::{
     Affinity, Alignment, AlignmentOptions, Cursor, FontContext, FontFamily, FontWeight,
@@ -428,6 +428,142 @@ impl TextRenderer {
                 bounds.y1 + at.y,
             );
             scene.set_paint(at.color);
+            scene.fill_path(&rect.to_path(0.1));
+        }
+    }
+
+    /// M30 Phase 9 Step 4 (§5, §8, §10): a real terminal's own cell
+    /// grid, painted on an analytic `col * cell_width, row * cell_
+    /// height` grid -- the identical real "cell backgrounds/cursor
+    /// positioned analytically, glyphs inside a run of same-styled
+    /// cells shaped with the text engine's ordinary shaping" split the
+    /// sibling `pyCopper` project's own real `Terminal` widget already
+    /// established, reused here directly. **Real, honest v1
+    /// limitation, not silently glossed over:** `cell_width`/`cell_
+    /// height` are a fixed analytic estimate from `state.font_size`
+    /// (this project bundles no real monospace font yet, `Code
+    /// Editor`'s own already-stated gap, M30 Phase 9 Step 3) -- glyphs
+    /// shaped from a proportional face won't land exactly on this
+    /// grid, the identical real drift `Code Editor`'s own missing-
+    /// monospace-font gap already causes there.
+    ///
+    /// Each row's own cells are grouped into real runs (a contiguous
+    /// span sharing one background, or one foreground/bold pair) so a
+    /// full row of differently-styled text needs only a handful of
+    /// real fill/shape calls, not one per character -- `bittty`'s own
+    /// real "a run of same-styled cells is laid out with the text
+    /// engine's ordinary shaping" precedent, applied here too.
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_terminal(
+        &mut self,
+        scene: &mut Scene,
+        resources: &mut Resources,
+        state: &TerminalState,
+        at: TextPlacement,
+        show_caret: bool,
+        _node_id: NodeId,
+    ) {
+        let (cell_width, cell_height) = engine_core::terminal_cell_size(state.font_size);
+        let cell_width = f64::from(cell_width);
+        let cell_height = f64::from(cell_height);
+
+        for row in 0..state.rows {
+            // Real background runs: a contiguous span of cells sharing
+            // one real bg color, painted as one rect -- `TRANSPARENT`
+            // (`TerminalCell::blank`'s own real default) is skipped
+            // entirely, the same "don't paint a real default" every
+            // other `NodeKind` arm here already does.
+            let mut col = 0u16;
+            while col < state.cols {
+                let bg = state.cell(row, col).bg;
+                let mut end = col + 1;
+                while end < state.cols && state.cell(row, end).bg == bg {
+                    end += 1;
+                }
+                if bg != Color::TRANSPARENT {
+                    let x0 = at.x + f64::from(col) * cell_width;
+                    let y0 = at.y + f64::from(row) * cell_height;
+                    let rect = Rect::new(
+                        x0,
+                        y0,
+                        x0 + f64::from(end - col) * cell_width,
+                        y0 + cell_height,
+                    );
+                    scene.set_paint(bg);
+                    scene.fill_path(&rect.to_path(0.1));
+                }
+                col = end;
+            }
+
+            // Real glyph runs: a contiguous span of cells sharing one
+            // real (fg, bold) pair, shaped and painted as one string --
+            // a blank cell's own real transparent `fg` (`TerminalCell::
+            // blank`'s own default) never reaches `build_field_layout`
+            // at all (an empty/whitespace-only run has no real glyphs
+            // to paint), so a genuinely empty terminal costs nothing
+            // beyond the background loop above.
+            let mut col = 0u16;
+            while col < state.cols {
+                let first = state.cell(row, col);
+                let (fg, bold) = (first.fg, first.bold);
+                let mut end = col + 1;
+                while end < state.cols {
+                    let next = state.cell(row, end);
+                    if next.fg != fg || next.bold != bold {
+                        break;
+                    }
+                    end += 1;
+                }
+                let run: String = (col..end).map(|c| state.cell(row, c).ch).collect();
+                if fg != Color::TRANSPARENT && !run.trim().is_empty() {
+                    let font_weight = if bold { 700.0 } else { 400.0 };
+                    let layout = self.build_field_layout(
+                        &run,
+                        &state.font_family,
+                        font_weight,
+                        state.font_size,
+                        f32::MAX,
+                    );
+                    let x0 = at.x + f64::from(col) * cell_width;
+                    let y0 = at.y + f64::from(row) * cell_height;
+                    scene.set_paint(fg);
+                    for line in layout.lines() {
+                        for item in line.items() {
+                            let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
+                                continue;
+                            };
+                            let glyph_run_font = glyph_run.run();
+                            let font = glyph_run_font.font();
+                            let font_size = glyph_run_font.font_size();
+                            let glyphs = glyph_run.positioned_glyphs().map(|g| glifo::Glyph {
+                                id: g.id,
+                                x: g.x + x0 as f32,
+                                y: g.y + y0 as f32,
+                            });
+                            scene
+                                .glyph_run(resources, font)
+                                .font_size(font_size)
+                                .fill_glyphs(glyphs);
+                        }
+                    }
+                }
+                col = end;
+            }
+        }
+
+        // The real cursor block, painted last (on top of every real
+        // cell) -- only while this terminal is the `Tree`'s own real,
+        // live focused node, the identical real `show_caret` gate
+        // `draw_field`'s own caret already uses.
+        if show_caret
+            && state.cursor_visible
+            && state.cursor_row < state.rows
+            && state.cursor_col < state.cols
+        {
+            let x0 = at.x + f64::from(state.cursor_col) * cell_width;
+            let y0 = at.y + f64::from(state.cursor_row) * cell_height;
+            let rect = Rect::new(x0, y0, x0 + cell_width, y0 + cell_height);
+            scene.set_paint(crate::with_opacity(at.color, 0.5));
             scene.fill_path(&rect.to_path(0.1));
         }
     }

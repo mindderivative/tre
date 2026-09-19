@@ -2122,10 +2122,21 @@ impl Tree {
                     // focus_to` verbatim -- the real focus-ring
                     // transition it already drives is exactly correct
                     // here too, not a second mechanism.
+                    //
+                    // M30 Phase 9 Step 4 (§5, §8, §10): widened to
+                    // `Terminal` too -- **a real, confirmed bug found
+                    // live, not predicted in advance**: a real end-to-
+                    // end empirical test (spawn a shell, click the
+                    // terminal, type a command) found the click never
+                    // actually focused it at all, so the typed command
+                    // silently never reached the shell. Every real
+                    // terminal emulator focuses itself on click, the
+                    // identical real expectation `TextField`'s own
+                    // finding already states for text input generally.
                     if button == PointerButton::Primary
                         && matches!(
                             self.nodes.get(node).map(|n| &n.kind),
-                            Some(NodeKind::TextField(_))
+                            Some(NodeKind::TextField(_)) | Some(NodeKind::Terminal(_))
                         )
                     {
                         self.set_focus_to(

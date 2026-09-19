@@ -126,8 +126,10 @@ class Node:
         """`Switch`-only -- raises `ValueError` for any other kind."""
         ...
     def get_text(self) -> str:
-        """`TextField`/`Text`-only -- raises `ValueError` for any other
-        kind.
+        """`TextField`/`Text`/`Terminal`-only -- raises `ValueError` for
+        any other kind. For a `Terminal`, returns its whole cell grid
+        as plain text (each row's own trailing whitespace trimmed,
+        rows joined by `"\\n"`), not just one line.
         """
         ...
     def is_focused(self) -> bool:
@@ -983,6 +985,29 @@ class Window:
         registered face -- `font_family` isn't exposed here since no
         other name would actually resolve), and no Tab-key indentation
         capture (`Tab` still moves focus).
+        """
+        ...
+    def add_terminal(
+        self,
+        shell: str,
+        cols: int,
+        rows: int,
+        background: Color,
+        font_size: float = 14.0,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """A real, live pseudo-terminal -- spawns `shell` on a real PTY
+        and parses its real byte stream with a real VT100 parser.
+        `width`/`height` are computed from `cols`/`rows`, not given
+        directly. Read its current contents back via `Node.get_text()`
+        (each row's own trailing whitespace trimmed, rows joined by
+        `"\\n"`); a focused terminal receives real keystrokes through
+        `Window.press_key`/`type_text`/a real platform keyboard event
+        alike. Real, honestly-scoped v1: no scrollback, no mouse text
+        selection, no Ctrl+C/SIGINT or any other Ctrl+letter shortcut,
+        no real resize-with-window, and POSIX only. Raises `OSError` if
+        `shell` can't be spawned on a real PTY.
         """
         ...
     def build_shell(

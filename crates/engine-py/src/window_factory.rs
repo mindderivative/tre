@@ -28,6 +28,7 @@ use taffy::prelude::{
 
 use crate::error::EngineError;
 use crate::node::Node;
+use crate::terminal::TerminalSession;
 use crate::window::{PyWindow, positioned_style};
 
 /// M30 Phase 1 Step 3 (§5, §7): `add_icon`'s own real curated-icon-
@@ -6555,6 +6556,77 @@ impl PyWindow {
         );
         tree.add_child(self.root, id);
         self.wrap_node(id)
+    }
+
+    /// M30 Phase 9 Step 4 (§5, §8, §10): `Terminal`, a real, live
+    /// pseudo-terminal -- spawns `shell` on a real PTY (`portable_pty`)
+    /// and parses its real byte stream with a real VT100 parser
+    /// (`vt100`), the identical real "spawn a real pseudo-terminal is
+    /// OS-specific process management; interpreting its byte stream is
+    /// the VT/ANSI state machine every real terminal emulator
+    /// implements identically -- neither is this widget's own concern
+    /// to reinvent" split the sibling `pyCopper` project's own real
+    /// `Terminal` widget already established (`crates/engine-py/src/
+    /// terminal.rs`'s own module doc comment has the full real design).
+    /// No official MD3 page exists (confirmed via the same directory-
+    /// listing technique this milestone already uses).
+    ///
+    /// `width`/`height` are computed from `cols`/`rows` via the real,
+    /// shared `engine_core::terminal_cell_size` formula -- the
+    /// identical real analytic grid `engine-render`'s own `draw_
+    /// terminal` positions every cell on, so the node's own box always
+    /// exactly fits its own real grid, no manual size bookkeeping for
+    /// the app. **Real, confirmed POSIX-only v1**, the identical real
+    /// scope pyCopper's own `Terminal` already chose for the same
+    /// stated reason (`terminal.rs`'s own doc comment).
+    #[pyo3(signature = (shell, cols, rows, background, font_size=14.0, x=None, y=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn add_terminal(
+        &self,
+        shell: &str,
+        cols: u16,
+        rows: u16,
+        background: (u8, u8, u8, u8),
+        font_size: f32,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<Node> {
+        let session = TerminalSession::spawn(shell, cols, rows).map_err(|reason| {
+            EngineError::TerminalSpawnFailed {
+                shell: shell.to_string(),
+                reason,
+            }
+        })?;
+
+        let (r, g, b, a) = background;
+        let (cell_width, cell_height) = engine_core::terminal_cell_size(font_size);
+        let width = cell_width * f32::from(cols);
+        let height = cell_height * f32::from(rows);
+
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::Terminal(engine_core::TerminalState::new(
+                cols, rows, "Roboto", font_size,
+            )),
+            positioned_style(
+                Size {
+                    width: length(width),
+                    height: length(height),
+                },
+                x,
+                y,
+            ),
+            PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
+        );
+        tree.set_access(
+            id,
+            AccessNodeData::new(Role::TextInput).with_action(Action::Focus),
+        );
+        tree.add_child(self.root, id);
+        drop(tree);
+
+        self.terminals.borrow_mut().insert(id, session);
+        Ok(self.wrap_node(id))
     }
 
     /// M13 Phase 1 (§11.2): a real, one-call way to build `AppShell`'s

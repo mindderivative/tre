@@ -38,6 +38,7 @@ use crate::dispatch::{
     run_completions, run_dispatch_outcome,
 };
 use crate::dock::{self, SharedDockState};
+use crate::terminal::{TerminalSession, input_bytes_for};
 use crate::window::{PyWindow, SharedTheme};
 
 #[pyclass(unsendable)]
@@ -76,6 +77,11 @@ struct WindowSetup {
     /// extracted the same way -- the real `on_frame` closure needs to
     /// mutate it (removing a callback the instant it's invoked).
     completions: SharedCompletions,
+    /// M30 Phase 9 Step 4 (§5, §8, §10): every real, live `Terminal`
+    /// session this window has spawned, extracted the same way --
+    /// `WindowRuntime`'s own per-frame closure needs to mutate it
+    /// (draining real PTY output each tick).
+    terminals: Rc<RefCell<HashMap<NodeId, TerminalSession>>>,
 }
 
 /// M18 Phase 1/2 (§8, §10, §11.9, §11.10): the real per-glyph hit-test
@@ -192,6 +198,10 @@ struct WindowRuntime {
     /// `engine-render` can do (§4) -- `engine-core` structurally can't
     /// own this drag's own per-frame tracking.
     text_drag: Option<NodeId>,
+    /// M30 Phase 9 Step 4 (§5, §8, §10): the same real, shared session
+    /// table `PyWindow.terminals` owns -- see `WindowSetup.terminals`'s
+    /// own doc comment.
+    terminals: Rc<RefCell<HashMap<NodeId, TerminalSession>>>,
 }
 
 #[pymethods]
@@ -250,6 +260,7 @@ impl App {
                     dock: window.dock.clone(),
                     theme: window.theme.clone(),
                     completions: window.completions.clone(),
+                    terminals: window.terminals.clone(),
                 }
             })
             .collect();
@@ -311,6 +322,7 @@ impl App {
                         theme: setup.theme.clone(),
                         completions: setup.completions.clone(),
                         text_drag: None,
+                        terminals: setup.terminals.clone(),
                     },
                 );
             },
@@ -328,6 +340,36 @@ impl App {
                 // registered callback" shape `run_dispatch_outcome`
                 // already uses for click/hover handlers.
                 run_completions(&runtime.completions, completed, py);
+
+                // M30 Phase 9 Step 4 (§5, §8, §10): drains every real,
+                // live `Terminal` session's own pending PTY output into
+                // the `Tree` -- `drain_into` itself goes through `Tree::
+                // get_mut`, M29's own real dirty-marking chokepoint, so
+                // a genuine content change here already makes `take_
+                // dirty` below see it. `any_active` is widened to also
+                // mean "a real terminal session is still alive" -- the
+                // identical real fix the sibling `pyCopper` project's
+                // own `Terminal` already needed for the same real
+                // problem (a background PTY reader thread producing new
+                // output has no other way to wake an otherwise-idle
+                // event loop, M29 Phase 2's own `ControlFlow::Wait`):
+                // its own module doc comment states it "keeps a
+                // repeat=True animation running purely to guarantee a
+                // repaint... regardless of focus." A real, honest v1
+                // cost, not silently hidden: a window with a live
+                // terminal never goes fully idle the way M29's own
+                // "genuinely idle window" case does.
+                let mut any_active = any_active;
+                {
+                    let mut terminals = runtime.terminals.borrow_mut();
+                    if !terminals.is_empty() {
+                        any_active = true;
+                    }
+                    let mut tree = runtime.tree.borrow_mut();
+                    for (&node_id, session) in terminals.iter_mut() {
+                        session.drain_into(&mut tree, node_id);
+                    }
+                }
 
                 // M29 Phase 1 (§5, §6): skip every real per-frame cost
                 // below -- layout, GPU texture/text-cache sync, scene
@@ -445,6 +487,40 @@ impl App {
                 let Some(runtime) = runtimes.get_mut(&window_id) else {
                     return;
                 };
+
+                // M30 Phase 9 Step 4 (§5, §8, §10): a real, live
+                // Terminal's own keyboard routing -- inspects the raw
+                // `event` directly, the identical real "meaning-
+                // dependent, not routed through `Tree::dispatch`'s own
+                // generic `DispatchOutcome`" precedent `Docking`'s own
+                // real winit wiring already established (M4 Phase 9):
+                // `engine-core` has no real notion of a PTY to write to
+                // (§4), and `NodeKind::Terminal` isn't matched by
+                // `dispatch_text_field_key` at all, so a keystroke
+                // reaching the generic dispatch below while a terminal
+                // is focused would either do nothing or (for `Tab`)
+                // wrongly move focus away instead of sending a real
+                // completion-triggering byte. When a focused node is a
+                // real `Terminal`, this claims the keystroke entirely --
+                // the generic dispatch below never runs for it.
+                if let Some(bytes) = input_bytes_for(&event) {
+                    let focused_terminal = {
+                        let tree_ref = runtime.tree.borrow();
+                        tree_ref.focused().filter(|&id| {
+                            matches!(
+                                tree_ref.get(id).map(|node| &node.kind),
+                                Some(NodeKind::Terminal(_))
+                            )
+                        })
+                    };
+                    if let Some(terminal_id) = focused_terminal {
+                        if let Some(session) = runtime.terminals.borrow_mut().get_mut(&terminal_id)
+                        {
+                            session.write_input(&bytes);
+                        }
+                        return;
+                    }
+                }
                 let outcome = runtime.tree.borrow_mut().dispatch(
                     runtime.root,
                     // M15 Phase 2: `InputEvent` is no longer `Copy`

@@ -781,6 +781,23 @@ impl Node {
             // (verifying a label's content actually changed) surfaced
             // by the exact same phase.
             NodeKind::Text(state) => Ok(state.content.clone()),
+            // M30 Phase 9 Step 4 (§5, §8, §10): a real terminal's own
+            // "text content" is its whole cell grid, not one string --
+            // joined here row by row (`\n`-separated, each row's own
+            // trailing spaces trimmed, the real, expected shape for a
+            // test to assert against, e.g. `"hello" in node.get_text()`
+            // after a real shell echoes it) purely for real read-back
+            // testing, mirroring `Text`/`TextField`'s own established
+            // "one plain string" contract rather than exposing the raw
+            // per-cell color/bold data Python has no real use for yet.
+            NodeKind::Terminal(state) => {
+                let mut lines = Vec::with_capacity(usize::from(state.rows));
+                for row in 0..state.rows {
+                    let line: String = (0..state.cols).map(|col| state.cell(row, col).ch).collect();
+                    lines.push(line.trim_end().to_string());
+                }
+                Ok(lines.join("\n"))
+            }
             _ => Err(EngineError::UnknownProperty {
                 kind: kind_name(&node.kind),
                 property: "text".to_string(),
@@ -840,6 +857,7 @@ fn kind_name(kind: &NodeKind) -> &'static str {
         NodeKind::Image(_) => "Image",
         NodeKind::Icon(_) => "Icon",
         NodeKind::Link(_) => "Link",
+        NodeKind::Terminal(_) => "Terminal",
     }
 }
 

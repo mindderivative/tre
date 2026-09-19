@@ -193,6 +193,124 @@ pub enum NodeKind {
     /// content/font shape is identical to `Text`'s, the only real
     /// difference is which `NodeKind` variant it is.
     Link(TextState),
+    /// M30 Phase 9 Step 4 (§5, §8, §10): a real, live terminal -- see
+    /// `TerminalState`'s own doc comment for the real crate-boundary
+    /// reasoning (the identical "engine-core holds inert data,
+    /// engine-render re-derives paint geometry" split `TextFieldState`
+    /// already established, extended to a whole cell grid instead of
+    /// one string).
+    Terminal(TerminalState),
+}
+
+/// M30 Phase 9 Step 4 (§5, §8, §10): one real, already-VT-interpreted
+/// terminal cell -- a single real character plus its own real
+/// foreground/background color and bold attribute, the identical real
+/// "what a genuine VT/ANSI parser hands back" shape the sibling
+/// `pyCopper` project's own real `Terminal` widget (grounded in
+/// `bittty`'s own `Cell` type) already established. Deliberately
+/// narrower than a full real terminal cell's real attribute set --
+/// underline/strikethrough/italic/dim/inverse are real, stated v1
+/// omissions, the identical real scope pyCopper's own `Terminal`
+/// already chose ("underline and strikethrough rendering... out of
+/// scope for this pass").
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TerminalCell {
+    pub ch: char,
+    pub fg: Color,
+    pub bg: Color,
+    pub bold: bool,
+}
+
+impl TerminalCell {
+    /// A real blank cell -- a literal space, transparent background
+    /// (so `engine-render`'s own paint arm can skip drawing a
+    /// background rect for it entirely, the same "skip painting a
+    /// real default" convention other `NodeKind`s already use), the
+    /// default foreground `engine-render`'s own paint code resolves
+    /// against the terminal's own real base ink color instead of a
+    /// hardcoded one here (`engine-core` has no MD3/theme awareness,
+    /// §4).
+    pub fn blank() -> Self {
+        Self {
+            ch: ' ',
+            fg: Color::TRANSPARENT,
+            bg: Color::TRANSPARENT,
+            bold: false,
+        }
+    }
+}
+
+/// M30 Phase 9 Step 4 (§5, §8, §10): a real, live terminal's own
+/// current cell-grid snapshot -- engine-core holds only this inert
+/// data (`cells`, row-major, `cols * rows` long, the real "already-
+/// VT-interpreted" state a real PTY/VT100 pipeline produces), the
+/// same real crate-boundary split `TextFieldState`'s own doc comment
+/// already established for a single editable string: real PTY process
+/// spawning and real VT/ANSI byte-stream parsing are `engine-py`'s own
+/// real concern (§4 -- neither belongs in a pure, OS-and-parser-
+/// agnostic `engine-core`), which rebuilds this whole struct's own
+/// `cells`/`cursor_*` fields wholesale whenever the real terminal
+/// screen changes (the identical real "wholesale replacement, not
+/// incremental diffing" simplicity `Video`'s own `push_frame` design
+/// already chose for a comparable "engine only displays the latest
+/// snapshot a real external process produced" shape, M30 Phase 9 Step
+/// 1).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TerminalState {
+    pub cols: u16,
+    pub rows: u16,
+    pub cells: Vec<TerminalCell>,
+    pub cursor_col: u16,
+    pub cursor_row: u16,
+    pub cursor_visible: bool,
+    pub font_family: String,
+    pub font_size: f32,
+}
+
+impl TerminalState {
+    /// Seeds a real, fully blank `cols * rows` grid -- the real
+    /// "nothing to show yet" state before the app's own first real PTY
+    /// bytes ever arrive, the identical real placeholder-first-frame
+    /// contract `Video`'s own `ImageState` placeholder already
+    /// establishes for a comparable "displays whatever a real external
+    /// process produced" shape.
+    pub fn new(cols: u16, rows: u16, font_family: impl Into<String>, font_size: f32) -> Self {
+        let cell_count = usize::from(cols) * usize::from(rows);
+        Self {
+            cols,
+            rows,
+            cells: vec![TerminalCell::blank(); cell_count],
+            cursor_col: 0,
+            cursor_row: 0,
+            cursor_visible: true,
+            font_family: font_family.into(),
+            font_size,
+        }
+    }
+
+    /// The real cell at `(row, col)`, `0`-indexed -- panics on an
+    /// out-of-bounds `row`/`col`, the same real "internal bookkeeping
+    /// bug, not a recoverable runtime condition" contract every other
+    /// direct-index accessor in this crate already has (`Tree::get_
+    /// mut`'s own doc comment, for one).
+    pub fn cell(&self, row: u16, col: u16) -> &TerminalCell {
+        &self.cells[usize::from(row) * usize::from(self.cols) + usize::from(col)]
+    }
+}
+
+/// M30 Phase 9 Step 4 (§5, §8, §10): the real analytic cell size
+/// `engine-render`'s own `TextRenderer::draw_terminal` positions every
+/// cell background/glyph/cursor on, and `engine-py`'s own `Window.
+/// add_terminal` sizes a fresh terminal node's own real box from --
+/// declared once, here, rather than duplicated in both crates where a
+/// future change to one could silently drift out of sync with the
+/// other. Real, honest v1 approximation, not a precise font metric
+/// (this project bundles no real monospace font yet, `Code Editor`'s
+/// own already-stated gap, M30 Phase 9 Step 3): a widely-used real
+/// monospace aspect-ratio estimate (advance width ~0.6em, line height
+/// ~1.3em), not measured from any specific installed font.
+pub fn terminal_cell_size(font_size: f32) -> (f32, f32) {
+    (font_size * 0.6, font_size * 1.3)
 }
 
 /// M15 Phase 1 (§5, §16.7): mirrors `TextState`'s own four font/content

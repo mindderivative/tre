@@ -18,6 +18,7 @@ use taffy::prelude::{Position, Rect as TaffyRect, Size, Style, auto, length};
 use crate::dispatch::{CompletionRegistry, HandlerMap, SharedCompletions};
 use crate::dock::{self, SharedDockState};
 use crate::node::Node;
+use crate::terminal::TerminalSession;
 
 const PADDING: f32 = 16.0;
 const GAP: f32 = 16.0;
@@ -221,6 +222,14 @@ pub struct PyWindow {
     /// `theme`) -- needs the same `__traverse__`/`__clear__` obligation
     /// below.
     pub(crate) completions: SharedCompletions,
+    /// M30 Phase 9 Step 4 (§5, §8, §10): every real, live `Terminal`
+    /// session this `Window` has spawned, keyed by its own real
+    /// `NodeId` -- shared with `App.run`'s own per-frame `WindowRuntime`
+    /// (`app.rs`'s own real drain loop), the identical real shape
+    /// `context_menus`/`dock`/`theme` already have: plain data, no
+    /// `Py<PyAny>` involved, so no `__traverse__`/`__clear__` GC
+    /// obligation either.
+    pub(crate) terminals: Rc<RefCell<HashMap<NodeId, TerminalSession>>>,
 }
 
 /// Real review finding: every `add_*`/`build_shell` method below used
@@ -288,6 +297,7 @@ impl PyWindow {
             dock: Rc::new(RefCell::new(dock::DockState::new())),
             theme: Rc::new(RefCell::new(ThemeState::default())),
             completions: Rc::new(RefCell::new(CompletionRegistry::new())),
+            terminals: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 

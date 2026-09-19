@@ -544,6 +544,39 @@ fn paint_node(
                 id,
             );
         }
+        // M30 Phase 9 Step 4 (§5, §8, §10): a real terminal's own cell
+        // grid -- `background` paints the real box fill first (the
+        // same `RoundedRect` fill `TextField`'s own arm just above
+        // already establishes), then `draw_terminal` paints every real
+        // cell's own background/glyph on top, plus the caret, in a
+        // fixed, not-yet-theme-aware color (the same real scope
+        // `TextField`'s own arm already accepts -- `engine-render` has
+        // no `engine-md3` dependency to resolve a real theme token
+        // from here, §4).
+        NodeKind::Terminal(state) => {
+            let radius = node.paint.corner_radius.current;
+            let bg = with_opacity(node.paint.background.current, node.paint.opacity.current);
+            scene.set_paint(bg);
+            scene.fill_path(&RoundedRect::new(0.0, 0.0, w, h, radius).to_path(0.1));
+
+            let cursor_color = with_opacity(
+                peniko::Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF),
+                node.paint.opacity.current,
+            );
+            text.draw_terminal(
+                scene,
+                resources,
+                state,
+                TextPlacement {
+                    x: 0.0,
+                    y: 0.0,
+                    max_width: w as f32,
+                    color: cursor_color,
+                },
+                tree.focused() == Some(id),
+                id,
+            );
+        }
         // A `VirtualList` container paints nothing itself, same as
         // `Container` -- it exists purely to give `taffy` something to
         // lay its (windowed) children out against; the recursive walk
