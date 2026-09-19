@@ -25,7 +25,9 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use engine_core::{Action, EventKind, MotionCurve, NodeId, NodeKind, ShapeKey, Tree};
+use engine_core::{
+    Action, EventKind, MotionCurve, NodeId, NodeKind, ShapeKey, TimePickerDialMode, Tree,
+};
 use peniko::Color;
 use peniko::kurbo::{Affine, BezPath};
 use pyo3::prelude::*;
@@ -899,6 +901,110 @@ impl Node {
         }
     }
 
+    /// M39 Phase 2 Step 2 (§5, §7): a real, direct programmatic move of
+    /// a `NodeKind::TimePickerDial`'s own hand positions -- the same
+    /// "engine-core owns the mechanism, this is just the real Python
+    /// entry point" shape `set_carousel_index` already establishes. A
+    /// thin wrapper around `Tree::set_time_picker_dial_time`, which
+    /// itself clamps `hour`/`minute` into range -- this method adds no
+    /// further validation of its own.
+    pub(crate) fn set_time_picker_dial_time(&self, hour: u8, minute: u8) -> PyResult<()> {
+        let mut tree = self.tree.borrow_mut();
+        let kind = kind_name(
+            &tree
+                .get(self.id)
+                .expect(
+                    "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+                )
+                .kind,
+        );
+        if !matches!(
+            tree.get(self.id).map(|n| &n.kind),
+            Some(NodeKind::TimePickerDial(_))
+        ) {
+            return Err(EngineError::UnknownProperty {
+                kind,
+                property: "hour/minute".to_string(),
+            }
+            .into());
+        }
+        tree.set_time_picker_dial_time(self.id, hour, minute);
+        Ok(())
+    }
+
+    /// `set_time_picker_dial_time`'s own real read-back getter.
+    pub(crate) fn get_time_picker_dial_time(&self) -> PyResult<(u8, u8)> {
+        let tree = self.tree.borrow();
+        let node = tree.get(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        match &node.kind {
+            NodeKind::TimePickerDial(state) => Ok((state.hour, state.minute)),
+            _ => Err(EngineError::UnknownProperty {
+                kind: kind_name(&node.kind),
+                property: "hour/minute".to_string(),
+            }
+            .into()),
+        }
+    }
+
+    /// M39 Phase 2 Step 2 (§5, §7): switches which real hand a drag on
+    /// this dial moves next -- the string-vocabulary convention
+    /// `parse_content_fit`/`parse_dock_side` already establish for a
+    /// small, closed real Rust enum exposed to Python, rather than a
+    /// dedicated pyo3-native enum type for just these two variants.
+    pub(crate) fn set_time_picker_dial_mode(&self, mode: &str) -> PyResult<()> {
+        let mode = match mode {
+            "hour" => TimePickerDialMode::Hour,
+            "minute" => TimePickerDialMode::Minute,
+            other => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "unknown time picker dial mode {other:?} -- expected \"hour\" or \"minute\""
+                )));
+            }
+        };
+        let mut tree = self.tree.borrow_mut();
+        let kind = kind_name(
+            &tree
+                .get(self.id)
+                .expect(
+                    "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+                )
+                .kind,
+        );
+        if !matches!(
+            tree.get(self.id).map(|n| &n.kind),
+            Some(NodeKind::TimePickerDial(_))
+        ) {
+            return Err(EngineError::UnknownProperty {
+                kind,
+                property: "mode".to_string(),
+            }
+            .into());
+        }
+        tree.set_time_picker_dial_mode(self.id, mode);
+        Ok(())
+    }
+
+    /// `set_time_picker_dial_mode`'s own real read-back getter.
+    pub(crate) fn get_time_picker_dial_mode(&self) -> PyResult<&'static str> {
+        let tree = self.tree.borrow();
+        let node = tree.get(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        match &node.kind {
+            NodeKind::TimePickerDial(state) => Ok(match state.mode {
+                TimePickerDialMode::Hour => "hour",
+                TimePickerDialMode::Minute => "minute",
+            }),
+            _ => Err(EngineError::UnknownProperty {
+                kind: kind_name(&node.kind),
+                property: "mode".to_string(),
+            }
+            .into()),
+        }
+    }
+
     /// M15 Phase 1 (§5, §16.7): the real read-back getter for a
     /// `TextField`'s own current `content` -- mirrors `get_checked`'s
     /// own exact shape (rejecting a non-`TextField` node the same way).
@@ -1122,6 +1228,7 @@ fn kind_name(kind: &NodeKind) -> &'static str {
         NodeKind::Carousel(_) => "Carousel",
         NodeKind::ScrollView(_) => "ScrollView",
         NodeKind::LoadingIndicator(_) => "LoadingIndicator",
+        NodeKind::TimePickerDial(_) => "TimePickerDial",
     }
 }
 

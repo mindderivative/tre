@@ -218,6 +218,120 @@ pub enum NodeKind {
     /// Expressive-style loading spinner -- see `LoadingIndicatorState`'s
     /// own doc comment for the full real design.
     LoadingIndicator(LoadingIndicatorState),
+    /// M39 Phase 2 Step 2 (§5, §7): a real MD3 Time Picker's own
+    /// circular clock-face drag control -- see `TimePickerDialState`'s
+    /// own doc comment for the full real design and its stated v1
+    /// scope limits.
+    TimePickerDial(TimePickerDialState),
+}
+
+/// M39 Phase 2 Step 2 (§5, §7): MD3's real Time Picker dial -- a
+/// circular clock face with an hour hand and a minute hand, where
+/// dragging around the circle picks a value by angle (12 o'clock =
+/// the "start" of the circle, sweeping clockwise, the identical real
+/// angle convention `CircularProgress`'s own paint arm already
+/// established: `-PI/2` start, `+angle` clockwise). Only one hand is
+/// draggable at a time (`mode` selects which); this mirrors real
+/// MD3's own dialog, which shows both hands but only lets the
+/// currently-focused one (hour first, then minute) actually move --
+/// `mode` here is this widget's own real equivalent of that focus,
+/// driven by whatever app-level control (e.g. an hour/minute toggle
+/// button) the caller builds, not by the dial itself.
+///
+/// **Real, stated v1 simplifications** (this is a genuinely new
+/// capability with no precedent anywhere in this codebase -- no
+/// existing angle-based drag math, no existing circular *drag* region
+/// distinct from a rectangular one, confirmed by direct grep before
+/// writing any of this):
+/// - No digit labels (`1`-`12` around the hour face, `00`-`55` around
+///   the minute face) are painted -- real MD3 anatomy has them, but
+///   drawing them needs `engine-render`'s own text-shaping pipeline
+///   threaded through paint-time geometry a plain `NodeKind` doesn't
+///   otherwise need, real added plumbing this v1 skips in favor of
+///   plain tick marks at each of the 12 hour/60 minute positions
+///   (still real, situated geometry, not a placeholder).
+/// - No AM/PM toggle chrome, no digital hour:minute text input field,
+///   no dialog frame -- this is the real circular drag *primitive*
+///   MD3's own Time Picker dialog is built from, not the whole
+///   dialog. `hour` is still a real 24-hour value (`0..=23`); flipping
+///   AM/PM is left to whatever app-level control the caller builds
+///   (dragging the hour hand preserves whichever half of the day the
+///   current `hour` was already in, the same way real MD3 dragging
+///   the hour hand alone never silently flips AM/PM either).
+/// - Dragging is a plain rectangular hit region (this node's own
+///   whole bounding box), not a strict circular clip -- the identical
+///   real simplicity `Slider`'s own whole-track-width hit region
+///   already uses rather than a pixel-exact thumb hit box. A drag
+///   starting anywhere in the box still computes a real angle from
+///   the box's own real center, so this is never visually wrong, only
+///   slightly more permissive about where a drag may *start* than a
+///   real circular clip would be.
+/// - `hour`/`minute` are plain, driven-directly values, not
+///   `Animated<f64>` -- the identical real "driven directly, like a
+///   scrollbar being dragged, never eased" precedent `CarouselState::
+///   scroll_x`'s own doc comment already establishes: a clock hand
+///   snapping instantly to wherever the pointer is IS the correct
+///   real behavior, not something to ease.
+///
+/// No `PartialEq`/`Eq` derive -- `peniko::Color` (`face_tint`/`hand_
+/// tint` below) itself only derives `Clone, Copy, Debug`, the same
+/// real reason `LinearProgressState`/`CircularProgressState`'s own
+/// `Color` fields already block a derived `PartialEq` there (tests
+/// compare individual fields instead, not the whole struct).
+#[derive(Clone, Copy, Debug)]
+pub struct TimePickerDialState {
+    /// Real 24-hour value, `0..=23`. The dial's own hour hand always
+    /// shows this modulo 12 (`0`/`12` both point straight up), the
+    /// real MD3 12-hour face convention.
+    pub hour: u8,
+    /// `0..=59`. A drag on the minute hand snaps to the nearest real
+    /// 5-minute increment (real MD3's own primary interaction
+    /// granularity -- fine per-minute adjustment exists in the real
+    /// spec too, via a secondary drag-precision mode this v1 doesn't
+    /// build), a programmatic `set_time_picker_dial_time` call does
+    /// not re-snap an already-precise value.
+    pub minute: u8,
+    /// Which hand a drag currently moves.
+    pub mode: TimePickerDialMode,
+    /// The circular face's own fill color -- `LinearProgressState::
+    /// track_tint`'s own real sibling, same reasoning (a real,
+    /// themeable field rather than a fixed literal `engine-render`
+    /// would otherwise hardcode).
+    pub face_tint: Color,
+    /// Both hands' stroke color plus the selector dot at the active
+    /// hand's own tip -- `CircularProgressState::indicator_tint`'s own
+    /// real sibling.
+    pub hand_tint: Color,
+}
+
+impl TimePickerDialState {
+    /// Clamps `hour` to `0..=23` and `minute` to `0..=59` (a debug-
+    /// only clamp, not a public contract -- `Tree::set_time_picker_
+    /// dial_time` is the real public setter that also clamps, this
+    /// constructor mirrors it so a directly-built `TimePickerDialState`
+    /// can never start out-of-range either). Starts in `Hour` mode,
+    /// mirroring real MD3's own dialog, which always focuses the hour
+    /// hand first. `face_tint`/`hand_tint` default to real, byte-for-
+    /// byte the same neutral literals `LinearProgressState::new`
+    /// already uses for its own untheme colors -- `Window.set_theme`
+    /// (`engine-py`) overwrites both once a real MD3 theme is pushed.
+    pub fn new(hour: u8, minute: u8) -> Self {
+        Self {
+            hour: hour.min(23),
+            minute: minute.min(59),
+            mode: TimePickerDialMode::Hour,
+            face_tint: Color::from_rgba8(0xE7, 0xE0, 0xEC, 0xFF),
+            hand_tint: Color::from_rgba8(0x00, 0x00, 0x00, 0xFF),
+        }
+    }
+}
+
+/// M39 Phase 2 Step 2 (§5, §7): which of a `TimePickerDialState`'s two
+/// real hands a drag currently moves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimePickerDialMode {
+    Hour,
+    Minute,
 }
 
 /// M39 Phase 2 (§5, §7): real MD3 Expressive "the loading indicator

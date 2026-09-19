@@ -160,6 +160,32 @@ class Node:
     def get_carousel_scroll(self) -> float:
         """`Carousel`-only -- raises `ValueError` for any other kind."""
         ...
+    def set_time_picker_dial_time(self, hour: int, minute: int) -> None:
+        """`TimePickerDial`-only -- raises `ValueError` for any other
+        kind. Moves both hands directly (an instant move, not an eased
+        one -- a clock hand snapping to wherever it's set IS the real
+        behavior here). `hour` clamps to `0..=23`, `minute` to
+        `0..=59`.
+        """
+        ...
+    def get_time_picker_dial_time(self) -> tuple[int, int]:
+        """`TimePickerDial`-only -- raises `ValueError` for any other
+        kind. Returns `(hour, minute)`.
+        """
+        ...
+    def set_time_picker_dial_mode(self, mode: str) -> None:
+        """`TimePickerDial`-only -- raises `ValueError` for any other
+        kind. `mode` is `"hour"` or `"minute"`: which hand a real drag
+        on this dial moves next -- the app-level equivalent of real
+        MD3's own hour-then-minute dialog focus (this widget has no
+        built-in toggle of its own; wire a button/tab to call this).
+        """
+        ...
+    def get_time_picker_dial_mode(self) -> str:
+        """`TimePickerDial`-only -- raises `ValueError` for any other
+        kind. `"hour"` or `"minute"`.
+        """
+        ...
     def is_focused(self) -> bool:
         """Whether this is the `Tree`'s own current keyboard-focused
         node.
@@ -465,6 +491,29 @@ class Window:
         subset of MD3 Expressive's own actual seven-shape sequence,
         morphed with plain easing rather than genuine spring physics
         -- not a pixel-for-pixel spec match.
+        """
+        ...
+    def add_time_picker_dial(
+        self,
+        hour: int = 0,
+        minute: int = 0,
+        size: float = 256.0,
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """A real MD3 Time Picker's circular clock-face drag control --
+        drag anywhere in the box to move the currently-active hand
+        (`hour` by default; switch with `Node.set_time_picker_dial_
+        mode`). `hour` is a real 24-hour value (`0..=23`); the hour
+        hand alone never flips AM/PM (no toggle chrome exists on this
+        widget -- see `set_time_picker_dial_mode`). `minute` (`0..=59`)
+        snaps to the nearest real 5-minute increment while dragging.
+        Releasing the drag produces a `"changed"` event, the same real
+        convention `add_slider` already establishes. **Real, honest v1
+        simplification:** no digit labels around the face (plain tick
+        marks stand in for them) and no AM/PM toggle or digital input
+        chrome -- this is the real circular drag primitive, not MD3's
+        whole Time Picker dialog.
         """
         ...
     def add_card(

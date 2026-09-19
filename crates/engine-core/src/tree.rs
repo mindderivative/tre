@@ -29,11 +29,12 @@ use crate::interaction::InteractionState;
 use crate::node::{
     CAROUSEL_DRAG_INDEX_THRESHOLD, CAROUSEL_GAP, CAROUSEL_PAD_X, CAROUSEL_PAD_Y,
     CAROUSEL_UNCONTAINED_WIDTH, ImageState, Node, NodeId, NodeKind, PaintProperties,
-    SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN, SCROLLBAR_THICKNESS, TextFieldState,
+    SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN, SCROLLBAR_THICKNESS, TextFieldState, TimePickerDialMode,
 };
 #[cfg(test)]
 use crate::node::{
-    CheckboxState, IconState, ItemExtent, SliderState, TerminalState, VirtualListState,
+    CheckboxState, IconState, ItemExtent, SliderState, TerminalState, TimePickerDialState,
+    VirtualListState,
 };
 use crate::overlay::OverlayMeta;
 #[cfg(test)]
@@ -1530,6 +1531,42 @@ impl Tree {
         state.thumb_position.tick(now, &mut Vec::new());
     }
 
+    /// M39 Phase 2 Step 2 (§5, §7): the real public setter both a
+    /// programmatic caller and `update_time_picker_dial_drag` (below)
+    /// funnel through -- one real mechanism, not two, the identical
+    /// "drag math computes a value, then calls the ordinary setter"
+    /// shape `update_splitter_drag`/`update_slider_drag` already
+    /// establish. Clamps `hour` to `0..=23`/`minute` to `0..=59` (a
+    /// real, defensive clamp -- a caller-supplied value has no type-
+    /// level guarantee of range the way `TimePickerDialState::new`'s
+    /// own internal `min()` calls do for construction). Panics if `id`
+    /// isn't a real `NodeKind::TimePickerDial`, the same "internal bug,
+    /// not a runtime condition" contract `set_slider_position` already
+    /// uses.
+    pub fn set_time_picker_dial_time(&mut self, id: NodeId, hour: u8, minute: u8) {
+        self.dirty = true;
+        let NodeKind::TimePickerDial(state) = &mut self.nodes[id].kind else {
+            panic!("set_time_picker_dial_time: {id:?} is not a NodeKind::TimePickerDial");
+        };
+        state.hour = hour.min(23);
+        state.minute = minute.min(59);
+    }
+
+    /// M39 Phase 2 Step 2 (§5, §7): switches which of the dial's two
+    /// real hands a drag moves -- the app-level equivalent of real
+    /// MD3's own hour-then-minute dialog focus, driven by whatever
+    /// control (e.g. an hour/minute toggle button) the caller builds;
+    /// see `TimePickerDialState`'s own doc comment for why this lives
+    /// outside the dial itself. Panics under the same contract `set_
+    /// time_picker_dial_time` above already uses.
+    pub fn set_time_picker_dial_mode(&mut self, id: NodeId, mode: TimePickerDialMode) {
+        self.dirty = true;
+        let NodeKind::TimePickerDial(state) = &mut self.nodes[id].kind else {
+            panic!("set_time_picker_dial_mode: {id:?} is not a NodeKind::TimePickerDial");
+        };
+        state.mode = mode;
+    }
+
     /// Shared by `set_splitter_position` and `update_drag` (M4 Phase 3,
     /// §11.5): resolves a splitter's own flanking-siblings geometry --
     /// which two real siblings it sits between, which axis its parent's
@@ -1629,6 +1666,14 @@ impl Tree {
             // `Slider`/`Carousel`'s own identical "only start a drag on
             // a genuine grab" contract.
             NodeKind::ScrollView(_) => self.update_scroll_view_thumb_drag(dragging, point, now),
+            // M39 Phase 2 Step 2 (§5, §7): a real angle-based drag,
+            // genuinely distinct from every other real drag primitive
+            // above -- none of `Splitter`/`Slider`/`Carousel`/
+            // `ScrollView` convert a pointer position through an
+            // `atan2` at all (confirmed by direct grep before writing
+            // this), so this is real, new math, not a reuse of any
+            // existing helper.
+            NodeKind::TimePickerDial(_) => self.update_time_picker_dial_drag(dragging, point),
             _ => {}
         }
     }
@@ -1659,6 +1704,70 @@ impl Tree {
         }
         let fraction = ((point.x - x) / width).clamp(0.0, 1.0);
         self.set_slider_position(slider, fraction, now);
+    }
+
+    /// M39 Phase 2 Step 2 (§5, §7): the dial's own real drag math --
+    /// converts `point` (already the drag's own absolute canvas-space
+    /// position, the same convention every other `update_*_drag`
+    /// above already uses) into an angle from the node's own real box
+    /// center, then into whichever hand `mode` currently selects. A
+    /// no-op if the box has zero real area (nothing to compute a
+    /// center of, the same zero-extent guard `update_splitter_drag`/
+    /// `update_slider_drag` already establish for their own axes).
+    ///
+    /// Real angle convention, byte-for-byte `CircularProgress`'s own
+    /// paint-time convention (`engine-render`'s `NodeKind::
+    /// CircularProgress` arm): 12 o'clock is the real zero point
+    /// (`-PI/2` in `atan2`'s own standard "0 = 3 o'clock" convention),
+    /// sweeping clockwise. Screen-space `y` grows downward, so a plain
+    /// `atan2(dy, dx)` already increases clockwise as drawn -- no sign
+    /// flip needed, confirmed by hand-tracing `atan2` at each of the 4
+    /// cardinal points against where they render on screen.
+    fn update_time_picker_dial_drag(&mut self, dial: NodeId, point: Point) {
+        let (x, y) = self.absolute_position(dial);
+        let layout = self.layout(dial);
+        let (w, h) = (f64::from(layout.size.width), f64::from(layout.size.height));
+        if w <= 0.0 || h <= 0.0 {
+            return;
+        }
+        let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+        let (dx, dy) = (point.x - cx, point.y - cy);
+        let raw_angle = dy.atan2(dx);
+        // Rotate so 12 o'clock (`-PI/2` in `atan2`'s own convention)
+        // becomes the real zero point, then wrap into `0.0..TAU` --
+        // `rem_euclid` (not plain `%`) is what makes this a genuine
+        // wrap rather than leaving a real negative remainder for an
+        // angle just counter-clockwise of 12.
+        let angle = (raw_angle + std::f64::consts::FRAC_PI_2).rem_euclid(std::f64::consts::TAU);
+        let fraction = angle / std::f64::consts::TAU;
+
+        let NodeKind::TimePickerDial(state) = &mut self.nodes[dial].kind else {
+            unreachable!("checked by update_drag's own match arm")
+        };
+        match state.mode {
+            TimePickerDialMode::Hour => {
+                // 12 real positions around the face; `round() % 12`
+                // turns a full `0.0..1.0` sweep into `0..=11`, where
+                // `0` means "straight up" -- real MD3's own `12`
+                // position, not `0` o'clock. AM/PM is preserved from
+                // whichever half of the day `hour` was already in
+                // (this widget has no AM/PM toggle of its own -- see
+                // `TimePickerDialState`'s own doc comment).
+                let hour_12 = ((fraction * 12.0).round() as u32) % 12;
+                let period = if state.hour >= 12 { 12 } else { 0 };
+                state.hour = (hour_12 + period) as u8;
+            }
+            TimePickerDialMode::Minute => {
+                // 60 real positions, snapped to the nearest real
+                // 5-minute increment (`TimePickerDialState::minute`'s
+                // own doc comment states this is deliberate, not a
+                // missing feature).
+                let raw_minute = (fraction * 60.0).round() as u32 % 60;
+                let snapped = ((raw_minute + 2) / 5 * 5) % 60;
+                state.minute = snapped as u8;
+            }
+        }
+        self.dirty = true;
     }
 
     /// §14 step 15 (§11.7): materializes/recycles a `NodeKind::
@@ -3320,14 +3429,22 @@ impl Tree {
                 }
                 if let Some(node) = hit {
                     self.set_pressed(Some((button, node)), config.hover_duration, now);
-                    // M4 Phase 3 (§11.5), widened M14 Phase 2 (§7.3):
-                    // pressing a splitter or a slider with the primary
-                    // button starts a real drag -- reuses this same
-                    // hit-test result, not a second one.
+                    // M4 Phase 3 (§11.5), widened M14 Phase 2 (§7.3),
+                    // widened M39 Phase 2 Step 2 (§5, §7): pressing a
+                    // splitter, a slider, or a time picker dial with
+                    // the primary button starts a real drag -- reuses
+                    // this same hit-test result, not a second one. The
+                    // dial's own whole bounding box is the hit region
+                    // (the plain `rect_contains` default already used
+                    // here for everything else), a real, stated v1
+                    // simplification -- see `TimePickerDialState`'s
+                    // own doc comment.
                     if button == PointerButton::Primary
                         && matches!(
                             self.nodes.get(node).map(|n| &n.kind),
-                            Some(NodeKind::Splitter(_)) | Some(NodeKind::Slider(_))
+                            Some(NodeKind::Splitter(_))
+                                | Some(NodeKind::Slider(_))
+                                | Some(NodeKind::TimePickerDial(_))
                         )
                     {
                         self.dragging = Some(node);
@@ -3439,17 +3556,18 @@ impl Tree {
                 };
                 self.set_pressed(None, config.hover_duration, now);
 
-                // M14 Phase 3 (§16.7): a real `Slider` drag genuinely
+                // M14 Phase 3 (§16.7), widened M39 Phase 2 Step 2 (§5,
+                // §7): a real `Slider`/`TimePickerDial` drag genuinely
                 // ending is this node's own real, meaningful edit --
                 // takes priority over the ordinary same-node-press-
                 // release `Activated`/`SecondaryActivated` logic above
-                // (a slider's own real interaction is its value
+                // (a slider's/dial's own real interaction is its value
                 // settling, not a click). Checked *before* `self.
                 // dragging` is cleared below.
                 let outcome = if button == PointerButton::Primary
                     && matches!(
                         self.dragging.map(|id| &self.nodes[id].kind),
-                        Some(NodeKind::Slider(_))
+                        Some(NodeKind::Slider(_)) | Some(NodeKind::TimePickerDial(_))
                     ) {
                     DispatchOutcome::Changed(self.dragging.expect("checked by matches! above"))
                 } else {
@@ -5617,6 +5735,274 @@ mod tests {
             now,
         );
         assert_eq!(outcome, DispatchOutcome::None);
+    }
+
+    /// M39 Phase 2 Step 2 (§5, §7): `slider_scene`'s own real shape,
+    /// mirrored for a 200x200 `TimePickerDial` -- a square box so its
+    /// own real center (`(100.0, 100.0)`) is trivial to reason about
+    /// by hand for every drag test below.
+    fn time_picker_dial_scene() -> (Tree, NodeId, NodeId) {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            size: Size {
+                width: length(200.0),
+                height: length(200.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let dial = tree.insert(
+            NodeKind::TimePickerDial(TimePickerDialState::new(0, 0)),
+            Style {
+                size: Size {
+                    width: length(200.0),
+                    height: length(200.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0x63, 0x50, 0xA4, 0xFF), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(root, dial);
+
+        let available = Size {
+            width: AvailableSpace::Definite(200.0),
+            height: AvailableSpace::Definite(200.0),
+        };
+        tree.compute_layout(root, available);
+        (tree, root, dial)
+    }
+
+    #[test]
+    fn time_picker_dial_state_new_clamps_out_of_range_hour_and_minute() {
+        let state = TimePickerDialState::new(25, 65);
+        assert_eq!(state.hour, 23);
+        assert_eq!(state.minute, 59);
+    }
+
+    #[test]
+    fn set_time_picker_dial_time_clamps_out_of_range_values_and_marks_the_tree_dirty() {
+        let (mut tree, _root, dial) = time_picker_dial_scene();
+        tree.dirty = false;
+        tree.set_time_picker_dial_time(dial, 30, 90);
+        let NodeKind::TimePickerDial(state) = &tree.get(dial).unwrap().kind else {
+            panic!("expected a TimePickerDial");
+        };
+        assert_eq!(state.hour, 23);
+        assert_eq!(state.minute, 59);
+        assert!(tree.dirty);
+    }
+
+    #[test]
+    fn set_time_picker_dial_mode_switches_which_hand_a_drag_moves() {
+        let (mut tree, _root, dial) = time_picker_dial_scene();
+        let NodeKind::TimePickerDial(state) = &tree.get(dial).unwrap().kind else {
+            panic!("expected a TimePickerDial");
+        };
+        assert_eq!(state.mode, TimePickerDialMode::Hour, "starts in Hour mode");
+
+        tree.set_time_picker_dial_mode(dial, TimePickerDialMode::Minute);
+        let NodeKind::TimePickerDial(state) = &tree.get(dial).unwrap().kind else {
+            panic!("expected a TimePickerDial");
+        };
+        assert_eq!(state.mode, TimePickerDialMode::Minute);
+    }
+
+    /// A real, hand-traced angle-to-hour drag test, one case per real
+    /// clock quadrant -- `update_time_picker_dial_drag`'s own doc
+    /// comment states the exact convention (12 o'clock = zero,
+    /// clockwise), this proves it against every cardinal point by
+    /// actually dragging there, not just reading the math.
+    #[test]
+    fn dispatch_drag_in_hour_mode_sets_the_hour_to_the_nearest_of_twelve_real_positions() {
+        // `199.0`/`1.0` rather than the exact `200.0`/`0.0` box edge --
+        // `rect_contains`'s own real `Rect::contains` is exclusive on
+        // the max edge (`kurbo`'s own standard convention), so a point
+        // exactly on the dial's own right/bottom edge would miss the
+        // hit-test entirely and never start a drag at all.
+        let cases = [
+            // (point relative to the real 100,100 center, expected hour)
+            ((100.0, 1.0), 0u8), // straight up -- 12 o'clock -> hour 0
+            ((199.0, 100.0), 3), // straight right -- 3 o'clock
+            ((100.0, 199.0), 6), // straight down -- 6 o'clock
+            ((1.0, 100.0), 9),   // straight left -- 9 o'clock
+        ];
+        for (point, expected_hour) in cases {
+            let (mut tree, root, dial) = time_picker_dial_scene();
+            let config = InteractionConfig {
+                hover_opacity: 0.08,
+                hover_duration: Duration::from_millis(100),
+                focus_ring_opacity: 1.0,
+                focus_ring_duration: Duration::from_millis(100),
+                ripple_radius: 50.0,
+                ripple_opacity: 0.12,
+                ripple_duration: Duration::from_millis(300),
+            };
+            let now = Instant::now();
+            // `PointerPressed` alone only starts the drag -- like
+            // `Splitter`/`Slider`, the value itself only moves on the
+            // real `PointerMoved` that follows (`update_drag`'s own
+            // call site, `dispatch`'s `PointerMoved` arm). Press
+            // somewhere neutral first, matching `slider_scene`'s own
+            // real drag tests.
+            tree.dispatch(
+                root,
+                InputEvent::PointerPressed {
+                    position: Point::new(100.0, 100.0),
+                    button: PointerButton::Primary,
+                },
+                &config,
+                now,
+            );
+            tree.dispatch(
+                root,
+                InputEvent::PointerMoved {
+                    position: Point::new(point.0, point.1),
+                },
+                &config,
+                now,
+            );
+            let NodeKind::TimePickerDial(state) = &tree.get(dial).unwrap().kind else {
+                panic!("expected a TimePickerDial");
+            };
+            assert_eq!(
+                state.hour, expected_hour,
+                "dragging to {point:?} should set hour to {expected_hour}, got {}",
+                state.hour
+            );
+        }
+    }
+
+    /// A real hour drag preserves whichever half of the day `hour` was
+    /// already in -- `TimePickerDialState`'s own doc comment states
+    /// this is deliberate (no AM/PM toggle chrome in this v1), so
+    /// dragging the hour hand alone must never silently flip a real
+    /// PM hour back to AM.
+    #[test]
+    fn dragging_the_hour_hand_preserves_the_real_am_pm_half_of_the_day() {
+        let (mut tree, root, dial) = time_picker_dial_scene();
+        tree.set_time_picker_dial_time(dial, 15, 0); // 3 PM
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let now = Instant::now();
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(100.0, 100.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        // Drag to straight-up (12 o'clock hand position).
+        tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(100.0, 1.0),
+            },
+            &config,
+            now,
+        );
+        let NodeKind::TimePickerDial(state) = &tree.get(dial).unwrap().kind else {
+            panic!("expected a TimePickerDial");
+        };
+        assert_eq!(
+            state.hour, 12,
+            "12 o'clock while already PM must stay PM (12), not become 0"
+        );
+    }
+
+    /// A real minute drag snaps to the nearest 5-minute increment --
+    /// `TimePickerDialState::minute`'s own doc comment states this is
+    /// the real, deliberate v1 granularity. `17` minutes' own real
+    /// angle is deliberately used here (not an exact multiple of 5),
+    /// so this only passes if real snapping actually happened, not by
+    /// coincidence.
+    #[test]
+    fn dispatch_drag_in_minute_mode_snaps_to_the_nearest_five_minute_increment() {
+        let (mut tree, root, dial) = time_picker_dial_scene();
+        tree.set_time_picker_dial_mode(dial, TimePickerDialMode::Minute);
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let now = Instant::now();
+
+        let raw_angle = (17.0 / 60.0) * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
+        let point = Point::new(
+            100.0 + 90.0 * raw_angle.cos(),
+            100.0 + 90.0 * raw_angle.sin(),
+        );
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(100.0, 100.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        tree.dispatch(
+            root,
+            InputEvent::PointerMoved { position: point },
+            &config,
+            now,
+        );
+        let NodeKind::TimePickerDial(state) = &tree.get(dial).unwrap().kind else {
+            panic!("expected a TimePickerDial");
+        };
+        assert_eq!(
+            state.minute, 15,
+            "a real 17-minute angle must snap to the nearest 5-minute mark (15), got {}",
+            state.minute
+        );
+    }
+
+    #[test]
+    fn dispatch_release_ending_a_real_time_picker_dial_drag_produces_changed() {
+        let (mut tree, root, dial) = time_picker_dial_scene();
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let now = Instant::now();
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(100.0, 0.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerReleased {
+                position: Point::new(100.0, 0.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        assert_eq!(outcome, DispatchOutcome::Changed(dial));
     }
 
     /// M24 Phase 1 (§10): a focused slider's own real ArrowRight

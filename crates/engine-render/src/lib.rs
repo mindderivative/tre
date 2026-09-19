@@ -27,10 +27,10 @@ mod text;
 
 use engine_core::{
     ContentFit, DrawCommand, ICON_VIEWBOX_SIZE, Interpolate, NodeId, NodeKind, SCROLLBAR_MARGIN,
-    SCROLLBAR_THICKNESS, ScrollViewState, Tree,
+    SCROLLBAR_THICKNESS, ScrollViewState, TimePickerDialMode, Tree,
 };
 use peniko::Color;
-use peniko::kurbo::{Affine, BezPath, Circle, Point, Rect, RoundedRect, Shape, Stroke};
+use peniko::kurbo::{Affine, BezPath, Circle, Line, Point, Rect, RoundedRect, Shape, Stroke, Vec2};
 use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
 pub use geometry_cache::GeometryCache;
@@ -1023,6 +1023,69 @@ fn paint_node(
             scene.set_paint(with_opacity(state.tint, node.paint.opacity.current));
             scene.fill_path(&state.path);
             scene.set_transform(composed);
+        }
+        // M39 Phase 2 Step 2 (§5, §7): a real MD3 Time Picker dial --
+        // see `TimePickerDialState`'s own doc comment for the full
+        // real design and its stated v1 scope limits (no digit
+        // labels; plain tick dots stand in for them here). Angle
+        // convention is byte-for-byte `CircularProgress`'s own arm
+        // above: `-PI/2` (12 o'clock) is the real zero point,
+        // sweeping clockwise -- `Tree::update_time_picker_dial_drag`
+        // (`engine-core`) already established this same convention
+        // for the reverse (pointer -> angle) direction, so paint and
+        // drag agree on where every real hour/minute position sits.
+        NodeKind::TimePickerDial(state) => {
+            let face_radius = w.min(h) / 2.0;
+            let (cx, cy) = (w / 2.0, h / 2.0);
+            let center = Point::new(cx, cy);
+
+            scene.set_paint(with_opacity(state.face_tint, node.paint.opacity.current));
+            scene.fill_path(&Circle::new(center, face_radius).to_path(0.1));
+
+            // 12 real tick-dot positions -- the honest v1 stand-in for
+            // real MD3's own painted digit labels (see the struct doc
+            // comment for why no text is shaped here).
+            let tick_tint = with_opacity(state.hand_tint, 0.4 * node.paint.opacity.current);
+            let tick_radius = (face_radius * 0.04).max(1.0);
+            let tick_orbit = face_radius * 0.84;
+            scene.set_paint(tick_tint);
+            for i in 0..12 {
+                let angle =
+                    -std::f64::consts::FRAC_PI_2 + (f64::from(i) / 12.0) * std::f64::consts::TAU;
+                let tick_center = center + Vec2::new(angle.cos(), angle.sin()) * tick_orbit;
+                scene.fill_path(&Circle::new(tick_center, tick_radius).to_path(0.1));
+            }
+
+            let hand_width = (face_radius * 0.05).max(1.5);
+            let hand_paint = with_opacity(state.hand_tint, node.paint.opacity.current);
+            scene.set_stroke(Stroke::new(hand_width));
+            scene.set_paint(hand_paint);
+
+            let hour_angle = -std::f64::consts::FRAC_PI_2
+                + (f64::from(state.hour % 12) / 12.0) * std::f64::consts::TAU;
+            let hour_tip =
+                center + Vec2::new(hour_angle.cos(), hour_angle.sin()) * (face_radius * 0.5);
+            scene.stroke_path(&Line::new(center, hour_tip).to_path(0.1));
+
+            let minute_angle = -std::f64::consts::FRAC_PI_2
+                + (f64::from(state.minute) / 60.0) * std::f64::consts::TAU;
+            let minute_tip =
+                center + Vec2::new(minute_angle.cos(), minute_angle.sin()) * (face_radius * 0.78);
+            scene.stroke_path(&Line::new(center, minute_tip).to_path(0.1));
+
+            // The real selector dot -- MD3's own real "which hand is
+            // currently draggable" indicator, at the active hand's own
+            // tip.
+            let selector_tip = match state.mode {
+                TimePickerDialMode::Hour => hour_tip,
+                TimePickerDialMode::Minute => minute_tip,
+            };
+            scene.set_paint(hand_paint);
+            scene.fill_path(&Circle::new(selector_tip, face_radius * 0.14).to_path(0.1));
+
+            // A small real center hub, the same real anatomy a
+            // physical analog clock face has.
+            scene.fill_path(&Circle::new(center, face_radius * 0.03).to_path(0.1));
         }
     }
 

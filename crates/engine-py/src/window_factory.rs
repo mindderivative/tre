@@ -17,7 +17,7 @@ use engine_core::{
     AccessNodeData, Action, Animated, CheckboxState, CircularProgressState, ContentFit, IconState,
     ImageState, LinearProgressState, LoadingIndicatorState, NodeId, NodeKind, OverlayMeta,
     PaintProperties, RadioButtonState, Role, ShapeKey, SliderState, SplitterState, SwitchState,
-    TextAlign, TextFieldState, TextState, Tree,
+    TextAlign, TextFieldState, TextState, TimePickerDialState, Tree,
 };
 use engine_render::{MONOSPACE_FONT_FAMILY, TextRenderer};
 use peniko::Color;
@@ -2504,6 +2504,60 @@ impl PyWindow {
                 y,
             ),
             paint,
+        );
+        tree.add_child(self.root, id);
+        self.wrap_node(id)
+    }
+
+    /// M39 Phase 2 Step 2 (§5, §7): a real MD3 Time Picker's own
+    /// circular clock-face drag control -- see `engine_core::
+    /// TimePickerDialState`'s own doc comment for the full real
+    /// design and its stated v1 scope limits (no digit labels, no
+    /// AM/PM toggle chrome, a plain rectangular drag hit region). A
+    /// square `size x size` box, the same single-dimension convention
+    /// `add_loading_indicator`/`add_circular_progress` already
+    /// establish -- 256.0 is a practical default for a legible dial,
+    /// not a cited MD3 token (this phase's own research located the
+    /// dial's real *anatomy*, not a verified default diameter). `hour`
+    /// is a real 24-hour value (`0..=23`), `minute` `0..=59`; both
+    /// clamp the same way `TimePickerDialState::new` does.
+    #[pyo3(signature = (hour=0, minute=0, size=256.0, x=None, y=None))]
+    fn add_time_picker_dial(
+        &self,
+        hour: u8,
+        minute: u8,
+        size: f32,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> Node {
+        let mut state = TimePickerDialState::new(hour, minute);
+        {
+            let theme = self.theme.borrow();
+            let role = |name: &str, fallback: Color| -> Color {
+                if theme.is_set() {
+                    theme.role(name).unwrap_or(fallback)
+                } else {
+                    fallback
+                }
+            };
+            state.face_tint = role(
+                "surface_container_highest",
+                Md3Baseline::SURFACE_CONTAINER_HIGHEST,
+            );
+            state.hand_tint = role("primary", Md3Baseline::PRIMARY);
+        }
+        let mut tree = self.tree.borrow_mut();
+        let id = tree.insert(
+            NodeKind::TimePickerDial(state),
+            positioned_style(
+                Size {
+                    width: length(size),
+                    height: length(size),
+                },
+                x,
+                y,
+            ),
+            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
         self.wrap_node(id)
