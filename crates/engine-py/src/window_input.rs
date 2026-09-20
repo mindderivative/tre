@@ -107,9 +107,34 @@ impl PyWindow {
     /// primary-button press+release pair at `node`'s own real center
     /// point -- exactly what a real mouse click there would produce.
     fn click(&self, node: PyRef<'_, Node>, py: Python<'_>) {
+        // M42 Phase 2 (§4, §5, §8, §16.2, §16.4): reads through `self.
+        // active` rather than `self.tree`/`self.root`/`self.handlers`
+        // directly -- after a real `show_view` switch, those plain
+        // fields still name this `Window`'s *original* tree/root/
+        // handlers (from construction), not whatever it currently
+        // shows. `active` is what `App::run`'s own live render loop
+        // actually dispatches against (`app.rs`'s per-frame/per-input
+        // re-sync), so this synthetic entry point must read the same
+        // source to stay correct/testable after a switch.
+        //
+        // **Real bug caught before shipping, not found later:** an
+        // earlier draft of this method held `self.active.borrow()`
+        // (a live `Ref`) across the `run_dispatch_outcome` calls below
+        // -- a real click handler that itself calls `Window.show_view`
+        // (a genuine, expected pattern: a nav button switching screens)
+        // would then hit `self.active.borrow_mut()` while this same
+        // `Ref` was still alive, panicking with "already borrowed."
+        // Cloning the three `Rc`s out and dropping the borrow
+        // immediately, before any dispatch/callback runs, is what
+        // actually avoids that -- the identical pattern `app.rs`'s own
+        // `frame`/`input` closures already use for the same real reason.
+        let (tree, root, handlers) = {
+            let active = self.active.borrow();
+            (active.tree.clone(), active.root, active.handlers.clone())
+        };
         let point = node_center(
-            &self.tree,
-            self.root,
+            &tree,
+            root,
             Size {
                 width: AvailableSpace::Definite(self.width.get() as f32),
                 height: AvailableSpace::Definite(self.height.get() as f32),
@@ -119,13 +144,13 @@ impl PyWindow {
 
         let now = std::time::Instant::now();
         let config = interaction_config();
-        // Each `dispatch` call's own `self.tree.borrow_mut()` is a
-        // short-lived temporary, released before `run_dispatch_outcome` runs
+        // Each `dispatch` call's own `tree.borrow_mut()` is a short-
+        // lived temporary, released before `run_dispatch_outcome` runs
         // -- a click handler that itself touches this same `Tree` (e.g.
         // animating the very node it's attached to, a real, plausible
         // pattern) would otherwise panic on a re-entrant borrow.
-        let press = self.tree.borrow_mut().dispatch(
-            self.root,
+        let press = tree.borrow_mut().dispatch(
+            root,
             InputEvent::PointerPressed {
                 position: point,
                 button: PointerButton::Primary,
@@ -133,10 +158,10 @@ impl PyWindow {
             &config,
             now,
         );
-        run_dispatch_outcome(&self.handlers, press, py);
+        run_dispatch_outcome(&handlers, press, py);
 
-        let release = self.tree.borrow_mut().dispatch(
-            self.root,
+        let release = tree.borrow_mut().dispatch(
+            root,
             InputEvent::PointerReleased {
                 position: point,
                 button: PointerButton::Primary,
@@ -144,7 +169,7 @@ impl PyWindow {
             &config,
             now,
         );
-        run_dispatch_outcome(&self.handlers, release, py);
+        run_dispatch_outcome(&handlers, release, py);
     }
 
     /// M4 Phase 6 (§7.3): `click()`'s own hover counterpart -- the same
@@ -156,9 +181,16 @@ impl PyWindow {
     /// `enable_interaction()` -- §7.3's own text: the event fires
     /// regardless of whether the default MD3 visual is enabled.
     fn hover(&self, node: PyRef<'_, Node>, py: Python<'_>) {
+        // M42 Phase 2: see `click()`'s own identical real reasoning --
+        // clone-then-drop, never a live borrow held across a dispatch
+        // call that can call back into a real Python handler.
+        let (tree, root, handlers) = {
+            let active = self.active.borrow();
+            (active.tree.clone(), active.root, active.handlers.clone())
+        };
         let point = node_center(
-            &self.tree,
-            self.root,
+            &tree,
+            root,
             Size {
                 width: AvailableSpace::Definite(self.width.get() as f32),
                 height: AvailableSpace::Definite(self.height.get() as f32),
@@ -166,13 +198,13 @@ impl PyWindow {
             node.id,
         );
 
-        let outcome = self.tree.borrow_mut().dispatch(
-            self.root,
+        let outcome = tree.borrow_mut().dispatch(
+            root,
             InputEvent::PointerMoved { position: point },
             &interaction_config(),
             std::time::Instant::now(),
         );
-        run_dispatch_outcome(&self.handlers, outcome, py);
+        run_dispatch_outcome(&handlers, outcome, py);
     }
 
     /// M32 Phase 2 (§4, §5): a direct, programmatic "resize this
@@ -233,24 +265,27 @@ impl PyWindow {
     /// not touched by this phase).
     #[pyo3(signature = (node, delta_y, delta_x=0.0))]
     fn scroll(&self, node: PyRef<'_, Node>, delta_y: f64, delta_x: f64, py: Python<'_>) {
+        // M42 Phase 2: see `click()`'s own identical real reasoning --
+        // clone-then-drop, never a live borrow held across a dispatch
+        // call that can call back into a real Python handler.
+        let (tree, root, handlers) = {
+            let active = self.active.borrow();
+            (active.tree.clone(), active.root, active.handlers.clone())
+        };
         let is_terminal = matches!(
-            self.tree.borrow().get(node.id).map(|n| &n.kind),
+            tree.borrow().get(node.id).map(|n| &n.kind),
             Some(engine_core::NodeKind::Terminal(_))
         );
         if is_terminal {
             if let Some(session) = self.terminals.borrow_mut().get_mut(&node.id) {
-                session.scroll_by(
-                    &mut self.tree.borrow_mut(),
-                    node.id,
-                    (delta_y / 20.0) as i64,
-                );
+                session.scroll_by(&mut tree.borrow_mut(), node.id, (delta_y / 20.0) as i64);
             }
             return;
         }
 
         let point = node_center(
-            &self.tree,
-            self.root,
+            &tree,
+            root,
             Size {
                 width: AvailableSpace::Definite(self.width.get() as f32),
                 height: AvailableSpace::Definite(self.height.get() as f32),
@@ -258,8 +293,8 @@ impl PyWindow {
             node.id,
         );
 
-        let outcome = self.tree.borrow_mut().dispatch(
-            self.root,
+        let outcome = tree.borrow_mut().dispatch(
+            root,
             InputEvent::Scroll {
                 delta: engine_core::ScrollDelta::Pixels(delta_x, delta_y),
                 position: point,
@@ -267,7 +302,7 @@ impl PyWindow {
             &interaction_config(),
             std::time::Instant::now(),
         );
-        run_dispatch_outcome(&self.handlers, outcome, py);
+        run_dispatch_outcome(&handlers, outcome, py);
     }
 
     /// M4 Phase 7 (§11.3): `click()`'s own secondary-button (right-click)
@@ -277,9 +312,21 @@ impl PyWindow {
     /// (`Node.set_context_menu`), opens it via `Tree::open_overlay`,
     /// exactly what a real right-click there would produce.
     fn right_click(&self, node: PyRef<'_, Node>, py: Python<'_>) {
+        // M42 Phase 2: see `click()`'s own identical real reasoning --
+        // clone-then-drop, never a live borrow held across a dispatch
+        // call that can call back into a real Python handler.
+        let (tree, root, handlers, context_menus) = {
+            let active = self.active.borrow();
+            (
+                active.tree.clone(),
+                active.root,
+                active.handlers.clone(),
+                active.context_menus.clone(),
+            )
+        };
         let point = node_center(
-            &self.tree,
-            self.root,
+            &tree,
+            root,
             Size {
                 width: AvailableSpace::Definite(self.width.get() as f32),
                 height: AvailableSpace::Definite(self.height.get() as f32),
@@ -289,8 +336,8 @@ impl PyWindow {
 
         let now = std::time::Instant::now();
         let config = interaction_config();
-        self.tree.borrow_mut().dispatch(
-            self.root,
+        tree.borrow_mut().dispatch(
+            root,
             InputEvent::PointerPressed {
                 position: point,
                 button: PointerButton::Secondary,
@@ -298,8 +345,8 @@ impl PyWindow {
             &config,
             now,
         );
-        let outcome = self.tree.borrow_mut().dispatch(
-            self.root,
+        let outcome = tree.borrow_mut().dispatch(
+            root,
             InputEvent::PointerReleased {
                 position: point,
                 button: PointerButton::Secondary,
@@ -307,8 +354,8 @@ impl PyWindow {
             &config,
             now,
         );
-        run_dispatch_outcome(&self.handlers, outcome, py);
-        open_context_menu(&self.tree, &self.context_menus, self.root, outcome);
+        run_dispatch_outcome(&handlers, outcome, py);
+        open_context_menu(&tree, &context_menus, root, outcome);
     }
 
     /// M4 Phase 2 (§10): `click()`'s own keyboard counterpart -- the

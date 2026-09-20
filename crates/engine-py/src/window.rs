@@ -126,6 +126,40 @@ pub(crate) type SharedTheme = Rc<RefCell<ThemeState>>;
 /// method's own `self.width`/`self.height` read, live.
 pub(crate) type SharedSize = Rc<Cell<u32>>;
 
+/// M42 Phase 2 (§4, §5, §8, §16.2, §16.4): the real, atomically
+/// swappable "what a live `Window` currently dispatches against and
+/// paints" bundle -- `Window.show_view` writes a whole new one of these
+/// in a single `RefCell` replace, and `WindowRuntime`'s own per-frame/
+/// per-input closures (`app.rs`) re-sync their existing plain `tree`/
+/// `root`/`handlers`/`context_menus` fields from it at the top of every
+/// real invocation, instead of every one of this crate's dozens of
+/// pre-existing `runtime.tree`/`.root`/`.handlers`/`.context_menus`
+/// call sites needing to be rewritten through an extra layer of
+/// indirection.
+///
+/// **Real, load-bearing correctness finding, not covered by this
+/// milestone's own original plan text (which named only a `(Tree,
+/// NodeId)` pair):** `engine_core::NodeId` is a `slotmap` generational
+/// key (`crates/engine-core/src/node.rs`), unique only *within* the
+/// `Tree` that allocated it -- two independent `View`s' own root nodes
+/// can (and, confirmed by how `slotmap` allocates keys, routinely do)
+/// collide on the identical raw value. `HandlerMap`/`context_menus` are
+/// keyed by `(NodeId, EventKind)`/`NodeId` alone, with no per-`Tree`
+/// namespacing -- sharing one persistent map across a `show_view`
+/// switch would silently cross-wire a different `View`'s old callback
+/// onto a colliding `NodeId` in the new one. `tree`/`root`/`handlers`/
+/// `context_menus` are therefore swapped together, atomically, as one
+/// unit. `theme`/`completions` deliberately stay outside it -- see
+/// `Window.show_view`'s own doc comment for why.
+pub(crate) struct ActiveTree {
+    pub(crate) tree: Rc<RefCell<Tree>>,
+    pub(crate) root: NodeId,
+    pub(crate) handlers: HandlerMap,
+    pub(crate) context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
+}
+
+pub(crate) type SharedActiveTree = Rc<RefCell<ActiveTree>>;
+
 /// M6 Phase 3 (§8): the real `Position::Absolute` + `taffy::Rect` inset
 /// shape every Rust-level pixel test already uses internally
 /// (`overlay_menu.rs`/`transform_composition.rs`/etc.'s own `absolute()`
@@ -245,6 +279,14 @@ pub struct PyWindow {
     /// `Py<PyAny>` involved, so no `__traverse__`/`__clear__` GC
     /// obligation either.
     pub(crate) terminals: Rc<RefCell<HashMap<NodeId, TerminalSession>>>,
+    /// M42 Phase 2 (§4, §5, §8, §16.2, §16.4): the real, swappable
+    /// "currently shown" bundle -- initialized to mirror this `Window`'s
+    /// own `tree`/`root`/`handlers`/`context_menus` at construction
+    /// time (`new`/`from_view`), and never read directly by any `add_*`
+    /// factory below (those keep using the plain fields above
+    /// unchanged) -- only `App::run`'s own `WindowSetup`/`WindowRuntime`
+    /// and `show_view` (below) ever touch it.
+    pub(crate) active: SharedActiveTree,
 }
 
 /// Real review finding: every `add_*`/`build_shell` method below used
@@ -299,20 +341,30 @@ impl PyWindow {
             },
             PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
         );
+        let tree = Rc::new(RefCell::new(tree));
+        let handlers: HandlerMap = Rc::new(RefCell::new(HashMap::new()));
+        let context_menus = Rc::new(RefCell::new(HashMap::new()));
+        let active = Rc::new(RefCell::new(ActiveTree {
+            tree: tree.clone(),
+            root,
+            handlers: handlers.clone(),
+            context_menus: context_menus.clone(),
+        }));
         Self {
-            tree: Rc::new(RefCell::new(tree)),
+            tree,
             root,
             title: title.to_string(),
             width: Rc::new(Cell::new(width)),
             height: Rc::new(Cell::new(height)),
             materializers: RefCell::new(HashMap::new()),
             canvas_draws: RefCell::new(HashMap::new()),
-            handlers: Rc::new(RefCell::new(HashMap::new())),
-            context_menus: Rc::new(RefCell::new(HashMap::new())),
+            handlers,
+            context_menus,
             dock: Rc::new(RefCell::new(dock::DockState::new())),
             theme: Rc::new(RefCell::new(ThemeState::default())),
             completions: Rc::new(RefCell::new(CompletionRegistry::new())),
             terminals: Rc::new(RefCell::new(HashMap::new())),
+            active,
         }
     }
 
@@ -352,9 +404,16 @@ impl PyWindow {
     fn from_view(view: PyRef<'_, View>, width: u32, height: u32, title: &str) -> PyWindow {
         view.width.set(width);
         view.height.set(height);
+        let root = view.reconciler.root();
+        let active = Rc::new(RefCell::new(ActiveTree {
+            tree: view.tree.clone(),
+            root,
+            handlers: view.handlers.clone(),
+            context_menus: view.context_menus.clone(),
+        }));
         Self {
             tree: view.tree.clone(),
-            root: view.reconciler.root(),
+            root,
             title: title.to_string(),
             width: view.width.clone(),
             height: view.height.clone(),
@@ -366,7 +425,43 @@ impl PyWindow {
             theme: view.theme.clone(),
             completions: view.completions.clone(),
             terminals: Rc::new(RefCell::new(HashMap::new())),
+            active,
         }
+    }
+
+    /// M42 Phase 2 (§4, §5, §8, §16.2, §16.4): switches which `View` a
+    /// *live* `Window` shows, without closing/reopening it -- the real
+    /// capability the user's own explicit plan-review feedback asked
+    /// for: "this allows for switching of current views without needing
+    /// to bootstrap each view/viewModel." Each named `View` a real
+    /// Tesserae-style app keeps around stays fully alive (its own
+    /// `Reconciler`/bindings/`Signal` subscriptions intact, untouched by
+    /// this call) -- only the shared `ActiveTree` bundle this `Window`'s
+    /// live render loop reads from is atomically replaced, one `RefCell`
+    /// write, picked up on the very next real frame.
+    ///
+    /// Mirrors `from_view`'s own real "sync the window's current size
+    /// into the view" step, so `view`'s own `click()`/`hover()` lay out
+    /// at this window's true current size immediately after switching --
+    /// **real, stated limit, not silently glossed over:** unlike
+    /// `from_view`'s own `width`/`height`-sharing (the *same*
+    /// `Rc<Cell<u32>>`), this only copies the *current* size once, at
+    /// switch time -- a later live resize while a *different* `View` is
+    /// showing won't keep this one's own `width`/`height` in sync until
+    /// `show_view` is called on it again. Real, separate follow-up if a
+    /// live resize ever needs to reach every registered View at once,
+    /// not just the currently-active one -- not needed for this
+    /// milestone's own real scope (only the active View is ever visible
+    /// or interactive at a time).
+    fn show_view(&self, view: PyRef<'_, View>) {
+        view.width.set(self.width.get());
+        view.height.set(self.height.get());
+        *self.active.borrow_mut() = ActiveTree {
+            tree: view.tree.clone(),
+            root: view.reconciler.root(),
+            handlers: view.handlers.clone(),
+            context_menus: view.context_menus.clone(),
+        };
     }
 
     /// M7 Phase 3 (§7.1, Step 1): builds a real MD3 `DynamicTheme` from
@@ -421,6 +516,40 @@ impl PyWindow {
         for callback in self.completions.borrow().callbacks.values() {
             visit.call(callback)?;
         }
+        // M42 Phase 2: after a real `show_view` switch, `self.active`'s
+        // own `handlers` can be a *different* `HandlerMap` than
+        // `self.handlers` above (the newly-shown `View`'s own) -- its
+        // callbacks are already reachable via that `View`'s own
+        // `__traverse__` too, but only for as long as that `View`'s own
+        // Python wrapper object stays alive. If it doesn't (a real app
+        // dropped its own reference after switching away), this Rust-
+        // level `Rc` clone is still the only thing keeping those
+        // callbacks alive -- traversing it directly here closes that
+        // real, if narrow, gap rather than leaving a cycle CPython's own
+        // collector could never find.
+        //
+        // **Real, load-bearing bug caught by this crate's own existing
+        // `test_window_participates_in_cyclic_gc_when_a_click_handler_
+        // captures_it_back` regression test, not found by inspection
+        // alone:** for an ordinary `Window` that never called `show_
+        // view` (the common case, `active.handlers` still the *same*
+        // `Rc` as `self.handlers` above), an unconditional second loop
+        // here calls `visit.call` on the identical `Py<PyAny>` object a
+        // second time within this same `tp_traverse` invocation.
+        // CPython's cyclic collector counts each `visit.call` as one
+        // real outgoing reference when subtracting internal refs from
+        // an object's total refcount -- reporting the same real,
+        // single reference twice makes a genuine cycle look like it
+        // still has an external referent, so it survives collection
+        // (confirmed: this exact regression test started failing before
+        // this `Rc::ptr_eq` guard was added). Skipped entirely unless
+        // `active`'s handlers are genuinely a *different* map.
+        let active_handlers = self.active.borrow().handlers.clone();
+        if !Rc::ptr_eq(&self.handlers, &active_handlers) {
+            for handler in active_handlers.borrow().values() {
+                visit.call(handler)?;
+            }
+        }
         Ok(())
     }
 
@@ -429,5 +558,6 @@ impl PyWindow {
         self.canvas_draws.borrow_mut().clear();
         self.handlers.borrow_mut().clear();
         self.completions.borrow_mut().callbacks.clear();
+        self.active.borrow().handlers.borrow_mut().clear();
     }
 }

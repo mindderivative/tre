@@ -1,9 +1,12 @@
-"""M42 Phase 1 (§4, §5, §8, §16.2, §16.4): real, repeatable coverage
-that `Window.from_view(view)` actually wires a `View` into a live
-window's own shared state, not a second, separate copy of it --
-`view.rs`'s own module doc comment names this as the real gap this
-phase closes (`View` had never been embedded into a live `winit`-driven
-window before).
+"""M42 Phases 1 and 2 (§4, §5, §8, §16.2, §16.4): real, repeatable
+coverage that `Window.from_view(view)` actually wires a `View` into a
+live window's own shared state, not a second, separate copy of it --
+`view.rs`'s own module doc comment names this as the real gap Phase 1
+closes (`View` had never been embedded into a live `winit`-driven
+window before) -- and that `Window.show_view(view)` (Phase 2) switches
+which `View` an already-live `Window` dispatches against and paints,
+without disturbing either `View`'s own independent `Reconciler`/
+bindings/`Signal` state.
 
 No test here calls `App.run()` -- a second real `App().run()` call
 inside this same pytest process has, in the past, broken an unrelated,
@@ -20,8 +23,8 @@ extension" discipline as `test_view_handlers.py`.
 from tre import Signal, View, ViewModel, Window
 
 
-def write_view(tmp_path, yaml):
-    path = tmp_path / "view.yaml"
+def write_view(tmp_path, yaml, name="view.yaml"):
+    path = tmp_path / name
     path.write_text(yaml)
     return str(path)
 
@@ -146,6 +149,164 @@ bindings: {corner_radius: "{{ radius.get() }}"}
 
     node = view.node("root")
     assert node.get("corner_radius") == 12.0
+
+
+def test_show_view_switches_a_live_windows_dispatch_to_a_different_view(tmp_path):
+    """M42 Phase 2's own decisive real proof: `window.show_view(view_b)`
+    must make `window.click(...)` dispatch against `view_b`'s own tree/
+    root/handlers from then on, not `view_a`'s (the one the `Window` was
+    originally built from via `from_view`) -- the real capability behind
+    the user's own explicit plan-review feedback, "switching of current
+    views without needing to bootstrap each view/viewModel."
+    """
+    path_a = write_view(
+        tmp_path,
+        """
+id: root
+kind: Rect
+style: {width: 40, height: 20, background: "#112233"}
+handlers: {on_click: "bump"}
+""",
+        name="a.yaml",
+    )
+    path_b = write_view(
+        tmp_path,
+        """
+id: root
+kind: Rect
+style: {width: 60, height: 30, background: "#332211"}
+handlers: {on_click: "bump"}
+""",
+        name="b.yaml",
+    )
+    view_a = View(path_a)
+    view_b = View(path_b)
+
+    class VM(ViewModel):
+        def __init__(self, view):
+            self.clicks = Signal(0)
+            super().__init__(view)
+
+        def bump(self):
+            self.clicks.update(lambda n: n + 1)
+
+    vm_a = VM(view_a)
+    vm_b = VM(view_b)
+
+    window = Window.from_view(view_a, width=200, height=100)
+    window.click(view_a.node("root"))
+    assert vm_a.clicks.get() == 1
+
+    window.show_view(view_b)
+    window.click(view_b.node("root"))
+
+    assert vm_b.clicks.get() == 1, "a click after show_view must reach the newly-shown View"
+    assert vm_a.clicks.get() == 1, (
+        "switching away from view_a must not fire its handler again for an unrelated click"
+    )
+
+
+def test_show_view_called_from_inside_a_click_handler_does_not_panic(tmp_path):
+    """Real bug caught and fixed before this ever shipped, not found
+    later: an earlier draft of `Window.click`/`hover`/`scroll`/
+    `right_click` held a live borrow of `Window.active` across the very
+    `run_dispatch_outcome` call that can invoke a real Python handler --
+    a handler that itself calls `window.show_view(...)` (exactly the
+    real pattern a nav button uses) would then hit `show_view`'s own
+    `self.active.borrow_mut()` while that borrow was still alive,
+    panicking with "already borrowed." This test calls `show_view` from
+    *inside* a real dispatched click handler, the one scenario that
+    actually exercises the bug -- `test_show_view_switches_a_live_
+    windows_dispatch_to_a_different_view` above calls `show_view`
+    directly from the test body, which never touched the buggy code
+    path at all.
+    """
+    path_a = write_view(
+        tmp_path,
+        """
+id: root
+kind: Rect
+style: {width: 40, height: 20, background: "#112233"}
+handlers: {on_click: "go_to_b"}
+""",
+        name="a.yaml",
+    )
+    path_b = write_view(
+        tmp_path,
+        """
+id: root
+kind: Rect
+style: {width: 60, height: 30, background: "#332211"}
+handlers: {on_click: "go_to_a"}
+""",
+        name="b.yaml",
+    )
+    view_a = View(path_a)
+    view_b = View(path_b)
+
+    window = Window.from_view(view_a, width=200, height=100)
+
+    class ScreenAVM(ViewModel):
+        def go_to_b(self):
+            window.show_view(view_b)
+
+    class ScreenBVM(ViewModel):
+        def go_to_a(self):
+            window.show_view(view_a)
+
+    ScreenAVM(view_a)
+    ScreenBVM(view_b)
+
+    window.click(view_a.node("root"))  # must not raise -- switches to view_b mid-dispatch
+    window.click(view_b.node("root"))  # must not raise -- switches back to view_a mid-dispatch
+
+
+def test_show_view_keeps_each_views_bindings_independently_reactive(tmp_path):
+    """The real, load-bearing claim `show_view`'s own doc comment makes:
+    each named `View` stays fully alive, its own `Reconciler`/bindings/
+    `Signal` subscriptions intact -- a `Signal` write on the *previous*
+    view's `ViewModel`, made after switching away from it, must still
+    reach its own (now merely not-currently-shown) tree, and must not
+    leak into the newly active view.
+    """
+    path_a = write_view(
+        tmp_path,
+        """
+id: root
+kind: Rect
+style: {width: 40, height: 20, background: "#112233"}
+bindings: {corner_radius: "{{ radius.get() }}"}
+""",
+        name="a.yaml",
+    )
+    path_b = write_view(
+        tmp_path,
+        """
+id: root
+kind: Rect
+style: {width: 60, height: 30, background: "#332211"}
+bindings: {corner_radius: "{{ radius.get() }}"}
+""",
+        name="b.yaml",
+    )
+    view_a = View(path_a)
+    view_b = View(path_b)
+
+    class VM(ViewModel):
+        def __init__(self, view):
+            self.radius = Signal(0.0)
+            super().__init__(view)
+
+    vm_a = VM(view_a)
+    vm_b = VM(view_b)
+
+    Window.from_view(view_a, width=200, height=100)  # not held on purpose -- unused here
+
+    vm_a.radius.set(5.0)
+    vm_b.radius.set(9.0)
+
+    assert view_a.node("root").get("corner_radius") == 5.0
+    assert view_b.node("root").get("corner_radius") == 9.0
 
 
 def test_from_view_shares_the_same_live_size_cell_as_the_window(tmp_path):

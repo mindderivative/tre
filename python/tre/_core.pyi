@@ -259,6 +259,18 @@ class Window:
         *current* real size, not the size passed here.
         """
         ...
+    def show_view(self, view: View) -> None:
+        """M42 Phase 2: switches which `View` this already-live `Window`
+        shows, without closing/reopening it -- each named `View` a real
+        app keeps around (its own `Reconciler`/bindings/`Signal`
+        subscriptions) stays fully alive; only what this window renders
+        and dispatches against changes, picked up on the next real
+        frame. Real, stated limit: `view`'s own `width`/`height` are
+        synced to this window's current size once, at switch time -- a
+        later live resize while a *different* `View` is showing won't
+        keep this one in sync until `show_view` is called on it again.
+        """
+        ...
     def set_theme(self, seed: tuple[int, int, int, int], dark: bool = False) -> None:
         """Builds a real MD3 `DynamicTheme` from `seed` and makes it
         this window's active theme, re-theming every already-created
