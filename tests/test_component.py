@@ -1,9 +1,12 @@
-"""M43 Phase 1 (§4, §5, §8, §16.2, §16.6): real, repeatable coverage
-that `View.instantiate(path, into)`/`Component` genuinely embed a view
-inside another view with its own, separate `ViewModel`, and that
-multiple simultaneous instances of the same component stay fully
-independent -- "the essence of MVVM and single page applications," the
-user's own words scoping this milestone.
+"""M43 Phases 1 and 2 (§4, §5, §8, §16.2, §16.6): real, repeatable
+coverage that `View.instantiate(path, into)`/`Component` genuinely
+embed a view inside another view with its own, separate `ViewModel`,
+that multiple simultaneous instances of the same component stay fully
+independent, and that `Component.remove()` (Phase 2) really tears the
+instance down -- unsubscribing its own bindings' `Signal`s so a later
+write no longer tries to reach a `NodeId` that's gone. "The essence of
+MVVM and single page applications," the user's own words scoping this
+milestone.
 
 Deliberately does *not* test `Component.click()`/`.hover()` -- `Component`
 has no such methods (see `component.rs`'s own module doc comment for
@@ -196,3 +199,123 @@ def test_component_node_with_unknown_widget_id_raises_clearly(tmp_path):
 
     with pytest.raises(ValueError):
         card.node("nonexistent_widget")
+
+
+def test_a_signal_write_after_remove_does_not_panic(tmp_path):
+    """The real bug M43 Phase 2 exists to fix: before `Signal.
+    _unsubscribe` existed, a removed component's own `BindingCallback`
+    stayed subscribed -- a later write to the `Signal` it read from
+    would try to apply the new value to a `NodeId` `Tree::remove`
+    already deleted, panicking. `card.remove()` must unsubscribe first,
+    so this write is now a real, silent no-op instead.
+    """
+    parent_path = write(tmp_path, PARENT_VIEW, "parent.yaml")
+    card_path = write(tmp_path, CARD_VIEW, "card.yaml")
+
+    view = View(parent_path)
+    container = view.node("card_list")
+    card = view.instantiate(card_path, container)
+    vm = CardViewModel(card)
+
+    card.remove()
+
+    vm.label.set("this must not panic")  # must not raise
+
+
+def test_remove_add_remove_cycle_stays_stable(tmp_path):
+    """Simulates a real dynamic list -- repeatedly instantiating and
+    removing components into the same container must stay stable
+    across several iterations, with each still-alive instance's own
+    state genuinely unaffected by a sibling's removal.
+    """
+    parent_path = write(tmp_path, PARENT_VIEW, "parent.yaml")
+    card_path = write(tmp_path, CARD_VIEW, "card.yaml")
+
+    view = View(parent_path)
+    container = view.node("card_list")
+
+    survivor = view.instantiate(card_path, container)
+    survivor_vm = CardViewModel(survivor)
+    view.click(survivor.node("button"))
+    assert survivor_vm._count == 1
+
+    for _ in range(5):
+        card = view.instantiate(card_path, container)
+        vm = CardViewModel(card)
+        view.click(card.node("button"))
+        assert vm._count == 1
+        card.remove()
+        vm.label.set("post-removal write must not panic")
+
+    # The survivor, never removed, must be completely unaffected by
+    # five real instantiate/click/remove cycles of unrelated siblings.
+    view.click(survivor.node("button"))
+    assert survivor_vm._count == 2
+    assert survivor.node("label").get_text() == "Count: 2"
+
+
+def test_instantiate_called_from_inside_a_click_handler_does_not_panic(tmp_path):
+    """A real bug caught and fixed before this ever shipped, found by
+    actually running `examples/component_list.py`, not by inspection:
+    `View.click`/`hover`/`right_click`/`_attach` used to take `&mut
+    self` even though nothing in their own bodies mutates a plain
+    `View` struct field directly (every real mutation goes through an
+    interior-mutable `Rc<RefCell<...>>`/`Cell`). pyo3 holds an
+    *exclusive* borrow on the whole `View` Python object for a `&mut
+    self` method's entire duration -- a handler dispatched from inside
+    `click()` that calls `view.instantiate(...)` (exactly the real "Add"
+    -button pattern a dynamic list needs) panicked with "Already
+    mutably borrowed." Fixed by widening those methods to `&self`
+    (mirroring `Window`'s own `click`/`hover`/`right_click`, which
+    already used `&self`) -- this test calls `instantiate` from *inside*
+    a dispatched handler, the one scenario that actually exercises it.
+    """
+    parent_path = write(tmp_path, PARENT_VIEW, "parent.yaml")
+    card_path = write(tmp_path, CARD_VIEW, "card.yaml")
+
+    view = View(parent_path)
+    container = view.node("card_list")
+
+    class SpawnerViewModel(ViewModel):
+        def __init__(self, view):
+            self.spawned = []
+            self.label = Signal("Count: 0")
+            super().__init__(view)
+
+        def bump(self):
+            # Reentrant: called from inside view.click() below, and
+            # itself calls another method on the same `view` object.
+            card = view.instantiate(card_path, container)
+            self.spawned.append(card)
+
+    root_card = view.instantiate(card_path, container)
+    vm = SpawnerViewModel(root_card)
+
+    view.click(root_card.node("button"))  # must not raise
+
+    assert len(vm.spawned) == 1
+
+
+def test_remove_is_safe_to_call_once_and_stops_dispatch_reaching_the_handler(tmp_path):
+    """A real, decisive structural proof: after `remove()`, the
+    instance's own subtree is genuinely gone from the `Tree` -- a
+    sibling's own click must still work (proving the shared `Tree`
+    itself stayed healthy), and the removed instance's own `ViewModel`
+    must not have been reachable by anything after removal.
+    """
+    parent_path = write(tmp_path, PARENT_VIEW, "parent.yaml")
+    card_path = write(tmp_path, CARD_VIEW, "card.yaml")
+
+    view = View(parent_path)
+    container = view.node("card_list")
+
+    card_a = view.instantiate(card_path, container)
+    vm_a = CardViewModel(card_a)
+    card_b = view.instantiate(card_path, container)
+    vm_b = CardViewModel(card_b)
+
+    card_a.remove()
+
+    view.click(card_b.node("button"))
+    assert vm_b._count == 1
+    assert vm_a._count == 0

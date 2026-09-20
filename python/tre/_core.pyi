@@ -1597,6 +1597,15 @@ class Component:
         itself uses.
         """
         ...
+    def remove(self) -> None:
+        """M43 Phase 2: real, structural teardown -- unsubscribes every
+        `Signal` this instance's own bindings subscribed to (so a later
+        write to one no longer tries to reach a `NodeId` that's gone),
+        then removes this instance's whole subtree from the shared
+        `Tree`. Safe to call once; the instance shouldn't be used again
+        afterward (its own `NodeId`s are no longer valid).
+        """
+        ...
 
 class CanvasContext:
     """The imperative drawing surface handed to a `Window.add_canvas`

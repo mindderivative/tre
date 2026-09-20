@@ -1,7 +1,11 @@
 id: root
 kind: Container
-style: {flex_direction: Column, width: 260, height: 200, gap: 8, padding: 16}
+style: {flex_direction: Column, width: 300, height: 260, gap: 8, padding: 16}
 children:
+  - id: add_button
+    kind: Rect
+    style: {width: 268, height: 32, background: "#03DAC6", corner_radius: 4}
+    handlers: {on_click: "add_card"}
   - id: card_list
     kind: Container
-    style: {flex_direction: Column, gap: 8, width: 228, height: 168}
+    style: {flex_direction: Column, gap: 8, width: 268, height: 200}

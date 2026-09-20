@@ -75,6 +75,16 @@ pub struct Component {
     context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
     theme: SharedTheme,
     completions: SharedCompletions,
+    /// M43 Phase 2 (§4, §5, §8, §16.2, §16.6): every `(signal,
+    /// callback)` pair `_attach` subscribed onto, so `remove()` can
+    /// unsubscribe them again before tearing down the subtree those
+    /// callbacks reference by `NodeId` -- without this, a `Signal`
+    /// write after removal would panic (`apply_binding_value`'s own
+    /// `tree.borrow_mut()...` calls expect a `NodeId` still present in
+    /// the `Tree`). `View` has no equivalent field: a `View` lives as
+    /// long as the whole script does and is never removed, so it has
+    /// nothing to unsubscribe from later.
+    subscriptions: Vec<(Py<PyAny>, Py<PyAny>)>,
 }
 
 /// The real, shared "parse a component's own YAML and splice it into
@@ -136,6 +146,7 @@ pub(crate) fn instantiate_component(
         context_menus: context_menus.clone(),
         theme: theme.clone(),
         completions: completions.clone(),
+        subscriptions: Vec::new(),
     })
 }
 
@@ -163,9 +174,12 @@ impl Component {
 
     /// §16.2's real inversion point, scoped to this component instance
     /// -- mirrors `View::_attach` exactly (both call the identical
-    /// shared `attach_bindings_and_handlers`, `view.rs`).
+    /// shared `attach_bindings_and_handlers`, `view.rs`), but -- unlike
+    /// `View`, which discards the return value -- keeps every
+    /// `(signal, callback)` pair it subscribed, so a later `remove()`
+    /// can unsubscribe them again.
     fn _attach(&mut self, py: Python<'_>, viewmodel: Py<PyAny>) -> PyResult<()> {
-        attach_bindings_and_handlers(
+        let subscriptions = attach_bindings_and_handlers(
             &self.tree,
             &self.handlers,
             &self.context_menus,
@@ -178,6 +192,7 @@ impl Component {
             py,
             viewmodel,
         )?;
+        self.subscriptions = subscriptions;
         Ok(())
     }
 
@@ -194,5 +209,38 @@ impl Component {
             &self.completions,
             path,
         )
+    }
+
+    /// M43 Phase 2 (§4, §5, §8, §16.2, §16.6): real, structural teardown
+    /// -- unsubscribes every `(signal, callback)` pair `_attach`
+    /// registered (via `Signal._unsubscribe`, `python/tre/__init__.py`),
+    /// *then* removes this instance's whole subtree from the shared
+    /// `Tree` (`Tree::remove`, confirmed by reading its own body to
+    /// already recurse the whole subtree deepest-first, cleaning up
+    /// `taffy`/the parent's children list/overlays/focus -- no new
+    /// `engine-core` work needed).
+    ///
+    /// **Real, load-bearing ordering, not incidental:** unsubscribing
+    /// *before* removing means a `Signal` write that happens to race
+    /// with this call (unlikely in this single-threaded runtime, but a
+    /// real ordering worth being deliberate about) can never reach a
+    /// `BindingCallback` whose own `node_id` is already gone from the
+    /// `Tree` -- the real bug this whole phase exists to prevent
+    /// (`apply_binding_value`'s own `tree.borrow_mut()...` calls
+    /// `.expect()` a `NodeId` still present).
+    ///
+    /// **Real, honestly-stated v1 limit, not silently glossed over:**
+    /// this instance's own `on_click`/`on_change`/two-way `Change`
+    /// handler entries stay in the *shared* `handlers`/`context_menus`
+    /// maps -- harmless (a removed `NodeId` can never be hit-tested
+    /// again, so they're never looked up), but not swept. A real,
+    /// bounded follow-up if a long-running, high-churn app ever shows
+    /// this mattering, not built ahead of a real need.
+    fn remove(&mut self, py: Python<'_>) -> PyResult<()> {
+        for (signal, callback) in self.subscriptions.drain(..) {
+            signal.bind(py).call_method1("_unsubscribe", (callback,))?;
+        }
+        self.tree.borrow_mut().remove(self.reconciler.root());
+        Ok(())
     }
 }

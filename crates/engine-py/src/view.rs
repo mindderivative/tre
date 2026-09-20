@@ -852,7 +852,26 @@ impl View {
     /// over it, discarding the returned subscription list since a
     /// `View` lives as long as the whole script does and never needs
     /// to unsubscribe (unlike a removable `Component`, Phase 2).
-    fn _attach(&mut self, py: Python<'_>, viewmodel: Py<PyAny>) -> PyResult<()> {
+    ///
+    /// **`&self`, not `&mut self` -- a real bug found and fixed in this
+    /// same phase, by actually running `examples/component_list.py`:**
+    /// nothing in this method's own body (or `click`/`hover`/
+    /// `right_click`, below) ever mutates one of `View`'s own plain
+    /// struct fields directly -- every real mutation goes through an
+    /// interior-mutable `Rc<RefCell<...>>`/`Cell` field instead. `&mut
+    /// self` here was a real, pre-existing (if latent) bug: pyo3 holds
+    /// an *exclusive* borrow on the whole `View` Python object for a
+    /// `&mut self` method's entire duration, so a handler dispatched
+    /// from inside `click()` that calls *any other* method on that
+    /// same `view` object -- exactly what `view.instantiate(...)`
+    /// inside an `on_click` handler does, the real scenario this
+    /// milestone exists for -- panicked with "Already mutably
+    /// borrowed." `&self` lets pyo3 allow that same reentrant call
+    /// (many shared borrows can coexist; only one exclusive borrow
+    /// can't coexist with anything), the same real reasoning `Window`'s
+    /// own `click`/`hover`/`right_click` (`window_input.rs`) already
+    /// use `&self` for.
+    fn _attach(&self, py: Python<'_>, viewmodel: Py<PyAny>) -> PyResult<()> {
         attach_bindings_and_handlers(
             &self.tree,
             &self.handlers,
@@ -886,7 +905,7 @@ impl View {
     /// there -- exactly what a real mouse click would produce, proving a
     /// handler `_attach` wired (above) actually fires, not just that it
     /// validated.
-    fn click(&mut self, node: PyRef<'_, Node>, py: Python<'_>) {
+    fn click(&self, node: PyRef<'_, Node>, py: Python<'_>) {
         let root = self.reconciler.root();
         let point = node_center(&self.tree, root, self.available_space(), node.id);
 
@@ -924,7 +943,7 @@ impl View {
     /// `Window.hover` exactly -- dispatches a `PointerMoved` at `node`'s
     /// own real center, firing `HoverEnter`/`HoverExit` through the same
     /// `handlers` map `_attach` wires into (above).
-    fn hover(&mut self, node: PyRef<'_, Node>, py: Python<'_>) {
+    fn hover(&self, node: PyRef<'_, Node>, py: Python<'_>) {
         let root = self.reconciler.root();
         let point = node_center(&self.tree, root, self.available_space(), node.id);
 
@@ -939,7 +958,7 @@ impl View {
 
     /// M4 Phase 7 (§11.3): `click()`'s own secondary-button (right-click)
     /// counterpart, mirroring `Window.right_click` exactly.
-    fn right_click(&mut self, node: PyRef<'_, Node>, py: Python<'_>) {
+    fn right_click(&self, node: PyRef<'_, Node>, py: Python<'_>) {
         let root = self.reconciler.root();
         let point = node_center(&self.tree, root, self.available_space(), node.id);
 

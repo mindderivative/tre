@@ -97,6 +97,26 @@ class Signal:
         """
         self._subscribers.append(callback)
 
+    def _unsubscribe(self, callback):
+        """M43 Phase 2 (§4, §5, §8, §16.2, §16.6): `_subscribe`'s own
+        real inverse -- called from Rust (`Component.remove`) so a
+        removed component's own bindings stop reacting to further
+        writes on a `Signal` they no longer have a live `NodeId` for.
+        Without this, a `Signal` write after removal would panic
+        (`apply_binding_value`'s own `tree.borrow_mut()...` calls
+        `.expect()` a `NodeId` still present in the `Tree`) -- the real,
+        decisive reason this method exists, not manufactured ahead of a
+        real need. A silent no-op if `callback` was never subscribed
+        (already removed, or never here at all), matching `Tree::
+        remove`'s own "not found is a no-op, not an error" convention
+        throughout this codebase -- not part of `Signal`'s own public
+        API, same as `_subscribe`.
+        """
+        try:
+            self._subscribers.remove(callback)
+        except ValueError:
+            pass
+
     def _notify(self):
         for callback in self._subscribers:
             callback()

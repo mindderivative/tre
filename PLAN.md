@@ -1,71 +1,64 @@
-# PLAN — M43 Phase 1: Real Component Instantiation with an Independent `ViewModel`
+# PLAN — M43 Phase 2: Real Removal, with Automatic `Signal` Unsubscription
 
 ## Goal
-Embed a view inside another view where the embedded content gets its
-own, separate `ViewModel`, supporting multiple simultaneous instances
--- "the essence of MVVM and single page applications," per the user's
-own words. Option 1 of two weighed architectures (one shared `Tree`,
-multiple `ViewModel`-scoped regions), confirmed and approved via a
-formal plan (`EnterPlanMode`/`ExitPlanMode`).
+Add `Component.remove()`, tearing an instance's subtree down and
+unsubscribing its own bindings' `Signal`s, closing the real panic risk
+Phase 1's own investigation found (a removed-but-still-subscribed
+component's `BindingCallback` would panic on the next write to a
+`Signal` it read from).
 
 ## Steps
-1. Investigated before designing: `engine_spec::build_tree` (already
-   `pub`, re-exported) inserts a `WidgetSpec` into an *existing* `Tree`,
-   returning a parentless subtree root; `Reconciler::load` does parse+
-   build+id-recording in one call; `Tree::add_child`/`Tree::remove`
-   (the latter confirmed, by reading its body, to already recurse a
-   whole subtree deepest-first) are exactly the primitives needed.
-   **`engine-spec`/`engine-core` needed zero changes.**
-2. Widened `collect_bindings`/`collect_handlers`/`collect_two_way`
-   (`view.rs`) from private `fn` to `pub(crate) fn` so the new
-   `component.rs` could reuse them verbatim.
-3. Factored `View::_attach`'s own ~150-line body into a new, shared
-   `pub(crate) fn attach_bindings_and_handlers` (`view.rs`) -- `View::
-   _attach` became a thin wrapper over it; behavior confirmed byte-for-
-   byte unchanged by the full pre-existing `_attach`-heavy pytest suite
-   passing unmodified.
-4. New `crates/engine-py/src/component.rs`: `Component { tree, reconciler,
-   bindings, declared_handlers, two_way, handlers, context_menus, theme,
-   completions }` -- deliberately mirrors `View`'s own shape (holding a
-   real `Reconciler`, not a separately-extracted id map). New
-   `instantiate_component` helper, called from both `View.instantiate`
-   and `Component.instantiate` (so components nest recursively for
-   free) -- reads the component's own YAML, `Reconciler::load`s it into
-   the shared `Tree`, `Tree::add_child`s its root under the target
-   node, collects its own scoped bindings/handlers via the
-   now-`pub(crate)` collection functions.
-5. **Real design correction, found during implementation, not in the
-   plan text:** `Component` has no `click`/`hover`/`right_click` of its
-   own. `Tree::compute_layout(root, available_space)` called from a
-   component's own root would compute a fresh layout as if that root
-   were the whole tree's top level -- silently distorting its real,
-   parent-constrained size. Confirmed via reading `Tree::
-   absolute_position`'s own body: it already walks a node's real parent
-   chain up to whatever ancestor has no parent, so dispatch on an
-   embedded node is already fully correct through the *owning* `View`/
-   `Window`'s existing `click`/`hover`/`right_click`
-   (`view.click(component.node("button"))`) -- zero new dispatch code
-   needed.
-6. Registered `Component` in `lib.rs`'s pymodule; re-exported from
-   `python/tre/__init__.py`; updated `_core.pyi`.
-7. New pytest tests (`tests/test_component.py`, 7): instantiate returns
-   a usable component; multiple instances resolve to distinct real
-   state (`Node.set_text`'s immediate effect, since `Node` has no `.id`
-   getter); each instance's own `ViewModel` is genuinely independent; a
-   click via the owning `View` reaches only the right instance's
-   handler (3 simultaneous instances); components nest recursively; bad
-   path and unknown widget id raise clearly.
-8. New live example (`examples/component_list.py` + 2 yaml files): 3
-   real `Card` component instances in one container, each its own
-   `Signal`-bound counter, a real dispatched click on only one
-   instance's button, then a genuine 20-frame `App.run()`.
+1. `python/tre/__init__.py`: added `Signal._unsubscribe(callback)` --
+   removes `callback` from `self._subscribers` if present, a silent
+   no-op otherwise (matching `Tree::remove`'s own convention).
+2. `component.rs`: added `subscriptions: Vec<(Py<PyAny>, Py<PyAny>)>` to
+   `Component`; `_attach` now keeps the list `attach_bindings_and_
+   handlers` returns (View discards it, since a View is never removed).
+3. New `Component.remove(&mut self, py)`: unsubscribes every tracked
+   `(signal, callback)` pair, *then* `Tree::remove(self.reconciler.
+   root())` -- unsubscribing first is real, deliberate ordering, not
+   incidental (a `Signal` write racing with removal must never reach a
+   `BindingCallback` whose `NodeId` is already gone).
+4. `.pyi`/`BUILD_TRACKER.md` updated.
+5. New pytest tests (`tests/test_component.py`, +4): a `Signal` write
+   after `remove()` doesn't panic (confirmed, by reading `Node::
+   set_text`'s own `.expect()`, that this really would have panicked
+   before the fix); a real remove/add cycle across 5 iterations stays
+   stable, with an untouched sibling's own state proven unaffected; a
+   sibling's own click still works after a neighbor is removed.
+6. **Real, significant bug found and fixed by actually running the
+   extended live example, not by inspection:** widened
+   `examples/component_list.py` into a real "Add Card"/per-card
+   "Remove" button flow -- running it hit `RuntimeError: Already
+   mutably borrowed` inside `view.instantiate(...)`, called from a
+   dispatched `on_click` handler. Root cause: `View::click`/`hover`/
+   `right_click`/`_attach` all took `&mut self`, even though none of
+   their bodies mutate a plain `View` field directly (every real
+   mutation goes through an interior-mutable `Rc<RefCell<...>>`/`Cell`)
+   -- pyo3 holds an *exclusive* borrow on the whole `View` Python object
+   for a `&mut self` method's entire duration, so a handler dispatched
+   from inside `click()` calling any other method on that same `view`
+   (exactly `view.instantiate(...)` from an "Add" button) panicked.
+   Fixed by widening all four to `&self`, matching `Window`'s own
+   `click`/`hover`/`right_click` (`window_input.rs`), which already
+   used `&self` for the identical real reason. New pytest regression
+   test (`test_instantiate_called_from_inside_a_click_handler_does_not_
+   panic`) calls `instantiate` from *inside* a dispatched handler -- the
+   one scenario that actually exercises this.
+7. Extended `examples/component_list.py` + both yaml files: real
+   "Add Card" button (wired to an `AppViewModel.add_card` handler on
+   the outer `View`) and a per-card "Remove" button (`CardViewModel.
+   remove_self`, calling `component.remove()`) -- 3 cards added via
+   real dispatched clicks, one clicked, one removed via its own
+   dispatched click, one more added, then a genuine 20-frame
+   `App.run()`.
 
 ## Status
 Complete. Full verification chain green: `cargo check`/`clippy -D
-warnings`/`fmt`, `cargo test --workspace --release` (213 unchanged --
-`Component`'s own methods need a live Python interpreter to call
-through pyo3, so no new Rust-level `#[test]`s were added, matching this
-crate's established GIL-needed/GIL-free split), `maturin develop
---release`, `pytest tests/` (596 passed, +7, 1 skipped unchanged), all
-80 examples (+1), showcase demo. **M43 Phase 1 is complete.** Phase 2
-(real removal, with automatic `Signal` unsubscription) remains open.
+warnings`/`fmt`, `cargo test --workspace --release` (213 unchanged),
+`maturin develop --release`, `pytest tests/` (600 passed, +4, 1 skipped
+unchanged), all 80 examples, showcase demo. **M43 -- Embeddable
+Components: Multi-Instance Views with Independent ViewModels -- is now
+fully complete, both phases.** This closes the milestone -- per the
+standing "push only after a full milestone closes" convention, a `git
+push` is now appropriate.
