@@ -28,7 +28,7 @@ plain `signal.get()` in ordinary Python code costs one cheap call and
 nothing else.
 """
 
-from tre._core import App, CanvasContext, Node, View, Window, _record_read
+from tre._core import App, CanvasContext, Component, Node, View, Window, _record_read
 
 #: M32 Phase 1 (§5, §8, §10): the real bundled monospace face
 #: `Window.add_terminal`/`add_code_editor` themselves always shape
@@ -131,6 +131,7 @@ class ViewModel:
 __all__ = [
     "App",
     "CanvasContext",
+    "Component",
     "MONOSPACE_FONT_FAMILY",
     "Node",
     "View",

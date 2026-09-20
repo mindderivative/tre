@@ -197,7 +197,11 @@ fn apply_binding_value(
     Ok(())
 }
 
-fn collect_bindings(spec: &WidgetSpec, out: &mut Vec<(String, String, String)>) {
+/// `pub(crate)`, not private: M43 Phase 1's own new `component.rs`
+/// needs this identical spec-walking logic to collect a *component*
+/// instance's own bindings, scoped separately from whatever `View`/
+/// `Component` it's embedded into -- reused verbatim, not duplicated.
+pub(crate) fn collect_bindings(spec: &WidgetSpec, out: &mut Vec<(String, String, String)>) {
     for (property, expr) in &spec.bindings {
         out.push((spec.id.clone(), property.clone(), expr.clone()));
     }
@@ -206,7 +210,8 @@ fn collect_bindings(spec: &WidgetSpec, out: &mut Vec<(String, String, String)>) 
     }
 }
 
-fn collect_handlers(spec: &WidgetSpec, out: &mut Vec<(String, String, String)>) {
+/// `pub(crate)` for the same M43 Phase 1 reason as `collect_bindings`.
+pub(crate) fn collect_handlers(spec: &WidgetSpec, out: &mut Vec<(String, String, String)>) {
     for (event, method) in &spec.handlers {
         out.push((spec.id.clone(), event.clone(), method.clone()));
     }
@@ -217,8 +222,9 @@ fn collect_handlers(spec: &WidgetSpec, out: &mut Vec<(String, String, String)>) 
 
 /// M14 Phase 3 (§16.7): mirrors `collect_bindings`/`collect_handlers`'
 /// own shape exactly -- `(widget_id, property)` for every widget that
-/// named a real `two_way:` property.
-fn collect_two_way(spec: &WidgetSpec, out: &mut Vec<(String, String)>) {
+/// named a real `two_way:` property. `pub(crate)` for the same M43
+/// Phase 1 reason as `collect_bindings`.
+pub(crate) fn collect_two_way(spec: &WidgetSpec, out: &mut Vec<(String, String)>) {
     if let Some(property) = &spec.two_way {
         out.push((spec.id.clone(), property.clone()));
     }
@@ -294,6 +300,235 @@ impl TwoWayCallback {
         self.signal.bind(py).call_method1("set", (value,))?;
         Ok(())
     }
+}
+
+/// M43 Phase 1 (§4, §5, §8, §16.2, §16.6): the real, shared "wire a
+/// `ViewModel` onto a set of declared bindings/handlers" logic --
+/// factored out of `View::_attach`'s own original body (byte-for-byte
+/// unchanged behavior there, verified by the existing `test_view_
+/// binding.py`/`test_view_handlers.py`/`test_view_in_window.py` suites)
+/// so the new `Component::_attach` (`component.rs`) can reuse it
+/// verbatim for an embedded component's own, independently-scoped
+/// bindings/handlers, rather than duplicating ~150 lines -- the
+/// identical "two real call sites justify factoring out" pattern this
+/// codebase already applies elsewhere (`throwaway_node`, `node_center`).
+///
+/// `id_of` is a closure rather than a `&Reconciler` taken directly,
+/// since `View` looks a widget id up via `self.reconciler.id_of(...)`
+/// and `Component` via its own, separately-instantiated `Reconciler`
+/// the identical way -- both satisfy the same `Fn(&str) -> Option
+/// <NodeId>` shape without this function needing to know which kind of
+/// caller it's serving.
+///
+/// Returns every `(signal, callback)` pair this call subscribed onto --
+/// `View::_attach` discards it (a `View` lives as long as the whole
+/// script does, never needs to unsubscribe); `Component::_attach`
+/// (Phase 2) keeps it, so a later `Component.remove()` can unsubscribe
+/// them again before tearing down the subtree those callbacks reference
+/// -- without this, a `Signal` write after removal would panic (`apply_
+/// binding_value`'s own `tree.borrow_mut()...` calls expect a `NodeId`
+/// still present in the `Tree`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn attach_bindings_and_handlers(
+    tree: &Rc<RefCell<Tree>>,
+    handlers: &HandlerMap,
+    context_menus: &Rc<RefCell<HashMap<NodeId, NodeId>>>,
+    theme: &SharedTheme,
+    completions: &SharedCompletions,
+    id_of: impl Fn(&str) -> Option<NodeId>,
+    declared_handlers: &[(String, String, String)],
+    bindings: &[(String, String, String)],
+    two_way: &[(String, String)],
+    py: Python<'_>,
+    viewmodel: Py<PyAny>,
+) -> PyResult<Vec<(Py<PyAny>, Py<PyAny>)>> {
+    for (widget_id, event, method_name) in declared_handlers {
+        let attr = viewmodel
+            .bind(py)
+            .getattr(method_name.as_str())
+            .map_err(|_| {
+                PyValueError::new_err(format!(
+                    "widget {widget_id:?}: handler {event:?} names {method_name:?}, which has \
+                     no matching attribute on the ViewModel"
+                ))
+            })?;
+        if !attr.is_callable() {
+            return Err(PyValueError::new_err(format!(
+                "widget {widget_id:?}: handler {event:?} names {method_name:?}, which is \
+                     not callable"
+            )));
+        }
+
+        // M4 Phase 4/6: wires the validated method into the same
+        // real dispatch mechanism `Node.set_on_click`/
+        // `set_on_hover_enter`/`set_on_hover_exit` already use --
+        // `_attach` used to stop at validation, so a real click/hover
+        // on this widget did nothing. Only these three real event
+        // kinds are wired today, matching §16.2's own "generalizing
+        // to whatever named events a NodeKind exposes" -- other
+        // declared event names still validate (so a typo still
+        // fails at `_attach()` time) but have no real mechanism to
+        // reach yet. Called with zero arguments, the same
+        // established convention `Node.set_on_click`/`dispatch::
+        // run_dispatch_outcome` already use (see
+        // `tests/test_click_dispatch.py`) -- a real `Event` argument
+        // is deferred until a real handler needs the extra context.
+        let kind = match event.as_str() {
+            "on_click" => Some(EventKind::Click),
+            "on_hover_enter" => Some(EventKind::HoverEnter),
+            "on_hover_exit" => Some(EventKind::HoverExit),
+            // M14 Phase 3 (§16.7): the real handler-name counterpart
+            // to `EventKind::Change` -- wires a declared `on_change:`
+            // the same way every other real event kind here already
+            // is.
+            "on_change" => Some(EventKind::Change),
+            _ => None,
+        };
+        if let Some(kind) = kind {
+            let node_id = id_of(widget_id).ok_or_else(|| {
+                PyValueError::new_err(format!(
+                    "widget {widget_id:?}: handler {event:?} names a widget id never built \
+                         into the Tree"
+                ))
+            })?;
+            let node = Node {
+                id: node_id,
+                tree: tree.clone(),
+                handlers: handlers.clone(),
+                context_menus: context_menus.clone(),
+                theme: theme.clone(),
+                completions: completions.clone(),
+            };
+            // Reuses `Node`'s own real setters verbatim (same
+            // construction `apply_binding_value` already uses for
+            // `animate`) rather than inserting into `handlers`
+            // directly -- `set_on_click` also adds `Action::Click`
+            // to the node's `access.actions` (§10, Tab-reachability),
+            // a real side effect only the real method carries.
+            match kind {
+                EventKind::Click => node.set_on_click(attr.unbind()),
+                EventKind::HoverEnter => node.set_on_hover_enter(attr.unbind()),
+                EventKind::HoverExit => node.set_on_hover_exit(attr.unbind()),
+                EventKind::Change => node.set_on_change(attr.unbind()),
+            }
+        }
+    }
+
+    let mut subscriptions = Vec::new();
+
+    for (widget_id, property, raw_expr) in bindings {
+        let node_id = id_of(widget_id).ok_or_else(|| {
+            PyValueError::new_err(format!(
+                "binding on unknown widget id {widget_id:?} (never built into the Tree)"
+            ))
+        })?;
+        let expr = parse_binding(raw_expr).map_err(|e| {
+            PyValueError::new_err(format!(
+                "widget {widget_id:?} binding on {property:?} ({raw_expr:?}): {e}"
+            ))
+        })?;
+        let resolver = PyViewModelResolver::new(viewmodel.clone_ref(py));
+
+        begin_recording();
+        let evaluated = evaluate(&expr, &resolver);
+        let touched = end_recording();
+        let value = evaluated.map_err(|e| {
+            PyValueError::new_err(format!(
+                "widget {widget_id:?} binding on {property:?} ({raw_expr:?}): {e}"
+            ))
+        })?;
+
+        apply_binding_value(tree, handlers, node_id, property, py, &value)?;
+
+        let callback = Py::new(
+            py,
+            BindingCallback {
+                tree: tree.clone(),
+                handlers: handlers.clone(),
+                node_id,
+                property: property.clone(),
+                expr: expr.clone(),
+                viewmodel: viewmodel.clone_ref(py),
+            },
+        )?;
+        for signal in &touched {
+            signal
+                .bind(py)
+                .call_method1("_subscribe", (callback.clone_ref(py),))
+                .map_err(|e| {
+                    PyValueError::new_err(format!(
+                        "widget {widget_id:?} binding on {property:?}: failed to subscribe \
+                             to a Signal it read: {e}"
+                    ))
+                })?;
+            subscriptions.push((signal.clone_ref(py), callback.clone_ref(py).into_any()));
+        }
+
+        // M14 Phase 3 (§16.7): the real write-back half -- only for
+        // a widget/property pair the author actually named `two_
+        // way:`. ARCHITECTURE.md §16.7's own text: "only for a plain
+        // Signal reference -- never a computed expression, since
+        // there's no way to reverse `{{ f"{first} {last}" }}` back
+        // into two Signals," enforced here by requiring the parsed
+        // `expr` to be exactly a bare Signal's own `.get()` call
+        // (`Expression::Call(Expression::Ident(signal_name), "get")`)
+        // -- a real, load-time-checked error otherwise, not a silent
+        // no-op. **Real finding:** a first draft of this check
+        // required a *bare* `Expression::Ident` instead (matching
+        // §16.7's own inline illustration, `{{ username }}` with no
+        // `.get()`), but every binding's forward direction resolves
+        // through `PyViewModelResolver::ident`, which reads the raw
+        // Python attribute unmodified -- for a `Signal`, that's the
+        // `Signal` object itself, not its value, so it always
+        // resolved to an opaque `Value::Handle` and `apply_binding_
+        // value` (above, forward direction) rejected it before this
+        // code ever ran. `.get()` is the one shape that both
+        // resolves to the real primitive forward (identical to every
+        // other binding in this codebase -- see `test_view_binding.
+        // py`) and still names the exact Signal to write back to.
+        if two_way.iter().any(|(w, p)| w == widget_id && p == property) {
+            let Expression::Call(receiver, method) = &expr else {
+                return Err(PyValueError::new_err(format!(
+                    "widget {widget_id:?}: two_way binding on {property:?} ({raw_expr:?}) \
+                         must be a plain Signal's own .get() call (e.g. \"{{{{ username.get() \
+                         }}}}\"), not a computed expression -- there's no way to reverse it back \
+                         into a Signal"
+                )));
+            };
+            let (Expression::Ident(signal_name), true) = (receiver.as_ref(), method == "get")
+            else {
+                return Err(PyValueError::new_err(format!(
+                    "widget {widget_id:?}: two_way binding on {property:?} ({raw_expr:?}) \
+                         must be a plain Signal's own .get() call (e.g. \"{{{{ username.get() \
+                         }}}}\"), not a computed expression -- there's no way to reverse it back \
+                         into a Signal"
+                )));
+            };
+            let signal = viewmodel
+                .bind(py)
+                .getattr(signal_name.as_str())
+                .map_err(|_| {
+                    PyValueError::new_err(format!(
+                        "widget {widget_id:?}: two_way binding names {signal_name:?}, which has \
+                         no matching attribute on the ViewModel"
+                    ))
+                })?;
+            let two_way_callback = Py::new(
+                py,
+                TwoWayCallback {
+                    tree: tree.clone(),
+                    node_id,
+                    property: property.clone(),
+                    signal: signal.unbind(),
+                },
+            )?;
+            handlers
+                .borrow_mut()
+                .insert((node_id, EventKind::Change), two_way_callback.into_any());
+        }
+    }
+
+    Ok(subscriptions)
 }
 
 #[pyclass(unsendable)]
@@ -526,6 +761,37 @@ impl View {
         })
     }
 
+    /// M43 Phase 1 (§4, §5, §8, §16.2, §16.6): instantiates another
+    /// view's own YAML as a real, independent component -- its own
+    /// `Reconciler`, its own scoped bindings/handlers, ready for its
+    /// own separate `ViewModel` to `_attach` to -- spliced into this
+    /// `View`'s own live `Tree` as a child of `into`. Calling this
+    /// multiple times (e.g. once per item in a real list) gives each
+    /// call its own independent `Component`, confirmed correct by
+    /// construction: each instantiation builds its own `Reconciler`, so
+    /// even identical widget ids declared inside the component's own
+    /// YAML resolve to distinct real `NodeId`s per instance -- see
+    /// `component.rs`'s own module doc comment for the full real
+    /// design (and why `Component` has no `click`/`hover`/`right_click`
+    /// of its own -- dispatch on an embedded node goes through this
+    /// `View`'s own `click`/`hover`/`right_click` instead, e.g.
+    /// `view.click(component.node("button"))`).
+    fn instantiate(
+        &self,
+        path: &str,
+        into: PyRef<'_, Node>,
+    ) -> PyResult<crate::component::Component> {
+        crate::component::instantiate_component(
+            &self.tree,
+            into.id,
+            &self.handlers,
+            &self.context_menus,
+            &self.theme,
+            &self.completions,
+            path,
+        )
+    }
+
     /// M19 Phase 1 (§16.4): the real, first Python-facing entry point
     /// for reconciliation -- `ViewWatcher`/`Reconciler` both already
     /// existed as tested `engine-spec` primitives, but nothing ever
@@ -579,193 +845,27 @@ impl View {
     /// resolves every declared binding once against `viewmodel`,
     /// applies its initial value, and subscribes a re-evaluation
     /// callback onto every `Signal` that evaluation actually read.
+    ///
+    /// M43 Phase 1 (§4, §5, §8, §16.2, §16.6): the real body lives in
+    /// `attach_bindings_and_handlers` now, shared with the new
+    /// `Component::_attach` (`component.rs`) -- this is a thin wrapper
+    /// over it, discarding the returned subscription list since a
+    /// `View` lives as long as the whole script does and never needs
+    /// to unsubscribe (unlike a removable `Component`, Phase 2).
     fn _attach(&mut self, py: Python<'_>, viewmodel: Py<PyAny>) -> PyResult<()> {
-        for (widget_id, event, method_name) in &self.declared_handlers {
-            let attr = viewmodel
-                .bind(py)
-                .getattr(method_name.as_str())
-                .map_err(|_| {
-                    PyValueError::new_err(format!(
-                        "widget {widget_id:?}: handler {event:?} names {method_name:?}, which has \
-                     no matching attribute on the ViewModel"
-                    ))
-                })?;
-            if !attr.is_callable() {
-                return Err(PyValueError::new_err(format!(
-                    "widget {widget_id:?}: handler {event:?} names {method_name:?}, which is \
-                     not callable"
-                )));
-            }
-
-            // M4 Phase 4/6: wires the validated method into the same
-            // real dispatch mechanism `Node.set_on_click`/
-            // `set_on_hover_enter`/`set_on_hover_exit` already use --
-            // `_attach` used to stop at validation, so a real click/hover
-            // on this widget did nothing. Only these three real event
-            // kinds are wired today, matching §16.2's own "generalizing
-            // to whatever named events a NodeKind exposes" -- other
-            // declared event names still validate (so a typo still
-            // fails at `_attach()` time) but have no real mechanism to
-            // reach yet. Called with zero arguments, the same
-            // established convention `Node.set_on_click`/`dispatch::
-            // run_dispatch_outcome` already use (see
-            // `tests/test_click_dispatch.py`) -- a real `Event` argument
-            // is deferred until a real handler needs the extra context.
-            let kind = match event.as_str() {
-                "on_click" => Some(EventKind::Click),
-                "on_hover_enter" => Some(EventKind::HoverEnter),
-                "on_hover_exit" => Some(EventKind::HoverExit),
-                // M14 Phase 3 (§16.7): the real handler-name counterpart
-                // to `EventKind::Change` -- wires a declared `on_change:`
-                // the same way every other real event kind here already
-                // is.
-                "on_change" => Some(EventKind::Change),
-                _ => None,
-            };
-            if let Some(kind) = kind {
-                let node_id = self.reconciler.id_of(widget_id).ok_or_else(|| {
-                    PyValueError::new_err(format!(
-                        "widget {widget_id:?}: handler {event:?} names a widget id never built \
-                         into the Tree"
-                    ))
-                })?;
-                let node = Node {
-                    id: node_id,
-                    tree: self.tree.clone(),
-                    handlers: self.handlers.clone(),
-                    context_menus: self.context_menus.clone(),
-                    // M42 Phase 1: shared, persistent instances now --
-                    // see `node()`'s own identical comment above.
-                    theme: self.theme.clone(),
-                    completions: self.completions.clone(),
-                };
-                // Reuses `Node`'s own real setters verbatim (same
-                // construction `apply_binding_value` already uses for
-                // `animate`) rather than inserting into `self.handlers`
-                // directly -- `set_on_click` also adds `Action::Click`
-                // to the node's `access.actions` (§10, Tab-reachability),
-                // a real side effect only the real method carries.
-                match kind {
-                    EventKind::Click => node.set_on_click(attr.unbind()),
-                    EventKind::HoverEnter => node.set_on_hover_enter(attr.unbind()),
-                    EventKind::HoverExit => node.set_on_hover_exit(attr.unbind()),
-                    EventKind::Change => node.set_on_change(attr.unbind()),
-                }
-            }
-        }
-
-        for (widget_id, property, raw_expr) in &self.bindings {
-            let node_id = self.reconciler.id_of(widget_id).ok_or_else(|| {
-                PyValueError::new_err(format!(
-                    "binding on unknown widget id {widget_id:?} (never built into the Tree)"
-                ))
-            })?;
-            let expr = parse_binding(raw_expr).map_err(|e| {
-                PyValueError::new_err(format!(
-                    "widget {widget_id:?} binding on {property:?} ({raw_expr:?}): {e}"
-                ))
-            })?;
-            let resolver = PyViewModelResolver::new(viewmodel.clone_ref(py));
-
-            begin_recording();
-            let evaluated = evaluate(&expr, &resolver);
-            let touched = end_recording();
-            let value = evaluated.map_err(|e| {
-                PyValueError::new_err(format!(
-                    "widget {widget_id:?} binding on {property:?} ({raw_expr:?}): {e}"
-                ))
-            })?;
-
-            apply_binding_value(&self.tree, &self.handlers, node_id, property, py, &value)?;
-
-            let callback = Py::new(
-                py,
-                BindingCallback {
-                    tree: self.tree.clone(),
-                    handlers: self.handlers.clone(),
-                    node_id,
-                    property: property.clone(),
-                    expr: expr.clone(),
-                    viewmodel: viewmodel.clone_ref(py),
-                },
-            )?;
-            for signal in &touched {
-                signal
-                    .bind(py)
-                    .call_method1("_subscribe", (callback.clone_ref(py),))
-                    .map_err(|e| {
-                        PyValueError::new_err(format!(
-                            "widget {widget_id:?} binding on {property:?}: failed to subscribe \
-                             to a Signal it read: {e}"
-                        ))
-                    })?;
-            }
-
-            // M14 Phase 3 (§16.7): the real write-back half -- only for
-            // a widget/property pair the author actually named `two_
-            // way:`. ARCHITECTURE.md §16.7's own text: "only for a plain
-            // Signal reference -- never a computed expression, since
-            // there's no way to reverse `{{ f"{first} {last}" }}` back
-            // into two Signals," enforced here by requiring the parsed
-            // `expr` to be exactly a bare Signal's own `.get()` call
-            // (`Expression::Call(Expression::Ident(signal_name), "get")`)
-            // -- a real, load-time-checked error otherwise, not a silent
-            // no-op. **Real finding:** a first draft of this check
-            // required a *bare* `Expression::Ident` instead (matching
-            // §16.7's own inline illustration, `{{ username }}` with no
-            // `.get()`), but every binding's forward direction resolves
-            // through `PyViewModelResolver::ident`, which reads the raw
-            // Python attribute unmodified -- for a `Signal`, that's the
-            // `Signal` object itself, not its value, so it always
-            // resolved to an opaque `Value::Handle` and `apply_binding_
-            // value` (above, forward direction) rejected it before this
-            // code ever ran. `.get()` is the one shape that both
-            // resolves to the real primitive forward (identical to every
-            // other binding in this codebase -- see `test_view_binding.
-            // py`) and still names the exact Signal to write back to.
-            if self
-                .two_way
-                .iter()
-                .any(|(w, p)| w == widget_id && p == property)
-            {
-                let Expression::Call(receiver, method) = &expr else {
-                    return Err(PyValueError::new_err(format!(
-                        "widget {widget_id:?}: two_way binding on {property:?} ({raw_expr:?}) \
-                         must be a plain Signal's own .get() call (e.g. \"{{{{ username.get() \
-                         }}}}\"), not a computed expression -- there's no way to reverse it back \
-                         into a Signal"
-                    )));
-                };
-                let (Expression::Ident(signal_name), true) = (receiver.as_ref(), method == "get")
-                else {
-                    return Err(PyValueError::new_err(format!(
-                        "widget {widget_id:?}: two_way binding on {property:?} ({raw_expr:?}) \
-                         must be a plain Signal's own .get() call (e.g. \"{{{{ username.get() \
-                         }}}}\"), not a computed expression -- there's no way to reverse it back \
-                         into a Signal"
-                    )));
-                };
-                let signal = viewmodel.bind(py).getattr(signal_name.as_str()).map_err(|_| {
-                    PyValueError::new_err(format!(
-                        "widget {widget_id:?}: two_way binding names {signal_name:?}, which has \
-                         no matching attribute on the ViewModel"
-                    ))
-                })?;
-                let two_way_callback = Py::new(
-                    py,
-                    TwoWayCallback {
-                        tree: self.tree.clone(),
-                        node_id,
-                        property: property.clone(),
-                        signal: signal.unbind(),
-                    },
-                )?;
-                self.handlers
-                    .borrow_mut()
-                    .insert((node_id, EventKind::Change), two_way_callback.into_any());
-            }
-        }
-
+        attach_bindings_and_handlers(
+            &self.tree,
+            &self.handlers,
+            &self.context_menus,
+            &self.theme,
+            &self.completions,
+            |widget_id| self.reconciler.id_of(widget_id),
+            &self.declared_handlers,
+            &self.bindings,
+            &self.two_way,
+            py,
+            viewmodel,
+        )?;
         Ok(())
     }
 

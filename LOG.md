@@ -1,178 +1,129 @@
-# LOG — M42 Phase 2: Swap Which `View` a Live Window Shows
+# LOG — M43 Phase 1: Real Component Instantiation with an Independent `ViewModel`
 
-- User's own governing instruction: the approved Tesserae bootstrap plan
-  (`/home/phil/.claude/plans/reflective-sleeping-falcon.md`), Part 1,
-  Phase 2 -- itself scoped in response to the user's own explicit
-  plan-review feedback on the first `ExitPlanMode` attempt: "`app.py`
-  should be the entry point for the app... this allows for switching of
-  current views without needing to bootstrap each view/viewModel."
-- Re-read the plan's own original design text before writing any code:
-  "a new shared type wrapping `Rc<RefCell<(Rc<RefCell<Tree>>, NodeId)>>`
-  ... `Window.show_view(view: &View)` writes the target View's own
-  `(tree.clone(), reconciler.root())` into that shared cell directly."
-- **Real, load-bearing correctness finding, made during implementation,
-  not covered by that original text:** `engine_core::NodeId`
-  (`crates/engine-core/src/node.rs`) is a `slotmap` generational key,
-  unique only *within* the `Tree` that allocated it -- two independent
-  `View`s' own root nodes can (and, confirmed by how `slotmap` allocates
-  keys, routinely do) collide on the identical raw value.
-  `HandlerMap`/`context_menus` are keyed by `(NodeId, EventKind)`/
-  `NodeId` alone, with no per-`Tree` namespacing at all -- sharing one
-  persistent map across a `show_view` switch would silently cross-wire
-  a different `View`'s old callback onto a colliding `NodeId` in the new
-  one. Widened the real swap bundle to `tree`+`root`+`handlers`+
-  `context_menus` together (a new `window::ActiveTree`/
-  `SharedActiveTree = Rc<RefCell<ActiveTree>>`, `window.rs`), not just
-  the `(Tree, NodeId)` pair the plan's own text named.
-  `theme`/`completions` deliberately stay outside this bundle: `ThemeState`
-  isn't keyed by `NodeId` at all (a single scheme+dark flag, resolved
-  uniformly); `CompletionRegistry` is keyed by its own private
-  monotonic `next_id` counter, not `NodeId` -- no cross-`Tree` collision
-  risk for either, and Phase 1 already named live theme-switching and
-  `on_complete` callbacks on View-sourced nodes as real, separate,
-  stated gaps this milestone doesn't fix.
-- **Real, scope-narrowing design choice, confirmed by grep before
-  implementing anything:** the naive reading of the plan's own text
-  ("wrap `tree`/`root` in the shared cell") would mean changing
-  `PyWindow`/`WindowSetup`/`WindowRuntime`'s own `tree`/`root`/
-  `handlers`/`context_menus` field *types* -- grepped and counted ~230
-  pre-existing call sites across `window_factory.rs`/`window_input.rs`/
-  `window_docking.rs`/`window_virtual_canvas.rs`/`app.rs` that read
-  those fields directly, almost all in `add_*` imperative factory
-  methods completely unrelated to View-switching. Rewriting all of them
-  through an extra indirection layer would have been a large, invasive,
-  error-prone refactor for a narrow, secondary capability. **Real
-  resolution:** those plain fields stay exactly as they are, used
-  unchanged by every `add_*` factory and by `wrap_node`; a new,
-  additional `pub(crate) active: SharedActiveTree` field was added
-  instead. `WindowRuntime`'s own per-frame/per-input closures (`app.rs`)
-  re-sync their existing plain `tree`/`root`/`handlers`/`context_menus`
-  fields from `active` at the top of every real invocation -- 4 real
-  call sites needed this: `frame` (re-syncs into `runtime`'s own owned
-  fields, tight block, borrow dropped immediately), `input` (identical
-  pattern), `access` (read-only, reads `active` locally since it only
-  ever holds `&runtime`), `access_action` (same, plus a real bug found
-  there -- see below). None of the ~230 `add_*`-factory call sites
-  needed to change at all.
-- `Window.show_view(view: &View)` (`window.rs`, added right after
-  `from_view`): writes a whole new `ActiveTree` into the shared cell in
-  one `RefCell` replace, picked up on the very next real frame. Also
-  syncs the window's current size into `view.width`/`view.height`
-  (mirroring `from_view`'s own real "sync size into the view" step) --
-  **real, stated smaller limit, not silently glossed over:** unlike
-  `from_view`'s own `Rc`-identity sharing (the *same* `Rc<Cell<u32>>`),
-  this only copies the *current* size once, at switch time -- a later
-  live resize while a *different* View is showing won't keep this one's
-  own size in sync until `show_view` is called on it again. Named as a
-  real, separate follow-up if a live resize ever needs to reach every
-  registered View at once, not needed for this milestone's real scope
-  (only the active View is ever visible/interactive at a time).
-- **Real bug #1, caught and fixed before this ever shipped, not found
-  later:** the first working draft of `Window.click`/`hover`/`scroll`/
-  `right_click` (`window_input.rs`, updated to read through `self.
-  active` instead of `self.tree`/`self.root`/`self.handlers` so
-  synthetic dispatch stays correct after a `show_view` switch) held a
-  live `Ref<ActiveTree>` (from `self.active.borrow()`) across the very
-  `run_dispatch_outcome` call that can synchronously invoke a real
-  Python handler. A handler calling `window.show_view(...)` from inside
-  itself -- the exact, expected real pattern a nav button uses -- would
-  then hit `show_view`'s own `self.active.borrow_mut()` while that
-  outer `Ref` was still alive on the stack, panicking with "already
-  borrowed." Caught by direct reasoning about the borrow lifetime
-  before writing the live example (not by a failing test -- the first
-  pytest test written, `test_show_view_switches_a_live_windows_
-  dispatch_to_a_different_view`, calls `show_view` directly from the
-  test body, never touching the buggy code path at all, a real reminder
-  that a test proving the *feature* doesn't automatically prove the
-  *reentrant* case). Fixed by cloning the needed `Rc`s (`tree`/`root`/
-  `handlers`/`context_menus` as needed per method) out of `active` and
-  dropping the borrow immediately, *before* any dispatch/callback runs
-  -- the identical pattern already correct in `app.rs`'s own `frame`/
-  `input` closures (their own refresh block is tightly scoped and
-  already dropped before continuing). Re-grepped for every remaining
-  `runtime.active.borrow()`/`self.active.borrow()` site after fixing
-  `window_input.rs` and found the identical bug in one more spot missed
-  on the first pass: `app.rs`'s `access_action` closure (a real
-  AccessKit-driven activation calling `run_dispatch_outcome` while still
-  holding `active`) -- fixed the same way.
-- **Real bug #2, caught by this crate's own pre-existing regression
-  test, not by inspection alone:** `PyWindow::__traverse__`'s new pass
-  over `self.active.borrow().handlers`, unconditional in the first
-  draft, calls `visit.call` a second time on the *same* `Py<PyAny>`
-  object whenever `active.handlers` is still the same `Rc` as `self.
-  handlers` (the common, never-switched case -- true for every `Window`
-  built via plain `Window::new()`, not just `from_view`). Running the
-  full verification chain's own `pytest tests/` step surfaced this
-  directly: `test_window_participates_in_cyclic_gc_when_a_click_
-  handler_captures_it_back` (a real, pre-existing regression test proving
-  a window<->handler reference cycle gets collected) started failing --
-  the cycle stopped being collected. Root cause, confirmed by reasoning
-  through CPython's own cyclic-GC algorithm: `tp_traverse`'s `visit.call`
-  is how a container reports one real outgoing reference for the
-  "subtract internal refs from total refcount" phase; reporting the
-  identical single Rust-level `Py<PyAny>` reference *twice* (once via
-  `self.handlers`, once via `self.active.borrow().handlers`, the same
-  underlying `Rc<RefCell<HashMap>>`) makes CPython's collector believe
-  there are more real edges into that object than actually exist,
-  undercounting how many of its references are purely internal to the
-  candidate cycle -- so the cycle looks like it still has an external
-  referent and survives. Fixed with an `Rc::ptr_eq(&self.handlers,
-  &active_handlers)` guard: the second traversal only runs when
-  `active`'s handlers are genuinely a *different* map (i.e. after a
-  real `show_view` switch to a different `View`). Re-ran the full
-  pytest suite after the fix: 589 passed (up from 586, the correct +3
-  for this phase's own new tests), confirming the regression test
-  passes again, not just that the build succeeds.
-- New pytest tests (`tests/test_view_in_window.py`, 3 new):
-  `test_show_view_switches_a_live_windows_dispatch_to_a_different_view`
-  -- a click through the *window* after `show_view` reaches the
-  newly-shown View's own handler and not the old one, proving real
-  tree/root/handlers sharing, not a stale copy;
-  `test_show_view_called_from_inside_a_click_handler_does_not_panic` --
-  the one test that actually exercises real bug #1 above (calls
-  `show_view` from *inside* a dispatched handler, not from the test
-  body directly);
-  `test_show_view_keeps_each_views_bindings_independently_reactive` --
-  a `Signal` write on either View's own `ViewModel` after switching away
-  from it still reaches its own (merely not-currently-shown) tree, and
-  doesn't leak into the other View.
-- New live example (`examples/live_view_switch.py` +
-  `live_view_switch_a.yaml`/`live_view_switch_b.yaml`): two fully-
-  bootstrapped, independent `View`s (`Screen A`/`Screen B`), each with
-  its own real `_attach`-wired `on_click` handler that calls `window.
-  show_view(...)` from *inside* itself -- three real dispatched clicks
-  switch A->B->A->B, asserted via a real `switches` list recording each
-  transition, then a genuine 20-frame `App.run()`. Ran clean: "switch
-  sequence: ['a->b', 'b->a', 'a->b']" / "live_view_switch.py: exited
-  cleanly after a real 20-frame render loop, switching Views three
-  times."
-- `.pyi` stub (`python/tre/_core.pyi`) updated: `Window.show_view`
-  added with a full docstring, including the real, stated size-sync
-  limit named above.
-- `BUILD_TRACKER.md`: Phase 2 flipped to ✅ with the full real
-  investigation/implementation/bug-fix writeup (both real bugs named
-  honestly, not glossed over); milestone-level status flipped to
-  "Complete, both phases"; Top Metrics row updated to 100%; a new "Just
-  closed" pointer added for the whole milestone, above Phase 1's own
-  (left unedited, a permanent historical record). Parser confirmed
-  balanced (42 milestones, 133 phases, 226 items, unchanged -- pure
-  status flips and prose on already-scoped phases); artifact
-  regenerated and republished.
+- User's own governing instruction, reached through a real technical
+  discussion, not assumed: "how do we make it so multiple views can
+  use a single viewModel? Or no viewModel at all" -> "I want to be able
+  to embed a view into another view and have the embedded view have a
+  separate viewModel. The essence of MVVM and single page
+  applications." Two architectural options were presented directly:
+  (1) one shared `Tree`, multiple `ViewModel`-scoped regions -- the
+  real Vue/React component pattern, zero `engine-core` rendering/
+  dispatch changes needed; (2) genuinely separate `Tree`s composed via
+  a cross-tree render -- would need `engine-core`/`engine-render` to
+  become tree-of-trees aware, crossing crate boundaries §4 deliberately
+  keeps separate. **User confirmed option 1, with multiple simultaneous
+  instances required.** Approved via a formal plan (`EnterPlanMode`/
+  `ExitPlanMode`).
+- Real investigation before writing any code (grounding the whole plan,
+  not assumed): `engine_spec::build_tree` (already `pub`, re-exported
+  at `lib.rs:22`) inserts a `WidgetSpec` into an *existing* `Tree` and
+  returns the new subtree's root as a parentless node ("attach it under
+  another with `add_child`, or leave it as a root" -- `Tree::insert`'s
+  own doc comment). `Reconciler::load` already does parse+build+id-
+  recording in one call. `Tree::add_child` attaches a parentless node
+  under an existing one. `Tree::remove` -- read directly, not assumed
+  -- already recurses a whole subtree deepest-first, cleaning up
+  `taffy`/the parent's children list/overlays/focus. **Real, decisive
+  finding: `engine-spec` and `engine-core` needed zero changes.** Every
+  primitive this feature needs already existed and was already `pub`.
+- `python/tre/__init__.py`'s `Signal` was confirmed (by reading the
+  file in full) to have `_subscribe` but no `_unsubscribe` -- a real
+  gap relevant to Phase 2 (removal), noted but not yet fixed in this
+  phase.
+- `crates/engine-py/src/view.rs`: `collect_bindings`/`collect_handlers`/
+  `collect_two_way` widened from private `fn` to `pub(crate) fn`.
+  `View::_attach`'s own ~150-line body (handler validation/wiring +
+  binding evaluation/subscription/two-way) was factored into a new,
+  shared `pub(crate) fn attach_bindings_and_handlers` -- `id_of` taken
+  as a closure (`impl Fn(&str) -> Option<NodeId>`) rather than a
+  `&Reconciler` directly, since `View` and the new `Component` each
+  look widget ids up through their own separately-owned `Reconciler`.
+  Returns every `(signal, callback)` pair it subscribed -- `View::
+  _attach` discards this (a `View` lives as long as the script does);
+  `Component::_attach` keeps it, ready for Phase 2's own removal work.
+  `View::_attach` itself became a thin wrapper; behavior confirmed
+  byte-for-byte unchanged by the full pre-existing `test_view_binding.
+  py`/`test_view_handlers.py`/`test_view_in_window.py` suites passing
+  with zero modifications.
+- New `crates/engine-py/src/component.rs`: `Component { tree: Rc<RefCell
+  <Tree>>, reconciler: Reconciler, bindings, declared_handlers,
+  two_way, handlers: HandlerMap, context_menus, theme: SharedTheme,
+  completions: SharedCompletions }` -- deliberately mirrors `View`'s
+  own struct shape (a real `Reconciler` field, not a separately-
+  extracted `HashMap<String, NodeId>`) rather than the plan's own
+  original sketch (`root: NodeId, ids: HashMap<...>`), since `Reconciler
+  ::load` already returns exactly what's needed (`.root()`/`.id_of()`)
+  -- a real, small simplification found while implementing, not a
+  deviation from the plan's own intent. `tree`/`handlers`/
+  `context_menus`/`theme`/`completions` are `Rc::clone`s shared with
+  whatever it was instantiated into -- safe because it's the *same*
+  `Tree`, so every `NodeId` is unique by construction (the opposite
+  situation from M42 Phase 2's own `ActiveTree`, which had to bundle
+  `handlers`/`context_menus` together specifically because *separate*
+  Trees can collide).
+- New `instantiate_component` helper (`component.rs`), called from both
+  `View.instantiate(path, into)` (`view.rs`) and `Component.instantiate
+  (...)` (so components nest recursively for free, with zero special-
+  casing) -- reads the component's own YAML, `Reconciler::load`s it
+  into the shared `Tree`, `Tree::add_child`s its root under the target
+  node, then `parse_view_with_includes`'s the same yaml a second time
+  (the identical "parse twice" pattern `View::new` itself already
+  established) to collect this instance's own scoped bindings/handlers.
+- **Real design correction, found during implementation, not in the
+  plan's own text -- the single most load-bearing finding this phase
+  made:** `Component` does *not* get `click`/`hover`/`right_click`
+  methods of its own. Traced through exactly what `Tree::compute_layout
+  (root, available_space)` does: it computes a fresh layout treating
+  `root` as if it were the whole tree's own top-level root, using
+  `available_space` as its outer constraint -- calling this from a
+  component's own root would silently distort its real size (actually
+  determined by its real parent container, not an independent
+  "available space" of its own). Read `Tree::absolute_position`'s own
+  body directly to confirm the real fix: it already walks a node's
+  real parent chain all the way up to whatever ancestor has no parent,
+  regardless of which root `compute_layout` was last called with --
+  meaning dispatch on an embedded component's own node is *already*
+  fully correct through the *owning* `View`/`Window`'s existing `click`/
+  `hover`/`right_click` (`view.click(component.node("button"))`), with
+  zero new dispatch code needed. This removed an entire planned layer
+  of complexity (a `window_root`/`available_space` reference `Component`
+  would otherwise have needed to thread through nested instantiation).
+- `Component` registered in `lib.rs`'s `#[pymodule]`; re-exported from
+  `python/tre/__init__.py` and its `__all__`; `_core.pyi` updated with
+  `View.instantiate`/the new `Component` class (mirroring `View`'s own
+  stub, minus `click`/`hover`/`right_click`/`__init__` -- not directly
+  constructible from Python).
+- New pytest tests (`tests/test_component.py`, 7 new): instantiate
+  returns a usable component; multiple instances resolve to distinct
+  real state (proven via `Node.set_text`'s own immediate, synchronous
+  effect -- `Node` has no `.id` getter exposed to Python, an early
+  draft of this test tried to compare `.id` directly and failed with a
+  real `AttributeError`, fixed by switching to an observable-behavior
+  proof instead); each instance's own `ViewModel` is genuinely
+  independent; a click via the owning `View` reaches only the right
+  instance's own handler, proven with 3 simultaneous instances;
+  components nest recursively; a bad path and an unknown widget id
+  both raise clearly.
+- New live example (`examples/component_list.py` + `component_list.
+  yaml` + `component_list_card.yaml`): 3 real `Card` component
+  instances in one container, each its own `Signal`-bound counter, a
+  real dispatched click on only the second instance's own button
+  (twice) leaving the other two untouched, then a genuine 20-frame
+  `App.run()`. Ran clean on the first real attempt.
 - Full verification chain, all green: `cargo check --workspace --all-
   targets`; `cargo clippy --workspace --all-targets -- -D warnings`;
   `cargo fmt` + `cargo fmt --check`; `cargo test --workspace --release`
-  (unchanged counts across every crate -- `show_view` itself needs a
-  live Python interpreter to call through pyo3's own generated wrapper,
-  so no new Rust-level `#[test]` was added for it, matching this
-  crate's established GIL-needed/GIL-free test-surface split);
-  `maturin develop --release` rebuilt; `pytest tests/` (589 passed, +3,
-  1 skipped, unchanged -- and, decisively, the pre-existing GC
-  regression test passing again after bug #2's fix); all 79 examples
-  (+2, `live_view_switch.py` plus a companion example the prior segment
-  already added) and the showcase demo run clean.
+  (213 in engine-py's own lib suite, unchanged -- `Component`'s own
+  methods need a live Python interpreter to call through pyo3's
+  generated wrapper, so no new Rust-level `#[test]`s were added,
+  matching this crate's established GIL-needed/GIL-free test-surface
+  split); `maturin develop --release` rebuilt; `pytest tests/` (596
+  passed, +7, 1 skipped, unchanged -- confirming zero regressions from
+  the `View::_attach` refactor); all 80 examples (+1) and the showcase
+  demo run clean.
 
-**M42 -- Live `View`: Wiring the Declarative Layer into a Real Window --
-is now fully complete, both phases.** This closes the milestone -- per
-the standing "push only after a full milestone closes" convention, a
-`git push` is now appropriate. Part 2 of the approved Tesserae bootstrap
-plan (bootstrapping the separate `tesserae` repo itself) is next.
+**M43 Phase 1 -- Real Component Instantiation with an Independent
+`ViewModel` -- is complete.** Phase 2 (real removal, with automatic
+`Signal` unsubscription) remains open -- the milestone as a whole is
+not yet closed, so no push yet per the standing "push only after a
+full milestone closes" convention.

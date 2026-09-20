@@ -1561,9 +1561,42 @@ class View:
         possible). Returns whether a reload actually happened.
         """
         ...
+    def instantiate(self, path: str, into: Node) -> Component:
+        """M43 Phase 1: embeds another view's own YAML as a real,
+        independent `Component` -- its own bindings/handlers, ready for
+        its own separate `ViewModel` to `_attach` to -- spliced into
+        this `View`'s live tree as a child of `into`. Call this once per
+        instance for multiple simultaneous instances (e.g. one per row
+        in a list); each instantiation is fully independent, even when
+        the same `path` is used repeatedly.
+        """
+        ...
     def click(self, node: Node) -> None: ...
     def hover(self, node: Node) -> None: ...
     def right_click(self, node: Node) -> None: ...
+
+class Component:
+    """M43 Phase 1: one real, embedded instance of another view's own
+    YAML, created via `View.instantiate`/`Component.instantiate` -- not
+    constructed directly. Behaves like a small `View` scoped to just
+    this instance's own widgets (its own `node`/`_attach`), sharing the
+    same live `Tree` as whatever it was instantiated into.
+
+    Has no `click`/`hover`/`right_click` of its own -- dispatch on one
+    of its nodes goes through the *owning* `View`/`Window`'s existing
+    method instead, e.g. `view.click(component.node("button"))`.
+    """
+
+    def node(self, widget_id: str) -> Node:
+        """Looks up a declared widget by its own `id:`, scoped to this
+        component instance."""
+        ...
+    def instantiate(self, path: str, into: Node) -> Component:
+        """Embeds another component inside this one -- components nest
+        recursively, the identical real mechanism `View.instantiate`
+        itself uses.
+        """
+        ...
 
 class CanvasContext:
     """The imperative drawing surface handed to a `Window.add_canvas`
