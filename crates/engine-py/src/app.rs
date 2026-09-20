@@ -239,6 +239,11 @@ impl GpuState {
     /// entirely -- `surface.configure` panics on a zero-sized
     /// `SurfaceConfiguration`, a real, known wgpu gotcha, not a
     /// hypothetical one.
+    ///
+    /// M40 Phase 1 (§4, §6, §9): called from exactly one real place now
+    /// -- the per-frame `RedrawRequested` path, guarded by `needs_
+    /// resize` below, not from every raw `InputEvent::Resized`. See
+    /// `needs_resize`'s own doc comment for the real, measured reason.
     fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
@@ -246,6 +251,49 @@ impl GpuState {
         self.surface_config.width = width;
         self.surface_config.height = height;
         self.surface.configure(&self.device, &self.surface_config);
+    }
+
+    /// M40 Phase 1 (§4, §6, §9): whether the surface's own currently-
+    /// configured size still matches the window's real, current
+    /// dimensions -- the real per-frame gate that replaces reconfiguring
+    /// on every raw `Resized` event.
+    ///
+    /// **Real root cause this closes, confirmed by direct measurement,
+    /// not assumed:** `surface.configure` is a genuine swapchain rebuild
+    /// -- a real, throwaway scratch probe on this exact machine (AMD
+    /// Radeon 890M, RADV/Vulkan) measured ~600µs-1ms per call, and a
+    /// live drag can deliver many `Resized` events between two real
+    /// frames. Calling `resize` inline on every one of them (the old
+    /// behavior) reconfigures the surface far more often than the
+    /// display can even present a new frame -- real, wasted, redundant
+    /// work, and the mechanism directly behind the "trailing behind the
+    /// cursor" symptom this milestone exists to fix. Checking this once
+    /// per real frame and reconfiguring only when it's actually `true`
+    /// collapses an entire burst of `Resized` events into at most one
+    /// real reconfigure per frame, always at the window's true current
+    /// size -- `runtime.width`/`height` (the live `SharedSize` cells)
+    /// never lag, only the expensive GPU-side reconfigure is coalesced.
+    ///
+    /// **Real, deliberate design choice, not the naive port of either
+    /// sibling project's own fix:** both TRE v1 and pyCopper instead
+    /// hold the swapchain at a coarser, oversized *bucketed* size during
+    /// a drag, relying on the compositor to scale it down to fit. A
+    /// real, throwaway empirical probe against this exact session's own
+    /// real KWin/Wayland compositor found that doesn't happen by
+    /// default: an oversized wgpu surface gets *cropped* to the window's
+    /// own declared geometry, not scaled -- a hard, visibly broken clip,
+    /// not the soft blur either prior project's own writeup described.
+    /// Both of them only get real scale-to-fit behavior via `wp_
+    /// viewporter` (TRE v1 via a real winit fork; likely something
+    /// equivalent under pyCopper's own GLFW/rendercanvas stack) -- this
+    /// milestone's own scoping already deferred that fork as a real,
+    /// explicit follow-up, not built here. Reconfiguring to the exact
+    /// true size every time, just less often, sidesteps the crop bug
+    /// entirely and needed no fork -- and at this machine's own real
+    /// measured cost (well under 1ms), a plain per-frame coalesce
+    /// already removes the redundant-reconfigure cost without it.
+    fn needs_resize(&self, width: u32, height: u32) -> bool {
+        self.surface_config.width != width || self.surface_config.height != height
     }
 }
 
@@ -471,7 +519,18 @@ impl App {
                 // need to keep scheduling this window's next redraw on
                 // its own) than `take_dirty` does (did *this* frame have
                 // real paint work to do).
-                if !runtime.tree.borrow_mut().take_dirty() {
+                //
+                // M40 Phase 1 (§4, §6, §9): widened with `needs_resize`
+                // -- a real, pending resize touches no `Tree` state at
+                // all (it's pure GPU/window sizing), so `take_dirty`
+                // alone would never see it; a frame must still do real
+                // work when the surface's own configured size has
+                // fallen behind the window's true current one, even if
+                // nothing else changed.
+                let resized = runtime
+                    .gpu
+                    .needs_resize(runtime.width.get(), runtime.height.get());
+                if !runtime.tree.borrow_mut().take_dirty() && !resized {
                     return any_active;
                 }
 
@@ -482,6 +541,20 @@ impl App {
                         height: AvailableSpace::Definite(runtime.height.get() as f32),
                     },
                 );
+
+                // M40 Phase 1 (§4, §6, §9): the one real place `GpuState::
+                // resize` is called from now -- collapses however many
+                // raw `Resized` events arrived since the last real frame
+                // into a single real reconfigure, at whatever the
+                // window's true, current size is at this exact moment
+                // (`needs_resize`'s own doc comment has the full real
+                // reasoning). A true no-op when nothing changed size
+                // (`resize` itself still no-ops on a 0-sized dimension).
+                if resized {
+                    runtime
+                        .gpu
+                        .resize(runtime.width.get(), runtime.height.get());
+                }
 
                 let (wgpu::CurrentSurfaceTexture::Success(output)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(output)) =
@@ -816,11 +889,11 @@ impl App {
                     // `InputEvent`) already resized `runtime.root`'s
                     // own `layout_style.size` directly (`engine-core`
                     // fully owns that, no need to defer it here); this
-                    // arm handles the two things only `engine-py` can
-                    // (real GPU surface access, and `runtime.width`/
-                    // `height`, which every per-frame `compute_layout`/
-                    // `build_tree_scene`/`RenderSize` call already
-                    // reads fresh -- see `RedrawRequested` above).
+                    // arm handles the one thing only `engine-py` can
+                    // (`runtime.width`/`height`, which every per-frame
+                    // `compute_layout`/`build_tree_scene`/`RenderSize`
+                    // call already reads fresh -- see `RedrawRequested`
+                    // above).
                     //
                     // M33 Phase 2 (§4, §5, §8) closed the real, stated
                     // v1 limit this comment used to name here:
@@ -833,12 +906,28 @@ impl App {
                     // dialog's own full-window scrim against the
                     // window's real *current* dimensions, not its
                     // construction-time ones.
+                    //
+                    // M40 Phase 1 (§4, §6, §9): no longer calls `runtime.
+                    // gpu.resize(...)` here -- a real, live drag can
+                    // deliver many `Resized` events between two real
+                    // frames, and reconfiguring the wgpu surface (a
+                    // genuine swapchain rebuild) on every single one is
+                    // the real, measured root cause of the "trailing
+                    // behind the cursor" symptom `BUILD_TRACKER.md`'s own
+                    // M40 investigation root-caused. The real, exact
+                    // *value* still updates here, live, with zero lag
+                    // (unchanged) -- only the expensive GPU reconfigure
+                    // itself is deferred to `RedrawRequested` below,
+                    // where it naturally coalesces every event in a
+                    // burst into a single real reconfigure per frame,
+                    // always at the true, current size (never a stale or
+                    // bucketed one -- see `GpuState::needs_resize`'s own
+                    // doc comment for why this codebase doesn't port
+                    // either sibling project's own size-bucketing
+                    // approach).
                     InputEvent::Resized { width, height } => {
                         runtime.width.set(width as u32);
                         runtime.height.set(height as u32);
-                        runtime
-                            .gpu
-                            .resize(runtime.width.get(), runtime.height.get());
                     }
                     // M17 Phase 1 (§8): the real, winit-driven Ctrl+C
                     // path -- `Tree::text_field_selected_text` is a pure

@@ -1,89 +1,133 @@
-# LOG — M39 Phase 5: `Tree::tick_all` Active-Set Optimization (closes M39)
+# LOG — M40: Smooth Window Resize (Coalesced Swapchain Reconfigure)
 
-- User's own explicit instruction: "Start" continued into M39 Phase 5
-  (item 5 from the gap-sweep answer, fifth and final in the user's own
-  chosen order): whether `Tree::tick_all`'s naive whole-tree walk needs
-  an active-set optimization.
-- Real, measured-first discipline, the identical real precedent M34
-  Phase 1's own benchmark already established for tessellation
-  caching, not assumed: before writing any design or code, wrote a
-  real, throwaway scratch benchmark (`crates/engine-core/tests/
-  scratch_tick_all_bench.rs`) -- deliberately never committed, the
-  identical "scratch, not a permanent bench suite" precedent M34
-  Phase 1's own investigation already set.
-- Three real scenarios measured, `cargo test -p engine-core --release
-  --test scratch_tick_all_bench -- --ignored --nocapture`:
-  - **2000-node idle tree** (a genuinely large real catalog screen --
-    far more than any single showcase demo screen in this project
-    actually builds -- every 5th node opted into `InteractionState`, a
-    real clickable-row proportion, nothing actively animating): 500
-    calls to `tick_all` averaged **~32µs/call** (two separate runs:
-    42.67µs and 31.82µs -- normal machine-load variance, both firmly
-    in the same real "tens of microseconds" order of magnitude).
-  - **The identical scene with 1% of nodes carrying a real, live
-    `opacity` animation** (a real "something is always subtly
-    animating somewhere" steady state, e.g. a ripple or hover fade):
-    **~31-45µs/call** -- essentially indistinguishable from the fully
-    idle case. This is the real, decisive confirmation of the scoping
-    note's own hypothesis: direct earlier reading of `Animated::tick`
-    found every per-field tick call already early-returns cheaply
-    (`if self.active.is_none() { return false; }`) for a settled
-    field, so the real cost was never the animation *work* -- it's the
-    sheer per-node iteration overhead of walking every `Node`'s own
-    `PaintProperties`/`InteractionState`/kind-specific fields every
-    frame, present whether or not anything is actually moving.
-  - **A 10x-scale sanity check** (20,000 nodes -- a genuinely
-    unrealistic single-screen node count for this catalog, included
-    only to check for a hidden quadratic blowup, not because it
-    represents a real scenario): **~1.09ms/call**, roughly linear with
-    the 2000-node measurement (not the quadratic result a naive
-    per-node-times-per-node cost would produce) -- and even at that
-    exaggerated scale, only ~6.5% of a 16.67ms/frame budget.
-- **Real, honest conclusion, stated plainly rather than building
-  something speculative because the phase was "supposed to" produce
-  code:** the numbers do not justify an active-set optimization. At
-  this catalog's own realistic node counts (hundreds to low thousands
-  per real screen), `tick_all`'s real cost is comfortably under 0.3%
-  of frame budget -- an even smaller real cost than M34 Phase 1's own
-  "a real, honest, modest win, not a dramatic one" finding for
-  tessellation caching; here there is essentially no real problem
-  to solve. A new `active: HashSet<NodeId>` mechanism (populated by
-  every real animation-starting call site -- `update_hover`, `set_
-  pressed`, `transition_focus`, every `Node.animate()` entry point --
-  each one gaining a new, permanent "never forget to keep the active
-  set in sync" correctness obligation) would trade real, ongoing
-  maintenance risk and code complexity for a per-frame saving no real
-  user could ever perceive. This whole project's own repeated
-  "measured, not assumed" discipline (M34 Phase 1's original
-  precedent, M38/M39's own repeated corrections of prior completion
-  notes found factually wrong on direct re-check) applies here in its
-  other valid direction too: a real benchmark can validly conclude
-  "the numbers say don't build this," and that conclusion, honestly
-  reached and documented, is this phase's own complete, real
-  deliverable -- not a placeholder deferring real work to later.
-- No production code changed. The scratch benchmark file was deleted
-  after capturing these real numbers, per its own stated intent and
-  M34 Phase 1's own identical precedent -- never staged, never part of
-  any commit.
-- `BUILD_TRACKER.md`: Phase 5 flipped to done with the full real
-  measurement writeup (all three scenarios' own real numbers, and the
-  real reasoning for the "don't build it" conclusion); milestone
-  status line flipped to "✅ Complete — all 5 phases done
-  (2026-09-19)"; Top Metrics row to 100%; a new "Just closed" trailer
-  written for M39's own closure, added above the pre-existing M38
-  Phase 7 trailer (the established stacking convention -- newest
-  closure first). Parser re-confirmed balanced (39 milestones, 127
-  phases, 218 items, unchanged -- no new real line items, only status
-  flips); artifact regenerated and republished.
+- User's own explicit instruction: "Start" continuing straight from
+  M40's own scoping turn ("Yes scope window resizing, this one is
+  really important"), the user's own prior context: "TRE v1 and
+  pyCopper had some issues with window trailing behind cursor and
+  stuttering. I believe v1 ended up implementing google chrome's
+  method."
+- Real winit investigation before design: direct source read of `winit
+  = "0.30.13"`'s own public `WindowEvent` enum (`event.rs:152-438`)
+  confirmed `Resized(PhysicalSize<u32>)` is the *only* public,
+  cross-platform resize-related event -- no enter/exit-live-resize
+  signal exists anywhere (the Windows-internal `WM_ENTERSIZEMOVE`/
+  `WM_EXITSIZEMOVE` handling I'd read earlier only sets a private
+  `MARKER_IN_SIZE_MOVE` flag, never surfaced to the app). This resolved
+  the scoping note's own explicitly-left-open design question: a
+  frame-count-based mechanism is the only portable option, not a
+  platform-native "still dragging" event.
+- **Real, load-bearing correction, made before writing a single line of
+  production code -- the exact discipline this whole project has
+  applied repeatedly to *other* people's prior notes, now applied to my
+  own scoping note from one turn earlier.** The scoping section
+  committed to porting both TRE v1's and pyCopper's own real technique:
+  hold the swapchain at a coarse, oversized "bucketed" size during a
+  drag, relying on the compositor to scale it down to fit. Before
+  building that, I re-read pyCopper's own `_pin_surface` doc comment
+  more carefully (`engine.py:292-313`) and found it says "content is
+  drawn across the *whole* oversized buffer," while my own summary of
+  TRE v1's report said content was "projected at the true logical
+  size" -- two different, mutually exclusive mechanics. Rather than
+  guess which (if either) applies to TRE v2's own architecture, built a
+  real, throwaway `wgpu`+`winit` scratch probe (outside the repo
+  entirely, in the session scratchpad) and ran it against this exact
+  session's own real KWin/Wayland compositor (confirmed via `loginctl`/
+  `ps`: `XDG_CURRENT_DESKTOP=KDE`, `kwin_wayland` running -- the same
+  real compositor TRE v1's own report was grounded in). The probe: a
+  fixed 300x300 window, a wgpu surface deliberately configured at
+  600x600 (2x oversized), painting the whole buffer red except a
+  scissor-restricted 100x100 blue marker in the top-left corner (1/6 of
+  each buffer dimension). Screenshotted the real, composited result via
+  `spectacle -b -a` and read the image directly. **Real, decisive
+  result: the blue marker appeared at its own full, native 100x100
+  size within the visible window -- not shrunk to ~1/6 as the
+  scale-to-fit model would predict.** This compositor crops an
+  oversized `wl_surface` buffer to the surface's own declared window
+  geometry by default; it does not scale it. Both prior projects' own
+  real, *working* implementations of this technique needed `wp_
+  viewporter`-level explicit scaling support to get real scale-to-fit
+  behavior -- TRE v1 via a real, confirmed winit fork (`WindowExtWayland
+  ::set_viewport_source_crop`), pyCopper likely via something
+  equivalent inside its own GLFW/rendercanvas stack, neither of which
+  this milestone's own scoping had planned to build (the fork was
+  already, separately, deferred as a follow-up). Had I built the
+  originally-scoped design without this check, it would have shipped a
+  real, visibly broken crop during every drag -- worse than the
+  original bug, not a fix for it.
+- A second real scratch probe (`configure_timing.rs`, same throwaway
+  project) measured `wgpu::Surface::configure()`'s own real cost on
+  this machine's actual adapter: **AMD Radeon 890M Graphics (RADV
+  STRIX1), Vulkan backend -- ~600µs average, ~941µs max across 100 real
+  reconfigure calls**, alternating sizes each time to force a genuine
+  rebuild rather than a same-size no-op. This is neither TRE v1's own
+  300-450ms figure (a different, Wayland-specific `vkAcquireNextImageKHR`
+  compositor-blocking stall, not the `configure()` call itself) nor
+  pyCopper's own 1.35-1.88ms (a different real backend) -- a real,
+  machine-specific number, not assumed to transfer from either prior
+  project.
+- **Real, corrected design, informed by both findings:** since (a) the
+  compositor-scaling trick doesn't work here without a fork this
+  milestone already declined, and (b) the real reconfigure cost on this
+  machine is modest (sub-millisecond, not hundreds of milliseconds),
+  the simplest real fix is architectural, not a bucket/settle
+  mechanism: **reconfigure the surface at most once per real frame,
+  always at the true current size**, instead of inline on every raw
+  `Resized` event. `InputEvent::Resized`'s handler (`app.rs`) now only
+  updates the real, live `runtime.width`/`height` `SharedSize` cells
+  (unchanged -- zero added lag, still immediately visible to
+  Python-facing `PyWindow` fields per M33 Phase 2's own real sharing).
+  New `GpuState::needs_resize(width, height) -> bool`, comparing against
+  the surface's own currently-configured size. The per-frame
+  `RedrawRequested` closure's existing `take_dirty()` early-return is
+  widened to also check it -- a pending resize touches no `Tree` state
+  at all (pure GPU/window sizing), so `take_dirty` alone would never
+  see it and the frame would wrongly skip real work. The existing
+  `GpuState::resize` is now called from exactly one place: right before
+  acquiring the surface texture, once per frame, only when `needs_
+  resize` is true. Any burst of `Resized` events arriving between two
+  real frames -- exactly what a live drag produces -- now collapses
+  into a single real reconfigure at whatever the window's true size is
+  at that moment, eliminating the redundant per-event cost with zero
+  compositor-scaling assumption and no fork. This turned out simpler
+  than either prior project's own more elaborate mechanism, precisely
+  *because* this machine's own real measured cost didn't demand more.
+- Cleaned up both scratch probes (deleted, never committed, matching
+  M34/M39 Phase 5's own identical "scratch, not committed" precedent)
+  once their real findings were captured and written into the code's
+  own doc comments.
+- Full verification chain, all green: `cargo check --workspace --all-
+  targets`; `cargo clippy --workspace --all-targets -- -D warnings`;
+  `cargo fmt` + `cargo fmt --check`; `cargo test --workspace --release`
+  (unchanged counts across every crate -- a pure internal render-loop
+  refactor with no new pure-logic surface a headless unit test could
+  exercise); `maturin develop --release` rebuilt; `pytest tests/` (581
+  passed, 1 skipped, unchanged, including `test_resize.py`'s own 5
+  tests -- confirmed these exercise the *synthetic*, `Tree::dispatch`-
+  based `Window.resize()` path, not the real winit-driven one this
+  phase touched, so their being unaffected is the expected, correct
+  outcome, not a false negative); all 77 examples + showcase demo
+  clean.
+- `BUILD_TRACKER.md`: both phases flipped to done with the full real
+  investigative story (the crop finding, the measured cost, the design
+  correction) written directly into the milestone's own top-level
+  section, not just the phase bullets; milestone status line and Top
+  Metrics row both flipped to Complete; a new "Just closed" trailer
+  added above the pre-existing M39 one. Parser re-confirmed balanced
+  (40 milestones, 129 phases, 220 items, unchanged -- only status flips
+  and prose edits, no new real line items); artifact regenerated and
+  republished.
+- **Real, honestly-stated limit, matching M33 Phase 2's own already-
+  established precedent for this exact class of capability:** whether
+  the fix actually *feels* smoother during a genuine, human-driven live
+  OS resize drag cannot be verified from this environment at all -- no
+  `xdotool`/`wmctrl`-equivalent window-manipulation tool is available
+  to simulate one programmatically, and "feels smooth" is inherently a
+  real-time, hands-on-the-mouse judgment no amount of code review or
+  scripted measurement substitutes for. Left for the user to try
+  directly against a real window (any example run with `app.run(max_
+  frames=None)` instead of a bounded frame count) and report back.
 
-**M39 — Hardening III: Second Follow-Up Gap Sweep — is now fully
-complete, all 5 phases done:**
-1. Code Editor Horizontal Scroll
-2. Loading Indicator + Time Picker Dial
-3. Shape-Morphed Border Inset Fix
-4. Terminal Cell Text Attributes
-5. `Tree::tick_all` Active-Set Optimization (real profiling, real
-   "no code change warranted" conclusion)
-
-This closes the whole milestone — per the standing "push only after a
-full milestone closes" convention, a `git push` is now appropriate.
+**M40 — Smooth Window Resize (Coalesced Swapchain Reconfigure) — is
+now fully complete, both phases.** This closes the milestone — per the
+standing "push only after a full milestone closes" convention, a `git
+push` is now appropriate.

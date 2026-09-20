@@ -1,54 +1,68 @@
-# PLAN — M39 Phase 5: `Tree::tick_all` Active-Set Optimization (closes M39)
+# PLAN — M40: Smooth Window Resize (Coalesced Swapchain Reconfigure)
 
 ## Goal
-Answer the phase's own scoping question honestly: is `tick_all`'s
-naive whole-tree walk a real, load-bearing per-frame cost at this
-catalog's own realistic node counts, or a real-but-negligible one --
-measured first, per M34 Phase 1's own precedent, before designing
-anything.
+Fix the real resize-smoothness gap M33 never touched: `GpuState::resize`
+reconfigures the wgpu surface (a genuine swapchain rebuild) on every
+single `WindowEvent::Resized` event, with zero coalescing -- the real
+root cause behind "window trailing behind cursor and stuttering" the
+user remembered from TRE v1 and pyCopper.
 
 ## Steps
-1. A real, throwaway scratch benchmark (`crates/engine-core/tests/
-   scratch_tick_all_bench.rs`, written, run, then deleted -- never
-   committed, mirroring M34 Phase 1's own identical "scratch, not
-   permanent" methodology): three scenarios --
-   - 2000-node idle tree (every 5th node opted into `InteractionState`,
-     a real clickable-row proportion, nothing actively animating):
-     ~32µs/call.
-   - The identical scene with 1% of nodes carrying a real, live
-     `opacity` animation: ~31-45µs/call across repeated runs (within
-     normal noise of the idle case) -- confirms `Animated::tick`'s own
-     per-field early return already makes the *animation* work cheap;
-     the real cost is the per-node walk itself, largely independent of
-     how much is actually animating.
-   - A 10x-scale sanity check (20,000 nodes, an unrealistic single-
-     screen count for this catalog): ~1.09ms/call -- confirms linear
-     scaling (no hidden quadratic blowup), still only ~6.5% of a
-     16.67ms/frame budget even there.
-2. Real, honest conclusion: the numbers do not justify building the
-   active-set mechanism. At this catalog's own realistic node counts,
-   `tick_all`'s real cost is under 0.3% of frame budget -- an even
-   smaller real cost than M34 Phase 1's own "modest, not dramatic"
-   tessellation-caching win. A new `active: HashSet<NodeId>` (touching
-   every animation-starting call site with a new "never forget to
-   update it" correctness invariant) would trade real, ongoing
-   maintenance risk for an imperceptible per-frame saving.
-3. No production code changed -- this phase's own real deliverable is
-   the investigation and its documented, measured conclusion, matching
-   this whole project's own "measured, not assumed" discipline: a
-   benchmark validly concluding "no action needed" is a complete
-   result, not a placeholder for future work.
-4. `BUILD_TRACKER.md` Phase 5 flipped to done with the full real
-   measurement writeup; milestone status line flipped to "✅ Complete
-   — all 5 phases done"; Top Metrics row to 100%; a new "Just closed"
-   trailer added for M39's own closure, above the pre-existing M38
-   one. Artifact regenerated (39/127/218, unchanged) and republished.
+1. Real winit investigation: confirmed via direct source read (`winit
+   = "0.30.13"`) that `Resized` is the only public cross-platform
+   resize-related `WindowEvent` -- no enter/exit-live-resize signal
+   exists anywhere in the public API, resolving the scoping note's own
+   open question (frame-count-based coalescing is the only portable
+   option).
+2. **Real, load-bearing correction made before writing any production
+   code:** built a throwaway `wgpu`+`winit` scratch probe, run against
+   this session's own real KWin/Wayland compositor, screenshotted via
+   `spectacle`. Configured a surface at 2x a fixed window's own size,
+   painted a marker filling a known fraction of the oversized buffer.
+   **Real result: the marker appeared at native, unscaled size, cropped
+   to the window's own top-left corner -- not scaled down.** This
+   compositor does not scale an oversized buffer to fit by default; it
+   crops to the surface's own declared window geometry. Both TRE v1 and
+   pyCopper's own real, working versions of the coarse-bucket technique
+   depend on `wp_viewporter`-level scaling support to avoid exactly this
+   -- the same fork this milestone's own scoping had already deferred.
+   The originally-scoped design (port both projects' bucket-and-settle
+   mechanism) would have shipped a real, visibly broken crop.
+3. A second scratch probe measured this machine's own real
+   `surface.configure()` cost: ~600µs-1ms/call (AMD Radeon 890M, RADV/
+   Vulkan, 100 real reconfigures) -- modest enough that no bucketing is
+   needed to fix the real root cause.
+4. **Real, corrected design:** `InputEvent::Resized`'s handler (`app.
+   rs`) no longer calls `GpuState::resize` inline -- it only updates the
+   real, live `runtime.width`/`height` `SharedSize` cells (zero added
+   lag, unchanged). New `GpuState::needs_resize(width, height) -> bool`;
+   the per-frame `RedrawRequested` closure's `take_dirty()` early-return
+   is widened to also check it (a pending resize touches no `Tree`
+   state, so `take_dirty` alone never sees it), and calls the existing
+   `resize` exactly once, right before acquiring the surface texture,
+   whenever it's true -- always at the window's true current size. Any
+   burst of `Resized` events between two real frames collapses into one
+   real reconfigure, eliminating the redundant cost with no compositor-
+   scaling assumption and no fork.
+5. Full verification chain: `cargo check`/`clippy -D warnings`/`fmt`/
+   `cargo test --workspace --release` (unchanged counts -- a pure
+   internal render-loop refactor, no new headless-testable pure-logic
+   surface), `maturin develop --release`, full `pytest tests/`
+   (including `test_resize.py`'s own 5 tests), all 77 examples, showcase
+   demo.
+6. `BUILD_TRACKER.md` both phases flipped to done with the full real
+   investigative story (the crop finding, the measured cost, the design
+   correction); milestone status/Top Metrics to Complete; a new "Just
+   closed" trailer. Artifact regenerated (40/129/220, unchanged) and
+   republished.
 
 ## Status
-Complete. **M39 -- Hardening III: Second Follow-Up Gap Sweep -- is now
-fully complete, all 5 phases done:** Code Editor Horizontal Scroll;
-Loading Indicator + Time Picker Dial; Shape-Morphed Border Inset Fix;
-Terminal Cell Text Attributes; `Tree::tick_all` Active-Set
-Optimization (this phase, concluding no code change was warranted).
-This closes the whole milestone -- the real "push after every
-milestone closes" convention now applies.
+Complete. Full verification chain green (unchanged test/pytest/example
+counts, as expected for an internal render-loop refactor with no new
+pure-logic surface). **M40 -- Smooth Window Resize -- is now complete,
+both phases.** Real, honestly-stated limit: whether this actually feels
+smoother during a genuine live OS drag can't be verified from this
+environment (no window-manipulation tool available to simulate one,
+and "feels smooth" is inherently a hands-on-the-mouse judgment) --
+left for the user to try directly against a real window (any example
+run with `app.run(max_frames=None)`).
