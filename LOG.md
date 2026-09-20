@@ -85,10 +85,24 @@
   +1/+2/+4 exactly matching the one new milestone/two new phases/four
   new steps this pass added); artifact regenerated and republished.
 
-**M41 Phase 2 is complete. Phase 1 -- triggering `wheels.yml` against
-current `main` and confirming it still passes with today's full
-dependency set -- is still in progress**: a real `workflow_dispatch`
-run was triggered (`gh workflow run wheels.yml --ref main`, run
-`35486913410`); macOS (all 5 Python versions) and `sdist` have already
-passed, Linux and the remaining Windows jobs were still running as
-this entry was written. Will update once the run finishes.
+**M41 Phase 2 is complete, and Phase 1 has since closed too:** the
+triggered `workflow_dispatch` run (`35486913410`) finished with **all
+12 jobs passing** -- Linux (the real manylinux container), macOS
+(Python 3.9-3.13), Windows (Python 3.9-3.13), and `sdist`. Real,
+decisive confirmation: the cross-platform packaging matrix M21 Phase 2
+built and verified 22 milestones ago (against the `v0.2.0` tag) still
+builds cleanly today, with the full real dependency surface added
+since -- image loading, MD3 icons, the whole M30 component catalog,
+real Terminal/PTY spawning, and several hardening passes, none of
+which broke cross-platform buildability. `BUILD_TRACKER.md` Phase 1's
+own bullet, the milestone status line, and the Top Metrics row were
+all flipped to complete together; a new "Just closed" trailer was
+added above the pre-existing M40 one. Parser re-confirmed balanced (41
+milestones, 131 phases, 224 items, unchanged from Phase 2's own edit
+-- only a status flip, no new real line items); artifact regenerated
+and republished.
+
+**M41 — Hardening IV: Documentation Drift & Dead Code — is now fully
+complete, both phases.** This closes the milestone — per the standing
+"push only after a full milestone closes" convention, a `git push` is
+now appropriate.

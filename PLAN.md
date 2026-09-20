@@ -49,8 +49,11 @@ confirmed-dead `AppHandler` trait.
 ## Status
 Complete. Full verification chain green (unchanged test/pytest/example
 counts, as expected for a pure documentation and dead-code cleanup
-pass). **M41 Phase 2 is done. Phase 1 (real cross-platform CI
-re-verification against current `main`) is still in progress -- a
-`workflow_dispatch` run was triggered (`35486913410`); macOS (all 5
-Python versions) and `sdist` have passed, Linux/Windows were still
-running as this was written.**
+pass). **M41 Phase 2 is done, and Phase 1 has since also closed: the
+triggered `workflow_dispatch` run (`35486913410`) finished with all 12
+jobs passing** (Linux manylinux, macOS × 5 Python versions, Windows ×
+5 Python versions, `sdist`) -- the real cross-platform packaging
+matrix still builds cleanly with today's full dependency set, 22
+milestones after its last confirmed-passing run. **M41 -- Hardening
+IV: Documentation Drift & Dead Code -- is now fully complete, both
+phases.**
