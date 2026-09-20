@@ -3317,9 +3317,11 @@ impl Tree {
     /// calls this. Every *mechanical* consequence (hover, focus
     /// movement, ripple-spawn-on-press, §2 Design Principle 6) happens
     /// here, inside `engine-core`; the one *meaning-dependent* outcome
-    /// (`DispatchOutcome::Activated`) is left for the caller's own
-    /// `AppHandler` impl to interpret -- `Tree` has no idea what
-    /// activating a node means, only that it happened.
+    /// (`DispatchOutcome::Activated`) is left for the caller to
+    /// interpret -- `engine-py::dispatch.rs`'s own real `call_handler`,
+    /// not a generic trait (`input.rs`'s own doc comment has the real
+    /// correction) -- `Tree` has no idea what activating a node means,
+    /// only that it happened.
     ///
     /// Ripple stays the existing single-shot press+release
     /// approximation (`InteractionState::spawn_ripple`) for this step --

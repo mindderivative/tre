@@ -7059,23 +7059,46 @@ impl PyWindow {
     /// exactly what both need, unlike pyCopper's own M3-styled paint
     /// chrome, which this codebase's `TextField` doesn't have either.
     ///
-    /// **Real, honestly-scoped v1, not a full IDE-grade editor:**
-    /// closes the one genuinely load-bearing gap (real multiline
-    /// editing: `Enter` inserts `\n`, `Home`/`End` operate per-line,
-    /// `ArrowUp`/`ArrowDown` navigate by line preserving column --
-    /// `TextFieldState.multiline`'s own doc comment, `Tree::dispatch_
-    /// text_field_key`'s own real logic). Real, stated, deliberately
-    /// deferred, not silently dropped: no syntax highlighting (pyCopper
-    /// itself treats this as optional/Pygments-based, a real
-    /// application-layer concern, not a hard engine dependency); no
-    /// line-number gutter (a real, separate compositional layer, the
-    /// same "app composes, engine provides the primitive" split
-    /// `AppShell`'s own chrome regions already establish); and no
-    /// Tab-key indentation capture (`Tab` remains generic focus
-    /// traversal engine-wide, `Tree::dispatch`'s own top-level match,
-    /// confirmed via direct read -- pyCopper's own real equivalent
-    /// needed a new dispatcher-level opt-in flag, `CAPTURES_TAB`, a
-    /// real, separate capability this step doesn't add).
+    /// **Real, honestly-scoped v1 at this step -- since substantially
+    /// widened, see M31 immediately below, not a full IDE-grade editor
+    /// even now:** closed, at this step, the one genuinely load-bearing
+    /// gap (real multiline editing: `Enter` inserts `\n`, `Home`/`End`
+    /// operate per-line, `ArrowUp`/`ArrowDown` navigate by line
+    /// preserving column -- `TextFieldState.multiline`'s own doc
+    /// comment, `Tree::dispatch_text_field_key`'s own real logic).
+    ///
+    /// **M31 (§5, §8, §10), all 6 phases: real syntax highlighting, a
+    /// real composed line-number gutter, and real Tab-key indentation
+    /// capture all closed the three real gaps this doc comment used to
+    /// name here as deliberately deferred -- corrected directly rather
+    /// than left stale, confirmed by direct re-check of the live source
+    /// before writing this correction, not assumed from the tracker
+    /// alone.** Real per-token syntax coloring: `Node.set_syntax_spans`
+    /// (`TextFieldState.syntax_spans`, app-side tokenization only --
+    /// Design Principle 6, `engine-core` never interprets the ranges
+    /// itself, the identical "no engine-bundled lexer" split pyCopper's
+    /// own optional-Pygments design already established). Real
+    /// line-number gutter: composed from existing primitives, not a
+    /// new engine capability -- an ordinary sibling `Text` node with
+    /// the editor's own identical `font_family`/`font_weight`/
+    /// `font_size` lines up with the editor's own real per-line Y
+    /// positions *by construction*, both built through the identical
+    /// real `shaped_layout` path; `examples/code_editor_gutter.py` has
+    /// the real, working, live-updating pattern to copy. Real Tab-key
+    /// indentation capture: a focused *multiline* field now claims
+    /// `Tab` before ordinary focus traversal and inserts a literal
+    /// `\t` (`Tree::dispatch_text_field_key`'s own real "first refusal"
+    /// contract, widened) -- a single-line `TextField` keeps its prior
+    /// real behavior byte-for-byte, `Tab` still moves focus there.
+    /// M31 also added real visible space/tab glyphs (`show_whitespace`,
+    /// set `true` below) and real code folding (`Node.set_folded_
+    /// ranges`) -- see each field's own doc comment for the full real
+    /// design. **Still real, stated, deliberately deferred, matching
+    /// pyCopper's own identical v1 scope for the identical reasons:**
+    /// multi-cursor editing, a minimap, bracket auto-closing/matching,
+    /// and any language-server (LSP) integration -- "an LSP client is
+    /// an *application* concern, never a widget's own hard dependency"
+    /// (`BUILD_TRACKER.md`'s own M31 closing note).
     ///
     /// **M38 Phase 7 (§5, §8): real vertical scroll+clip for content
     /// taller than the box, with real caret-follow, closes the gap

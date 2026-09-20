@@ -5,12 +5,18 @@
 //! of dependency as `taffy`/`parley`, both already here).
 //!
 //! `BindingResolver` lives in `engine-spec` instead (§16.2, the one
-//! capability only `engine-py` supplies there). `AppHandler`/
-//! `InputEvent` (§4) land here at M4 Phase 1 step 1, alongside
-//! `Tree::dispatch`/`hit_test`/`update_hover`/`move_focus` -- the real
-//! dispatch core every M3 interaction-dependent step (7, 9, 11, 12, 13,
-//! 14, 15) deferred, each exposing a direct `Tree` method instead and
-//! explicitly naming this as the eventual real wiring.
+//! capability only `engine-py` supplies there). `InputEvent` (§4) lands
+//! here at M4 Phase 1 step 1, alongside `Tree::dispatch`/`hit_test`/
+//! `update_hover`/`move_focus` -- the real dispatch core every M3
+//! interaction-dependent step (7, 9, 11, 12, 13, 14, 15) deferred, each
+//! exposing a direct `Tree` method instead and explicitly naming this
+//! as the eventual real wiring. `input.rs`'s own doc comment has the
+//! real correction: this step's original plan sketched a generic
+//! `AppHandler` trait alongside `InputEvent` for the one meaning-
+//! dependent hook `Tree::dispatch` can't resolve itself -- never
+//! actually implemented anywhere; `engine-py::dispatch.rs`'s own
+//! `HandlerMap`/`call_handler` is the real mechanism that shipped
+//! instead, so the dead trait was removed.
 
 mod access;
 mod animation;
@@ -27,9 +33,7 @@ pub use access::{AccessNodeData, AccessStates, Action, Role};
 pub use animation::{ActiveAnimation, Animated, CompletionHandle, Interpolate, MotionCurve};
 pub use canvas::{CanvasState, CustomHitTest, DrawCommand};
 pub use dock::{DockLayout, DockSide, DockZone};
-pub use input::{
-    AppHandler, DispatchOutcome, EventKind, InputEvent, Key, PointerButton, ScrollDelta,
-};
+pub use input::{DispatchOutcome, EventKind, InputEvent, Key, PointerButton, ScrollDelta};
 pub use interaction::{InteractionState, RippleState};
 pub use node::{
     CAROUSEL_DRAG_INDEX_THRESHOLD, CAROUSEL_GAP, CAROUSEL_HEIGHT, CAROUSEL_ITEM_RADIUS,

@@ -1,10 +1,22 @@
-//! §4's own generic `InputEvent` enum and `AppHandler` trait -- M4 Phase
-//! 1 step 1's real dispatch core. `engine-platform` translates raw
-//! `winit` events into `InputEvent` and calls `Tree::dispatch` (in
-//! `tree.rs`); `AppHandler` is the one remaining meaning-dependent hook
-//! `Tree::dispatch` can't resolve on its own (§2 Design Principle 6) --
-//! `engine-py` is the crate that actually implements it, since only it
-//! can map a `NodeId` back to a registered Python callback.
+//! §4's own generic `InputEvent` enum -- M4 Phase 1 step 1's real
+//! dispatch core. `engine-platform` translates raw `winit` events into
+//! `InputEvent` and calls `Tree::dispatch` (in `tree.rs`); what a real
+//! `DispatchOutcome::Activated`/`Changed` *means* (§2 Design Principle
+//! 6: meaning-dependent, not mechanical) is the one remaining hook
+//! `Tree::dispatch` can't resolve on its own.
+//!
+//! **Real correction:** this module originally sketched a generic
+//! `AppHandler` trait here for that hook (M4 Phase 1 step 1's own
+//! original plan) -- it was never actually implemented anywhere; the
+//! real mechanism that shipped instead is `engine-py::dispatch.rs`'s
+//! own `HandlerMap`/`call_handler`/`run_dispatch_outcome` (a real,
+//! per-`(NodeId, EventKind)` Python callback registry, reached directly
+//! from `App::run`'s own per-frame closure, no generic trait needed at
+//! all since only `engine-py` ever calls `Tree::dispatch` in practice).
+//! The dead trait was removed once this was confirmed via grep -- kept
+//! stated here, not silently dropped, since a stale forward-reference
+//! is exactly the kind of drift this project's own doc comments are
+//! supposed to catch, not cause.
 //!
 //! `Key` is deliberately narrow: `Tab`/`Enter`/`Space`/`Escape` only,
 //! matching §10's own stated minimal keyboard focus model exactly --
@@ -278,7 +290,9 @@ pub enum DispatchOutcome {
     /// over the same node it was pressed on, or `Enter`/`Space` while it
     /// was `Tree::focused()`. What activating a node actually *means*
     /// (call a registered `on_click`, or nothing if none is registered)
-    /// is `AppHandler`'s job, not `Tree`'s.
+    /// is `engine-py::dispatch.rs`'s own `call_handler`'s job, not
+    /// `Tree`'s -- this module's own doc comment has the full real
+    /// reason no generic trait mediates it.
     Activated(crate::NodeId),
     /// M4 Phase 7 (§11.3): the secondary-button (right-click) counterpart
     /// to `Activated` -- a secondary-button pointer click released over
@@ -303,20 +317,7 @@ pub enum DispatchOutcome {
     /// drag-tracking held this `NodeId`) -- the mechanical half of a
     /// real edit `Tree::dispatch` itself can detect, the same way
     /// `HoverChanged` already is; what a real `Change` means (call a
-    /// registered handler, or nothing) is still `AppHandler`'s job.
+    /// registered handler, or nothing) is still `call_handler`'s job
+    /// (`engine-py::dispatch.rs`), not `Tree`'s.
     Changed(crate::NodeId),
-}
-
-/// §4's own generic dependency-inversion trait: `engine-platform`'s
-/// event loop is generic over this, `engine-py` is the crate that
-/// actually implements it (it alone has GIL access and a Python
-/// callback map) -- the same shape already used for `BindingResolver`
-/// (§16.2) and the `on_complete` completion-queue mechanism (§5).
-pub trait AppHandler {
-    /// Called once per `DispatchOutcome::Activated` `Tree::dispatch`
-    /// produces. Takes no `&mut Tree` -- an activation handler that
-    /// wants to mutate the tree (start an animation, change a property)
-    /// does so through whatever handle it already holds (`engine-py`'s
-    /// own `Node`/`Rc<RefCell<Tree>>`, §9), not through this call.
-    fn on_activated(&mut self, node: crate::NodeId);
 }

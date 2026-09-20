@@ -1,133 +1,94 @@
-# LOG — M40: Smooth Window Resize (Coalesced Swapchain Reconfigure)
+# LOG — M41 Phase 2: Correct Stale Documentation
 
-- User's own explicit instruction: "Start" continuing straight from
-  M40's own scoping turn ("Yes scope window resizing, this one is
-  really important"), the user's own prior context: "TRE v1 and
-  pyCopper had some issues with window trailing behind cursor and
-  stuttering. I believe v1 ended up implementing google chrome's
-  method."
-- Real winit investigation before design: direct source read of `winit
-  = "0.30.13"`'s own public `WindowEvent` enum (`event.rs:152-438`)
-  confirmed `Resized(PhysicalSize<u32>)` is the *only* public,
-  cross-platform resize-related event -- no enter/exit-live-resize
-  signal exists anywhere (the Windows-internal `WM_ENTERSIZEMOVE`/
-  `WM_EXITSIZEMOVE` handling I'd read earlier only sets a private
-  `MARKER_IN_SIZE_MOVE` flag, never surfaced to the app). This resolved
-  the scoping note's own explicitly-left-open design question: a
-  frame-count-based mechanism is the only portable option, not a
-  platform-native "still dragging" event.
-- **Real, load-bearing correction, made before writing a single line of
-  production code -- the exact discipline this whole project has
-  applied repeatedly to *other* people's prior notes, now applied to my
-  own scoping note from one turn earlier.** The scoping section
-  committed to porting both TRE v1's and pyCopper's own real technique:
-  hold the swapchain at a coarse, oversized "bucketed" size during a
-  drag, relying on the compositor to scale it down to fit. Before
-  building that, I re-read pyCopper's own `_pin_surface` doc comment
-  more carefully (`engine.py:292-313`) and found it says "content is
-  drawn across the *whole* oversized buffer," while my own summary of
-  TRE v1's report said content was "projected at the true logical
-  size" -- two different, mutually exclusive mechanics. Rather than
-  guess which (if either) applies to TRE v2's own architecture, built a
-  real, throwaway `wgpu`+`winit` scratch probe (outside the repo
-  entirely, in the session scratchpad) and ran it against this exact
-  session's own real KWin/Wayland compositor (confirmed via `loginctl`/
-  `ps`: `XDG_CURRENT_DESKTOP=KDE`, `kwin_wayland` running -- the same
-  real compositor TRE v1's own report was grounded in). The probe: a
-  fixed 300x300 window, a wgpu surface deliberately configured at
-  600x600 (2x oversized), painting the whole buffer red except a
-  scissor-restricted 100x100 blue marker in the top-left corner (1/6 of
-  each buffer dimension). Screenshotted the real, composited result via
-  `spectacle -b -a` and read the image directly. **Real, decisive
-  result: the blue marker appeared at its own full, native 100x100
-  size within the visible window -- not shrunk to ~1/6 as the
-  scale-to-fit model would predict.** This compositor crops an
-  oversized `wl_surface` buffer to the surface's own declared window
-  geometry by default; it does not scale it. Both prior projects' own
-  real, *working* implementations of this technique needed `wp_
-  viewporter`-level explicit scaling support to get real scale-to-fit
-  behavior -- TRE v1 via a real, confirmed winit fork (`WindowExtWayland
-  ::set_viewport_source_crop`), pyCopper likely via something
-  equivalent inside its own GLFW/rendercanvas stack, neither of which
-  this milestone's own scoping had planned to build (the fork was
-  already, separately, deferred as a follow-up). Had I built the
-  originally-scoped design without this check, it would have shipped a
-  real, visibly broken crop during every drag -- worse than the
-  original bug, not a fix for it.
-- A second real scratch probe (`configure_timing.rs`, same throwaway
-  project) measured `wgpu::Surface::configure()`'s own real cost on
-  this machine's actual adapter: **AMD Radeon 890M Graphics (RADV
-  STRIX1), Vulkan backend -- ~600µs average, ~941µs max across 100 real
-  reconfigure calls**, alternating sizes each time to force a genuine
-  rebuild rather than a same-size no-op. This is neither TRE v1's own
-  300-450ms figure (a different, Wayland-specific `vkAcquireNextImageKHR`
-  compositor-blocking stall, not the `configure()` call itself) nor
-  pyCopper's own 1.35-1.88ms (a different real backend) -- a real,
-  machine-specific number, not assumed to transfer from either prior
-  project.
-- **Real, corrected design, informed by both findings:** since (a) the
-  compositor-scaling trick doesn't work here without a fork this
-  milestone already declined, and (b) the real reconfigure cost on this
-  machine is modest (sub-millisecond, not hundreds of milliseconds),
-  the simplest real fix is architectural, not a bucket/settle
-  mechanism: **reconfigure the surface at most once per real frame,
-  always at the true current size**, instead of inline on every raw
-  `Resized` event. `InputEvent::Resized`'s handler (`app.rs`) now only
-  updates the real, live `runtime.width`/`height` `SharedSize` cells
-  (unchanged -- zero added lag, still immediately visible to
-  Python-facing `PyWindow` fields per M33 Phase 2's own real sharing).
-  New `GpuState::needs_resize(width, height) -> bool`, comparing against
-  the surface's own currently-configured size. The per-frame
-  `RedrawRequested` closure's existing `take_dirty()` early-return is
-  widened to also check it -- a pending resize touches no `Tree` state
-  at all (pure GPU/window sizing), so `take_dirty` alone would never
-  see it and the frame would wrongly skip real work. The existing
-  `GpuState::resize` is now called from exactly one place: right before
-  acquiring the surface texture, once per frame, only when `needs_
-  resize` is true. Any burst of `Resized` events arriving between two
-  real frames -- exactly what a live drag produces -- now collapses
-  into a single real reconfigure at whatever the window's true size is
-  at that moment, eliminating the redundant per-event cost with zero
-  compositor-scaling assumption and no fork. This turned out simpler
-  than either prior project's own more elaborate mechanism, precisely
-  *because* this machine's own real measured cost didn't demand more.
-- Cleaned up both scratch probes (deleted, never committed, matching
-  M34/M39 Phase 5's own identical "scratch, not committed" precedent)
-  once their real findings were captured and written into the code's
-  own doc comments.
+- User's own explicit instruction: "Yes" to my recommendation (re-run
+  wheels CI against current main, then fix the two doc issues and the
+  dead-code item as one small pass), continued by "Continue hardening
+  TRE v2" when asked which direction "let's move on" should take.
+- Delegated a real, thorough Explore agent to inventory every "real,
+  stated v1 limit" still open across the whole codebase, cross-checked
+  against current source (not trusted from the tracker text alone --
+  the agent's own report explicitly re-verified each older claim
+  against later milestones before including or excluding it). **Real,
+  decisive finding: almost everything found is a deliberate,
+  already-argued scope choice** (Loading Indicator's simplified shapes,
+  Time Picker Dial's missing labels, Terminal's no-strikethrough, the
+  Wayland/Windows resize follow-ups, etc.) -- each already has a real,
+  stated reason on record. Reopening any of them would be second-
+  guessing an already-made call, not closing a real gap, so none were
+  scoped. Two genuinely real, cheap doc-hygiene bugs were found
+  instead, plus one confirmed dead-code item.
+- **`add_code_editor`'s own doc comment (`window_factory.rs`)**: re-
+  verified each of its three stale claims directly against live source
+  before touching anything -- `Node.set_syntax_spans` is real
+  (`engine-py/src/node.rs:1070`); the real line-number gutter is a
+  composed sibling-`Text`-node pattern, demonstrated in `examples/
+  code_editor_gutter.py`, lining up with the editor's own real per-
+  line Y positions *by construction* (both go through the identical
+  `shaped_layout` path); real multiline-only Tab-key indentation
+  capture is in `Tree::dispatch_text_field_key`. All three were built
+  in full at M31 (Phases 4, 1, 2 respectively) and the doc comment was
+  never corrected, even though two *later* gaps (M38/M39 scroll
+  fixes) on the same comment block DID get their own correction
+  paragraphs -- a genuine, understandable miss, not a pattern of
+  neglect. Rewrote the stale paragraph to name the real capabilities
+  and where to find their own real design; kept the genuinely still-
+  deferred items (multi-cursor, minimap, bracket matching, LSP
+  integration) stated plainly, matching pyCopper's own identical v1
+  scope for the identical reasons.
+- **The early "Known gaps" list (`BUILD_TRACKER.md`'s own pre-M6
+  section)**: cross-checked four bullets against this file's own
+  later, authoritative sections before touching anything (not assumed
+  from the agent's own report alone) -- confirmed culling and
+  `VirtualList`'s real scrollable viewport both closed at M8 (all 3
+  phases); `ItemExtent::Variable` closed at M12 Phase 1; `material-
+  colors` verification closed at M3 step 11 (129/129 tests, cross-
+  checked field-by-field); and found a genuine internal inconsistency
+  -- a drop-zone-highlight bullet still marked "Still open, stated not
+  silent" even though a *later* bullet in the very same list already
+  correctly recorded its M10 Phase 3 fix. Struck through and corrected
+  all four, matching this file's own established strikethrough-plus-
+  correction convention used throughout for every other resolved
+  bullet in the same section.
+- **`AppHandler` (`engine-core/src/input.rs`)**: re-confirmed via grep
+  immediately before deleting anything -- zero `impl`s, zero uses as a
+  trait bound, anywhere in the entire workspace. A trait sketched at M4
+  Phase 1 step 1's own original plan (a generic dependency-inversion
+  hook for `DispatchOutcome::Activated`'s own meaning-dependent
+  handling), superseded before it was ever implemented by the real
+  mechanism that actually shipped: `engine-py::dispatch.rs`'s own
+  `HandlerMap`/`call_handler`/`run_dispatch_outcome` (a concrete,
+  per-`(NodeId, EventKind)` Python callback registry, no generic trait
+  needed since only `engine-py` ever calls `Tree::dispatch` in
+  practice). Removed the trait itself, its crate-root re-export
+  (`lib.rs`), and corrected every doc comment that cited it as if it
+  were the real current mechanism: `input.rs`'s own module doc
+  (claimed "`engine-py` is the crate that actually implements it" --
+  false, it never was), the two `DispatchOutcome::Activated`/`Changed`
+  variant docs, `Tree::dispatch`'s own doc comment (`tree.rs`), and
+  `lib.rs`'s own module doc. **Real, deliberate scope boundary:** left
+  every genuinely *historical* mention of `AppHandler` untouched across
+  the codebase and `BUILD_TRACKER.md` (e.g. M4 Phase 1's own tracker
+  entry, which accurately records the trait *was* declared at that
+  step -- a true statement about the past, not something to revise)
+  -- only comments making a "this is real and current" claim about it
+  were corrected, preserving this project's own honest chronological
+  record rather than rewriting history.
 - Full verification chain, all green: `cargo check --workspace --all-
   targets`; `cargo clippy --workspace --all-targets -- -D warnings`;
   `cargo fmt` + `cargo fmt --check`; `cargo test --workspace --release`
-  (unchanged counts across every crate -- a pure internal render-loop
-  refactor with no new pure-logic surface a headless unit test could
-  exercise); `maturin develop --release` rebuilt; `pytest tests/` (581
-  passed, 1 skipped, unchanged, including `test_resize.py`'s own 5
-  tests -- confirmed these exercise the *synthetic*, `Tree::dispatch`-
-  based `Window.resize()` path, not the real winit-driven one this
-  phase touched, so their being unaffected is the expected, correct
-  outcome, not a false negative); all 77 examples + showcase demo
-  clean.
-- `BUILD_TRACKER.md`: both phases flipped to done with the full real
-  investigative story (the crop finding, the measured cost, the design
-  correction) written directly into the milestone's own top-level
-  section, not just the phase bullets; milestone status line and Top
-  Metrics row both flipped to Complete; a new "Just closed" trailer
-  added above the pre-existing M39 one. Parser re-confirmed balanced
-  (40 milestones, 129 phases, 220 items, unchanged -- only status flips
-  and prose edits, no new real line items); artifact regenerated and
-  republished.
-- **Real, honestly-stated limit, matching M33 Phase 2's own already-
-  established precedent for this exact class of capability:** whether
-  the fix actually *feels* smoother during a genuine, human-driven live
-  OS resize drag cannot be verified from this environment at all -- no
-  `xdotool`/`wmctrl`-equivalent window-manipulation tool is available
-  to simulate one programmatically, and "feels smooth" is inherently a
-  real-time, hands-on-the-mouse judgment no amount of code review or
-  scripted measurement substitutes for. Left for the user to try
-  directly against a real window (any example run with `app.run(max_
-  frames=None)` instead of a bounded frame count) and report back.
+  (unchanged counts across every crate -- pure documentation and dead-
+  code cleanup, zero behavior change); `maturin develop --release`
+  rebuilt; `pytest tests/` (581 passed, 1 skipped, unchanged); all 77
+  examples + showcase demo clean.
+- `BUILD_TRACKER.md`: Phase 2 (all three steps) flipped to done.
+  Parser confirmed balanced (41 milestones, 131 phases, 224 items,
+  +1/+2/+4 exactly matching the one new milestone/two new phases/four
+  new steps this pass added); artifact regenerated and republished.
 
-**M40 — Smooth Window Resize (Coalesced Swapchain Reconfigure) — is
-now fully complete, both phases.** This closes the milestone — per the
-standing "push only after a full milestone closes" convention, a `git
-push` is now appropriate.
+**M41 Phase 2 is complete. Phase 1 -- triggering `wheels.yml` against
+current `main` and confirming it still passes with today's full
+dependency set -- is still in progress**: a real `workflow_dispatch`
+run was triggered (`gh workflow run wheels.yml --ref main`, run
+`35486913410`); macOS (all 5 Python versions) and `sdist` have already
+passed, Linux and the remaining Windows jobs were still running as
+this entry was written. Will update once the run finishes.
