@@ -21,10 +21,22 @@
 //!   over the three real event kinds that exist today. Other declared
 //!   event names still validate but reach no real mechanism, matching
 //!   §16.2's own "generalizing to whatever named events a `NodeKind`
-//!   exposes" -- not manufactured ahead of a real need. `View` is still
-//!   never embedded into a live `winit`-driven window -- it has no
-//!   width/height/render-loop concept of its own, and giving it one
-//!   remains real, separate, larger work no confirmed gap needs yet.
+//!   exposes" -- not manufactured ahead of a real need.
+//! - **Updated, M42 Phase 1 (§4, §5, §8, §16.2, §16.4):** `View` can now
+//!   be shown in a real, live, `winit`-driven window --
+//!   `crate::window::PyWindow::from_view` shares this `View`'s own
+//!   `Rc<RefCell<Tree>>`, root, `handlers`/`context_menus`, and (new
+//!   this phase) persistent `theme`/`completions`/`width`/`height`
+//!   fields directly into a real `Window`, the same `Rc`-clone pattern
+//!   `PyWindow::wrap_node` already uses for every `Node` it hands out.
+//!   `click()`/`hover()`/`right_click()` below now lay out against the
+//!   real `Definite` size once a `View` has been shown this way (see
+//!   `available_space()`), falling back to the original `MaxContent`
+//!   behavior -- byte-for-byte unchanged -- for a `View` never shown
+//!   live. Live theme-switching, `on_complete` callbacks firing on a
+//!   View-sourced node's live render loop, and hot-reload *while shown*
+//!   remain real, separate, stated gaps -- not silently dropped, just
+//!   not this phase's own scope (see `BUILD_TRACKER.md` M42).
 //! - Binding application supports `opacity`/`corner_radius` -- the two
 //!   numeric `Animated<f64>` properties a resolved `engine_spec::
 //!   Value::Int`/`Float` maps onto directly through the existing
@@ -40,7 +52,7 @@
 //!   that works, revisit if a real case needs more" calibration this
 //!   project applies throughout.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -59,10 +71,11 @@ use taffy::prelude::{AvailableSpace, Size};
 use crate::binding::PyViewModelResolver;
 use crate::dispatch::CompletionRegistry;
 use crate::dispatch::{
-    HandlerMap, interaction_config, node_center, open_context_menu, run_dispatch_outcome,
+    HandlerMap, SharedCompletions, interaction_config, node_center, open_context_menu,
+    run_dispatch_outcome,
 };
 use crate::node::Node;
-use crate::window::ThemeState;
+use crate::window::{SharedSize, SharedTheme, ThemeState};
 
 thread_local! {
     static RECORDING: RefCell<Option<Vec<Py<PyAny>>>> = const { RefCell::new(None) };
@@ -285,8 +298,14 @@ impl TwoWayCallback {
 
 #[pyclass(unsendable)]
 pub struct View {
-    tree: Rc<RefCell<Tree>>,
-    reconciler: Reconciler,
+    /// `pub(crate)`, unlike most of this struct's other fields: M42
+    /// Phase 1's own `crate::window::PyWindow::from_view` (a different
+    /// module) needs to clone this same `Rc<RefCell<Tree>>` into a real,
+    /// live `Window` -- mirrors `PyWindow`'s own fields, all `pub
+    /// (crate)` for the identical reason (`wrap_node`'s own doc
+    /// comment).
+    pub(crate) tree: Rc<RefCell<Tree>>,
+    pub(crate) reconciler: Reconciler,
     bindings: Vec<(String, String, String)>, // (widget_id, property, raw "{{ expr }}")
     declared_handlers: Vec<(String, String, String)>, // (widget_id, event, method_name)
     /// M14 Phase 3 (§16.7): `(widget_id, property)` for every widget
@@ -298,10 +317,38 @@ pub struct View {
     /// by `(NodeId, EventKind)` at M4 Phase 6) -- shared with every
     /// `Node` this `View` hands out via `node()`, so `set_on_click`/
     /// `set_on_hover_enter`/`set_on_hover_exit` are all structurally
-    /// available on a `View`'s widgets too.
-    handlers: HandlerMap,
+    /// available on a `View`'s widgets too. `pub(crate)` for the same
+    /// `from_view` reason as `tree` above.
+    pub(crate) handlers: HandlerMap,
     /// M4 Phase 7 (§11.3): mirrors `PyWindow`'s own `context_menus`.
-    context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
+    /// `pub(crate)` for the same `from_view` reason as `tree` above.
+    pub(crate) context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
+    /// M42 Phase 1 (§4, §5, §8): a `View`'s own persistent theme,
+    /// mirroring `PyWindow`'s own `theme: SharedTheme` field exactly --
+    /// replaces the fresh, private `ThemeState::default()` instance
+    /// `node()`/`_attach()` used to build per call (never shared with
+    /// each other, and orphaned the instant each call returned). Needed
+    /// so a `View` shown live via `PyWindow::from_view` has real,
+    /// persistent theme state for the shared `Window` to read/mutate,
+    /// not throwaway instances a live render loop can never reach.
+    pub(crate) theme: SharedTheme,
+    /// M42 Phase 1 (§4, §5, §8): same real reasoning as `theme` above,
+    /// for `PyWindow`'s own `completions: SharedCompletions` --
+    /// `Node.animate(..., on_complete=...)`'s registry needs a real,
+    /// persistent instance a live `Window`'s per-frame loop can drain,
+    /// not a fresh one built and discarded per `node()`/`_attach()` call.
+    pub(crate) completions: SharedCompletions,
+    /// M42 Phase 1 (§4, §5, §8): `0` (the default) means "never shown
+    /// live" -- `available_space()` below falls back to `AvailableSpace
+    /// ::MaxContent` on both axes in that case, byte-for-byte this
+    /// struct's own pre-M42 `click()`/`hover()`/`right_click()`
+    /// behavior. `PyWindow::from_view` sets a real nonzero value (and
+    /// clones this exact `Rc<Cell<u32>>` into the new `Window` it
+    /// returns), the same shared-`Cell` pattern `PyWindow`'s own
+    /// `width`/`height` already establish (M33 Phase 2) -- a live
+    /// resize's `.set()` call is then immediately visible here too.
+    pub(crate) width: SharedSize,
+    pub(crate) height: SharedSize,
     /// M19 Phase 1 (§16.4): remembered so `poll_reload` can re-read the
     /// same file later -- `View::new` used to discard it the instant
     /// the initial read finished.
@@ -321,6 +368,34 @@ pub struct View {
     /// gets.
     stylesheet: Option<Stylesheet>,
     scheme: Option<ColorScheme>,
+}
+
+/// A plain, non-`#[pymethods]` block for a Rust-only helper, mirroring
+/// `PyWindow::wrap_node`'s own identical split (`window.rs`) -- `pyo3`
+/// exposes every fn in a `#[pymethods]` block as a Python method, so a
+/// genuinely internal helper like this one needs its own separate,
+/// ordinary `impl` block instead.
+impl View {
+    /// M42 Phase 1 (§4, §5, §8): `click()`/`hover()`/`right_click()`'s
+    /// own real layout size -- `Definite` on both axes once a real
+    /// nonzero `width`/`height` has been set (only `PyWindow::from_view`
+    /// ever does that), otherwise `MaxContent` on both, byte-for-byte
+    /// this struct's own original, pre-M42 behavior for a `View` that
+    /// has never been shown live.
+    fn available_space(&self) -> Size<AvailableSpace> {
+        let (width, height) = (self.width.get(), self.height.get());
+        if width == 0 || height == 0 {
+            Size {
+                width: AvailableSpace::MaxContent,
+                height: AvailableSpace::MaxContent,
+            }
+        } else {
+            Size {
+                width: AvailableSpace::Definite(width as f32),
+                height: AvailableSpace::Definite(height as f32),
+            }
+        }
+    }
 }
 
 #[pymethods]
@@ -411,6 +486,10 @@ impl View {
             two_way,
             handlers: Rc::new(RefCell::new(HashMap::new())),
             context_menus: Rc::new(RefCell::new(HashMap::new())),
+            theme: Rc::new(RefCell::new(ThemeState::default())),
+            completions: Rc::new(RefCell::new(CompletionRegistry::new())),
+            width: Rc::new(Cell::new(0)),
+            height: Rc::new(Cell::new(0)),
             path,
             watcher,
             stylesheet,
@@ -430,16 +509,20 @@ impl View {
             tree: self.tree.clone(),
             handlers: self.handlers.clone(),
             context_menus: self.context_menus.clone(),
-            // M7 Phase 3 (§7.1): `View` has no theme concept of its own
-            // in this phase (out of scope -- see `PLAN.md`) -- a fresh,
-            // private, always-`None` instance here means a `View`-
-            // created node's ripple/hover tint stays the same plain
-            // black default it already was, byte-for-byte.
-            theme: Rc::new(RefCell::new(ThemeState::default())),
-            // M9 Phase 2 (§5): same scope reasoning as `theme` above --
-            // a fresh, private instance, never drained through a real
-            // per-frame render loop `View` doesn't have.
-            completions: Rc::new(RefCell::new(CompletionRegistry::new())),
+            // M42 Phase 1 (§4, §5, §8): now this `View`'s own real,
+            // persistent instance -- previously a fresh, private,
+            // always-`None` `ThemeState::default()` built and discarded
+            // on every call (M7 Phase 3's own original, narrower scope).
+            // A `View` never shown live still sees byte-for-byte the
+            // same behavior (this persistent instance also starts
+            // `None`/un-themed); one shown via `PyWindow::from_view` now
+            // shares the exact instance the live `Window` itself reads.
+            theme: self.theme.clone(),
+            // M42 Phase 1 (§4, §5, §8): same real reasoning as `theme`
+            // above -- now shared with a live `Window`'s own per-frame
+            // `on_complete` drain loop instead of a fresh, never-drained
+            // instance (M9 Phase 2's own original, narrower scope).
+            completions: self.completions.clone(),
         })
     }
 
@@ -551,8 +634,10 @@ impl View {
                     tree: self.tree.clone(),
                     handlers: self.handlers.clone(),
                     context_menus: self.context_menus.clone(),
-                    theme: Rc::new(RefCell::new(ThemeState::default())),
-                    completions: Rc::new(RefCell::new(CompletionRegistry::new())),
+                    // M42 Phase 1: shared, persistent instances now --
+                    // see `node()`'s own identical comment above.
+                    theme: self.theme.clone(),
+                    completions: self.completions.clone(),
                 };
                 // Reuses `Node`'s own real setters verbatim (same
                 // construction `apply_binding_value` already uses for
@@ -686,28 +771,24 @@ impl View {
 
     /// M4 Phase 4 (§16.2): the same no-live-window-needed proof pattern
     /// `Window.click` (M4 Phase 1 step 3) already established, adapted
-    /// for a `View`'s own shape -- `View` has no window width/height of
-    /// its own (it's never embedded into a `PyWindow`, see this module's
-    /// own doc comment), so layout is computed with `AvailableSpace::
-    /// MaxContent` on both axes rather than a fixed size. Every existing
-    /// `view.yaml` already declares an explicit `style.width`/`style.
-    /// height` on its root widget (see `tests/test_view_binding.py`), so
-    /// this sizes correctly rather than needing a workaround. Computes
-    /// layout, finds `node`'s real center, and dispatches a primary
-    /// press+release pair there -- exactly what a real mouse click would
-    /// produce, proving a handler `_attach` wired (above) actually
-    /// fires, not just that it validated.
+    /// for a `View`'s own shape -- a `View` never shown live has no
+    /// window width/height of its own, so layout is computed with
+    /// `AvailableSpace::MaxContent` on both axes rather than a fixed
+    /// size (`available_space()`, below). Every existing `view.yaml`
+    /// already declares an explicit `style.width`/`style.height` on its
+    /// root widget (see `tests/test_view_binding.py`), so this sizes
+    /// correctly rather than needing a workaround. **Updated, M42 Phase
+    /// 1:** once a `View` has been shown via `PyWindow::from_view`,
+    /// `available_space()` instead returns the real, live `Definite`
+    /// size -- matching what the on-screen window actually paints, not
+    /// an unconstrained hypothetical layout. Computes layout, finds
+    /// `node`'s real center, and dispatches a primary press+release pair
+    /// there -- exactly what a real mouse click would produce, proving a
+    /// handler `_attach` wired (above) actually fires, not just that it
+    /// validated.
     fn click(&mut self, node: PyRef<'_, Node>, py: Python<'_>) {
         let root = self.reconciler.root();
-        let point = node_center(
-            &self.tree,
-            root,
-            Size {
-                width: AvailableSpace::MaxContent,
-                height: AvailableSpace::MaxContent,
-            },
-            node.id,
-        );
+        let point = node_center(&self.tree, root, self.available_space(), node.id);
 
         let now = std::time::Instant::now();
         let config = interaction_config();
@@ -745,15 +826,7 @@ impl View {
     /// `handlers` map `_attach` wires into (above).
     fn hover(&mut self, node: PyRef<'_, Node>, py: Python<'_>) {
         let root = self.reconciler.root();
-        let point = node_center(
-            &self.tree,
-            root,
-            Size {
-                width: AvailableSpace::MaxContent,
-                height: AvailableSpace::MaxContent,
-            },
-            node.id,
-        );
+        let point = node_center(&self.tree, root, self.available_space(), node.id);
 
         let outcome = self.tree.borrow_mut().dispatch(
             root,
@@ -768,15 +841,7 @@ impl View {
     /// counterpart, mirroring `Window.right_click` exactly.
     fn right_click(&mut self, node: PyRef<'_, Node>, py: Python<'_>) {
         let root = self.reconciler.root();
-        let point = node_center(
-            &self.tree,
-            root,
-            Size {
-                width: AvailableSpace::MaxContent,
-                height: AvailableSpace::MaxContent,
-            },
-            node.id,
-        );
+        let point = node_center(&self.tree, root, self.available_space(), node.id);
 
         let now = std::time::Instant::now();
         let config = interaction_config();
@@ -815,5 +880,113 @@ impl View {
 
     fn __clear__(&mut self) {
         self.handlers.borrow_mut().clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Same real "genuinely fresh file per run" pattern `engine-spec::
+    /// watch::tests::watcher_detects_a_real_write_to_the_watched_file`
+    /// already established -- `View::new` reads a real path from disk,
+    /// so these tests need one, not an in-memory fixture.
+    fn write_temp_view(yaml: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "engine_py_view_test_{}_{}.yaml",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, yaml).expect("create test view file");
+        path
+    }
+
+    /// M42 Phase 1's own real, new behavior: `View::new` is a
+    /// `#[pymethods]` constructor but takes no `Python<'_>` and touches
+    /// no `Py<PyAny>` internally (its body only builds a `Tree` and
+    /// plain Rust bookkeeping) -- callable directly here with no GIL, no
+    /// `pyo3::prepare_freethreaded_python()`, matching this crate's own
+    /// established real test-surface split: pyo3-facing *Python* API
+    /// behavior is covered by `tests/*.py` (needs a real interpreter),
+    /// while plain-Rust logic reachable without the GIL -- like
+    /// `available_space()`'s own new branch, below -- gets a real Rust
+    /// unit test the same as any other crate in this workspace.
+    #[test]
+    fn a_view_never_shown_live_still_lays_out_with_max_content() {
+        let path = write_temp_view("id: root\nkind: Container\nstyle: {width: 40, height: 20}\n");
+        let view =
+            View::new(path.to_string_lossy().into_owned(), None, None, false).expect("real View");
+
+        assert_eq!(
+            view.available_space(),
+            Size {
+                width: AvailableSpace::MaxContent,
+                height: AvailableSpace::MaxContent,
+            },
+            "a View PyWindow::from_view has never touched must keep its original, pre-M42 \
+             MaxContent layout behavior byte-for-byte"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The exact real mutation `PyWindow::from_view` performs on a
+    /// `View` (`view.width.set(width); view.height.set(height);`,
+    /// `window.rs`) -- proven directly here since `from_view` itself is
+    /// a `#[pymethods]` staticmethod whose generated pyo3 wrapper needs
+    /// a live Python interpreter to call through, but the real,
+    /// load-bearing logic this phase adds (`available_space()`'s own
+    /// branch) needs none of that to verify.
+    #[test]
+    fn setting_a_real_size_switches_available_space_to_definite() {
+        let path = write_temp_view("id: root\nkind: Container\nstyle: {width: 40, height: 20}\n");
+        let view =
+            View::new(path.to_string_lossy().into_owned(), None, None, false).expect("real View");
+
+        view.width.set(300);
+        view.height.set(150);
+
+        assert_eq!(
+            view.available_space(),
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(150.0),
+            },
+            "once a real nonzero size is set (what from_view does), layout must switch to the \
+             real Definite size a live window actually paints at, not stay unconstrained"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A real, load-bearing edge case `available_space()`'s own `||`
+    /// branch condition depends on: only one axis ever getting set
+    /// (impossible through `from_view`'s own real call site, which
+    /// always sets both together, but not structurally impossible for
+    /// some future caller) must still fall back to MaxContent on *both*
+    /// axes rather than mixing a Definite width with a MaxContent
+    /// height -- taffy has no real "mixed" `AvailableSpace` convention
+    /// this codebase relies on anywhere else.
+    #[test]
+    fn only_one_axis_set_still_falls_back_to_max_content_on_both() {
+        let path = write_temp_view("id: root\nkind: Container\nstyle: {width: 40, height: 20}\n");
+        let view =
+            View::new(path.to_string_lossy().into_owned(), None, None, false).expect("real View");
+
+        view.width.set(300);
+        // height left at its real default, 0.
+
+        assert_eq!(
+            view.available_space(),
+            Size {
+                width: AvailableSpace::MaxContent,
+                height: AvailableSpace::MaxContent,
+            }
+        );
+
+        let _ = std::fs::remove_file(&path);
     }
 }

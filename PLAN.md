@@ -1,59 +1,74 @@
-# PLAN — M41 Phase 2: Correct Stale Documentation
+# PLAN — M42 Phase 1: Show a Single `View` Live
 
 ## Goal
-Close two real, cheap doc-hygiene bugs found by a dedicated v1-limits
-inventory: `add_code_editor`'s doc comment still claimed three real
-capabilities (syntax highlighting, line-number gutter, Tab-key
-indentation) as deliberately deferred, even though all three were
-built in full at M31; the early "Known gaps" list has several
-un-struck-through bullets closed by later milestones. Also: remove the
-confirmed-dead `AppHandler` trait.
+Wire `View` (the declarative YAML + `ViewModel` layer, §16.2) into a
+real, on-screen `Window` for the first time -- every existing
+`View`-using example is headless. Part 1 of the user's approved
+Tesserae bootstrap plan (`/home/phil/.claude/plans/reflective-sleeping-falcon.md`).
 
 ## Steps
-1. Verified each of the three `add_code_editor` claims directly against
-   live source before touching the doc comment: `Node.set_syntax_spans`
-   (real, `engine-py/src/node.rs:1070`); the real composed-gutter
-   pattern (`examples/code_editor_gutter.py`, `engine-render/src/
-   text.rs`'s own gutter-alignment test); real multiline-only `Tab`
-   capture (`Tree::dispatch_text_field_key`). Rewrote the stale
-   paragraph to name the real M31 phases that built each, kept the
-   still-real deferred items (multi-cursor/minimap/bracket-matching/
-   LSP) stated plainly.
-2. Cross-checked four "Known gaps" bullets against this file's own
-   later, authoritative sections before touching anything: culling/
-   `VirtualList` scrolling (M8, all 3 phases), `ItemExtent::Variable`
-   (M12 Phase 1), `material-colors` verification (M3 step 11), and a
-   drop-zone-highlight bullet genuinely inconsistent with a later
-   bullet in the same list that already recorded the M10 Phase 3 fix.
-   Struck through and corrected all four.
-3. Re-confirmed via grep immediately before deleting: `AppHandler`
-   (`engine-core/src/input.rs`) has zero `impl`s and zero uses as a
-   trait bound anywhere in the workspace -- a trait sketched at M4
-   Phase 1 step 1's own original plan, superseded by the real
-   `engine-py::dispatch.rs`'s `HandlerMap`/`call_handler` mechanism
-   that actually shipped. Removed the trait, its crate-root re-export,
-   and corrected every doc comment that cited it as the real current
-   mechanism (`input.rs`'s own module doc, two `DispatchOutcome`
-   variant docs, `Tree::dispatch`'s own doc, `lib.rs`'s own module
-   doc) -- each now names the real mechanism instead. Deliberately left
-   every *historical* mention of `AppHandler` untouched (e.g. M4 Phase
-   1's own tracker entry, which accurately records it was declared at
-   that step) -- only "still true today" claims were corrected.
-4. Full verification chain: `cargo check`/`clippy -D warnings`/`fmt`/
-   `cargo test --workspace --release` (unchanged counts -- pure doc/
-   dead-code cleanup, no behavior change), `maturin develop --release`,
-   full `pytest tests/`, all 77 examples, showcase demo.
-5. `BUILD_TRACKER.md` Phase 2 (both steps... three steps) flipped to
-   done. Artifact regenerated (41/131/224) and republished.
+1. Investigated `view.rs`'s own current shape before touching anything:
+   `node()`/`_attach()`'s handler-wiring each built a fresh, private
+   `ThemeState::default()`/`CompletionRegistry::new()` per call
+   (`view.rs:438-442, 554-555` before this phase); `click()`/`hover()`/
+   `right_click()` laid out with a hardcoded `AvailableSpace::
+   MaxContent` on both axes.
+2. Read `App::run`'s own setup step (`app.rs:383-402`) directly before
+   designing the new entry point -- **real, scope-narrowing finding:**
+   `WindowSetup` is already built generically from any `PyWindow`
+   instance's `pub(crate)` fields, with zero assumption about how that
+   `PyWindow` was constructed. This means a `PyWindow`-constructing
+   entry point needs no changes anywhere in `app.rs`/`WindowRuntime` to
+   work with the existing `App.add_window()`/`App.run()` path.
+3. Gave `View` persistent `pub(crate) theme: SharedTheme`/
+   `completions: SharedCompletions`/`width`/`height: SharedSize` fields
+   (matching `PyWindow`'s own shape exactly), initialized once in
+   `View::new`. `node()`/`_attach()` now clone these shared instances
+   instead of building fresh ones.
+4. Added a new, non-`#[pymethods]` `available_space()` helper (a
+   separate plain `impl View` block, mirroring `PyWindow::wrap_node`'s
+   own identical split so it isn't accidentally exposed as a Python
+   method) -- `MaxContent` on both axes while `width`/`height` are `0`
+   (the real default, "never shown live"), `Definite` once a real size
+   has been set. `click()`/`hover()`/`right_click()` now call it instead
+   of a hardcoded literal.
+5. Added `PyWindow::from_view(view: &View, width=480, height=200,
+   title="tre v2") -> PyWindow`, a `#[staticmethod]` on `Window`
+   (`window.rs`) -- sets `view.width`/`height`, then clones `view.tree`,
+   `view.reconciler.root()`, `handlers`, `context_menus`, `theme`,
+   `completions`, and the just-set `width`/`height` cells directly into
+   the new `Window`'s own fields. `dock`/`materializers`/`canvas_draws`/
+   `terminals` start fresh-empty -- confirmed safe: `engine-spec`'s YAML
+   builder has no `Terminal`/`VirtualList`/`Canvas` case.
+6. New Rust unit tests directly in `view.rs` (`#[cfg(test)] mod tests`)
+   proving `available_space()`'s three real branches -- constructed via
+   `View::new()` called directly with no GIL/interpreter, since its body
+   never touches `Python<'_>`/`Py<PyAny>` (confirmed by reading it before
+   writing the tests) -- the same real "plain-Rust logic gets a Rust
+   test" split this crate has always implicitly followed (zero prior
+   `Python::with_gil` usage anywhere in `engine-py`'s own test surface).
+7. New pytest tests (`tests/test_view_in_window.py`): a click dispatched
+   through the *Window* (not the View) reaches a handler `View._attach`
+   wired -- the real, decisive proof of shared tree/root/handlers;
+   `view.click()` still works standalone post-`from_view`; a `Signal`
+   write still reaches the live tree; two independent `View`s get
+   independent, non-cross-wired size cells. No test calls `App.run()`
+   -- a second real `App().run()` in the same pytest process has broken
+   an unrelated test before (`test_tracing.py`'s own subprocess
+   convention is the established workaround, not needed for the
+   run-loop-free coverage this phase needed).
+8. New example `examples/live_view.py` + `live_view.yaml`: a real
+   `Signal`-bound counter, five real dispatched clicks against the
+   live-shown `View`, an asserted real text-binding repaint, then a
+   genuine 30-frame `App.run()` -- the one real, full end-to-end proof.
+9. `.pyi` stub updated: `Window.from_view` added, `View`'s own class
+   docstring updated to mention it.
 
 ## Status
-Complete. Full verification chain green (unchanged test/pytest/example
-counts, as expected for a pure documentation and dead-code cleanup
-pass). **M41 Phase 2 is done, and Phase 1 has since also closed: the
-triggered `workflow_dispatch` run (`35486913410`) finished with all 12
-jobs passing** (Linux manylinux, macOS × 5 Python versions, Windows ×
-5 Python versions, `sdist`) -- the real cross-platform packaging
-matrix still builds cleanly with today's full dependency set, 22
-milestones after its last confirmed-passing run. **M41 -- Hardening
-IV: Documentation Drift & Dead Code -- is now fully complete, both
-phases.**
+Complete. Full verification chain green: `cargo check`/`clippy -D
+warnings`/`fmt`, `cargo test --workspace --release` (+3, all else
+unchanged), `maturin develop --release`, `pytest tests/` (586 passed,
++5, 1 skipped unchanged), all 78 examples (+1, `live_view.py`), showcase
+demo. **M42 Phase 1 -- Show a Single `View` Live -- is complete.** Phase
+2 (a shared, swappable `(Tree, root)` cell letting a live window switch
+which `View` it shows without closing/reopening) remains open.

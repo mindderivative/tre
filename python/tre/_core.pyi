@@ -243,6 +243,22 @@ class Window:
     """
 
     def __init__(self, width: int = 480, height: int = 200, title: str = "tre v2") -> None: ...
+    @staticmethod
+    def from_view(view: View, width: int = 480, height: int = 200, title: str = "tre v2") -> Window:
+        """M42 Phase 1: shows a `View` (a declarative `view.yaml` +
+        `ViewModel`, headless until now) in a real, live, on-screen
+        window -- shares `view`'s own node tree directly rather than
+        building a second, separate one, so a `Signal` write that
+        re-evaluates a binding (`view.rs`'s own `_attach`) repaints this
+        same window on the very next frame. `add_window`/`App.run()`
+        work with the result exactly like any other `Window`.
+
+        A real, live resize of the returned `Window` is immediately
+        visible back on `view` itself -- `view.click(node)`/`view.hover
+        (node)`, called again after this, lay out against the window's
+        *current* real size, not the size passed here.
+        """
+        ...
     def set_theme(self, seed: tuple[int, int, int, int], dark: bool = False) -> None:
         """Builds a real MD3 `DynamicTheme` from `seed` and makes it
         this window's active theme, re-theming every already-created
@@ -1504,6 +1520,10 @@ class View:
     Rust-side crossing point. Pair with a Python `ViewModel` subclass
     (`tre.ViewModel`), not used directly for imperative node creation
     the way `Window` is.
+
+    Works headless (no `Window` needed) via `click`/`hover`/`right_click`
+    below, or shown live via `Window.from_view(view)` -- see `Window`'s
+    own doc comment.
     """
 
     def __init__(

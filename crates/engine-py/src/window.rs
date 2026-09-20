@@ -19,6 +19,7 @@ use crate::dispatch::{CompletionRegistry, HandlerMap, SharedCompletions};
 use crate::dock::{self, SharedDockState};
 use crate::node::Node;
 use crate::terminal::TerminalSession;
+use crate::view::View;
 
 const PADDING: f32 = 16.0;
 const GAP: f32 = 16.0;
@@ -311,6 +312,59 @@ impl PyWindow {
             dock: Rc::new(RefCell::new(dock::DockState::new())),
             theme: Rc::new(RefCell::new(ThemeState::default())),
             completions: Rc::new(RefCell::new(CompletionRegistry::new())),
+            terminals: Rc::new(RefCell::new(HashMap::new())),
+        }
+    }
+
+    /// M42 Phase 1 (§4, §5, §8, §16.2, §16.4): the real, first entry
+    /// point wiring `View`'s own declarative layer into a live,
+    /// `winit`-driven window -- shares `view`'s own `Rc<RefCell<Tree>>`,
+    /// root, `handlers`/`context_menus`, and (M42 Phase 1's own new
+    /// fields) `theme`/`completions` directly into a new `Window`, the
+    /// identical `Rc`-clone pattern `wrap_node` already uses for every
+    /// `Node` a `Window` hands out -- not a second, parallel tree.
+    ///
+    /// **Real, load-bearing consequence, not obvious from the signature
+    /// alone:** `view.width`/`view.height` become the *same* shared
+    /// `Rc<Cell<u32>>` this new `Window`'s own `width`/`height` fields
+    /// hold (mirroring `SharedSize`'s own established M33 Phase 2
+    /// pattern) -- a real live resize (`App::run`'s own `on_input`
+    /// closure, `app.rs`) writes through this one shared cell, so
+    /// `view.click()`/`view.hover()`, called again after the window is
+    /// shown, see the window's true current size immediately, not a
+    /// stale value captured at `from_view` time.
+    ///
+    /// `dock`/`materializers`/`canvas_draws`/`terminals` default-empty,
+    /// confirmed safe: `engine-spec`'s own YAML builder (`Reconciler::
+    /// load`, which built `view`'s tree) has no `Terminal`/`VirtualList`/
+    /// `Canvas` case, so a View-built tree can never contain a `NodeKind`
+    /// that would need any of them populated.
+    ///
+    /// **Requires no changes to `App::run`/`WindowSetup`/`WindowRuntime`
+    /// (`app.rs`):** confirmed by reading `App::run`'s own setup step --
+    /// it already builds a `WindowSetup` generically from any `PyWindow`
+    /// instance's `pub(crate)` fields, with no assumption a `PyWindow`
+    /// was ever constructed via `PyWindow::new`. A `Window` built this
+    /// way works with the existing `App.add_window()`/`App.run()` path
+    /// completely unmodified.
+    #[staticmethod]
+    #[pyo3(signature = (view, width=480, height=200, title="tre v2"))]
+    fn from_view(view: PyRef<'_, View>, width: u32, height: u32, title: &str) -> PyWindow {
+        view.width.set(width);
+        view.height.set(height);
+        Self {
+            tree: view.tree.clone(),
+            root: view.reconciler.root(),
+            title: title.to_string(),
+            width: view.width.clone(),
+            height: view.height.clone(),
+            materializers: RefCell::new(HashMap::new()),
+            canvas_draws: RefCell::new(HashMap::new()),
+            handlers: view.handlers.clone(),
+            context_menus: view.context_menus.clone(),
+            dock: Rc::new(RefCell::new(dock::DockState::new())),
+            theme: view.theme.clone(),
+            completions: view.completions.clone(),
             terminals: Rc::new(RefCell::new(HashMap::new())),
         }
     }
