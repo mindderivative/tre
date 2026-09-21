@@ -46,5 +46,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Component>()?;
     m.add_class::<CanvasContext>()?;
     m.add_function(wrap_pyfunction!(view::_record_read, m)?)?;
+    m.add_function(wrap_pyfunction!(view::_begin_recording, m)?)?;
+    m.add_function(wrap_pyfunction!(view::_end_recording, m)?)?;
     Ok(())
 }

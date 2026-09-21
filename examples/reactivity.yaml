@@ -1,0 +1,13 @@
+id: root
+kind: Container
+style: {flex_direction: Column, width: 260, height: 140, gap: 12, padding: 16}
+children:
+  - id: total_label
+    kind: Text
+    text: {content: "Total: $0", font_family: Roboto, font_size: 20}
+    style: {width: 220, height: 32, background: "#FFFFFF00"}
+    bindings: {text: "{{ total_label.get() }}"}
+  - id: bump_button
+    kind: Rect
+    style: {width: 140, height: 40, background: "#6750A4", corner_radius: 8}
+    handlers: {on_click: "bump_both"}

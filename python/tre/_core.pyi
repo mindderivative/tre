@@ -34,7 +34,7 @@ object exists yet) and discards whatever it returns.
 
 from __future__ import annotations
 
-from typing import Callable, Sequence
+from typing import Any, Callable, Sequence
 
 Color = tuple[int, int, int, int]
 """An MD3 `(r, g, b, a)` byte tuple, 0-255 per channel."""
@@ -1641,5 +1641,21 @@ def _record_read(signal: object) -> None:
     the current binding evaluation's dependency list while one is
     genuinely in progress (`View._attach`); a no-op otherwise. Not part
     of the public API.
+    """
+    ...
+
+def _begin_recording() -> None:
+    """Internal -- pushes a fresh recording frame. `Computed`/`Effect`/
+    `untrack` (`tre.__init__`) pair this with `_end_recording` to open a
+    dependency-tracking scope around their own callable, the same real
+    mechanism `View._attach` already uses for `{{ }}` bindings. Not part
+    of the public API.
+    """
+    ...
+
+def _end_recording() -> list[Any]:
+    """Internal -- pops the current recording frame and returns every
+    distinct object `_record_read` saw while it was on top (by identity,
+    in first-read order). Not part of the public API.
     """
     ...

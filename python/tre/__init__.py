@@ -26,9 +26,31 @@ in progress -- appends `self` to that evaluation's dependency list.
 Outside of an active `_attach()` call, `_record_read` is a no-op, so a
 plain `signal.get()` in ordinary Python code costs one cheap call and
 nothing else.
+
+M45 (§16.2): `Computed`/`Effect`/`batch`/`untrack` are the richer
+reactivity layer built on top of `Signal`'s own dependency-recording
+primitive -- `_core._begin_recording`/`_end_recording` (the Rust-side
+stack `_record_read` pushes onto) are the *same* mechanism `View.
+_attach` already uses for `{{ }}` bindings, exposed here so pure-Python
+code can open its own tracked evaluation scope the identical way. Both
+`Computed` and `Effect` duck-type against `Signal`'s own `_subscribe`/
+`_unsubscribe` shape -- `View._attach`'s own real subscribe call site
+(`signal.call_method1("_subscribe", ...)`) never type-checks its
+target, so a `{{ }}` binding can point straight at a `Computed.get()`
+value with zero Rust changes.
 """
 
-from tre._core import App, CanvasContext, Component, Node, View, Window, _record_read
+from tre._core import (
+    App,
+    CanvasContext,
+    Component,
+    Node,
+    View,
+    Window,
+    _begin_recording,
+    _end_recording,
+    _record_read,
+)
 
 #: M32 Phase 1 (§5, §8, §10): the real bundled monospace face
 #: `Window.add_terminal`/`add_code_editor` themselves always shape
@@ -38,6 +60,105 @@ from tre._core import App, CanvasContext, Component, Node, View, Window, _record
 #: real editor grid can match its exact real font_family rather than
 #: guessing or drifting out of sync with it.
 MONOSPACE_FONT_FAMILY = "Hack Nerd Font Mono"
+
+# M45 (§16.2): module-global, not `threading.local()` -- this engine's
+# whole render/event/dispatch loop runs on one thread (confirmed by
+# reading `engine-py::app.rs`'s real per-frame closures: nothing here
+# spawns a Python-visible thread), so a plain module-level counter/list
+# is the correct, simplest real choice, not a corner cut.
+_batch_depth = 0
+_pending_notifications = []
+
+
+def _schedule_notify(signal_like):
+    """Every `Signal`/`Computed` write-completion routes through this,
+    instead of calling `._notify()` directly -- outside an active
+    `batch()`, behaves exactly as before (fires immediately); inside
+    one, defers into `_pending_notifications` instead. Since nothing
+    calls `batch()` unless an app opts in, `_batch_depth` stays `0` for
+    every pre-M45 code path, making this a true no-op refactor of
+    `Signal`'s own prior direct-`._notify()` behavior.
+    """
+    if _batch_depth > 0:
+        _pending_notifications.append(signal_like)
+    else:
+        signal_like._notify()
+
+
+def batch(fn):
+    """Runs `fn()` with every `Signal`/`Computed` write inside it
+    deferred until `fn` returns, then fires each affected *subscriber
+    callback* exactly once -- not once per individual `.set()`/
+    `.update()` call, and not once per Signal it happens to depend on.
+    A `Computed` that depends on two Signals both written inside one
+    `batch()` recomputes exactly once, with no `Computed`-specific
+    batching code anywhere: its own recompute is just a normal
+    subscriber callback on its dependencies, so deferring *their*
+    notification already defers it too.
+
+    **Real bug caught by actually running this, not by inspection:** an
+    earlier version deduplicated by *Signal*, then called each pending
+    Signal's own `._notify()` -- which still invoked a callback
+    subscribed to *multiple* pending Signals once per Signal (e.g. a
+    `Computed` depending on both `x` and `y`, both written in the same
+    batch, recomputed twice). Deduplication has to happen at the
+    *callback* level instead: bound methods compare/hash by identity of
+    `(__self__, __func__)`, not by the specific bound-method object a
+    given access creates (confirmed directly: `obj.method == obj.method`
+    is `True` even though `obj.method is obj.method` is `False`), so a
+    plain `set()` of callbacks already dedupes correctly across
+    different Signals' own subscriber lists.
+
+    Nested `batch()` calls only flush once the *outermost* one returns
+    (a plain depth counter, not a real stack -- nothing here needs
+    per-level data). Pending notifications are flushed in a `finally`,
+    so they still fire even if `fn` raises -- the exception itself still
+    propagates normally, `batch` never swallows it.
+    """
+    global _batch_depth
+    _batch_depth += 1
+    try:
+        return fn()
+    finally:
+        _batch_depth -= 1
+        if _batch_depth == 0:
+            pending, _pending_notifications[:] = _pending_notifications[:], []
+            seen_signals = set()
+            invoked_callbacks = set()
+            for signal_like in pending:
+                if id(signal_like) in seen_signals:
+                    continue
+                seen_signals.add(id(signal_like))
+                # A snapshot, not a live iteration over `signal_like.
+                # _subscribers` -- real bug caught by actually running
+                # `examples/reactivity.py`: a `Computed` subscriber's
+                # own recompute unsubscribes-then-resubscribes itself
+                # on this very list while being invoked, which silently
+                # skipped/duplicated callbacks mid-loop. See `Signal.
+                # _notify`'s own matching fix and comment below.
+                for callback in list(signal_like._subscribers):
+                    if callback in invoked_callbacks:
+                        continue
+                    invoked_callbacks.add(callback)
+                    callback()
+
+
+def untrack(fn):
+    """Runs `fn()` without its own `Signal.get()`/`Computed.get()` reads
+    being captured by whatever outer `Computed`/`Effect`/binding
+    recording scope is currently active, if any. Needs no dedicated
+    Rust-side primitive: opening and immediately closing a fresh
+    recording frame around `fn()` and discarding what it collected
+    already hides those reads from the *outer* frame beneath it on the
+    stack (`_record_read` only ever touches the top one) -- exactly
+    `untrack`'s contract, reusing `_begin_recording`/`_end_recording`
+    verbatim.
+    """
+    _begin_recording()
+    try:
+        return fn()
+    finally:
+        _end_recording()  # discarded on purpose -- that's the whole point
 
 
 class Signal:
@@ -75,7 +196,7 @@ class Signal:
         if value == self._value:
             return
         self._value = value
-        self._notify()
+        _schedule_notify(self)
 
     def update(self, fn):
         """Sets this signal's value to `fn(current_value)`, then
@@ -88,7 +209,7 @@ class Signal:
         if new_value == self._value:
             return
         self._value = new_value
-        self._notify()
+        _schedule_notify(self)
 
     def _subscribe(self, callback):
         """Called from Rust (`View._attach`) -- registers a binding's
@@ -118,8 +239,126 @@ class Signal:
             pass
 
     def _notify(self):
-        for callback in self._subscribers:
+        # A snapshot, not a live iteration -- see `Computed._notify`'s
+        # own matching fix for the real, concrete bug this closes (a
+        # subscriber that unsubscribes/resubscribes itself from *this*
+        # list during its own execution, which a `Computed` downstream
+        # of a `Signal` does on every recompute).
+        for callback in list(self._subscribers):
             callback()
+
+
+_UNSET = object()
+
+
+class Computed:
+    """A derived, cached reactive value (§16.2, M45): `fn` is run once
+    inside a real recording scope (`_begin_recording`/`_end_recording`,
+    the same mechanism `View._attach` uses for `{{ }}` bindings) to
+    discover its own real dependencies, subscribes to each, and only
+    re-runs `fn` -- then only renotifies its own downstream subscribers
+    -- when one of them actually changes, mirroring `Signal.set`'s own
+    "skip notify if the value is unchanged" rule.
+
+    Duck-types `Signal`'s own `.get()`/`_subscribe`/`_unsubscribe`
+    shape exactly, so a `{{ }}` binding (or another `Computed`, or an
+    `Effect`) can depend on one with zero special-casing anywhere:
+
+        total = Computed(lambda: price.get() * quantity.get())
+        total.get()  # recomputes only when price or quantity changes
+
+    Real, deliberate scope limit: dependencies are re-subscribed in
+    full on every recompute (unsubscribe every old one, subscribe every
+    new one) rather than diffed -- the real dependency lists this is
+    for are small (a handful of Signals), so the simpler unconditional
+    approach is correct, not a corner cut.
+    """
+
+    def __init__(self, fn):
+        self._fn = fn
+        self._dependencies = []
+        self._subscribers = []
+        self._value = _UNSET
+        self._recompute()
+
+    def get(self):
+        _record_read(self)
+        return self._value
+
+    def _recompute(self):
+        for dependency in self._dependencies:
+            dependency._unsubscribe(self._recompute)
+        _begin_recording()
+        try:
+            new_value = self._fn()
+        finally:
+            self._dependencies = _end_recording()
+        for dependency in self._dependencies:
+            dependency._subscribe(self._recompute)
+        if new_value != self._value:
+            self._value = new_value
+            _schedule_notify(self)
+
+    def _subscribe(self, callback):
+        self._subscribers.append(callback)
+
+    def _unsubscribe(self, callback):
+        try:
+            self._subscribers.remove(callback)
+        except ValueError:
+            pass
+
+    def _notify(self):
+        # A snapshot, not a live iteration -- the real bug this closes,
+        # caught by actually running `examples/reactivity.py`, not by
+        # inspection: a `Computed`-of-`Computed` chain (`total_label`
+        # depending on `total`) means the *first* subscriber invoked
+        # here can itself unsubscribe-then-resubscribe from *this very
+        # list* as part of its own `_recompute()` -- mutating `self.
+        # _subscribers` while this `for` loop is still walking its old
+        # positions silently skipped the next real subscriber (`Effect.
+        # _run`) and re-invoked the mutating one a second time instead.
+        for callback in list(self._subscribers):
+            callback()
+
+
+class Effect:
+    """Runs `fn` once immediately, then again every time one of the
+    Signals/Computeds it actually read last time changes (§16.2, M45) --
+    the same real dependency-recording `Computed` uses, minus the cache:
+    `Effect` has no `.get()`/downstream subscribers of its own, it's for
+    side effects only (logging, a non-visual derived computation, a
+    callback into other systems).
+
+        Effect(lambda: print(f"count is now {count.get()}"))
+
+    `dispose()` unsubscribes from every currently-tracked dependency and
+    stops future reruns -- call it when whatever owns this `Effect` goes
+    away. Named `dispose`, not `remove()`: `Component.remove()`'s own
+    name is specific to tearing down a live `Tree` subtree, which an
+    `Effect` never has.
+    """
+
+    def __init__(self, fn):
+        self._fn = fn
+        self._dependencies = []
+        self._run()
+
+    def _run(self):
+        for dependency in self._dependencies:
+            dependency._unsubscribe(self._run)
+        _begin_recording()
+        try:
+            self._fn()
+        finally:
+            self._dependencies = _end_recording()
+        for dependency in self._dependencies:
+            dependency._subscribe(self._run)
+
+    def dispose(self):
+        for dependency in self._dependencies:
+            dependency._unsubscribe(self._run)
+        self._dependencies = []
 
 
 class ViewModel:

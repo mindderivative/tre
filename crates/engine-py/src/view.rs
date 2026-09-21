@@ -78,18 +78,40 @@ use crate::node::Node;
 use crate::window::{SharedSize, SharedTheme, ThemeState};
 
 thread_local! {
-    static RECORDING: RefCell<Option<Vec<Py<PyAny>>>> = const { RefCell::new(None) };
+    /// M45 (§16.2): a real *stack* of recording frames, not a single
+    /// flat slot -- `_begin_recording`/`_end_recording` push/pop a
+    /// frame each, and `_record_read` only ever touches the top one.
+    /// **Real, load-bearing correctness fix, not a hypothetical
+    /// hardening:** the binding grammar (`engine_spec::binding::
+    /// Expression::Call`) already permits a zero-arg method call with
+    /// real side effects -- `{{ vm.trigger().get() }}` could call a
+    /// method that does `some_signal.set(...)`, firing `_notify()`
+    /// *synchronously* while the outer binding's own recording scope is
+    /// still open. Before this fix (a flat `Option<Vec<...>>`), any
+    /// subscriber that opened its *own* nested recording scope from
+    /// inside that `_notify()` call -- exactly what M45's own `Computed`
+    /// /`Effect` do -- would silently destroy the outer scope's already-
+    /// recorded dependencies (the inner `end_recording` cleared the
+    /// whole slot to `None`), permanently losing that binding's own
+    /// reactivity with no error at all. Unreachable before M45 (nothing
+    /// previously opened a nested recording scope), but `Computed`/
+    /// `Effect`'s own eager re-tracking is exactly the mechanism that
+    /// would first make it reachable, so this is fixed as a real
+    /// prerequisite here, not deferred.
+    static RECORDING: RefCell<Vec<Vec<Py<PyAny>>>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Called from Python's `Signal.get()` on every read. If a binding
-/// evaluation is currently recording (see `begin_recording`/
-/// `end_recording`), records this signal as one of its dependencies --
-/// by object identity, deduplicated, since one binding can legitimately
-/// read the same `Signal` more than once in a single evaluation.
+/// evaluation is currently recording (see `_begin_recording`/`_end_
+/// recording`), records this signal as one of its dependencies -- by
+/// object identity, deduplicated, since one binding can legitimately
+/// read the same `Signal` more than once in a single evaluation. Only
+/// ever touches the *top* frame of the stack -- a nested recording
+/// scope (M45's `Computed`/`Effect`) never disturbs an outer one.
 #[pyfunction]
 pub(crate) fn _record_read(py: Python<'_>, signal: Py<PyAny>) {
     RECORDING.with(|cell| {
-        if let Some(list) = cell.borrow_mut().as_mut() {
+        if let Some(list) = cell.borrow_mut().last_mut() {
             let already_present = list.iter().any(|s| s.bind(py).is(signal.bind(py)));
             if !already_present {
                 list.push(signal);
@@ -98,12 +120,29 @@ pub(crate) fn _record_read(py: Python<'_>, signal: Py<PyAny>) {
     });
 }
 
-fn begin_recording() {
-    RECORDING.with(|cell| *cell.borrow_mut() = Some(Vec::new()));
+/// M45 (§16.2): `pub(crate)` + `#[pyfunction]`, not private -- `Computed`
+/// /`Effect`/`untrack` (`python/tre/__init__.py`) need to open/close a
+/// recording scope around their own `fn` the same way a YAML binding's
+/// evaluation already does via `attach_bindings_and_handlers` (which
+/// calls this directly, not just through the Python wrapper -- a
+/// `#[pyfunction]`-annotated fn stays a normal, directly-callable Rust
+/// item under its own name, the same pattern already proven safe by
+/// this file's own `_record_read`, called only from Python, and this
+/// pair, called from both sides).
+#[pyfunction]
+pub(crate) fn _begin_recording() {
+    RECORDING.with(|cell| cell.borrow_mut().push(Vec::new()));
 }
 
-fn end_recording() -> Vec<Py<PyAny>> {
-    RECORDING.with(|cell| cell.borrow_mut().take().unwrap_or_default())
+/// The `_begin_recording` counterpart -- pops the top frame and returns
+/// it. **`untrack(fn)` (Python) needs no third primitive:** calling this
+/// pair around `fn()` and discarding the returned list already hides
+/// `fn`'s own reads from whatever frame is beneath it on the stack,
+/// since `_record_read` only ever touches the top -- exactly `untrack`'s
+/// contract, for free.
+#[pyfunction]
+pub(crate) fn _end_recording() -> Vec<Py<PyAny>> {
+    RECORDING.with(|cell| cell.borrow_mut().pop().unwrap_or_default())
 }
 
 /// Real review finding: `apply_binding_value` and `TwoWayCallback::
@@ -507,9 +546,9 @@ pub(crate) fn attach_bindings_and_handlers(
         })?;
         let resolver = PyViewModelResolver::new(viewmodel.clone_ref(py));
 
-        begin_recording();
+        _begin_recording();
         let evaluated = evaluate(&expr, &resolver);
-        let touched = end_recording();
+        let touched = _end_recording();
         let value = evaluated.map_err(|e| {
             PyValueError::new_err(format!(
                 "widget {widget_id:?} binding on {property:?} ({raw_expr:?}): {e}"
