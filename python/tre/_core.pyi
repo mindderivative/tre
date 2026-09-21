@@ -1627,6 +1627,41 @@ class View:
         possible). Returns whether a reload actually happened.
         """
         ...
+    def set_theme(
+        self,
+        default_theme: str | None = None,
+        custom_theme: str | None = None,
+        theme_seed: tuple[int, int, int, int] | None = None,
+        dark: bool = False,
+    ) -> None:
+        """M51: live re-theme. Re-resolves `default_theme`/`custom_theme`/
+        `theme_seed`/`dark` exactly like `__init__` does, then walks
+        every already-built node in this `View`'s tree and recomputes
+        its `PaintProperties`/`layout_style` from its own YAML spec
+        against the new theme layers, overwriting in place -- the same
+        real "recompute and overwrite" step `poll_reload` already runs
+        on content changes, just unconditional (spec unchanged, only
+        the theme differs) rather than skipped for unchanged nodes.
+        `NodeId`/children/focus are preserved; a widget's own inline
+        `style:` still wins over any theme layer, exactly like at
+        construction time.
+
+        Real, deliberate convention, matching `Window.set_theme`'s own
+        precedent: each call is a complete, fresh theme selection --
+        omitting `default_theme`/`custom_theme` resets to the engine's
+        shipped default / no custom override, *not* "keep whatever the
+        previous call used." A `poll_reload()` called after this
+        continues resolving against the theme this call installed.
+
+        Real, named limit, not silently glossed over: only the static
+        style cascade is recomputed -- a `{{ }}` binding's own
+        currently-applied value is not re-run, so a bound field reverts
+        to its spec's own static value (same as any content-only
+        `poll_reload` already does today). `View` has no imperative
+        factories, so `Window.set_theme`'s own `components:` shape/
+        elevation section has nothing to apply to here.
+        """
+        ...
     def instantiate(self, path: str, into: Node) -> Component:
         """M43 Phase 1: embeds another view's own YAML as a real,
         independent `Component` -- its own bindings/handlers, ready for

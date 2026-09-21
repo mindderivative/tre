@@ -24,7 +24,7 @@ import time
 
 import pytest
 
-from tre import View, Window
+from tre import Signal, View, ViewModel, Window
 
 
 def write_yaml(tmp_path, name, content):
@@ -675,3 +675,157 @@ def test_unthemed_navigation_and_misc_preserve_every_real_default_value(tmp_path
     graph = window.add_node_graph(width=400.0, height=300.0)
     node = window.add_graph_node(graph=graph, label="hi", x=0.0, y=0.0, width=120.0, height=80.0)
     assert node.get("corner_radius") == pytest.approx(12.0)
+
+
+# --- M51: View.set_theme (live re-theme) --------------------------------
+
+
+def test_view_set_theme_custom_theme_changes_an_already_built_node_live(tmp_path):
+    view_path = write_yaml(
+        tmp_path,
+        "view.yaml",
+        'id: root\nkind: Checkbox\nstyle: {width: 20, height: 20, background: "#112233"}\n',
+    )
+    view = View(view_path)
+    node = view.node("root")
+    assert node.get("corner_radius") == pytest.approx(2.0), "the shipped default, before retheme"
+
+    custom_theme_path = write_yaml(
+        tmp_path, "custom_theme.yaml", "styles:\n  - kind: Checkbox\n    style: {corner_radius: 16}\n"
+    )
+    view.set_theme(custom_theme=custom_theme_path)
+    assert node.get("corner_radius") == pytest.approx(16.0), "the exact same Node object, re-themed live"
+
+
+def test_view_set_theme_with_no_args_resets_to_the_shipped_default(tmp_path):
+    view_path = write_yaml(
+        tmp_path,
+        "view.yaml",
+        'id: root\nkind: Checkbox\nstyle: {width: 20, height: 20, background: "#112233"}\n',
+    )
+    custom_theme_path = write_yaml(
+        tmp_path, "custom_theme.yaml", "styles:\n  - kind: Checkbox\n    style: {corner_radius: 16}\n"
+    )
+    view = View(view_path, custom_theme=custom_theme_path)
+    node = view.node("root")
+    assert node.get("corner_radius") == pytest.approx(16.0)
+
+    view.set_theme()
+    assert node.get("corner_radius") == pytest.approx(2.0), (
+        "each set_theme call is a complete, fresh selection -- omitting custom_theme "
+        "must reset to the shipped default, not silently keep the previous override"
+    )
+
+
+def test_view_set_theme_leaves_a_widgets_own_inline_style_untouched(tmp_path):
+    view_path = write_yaml(
+        tmp_path,
+        "view.yaml",
+        'id: root\nkind: Checkbox\nstyle: {width: 20, height: 20, background: "#112233", corner_radius: 99}\n',
+    )
+    custom_theme_path = write_yaml(
+        tmp_path, "custom_theme.yaml", "styles:\n  - kind: Checkbox\n    style: {corner_radius: 16}\n"
+    )
+    view = View(view_path)
+    node = view.node("root")
+    view.set_theme(custom_theme=custom_theme_path)
+    assert node.get("corner_radius") == pytest.approx(99.0), "inline style must still win over the new theme"
+
+
+def test_view_set_theme_changes_a_declarative_color_token_without_raising(tmp_path):
+    view_path = write_yaml(
+        tmp_path, "view.yaml", "id: root\nkind: Rect\nstyle: {width: 20, height: 20, background: primary}\n"
+    )
+    view = View(view_path, theme_seed=(0x67, 0x50, 0xA4, 0xFF))
+    # Must not raise -- background has no Python-facing getter (the
+    # same honest limit every other color-touching test in this suite
+    # already states), so re-resolving the "primary" token against a
+    # new seed is proven by not raising, through the real Node the
+    # view already returned before this call.
+    view.set_theme(theme_seed=(0x00, 0xFF, 0x00, 0xFF))
+
+
+def test_view_set_theme_node_ids_survive_a_retheme(tmp_path):
+    view_path = write_yaml(
+        tmp_path,
+        "view.yaml",
+        'id: root\nkind: Checkbox\nstyle: {width: 20, height: 20, background: "#112233"}\n',
+    )
+    custom_theme_path = write_yaml(
+        tmp_path, "custom_theme.yaml", "styles:\n  - kind: Checkbox\n    style: {corner_radius: 16}\n"
+    )
+    view = View(view_path)
+    node_before = view.node("root")
+    view.set_theme(custom_theme=custom_theme_path)
+    node_after = view.node("root")
+    # Same real corner_radius readback on a fresh lookup, and the
+    # originally-held Node object still reads the live value too --
+    # both prove the node was patched in place, not removed/rebuilt.
+    assert node_before.get("corner_radius") == pytest.approx(16.0)
+    assert node_after.get("corner_radius") == pytest.approx(16.0)
+
+
+def test_view_set_theme_survives_a_later_poll_reload(tmp_path):
+    view_path = write_yaml(
+        tmp_path,
+        "view.yaml",
+        'id: root\nkind: Checkbox\nstyle: {width: 20, height: 20, background: "#112233"}\n',
+    )
+    custom_theme_path = write_yaml(
+        tmp_path, "custom_theme.yaml", "styles:\n  - kind: Checkbox\n    style: {corner_radius: 16}\n"
+    )
+    view = View(view_path)
+    view.set_theme(custom_theme=custom_theme_path)
+    node = view.node("root")
+    assert node.get("corner_radius") == pytest.approx(16.0)
+
+    # A real, unrelated content edit -- poll_reload must keep resolving
+    # against the theme set_theme just installed, not silently revert
+    # to whatever View.__init__ originally used.
+    write_yaml(
+        tmp_path,
+        "view.yaml",
+        'id: root\nkind: Checkbox\nstyle: {width: 30, height: 20, background: "#112233"}\n',
+    )
+    assert poll_until_changed(view), "expected a real file-watcher change within the timeout"
+    assert node.get("corner_radius") == pytest.approx(16.0)
+
+
+def test_view_set_theme_a_bound_property_reverts_to_its_static_value_sanely(tmp_path):
+    # Real, verified finding, not assumed: `patch_node` only recomputes
+    # the *static* style cascade -- the identical, pre-existing behavior
+    # any content-only `poll_reload()` already has today, not a new
+    # interaction `set_theme` introduces. A bound field's last-applied
+    # value does NOT survive a retheme -- it reverts to the node's own
+    # static spec value (here `opacity: 1.0`), same as a real content
+    # hot-reload would produce. This is the milestone's own named scope
+    # limit (bindings are not re-applied by `set_theme`), proven here as
+    # "reverts sanely to a real value," not "crashes" or "goes stale
+    # garbage."
+    view_path = write_yaml(
+        tmp_path,
+        "view.yaml",
+        'id: root\nkind: Rect\nstyle: {width: 20, height: 20, background: "#112233", opacity: 1.0}\n'
+        'bindings: {opacity: "{{ level.get() }}"}\n',
+    )
+    custom_theme_path = write_yaml(
+        tmp_path, "custom_theme.yaml", "styles:\n  - kind: Rect\n    style: {corner_radius: 5}\n"
+    )
+    view = View(view_path)
+
+    class VM(ViewModel):
+        def __init__(self, view):
+            self.level = Signal(0.4)
+            super().__init__(view)
+
+    vm = VM(view)
+    node = view.node("root")
+    assert node.get("opacity") == pytest.approx(0.4), "the binding's own initial value applied"
+
+    view.set_theme(custom_theme=custom_theme_path)
+
+    assert node.get("corner_radius") == pytest.approx(5.0), "the new theme layer applied"
+    assert node.get("opacity") == pytest.approx(1.0), (
+        "retheme recomputes only the static cascade -- the bound value reverts "
+        "to the spec's own static opacity, exactly like a content hot-reload would"
+    )

@@ -34,6 +34,13 @@ reaches a real imperative component's own corner radius/elevation too:
   `ThemeState::shape`/`elevation`'s 2-tier lookup, reached through the
   identical `custom_theme` parameter M49 already built (no new Python
   API needed for M50 at all).
+- M51: after the window is already showing, `view.set_theme(custom_
+  theme=...)` swaps in a *second* custom theme live -- `theme_checkbox`
+  (which has no stylesheet rule or inline override of its own) picks up
+  the new theme's `corner_radius: 18` on the exact same, already-built
+  `Node`, while `stylesheet_checkbox`/`inline_checkbox` are unaffected
+  (the app's own stylesheet and each widget's own inline style still
+  win, exactly like at construction time).
 
 `Node.get` only returns `f64`, so `corner_radius`/`elevation` (real
 numbers) are asserted directly below; there is still no Python-facing
@@ -88,6 +95,15 @@ print(
     f"components: override verified: corner_radius={button.get('corner_radius')!r}, "
     f"elevation={button.get('elevation')!r}"
 )
+
+# M51: live re-theme -- swap in a second custom theme on the already-
+# built view, on the already-shown window, without rebuilding anything.
+retheme_path = str(directory / "theme_customization_retheme.yaml")
+view.set_theme(theme_seed=(0x67, 0x50, 0xA4, 0xFF), custom_theme=retheme_path)
+assert theme_checkbox.get("corner_radius") == 18.0, "expected the new custom theme's own live override"
+assert stylesheet_checkbox.get("corner_radius") == 6.0, "the app's own stylesheet still wins"
+assert inline_checkbox.get("corner_radius") == 12.0, "the widget's own inline style still wins"
+print(f"live re-theme verified: theme_checkbox={theme_checkbox.get('corner_radius')!r}")
 
 app = App()
 app.add_window(window)

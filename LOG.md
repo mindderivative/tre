@@ -1,111 +1,111 @@
-# LOG — M50: Theme-Driven Shape & Elevation for the Imperative MD3 Catalog
+# LOG — M51: Live Re-Theme for the Declarative Surface (`View.set_theme`)
 
-- User: "Scope the corner-radius/elevation to use the new theme
-  pattern. I would like the theme backend complete before re-theming
-  everything else" -- an explicit reprioritization ahead of M51/live
-  re-theme, which M49's own writeup had originally scoped as next.
-- Entered Plan Mode. Dispatched an Explore agent for an exhaustive,
-  component-by-component audit of all 56 `add_*` factories in
-  `window_factory.rs` (7,581 lines) before designing anything.
-  Findings: 28 of 56 have a real, themeable corner radius; 14 of those
-  28 also have real elevation; the other 28 have neither (custom-
-  painted `NodeKind`s or deliberately flat/square MD3 rows). Only
-  `add_fab` (size) and `add_toolbar` (docked/floating) genuinely pick
-  between multiple corner-radius values by variant. Two factories
-  (`add_split_button`, `add_button_group`) have a second, distinct
-  "tightened" hover/press shape concept.
-- Implementation (5 phases, approved plan):
-  - Phase 1: `ThemeSpec.components`/`ComponentOverride`
-    (`engine-spec/src/theme.rs`) -- a separate namespace from
-    `styles:`. `ThemeState.components`/`shape()`/`elevation()`
-    (`engine-py/src/window.rs`) -- a real 2-tier, per-field lookup.
-    **Real bug caught by a dedicated unit test before any factory used
-    it, not by inspection:** an early draft checked "does a variant
-    entry exist at all" before falling through to the bare key, which
-    would let a variant entry setting only `elevation` incorrectly
-    block the bare key's own `corner_radius`. Fixed to look up each
-    field independently.
-  - Phase 2: wired `add_button`, `add_icon_button`, `add_fab`,
-    `add_extended_fab`, `add_segmented_button`, `add_toolbar`,
-    `add_split_button`, `add_button_group`. `resolve_button_colors`
-    gained a `component: &str` param so different real callers
-    (`"button"` vs `"icon_button"`) get their own elevation key even
-    though they share the same color-resolution logic. **A real,
-    load-bearing bug caught and fixed before it shipped:**
-    `add_split_button`/`add_button_group`'s own hover/press shape-morph
-    code recomputed `height / 2.0` as a fresh, independent literal,
-    completely bypassing whatever `add_button` itself had just resolved
-    for `paint.corner_radius` -- a themed button's own painted *shape*
-    would have silently disagreed with its own `corner_radius` field.
-    Fixed by resolving the override once and reusing the identical
-    value for both.
-  - Phase 3: wired `add_chip`, `add_card`, `add_tooltip`, `add_dialog`,
-    `add_snackbar`, `add_popover`, `add_side_sheet`,
-    `add_navigation_drawer`, `add_search_bar`, `add_search_view`.
-    **A real test-authoring mistake caught by running the tests:** an
-    initial test asserted `add_dialog`'s own return value carried the
-    themed values directly, but `add_dialog` returns the scrim (always
-    `0.0`), not the themed panel, one of its children, never returned
-    to Python -- fixed to a "does not raise" test.
-  - Phase 4: wired the final 10 -- `add_badge`, `add_navigation_rail`,
-    `add_top_app_bar`, `add_tabs`, `add_date_picker_day`,
-    `add_time_input_field`, `add_period_selector`, `add_spin_box`,
-    `add_pagination`, `add_graph_node`.
-  - Phase 5: populated the shipped `default_theme.yaml`'s new
-    `components:` section. **A real correctness constraint identified
-    and honored before writing any values, not glossed over:** only
-    components whose real default is a *fixed* value (not a formula
-    over a caller-supplied dimension like `height`/`size`) could safely
-    be included -- `add_button`/`add_icon_button`/`add_segmented_button`
-    /`add_toolbar`/`add_button_group`'s own tightened shape were
-    deliberately given no entry at all, since a fixed number would
-    silently override their real "scales with the caller's own
-    dimension" behavior. **A real completeness gap found and closed
-    while populating the file, not originally scoped:** `Window.
-    set_theme` had no way to auto-load any default theme at all --
-    meaning the newly-populated `components:` section would have been
-    dead data for the whole imperative catalog. Fixed by giving
-    `Window.set_theme` its own `default_theme` parameter, mirroring
-    `View.__new__`'s identical convention, deliberately scoped to
-    `components:` only (never `colors:`/`seed:`, which stay fully
-    served by the required `seed` argument plus `custom_theme`).
-- A shared design principle applied consistently throughout: a factory
-  that only *coincidentally* reuses another's Rust `const` today
-  (`add_search_view`/`DIALOG_CORNER_RADIUS`, `add_time_input_field`/
-  `add_period_selector`/`add_spin_box`/`CHIP_CORNER_RADIUS`,
-  `add_graph_node`/`CARD_CORNER_RADIUS`, `add_navigation_drawer`/
-  `SIDE_SHEET_CORNER_RADIUS`) still gets its own distinct theme key --
-  while sub-elements that are *structurally* the same real component
-  (`add_top_app_bar`/`add_spin_box`'s own icon buttons) deliberately
-  reuse `"icon_button"` rather than inventing a redundant key.
-- `python/tre/_core.pyi` updated (`Window.set_theme`'s widened
-  signature/docstring, `View.__init__`'s docstring noting `components:`
-  is unused there). Extended `examples/theme_customization.py` + its
-  own custom-theme fixture with a real `components:` entry, asserted
-  directly on a real `add_button` node.
-- `BUILD_TRACKER.md`: new M50 milestone section (5 phases, 9 steps),
-  Top Metrics row, "Just closed" prepended, "Up next" renumbered to
-  M51 (live re-theme, deferred by the user's own explicit
-  reprioritization). Regenerated cleanly on the first attempt.
-- Full chain green at every phase boundary: `cargo check`/`clippy -D
-  warnings`/`fmt` clean, `cargo test --workspace --release`
-  (`engine-py` 20 up from 11 +9, `engine-spec` 63 up from 60 +3, every
-  other suite unchanged -- no `engine-core`/`engine-render` logic
-  touched at all), `maturin develop --release`, `pytest tests/` (702
-  passed, up from 663, +39, 1 skipped unchanged), all 84 examples (one
-  extended), showcase demo -- re-run in full after every phase,
-  including after populating the shipped defaults, to confirm zero
-  behavior change for every pre-existing example/test. Tracker
-  generator: 50 milestones/149 phases/258 items/2 known gaps/19 fixed
-  gaps. Artifact republished to the existing URL.
+- User: "Scope M51" -- following M50's own writeup renumbering this as
+  the next roadmap item once color (M49) and shape/elevation (M50)
+  overrides both reached the whole real MD3 catalog. Entered Plan Mode
+  before implementing.
+- Real investigation, not assumed: re-read `Reconciler`
+  (`engine-spec/src/reconcile.rs`) and `patch_node`
+  (`engine-spec/src/build.rs`) directly. `Reconciler` already retains
+  the full parsed `WidgetSpec` (`self.spec`) and every widget `id`'s
+  `NodeId` (`self.ids`) for a `View`'s entire lifetime, purely to
+  support hot-reload. `patch_node` already does exactly "recompute this
+  node's `PaintProperties`/`layout_style` from its spec + the active
+  theme layers, overwrite in place, leave `id`/`parent`/`children`/
+  `access`/`interaction` untouched" -- the entire mechanism a live
+  re-theme needs for one node, already built and tested. `reconcile_
+  node` only *skips* `patch_node` when the spec is unchanged (a real
+  fast path for the common hot-reload case) -- live re-theme is the
+  opposite: spec always unchanged, theme changed, so `patch_node`
+  needed to run unconditionally instead. This turned what could have
+  been a large new subsystem into a small, well-bounded addition.
+- Explicitly investigated and deliberately not attempted, named in the
+  plan, not silently skipped: live re-theme for `Window`'s own
+  imperative catalog. `Window.add_button`/etc. retain no spec at all
+  once built -- nothing remembers "this node's container color came
+  from resolving 'primary' against variant 'filled'" -- so there is
+  nothing analogous to `patch_node` to unconditionally re-run. A real
+  fix needs a new per-node theme-derivation tracking mechanism, the
+  same "live token-linkage" concept flagged as the highest-risk/
+  highest-value piece of the whole customization request since the
+  very first investigation in this session, long before M49 existed.
+  `Window.set_theme`'s own existing narrow 4-field color re-tint
+  (`Tree::set_all_interaction_tints`/`set_all_component_tints`) is
+  unchanged by this milestone.
+- Implementation (single phase, approved plan):
+  - `resolve_theme_layers` (`engine-py/src/view.rs`): `View::new`'s own
+    inline ~35-line theme-resolution block factored into a shared
+    private helper once `View.set_theme` needed the identical logic --
+    the same "two real call sites justify factoring out" precedent
+    `resolve_button_colors`/`fill_scrollbar_thumb` already established.
+    `View::new` itself confirmed behavior-identical by the full
+    pre-existing `test_theme.py` suite re-passing unmodified.
+  - `Reconciler::retheme` (`engine-spec/src/reconcile.rs`): walks
+    `self.spec` via a new private `retheme_node` recursive helper
+    (mirroring `record_ids`'s own walk shape), calling `patch_node`
+    unconditionally for every node -- no `node_props_equal` check, since
+    the spec is guaranteed unchanged. `&self`, not `&mut self` -- reads
+    `self.spec`/`self.ids`, only mutates the passed-in `Tree`. Zero
+    changes to `patch_node`/`build_tree` themselves. 2 new unit tests
+    passed on the first run.
+  - `View.set_theme` (`engine-py/src/view.rs`): calls `resolve_theme_
+    layers` then `self.reconciler.retheme(...)`, then updates
+    `self.default_theme`/`self.custom_theme`/`self.scheme` so a later
+    `poll_reload()` continues using the new theme. **Deliberate
+    convention, matching `Window.set_theme`'s own already-shipped
+    precedent, not invented fresh here:** each call is a complete,
+    fresh theme selection -- omitting `default_theme`/`custom_theme`
+    resets to the shipped default, not "keep whatever the previous
+    call used."
+- A manual Python smoke test (`python3 -c "..."`) run before writing
+  formal pytest coverage proved all four core behaviors on the first
+  try: shipped default before retheme, override after `set_theme
+  (custom_theme=...)`, reset after `set_theme()` with no args, inline
+  style still winning after a retheme.
+- **A real, verified-not-assumed finding while writing formal pytest
+  coverage, caught by actually running the test, not by inspection:** a
+  `{{ }}`-bound property does *not* survive a `retheme()` call --
+  `patch_node` only recomputes the static style cascade (the identical,
+  pre-existing behavior any content-only `poll_reload` already has
+  today, not a new limitation this milestone introduces), so a bound
+  field reverts to its spec's own static value. The first draft of this
+  test asserted the bound value survived; running it showed it reverts
+  to the static default instead -- fixed the test to assert the real,
+  correct, honest outcome ("reverts sanely to a real value," not
+  "crashes" or "goes stale"), matching the plan's own named scope limit.
+- `python/tre/_core.pyi` updated with a `View.set_theme` stub, matching
+  `Window.set_theme`'s own doc-comment conventions. Extended `examples/
+  theme_customization.py` + a new `theme_customization_retheme.yaml`
+  fixture: after the window is already showing, `view.set_theme
+  (custom_theme=...)` swaps in a second custom theme live, and
+  `theme_checkbox` picks up the new value on the exact same, already-
+  built node, while `stylesheet_checkbox`/`inline_checkbox` are
+  unaffected.
+- `BUILD_TRACKER.md`: new M51 milestone section (single phase, 4
+  steps), Top Metrics row, "Just closed" prepended, "Up next" updated
+  to state nothing is formally scoped yet (M51 closes the declarative-
+  surface theme roadmap; live re-theme for `Window`'s imperative
+  catalog remains the one named, still-unscoped follow-up). Regenerated
+  cleanly on the first attempt.
+- Full chain green: `cargo check`/`clippy -D warnings`/`fmt` clean,
+  `cargo test --workspace --release` (`engine-spec` 65, up from 63, +2;
+  every other Rust suite unchanged -- no `engine-core`/`engine-render`/
+  `engine-md3` logic touched at all), `maturin develop --release`,
+  `pytest tests/` (709 passed, up from 702, +7, 1 skipped unchanged),
+  all 84 examples (one extended, zero new files, zero failures),
+  showcase demo. Tracker generator: 51 milestones/150 phases/262
+  items/2 known gaps/19 fixed gaps. Artifact republished to the
+  existing URL.
 
 ## Status
 
-**M50 -- Theme-Driven Shape & Elevation for the Imperative MD3 Catalog
--- is now fully complete, all 5 phases.** Completes the theme backend
-across the entire real MD3 catalog -- both color (M49) and now shape/
-elevation (M50) reach every themeable component through the same real
-`custom_theme`/`default_theme` parameters. M51 (live re-theme) is next
-per the user's own stated ordering, still needing its own dedicated
-plan-mode pass. Per the standing "push after a full milestone closes"
-convention, a `git push` is now appropriate.
+**M51 -- Live Re-Theme for the Declarative Surface -- is now fully
+complete, single phase.** Completes the "theme as a YAML file" roadmap
+for the declarative `View` surface end to end: construction-time
+resolution (M49/M50) plus genuine live re-resolution (M51), all through
+the same `default_theme`/`custom_theme`/`theme_seed` parameters. Live
+re-theme for `Window`'s own imperative catalog remains explicitly out
+of scope, not yet formally scoped -- the "live token-linkage" mechanism
+it would need is real, separate, large follow-up work. Per the standing
+"push after a full milestone closes" convention, a `git push` is now
+appropriate.

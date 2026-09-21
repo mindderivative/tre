@@ -73,6 +73,40 @@ impl Reconciler {
         self.root
     }
 
+    /// M51: re-resolves *every* node's `PaintProperties`/`layout_style`
+    /// against a new set of theme layers -- the real, live-re-theme
+    /// counterpart to `reconcile` above, for the case where the spec
+    /// itself hasn't changed at all (a theme change, not a content
+    /// change), so there's nothing to diff. Calls `patch_node`
+    /// unconditionally for every node in `self.spec`, skipping
+    /// `reconcile`'s own `node_props_equal` fast path entirely -- that
+    /// check exists to avoid needless work when *most* nodes are
+    /// unchanged across a content reload; here, by definition, *no*
+    /// node's spec changed, only the theme layers being resolved
+    /// against it, so every node's own static cascade genuinely needs
+    /// re-running. `&self`, not `&mut self` -- only reads `self.spec`/
+    /// `self.ids`, mutates only the passed-in `tree`.
+    pub fn retheme(
+        &self,
+        tree: &mut Tree,
+        default_theme: Option<&Stylesheet>,
+        custom_theme: Option<&Stylesheet>,
+        sheet: Option<&Stylesheet>,
+        scheme: Option<&ColorScheme>,
+        base_dir: Option<&Path>,
+    ) -> Result<(), SpecError> {
+        retheme_node(
+            tree,
+            &self.spec,
+            &self.ids,
+            default_theme,
+            custom_theme,
+            sheet,
+            scheme,
+            base_dir,
+        )
+    }
+
     /// The current `NodeId` for a widget's author-assigned `id`, if it
     /// exists in the most recently loaded/reconciled tree.
     pub fn id_of(&self, widget_id: &str) -> Option<NodeId> {
@@ -153,6 +187,51 @@ fn remove_ids(spec: &WidgetSpec, ids: &mut HashMap<String, NodeId>) {
     for child in &spec.children {
         remove_ids(child, ids);
     }
+}
+
+/// M51: `record_ids`'s own recursive-walk shape, but calling
+/// `patch_node` unconditionally at every node instead of just mapping
+/// ids -- `self.ids` is already known-complete and known-correct here
+/// (the spec never changed), so unlike `reconcile_node` there's no
+/// insert/remove/match-by-kind logic needed at all, just "patch this
+/// node, then patch every child."
+#[allow(clippy::too_many_arguments)]
+fn retheme_node(
+    tree: &mut Tree,
+    spec: &WidgetSpec,
+    ids: &HashMap<String, NodeId>,
+    default_theme: Option<&Stylesheet>,
+    custom_theme: Option<&Stylesheet>,
+    sheet: Option<&Stylesheet>,
+    scheme: Option<&ColorScheme>,
+    base_dir: Option<&Path>,
+) -> Result<(), SpecError> {
+    let id = *ids
+        .get(&spec.id)
+        .expect("retheme_node: every spec id must already be tracked in self.ids");
+    patch_node(
+        tree,
+        id,
+        spec,
+        default_theme,
+        custom_theme,
+        sheet,
+        scheme,
+        base_dir,
+    )?;
+    for child in &spec.children {
+        retheme_node(
+            tree,
+            child,
+            ids,
+            default_theme,
+            custom_theme,
+            sheet,
+            scheme,
+            base_dir,
+        )?;
+    }
+    Ok(())
 }
 
 /// A node's own properties, ignoring `id` (already matched by the
@@ -339,6 +418,81 @@ children:
         assert_eq!(
             node.paint.background.current,
             peniko::Color::from_rgba8(0x44, 0x55, 0x66, 0xFF)
+        );
+    }
+
+    // --- M51: retheme ---
+
+    #[test]
+    fn retheme_applies_a_new_theme_layers_corner_radius_to_every_matching_node() {
+        let yaml = r##"
+id: root
+kind: Container
+children:
+  - id: a
+    kind: Rect
+    style: {width: 10, height: 10, background: "#112233"}
+  - id: b
+    kind: Rect
+    style: {width: 10, height: 10, background: "#112233"}
+"##;
+        let mut tree = Tree::new();
+        let reconciler = Reconciler::load(&mut tree, yaml, None, None, None, None, None).unwrap();
+        let a_id = reconciler.id_of("a").unwrap();
+        let b_id = reconciler.id_of("b").unwrap();
+        assert_eq!(tree.get(a_id).unwrap().paint.corner_radius.current, 0.0);
+
+        let theme = crate::cascade::parse_stylesheet(
+            "styles:\n  - kind: Rect\n    style: {corner_radius: 8}\n",
+        )
+        .unwrap();
+        reconciler
+            .retheme(&mut tree, Some(&theme), None, None, None, None)
+            .unwrap();
+
+        assert_eq!(tree.get(a_id).unwrap().paint.corner_radius.current, 8.0);
+        assert_eq!(tree.get(b_id).unwrap().paint.corner_radius.current, 8.0);
+        // NodeIds must survive -- retheme patches in place, never
+        // removes/reinserts, the same real contract `reconcile` itself
+        // already establishes for a content-only change.
+        assert_eq!(reconciler.id_of("a"), Some(a_id));
+        assert_eq!(reconciler.id_of("b"), Some(b_id));
+    }
+
+    #[test]
+    fn retheme_leaves_a_widgets_own_inline_style_untouched() {
+        let yaml = r##"
+id: root
+kind: Container
+children:
+  - id: themed
+    kind: Rect
+    style: {width: 10, height: 10, background: "#112233"}
+  - id: inline
+    kind: Rect
+    style: {width: 10, height: 10, background: "#112233", corner_radius: 99}
+"##;
+        let mut tree = Tree::new();
+        let reconciler = Reconciler::load(&mut tree, yaml, None, None, None, None, None).unwrap();
+        let themed_id = reconciler.id_of("themed").unwrap();
+        let inline_id = reconciler.id_of("inline").unwrap();
+
+        let theme = crate::cascade::parse_stylesheet(
+            "styles:\n  - kind: Rect\n    style: {corner_radius: 8}\n",
+        )
+        .unwrap();
+        reconciler
+            .retheme(&mut tree, Some(&theme), None, None, None, None)
+            .unwrap();
+
+        assert_eq!(
+            tree.get(themed_id).unwrap().paint.corner_radius.current,
+            8.0
+        );
+        assert_eq!(
+            tree.get(inline_id).unwrap().paint.corner_radius.current,
+            99.0,
+            "a widget's own inline style must still win over the new theme layer"
         );
     }
 

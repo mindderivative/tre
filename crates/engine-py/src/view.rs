@@ -233,6 +233,61 @@ pub(crate) fn theme_spec_seed(theme: &ThemeSpec) -> PyResult<Option<(u8, u8, u8,
         .transpose()
 }
 
+/// M51: `View::new`'s own real theme-resolution logic (default_theme/
+/// custom_theme -> the `(default_sheet, custom_sheet, scheme)` triple
+/// `build_tree`/`patch_node`/`retheme` all need), factored out once a
+/// second real call site (`View.set_theme`, below) needed the identical
+/// logic -- the same "two real call sites justify factoring out"
+/// precedent `resolve_button_colors`/`fill_scrollbar_thumb` already
+/// established elsewhere in this codebase. `default_theme` omitted
+/// loads the engine's own shipped default; seed precedence: explicit
+/// `theme_seed` > `custom_theme`'s own `seed:` > `default_theme`'s.
+/// `colors:` overrides apply to whichever scheme that precedence
+/// resolves to, default's first then custom's.
+fn resolve_theme_layers(
+    default_theme: Option<&str>,
+    custom_theme: Option<&str>,
+    theme_seed: Option<(u8, u8, u8, u8)>,
+    dark: bool,
+) -> PyResult<(Stylesheet, Option<Stylesheet>, Option<ColorScheme>)> {
+    let default_theme_spec = match default_theme {
+        Some(theme_path) => load_theme_spec(theme_path)?,
+        None => parse_theme(SHIPPED_DEFAULT_THEME_YAML)
+            .expect("the engine's own shipped default_theme.yaml must always parse"),
+    };
+    let custom_theme_spec = custom_theme.map(load_theme_spec).transpose()?;
+
+    let default_theme_sheet = theme_spec_to_stylesheet(&default_theme_spec);
+    let custom_theme_sheet = custom_theme_spec.as_ref().map(theme_spec_to_stylesheet);
+
+    let default_seed = theme_spec_seed(&default_theme_spec)?;
+    let custom_seed = match &custom_theme_spec {
+        Some(t) => theme_spec_seed(t)?,
+        None => None,
+    };
+    let effective_seed = theme_seed.or(custom_seed).or(default_seed);
+
+    let mut scheme = effective_seed.map(|(r, g, b, a)| {
+        let theme = DynamicTheme::from_seed(Color::from_rgba8(r, g, b, a));
+        if dark { theme.dark } else { theme.light }
+    });
+    if let Some(scheme) = scheme.as_mut() {
+        if !default_theme_spec.colors.is_empty() {
+            scheme
+                .apply_overrides(&default_theme_spec.colors)
+                .map_err(PyValueError::new_err)?;
+        }
+        if let Some(custom) = &custom_theme_spec
+            && !custom.colors.is_empty()
+        {
+            scheme
+                .apply_overrides(&custom.colors)
+                .map_err(PyValueError::new_err)?;
+        }
+    }
+    Ok((default_theme_sheet, custom_theme_sheet, scheme))
+}
+
 /// Applies a resolved binding value to `node_id`'s corresponding
 /// property by constructing a temporary `Node` and reusing its own
 /// `animate` dispatch (§8) verbatim -- the exact same property-name
@@ -893,41 +948,13 @@ impl View {
             None => None,
         };
 
-        let default_theme_spec = match &default_theme {
-            Some(theme_path) => load_theme_spec(theme_path)?,
-            None => parse_theme(SHIPPED_DEFAULT_THEME_YAML)
-                .expect("the engine's own shipped default_theme.yaml must always parse"),
-        };
-        let custom_theme_spec = custom_theme.as_deref().map(load_theme_spec).transpose()?;
-
-        let default_theme_sheet = Some(theme_spec_to_stylesheet(&default_theme_spec));
-        let custom_theme_sheet = custom_theme_spec.as_ref().map(theme_spec_to_stylesheet);
-
-        let default_seed = theme_spec_seed(&default_theme_spec)?;
-        let custom_seed = match &custom_theme_spec {
-            Some(t) => theme_spec_seed(t)?,
-            None => None,
-        };
-        let effective_seed = theme_seed.or(custom_seed).or(default_seed);
-
-        let mut scheme = effective_seed.map(|(r, g, b, a)| {
-            let theme = DynamicTheme::from_seed(Color::from_rgba8(r, g, b, a));
-            if dark { theme.dark } else { theme.light }
-        });
-        if let Some(scheme) = scheme.as_mut() {
-            if !default_theme_spec.colors.is_empty() {
-                scheme
-                    .apply_overrides(&default_theme_spec.colors)
-                    .map_err(PyValueError::new_err)?;
-            }
-            if let Some(custom) = &custom_theme_spec
-                && !custom.colors.is_empty()
-            {
-                scheme
-                    .apply_overrides(&custom.colors)
-                    .map_err(PyValueError::new_err)?;
-            }
-        }
+        let (default_theme_sheet, custom_theme_sheet, scheme) = resolve_theme_layers(
+            default_theme.as_deref(),
+            custom_theme.as_deref(),
+            theme_seed,
+            dark,
+        )?;
+        let default_theme_sheet = Some(default_theme_sheet);
 
         let mut tree = Tree::new();
         let reconciler = Reconciler::load(
@@ -1092,6 +1119,61 @@ impl View {
             )
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(true)
+    }
+
+    /// M51: live re-theme -- re-resolves *every* node's `PaintProperties`
+    /// /`layout_style` against a new set of theme layers, in place
+    /// (`Reconciler::retheme`, `reconcile.rs`), without needing the
+    /// underlying `view.yaml` to have changed at all (unlike `poll_
+    /// reload`, which reacts to a real file edit). Stores the new
+    /// theme layers so a *later* `poll_reload()` keeps resolving
+    /// against them, not the ones this `View` was originally
+    /// constructed with.
+    ///
+    /// **Real, deliberate convention, matching `Window.set_theme`'s own
+    /// already-shipped precedent, not a new one invented here:** each
+    /// call is a complete, fresh theme selection -- omitting `default_
+    /// theme`/`custom_theme` means the shipped default / no custom
+    /// override, exactly like `View.__new__`'s own defaults, *not*
+    /// "keep whatever the previous call used." A caller who only wants
+    /// to change the seed re-passes the same `default_theme`/
+    /// `custom_theme` path it already has in hand.
+    ///
+    /// `{{ }}` bindings are not re-applied by this call -- `patch_node`
+    /// (inside `retheme`) only recomputes the *static* cascade, the
+    /// identical real behavior a content-only `poll_reload()` already
+    /// has today, not a new interaction this method introduces.
+    #[pyo3(signature = (default_theme=None, custom_theme=None, theme_seed=None, dark=false))]
+    fn set_theme(
+        &mut self,
+        default_theme: Option<String>,
+        custom_theme: Option<String>,
+        theme_seed: Option<(u8, u8, u8, u8)>,
+        dark: bool,
+    ) -> PyResult<()> {
+        let (default_theme_sheet, custom_theme_sheet, scheme) = resolve_theme_layers(
+            default_theme.as_deref(),
+            custom_theme.as_deref(),
+            theme_seed,
+            dark,
+        )?;
+        let base_dir = std::path::Path::new(&self.path).parent();
+        let mut tree = self.tree.borrow_mut();
+        self.reconciler
+            .retheme(
+                &mut tree,
+                Some(&default_theme_sheet),
+                custom_theme_sheet.as_ref(),
+                self.stylesheet.as_ref(),
+                scheme.as_ref(),
+                base_dir,
+            )
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        drop(tree);
+        self.default_theme = Some(default_theme_sheet);
+        self.custom_theme = custom_theme_sheet;
+        self.scheme = scheme;
+        Ok(())
     }
 
     /// §16.2's real inversion point. Validates every declared handler
