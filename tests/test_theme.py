@@ -253,3 +253,135 @@ def test_poll_reload_re_resolves_against_the_same_theme(tmp_path):
     assert poll_until_changed(view), "expected a real file-watcher change within the timeout"
     node = view.node("root")
     assert node.get("corner_radius") == pytest.approx(16.0)
+
+
+# --- M50 Phase 2: components: -- Buttons & FAB family ------------------
+
+
+def window_with_components(tmp_path, components_yaml):
+    theme_path = write_yaml(tmp_path, "theme.yaml", f"components:\n{components_yaml}")
+    window = Window(width=400, height=400)
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), custom_theme=theme_path)
+    return window
+
+
+def test_button_variant_specific_override_applies_corner_radius_and_elevation(tmp_path):
+    window = window_with_components(
+        tmp_path, "  button.filled: {corner_radius: 5, elevation: 3}\n"
+    )
+    node = window.add_button(label="hi", variant="filled", width=100, height=40)
+    assert node.get("corner_radius") == pytest.approx(5.0)
+    assert node.get("elevation") == pytest.approx(3.0)
+
+
+def test_button_variant_specific_override_does_not_leak_to_other_variants(tmp_path):
+    window = window_with_components(tmp_path, "  button.filled: {corner_radius: 5}\n")
+    node = window.add_button(label="hi", variant="outlined", width=100, height=40)
+    assert node.get("corner_radius") == pytest.approx(20.0)
+
+
+def test_bare_button_key_applies_to_every_variant(tmp_path):
+    window = window_with_components(tmp_path, "  button: {corner_radius: 6}\n")
+    for variant in ("elevated", "filled", "filled_tonal", "outlined", "text"):
+        node = window.add_button(label="hi", variant=variant, width=100, height=40)
+        assert node.get("corner_radius") == pytest.approx(6.0), variant
+
+
+def test_icon_button_has_its_own_key_distinct_from_plain_button(tmp_path):
+    window = window_with_components(tmp_path, "  button: {corner_radius: 6}\n")
+    node = window.add_icon_button(icon="add", size=40.0, variant="filled")
+    # The bare "button" override must not leak into "icon_button" --
+    # each factory gets its own key, confirmed by the real default
+    # (size / 2.0 = 20.0) surviving untouched.
+    assert node.get("corner_radius") == pytest.approx(20.0)
+
+
+def test_icon_button_key_uses_the_md3_internal_text_variant_name_for_standard(tmp_path):
+    window = window_with_components(tmp_path, "  icon_button.text: {corner_radius: 7}\n")
+    node = window.add_icon_button(icon="add", size=40.0, variant="standard")
+    assert node.get("corner_radius") == pytest.approx(7.0)
+
+
+def test_fab_corner_radius_is_keyed_by_size_elevation_is_not(tmp_path):
+    window = window_with_components(
+        tmp_path, "  fab.small: {corner_radius: 4}\n  fab: {elevation: 5}\n"
+    )
+    small = window.add_fab(icon="add", size="small", variant="surface")
+    default = window.add_fab(icon="add", size="default", variant="surface")
+    assert small.get("corner_radius") == pytest.approx(4.0)
+    assert default.get("corner_radius") == pytest.approx(16.0), "size=default must be unaffected"
+    assert small.get("elevation") == pytest.approx(5.0)
+    assert default.get("elevation") == pytest.approx(5.0), "elevation override has no size key"
+
+
+def test_extended_fab_has_its_own_key_distinct_from_fab(tmp_path):
+    window = window_with_components(tmp_path, "  fab: {corner_radius: 4}\n")
+    node = window.add_extended_fab(label="hi", width=120.0, variant="primary")
+    assert node.get("corner_radius") == pytest.approx(16.0), "extended_fab must use its own key"
+
+
+def test_segmented_button_corner_radius_override_does_not_raise(tmp_path):
+    # `add_segmented_button` never returns its own frame Node (only the
+    # segments, each of which uses `corner_radii_override` -- not the
+    # plain `corner_radius` field -- for its own rounding), so there is
+    # no Python-facing way to read back the overridden frame value
+    # directly; this proves the real override wiring applies without
+    # raising, the same honest limit this suite already states
+    # elsewhere for untestable internal state.
+    window = window_with_components(tmp_path, "  segmented_button: {corner_radius: 3}\n")
+    window.add_segmented_button(labels=["A", "B"], width=200.0, height=40.0)
+
+
+def test_toolbar_corner_radius_and_elevation_keyed_by_variant(tmp_path):
+    window = window_with_components(
+        tmp_path,
+        "  toolbar.floating: {corner_radius: 9, elevation: 4}\n  toolbar.docked: {corner_radius: 1}\n",
+    )
+    floating = window.add_toolbar(variant="floating")
+    docked = window.add_toolbar(variant="docked")
+    assert floating.get("corner_radius") == pytest.approx(9.0)
+    assert floating.get("elevation") == pytest.approx(4.0)
+    assert docked.get("corner_radius") == pytest.approx(1.0)
+    assert docked.get("elevation") == pytest.approx(0.0), "docked has no real elevation override here"
+
+
+def test_split_button_leading_inherits_the_button_key(tmp_path):
+    window = window_with_components(tmp_path, "  button.filled: {corner_radius: 5}\n")
+    leading, trailing, _icon = window.add_split_button(
+        label="hi", width=100.0, height=40.0, variant="filled"
+    )
+    assert leading.get("corner_radius") == pytest.approx(5.0)
+    assert trailing.get("corner_radius") == pytest.approx(5.0)
+
+
+def test_split_button_and_button_group_tightened_keys_do_not_raise(tmp_path):
+    # No Python-facing readback exists for corner_radii_override/
+    # interactive_shape (a hover/press-driven ShapeKey pair, not a
+    # plain f64 Node.get already supports) -- proven by not raising,
+    # matching this suite's own established honesty about that real
+    # limit elsewhere.
+    window = window_with_components(
+        tmp_path,
+        "  split_button.tightened: {corner_radius: 2}\n  button_group.tightened: {corner_radius: 3}\n",
+    )
+    window.add_split_button(label="hi", width=100.0, height=40.0, variant="filled")
+    window.add_button_group(labels=["A", "B"], width=80.0, height=40.0, variant="filled")
+
+
+def test_unthemed_window_preserves_every_real_default_value(tmp_path):
+    window = Window(width=400, height=400)
+    cases = [
+        (window.add_button(label="hi", variant="elevated", width=100, height=40), 20.0, 1.0),
+        (window.add_button(label="hi", variant="filled", width=100, height=40), 20.0, 0.0),
+        (window.add_icon_button(icon="add", size=40.0, variant="filled"), 20.0, 0.0),
+        (window.add_fab(icon="add", size="small", variant="surface"), 12.0, 3.0),
+        (window.add_fab(icon="add", size="default", variant="surface"), 16.0, 3.0),
+        (window.add_fab(icon="add", size="large", variant="surface"), 28.0, 3.0),
+        (window.add_extended_fab(label="hi", width=120.0, variant="primary"), 16.0, 3.0),
+        (window.add_toolbar(variant="floating"), None, 3.0),
+        (window.add_toolbar(variant="docked"), 0.0, 0.0),
+    ]
+    for node, expected_radius, expected_elevation in cases:
+        if expected_radius is not None:
+            assert node.get("corner_radius") == pytest.approx(expected_radius)
+        assert node.get("elevation") == pytest.approx(expected_elevation)

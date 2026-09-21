@@ -40,6 +40,15 @@ const GAP: f32 = 16.0;
 pub(crate) struct ThemeState {
     theme: Option<DynamicTheme>,
     dark: bool,
+    /// M50 Phase 1: shape/elevation overrides for the imperative MD3
+    /// catalog, populated from `Window.set_theme`'s `custom_theme`
+    /// (`ThemeSpec.components`, `engine-spec/src/theme.rs`). Empty (the
+    /// default) is a true no-op -- `shape`/`elevation` below both
+    /// return `None` for every key, so every existing `add_*` factory's
+    /// own hardcoded fallback survives untouched, the identical
+    /// "un-themed default survives" contract `is_set()`'s own callers
+    /// already rely on for color.
+    components: HashMap<String, engine_spec::ComponentOverride>,
 }
 
 impl ThemeState {
@@ -103,6 +112,45 @@ impl ThemeState {
     /// untouched until an app genuinely calls `set_theme`.
     pub(crate) fn is_set(&self) -> bool {
         self.theme.is_some()
+    }
+
+    /// M50 Phase 1: the real 2-tier lookup every `add_*` factory's own
+    /// corner-radius consults, from Phase 2 onward -- `"<component>.
+    /// <variant>"` first (when `variant` is given), then the bare
+    /// `"<component>"` key, `None` if neither has this specific field
+    /// set. Callers keep their own existing hardcoded constant/formula
+    /// as the fallback (`theme.shape("card", None).unwrap_or(CARD_
+    /// CORNER_RADIUS)`) -- this method never invents a default of its
+    /// own. **Real, deliberate per-field fallthrough, not per-entry:**
+    /// a variant-specific entry that sets only `elevation` must not
+    /// block the bare key's own `corner_radius` from being found --
+    /// each field is looked up independently, not "does a variant
+    /// entry exist at all."
+    pub(crate) fn shape(&self, component: &str, variant: Option<&str>) -> Option<f64> {
+        self.lookup(component, variant, |o| o.corner_radius)
+    }
+
+    /// `shape`'s own sibling for elevation -- identical 2-tier,
+    /// per-field lookup.
+    pub(crate) fn elevation(&self, component: &str, variant: Option<&str>) -> Option<f64> {
+        self.lookup(component, variant, |o| o.elevation)
+    }
+
+    fn lookup(
+        &self,
+        component: &str,
+        variant: Option<&str>,
+        field: impl Fn(&engine_spec::ComponentOverride) -> Option<f64>,
+    ) -> Option<f64> {
+        if let Some(variant) = variant
+            && let Some(value) = self
+                .components
+                .get(&format!("{component}.{variant}"))
+                .and_then(&field)
+        {
+            return Some(value);
+        }
+        self.components.get(component).and_then(field)
     }
 }
 
@@ -490,9 +538,13 @@ impl PyWindow {
     /// has an opinion is the only way that deference is expressible.
     /// `custom_theme`'s own `styles:`/`dark` are not used here at all --
     /// `styles:` only matters to the declarative `StyleSpec` cascade
-    /// (`View`), and this catalog's corner-radius/elevation never
-    /// consult any theme regardless (confirmed via direct investigation
-    /// before this milestone -- `BUILD_TRACKER.md`'s M49 section).
+    /// (`View`). M50 Phase 1: `custom_theme`'s own `components:` *is*
+    /// now used here -- stored into `ThemeState.components`, consulted
+    /// by `ThemeState::shape`/`elevation` from M50 Phase 2 onward as
+    /// each `add_*` factory is wired to it (see `window_factory.rs`;
+    /// `M49`'s own doc comment above, "corner-radius/elevation never
+    /// consult any theme regardless," was the real state of the world
+    /// *before* M50, not a permanent limit).
     #[pyo3(signature = (seed, dark=false, custom_theme=None))]
     fn set_theme(
         &self,
@@ -532,6 +584,14 @@ impl PyWindow {
         let mut state = self.theme.borrow_mut();
         state.theme = Some(dynamic);
         state.dark = dark;
+        // M50 Phase 1: `components:` -- shape/elevation overrides for
+        // the imperative MD3 catalog, read here since `custom_theme`
+        // was already parsed above for `colors:`/`seed:`. Replaces
+        // (not merges with) whatever a *previous* `set_theme` call may
+        // have set, matching `state.theme`/`state.dark` right above --
+        // a `custom_theme=None` call genuinely means "no overrides,"
+        // not "keep whatever the last call had."
+        state.components = custom_theme_spec.map(|t| t.components).unwrap_or_default();
         let tint = state.on_surface();
         drop(state);
         let mut tree = self.tree.borrow_mut();
@@ -610,5 +670,112 @@ impl PyWindow {
         self.handlers.borrow_mut().clear();
         self.completions.borrow_mut().callbacks.clear();
         self.active.borrow().handlers.borrow_mut().clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use engine_spec::ComponentOverride;
+
+    fn state_with(components: &[(&str, ComponentOverride)]) -> ThemeState {
+        ThemeState {
+            components: components
+                .iter()
+                .map(|(k, v)| (k.to_string(), *v))
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn shape_with_no_override_at_all_returns_none() {
+        let state = ThemeState::default();
+        assert_eq!(state.shape("card", None), None);
+        assert_eq!(state.shape("fab", Some("small")), None);
+    }
+
+    #[test]
+    fn shape_reads_the_bare_component_key_when_no_variant_is_given() {
+        let state = state_with(&[(
+            "card",
+            ComponentOverride {
+                corner_radius: Some(16.0),
+                elevation: None,
+            },
+        )]);
+        assert_eq!(state.shape("card", None), Some(16.0));
+    }
+
+    #[test]
+    fn shape_prefers_the_variant_specific_key_over_the_bare_one() {
+        let state = state_with(&[
+            (
+                "fab",
+                ComponentOverride {
+                    corner_radius: Some(16.0),
+                    elevation: None,
+                },
+            ),
+            (
+                "fab.small",
+                ComponentOverride {
+                    corner_radius: Some(12.0),
+                    elevation: None,
+                },
+            ),
+        ]);
+        assert_eq!(state.shape("fab", Some("small")), Some(12.0));
+        // A variant not named by any override falls back to the bare key.
+        assert_eq!(state.shape("fab", Some("large")), Some(16.0));
+    }
+
+    /// The real bug caught before this shipped: a variant-specific
+    /// entry that sets only `elevation` must not block the *bare* key's
+    /// own `corner_radius` -- each field is looked up independently,
+    /// not "does a variant entry exist at all."
+    #[test]
+    fn a_variant_entry_setting_only_elevation_does_not_shadow_the_bare_keys_corner_radius() {
+        let state = state_with(&[
+            (
+                "card",
+                ComponentOverride {
+                    corner_radius: Some(16.0),
+                    elevation: None,
+                },
+            ),
+            (
+                "card.elevated",
+                ComponentOverride {
+                    corner_radius: None,
+                    elevation: Some(2.0),
+                },
+            ),
+        ]);
+        assert_eq!(state.shape("card", Some("elevated")), Some(16.0));
+        assert_eq!(state.elevation("card", Some("elevated")), Some(2.0));
+    }
+
+    #[test]
+    fn elevation_lookup_mirrors_shapes_own_precedence() {
+        let state = state_with(&[
+            (
+                "button",
+                ComponentOverride {
+                    corner_radius: None,
+                    elevation: Some(0.0),
+                },
+            ),
+            (
+                "button.elevated",
+                ComponentOverride {
+                    corner_radius: None,
+                    elevation: Some(1.0),
+                },
+            ),
+        ]);
+        assert_eq!(state.elevation("button", Some("elevated")), Some(1.0));
+        assert_eq!(state.elevation("button", Some("filled")), Some(0.0));
+        assert_eq!(state.elevation("button", None), Some(0.0));
     }
 }

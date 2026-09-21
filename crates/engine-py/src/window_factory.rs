@@ -151,9 +151,19 @@ struct ButtonColors {
 /// gate on `theme.is_set()` before ever reading a role, so an un-themed
 /// `Window` keeps painting `Md3Baseline`'s own real historical
 /// default rather than silently going black.
+/// M50 Phase 2: `component` names the real theme-override key this
+/// call site's own elevation should be looked up under (`"button"` for
+/// `add_button` itself, `"icon_button"` for `add_icon_button`, since
+/// each real factory gets its own key even where several reuse this
+/// one resolver -- `crates/engine-spec/src/theme.rs`'s own `components:`
+/// doc comment). `theme.elevation(component, Some(variant))` is tried
+/// first; the existing hardcoded per-variant literal survives as the
+/// fallback, the identical "un-themed default survives untouched"
+/// contract colors already established.
 fn resolve_button_colors(
     theme: &crate::window::ThemeState,
     variant: &str,
+    component: &str,
 ) -> PyResult<ButtonColors> {
     let role = |name: &str, fallback: Color| -> Color {
         if theme.is_set() {
@@ -162,20 +172,22 @@ fn resolve_button_colors(
             fallback
         }
     };
+    let elevation =
+        |default: f64| -> f64 { theme.elevation(component, Some(variant)).unwrap_or(default) };
     match variant {
         "elevated" => Ok(ButtonColors {
             container: role("surface_container_low", Md3Baseline::SURFACE_CONTAINER_LOW),
             label: role("primary", Md3Baseline::PRIMARY),
             border_color: TRANSPARENT,
             border_width: 0.0,
-            elevation: 1.0,
+            elevation: elevation(1.0),
         }),
         "filled" => Ok(ButtonColors {
             container: role("primary", Md3Baseline::PRIMARY),
             label: role("on_primary", Md3Baseline::ON_PRIMARY),
             border_color: TRANSPARENT,
             border_width: 0.0,
-            elevation: 0.0,
+            elevation: elevation(0.0),
         }),
         "filled_tonal" => Ok(ButtonColors {
             container: role("secondary_container", Md3Baseline::SECONDARY_CONTAINER),
@@ -185,21 +197,21 @@ fn resolve_button_colors(
             ),
             border_color: TRANSPARENT,
             border_width: 0.0,
-            elevation: 0.0,
+            elevation: elevation(0.0),
         }),
         "outlined" => Ok(ButtonColors {
             container: TRANSPARENT,
             label: role("primary", Md3Baseline::PRIMARY),
             border_color: role("outline", Md3Baseline::OUTLINE),
             border_width: 1.0,
-            elevation: 0.0,
+            elevation: elevation(0.0),
         }),
         "text" => Ok(ButtonColors {
             container: TRANSPARENT,
             label: role("primary", Md3Baseline::PRIMARY),
             border_color: TRANSPARENT,
             border_width: 0.0,
-            elevation: 0.0,
+            elevation: elevation(0.0),
         }),
         other => Err(pyo3::exceptions::PyValueError::new_err(format!(
             "unknown button variant {other:?} -- expected one of \"elevated\", \"filled\", \
@@ -1359,15 +1371,16 @@ impl PyWindow {
         x: Option<f32>,
         y: Option<f32>,
     ) -> PyResult<Node> {
-        let colors = resolve_button_colors(&self.theme.borrow(), variant)?;
+        let colors = resolve_button_colors(&self.theme.borrow(), variant, "button")?;
+        let corner_radius = self
+            .theme
+            .borrow()
+            .shape("button", Some(variant))
+            .unwrap_or_else(|| f64::from(height) / 2.0);
         let mut tree = self.tree.borrow_mut();
 
-        let mut container_paint = PaintProperties::new(
-            colors.container,
-            f64::from(height) / 2.0,
-            colors.elevation,
-            1.0,
-        );
+        let mut container_paint =
+            PaintProperties::new(colors.container, corner_radius, colors.elevation, 1.0);
         container_paint.border_color = Animated::new(colors.border_color);
         container_paint.border_width = Animated::new(colors.border_width);
         let mut container_style = positioned_style(
@@ -1447,17 +1460,25 @@ impl PyWindow {
                 )));
             }
         };
-        let colors = resolve_button_colors(&self.theme.borrow(), resolved_variant)?;
+        let colors = resolve_button_colors(&self.theme.borrow(), resolved_variant, "icon_button")?;
         let path = resolve_icon_path(icon)?;
+        // Real, deliberate consistency fix caught before this shipped:
+        // the shape key must use the same `resolved_variant` ("standard"
+        // -> "text") the elevation lookup above already does, not the
+        // raw, un-translated `variant` -- otherwise overriding
+        // "icon_button.standard" would silently miss elevation (keyed
+        // under "icon_button.text" instead), a real, confusing mismatch
+        // for a theme author who only set one of the two.
+        let corner_radius = self
+            .theme
+            .borrow()
+            .shape("icon_button", Some(resolved_variant))
+            .unwrap_or_else(|| f64::from(size) / 2.0);
 
         let mut tree = self.tree.borrow_mut();
 
-        let mut container_paint = PaintProperties::new(
-            colors.container,
-            f64::from(size) / 2.0,
-            colors.elevation,
-            1.0,
-        );
+        let mut container_paint =
+            PaintProperties::new(colors.container, corner_radius, colors.elevation, 1.0);
         container_paint.border_color = Animated::new(colors.border_color);
         container_paint.border_width = Animated::new(colors.border_width);
         let mut container_style = positioned_style(
@@ -1511,17 +1532,32 @@ impl PyWindow {
         x: Option<f32>,
         y: Option<f32>,
     ) -> PyResult<Node> {
-        let (container_size, corner_radius) = fab_shape(size)?;
+        let (container_size, default_corner_radius) = fab_shape(size)?;
         let colors = resolve_fab_colors(&self.theme.borrow(), variant)?;
         let path = resolve_icon_path(icon)?;
+        // M50 Phase 2: corner radius is keyed by *size* (small/default/
+        // large -- FAB's own real variant dimension for shape), not the
+        // *color* variant `resolve_fab_colors` uses -- the two are
+        // genuinely independent axes for this component. Elevation is
+        // flat regardless of either (real MD3 anatomy, confirmed before
+        // this milestone), so it's looked up with no variant at all --
+        // `FabColors` deliberately doesn't carry it (unlike `ButtonColors`),
+        // since bundling it into the color resolver would need a second,
+        // unrelated key axis threaded through for no real benefit.
+        let corner_radius = {
+            let theme = self.theme.borrow();
+            theme
+                .shape("fab", Some(size))
+                .unwrap_or(f64::from(default_corner_radius))
+        };
+        let elevation = self
+            .theme
+            .borrow()
+            .elevation("fab", None)
+            .unwrap_or(FAB_REST_ELEVATION_LEVEL);
 
         let mut tree = self.tree.borrow_mut();
-        let container_paint = PaintProperties::new(
-            colors.container,
-            f64::from(corner_radius),
-            FAB_REST_ELEVATION_LEVEL,
-            1.0,
-        );
+        let container_paint = PaintProperties::new(colors.container, corner_radius, elevation, 1.0);
         let mut container_style = positioned_style(
             Size {
                 width: length(container_size),
@@ -1582,14 +1618,22 @@ impl PyWindow {
         } else {
             EXTENDED_FAB_LEADING_PADDING_NO_ICON
         };
+        // M50 Phase 2: its own distinct key from plain `"fab"` -- no
+        // size variants for Extended FAB in real MD3, so no variant is
+        // threaded through at all.
+        let corner_radius = self
+            .theme
+            .borrow()
+            .shape("extended_fab", None)
+            .unwrap_or(EXTENDED_FAB_CORNER_RADIUS);
+        let elevation = self
+            .theme
+            .borrow()
+            .elevation("extended_fab", None)
+            .unwrap_or(FAB_REST_ELEVATION_LEVEL);
 
         let mut tree = self.tree.borrow_mut();
-        let container_paint = PaintProperties::new(
-            colors.container,
-            EXTENDED_FAB_CORNER_RADIUS,
-            FAB_REST_ELEVATION_LEVEL,
-            1.0,
-        );
+        let container_paint = PaintProperties::new(colors.container, corner_radius, elevation, 1.0);
         let mut container_style = positioned_style(
             Size {
                 width: length(width),
@@ -1753,7 +1797,16 @@ impl PyWindow {
         let n = labels.len();
         let divider_count = (n - 1) as f32;
         let segment_width = (width - divider_count * SEGMENTED_BUTTON_OUTLINE_WIDTH) / n as f32;
-        let corner = f64::from(height) / 2.0;
+        // M50 Phase 2: no elevation override here -- the frame's own
+        // elevation is always a literal `0.0` in real MD3 anatomy for
+        // this component (confirmed before this milestone), not a real
+        // themeable choice, the same "neither" classification `add_chip`
+        // /`add_tooltip` share.
+        let corner = self
+            .theme
+            .borrow()
+            .shape("segmented_button", None)
+            .unwrap_or_else(|| f64::from(height) / 2.0);
 
         let mut tree = self.tree.borrow_mut();
 
@@ -4285,7 +4338,7 @@ impl PyWindow {
             }
         };
 
-        let corner_radius = if is_floating {
+        let default_corner_radius = if is_floating {
             f64::from(if vertical {
                 width.unwrap_or(TOOLBAR_HEIGHT)
             } else {
@@ -4294,11 +4347,24 @@ impl PyWindow {
         } else {
             0.0
         };
-        let elevation = if is_floating {
+        let default_elevation = if is_floating {
             FAB_REST_ELEVATION_LEVEL
         } else {
             0.0
         };
+        // M50 Phase 2: keyed by the real `variant` string ("docked"/
+        // "floating") -- the two genuinely pick different shape/
+        // elevation, unlike most of this catalog's other components.
+        let corner_radius = self
+            .theme
+            .borrow()
+            .shape("toolbar", Some(variant))
+            .unwrap_or(default_corner_radius);
+        let elevation = self
+            .theme
+            .borrow()
+            .elevation("toolbar", Some(variant))
+            .unwrap_or(default_elevation);
 
         let mut bar_style = positioned_style(size, x, y);
         bar_style.display = taffy::Display::Flex;
@@ -4388,38 +4454,62 @@ impl PyWindow {
     ) -> PyResult<(Node, Node, Node)> {
         let leading = self.add_button(label, width, height, variant, x, y)?;
 
-        let colors = resolve_button_colors(&self.theme.borrow(), variant)?;
+        let colors = resolve_button_colors(&self.theme.borrow(), variant, "button")?;
         let trailing_path = resolve_icon_path("expand_more")?;
         let trailing_x = x.map(|x| x + width + SPLIT_BUTTON_GAP);
+
+        // M50 Phase 2: `rest_radius` recomputes the *exact* same
+        // theme-or-formula value `add_button` above already resolved
+        // for `leading` internally (same `"button"` key, same
+        // `variant`, same `height` -- the two calls are guaranteed to
+        // agree, not read back from the tree, which would be an
+        // equivalent but more roundabout way to get the identical
+        // number). **Real bug caught before this shipped, not by
+        // inspection alone:** the shape-morph code below used to
+        // recompute `h / 2.0` as a fresh, independent literal for
+        // `leading_relaxed`/`trailing_relaxed` -- if a theme overrides
+        // `"button"`'s corner radius, `leading`'s own `paint.corner_
+        // radius` (set correctly, inside `add_button`) and its `paint.
+        // shape` (used for the actual painted outline) would silently
+        // disagree, the *shape* still painting the old, un-themed pill.
+        // `tightened_radius` gets its own, genuinely `split_button`-
+        // specific key -- there is no equivalent concept in plain
+        // `add_button` to inherit it from.
+        let rest_radius = self
+            .theme
+            .borrow()
+            .shape("button", Some(variant))
+            .unwrap_or_else(|| f64::from(height) / 2.0);
+        let tightened_radius = self
+            .theme
+            .borrow()
+            .shape("split_button", Some("tightened"))
+            .unwrap_or(SPLIT_BUTTON_INNER_CORNER_RADIUS);
 
         let mut tree = self.tree.borrow_mut();
 
         // M38 Phase 4 (§5, §7): real inner-corner shape-tightening --
         // `leading`'s own two right corners (facing the trailing
-        // button across `SPLIT_BUTTON_GAP`) tighten to `SPLIT_BUTTON_
-        // INNER_CORNER_RADIUS` on hover; its two left (outer) corners
-        // stay fully round always. `[top_left, top_right, bottom_
-        // right, bottom_left]`, `PaintProperties.corner_radii_
-        // override`'s own real ordering -- `RoundedRect::new`'s 4-tuple
-        // corner-radii constructor takes the identical order (confirmed
-        // via `GeometryCache::rounded_rect_fill_per_corner`'s own real
+        // button across `SPLIT_BUTTON_GAP`) tighten to `tightened_
+        // radius` on hover; its two left (outer) corners stay fully
+        // round always. `[top_left, top_right, bottom_right, bottom_
+        // left]`, `PaintProperties.corner_radii_override`'s own real
+        // ordering -- `RoundedRect::new`'s 4-tuple corner-radii
+        // constructor takes the identical order (confirmed via
+        // `GeometryCache::rounded_rect_fill_per_corner`'s own real
         // call, `geometry_cache.rs`).
         let h = f64::from(height);
         let leading_w = f64::from(width);
-        let leading_relaxed =
-            ShapeKey::from_path(&RoundedRect::new(0.0, 0.0, leading_w, h, h / 2.0).to_path(0.1));
+        let leading_relaxed = ShapeKey::from_path(
+            &RoundedRect::new(0.0, 0.0, leading_w, h, rest_radius).to_path(0.1),
+        );
         let leading_tightened = ShapeKey::from_path(
             &RoundedRect::new(
                 0.0,
                 0.0,
                 leading_w,
                 h,
-                (
-                    h / 2.0,
-                    SPLIT_BUTTON_INNER_CORNER_RADIUS,
-                    SPLIT_BUTTON_INNER_CORNER_RADIUS,
-                    h / 2.0,
-                ),
+                (rest_radius, tightened_radius, tightened_radius, rest_radius),
             )
             .to_path(0.1),
         );
@@ -4428,31 +4518,22 @@ impl PyWindow {
             leading_node.paint.interactive_shape = Some((leading_relaxed, leading_tightened));
         }
 
-        let mut trailing_paint = PaintProperties::new(
-            colors.container,
-            f64::from(height) / 2.0,
-            colors.elevation,
-            1.0,
-        );
+        let mut trailing_paint =
+            PaintProperties::new(colors.container, rest_radius, colors.elevation, 1.0);
         trailing_paint.border_color = Animated::new(colors.border_color);
         trailing_paint.border_width = Animated::new(colors.border_width);
         // M38 Phase 4 (§5, §7): `trailing`'s own real inner-corner
         // sibling -- its two *left* corners face `leading` across the
         // same gap, so they tighten instead of the right ones.
         let trailing_relaxed =
-            ShapeKey::from_path(&RoundedRect::new(0.0, 0.0, h, h, h / 2.0).to_path(0.1));
+            ShapeKey::from_path(&RoundedRect::new(0.0, 0.0, h, h, rest_radius).to_path(0.1));
         let trailing_tightened = ShapeKey::from_path(
             &RoundedRect::new(
                 0.0,
                 0.0,
                 h,
                 h,
-                (
-                    SPLIT_BUTTON_INNER_CORNER_RADIUS,
-                    h / 2.0,
-                    h / 2.0,
-                    SPLIT_BUTTON_INNER_CORNER_RADIUS,
-                ),
+                (tightened_radius, rest_radius, rest_radius, tightened_radius),
             )
             .to_path(0.1),
         );
@@ -4565,21 +4646,33 @@ impl PyWindow {
         // shapes every child shares -- built once outside the loop
         // since every real Standard Button Group child uses the
         // identical `width`/`height` (real MD3 anatomy, `add_button_
-        // group`'s own doc comment above).
+        // group`'s own doc comment above). M50 Phase 2: `rest_radius`
+        // recomputes the exact same theme-or-formula value each child's
+        // own `self.add_button(...)` call already resolved internally
+        // (same `"button"` key/`variant`/`height`) -- the identical
+        // "recompute, don't read back" reasoning `add_split_button`'s
+        // own doc comment states, and the identical real bug class it
+        // caught (a themed `paint.corner_radius` silently disagreeing
+        // with an un-themed `paint.shape`) if this weren't done.
+        // `tightened_radius` gets its own `button_group`-specific key --
+        // no equivalent concept in plain `add_button` to inherit it from.
         let group_h = f64::from(height);
         let group_w = f64::from(width);
+        let rest_radius = self
+            .theme
+            .borrow()
+            .shape("button", Some(variant))
+            .unwrap_or(group_h / 2.0);
+        let tightened_radius = self
+            .theme
+            .borrow()
+            .shape("button_group", Some("tightened"))
+            .unwrap_or_else(|| button_group_pressed_corner_radius(group_h));
         let child_relaxed = ShapeKey::from_path(
-            &RoundedRect::new(0.0, 0.0, group_w, group_h, group_h / 2.0).to_path(0.1),
+            &RoundedRect::new(0.0, 0.0, group_w, group_h, rest_radius).to_path(0.1),
         );
         let child_tightened = ShapeKey::from_path(
-            &RoundedRect::new(
-                0.0,
-                0.0,
-                group_w,
-                group_h,
-                button_group_pressed_corner_radius(group_h),
-            )
-            .to_path(0.1),
+            &RoundedRect::new(0.0, 0.0, group_w, group_h, tightened_radius).to_path(0.1),
         );
 
         let mut children = Vec::with_capacity(n);

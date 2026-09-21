@@ -25,5 +25,5 @@ pub use cascade::{StyleRule, Stylesheet, parse_stylesheet, resolve_style, resolv
 pub use include::parse_view_with_includes;
 pub use reconcile::Reconciler;
 pub use spec::{FlexDirectionSpec, NodeKindSpec, StyleSpec, TextSpec, WidgetSpec, parse_view};
-pub use theme::{ThemeSpec, parse_theme};
+pub use theme::{ComponentOverride, ThemeSpec, parse_theme};
 pub use watch::ViewWatcher;

@@ -52,6 +52,35 @@ pub struct ThemeSpec {
     /// (`resolve_style_layered`).
     #[serde(default)]
     pub styles: Vec<StyleRule>,
+    /// M50: shape/elevation overrides for the *imperative* MD3 catalog
+    /// (`Window.add_button`/`add_fab`/etc., `engine-py::window_
+    /// factory.rs`) -- a deliberately separate namespace from `styles:`
+    /// above, which only ever reaches the 7 declarative `NodeKindSpec`
+    /// kinds. Keyed by `"<component>"` (the factory name minus `add_`,
+    /// e.g. `"card"`, applies regardless of variant) or
+    /// `"<component>.<variant>"` (e.g. `"fab.small"`, overrides just
+    /// that variant) -- resolved with a real 2-tier lookup (`engine-py::
+    /// window::ThemeState::shape`/`elevation`), not here: this struct
+    /// stays plain data, matching every other `ThemeSpec` field's own
+    /// "parsed at apply time, not parse time" precedent. `View` never
+    /// consults this field (it has no imperative factories) -- present
+    /// in the shared struct so one theme file can serve both surfaces.
+    #[serde(default)]
+    pub components: HashMap<String, ComponentOverride>,
+}
+
+/// M50: one imperative MD3 component's shape/elevation override --
+/// both fields optional so a theme can set just one (e.g. only
+/// `corner_radius`) while leaving the other at its existing hardcoded
+/// default, the same per-field-optional shape `StyleSpec` already
+/// establishes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentOverride {
+    #[serde(default)]
+    pub corner_radius: Option<f64>,
+    #[serde(default)]
+    pub elevation: Option<f64>,
 }
 
 /// Parses a theme document -- mirrors `cascade::parse_stylesheet`'s own
@@ -103,5 +132,42 @@ styles:
     fn an_unknown_top_level_key_is_a_clear_load_time_error() {
         let err = parse_theme("nope: true").unwrap_err();
         assert!(err.to_string().contains("nope"));
+    }
+
+    // --- M50: components: ---
+
+    #[test]
+    fn components_section_parses_bare_and_variant_keys() {
+        let theme = parse_theme(
+            "components:\n  card: {corner_radius: 16}\n  fab.small: {corner_radius: 12, elevation: 2}\n",
+        )
+        .unwrap();
+        assert_eq!(theme.components.len(), 2);
+        assert_eq!(
+            theme.components["card"],
+            ComponentOverride {
+                corner_radius: Some(16.0),
+                elevation: None,
+            }
+        );
+        assert_eq!(
+            theme.components["fab.small"],
+            ComponentOverride {
+                corner_radius: Some(12.0),
+                elevation: Some(2.0),
+            }
+        );
+    }
+
+    #[test]
+    fn an_empty_theme_documents_components_section_is_empty() {
+        let theme = parse_theme("{}").unwrap();
+        assert!(theme.components.is_empty());
+    }
+
+    #[test]
+    fn a_component_override_with_an_unknown_field_is_a_clear_error() {
+        let err = parse_theme("components:\n  card: {not_a_real_field: 1}\n").unwrap_err();
+        assert!(err.to_string().contains("not_a_real_field"));
     }
 }
