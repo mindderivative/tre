@@ -136,6 +136,36 @@ impl ThemeState {
         self.lookup(component, variant, |o| o.elevation)
     }
 
+    /// Test-only constructor (`ThemeState`'s own fields are private to
+    /// this module) -- lets a `RetitheHook` builder's own unit tests,
+    /// living beside the factory they belong to in `window_factory.rs`,
+    /// exercise a real, themed `ThemeState` without needing `PyWindow`/
+    /// `Window.set_theme`/the GIL. `#[cfg(test)]`-gated: compiled into
+    /// test binaries only, zero production API surface.
+    #[cfg(test)]
+    pub(crate) fn for_test(seed: Color) -> Self {
+        Self {
+            theme: Some(DynamicTheme::from_seed(seed)),
+            dark: false,
+            components: HashMap::new(),
+        }
+    }
+
+    /// `for_test`'s own sibling with a real `components:` override --
+    /// needed by any `RetitheHook` test that also proves a corner_
+    /// radius/elevation override re-resolves live, not just color.
+    #[cfg(test)]
+    pub(crate) fn for_test_with_components(
+        seed: Color,
+        components: HashMap<String, engine_spec::ComponentOverride>,
+    ) -> Self {
+        Self {
+            theme: Some(DynamicTheme::from_seed(seed)),
+            dark: false,
+            components,
+        }
+    }
+
     fn lookup(
         &self,
         component: &str,
@@ -159,6 +189,28 @@ impl ThemeState {
 /// instance instead (see `view.rs`), matching this phase's own stated
 /// scope: only `Window`-created nodes ever see a real theme.
 pub(crate) type SharedTheme = Rc<RefCell<ThemeState>>;
+
+/// M52 Phase 1 (§7.1, §7.3): live re-theme for `Window`'s own imperative
+/// MD3 catalog -- the "live token-linkage" mechanism named and
+/// deliberately deferred since M49. Each themed `add_*` factory
+/// registers one of these (via a small, named, independently-testable
+/// builder function like `button_retheme_hook` in `window_factory.rs`,
+/// not an inline closure) right before returning its node(s); `Window.
+/// set_theme` replays every registered hook after installing the new
+/// `ThemeState`, so an already-built button's real container/label
+/// color and corner_radius/elevation are recomputed and overwritten in
+/// place -- the exact same "recompute from the same inputs the
+/// component's own `resolve_*_colors`/`theme.shape`/`theme.elevation`
+/// call originally used, then snap the result in" convention `patch_
+/// node` (M51, `engine-spec::build`) already established for the
+/// declarative surface. `Box<dyn Fn(&ThemeState, &mut Tree)>`, not
+/// `Py<PyAny>`: every hook this milestone registers closes only over
+/// plain Rust values (`NodeId`s, owned `String`/`f32` params) and calls
+/// only pure-Rust resolvers (`resolve_button_colors` and siblings all
+/// take `&ThemeState` plus plain args, confirmed via direct read, no
+/// `Python<'_>`/GIL type anywhere) -- so no `__traverse__`/`__clear__`
+/// GC obligation applies, unlike `handlers`/`completions`.
+pub(crate) type RetitheHook = Box<dyn Fn(&ThemeState, &mut Tree)>;
 
 /// M33 Phase 2 (§4, §5, §8): a `Window`'s own real width/height,
 /// shared the identical way `SharedTheme`/`HandlerMap`/`context_menus`
@@ -327,6 +379,21 @@ pub struct PyWindow {
     /// `Py<PyAny>` involved, so no `__traverse__`/`__clear__` GC
     /// obligation either.
     pub(crate) terminals: Rc<RefCell<HashMap<NodeId, TerminalSession>>>,
+    /// M52 Phase 1 (§7.1, §7.3): every registered `RetitheHook`, in
+    /// registration order (order never matters for correctness -- each
+    /// hook only ever writes its own captured `NodeId`s). Plain
+    /// `RefCell<Vec<...>>`, not `Rc`-shared like `theme`/`handlers` --
+    /// only this `Window`'s own `add_*` methods (push) and `set_theme`
+    /// (replay) ever touch it, the same "not shared with `Node`" shape
+    /// `materializers`/`canvas_draws` already have. **Real, deliberately
+    /// accepted limitation, named not hidden:** never pruned when a
+    /// hook's own node(s) are later removed (`Node.remove()`) -- a
+    /// stale hook becomes a silent no-op on the next `set_theme` call
+    /// (`Tree::get_mut` returns `None`), the identical accepted
+    /// tradeoff `handlers`/`materializers`/`context_menus` already have
+    /// today (confirmed via direct read: none of them are pruned on
+    /// node removal either).
+    pub(crate) retheme_hooks: RefCell<Vec<RetitheHook>>,
     /// M42 Phase 2 (§4, §5, §8, §16.2, §16.4): the real, swappable
     /// "currently shown" bundle -- initialized to mirror this `Window`'s
     /// own `tree`/`root`/`handlers`/`context_menus` at construction
@@ -412,6 +479,7 @@ impl PyWindow {
             theme: Rc::new(RefCell::new(ThemeState::default())),
             completions: Rc::new(RefCell::new(CompletionRegistry::new())),
             terminals: Rc::new(RefCell::new(HashMap::new())),
+            retheme_hooks: RefCell::new(Vec::new()),
             active,
         }
     }
@@ -473,6 +541,15 @@ impl PyWindow {
             theme: view.theme.clone(),
             completions: view.completions.clone(),
             terminals: Rc::new(RefCell::new(HashMap::new())),
+            // M52 Phase 1: fresh, empty, not shared with `view` -- a
+            // `View`-built tree never calls an `add_*` factory (it goes
+            // through `engine_spec::build`/`Reconciler`, a completely
+            // separate path that already gets its own live re-theme via
+            // `View.set_theme`/`Reconciler::retheme`, M51), so there is
+            // nothing to inherit here. A caller who then calls `add_*`
+            // directly on this `Window` still gets a real, correctly-
+            // registered hook for that node going forward.
+            retheme_hooks: RefCell::new(Vec::new()),
             active,
         }
     }
@@ -613,7 +690,6 @@ impl PyWindow {
         }
         state.components = components;
         let tint = state.on_surface();
-        drop(state);
         let mut tree = self.tree.borrow_mut();
         tree.set_all_interaction_tints(tint);
         // M20 Phase 1 (§7.1, §7.3): the real, deliberate scope choice
@@ -621,6 +697,22 @@ impl PyWindow {
         // rather than resolving a second, more specific MD3 role per
         // component.
         tree.set_all_component_tints(tint);
+        // M52 Phase 1 (§7.1, §7.3): replay every registered `Retithe
+        // Hook` now that `state` reflects the newly-installed theme --
+        // each hook recomputes its own component's real container/
+        // label color and corner_radius/elevation from scratch (the
+        // same `resolve_*_colors`/`theme.shape`/`theme.elevation` calls
+        // its own `add_*` factory made at construction time) and
+        // overwrites in place, snapping any in-flight animation --
+        // purely additive alongside the two tint pushes above, which
+        // stay exactly as they were (unchanged, zero regression risk;
+        // they're still the only mechanism for a plain node that opted
+        // into `InteractionState` via `Node.enable_interaction()`
+        // directly, never built by a themed factory).
+        for hook in self.retheme_hooks.borrow().iter() {
+            hook(&state, &mut tree);
+        }
+        drop(state);
         Ok(())
     }
 
@@ -797,5 +889,70 @@ mod tests {
         assert_eq!(state.elevation("button", Some("elevated")), Some(1.0));
         assert_eq!(state.elevation("button", Some("filled")), Some(0.0));
         assert_eq!(state.elevation("button", None), Some(0.0));
+    }
+
+    /// M52 Phase 1: the `RetitheHook` mechanism itself -- GIL-free,
+    /// no `PyWindow`/pyo3 involved, since `Box<dyn Fn(&ThemeState, &mut
+    /// Tree)>` closures over plain Rust values need none. Confirms two
+    /// registered hooks both fire, in registration order, and each
+    /// writes only its own captured `NodeId`.
+    #[test]
+    fn every_registered_hook_fires_and_writes_only_its_own_node() {
+        let mut tree = Tree::new();
+        let a = tree.insert(
+            NodeKind::Rect,
+            Style::default(),
+            PaintProperties::new(Color::TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+        let b = tree.insert(
+            NodeKind::Rect,
+            Style::default(),
+            PaintProperties::new(Color::TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+        let hooks: Vec<RetitheHook> = vec![
+            Box::new(move |_theme, tree| {
+                if let Some(node) = tree.get_mut(a) {
+                    node.paint.corner_radius = engine_core::Animated::new(4.0);
+                }
+            }),
+            Box::new(move |_theme, tree| {
+                if let Some(node) = tree.get_mut(b) {
+                    node.paint.corner_radius = engine_core::Animated::new(8.0);
+                }
+            }),
+        ];
+        let theme = ThemeState::default();
+        for hook in &hooks {
+            hook(&theme, &mut tree);
+        }
+        assert_eq!(tree.get(a).unwrap().paint.corner_radius.current, 4.0);
+        assert_eq!(tree.get(b).unwrap().paint.corner_radius.current, 8.0);
+    }
+
+    /// A hook that captured a `NodeId` whose node was since removed
+    /// (`Node.remove()`, real, ordinary usage) must be a safe, silent
+    /// no-op on replay -- the same "stale side-table entry is harmless"
+    /// contract `handlers`/`materializers`/`context_menus` already have,
+    /// extended to this new side table, not a new regression class.
+    #[test]
+    fn a_hook_whose_node_was_since_removed_is_a_safe_no_op() {
+        let mut tree = Tree::new();
+        let removed = tree.insert(
+            NodeKind::Rect,
+            Style::default(),
+            PaintProperties::new(Color::TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+        tree.remove(removed);
+        let hook: RetitheHook = Box::new(move |_theme, tree| {
+            if let Some(node) = tree.get_mut(removed) {
+                node.paint.corner_radius = engine_core::Animated::new(99.0);
+            }
+        });
+        let theme = ThemeState::default();
+        hook(&theme, &mut tree);
+        assert!(
+            tree.get(removed).is_none(),
+            "the removed node must still be gone -- the hook must not have panicked or resurrected it"
+        );
     }
 }

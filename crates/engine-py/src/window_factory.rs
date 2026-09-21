@@ -220,6 +220,47 @@ fn resolve_button_colors(
     }
 }
 
+/// M52 Phase 1 (§7.1, §7.3): `add_button`'s own real `RetitheHook`
+/// builder -- the milestone's own proof-of-concept, chosen for being
+/// the simplest real themed factory (fixed 2-node topology, a single
+/// shared `resolve_button_colors` call, no custom `NodeKind` payload
+/// field). Recomputes exactly what `add_button` itself computed at
+/// construction time, from the same captured inputs, and snaps the
+/// result into the container/label nodes in place -- `Ok`/`Err` from
+/// `resolve_button_colors` is deliberately swallowed (a hook can't
+/// return a `PyResult` to any caller, and an unknown `variant` string
+/// was already validated the moment `add_button` first accepted it, so
+/// this can only fail if something else already went wrong; a silent
+/// no-op is the same safe fallback `tree.get_mut(id) -> None` already
+/// gives for a stale `NodeId`). A named, standalone function (not an
+/// inline closure written at the `add_button` call site) so it can be
+/// unit-tested directly, GIL-free, without constructing a `PyWindow`.
+fn button_retheme_hook(
+    container: NodeId,
+    label: NodeId,
+    variant: String,
+    height: f32,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let Ok(colors) = resolve_button_colors(theme, &variant, "button") else {
+            return;
+        };
+        let corner_radius = theme
+            .shape("button", Some(&variant))
+            .unwrap_or_else(|| f64::from(height) / 2.0);
+        if let Some(node) = tree.get_mut(container) {
+            node.paint.background = Animated::new(colors.container);
+            node.paint.corner_radius = Animated::new(corner_radius);
+            node.paint.elevation = Animated::new(colors.elevation);
+            node.paint.border_color = Animated::new(colors.border_color);
+            node.paint.border_width = Animated::new(colors.border_width);
+        }
+        if let Some(node) = tree.get_mut(label) {
+            node.paint.background = Animated::new(colors.label);
+        }
+    })
+}
+
 /// M30 Phase 1 Step 3 (§5, §7): `FAB`/`Extended FAB` share one real
 /// color-variant system, distinct from `Button`'s own -- Surface (the
 /// real MD3 default)/Primary/Secondary/Tertiary, not Elevated/Filled/
@@ -1420,6 +1461,17 @@ impl PyWindow {
         );
         tree.add_child(container, label_id);
         tree.add_child(self.root, container);
+        drop(tree);
+        // M52 Phase 1 (§7.1, §7.3): registers this button's own live
+        // re-theme hook, so a later `Window.set_theme(...)` recomputes
+        // and overwrites `container`/`label_id`'s real color/corner_
+        // radius/elevation in place, not just at construction time.
+        self.retheme_hooks.borrow_mut().push(button_retheme_hook(
+            container,
+            label_id,
+            variant.to_string(),
+            height,
+        ));
         Ok(self.wrap_node(container))
     }
 
@@ -7857,5 +7909,159 @@ impl PyWindow {
         );
         tree.add_child(self.root, id);
         self.wrap_node(id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::window::ThemeState;
+
+    fn leaf() -> (NodeId, Tree) {
+        let mut tree = Tree::new();
+        let id = tree.insert(
+            NodeKind::Rect,
+            Style::default(),
+            PaintProperties::new(Color::TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+        (id, tree)
+    }
+
+    /// M52 Phase 1: `button_retheme_hook` -- the milestone's own proof
+    /// of concept. Exact-`Color`/`f64`-value assertions, not "does not
+    /// raise" -- possible here (unlike this suite's pytest coverage,
+    /// which has no Python-facing getter for a node's `background`)
+    /// because the hook-builder function is plain, testable Rust,
+    /// confirmed GIL-free.
+    #[test]
+    fn recomputes_container_and_label_color_when_the_theme_changes() {
+        let (container, mut tree) = leaf();
+        let label = tree.insert(
+            NodeKind::Text(TextState {
+                content: "Save".to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: BUTTON_LABEL_FONT_WEIGHT,
+                font_size: BUTTON_LABEL_FONT_SIZE,
+                align: TextAlign::Center,
+            }),
+            Style::default(),
+            PaintProperties::new(Color::TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+        let hook = button_retheme_hook(container, label, "filled".to_string(), 40.0);
+
+        let theme_a = ThemeState::for_test(Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF));
+        hook(&theme_a, &mut tree);
+        let container_after_a = tree.get(container).unwrap().paint.background.current;
+        assert_eq!(
+            container_after_a,
+            theme_a.role("primary").unwrap(),
+            "expected the exact real resolved 'primary' role for the filled variant"
+        );
+
+        let theme_b = ThemeState::for_test(Color::from_rgba8(0x00, 0x66, 0x00, 0xFF));
+        hook(&theme_b, &mut tree);
+        let container_after_b = tree.get(container).unwrap().paint.background.current;
+        let label_after_b = tree.get(label).unwrap().paint.background.current;
+
+        // "filled" resolves container/label from the "primary"/
+        // "on_primary" roles directly -- exact-value assertions against
+        // the second theme's own real resolution, not an inequality
+        // check against the first: MD3's tone mapping can legitimately
+        // resolve "on_primary" to the identical white for two different
+        // hues that are both dark enough, so "must differ from theme_a"
+        // is not a valid general assumption (caught by actually running
+        // this test with two real, dark seeds -- both resolved on_
+        // primary to white).
+        assert_ne!(
+            container_after_a, container_after_b,
+            "a real seed change must produce a real, different resolved container color"
+        );
+        assert_eq!(
+            container_after_b,
+            theme_b.role("primary").unwrap(),
+            "expected the exact real resolved 'primary' role for the filled variant"
+        );
+        assert_eq!(
+            label_after_b,
+            theme_b.role("on_primary").unwrap(),
+            "expected the exact real resolved 'on_primary' role, re-resolved against the new theme"
+        );
+    }
+
+    /// The hook's own `corner_radius` half -- a real `components:`
+    /// override must apply live too, not just color, and a later call
+    /// with no override at all must fall back to `height / 2.0` again
+    /// (the exact same "each `set_theme` is a complete, fresh selection"
+    /// convention `View.set_theme` (M51) already established).
+    #[test]
+    fn recomputes_corner_radius_from_a_components_override_when_the_theme_changes() {
+        let (container, mut tree) = leaf();
+        let label = tree.insert(
+            NodeKind::Text(TextState {
+                content: "Save".to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: BUTTON_LABEL_FONT_WEIGHT,
+                font_size: BUTTON_LABEL_FONT_SIZE,
+                align: TextAlign::Center,
+            }),
+            Style::default(),
+            PaintProperties::new(Color::TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+        let hook = button_retheme_hook(container, label, "filled".to_string(), 40.0);
+        let seed = Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF);
+
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "button.filled".to_string(),
+            engine_spec::ComponentOverride {
+                corner_radius: Some(4.0),
+                elevation: None,
+            },
+        );
+        let themed = ThemeState::for_test_with_components(seed, overrides);
+        hook(&themed, &mut tree);
+        assert_eq!(
+            tree.get(container).unwrap().paint.corner_radius.current,
+            4.0,
+            "expected the real components: override, not height / 2.0"
+        );
+
+        let unthemed = ThemeState::for_test(seed);
+        hook(&unthemed, &mut tree);
+        assert_eq!(
+            tree.get(container).unwrap().paint.corner_radius.current,
+            20.0,
+            "a later set_theme with no override must reset to height / 2.0 (40.0 / 2.0), \
+             not silently keep the previous override"
+        );
+    }
+
+    /// A hook whose `NodeId`s were since removed (`Node.remove()`) must
+    /// be a safe no-op, the same contract `window::tests` already
+    /// proved for the generic mechanism -- re-proved here at the real
+    /// `button_retheme_hook` call site, not just the abstract one.
+    #[test]
+    fn is_a_safe_no_op_after_both_nodes_are_removed() {
+        let (container, mut tree) = leaf();
+        let label = tree.insert(
+            NodeKind::Text(TextState {
+                content: "Save".to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: BUTTON_LABEL_FONT_WEIGHT,
+                font_size: BUTTON_LABEL_FONT_SIZE,
+                align: TextAlign::Center,
+            }),
+            Style::default(),
+            PaintProperties::new(Color::TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+        tree.remove(container);
+        tree.remove(label);
+        let hook = button_retheme_hook(container, label, "filled".to_string(), 40.0);
+        let theme = ThemeState::for_test(Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF));
+        hook(&theme, &mut tree);
+        assert!(tree.get(container).is_none());
+        assert!(tree.get(label).is_none());
     }
 }

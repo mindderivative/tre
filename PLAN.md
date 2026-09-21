@@ -1,57 +1,65 @@
-# PLAN — M51: Live Re-Theme for the Declarative Surface (`View.set_theme`)
+# PLAN — M52: Live Re-Theme for `Window`'s Imperative MD3 Catalog
 
 ## Goal
-User: "Scope M51" -- following M50's own writeup renumbering this as the
-next roadmap item once the theme backend (color + shape/elevation) was
-complete across the whole MD3 catalog. Scoped via a formal plan
-(`EnterPlanMode`/`ExitPlanMode`).
+User: "Scope the live re-theme for Window's imperative MD3 catalog" --
+the "live token-linkage" mechanism M51's own writeup named and
+deliberately deferred since M49. Scoped via a formal plan
+(`EnterPlanMode`/`ExitPlanMode`), grounded in a dedicated Explore
+agent's exhaustive audit of all 58 `add_*` factories in
+`window_factory.rs`/`window_virtual_canvas.rs`.
 
-## Design (single phase)
-Real investigation before designing confirmed this is a small,
-well-bounded addition, not a new subsystem: `Reconciler` already
-retains the parsed `WidgetSpec`/`id`->`NodeId` map for a `View`'s
-lifetime (for hot-reload), and `patch_node` already does exactly
-"recompute a node's `PaintProperties`/`layout_style` from its spec +
-active theme layers, overwrite in place." `reconcile_node` only skips
-`patch_node` when the spec is unchanged (a hot-reload fast path) --
-live re-theme is the opposite case: spec unchanged, theme changed, so
-`patch_node` should run unconditionally for every node instead.
+## Real investigation
+46 of 58 factories resolve a theme-derived value and are in scope. The
+file's 4 shared `resolve_*_colors` helpers are confirmed pure Rust (no
+GIL type in any signature) -- every hook this milestone registers can
+run with no Python interpreter involved. Node topology: 30 fixed, 8
+conditional-but-bounded, 8 genuinely `Vec`-driven. `add_split_button`/
+`add_button_group` are structurally unusual (call `add_button`
+internally, then overwrite shape-morph fields via a second, independent
+theme lookup). 9 factories set theme-derived colors on their own
+`NodeKind` payload field, not `PaintProperties` -- 5 of those
+(RadioButton/Switch/LinearProgress/CircularProgress/TimePickerDial) are
+confirmed completely untouched by `Window.set_theme` today, a larger
+gap than the milestone's own naming implied. Two pre-existing gaps
+(`add_tooltip` color, `build_menu` panel shape/elevation) are named but
+deliberately not fixed here.
 
-1. `resolve_theme_layers` (`engine-py/src/view.rs`) -- extracted
-   `View::new`'s own inline theme-resolution logic into a shared
-   private helper, once `View.set_theme` needed the identical logic.
-2. `Reconciler::retheme` (`engine-spec/src/reconcile.rs`) -- walks
-   `self.spec` via a new `retheme_node` recursive helper, calling
-   `patch_node` unconditionally for every node. `&self`, not `&mut
-   self`. No changes to `patch_node`/`build_tree` themselves.
-3. `View.set_theme(default_theme=None, custom_theme=None,
-   theme_seed=None, dark=False)` -- calls `resolve_theme_layers` then
-   `retheme`, then updates `self.default_theme`/`custom_theme`/`scheme`
-   so a later `poll_reload()` keeps using the new theme. Each call is a
-   complete, fresh theme selection, matching `Window.set_theme`'s own
-   precedent -- omitting params resets to the shipped default, not
-   "keep the previous call's theme."
+## Design (6 phases, 46 factories)
+1. **Mechanism + `add_button` proof of concept.** `RetitheHook = Box<dyn
+   Fn(&ThemeState, &mut Tree)>`, a new `PyWindow.retheme_hooks: RefCell
+   <Vec<RetitheHook>>` side table (mirrors `materializers`/`canvas_
+   draws`), replayed at the end of `Window.set_theme` alongside the
+   existing (unchanged) tint pushes. Each themed factory builds its hook
+   via a small, named, independently-testable builder function, not an
+   inline closure.
+2. Fixed/simple `PaintProperties`-only factories (~19).
+3. Buttons & FAB family (~8), including the two structurally unusual
+   nested-reuse cases last.
+4. Conditional/variable multi-node Containers & Navigation (~9).
+5. Non-`PaintProperties` stateful components (~9) -- closes the 5
+   confirmed pre-existing gaps as a direct byproduct.
+6. Docs/example/verification wrap-up. No `_core.pyi` change needed --
+   `Window.set_theme`'s signature is unchanged throughout.
 
-## Explicitly out of scope (named, not silent)
-- Live re-theme for `Window`'s imperative catalog -- would need a new
-  per-node "how was this constructed" tracking mechanism, the "live
-  token-linkage" concept flagged as highest-risk/highest-value since
-  the earliest investigation in this session, long before M49 existed.
-- Re-applying `{{ }}` bindings after `retheme()` -- `patch_node` only
-  recomputes the static cascade, identical to any content-only
-  `poll_reload` today. Verified by a dedicated test, not assumed safe.
+## Explicitly out of scope
+Making `add_tooltip`'s color or `build_menu`'s panel shape/elevation
+theme-resolved for the first time (M49/M50's job, not this milestone's).
+Any new Python-facing API surface. Pruning `retheme_hooks` on node
+removal (matches the existing, accepted `handlers`/`materializers`/
+`context_menus` precedent).
 
 ## Status
-Complete. 7 new pytest tests (`tests/test_theme.py`), 2 new Rust unit
-tests (`reconcile.rs`, GIL-free). `python/tre/_core.pyi` updated
-(`View.set_theme` stub). Extended `examples/theme_customization.py` +
-new `theme_customization_retheme.yaml` fixture with a real live-retheme
-call proving an already-built node's `corner_radius` changes in place
-while stylesheet/inline overrides still win. Full chain green:
-`cargo check`/`clippy -D warnings`/`fmt` clean, `cargo test --workspace
---release` (`engine-spec` 65, up from 63, +2; every other suite
-unchanged), `maturin develop --release`, `pytest tests/` (709 passed,
-up from 702, +7, 1 skipped unchanged), all 84 examples (one extended),
-showcase demo. Tracker generator re-verified (51 milestones/150
-phases/262 items/2 known gaps/19 fixed gaps, up from 50/149/258/2/19).
-**M51 -- is now fully complete, single phase.**
+**Phase 1 of 6 complete.** `RetitheHook` mechanism + `Window.set_theme`
+wiring + `add_button` fully wired, both in `window.rs`/`window_
+factory.rs`. 5 new Rust unit tests (GIL-free: 2 generic-mechanism, 3
+`button_retheme_hook` exact-value -- a real test-authoring mistake
+caught by running it: MD3's `on_primary` role can legitimately resolve
+to the identical white for two different dark seeds, so an initial
+"must differ" assertion was wrong, fixed to assert exact resolved
+values instead). 4 new pytest tests. Full chain green: `cargo check`/
+`clippy -D warnings`/`fmt` clean, `cargo test --workspace --release`
+(`engine-py` 25, up from 20, +5), `maturin develop --release`, `pytest
+tests/` (713 passed, up from 709, +4, 1 skipped unchanged), all 84
+examples, showcase demo. Tracker generator: 52 milestones/151
+phases/265 items/2 known gaps/19 fixed gaps. **Up next: Phase 2, the
+~19 remaining fixed/simple factories.**

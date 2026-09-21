@@ -829,3 +829,68 @@ def test_view_set_theme_a_bound_property_reverts_to_its_static_value_sanely(tmp_
         "retheme recomputes only the static cascade -- the bound value reverts "
         "to the spec's own static opacity, exactly like a content hot-reload would"
     )
+
+
+# --- M52 Phase 1: live re-theme for Window's imperative catalog --------
+# -- add_button, the milestone's own proof of concept. A second
+# window.set_theme(...) call must recompute an already-built button's
+# real corner_radius/elevation in place, not just at construction time
+# (the pre-M52 behavior: set_theme only ever pushed one blind uniform
+# on_surface tint into 4 unrelated fields, never a button's own
+# container/label color or shape).
+
+
+def test_window_set_theme_recomputes_an_already_built_buttons_corner_radius_live(tmp_path):
+    window = Window(width=400, height=400)
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF))
+    node = window.add_button(label="hi", variant="filled", width=100, height=40)
+    assert node.get("corner_radius") == pytest.approx(20.0), "height / 2.0, the un-themed default"
+
+    theme_path = write_yaml(
+        tmp_path, "theme.yaml", "components:\n  button.filled: {corner_radius: 4, elevation: 2}\n"
+    )
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), custom_theme=theme_path)
+    assert node.get("corner_radius") == pytest.approx(
+        4.0
+    ), "the exact same, already-built Node -- expected the real components: override, applied live"
+    assert node.get("elevation") == pytest.approx(2.0)
+
+
+def test_window_set_theme_with_no_override_resets_an_already_themed_buttons_corner_radius(tmp_path):
+    theme_path = write_yaml(
+        tmp_path, "theme.yaml", "components:\n  button.filled: {corner_radius: 4, elevation: 2}\n"
+    )
+    window = Window(width=400, height=400)
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), custom_theme=theme_path)
+    node = window.add_button(label="hi", variant="filled", width=100, height=40)
+    assert node.get("corner_radius") == pytest.approx(4.0)
+
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF))
+    assert node.get("corner_radius") == pytest.approx(20.0), (
+        "each set_theme call is a complete, fresh selection -- omitting custom_theme "
+        "must reset to height / 2.0 live, not silently keep the previous override"
+    )
+
+
+def test_window_set_theme_a_second_call_does_not_raise_for_an_already_built_buttons_color(tmp_path):
+    theme_a = write_yaml(tmp_path, "theme_a.yaml", "colors:\n  primary: \"#00695C\"\n")
+    theme_b = write_yaml(tmp_path, "theme_b.yaml", "colors:\n  primary: \"#8B0000\"\n")
+    window = Window(width=400, height=400)
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), custom_theme=theme_a)
+    window.add_button(label="hi", variant="filled", width=100, height=40)
+    # No Python-facing getter for a node's resolved background color
+    # (the same honest limit every other color test in this suite
+    # already states) -- proven by not raising, through the exact same
+    # already-built Node the window returned before this second call.
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), custom_theme=theme_b)
+
+
+def test_window_set_theme_removed_buttons_hook_is_a_safe_no_op(tmp_path):
+    window = Window(width=400, height=400)
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF))
+    node = window.add_button(label="hi", variant="filled", width=100, height=40)
+    node.remove()
+    # Must not raise -- a stale retheme hook whose node was since
+    # removed is a safe no-op (Tree::get_mut -> None), the same accepted
+    # tradeoff handlers/materializers/context_menus already have.
+    window.set_theme(seed=(0x00, 0x66, 0x00, 0xFF))
