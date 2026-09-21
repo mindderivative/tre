@@ -1,86 +1,111 @@
-# LOG — M49: Theme as a YAML File (Color Overrides + Per-Kind Default Styles)
+# LOG — M50: Theme-Driven Shape & Elevation for the Imperative MD3 Catalog
 
-- User: "Yes scope M49" -- following M48's own writeup naming M49 as
-  the next roadmap piece ("theme YAML carrying both a token/palette
-  section and per-kind default styles, layered beneath the existing
-  Stylesheet cascade").
-- Entered Plan Mode. Dispatched an Explore agent to answer the open
-  question: does theme YAML reach the *real* MD3 component catalog
-  (`window_factory.rs`'s 56 `add_*` factories) or only the narrow
-  declarative 7-kind surface? Findings: corner-radius/elevation are a
-  real dead end -- every factory hardcodes them as a Rust `const` or a
-  required Python argument, confirmed via grep, never theme-driven.
-  Color is NOT a dead end -- `window_factory.rs`'s `resolve_*_colors`
-  helpers and the declarative `resolve_color` path both already
-  resolve roles through the exact same `ColorScheme::role` lookup, so
-  a single override layer applied wherever a `ColorScheme` is selected
-  reaches the entire real catalog, not just 7 kinds. This materially
-  improved the plan over its original "theme YAML only affects Rect/
-  Container" framing.
-- Implementation (4 phases, approved plan):
-  - Phase 1: `ColorScheme::set_role`/`apply_overrides`
-    (`engine-md3/src/color.rs`) -- a mirrored setter of the existing
-    `role()` getter plus an override-applying method reusing the same
-    hex/CSS parser used elsewhere. Wired into `Window.set_theme`'s new
-    `custom_theme` param and `View::new`'s new `default_theme`/
-    `custom_theme` params.
-  - Phase 2: `StyleSpec.elevation` (a real parity gap -- `PaintProperties
-    .elevation` existed since day one, never exposed to YAML). New
-    `engine_md3::shape` module -- real, tested MD3 shape/elevation
-    scale constants, replacing ~40 scattered doc-comment-only mentions
-    across `window_factory.rs` with one source of truth (data only,
-    not yet consumed by those call sites -- named as explicit
-    out-of-scope follow-up).
-  - Phase 3: `cascade.rs`'s `resolve_style` split into
-    `resolve_style_within_sheet` (unchanged external behavior) +
-    `resolve_style_layered(spec, default_theme, custom_theme, sheet)`
-    -- each layer resolved through its own independent cascade before
-    merging in source-priority order, inline last. Deliberately NOT
-    concatenating all three sheets' rules into one combined list
-    (would let a default theme's `id:` rule beat an app's own
-    `baseline` stylesheet rule, backwards from the user's own stated
-    model). Threaded through `build_tree`/`patch_node`/
-    `load_styled_view`/`Reconciler::load`/`Reconciler::reconcile`,
-    mirroring exactly how `sheet` was already threaded.
-  - Phase 4: `View.__new__(default_theme=, custom_theme=)` --
-    omitting `default_theme` loads the engine's own shipped
-    `crates/engine-py/assets/default_theme.yaml`, embedded at compile
-    time via `include_str!` (never a runtime filesystem lookup).
-    `Window.set_theme(custom_theme=)` confirmed to need no
-    `default_theme` equivalent (its corner-radius/elevation never
-    consult any theme regardless).
-- **Real design decision worth recording:** seed precedence is
-  DIFFERENT direction between `View`/`Window` on purpose, not an
-  oversight -- `View`'s `theme_seed` is optional, so an explicit value
-  there is itself the "don't defer to the file" signal; `Window.
-  set_theme`'s `seed` is required, so the theme file's own seed wins
-  when present, since there's no way to omit a required argument to
-  express deference. Documented directly in both doc comments.
-- No real test-authoring mistakes this time -- all 15 new pytest tests
-  passed on the first real run (verified via an ad hoc smoke-test
-  script before writing the formal suite, catching nothing new).
-- `python/tre/_core.pyi` updated (`View.__init__`, `Window.set_theme`).
-  New `tests/test_theme.py` (15 tests). New `examples/
-  theme_customization.py` + 3 YAML fixtures, proving all four real
-  cascade tiers plus color overrides reaching both the declarative and
-  imperative catalog in one script.
-- `BUILD_TRACKER.md`: new M49 milestone section (4 phases, 11 steps),
-  Top Metrics row, "Just closed" prepended, "Up next" pointed forward
-  to M50. Regenerated cleanly on the first attempt (no parser-format
-  mistakes this time, unlike M47/M48's own real bugs found there).
-- Full chain green: `cargo check`/`clippy -D warnings`/`fmt` clean,
-  `cargo test --workspace --release` (`engine-md3` 19 up from 14 +5,
-  `engine-spec` 60 up from 52 +8, every other suite unchanged),
-  `maturin develop --release`, `pytest tests/` (663 passed, up from
-  648, +15, 1 skipped unchanged), all 84 examples (+1), showcase demo.
-  Tracker generator: 49 milestones/144 phases/249 items/2 known
-  gaps/19 fixed gaps. Artifact republished to the existing URL.
+- User: "Scope the corner-radius/elevation to use the new theme
+  pattern. I would like the theme backend complete before re-theming
+  everything else" -- an explicit reprioritization ahead of M51/live
+  re-theme, which M49's own writeup had originally scoped as next.
+- Entered Plan Mode. Dispatched an Explore agent for an exhaustive,
+  component-by-component audit of all 56 `add_*` factories in
+  `window_factory.rs` (7,581 lines) before designing anything.
+  Findings: 28 of 56 have a real, themeable corner radius; 14 of those
+  28 also have real elevation; the other 28 have neither (custom-
+  painted `NodeKind`s or deliberately flat/square MD3 rows). Only
+  `add_fab` (size) and `add_toolbar` (docked/floating) genuinely pick
+  between multiple corner-radius values by variant. Two factories
+  (`add_split_button`, `add_button_group`) have a second, distinct
+  "tightened" hover/press shape concept.
+- Implementation (5 phases, approved plan):
+  - Phase 1: `ThemeSpec.components`/`ComponentOverride`
+    (`engine-spec/src/theme.rs`) -- a separate namespace from
+    `styles:`. `ThemeState.components`/`shape()`/`elevation()`
+    (`engine-py/src/window.rs`) -- a real 2-tier, per-field lookup.
+    **Real bug caught by a dedicated unit test before any factory used
+    it, not by inspection:** an early draft checked "does a variant
+    entry exist at all" before falling through to the bare key, which
+    would let a variant entry setting only `elevation` incorrectly
+    block the bare key's own `corner_radius`. Fixed to look up each
+    field independently.
+  - Phase 2: wired `add_button`, `add_icon_button`, `add_fab`,
+    `add_extended_fab`, `add_segmented_button`, `add_toolbar`,
+    `add_split_button`, `add_button_group`. `resolve_button_colors`
+    gained a `component: &str` param so different real callers
+    (`"button"` vs `"icon_button"`) get their own elevation key even
+    though they share the same color-resolution logic. **A real,
+    load-bearing bug caught and fixed before it shipped:**
+    `add_split_button`/`add_button_group`'s own hover/press shape-morph
+    code recomputed `height / 2.0` as a fresh, independent literal,
+    completely bypassing whatever `add_button` itself had just resolved
+    for `paint.corner_radius` -- a themed button's own painted *shape*
+    would have silently disagreed with its own `corner_radius` field.
+    Fixed by resolving the override once and reusing the identical
+    value for both.
+  - Phase 3: wired `add_chip`, `add_card`, `add_tooltip`, `add_dialog`,
+    `add_snackbar`, `add_popover`, `add_side_sheet`,
+    `add_navigation_drawer`, `add_search_bar`, `add_search_view`.
+    **A real test-authoring mistake caught by running the tests:** an
+    initial test asserted `add_dialog`'s own return value carried the
+    themed values directly, but `add_dialog` returns the scrim (always
+    `0.0`), not the themed panel, one of its children, never returned
+    to Python -- fixed to a "does not raise" test.
+  - Phase 4: wired the final 10 -- `add_badge`, `add_navigation_rail`,
+    `add_top_app_bar`, `add_tabs`, `add_date_picker_day`,
+    `add_time_input_field`, `add_period_selector`, `add_spin_box`,
+    `add_pagination`, `add_graph_node`.
+  - Phase 5: populated the shipped `default_theme.yaml`'s new
+    `components:` section. **A real correctness constraint identified
+    and honored before writing any values, not glossed over:** only
+    components whose real default is a *fixed* value (not a formula
+    over a caller-supplied dimension like `height`/`size`) could safely
+    be included -- `add_button`/`add_icon_button`/`add_segmented_button`
+    /`add_toolbar`/`add_button_group`'s own tightened shape were
+    deliberately given no entry at all, since a fixed number would
+    silently override their real "scales with the caller's own
+    dimension" behavior. **A real completeness gap found and closed
+    while populating the file, not originally scoped:** `Window.
+    set_theme` had no way to auto-load any default theme at all --
+    meaning the newly-populated `components:` section would have been
+    dead data for the whole imperative catalog. Fixed by giving
+    `Window.set_theme` its own `default_theme` parameter, mirroring
+    `View.__new__`'s identical convention, deliberately scoped to
+    `components:` only (never `colors:`/`seed:`, which stay fully
+    served by the required `seed` argument plus `custom_theme`).
+- A shared design principle applied consistently throughout: a factory
+  that only *coincidentally* reuses another's Rust `const` today
+  (`add_search_view`/`DIALOG_CORNER_RADIUS`, `add_time_input_field`/
+  `add_period_selector`/`add_spin_box`/`CHIP_CORNER_RADIUS`,
+  `add_graph_node`/`CARD_CORNER_RADIUS`, `add_navigation_drawer`/
+  `SIDE_SHEET_CORNER_RADIUS`) still gets its own distinct theme key --
+  while sub-elements that are *structurally* the same real component
+  (`add_top_app_bar`/`add_spin_box`'s own icon buttons) deliberately
+  reuse `"icon_button"` rather than inventing a redundant key.
+- `python/tre/_core.pyi` updated (`Window.set_theme`'s widened
+  signature/docstring, `View.__init__`'s docstring noting `components:`
+  is unused there). Extended `examples/theme_customization.py` + its
+  own custom-theme fixture with a real `components:` entry, asserted
+  directly on a real `add_button` node.
+- `BUILD_TRACKER.md`: new M50 milestone section (5 phases, 9 steps),
+  Top Metrics row, "Just closed" prepended, "Up next" renumbered to
+  M51 (live re-theme, deferred by the user's own explicit
+  reprioritization). Regenerated cleanly on the first attempt.
+- Full chain green at every phase boundary: `cargo check`/`clippy -D
+  warnings`/`fmt` clean, `cargo test --workspace --release`
+  (`engine-py` 20 up from 11 +9, `engine-spec` 63 up from 60 +3, every
+  other suite unchanged -- no `engine-core`/`engine-render` logic
+  touched at all), `maturin develop --release`, `pytest tests/` (702
+  passed, up from 663, +39, 1 skipped unchanged), all 84 examples (one
+  extended), showcase demo -- re-run in full after every phase,
+  including after populating the shipped defaults, to confirm zero
+  behavior change for every pre-existing example/test. Tracker
+  generator: 50 milestones/149 phases/258 items/2 known gaps/19 fixed
+  gaps. Artifact republished to the existing URL.
 
 ## Status
 
-**M49 -- Theme as a YAML File -- is now fully complete, all 4 phases.**
-The second concrete piece of the user's broader customization request.
-M50 (live re-theme) remains sketched-but-unscoped in the approved plan,
-needing its own dedicated plan-mode pass now that M49's theme-as-data
-shape exists to re-resolve from. Per the standing "push after a full
-milestone closes" convention, a `git push` is now appropriate.
+**M50 -- Theme-Driven Shape & Elevation for the Imperative MD3 Catalog
+-- is now fully complete, all 5 phases.** Completes the theme backend
+across the entire real MD3 catalog -- both color (M49) and now shape/
+elevation (M50) reach every themeable component through the same real
+`custom_theme`/`default_theme` parameters. M51 (live re-theme) is next
+per the user's own stated ordering, still needing its own dedicated
+plan-mode pass. Per the standing "push after a full milestone closes"
+convention, a `git push` is now appropriate.

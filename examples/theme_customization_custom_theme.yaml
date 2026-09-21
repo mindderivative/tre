@@ -9,3 +9,10 @@ colors:
 styles:
   - kind: Checkbox
     style: {corner_radius: 10}
+# M50: `components:` overrides the imperative MD3 catalog's own real
+# shape/elevation -- a "button.filled" corner radius, reaching every
+# add_button(variant="filled") call this window makes, independent of
+# `styles:` above (which only ever reaches the 7 declarative NodeKindSpec
+# kinds, never window_factory.rs's real MD3 component catalog).
+components:
+  button.filled: {corner_radius: 4, elevation: 2}

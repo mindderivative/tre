@@ -216,6 +216,47 @@ def test_window_set_theme_without_custom_theme_still_works(tmp_path):
     window.add_button(label="hi", variant="filled", width=100, height=40)
 
 
+# --- M50 Phase 5: Window.set_theme(default_theme=...) ------------------
+
+
+def test_window_set_theme_auto_loads_the_shipped_default_components(tmp_path):
+    window = Window(width=200, height=200)
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF))
+    card = window.add_card(width=200.0, height=100.0, variant="elevated")
+    assert card.get("corner_radius") == pytest.approx(12.0)
+    assert card.get("elevation") == pytest.approx(1.0)
+
+
+def test_window_set_theme_custom_theme_wins_over_the_shipped_default(tmp_path):
+    theme_path = write_yaml(tmp_path, "theme.yaml", "components:\n  card: {corner_radius: 99}\n")
+    window = Window(width=200, height=200)
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), custom_theme=theme_path)
+    card = window.add_card(width=200.0, height=100.0, variant="filled")
+    assert card.get("corner_radius") == pytest.approx(99.0)
+    # elevation wasn't in the custom theme's own override -- still
+    # resolves from the shipped default's own merged-in baseline.
+    assert card.get("elevation") == pytest.approx(0.0)
+
+
+def test_window_set_theme_custom_default_theme_path_replaces_the_shipped_one(tmp_path):
+    default_theme_path = write_yaml(
+        tmp_path, "my_default.yaml", "components:\n  card: {corner_radius: 42}\n"
+    )
+    window = Window(width=200, height=200)
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), default_theme=default_theme_path)
+    card = window.add_card(width=200.0, height=100.0, variant="filled")
+    assert card.get("corner_radius") == pytest.approx(42.0)
+    # The shipped default's own "card.elevated: elevation 1" entry is
+    # gone -- a real, own default_theme replaces it entirely, the same
+    # "replace, not merge" contract View.__init__'s own default_theme
+    # already establishes.
+    elevated = window.add_card(width=200.0, height=100.0, variant="elevated")
+    assert elevated.get("elevation") == pytest.approx(1.0), (
+        "the real MD3 baseline (colors.elevation's own per-variant match) still "
+        "applies -- only the theme layer's own entry is gone, not the underlying default"
+    )
+
+
 # --- hot reload keeps using the same theme -----------------------------------
 
 

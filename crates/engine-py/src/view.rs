@@ -196,7 +196,7 @@ pub(crate) fn parse_background_color(raw: &str) -> Result<(u8, u8, u8, u8), Stri
 /// extension. Loaded whenever a caller's `default_theme` param is
 /// `None`, both here (`View::new`) and in `Window.set_theme`
 /// (`window.rs`).
-const SHIPPED_DEFAULT_THEME_YAML: &str = include_str!("../assets/default_theme.yaml");
+pub(crate) const SHIPPED_DEFAULT_THEME_YAML: &str = include_str!("../assets/default_theme.yaml");
 
 /// M49 Phase 4: reads and parses one theme YAML file -- shared by
 /// `View::new`'s `default_theme`/`custom_theme` params and `Window.

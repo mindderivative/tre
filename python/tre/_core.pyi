@@ -288,15 +288,37 @@ class Window:
         self,
         seed: tuple[int, int, int, int],
         dark: bool = False,
+        default_theme: str | None = None,
         custom_theme: str | None = None,
     ) -> None:
         """Builds a real MD3 `DynamicTheme` from `seed` and makes it
-        this window's active theme, re-theming every already-created
-        component live. `custom_theme` (a path to a theme YAML file)
-        applies its `colors:` role overrides to both schemes, reaching
-        every real MD3 component this window's factories create -- its
-        own `seed:`, if present, overrides the `seed` argument. Raises
-        `ValueError` for an unknown role name or an unparseable color.
+        this window's active theme. `colors:` role overrides (in
+        `custom_theme`, if given) re-tint a small, fixed set of
+        already-created components live (checkbox marks, slider
+        tracks, ripple/hover tint) the moment this is called, the same
+        as always -- but every `add_*` call *after* this one picks up
+        the full override for real, through the identical `ColorScheme
+        ::role` lookup every component already resolves colors through.
+
+        `components:` (shape/elevation overrides, e.g. `{button.filled:
+        {corner_radius: 8, elevation: 2}}`) only affects nodes an
+        `add_*` factory creates *after* this call -- there is no live
+        re-theming of an already-built node's own corner radius or
+        elevation (a real, honest limit, not silently glossed over; see
+        `crates/engine-spec/src/theme.rs`'s own `components:` doc
+        comment for the full key convention). `default_theme`'s own
+        `components:` (omit for the engine's own shipped defaults,
+        mirroring `View.__init__`'s identical convention) supplies the
+        baseline, with `custom_theme`'s own `components:` layered on
+        top (custom wins on any overlapping key) -- deliberately scoped
+        to `components:` only: `default_theme`'s own `colors:`/`seed:`
+        are never consulted here, since color/seed are already fully
+        served by the required `seed` argument plus `custom_theme`'s
+        own override, and a second theme file quietly competing with a
+        required argument would be a real, confusing ambiguity.
+        `custom_theme`'s own `seed:`, if present, overrides the `seed`
+        argument. Raises `ValueError` for an unknown role name, an
+        unparseable color, or invalid theme YAML.
         """
         ...
 
@@ -1586,6 +1608,13 @@ class View:
         given (an explicit `theme_seed` always wins). Raises `ValueError`
         for an unknown role name, an unparseable color, or invalid theme
         YAML.
+
+        M50: a theme's own `components:` section (shape/elevation
+        overrides for the *imperative* MD3 catalog, `Window.add_button`/
+        `add_fab`/etc.) is silently unused here -- `View` has no
+        imperative factories to apply it to. Present in the shared
+        `ThemeSpec` type so one theme file can serve both `View` and
+        `Window`; see `Window.set_theme`'s own docstring for what it does.
         """
         ...
     def node(self, widget_id: str) -> Node:

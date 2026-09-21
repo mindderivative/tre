@@ -26,3 +26,55 @@ styles:
     style: {corner_radius: 8}
   - kind: TextField
     style: {corner_radius: 4}
+
+# M50: shape/elevation defaults for the imperative MD3 catalog
+# (`Window.add_button`/`add_fab`/etc., `engine-py::window_factory.rs`)
+# -- every value below is copied byte-for-byte from that file's own
+# real Rust `const`s (verified by direct read before writing this,
+# not recalled from memory), so a `Window` that never sets a theme,
+# or calls `set_theme` with no `custom_theme`, sees zero behavior
+# change from before this milestone.
+#
+# **Real, deliberate omission, not an oversight:** `button`/
+# `icon_button`/`segmented_button`/`toolbar`/`button_group.tightened`
+# have NO entry here at all, because their real default corner radius
+# is a *formula* over a caller-supplied dimension (`height`/`size`),
+# not a fixed number -- e.g. `add_button`'s own real default is
+# `height / 2.0`, which must keep scaling with whatever `height` a
+# caller passes. Baking in one fixed number for these would silently
+# override that scaling for every call that doesn't happen to match
+# whatever number was chosen, a real behavior change, not a neutral
+# default. Leaving them with no entry is what correctly preserves
+# their existing formula (`ThemeState::shape` returns `None`, so each
+# factory's own real fallback computation still runs).
+components:
+  card: {corner_radius: 12}
+  card.elevated: {elevation: 1}
+  chip: {corner_radius: 8}
+  tooltip: {corner_radius: 4}
+  dialog: {corner_radius: 28, elevation: 3}
+  snackbar: {corner_radius: 4, elevation: 3}
+  popover: {corner_radius: 12, elevation: 2}
+  side_sheet: {corner_radius: 16}
+  side_sheet.modal: {elevation: 1}
+  navigation_drawer: {corner_radius: 16}
+  navigation_drawer.modal: {elevation: 1}
+  navigation_drawer.indicator: {corner_radius: 28}
+  navigation_rail.indicator: {corner_radius: 16}
+  search_bar: {corner_radius: 28, elevation: 3}
+  search_view: {corner_radius: 28, elevation: 3}
+  date_picker_day: {corner_radius: 24}
+  time_input_field: {corner_radius: 8}
+  period_selector: {corner_radius: 8}
+  spin_box: {corner_radius: 8}
+  pagination: {corner_radius: 20}
+  tabs.indicator: {corner_radius: 3}
+  badge.dot: {corner_radius: 3}
+  badge.labeled: {corner_radius: 8}
+  fab.small: {corner_radius: 12}
+  fab.default: {corner_radius: 16}
+  fab.large: {corner_radius: 28}
+  fab: {elevation: 3}
+  extended_fab: {corner_radius: 16, elevation: 3}
+  split_button.tightened: {corner_radius: 8}
+  graph_node: {corner_radius: 12}

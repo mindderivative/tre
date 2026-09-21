@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""M49 (§7.1, §16.3): the real, end-to-end proof of this milestone's own
-"theme as a YAML file" work -- the user's own stated model, verbatim:
-"a default theme at the top level, then custom theme, then widget wide
-styles, then in line style directly on a specific widget." Before this
-milestone, none of this was reachable at all (confirmed via direct
-investigation before it started -- see `BUILD_TRACKER.md`'s M49
-section for the full audit): `DynamicTheme::from_seed` was the only
-constructor, no per-widget-kind default styles existed anywhere, and
-there was no way to override even a single MD3 color role.
+"""M49/M50 (§7.1, §16.3): the real, end-to-end proof of "theme as a
+YAML file" -- the user's own stated model, verbatim: "a default theme
+at the top level, then custom theme, then widget wide styles, then in
+line style directly on a specific widget," plus "scope the corner-
+radius/elevation to use the new theme pattern... the theme backend
+complete." Before M49, none of this was reachable at all; before M50,
+color overrides reached the real MD3 catalog but shape/elevation never
+did (confirmed via direct investigation before each milestone started
+-- see `BUILD_TRACKER.md`'s M49/M50 sections for the full audits).
 
 This script proves the real four-tier cascade on `theme_customization_
-view.yaml`'s three checkboxes, and that a `colors:` override reaches
-*both* the declarative and imperative surfaces through the exact same
-`ColorScheme::role` mechanism, not two separate paths:
+view.yaml`'s three checkboxes, that a `colors:` override reaches *both*
+the declarative and imperative surfaces through the exact same
+`ColorScheme::role` mechanism, and that a `components:` override
+reaches a real imperative component's own corner radius/elevation too:
 
 - `theme_checkbox`: no stylesheet rule, no inline override -- resolves
   from `theme_customization_custom_theme.yaml`'s own `corner_radius:
@@ -28,14 +29,20 @@ view.yaml`'s three checkboxes, and that a `colors:` override reaches
   `colors: {primary: "#00695C"}` override -- the real point of routing
   the override through `ColorScheme::apply_overrides` at the one shared
   choke point both paths already resolve colors through.
+- The same `add_button` also picks up `components: {button.filled:
+  {corner_radius: 4, elevation: 2}}` -- M50's own new mechanism,
+  `ThemeState::shape`/`elevation`'s 2-tier lookup, reached through the
+  identical `custom_theme` parameter M49 already built (no new Python
+  API needed for M50 at all).
 
-`Node.get` only returns `f64`, so `corner_radius` (a real number) is
-asserted directly below; there is still no Python-facing getter for a
-node's own resolved color (the same honest limitation `theme.py`/
-`bindable_background.py` already state) -- the color override is proven
-by *not raising* through both real construction paths, and rendered in
-a genuine window so a human running this locally can see `primary_box`/
-the button both take the same real overridden green.
+`Node.get` only returns `f64`, so `corner_radius`/`elevation` (real
+numbers) are asserted directly below; there is still no Python-facing
+getter for a node's own resolved color (the same honest limitation
+`theme.py`/`bindable_background.py` already state) -- the color
+override is proven by *not raising*, and rendered in a genuine window
+so a human running this locally can see `primary_box`/the button both
+take the same real overridden green, and the button's own real
+(smaller, more elevated) shape.
 """
 
 from pathlib import Path
@@ -71,9 +78,16 @@ window = Window.from_view(view, width=320, height=260, title="Theme Customizatio
 
 # M49 Phase 1: the same custom theme's color override reaches the real
 # imperative MD3 catalog too, through the identical ColorScheme::role
-# chain -- must not raise.
+# chain -- must not raise. M50: components: {button.filled: {...}} also
+# applies here, through the exact same custom_theme parameter.
 window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), custom_theme=custom_theme_path)
-window.add_button(label="Primary", variant="filled", width=140, height=40, x=16, y=180)
+button = window.add_button(label="Primary", variant="filled", width=140, height=40, x=16, y=180)
+assert button.get("corner_radius") == 4.0, "expected the components: override, not height / 2.0"
+assert button.get("elevation") == 2.0, "expected the components: override, not the MD3 default"
+print(
+    f"components: override verified: corner_radius={button.get('corner_radius')!r}, "
+    f"elevation={button.get('elevation')!r}"
+)
 
 app = App()
 app.add_window(window)

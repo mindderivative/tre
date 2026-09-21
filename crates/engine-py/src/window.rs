@@ -540,18 +540,34 @@ impl PyWindow {
     /// `styles:` only matters to the declarative `StyleSpec` cascade
     /// (`View`). M50 Phase 1: `custom_theme`'s own `components:` *is*
     /// now used here -- stored into `ThemeState.components`, consulted
-    /// by `ThemeState::shape`/`elevation` from M50 Phase 2 onward as
-    /// each `add_*` factory is wired to it (see `window_factory.rs`;
-    /// `M49`'s own doc comment above, "corner-radius/elevation never
-    /// consult any theme regardless," was the real state of the world
-    /// *before* M50, not a permanent limit).
-    #[pyo3(signature = (seed, dark=false, custom_theme=None))]
+    /// by `ThemeState::shape`/`elevation` as each `add_*` factory
+    /// consults it (see `window_factory.rs`; `M49`'s own doc comment
+    /// above, "corner-radius/elevation never consult any theme
+    /// regardless," was the real state of the world *before* M50, not
+    /// a permanent limit). M50 Phase 5: `default_theme` (omitted ->
+    /// the engine's own shipped default, matching `View::new`'s
+    /// identical convention) supplies the baseline `components:`
+    /// underneath `custom_theme`'s own overrides (custom wins on any
+    /// overlapping key) -- deliberately scoped to `components:` only:
+    /// `default_theme`'s own `colors:`/`seed:` are never consulted
+    /// here, since `Window`'s color/seed story is already fully served
+    /// by the required `seed` argument plus `custom_theme`'s own
+    /// override, and letting a second theme file quietly compete with
+    /// a required argument would be a real, confusing ambiguity this
+    /// milestone deliberately doesn't introduce.
+    #[pyo3(signature = (seed, dark=false, default_theme=None, custom_theme=None))]
     fn set_theme(
         &self,
         seed: (u8, u8, u8, u8),
         dark: bool,
+        default_theme: Option<String>,
         custom_theme: Option<String>,
     ) -> PyResult<()> {
+        let default_theme_spec = match &default_theme {
+            Some(theme_path) => crate::view::load_theme_spec(theme_path)?,
+            None => engine_spec::parse_theme(crate::view::SHIPPED_DEFAULT_THEME_YAML)
+                .expect("the engine's own shipped default_theme.yaml must always parse"),
+        };
         let custom_theme_spec = custom_theme
             .as_deref()
             .map(crate::view::load_theme_spec)
@@ -584,14 +600,18 @@ impl PyWindow {
         let mut state = self.theme.borrow_mut();
         state.theme = Some(dynamic);
         state.dark = dark;
-        // M50 Phase 1: `components:` -- shape/elevation overrides for
-        // the imperative MD3 catalog, read here since `custom_theme`
-        // was already parsed above for `colors:`/`seed:`. Replaces
-        // (not merges with) whatever a *previous* `set_theme` call may
-        // have set, matching `state.theme`/`state.dark` right above --
-        // a `custom_theme=None` call genuinely means "no overrides,"
-        // not "keep whatever the last call had."
-        state.components = custom_theme_spec.map(|t| t.components).unwrap_or_default();
+        // M50: `components:` -- default theme first, then custom
+        // theme's own overrides layered on top (custom wins on any
+        // overlapping key, a plain `HashMap::extend`). Replaces (not
+        // merges with) whatever a *previous* `set_theme` call may have
+        // set, matching `state.theme`/`state.dark` right above -- each
+        // `set_theme` call is a complete, fresh theme selection, not
+        // an incremental patch onto the last one.
+        let mut components = default_theme_spec.components;
+        if let Some(custom) = custom_theme_spec {
+            components.extend(custom.components);
+        }
+        state.components = components;
         let tint = state.on_surface();
         drop(state);
         let mut tree = self.tree.borrow_mut();
