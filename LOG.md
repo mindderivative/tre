@@ -1,89 +1,86 @@
-# LOG — M48: General Live Property Exposure (Layout Mutation + Border)
+# LOG — M49: Theme as a YAML File (Color Overrides + Per-Kind Default Styles)
 
-- User's governing instruction: "I want all properties usable and
-  exposed for a users use. Customization is a key function of any GUI
-  framework. Even changing the MD3 theme should be customizable by a
-  user as the MD3 specification is just the default setting." Preceded
-  by a direct factual question ("Do we have bindable properties for all
-  renderable nodes for yaml and python? Like width, height, border
-  thickness, colors, states like checked, etc…?"), answered with a
-  real, cited audit before any scoping began.
-- Entered Plan Mode. Investigation confirmed no live resize/reposition
-  API existed anywhere (`Tree::set_layout_style` genuinely general but
-  only ever reached through one narrow caller, `resize_terminal`), and
-  `border_color`/`border_width` (real `PaintProperties` fields since
-  M30 Phase 1) were unreachable from `animate()`, YAML bindings,
-  `StyleSpec`, and every widget constructor.
-- **Mid-plan redirect, not anticipated at first:** a follow-up user
-  message described a 4-tier cascade (default theme < custom theme <
-  widget-wide styles < inline) for MD3 customization. A dedicated
-  Explore investigation found roughly half of this already exists --
-  `crates/engine-spec/src/cascade.rs`'s `Stylesheet`/`StyleRule`/
-  `resolve_style`, a real, tested, fully-wired per-field cascade
-  (`baseline < kind < classes < id < inline`). A follow-up
-  `AskUserQuestion` clarified theme YAML should carry both a token/
-  palette section and per-kind default styles ("Both" of three options)
-  -- scoped as M49/M50, deliberately deferred, sketched only at the
-  mechanism level. The plan file was rewritten to reflect this before
-  `ExitPlanMode`.
-- Implementation (M48, approved plan's own concrete first piece):
-  - `crates/engine-py/src/node.rs`: `Node.set_layout(width, height,
-    padding, gap)` -- new, generalizing `resize_terminal`'s exact
-    pattern; `animate()`/`get()` gained `border_color`/`border_width`
-    arms mirroring `background`/`corner_radius`.
-  - `crates/engine-spec/src/spec.rs`+`build.rs`+`cascade.rs`:
-    `StyleSpec` gained `border_width`/`border_color`; `node_kind_and_
-    paint` split into itself + a new `node_kind_and_base_paint`
-    carrying every pre-existing match arm unchanged; `merge()` gained
-    the matching two field-overlay arms so border cascades through the
-    existing stylesheet mechanism too.
-  - `crates/engine-py/src/view.rs`: `apply_binding_value`'s `Str`-as-
-    color guard widened to `border_color`; new pre-`animate()` branch
-    routes `width`/`height`/`padding`/`gap` bindings to `set_layout`
-    (these can never reach `animate()`'s own dispatch, not `Animated<T>`
-    fields).
-  - `crates/engine-py/src/window_factory.rs`: `add_rect` gained
-    optional `border_color`/`border_width` construction kwargs
-    (confirmed via grep: the one genuinely generic imperative shape
-    factory, no `add_container` exists at all).
-- **Two real test-authoring mistakes caught by actually running the
-  tests, not shipped:** a `node.get("border_width")` assertion
-  immediately after `node.animate(..., duration_ms=0)` on a plain
-  `Window`-created node failed -- `animate()`'s own documented contract
-  only snaps on the next tick, which nothing drains without a running
-  render loop; fixed to match every sibling `animate()` test's own
-  "must not raise" convention, moving the real readback assertion to
-  the `View`-binding-path test (which ticks eagerly). A layout-binding
-  type-mismatch test expected `TypeError` but the real code (matching
-  `checked`/`text`'s own sibling branches) raises `ValueError` -- fixed.
-- `python/tre/_core.pyi` updated. New `tests/test_live_style.py` (19
-  tests). New `examples/live_style.py`/`.yaml`.
-- `BUILD_TRACKER.md`: new M48 milestone section, Top Metrics row,
-  "Just closed" prepended, "Up next" pointed forward to M49. **A real
-  parser-format mistake caught by re-running the generator, not
-  shipped:** Step 1's own note had an unbalanced trailing paren (an
-  outer wrapping paren left unclosed) -- the generator's own `ITEM_RE`
-  correctly refused to parse it rather than silently truncating;
-  matched to the file's own established "close the outer wrapper after
-  the trailing period" convention (`...exit 0).)`), confirmed by
-  re-running the generator until parse counts matched expectations
-  exactly (+1 milestone/+1 phase/+5 items, known/fixed gap counts
-  unchanged).
+- User: "Yes scope M49" -- following M48's own writeup naming M49 as
+  the next roadmap piece ("theme YAML carrying both a token/palette
+  section and per-kind default styles, layered beneath the existing
+  Stylesheet cascade").
+- Entered Plan Mode. Dispatched an Explore agent to answer the open
+  question: does theme YAML reach the *real* MD3 component catalog
+  (`window_factory.rs`'s 56 `add_*` factories) or only the narrow
+  declarative 7-kind surface? Findings: corner-radius/elevation are a
+  real dead end -- every factory hardcodes them as a Rust `const` or a
+  required Python argument, confirmed via grep, never theme-driven.
+  Color is NOT a dead end -- `window_factory.rs`'s `resolve_*_colors`
+  helpers and the declarative `resolve_color` path both already
+  resolve roles through the exact same `ColorScheme::role` lookup, so
+  a single override layer applied wherever a `ColorScheme` is selected
+  reaches the entire real catalog, not just 7 kinds. This materially
+  improved the plan over its original "theme YAML only affects Rect/
+  Container" framing.
+- Implementation (4 phases, approved plan):
+  - Phase 1: `ColorScheme::set_role`/`apply_overrides`
+    (`engine-md3/src/color.rs`) -- a mirrored setter of the existing
+    `role()` getter plus an override-applying method reusing the same
+    hex/CSS parser used elsewhere. Wired into `Window.set_theme`'s new
+    `custom_theme` param and `View::new`'s new `default_theme`/
+    `custom_theme` params.
+  - Phase 2: `StyleSpec.elevation` (a real parity gap -- `PaintProperties
+    .elevation` existed since day one, never exposed to YAML). New
+    `engine_md3::shape` module -- real, tested MD3 shape/elevation
+    scale constants, replacing ~40 scattered doc-comment-only mentions
+    across `window_factory.rs` with one source of truth (data only,
+    not yet consumed by those call sites -- named as explicit
+    out-of-scope follow-up).
+  - Phase 3: `cascade.rs`'s `resolve_style` split into
+    `resolve_style_within_sheet` (unchanged external behavior) +
+    `resolve_style_layered(spec, default_theme, custom_theme, sheet)`
+    -- each layer resolved through its own independent cascade before
+    merging in source-priority order, inline last. Deliberately NOT
+    concatenating all three sheets' rules into one combined list
+    (would let a default theme's `id:` rule beat an app's own
+    `baseline` stylesheet rule, backwards from the user's own stated
+    model). Threaded through `build_tree`/`patch_node`/
+    `load_styled_view`/`Reconciler::load`/`Reconciler::reconcile`,
+    mirroring exactly how `sheet` was already threaded.
+  - Phase 4: `View.__new__(default_theme=, custom_theme=)` --
+    omitting `default_theme` loads the engine's own shipped
+    `crates/engine-py/assets/default_theme.yaml`, embedded at compile
+    time via `include_str!` (never a runtime filesystem lookup).
+    `Window.set_theme(custom_theme=)` confirmed to need no
+    `default_theme` equivalent (its corner-radius/elevation never
+    consult any theme regardless).
+- **Real design decision worth recording:** seed precedence is
+  DIFFERENT direction between `View`/`Window` on purpose, not an
+  oversight -- `View`'s `theme_seed` is optional, so an explicit value
+  there is itself the "don't defer to the file" signal; `Window.
+  set_theme`'s `seed` is required, so the theme file's own seed wins
+  when present, since there's no way to omit a required argument to
+  express deference. Documented directly in both doc comments.
+- No real test-authoring mistakes this time -- all 15 new pytest tests
+  passed on the first real run (verified via an ad hoc smoke-test
+  script before writing the formal suite, catching nothing new).
+- `python/tre/_core.pyi` updated (`View.__init__`, `Window.set_theme`).
+  New `tests/test_theme.py` (15 tests). New `examples/
+  theme_customization.py` + 3 YAML fixtures, proving all four real
+  cascade tiers plus color overrides reaching both the declarative and
+  imperative catalog in one script.
+- `BUILD_TRACKER.md`: new M49 milestone section (4 phases, 11 steps),
+  Top Metrics row, "Just closed" prepended, "Up next" pointed forward
+  to M50. Regenerated cleanly on the first attempt (no parser-format
+  mistakes this time, unlike M47/M48's own real bugs found there).
 - Full chain green: `cargo check`/`clippy -D warnings`/`fmt` clean,
-  `cargo test --workspace --release` (every pre-existing suite
-  unchanged -- zero new Rust-level `#[test]`s, no new `engine-core`
-  logic added this milestone), `maturin develop --release`, `pytest
-  tests/` (648 passed, up from 629, +19, 1 skipped unchanged), all 83
-  examples (+1), showcase demo. Tracker generator: 48 milestones/140
-  phases/238 items/2 known gaps/19 fixed gaps. Artifact republished to
-  the existing URL.
+  `cargo test --workspace --release` (`engine-md3` 19 up from 14 +5,
+  `engine-spec` 60 up from 52 +8, every other suite unchanged),
+  `maturin develop --release`, `pytest tests/` (663 passed, up from
+  648, +15, 1 skipped unchanged), all 84 examples (+1), showcase demo.
+  Tracker generator: 49 milestones/144 phases/249 items/2 known
+  gaps/19 fixed gaps. Artifact republished to the existing URL.
 
 ## Status
 
-**M48 -- General Live Property Exposure -- is now fully complete,
-single phase.** Closes the first, concrete piece of the user's broader
-customization request. M49 (theme as a YAML cascade tier) and M50 (live
-re-theme) remain sketched-but-unscoped in the approved plan, each
-needing its own dedicated plan-mode pass before implementation begins.
-Per the standing "push after a full milestone closes" convention, a
-`git push` is now appropriate.
+**M49 -- Theme as a YAML File -- is now fully complete, all 4 phases.**
+The second concrete piece of the user's broader customization request.
+M50 (live re-theme) remains sketched-but-unscoped in the approved plan,
+needing its own dedicated plan-mode pass now that M49's theme-as-data
+shape exists to re-resolve from. Per the standing "push after a full
+milestone closes" convention, a `git push` is now appropriate.

@@ -170,6 +170,101 @@ impl ColorScheme {
             _ => None,
         }
     }
+
+    /// M49 Phase 1: `role`'s own mirrored *setter* -- the identical
+    /// 49-arm match, assigning instead of returning. `false` for an
+    /// unrecognized `name`, the same "unknown role" contract `role`
+    /// already establishes via `None`. Exists so a caller (`apply_
+    /// overrides`, right below) can override one named role without
+    /// rebuilding the whole struct field-by-field.
+    pub fn set_role(&mut self, name: &str, color: Color) -> bool {
+        match name {
+            "primary" => self.primary = color,
+            "on_primary" => self.on_primary = color,
+            "primary_container" => self.primary_container = color,
+            "on_primary_container" => self.on_primary_container = color,
+            "inverse_primary" => self.inverse_primary = color,
+            "primary_fixed" => self.primary_fixed = color,
+            "primary_fixed_dim" => self.primary_fixed_dim = color,
+            "on_primary_fixed" => self.on_primary_fixed = color,
+            "on_primary_fixed_variant" => self.on_primary_fixed_variant = color,
+            "secondary" => self.secondary = color,
+            "on_secondary" => self.on_secondary = color,
+            "secondary_container" => self.secondary_container = color,
+            "on_secondary_container" => self.on_secondary_container = color,
+            "secondary_fixed" => self.secondary_fixed = color,
+            "secondary_fixed_dim" => self.secondary_fixed_dim = color,
+            "on_secondary_fixed" => self.on_secondary_fixed = color,
+            "on_secondary_fixed_variant" => self.on_secondary_fixed_variant = color,
+            "tertiary" => self.tertiary = color,
+            "on_tertiary" => self.on_tertiary = color,
+            "tertiary_container" => self.tertiary_container = color,
+            "on_tertiary_container" => self.on_tertiary_container = color,
+            "tertiary_fixed" => self.tertiary_fixed = color,
+            "tertiary_fixed_dim" => self.tertiary_fixed_dim = color,
+            "on_tertiary_fixed" => self.on_tertiary_fixed = color,
+            "on_tertiary_fixed_variant" => self.on_tertiary_fixed_variant = color,
+            "error" => self.error = color,
+            "on_error" => self.on_error = color,
+            "error_container" => self.error_container = color,
+            "on_error_container" => self.on_error_container = color,
+            "surface_dim" => self.surface_dim = color,
+            "surface" => self.surface = color,
+            "surface_tint" => self.surface_tint = color,
+            "surface_bright" => self.surface_bright = color,
+            "surface_container_lowest" => self.surface_container_lowest = color,
+            "surface_container_low" => self.surface_container_low = color,
+            "surface_container" => self.surface_container = color,
+            "surface_container_high" => self.surface_container_high = color,
+            "surface_container_highest" => self.surface_container_highest = color,
+            "on_surface" => self.on_surface = color,
+            "on_surface_variant" => self.on_surface_variant = color,
+            "outline" => self.outline = color,
+            "outline_variant" => self.outline_variant = color,
+            "inverse_surface" => self.inverse_surface = color,
+            "inverse_on_surface" => self.inverse_on_surface = color,
+            "surface_variant" => self.surface_variant = color,
+            "background" => self.background = color,
+            "on_background" => self.on_background = color,
+            "shadow" => self.shadow = color,
+            "scrim" => self.scrim = color,
+            _ => return false,
+        }
+        true
+    }
+
+    /// M49 Phase 1: applies a user-authored theme's `colors:` overrides
+    /// -- role name -> a hex (`"#6750A4"`/`"#6750A4FF"`) or CSS-named
+    /// color string, the identical real parser `engine_spec::build::
+    /// resolve_color`/`engine-py::view::parse_background_color` already
+    /// use for literal colors elsewhere in this codebase, reused here
+    /// rather than a third copy. Returns a plain `Result<_, String>`,
+    /// not a `PyResult` -- deliberately free of `pyo3`/GIL concerns
+    /// (this crate has no pyo3 dependency at all, per its own crate-
+    /// boundary contract, ARCHITECTURE.md §4), matching `parse_
+    /// background_color`'s own established precedent; the caller at the
+    /// `engine-py` boundary wraps the `Err` string into a real `PyErr`.
+    /// Fails loudly on the *first* unknown role name or unparseable
+    /// color string rather than silently skipping it or applying a
+    /// partial set -- matching this codebase's established "fail loudly
+    /// at the boundary" convention (`SpecError`'s own precedent).
+    pub fn apply_overrides(
+        &mut self,
+        overrides: &std::collections::HashMap<String, String>,
+    ) -> Result<(), String> {
+        for (role, raw) in overrides {
+            let color = peniko::color::parse_color(raw)
+                .map(|c| c.to_alpha_color::<peniko::color::Srgb>())
+                .map_err(|e| {
+                    format!("theme color override {role:?}: {raw:?} isn't a valid color: {e}")
+                })?;
+            let [r, g, b, a] = color.to_rgba8().to_u8_array();
+            if !self.set_role(role, Color::from_rgba8(r, g, b, a)) {
+                return Err(format!("theme color override names unknown role {role:?}"));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl From<&material_colors::scheme::Scheme> for ColorScheme {
@@ -351,5 +446,67 @@ mod tests {
             None,
             "an unrecognized token name must not silently resolve to some color"
         );
+    }
+
+    // --- M49 Phase 1: set_role / apply_overrides ---
+
+    #[test]
+    fn set_role_overrides_a_known_role_and_leaves_every_other_role_untouched() {
+        let mut scheme = DynamicTheme::from_seed(Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF)).light;
+        let original_secondary = scheme.secondary;
+        let new_primary = Color::from_rgba8(0xFF, 0x00, 0x00, 0xFF);
+
+        assert!(scheme.set_role("primary", new_primary));
+
+        assert_eq!(scheme.primary, new_primary);
+        assert_eq!(
+            scheme.secondary, original_secondary,
+            "overriding one role must not disturb any other role"
+        );
+    }
+
+    #[test]
+    fn set_role_returns_false_and_changes_nothing_for_an_unknown_role() {
+        let mut scheme = DynamicTheme::from_seed(Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF)).light;
+        let before = scheme;
+
+        assert!(!scheme.set_role("not_a_real_role", Color::from_rgba8(0, 0, 0, 255)));
+        assert_eq!(scheme, before);
+    }
+
+    #[test]
+    fn apply_overrides_parses_hex_and_css_named_colors_and_applies_both() {
+        let mut scheme = DynamicTheme::from_seed(Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF)).light;
+        let overrides = std::collections::HashMap::from([
+            ("primary".to_string(), "#FF0000".to_string()),
+            ("secondary".to_string(), "white".to_string()),
+        ]);
+
+        scheme.apply_overrides(&overrides).unwrap();
+
+        assert_eq!(scheme.primary, Color::from_rgba8(0xFF, 0x00, 0x00, 0xFF));
+        assert_eq!(scheme.secondary, Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF));
+    }
+
+    #[test]
+    fn apply_overrides_rejects_an_unknown_role_naming_it_in_the_error() {
+        let mut scheme = DynamicTheme::from_seed(Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF)).light;
+        let overrides = std::collections::HashMap::from([(
+            "not_a_real_role".to_string(),
+            "#FF0000".to_string(),
+        )]);
+
+        let err = scheme.apply_overrides(&overrides).unwrap_err();
+        assert!(err.contains("not_a_real_role"));
+    }
+
+    #[test]
+    fn apply_overrides_rejects_an_unparseable_color_string_naming_it_in_the_error() {
+        let mut scheme = DynamicTheme::from_seed(Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF)).light;
+        let overrides =
+            std::collections::HashMap::from([("primary".to_string(), "not-a-color".to_string())]);
+
+        let err = scheme.apply_overrides(&overrides).unwrap_err();
+        assert!(err.contains("not-a-color"));
     }
 }

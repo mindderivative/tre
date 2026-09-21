@@ -1,0 +1,11 @@
+# M49: a real user-authored custom theme -- overrides the "primary"
+# role (reaching both the declarative box below AND the imperative
+# add_button, since both resolve colors through the same ColorScheme::
+# role chain), and gives Checkbox a larger corner_radius than the
+# engine's own shipped default (2.0) -- still beaten by the widget-wide
+# stylesheet and any inline style, per the real four-tier cascade.
+colors:
+  primary: "#00695C"
+styles:
+  - kind: Checkbox
+    style: {corner_radius: 10}

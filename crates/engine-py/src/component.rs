@@ -122,7 +122,7 @@ pub(crate) fn instantiate_component(
 
     let reconciler = {
         let mut tree_mut = tree.borrow_mut();
-        Reconciler::load(&mut tree_mut, &yaml, None, None, base_dir)
+        Reconciler::load(&mut tree_mut, &yaml, None, None, None, None, base_dir)
             .map_err(|e| PyValueError::new_err(e.to_string()))?
     };
     tree.borrow_mut().add_child(into, reconciler.root());

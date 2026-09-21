@@ -1,0 +1,28 @@
+# M49 Phase 4: the engine's own shipped default theme -- the MD3
+# specification is just the default setting (the user's own words),
+# expressed here as real, editable data instead of being invisible.
+# Loaded automatically by `View`/`Window.set_theme` whenever a caller
+# doesn't supply their own `default_theme` path -- a caller who *does*
+# supply one replaces this file entirely (as a *default*, not merged
+# with it); `custom_theme` is the usual way to override just a few
+# things while keeping the rest of whichever default is active.
+#
+# `colors:` is deliberately empty here -- the seed-derived ColorScheme
+# (`DynamicTheme::from_seed`) already supplies every real MD3 role;
+# this file only supplies per-widget-kind default *styles* for the
+# declarative `kind:` surface (`Rect`/`Container`/`Checkbox`/`Slider`/
+# `TextField`/`Image`/`Text` -- `engine-spec`'s own `NodeKindSpec`).
+# Corner-radius values are drawn from the real MD3 shape scale
+# (`engine_md3::shape` -- `SHAPE_NONE`/`SHAPE_EXTRA_SMALL`/`SHAPE_SMALL`),
+# not invented ad hoc.
+styles:
+  - kind: Rect
+    style: {corner_radius: 0}
+  - kind: Container
+    style: {corner_radius: 0}
+  - kind: Checkbox
+    style: {corner_radius: 2}
+  - kind: Slider
+    style: {corner_radius: 8}
+  - kind: TextField
+    style: {corner_radius: 4}

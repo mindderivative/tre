@@ -1,0 +1,16 @@
+id: root
+kind: Container
+style: {flex_direction: Column, width: 320, height: 220, gap: 12, padding: 16}
+children:
+  - id: primary_box
+    kind: Rect
+    style: {width: 288, height: 40, background: primary, corner_radius: 4}
+  - id: theme_checkbox
+    kind: Checkbox
+    style: {width: 24, height: 24, background: "#FFFFFF"}
+  - id: stylesheet_checkbox
+    kind: Checkbox
+    style: {width: 24, height: 24, background: "#FFFFFF"}
+  - id: inline_checkbox
+    kind: Checkbox
+    style: {width: 24, height: 24, background: "#FFFFFF", corner_radius: 12}

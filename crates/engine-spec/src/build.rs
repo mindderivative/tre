@@ -13,7 +13,7 @@ use engine_md3::ColorScheme;
 use peniko::Color;
 use taffy::prelude::{Rect as TaffyRect, Size, Style, auto, length, zero};
 
-use crate::cascade::{Stylesheet, resolve_style};
+use crate::cascade::{Stylesheet, resolve_style_layered};
 use crate::spec::{
     ContentFitSpec, FlexDirectionSpec, NodeKindSpec, StyleSpec, WidgetSpec, parse_view,
 };
@@ -172,7 +172,7 @@ pub fn load_view(tree: &mut Tree, yaml: &str) -> Result<NodeId, SpecError> {
     // unchanged for its one existing caller; a `kind: Image` loaded
     // this way (no base directory to resolve `src:` against at all)
     // gets a real, clear `SpecError::ImageSrcNoBaseDir`.
-    build_tree(tree, &spec, None, None, None)
+    build_tree(tree, &spec, None, None, None, None, None)
 }
 
 /// The full §16.3 path: parses `yaml`, resolves every widget's style
@@ -182,16 +182,29 @@ pub fn load_view(tree: &mut Tree, yaml: &str) -> Result<NodeId, SpecError> {
 /// recognized role name. `base_dir` (M22 Phase 2, §16.1) resolves any
 /// real `kind: Image` `image.src:` path -- `None` is real and valid,
 /// the same `include:`-established contract `load_view`'s own doc
-/// comment states.
+/// comment states. M49 Phase 3: `default_theme`/`custom_theme` are the
+/// two new layers `resolve_style_layered` cascades *beneath* `sheet`,
+/// both optional -- omitting both is byte-for-byte this function's own
+/// pre-M49 behavior.
 pub fn load_styled_view(
     tree: &mut Tree,
     yaml: &str,
+    default_theme: Option<&Stylesheet>,
+    custom_theme: Option<&Stylesheet>,
     sheet: &Stylesheet,
     scheme: &ColorScheme,
     base_dir: Option<&std::path::Path>,
 ) -> Result<NodeId, SpecError> {
     let spec = parse_view(yaml)?;
-    build_tree(tree, &spec, Some(sheet), Some(scheme), base_dir)
+    build_tree(
+        tree,
+        &spec,
+        default_theme,
+        custom_theme,
+        Some(sheet),
+        Some(scheme),
+        base_dir,
+    )
 }
 
 /// Recursively inserts `spec` and its `children` into `tree`, wiring
@@ -201,24 +214,37 @@ pub fn load_styled_view(
 /// `base_dir` (M22 Phase 2, §16.1) is the same real base directory
 /// `include:` resolution already uses (`include::parse_view_with_
 /// includes`) -- threaded here too so a real `kind: Image` `image.
-/// src:` resolves against the identical directory.
+/// src:` resolves against the identical directory. M49 Phase 3:
+/// `default_theme`/`custom_theme` are resolved via `resolve_style_
+/// layered` instead of the plain single-sheet `resolve_style` --
+/// each present layer entirely supersedes the layer below it,
+/// regardless of any layer's own internal selector specificity
+/// (`resolve_style_layered`'s own doc comment, `cascade.rs`).
+#[allow(clippy::too_many_arguments)]
 pub fn build_tree(
     tree: &mut Tree,
     spec: &WidgetSpec,
+    default_theme: Option<&Stylesheet>,
+    custom_theme: Option<&Stylesheet>,
     sheet: Option<&Stylesheet>,
     scheme: Option<&ColorScheme>,
     base_dir: Option<&std::path::Path>,
 ) -> Result<NodeId, SpecError> {
-    let resolved_style = match sheet {
-        Some(sheet) => resolve_style(spec, sheet),
-        None => spec.style.clone(),
-    };
+    let resolved_style = resolve_style_layered(spec, default_theme, custom_theme, sheet);
     let layout_style = layout_style(&resolved_style);
     let (kind, paint) = node_kind_and_paint(spec, &resolved_style, scheme, base_dir)?;
     let id = tree.insert(kind, layout_style, paint);
 
     for child_spec in &spec.children {
-        let child_id = build_tree(tree, child_spec, sheet, scheme, base_dir)?;
+        let child_id = build_tree(
+            tree,
+            child_spec,
+            default_theme,
+            custom_theme,
+            sheet,
+            scheme,
+            base_dir,
+        )?;
         tree.add_child(id, child_id);
     }
 
@@ -236,18 +262,18 @@ pub fn build_tree(
 /// has already determined actually changed; an unchanged node is never
 /// patched at all, so its `PaintProperties` (mid-animation or not) is
 /// never touched in the first place.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn patch_node(
     tree: &mut Tree,
     id: NodeId,
     spec: &WidgetSpec,
+    default_theme: Option<&Stylesheet>,
+    custom_theme: Option<&Stylesheet>,
     sheet: Option<&Stylesheet>,
     scheme: Option<&ColorScheme>,
     base_dir: Option<&std::path::Path>,
 ) -> Result<(), SpecError> {
-    let resolved_style = match sheet {
-        Some(sheet) => resolve_style(spec, sheet),
-        None => spec.style.clone(),
-    };
+    let resolved_style = resolve_style_layered(spec, default_theme, custom_theme, sheet);
     let new_layout_style = layout_style(&resolved_style);
     let (kind, paint) = node_kind_and_paint(spec, &resolved_style, scheme, base_dir)?;
 
@@ -311,6 +337,13 @@ fn node_kind_and_paint(
     }
     if let Some(border_width) = style.border_width {
         paint.border_width = Animated::new(f64::from(border_width));
+    }
+    // M49 Phase 2: the identical real "universal, applied once after
+    // the match" shape border just established above -- `elevation`
+    // was a real, existing `PaintProperties` field never reachable from
+    // `StyleSpec` at all until this milestone.
+    if let Some(elevation) = style.elevation {
+        paint.elevation = Animated::new(f64::from(elevation));
     }
 
     Ok((kind, paint))
@@ -738,7 +771,7 @@ kind: Rect
 style: {width: 10, height: 10, background: primary}
 "#;
         let mut tree = Tree::new();
-        let root = load_styled_view(&mut tree, yaml, &sheet, &theme.light, None)
+        let root = load_styled_view(&mut tree, yaml, None, None, &sheet, &theme.light, None)
             .expect("a token-named background must resolve against the given scheme");
         let node = tree.get(root).unwrap();
         assert_eq!(node.paint.background.current, theme.light.primary);
@@ -758,7 +791,7 @@ kind: Rect
 style: {width: 10, height: 10, background: "#112233"}
 "##;
         let mut tree = Tree::new();
-        let root = load_styled_view(&mut tree, yaml, &sheet, &theme.light, None)
+        let root = load_styled_view(&mut tree, yaml, None, None, &sheet, &theme.light, None)
             .expect("a literal color must still parse with a scheme active");
         let node = tree.get(root).unwrap();
         assert_eq!(
@@ -926,6 +959,6 @@ style: {width: 40, height: 40}
         base_dir: Option<&std::path::Path>,
     ) -> Result<NodeId, SpecError> {
         let spec = parse_view(yaml)?;
-        build_tree(tree, &spec, None, None, base_dir)
+        build_tree(tree, &spec, None, None, None, None, base_dir)
     }
 }

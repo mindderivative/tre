@@ -23,9 +23,15 @@
 mod color;
 mod container_transform;
 pub mod icons;
+mod shape;
 
 pub use color::{ColorScheme, DynamicTheme};
 pub use container_transform::{
     ContainerTransformConfig, begin as begin_container_transform,
     teardown as teardown_container_transform,
+};
+pub use shape::{
+    ELEVATION_LEVEL_0, ELEVATION_LEVEL_1, ELEVATION_LEVEL_2, ELEVATION_LEVEL_3, ELEVATION_LEVEL_4,
+    ELEVATION_LEVEL_5, SHAPE_EXTRA_LARGE, SHAPE_EXTRA_SMALL, SHAPE_LARGE, SHAPE_MEDIUM, SHAPE_NONE,
+    SHAPE_SMALL,
 };

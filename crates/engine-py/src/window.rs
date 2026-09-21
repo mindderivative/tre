@@ -475,10 +475,60 @@ impl PyWindow {
     /// set_all_interaction_tints`) -- a node opting in *after* this call
     /// picks up the same color at opt-in time instead (`Node.
     /// enable_interaction`).
-    #[pyo3(signature = (seed, dark=false))]
-    fn set_theme(&self, seed: (u8, u8, u8, u8), dark: bool) {
+    /// M49 Phase 1: `custom_theme` (a path to a real theme YAML file,
+    /// `ThemeSpec` -- `engine-spec/src/theme.rs`) applies its `colors:`
+    /// role overrides to *both* `light`/`dark` schemes before either is
+    /// stored -- every existing `resolve_*_colors` call site across
+    /// `window_factory.rs`'s real MD3 catalog needs zero changes, since
+    /// they already resolve colors through this same `ThemeState::role`
+    /// -> `ColorScheme::role` chain. If `custom_theme` names its own
+    /// `seed:`, it overrides the `seed` argument -- unlike `View::new`'s
+    /// own optional `theme_seed` (where an explicit argument can signal
+    /// deliberate intent by being present at all), `seed` here is
+    /// *required*, so there's no way to omit it to mean "defer to
+    /// whatever the theme file says" -- the theme file winning when it
+    /// has an opinion is the only way that deference is expressible.
+    /// `custom_theme`'s own `styles:`/`dark` are not used here at all --
+    /// `styles:` only matters to the declarative `StyleSpec` cascade
+    /// (`View`), and this catalog's corner-radius/elevation never
+    /// consult any theme regardless (confirmed via direct investigation
+    /// before this milestone -- `BUILD_TRACKER.md`'s M49 section).
+    #[pyo3(signature = (seed, dark=false, custom_theme=None))]
+    fn set_theme(
+        &self,
+        seed: (u8, u8, u8, u8),
+        dark: bool,
+        custom_theme: Option<String>,
+    ) -> PyResult<()> {
+        let custom_theme_spec = custom_theme
+            .as_deref()
+            .map(crate::view::load_theme_spec)
+            .transpose()?;
+
+        let seed = match custom_theme_spec
+            .as_ref()
+            .map(crate::view::theme_spec_seed)
+            .transpose()?
+            .flatten()
+        {
+            Some(theme_seed) => theme_seed,
+            None => seed,
+        };
+
         let (r, g, b, a) = seed;
-        let dynamic = DynamicTheme::from_seed(Color::from_rgba8(r, g, b, a));
+        let mut dynamic = DynamicTheme::from_seed(Color::from_rgba8(r, g, b, a));
+        if let Some(custom) = &custom_theme_spec
+            && !custom.colors.is_empty()
+        {
+            dynamic
+                .light
+                .apply_overrides(&custom.colors)
+                .map_err(pyo3::exceptions::PyValueError::new_err)?;
+            dynamic
+                .dark
+                .apply_overrides(&custom.colors)
+                .map_err(pyo3::exceptions::PyValueError::new_err)?;
+        }
         let mut state = self.theme.borrow_mut();
         state.theme = Some(dynamic);
         state.dark = dark;
@@ -491,6 +541,7 @@ impl PyWindow {
         // rather than resolving a second, more specific MD3 role per
         // component.
         tree.set_all_component_tints(tint);
+        Ok(())
     }
 
     /// §11.7's own claim, matching `App::run`'s existing `PyWindow::

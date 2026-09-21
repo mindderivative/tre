@@ -1,0 +1,8 @@
+# M49: an app's own widget-wide stylesheet -- targets `stylesheet_
+# checkbox` specifically (by id), proving it beats both the shipped
+# default theme (2.0) and the custom theme's own override (10.0)
+# for that one node, while `theme_checkbox` (no id-level rule here)
+# still falls through to the custom theme's 10.0.
+styles:
+  - id: stylesheet_checkbox
+    style: {corner_radius: 6}

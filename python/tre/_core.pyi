@@ -284,10 +284,19 @@ class Window:
         keep this one in sync until `show_view` is called on it again.
         """
         ...
-    def set_theme(self, seed: tuple[int, int, int, int], dark: bool = False) -> None:
+    def set_theme(
+        self,
+        seed: tuple[int, int, int, int],
+        dark: bool = False,
+        custom_theme: str | None = None,
+    ) -> None:
         """Builds a real MD3 `DynamicTheme` from `seed` and makes it
         this window's active theme, re-theming every already-created
-        component live.
+        component live. `custom_theme` (a path to a theme YAML file)
+        applies its `colors:` role overrides to both schemes, reaching
+        every real MD3 component this window's factories create -- its
+        own `seed:`, if present, overrides the `seed` argument. Raises
+        `ValueError` for an unknown role name or an unparseable color.
         """
         ...
 
@@ -1559,11 +1568,24 @@ class View:
         stylesheet: str | None = None,
         theme_seed: tuple[int, int, int, int] | None = None,
         dark: bool = False,
+        default_theme: str | None = None,
+        custom_theme: str | None = None,
     ) -> None:
         """`stylesheet` is a path to a stylesheet YAML file (§16.3's
         cascade); `theme_seed` builds a real MD3 `DynamicTheme` the
         same way `Window.set_theme` does, resolving any `background:
         primary`-style MD3 token name in the view/stylesheet.
+
+        M49: `default_theme`/`custom_theme` (paths to theme YAML files)
+        are two more cascade tiers, resolved *beneath* `stylesheet` and
+        the widget's own inline `style:` -- `default theme < custom
+        theme < stylesheet < inline`. Omitting `default_theme` uses the
+        engine's own shipped default. Either theme's `colors:` overrides
+        a role in the active `ColorScheme`; either theme's own `seed:`
+        (if present) sets the seed when `theme_seed` isn't explicitly
+        given (an explicit `theme_seed` always wins). Raises `ValueError`
+        for an unknown role name, an unparseable color, or invalid theme
+        YAML.
         """
         ...
     def node(self, widget_id: str) -> Node:

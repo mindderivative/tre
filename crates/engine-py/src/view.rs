@@ -59,8 +59,8 @@ use std::rc::Rc;
 use engine_core::{EventKind, InputEvent, NodeId, PointerButton, Tree};
 use engine_md3::{ColorScheme, DynamicTheme};
 use engine_spec::{
-    Expression, Reconciler, Stylesheet, ViewWatcher, WidgetSpec, evaluate, parse_binding,
-    parse_stylesheet, parse_view_with_includes,
+    Expression, Reconciler, Stylesheet, ThemeSpec, ViewWatcher, WidgetSpec, evaluate,
+    parse_binding, parse_stylesheet, parse_theme, parse_view_with_includes,
 };
 use peniko::Color;
 use pyo3::IntoPyObjectExt;
@@ -181,12 +181,56 @@ fn throwaway_node(tree: &Rc<RefCell<Tree>>, id: NodeId, handlers: HandlerMap) ->
 /// that needs a live `ColorScheme`, which `apply_binding_value`'s own
 /// `throwaway_node` doesn't carry -- a real, named, deferred follow-up,
 /// not silently unsupported.
-fn parse_background_color(raw: &str) -> Result<(u8, u8, u8, u8), String> {
+pub(crate) fn parse_background_color(raw: &str) -> Result<(u8, u8, u8, u8), String> {
     let color = peniko::color::parse_color(raw)
         .map(|c| c.to_alpha_color::<peniko::color::Srgb>())
         .map_err(|e| format!("{raw:?} isn't a valid color: {e}"))?;
     let [r, g, b, a] = color.to_rgba8().to_u8_array();
     Ok((r, g, b, a))
+}
+
+/// M49 Phase 4: the engine's own shipped default theme (`M49 Phase 4`'s
+/// own `default_theme.yaml` doc comment) -- embedded at compile time,
+/// not read from the installed package's own filesystem location at
+/// runtime, so it can never go missing/stale relative to the compiled
+/// extension. Loaded whenever a caller's `default_theme` param is
+/// `None`, both here (`View::new`) and in `Window.set_theme`
+/// (`window.rs`).
+const SHIPPED_DEFAULT_THEME_YAML: &str = include_str!("../assets/default_theme.yaml");
+
+/// M49 Phase 4: reads and parses one theme YAML file -- shared by
+/// `View::new`'s `default_theme`/`custom_theme` params and `Window.
+/// set_theme`'s `custom_theme` param, rather than three independent
+/// copies of "read this file, call `parse_theme`, wrap the errors."
+pub(crate) fn load_theme_spec(path: &str) -> PyResult<ThemeSpec> {
+    let yaml = std::fs::read_to_string(path)
+        .map_err(|e| PyRuntimeError::new_err(format!("failed to read theme {path:?}: {e}")))?;
+    parse_theme(&yaml).map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
+/// M49 Phase 4: a `ThemeSpec`'s `styles:` section, wrapped as a
+/// `Stylesheet` -- the exact shape `resolve_style_layered`'s own
+/// `default_theme`/`custom_theme` parameters expect (`cascade.rs`).
+pub(crate) fn theme_spec_to_stylesheet(theme: &ThemeSpec) -> Stylesheet {
+    Stylesheet {
+        styles: theme.styles.clone(),
+    }
+}
+
+/// M49 Phase 4: a `ThemeSpec`'s own optional `seed:` color string,
+/// parsed the same real hex/CSS way every other color string in this
+/// codebase already is -- `None` when the theme doesn't name its own
+/// seed (the caller's own directly-passed seed, if any, applies
+/// instead).
+pub(crate) fn theme_spec_seed(theme: &ThemeSpec) -> PyResult<Option<(u8, u8, u8, u8)>> {
+    theme
+        .seed
+        .as_deref()
+        .map(|raw| {
+            parse_background_color(raw)
+                .map_err(|e| PyValueError::new_err(format!("theme seed color: {e}")))
+        })
+        .transpose()
 }
 
 /// Applies a resolved binding value to `node_id`'s corresponding
@@ -747,6 +791,14 @@ pub struct View {
     /// gets.
     stylesheet: Option<Stylesheet>,
     scheme: Option<ColorScheme>,
+    /// M49 Phase 4: the same real "remembered for every future
+    /// reconcile" reasoning `stylesheet`/`scheme` above already
+    /// establish -- the `styles:` half of the theme(s) this `View` was
+    /// constructed with, already converted to a `Stylesheet` (`theme_
+    /// spec_to_stylesheet`) so `poll_reload` never needs to re-parse
+    /// the original YAML file on every reload.
+    default_theme: Option<Stylesheet>,
+    custom_theme: Option<Stylesheet>,
 }
 
 /// A plain, non-`#[pymethods]` block for a Rust-only helper, mirroring
@@ -790,13 +842,33 @@ impl View {
     /// both default to `None` -- a `View(path)` call with neither given
     /// is byte-for-byte today's existing "literal colors only, no
     /// stylesheet" behavior.
+    /// M49 Phase 4: `default_theme`/`custom_theme` (paths to real theme
+    /// YAML files, `ThemeSpec` -- `engine-spec/src/theme.rs`) are the
+    /// two new layers `resolve_style_layered` cascades beneath
+    /// `stylesheet`/inline (`cascade.rs`). `default_theme` omitted uses
+    /// the engine's own shipped default (`SHIPPED_DEFAULT_THEME_YAML`,
+    /// embedded at compile time) -- the user's own stated "a yaml style
+    /// file loaded as the default." A theme's own `seed:` (if present)
+    /// takes precedence over `default_theme`'s, which takes precedence
+    /// over `custom_theme`'s -- an explicit, directly-passed `theme_
+    /// seed` argument always wins, matching "an explicit argument beats
+    /// file config." A theme's own `colors:` overrides are applied
+    /// *onto* whichever scheme that precedence resolves to, default's
+    /// first then custom's (custom wins on any overlapping role) --
+    /// only meaningful when a real scheme exists at all (some `seed`
+    /// was resolved); with none, colors stay silently unused, the same
+    /// "no scheme, no MD3 token resolution, literal colors only"
+    /// precedent this codebase already establishes for `theme_seed`
+    /// alone being omitted.
     #[new]
-    #[pyo3(signature = (path, stylesheet=None, theme_seed=None, dark=false))]
+    #[pyo3(signature = (path, stylesheet=None, theme_seed=None, dark=false, default_theme=None, custom_theme=None))]
     fn new(
         path: String,
         stylesheet: Option<String>,
         theme_seed: Option<(u8, u8, u8, u8)>,
         dark: bool,
+        default_theme: Option<String>,
+        custom_theme: Option<String>,
     ) -> PyResult<Self> {
         let yaml = std::fs::read_to_string(&path)
             .map_err(|e| PyRuntimeError::new_err(format!("failed to read view {path:?}: {e}")))?;
@@ -820,15 +892,49 @@ impl View {
             }
             None => None,
         };
-        let scheme = theme_seed.map(|(r, g, b, a)| {
+
+        let default_theme_spec = match &default_theme {
+            Some(theme_path) => load_theme_spec(theme_path)?,
+            None => parse_theme(SHIPPED_DEFAULT_THEME_YAML)
+                .expect("the engine's own shipped default_theme.yaml must always parse"),
+        };
+        let custom_theme_spec = custom_theme.as_deref().map(load_theme_spec).transpose()?;
+
+        let default_theme_sheet = Some(theme_spec_to_stylesheet(&default_theme_spec));
+        let custom_theme_sheet = custom_theme_spec.as_ref().map(theme_spec_to_stylesheet);
+
+        let default_seed = theme_spec_seed(&default_theme_spec)?;
+        let custom_seed = match &custom_theme_spec {
+            Some(t) => theme_spec_seed(t)?,
+            None => None,
+        };
+        let effective_seed = theme_seed.or(custom_seed).or(default_seed);
+
+        let mut scheme = effective_seed.map(|(r, g, b, a)| {
             let theme = DynamicTheme::from_seed(Color::from_rgba8(r, g, b, a));
             if dark { theme.dark } else { theme.light }
         });
+        if let Some(scheme) = scheme.as_mut() {
+            if !default_theme_spec.colors.is_empty() {
+                scheme
+                    .apply_overrides(&default_theme_spec.colors)
+                    .map_err(PyValueError::new_err)?;
+            }
+            if let Some(custom) = &custom_theme_spec
+                && !custom.colors.is_empty()
+            {
+                scheme
+                    .apply_overrides(&custom.colors)
+                    .map_err(PyValueError::new_err)?;
+            }
+        }
 
         let mut tree = Tree::new();
         let reconciler = Reconciler::load(
             &mut tree,
             &yaml,
+            default_theme_sheet.as_ref(),
+            custom_theme_sheet.as_ref(),
             stylesheet.as_ref(),
             scheme.as_ref(),
             base_dir,
@@ -873,6 +979,8 @@ impl View {
             watcher,
             stylesheet,
             scheme,
+            default_theme: default_theme_sheet,
+            custom_theme: custom_theme_sheet,
         })
     }
 
@@ -976,6 +1084,8 @@ impl View {
             .reconcile(
                 &mut tree,
                 &yaml,
+                self.default_theme.as_ref(),
+                self.custom_theme.as_ref(),
                 self.stylesheet.as_ref(),
                 self.scheme.as_ref(),
                 base_dir,
@@ -1180,8 +1290,15 @@ mod tests {
     #[test]
     fn a_view_never_shown_live_still_lays_out_with_max_content() {
         let path = write_temp_view("id: root\nkind: Container\nstyle: {width: 40, height: 20}\n");
-        let view =
-            View::new(path.to_string_lossy().into_owned(), None, None, false).expect("real View");
+        let view = View::new(
+            path.to_string_lossy().into_owned(),
+            None,
+            None,
+            false,
+            None,
+            None,
+        )
+        .expect("real View");
 
         assert_eq!(
             view.available_space(),
@@ -1206,8 +1323,15 @@ mod tests {
     #[test]
     fn setting_a_real_size_switches_available_space_to_definite() {
         let path = write_temp_view("id: root\nkind: Container\nstyle: {width: 40, height: 20}\n");
-        let view =
-            View::new(path.to_string_lossy().into_owned(), None, None, false).expect("real View");
+        let view = View::new(
+            path.to_string_lossy().into_owned(),
+            None,
+            None,
+            false,
+            None,
+            None,
+        )
+        .expect("real View");
 
         view.width.set(300);
         view.height.set(150);
@@ -1236,8 +1360,15 @@ mod tests {
     #[test]
     fn only_one_axis_set_still_falls_back_to_max_content_on_both() {
         let path = write_temp_view("id: root\nkind: Container\nstyle: {width: 40, height: 20}\n");
-        let view =
-            View::new(path.to_string_lossy().into_owned(), None, None, false).expect("real View");
+        let view = View::new(
+            path.to_string_lossy().into_owned(),
+            None,
+            None,
+            false,
+            None,
+            None,
+        )
+        .expect("real View");
 
         view.width.set(300);
         // height left at its real default, 0.

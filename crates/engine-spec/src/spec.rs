@@ -222,6 +222,13 @@ pub struct StyleSpec {
     /// way `background` already is (`node_kind_and_paint`, `build.rs`).
     pub border_width: Option<f32>,
     pub border_color: Option<String>,
+    /// M49 Phase 2: `PaintProperties.elevation` has existed since day
+    /// one but was never exposed here at all -- confirmed via direct
+    /// read of this struct's own field list before this change, the
+    /// same real gap class `border_width`/`border_color` were in before
+    /// M48. Lets a theme's own per-kind default styles (M49 Phase 3)
+    /// set a real elevation, not just corner radius/opacity.
+    pub elevation: Option<f32>,
 }
 
 /// Parses one `view.yaml` document's raw text into a `WidgetSpec` tree.
