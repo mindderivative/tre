@@ -375,3 +375,184 @@ bindings: {text: "{{ a.get() }}"}
         "REGRESSION: the outer binding lost its own dependency tracking after a nested "
         "recording scope opened mid-evaluation"
     )
+
+
+# ---------------------------------------------------------------------
+# M46: the reentrant-notification guard -- the real fix for the hazard
+# named (and deliberately left unfixed) in M45's own BUILD_TRACKER.md
+# entry. `_Notifiable._notify` (the shared base `Signal`/`Computed` both
+# use) now raises a clear `RuntimeError` the moment an object's own
+# notify is re-entered while still running, instead of recursing until
+# a `RecursionError` -- for any cause, not just the one scenario found
+# while building M45's own regression test.
+# ---------------------------------------------------------------------
+
+
+def test_reentrant_notify_raises_a_clear_error_instead_of_recursing():
+    """The minimal, isolated proof of the guard itself, with no View/
+    binding machinery involved: a Signal subscriber whose own call
+    writes back to the very Signal notifying it.
+    """
+    b = Signal(1)
+
+    def loopback():
+        b.set(b.get() + 1)
+
+    b._subscribe(loopback)
+    with pytest.raises(RuntimeError, match="written to again while still notifying"):
+        b.set(2)
+
+
+def test_reentrant_notify_guard_resets_after_a_caught_exception():
+    """The `_notifying` flag must reset via `finally`, not stay stuck
+    `True` forever after the first reentrant write is caught -- a later,
+    unrelated write on the same Signal must still work normally.
+    """
+    b = Signal(1)
+
+    def loopback():
+        b.set(b.get() + 1)
+
+    b._subscribe(loopback)
+    with pytest.raises(RuntimeError):
+        b.set(2)
+
+    b._unsubscribe(loopback)
+    b.set(99)  # must not raise -- the guard must not be permanently tripped
+    assert b.get() == 99
+
+
+def test_a_legitimate_non_cyclic_chain_does_not_trip_the_guard():
+    """A real, deep dependency chain (a -> b -> c, no path back to a)
+    must notify cleanly -- the guard is specifically for an object
+    re-entering *its own* notify, not for depth in general.
+    """
+    a = Signal(1)
+    b = Computed(lambda: a.get() * 10)
+    c = Computed(lambda: b.get() + 1)
+    log = []
+    Effect(lambda: log.append(c.get()))
+
+    a.set(2)  # must not raise
+    assert log == [11, 21]
+
+
+def test_batch_flush_also_hits_the_reentrant_notify_guard():
+    """M46's own real finding: `batch()`'s flush loop doesn't call
+    `_notify()` through the ordinary immediate path -- it threads a
+    shared dedup set straight into `_Notifiable._notify`. This proves
+    the guard fires there too, not just on the immediate (non-batched)
+    path.
+    """
+    b = Signal(1)
+
+    def loopback():
+        b.set(b.get() + 1)
+
+    b._subscribe(loopback)
+
+    def writes():
+        b.set(2)
+
+    with pytest.raises(RuntimeError, match="written to again while still notifying"):
+        batch(writes)
+
+
+def test_the_original_read_before_write_binding_hazard_now_raises_clearly(tmp_path):
+    """The real, originally-observed scenario (traced while building
+    M45's own nested-recording regression test): a `Signal.get()`
+    override that reads a *different* Signal's current value before
+    writing to it, while an outer binding's own recording scope is
+    open. `b` gets over-broadly recorded as a dependency of the "text"
+    binding (recording is ambient); since the binding's own evaluation
+    also writes `b`, every write used to re-trigger the same binding
+    before the previous notification returned -- confirmed via `sys.
+    setrecursionlimit` + traced stack prints while first finding this.
+    Now it raises one clear error instead.
+    """
+
+    class TriggeringSignal(Signal):
+        def __init__(self, value, on_read):
+            super().__init__(value)
+            self._on_read = on_read
+
+        def get(self):
+            result = super().get()
+            self._on_read()
+            return result
+
+    path = write_view(
+        tmp_path,
+        """
+id: root
+kind: Text
+style: {width: 200, height: 30, background: "#000000"}
+text: {content: "", font_family: Roboto, font_size: 14}
+bindings: {text: "{{ a.get() }}"}
+""",
+    )
+    view = View(path)
+
+    class VM(ViewModel):
+        def __init__(self, view):
+            self.b = Signal(1)
+
+            def trigger_b():
+                self.b.set(self.b.get() + 1)
+
+            self.a = TriggeringSignal("a1", trigger_b)
+            super().__init__(view)
+
+    vm = VM(view)
+    with pytest.raises(ValueError, match="written to again while still notifying"):
+        vm.a.set("a2")
+
+
+def test_untrack_is_the_real_documented_fix_for_the_read_before_write_hazard(tmp_path):
+    """The error message's own suggested remedy, verified end to end,
+    not just asserted: wrapping the *offending read* (not the write) in
+    `untrack()` stops it from being over-broadly recorded as a
+    dependency of the outer binding, which is what breaks the
+    self-referential subscription that caused the reentrant loop above.
+    """
+
+    class TriggeringSignal(Signal):
+        def __init__(self, value, on_read):
+            super().__init__(value)
+            self._on_read = on_read
+
+        def get(self):
+            result = super().get()
+            self._on_read()
+            return result
+
+    path = write_view(
+        tmp_path,
+        """
+id: root
+kind: Text
+style: {width: 200, height: 30, background: "#000000"}
+text: {content: "", font_family: Roboto, font_size: 14}
+bindings: {text: "{{ a.get() }}"}
+""",
+    )
+    view = View(path)
+
+    class VM(ViewModel):
+        def __init__(self, view):
+            self.b = Signal(1)
+
+            def trigger_b():
+                current = untrack(lambda: self.b.get())
+                self.b.set(current + 1)
+
+            self.a = TriggeringSignal("a1", trigger_b)
+            super().__init__(view)
+
+    vm = VM(view)
+    node = view.node("root")
+    assert vm.b.get() == 2  # bumped once by the initial attach's own read of `a`
+
+    vm.a.set("a2")  # must not raise
+    assert node.get_text() == "a2"
+    assert vm.b.get() == 3  # bumped again by this second read of `a`

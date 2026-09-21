@@ -107,7 +107,13 @@ def batch(fn):
     given access creates (confirmed directly: `obj.method == obj.method`
     is `True` even though `obj.method is obj.method` is `False`), so a
     plain `set()` of callbacks already dedupes correctly across
-    different Signals' own subscriber lists.
+    different Signals' own subscriber lists. **M46:** this dedup set is
+    now threaded straight into each pending Signal's own `_Notifiable.
+    _notify(already_invoked)` (§16.2) instead of being duplicated here
+    -- the same method that also carries the real reentrancy guard, so
+    a batched write that re-enters its own notification hits the
+    identical clear error the immediate (non-batched) path does, not a
+    silently-uncovered second copy of the old bug.
 
     Nested `batch()` calls only flush once the *outermost* one returns
     (a plain depth counter, not a real stack -- nothing here needs
@@ -129,18 +135,7 @@ def batch(fn):
                 if id(signal_like) in seen_signals:
                     continue
                 seen_signals.add(id(signal_like))
-                # A snapshot, not a live iteration over `signal_like.
-                # _subscribers` -- real bug caught by actually running
-                # `examples/reactivity.py`: a `Computed` subscriber's
-                # own recompute unsubscribes-then-resubscribes itself
-                # on this very list while being invoked, which silently
-                # skipped/duplicated callbacks mid-loop. See `Signal.
-                # _notify`'s own matching fix and comment below.
-                for callback in list(signal_like._subscribers):
-                    if callback in invoked_callbacks:
-                        continue
-                    invoked_callbacks.add(callback)
-                    callback()
+                signal_like._notify(invoked_callbacks)
 
 
 def untrack(fn):
@@ -161,7 +156,106 @@ def untrack(fn):
         _end_recording()  # discarded on purpose -- that's the whole point
 
 
-class Signal:
+class _Notifiable:
+    """M46 (§16.2): shared subscriber-list + notify machinery for
+    `Signal` and `Computed` -- both had byte-for-byte identical
+    `_subscribe`/`_unsubscribe` bodies and near-identical `_notify`
+    bodies before this existed (both independently fixed for the same
+    live-iteration bug in M45). Factored out once a real reentrancy
+    guard needed adding to both, rather than fixing the same thing
+    twice -- the same "two real call sites justify factoring out"
+    precedent this codebase already uses elsewhere (e.g. `throwaway_
+    node` on the Rust side).
+    """
+
+    def __init__(self):
+        self._subscribers = []
+        self._notifying = False
+
+    def _subscribe(self, callback):
+        """Called from Rust (`View._attach`) -- registers a binding's
+        own re-evaluation trigger, or from another `Computed`/`Effect`
+        tracking this object as one of its own dependencies. Not part
+        of the public API; an app author never calls this directly.
+        """
+        self._subscribers.append(callback)
+
+    def _unsubscribe(self, callback):
+        """M43 Phase 2 (§4, §5, §8, §16.2, §16.6): `_subscribe`'s own
+        real inverse -- called from Rust (`Component.remove`) so a
+        removed component's own bindings stop reacting to further
+        writes on a `Signal` they no longer have a live `NodeId` for,
+        and from `Computed`/`Effect`'s own re-tracking on every
+        recompute/rerun. A silent no-op if `callback` was never
+        subscribed (already removed, or never here at all), matching
+        `Tree::remove`'s own "not found is a no-op, not an error"
+        convention throughout this codebase -- not part of the public
+        API, same as `_subscribe`.
+        """
+        try:
+            self._subscribers.remove(callback)
+        except ValueError:
+            pass
+
+    def _notify(self, already_invoked=None):
+        """Invokes every subscriber exactly once. `already_invoked`,
+        when given, is a `set()` of callbacks shared across a whole
+        `batch()` flush (M45) -- a callback subscribed to two Signals
+        both flushed in the same batch still only runs once; `batch()`
+        itself doesn't duplicate this dedup logic, it just threads its
+        own shared set through here.
+
+        A snapshot of `self._subscribers`, not a live iteration -- real
+        bug caught by actually running `examples/reactivity.py` (M45):
+        a `Computed`-of-`Computed` chain means the first subscriber
+        invoked here can itself unsubscribe-then-resubscribe from this
+        very list as part of its own `_recompute()`/`_run()`, silently
+        skipping the next real subscriber and re-invoking the mutating
+        one a second time if this iterated the live list instead.
+
+        **M46 real reentrancy guard:** if this object's own `_notify()`
+        is already running further up the call stack, raise immediately
+        instead of recursing. Real, traced scenario this closes: a
+        `Signal.get()` override (or a plain ViewModel method reachable
+        from a binding) that reads a *different* Signal before writing
+        to it, while an outer recording scope is open, gets that
+        Signal misattributed as a dependency of the outer scope too
+        (recording is ambient -- it has no notion of call-stack depth);
+        combined with the outer scope's own evaluation also writing to
+        that same Signal, every write re-triggers the same notify
+        before the previous one returns -- unbounded recursion with no
+        error, confirmed directly via `sys.setrecursionlimit` + traced
+        stack prints while building M45's own regression test. This
+        guard doesn't prevent the over-broad attribution itself (would
+        need every plain `Signal.get()` to open its own isolated
+        recording frame -- real, invasive, unjustified cost on every
+        Signal read for a narrow case `untrack()` already targets) --
+        it turns the *consequence* into one clear, actionable error the
+        moment it would happen, for any cause, not just this one.
+        """
+        if self._notifying:
+            raise RuntimeError(
+                f"{type(self).__name__} {self!r} was written to again while still notifying "
+                "its own subscribers from an earlier write on the same call stack -- something "
+                "invoked during this notification wrote back to it, directly or through a "
+                "chain of other Signals/Computeds. If a read caused this Signal to be "
+                "over-broadly recorded as a dependency it shouldn't be, wrap that read in "
+                "tre.untrack(...); otherwise restructure the code so this Signal's own "
+                "subscribers don't write back to it."
+            )
+        self._notifying = True
+        try:
+            invoked = already_invoked if already_invoked is not None else set()
+            for callback in list(self._subscribers):
+                if callback in invoked:
+                    continue
+                invoked.add(callback)
+                callback()
+        finally:
+            self._notifying = False
+
+
+class Signal(_Notifiable):
     """A minimal reactive value cell (§16.2). `.get()` records a
     dependency when read during a binding's evaluation; `.set()`/
     `.update()` notify every binding subscribed through that read --
@@ -185,8 +279,8 @@ class Signal:
     """
 
     def __init__(self, value):
+        super().__init__()
         self._value = value
-        self._subscribers = []
 
     def get(self):
         _record_read(self)
@@ -211,47 +305,11 @@ class Signal:
         self._value = new_value
         _schedule_notify(self)
 
-    def _subscribe(self, callback):
-        """Called from Rust (`View._attach`) -- registers a binding's
-        own re-evaluation trigger. Not part of `Signal`'s own public
-        API; an app author never calls this directly.
-        """
-        self._subscribers.append(callback)
-
-    def _unsubscribe(self, callback):
-        """M43 Phase 2 (§4, §5, §8, §16.2, §16.6): `_subscribe`'s own
-        real inverse -- called from Rust (`Component.remove`) so a
-        removed component's own bindings stop reacting to further
-        writes on a `Signal` they no longer have a live `NodeId` for.
-        Without this, a `Signal` write after removal would panic
-        (`apply_binding_value`'s own `tree.borrow_mut()...` calls
-        `.expect()` a `NodeId` still present in the `Tree`) -- the real,
-        decisive reason this method exists, not manufactured ahead of a
-        real need. A silent no-op if `callback` was never subscribed
-        (already removed, or never here at all), matching `Tree::
-        remove`'s own "not found is a no-op, not an error" convention
-        throughout this codebase -- not part of `Signal`'s own public
-        API, same as `_subscribe`.
-        """
-        try:
-            self._subscribers.remove(callback)
-        except ValueError:
-            pass
-
-    def _notify(self):
-        # A snapshot, not a live iteration -- see `Computed._notify`'s
-        # own matching fix for the real, concrete bug this closes (a
-        # subscriber that unsubscribes/resubscribes itself from *this*
-        # list during its own execution, which a `Computed` downstream
-        # of a `Signal` does on every recompute).
-        for callback in list(self._subscribers):
-            callback()
-
 
 _UNSET = object()
 
 
-class Computed:
+class Computed(_Notifiable):
     """A derived, cached reactive value (§16.2, M45): `fn` is run once
     inside a real recording scope (`_begin_recording`/`_end_recording`,
     the same mechanism `View._attach` uses for `{{ }}` bindings) to
@@ -275,9 +333,9 @@ class Computed:
     """
 
     def __init__(self, fn):
+        super().__init__()
         self._fn = fn
         self._dependencies = []
-        self._subscribers = []
         self._value = _UNSET
         self._recompute()
 
@@ -298,28 +356,6 @@ class Computed:
         if new_value != self._value:
             self._value = new_value
             _schedule_notify(self)
-
-    def _subscribe(self, callback):
-        self._subscribers.append(callback)
-
-    def _unsubscribe(self, callback):
-        try:
-            self._subscribers.remove(callback)
-        except ValueError:
-            pass
-
-    def _notify(self):
-        # A snapshot, not a live iteration -- the real bug this closes,
-        # caught by actually running `examples/reactivity.py`, not by
-        # inspection: a `Computed`-of-`Computed` chain (`total_label`
-        # depending on `total`) means the *first* subscriber invoked
-        # here can itself unsubscribe-then-resubscribe from *this very
-        # list* as part of its own `_recompute()` -- mutating `self.
-        # _subscribers` while this `for` loop is still walking its old
-        # positions silently skipped the next real subscriber (`Effect.
-        # _run`) and re-invoked the mutating one a second time instead.
-        for callback in list(self._subscribers):
-            callback()
 
 
 class Effect:
@@ -391,10 +427,14 @@ __all__ = [
     "App",
     "CanvasContext",
     "Component",
+    "Computed",
+    "Effect",
     "MONOSPACE_FONT_FAMILY",
     "Node",
     "View",
     "Window",
     "Signal",
     "ViewModel",
+    "batch",
+    "untrack",
 ]

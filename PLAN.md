@@ -1,55 +1,50 @@
-# PLAN — M45: Richer Reactivity (`Computed`, `Effect`, `batch()`, `untrack()`)
+# PLAN — M46: Reentrant-Notification Guard for the Read-Before-Write Hazard
 
 ## Goal
-Build the richer-reactivity layer M44's own scoping named and deferred
-(item 2), on top of `tre.Signal`'s existing dependency-recording
-primitive, per the approved plan
-(`/home/phil/.claude/plans/reflective-sleeping-falcon.md`, entered fresh
-after the user said "Start it").
+Fix the real hazard M45's own scoping named and deliberately left
+unfixed: a `Signal.get()`/method read of a different Signal before
+writing to it, while an outer recording scope is open, can produce a
+binding subscribed to a Signal its own evaluation writes to —
+unbounded reentrant recursion with no error. Per the approved plan
+(`/home/phil/.claude/plans/reflective-sleeping-falcon.md`).
 
 ## Steps
-1. Investigated `Signal`/`_record_read`/`RECORDING` directly -- found
-   `begin_recording`/`end_recording` were NOT already Python-exposed
-   (correcting M44's own scoping assumption), and found `RECORDING` was
-   a flat `Option<Vec<...>>`, not a stack -- a real, load-bearing
-   correctness bug reachable the moment anything opens a nested
-   recording scope (exactly what `Computed`/`Effect`'s eager
-   re-tracking does).
-2. `crates/engine-py/src/view.rs`: `RECORDING` -> `RefCell<Vec<Vec<Py
-   <PyAny>>>>`; `_record_read` reads/writes only `.last_mut()`;
-   `begin_recording`/`end_recording` widened to `#[pyfunction] pub
-   (crate) fn _begin_recording`/`_end_recording`, registered in
-   `lib.rs`. Internal call sites in `attach_bindings_and_handlers`
-   renamed to match. `python/tre/_core.pyi` stubs added.
-3. `python/tre/__init__.py`: `Computed`, `Effect`, `batch`, `untrack`.
-   `Signal.set`/`.update` route through new `_schedule_notify` instead
-   of calling `._notify()` directly.
-4. Real bugs found and fixed by actually running the new tests/example:
-   - `batch()` deduped by Signal, not by callback -- a shared `Computed`
-     recomputed once per Signal it depended on, not once per batch.
-     Fixed: dedupe by callback (`set()`, using bound-method equality).
-   - `Signal._notify`/`Computed._notify` iterated `_subscribers` live --
-     a `Computed`-of-`Computed`'s own recompute mutates that very list
-     mid-iteration (unsubscribe+resubscribe), silently skipping/
-     duplicating callbacks. Fixed: snapshot before iterating, in both
-     `_notify`s and `batch()`'s own flush loop.
-   - A separate, genuinely pathological hazard found while writing the
-     `RECORDING`-stack regression test (a Signal read-before-write
-     during an open outer recording scope gets misattributed as a
-     dependency of that outer scope) -- named, deliberately routed
-     around in the test, not fixed (out of scope, needs a larger
-     redesign nothing else in this codebase calls for).
-5. New pytest tests (`tests/test_reactivity.py`, +17): Computed/Effect/
-   batch/untrack coverage plus the nested-recording regression proof.
-6. New live example `examples/reactivity.py` + `.yaml`.
-7. `BUILD_TRACKER.md`/artifact updated.
+1. Re-traced the original failure: the dangerous consequence is always
+   a single Signal/Computed's own `_notify()` re-entering itself, not
+   a genuinely unbounded chain — a narrow, well-defined shape a
+   per-object reentrancy guard can catch for any cause.
+2. Deliberate scope decision: fix the *consequence* (crash -> clear
+   error), not the *cause* (over-broad attribution) — the latter would
+   need every `Signal.get()` to open its own isolated frame, invasive
+   for a case `untrack()` already targets.
+3. Found a real gap: `batch()`'s own flush loop doesn't call
+   `_notify()` at all (bypasses a guard placed only there).
+4. `python/tre/__init__.py`: factored `Signal`/`Computed`'s already-
+   duplicated `_subscribe`/`_unsubscribe`/`_notify` into a shared
+   `_Notifiable` base; `_notify(already_invoked=None)` now carries a
+   `_notifying` reentrancy flag (raises a clear `RuntimeError` on
+   re-entry) and the dedup/snapshot logic in one place. `batch()`'s
+   flush threads its shared dedup set into `_notify` instead of
+   duplicating the loop — closing the batch-path gap with the same
+   code the immediate path uses.
+5. Confirmed `Computed`/`Effect` don't need a second guard on
+   `_recompute`/`_run` — both already unsubscribe-before-run/resubscribe
+   -after, so a write inside `fn` can't self-reenter that method.
+6. Fixed `__all__` to include `Computed`/`Effect`/`batch`/`untrack`
+   (missing since M45, a real small correction found while here).
+7. 6 new pytest tests (`tests/test_reactivity.py`): isolated guard
+   proof, guard-resets-after-exception, legitimate non-cyclic chain
+   doesn't trip it, batch-path hits the same guard, the original
+   real hazard now raises cleanly, and `untrack()` genuinely fixes it
+   (verified end to end, not just asserted).
+8. `BUILD_TRACKER.md`/artifact updated.
 
 ## Status
-Complete, single phase. Full verification chain green: `cargo check`/
-`clippy -D warnings`/`fmt`, `cargo test --workspace --release`
-(`engine-py` 15, unchanged), `maturin develop --release`, `pytest
-tests/` (623 passed, up from 606, +17, 1 skipped unchanged), all 82
-examples (+1), showcase demo. **M45 -- Richer Reactivity -- is now
-fully complete.** This closes the milestone -- per the standing "push
-after a full milestone closes" convention, a `git push` is now
-appropriate.
+Complete, single phase. No Rust changes needed. Full verification
+chain green: `pytest tests/` (629 passed, up from 623, +6, 1 skipped
+unchanged), all 82 examples, showcase demo. Full pre-existing
+`test_reactivity.py` M45 suite (17 tests) confirmed passing unmodified
+— the `_Notifiable` refactor is behavior-preserving. **M46 -- Reentrant-
+Notification Guard -- is now fully complete.** This closes the
+milestone — per the standing "push after a full milestone closes"
+convention, a `git push` is now appropriate.
