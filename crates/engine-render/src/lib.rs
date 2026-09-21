@@ -27,7 +27,7 @@ mod text;
 
 use engine_core::{
     ContentFit, DrawCommand, ICON_VIEWBOX_SIZE, Interpolate, NodeId, NodeKind, SCROLLBAR_MARGIN,
-    SCROLLBAR_THICKNESS, ScrollViewState, TimePickerDialMode, Tree,
+    SCROLLBAR_THICKNESS, ScrollViewState, TimePickerDialMode, Tree, VirtualListState,
 };
 use peniko::Color;
 use peniko::kurbo::{Affine, BezPath, Circle, Line, Point, Rect, RoundedRect, Shape, Stroke, Vec2};
@@ -1226,6 +1226,14 @@ fn paint_node(
         if let NodeKind::ScrollView(state) = &node.kind {
             paint_scroll_view_thumb(tree, id, state, w, h, composed, scene);
         }
+        // M47 (§5, §7, §11.7): the identical real "paint after every
+        // child" scrollbar thumb, for `VirtualList` -- closes the one
+        // real gap M38 Phase 6 left open (named in M37's own trailer
+        // note): `VirtualList` has always scrolled correctly via wheel
+        // input, it just never had a visual thumb.
+        if let NodeKind::VirtualList(state) = &node.kind {
+            paint_virtual_list_thumb(state, w, h, composed, scene);
+        }
     } else {
         for &child in &node.children {
             paint_node(
@@ -1300,6 +1308,49 @@ fn paint_scroll_view_thumb(
         )
     };
 
+    fill_scrollbar_thumb(x, y, w, h, composed, scene);
+}
+
+/// M47 (§5, §7, §11.7): a real `VirtualList`'s own real scrollbar
+/// thumb -- the identical real gate/geometry/paint technique `paint_
+/// scroll_view_thumb` (M38 Phase 6) already established, narrowed to
+/// `VirtualList`'s own vertical-only axis. Unlike `ScrollView`,
+/// there's no single real child to measure for content extent --
+/// `VirtualListState::total_extent()` (already the same real primitive
+/// `Tree::scroll_virtual_list_by`'s own clamping and `Tree::grabs_
+/// virtual_list_thumb`'s own hit-test use) is the real source of truth
+/// here too, so paint and hit-testing/dragging can never disagree about
+/// it.
+fn paint_virtual_list_thumb(
+    state: &VirtualListState,
+    viewport_w: f64,
+    viewport_h: f64,
+    composed: Affine,
+    scene: &mut Scene,
+) {
+    if state.total_extent() <= viewport_h {
+        return;
+    }
+    let (track, thumb, along) = state.thumb_geometry(viewport_h);
+    if track <= 0.0 {
+        return;
+    }
+    let (x, y, w, h) = (
+        viewport_w - SCROLLBAR_THICKNESS - SCROLLBAR_MARGIN,
+        along,
+        SCROLLBAR_THICKNESS,
+        thumb,
+    );
+    fill_scrollbar_thumb(x, y, w, h, composed, scene);
+}
+
+/// M47 (§5, §7, §11.7): the real geometry-to-pixels fill both `paint_
+/// scroll_view_thumb`/`paint_virtual_list_thumb` need -- factored out
+/// once a second real caller needed the identical `RoundedRect` fill
+/// at the identical color/opacity/radius, the same "two real call
+/// sites justify factoring out" precedent this codebase already uses
+/// throughout.
+fn fill_scrollbar_thumb(x: f64, y: f64, w: f64, h: f64, composed: Affine, scene: &mut Scene) {
     scene.set_transform(composed);
     let color = with_opacity(
         Color::from_rgba8(0xCA, 0xC4, 0xD0, 0xFF),

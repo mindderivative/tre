@@ -1,123 +1,169 @@
-# LOG — M46: Reentrant-Notification Guard for the Read-Before-Write Hazard
+# LOG — M47: `VirtualList` Scrollbar Thumb + Build Tracker "Fixed Gaps"
 
-- User's own governing instruction: M45's own `BUILD_TRACKER.md` entry
-  named a real hazard and deliberately left it unfixed. The user then
-  asked directly: "Scope and fix the Signal read-before-write on a
-  different Signal during an open recording scope hazards." Entered
-  Plan Mode fresh (a different task from M45's own plan file), did real
-  investigation, wrote and got approval for a formal plan before
-  implementing.
-- Investigation, direct reasoning before designing: re-traced the
-  original failure (kept from M45's own `sys.setrecursionlimit` +
-  instrumented-print debugging session) and confirmed the dangerous
-  *consequence* always has the same narrow shape regardless of cause --
-  a single Signal/Computed's own `_notify()` re-entering itself several
-  frames down, never a genuinely unbounded chain of distinct objects.
-  This is what makes a per-object reentrancy guard the right fix: it
-  catches the *pattern*, not just the one scenario already found.
-- **Real, deliberate scope decision, stated not assumed:** considered
-  and rejected fixing the *cause* (over-broad dependency attribution --
-  a Signal read buried in a call stack getting recorded into whatever
-  outer recording frame happens to be open) -- would need every plain
-  `Signal.get()` call to open its own isolated recording frame, an
-  invasive change to the hot path of every Signal read, to control for
-  a call-stack-depth distinction nothing else in this engine's binding
-  semantics has ever needed. `untrack()` (M45) already exists as the
-  exact, targeted escape hatch for the read that shouldn't count as a
-  dependency -- the real, scoped gap is that hitting the hazard today
-  fails as unbounded recursion instead of a clear, actionable error.
-- **Real gap found while designing the fix, checked directly:**
-  `batch()`'s own flush loop (`python/tre/__init__.py`, M45) doesn't
-  call `signal._notify()` at all -- it iterates subscriber lists and
-  invokes callbacks directly (a deliberate M45 fix for cross-signal
-  callback dedup). A guard placed only inside the ordinary immediate-
-  notify path would never trigger during a batch flush, leaving the
-  identical hazard silently reachable there. This shaped the whole
-  design: the guard needed to live somewhere both paths actually go
-  through, not just the one originally observed.
-- `python/tre/__init__.py`: `Signal`/`Computed` already had byte-for-
-  byte identical `_subscribe`/`_unsubscribe` and near-identical
-  `_notify` bodies (both independently fixed for the same live-
-  iteration-during-mutation bug in M45) -- real, pre-existing
-  duplication that made "add the guard to both separately" clearly the
-  wrong move. Factored a new `_Notifiable` base class: `_subscribers`,
-  a new `_notifying` boolean, `_subscribe`/`_unsubscribe` (moved
-  verbatim), and `_notify(already_invoked=None)` -- raises a clear
-  `RuntimeError` immediately if `self._notifying` is already `True`,
-  otherwise sets the flag, walks a snapshot of `_subscribers`, dedupes
-  against an optional shared `already_invoked` set, and always clears
-  the flag in a `finally`. `Signal(_Notifiable)`/`Computed(_Notifiable)`
-  call `super().__init__()` and drop their now-redundant copies.
-  `batch()`'s own flush loop drops its duplicated snapshot/dedup logic
-  and calls `signal_like._notify(invoked_callbacks)` per pending
-  signal instead -- the batch-path gap closed with the *same* guarded
-  code the immediate path uses, not a second copy of the fix.
-- **Real design question resolved, not assumed:** does `Computed`/
-  `Effect`'s own re-tracking (`_recompute`/`_run`) need a *second*,
-  matching guard? Re-read both bodies directly: both already
-  unsubscribe from their old dependencies *before* running `fn`/
-  `self._fn`, and only resubscribe *after* it returns -- so a write
-  inside `fn` to one of its own (about-to-be-re-established)
-  dependencies can't directly re-invoke that same `_recompute`/`_run`
-  through a dependency's own `_notify()`, since it isn't currently
-  subscribed to anything at that moment. Confirmed the one guard on
-  `_notify` was the whole real gap, not the first of two.
-- Real, small correction made while already touching this file: `__all__`
-  was missing `Computed`/`Effect`/`batch`/`untrack` since M45 shipped
-  them (`from tre import *` never exported any of the four, even though
-  direct `from tre import Computed` always worked) -- fixed in the same
-  pass, not separately scoped.
-- Manual, interactive verification before writing formal tests: ran the
-  exact original pathological scenario (a `TriggeringSignal` override
-  reading-then-writing `b` while the "text" binding's own recording
-  scope is open) -- confirmed the guard now raises one clear
-  `RuntimeError` (wrapped once by the Rust-side binding-evaluation
-  error path, not dozens of times as before) instead of recursing.
-  Separately confirmed the error message's own suggested remedy
-  actually works: wrapping the *offending read* (not the write, which
-  the first draft of the message incorrectly suggested -- caught by
-  actually testing the suggestion before shipping it, since `untrack()`
-  only affects dependency *recording*, not notification, so it's
-  specifically the read that caused the over-broad subscription that
-  needs wrapping) in `untrack()` resolves the hazard with no error and
-  correct behavior.
-- New pytest tests (`tests/test_reactivity.py`, +6):
-  `test_reentrant_notify_raises_a_clear_error_instead_of_recursing`
-  (the minimal, isolated proof -- a bare Signal whose own subscriber
-  writes back to it, no View/binding machinery); `test_reentrant_
-  notify_guard_resets_after_a_caught_exception` (the flag clears via
-  `finally`, a later unrelated write still works);
-  `test_a_legitimate_non_cyclic_chain_does_not_trip_the_guard` (a real
-  Signal -> Computed -> Computed -> Effect chain with no path back
-  notifies cleanly -- the guard is for self-reentry, not depth);
-  `test_batch_flush_also_hits_the_reentrant_notify_guard` (the real
-  proof the batch-path gap is closed); `test_the_original_read_before_
-  write_binding_hazard_now_raises_clearly` (the exact, real,
-  originally-observed YAML-binding scenario); `test_untrack_is_the_
-  real_documented_fix_for_the_read_before_write_hazard` (the
-  documented remedy, verified end to end).
-- Re-ran the full pre-existing `test_reactivity.py` suite (all 17 M45
-  tests): all passed unmodified, confirming the `_Notifiable` refactor
-  is a true behavior-preserving no-op.
-- Full verification chain, all green: no Rust changes this milestone
-  (entirely within `python/tre/__init__.py`), so no `cargo`/`maturin`
-  steps were needed; `pytest tests/` (629 passed, up from 623, +6, 1
-  skipped, unchanged); all 82 examples run individually with zero
-  failures; `demo/showcase.py` (all 5 phases, exit 0).
-- `BUILD_TRACKER.md`: new Milestone 46 section, Top Metrics row, "Just
-  closed" entry added; `tools/generate_tracker_artifact.py` confirmed
-  46 milestones/138 phases/232 items (up from 45/137/231, the correct
-  +1/+1/+1 for one new milestone, one phase, one step); Build Tracker
-  artifact republished to the existing URL.
-- Explicitly out of scope, named: eliminating the over-broad dependency
-  attribution itself (the real cause, needs an invasive per-read
-  isolation change nothing else calls for); a `Computed`/`Effect`-level
-  guard on `_recompute`/`_run` (confirmed unnecessary); a `tesserae`-
-  level change (nothing new to propagate -- `Computed`/`Effect`/
-  `batch`/`untrack` were already re-exported there since M45's own
-  follow-up commit, and this milestone touches only `tre` itself).
+- User's own governing instructions, two in one message: "Yes scope and
+  built that" (the `VirtualList` scrollbar gap from the last audit) and
+  "let's created a Fixed Gabs section with expand and collapse
+  functionality... Add this to the template for the build tracker."
+  Entered Plan Mode, did real investigation on both parts before
+  writing a formal plan and getting approval.
 
-**M46 -- Reentrant-Notification Guard for the Read-Before-Write Hazard
--- is now fully complete, single phase.** This closes the milestone --
-per the standing "push only after a full milestone closes" convention,
-a `git push` is now appropriate.
+## Part A — `VirtualList` scrollbar thumb
+
+- Read `ScrollView`'s own identical M38 Phase 6 capability directly as
+  the concrete precedent: `ScrollViewState::thumb_geometry`, `Tree::
+  grabs_scroll_view_thumb`/`update_scroll_view_thumb_drag` (grab
+  tolerance via `SCROLLBAR_GRAB_SLOP`, relative-delta drag anchor,
+  direct never-eased scroll write), `engine-render::paint_scroll_view_
+  thumb` (paint after children, shared scrollbar tokens already `pub`
+  in `engine-core`).
+- Real, load-bearing difference confirmed before writing code:
+  `VirtualList` has no single measured child for "content extent" --
+  reused its own `VirtualListState::total_extent()` (the same
+  primitive `Tree::scroll_virtual_list_by`'s own clamping already uses,
+  so wheel-scroll and thumb-drag can never disagree); `VirtualList` is
+  vertical-only today, so the new code is a narrower single-axis
+  version, not a horizontal-capable copy.
+- `crates/engine-core/src/node.rs`: `VirtualListState` gained `thumb_
+  drag_anchor: Option<(f64, f64)>` and `thumb_geometry(viewport_extent)
+  -> (track, thumb, along)`.
+- `crates/engine-core/src/tree.rs`: new `virtual_list_viewport_extent`/
+  `grabs_virtual_list_thumb`/`update_virtual_list_thumb_drag`, wired
+  into `PointerPressed`'s ancestor-walk (a second `NodeKind::
+  VirtualList` check right after the existing `ScrollView` one) and
+  `update_drag`'s `NodeKind` match.
+- `crates/engine-render/src/lib.rs`: `paint_node` gained a `NodeKind::
+  VirtualList` arm calling new `paint_virtual_list_thumb`, sharing the
+  actual fill math with `paint_scroll_view_thumb` via a new small
+  `fill_scrollbar_thumb` helper (factored out once a second real caller
+  needed the identical `RoundedRect` fill).
+- 6 new `engine-core` unit tests, mirroring `ScrollView`'s own test
+  cluster exactly (same real numbers: 200x100 viewport, 400px content
+  -> track 96, thumb 32). **Real test-fixture bug caught by actually
+  running the tests:** the first `Variable`-extent drag test reused the
+  identical tiny 30px-viewport fixture `scroll_virtual_list_by`'s own
+  clamp test uses, which leaves zero real thumb travel once `SCROLLBAR_
+  MIN_LENGTH` fills the whole track -- a real, correct no-op, but
+  invalid for testing drag specifically; fixed with a larger, still
+  genuinely non-uniform fixture with real drag travel.
+- 2 new `engine-render` pixel-level tests (`virtual_list_scroll.rs`),
+  mirroring `scroll_view.rs`'s own M38 Phase 6 tests. **A second real
+  test-fixture bug caught by running it:** the shared `materialize`
+  fixture paints items spanning the full viewport width, so the "no
+  thumb" check point coincided with real opaque item content, not
+  background -- fixed with a dedicated narrower-item fixture for just
+  that test, mirroring `scroll_view.rs`'s own identical "use a
+  transparent `Container`, not the shared opaque marker" fixture split.
+- `examples/scrollable_list.py`'s doc comment updated: the new thumb
+  paints automatically (no script change needed, its real 1,000-row
+  list already exceeds its viewport); explicitly stated, matching
+  `docking.py`/`resizable_panes.py`'s established honesty, that this
+  engine has no synthetic Python-level "press at an arbitrary point,
+  then move" primitive for *any* drag gesture (confirmed via grep
+  before claiming this) -- the real thumb-drag itself stays proven at
+  the Rust level, left for a human to try interactively.
+- Full chain green: `cargo check`/`clippy -D warnings`/`fmt`, `cargo
+  test --workspace --release` (`engine-core` 219, up from 213, +6;
+  `engine-render` virtual_list_scroll suite 4, up from 2, +2),
+  `maturin develop --release`, `pytest tests/` (629 passed, unchanged),
+  all 82 examples, showcase demo.
+
+## Part B — Build Tracker "Fixed Gaps" (the template)
+
+- Discovered a real, already-existing `**Known gaps:**` convention in
+  `~/.claude/skills/build-tracker/` (a reusable skill, not project-
+  tracked in git -- confirmed via `git rev-parse --is-inside-work-tree`
+  failing) with `generate_tracker_artifact.py`, `BUILD_TRACKER_TEMPLATE
+  .md`, `SKILL.md`. Edited the skill's master copy first, then
+  re-copied verbatim into `tools/`, per the skill's own explicit rule.
+- `Tracker` gained `fixed_gaps: list[str]`; `_parse_bullet_list` shared
+  by both "Known gaps"/"Fixed gaps"; new `render_fixed_gaps_section`
+  wraps the list in a `<details class="fixed-gaps">` -- the same
+  native pattern every milestone/phase already uses, so `expandAll`/
+  `collapseAll` picks it up for free via the existing `querySelectorAll
+  ('details')`, no new JS. New CSS block matching the existing metric-
+  card/details styling. `main()`'s summary line gained the fixed-gap
+  count.
+- **Real bug found and fixed along the way, not anticipated during
+  planning:** verified the change by regenerating this project's own
+  much larger, real `BUILD_TRACKER.md` (not just a synthetic test) and
+  found the published artifact's own "Just closed"/"Up next" highlight
+  box had been showing text from roughly M31's own historical per-step
+  note -- stale for over a dozen milestones. Root cause: `_grab()`
+  searched the *whole file* and took the *last* match, an earlier fix
+  (documented in SKILL.md's own "Lessons learned") that assumed fresh
+  pairs are *appended*. This project's real, actually-used convention
+  is the opposite -- a fresh pair is prepended at the very top, right
+  after Top Metrics, every time a milestone closes -- and the file also
+  accumulates many legitimate, older "Just closed" mentions deep inside
+  individual milestone sections' own historical narrative (a step's
+  own transient status note from when that milestone was being built),
+  so "last match in the whole file" was silently finding one of those
+  instead. Fixed by bounding the search to the real front matter
+  (everything before the first `## Milestone <N>` heading) and taking
+  the *first* match there.
+- **A second real regression caught immediately by re-testing, not
+  assumed fixed:** re-ran the skill's own `BUILD_TRACKER_TEMPLATE.md`
+  after the front-matter fix and found it now returned an *empty*
+  "Just closed"/"Up next" -- the template's own documented convention
+  (a single pair at the true tail, after every milestone section) has
+  nothing in the front matter to find. Fixed with a fallback: only
+  when the front-matter search comes up empty, fall back to the
+  original whole-file/last-match search -- correct for a single tail
+  pair (there's only one to find either way). Re-verified both real
+  conventions work: the template's own tail-pair convention, and this
+  project's own front-matter-stack convention, side by side.
+- `BUILD_TRACKER_TEMPLATE.md`: added a `**Fixed gaps:**` block modeling
+  both a `**Fixed**` and a `**Resolved**` entry. `SKILL.md`: extended
+  the "Exact format" section with the new grammar and the *convention*
+  (move a closed bullet, don't strike it in place); added a maintenance
+  -workflow step; rewrote the existing "Just closed"/"Up next" lesson
+  to record the full two-bug arc (the original fix, and this session's
+  correction of what that fix had assumed).
+
+## Part C — Applied to this project's own `BUILD_TRACKER.md`
+
+- Re-verified every one of the 19 existing "Known gaps" bullets against
+  current source directly, not trusted from its own prior "Fixed" note
+  -- confirmed `Node.add_child` (`crates/engine-py/src/node.rs:497`),
+  `tracing::error!` wiring (`crates/engine-py/src/dispatch.rs`), and
+  context-menu dismissal (`Tree::dismiss_on_outside_click`/`dismiss_
+  escapable_overlays`) are all real, though none had ever actually been
+  struck through in the original list despite being genuinely closed.
+- Split into a trimmed "Known gaps" (2 items: handlers stay zero-
+  argument with no real `Event` payload; no live accessibility client
+  in this dev/CI environment) and a new "Fixed gaps" (19 entries,
+  including the reframed PLAN.md/LOG.md-archiving bullet as "convention
+  corrected, not a gap" and the new `VirtualList` scrollbar entry).
+- Added the M47 milestone entry (Top Metrics row, "Just closed"
+  paragraph, full `## Milestone 47` section with Phase 1/Step 1).
+  **A real structural mistake caught immediately by re-parsing, not
+  shipped:** first draft embedded a `### Phase 1` heading directly
+  inside the "Just closed" narrative prose (before any `## Milestone`
+  heading existed in the file at that point), which the parser would
+  have silently ignored (no `current_milestone` set yet) -- moved to a
+  proper `## Milestone 47` section in the correct position.
+- Added a fresh "Up next: nothing currently scoped" entry -- a real,
+  separate finding from the same front-matter investigation: this
+  file's own "Up next" pointer had gone stale after roughly M17/M18
+  and was never refreshed on any later closure, violating this
+  project's own "never let this pair go stale" convention, silently,
+  for about 30 milestones.
+- `python tools/generate_tracker_artifact.py`: confirmed 47 milestones/
+  139 phases/233 items/2 known gaps/19 fixed gaps (up from 46/138/232/
+  --/--). Spot-checked the generated HTML directly for the correct
+  "Just closed"/"Up next"/"Known gaps"/"Fixed gaps" content, not just
+  the summary counts. Build Tracker artifact republished twice (once
+  after the initial Fixed-Gaps migration, once after the front-matter
+  parser fix) to the existing URL.
+
+## Status
+
+**M47 -- `VirtualList` Scrollbar Thumb -- is now fully complete, single
+phase.** The Build Tracker template work (Parts B/C) is process/tooling
+work on the tracker itself, folded into this same milestone's own
+writeup rather than numbered separately, matching how this file has
+never numbered its own maintenance passes as milestones. This closes
+the milestone -- per the standing "push after a full milestone closes"
+convention, a `git push` is now appropriate for the `tre` repo. The
+`~/.claude/skills/build-tracker/` edits are not git-tracked (confirmed
+directly) -- no push applicable there, the files are simply saved.

@@ -930,6 +930,87 @@ impl Tree {
         state.scroll.current = target;
     }
 
+    /// M47 (§5, §7, §11.7): a real `VirtualList`'s own live viewport
+    /// extent along its (always vertical) scroll axis -- mirrors
+    /// `scroll_view_extents`'s own viewport half, but `VirtualList` has
+    /// no single measured child to read a "content extent" from (it's
+    /// windowed materialization, `Fixed` or `Variable`), so content
+    /// extent comes from `VirtualListState::total_extent()` directly at
+    /// each real call site instead of being returned from here. `None`
+    /// if `id` isn't a real `NodeKind::VirtualList` in this `Tree`.
+    fn virtual_list_viewport_extent(&self, id: NodeId) -> Option<f64> {
+        let node = self.nodes.get(id)?;
+        if !matches!(node.kind, NodeKind::VirtualList(_)) {
+            return None;
+        }
+        Some(f64::from(self.layout(id).size.height))
+    }
+
+    /// M47 (§5, §7, §11.7): whether a real press at `point` grabs
+    /// `list`'s own real scrollbar thumb -- the identical real grab-
+    /// tolerance technique `grabs_scroll_view_thumb` (M38 Phase 6)
+    /// already established, narrowed to `VirtualList`'s own vertical-
+    /// only axis. `false` when there's nothing to scroll (`total_
+    /// extent() <= viewport`, the same real condition `engine-render`'s
+    /// own thumb-paint arm uses) or the list has no real viewport yet.
+    fn grabs_virtual_list_thumb(&self, list: NodeId, point: Point) -> bool {
+        let Some(viewport) = self.virtual_list_viewport_extent(list) else {
+            return false;
+        };
+        let NodeKind::VirtualList(state) = &self.nodes[list].kind else {
+            return false;
+        };
+        if state.total_extent() <= viewport {
+            return false;
+        }
+        let (track, thumb, along) = state.thumb_geometry(viewport);
+        if track <= 0.0 {
+            return false;
+        }
+        let (ox, oy) = self.absolute_position(list);
+        let size = self.layout(list).size;
+        let slop = SCROLLBAR_GRAB_SLOP;
+        let tx = ox + f64::from(size.width) - SCROLLBAR_THICKNESS - SCROLLBAR_MARGIN;
+        let ty = oy + along;
+        (tx - slop..=tx + SCROLLBAR_THICKNESS + slop).contains(&point.x)
+            && (ty - slop..=ty + thumb + slop).contains(&point.y)
+    }
+
+    /// M47 (§5, §7, §11.7): live-follows-the-cursor thumb drag for a
+    /// `VirtualList` -- the identical real ratio-mapped technique
+    /// `update_scroll_view_thumb_drag` (M38 Phase 6) already
+    /// established, narrowed to the vertical-only axis, writing through
+    /// the same clamp `Tree::scroll_virtual_list_by` already uses so
+    /// wheel-scroll and thumb-drag can never disagree about the real
+    /// clamp bounds. A true no-op if the drag anchor is missing or the
+    /// real track has no room to travel.
+    fn update_virtual_list_thumb_drag(&mut self, list: NodeId, point: Point) {
+        let Some(viewport) = self.virtual_list_viewport_extent(list) else {
+            return;
+        };
+        let NodeKind::VirtualList(state) = &self.nodes[list].kind else {
+            return;
+        };
+        let max_scroll = (state.total_extent() - viewport).max(0.0);
+        let Some((anchor_y, anchor_scroll)) = state.thumb_drag_anchor else {
+            return;
+        };
+        let (track, thumb, _along) = state.thumb_geometry(viewport);
+        let travel = track - thumb;
+        if travel <= 0.0 {
+            return;
+        }
+        let moved = point.y - anchor_y;
+        let target = (anchor_scroll + moved * (max_scroll / travel)).clamp(0.0, max_scroll);
+        let NodeKind::VirtualList(state) = &mut self.nodes[list].kind else {
+            unreachable!("checked above")
+        };
+        // A real, direct write, not `animate_to` -- the identical
+        // "driven directly, never eased" precedent `VirtualListState.
+        // scroll_offset`'s own doc comment already establishes.
+        state.scroll_offset.current = target;
+    }
+
     /// The real total content extent of an `Uncontained` carousel's own
     /// items -- every item's width plus every gap between them, read
     /// from each child's own real, most-recently-computed `Layout`
@@ -1666,6 +1747,14 @@ impl Tree {
             // `Slider`/`Carousel`'s own identical "only start a drag on
             // a genuine grab" contract.
             NodeKind::ScrollView(_) => self.update_scroll_view_thumb_drag(dragging, point, now),
+            // M47 (§5, §7, §11.7): the identical real scrollbar-thumb
+            // drag mechanism above, for `VirtualList` -- `PointerPressed`
+            // 's own dispatch arm only ever sets `self.dragging = Some
+            // (list)` after a real `grabs_virtual_list_thumb` check
+            // already passed, the same "only start a drag on a genuine
+            // grab" contract `ScrollView`/`Splitter`/`Slider`/`Carousel`
+            // already establish.
+            NodeKind::VirtualList(_) => self.update_virtual_list_thumb_drag(dragging, point),
             // M39 Phase 2 Step 2 (§5, §7): a real angle-based drag,
             // genuinely distinct from every other real drag primitive
             // above -- none of `Splitter`/`Slider`/`Carousel`/
@@ -3422,6 +3511,23 @@ impl Tree {
                             };
                             let scroll = state.scroll.current;
                             state.thumb_drag_anchor = Some((coord, scroll));
+                            self.dragging = Some(id);
+                            self.set_pressed(None, config.hover_duration, now);
+                            return DispatchOutcome::None;
+                        }
+                        // M47 (§5, §7, §11.7): the identical real grab-
+                        // takes-priority-over-content technique above,
+                        // for `VirtualList`'s own thumb -- vertical-only,
+                        // so no `horizontal` branch is needed the way
+                        // `ScrollView`'s own arm above has one.
+                        if matches!(self.nodes[id].kind, NodeKind::VirtualList(_))
+                            && self.grabs_virtual_list_thumb(id, position)
+                        {
+                            let NodeKind::VirtualList(state) = &mut self.nodes[id].kind else {
+                                unreachable!("checked above")
+                            };
+                            let scroll = state.scroll_offset.current;
+                            state.thumb_drag_anchor = Some((position.y, scroll));
                             self.dragging = Some(id);
                             self.set_pressed(None, config.hover_duration, now);
                             return DispatchOutcome::None;
@@ -6739,6 +6845,170 @@ mod tests {
         };
         assert_eq!(
             state.scroll_offset.current, 50.0,
+            "must clamp to the real non-uniform total_extent minus viewport height"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // M47 (§5, §7, §11.7): VirtualList's own real scrollbar thumb --
+    // mirrors the ScrollView thumb test cluster above (M38 Phase 6),
+    // reusing the identical `scrollable_list` fixture (200x100
+    // viewport, Fixed(20.0) item extent) the scroll-clamping tests
+    // above already use, so the real numbers match exactly: 20 items *
+    // 20px = 400px content in a 100px-tall viewport.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn virtual_list_thumb_geometry_computes_the_real_track_thumb_and_along_values() {
+        // track = 100 - 2*2 (margin) = 96. thumb = max(96*(100/400),
+        // 32 (min length)) = max(24, 32) = 32 -- the identical real
+        // numbers ScrollView's own equivalent test already proves,
+        // confirming VirtualList's `total_extent()`-based geometry
+        // agrees with the measured-child-based one for the same shape.
+        let (tree, list) = scrollable_list(20);
+        let NodeKind::VirtualList(state) = &tree.get(list).unwrap().kind else {
+            panic!("expected a VirtualList");
+        };
+        assert_eq!(
+            state.thumb_geometry(100.0),
+            (96.0, 32.0, 2.0),
+            "at scroll 0, `along` must sit at the real starting margin"
+        );
+    }
+
+    #[test]
+    fn virtual_list_thumb_geometry_along_tracks_real_scroll_progress() {
+        let (mut tree, list) = scrollable_list(20);
+        tree.scroll_virtual_list_by(list, 150.0); // half of max_scroll (300)
+        let NodeKind::VirtualList(state) = &tree.get(list).unwrap().kind else {
+            panic!("expected a VirtualList");
+        };
+        let (track, thumb, along) = state.thumb_geometry(100.0);
+        assert_eq!(
+            (track, thumb),
+            (96.0, 32.0),
+            "track/thumb don't depend on scroll position"
+        );
+        assert!(
+            (along - 34.0).abs() < 0.001,
+            "at half scroll, `along` must sit halfway across the real (track - thumb) = 64px \
+             of travel (2 + 64*0.5 = 34), got {along}"
+        );
+    }
+
+    #[test]
+    fn grabs_virtual_list_thumb_is_true_only_within_the_real_thumb_plus_slop() {
+        // 200px-wide viewport: thumb sits on the right edge, x in
+        // [200-4-2, 200-2] = [194, 198], y in [2, 34] at scroll 0 (the
+        // proof above).
+        let (tree, list) = scrollable_list(20);
+        assert!(
+            tree.grabs_virtual_list_thumb(list, Point::new(196.0, 18.0)),
+            "a point squarely inside the real thumb rect must grab it"
+        );
+        assert!(
+            tree.grabs_virtual_list_thumb(list, Point::new(194.0 - 5.0, 18.0)),
+            "a point just within the real SCROLLBAR_GRAB_SLOP tolerance must still grab it"
+        );
+        assert!(
+            !tree.grabs_virtual_list_thumb(list, Point::new(10.0, 10.0)),
+            "a point nowhere near the real thumb (e.g. over the scrolled content) must not grab it"
+        );
+    }
+
+    #[test]
+    fn virtual_list_thumb_does_not_grab_when_theres_nothing_to_scroll() {
+        // 3 items * 20px = 60px of content in a 100px-tall viewport --
+        // the identical real "nothing to scroll" shape `scroll_virtual_
+        // list_by_cannot_scroll_a_list_shorter_than_its_own_viewport`
+        // already proves for wheel scrolling; the thumb must agree.
+        let (tree, list) = scrollable_list(3);
+        assert!(
+            !tree.grabs_virtual_list_thumb(list, Point::new(196.0, 18.0)),
+            "no thumb exists to grab when total_extent() <= viewport"
+        );
+    }
+
+    #[test]
+    fn update_virtual_list_thumb_drag_moves_the_scroll_offset_proportionally_to_pointer_travel() {
+        let (mut tree, list) = scrollable_list(20);
+        // Start a real drag exactly the way `PointerPressed`'s own
+        // dispatch arm does: anchor the current pointer coordinate and
+        // scroll offset, then mark the list as the live drag target.
+        let NodeKind::VirtualList(state) = &mut tree.get_mut(list).unwrap().kind else {
+            panic!("expected a VirtualList");
+        };
+        state.thumb_drag_anchor = Some((18.0, 0.0));
+        tree.dragging = Some(list);
+
+        // track - thumb = 96 - 32 = 64px of real thumb travel maps to
+        // the real 300px of max_scroll -- moving the pointer down by
+        // 32px (half the real travel) must move scroll by half of
+        // max_scroll (150).
+        tree.update_virtual_list_thumb_drag(list, Point::new(0.0, 50.0));
+        let NodeKind::VirtualList(state) = &tree.get(list).unwrap().kind else {
+            panic!("expected a VirtualList");
+        };
+        assert!(
+            (state.scroll_offset.current - 150.0).abs() < 0.001,
+            "half the real thumb travel must move scroll by half of max_scroll, got {}",
+            state.scroll_offset.current
+        );
+    }
+
+    #[test]
+    fn update_virtual_list_thumb_drag_uses_the_real_non_uniform_total_extent_for_variable() {
+        // Real proof `total_extent()`, not a Fixed-shaped formula, is
+        // what the thumb drag clamps against for a Variable-extent
+        // list. Rows of height 40/60/50/50 (non-uniform, cumulative
+        // offsets [0, 40, 100, 150], total_extent 200) in a 100px-tall
+        // viewport -- deliberately *not* `scroll_virtual_list_by_
+        // clamps_against_the_real_non_uniform_total_extent`'s own
+        // tiny 30px-viewport fixture: that one leaves zero real thumb
+        // travel (`SCROLLBAR_MIN_LENGTH` fills the whole track), a
+        // real, correct no-op for *drag* that this test needs to avoid
+        // to actually exercise the drag math.
+        let mut tree = Tree::new();
+        let list = tree.insert(
+            NodeKind::VirtualList(VirtualListState::new(4, ItemExtent::Variable)),
+            Style {
+                size: Size {
+                    width: length(200.0),
+                    height: length(100.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.compute_layout(
+            list,
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+        tree.set_virtual_list_resolved_offsets(
+            list,
+            vec![(0, 0.0), (1, 40.0), (2, 100.0), (3, 150.0), (4, 200.0)],
+        );
+
+        let NodeKind::VirtualList(state) = &mut tree.get_mut(list).unwrap().kind else {
+            panic!("expected a VirtualList");
+        };
+        state.thumb_drag_anchor = Some((0.0, 0.0));
+        tree.dragging = Some(list);
+
+        // track = 100 - 4 = 96, thumb = max(96*(100/200), 32) = 48,
+        // travel = 48 -- real room to drag, unlike the tiny-viewport
+        // fixture above. A drag far past that travel must clamp to the
+        // real max_scroll (200 - 100 = 100.0), not the wrong value a
+        // Fixed-shaped formula (4 * some uniform guess) would produce.
+        tree.update_virtual_list_thumb_drag(list, Point::new(0.0, 10_000.0));
+        let NodeKind::VirtualList(state) = &tree.get(list).unwrap().kind else {
+            panic!("expected a VirtualList");
+        };
+        assert_eq!(
+            state.scroll_offset.current, 100.0,
             "must clamp to the real non-uniform total_extent minus viewport height"
         );
     }

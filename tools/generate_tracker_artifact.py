@@ -83,6 +83,7 @@ class Tracker:
     just_closed: str
     up_next: str
     known_gaps: list[str]
+    fixed_gaps: list[str]
     milestones: list[Milestone]
     commit: str
 
@@ -156,29 +157,83 @@ def parse_percentages(lines: list[str]) -> dict[str, int]:
     return out
 
 
-def parse_narrative(text: str) -> tuple[str, str, list[str]]:
+def _parse_bullet_list(text: str, label: str) -> list[str]:
+    """Shared by "Known gaps"/"Fixed gaps": only the *first* occurrence
+    of `**<label>:**` in the file is read (unlike "Just closed"/"Up
+    next" below, these sections aren't meant to repeat per milestone).
+    """
+    items: list[str] = []
+    match = re.search(rf"\*\*{label}:\*\*\s*\n((?:- .+\n?)+)", text)
+    if match:
+        for line in match.group(1).splitlines():
+            line = line.strip()
+            if line.startswith("- "):
+                items.append(line[2:].strip())
+    return items
+
+
+def parse_narrative(text: str) -> tuple[str, str, list[str], list[str]]:
+    # Real, load-bearing bound, not the whole file -- a real bug found
+    # in production use (2026-09-21), not hypothetical: a large tracker
+    # accumulates *many* legitimate, older "Just closed"/"Up next"
+    # mentions deep inside individual milestone sections' own historical
+    # narrative (a step's own transient status note, written while that
+    # milestone was still being built -- real prose, not a formatting
+    # mistake). This function's own original fix (below) searched the
+    # *whole file* and took the *last* match, assuming the most recent
+    # pair sits closest to the bottom -- correct only if fresh pairs are
+    # ever *appended*. The real, actually-used convention in this
+    # project is the opposite: a fresh pair is written at the very top
+    # of the file, right after Top Metrics, every time a milestone
+    # closes, newest first, pushing every earlier pair down -- so
+    # "last match in the whole file" silently found one of the
+    # *embedded historical* mentions deep in an old milestone section
+    # instead, and stayed wrong for over a dozen milestones before this
+    # was caught (confirmed by diffing the published artifact's own
+    # "Just closed" box against the real current top-of-file text).
+    # Bounding the search to the real *front matter* -- everything
+    # before the first `## Milestone <N>` heading -- excludes every
+    # embedded historical mention by construction; taking the *first*
+    # match within that bound (not the last) then correctly picks up
+    # the newest one, matching how entries are actually inserted.
+    boundary = re.search(r"^## Milestone \d", text, re.M)
+    front_matter = text[: boundary.start()] if boundary else text
+
     def _grab(label: str) -> str:
-        # Every closed milestone conventionally writes its own
-        # "**Just closed:**"/"**Up next:**" pair at its own point in the
-        # file, so a plain `re.search` would always find the *oldest*
-        # one, frozen there forever regardless of how far the project
-        # moves. The most recent pair (closest to the bottom of the
-        # file) is the one that actually answers "what's the current
-        # status" -- take the last match, not the first.
-        matches = list(re.finditer(rf"\*\*{label}:\*\*\s*(.+?)(?=\n\n|\Z)", text, re.S))
-        return matches[-1].group(1).strip() if matches else ""
+        front_matches = list(
+            re.finditer(rf"\*\*{label}:\*\*\s*(.+?)(?=\n\n|\Z)", front_matter, re.S)
+        )
+        if front_matches:
+            return front_matches[0].group(1).strip()
+        # Real fallback, not just the front-matter case above: the
+        # *other* real, documented convention (`BUILD_TRACKER_TEMPLATE
+        # .md`'s own example) writes exactly *one* "Just closed"/"Up
+        # next" pair at the true tail of the file, after every milestone
+        # section -- which the front-matter bound above deliberately
+        # excludes, so a tracker using that convention would otherwise
+        # come back empty (a real regression this fallback closes,
+        # found by re-testing the template itself after fixing the
+        # front-matter case). Search the whole file and take the *last*
+        # match in that case -- correct for a single tail pair (there's
+        # only one to find), and still reasonable for an older tracker
+        # that never adopted front-matter stacking at all.
+        whole_matches = list(re.finditer(rf"\*\*{label}:\*\*\s*(.+?)(?=\n\n|\Z)", text, re.S))
+        return whole_matches[-1].group(1).strip() if whole_matches else ""
 
     just_closed = _grab("Just closed")
     up_next = _grab("Up next")
-
-    gaps: list[str] = []
-    gaps_match = re.search(r"\*\*Known gaps:\*\*\s*\n((?:- .+\n?)+)", text)
-    if gaps_match:
-        for line in gaps_match.group(1).splitlines():
-            line = line.strip()
-            if line.startswith("- "):
-                gaps.append(line[2:].strip())
-    return just_closed, up_next, gaps
+    known_gaps = _parse_bullet_list(front_matter, "Known gaps")
+    # "Fixed gaps" (added alongside this function's own real second
+    # user, not designed speculatively): a real, currently-open gap
+    # lives in "Known gaps" until it closes, at which point its own
+    # bullet -- already struck-through and `**Fixed (M...)**`/`**
+    # Resolved (M...)**`-labeled, the exact same convention "Known
+    # gaps" already established -- gets *moved* here, not left in place.
+    # Keeps "Known gaps" answering "what's still open" at a glance,
+    # instead of growing into an ever-larger wall of history mixed in
+    # with what's actually open.
+    fixed_gaps = _parse_bullet_list(front_matter, "Fixed gaps")
+    return just_closed, up_next, known_gaps, fixed_gaps
 
 
 def parse_milestones(lines: list[str], percentages: dict[str, int]) -> list[Milestone]:
@@ -255,12 +310,13 @@ def parse_milestones(lines: list[str], percentages: dict[str, int]) -> list[Mile
 def parse_tracker(md_text: str, commit: str) -> Tracker:
     lines = md_text.splitlines()
     percentages = parse_percentages(lines)
-    just_closed, up_next, gaps = parse_narrative(md_text)
+    just_closed, up_next, known_gaps, fixed_gaps = parse_narrative(md_text)
     milestones = parse_milestones(lines, percentages)
     return Tracker(
         just_closed=just_closed,
         up_next=up_next,
-        known_gaps=gaps,
+        known_gaps=known_gaps,
+        fixed_gaps=fixed_gaps,
         milestones=milestones,
         commit=commit,
     )
@@ -343,6 +399,32 @@ def render_gap(gap: str) -> str:
     return f"<li>{inline_md(gap)}</li>"
 
 
+def render_fixed_gaps_section(gaps: list[str]) -> str:
+    """A real, dedicated `<details>` archive for closed "Known gaps"
+    bullets, collapsed by default -- the exact same native `<details>`
+    pattern every milestone/phase already uses (so `expandAll`/
+    `collapseAll`'s own `querySelectorAll('details')` picks this up for
+    free, no new JS). Omitted entirely when there are no fixed gaps yet
+    (a brand-new tracker), rather than rendering an empty, misleading
+    section.
+    """
+    if not gaps:
+        return ""
+    items_html = "\n        ".join(render_gap(g) for g in gaps)
+    return f"""  <section class="fixed-gaps-wrap">
+    <details class="fixed-gaps">
+      <summary>
+        {CHEV_SMALL}
+        <span class="fg-title">Fixed gaps</span>
+        <span class="fg-count">{len(gaps)}</span>
+      </summary>
+      <ul class="fixed-gaps-list">
+        {items_html}
+      </ul>
+    </details>
+  </section>"""
+
+
 PAGE_TEMPLATE = """<title>{project} Build Tracker</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&display=swap');
@@ -402,6 +484,20 @@ PAGE_TEMPLATE = """<title>{project} Build Tracker</title>
   .metric.gaps ul {{ margin: 0; padding-left: 16px; font-size: 0.82rem; }}
   .metric.gaps li {{ margin-bottom: 5px; }}
   .metric.gaps li:last-child {{ margin-bottom: 0; }}
+
+  .fixed-gaps-wrap {{ margin-bottom: 24px; }}
+  details.fixed-gaps {{ background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: var(--shadow); overflow: hidden; }}
+  details.fixed-gaps > summary {{ list-style: none; cursor: pointer; padding: 12px 16px;
+    display: flex; align-items: center; gap: 10px; }}
+  details.fixed-gaps > summary::-webkit-details-marker {{ display: none; }}
+  details.fixed-gaps[open] > summary .chev {{ transform: rotate(90deg); }}
+  .fg-title {{ flex: 1; font-size: 0.86rem; font-weight: 700; color: var(--text-muted); }}
+  .fg-count {{ font-size: 0.72rem; font-weight: 800; color: var(--idle); background: var(--idle-bg);
+    border-radius: 999px; padding: 2px 9px; }}
+  .fixed-gaps-list {{ list-style: none; margin: 0; padding: 2px 16px 14px 38px; font-size: 0.82rem;
+    color: var(--text-muted); display: grid; gap: 7px; border-top: 1px solid var(--border);
+    padding-top: 10px; }}
 
   .overview {{ background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
     box-shadow: var(--shadow); padding: 14px 16px; margin-bottom: 24px; display: grid; gap: 12px; }}
@@ -485,6 +581,8 @@ PAGE_TEMPLATE = """<title>{project} Build Tracker</title>
     </div>
   </section>
 
+{fixed_gaps_html}
+
   <section class="overview">
 {overview_rows}
   </section>
@@ -509,6 +607,7 @@ PAGE_TEMPLATE = """<title>{project} Build Tracker</title>
 
 def render_html(tracker: Tracker, project: str) -> str:
     gaps_html = "\n".join(f"        {render_gap(g)}" for g in tracker.known_gaps)
+    fixed_gaps_html = render_fixed_gaps_section(tracker.fixed_gaps)
 
     overview_rows = "\n".join(
         f"""    <div class="overview-row">
@@ -533,6 +632,7 @@ def render_html(tracker: Tracker, project: str) -> str:
         just_closed=inline_md(tracker.just_closed),
         up_next=inline_md(tracker.up_next),
         gaps_html=gaps_html,
+        fixed_gaps_html=fixed_gaps_html,
         overview_rows=overview_rows,
         milestones_html=milestones_html,
     )
@@ -615,7 +715,10 @@ def main() -> int:
 
     total_phases = sum(len(m.phases) for m in tracker.milestones)
     total_items = sum(len(p.items) for m in tracker.milestones for p in m.phases)
-    print(f"Parsed {len(tracker.milestones)} milestones, {total_phases} phases, {total_items} items.")
+    print(
+        f"Parsed {len(tracker.milestones)} milestones, {total_phases} phases, {total_items} items, "
+        f"{len(tracker.known_gaps)} known gaps, {len(tracker.fixed_gaps)} fixed gaps."
+    )
     print(f"Wrote {args.out}")
     print("Next: publish this file to the existing artifact URL (same file path each time keeps the link).")
     return 0

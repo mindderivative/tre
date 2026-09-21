@@ -267,3 +267,98 @@ fn scrolled_content_outside_the_lists_own_bounds_is_genuinely_clipped_not_just_m
         );
     });
 }
+
+/// M47 (§5, §7, §11.7): the real pixel-level proof `engine-render::
+/// paint_virtual_list_thumb` actually paints -- mirrors `scroll_view.
+/// rs`'s own identical M38 Phase 6 test exactly: 20 items * 20px = 400px
+/// of real content in a 200x100 viewport puts the real thumb at
+/// absolute x in [194, 198], y in [2, 34] (proven directly at the Rust
+/// level, `tree.rs`'s own `virtual_list_thumb_geometry_computes_the_
+/// real_track_thumb_and_along_values`) -- checks a point squarely
+/// inside that rect is genuinely non-transparent, the real, decisive
+/// claim this phase's own thumb-paint code exists to prove.
+#[test]
+fn a_scrollable_virtual_list_paints_a_real_thumb_pixel_at_the_expected_position() {
+    pollster::block_on(async {
+        // 20 real items, only 0..5 materialized -- the realistic
+        // windowed-materialization shape a real app actually uses; the
+        // thumb's own geometry depends on `total_extent()` (item_count
+        // * item_extent), not how many items happen to be materialized.
+        let (tree, list) = build_list(20, 0..5);
+        let (data, bpr) = render(&tree, list, WIDTH, HEIGHT).await;
+        let at_thumb = pixel_at(&data, bpr, 196, 18);
+        assert_ne!(
+            at_thumb, UNCOVERED,
+            "a real point inside the real thumb's own computed rect must be genuinely \
+             painted, not left fully transparent"
+        );
+    });
+}
+
+/// The real other half: a `VirtualList` with nothing to scroll must not
+/// paint a thumb at all -- `paint_virtual_list_thumb`'s own real
+/// `total_extent() <= viewport` guard, mirroring `ScrollView`'s
+/// identical real gate.
+///
+/// **Real, deliberate fixture difference from the "scrollable" test
+/// above, not an oversight:** `build_list`'s own shared `materialize`
+/// fixture paints items spanning the *entire* real viewport width
+/// (`WIDTH`), so the thumb's own would-be x-position (196) always sits
+/// on top of real, opaque item content -- checking for `UNCOVERED`
+/// there would fail regardless of whether a thumb painted, the same
+/// real reason `ScrollView`'s own equivalent test uses a transparent
+/// `Container` for its content instead of an opaque marker. This test
+/// builds its own tree with items narrower than the viewport (150 of
+/// 200px) so the thumb's own real x-position genuinely has nothing
+/// else painted there, making `UNCOVERED` a real, meaningful assertion.
+#[test]
+fn a_virtual_list_that_fits_its_own_content_paints_no_thumb() {
+    pollster::block_on(async {
+        fn narrow_item(_idx: usize) -> (NodeKind, Style, PaintProperties) {
+            (
+                NodeKind::Rect,
+                Style {
+                    size: Size {
+                        width: length(150.0),
+                        height: length(ITEM_EXTENT as f32),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(CHIP, 0.0, 0.0, 1.0),
+            )
+        }
+
+        let mut tree = Tree::new();
+        // 3 items * 20px = 60px of content in a 100px-tall viewport --
+        // nothing to scroll.
+        let list = tree.insert(
+            NodeKind::VirtualList(VirtualListState::new(3, ItemExtent::Fixed(ITEM_EXTENT))),
+            Style {
+                size: Size {
+                    width: length(f32::from(WIDTH)),
+                    height: length(f32::from(HEIGHT)),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.set_virtual_list_window(list, 0..3, narrow_item);
+        let available = Size {
+            width: AvailableSpace::Definite(f32::from(WIDTH)),
+            height: AvailableSpace::Definite(f32::from(HEIGHT)),
+        };
+        tree.compute_layout(list, available);
+
+        let (data, bpr) = render(&tree, list, WIDTH, HEIGHT).await;
+        // Where a real thumb would sit if this list were scrollable
+        // (the same real x/y the scrollable-case test above just
+        // checked) -- past the narrow items' own 150px width, so
+        // genuinely uncovered unless a thumb wrongly painted there.
+        let at_would_be_thumb = pixel_at(&data, bpr, 196, 18);
+        assert_eq!(
+            at_would_be_thumb, UNCOVERED,
+            "a VirtualList with nothing to scroll must not paint a thumb at all, got \
+             {at_would_be_thumb:?}"
+        );
+    });
+}

@@ -1192,6 +1192,16 @@ pub struct VirtualListState {
     /// (populated via `Tree::set_virtual_list_resolved_offsets`), the
     /// same real reason `materialize` itself lives there too, not here.
     pub resolved_offsets: std::collections::BTreeMap<usize, f64>,
+    /// M47 (§5, §7, §11.7): `Some((pointer_y, scroll_at_drag_start))`,
+    /// set the instant a real thumb drag begins and cleared when it
+    /// ends -- byte-for-byte the same real anchor shape `ScrollViewState
+    /// ::thumb_drag_anchor` (M38 Phase 6) already established, ported
+    /// here rather than reinvented. A *relative*-delta anchor, not an
+    /// absolute pointer-to-scroll mapping, for the identical real reason
+    /// `ScrollView`'s own doc comment already gives: grabbing the thumb
+    /// anywhere along its own length must not snap it so that point
+    /// jumps under the pointer.
+    pub thumb_drag_anchor: Option<(f64, f64)>,
 }
 
 impl VirtualListState {
@@ -1202,7 +1212,48 @@ impl VirtualListState {
             materialized: std::collections::BTreeMap::new(),
             scroll_offset: Animated::new(0.0),
             resolved_offsets: std::collections::BTreeMap::new(),
+            thumb_drag_anchor: None,
         }
+    }
+
+    /// M47 (§5, §7, §11.7): real thumb geometry `(track, thumb, along)`
+    /// -- the identical real shape `ScrollViewState::thumb_geometry`
+    /// (M38 Phase 6) already established, shared by painting
+    /// (`engine-render::paint_node`) and hit-testing/dragging
+    /// (`Tree::grabs_virtual_list_thumb`/`update_virtual_list_thumb_
+    /// drag`) so the two can never drift -- the same "one function,
+    /// every real caller" discipline this codebase already applies
+    /// throughout. Vertical-only (no `horizontal` parameter): `Virtual
+    /// List` itself has no horizontal-scroll variant today (`Tree::
+    /// scroll_virtual_list_by`'s own signature is vertical-only),
+    /// unlike `ScrollView`, so this is a real, narrower single-axis
+    /// version, not a second horizontal-capable copy. Reads `self.
+    /// total_extent()` for content extent directly (`VirtualList` has
+    /// no single measured child to pass one in from, unlike
+    /// `ScrollView`) -- the same real primitive `Tree::scroll_virtual_
+    /// list_by`'s own clamping already uses, so thumb geometry and
+    /// wheel-scroll clamping can never disagree about the real content
+    /// extent.
+    pub fn thumb_geometry(&self, viewport_extent: f64) -> (f64, f64, f64) {
+        let track = viewport_extent - SCROLLBAR_MARGIN * 2.0;
+        if track <= 0.0 {
+            return (0.0, 0.0, 0.0);
+        }
+        let content_extent = self.total_extent();
+        let max_scroll = (content_extent - viewport_extent).max(0.0);
+        let thumb = if content_extent > 0.0 {
+            (track * (viewport_extent / content_extent)).max(SCROLLBAR_MIN_LENGTH)
+        } else {
+            track
+        };
+        let thumb = thumb.min(track);
+        let progress = if max_scroll > 0.0 {
+            self.scroll_offset.current / max_scroll
+        } else {
+            0.0
+        };
+        let along = SCROLLBAR_MARGIN + (track - thumb) * progress;
+        (track, thumb, along)
     }
 
     /// Item `idx`'s own real top-offset. Panics if `item_extent` is
