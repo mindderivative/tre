@@ -385,3 +385,148 @@ def test_unthemed_window_preserves_every_real_default_value(tmp_path):
         if expected_radius is not None:
             assert node.get("corner_radius") == pytest.approx(expected_radius)
         assert node.get("elevation") == pytest.approx(expected_elevation)
+
+
+# --- M50 Phase 3: components: -- Containers & surfaces ------------------
+
+
+def test_card_variant_specific_elevation_and_bare_corner_radius(tmp_path):
+    window = window_with_components(
+        tmp_path, "  card: {corner_radius: 20}\n  card.elevated: {elevation: 9}\n"
+    )
+    elevated = window.add_card(width=200.0, height=100.0, variant="elevated")
+    filled = window.add_card(width=200.0, height=100.0, variant="filled")
+    assert elevated.get("corner_radius") == pytest.approx(20.0)
+    assert filled.get("corner_radius") == pytest.approx(20.0), "bare key applies to every variant"
+    assert elevated.get("elevation") == pytest.approx(9.0)
+    assert filled.get("elevation") == pytest.approx(0.0), "elevated-only override must not leak"
+
+
+def test_chip_corner_radius_override_has_no_elevation_concept(tmp_path):
+    window = window_with_components(tmp_path, "  chip: {corner_radius: 2}\n")
+    node = window.add_chip(label="hi", width=100.0, variant="assist")
+    assert node.get("corner_radius") == pytest.approx(2.0)
+    assert node.get("elevation") == pytest.approx(0.0)
+
+
+def test_tooltip_corner_radius_override(tmp_path):
+    window = window_with_components(tmp_path, "  tooltip: {corner_radius: 1}\n")
+    node = window.add_tooltip(text="hi", width=100.0)
+    assert node.get("corner_radius") == pytest.approx(1.0)
+
+
+def test_dialog_override_does_not_raise(tmp_path):
+    # `add_dialog` returns the *scrim* node (its own `corner_radius`/
+    # `elevation` always literal `0.0`, a full-window backdrop) -- the
+    # real themed panel is one of its children, never returned to
+    # Python at all, confirmed via direct read of `add_dialog`'s own
+    # real `self.wrap_node(scrim)` return before writing this test.
+    # Matches this suite's own established honesty for untestable
+    # internal state elsewhere (`add_segmented_button`/`add_side_sheet`).
+    window = window_with_components(
+        tmp_path, "  card: {corner_radius: 99}\n  dialog: {corner_radius: 10, elevation: 6}\n"
+    )
+    window.add_dialog(headline="hi", text="body", width=280.0, height=180.0)
+
+
+def test_snackbar_corner_radius_and_elevation_override(tmp_path):
+    window = window_with_components(tmp_path, "  snackbar: {corner_radius: 2, elevation: 4}\n")
+    container, _action, _close = window.add_snackbar(text="hi", width=300.0)
+    assert container.get("corner_radius") == pytest.approx(2.0)
+    assert container.get("elevation") == pytest.approx(4.0)
+
+
+def test_popover_has_its_own_key_distinct_from_card(tmp_path):
+    window = window_with_components(
+        tmp_path, "  card: {corner_radius: 99}\n  popover: {corner_radius: 8, elevation: 5}\n"
+    )
+    node = window.add_popover(subhead="hi", text="body", width=280.0, height=140.0)
+    assert node.get("corner_radius") == pytest.approx(8.0)
+    assert node.get("elevation") == pytest.approx(5.0)
+
+
+def test_side_sheet_elevation_override_keyed_by_modal_variant(tmp_path):
+    window = window_with_components(
+        tmp_path,
+        "  side_sheet.modal: {elevation: 3}\n  side_sheet.standard: {elevation: 1}\n",
+    )
+    standard = window.add_side_sheet(width=300.0, modal=False)
+    modal = window.add_side_sheet(width=300.0, modal=True)
+    assert standard.get("elevation") == pytest.approx(1.0)
+    # `modal=True` returns the scrim (unattached) per its own doc
+    # comment -- the panel's own elevation isn't directly readable
+    # through it, so this only proves the override path doesn't raise
+    # for the modal branch specifically.
+    assert modal is not None
+
+
+def test_side_sheet_corner_radius_override_does_not_raise(tmp_path):
+    # `corner_radii_override`, not the plain `corner_radius` field, so
+    # there's no Python-facing readback -- matching `add_segmented_
+    # button`'s own established limit in this same suite.
+    window = window_with_components(tmp_path, "  side_sheet: {corner_radius: 4}\n")
+    window.add_side_sheet(width=300.0, modal=False)
+
+
+def test_navigation_drawer_has_its_own_key_distinct_from_side_sheet(tmp_path):
+    window = window_with_components(
+        tmp_path,
+        "  side_sheet.standard: {elevation: 9}\n  navigation_drawer.standard: {elevation: 2}\n",
+    )
+    container, _items = window.add_navigation_drawer(
+        labels=["A", "B"], icons=["home", "settings"], modal=False, width=280.0
+    )
+    assert container.get("elevation") == pytest.approx(2.0)
+
+
+def test_navigation_drawer_indicator_and_corner_radius_overrides_do_not_raise(tmp_path):
+    window = window_with_components(
+        tmp_path,
+        "  navigation_drawer.standard: {corner_radius: 5}\n  navigation_drawer.indicator: {corner_radius: 3}\n",
+    )
+    window.add_navigation_drawer(
+        labels=["A", "B"], icons=["home", "settings"], selected=0, modal=False, width=280.0
+    )
+
+
+def test_search_bar_corner_radius_and_elevation_override(tmp_path):
+    window = window_with_components(tmp_path, "  search_bar: {corner_radius: 6, elevation: 2}\n")
+    bar, _field, _leading, _trailing = window.add_search_bar(placeholder="hi", width=300.0)
+    assert bar.get("corner_radius") == pytest.approx(6.0)
+    assert bar.get("elevation") == pytest.approx(2.0)
+
+
+def test_search_view_has_its_own_key_distinct_from_dialog(tmp_path):
+    window = window_with_components(
+        tmp_path, "  dialog: {corner_radius: 99}\n  search_view: {corner_radius: 7, elevation: 2}\n"
+    )
+    node = window.add_search_view(width=300.0, height=400.0)
+    assert node.get("corner_radius") == pytest.approx(7.0)
+    assert node.get("elevation") == pytest.approx(2.0)
+
+
+def test_unthemed_containers_and_surfaces_preserve_every_real_default_value(tmp_path):
+    window = Window(width=400, height=400)
+    assert window.add_card(width=200.0, height=100.0, variant="elevated").get(
+        "corner_radius"
+    ) == pytest.approx(12.0)
+    assert window.add_card(width=200.0, height=100.0, variant="elevated").get(
+        "elevation"
+    ) == pytest.approx(1.0)
+    assert window.add_chip(label="hi", width=100.0, variant="assist").get(
+        "corner_radius"
+    ) == pytest.approx(8.0)
+    assert window.add_tooltip(text="hi", width=100.0).get("corner_radius") == pytest.approx(4.0)
+    # add_dialog returns the scrim, not the themed panel -- see
+    # test_dialog_override_does_not_raise's own doc comment above.
+    window.add_dialog(headline="hi", text="body", width=280.0, height=180.0)
+    snackbar, _a, _c = window.add_snackbar(text="hi", width=300.0)
+    assert snackbar.get("corner_radius") == pytest.approx(4.0)
+    assert snackbar.get("elevation") == pytest.approx(3.0)
+    popover = window.add_popover(subhead="hi", text="body", width=280.0, height=140.0)
+    assert popover.get("corner_radius") == pytest.approx(12.0)
+    search_bar, _f, _l, _t = window.add_search_bar(placeholder="hi", width=300.0)
+    assert search_bar.get("corner_radius") == pytest.approx(28.0)
+    search_view = window.add_search_view(width=300.0, height=400.0)
+    assert search_view.get("corner_radius") == pytest.approx(28.0)
+    assert search_view.get("elevation") == pytest.approx(3.0)

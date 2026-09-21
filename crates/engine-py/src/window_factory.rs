@@ -463,6 +463,9 @@ struct CardColors {
     elevation: f64,
 }
 
+/// M50 Phase 3: `elevation` consults `theme.elevation("card", Some(
+/// variant))` first, the same real pattern `resolve_button_colors`
+/// already established (`window_factory.rs`).
 fn resolve_card_colors(theme: &crate::window::ThemeState, variant: &str) -> PyResult<CardColors> {
     let role = |name: &str, fallback: Color| -> Color {
         if theme.is_set() {
@@ -471,12 +474,14 @@ fn resolve_card_colors(theme: &crate::window::ThemeState, variant: &str) -> PyRe
             fallback
         }
     };
+    let elevation =
+        |default: f64| -> f64 { theme.elevation("card", Some(variant)).unwrap_or(default) };
     match variant {
         "elevated" => Ok(CardColors {
             container: role("surface_container_low", Md3Baseline::SURFACE_CONTAINER_LOW),
             border_color: TRANSPARENT,
             border_width: 0.0,
-            elevation: 1.0,
+            elevation: elevation(1.0),
         }),
         "filled" => Ok(CardColors {
             container: role(
@@ -485,13 +490,13 @@ fn resolve_card_colors(theme: &crate::window::ThemeState, variant: &str) -> PyRe
             ),
             border_color: TRANSPARENT,
             border_width: 0.0,
-            elevation: 0.0,
+            elevation: elevation(0.0),
         }),
         "outlined" => Ok(CardColors {
             container: role("surface", Md3Baseline::SURFACE),
             border_color: role("outline_variant", Md3Baseline::OUTLINE_VARIANT),
             border_width: 1.0,
-            elevation: 0.0,
+            elevation: elevation(0.0),
         }),
         other => Err(pyo3::exceptions::PyValueError::new_err(format!(
             "unknown card variant {other:?} -- expected one of \"elevated\", \"filled\", \
@@ -1987,9 +1992,18 @@ impl PyWindow {
             CHIP_TRAILING_PADDING_NO_ICON
         };
 
+        // M50 Phase 3: no elevation override -- Chip has no real
+        // elevation concept in MD3 anatomy at all (confirmed before
+        // this milestone, always a literal `0.0`), the same "neither"
+        // classification `add_segmented_button`'s own doc comment
+        // states.
+        let corner_radius = self
+            .theme
+            .borrow()
+            .shape("chip", None)
+            .unwrap_or(CHIP_CORNER_RADIUS);
         let mut tree = self.tree.borrow_mut();
-        let mut container_paint =
-            PaintProperties::new(colors.container, CHIP_CORNER_RADIUS, 0.0, 1.0);
+        let mut container_paint = PaintProperties::new(colors.container, corner_radius, 0.0, 1.0);
         container_paint.border_color = Animated::new(colors.border_color);
         container_paint.border_width = Animated::new(colors.border_width);
         let mut container_style = positioned_style(
@@ -2654,9 +2668,17 @@ impl PyWindow {
         y: Option<f32>,
     ) -> PyResult<Node> {
         let colors = resolve_card_colors(&self.theme.borrow(), variant)?;
+        // M50 Phase 3: bare "card" key -- corner radius is not
+        // variant-dependent in real MD3 anatomy (confirmed before this
+        // milestone), so no variant is threaded through.
+        let corner_radius = self
+            .theme
+            .borrow()
+            .shape("card", None)
+            .unwrap_or(CARD_CORNER_RADIUS);
         let mut tree = self.tree.borrow_mut();
         let mut paint =
-            PaintProperties::new(colors.container, CARD_CORNER_RADIUS, colors.elevation, 1.0);
+            PaintProperties::new(colors.container, corner_radius, colors.elevation, 1.0);
         paint.border_color = Animated::new(colors.border_color);
         paint.border_width = Animated::new(colors.border_width);
         let id = tree.insert(
@@ -2736,6 +2758,11 @@ impl PyWindow {
     /// `examples/tooltip.py` demonstrates the real end-to-end wiring.
     #[pyo3(signature = (text, width, x=None, y=None))]
     fn add_tooltip(&self, text: &str, width: f32, x: Option<f32>, y: Option<f32>) -> Node {
+        let corner_radius = self
+            .theme
+            .borrow()
+            .shape("tooltip", None)
+            .unwrap_or(TOOLTIP_CORNER_RADIUS);
         let mut tree = self.tree.borrow_mut();
         let mut container_style = positioned_style(
             Size {
@@ -2757,12 +2784,7 @@ impl PyWindow {
         let container = tree.insert(
             NodeKind::Rect,
             container_style,
-            PaintProperties::new(
-                Md3Baseline::INVERSE_SURFACE,
-                TOOLTIP_CORNER_RADIUS,
-                0.0,
-                1.0,
-            ),
+            PaintProperties::new(Md3Baseline::INVERSE_SURFACE, corner_radius, 0.0, 1.0),
         );
 
         let label_width = (width - 2.0 * TOOLTIP_HORIZONTAL_PADDING).max(0.0);
@@ -2828,6 +2850,13 @@ impl PyWindow {
                 role("on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT),
             )
         };
+        let (dialog_corner_radius, dialog_elevation) = {
+            let theme = self.theme.borrow();
+            (
+                theme.shape("dialog", None).unwrap_or(DIALOG_CORNER_RADIUS),
+                theme.elevation("dialog", None).unwrap_or(DIALOG_ELEVATION),
+            )
+        };
 
         let mut tree = self.tree.borrow_mut();
 
@@ -2869,7 +2898,7 @@ impl PyWindow {
         let panel = tree.insert(
             NodeKind::Rect,
             panel_style,
-            PaintProperties::new(panel_color, DIALOG_CORNER_RADIUS, DIALOG_ELEVATION, 1.0),
+            PaintProperties::new(panel_color, dialog_corner_radius, dialog_elevation, 1.0),
         );
         tree.add_child(scrim, panel);
 
@@ -3046,6 +3075,17 @@ impl PyWindow {
                 role("inverse_on_surface", Md3Baseline::INVERSE_ON_SURFACE),
             )
         };
+        let (corner_radius, elevation) = {
+            let theme = self.theme.borrow();
+            (
+                theme
+                    .shape("snackbar", None)
+                    .unwrap_or(SNACKBAR_CORNER_RADIUS),
+                theme
+                    .elevation("snackbar", None)
+                    .unwrap_or(SNACKBAR_ELEVATION),
+            )
+        };
 
         let mut tree = self.tree.borrow_mut();
 
@@ -3071,12 +3111,7 @@ impl PyWindow {
         let container = tree.insert(
             NodeKind::Rect,
             container_style,
-            PaintProperties::new(
-                container_color,
-                SNACKBAR_CORNER_RADIUS,
-                SNACKBAR_ELEVATION,
-                1.0,
-            ),
+            PaintProperties::new(container_color, corner_radius, elevation, 1.0),
         );
 
         let text_id = tree.insert(
@@ -3316,18 +3351,29 @@ impl PyWindow {
                 (role("surface", Md3Baseline::SURFACE), Md3Baseline::SCRIM)
             }
         };
-        let elevation = if modal {
+        let variant_key = if modal { "modal" } else { "standard" };
+        let default_elevation = if modal {
             SIDE_SHEET_MODAL_ELEVATION
         } else {
             SIDE_SHEET_STANDARD_ELEVATION
+        };
+        let (corner_radius, elevation) = {
+            let theme = self.theme.borrow();
+            (
+                theme
+                    .shape("side_sheet", Some(variant_key))
+                    .unwrap_or(SIDE_SHEET_CORNER_RADIUS),
+                theme
+                    .elevation("side_sheet", Some(variant_key))
+                    .unwrap_or(default_elevation),
+            )
         };
 
         let mut tree = self.tree.borrow_mut();
         let panel_height = height.unwrap_or(self.height.get() as f32);
 
         let mut panel_paint = PaintProperties::new(container_color, 0.0, elevation, 1.0);
-        panel_paint.corner_radii_override =
-            Some([SIDE_SHEET_CORNER_RADIUS, 0.0, 0.0, SIDE_SHEET_CORNER_RADIUS]);
+        panel_paint.corner_radii_override = Some([corner_radius, 0.0, 0.0, corner_radius]);
 
         if modal {
             let scrim_style = Style {
@@ -3788,18 +3834,43 @@ impl PyWindow {
                 role("scrim", Md3Baseline::SCRIM),
             )
         };
-        let elevation = if modal {
+        let variant_key = if modal { "modal" } else { "standard" };
+        let default_elevation = if modal {
             SIDE_SHEET_MODAL_ELEVATION
         } else {
             SIDE_SHEET_STANDARD_ELEVATION
+        };
+        // M50 Phase 3: `add_navigation_drawer`'s panel currently reuses
+        // `SIDE_SHEET_CORNER_RADIUS`/`SIDE_SHEET_MODAL_ELEVATION`/
+        // `SIDE_SHEET_STANDARD_ELEVATION` as its own real *constant
+        // value*, but gets its own theme key (`"navigation_drawer"`,
+        // not `"side_sheet"`) -- decoupling "shares a number today"
+        // from "should always share a theme override," matching this
+        // milestone's own established `components:` convention
+        // (`crates/engine-spec/src/theme.rs`'s own doc comment).
+        // `.indicator` is a second, genuinely distinct key for the
+        // active-item indicator pill, which has no `side_sheet`
+        // equivalent to inherit from at all.
+        let (corner_radius, elevation, indicator_corner_radius) = {
+            let theme = self.theme.borrow();
+            (
+                theme
+                    .shape("navigation_drawer", Some(variant_key))
+                    .unwrap_or(SIDE_SHEET_CORNER_RADIUS),
+                theme
+                    .elevation("navigation_drawer", Some(variant_key))
+                    .unwrap_or(default_elevation),
+                theme
+                    .shape("navigation_drawer", Some("indicator"))
+                    .unwrap_or(NAV_DRAWER_INDICATOR_CORNER_RADIUS),
+            )
         };
 
         let mut tree = self.tree.borrow_mut();
         let panel_height = height.unwrap_or(self.height.get() as f32);
 
         let mut panel_paint = PaintProperties::new(container_color, 0.0, elevation, 1.0);
-        panel_paint.corner_radii_override =
-            Some([0.0, SIDE_SHEET_CORNER_RADIUS, SIDE_SHEET_CORNER_RADIUS, 0.0]);
+        panel_paint.corner_radii_override = Some([0.0, corner_radius, corner_radius, 0.0]);
 
         let mut panel_style = Style {
             size: Size {
@@ -3878,7 +3949,7 @@ impl PyWindow {
             let indicator = tree.insert(
                 NodeKind::Rect,
                 indicator_style,
-                PaintProperties::new(fill, NAV_DRAWER_INDICATOR_CORNER_RADIUS, 0.0, 1.0),
+                PaintProperties::new(fill, indicator_corner_radius, 0.0, 1.0),
             );
 
             let icon_id = tree.insert(
@@ -4970,6 +5041,17 @@ impl PyWindow {
                 theme.on_surface(),
             )
         };
+        let (corner_radius, elevation) = {
+            let theme = self.theme.borrow();
+            (
+                theme
+                    .shape("search_bar", None)
+                    .unwrap_or(SEARCH_BAR_CORNER_RADIUS),
+                theme
+                    .elevation("search_bar", None)
+                    .unwrap_or(SEARCH_BAR_ELEVATION),
+            )
+        };
 
         let mut tree = self.tree.borrow_mut();
 
@@ -4992,12 +5074,7 @@ impl PyWindow {
         let bar = tree.insert(
             NodeKind::Rect,
             bar_style,
-            PaintProperties::new(
-                container_color,
-                SEARCH_BAR_CORNER_RADIUS,
-                SEARCH_BAR_ELEVATION,
-                1.0,
-            ),
+            PaintProperties::new(container_color, corner_radius, elevation, 1.0),
         );
 
         let leading = if let Some(path) = leading_path {
@@ -5135,6 +5212,21 @@ impl PyWindow {
                 Md3Baseline::SURFACE_CONTAINER_HIGH
             }
         };
+        // M50 Phase 3: its own key, not "dialog" -- reuses `DIALOG_
+        // CORNER_RADIUS` as a real constant *value* today, but that's
+        // a coincidence of the two components sharing a shape token,
+        // not a reason to couple their theme overrides together.
+        let (corner_radius, elevation) = {
+            let theme = self.theme.borrow();
+            (
+                theme
+                    .shape("search_view", None)
+                    .unwrap_or(DIALOG_CORNER_RADIUS),
+                theme
+                    .elevation("search_view", None)
+                    .unwrap_or(SEARCH_VIEW_ELEVATION),
+            )
+        };
 
         let mut tree = self.tree.borrow_mut();
         let style = positioned_style(
@@ -5148,12 +5240,7 @@ impl PyWindow {
         let id = tree.insert(
             NodeKind::Rect,
             style,
-            PaintProperties::new(
-                container_color,
-                DIALOG_CORNER_RADIUS,
-                SEARCH_VIEW_ELEVATION,
-                1.0,
-            ),
+            PaintProperties::new(container_color, corner_radius, elevation, 1.0),
         );
         self.wrap_node(id)
     }
@@ -5956,6 +6043,17 @@ impl PyWindow {
                 Md3Baseline::SURFACE_CONTAINER
             }
         };
+        let (corner_radius, elevation) = {
+            let theme = self.theme.borrow();
+            (
+                theme
+                    .shape("popover", None)
+                    .unwrap_or(POPOVER_CORNER_RADIUS),
+                theme
+                    .elevation("popover", None)
+                    .unwrap_or(POPOVER_ELEVATION),
+            )
+        };
 
         let mut tree = self.tree.borrow_mut();
 
@@ -5981,12 +6079,7 @@ impl PyWindow {
         let panel = tree.insert(
             NodeKind::Rect,
             panel_style,
-            PaintProperties::new(
-                container_color,
-                POPOVER_CORNER_RADIUS,
-                POPOVER_ELEVATION,
-                1.0,
-            ),
+            PaintProperties::new(container_color, corner_radius, elevation, 1.0),
         );
 
         let content_width = (width - 2.0 * POPOVER_PADDING).max(0.0);
