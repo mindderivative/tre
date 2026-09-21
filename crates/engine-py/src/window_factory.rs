@@ -2391,6 +2391,11 @@ impl PyWindow {
 
         let mut tree = self.tree.borrow_mut();
         let Some(label) = label else {
+            let corner_radius = self
+                .theme
+                .borrow()
+                .shape("badge", Some("dot"))
+                .unwrap_or_else(|| f64::from(BADGE_DOT_SIZE) / 2.0);
             let id = tree.insert(
                 NodeKind::Rect,
                 positioned_style(
@@ -2401,13 +2406,18 @@ impl PyWindow {
                     x,
                     y,
                 ),
-                PaintProperties::new(error_color, f64::from(BADGE_DOT_SIZE) / 2.0, 0.0, 1.0),
+                PaintProperties::new(error_color, corner_radius, 0.0, 1.0),
             );
             tree.add_child(self.root, id);
             return self.wrap_node(id);
         };
 
         let badge_width = width.unwrap_or(BADGE_LABELED_HEIGHT);
+        let corner_radius = self
+            .theme
+            .borrow()
+            .shape("badge", Some("labeled"))
+            .unwrap_or_else(|| f64::from(BADGE_LABELED_HEIGHT) / 2.0);
         let mut container_style = positioned_style(
             Size {
                 width: length(badge_width),
@@ -2422,7 +2432,7 @@ impl PyWindow {
         let container = tree.insert(
             NodeKind::Rect,
             container_style,
-            PaintProperties::new(error_color, f64::from(BADGE_LABELED_HEIGHT) / 2.0, 0.0, 1.0),
+            PaintProperties::new(error_color, corner_radius, 0.0, 1.0),
         );
 
         let label_id = tree.insert(
@@ -3586,6 +3596,18 @@ impl PyWindow {
                 on_surface_variant,
             )
         };
+        // M50 Phase 4: the frame's own corner radius stays un-themed --
+        // real MD3 anatomy deliberately uses "corner-none" here (a
+        // genuine design choice, not a missing value), and the frame
+        // is never returned to Python at all, matching `add_segmented_
+        // button`'s own identical "internal frame, not a themeable
+        // surface" precedent. Only the per-item indicator's real const
+        // gets an override.
+        let indicator_corner_radius = self
+            .theme
+            .borrow()
+            .shape("navigation_rail", Some("indicator"))
+            .unwrap_or(NAV_RAIL_INDICATOR_CORNER_RADIUS);
 
         let mut tree = self.tree.borrow_mut();
         let item_height =
@@ -3663,7 +3685,7 @@ impl PyWindow {
             let indicator = tree.insert(
                 NodeKind::Rect,
                 indicator_style,
-                PaintProperties::new(indicator_fill, NAV_RAIL_INDICATOR_CORNER_RADIUS, 0.0, 1.0),
+                PaintProperties::new(indicator_fill, indicator_corner_radius, 0.0, 1.0),
             );
             // M30 Phase 5 Step 1 (§5, §7): the real, confirmed gap this
             // component surfaced -- the indicator pill sits squarely
@@ -4143,6 +4165,20 @@ impl PyWindow {
             )
         };
 
+        // M50 Phase 4: the bar itself stays un-themed -- always square
+        // in real MD3 anatomy, a deliberate design choice, the same
+        // "corner-none" precedent `add_navigation_rail`'s own frame
+        // already establishes. The leading/trailing icon buttons reuse
+        // `add_icon_button`'s own exact real anatomy (this factory's
+        // own doc comment), so they share its `"icon_button"` key too,
+        // rather than inventing a third, redundant key for the
+        // identical real shape.
+        let icon_button_corner_radius = self
+            .theme
+            .borrow()
+            .shape("icon_button", None)
+            .unwrap_or(TOP_APP_BAR_ICON_BUTTON_SIZE as f64 / 2.0);
+
         let mut tree = self.tree.borrow_mut();
         let bar_width = width.unwrap_or(self.width.get() as f32);
 
@@ -4181,12 +4217,7 @@ impl PyWindow {
                     align_items: Some(AlignItems::CENTER),
                     ..Default::default()
                 },
-                PaintProperties::new(
-                    TRANSPARENT,
-                    TOP_APP_BAR_ICON_BUTTON_SIZE as f64 / 2.0,
-                    0.0,
-                    1.0,
-                ),
+                PaintProperties::new(TRANSPARENT, icon_button_corner_radius, 0.0, 1.0),
             );
             let icon_id = tree.insert(
                 NodeKind::Icon(IconState::new(path, leading_icon_color)),
@@ -4257,12 +4288,7 @@ impl PyWindow {
                     },
                     ..Default::default()
                 },
-                PaintProperties::new(
-                    TRANSPARENT,
-                    TOP_APP_BAR_ICON_BUTTON_SIZE as f64 / 2.0,
-                    0.0,
-                    1.0,
-                ),
+                PaintProperties::new(TRANSPARENT, icon_button_corner_radius, 0.0, 1.0),
             );
             let icon_id = tree.insert(
                 NodeKind::Icon(IconState::new(path, trailing_icon_color)),
@@ -4850,6 +4876,15 @@ impl PyWindow {
                 role("on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT),
             )
         };
+        // M50 Phase 4: the row itself stays un-themed (always flat/
+        // square, deliberate MD3 anatomy, the same "corner-none"
+        // precedent as `add_navigation_rail`'s own frame) -- only the
+        // active-indicator's real const gets an override.
+        let indicator_corner_radius = self
+            .theme
+            .borrow()
+            .shape("tabs", Some("indicator"))
+            .unwrap_or(TAB_INDICATOR_CORNER_RADIUS);
 
         let mut tree = self.tree.borrow_mut();
         let row_width = width.unwrap_or(self.width.get() as f32);
@@ -4964,12 +4999,8 @@ impl PyWindow {
 
             let indicator_fill = if is_active { active_color } else { TRANSPARENT };
             let mut indicator_paint = PaintProperties::new(indicator_fill, 0.0, 0.0, 1.0);
-            indicator_paint.corner_radii_override = Some([
-                TAB_INDICATOR_CORNER_RADIUS,
-                TAB_INDICATOR_CORNER_RADIUS,
-                0.0,
-                0.0,
-            ]);
+            indicator_paint.corner_radii_override =
+                Some([indicator_corner_radius, indicator_corner_radius, 0.0, 0.0]);
             let indicator = tree.insert(
                 NodeKind::Rect,
                 Style {
@@ -5808,8 +5839,13 @@ impl PyWindow {
             }
         };
 
+        let corner_radius = self
+            .theme
+            .borrow()
+            .shape("date_picker_day", None)
+            .unwrap_or(DATE_CELL_CORNER_RADIUS);
         let mut tree = self.tree.borrow_mut();
-        let mut cell_paint = PaintProperties::new(fill, DATE_CELL_CORNER_RADIUS, 0.0, 1.0);
+        let mut cell_paint = PaintProperties::new(fill, corner_radius, 0.0, 1.0);
         cell_paint.border_color = Animated::new(border_color);
         cell_paint.border_width = Animated::new(border_width);
         let mut cell_style = positioned_style(
@@ -5893,10 +5929,20 @@ impl PyWindow {
         field_style.display = taffy::Display::Flex;
         field_style.justify_content = Some(JustifyContent::CENTER);
         field_style.align_items = Some(AlignItems::CENTER);
+        // M50 Phase 4: its own key, not "chip" -- reuses `CHIP_CORNER_
+        // RADIUS` as a real constant *value* today, the same
+        // "coincidental shared number, not a reason to couple theme
+        // overrides" reasoning `add_search_view`'s own doc comment
+        // already states relative to `"dialog"`.
+        let corner_radius = self
+            .theme
+            .borrow()
+            .shape("time_input_field", None)
+            .unwrap_or(CHIP_CORNER_RADIUS);
         let id = tree.insert(
             NodeKind::TextField(text_field_state),
             field_style,
-            PaintProperties::new(container_color, CHIP_CORNER_RADIUS, 0.0, 1.0),
+            PaintProperties::new(container_color, corner_radius, 0.0, 1.0),
         );
         tree.set_access(
             id,
@@ -5952,6 +5998,13 @@ impl PyWindow {
             )
         };
 
+        // M50 Phase 4: its own key, not "chip" -- same real reasoning
+        // `add_time_input_field`'s own doc comment above states.
+        let corner_radius = self
+            .theme
+            .borrow()
+            .shape("period_selector", None)
+            .unwrap_or(CHIP_CORNER_RADIUS);
         let mut tree = self.tree.borrow_mut();
         let base_x = x.unwrap_or(0.0);
         let base_y = y.unwrap_or(0.0);
@@ -5976,7 +6029,7 @@ impl PyWindow {
             let option = tree.insert(
                 NodeKind::Rect,
                 option_style,
-                PaintProperties::new(fill, CHIP_CORNER_RADIUS, 0.0, 1.0),
+                PaintProperties::new(fill, corner_radius, 0.0, 1.0),
             );
             let label_id = tree.insert(
                 NodeKind::Text(TextState {
@@ -6216,6 +6269,23 @@ impl PyWindow {
             )
         };
 
+        // M50 Phase 4: the +/- buttons are genuinely icon-button-shaped
+        // (`SPIN_BOX_BUTTON_SIZE` itself reuses `SEARCH_ICON_BUTTON_
+        // SIZE` as a real constant value already), so they share the
+        // `"icon_button"` key -- the same reuse `add_top_app_bar`'s own
+        // leading/trailing icon buttons already establish. The field
+        // gets its own `"spin_box"` key, not `"chip"`.
+        let icon_button_corner_radius = self
+            .theme
+            .borrow()
+            .shape("icon_button", None)
+            .unwrap_or(SPIN_BOX_BUTTON_SIZE as f64 / 2.0);
+        let field_corner_radius = self
+            .theme
+            .borrow()
+            .shape("spin_box", None)
+            .unwrap_or(CHIP_CORNER_RADIUS);
+
         let mut tree = self.tree.borrow_mut();
         let base_x = x.unwrap_or(0.0);
         let base_y = y.unwrap_or(0.0);
@@ -6236,7 +6306,7 @@ impl PyWindow {
             let button = tree.insert(
                 NodeKind::Rect,
                 button_style,
-                PaintProperties::new(TRANSPARENT, SPIN_BOX_BUTTON_SIZE as f64 / 2.0, 0.0, 1.0),
+                PaintProperties::new(TRANSPARENT, icon_button_corner_radius, 0.0, 1.0),
             );
             let icon_id = tree.insert(
                 NodeKind::Icon(IconState::new(path, icon_color)),
@@ -6281,7 +6351,7 @@ impl PyWindow {
         let field = tree.insert(
             NodeKind::TextField(text_field_state),
             field_style,
-            PaintProperties::new(field_color, CHIP_CORNER_RADIUS, 0.0, 1.0),
+            PaintProperties::new(field_color, field_corner_radius, 0.0, 1.0),
         );
         tree.set_access(
             field,
@@ -6345,6 +6415,11 @@ impl PyWindow {
                 on_surface_variant,
             )
         };
+        let corner_radius = self
+            .theme
+            .borrow()
+            .shape("pagination", None)
+            .unwrap_or(PAGE_ITEM_CORNER_RADIUS);
 
         // A plain, non-capturing `fn` rather than a closure -- shared
         // across this method's own three real call sites (`previous`,
@@ -6353,6 +6428,7 @@ impl PyWindow {
         // capturing closure would hit once real code runs *between*
         // calls (`pages`'s own loop, in between `previous` and
         // `next`).
+        #[allow(clippy::too_many_arguments)]
         fn build_icon_button(
             tree: &mut Tree,
             root: NodeId,
@@ -6361,6 +6437,7 @@ impl PyWindow {
             base_x: f32,
             base_y: f32,
             offset_x: f32,
+            corner_radius: f64,
         ) -> NodeId {
             let mut style = positioned_style(
                 Size {
@@ -6376,7 +6453,7 @@ impl PyWindow {
             let button = tree.insert(
                 NodeKind::Rect,
                 style,
-                PaintProperties::new(TRANSPARENT, PAGE_ITEM_CORNER_RADIUS, 0.0, 1.0),
+                PaintProperties::new(TRANSPARENT, corner_radius, 0.0, 1.0),
             );
             let icon_id = tree.insert(
                 NodeKind::Icon(IconState::new(path, icon_color)),
@@ -6399,7 +6476,14 @@ impl PyWindow {
         let base_y = y.unwrap_or(0.0);
 
         let previous = build_icon_button(
-            &mut tree, self.root, back_path, icon_color, base_x, base_y, 0.0,
+            &mut tree,
+            self.root,
+            back_path,
+            icon_color,
+            base_x,
+            base_y,
+            0.0,
+            corner_radius,
         );
 
         let mut pages = Vec::with_capacity(page_count);
@@ -6426,7 +6510,7 @@ impl PyWindow {
             let item = tree.insert(
                 NodeKind::Rect,
                 item_style,
-                PaintProperties::new(fill, PAGE_ITEM_CORNER_RADIUS, 0.0, 1.0),
+                PaintProperties::new(fill, corner_radius, 0.0, 1.0),
             );
             let label_id = tree.insert(
                 NodeKind::Text(TextState {
@@ -6460,6 +6544,7 @@ impl PyWindow {
             base_x,
             base_y,
             next_offset,
+            corner_radius,
         );
 
         Ok((self.wrap_node(previous), pages, self.wrap_node(next)))
@@ -7056,6 +7141,15 @@ impl PyWindow {
             (body, title, label)
         };
 
+        // M50 Phase 4: its own key, not "card" -- reuses `CARD_CORNER_
+        // RADIUS` as a real constant *value* today, the same
+        // "coincidental shared number" reasoning `add_search_view`'s
+        // own doc comment already states.
+        let corner_radius = self
+            .theme
+            .borrow()
+            .shape("graph_node", None)
+            .unwrap_or(CARD_CORNER_RADIUS);
         let mut tree = self.tree.borrow_mut();
         let title_height = NODE_GRAPH_TITLE_HEIGHT.min(height);
 
@@ -7069,7 +7163,7 @@ impl PyWindow {
                 Some(x),
                 Some(y),
             ),
-            PaintProperties::new(body_color, CARD_CORNER_RADIUS, 0.0, 1.0),
+            PaintProperties::new(body_color, corner_radius, 0.0, 1.0),
         );
 
         let title_bar = tree.insert(

@@ -530,3 +530,107 @@ def test_unthemed_containers_and_surfaces_preserve_every_real_default_value(tmp_
     search_view = window.add_search_view(width=300.0, height=400.0)
     assert search_view.get("corner_radius") == pytest.approx(28.0)
     assert search_view.get("elevation") == pytest.approx(3.0)
+
+
+# --- M50 Phase 4: components: -- Navigation, data entry & misc ------------
+
+
+def test_badge_dot_and_labeled_variants_have_their_own_keys(tmp_path):
+    window = window_with_components(
+        tmp_path, "  badge.dot: {corner_radius: 1}\n  badge.labeled: {corner_radius: 2}\n"
+    )
+    dot = window.add_badge()
+    labeled = window.add_badge(label="9")
+    assert dot.get("corner_radius") == pytest.approx(1.0)
+    assert labeled.get("corner_radius") == pytest.approx(2.0)
+
+
+def test_navigation_rail_indicator_override_does_not_raise(tmp_path):
+    window = window_with_components(
+        tmp_path, "  navigation_rail.indicator: {corner_radius: 3}\n"
+    )
+    window.add_navigation_rail(labels=["A", "B"], icons=["home", "settings"], selected=0)
+
+
+def test_top_app_bar_icon_button_key_reuses_icon_button(tmp_path):
+    window = window_with_components(tmp_path, "  icon_button: {corner_radius: 6}\n")
+    bar, leading, trailing = window.add_top_app_bar(
+        title="hi", leading_icon="menu", trailing_icons=["search"]
+    )
+    assert leading.get("corner_radius") == pytest.approx(6.0)
+    assert trailing[0].get("corner_radius") == pytest.approx(6.0)
+    assert bar.get("corner_radius") == pytest.approx(0.0), "the bar itself stays un-themed"
+
+
+def test_tabs_indicator_override_does_not_raise(tmp_path):
+    window = window_with_components(tmp_path, "  tabs.indicator: {corner_radius: 5}\n")
+    window.add_tabs(labels=["A", "B"], selected=0)
+
+
+def test_date_picker_day_corner_radius_override(tmp_path):
+    window = window_with_components(tmp_path, "  date_picker_day: {corner_radius: 10}\n")
+    node = window.add_date_picker_day(day=1, selected=True)
+    assert node.get("corner_radius") == pytest.approx(10.0)
+
+
+def test_time_input_field_has_its_own_key_distinct_from_chip(tmp_path):
+    window = window_with_components(
+        tmp_path, "  chip: {corner_radius: 99}\n  time_input_field: {corner_radius: 3}\n"
+    )
+    node = window.add_time_input_field(value="12:00")
+    assert node.get("corner_radius") == pytest.approx(3.0)
+
+
+def test_period_selector_has_its_own_key_distinct_from_chip(tmp_path):
+    window = window_with_components(
+        tmp_path, "  chip: {corner_radius: 99}\n  period_selector: {corner_radius: 4}\n"
+    )
+    am, pm = window.add_period_selector()
+    assert am.get("corner_radius") == pytest.approx(4.0)
+    assert pm.get("corner_radius") == pytest.approx(4.0)
+
+
+def test_spin_box_button_reuses_icon_button_field_has_its_own_key(tmp_path):
+    window = window_with_components(
+        tmp_path, "  icon_button: {corner_radius: 6}\n  spin_box: {corner_radius: 5}\n"
+    )
+    field, decrement, increment = window.add_spin_box(value="1")
+    assert decrement.get("corner_radius") == pytest.approx(6.0)
+    assert increment.get("corner_radius") == pytest.approx(6.0)
+    assert field.get("corner_radius") == pytest.approx(5.0)
+
+
+def test_pagination_corner_radius_override_applies_to_arrows_and_pages(tmp_path):
+    window = window_with_components(tmp_path, "  pagination: {corner_radius: 7}\n")
+    previous, pages, next_ = window.add_pagination(page_count=3, current=0)
+    assert previous.get("corner_radius") == pytest.approx(7.0)
+    assert pages[0].get("corner_radius") == pytest.approx(7.0)
+    assert next_.get("corner_radius") == pytest.approx(7.0)
+
+
+def test_graph_node_has_its_own_key_distinct_from_card(tmp_path):
+    window = window_with_components(
+        tmp_path, "  card: {corner_radius: 99}\n  graph_node: {corner_radius: 6}\n"
+    )
+    graph = window.add_node_graph(width=400.0, height=300.0)
+    node = window.add_graph_node(graph=graph, label="hi", x=0.0, y=0.0, width=120.0, height=80.0)
+    assert node.get("corner_radius") == pytest.approx(6.0)
+
+
+def test_unthemed_navigation_and_misc_preserve_every_real_default_value(tmp_path):
+    window = Window(width=400, height=400)
+    assert window.add_badge().get("corner_radius") == pytest.approx(3.0)
+    assert window.add_badge(label="9").get("corner_radius") == pytest.approx(8.0)
+    bar, _l, _t = window.add_top_app_bar(title="hi")
+    assert bar.get("corner_radius") == pytest.approx(0.0)
+    assert window.add_date_picker_day(day=1).get("corner_radius") == pytest.approx(24.0)
+    assert window.add_time_input_field(value="12:00").get("corner_radius") == pytest.approx(8.0)
+    am, _pm = window.add_period_selector()
+    assert am.get("corner_radius") == pytest.approx(8.0)
+    field, _d, _i = window.add_spin_box(value="1")
+    assert field.get("corner_radius") == pytest.approx(8.0)
+    previous, _pages, _next = window.add_pagination(page_count=1, current=0)
+    assert previous.get("corner_radius") == pytest.approx(20.0)
+    graph = window.add_node_graph(width=400.0, height=300.0)
+    node = window.add_graph_node(graph=graph, label="hi", x=0.0, y=0.0, width=120.0, height=80.0)
+    assert node.get("corner_radius") == pytest.approx(12.0)
