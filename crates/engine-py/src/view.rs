@@ -123,6 +123,33 @@ fn throwaway_node(tree: &Rc<RefCell<Tree>>, id: NodeId, handlers: HandlerMap) ->
     }
 }
 
+/// Parses a bound `background:` string the same way `engine_spec::
+/// build::resolve_color` parses a *static* YAML color -- hex (`#rrggbb`/
+/// `#rrggbbaa`) or a CSS-named color, via `peniko::color::parse_color`
+/// -- returning the `(r, g, b, a)` u8 tuple `Node::animate`'s own
+/// `extract_color` already accepts for `background` imperatively.
+///
+/// Returns a plain `Result<_, String>`, not a `PyResult` -- deliberately
+/// keeps this function 100% free of `pyo3`/GIL concerns (it never
+/// touches `Python<'_>` or `PyErr`) so it gets a real, unconditional
+/// Rust unit test below (no interpreter to initialize, no ambiguity
+/// about whether `PyErr::to_string()` itself needs the GIL) rather than
+/// only indirect pytest coverage -- matching this crate's own
+/// established split (§16.2). The caller (`apply_binding_value`, right
+/// below) wraps the `Err` string into a real `PyValueError` at its own
+/// call site, where a GIL token is already in scope. MD3 theme-role
+/// token strings (e.g. `"primary"`) are explicitly not handled here:
+/// that needs a live `ColorScheme`, which `apply_binding_value`'s own
+/// `throwaway_node` doesn't carry -- a real, named, deferred follow-up,
+/// not silently unsupported.
+fn parse_background_color(raw: &str) -> Result<(u8, u8, u8, u8), String> {
+    let color = peniko::color::parse_color(raw)
+        .map(|c| c.to_alpha_color::<peniko::color::Srgb>())
+        .map_err(|e| format!("{raw:?} isn't a valid color: {e}"))?;
+    let [r, g, b, a] = color.to_rgba8().to_u8_array();
+    Ok((r, g, b, a))
+}
+
 /// Applies a resolved binding value to `node_id`'s corresponding
 /// property by constructing a temporary `Node` and reusing its own
 /// `animate` dispatch (§8) verbatim -- the exact same property-name
@@ -143,15 +170,34 @@ fn throwaway_node(tree: &Rc<RefCell<Tree>>, id: NodeId, handlers: HandlerMap) ->
 /// running, rather than only working correctly by accident once one
 /// eventually is.
 ///
-/// **M14 Phase 3 (§5, §16.7):** this doc comment used to say "only
-/// numeric (opacity/corner_radius) bindings are supported today" --
-/// stale even before this phase, since `animate()` itself already
-/// dispatches any real numeric property it recognizes (`check_
-/// progress`/`thumb_position` included, once M14 Phases 1/2 added
-/// them, with zero change needed here). `checked` is the one genuinely
-/// new case: a real `bool`, not a numeric `Animated<T>` field `animate
-/// ()`'s own contract can ever reach, so it goes through `Node.set_
-/// checked` directly instead.
+/// **M44 (§16.2):** dispatch is now *property-name-first*, not
+/// value-type-first. The old version keyed entirely off `value`'s own
+/// runtime `Value` variant (`Bool` -> unconditionally `set_checked`,
+/// `Str` -> unconditionally `set_text`, regardless of what `property`
+/// actually named) -- real bug: a `background:` binding resolving to a
+/// `Str` (a hex color) was silently misrouted into `set_text`, and any
+/// binding resolving to a non-primitive Python value (`Value::Handle`,
+/// e.g. an `(r,g,b,a)` tuple) was rejected outright even though `Node.
+/// animate` already accepts exactly that shape for `background`/
+/// `transform`/`shape` imperatively. `checked`/`text` are still the two
+/// genuinely non-numeric properties that bypass `animate()` entirely
+/// (a real `bool`/`String`, not a numeric `Animated<T>` field `animate
+/// ()`'s own contract can ever reach) -- gated by `property` now, so a
+/// binding declared on `checked` that resolves to the wrong shape is a
+/// real type-mismatch error instead of silently accepting whatever
+/// value happened to be a `Bool`. Every other property (numeric --
+/// `opacity`/`corner_radius`/`elevation`/`rotation`/`check_progress`/
+/// `thumb_position`/`select_progress`/`toggle_progress` -- and
+/// composite -- `background`/`transform`/`shape`) forwards to `animate
+/// ()`, which already knows how to validate/extract whatever Python
+/// value shape each one needs; a bound `Value::Str` is parsed as a
+/// color only for `property == "background"` (the same real hex/CSS-
+/// named parser `engine_spec::build::resolve_color` already uses for
+/// *static* YAML colors -- MD3 theme-role token strings are explicitly
+/// out of scope here, since this function's own `throwaway_node` below
+/// has no access to the view's real, live `ColorScheme`), and a
+/// `Value::Handle` is recovered via `resolver.to_pyobject` and handed
+/// to `animate()` verbatim.
 fn apply_binding_value(
     tree: &Rc<RefCell<Tree>>,
     handlers: &HandlerMap,
@@ -159,6 +205,7 @@ fn apply_binding_value(
     property: &str,
     py: Python<'_>,
     value: &engine_spec::Value,
+    resolver: &PyViewModelResolver,
 ) -> PyResult<()> {
     // Never exposed to Python beyond this function's own real calls
     // below -- an empty, throwaway `context_menus`/`theme`/`completions`
@@ -170,25 +217,55 @@ fn apply_binding_value(
     // change` handler would never see a binding-applied `checked` value.
     let temp_node = throwaway_node(tree, node_id, handlers.clone());
 
-    if let engine_spec::Value::Bool(checked) = value {
+    if property == "checked" {
+        let engine_spec::Value::Bool(checked) = value else {
+            return Err(PyValueError::new_err(format!(
+                "widget property {property:?} expects a boolean binding, got {value:?}"
+            )));
+        };
         return temp_node.set_checked(*checked, py);
     }
-    // M15 Phase 3 (§16.7): the same real, direct dispatch the `Bool`
-    // branch above already established for `checked` -- `text` is the
-    // one other genuinely non-numeric bindable property, so it goes
-    // through `Node.set_text` directly rather than `animate()`'s own
-    // `Animated<f64>` contract, which a `String` can never satisfy.
-    if let engine_spec::Value::Str(text) = value {
+    // M15 Phase 3 (§16.7): the same real, direct dispatch the `checked`
+    // branch above already established -- `text` is the one other
+    // genuinely non-numeric bindable property, so it goes through
+    // `Node.set_text` directly rather than `animate()`'s own `Animated
+    // <f64>` contract, which a `String` can never satisfy.
+    if property == "text" {
+        let engine_spec::Value::Str(text) = value else {
+            return Err(PyValueError::new_err(format!(
+                "widget property {property:?} expects a string binding, got {value:?}"
+            )));
+        };
         return temp_node.set_text(text, py);
     }
 
     let bound: Bound<'_, PyAny> = match value {
         engine_spec::Value::Int(i) => (*i as f64).into_bound_py_any(py)?,
         engine_spec::Value::Float(f) => (*f).into_bound_py_any(py)?,
+        // M44: a string bound to `background` is parsed as a color
+        // (hex/CSS-named) rather than falling into the `other => Err`
+        // arm below -- see this function's own doc comment above for
+        // why MD3 theme-role tokens aren't handled here.
+        engine_spec::Value::Str(s) if property == "background" => {
+            let rgba = parse_background_color(s).map_err(|e| {
+                PyValueError::new_err(format!(
+                    "binding for property \"background\" resolved to {e}"
+                ))
+            })?;
+            rgba.into_bound_py_any(py)?
+        }
+        // M44: a non-primitive resolved value (e.g. a Signal holding an
+        // `(r,g,b,a)` tuple for `background`, or a translate/scale
+        // tuple for `transform`, or a point list for `shape`) is
+        // recovered via the resolver's own real Handle -> Python object
+        // mapping and forwarded verbatim -- `animate()` does the actual
+        // per-property validation, identical to its own imperative path.
+        engine_spec::Value::Handle(_) => resolver.to_pyobject(py, value)?,
         other => {
             return Err(PyValueError::new_err(format!(
                 "binding for property {property:?} resolved to {other:?} -- only numeric, \
-                 boolean (checked), and string (text) bindings are supported today"
+                 boolean (checked), string (text), and background-color bindings are \
+                 supported today"
             )));
         }
     };
@@ -259,6 +336,7 @@ impl BindingCallback {
             &self.property,
             py,
             &value,
+            &resolver,
         )
     }
 }
@@ -438,7 +516,7 @@ pub(crate) fn attach_bindings_and_handlers(
             ))
         })?;
 
-        apply_binding_value(tree, handlers, node_id, property, py, &value)?;
+        apply_binding_value(tree, handlers, node_id, property, py, &value, &resolver)?;
 
         let callback = Py::new(
             py,
@@ -1107,5 +1185,40 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// M44 (§16.2): `parse_background_color` is the real, GIL-free
+    /// conversion a `background:` string binding now goes through --
+    /// exact-value coverage here, since pytest has no way to read a
+    /// node's applied color back (`Node.get` only returns `f64`; there's
+    /// no `background`-reading getter at all, confirmed by grep).
+    #[test]
+    fn parse_background_color_accepts_a_hex_string() {
+        assert_eq!(
+            parse_background_color("#112233").unwrap(),
+            (0x11, 0x22, 0x33, 0xff),
+        );
+    }
+
+    #[test]
+    fn parse_background_color_accepts_hex_with_alpha() {
+        assert_eq!(
+            parse_background_color("#11223344").unwrap(),
+            (0x11, 0x22, 0x33, 0x44),
+        );
+    }
+
+    #[test]
+    fn parse_background_color_accepts_a_css_named_color() {
+        assert_eq!(parse_background_color("red").unwrap(), (0xff, 0, 0, 0xff));
+    }
+
+    #[test]
+    fn parse_background_color_rejects_nonsense() {
+        let err = parse_background_color("not a color").unwrap_err();
+        assert!(
+            err.contains("not a color"),
+            "the real bad input must appear in the error message, not a generic failure: {err}"
+        );
     }
 }

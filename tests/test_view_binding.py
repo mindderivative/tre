@@ -200,3 +200,172 @@ kind: Container
     view = View(path)
     with pytest.raises(ValueError, match="nope"):
         view.node("nope")
+
+
+# M44 (§16.2): `apply_binding_value` used to dispatch purely on the
+# resolved `Value`'s own runtime type, ignoring the declared property
+# name entirely -- a `background:` binding resolving to a string was
+# unconditionally routed to `set_text` (wrong for a non-text widget: it
+# raised, just via the wrong path/message), and one resolving to any
+# non-primitive Python value (`Value::Handle`, e.g. an `(r,g,b,a)`
+# tuple) was rejected outright even though `Node.animate` already
+# accepts that exact shape imperatively. These tests prove the new,
+# property-name-first dispatch actually reaches `background` for both
+# shapes, and that the error paths stay clear and specific.
+#
+# Real, honest limitation (not worked around): `tre` has no Python-
+# facing getter for a node's currently-applied `background` color at
+# all (`Node.get` only returns `f64`; confirmed by grep of `node.rs`/
+# `_core.pyi`) -- so the positive-path tests below can only prove the
+# binding *applies without raising* (and that the node/Tree stays
+# healthy afterward, via a co-bound `opacity` on the same widget), not
+# read the resulting color back. The actual color math itself (hex/
+# CSS-named string -> `(r,g,b,a)`) has real, exact-value coverage as a
+# Rust unit test instead (`crates/engine-py/src/view.rs`'s own
+# `parse_background_color_*` tests) -- pure, GIL-free logic that needs
+# no Python interpreter to verify precisely.
+
+
+def test_background_binding_accepts_a_hex_color_signal(tmp_path):
+    path = write_view(
+        tmp_path,
+        """
+id: root
+kind: Rect
+style: {width: 10, height: 10, background: "#000000", opacity: 1.0}
+bindings: {background: "{{ color.get() }}", opacity: "{{ level.get() }}"}
+""",
+    )
+    view = View(path)
+
+    class VM(ViewModel):
+        def __init__(self, view):
+            self.color = Signal("#FF3366")
+            self.level = Signal(0.5)
+            super().__init__(view)
+
+    vm = VM(view)  # must not raise -- the real M44 bug
+    node = view.node("root")
+    assert node.get("opacity") == pytest.approx(
+        0.5
+    ), "the node/Tree must stay healthy after a background binding applies"
+
+    vm.color.set("#00FF00")  # re-evaluation must not raise either
+    vm.level.set(0.75)
+    assert node.get("opacity") == pytest.approx(0.75)
+
+
+def test_background_binding_accepts_an_rgba_tuple_signal(tmp_path):
+    path = write_view(
+        tmp_path,
+        """
+id: root
+kind: Rect
+style: {width: 10, height: 10, background: "#000000", opacity: 1.0}
+bindings: {background: "{{ color.get() }}"}
+""",
+    )
+    view = View(path)
+
+    class VM(ViewModel):
+        def __init__(self, view):
+            self.color = Signal((255, 51, 102, 255))
+            super().__init__(view)
+
+    vm = VM(view)  # must not raise -- a Value::Handle reaching animate()
+    node = view.node("root")
+    assert node.get("opacity") == pytest.approx(1.0)
+
+    vm.color.set((0, 255, 0, 200))  # re-evaluation must not raise either
+
+
+def test_background_binding_rejects_an_invalid_color_string(tmp_path):
+    path = write_view(
+        tmp_path,
+        """
+id: root
+kind: Rect
+style: {width: 10, height: 10, background: "#000000"}
+bindings: {background: "{{ color.get() }}"}
+""",
+    )
+    view = View(path)
+
+    class VM(ViewModel):
+        def __init__(self, view):
+            self.color = Signal("not a real color")
+            super().__init__(view)
+
+    with pytest.raises(ValueError, match="not a real color"):
+        VM(view)
+
+
+def test_background_binding_rejects_a_boolean_value(tmp_path):
+    """Real M44 regression coverage: under the old value-type-first
+    dispatch, *any* `Bool`-resolved binding -- regardless of its
+    declared property -- was routed unconditionally to `set_checked`,
+    which would raise a `Rect`-is-not-a-Checkbox error. The new
+    property-name-first dispatch rejects it directly instead, with a
+    message naming the actual property.
+    """
+    path = write_view(
+        tmp_path,
+        """
+id: root
+kind: Rect
+style: {width: 10, height: 10, background: "#000000"}
+bindings: {background: "{{ flag.get() }}"}
+""",
+    )
+    view = View(path)
+
+    class VM(ViewModel):
+        def __init__(self, view):
+            self.flag = Signal(True)
+            super().__init__(view)
+
+    with pytest.raises(ValueError, match="background"):
+        VM(view)
+
+
+def test_checked_binding_gives_a_clear_error_for_a_non_boolean_value(tmp_path):
+    path = write_view(
+        tmp_path,
+        """
+id: box
+kind: Checkbox
+style: {width: 24, height: 24, background: "#6750A4"}
+bindings: {checked: "{{ level.get() }}"}
+""",
+    )
+    view = View(path)
+
+    class VM(ViewModel):
+        def __init__(self, view):
+            self.level = Signal(1)  # an int, not a bool
+            super().__init__(view)
+
+    with pytest.raises(ValueError, match="checked.*expects a boolean binding"):
+        VM(view)
+
+
+def test_text_binding_gives_a_clear_error_for_a_non_string_value(tmp_path):
+    path = write_view(
+        tmp_path,
+        """
+id: label
+kind: TextField
+text: {content: "", font_family: Roboto, font_size: 16}
+style: {width: 100, height: 24, background: "#FFFFFF"}
+bindings: {text: "{{ level.get() }}"}
+""",
+    )
+    view = View(path)
+
+    class VM(ViewModel):
+        def __init__(self, view):
+            self.level = Signal(3.14)  # a float, not a string
+            super().__init__(view)
+
+    with pytest.raises(ValueError, match="text.*expects a string binding"):
+        VM(view)

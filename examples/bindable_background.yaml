@@ -1,0 +1,16 @@
+id: root
+kind: Container
+style: {flex_direction: Column, width: 300, height: 200, gap: 12, padding: 16}
+children:
+  - id: hex_swatch
+    kind: Rect
+    style: {width: 268, height: 60, background: "#000000", corner_radius: 4}
+    bindings: {background: "{{ hex_color.get() }}"}
+  - id: tuple_swatch
+    kind: Rect
+    style: {width: 268, height: 60, background: "#000000", corner_radius: 4}
+    bindings: {background: "{{ rgba_color.get() }}"}
+  - id: cycle_button
+    kind: Rect
+    style: {width: 268, height: 32, background: "#6750A4", corner_radius: 4}
+    handlers: {on_click: "cycle"}

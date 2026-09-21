@@ -1,112 +1,135 @@
-# LOG — M43 Phase 2: Real Removal, with Automatic `Signal` Unsubscription
+# LOG — M44: Widen Live-Bindable Properties (`background` Color Bindings)
 
-- User's own governing instruction: the approved plan
-  (`/home/phil/.claude/plans/reflective-sleeping-falcon.md`), Part 2 --
-  close the real panic risk Phase 1's own investigation named:
-  `python/tre/__init__.py`'s `Signal` had `_subscribe` but no
-  `_unsubscribe`, meaning a removed component's own `BindingCallback`
-  would stay subscribed forever, panicking the next time that `Signal`
-  was written to.
-- `python/tre/__init__.py`: added `Signal._unsubscribe(callback)` --
-  `self._subscribers.remove(callback)` inside a `try`/`except
-  ValueError: pass`, matching `Tree::remove`'s own "not found is a
-  no-op, not an error" convention throughout this codebase. Confirmed
-  `list.remove()` uses `==`, which falls back to identity (`is`) for
-  `BindingCallback`/`TwoWayCallback` pyo3 objects (neither defines
-  `__eq__`), so this correctly removes the exact subscribed callback.
-- `component.rs`: `Component` gained `subscriptions: Vec<(Py<PyAny>,
-  Py<PyAny>)>`; `_attach` now keeps the list `attach_bindings_and_
-  handlers` returns (`View::_attach` still discards it -- a `View` is
-  never removed, so it has nothing to unsubscribe later). New
-  `Component.remove(&mut self, py)`: unsubscribes every tracked
-  `(signal, callback)` pair first, *then* `self.tree.borrow_mut()
-  .remove(self.reconciler.root())` -- this ordering is real and
-  deliberate, not incidental: unsubscribing before removing means a
-  `Signal` write that happens to race with this call can never reach a
-  `BindingCallback` whose own `node_id` is already gone from the
-  `Tree`.
-- New pytest tests (`tests/test_component.py`, 4 new, before the
-  reentrancy fix below): `test_a_signal_write_after_remove_does_not_
-  panic` -- confirmed real, not accidental, by reading `Node::set_text`
-  ('s own `tree.get_mut(self.id).expect("Node holds a NodeId missing
-  from its own Tree...")`) directly before writing the test: this
-  genuinely would have panicked pre-fix, since `BindingCallback::
-  __call__` -> `apply_binding_value` -> (`Value::Str` case) `temp_node.
-  set_text(...)` hits exactly this `.expect()` on a `NodeId` `Tree::
-  remove` already deleted. `test_remove_add_remove_cycle_stays_stable`
-  -- 5 real instantiate/click/remove iterations into the same
-  container, with a never-removed sibling's own state proven completely
-  unaffected throughout. `test_remove_is_safe_to_call_once_and_stops_
-  dispatch_reaching_the_handler` -- a sibling's own click still
-  dispatches correctly after a neighbor is removed, proving the shared
-  `Tree` stays healthy.
-- **Real, significant bug caught and fixed before this ever shipped,
-  found by actually running the extended live example, not by
-  inspection or by any of the pytest tests above (none of them happened
-  to exercise the reentrant path):** widened `examples/component_list.
-  py` into the plan's own called-for "Add Card"/"Remove Card" real
-  button flow -- `component_list.yaml` gained a real `add_button`
-  (`on_click: "add_card"`), `component_list_card.yaml` gained a real
-  `remove_button` (`on_click: "remove_self"`). Running the script hit
-  `RuntimeError: Already mutably borrowed` inside `view.instantiate
-  (...)`, called from `AppViewModel.add_card`, itself dispatched via
-  `view.click(add_button)`.
-  Root-caused by reasoning through pyo3's own borrow model, not
-  guessing: `View::click`/`hover`/`right_click`/`_attach` (`view.rs`)
-  had always taken `&mut self`, matching `View`'s own original,
-  pre-M43 shape -- but re-reading each body confirmed none of them
-  actually mutate a plain `View` struct field directly; every real
-  mutation goes through an interior-mutable `Rc<RefCell<Tree>>`/
-  `HandlerMap`/etc. pyo3 holds an *exclusive* borrow on the whole
-  `View` Python object for a `&mut self` method's entire duration --
-  since `run_dispatch_outcome` (called from inside `click()`) invokes
-  the Python handler *synchronously*, and that handler called `view.
-  instantiate(...)` (a *different* method on the *same* `view` object),
-  pyo3's own reentrant-borrow check correctly refused it. This had been
-  a real, latent bug in `View::click`/etc. since long before M43 --
-  M43 is simply the first real feature that ever called back into a
-  `View` method from inside a dispatched handler, the exact "essence of
-  MVVM and single page applications" pattern the user asked this whole
-  milestone to support.
-  Fixed by widening `click`/`hover`/`right_click`/`_attach` from `&mut
-  self` to `&self` -- confirmed safe by rereading each body (no direct
-  field mutation anywhere), and confirmed consistent with precedent:
-  `Window`'s own `click`/`hover`/`right_click`/`scroll` (`window_input.
-  rs`) already use `&self`, for the identical real reason. `View::
-  poll_reload` was deliberately left as `&mut self` -- it genuinely
-  calls `self.reconciler.reconcile(&mut tree, ...)`, a real mutation of
-  a plain (non-interior-mutable) field, and isn't a real reentrancy
-  risk in practice (not called from inside a dispatched handler).
-  New regression test, `test_instantiate_called_from_inside_a_click_
-  handler_does_not_panic` -- calls `view.instantiate(...)` from *inside*
-  a dispatched `on_click` handler, the one scenario that actually
-  exercises this; the four pre-existing Phase 2 tests above never
-  touched this path (none of them called `instantiate` reentrantly), a
-  real reminder that "the feature works" tests don't automatically
-  cover "the feature works when triggered reentrantly."
-- Re-ran the full pytest suite after the `&self` widening: 600 passed
-  (up from 599, the correct +1 for the new regression test), confirming
-  the widening is a pure capability-add with zero behavior change to
-  any existing caller.
-- `examples/component_list.py` (+ both yaml files) now demonstrates the
-  full real dynamic-list lifecycle: 3 real dispatched clicks on a real
-  "Add Card" button (each instantiating a fresh `Card` component with
-  its own `CardViewModel`); a real dispatched click on one card's own
-  "+1" button; a real dispatched click on a different card's own
-  "Remove" button (calling `component.remove()` from inside its own
-  handler, then notifying the script's own `cards` list via a plain
-  Python callback); one more real "Add" click; then a genuine 20-frame
-  `App.run()`. Ran clean end to end after the reentrancy fix.
+- User's own governing instruction: after M43 closed, asked "what do
+  you recommend we look at next?" -- two real recommendations were
+  given: (1) widen live-bindable properties beyond opacity/corner_
+  radius/checked/text; (2) richer reactivity (Computed/Effect/batch/
+  untrack). User replied "scope both 1 and 2, let's start with 1" --
+  scoped both via a formal plan (`EnterPlanMode`/`ExitPlanMode`,
+  `/home/phil/.claude/plans/reflective-sleeping-falcon.md`), implemented
+  only item 1.
+- Investigation, in order, all direct reads before writing any code:
+  `crates/engine-py/src/node.rs`'s `Node::animate()` (already supports
+  `background`/`transform`/`shape` as composite values, and numeric
+  properties well beyond opacity/corner_radius, imperatively) and its
+  own `extract_color` (only ever accepted an `(u8,u8,u8,u8)` tuple, no
+  string parsing); `crates/engine-py/src/view.rs`'s `apply_binding_
+  value` (the real, single gap: dispatched on `Value`'s own runtime
+  type, not on `property` -- `Bool` always -> `set_checked`, `Str`
+  always -> `set_text`, `Value::Handle` rejected outright);
+  `crates/engine-spec/src/binding.rs`'s `Value` enum; `crates/engine-py/
+  src/binding.rs`'s `PyViewModelResolver` (`to_value`/`store_handle`/
+  `to_pyobject` -- confirmed the exact Handle round-trip mechanics,
+  and that both real call sites in `view.rs` already hold a live
+  `resolver` in scope when calling `apply_binding_value`); `crates/
+  engine-spec/src/build.rs`'s `resolve_color` (the real static-YAML
+  color parser precedent -- MD3 token first, else `peniko::color::
+  parse_color`); confirmed `peniko` is already a direct `engine-py`
+  dependency, already `use`d in `node.rs`, so string color parsing
+  needed zero new dependencies.
+- `crates/engine-py/src/binding.rs`: `PyViewModelResolver::to_pyobject`
+  widened `private` -> `pub(crate)`, so `view.rs` can recover a
+  `Value::Handle`'s real Python object -- the same "two real call sites
+  justify widening" precedent `collect_bindings`/`collect_handlers`
+  established for M43.
+- `crates/engine-py/src/view.rs`: new, pure, GIL-free `fn
+  parse_background_color(raw: &str) -> Result<(u8,u8,u8,u8), String>`
+  -- deliberately `Result<_, String>`, not `PyResult`, so it needs no
+  Python interpreter and gets a real, unconditional Rust `#[test]`
+  rather than only indirect pytest coverage (the same GIL-needed/
+  GIL-free test-surface split `View::new`'s own existing tests already
+  established in this file). `apply_binding_value` rewritten:
+  `checked`/`text` stay non-`animate()` special cases but are now
+  gated by `property`, not `value`'s type (a binding declared on
+  `checked` that resolves to the wrong shape is now a real, specific
+  type-mismatch error); every other property forwards to `animate()`
+  unchanged; a `Value::Str` resolved for `property == "background"`
+  calls the new helper; a `Value::Handle` is recovered via `resolver.
+  to_pyobject` and forwarded to `animate()` verbatim. Both real call
+  sites (`BindingCallback::__call__`, `attach_bindings_and_handlers`)
+  updated to pass `&resolver` -- both already constructed one
+  immediately before calling `evaluate`, so this needed no lifetime
+  restructuring, just one new parameter/argument at each site.
+- **Real, incidental side effect, named not silently claimed as the
+  headline feature:** because the `Value::Handle` recovery path is
+  property-name-agnostic (it just forwards whatever real Python object
+  it recovers to `animate()`), `transform`/`shape` bindings are now
+  reachable too, not just `background` -- `animate()` already validates
+  each one's own expected shape.
+- New Rust unit tests (`view.rs`'s own `#[cfg(test)] mod tests`, +4):
+  `parse_background_color_accepts_a_hex_string`,
+  `parse_background_color_accepts_hex_with_alpha`,
+  `parse_background_color_accepts_a_css_named_color`,
+  `parse_background_color_rejects_nonsense` (asserts the real bad input
+  string appears in the error message). All passed on the first run
+  after fixing one design choice mid-implementation: the helper
+  originally returned `PyResult`, but constructing/`Display`-ing a
+  `PyErr` from a GIL-free `#[test]` (no `pyo3::prepare_freethreaded_
+  python()` called, matching this module's own established no-GIL test
+  convention) raised a real doubt about whether `PyErr::to_string()`
+  itself needs the GIL -- resolved by keeping the helper's own return
+  type 100% pyo3-free (`Result<_, String>`) and moving the `PyValueError`
+  construction to `apply_binding_value`'s own call site, where a `py:
+  Python<'_>` token is already in scope. Cleaner separation, not just a
+  workaround -- matches this crate's own stated "pure Rust logic gets a
+  real Rust unit test" split precisely, with zero ambiguity.
+- New pytest tests (`tests/test_view_binding.py`, +6):
+  `test_background_binding_accepts_a_hex_color_signal` and
+  `test_background_binding_accepts_an_rgba_tuple_signal` -- both prove
+  the binding applies and survives re-evaluation without raising,
+  verified indirectly via a co-bound `opacity` read on the same node
+  (a real, honestly-stated limitation: `tre` has no Python-facing
+  getter for a node's currently-applied `background` color at all --
+  `Node.get` only returns `f64`, confirmed by grep of `node.rs`/`_core.
+  pyi` before writing the test this way, not worked around with a fake
+  assertion). `test_background_binding_rejects_an_invalid_color_string`
+  -- raises `ValueError` naming the bad string.
+  `test_background_binding_rejects_a_boolean_value` -- real M44
+  regression coverage: under the old dispatch, *any* `Bool`-resolved
+  binding, regardless of declared property, was routed unconditionally
+  to `set_checked`, which would raise a `Rect`-is-not-a-Checkbox error;
+  the new dispatch rejects it directly with a message naming the actual
+  property instead. `test_checked_binding_gives_a_clear_error_for_a_
+  non_boolean_value`/`test_text_binding_gives_a_clear_error_for_a_non_
+  string_value` -- confirms the message-quality tightening (both cases
+  already errored before this milestone too, just via `animate()`'s own
+  "unknown property" rejection or the wrong-widget-kind path through
+  `set_text`/`set_checked` -- this is a clearer, more specific error,
+  not a new accept/reject behavior). Two real fixture bugs caught
+  immediately by running pytest, not anticipated: the `TextField`
+  fixture needed both `style.background` and a `text:` block (`content`/
+  `font_family`/`font_size`) to parse at all -- fixed by copying the
+  exact shape `test_two_way_binding.py`'s own `TextField` fixture
+  already uses.
+- Confirmed via grep (`#[pymethods]`/`#[pyclass]` in `view.rs`/
+  `binding.rs`) that none of `apply_binding_value`, `parse_background_
+  color`, or the widened `to_pyobject` are Python-visible -- no `.pyi`
+  change needed.
+- New live example `examples/bindable_background.py` + `.yaml`: two
+  `Rect` swatches, `hex_swatch` bound to a `Signal[str]` (hex color),
+  `tuple_swatch` bound to a `Signal[tuple]` (`(r,g,b,a)`), a
+  `cycle_button` handler advancing both Signals together through a
+  real 3-entry palette via real dispatched clicks -- asserts the
+  ViewModel's own state after each click (the same "no color getter"
+  limitation as the pytest tests, so assertions check the ViewModel's
+  own Signals, not the rendered node), then a genuine 60-frame
+  `App.run()` via `Window.from_view`, matching `component_list.py`'s
+  own established View-then-Window pattern. Ran clean on the first try.
 - Full verification chain, all green: `cargo check --workspace --all-
   targets`; `cargo clippy --workspace --all-targets -- -D warnings`;
   `cargo fmt` + `cargo fmt --check`; `cargo test --workspace --release`
-  (213 unchanged -- `Component.remove()`/the `&self` widening need a
-  live Python interpreter, no new Rust-level `#[test]`s needed);
-  `maturin develop --release` rebuilt; `pytest tests/` (600 passed, +4,
-  1 skipped, unchanged); all 80 examples and the showcase demo run
-  clean.
+  (`engine-py` 15, up from 11, +4; every other crate's own count
+  unchanged); `maturin develop --release` rebuilt; `pytest tests/` (606
+  passed, up from 600, +6, 1 skipped, unchanged); all 81 examples run
+  individually with zero failures; `demo/showcase.py` (all 5 phases,
+  exit 0).
+- `BUILD_TRACKER.md`: new Milestone 44 section, Top Metrics row, "Just
+  closed" entry added; `tools/generate_tracker_artifact.py` confirmed
+  44 milestones/136 phases/229 items (up from 43/135/228, the correct
+  +1/+1/+1 for one new milestone with one phase with one step); Build
+  Tracker artifact republished to the existing URL.
 
-**M43 -- Embeddable Components: Multi-Instance Views with Independent
-ViewModels -- is now fully complete, both phases.** This closes the
-milestone -- per the standing "push only after a full milestone
-closes" convention, a `git push` is now appropriate.
+**M44 -- Widening Live-Bindable Properties: `background` Color Bindings
+-- is now fully complete, single phase.** This closes the milestone --
+per the standing "push only after a full milestone closes" convention,
+a `git push` is now appropriate.

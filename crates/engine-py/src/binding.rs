@@ -62,7 +62,18 @@ impl PyViewModelResolver {
     /// needed because `attr`/`index`/`call`/`binary_op` all receive
     /// `Value`s (possibly primitives `engine-spec` itself already
     /// computed) but must call back into real Python objects.
-    fn to_pyobject<'py>(&self, py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
+    ///
+    /// `pub(crate)`, not private: M44 (§16.2) needs this from `view.rs`'s
+    /// own `apply_binding_value`, to recover a `Value::Handle`'s real
+    /// Python object (e.g. an `(r,g,b,a)` color tuple) and forward it
+    /// straight to `Node.animate` -- same "two real call sites justify
+    /// widening" precedent `collect_bindings`/`collect_handlers` already
+    /// established for M43.
+    pub(crate) fn to_pyobject<'py>(
+        &self,
+        py: Python<'py>,
+        value: &Value,
+    ) -> PyResult<Bound<'py, PyAny>> {
         match value {
             Value::Int(i) => i.into_bound_py_any(py),
             Value::Float(f) => f.into_bound_py_any(py),
