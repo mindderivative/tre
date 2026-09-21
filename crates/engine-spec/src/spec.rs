@@ -215,6 +215,13 @@ pub struct StyleSpec {
     pub background: Option<String>,
     pub corner_radius: Option<f32>,
     pub opacity: Option<f32>,
+    /// M48 (§5, §7): `PaintProperties.border_width`/`border_color` have
+    /// existed since M30 Phase 1 but were never reachable from static
+    /// YAML -- confirmed via direct read of this struct's own field
+    /// list before this change. Parsed the same hex/CSS-name/MD3-token
+    /// way `background` already is (`node_kind_and_paint`, `build.rs`).
+    pub border_width: Option<f32>,
+    pub border_color: Option<String>,
 }
 
 /// Parses one `view.yaml` document's raw text into a `WidgetSpec` tree.

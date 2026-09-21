@@ -277,6 +277,33 @@ fn apply_binding_value(
         };
         return temp_node.set_text(text, py);
     }
+    // M48 (§16.2): `width`/`height`/`padding`/`gap` are real, live-
+    // mutable via `Node.set_layout` since M48, but -- unlike every
+    // other bindable property -- they are NOT `Animated<T>` fields, so
+    // they can never reach `animate()`'s own dispatch at all (see `Node
+    // ::set_layout`'s own doc comment). Routed here, before the generic
+    // `animate()` forwarding below, the same way `checked`/`text`
+    // already are for their own non-numeric reasons.
+    if matches!(property, "width" | "height" | "padding" | "gap") {
+        let numeric = match value {
+            engine_spec::Value::Int(i) => *i as f32,
+            engine_spec::Value::Float(f) => *f as f32,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "widget property {property:?} expects a numeric binding, got {other:?}"
+                )));
+            }
+        };
+        let (width, height, padding, gap) = match property {
+            "width" => (Some(numeric), None, None, None),
+            "height" => (None, Some(numeric), None, None),
+            "padding" => (None, None, Some(numeric), None),
+            "gap" => (None, None, None, Some(numeric)),
+            _ => unreachable!("matched by the outer `matches!` above"),
+        };
+        temp_node.set_layout(width, height, padding, gap);
+        return Ok(());
+    }
 
     let bound: Bound<'_, PyAny> = match value {
         engine_spec::Value::Int(i) => (*i as f64).into_bound_py_any(py)?,
@@ -284,12 +311,12 @@ fn apply_binding_value(
         // M44: a string bound to `background` is parsed as a color
         // (hex/CSS-named) rather than falling into the `other => Err`
         // arm below -- see this function's own doc comment above for
-        // why MD3 theme-role tokens aren't handled here.
-        engine_spec::Value::Str(s) if property == "background" => {
+        // why MD3 theme-role tokens aren't handled here. M48: `border_
+        // color` gets the identical treatment -- same `(u8,u8,u8,u8)`
+        // shape `Node::animate`'s own new `"border_color"` arm expects.
+        engine_spec::Value::Str(s) if matches!(property, "background" | "border_color") => {
             let rgba = parse_background_color(s).map_err(|e| {
-                PyValueError::new_err(format!(
-                    "binding for property \"background\" resolved to {e}"
-                ))
+                PyValueError::new_err(format!("binding for property {property:?} resolved to {e}"))
             })?;
             rgba.into_bound_py_any(py)?
         }

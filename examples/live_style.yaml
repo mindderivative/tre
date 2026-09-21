@@ -1,0 +1,12 @@
+id: root
+kind: Container
+style: {flex_direction: Column, width: 300, height: 220, gap: 12, padding: 16}
+children:
+  - id: box
+    kind: Rect
+    style: {width: 120, height: 60, background: "#6750A4", corner_radius: 8, border_width: 0.0, border_color: "#000000"}
+    bindings: {border_width: "{{ thickness.get() }}", border_color: "{{ outline.get() }}"}
+  - id: cycle_button
+    kind: Rect
+    style: {width: 268, height: 32, background: "#B00020", corner_radius: 4}
+    handlers: {on_click: "cycle"}

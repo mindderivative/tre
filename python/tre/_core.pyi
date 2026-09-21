@@ -63,6 +63,19 @@ class Node:
     def get(self, property: str) -> float:
         """Reads one property's current, possibly-mid-animation value."""
         ...
+    def set_layout(
+        self,
+        width: float | None = None,
+        height: float | None = None,
+        padding: float | None = None,
+        gap: float | None = None,
+    ) -> None:
+        """M48: general live layout mutation. Only the fields actually
+        passed are changed -- every omitted field keeps its current
+        value. Applies immediately (not eased): layout fields aren't
+        animatable the way paint properties are.
+        """
+        ...
     def set_on_click(self, callback: Callable[[], object]) -> None: ...
     def set_on_hover_enter(self, callback: Callable[[], object]) -> None: ...
     def set_on_hover_exit(self, callback: Callable[[], object]) -> None: ...
@@ -286,6 +299,8 @@ class Window:
         height: float,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> Node: ...
     def add_text(
         self,

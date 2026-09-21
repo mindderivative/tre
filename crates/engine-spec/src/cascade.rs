@@ -125,6 +125,12 @@ fn merge(base: &mut StyleSpec, overlay: &StyleSpec) {
     if overlay.opacity.is_some() {
         base.opacity = overlay.opacity;
     }
+    if overlay.border_width.is_some() {
+        base.border_width = overlay.border_width;
+    }
+    if overlay.border_color.is_some() {
+        base.border_color.clone_from(&overlay.border_color);
+    }
 }
 
 #[cfg(test)]

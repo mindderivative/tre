@@ -6,8 +6,8 @@
 //! one built imperatively.
 
 use engine_core::{
-    CheckboxState, NodeId, NodeKind, PaintProperties, SliderState, TextAlign, TextFieldState,
-    TextState, Tree,
+    Animated, CheckboxState, NodeId, NodeKind, PaintProperties, SliderState, TextAlign,
+    TextFieldState, TextState, Tree,
 };
 use engine_md3::ColorScheme;
 use peniko::Color;
@@ -294,6 +294,36 @@ fn node_kind_and_paint(
     let corner_radius = f64::from(style.corner_radius.unwrap_or(0.0));
     let opacity = f64::from(style.opacity.unwrap_or(1.0));
 
+    let (kind, mut paint) =
+        node_kind_and_base_paint(spec, style, scheme, corner_radius, opacity, base_dir)?;
+
+    // M48 (§5, §7): border is universal across every `NodeKind`, the
+    // same real reason `corner_radius`/`opacity` are computed once
+    // above rather than per-arm -- applied after the match instead of
+    // threaded into every arm's own `PaintProperties::new(...)` call,
+    // which takes no border params (`engine-core/src/node.rs`'s own
+    // signature, unchanged by this milestone). `Animated::new` (not
+    // `animate_to`) since this is the node's real starting value, the
+    // identical "just set it" shape `PaintProperties::new` itself uses
+    // for `background`/`corner_radius`, not a live-eased transition.
+    if let Some(raw) = &style.border_color {
+        paint.border_color = Animated::new(resolve_color(spec, raw, scheme)?);
+    }
+    if let Some(border_width) = style.border_width {
+        paint.border_width = Animated::new(f64::from(border_width));
+    }
+
+    Ok((kind, paint))
+}
+
+fn node_kind_and_base_paint(
+    spec: &WidgetSpec,
+    style: &StyleSpec,
+    scheme: Option<&ColorScheme>,
+    corner_radius: f64,
+    opacity: f64,
+    base_dir: Option<&std::path::Path>,
+) -> Result<(NodeKind, PaintProperties), SpecError> {
     match &spec.kind {
         NodeKindSpec::Rect => {
             let background = required_background(spec, style, scheme, "Rect")?;

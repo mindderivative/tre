@@ -31,6 +31,7 @@ use engine_core::{
 use peniko::Color;
 use peniko::kurbo::{Affine, BezPath};
 use pyo3::prelude::*;
+use taffy::prelude::{Rect as TaffyRect, Size, length};
 
 use crate::dispatch::{HandlerMap, SharedCompletions, call_handler};
 use crate::error::EngineError;
@@ -128,6 +129,22 @@ impl Node {
                 let value = extract_color(&to, property)?;
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
                 animate_field(&mut node.paint.background, value, duration, now, handle);
+            }
+            // M48 (§5, §7): `border_color`/`border_width` are real
+            // `PaintProperties` fields since M30 Phase 1 but were never
+            // reachable from `animate()` -- confirmed via direct read of
+            // this match's own exhaustive arm list before this change.
+            // Mirrors `"background"`/`"corner_radius"` exactly; no new
+            // engine-core work needed, the fields are already `Animated`.
+            "border_color" => {
+                let value = extract_color(&to, property)?;
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                animate_field(&mut node.paint.border_color, value, duration, now, handle);
+            }
+            "border_width" => {
+                let value = extract_f64(&to, property)?;
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                animate_field(&mut node.paint.border_width, value, duration, now, handle);
             }
             // M6 Phase 2 (§8): "pan offset × zoom scale" (§11.9's own
             // text), not a raw 6-coefficient `Affine` -- matches
@@ -306,6 +323,11 @@ impl Node {
             "opacity" => Ok(node.paint.opacity.current),
             "corner_radius" => Ok(node.paint.corner_radius.current),
             "elevation" => Ok(node.paint.elevation.current),
+            // M48: `border_width` is a plain `Animated<f64>`, the same
+            // shape as `corner_radius`/`elevation` above -- `border_
+            // color` stays excluded, the same real reason `background`
+            // already is (not a single `f64`).
+            "border_width" => Ok(node.paint.border_width.current),
             "check_progress" => match &node.kind {
                 NodeKind::Checkbox(state) => Ok(state.check_progress.current),
                 _ => Err(EngineError::UnknownProperty {
@@ -353,6 +375,63 @@ impl Node {
             }
             .into()),
         }
+    }
+
+    /// M48 (§5, §7, §11): the general live layout-mutation API this
+    /// engine never had -- `width`/`height`/`padding`/`gap` were fixed
+    /// at construction with no way to change them afterward from Python
+    /// or YAML, confirmed via grep before this method existed (the only
+    /// real precedent was `Window.resize_terminal`'s narrow, size-only
+    /// version, `window_factory.rs`). Generalizes that exact real
+    /// pattern instead of inventing a new one: clone this node's current
+    /// `layout_style`, patch only the fields the caller actually passed
+    /// (`None` by default, so a partial call like `set_layout(width=200)`
+    /// leaves every other field untouched), then push the result back
+    /// through `Tree::set_layout_style` -- the one sanctioned way to
+    /// mutate `layout_style` post-insert (its own doc comment: direct
+    /// field mutation desyncs `taffy`'s internal copy, the real bug
+    /// M32 Phase 2 hit). Immediate, not eased -- these fields aren't
+    /// `Animated<T>` (a layout box doesn't tween the way a paint
+    /// property does in this engine), so this is a parallel dispatch
+    /// next to `animate()`, not an extra match arm inside it. `padding`/
+    /// `gap` are uniform scalars, matching `StyleSpec`'s own real scope
+    /// today (`engine-spec/src/spec.rs`) -- per-side padding/margin
+    /// remain a real, separate, un-added gap.
+    #[pyo3(signature = (width=None, height=None, padding=None, gap=None))]
+    pub(crate) fn set_layout(
+        &self,
+        width: Option<f32>,
+        height: Option<f32>,
+        padding: Option<f32>,
+        gap: Option<f32>,
+    ) {
+        let mut tree = self.tree.borrow_mut();
+        let mut style = tree
+            .get(self.id)
+            .expect("Node holds a NodeId missing from its own Tree -- an engine-py bug")
+            .layout_style
+            .clone();
+        if let Some(width) = width {
+            style.size.width = length(width);
+        }
+        if let Some(height) = height {
+            style.size.height = length(height);
+        }
+        if let Some(padding) = padding {
+            style.padding = TaffyRect {
+                left: length(padding),
+                right: length(padding),
+                top: length(padding),
+                bottom: length(padding),
+            };
+        }
+        if let Some(gap) = gap {
+            style.gap = Size {
+                width: length(gap),
+                height: length(gap),
+            };
+        }
+        tree.set_layout_style(self.id, style);
     }
 
     /// M4 Phase 1 step 3 (§4, §11.10): registers `callback` to run when

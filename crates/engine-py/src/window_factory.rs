@@ -1229,7 +1229,17 @@ impl PyWindow {
     /// child of this window's implicit root row) is the real minimal
     /// slice; unchanged by the `PyWindow` split, just moved here with
     /// `App` itself.
-    #[pyo3(signature = (background, width, height, x=None, y=None))]
+    /// M48 (§5, §7): `border_color`/`border_width` -- real `PaintProperties`
+    /// fields since M30 Phase 1 -- were never settable anywhere in the
+    /// imperative API, confirmed via grep before this change (only
+    /// specific MD3 component factories, e.g. Outlined Button, ever
+    /// baked a border in internally). `add_rect` is this file's one
+    /// genuinely generic "colored box" factory (no `add_container`
+    /// exists in the imperative API at all), so it's the representative
+    /// case for this milestone; extending border kwargs to every other
+    /// factory is a natural, separate follow-up.
+    #[pyo3(signature = (background, width, height, x=None, y=None, border_color=None, border_width=None))]
+    #[allow(clippy::too_many_arguments)]
     fn add_rect(
         &self,
         background: (u8, u8, u8, u8),
@@ -1237,9 +1247,18 @@ impl PyWindow {
         height: f32,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> Node {
         let (r, g, b, a) = background;
         let mut tree = self.tree.borrow_mut();
+        let mut paint = PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0);
+        if let Some((br, bg, bb, ba)) = border_color {
+            paint.border_color = Animated::new(Color::from_rgba8(br, bg, bb, ba));
+        }
+        if let Some(border_width) = border_width {
+            paint.border_width = Animated::new(border_width);
+        }
         let id = tree.insert(
             NodeKind::Rect,
             positioned_style(
@@ -1250,7 +1269,7 @@ impl PyWindow {
                 x,
                 y,
             ),
-            PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
+            paint,
         );
         tree.add_child(self.root, id);
         self.wrap_node(id)
