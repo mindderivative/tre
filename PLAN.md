@@ -49,17 +49,38 @@ removal (matches the existing, accepted `handlers`/`materializers`/
 `context_menus` precedent).
 
 ## Status
-**Phase 1 of 6 complete.** `RetitheHook` mechanism + `Window.set_theme`
-wiring + `add_button` fully wired, both in `window.rs`/`window_
-factory.rs`. 5 new Rust unit tests (GIL-free: 2 generic-mechanism, 3
-`button_retheme_hook` exact-value -- a real test-authoring mistake
-caught by running it: MD3's `on_primary` role can legitimately resolve
-to the identical white for two different dark seeds, so an initial
-"must differ" assertion was wrong, fixed to assert exact resolved
-values instead). 4 new pytest tests. Full chain green: `cargo check`/
-`clippy -D warnings`/`fmt` clean, `cargo test --workspace --release`
-(`engine-py` 25, up from 20, +5), `maturin develop --release`, `pytest
-tests/` (713 passed, up from 709, +4, 1 skipped unchanged), all 84
-examples, showcase demo. Tracker generator: 52 milestones/151
-phases/265 items/2 known gaps/19 fixed gaps. **Up next: Phase 2, the
-~19 remaining fixed/simple factories.**
+**Phases 1-2 of 6 complete.** Phase 1: `RetitheHook` mechanism +
+`Window.set_theme` wiring + `add_button` fully wired. 5 new Rust unit
+tests (GIL-free: 2 generic-mechanism, 3 `button_retheme_hook`
+exact-value -- a real test-authoring mistake caught by running it:
+MD3's `on_primary` role can legitimately resolve to the identical white
+for two different dark seeds, so an initial "must differ" assertion was
+wrong, fixed to assert exact resolved values instead). 4 new pytest
+tests.
+
+Phase 2: all 19 remaining fixed/simple `PaintProperties`-only factories
+wired -- each a new, named `*_retheme_hook` builder function, grouped
+together in one dedicated preamble section. Handled several real
+non-trivial shapes: `add_toolbar`'s conditional default fallbacks
+(branch on `is_floating`/`vertical`/original `width`/`height`, not
+fixed constants); `add_date_picker_day`'s 4-outcome branch; the
+milestone's first `IconState.tint`-touching hooks (`add_list_item`/
+`add_spin_box`, a plain non-`Animated` field); `add_accordion_header`/
+`add_tree_node` carefully never touch their chevron's `paint.
+transform`; `add_tooltip`'s hook correctly does less than its siblings
+(color is a named, deliberately unfixed pre-existing gap). 11 new
+pytest tests extending each factory's own M50-era fixture with a
+second `set_theme` call, plus one combined "does not raise" test for
+color-only factories. **A real, honest finding caught by running the
+tests:** an `add_card` test's bare `"card"` elevation override never
+took effect -- the shipped default theme already sets the more
+specific `card.elevated` key, which the 2-tier lookup always checks
+first; fixed to override that key explicitly.
+
+Full chain green: `cargo check`/`clippy -D warnings`/`fmt` clean,
+`cargo test --workspace --release` (`engine-py` 25, unchanged from
+Phase 1 -- Phase 2 added no new Rust tests), `maturin develop
+--release`, `pytest tests/` (725 passed, up from 709 at M52's start,
++16, 1 skipped unchanged), all 84 examples, showcase demo. Tracker
+generator: 52 milestones/152 phases/266 items/2 known gaps/19 fixed
+gaps. **Up next: Phase 3, the ~8 Buttons & FAB family factories.**

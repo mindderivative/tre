@@ -90,12 +90,84 @@
   generator: 52 milestones/151 phases/265 items/2 known gaps/19 fixed
   gaps. Artifact republished to the existing URL.
 
+## Phase 2 — Fixed/Simple `PaintProperties`-Only Factories
+
+- Wired all 19 remaining factories from Phase 2's own scope: `add_
+  card`, `add_divider`, `add_tooltip`, `add_dialog`, `add_toolbar`,
+  `add_search_view`, `add_popover`, `add_link`, `add_status_bar`,
+  `add_node_graph`, `add_graph_node`, `add_list_item`, `add_accordion_
+  header`, `add_tree_node`, `add_date_picker_day`, `add_time_input_
+  field`, `add_period_selector`, `add_spin_box`, `add_loading_
+  indicator`. Each factory's own `*_retheme_hook` builder function
+  lives in one new, dedicated preamble section in `window_factory.rs`
+  (a deliberate, purely organizational choice for this milestone's own
+  ~45-factory batch -- distinct from Phase 1's own `resolve_button_
+  colors`-adjacent placement, which would have meant jumping to each
+  factory's own scattered location in a 7,900-line file for every one
+  of the remaining ~45).
+- Several real, non-trivial shapes handled correctly, not glossed
+  over: `add_toolbar`'s hook reproduces conditional *default*
+  fallbacks (branch on `is_floating`/`vertical`/the caller's own
+  original `width`/`height`), not fixed constants; `add_date_picker_
+  day`'s hook reproduces the exact same 4-outcome `selected`/`today`/
+  `outside_month` branch the factory itself resolves; `add_list_item`/
+  `add_spin_box` are this milestone's first `IconState.tint`-touching
+  hooks (a plain, non-`Animated` field, written directly); `add_
+  accordion_header`/`add_tree_node`'s hooks are careful never to touch
+  their own chevron's `paint.transform` (the real, currently-set
+  expand/collapse flip state, unrelated to theming); `add_tooltip`'s
+  hook correctly does *less* than its siblings (only `corner_radius` --
+  its color is a real, confirmed, pre-existing M49-era gap, deliberately
+  left unfixed, named directly in the hook's own doc comment, not
+  silently "completed" as part of this milestone's narrower scope).
+  `add_time_input_field`'s hook reproduces a real, pre-existing minor
+  inconsistency as-is (`text_tint` reads `on_surface()` unconditionally,
+  no `is_set()` gate, unlike `add_text_field`/`add_code_editor`) rather
+  than silently fixing it.
+- `add_list_item`/`add_accordion_header`/`add_tree_node`/`add_period_
+  selector`/`add_spin_box` each needed a small, real refactor first:
+  their own construction code built intermediate `NodeId`s inside
+  `if`/`else` branches or closures without retaining them in an
+  outer-scope binding the hook-wiring code could later capture -- e.g.
+  `add_period_selector`'s own `build_option` closure returned only the
+  option's `NodeId`, discarding its label's; widened to return
+  `(NodeId, NodeId)`.
+- 11 new pytest tests extending each factory's own M50-era construction-
+  time fixture with a second `window.set_theme(...)` call, proving the
+  same value changes live on the same already-built `Node`, plus one
+  combined "does not raise" test across every remaining color-only
+  factory with no Python-readable shape/elevation field at all.
+- **A real, honest finding caught by running the tests, not assumed:**
+  an initial `add_card` test overrode only the bare `"card"` key's own
+  `elevation`, which never took effect. The shipped `default_theme.
+  yaml` already sets `card.elevated: {elevation: 1}` as a separate,
+  more specific key -- the 2-tier lookup always checks the variant-
+  specific key first, regardless of which theme layer originally set
+  it, so a bare-key override for a field a more specific key already
+  defines can never reach that variant. Fixed by overriding `"card.
+  elevated"` explicitly, matching this suite's own established M50
+  test convention -- this is real, correct, load-bearing behavior of
+  the 2-tier lookup itself, not a bug in the new retheme mechanism.
+- `BUILD_TRACKER.md`: Phase 2 section added, Top Metrics row updated
+  (33%, Phase 2 of 6), "In progress" note updated. Regenerated cleanly.
+- Full chain green: `cargo check`/`clippy -D warnings`/`fmt` clean,
+  `cargo test --workspace --release` (`engine-py` 25, unchanged from
+  Phase 1 -- Phase 2 needed no new Rust-level tests, relying on Phase
+  1's own generic-mechanism coverage plus pytest for these factories'
+  integration proof), `maturin develop --release`, `pytest tests/`
+  (725 passed, up from 713, +12, 1 skipped unchanged), all 84 examples,
+  showcase demo. Tracker generator: 52 milestones/152 phases/266
+  items/2 known gaps/19 fixed gaps.
+
 ## Status
 
-**M52 Phase 1 of 6 is complete.** The mechanism is proven end to end on
-the simplest real themed factory. Per this session's own standing
-discipline, committing locally now (a phase boundary, not yet a closed
-milestone) -- push deferred until the full milestone closes, matching
-the established "push after a full milestone" convention. Up next:
-Phase 2, the ~19 remaining fixed/simple `PaintProperties`-only
-factories.
+**M52 Phases 1-2 of 6 are complete.** The mechanism is proven across a
+real, deliberately varied sample of factory shapes -- fixed/conditional
+node counts, `PaintProperties`-only and `IconState.tint`-touching
+hooks, transform-adjacent nodes that must not be clobbered, and a hook
+that legitimately does less than its siblings. Per this session's own
+standing discipline, committing locally at this phase boundary too --
+push still deferred until the full milestone closes. Up next: Phase 3,
+the ~8 Buttons & FAB family factories, including the two structurally
+unusual nested-reuse cases (`add_split_button`, `add_button_group`)
+last, with extra care per this milestone's own investigation.

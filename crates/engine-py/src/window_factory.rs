@@ -1281,6 +1281,634 @@ const SEGMENTED_BUTTON_CHECKMARK_SIZE: f32 = 18.0;
 const SEGMENTED_BUTTON_HORIZONTAL_PADDING: f32 = 12.0;
 const SEGMENTED_BUTTON_ICON_LABEL_GAP: f32 = 4.0;
 
+// M52 Phases 2+: every remaining `RetitheHook` builder function lives
+// here, grouped together rather than scattered near each factory's own
+// consts the way `resolve_button_colors`/`button_retheme_hook` (Phase
+// 1, above) sit right next to `add_button`'s own real anatomy constants
+// -- a deliberate, purely organizational choice for this milestone's
+// remaining ~45 factories (a genuinely large, repetitive-pattern batch,
+// not worth the per-factory file-navigation cost of colocating each one
+// individually the way the file's pre-existing helpers do).
+
+/// M52 Phase 2: `add_card`'s own hook -- bare `"card"` key, no variant,
+/// matching `add_card` itself (corner radius is not variant-dependent
+/// in real MD3 anatomy).
+fn card_retheme_hook(id: NodeId, variant: String) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let Ok(colors) = resolve_card_colors(theme, &variant) else {
+            return;
+        };
+        let corner_radius = theme.shape("card", None).unwrap_or(CARD_CORNER_RADIUS);
+        if let Some(node) = tree.get_mut(id) {
+            node.paint.background = Animated::new(colors.container);
+            node.paint.corner_radius = Animated::new(corner_radius);
+            node.paint.elevation = Animated::new(colors.elevation);
+            node.paint.border_color = Animated::new(colors.border_color);
+            node.paint.border_width = Animated::new(colors.border_width);
+        }
+    })
+}
+
+/// M52 Phase 2: `add_divider`'s own hook -- one role, no shape/
+/// elevation (a divider has neither in real MD3 anatomy).
+fn divider_retheme_hook(id: NodeId) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let color = if theme.is_set() {
+            theme
+                .role("outline_variant")
+                .unwrap_or(Md3Baseline::OUTLINE_VARIANT)
+        } else {
+            Md3Baseline::OUTLINE_VARIANT
+        };
+        if let Some(node) = tree.get_mut(id) {
+            node.paint.background = Animated::new(color);
+        }
+    })
+}
+
+/// M52 Phase 2: `add_tooltip`'s own hook -- only `corner_radius` is
+/// theme-resolved (a real, confirmed, pre-existing M49-era gap, not
+/// fixed by this milestone: `add_tooltip`'s own container/label colors
+/// are hardcoded `Md3Baseline` constants with no `theme.role(...)` call
+/// at all). This hook correctly does strictly less than its siblings.
+fn tooltip_retheme_hook(container: NodeId) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let corner_radius = theme
+            .shape("tooltip", None)
+            .unwrap_or(TOOLTIP_CORNER_RADIUS);
+        if let Some(node) = tree.get_mut(container) {
+            node.paint.corner_radius = Animated::new(corner_radius);
+        }
+    })
+}
+
+/// M52 Phase 2: `add_toolbar`'s own hook -- both the container color
+/// (branches on `color`, `"standard"` vs `"vibrant"`) and the shape/
+/// elevation fallback (branches on `is_floating`/`vertical`/the
+/// caller's own original `width`/`height`) must be reproduced exactly,
+/// since `add_toolbar` itself computes conditional *defaults*, not
+/// fixed constants, before ever consulting the theme override.
+#[allow(clippy::too_many_arguments)]
+fn toolbar_retheme_hook(
+    bar: NodeId,
+    variant: String,
+    color: Option<String>,
+    is_floating: bool,
+    vertical: bool,
+    width: Option<f32>,
+    height: Option<f32>,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let role = |name: &str, fallback: Color| -> Color {
+            if theme.is_set() {
+                theme.role(name).unwrap_or(fallback)
+            } else {
+                fallback
+            }
+        };
+        let container_color = match color.as_deref().unwrap_or("standard") {
+            "standard" => role("surface_container", Md3Baseline::SURFACE_CONTAINER),
+            "vibrant" => role("primary_container", Md3Baseline::PRIMARY_CONTAINER),
+            _ => return,
+        };
+        let default_corner_radius = if is_floating {
+            f64::from(if vertical {
+                width.unwrap_or(TOOLBAR_HEIGHT)
+            } else {
+                height.unwrap_or(TOOLBAR_HEIGHT)
+            }) / 2.0
+        } else {
+            0.0
+        };
+        let default_elevation = if is_floating {
+            FAB_REST_ELEVATION_LEVEL
+        } else {
+            0.0
+        };
+        let corner_radius = theme
+            .shape("toolbar", Some(&variant))
+            .unwrap_or(default_corner_radius);
+        let elevation = theme
+            .elevation("toolbar", Some(&variant))
+            .unwrap_or(default_elevation);
+        if let Some(node) = tree.get_mut(bar) {
+            node.paint.background = Animated::new(container_color);
+            node.paint.corner_radius = Animated::new(corner_radius);
+            node.paint.elevation = Animated::new(elevation);
+        }
+    })
+}
+
+/// M52 Phase 2: `add_spin_box`'s own hook, closing Phase 2 -- the
+/// decrement/increment buttons deliberately reuse the `"icon_button"`
+/// key (structurally the same real shape `add_icon_button` itself
+/// produces), while the field gets its own distinct `"spin_box"` key.
+fn spin_box_retheme_hook(
+    field: NodeId,
+    decrement: NodeId,
+    decrement_icon: NodeId,
+    increment: NodeId,
+    increment_icon: NodeId,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let role = |theme: &crate::window::ThemeState, name: &str, fallback: Color| -> Color {
+            if theme.is_set() {
+                theme.role(name).unwrap_or(fallback)
+            } else {
+                fallback
+            }
+        };
+        let field_color = role(
+            theme,
+            "surface_container_highest",
+            Md3Baseline::SURFACE_CONTAINER_HIGHEST,
+        );
+        let text_color = theme.on_surface();
+        let icon_color = role(theme, "on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT);
+        let icon_button_corner_radius = theme
+            .shape("icon_button", None)
+            .unwrap_or(SPIN_BOX_BUTTON_SIZE as f64 / 2.0);
+        let field_corner_radius = theme.shape("spin_box", None).unwrap_or(CHIP_CORNER_RADIUS);
+        for button in [decrement, increment] {
+            if let Some(node) = tree.get_mut(button) {
+                node.paint.corner_radius = Animated::new(icon_button_corner_radius);
+            }
+        }
+        for icon in [decrement_icon, increment_icon] {
+            if let Some(node) = tree.get_mut(icon)
+                && let NodeKind::Icon(state) = &mut node.kind
+            {
+                state.tint = icon_color;
+            }
+        }
+        if let Some(node) = tree.get_mut(field) {
+            node.paint.background = Animated::new(field_color);
+            node.paint.corner_radius = Animated::new(field_corner_radius);
+            if let NodeKind::TextField(state) = &mut node.kind {
+                state.text_tint = text_color;
+            }
+        }
+    })
+}
+
+/// M52 Phase 2: `add_period_selector`'s own hook -- 2 options
+/// (am/pm), each independently `is_selected`, its own distinct
+/// `"period_selector"` key.
+#[allow(clippy::too_many_arguments)]
+fn period_selector_retheme_hook(
+    am: NodeId,
+    am_label: NodeId,
+    am_selected: bool,
+    pm: NodeId,
+    pm_label: NodeId,
+    pm_selected: bool,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let selected_fill = if theme.is_set() {
+            theme
+                .role("tertiary_container")
+                .unwrap_or(Md3Baseline::TERTIARY_CONTAINER)
+        } else {
+            Md3Baseline::TERTIARY_CONTAINER
+        };
+        let selected_label = if theme.is_set() {
+            theme
+                .role("on_tertiary_container")
+                .unwrap_or(Md3Baseline::ON_TERTIARY_CONTAINER)
+        } else {
+            Md3Baseline::ON_TERTIARY_CONTAINER
+        };
+        let unselected_label = theme.on_surface();
+        let corner_radius = theme
+            .shape("period_selector", None)
+            .unwrap_or(CHIP_CORNER_RADIUS);
+        for (option, label, is_selected) in
+            [(am, am_label, am_selected), (pm, pm_label, pm_selected)]
+        {
+            let (fill, label_color) = if is_selected {
+                (selected_fill, selected_label)
+            } else {
+                (TRANSPARENT, unselected_label)
+            };
+            if let Some(node) = tree.get_mut(option) {
+                node.paint.background = Animated::new(fill);
+                node.paint.corner_radius = Animated::new(corner_radius);
+            }
+            if let Some(node) = tree.get_mut(label) {
+                node.paint.background = Animated::new(label_color);
+            }
+        }
+    })
+}
+
+/// M52 Phase 2: `add_time_input_field`'s own hook -- `TextFieldState.
+/// text_tint` is a plain field, not `Animated`, written directly.
+/// `text_tint` reads `theme.on_surface()` unconditionally, without an
+/// `is_set()` gate -- a real, pre-existing minor inconsistency vs.
+/// `add_text_field`/`add_code_editor` (both gate it), confirmed
+/// harmless (`on_surface()` has its own safe no-theme-set default
+/// built in) and deliberately reproduced as-is here, not silently
+/// "fixed" as part of this milestone's own narrower scope.
+fn time_input_field_retheme_hook(id: NodeId) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let container_color = if theme.is_set() {
+            theme
+                .role("surface_container_highest")
+                .unwrap_or(Md3Baseline::SURFACE_CONTAINER_HIGHEST)
+        } else {
+            Md3Baseline::SURFACE_CONTAINER_HIGHEST
+        };
+        let corner_radius = theme
+            .shape("time_input_field", None)
+            .unwrap_or(CHIP_CORNER_RADIUS);
+        if let Some(node) = tree.get_mut(id) {
+            node.paint.background = Animated::new(container_color);
+            node.paint.corner_radius = Animated::new(corner_radius);
+            if let NodeKind::TextField(state) = &mut node.kind {
+                state.text_tint = theme.on_surface();
+            }
+        }
+    })
+}
+
+/// M52 Phase 2: `add_date_picker_day`'s own hook -- reproduces the
+/// exact same 4-outcome `selected`/`today`/`outside_month` branch
+/// `add_date_picker_day` itself resolves at construction time.
+fn date_picker_day_retheme_hook(
+    cell: NodeId,
+    label: NodeId,
+    selected: bool,
+    today: bool,
+    outside_month: bool,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let role = |theme: &crate::window::ThemeState, name: &str, fallback: Color| -> Color {
+            if theme.is_set() {
+                theme.role(name).unwrap_or(fallback)
+            } else {
+                fallback
+            }
+        };
+        let primary = role(theme, "primary", Md3Baseline::PRIMARY);
+        let (fill, border_color, border_width, label_color) = if selected {
+            (
+                primary,
+                TRANSPARENT,
+                0.0,
+                role(theme, "on_primary", Md3Baseline::ON_PRIMARY),
+            )
+        } else if today {
+            (TRANSPARENT, primary, DATE_TODAY_OUTLINE_WIDTH, primary)
+        } else if outside_month {
+            (
+                TRANSPARENT,
+                TRANSPARENT,
+                0.0,
+                role(theme, "on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT),
+            )
+        } else {
+            (TRANSPARENT, TRANSPARENT, 0.0, theme.on_surface())
+        };
+        let corner_radius = theme
+            .shape("date_picker_day", None)
+            .unwrap_or(DATE_CELL_CORNER_RADIUS);
+        if let Some(node) = tree.get_mut(cell) {
+            node.paint.background = Animated::new(fill);
+            node.paint.corner_radius = Animated::new(corner_radius);
+            node.paint.border_color = Animated::new(border_color);
+            node.paint.border_width = Animated::new(border_width);
+        }
+        if let Some(node) = tree.get_mut(label) {
+            node.paint.background = Animated::new(label_color);
+        }
+    })
+}
+
+/// M52 Phase 2: `add_accordion_header`'s own hook -- never touches
+/// `chevron`'s own `paint.transform` (the real, currently-set
+/// expand/collapse flip state), only its `IconState.tint`.
+fn accordion_header_retheme_hook(headline: NodeId, chevron: NodeId) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let on_surface_variant = if theme.is_set() {
+            theme
+                .role("on_surface_variant")
+                .unwrap_or(Md3Baseline::ON_SURFACE_VARIANT)
+        } else {
+            Md3Baseline::ON_SURFACE_VARIANT
+        };
+        if let Some(node) = tree.get_mut(headline) {
+            node.paint.background = Animated::new(theme.on_surface());
+        }
+        if let Some(node) = tree.get_mut(chevron)
+            && let NodeKind::Icon(state) = &mut node.kind
+        {
+            state.tint = on_surface_variant;
+        }
+    })
+}
+
+/// M52 Phase 2: `add_tree_node`'s own hook -- `chevron` is `None` for a
+/// leaf row (nothing to re-theme there); never touches its own
+/// `paint.transform` either, the same real reason `add_accordion_
+/// header`'s hook doesn't.
+fn tree_node_retheme_hook(headline: NodeId, chevron: Option<NodeId>) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let on_surface_variant = if theme.is_set() {
+            theme
+                .role("on_surface_variant")
+                .unwrap_or(Md3Baseline::ON_SURFACE_VARIANT)
+        } else {
+            Md3Baseline::ON_SURFACE_VARIANT
+        };
+        if let Some(node) = tree.get_mut(headline) {
+            node.paint.background = Animated::new(theme.on_surface());
+        }
+        if let Some(id) = chevron
+            && let Some(node) = tree.get_mut(id)
+            && let NodeKind::Icon(state) = &mut node.kind
+        {
+            state.tint = on_surface_variant;
+        }
+    })
+}
+
+/// M52 Phase 2: `add_list_item`'s own hook -- the milestone's first
+/// icon-touching factory: `IconState.tint` is a plain (non-`Animated`)
+/// field, written directly rather than through `Animated::new`. No
+/// shape/elevation (a list item has neither in real MD3 anatomy).
+fn list_item_retheme_hook(
+    headline: NodeId,
+    supporting: Option<NodeId>,
+    leading_icon: Option<NodeId>,
+    trailing_icon: Option<NodeId>,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let on_surface_variant = if theme.is_set() {
+            theme
+                .role("on_surface_variant")
+                .unwrap_or(Md3Baseline::ON_SURFACE_VARIANT)
+        } else {
+            Md3Baseline::ON_SURFACE_VARIANT
+        };
+        if let Some(node) = tree.get_mut(headline) {
+            node.paint.background = Animated::new(theme.on_surface());
+        }
+        if let Some(id) = supporting
+            && let Some(node) = tree.get_mut(id)
+        {
+            node.paint.background = Animated::new(on_surface_variant);
+        }
+        for icon in [leading_icon, trailing_icon].into_iter().flatten() {
+            if let Some(node) = tree.get_mut(icon)
+                && let NodeKind::Icon(state) = &mut node.kind
+            {
+                state.tint = on_surface_variant;
+            }
+        }
+    })
+}
+
+/// M52 Phase 2: `add_status_bar`'s own hook -- 2 roles, no shape/
+/// elevation.
+fn status_bar_retheme_hook(bar: NodeId, label: NodeId) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let container = if theme.is_set() {
+            theme
+                .role("surface_container")
+                .unwrap_or(Md3Baseline::SURFACE_CONTAINER)
+        } else {
+            Md3Baseline::SURFACE_CONTAINER
+        };
+        let on_surface_variant = if theme.is_set() {
+            theme
+                .role("on_surface_variant")
+                .unwrap_or(Md3Baseline::ON_SURFACE_VARIANT)
+        } else {
+            Md3Baseline::ON_SURFACE_VARIANT
+        };
+        if let Some(node) = tree.get_mut(bar) {
+            node.paint.background = Animated::new(container);
+        }
+        if let Some(node) = tree.get_mut(label) {
+            node.paint.background = Animated::new(on_surface_variant);
+        }
+    })
+}
+
+/// M52 Phase 2: `add_node_graph`'s own hook -- one role, no shape/
+/// elevation.
+fn node_graph_retheme_hook(id: NodeId) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let color = if theme.is_set() {
+            theme
+                .role("surface_container_low")
+                .unwrap_or(Md3Baseline::SURFACE_CONTAINER_LOW)
+        } else {
+            Md3Baseline::SURFACE_CONTAINER_LOW
+        };
+        if let Some(node) = tree.get_mut(id) {
+            node.paint.background = Animated::new(color);
+        }
+    })
+}
+
+/// M52 Phase 2: `add_graph_node`'s own hook -- 3 nodes (wrapper/title_
+/// bar/label), its own distinct `"graph_node"` key (not `"card"`, a
+/// coincidentally-shared constant value). `title_bar`'s own fixed
+/// `0`/`0` corner_radius/elevation are never theme-derived, so this
+/// hook correctly never touches them.
+fn graph_node_retheme_hook(
+    wrapper: NodeId,
+    title_bar: NodeId,
+    label: NodeId,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let body = if theme.is_set() {
+            theme
+                .role("surface_container")
+                .unwrap_or(Md3Baseline::SURFACE_CONTAINER)
+        } else {
+            Md3Baseline::SURFACE_CONTAINER
+        };
+        let title = if theme.is_set() {
+            theme
+                .role("surface_container_high")
+                .unwrap_or(Md3Baseline::SURFACE_CONTAINER_HIGH)
+        } else {
+            Md3Baseline::SURFACE_CONTAINER_HIGH
+        };
+        let label_color = if theme.is_set() {
+            theme
+                .role("on_surface_variant")
+                .unwrap_or(Md3Baseline::ON_SURFACE_VARIANT)
+        } else {
+            Md3Baseline::ON_SURFACE_VARIANT
+        };
+        let corner_radius = theme
+            .shape("graph_node", None)
+            .unwrap_or(CARD_CORNER_RADIUS);
+        if let Some(node) = tree.get_mut(wrapper) {
+            node.paint.background = Animated::new(body);
+            node.paint.corner_radius = Animated::new(corner_radius);
+        }
+        if let Some(node) = tree.get_mut(title_bar) {
+            node.paint.background = Animated::new(title);
+        }
+        if let Some(node) = tree.get_mut(label) {
+            node.paint.background = Animated::new(label_color);
+        }
+    })
+}
+
+/// M52 Phase 2: `add_search_view`'s own hook -- its own distinct
+/// `"search_view"` key, not `"dialog"` (a coincidentally-shared
+/// constant *value*, not a reason to couple the overrides).
+fn search_view_retheme_hook(id: NodeId) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let container_color = if theme.is_set() {
+            theme
+                .role("surface_container_high")
+                .unwrap_or(Md3Baseline::SURFACE_CONTAINER_HIGH)
+        } else {
+            Md3Baseline::SURFACE_CONTAINER_HIGH
+        };
+        let corner_radius = theme
+            .shape("search_view", None)
+            .unwrap_or(DIALOG_CORNER_RADIUS);
+        let elevation = theme
+            .elevation("search_view", None)
+            .unwrap_or(SEARCH_VIEW_ELEVATION);
+        if let Some(node) = tree.get_mut(id) {
+            node.paint.background = Animated::new(container_color);
+            node.paint.corner_radius = Animated::new(corner_radius);
+            node.paint.elevation = Animated::new(elevation);
+        }
+    })
+}
+
+/// M52 Phase 2: `add_popover`'s own hook -- 3 nodes (panel/subhead/
+/// body), its own distinct `"popover"` key.
+fn popover_retheme_hook(
+    panel: NodeId,
+    subhead: NodeId,
+    body: NodeId,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let on_surface_variant = if theme.is_set() {
+            theme
+                .role("on_surface_variant")
+                .unwrap_or(Md3Baseline::ON_SURFACE_VARIANT)
+        } else {
+            Md3Baseline::ON_SURFACE_VARIANT
+        };
+        let container_color = if theme.is_set() {
+            theme
+                .role("surface_container")
+                .unwrap_or(Md3Baseline::SURFACE_CONTAINER)
+        } else {
+            Md3Baseline::SURFACE_CONTAINER
+        };
+        let corner_radius = theme
+            .shape("popover", None)
+            .unwrap_or(POPOVER_CORNER_RADIUS);
+        let elevation = theme
+            .elevation("popover", None)
+            .unwrap_or(POPOVER_ELEVATION);
+        if let Some(node) = tree.get_mut(panel) {
+            node.paint.background = Animated::new(container_color);
+            node.paint.corner_radius = Animated::new(corner_radius);
+            node.paint.elevation = Animated::new(elevation);
+        }
+        if let Some(node) = tree.get_mut(subhead) {
+            node.paint.background = Animated::new(on_surface_variant);
+        }
+        if let Some(node) = tree.get_mut(body) {
+            node.paint.background = Animated::new(on_surface_variant);
+        }
+    })
+}
+
+/// M52 Phase 2: `add_link`'s own hook -- one role, no shape/elevation
+/// (a link has neither in real MD3 anatomy).
+fn link_retheme_hook(id: NodeId) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let color = if theme.is_set() {
+            theme.role("primary").unwrap_or(Md3Baseline::PRIMARY)
+        } else {
+            Md3Baseline::PRIMARY
+        };
+        if let Some(node) = tree.get_mut(id) {
+            node.paint.background = Animated::new(color);
+        }
+    })
+}
+
+/// M52 Phase 2: `add_dialog`'s own hook -- 4 nodes (scrim/panel/
+/// headline/body), only 3 of which are theme-resolved (scrim's own
+/// `opacity` is a fixed constant, `DIALOG_SCRIM_OPACITY`, never theme-
+/// derived, so it's correctly never touched here).
+fn dialog_retheme_hook(
+    scrim: NodeId,
+    panel: NodeId,
+    headline: NodeId,
+    body: NodeId,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let role = |theme: &crate::window::ThemeState, name: &str, fallback: Color| -> Color {
+            if theme.is_set() {
+                theme.role(name).unwrap_or(fallback)
+            } else {
+                fallback
+            }
+        };
+        let scrim_color = role(theme, "scrim", Md3Baseline::SCRIM);
+        let panel_color = role(
+            theme,
+            "surface_container_high",
+            Md3Baseline::SURFACE_CONTAINER_HIGH,
+        );
+        let headline_color = theme.on_surface();
+        let body_color = role(theme, "on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT);
+        let corner_radius = theme.shape("dialog", None).unwrap_or(DIALOG_CORNER_RADIUS);
+        let elevation = theme.elevation("dialog", None).unwrap_or(DIALOG_ELEVATION);
+        if let Some(node) = tree.get_mut(scrim) {
+            node.paint.background = Animated::new(scrim_color);
+        }
+        if let Some(node) = tree.get_mut(panel) {
+            node.paint.background = Animated::new(panel_color);
+            node.paint.corner_radius = Animated::new(corner_radius);
+            node.paint.elevation = Animated::new(elevation);
+        }
+        if let Some(node) = tree.get_mut(headline) {
+            node.paint.background = Animated::new(headline_color);
+        }
+        if let Some(node) = tree.get_mut(body) {
+            node.paint.background = Animated::new(body_color);
+        }
+    })
+}
+
+/// M52 Phase 2: `add_loading_indicator`'s own hook -- only ever
+/// registered when the caller's own `color` argument was `None` (an
+/// explicit literal color always wins, forever, and was never theme-
+/// derived to begin with). Recomputes the identical `role("primary")`
+/// fallback `add_loading_indicator` itself used at construction time.
+/// Never touches `paint.shape` -- that field is the real, currently-
+/// animating MD3 morph target (`Tree::tick_all`'s own automatic
+/// advance), not something a retheme should ever clobber.
+fn loading_indicator_retheme_hook(id: NodeId) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let tint = if theme.is_set() {
+            theme.role("primary").unwrap_or(Md3Baseline::PRIMARY)
+        } else {
+            Md3Baseline::PRIMARY
+        };
+        if let Some(node) = tree.get_mut(id) {
+            node.paint.background = Animated::new(tint);
+        }
+    })
+}
+
 #[pymethods]
 impl PyWindow {
     /// §14 step 6's own "node creation" -- one shape (a colored rect, a
@@ -2654,6 +3282,16 @@ impl PyWindow {
             paint,
         );
         tree.add_child(self.root, id);
+        drop(tree);
+        // M52 Phase 2: only register a hook when `color` was omitted --
+        // an explicit literal color always wins, forever, and was never
+        // theme-derived in the first place, so there is nothing for a
+        // later `set_theme` to legitimately recompute.
+        if color.is_none() {
+            self.retheme_hooks
+                .borrow_mut()
+                .push(loading_indicator_retheme_hook(id));
+        }
         self.wrap_node(id)
     }
 
@@ -2756,6 +3394,10 @@ impl PyWindow {
             paint,
         );
         tree.add_child(self.root, id);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(card_retheme_hook(id, variant.to_string()));
         Ok(self.wrap_node(id))
     }
 
@@ -2799,6 +3441,10 @@ impl PyWindow {
             PaintProperties::new(color, 0.0, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(divider_retheme_hook(id));
         self.wrap_node(id)
     }
 
@@ -2868,6 +3514,10 @@ impl PyWindow {
             PaintProperties::new(Md3Baseline::INVERSE_ON_SURFACE, 0.0, 0.0, 1.0),
         );
         tree.add_child(container, label_id);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(tooltip_retheme_hook(container));
         self.wrap_node(container)
     }
 
@@ -3007,7 +3657,13 @@ impl PyWindow {
             PaintProperties::new(body_color, 0.0, 0.0, 1.0),
         );
         tree.add_child(panel, body_id);
-
+        drop(tree);
+        self.retheme_hooks.borrow_mut().push(dialog_retheme_hook(
+            scrim,
+            panel,
+            headline_id,
+            body_id,
+        ));
         self.wrap_node(scrim)
     }
 
@@ -4541,6 +5197,16 @@ impl PyWindow {
             PaintProperties::new(container_color, corner_radius, elevation, 1.0),
         );
         tree.add_child(self.root, bar);
+        drop(tree);
+        self.retheme_hooks.borrow_mut().push(toolbar_retheme_hook(
+            bar,
+            variant.to_string(),
+            color.map(str::to_string),
+            is_floating,
+            vertical,
+            width,
+            height,
+        ));
         Ok(self.wrap_node(bar))
     }
 
@@ -5325,6 +5991,10 @@ impl PyWindow {
             style,
             PaintProperties::new(container_color, corner_radius, elevation, 1.0),
         );
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(search_view_retheme_hook(id));
         self.wrap_node(id)
     }
 
@@ -5408,6 +6078,7 @@ impl PyWindow {
         );
 
         let mut side_width = 0.0_f32;
+        let mut leading_icon_id: Option<NodeId> = None;
         if let Some(path) = leading_path {
             side_width += MENU_ITEM_ICON_SIZE + MENU_ITEM_ICON_GAP;
             let icon_id = tree.insert(
@@ -5422,12 +6093,15 @@ impl PyWindow {
                 PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
             );
             tree.add_child(container, icon_id);
+            leading_icon_id = Some(icon_id);
         }
         if trailing_path.is_some() {
             side_width += MENU_ITEM_ICON_SIZE + MENU_ITEM_ICON_GAP;
         }
 
         let text_width = (width - 2.0 * MENU_ITEM_LEADING_SPACE - side_width).max(0.0);
+        let headline_node_id;
+        let mut supporting_node_id: Option<NodeId> = None;
         if let Some(supporting) = supporting_text {
             let text_block = tree.insert(
                 NodeKind::Container,
@@ -5483,6 +6157,8 @@ impl PyWindow {
             );
             tree.add_child(text_block, supporting_id);
             tree.add_child(container, text_block);
+            headline_node_id = headline_id;
+            supporting_node_id = Some(supporting_id);
         } else {
             let headline_id = tree.insert(
                 NodeKind::Text(TextState {
@@ -5502,8 +6178,10 @@ impl PyWindow {
                 PaintProperties::new(headline_color, 0.0, 0.0, 1.0),
             );
             tree.add_child(container, headline_id);
+            headline_node_id = headline_id;
         }
 
+        let mut trailing_icon_id: Option<NodeId> = None;
         if let Some(path) = trailing_path {
             let icon_id = tree.insert(
                 NodeKind::Icon(IconState::new(path, icon_color)),
@@ -5517,9 +6195,17 @@ impl PyWindow {
                 PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
             );
             tree.add_child(container, icon_id);
+            trailing_icon_id = Some(icon_id);
         }
 
         tree.add_child(self.root, container);
+        drop(tree);
+        self.retheme_hooks.borrow_mut().push(list_item_retheme_hook(
+            headline_node_id,
+            supporting_node_id,
+            leading_icon_id,
+            trailing_icon_id,
+        ));
         Ok(self.wrap_node(container))
     }
 
@@ -5705,6 +6391,10 @@ impl PyWindow {
         tree.add_child(header, chevron);
 
         tree.add_child(self.root, header);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(accordion_header_retheme_hook(headline_id, chevron));
         Ok((self.wrap_node(header), self.wrap_node(chevron)))
     }
 
@@ -5794,6 +6484,7 @@ impl PyWindow {
         let headline_width =
             (width - leading_padding - MENU_ITEM_LEADING_SPACE - chevron_reserved).max(0.0);
 
+        let mut chevron_id: Option<NodeId> = None;
         let chevron = if let Some(path) = chevron_path {
             let mut chevron_paint = PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0);
             if expanded {
@@ -5811,6 +6502,7 @@ impl PyWindow {
                 chevron_paint,
             );
             tree.add_child(header, id);
+            chevron_id = Some(id);
             Some(self.wrap_node(id))
         } else {
             None
@@ -5837,6 +6529,10 @@ impl PyWindow {
         tree.add_child(header, headline_id);
 
         tree.add_child(self.root, header);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(tree_node_retheme_hook(headline_id, chevron_id));
         Ok((self.wrap_node(header), chevron))
     }
 
@@ -5933,6 +6629,16 @@ impl PyWindow {
         tree.add_child(cell, label_id);
 
         tree.add_child(self.root, cell);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(date_picker_day_retheme_hook(
+                cell,
+                label_id,
+                selected,
+                today,
+                outside_month,
+            ));
         self.wrap_node(cell)
     }
 
@@ -6001,6 +6707,10 @@ impl PyWindow {
             AccessNodeData::new(Role::TextInput).with_action(Action::Focus),
         );
         tree.add_child(self.root, id);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(time_input_field_retheme_hook(id));
         self.wrap_node(id)
     }
 
@@ -6102,11 +6812,22 @@ impl PyWindow {
             );
             tree.add_child(option, label_id);
             tree.add_child(self.root, option);
-            option
+            (option, label_id)
         };
 
-        let am = build_option("AM", selected == "AM", 0.0);
-        let pm = build_option("PM", selected == "PM", PERIOD_OPTION_HEIGHT);
+        let (am, am_label) = build_option("AM", selected == "AM", 0.0);
+        let (pm, pm_label) = build_option("PM", selected == "PM", PERIOD_OPTION_HEIGHT);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(period_selector_retheme_hook(
+                am,
+                am_label,
+                selected == "AM",
+                pm,
+                pm_label,
+                selected == "PM",
+            ));
 
         Ok((self.wrap_node(am), self.wrap_node(pm)))
     }
@@ -6230,7 +6951,10 @@ impl PyWindow {
             PaintProperties::new(body_color, 0.0, 0.0, 1.0),
         );
         tree.add_child(panel, body_id);
-
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(popover_retheme_hook(panel, subhead_id, body_id));
         self.wrap_node(panel)
     }
 
@@ -6271,6 +6995,8 @@ impl PyWindow {
             PaintProperties::new(color, 0.0, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
+        drop(tree);
+        self.retheme_hooks.borrow_mut().push(link_retheme_hook(id));
         self.wrap_node(id)
     }
 
@@ -6373,11 +7099,11 @@ impl PyWindow {
             );
             tree.add_child(button, icon_id);
             tree.add_child(self.root, button);
-            button
+            (button, icon_id)
         };
 
-        let decrement = build_icon_button(minus_path, 0.0);
-        let increment = build_icon_button(
+        let (decrement, decrement_icon) = build_icon_button(minus_path, 0.0);
+        let (increment, increment_icon) = build_icon_button(
             plus_path,
             SPIN_BOX_BUTTON_SIZE + SPIN_BOX_GAP + SPIN_BOX_FIELD_WIDTH + SPIN_BOX_GAP,
         );
@@ -6410,6 +7136,14 @@ impl PyWindow {
             AccessNodeData::new(Role::TextInput).with_action(Action::Focus),
         );
         tree.add_child(self.root, field);
+        drop(tree);
+        self.retheme_hooks.borrow_mut().push(spin_box_retheme_hook(
+            field,
+            decrement,
+            decrement_icon,
+            increment,
+            increment_icon,
+        ));
 
         Ok((
             self.wrap_node(field),
@@ -6675,6 +7409,10 @@ impl PyWindow {
         tree.add_child(bar, label_id);
 
         tree.add_child(self.root, bar);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(status_bar_retheme_hook(bar, label_id));
         self.wrap_node(bar)
     }
 
@@ -7080,6 +7818,10 @@ impl PyWindow {
             PaintProperties::new(container_color, 0.0, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(node_graph_retheme_hook(id));
         self.wrap_node(id)
     }
 
@@ -7278,6 +8020,10 @@ impl PyWindow {
         tree.add_child(wrapper, label_id);
 
         tree.add_child(graph.id, wrapper);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(graph_node_retheme_hook(wrapper, title_bar, label_id));
         Ok(self.wrap_node(wrapper))
     }
 

@@ -894,3 +894,134 @@ def test_window_set_theme_removed_buttons_hook_is_a_safe_no_op(tmp_path):
     # removed is a safe no-op (Tree::get_mut -> None), the same accepted
     # tradeoff handlers/materializers/context_menus already have.
     window.set_theme(seed=(0x00, 0x66, 0x00, 0xFF))
+
+
+# --- M52 Phase 2: live re-theme -- the 19 fixed/simple factories -------
+# For each factory M50 already proved a construction-time corner_radius/
+# elevation value for, a second window.set_theme(...) call with a
+# different components: override must change that same, already-built
+# Node's value live. Factories with only a themed color (no Python-
+# readable field) get a "does not raise" proof, the same honest limit
+# this suite has carried since M44.
+
+
+def retheme(window, tmp_path, name, components_yaml, seed=(0x67, 0x50, 0xA4, 0xFF)):
+    theme_path = write_yaml(tmp_path, name, f"components:\n{components_yaml}")
+    window.set_theme(seed=seed, custom_theme=theme_path)
+
+
+def test_window_set_theme_recomputes_an_already_built_cards_shape_live(tmp_path):
+    window = Window(width=400, height=400)
+    node = window.add_card(width=200.0, height=100.0, variant="elevated")
+    assert node.get("corner_radius") == pytest.approx(12.0)
+    # Real finding, not assumed: the shipped default_theme.yaml already
+    # sets card.elevated: {elevation: 1} -- a bare "card" override for
+    # elevation would never reach the "elevated" variant, since the
+    # 2-tier lookup checks the variant-specific key first regardless of
+    # which theme layer set it. Overriding "card.elevated" explicitly,
+    # matching this suite's own established M50 test convention.
+    retheme(
+        window, tmp_path, "t.yaml", "  card: {corner_radius: 20}\n  card.elevated: {elevation: 9}\n"
+    )
+    assert node.get("corner_radius") == pytest.approx(20.0)
+    assert node.get("elevation") == pytest.approx(9.0)
+
+
+def test_window_set_theme_recomputes_an_already_built_tooltips_corner_radius_live(tmp_path):
+    window = Window(width=400, height=400)
+    node = window.add_tooltip(text="hi", width=100.0)
+    retheme(window, tmp_path, "t.yaml", "  tooltip: {corner_radius: 1}\n")
+    assert node.get("corner_radius") == pytest.approx(1.0)
+
+
+def test_window_set_theme_a_second_call_does_not_raise_for_an_already_built_dialog(tmp_path):
+    window = Window(width=400, height=400)
+    window.add_dialog(headline="hi", text="body", width=280.0, height=180.0)
+    retheme(window, tmp_path, "t.yaml", "  dialog: {corner_radius: 10, elevation: 6}\n")
+
+
+def test_window_set_theme_recomputes_an_already_built_popovers_shape_live(tmp_path):
+    window = Window(width=400, height=400)
+    node = window.add_popover(subhead="hi", text="body", width=280.0, height=140.0)
+    retheme(window, tmp_path, "t.yaml", "  popover: {corner_radius: 8, elevation: 5}\n")
+    assert node.get("corner_radius") == pytest.approx(8.0)
+    assert node.get("elevation") == pytest.approx(5.0)
+
+
+def test_window_set_theme_recomputes_an_already_built_search_views_shape_live(tmp_path):
+    window = Window(width=400, height=400)
+    node = window.add_search_view(width=300.0, height=400.0)
+    retheme(window, tmp_path, "t.yaml", "  search_view: {corner_radius: 7, elevation: 2}\n")
+    assert node.get("corner_radius") == pytest.approx(7.0)
+    assert node.get("elevation") == pytest.approx(2.0)
+
+
+def test_window_set_theme_recomputes_an_already_built_date_picker_days_shape_live(tmp_path):
+    window = Window(width=400, height=400)
+    node = window.add_date_picker_day(day=5, selected=False, today=False, outside_month=False)
+    retheme(window, tmp_path, "t.yaml", "  date_picker_day: {corner_radius: 3}\n")
+    assert node.get("corner_radius") == pytest.approx(3.0)
+
+
+def test_window_set_theme_recomputes_an_already_built_time_input_fields_shape_live(tmp_path):
+    window = Window(width=400, height=400)
+    node = window.add_time_input_field(value="12")
+    retheme(window, tmp_path, "t.yaml", "  time_input_field: {corner_radius: 9}\n")
+    assert node.get("corner_radius") == pytest.approx(9.0)
+
+
+def test_window_set_theme_recomputes_an_already_built_period_selectors_shape_live(tmp_path):
+    window = Window(width=400, height=400)
+    am, pm = window.add_period_selector(selected="AM")
+    retheme(window, tmp_path, "t.yaml", "  period_selector: {corner_radius: 11}\n")
+    assert am.get("corner_radius") == pytest.approx(11.0)
+    assert pm.get("corner_radius") == pytest.approx(11.0)
+
+
+def test_window_set_theme_recomputes_an_already_built_spin_boxs_shape_live(tmp_path):
+    window = Window(width=400, height=400)
+    field, decrement, increment = window.add_spin_box(value="1")
+    retheme(
+        window,
+        tmp_path,
+        "t.yaml",
+        "  spin_box: {corner_radius: 13}\n  icon_button: {corner_radius: 6}\n",
+    )
+    assert field.get("corner_radius") == pytest.approx(13.0)
+    assert decrement.get("corner_radius") == pytest.approx(6.0)
+    assert increment.get("corner_radius") == pytest.approx(6.0)
+
+
+def test_window_set_theme_recomputes_an_already_built_graph_nodes_shape_live(tmp_path):
+    window = Window(width=400, height=400)
+    graph = window.add_node_graph(width=400.0, height=300.0)
+    node = window.add_graph_node(graph=graph, label="hi", x=0.0, y=0.0, width=120.0, height=80.0)
+    retheme(window, tmp_path, "t.yaml", "  graph_node: {corner_radius: 15}\n")
+    assert node.get("corner_radius") == pytest.approx(15.0)
+
+
+def test_window_set_theme_recomputes_an_already_built_toolbars_shape_live(tmp_path):
+    window = Window(width=400, height=400)
+    node = window.add_toolbar(variant="floating", width=200.0, height=64.0)
+    retheme(window, tmp_path, "t.yaml", "  toolbar.floating: {corner_radius: 17, elevation: 1}\n")
+    assert node.get("corner_radius") == pytest.approx(17.0)
+    assert node.get("elevation") == pytest.approx(1.0)
+
+
+def test_window_set_theme_a_second_call_does_not_raise_for_every_remaining_color_only_factory(
+    tmp_path,
+):
+    # add_divider/add_status_bar/add_link/add_accordion_header/add_
+    # tree_node/add_list_item/add_loading_indicator have no theme-driven
+    # shape/elevation and no Python-facing color getter -- proven here
+    # by not raising across a real second set_theme() call, on every
+    # already-built node at once.
+    window = Window(width=400, height=400)
+    window.add_divider(length=100.0)
+    window.add_status_bar(text="hi")
+    window.add_link(text="hi", width=100.0)
+    window.add_accordion_header(title="hi", expanded=False, width=200.0)
+    window.add_tree_node(title="hi", depth=0, expanded=False, leaf=False, width=200.0)
+    window.add_list_item(headline="hi", width=280.0)
+    window.add_loading_indicator()
+    window.set_theme(seed=(0x00, 0x66, 0x00, 0xFF))
