@@ -1141,14 +1141,29 @@ impl App {
                         // fabricated.
                         run_dispatch_outcome(&handlers, &tree_rc, &outcome, None, py);
                     }
+                    // M55 (§10, §16.2): parity with `Action::Click`
+                    // just above -- a screen-reader-driven focus
+                    // change is a real, equally legitimate way focus
+                    // changes, so a registered `FocusEnter`/
+                    // `FocusExit` handler fires the same way it does
+                    // for real mouse/keyboard focus changes. Never
+                    // reaches `Tree::dispatch`/`run_dispatch_outcome`
+                    // at all (this calls `set_focus_to` directly, the
+                    // one real non-`dispatch()` mutation path), so
+                    // `fire_focus_transition` is called directly here
+                    // instead.
                     engine_core::Action::Focus => {
                         let config = interaction_config();
-                        tree.set_focus_to(
+                        let transition = tree.set_focus_to(
                             node,
                             config.focus_ring_opacity,
                             config.focus_ring_duration,
                             Instant::now(),
                         );
+                        drop(tree);
+                        if let Some((old, new)) = transition {
+                            crate::dispatch::fire_focus_transition(&handlers, old, new, py);
+                        }
                     }
                     // No other accesskit action has real dispatch
                     // meaning yet (§14 step 7's own original minimal

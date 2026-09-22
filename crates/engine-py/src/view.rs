@@ -627,6 +627,11 @@ pub(crate) fn attach_bindings_and_handlers(
             // the same way every other real event kind here already
             // is.
             "on_change" => Some(EventKind::Change),
+            // M55 (§10, §16.2): the real handler-name counterpart to
+            // `EventKind::FocusEnter`/`FocusExit` -- the same real
+            // extension pattern `on_change` already established.
+            "on_focus_enter" => Some(EventKind::FocusEnter),
+            "on_focus_exit" => Some(EventKind::FocusExit),
             _ => None,
         };
         if let Some(kind) = kind {
@@ -655,6 +660,8 @@ pub(crate) fn attach_bindings_and_handlers(
                 EventKind::HoverEnter => node.set_on_hover_enter(attr.unbind(), py),
                 EventKind::HoverExit => node.set_on_hover_exit(attr.unbind(), py),
                 EventKind::Change => node.set_on_change(attr.unbind(), py),
+                EventKind::FocusEnter => node.set_on_focus_enter(attr.unbind(), py),
+                EventKind::FocusExit => node.set_on_focus_exit(attr.unbind(), py),
             }?;
         }
     }
@@ -1306,6 +1313,24 @@ impl View {
         run_dispatch_outcome(&self.handlers, &self.tree, &outcome, Some(&event), py);
     }
 
+    /// M55 (§10, §16.2): `Window.focus`'s own real `View` sibling,
+    /// mirroring it exactly -- no real `InputEvent` for "focus this
+    /// specific node" exists, so this calls `Tree::set_focus_to`
+    /// directly and fires the transition via the shared `dispatch::
+    /// fire_focus_transition`.
+    fn focus(&self, node: PyRef<'_, Node>, py: Python<'_>) {
+        let config = interaction_config();
+        let transition = self.tree.borrow_mut().set_focus_to(
+            node.id,
+            config.focus_ring_opacity,
+            config.focus_ring_duration,
+            std::time::Instant::now(),
+        );
+        if let Some((old, new)) = transition {
+            crate::dispatch::fire_focus_transition(&self.handlers, old, new, py);
+        }
+    }
+
     /// M4 Phase 7 (§11.3): `click()`'s own secondary-button (right-click)
     /// counterpart, mirroring `Window.right_click` exactly.
     fn right_click(&self, node: PyRef<'_, Node>, py: Python<'_>) {
@@ -1314,15 +1339,22 @@ impl View {
 
         let now = std::time::Instant::now();
         let config = interaction_config();
-        self.tree.borrow_mut().dispatch(
-            root,
-            InputEvent::PointerPressed {
-                position: point,
-                button: PointerButton::Secondary,
-            },
-            &config,
-            now,
-        );
+        // M55 (§10, §16.2): a real gap found while scoping `Focus`
+        // events -- this press's own outcome used to be discarded
+        // with no variable at all, so a real right-click-to-focus
+        // (M53) on `TextField`/`Terminal` was structurally
+        // unobservable from this entry point. Captured and forwarded
+        // now, the same way every other real dispatch call site
+        // already does.
+        let press_event = InputEvent::PointerPressed {
+            position: point,
+            button: PointerButton::Secondary,
+        };
+        let press = self
+            .tree
+            .borrow_mut()
+            .dispatch(root, press_event.clone(), &config, now);
+        run_dispatch_outcome(&self.handlers, &self.tree, &press, Some(&press_event), py);
         let release_event = InputEvent::PointerReleased {
             position: point,
             button: PointerButton::Secondary,

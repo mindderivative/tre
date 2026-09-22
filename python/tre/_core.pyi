@@ -46,19 +46,26 @@ Color = tuple[int, int, int, int]
 
 class Event:
     """The real payload a `Node.set_on_click`/`set_on_hover_enter`/
-    `set_on_hover_exit`/`set_on_change` handler receives when it
-    declares one parameter (M54 Phase 2, §8, §16.2) -- never
-    constructed directly, always built and handed in by the engine.
-    Every field beyond `kind`/`source` is `None` when this event's own
-    real kind has nothing to say about it (never fabricated): a real
-    keyboard `Enter`/`Space` `"click"` has `position`/`button` both
-    `None`; `"hover_enter"`/`"hover_exit"` never carry `button`/
-    `old_value`/`new_value`; `"change"` never carries `position`/
-    `button`.
+    `set_on_hover_exit`/`set_on_change`/`set_on_focus_enter`/`set_on_
+    focus_exit` handler receives when it declares one parameter (M54
+    Phase 2, M55, §8, §10, §16.2) -- never constructed directly, always
+    built and handed in by the engine. Every field beyond `kind`/
+    `source` is `None` when this event's own real kind has nothing to
+    say about it (never fabricated): a real keyboard `Enter`/`Space`
+    `"click"` has `position`/`button` both `None`; `"hover_enter"`/
+    `"hover_exit"` never carry `button`/`old_value`/`new_value`;
+    `"change"` never carries `position`/`button`; `"focus_enter"`/
+    `"focus_exit"` never carry any of `position`/`button`/`old_value`/
+    `new_value` at all (a focus change, unlike a click/hover, never has
+    a real pointer position -- Tab navigation, an explicit `Window.
+    focus()`/`View.focus()` call, and AccessKit's own `Action::Focus`
+    are all equally real, equally position-less sources).
     """
 
     kind: str
-    """One of `"click"`, `"hover_enter"`, `"hover_exit"`, `"change"`."""
+    """One of `"click"`, `"hover_enter"`, `"hover_exit"`, `"change"`,
+    `"focus_enter"`, `"focus_exit"`.
+    """
     source: int
     """A stable, opaque integer identity for the node this event fired
     on -- not a `Node` handle (deliberately deferred, M54 scoping); a
@@ -159,6 +166,24 @@ class Node:
         `callback` may take zero arguments, or one -- a real `Event`
         (M54 Phase 2) with `event.old_value`/`event.new_value` set to
         this edit's own real before/after values.
+        """
+        ...
+    def set_on_focus_enter(
+        self, callback: Callable[[], object] | Callable[[Event], object]
+    ) -> None:
+        """Fires when this node becomes the keyboard-focused node --
+        real click-to-focus, Tab/Shift-Tab navigation, a real `Window.
+        focus()`/`View.focus()` call, or a real AccessKit `Action::
+        Focus` request (M55). `callback` may take zero arguments, or
+        one -- a real `Event` with `position`/`button`/`old_value`/
+        `new_value` all `None` (a focus change carries none of those).
+        """
+        ...
+    def set_on_focus_exit(
+        self, callback: Callable[[], object] | Callable[[Event], object]
+    ) -> None:
+        """`set_on_focus_enter`'s own real counterpart, same `Event`
+        contract.
         """
         ...
     def set_context_menu(self, content: Node) -> None:
@@ -1529,6 +1554,14 @@ class Window:
         point, firing hover-enter/exit exactly like a real mouse would.
         """
         ...
+    def focus(self, node: Node) -> None:
+        """Directly focuses `node` (M55) -- no real `InputEvent`
+        represents "focus this specific node," so this calls the same
+        real mechanism click-to-focus/Tab navigation/AccessKit's own
+        `Action::Focus` all use, firing a registered `FocusEnter`/
+        `FocusExit` handler exactly like any of those would.
+        """
+        ...
     def resize(self, width: int, height: int) -> None:
         """A direct, programmatic "resize this window" entry point --
         the same no-live-window-needed pattern `click`/`hover` use.
@@ -1812,6 +1845,7 @@ class View:
         ...
     def click(self, node: Node) -> None: ...
     def hover(self, node: Node) -> None: ...
+    def focus(self, node: Node) -> None: ...
     def right_click(self, node: Node) -> None: ...
 
 class Component:

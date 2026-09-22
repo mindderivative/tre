@@ -391,12 +391,51 @@ pub(crate) fn run_dispatch_outcome(
                 Ok(Event::change(node, old, new))
             });
         }
+        // M55 (§10, §16.2): a real click-to-focus or Tab-navigation
+        // transition `Tree::dispatch` itself detected -- reuses the
+        // shared `fire_focus_transition` (below), the identical real
+        // implementation AccessKit's own `Action::Focus` handling
+        // (`app.rs`) calls directly, since that path never reaches
+        // `Tree::dispatch`/this function at all.
+        DispatchOutcome::FocusChanged { old, new } => {
+            fire_focus_transition(handlers, *old, *new, py);
+        }
         // M4 Phase 7 (§11.3): `SecondaryActivated`'s real meaning is a
         // context menu, handled by `open_context_menu` below -- a
         // separate function, not a new match arm here, since it needs
         // `&mut Tree` access this function's callback-only signature
         // doesn't carry.
         DispatchOutcome::SecondaryActivated(_) | DispatchOutcome::None => {}
+    }
+}
+
+/// M55 (§10, §16.2): the real `FocusEnter`/`FocusExit` firing logic,
+/// shared by two real callers -- `run_dispatch_outcome`'s own
+/// `FocusChanged` arm above (real click-to-focus/Tab navigation,
+/// reached through `Tree::dispatch`) and `app.rs`'s real AccessKit
+/// `Action::Focus` handling (which calls `Tree::set_focus_to` directly,
+/// never through `dispatch()`, so it can't reach this via `run_
+/// dispatch_outcome` at all). Mirrors `HoverChanged`'s own real
+/// two-single-source-`call_handler`-calls shape exactly: the old node's
+/// own registered `FocusExit` handler, if any, then the new node's own
+/// registered `FocusEnter` handler, if any -- never one event with two
+/// sources, the same real reason `HandlerMap`'s per-node key forced a
+/// kind *pair* in the first place.
+pub(crate) fn fire_focus_transition(
+    handlers: &HandlerMap,
+    old: Option<NodeId>,
+    new: Option<NodeId>,
+    py: Python<'_>,
+) {
+    if let Some(old) = old {
+        call_handler(handlers, old, EventKind::FocusExit, py, |_py| {
+            Ok(Event::focus_transition(EventKind::FocusExit, old))
+        });
+    }
+    if let Some(new) = new {
+        call_handler(handlers, new, EventKind::FocusEnter, py, |_py| {
+            Ok(Event::focus_transition(EventKind::FocusEnter, new))
+        });
     }
 }
 

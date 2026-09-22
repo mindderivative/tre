@@ -507,6 +507,32 @@ impl Node {
         )
     }
 
+    /// M55 (§10, §16.2): registers `callback` to run when this node
+    /// becomes the keyboard-focused node -- real click-to-focus,
+    /// Tab/Shift-Tab navigation, a real `Window.focus()`/`View.focus()`
+    /// call, or a real AccessKit `Action::Focus` request, all firing
+    /// through `dispatch::fire_focus_transition`, the same shared
+    /// mechanism regardless of which real source caused it.
+    pub(crate) fn set_on_focus_enter(&self, callback: Py<PyAny>, py: Python<'_>) -> PyResult<()> {
+        crate::dispatch::register_handler(
+            &self.handlers,
+            (self.id, EventKind::FocusEnter),
+            callback,
+            py,
+        )
+    }
+
+    /// The `FocusExit` counterpart to `set_on_focus_enter` -- fired
+    /// when this node stops being the focused node.
+    pub(crate) fn set_on_focus_exit(&self, callback: Py<PyAny>, py: Python<'_>) -> PyResult<()> {
+        crate::dispatch::register_handler(
+            &self.handlers,
+            (self.id, EventKind::FocusExit),
+            callback,
+            py,
+        )
+    }
+
     /// M4 Phase 7 (§11.3): registers `content` as this node's real
     /// right-click context menu -- opened for real by
     /// `dispatch::open_context_menu` on a `DispatchOutcome::

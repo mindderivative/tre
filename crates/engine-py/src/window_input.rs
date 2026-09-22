@@ -204,6 +204,33 @@ impl PyWindow {
         run_dispatch_outcome(&handlers, &tree, &outcome, Some(&event), py);
     }
 
+    /// M55 (§10, §16.2): `click`/`hover`'s own real `Focus` sibling --
+    /// the same no-live-window-needed proof pattern, and the real way
+    /// to test `FocusEnter`/`FocusExit` without relying on Tab-order or
+    /// click-to-focus side effects. Unlike `click`/`hover`, there's no
+    /// real `InputEvent` for "focus this specific node" (the same
+    /// reason AccessKit's own `Action::Focus` handling calls `Tree::
+    /// set_focus_to` directly too, `app.rs`) -- calls it directly here
+    /// and fires the transition via the shared `dispatch::fire_focus_
+    /// transition`, the identical real mechanism `run_dispatch_outcome`
+    /// 's own `FocusChanged` arm uses.
+    fn focus(&self, node: PyRef<'_, Node>, py: Python<'_>) {
+        let (tree, handlers) = {
+            let active = self.active.borrow();
+            (active.tree.clone(), active.handlers.clone())
+        };
+        let config = interaction_config();
+        let transition = tree.borrow_mut().set_focus_to(
+            node.id,
+            config.focus_ring_opacity,
+            config.focus_ring_duration,
+            std::time::Instant::now(),
+        );
+        if let Some((old, new)) = transition {
+            crate::dispatch::fire_focus_transition(&handlers, old, new, py);
+        }
+    }
+
     /// M32 Phase 2 (§4, §5): a direct, programmatic "resize this
     /// window" entry point -- the same no-live-window-needed proof
     /// pattern `click`/`hover` already establish (a real resize has
@@ -341,15 +368,21 @@ impl PyWindow {
 
         let now = std::time::Instant::now();
         let config = interaction_config();
-        tree.borrow_mut().dispatch(
-            root,
-            InputEvent::PointerPressed {
-                position: point,
-                button: PointerButton::Secondary,
-            },
-            &config,
-            now,
-        );
+        // M55 (§10, §16.2): a real gap found while scoping `Focus`
+        // events -- this press's own outcome used to be discarded
+        // with no variable at all, so a real right-click-to-focus
+        // (M53) on `TextField`/`Terminal` was structurally
+        // unobservable from this entry point. Captured and forwarded
+        // now, the same way every other real dispatch call site
+        // already does.
+        let press_event = InputEvent::PointerPressed {
+            position: point,
+            button: PointerButton::Secondary,
+        };
+        let press = tree
+            .borrow_mut()
+            .dispatch(root, press_event.clone(), &config, now);
+        run_dispatch_outcome(&handlers, &tree, &press, Some(&press_event), py);
         let release_event = InputEvent::PointerReleased {
             position: point,
             button: PointerButton::Secondary,

@@ -35,6 +35,8 @@ fn kind_name(kind: EventKind) -> &'static str {
         EventKind::HoverEnter => "hover_enter",
         EventKind::HoverExit => "hover_exit",
         EventKind::Change => "change",
+        EventKind::FocusEnter => "focus_enter",
+        EventKind::FocusExit => "focus_exit",
     }
 }
 
@@ -139,6 +141,26 @@ impl Event {
             button: None,
             old_value,
             new_value,
+        }
+    }
+
+    /// M55 (§10, §16.2): `Event::hover`'s own real `Focus` sibling --
+    /// mirrors its exact shape, but `position` stays `None`: unlike a
+    /// hover transition (always produced by a real `PointerMoved`), a
+    /// focus transition can come from a real keyboard Tab press, a
+    /// real AccessKit `Action::Focus` request, or a real `Node.focus()`
+    /// call, none of which carry a pointer position at all -- `None`
+    /// rather than fabricating one for the one real case (click-to-
+    /// focus) that happens to have one.
+    pub(crate) fn focus_transition(kind: EventKind, node: engine_core::NodeId) -> Self {
+        debug_assert!(matches!(kind, EventKind::FocusEnter | EventKind::FocusExit));
+        Self {
+            kind: kind_name(kind).to_string(),
+            source: node_id_as_u64(node),
+            position: None,
+            button: None,
+            old_value: None,
+            new_value: None,
         }
     }
 }

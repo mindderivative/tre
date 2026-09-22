@@ -63,13 +63,106 @@
   /`event.rs`'s own exhaustive matches on the now-widened
   `DispatchOutcome`/`EventKind`) -- exactly Phase 2's own scope.
 
+## Phase 2 — `engine-py`: `Event` Wiring + `Window.focus`/`View.focus`
+
+- `Event::focus_transition(kind, node)` (`event.rs`): mirrors `Event::
+  hover` exactly, but `position` stays `None` -- a focus transition,
+  unlike hover, never carries a real pointer position regardless of
+  which of its several real sources (click, Tab, explicit `focus()`,
+  AccessKit) caused it. `kind_name` widened for the two new variants.
+- `run_dispatch_outcome`'s new `FocusChanged` arm delegates to a new
+  `pub(crate) fn fire_focus_transition(handlers, old, new, py)`
+  (`dispatch.rs`) -- factored out specifically because it has a
+  *second* real caller: AccessKit's own `Action::Focus` handling
+  (`app.rs`), which calls `Tree::set_focus_to` directly and never
+  reaches `Tree::dispatch`/`run_dispatch_outcome` at all. One real
+  implementation, two real callers, mirroring `HoverChanged`'s own
+  two-single-source-`call_handler`-calls shape.
+- `app.rs`'s `Action::Focus` handling captures `tree.set_focus_to`'s
+  now-widened return and calls `fire_focus_transition` -- parity with
+  `Action::Click`'s own existing treatment immediately above it.
+- `Node.set_on_focus_enter`/`set_on_focus_exit` (`node.rs`), mirroring
+  `set_on_hover_enter`/`exit` exactly, through the same `dispatch::
+  register_handler` arity-sniff. `view.rs`'s declarative handler-name
+  mapping widened with `on_focus_enter:`/`on_focus_exit:`, the same
+  extension `on_change` already established.
+- **Real, found-while-implementing correction to the approved plan's
+  own original phrasing:** the plan said "`Node.focus()`/`Window.
+  focus(node)`" -- implementing it found that `Node` has zero existing
+  self-dispatching methods anywhere (confirmed via grep); `click`/
+  `hover`/`right_click` all live exclusively on `Window`/`View`, taking
+  a `node: PyRef<'_, Node>` argument. Landed as `Window.focus(node)`/
+  `View.focus(node)` instead, matching that real, established
+  convention rather than breaking it. Both call `Tree::set_focus_to`
+  directly (no real `InputEvent` represents "focus this specific
+  node," the identical real reason AccessKit's own path does the same)
+  and fire the transition via the shared `fire_focus_transition`.
+- Fixed a real, pre-existing gap Phase 1's own investigation found:
+  `Window.right_click`/`View.right_click`'s own `PointerPressed`
+  dispatch used to discard its outcome with no variable binding at all
+  -- captured and forwarded now, through `run_dispatch_outcome` like
+  every other real dispatch call site already does. A real right-
+  click-to-focus (M53) on `TextField`/`Terminal` is now genuinely
+  observable from both entry points for the first time.
+- Full chain green: `cargo check`/`clippy -D warnings`/`fmt --check`
+  clean across the whole workspace, first attempt; `cargo test
+  --workspace --release` (unchanged). `maturin develop --release`; a
+  standalone smoke script confirmed every real path end to end before
+  writing formal tests: click-to-focus, `Window.focus()`, backward-
+  compat zero-arg handlers, and the newly-fixed right-click-to-focus
+  observability. `pytest tests/` (767 passed, 2 skipped -- unchanged
+  from before this phase).
+
+## Phase 3 — Python-Facing API, Tests, Example, Docs
+
+- `python/tre/_core.pyi`: new `set_on_focus_enter`/`set_on_focus_exit`
+  stubs on `Node`, mirroring `set_on_hover_enter`/`exit`; new `focus
+  (node)` stubs on `Window`/`View`, mirroring `hover(node)`; `Event`'s
+  own class doc and `kind` field widened to name `"focus_enter"`/
+  `"focus_exit"`.
+- 9 new pytest tests (`tests/test_focus_events.py`): `Window.focus()`
+  gives a one-arg handler a real `Event` with every other field
+  `None`; focus-exit fires when focus moves to a sibling; focusing an
+  unregistered/already-focused node is a safe no-op with no stale
+  repeat; real click-to-focus *and* the newly-fixed real right-click-
+  to-focus on a `TextField` both fire `FocusEnter`; real Tab
+  navigation fires it; `View.focus()`'s own declarative `on_focus_
+  enter:` wiring actually invokes the bound `ViewModel` method; an
+  uncaught exception in a focus handler is caught, logged, and
+  non-fatal.
+- AccessKit's own `Action::Focus` wiring verified by code review and
+  parity with `Action::Click`'s identical, equally untestable-in-this-
+  environment pattern -- no live AT-SPI/UIA/NSAccessibility client
+  exists in this dev/CI environment, and no existing pytest harness
+  exercises `Action::Click` either, confirmed via grep before
+  concluding this rather than assumed.
+- New `examples/focus_events.py`: a real, live window demonstrating
+  `FocusEnter`/`FocusExit` on two `TextField`s via explicit `Window.
+  focus()`, real click-to-focus, the newly-fixed real right-click-to-
+  focus, and real Tab navigation, side by side with both zero-argument
+  and one-argument handlers.
+- `BUILD_TRACKER.md`: Phase 2 and Phase 3 sections added, milestone
+  marked ✅ complete, Top Metrics updated to 100%. Regenerated: 55
+  milestones/165 phases/306 items/1 known gap/20 fixed gaps. Artifact
+  republished.
+- Full chain green: `cargo check`/`clippy -D warnings`/`fmt --check`
+  clean (no Rust changes this phase); `cargo test --workspace
+  --release` (unchanged). `maturin develop --release`; `pytest tests/`
+  (776 passed, up from 767, +9, 2 skipped unchanged); all 87 examples
+  (+1, zero failures); `demo/showcase.py` (all 5 phases, exit 0).
+
 ## Status
 
-**M55 Phase 1 of 3 is complete.** The real mechanical half -- a click-
-to-focus or Tab-navigation transition genuinely producing a real,
-observable outcome instead of being silently discarded -- is proven.
-Committing locally now. Up next: Phase 2, the `engine-py` side --
-`Event::focus_transition`, `FocusEnter`/`FocusExit` registration
-methods, the AccessKit `Action::Focus` wiring, `Node.focus()`/
-`Window.focus()`, and fixing the two right-click call sites that
-currently discard their own dispatch outcome.
+**M55 is complete -- all 3 phases.** The real capability gap this
+milestone exists to close -- keyboard focus genuinely changing with
+no way for a registered handler to know -- is closed, with zero
+breaking changes to any of the 767 pre-existing tests or 86 pre-
+existing examples. Two real, found-while-implementing corrections to
+the approved plan (documented honestly, not glossed over): the new
+synthetic focus entry point landed as `Window.focus`/`View.focus`, not
+`Node.focus()`, once the established convention was confirmed; and a
+real, pre-existing gap in both `right_click` implementations (a
+discarded dispatch outcome) was found and fixed along the way, not
+just the new `Focus` mechanism added around it. Committing locally
+now; push deferred pending explicit user confirmation, per this
+session's own established convention.
