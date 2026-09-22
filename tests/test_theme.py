@@ -1128,3 +1128,101 @@ def test_window_set_theme_recomputes_an_already_built_button_groups_children_sha
     retheme(window, tmp_path, "t.yaml", "  button.outlined: {corner_radius: 6}\n")
     for child in children:
         assert child.get("corner_radius") == pytest.approx(6.0)
+
+
+# --- M52 Phase 4: live re-theme -- Containers & Navigation --------------
+# For each factory M50 already proved a construction-time corner_radius/
+# elevation value for, a second window.set_theme(...) call with a
+# different components: override must change that same, already-built
+# Node's value live.
+
+
+def test_window_set_theme_recomputes_an_already_built_snackbars_shape_live(tmp_path):
+    window = Window(width=400, height=400)
+    container, _action, _close = window.add_snackbar(text="hi", width=300.0)
+    retheme(window, tmp_path, "t.yaml", "  snackbar: {corner_radius: 2, elevation: 4}\n")
+    assert container.get("corner_radius") == pytest.approx(2.0)
+    assert container.get("elevation") == pytest.approx(4.0)
+
+
+def test_window_set_theme_recomputes_an_already_built_side_sheets_elevation_live(tmp_path):
+    window = Window(width=400, height=400)
+    standard = window.add_side_sheet(width=300.0, modal=False)
+    retheme(window, tmp_path, "t.yaml", "  side_sheet.standard: {elevation: 1}\n")
+    assert standard.get("elevation") == pytest.approx(1.0)
+
+
+def test_window_set_theme_a_second_call_does_not_raise_for_an_already_built_modal_side_sheet(
+    tmp_path,
+):
+    window = Window(width=400, height=400)
+    window.add_side_sheet(width=300.0, modal=True)
+    retheme(window, tmp_path, "t.yaml", "  side_sheet.modal: {elevation: 3, corner_radius: 4}\n")
+
+
+def test_window_set_theme_recomputes_an_already_built_navigation_drawers_elevation_live(tmp_path):
+    window = Window(width=400, height=400)
+    container, _items = window.add_navigation_drawer(
+        labels=["A", "B"], icons=["home", "settings"], modal=False, width=280.0
+    )
+    retheme(window, tmp_path, "t.yaml", "  navigation_drawer.standard: {elevation: 2}\n")
+    assert container.get("elevation") == pytest.approx(2.0)
+
+
+def test_window_set_theme_a_second_call_does_not_raise_for_navigation_drawer_indicator(tmp_path):
+    window = Window(width=400, height=400)
+    window.add_navigation_drawer(
+        labels=["A", "B"], icons=["home", "settings"], selected=0, modal=False, width=280.0
+    )
+    retheme(
+        window,
+        tmp_path,
+        "t.yaml",
+        "  navigation_drawer.standard: {corner_radius: 5}\n  navigation_drawer.indicator: {corner_radius: 3}\n",
+    )
+
+
+def test_window_set_theme_recomputes_an_already_built_top_app_bars_icon_buttons_live(tmp_path):
+    window = Window(width=400, height=400)
+    bar, leading, trailing = window.add_top_app_bar(
+        title="hi", leading_icon="menu", trailing_icons=["search"]
+    )
+    retheme(window, tmp_path, "t.yaml", "  icon_button: {corner_radius: 6}\n")
+    assert leading.get("corner_radius") == pytest.approx(6.0)
+    assert trailing[0].get("corner_radius") == pytest.approx(6.0)
+    assert bar.get("corner_radius") == pytest.approx(0.0), "the bar itself stays un-themed"
+
+
+def test_window_set_theme_a_second_call_does_not_raise_for_navigation_rail_indicator(tmp_path):
+    window = Window(width=400, height=400)
+    window.add_navigation_rail(labels=["A", "B"], icons=["home", "settings"], selected=0)
+    retheme(window, tmp_path, "t.yaml", "  navigation_rail.indicator: {corner_radius: 3}\n")
+
+
+def test_window_set_theme_a_second_call_does_not_raise_for_tabs_indicator(tmp_path):
+    window = Window(width=400, height=400)
+    window.add_tabs(labels=["A", "B"], selected=0)
+    retheme(window, tmp_path, "t.yaml", "  tabs.indicator: {corner_radius: 5}\n")
+
+
+def test_window_set_theme_recomputes_an_already_built_search_bars_shape_live(tmp_path):
+    window = Window(width=400, height=400)
+    bar, _field, _leading, _trailing = window.add_search_bar(placeholder="hi", width=300.0)
+    retheme(window, tmp_path, "t.yaml", "  search_bar: {corner_radius: 6, elevation: 2}\n")
+    assert bar.get("corner_radius") == pytest.approx(6.0)
+    assert bar.get("elevation") == pytest.approx(2.0)
+
+
+def test_window_set_theme_recomputes_an_already_built_paginations_shape_live(tmp_path):
+    window = Window(width=400, height=400)
+    previous, pages, next_ = window.add_pagination(page_count=3, current=0)
+    retheme(window, tmp_path, "t.yaml", "  pagination: {corner_radius: 7}\n")
+    assert previous.get("corner_radius") == pytest.approx(7.0)
+    assert pages[0].get("corner_radius") == pytest.approx(7.0)
+    assert next_.get("corner_radius") == pytest.approx(7.0)
+
+
+def test_window_set_theme_a_second_call_does_not_raise_for_an_already_built_menu_item(tmp_path):
+    window = Window(width=400, height=400)
+    window.add_menu_item(label="hi", icon="settings", submenu=True, width=200.0)
+    window.set_theme(seed=(0x00, 0x66, 0x00, 0xFF))

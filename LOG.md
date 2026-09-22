@@ -219,20 +219,85 @@
   all 84 examples, showcase demo. Tracker generator: 52 milestones/153
   phases/267 items/2 known gaps/19 fixed gaps.
 
+## Phase 4 — Conditional/Variable Multi-Node Containers & Navigation
+
+- Wired all 9 remaining factories in this phase's scope: `add_
+  snackbar`, `add_side_sheet`, `add_navigation_drawer`, `add_top_app_
+  bar`, `add_navigation_rail`, `add_tabs`, `add_search_bar`, `add_
+  pagination`, `add_menu_item`.
+- `add_side_sheet` needed one hook shared by both real branches
+  (`modal=true`/`false`) -- captures `scrim: Option<NodeId>` plus
+  `modal: bool` itself, and re-derives which role/variant-key/default-
+  elevation applies inside the hook, exactly mirroring the factory's
+  own real branching.
+- `add_navigation_drawer` extended the "capture app-owned state at
+  construction time, never re-derive" convention `add_date_picker_
+  day`'s own hook (Phase 2) already established, per-item this time --
+  confirmed the item's own real `font_weight` co-varies with
+  `is_active` but is never theme-derived, so the hook correctly never
+  touches it.
+- `add_pagination`'s own private, non-capturing `build_icon_button`
+  helper (shared across its 3 real call sites: previous/each page/
+  next) needed a small, real widening -- it used to return only the
+  button's own `NodeId`, discarding the icon's; widened to return
+  `(NodeId, NodeId)` so both could be captured for the new hook.
+- **Two real, pre-existing inconsistencies confirmed and reproduced
+  faithfully, not silently corrected -- named directly in each hook's
+  own doc comment, not glossed over:** `add_search_bar`'s own leading/
+  trailing icon-button containers use a hardcoded `SEARCH_ICON_BUTTON_
+  SIZE / 2.0` literal for `corner_radius`, never looked up via `theme.
+  shape("icon_button", ...)` the way `add_top_app_bar`/`add_spin_box`'s
+  own visually-identical icon buttons are. `add_pagination`'s own
+  `previous`/`next` icon buttons share the *same* `"pagination"` key
+  every page item uses, not `"icon_button"` either -- a third, genuinely
+  different real convention among this catalog's four icon-button-
+  shaped call sites (`"icon_button"`, a hardcoded literal, and
+  `"pagination"`), all three now confirmed and preserved exactly as
+  they were before this milestone, since "make already-resolved values
+  live" is this milestone's own scope, not "make every key convention
+  consistent."
+- **A real, confirmed pre-existing gap named again, still deliberately
+  not fixed:** `build_menu`'s own panel (the real consumer of `add_
+  menu_item`, not itself an `add_*` factory) hardcodes `MENU_PANEL_
+  CORNER_RADIUS`/`MENU_PANEL_ELEVATION` with no `theme.shape`/
+  `elevation` call at all -- `add_menu_item`'s own new hook correctly
+  has nothing to recompute for shape/elevation, only its real
+  `background` roles.
+- 11 new pytest tests extending each factory's own M50-era construction-
+  time fixture with a second `window.set_theme(...)` call. All 11
+  passed on the first run.
+- `BUILD_TRACKER.md`: Phase 4 section added, Top Metrics row updated
+  (67%, Phase 4 of 6), "In progress" note updated. **A real parser
+  error caught immediately by running the generator, not shipped:** the
+  Step 1 note's own outer wrapping parenthesis was never closed (a long
+  note listing 9 factories, several with their own nested parenthetical
+  asides, made the missing final `)` easy to miss by eye) -- the
+  tracker's own balanced-parens requirement caught it on the first
+  regeneration attempt; fixed, regenerated cleanly on the second.
+- Full chain green: `cargo check`/`clippy -D warnings`/`fmt` clean,
+  `cargo test --workspace --release` (unchanged -- no new Rust-level
+  tests needed this phase either), `maturin develop --release`,
+  `pytest tests/` (745 passed, up from 734, +11, 1 skipped unchanged),
+  all 84 examples, showcase demo. Tracker generator: 52 milestones/154
+  phases/268 items/2 known gaps/19 fixed gaps.
+
 ## Status
 
-**M52 Phases 1-3 of 6 are complete.** The mechanism has now been proven
+**M52 Phases 1-4 of 6 are complete.** The mechanism has now been proven
 across every real topology class the original audit identified except
-the genuinely variable/`Vec`-driven multi-node case (Phase 4) and the
-non-`PaintProperties` stateful components (Phase 5) -- fixed/
-conditional node counts, `PaintProperties`-only and `IconState.tint`-
-touching hooks, transform-adjacent nodes, a hook that legitimately does
-less than its siblings, per-index-branching state captured at
-construction time, and (the real surprise of this phase) hooks that
-compose correctly with an *inherited* hook from an internally-reused
-factory. Per this session's own standing discipline, committing locally
-at this phase boundary too -- push still deferred until the full
-milestone closes. Up next: Phase 4, the ~9 conditional/variable multi-
-node Containers & Navigation factories (`add_snackbar`, `add_side_
-sheet`, `add_navigation_drawer`, `add_top_app_bar`, `add_navigation_
-rail`, `add_tabs`, `add_search_bar`, `add_pagination`, `add_menu_item`).
+the non-`PaintProperties` stateful components (Phase 5) -- fixed/
+conditional/genuinely-variable node counts, `PaintProperties`-only and
+`IconState.tint`-touching hooks, transform-adjacent nodes, hooks that
+legitimately do less than their siblings, per-index/per-item app-owned
+state captured at construction time, hooks that compose correctly with
+an inherited hook from an internally-reused factory, and now a single
+hook shared correctly across two structurally different real branches.
+Per this session's own standing discipline, committing locally at this
+phase boundary too -- push still deferred until the full milestone
+closes. Up next: Phase 5, the ~9 non-`PaintProperties` stateful
+components (`add_checkbox`, `add_slider`, `add_text_field`, `add_code_
+editor`, `add_radio_button`, `add_switch`, `add_linear_progress`,
+`add_circular_progress`, `add_time_picker_dial`), which also closes 5
+confirmed, previously-undocumented gaps where `Window.set_theme` had
+zero effect at all (`RadioButton`/`Switch`/`LinearProgress`/
+`CircularProgress`/`TimePickerDial`).

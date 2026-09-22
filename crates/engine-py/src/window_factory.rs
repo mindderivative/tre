@@ -2312,6 +2312,545 @@ fn button_group_retheme_hook(
     })
 }
 
+// M52 Phase 4: conditional/variable multi-node Containers & Navigation.
+
+/// M52 Phase 4: `add_snackbar`'s own hook -- `action`/`close` are each
+/// independently `Option<(container, child)>`, since a snackbar may
+/// have neither, either, or both, fixed at construction time (a
+/// snackbar's own anatomy never gains/loses these after being built).
+fn snackbar_retheme_hook(
+    container: NodeId,
+    text: NodeId,
+    action: Option<(NodeId, NodeId)>,
+    close: Option<(NodeId, NodeId)>,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let role = |theme: &crate::window::ThemeState, name: &str, fallback: Color| -> Color {
+            if theme.is_set() {
+                theme.role(name).unwrap_or(fallback)
+            } else {
+                fallback
+            }
+        };
+        let container_color = role(theme, "inverse_surface", Md3Baseline::INVERSE_SURFACE);
+        let text_color = role(theme, "inverse_on_surface", Md3Baseline::INVERSE_ON_SURFACE);
+        let action_color = role(theme, "inverse_primary", Md3Baseline::INVERSE_PRIMARY);
+        let icon_color = text_color;
+        let corner_radius = theme
+            .shape("snackbar", None)
+            .unwrap_or(SNACKBAR_CORNER_RADIUS);
+        let elevation = theme
+            .elevation("snackbar", None)
+            .unwrap_or(SNACKBAR_ELEVATION);
+        if let Some(node) = tree.get_mut(container) {
+            node.paint.background = Animated::new(container_color);
+            node.paint.corner_radius = Animated::new(corner_radius);
+            node.paint.elevation = Animated::new(elevation);
+        }
+        if let Some(node) = tree.get_mut(text) {
+            node.paint.background = Animated::new(text_color);
+        }
+        if let Some((_, label)) = action
+            && let Some(node) = tree.get_mut(label)
+        {
+            node.paint.background = Animated::new(action_color);
+        }
+        if let Some((_, icon)) = close
+            && let Some(node) = tree.get_mut(icon)
+            && let NodeKind::Icon(state) = &mut node.kind
+        {
+            state.tint = icon_color;
+        }
+    })
+}
+
+/// M52 Phase 4: `add_side_sheet`'s own hook -- `scrim` is `Some` only
+/// for the `modal=true` branch. Both branches share the identical
+/// `corner_radii_override`/`elevation`/`variant_key` resolution
+/// `add_side_sheet` itself computes once, before branching -- only
+/// `container_color` genuinely differs by branch.
+fn side_sheet_retheme_hook(
+    panel: NodeId,
+    scrim: Option<NodeId>,
+    modal: bool,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let role = |theme: &crate::window::ThemeState, name: &str, fallback: Color| -> Color {
+            if theme.is_set() {
+                theme.role(name).unwrap_or(fallback)
+            } else {
+                fallback
+            }
+        };
+        let (container_color, scrim_color) = if modal {
+            (
+                role(
+                    theme,
+                    "surface_container_low",
+                    Md3Baseline::SURFACE_CONTAINER_LOW,
+                ),
+                role(theme, "scrim", Md3Baseline::SCRIM),
+            )
+        } else {
+            (
+                role(theme, "surface", Md3Baseline::SURFACE),
+                Md3Baseline::SCRIM,
+            )
+        };
+        let variant_key = if modal { "modal" } else { "standard" };
+        let default_elevation = if modal {
+            SIDE_SHEET_MODAL_ELEVATION
+        } else {
+            SIDE_SHEET_STANDARD_ELEVATION
+        };
+        let corner_radius = theme
+            .shape("side_sheet", Some(variant_key))
+            .unwrap_or(SIDE_SHEET_CORNER_RADIUS);
+        let elevation = theme
+            .elevation("side_sheet", Some(variant_key))
+            .unwrap_or(default_elevation);
+        if let Some(node) = tree.get_mut(panel) {
+            node.paint.background = Animated::new(container_color);
+            node.paint.elevation = Animated::new(elevation);
+            node.paint.corner_radii_override = Some([corner_radius, 0.0, 0.0, corner_radius]);
+        }
+        if let Some(id) = scrim
+            && let Some(node) = tree.get_mut(id)
+        {
+            node.paint.background = Animated::new(scrim_color);
+        }
+    })
+}
+
+/// M52 Phase 4: `add_navigation_drawer`'s own hook -- `scrim` is `Some`
+/// only for `modal=true`. Each item's own `is_active` is real, app-
+/// owned selection state (Design Principle 6), captured at
+/// construction time, never re-derived -- matching `add_date_picker_
+/// day`'s established convention. Its own real `font_weight` co-varies
+/// with `is_active` but is never theme-derived, so this hook correctly
+/// never touches it (the same real distinction the audit that scoped
+/// this milestone already drew).
+fn navigation_drawer_retheme_hook(
+    panel: NodeId,
+    scrim: Option<NodeId>,
+    items: Vec<(NodeId, NodeId, NodeId, bool)>,
+    modal: bool,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let role = |theme: &crate::window::ThemeState, name: &str, fallback: Color| -> Color {
+            if theme.is_set() {
+                theme.role(name).unwrap_or(fallback)
+            } else {
+                fallback
+            }
+        };
+        let container_color = if modal {
+            role(
+                theme,
+                "surface_container_low",
+                Md3Baseline::SURFACE_CONTAINER_LOW,
+            )
+        } else {
+            role(theme, "surface", Md3Baseline::SURFACE)
+        };
+        let indicator_color = role(
+            theme,
+            "secondary_container",
+            Md3Baseline::SECONDARY_CONTAINER,
+        );
+        let active_color = role(
+            theme,
+            "on_secondary_container",
+            Md3Baseline::ON_SECONDARY_CONTAINER,
+        );
+        let inactive_color = role(theme, "on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT);
+        let scrim_color = role(theme, "scrim", Md3Baseline::SCRIM);
+        let variant_key = if modal { "modal" } else { "standard" };
+        let default_elevation = if modal {
+            SIDE_SHEET_MODAL_ELEVATION
+        } else {
+            SIDE_SHEET_STANDARD_ELEVATION
+        };
+        let corner_radius = theme
+            .shape("navigation_drawer", Some(variant_key))
+            .unwrap_or(SIDE_SHEET_CORNER_RADIUS);
+        let elevation = theme
+            .elevation("navigation_drawer", Some(variant_key))
+            .unwrap_or(default_elevation);
+        let indicator_corner_radius = theme
+            .shape("navigation_drawer", Some("indicator"))
+            .unwrap_or(NAV_DRAWER_INDICATOR_CORNER_RADIUS);
+        if let Some(node) = tree.get_mut(panel) {
+            node.paint.background = Animated::new(container_color);
+            node.paint.elevation = Animated::new(elevation);
+            node.paint.corner_radii_override = Some([0.0, corner_radius, corner_radius, 0.0]);
+        }
+        if let Some(id) = scrim
+            && let Some(node) = tree.get_mut(id)
+        {
+            node.paint.background = Animated::new(scrim_color);
+        }
+        for &(indicator, icon, label, is_active) in &items {
+            let fill = if is_active {
+                indicator_color
+            } else {
+                TRANSPARENT
+            };
+            let item_color = if is_active {
+                active_color
+            } else {
+                inactive_color
+            };
+            if let Some(node) = tree.get_mut(indicator) {
+                node.paint.background = Animated::new(fill);
+                node.paint.corner_radius = Animated::new(indicator_corner_radius);
+            }
+            if let Some(node) = tree.get_mut(icon)
+                && let NodeKind::Icon(state) = &mut node.kind
+            {
+                state.tint = item_color;
+            }
+            if let Some(node) = tree.get_mut(label) {
+                node.paint.background = Animated::new(item_color);
+            }
+        }
+    })
+}
+
+/// M52 Phase 4: `add_top_app_bar`'s own hook -- the bar's own frame
+/// stays un-themed (real MD3 anatomy is always square, deliberate, no
+/// `theme.shape` call at all), only its `background` role is re-
+/// resolved. `leading`/each `trailing` icon-button container reuses
+/// the `"icon_button"` key, matching `add_top_app_bar` itself.
+fn top_app_bar_retheme_hook(
+    bar: NodeId,
+    headline: NodeId,
+    leading: Option<(NodeId, NodeId)>,
+    trailing: Vec<(NodeId, NodeId)>,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let container_color = if theme.is_set() {
+            theme.role("surface").unwrap_or(Md3Baseline::SURFACE)
+        } else {
+            Md3Baseline::SURFACE
+        };
+        let leading_icon_color = theme.on_surface();
+        let trailing_icon_color = if theme.is_set() {
+            theme
+                .role("on_surface_variant")
+                .unwrap_or(Md3Baseline::ON_SURFACE_VARIANT)
+        } else {
+            Md3Baseline::ON_SURFACE_VARIANT
+        };
+        let icon_button_corner_radius = theme
+            .shape("icon_button", None)
+            .unwrap_or(TOP_APP_BAR_ICON_BUTTON_SIZE as f64 / 2.0);
+        if let Some(node) = tree.get_mut(bar) {
+            node.paint.background = Animated::new(container_color);
+        }
+        if let Some(node) = tree.get_mut(headline) {
+            node.paint.background = Animated::new(leading_icon_color);
+        }
+        if let Some((container, icon)) = leading {
+            if let Some(node) = tree.get_mut(container) {
+                node.paint.corner_radius = Animated::new(icon_button_corner_radius);
+            }
+            if let Some(node) = tree.get_mut(icon)
+                && let NodeKind::Icon(state) = &mut node.kind
+            {
+                state.tint = leading_icon_color;
+            }
+        }
+        for &(container, icon) in &trailing {
+            if let Some(node) = tree.get_mut(container) {
+                node.paint.corner_radius = Animated::new(icon_button_corner_radius);
+            }
+            if let Some(node) = tree.get_mut(icon)
+                && let NodeKind::Icon(state) = &mut node.kind
+            {
+                state.tint = trailing_icon_color;
+            }
+        }
+    })
+}
+
+/// M52 Phase 4: `add_navigation_rail`'s own hook -- the frame's own
+/// corner radius stays un-themed (real MD3 anatomy is deliberately
+/// "corner-none" here), only its `background` role and each item's own
+/// indicator/icon/label are re-resolved. `is_active` is real, app-owned
+/// selection state, captured at construction time, never re-derived.
+fn navigation_rail_retheme_hook(
+    frame: NodeId,
+    items: Vec<(NodeId, NodeId, NodeId, bool)>,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let role = |theme: &crate::window::ThemeState, name: &str, fallback: Color| -> Color {
+            if theme.is_set() {
+                theme.role(name).unwrap_or(fallback)
+            } else {
+                fallback
+            }
+        };
+        let container_color = role(theme, "surface", Md3Baseline::SURFACE);
+        let indicator_color = role(
+            theme,
+            "secondary_container",
+            Md3Baseline::SECONDARY_CONTAINER,
+        );
+        let active_icon_color = role(
+            theme,
+            "on_secondary_container",
+            Md3Baseline::ON_SECONDARY_CONTAINER,
+        );
+        let on_surface_variant = role(theme, "on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT);
+        let active_label_color = theme.on_surface();
+        let indicator_corner_radius = theme
+            .shape("navigation_rail", Some("indicator"))
+            .unwrap_or(NAV_RAIL_INDICATOR_CORNER_RADIUS);
+        if let Some(node) = tree.get_mut(frame) {
+            node.paint.background = Animated::new(container_color);
+        }
+        for &(indicator, icon, label, is_active) in &items {
+            let fill = if is_active {
+                indicator_color
+            } else {
+                TRANSPARENT
+            };
+            let icon_color = if is_active {
+                active_icon_color
+            } else {
+                on_surface_variant
+            };
+            let label_color = if is_active {
+                active_label_color
+            } else {
+                on_surface_variant
+            };
+            if let Some(node) = tree.get_mut(indicator) {
+                node.paint.background = Animated::new(fill);
+                node.paint.corner_radius = Animated::new(indicator_corner_radius);
+            }
+            if let Some(node) = tree.get_mut(icon)
+                && let NodeKind::Icon(state) = &mut node.kind
+            {
+                state.tint = icon_color;
+            }
+            if let Some(node) = tree.get_mut(label) {
+                node.paint.background = Animated::new(label_color);
+            }
+        }
+    })
+}
+
+/// M52 Phase 4: `add_tabs`'s own hook -- the row's own frame stays
+/// un-themed (real MD3 anatomy is deliberately flat/square), only its
+/// `background` and each tab's own icon (optional)/label/indicator are
+/// re-resolved. `is_active` is real, app-owned selection state,
+/// captured at construction time.
+fn tabs_retheme_hook(
+    row: NodeId,
+    tabs: Vec<(Option<NodeId>, NodeId, NodeId, bool)>,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let role = |theme: &crate::window::ThemeState, name: &str, fallback: Color| -> Color {
+            if theme.is_set() {
+                theme.role(name).unwrap_or(fallback)
+            } else {
+                fallback
+            }
+        };
+        let container_color = role(theme, "surface", Md3Baseline::SURFACE);
+        let active_color = role(theme, "primary", Md3Baseline::PRIMARY);
+        let inactive_color = role(theme, "on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT);
+        let indicator_corner_radius = theme
+            .shape("tabs", Some("indicator"))
+            .unwrap_or(TAB_INDICATOR_CORNER_RADIUS);
+        if let Some(node) = tree.get_mut(row) {
+            node.paint.background = Animated::new(container_color);
+        }
+        for &(icon, label, indicator, is_active) in &tabs {
+            let color = if is_active {
+                active_color
+            } else {
+                inactive_color
+            };
+            if let Some(id) = icon
+                && let Some(node) = tree.get_mut(id)
+                && let NodeKind::Icon(state) = &mut node.kind
+            {
+                state.tint = color;
+            }
+            if let Some(node) = tree.get_mut(label) {
+                node.paint.background = Animated::new(color);
+            }
+            if let Some(node) = tree.get_mut(indicator) {
+                let indicator_fill = if is_active { active_color } else { TRANSPARENT };
+                node.paint.background = Animated::new(indicator_fill);
+                node.paint.corner_radii_override =
+                    Some([indicator_corner_radius, indicator_corner_radius, 0.0, 0.0]);
+            }
+        }
+    })
+}
+
+/// M52 Phase 4: `add_search_bar`'s own hook -- **a real, pre-existing
+/// inconsistency reproduced as-is, not silently fixed:** the leading/
+/// trailing icon-button containers' own `corner_radius` is a hardcoded
+/// `SEARCH_ICON_BUTTON_SIZE / 2.0` literal at construction time, never
+/// looked up via `theme.shape("icon_button", ...)` the way `add_top_
+/// app_bar`/`add_spin_box`'s own visually-identical icon buttons are --
+/// so this hook correctly never touches their `corner_radius` at all,
+/// only their `IconState.tint`. `field_id`'s own `text_tint` reads
+/// `on_surface()` unconditionally (no `is_set()` gate), the same minor
+/// pre-existing pattern `add_time_input_field`'s hook already
+/// reproduces as-is.
+fn search_bar_retheme_hook(
+    bar: NodeId,
+    field: NodeId,
+    leading: Option<(NodeId, NodeId)>,
+    trailing: Vec<(NodeId, NodeId)>,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let role = |theme: &crate::window::ThemeState, name: &str, fallback: Color| -> Color {
+            if theme.is_set() {
+                theme.role(name).unwrap_or(fallback)
+            } else {
+                fallback
+            }
+        };
+        let container_color = role(
+            theme,
+            "surface_container_high",
+            Md3Baseline::SURFACE_CONTAINER_HIGH,
+        );
+        let leading_icon_color = theme.on_surface();
+        let trailing_icon_color =
+            role(theme, "on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT);
+        let corner_radius = theme
+            .shape("search_bar", None)
+            .unwrap_or(SEARCH_BAR_CORNER_RADIUS);
+        let elevation = theme
+            .elevation("search_bar", None)
+            .unwrap_or(SEARCH_BAR_ELEVATION);
+        if let Some(node) = tree.get_mut(bar) {
+            node.paint.background = Animated::new(container_color);
+            node.paint.corner_radius = Animated::new(corner_radius);
+            node.paint.elevation = Animated::new(elevation);
+        }
+        if let Some(node) = tree.get_mut(field)
+            && let NodeKind::TextField(state) = &mut node.kind
+        {
+            state.text_tint = theme.on_surface();
+        }
+        if let Some((_, icon)) = leading
+            && let Some(node) = tree.get_mut(icon)
+            && let NodeKind::Icon(state) = &mut node.kind
+        {
+            state.tint = leading_icon_color;
+        }
+        for &(_, icon) in &trailing {
+            if let Some(node) = tree.get_mut(icon)
+                && let NodeKind::Icon(state) = &mut node.kind
+            {
+                state.tint = trailing_icon_color;
+            }
+        }
+    })
+}
+
+/// M52 Phase 4: `add_pagination`'s own hook, closing Phase 4 -- **a
+/// real, pre-existing inconsistency reproduced as-is:** `previous`/
+/// `next`'s own corner_radius shares the *same* single `"pagination"`
+/// key every page item uses, not the `"icon_button"` key
+/// `add_top_app_bar`/`add_spin_box`'s own visually-identical icon
+/// buttons use -- confirmed at construction time and reproduced
+/// unchanged here, not silently "fixed" to a different key.
+/// `is_selected` is real, app-owned state, captured at construction.
+fn pagination_retheme_hook(
+    previous: NodeId,
+    previous_icon: NodeId,
+    next: NodeId,
+    next_icon: NodeId,
+    pages: Vec<(NodeId, NodeId, bool)>,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let role = |theme: &crate::window::ThemeState, name: &str, fallback: Color| -> Color {
+            if theme.is_set() {
+                theme.role(name).unwrap_or(fallback)
+            } else {
+                fallback
+            }
+        };
+        let selected_fill = role(theme, "primary", Md3Baseline::PRIMARY);
+        let selected_label = role(theme, "on_primary", Md3Baseline::ON_PRIMARY);
+        let on_surface_variant = role(theme, "on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT);
+        let corner_radius = theme
+            .shape("pagination", None)
+            .unwrap_or(PAGE_ITEM_CORNER_RADIUS);
+        for button in [previous, next] {
+            if let Some(node) = tree.get_mut(button) {
+                node.paint.corner_radius = Animated::new(corner_radius);
+            }
+        }
+        for icon in [previous_icon, next_icon] {
+            if let Some(node) = tree.get_mut(icon)
+                && let NodeKind::Icon(state) = &mut node.kind
+            {
+                state.tint = on_surface_variant;
+            }
+        }
+        for &(item, label, is_selected) in &pages {
+            let (fill, label_color) = if is_selected {
+                (selected_fill, selected_label)
+            } else {
+                (TRANSPARENT, on_surface_variant)
+            };
+            if let Some(node) = tree.get_mut(item) {
+                node.paint.background = Animated::new(fill);
+                node.paint.corner_radius = Animated::new(corner_radius);
+            }
+            if let Some(node) = tree.get_mut(label) {
+                node.paint.background = Animated::new(label_color);
+            }
+        }
+    })
+}
+
+/// M52 Phase 4: `add_menu_item`'s own hook -- `icon`/`chevron` are each
+/// independently `Option<NodeId>`. **A real, confirmed, pre-existing
+/// gap named but deliberately not fixed here:** `build_menu`'s own
+/// panel (the real consumer of `add_menu_item`, not itself an `add_*`
+/// factory) hardcodes `MENU_PANEL_CORNER_RADIUS`/`MENU_PANEL_ELEVATION`
+/// with no `theme.shape`/`elevation` call at all -- there is nothing
+/// for a retheme hook to recompute for the panel's own shape/elevation
+/// today (only `add_menu_item`'s own real `background` roles are in
+/// scope for this milestone).
+fn menu_item_retheme_hook(
+    label: NodeId,
+    icon: Option<NodeId>,
+    chevron: Option<NodeId>,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let icon_color = if theme.is_set() {
+            theme
+                .role("on_surface_variant")
+                .unwrap_or(Md3Baseline::ON_SURFACE_VARIANT)
+        } else {
+            Md3Baseline::ON_SURFACE_VARIANT
+        };
+        if let Some(node) = tree.get_mut(label) {
+            node.paint.background = Animated::new(theme.on_surface());
+        }
+        for id in [icon, chevron].into_iter().flatten() {
+            if let Some(node) = tree.get_mut(id)
+                && let NodeKind::Icon(state) = &mut node.kind
+            {
+                state.tint = icon_color;
+            }
+        }
+    })
+}
+
 #[pymethods]
 impl PyWindow {
     /// §14 step 6's own "node creation" -- one shape (a colored rect, a
@@ -3305,6 +3844,7 @@ impl PyWindow {
         );
 
         let mut icon_count = 0.0_f32;
+        let mut menu_item_icon_id: Option<NodeId> = None;
         if let Some(path) = icon_path {
             icon_count = 1.0;
             let icon_id = tree.insert(
@@ -3319,6 +3859,7 @@ impl PyWindow {
                 PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
             );
             tree.add_child(container, icon_id);
+            menu_item_icon_id = Some(icon_id);
         }
 
         let trailing_reserved = if chevron_path.is_some() {
@@ -3350,6 +3891,7 @@ impl PyWindow {
         );
         tree.add_child(container, label_id);
 
+        let mut menu_item_chevron_id: Option<NodeId> = None;
         if let Some(path) = chevron_path {
             let chevron_id = tree.insert(
                 NodeKind::Icon(IconState::new(path, icon_color)),
@@ -3363,9 +3905,16 @@ impl PyWindow {
                 PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
             );
             tree.add_child(container, chevron_id);
+            menu_item_chevron_id = Some(chevron_id);
         }
 
         tree.add_child(self.root, container);
+        drop(tree);
+        self.retheme_hooks.borrow_mut().push(menu_item_retheme_hook(
+            label_id,
+            menu_item_icon_id,
+            menu_item_chevron_id,
+        ));
         Ok(self.wrap_node(container))
     }
 
@@ -4320,6 +4869,7 @@ impl PyWindow {
         );
         tree.add_child(container, text_id);
 
+        let mut snackbar_action_ids: Option<(NodeId, NodeId)> = None;
         let action = if let Some(label) = action_label {
             let action_container = tree.insert(
                 NodeKind::Rect,
@@ -4354,11 +4904,13 @@ impl PyWindow {
             );
             tree.add_child(action_container, label_id);
             tree.add_child(container, action_container);
+            snackbar_action_ids = Some((action_container, label_id));
             Some(self.wrap_node(action_container))
         } else {
             None
         };
 
+        let mut snackbar_close_ids: Option<(NodeId, NodeId)> = None;
         let close = if closable {
             let close_path = resolve_icon_path("close")?;
             let close_container = tree.insert(
@@ -4388,11 +4940,19 @@ impl PyWindow {
             );
             tree.add_child(close_container, icon_id);
             tree.add_child(container, close_container);
+            snackbar_close_ids = Some((close_container, icon_id));
             Some(self.wrap_node(close_container))
         } else {
             None
         };
 
+        drop(tree);
+        self.retheme_hooks.borrow_mut().push(snackbar_retheme_hook(
+            container,
+            text_id,
+            snackbar_action_ids,
+            snackbar_close_ids,
+        ));
         Ok((self.wrap_node(container), action, close))
     }
 
@@ -4585,6 +5145,10 @@ impl PyWindow {
             };
             let panel = tree.insert(NodeKind::Rect, panel_style, panel_paint);
             tree.add_child(scrim, panel);
+            drop(tree);
+            self.retheme_hooks
+                .borrow_mut()
+                .push(side_sheet_retheme_hook(panel, Some(scrim), modal));
             self.wrap_node(scrim)
         } else {
             let panel_style = positioned_style(
@@ -4597,6 +5161,10 @@ impl PyWindow {
             );
             let panel = tree.insert(NodeKind::Rect, panel_style, panel_paint);
             tree.add_child(self.root, panel);
+            drop(tree);
+            self.retheme_hooks
+                .borrow_mut()
+                .push(side_sheet_retheme_hook(panel, None, modal));
             self.wrap_node(panel)
         }
     }
@@ -4820,6 +5388,8 @@ impl PyWindow {
         );
 
         let mut items = Vec::with_capacity(labels.len());
+        let mut rail_item_data: Vec<(NodeId, NodeId, NodeId, bool)> =
+            Vec::with_capacity(labels.len());
         for (i, (label, path)) in labels.into_iter().zip(icon_paths).enumerate() {
             let is_active = selected == Some(i);
 
@@ -4921,10 +5491,15 @@ impl PyWindow {
             tree.add_child(item, label_id);
 
             tree.add_child(frame, item);
+            rail_item_data.push((indicator, icon_id, label_id, is_active));
             items.push(self.wrap_node(item));
         }
 
         tree.add_child(self.root, frame);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(navigation_rail_retheme_hook(frame, rail_item_data));
         Ok(items)
     }
 
@@ -5102,6 +5677,8 @@ impl PyWindow {
         let panel = tree.insert(NodeKind::Rect, panel_style, panel_paint);
 
         let mut items = Vec::with_capacity(labels.len());
+        let mut item_retheme_data: Vec<(NodeId, NodeId, NodeId, bool)> =
+            Vec::with_capacity(labels.len());
         for (i, (label, path)) in labels.into_iter().zip(icon_paths).enumerate() {
             let is_active = selected == Some(i);
             let fill = if is_active {
@@ -5188,6 +5765,7 @@ impl PyWindow {
             tree.add_child(indicator, label_id);
 
             tree.add_child(panel, indicator);
+            item_retheme_data.push((indicator, icon_id, label_id, is_active));
             items.push(self.wrap_node(indicator));
         }
 
@@ -5207,9 +5785,27 @@ impl PyWindow {
                 PaintProperties::new(scrim_color, 0.0, 0.0, DIALOG_SCRIM_OPACITY),
             );
             tree.add_child(scrim, panel);
+            drop(tree);
+            self.retheme_hooks
+                .borrow_mut()
+                .push(navigation_drawer_retheme_hook(
+                    panel,
+                    Some(scrim),
+                    item_retheme_data,
+                    modal,
+                ));
             self.wrap_node(scrim)
         } else {
             tree.add_child(self.root, panel);
+            drop(tree);
+            self.retheme_hooks
+                .borrow_mut()
+                .push(navigation_drawer_retheme_hook(
+                    panel,
+                    None,
+                    item_retheme_data,
+                    modal,
+                ));
             self.wrap_node(panel)
         };
 
@@ -5380,6 +5976,7 @@ impl PyWindow {
             PaintProperties::new(container_color, 0.0, 0.0, 1.0),
         );
 
+        let mut top_app_bar_leading_ids: Option<(NodeId, NodeId)> = None;
         let leading = if let Some(path) = leading_path {
             let leading_container = tree.insert(
                 NodeKind::Rect,
@@ -5408,6 +6005,7 @@ impl PyWindow {
             );
             tree.add_child(leading_container, icon_id);
             tree.add_child(bar, leading_container);
+            top_app_bar_leading_ids = Some((leading_container, icon_id));
             Some(self.wrap_node(leading_container))
         } else {
             None
@@ -5445,6 +6043,8 @@ impl PyWindow {
         tree.add_child(bar, headline_id);
 
         let mut trailing = Vec::with_capacity(trailing_paths.len());
+        let mut top_app_bar_trailing_ids: Vec<(NodeId, NodeId)> =
+            Vec::with_capacity(trailing_paths.len());
         for path in trailing_paths {
             let trailing_container = tree.insert(
                 NodeKind::Rect,
@@ -5479,10 +6079,20 @@ impl PyWindow {
             );
             tree.add_child(trailing_container, icon_id);
             tree.add_child(bar, trailing_container);
+            top_app_bar_trailing_ids.push((trailing_container, icon_id));
             trailing.push(self.wrap_node(trailing_container));
         }
 
         tree.add_child(self.root, bar);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(top_app_bar_retheme_hook(
+                bar,
+                headline_id,
+                top_app_bar_leading_ids,
+                top_app_bar_trailing_ids,
+            ));
         Ok((self.wrap_node(bar), leading, trailing))
     }
 
@@ -6132,6 +6742,8 @@ impl PyWindow {
         );
 
         let mut tabs = Vec::with_capacity(labels.len());
+        let mut tab_retheme_data: Vec<(Option<NodeId>, NodeId, NodeId, bool)> =
+            Vec::with_capacity(labels.len());
         for (i, label) in labels.into_iter().enumerate() {
             let is_active = selected == Some(i);
             let color = if is_active {
@@ -6188,6 +6800,7 @@ impl PyWindow {
             // finding this reuses a second time.
             tree.set_hit_testable(content, false);
 
+            let mut tab_icon_id: Option<NodeId> = None;
             if let Some(paths) = &icon_paths {
                 let icon_id = tree.insert(
                     NodeKind::Icon(IconState::new(paths[i].clone(), color)),
@@ -6201,6 +6814,7 @@ impl PyWindow {
                     PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
                 );
                 tree.add_child(content, icon_id);
+                tab_icon_id = Some(icon_id);
             }
 
             let label_id = tree.insert(
@@ -6241,10 +6855,15 @@ impl PyWindow {
             tree.add_child(tab, indicator);
 
             tree.add_child(row, tab);
+            tab_retheme_data.push((tab_icon_id, label_id, indicator, is_active));
             tabs.push(self.wrap_node(tab));
         }
 
         tree.add_child(self.root, row);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(tabs_retheme_hook(row, tab_retheme_data));
         Ok(tabs)
     }
 
@@ -6334,6 +6953,7 @@ impl PyWindow {
             PaintProperties::new(container_color, corner_radius, elevation, 1.0),
         );
 
+        let mut search_bar_leading_ids: Option<(NodeId, NodeId)> = None;
         let leading = if let Some(path) = leading_path {
             let leading_container = tree.insert(
                 NodeKind::Rect,
@@ -6362,6 +6982,7 @@ impl PyWindow {
             );
             tree.add_child(leading_container, icon_id);
             tree.add_child(bar, leading_container);
+            search_bar_leading_ids = Some((leading_container, icon_id));
             Some(self.wrap_node(leading_container))
         } else {
             None
@@ -6403,6 +7024,8 @@ impl PyWindow {
         let text_field = self.wrap_node(field_id);
 
         let mut trailing = Vec::with_capacity(trailing_paths.len());
+        let mut search_bar_trailing_ids: Vec<(NodeId, NodeId)> =
+            Vec::with_capacity(trailing_paths.len());
         for path in trailing_paths {
             let trailing_container = tree.insert(
                 NodeKind::Rect,
@@ -6437,10 +7060,20 @@ impl PyWindow {
             );
             tree.add_child(trailing_container, icon_id);
             tree.add_child(bar, trailing_container);
+            search_bar_trailing_ids.push((trailing_container, icon_id));
             trailing.push(self.wrap_node(trailing_container));
         }
 
         tree.add_child(self.root, bar);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(search_bar_retheme_hook(
+                bar,
+                field_id,
+                search_bar_leading_ids,
+                search_bar_trailing_ids,
+            ));
         Ok((self.wrap_node(bar), text_field, leading, trailing))
     }
 
@@ -7732,7 +8365,7 @@ impl PyWindow {
             base_y: f32,
             offset_x: f32,
             corner_radius: f64,
-        ) -> NodeId {
+        ) -> (NodeId, NodeId) {
             let mut style = positioned_style(
                 Size {
                     width: length(PAGE_ITEM_SIZE),
@@ -7762,14 +8395,14 @@ impl PyWindow {
             );
             tree.add_child(button, icon_id);
             tree.add_child(root, button);
-            button
+            (button, icon_id)
         }
 
         let mut tree = self.tree.borrow_mut();
         let base_x = x.unwrap_or(0.0);
         let base_y = y.unwrap_or(0.0);
 
-        let previous = build_icon_button(
+        let (previous, previous_icon) = build_icon_button(
             &mut tree,
             self.root,
             back_path,
@@ -7781,6 +8414,7 @@ impl PyWindow {
         );
 
         let mut pages = Vec::with_capacity(page_count);
+        let mut page_retheme_data: Vec<(NodeId, NodeId, bool)> = Vec::with_capacity(page_count);
         for i in 0..page_count {
             let is_selected = i == current;
             let offset_x =
@@ -7825,12 +8459,13 @@ impl PyWindow {
             );
             tree.add_child(item, label_id);
             tree.add_child(self.root, item);
+            page_retheme_data.push((item, label_id, is_selected));
             pages.push(self.wrap_node(item));
         }
 
         let next_offset =
             PAGE_ITEM_SIZE + PAGE_ITEM_GAP + page_count as f32 * (PAGE_ITEM_SIZE + PAGE_ITEM_GAP);
-        let next = build_icon_button(
+        let (next, next_icon) = build_icon_button(
             &mut tree,
             self.root,
             forward_path,
@@ -7841,6 +8476,16 @@ impl PyWindow {
             corner_radius,
         );
 
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(pagination_retheme_hook(
+                previous,
+                previous_icon,
+                next,
+                next_icon,
+                page_retheme_data,
+            ));
         Ok((self.wrap_node(previous), pages, self.wrap_node(next)))
     }
 

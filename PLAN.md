@@ -106,5 +106,26 @@ Full chain green: `cargo check`/`clippy -D warnings`/`fmt` clean,
 phase either), `maturin develop --release`, `pytest tests/` (734
 passed, up from 725, +9, 1 skipped unchanged), all 84 examples,
 showcase demo. Tracker generator: 52 milestones/153 phases/267
-items/2 known gaps/19 fixed gaps. **Up next: Phase 4, the ~9
-conditional/variable multi-node Containers & Navigation factories.**
+items/2 known gaps/19 fixed gaps.
+
+Phase 4: all 9 conditional/variable multi-node Containers & Navigation
+factories wired -- `add_snackbar`, `add_side_sheet`, `add_navigation_
+drawer`, `add_top_app_bar`, `add_navigation_rail`, `add_tabs`, `add_
+search_bar`, `add_pagination`, `add_menu_item`. Two real, pre-existing
+inconsistencies reproduced faithfully, not silently corrected:
+`add_search_bar`'s own icon-button containers use a hardcoded literal
+corner radius, never the `"icon_button"` key; `add_pagination`'s own
+prev/next icon buttons share the `"pagination"` key, not `"icon_
+button"` either -- a third distinct convention among this catalog's
+four icon-button-shaped call sites. `add_menu_item`'s hook correctly
+has nothing to do for shape/elevation (`build_menu`'s own panel, the
+real consumer, still hardcodes those, a confirmed pre-existing gap
+named again, not fixed here).
+
+Full chain green: `cargo check`/`clippy -D warnings`/`fmt` clean,
+`cargo test --workspace --release` (unchanged), `maturin develop
+--release`, `pytest tests/` (745 passed, up from 734, +11, 1 skipped
+unchanged), all 84 examples, showcase demo. Tracker generator: 52
+milestones/154 phases/268 items/2 known gaps/19 fixed gaps. **Up
+next: Phase 5, the ~9 non-`PaintProperties` stateful components,
+which also closes 5 confirmed, previously-undocumented gaps.**
