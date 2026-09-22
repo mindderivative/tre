@@ -83,4 +83,28 @@ Phase 1 -- Phase 2 added no new Rust tests), `maturin develop
 --release`, `pytest tests/` (725 passed, up from 709 at M52's start,
 +16, 1 skipped unchanged), all 84 examples, showcase demo. Tracker
 generator: 52 milestones/152 phases/266 items/2 known gaps/19 fixed
-gaps. **Up next: Phase 3, the ~8 Buttons & FAB family factories.**
+gaps.
+
+Phase 3: all 8 Buttons & FAB family factories wired -- `add_icon_
+button`, `add_fab`, `add_extended_fab`, `add_chip`, `add_badge`
+(dot/labeled pair), `add_segmented_button` (per-segment state captured
+at construction time, `is_selected` never re-derived per Design
+Principle 6), then `add_split_button`/`add_button_group` last. **Real
+emergent design property discovered while wiring the two nested-reuse
+cases:** since both call `self.add_button(...)` internally, that call
+already registers its own plain button hook -- the new hooks only
+layer the additional shape-morph geometry on top (disjoint fields),
+not redundantly re-resolve colors. **A real compiler-caught bug, not
+shipped:** an initial draft of the segmented-button/button-group hooks
+consumed their captured `Vec`s via `.into_iter()` -- `RetitheHook`
+(`Fn`, not `FnOnce`) must be callable multiple times, so this would
+have panicked on a second `set_theme()` call; caught by `cargo check`
+before any test ran, fixed to iterate by reference.
+
+Full chain green: `cargo check`/`clippy -D warnings`/`fmt` clean,
+`cargo test --workspace --release` (unchanged -- no new Rust tests this
+phase either), `maturin develop --release`, `pytest tests/` (734
+passed, up from 725, +9, 1 skipped unchanged), all 84 examples,
+showcase demo. Tracker generator: 52 milestones/153 phases/267
+items/2 known gaps/19 fixed gaps. **Up next: Phase 4, the ~9
+conditional/variable multi-node Containers & Navigation factories.**

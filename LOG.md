@@ -159,15 +159,80 @@
   showcase demo. Tracker generator: 52 milestones/152 phases/266
   items/2 known gaps/19 fixed gaps.
 
+## Phase 3 — Buttons & FAB Family
+
+- Wired the 8 remaining Buttons & FAB factories: `add_icon_button`,
+  `add_fab`, `add_extended_fab`, `add_chip`, `add_badge`, `add_
+  segmented_button`, then `add_split_button`/`add_button_group` last,
+  with the extra care the earlier audit flagged.
+- `add_segmented_button` needed the most structural care of the
+  "single-factory" cases: captured each segment's own `(segment,
+  label, check, is_selected)` tuple into a `Vec` at construction time
+  -- `is_selected` is real, app-owned state (Design Principle 6),
+  never re-derived by the hook -- and reproduced `corner_radii_
+  override`'s own first/last branching using the segment's *index
+  within that captured Vec*, matching the factory's own real logic
+  exactly.
+- **A real, emergent design property discovered while wiring `add_
+  split_button`/`add_button_group`, not anticipated in the plan's own
+  text:** both factories call `self.add_button(...)` internally to
+  build their leading/child buttons -- that internal call *already*
+  registers its own plain `button_retheme_hook` for each one, correctly
+  re-resolving background/corner_radius/elevation/border live, for
+  free. The new `split_button_retheme_hook`/`button_group_retheme_hook`
+  therefore only needed to layer the *additional* shape-morph geometry
+  on top (`paint.shape`/`interactive_shape` for split button, `paint.
+  shape`/`press_interactive_shape` for button group -- disjoint fields
+  the plain button hook never touches), not redundantly re-run color
+  resolution a second time. Two hooks firing for the same `NodeId`,
+  writing disjoint fields, turned out to be a real, deliberate
+  consequence of the hook-vec design itself -- composability that
+  wasn't explicitly designed in, but fell out correctly because each
+  hook only ever writes the fields it's responsible for.
+- **A real bug caught by the compiler, not shipped, not even reaching
+  a test run:** the first draft of `segmented_button_retheme_hook`/
+  `button_group_retheme_hook` iterated their own captured `Vec<NodeId>`/
+  `Vec<(NodeId, NodeId, Option<NodeId>, bool)>` via `.into_iter()` --
+  but `RetitheHook = Box<dyn Fn(&ThemeState, &mut Tree)>` is `Fn`, not
+  `FnOnce`, and must be callable multiple times (once per real
+  `set_theme()` call). Consuming the captured `Vec` on its first
+  invocation would have made a *second* `set_theme()` call panic --
+  `cargo check` refused to compile it at all, catching the bug before
+  any test could even run. Fixed by iterating over `&segments`/
+  `&dividers` (by reference) instead.
+- 9 new pytest tests extending each factory's own M50-era construction-
+  time fixture with a second `window.set_theme(...)` call -- including
+  two that directly prove the emergent split-button/button-group
+  composition property (the leading button's/each child's own
+  *inherited* plain-button retheme survives and applies correctly after
+  a second `set_theme()` call, read back via `Node.get`) and one
+  combined "does not raise" test for the two tightened-shape overrides
+  (no Python-facing readback for `interactive_shape`/`press_
+  interactive_shape`, matching this suite's own established limit).
+  All 9 passed on the first run.
+- `BUILD_TRACKER.md`: Phase 3 section added, Top Metrics row updated
+  (50%, Phase 3 of 6), "In progress" note updated. Regenerated cleanly.
+- Full chain green: `cargo check`/`clippy -D warnings`/`fmt` clean,
+  `cargo test --workspace --release` (unchanged -- no new Rust-level
+  tests needed this phase either), `maturin develop --release`,
+  `pytest tests/` (734 passed, up from 725, +9, 1 skipped unchanged),
+  all 84 examples, showcase demo. Tracker generator: 52 milestones/153
+  phases/267 items/2 known gaps/19 fixed gaps.
+
 ## Status
 
-**M52 Phases 1-2 of 6 are complete.** The mechanism is proven across a
-real, deliberately varied sample of factory shapes -- fixed/conditional
-node counts, `PaintProperties`-only and `IconState.tint`-touching
-hooks, transform-adjacent nodes that must not be clobbered, and a hook
-that legitimately does less than its siblings. Per this session's own
-standing discipline, committing locally at this phase boundary too --
-push still deferred until the full milestone closes. Up next: Phase 3,
-the ~8 Buttons & FAB family factories, including the two structurally
-unusual nested-reuse cases (`add_split_button`, `add_button_group`)
-last, with extra care per this milestone's own investigation.
+**M52 Phases 1-3 of 6 are complete.** The mechanism has now been proven
+across every real topology class the original audit identified except
+the genuinely variable/`Vec`-driven multi-node case (Phase 4) and the
+non-`PaintProperties` stateful components (Phase 5) -- fixed/
+conditional node counts, `PaintProperties`-only and `IconState.tint`-
+touching hooks, transform-adjacent nodes, a hook that legitimately does
+less than its siblings, per-index-branching state captured at
+construction time, and (the real surprise of this phase) hooks that
+compose correctly with an *inherited* hook from an internally-reused
+factory. Per this session's own standing discipline, committing locally
+at this phase boundary too -- push still deferred until the full
+milestone closes. Up next: Phase 4, the ~9 conditional/variable multi-
+node Containers & Navigation factories (`add_snackbar`, `add_side_
+sheet`, `add_navigation_drawer`, `add_top_app_bar`, `add_navigation_
+rail`, `add_tabs`, `add_search_bar`, `add_pagination`, `add_menu_item`).

@@ -1909,6 +1909,409 @@ fn loading_indicator_retheme_hook(id: NodeId) -> crate::window::RetitheHook {
     })
 }
 
+// M52 Phase 3: Buttons & FAB family.
+
+/// M52 Phase 3: `add_icon_button`'s own hook -- reuses `resolved_
+/// variant` ("standard" already translated to "text") consistently for
+/// both color and shape, the same real consistency fix `add_icon_
+/// button` itself makes at construction time. `icon_id`'s own
+/// `IconState.tint` = `colors.label`, matching the factory's own real
+/// anatomy.
+fn icon_button_retheme_hook(
+    container: NodeId,
+    icon_id: NodeId,
+    resolved_variant: String,
+    size: f32,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let Ok(colors) = resolve_button_colors(theme, &resolved_variant, "icon_button") else {
+            return;
+        };
+        let corner_radius = theme
+            .shape("icon_button", Some(&resolved_variant))
+            .unwrap_or_else(|| f64::from(size) / 2.0);
+        if let Some(node) = tree.get_mut(container) {
+            node.paint.background = Animated::new(colors.container);
+            node.paint.corner_radius = Animated::new(corner_radius);
+            node.paint.elevation = Animated::new(colors.elevation);
+            node.paint.border_color = Animated::new(colors.border_color);
+            node.paint.border_width = Animated::new(colors.border_width);
+        }
+        if let Some(node) = tree.get_mut(icon_id)
+            && let NodeKind::Icon(state) = &mut node.kind
+        {
+            state.tint = colors.label;
+        }
+    })
+}
+
+/// M52 Phase 3: `add_fab`'s own hook -- corner radius is keyed by
+/// *size* (`fab_shape`'s own real fallback recomputed here too, since
+/// each real size has its own distinct default), elevation by no
+/// variant at all (real MD3 anatomy is flat regardless of size/color).
+fn fab_retheme_hook(
+    container: NodeId,
+    icon_id: NodeId,
+    variant: String,
+    size: String,
+    default_corner_radius: f32,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let Ok(colors) = resolve_fab_colors(theme, &variant) else {
+            return;
+        };
+        let corner_radius = theme
+            .shape("fab", Some(&size))
+            .unwrap_or(f64::from(default_corner_radius));
+        let elevation = theme
+            .elevation("fab", None)
+            .unwrap_or(FAB_REST_ELEVATION_LEVEL);
+        if let Some(node) = tree.get_mut(container) {
+            node.paint.background = Animated::new(colors.container);
+            node.paint.corner_radius = Animated::new(corner_radius);
+            node.paint.elevation = Animated::new(elevation);
+        }
+        if let Some(node) = tree.get_mut(icon_id)
+            && let NodeKind::Icon(state) = &mut node.kind
+        {
+            state.tint = colors.icon;
+        }
+    })
+}
+
+/// M52 Phase 3: `add_extended_fab`'s own hook -- `icon_id` is `None`
+/// when the factory was called with no `icon`; the label's own color
+/// reuses `colors.icon` (real MD3 anatomy, matching `add_extended_fab`
+/// itself, not a bug). Its own distinct `"extended_fab"` key, no
+/// variant at all (no size variants for Extended FAB in real MD3).
+fn extended_fab_retheme_hook(
+    container: NodeId,
+    icon_id: Option<NodeId>,
+    label: NodeId,
+    variant: String,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let Ok(colors) = resolve_fab_colors(theme, &variant) else {
+            return;
+        };
+        let corner_radius = theme
+            .shape("extended_fab", None)
+            .unwrap_or(EXTENDED_FAB_CORNER_RADIUS);
+        let elevation = theme
+            .elevation("extended_fab", None)
+            .unwrap_or(FAB_REST_ELEVATION_LEVEL);
+        if let Some(node) = tree.get_mut(container) {
+            node.paint.background = Animated::new(colors.container);
+            node.paint.corner_radius = Animated::new(corner_radius);
+            node.paint.elevation = Animated::new(elevation);
+        }
+        if let Some(id) = icon_id
+            && let Some(node) = tree.get_mut(id)
+            && let NodeKind::Icon(state) = &mut node.kind
+        {
+            state.tint = colors.icon;
+        }
+        if let Some(node) = tree.get_mut(label) {
+            node.paint.background = Animated::new(colors.icon);
+        }
+    })
+}
+
+/// M52 Phase 3: `add_chip`'s own hook -- `selected` (in addition to
+/// `variant`) is captured, since `resolve_chip_colors` resolves
+/// differently depending on it. No elevation lookup (Chip has no real
+/// elevation concept in MD3 anatomy). `leading`/`trailing` are each
+/// independently `Option<NodeId>` -- a chip may have neither, either,
+/// or both.
+fn chip_retheme_hook(
+    container: NodeId,
+    label: NodeId,
+    leading: Option<NodeId>,
+    trailing: Option<NodeId>,
+    variant: String,
+    selected: bool,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let Ok(colors) = resolve_chip_colors(theme, &variant, selected) else {
+            return;
+        };
+        let corner_radius = theme.shape("chip", None).unwrap_or(CHIP_CORNER_RADIUS);
+        if let Some(node) = tree.get_mut(container) {
+            node.paint.background = Animated::new(colors.container);
+            node.paint.corner_radius = Animated::new(corner_radius);
+            node.paint.border_color = Animated::new(colors.border_color);
+            node.paint.border_width = Animated::new(colors.border_width);
+        }
+        if let Some(node) = tree.get_mut(label) {
+            node.paint.background = Animated::new(colors.label);
+        }
+        for icon in [leading, trailing].into_iter().flatten() {
+            if let Some(node) = tree.get_mut(icon)
+                && let NodeKind::Icon(state) = &mut node.kind
+            {
+                state.tint = colors.icon;
+            }
+        }
+    })
+}
+
+/// M52 Phase 3: `add_badge`'s own hook for its "dot" anatomy (no
+/// label) -- its own `"badge.dot"` key, distinct from `"badge.
+/// labeled"`.
+fn badge_dot_retheme_hook(id: NodeId) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let color = if theme.is_set() {
+            theme.role("error").unwrap_or(Md3Baseline::ERROR)
+        } else {
+            Md3Baseline::ERROR
+        };
+        let corner_radius = theme
+            .shape("badge", Some("dot"))
+            .unwrap_or_else(|| f64::from(BADGE_DOT_SIZE) / 2.0);
+        if let Some(node) = tree.get_mut(id) {
+            node.paint.background = Animated::new(color);
+            node.paint.corner_radius = Animated::new(corner_radius);
+        }
+    })
+}
+
+/// M52 Phase 3: `add_badge`'s own hook for its "labeled" anatomy -- its
+/// own `"badge.labeled"` key, distinct from `"badge.dot"`.
+fn badge_labeled_retheme_hook(container: NodeId, label: NodeId) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let role = |theme: &crate::window::ThemeState, name: &str, fallback: Color| -> Color {
+            if theme.is_set() {
+                theme.role(name).unwrap_or(fallback)
+            } else {
+                fallback
+            }
+        };
+        let error_color = role(theme, "error", Md3Baseline::ERROR);
+        let on_error_color = role(theme, "on_error", Md3Baseline::ON_ERROR);
+        let corner_radius = theme
+            .shape("badge", Some("labeled"))
+            .unwrap_or_else(|| f64::from(BADGE_LABELED_HEIGHT) / 2.0);
+        if let Some(node) = tree.get_mut(container) {
+            node.paint.background = Animated::new(error_color);
+            node.paint.corner_radius = Animated::new(corner_radius);
+        }
+        if let Some(node) = tree.get_mut(label) {
+            node.paint.background = Animated::new(on_error_color);
+        }
+    })
+}
+
+/// M52 Phase 3: `add_segmented_button`'s own hook -- the most
+/// structurally involved of Phase 3's "single-factory" cases (`add_
+/// split_button`/`add_button_group` are harder still, but for a
+/// different, nested-reuse reason, handled separately below). Captures
+/// each segment's own `(segment, label, check, is_selected)` at
+/// construction time -- `is_selected` is real, app-owned state (Design
+/// Principle 6), never re-derived, the same "fixed at construction,
+/// only theme-tier properties re-resolve" convention `add_date_picker_
+/// day`'s own hook already established. `corner_radii_override` is
+/// reproduced using the *index within this Vec* (first/last), the
+/// identical real branching `add_segmented_button` itself uses.
+fn segmented_button_retheme_hook(
+    frame: NodeId,
+    segments: Vec<(NodeId, NodeId, Option<NodeId>, bool)>,
+    dividers: Vec<NodeId>,
+    height: f32,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let outline_color = if theme.is_set() {
+            theme.role("outline").unwrap_or(Md3Baseline::OUTLINE)
+        } else {
+            Md3Baseline::OUTLINE
+        };
+        let on_surface = theme.on_surface();
+        let secondary_container = if theme.is_set() {
+            theme
+                .role("secondary_container")
+                .unwrap_or(Md3Baseline::SECONDARY_CONTAINER)
+        } else {
+            Md3Baseline::SECONDARY_CONTAINER
+        };
+        let on_secondary_container = if theme.is_set() {
+            theme
+                .role("on_secondary_container")
+                .unwrap_or(Md3Baseline::ON_SECONDARY_CONTAINER)
+        } else {
+            Md3Baseline::ON_SECONDARY_CONTAINER
+        };
+        let corner = theme
+            .shape("segmented_button", None)
+            .unwrap_or_else(|| f64::from(height) / 2.0);
+        if let Some(node) = tree.get_mut(frame) {
+            node.paint.corner_radius = Animated::new(corner);
+            node.paint.border_color = Animated::new(outline_color);
+        }
+        let n = segments.len();
+        for (i, &(segment, label, check, is_selected)) in segments.iter().enumerate() {
+            let corner_radii_override = if i == 0 {
+                Some([corner, 0.0, 0.0, corner])
+            } else if i == n - 1 {
+                Some([0.0, corner, corner, 0.0])
+            } else {
+                None
+            };
+            if let Some(node) = tree.get_mut(segment) {
+                node.paint.background = Animated::new(if is_selected {
+                    secondary_container
+                } else {
+                    TRANSPARENT
+                });
+                node.paint.corner_radii_override = corner_radii_override;
+            }
+            let label_color = if is_selected {
+                on_secondary_container
+            } else {
+                on_surface
+            };
+            if let Some(node) = tree.get_mut(label) {
+                node.paint.background = Animated::new(label_color);
+            }
+            if let Some(id) = check
+                && let Some(node) = tree.get_mut(id)
+                && let NodeKind::Icon(state) = &mut node.kind
+            {
+                state.tint = on_secondary_container;
+            }
+        }
+        for &divider in &dividers {
+            if let Some(node) = tree.get_mut(divider) {
+                node.paint.background = Animated::new(outline_color);
+            }
+        }
+    })
+}
+
+/// M52 Phase 3: `add_split_button`'s own hook -- the milestone's first
+/// nested-reuse case. `leading` already has its own `button_retheme_
+/// hook` (registered by the internal `self.add_button(...)` call
+/// `add_split_button` itself makes) correctly re-resolving its
+/// background/corner_radius/elevation/border live -- this hook only
+/// layers the *additional* shape-morph geometry on top (`paint.shape`/
+/// `interactive_shape`, disjoint fields the plain button hook never
+/// touches), reproducing the exact real bug-fix `add_split_button`'s
+/// own doc comment states: `rest_radius` must be the *same* value
+/// `leading`'s own background hook resolves, not an independently
+/// recomputed one, or the painted shape could silently disagree with
+/// the painted corner radius. `trailing`/`icon_id` never went through
+/// `add_button` at all, so this hook recomputes their full paint from
+/// scratch, the same `resolve_button_colors(theme, &variant, "button")`
+/// call `add_split_button` itself makes (not a `"split_button"` key).
+fn split_button_retheme_hook(
+    leading: NodeId,
+    trailing: NodeId,
+    icon_id: NodeId,
+    variant: String,
+    width: f32,
+    height: f32,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let Ok(colors) = resolve_button_colors(theme, &variant, "button") else {
+            return;
+        };
+        let rest_radius = theme
+            .shape("button", Some(&variant))
+            .unwrap_or_else(|| f64::from(height) / 2.0);
+        let tightened_radius = theme
+            .shape("split_button", Some("tightened"))
+            .unwrap_or(SPLIT_BUTTON_INNER_CORNER_RADIUS);
+
+        let h = f64::from(height);
+        let leading_w = f64::from(width);
+        let leading_relaxed = ShapeKey::from_path(
+            &RoundedRect::new(0.0, 0.0, leading_w, h, rest_radius).to_path(0.1),
+        );
+        let leading_tightened = ShapeKey::from_path(
+            &RoundedRect::new(
+                0.0,
+                0.0,
+                leading_w,
+                h,
+                (rest_radius, tightened_radius, tightened_radius, rest_radius),
+            )
+            .to_path(0.1),
+        );
+        if let Some(node) = tree.get_mut(leading) {
+            node.paint.shape = Animated::new(leading_relaxed.clone());
+            node.paint.interactive_shape = Some((leading_relaxed, leading_tightened));
+        }
+
+        let trailing_relaxed =
+            ShapeKey::from_path(&RoundedRect::new(0.0, 0.0, h, h, rest_radius).to_path(0.1));
+        let trailing_tightened = ShapeKey::from_path(
+            &RoundedRect::new(
+                0.0,
+                0.0,
+                h,
+                h,
+                (tightened_radius, rest_radius, rest_radius, tightened_radius),
+            )
+            .to_path(0.1),
+        );
+        if let Some(node) = tree.get_mut(trailing) {
+            node.paint.background = Animated::new(colors.container);
+            node.paint.corner_radius = Animated::new(rest_radius);
+            node.paint.elevation = Animated::new(colors.elevation);
+            node.paint.border_color = Animated::new(colors.border_color);
+            node.paint.border_width = Animated::new(colors.border_width);
+            node.paint.shape = Animated::new(trailing_relaxed.clone());
+            node.paint.interactive_shape = Some((trailing_relaxed, trailing_tightened));
+        }
+        if let Some(node) = tree.get_mut(icon_id)
+            && let NodeKind::Icon(state) = &mut node.kind
+        {
+            state.tint = colors.label;
+        }
+    })
+}
+
+/// M52 Phase 3: `add_button_group`'s own hook, closing Phase 3 -- the
+/// same emergent-composition reasoning `add_split_button`'s own hook
+/// uses: every child already has its own `button_retheme_hook`
+/// (registered inside each `self.add_button(...)` call in the loop)
+/// correctly re-resolving background/corner_radius/elevation/border
+/// live. This hook only layers `paint.shape`/`press_interactive_shape`
+/// on top (disjoint fields) for every child at once -- `press_
+/// interactive_shape`, not `interactive_shape` (`add_split_button`'s
+/// own field), the real, distinct field this component's own hover/
+/// press mechanic uses. `tightened_radius`'s own fallback is a real
+/// formula over `height` (`button_group_pressed_corner_radius`), not a
+/// fixed constant, reproduced exactly.
+fn button_group_retheme_hook(
+    children: Vec<NodeId>,
+    variant: String,
+    width: f32,
+    height: f32,
+) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let group_h = f64::from(height);
+        let group_w = f64::from(width);
+        let rest_radius = theme
+            .shape("button", Some(&variant))
+            .unwrap_or(group_h / 2.0);
+        let tightened_radius = theme
+            .shape("button_group", Some("tightened"))
+            .unwrap_or_else(|| button_group_pressed_corner_radius(group_h));
+        let child_relaxed = ShapeKey::from_path(
+            &RoundedRect::new(0.0, 0.0, group_w, group_h, rest_radius).to_path(0.1),
+        );
+        let child_tightened = ShapeKey::from_path(
+            &RoundedRect::new(0.0, 0.0, group_w, group_h, tightened_radius).to_path(0.1),
+        );
+        for &child in &children {
+            if let Some(node) = tree.get_mut(child) {
+                node.paint.shape = Animated::new(child_relaxed.clone());
+                node.paint.press_interactive_shape =
+                    Some((child_relaxed.clone(), child_tightened.clone()));
+            }
+        }
+    })
+}
+
 #[pymethods]
 impl PyWindow {
     /// §14 step 6's own "node creation" -- one shape (a colored rect, a
@@ -2192,6 +2595,15 @@ impl PyWindow {
         );
         tree.add_child(container, icon_id);
         tree.add_child(self.root, container);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(icon_button_retheme_hook(
+                container,
+                icon_id,
+                resolved_variant.to_string(),
+                size,
+            ));
         Ok(self.wrap_node(container))
     }
 
@@ -2269,6 +2681,14 @@ impl PyWindow {
         );
         tree.add_child(container, icon_id);
         tree.add_child(self.root, container);
+        drop(tree);
+        self.retheme_hooks.borrow_mut().push(fab_retheme_hook(
+            container,
+            icon_id,
+            variant.to_string(),
+            size.to_string(),
+            default_corner_radius,
+        ));
         Ok(self.wrap_node(container))
     }
 
@@ -2341,6 +2761,7 @@ impl PyWindow {
         };
         let container = tree.insert(NodeKind::Rect, container_style, container_paint);
 
+        let mut extended_fab_icon_id: Option<NodeId> = None;
         if let Some(path) = icon_path {
             let icon_id = tree.insert(
                 NodeKind::Icon(IconState::new(path, colors.icon)),
@@ -2354,6 +2775,7 @@ impl PyWindow {
                 PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
             );
             tree.add_child(container, icon_id);
+            extended_fab_icon_id = Some(icon_id);
         }
 
         let icon_and_gap = if icon.is_some() {
@@ -2382,6 +2804,15 @@ impl PyWindow {
         );
         tree.add_child(container, label_id);
         tree.add_child(self.root, container);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(extended_fab_retheme_hook(
+                container,
+                extended_fab_icon_id,
+                label_id,
+                variant.to_string(),
+            ));
         Ok(self.wrap_node(container))
     }
 
@@ -2510,6 +2941,9 @@ impl PyWindow {
         let frame = tree.insert(NodeKind::Rect, frame_style, frame_paint);
 
         let mut segments = Vec::with_capacity(n);
+        let mut segment_retheme_data: Vec<(NodeId, NodeId, Option<NodeId>, bool)> =
+            Vec::with_capacity(n);
+        let mut divider_ids: Vec<NodeId> = Vec::with_capacity(n.saturating_sub(1));
         let mut cursor = 0.0_f32;
         for (i, label) in labels.into_iter().enumerate() {
             let is_selected = selected[i];
@@ -2554,8 +2988,9 @@ impl PyWindow {
             } else {
                 on_surface
             };
+            let mut check_id: Option<NodeId> = None;
             if is_selected {
-                let check_id = tree.insert(
+                let id = tree.insert(
                     NodeKind::Icon(IconState::new(check_path.clone(), on_secondary_container)),
                     Style {
                         size: Size {
@@ -2566,7 +3001,8 @@ impl PyWindow {
                     },
                     PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
                 );
-                tree.add_child(segment, check_id);
+                tree.add_child(segment, id);
+                check_id = Some(id);
             }
             let label_width = (segment_width
                 - 2.0 * SEGMENTED_BUTTON_HORIZONTAL_PADDING
@@ -2596,6 +3032,7 @@ impl PyWindow {
             tree.add_child(segment, label_id);
             tree.add_child(frame, segment);
             segments.push(segment);
+            segment_retheme_data.push((segment, label_id, check_id, is_selected));
 
             cursor += segment_width;
             if i < n - 1 {
@@ -2612,11 +3049,21 @@ impl PyWindow {
                     PaintProperties::new(outline_color, 0.0, 0.0, 1.0),
                 );
                 tree.add_child(frame, divider_id);
+                divider_ids.push(divider_id);
                 cursor += SEGMENTED_BUTTON_OUTLINE_WIDTH;
             }
         }
 
         tree.add_child(self.root, frame);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(segmented_button_retheme_hook(
+                frame,
+                segment_retheme_data,
+                divider_ids,
+                height,
+            ));
         Ok(segments.into_iter().map(|id| self.wrap_node(id)).collect())
     }
 
@@ -2709,6 +3156,7 @@ impl PyWindow {
         let container = tree.insert(NodeKind::Rect, container_style, container_paint);
 
         let mut icon_count = 0.0_f32;
+        let mut chip_leading_id: Option<NodeId> = None;
         if let Some(path) = leading_path {
             icon_count += 1.0;
             let leading_id = tree.insert(
@@ -2723,6 +3171,7 @@ impl PyWindow {
                 PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
             );
             tree.add_child(container, leading_id);
+            chip_leading_id = Some(leading_id);
         }
 
         let label_width = (width
@@ -2749,6 +3198,7 @@ impl PyWindow {
         );
         tree.add_child(container, label_id);
 
+        let mut chip_trailing_id: Option<NodeId> = None;
         if let Some(path) = trailing_path {
             let trailing_id = tree.insert(
                 NodeKind::Icon(IconState::new(path, colors.icon)),
@@ -2762,9 +3212,19 @@ impl PyWindow {
                 PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
             );
             tree.add_child(container, trailing_id);
+            chip_trailing_id = Some(trailing_id);
         }
 
         tree.add_child(self.root, container);
+        drop(tree);
+        self.retheme_hooks.borrow_mut().push(chip_retheme_hook(
+            container,
+            label_id,
+            chip_leading_id,
+            chip_trailing_id,
+            variant.to_string(),
+            selected,
+        ));
         Ok(self.wrap_node(container))
     }
 
@@ -3089,6 +3549,10 @@ impl PyWindow {
                 PaintProperties::new(error_color, corner_radius, 0.0, 1.0),
             );
             tree.add_child(self.root, id);
+            drop(tree);
+            self.retheme_hooks
+                .borrow_mut()
+                .push(badge_dot_retheme_hook(id));
             return self.wrap_node(id);
         };
 
@@ -3134,6 +3598,10 @@ impl PyWindow {
         );
         tree.add_child(container, label_id);
         tree.add_child(self.root, container);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(badge_labeled_retheme_hook(container, label_id));
         self.wrap_node(container)
     }
 
@@ -5380,6 +5848,28 @@ impl PyWindow {
         );
         tree.add_child(trailing, icon_id);
         tree.add_child(self.root, trailing);
+        drop(tree);
+        // M52 Phase 3: `leading` already got its own `button_retheme_
+        // hook` registered *inside* the `self.add_button(...)` call
+        // above -- that hook already correctly re-resolves `leading`'s
+        // own background/corner_radius/elevation/border live. This new
+        // hook only layers the *additional* shape-morph geometry on top
+        // (disjoint fields: `paint.shape`/`interactive_shape`, never
+        // touched by the plain button hook) plus everything `trailing`/
+        // `icon_id` need, since neither went through `add_button` at
+        // all. Two hooks firing for the same `leading.id`, writing
+        // disjoint fields, is a real, deliberate emergent property of
+        // the hook-vec design, not a workaround.
+        self.retheme_hooks
+            .borrow_mut()
+            .push(split_button_retheme_hook(
+                leading.id,
+                trailing,
+                icon_id,
+                variant.to_string(),
+                width,
+                height,
+            ));
 
         Ok((leading, self.wrap_node(trailing), self.wrap_node(icon_id)))
     }
@@ -5491,6 +5981,7 @@ impl PyWindow {
         );
 
         let mut children = Vec::with_capacity(n);
+        let mut child_ids: Vec<NodeId> = Vec::with_capacity(n);
         for label in &labels {
             let button = self.add_button(label, width, height, variant, None, None)?;
             let mut tree = self.tree.borrow_mut();
@@ -5500,8 +5991,25 @@ impl PyWindow {
                 node.paint.press_interactive_shape =
                     Some((child_relaxed.clone(), child_tightened.clone()));
             }
+            child_ids.push(button.id);
             children.push(button);
         }
+
+        // M52 Phase 3: same emergent-composition reasoning `add_split_
+        // button`'s own hook uses -- each child already got its own
+        // `button_retheme_hook` registered inside `self.add_button(...)`
+        // above, correctly re-resolving background/corner_radius/
+        // elevation/border live. This new hook only layers the
+        // additional `paint.shape`/`press_interactive_shape` geometry on
+        // top (disjoint fields), for every child at once.
+        self.retheme_hooks
+            .borrow_mut()
+            .push(button_group_retheme_hook(
+                child_ids,
+                variant.to_string(),
+                width,
+                height,
+            ));
 
         Ok((self.wrap_node(group_id), children))
     }

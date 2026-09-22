@@ -1025,3 +1025,106 @@ def test_window_set_theme_a_second_call_does_not_raise_for_every_remaining_color
     window.add_list_item(headline="hi", width=280.0)
     window.add_loading_indicator()
     window.set_theme(seed=(0x00, 0x66, 0x00, 0xFF))
+
+
+# --- M52 Phase 3: live re-theme -- the Buttons & FAB family -------------
+# For each factory M50 already proved a construction-time corner_radius/
+# elevation value for, a second window.set_theme(...) call with a
+# different components: override must change that same, already-built
+# Node's value live.
+
+
+def test_window_set_theme_recomputes_an_already_built_icon_buttons_shape_live(tmp_path):
+    window = Window(width=400, height=400)
+    node = window.add_icon_button(icon="add", size=40.0, variant="filled")
+    retheme(window, tmp_path, "t.yaml", "  icon_button.filled: {corner_radius: 3, elevation: 2}\n")
+    assert node.get("corner_radius") == pytest.approx(3.0)
+    assert node.get("elevation") == pytest.approx(2.0)
+
+
+def test_window_set_theme_recomputes_an_already_built_fabs_shape_live(tmp_path):
+    window = Window(width=400, height=400)
+    node = window.add_fab(icon="add", size="small", variant="surface")
+    retheme(window, tmp_path, "t.yaml", "  fab.small: {corner_radius: 4}\n  fab: {elevation: 5}\n")
+    assert node.get("corner_radius") == pytest.approx(4.0)
+    assert node.get("elevation") == pytest.approx(5.0)
+
+
+def test_window_set_theme_recomputes_an_already_built_extended_fabs_shape_live(tmp_path):
+    window = Window(width=400, height=400)
+    node = window.add_extended_fab(label="hi", width=120.0, variant="primary")
+    assert node.get("corner_radius") == pytest.approx(16.0)
+    retheme(window, tmp_path, "t.yaml", "  extended_fab: {corner_radius: 9, elevation: 6}\n")
+    assert node.get("corner_radius") == pytest.approx(9.0)
+    assert node.get("elevation") == pytest.approx(6.0)
+
+
+def test_window_set_theme_recomputes_an_already_built_chips_shape_live(tmp_path):
+    window = Window(width=400, height=400)
+    node = window.add_chip(label="hi", width=100.0, variant="assist")
+    retheme(window, tmp_path, "t.yaml", "  chip: {corner_radius: 2}\n")
+    assert node.get("corner_radius") == pytest.approx(2.0)
+
+
+def test_window_set_theme_recomputes_an_already_built_badges_shape_live(tmp_path):
+    window = Window(width=400, height=400)
+    dot = window.add_badge()
+    labeled = window.add_badge(label="9")
+    retheme(
+        window,
+        tmp_path,
+        "t.yaml",
+        "  badge.dot: {corner_radius: 1}\n  badge.labeled: {corner_radius: 2}\n",
+    )
+    assert dot.get("corner_radius") == pytest.approx(1.0)
+    assert labeled.get("corner_radius") == pytest.approx(2.0)
+
+
+def test_window_set_theme_a_second_call_does_not_raise_for_an_already_built_segmented_button(
+    tmp_path,
+):
+    window = Window(width=400, height=400)
+    window.add_segmented_button(labels=["A", "B"], width=200.0, height=40.0)
+    retheme(window, tmp_path, "t.yaml", "  segmented_button: {corner_radius: 3}\n")
+
+
+def test_window_set_theme_recomputes_an_already_built_split_buttons_leading_shape_live(tmp_path):
+    # leading inherits its background/corner_radius/elevation retheme
+    # from the plain button_retheme_hook registered inside the internal
+    # self.add_button(...) call -- proven here through the same real
+    # readback test_split_button_leading_inherits_the_button_key already
+    # established at construction time, now after a second set_theme().
+    window = Window(width=400, height=400)
+    leading, trailing, _icon = window.add_split_button(
+        label="hi", width=100.0, height=40.0, variant="filled"
+    )
+    retheme(window, tmp_path, "t.yaml", "  button.filled: {corner_radius: 5}\n")
+    assert leading.get("corner_radius") == pytest.approx(5.0)
+    assert trailing.get("corner_radius") == pytest.approx(5.0)
+
+
+def test_window_set_theme_a_second_call_does_not_raise_for_split_button_and_button_group_tightened(
+    tmp_path,
+):
+    # No Python-facing readback for corner_radii_override/interactive_
+    # shape/press_interactive_shape -- proven by not raising, matching
+    # this suite's own established limit at construction time.
+    window = Window(width=400, height=400)
+    window.add_split_button(label="hi", width=100.0, height=40.0, variant="filled")
+    window.add_button_group(labels=["A", "B"], width=80.0, height=40.0, variant="outlined")
+    retheme(
+        window,
+        tmp_path,
+        "t.yaml",
+        "  split_button.tightened: {corner_radius: 2}\n  button_group.tightened: {corner_radius: 3}\n",
+    )
+
+
+def test_window_set_theme_recomputes_an_already_built_button_groups_children_shape_live(tmp_path):
+    window = Window(width=400, height=400)
+    group, children = window.add_button_group(
+        labels=["A", "B"], width=80.0, height=40.0, variant="outlined"
+    )
+    retheme(window, tmp_path, "t.yaml", "  button.outlined: {corner_radius: 6}\n")
+    for child in children:
+        assert child.get("corner_radius") == pytest.approx(6.0)
