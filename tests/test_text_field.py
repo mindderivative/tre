@@ -89,6 +89,25 @@ def test_a_real_click_also_reaches_the_text_field():
     assert field.is_focused() is True, "a real click on a TextField must move real focus there"
 
 
+def test_a_real_right_click_also_reaches_the_text_field():
+    """M53 Phase 1 (§8, §10, §11.3): the real gap found while scoping
+    context menus for `TextField`/`CodeEditor` -- a right-click must
+    also focus the field, or a Copy/Cut/Paste context-menu item opened
+    by that same right-click would act on whatever was last *left*-
+    clicked, not the field the user just right-clicked. `Window.
+    right_click(node)` is the same real, no-live-window-needed
+    synthetic entry point `test_a_real_click_also_reaches_the_text_
+    field` already uses for `click`.
+    """
+    window = Window(width=200, height=100)
+    field = window.add_text_field(background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24)
+    assert field.is_focused() is False
+
+    window.right_click(field)
+
+    assert field.is_focused() is True, "a real right-click on a TextField must move real focus there"
+
+
 def test_clicking_a_non_text_field_still_does_not_move_focus():
     window = Window(width=200, height=100)
     checkbox = window.add_checkbox(background=(0xEE, 0xEE, 0xEE, 0xFF), width=24, height=24)

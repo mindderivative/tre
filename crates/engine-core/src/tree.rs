@@ -3286,6 +3286,31 @@ impl Tree {
         true
     }
 
+    /// M53 Phase 1 (§8, §10, §11.3): a real "Select All" -- genuinely
+    /// new, not composable from Python today (`Node.get` has no way to
+    /// read a field's own `content.len()`, so an app cannot build this
+    /// itself from `set_text_field_cursor`/`extend_text_field_selection`
+    /// alone). `selection_anchor` at the real start (`0`, always a char
+    /// boundary), `cursor` at the real end (`content.len()`, likewise) --
+    /// matching every real desktop text field's own Ctrl+A convention:
+    /// the whole content becomes selected, cursor lands at the end, not
+    /// the start. Returns whether `field` was actually a real
+    /// `TextField` -- a no-op on any other kind or a stale/missing
+    /// `NodeId`, the same real contract every sibling method here
+    /// already has.
+    pub fn select_all_text_field(&mut self, field: NodeId) -> bool {
+        self.dirty = true;
+        let Some(NodeKind::TextField(state)) = self.nodes.get_mut(field).map(|n| &mut n.kind)
+        else {
+            return false;
+        };
+        state.selection_anchor = Some(0);
+        state.cursor = state.content.len();
+        state.goal_column = None;
+        self.scroll_text_field_caret_into_view(field);
+        true
+    }
+
     /// M32 Phase 6 (§4, §5, §8): a real press on a `Terminal`'s own
     /// cell grid -- sets both `selection_start`/`selection_end` to the
     /// same real `(row, col)`, the identical "a plain click collapses
@@ -3612,7 +3637,21 @@ impl Tree {
                     // terminal emulator focuses itself on click, the
                     // identical real expectation `TextField`'s own
                     // finding already states for text input generally.
-                    if button == PointerButton::Primary
+                    //
+                    // M53 Phase 1 (§8, §10, §11.3): widened to `Pointer
+                    // Button::Secondary` too -- a real, concrete gap
+                    // found while scoping context menus for `TextField`/
+                    // `CodeEditor`: a right-click opens whatever context
+                    // menu `Node.set_context_menu` attached (already
+                    // real, already wired, `open_context_menu`), but
+                    // without this, it never focused the field first --
+                    // a Copy/Cut/Paste menu item would act on whatever
+                    // was last *left*-clicked, not the field the user
+                    // just right-clicked. Every real desktop text field
+                    // focuses itself on right-click too, the identical
+                    // real expectation this gate's own `Primary` case
+                    // already establishes.
+                    if matches!(button, PointerButton::Primary | PointerButton::Secondary)
                         && matches!(
                             self.nodes.get(node).map(|n| &n.kind),
                             Some(NodeKind::TextField(_)) | Some(NodeKind::Terminal(_))
@@ -9854,6 +9893,70 @@ mod tests {
         );
     }
 
+    /// M53 Phase 1 (§8, §10, §11.3): the real gap found while scoping
+    /// context menus for `TextField`/`CodeEditor` -- a right-click must
+    /// focus the field too, or a Copy/Cut/Paste context-menu item would
+    /// act on whatever was last left-clicked, not the field the user
+    /// just right-clicked.
+    #[test]
+    fn pointer_right_click_on_a_text_field_also_moves_focus_there() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            size: Size {
+                width: length(120.0),
+                height: length(24.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+        let field = tree.insert(
+            NodeKind::TextField(TextFieldState::new("hi", "Roboto", 400.0, 16.0)),
+            Style {
+                size: Size {
+                    width: length(120.0),
+                    height: length(24.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(root, field);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(120.0),
+                height: AvailableSpace::Definite(24.0),
+            },
+        );
+        assert_eq!(tree.focused(), None, "must start genuinely unfocused");
+
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(10.0, 10.0),
+                button: PointerButton::Secondary,
+            },
+            &config,
+            Instant::now(),
+        );
+        assert_eq!(
+            tree.focused(),
+            Some(field),
+            "a real right-click on a TextField must move real focus there too, so a context \
+             menu opened by the same right-click acts on the correct field"
+        );
+    }
+
     #[test]
     fn pointer_press_on_a_non_text_field_does_not_move_focus() {
         let mut tree = Tree::new();
@@ -10228,6 +10331,54 @@ mod tests {
         let (k, s, p) = leaf(100.0, 100.0);
         let root = tree.insert(k, s, p);
         assert!(!tree.extend_text_field_selection(root, 0));
+    }
+
+    /// M53 Phase 1 (§8, §10, §11.3): `select_all_text_field` -- real,
+    /// exact-value proof of the "Select All" convention (anchor at the
+    /// real start, cursor lands at the real end, matching every real
+    /// desktop text field's own Ctrl+A behavior).
+    #[test]
+    fn select_all_text_field_selects_from_start_to_end() {
+        let (mut tree, _root, field) = text_field_scene("hello world");
+        tree.set_text_field_cursor(field, 3);
+        assert!(tree.select_all_text_field(field));
+        let state = field_state(&tree, field);
+        assert_eq!(state.selection_anchor, Some(0));
+        assert_eq!(state.cursor, 11);
+    }
+
+    #[test]
+    fn select_all_text_field_on_empty_content_selects_an_empty_range() {
+        let (mut tree, _root, field) = text_field_scene("");
+        assert!(tree.select_all_text_field(field));
+        let state = field_state(&tree, field);
+        assert_eq!(state.selection_anchor, Some(0));
+        assert_eq!(state.cursor, 0);
+    }
+
+    #[test]
+    fn select_all_text_field_lands_on_a_real_char_boundary_for_multi_byte_content() {
+        // Three 3-byte real characters -- content.len() is a real char
+        // boundary already (the end of the string always is), but this
+        // proves the cursor lands at the genuine byte length, not a
+        // truncated/miscounted one, for real multi-byte UTF-8 content.
+        let (mut tree, _root, field) = text_field_scene("\u{5462}\u{5462}\u{5462}");
+        assert!(tree.select_all_text_field(field));
+        let state = field_state(&tree, field);
+        assert_eq!(state.selection_anchor, Some(0));
+        assert_eq!(
+            state.cursor, 9,
+            "three 3-byte chars must select through all 9 real bytes"
+        );
+        assert!(state.content.is_char_boundary(state.cursor));
+    }
+
+    #[test]
+    fn select_all_text_field_on_a_non_text_field_is_a_true_no_op() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(100.0, 100.0);
+        let root = tree.insert(k, s, p);
+        assert!(!tree.select_all_text_field(root));
     }
 
     /// M32 Phase 6 (§4, §5, §8): a real 3-row terminal seeded with
