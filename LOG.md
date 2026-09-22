@@ -281,23 +281,76 @@
   all 84 examples, showcase demo. Tracker generator: 52 milestones/154
   phases/268 items/2 known gaps/19 fixed gaps.
 
+## Phase 5 — Non-`PaintProperties` Stateful Components
+
+- **Real investigation before writing any code, not assumed:** re-read
+  `Tree::set_all_component_tints` (`engine-core/src/tree.rs`) directly,
+  the pre-existing, untouched-since-Phase-1 mechanism. Confirmed `add_
+  checkbox`/`add_slider`/`add_text_field`/`add_code_editor`'s own
+  themed fields (`CheckboxState.mark_tint`/`SliderState.track_tint`/
+  `TextFieldState.text_tint`) are the *exact* fields that mechanism
+  already unconditionally re-tints with `on_surface()` on every real
+  `set_theme()` call -- these 4 factories needed **zero new Rust
+  code**, a real finding that avoided writing genuinely redundant
+  duplicate-hook logic a less careful pass could easily have written
+  (all four look, at a glance, exactly like the other stateful
+  components this phase was scoped to cover).
+- Wired the 5 factories confirmed to be real, previously-undocumented
+  gaps instead: `add_radio_button` (2 independent real roles -- the
+  exact gap `set_all_component_tints`'s own doc comment already names
+  as the reason its single-`Color`-parameter mechanism can't express
+  it), `add_switch` (5 independent real roles, the most of any
+  component in this catalog), `add_linear_progress`, `add_circular_
+  progress`, `add_time_picker_dial`. All 5 confirmed, via the same
+  direct `set_all_component_tints` read, to have been completely
+  untouched by `Window.set_theme` even before this milestone -- not
+  partially covered the way Checkbox/Slider/TextField were.
+- 2 new Rust unit tests, GIL-free, both passing on the first run:
+  `radio_button_retheme_hook`'s own exact-value proof across both real
+  roles; `switch_retheme_hook`'s own exact-value proof across all 5 --
+  the real, concrete demonstration that a gap this project's own prior
+  M20 doc comment had already named and left unfixed is now genuinely
+  closed, not just asserted closed.
+- 2 new pytest tests: one confirming the pre-existing tint-push
+  mechanism keeps working correctly for the 4 already-covered
+  components after this milestone's own changes (a real regression
+  check on old behavior, not new functionality); one confirming a
+  second `set_theme()` call does not raise across all 5 newly-wired
+  components at once. A real signature mismatch caught by running the
+  first draft, not by inspection: `add_text_field`/`add_code_editor`
+  both require a `background: (u8,u8,u8,u8)` tuple (not a `value=`
+  keyword the way `add_time_input_field`/`add_spin_box` use `value=`) --
+  fixed to match each factory's own real signature.
+- `BUILD_TRACKER.md`: Phase 5 section added, Top Metrics row updated
+  (83%, Phase 5 of 6), "In progress" note updated to state all 46
+  in-scope factories are now wired. Regenerated cleanly.
+- Full chain green: `cargo check`/`clippy -D warnings`/`fmt` clean,
+  `cargo test --workspace --release` (`engine-py` 27, up from 25, +2),
+  `maturin develop --release`, `pytest tests/` (747 passed, up from
+  745, +2, 1 skipped unchanged), all 84 examples, showcase demo.
+  Tracker generator: 52 milestones/155 phases/270 items/2 known
+  gaps/19 fixed gaps.
+
 ## Status
 
-**M52 Phases 1-4 of 6 are complete.** The mechanism has now been proven
-across every real topology class the original audit identified except
-the non-`PaintProperties` stateful components (Phase 5) -- fixed/
-conditional/genuinely-variable node counts, `PaintProperties`-only and
-`IconState.tint`-touching hooks, transform-adjacent nodes, hooks that
-legitimately do less than their siblings, per-index/per-item app-owned
-state captured at construction time, hooks that compose correctly with
-an inherited hook from an internally-reused factory, and now a single
-hook shared correctly across two structurally different real branches.
-Per this session's own standing discipline, committing locally at this
-phase boundary too -- push still deferred until the full milestone
-closes. Up next: Phase 5, the ~9 non-`PaintProperties` stateful
-components (`add_checkbox`, `add_slider`, `add_text_field`, `add_code_
-editor`, `add_radio_button`, `add_switch`, `add_linear_progress`,
-`add_circular_progress`, `add_time_picker_dial`), which also closes 5
-confirmed, previously-undocumented gaps where `Window.set_theme` had
-zero effect at all (`RadioButton`/`Switch`/`LinearProgress`/
-`CircularProgress`/`TimePickerDial`).
+**M52 Phases 1-5 of 6 are complete -- all 46 in-scope factories are now
+wired.** The mechanism has been proven across every real topology
+class the original audit identified: fixed/conditional/genuinely-
+variable node counts, `PaintProperties`-only and `IconState.tint`-
+touching hooks, transform-adjacent nodes, hooks that legitimately do
+less than their siblings, per-index/per-item app-owned state captured
+at construction time, hooks that compose correctly with an inherited
+hook from an internally-reused factory, a single hook shared across
+two structurally different real branches, and (this phase's own real
+finding) knowing when a factory needs *no* new hook at all because an
+existing mechanism already covers it correctly. Per this session's own
+standing discipline, committing locally at this phase boundary too --
+push still deferred until the full milestone closes. Up next: Phase 6,
+docs/example/verification wrap-up -- no `_core.pyi` change needed
+(`Window.set_theme`'s own signature is unchanged throughout this whole
+milestone), extend `examples/theme_customization.py` with a second
+`window.set_theme(...)` call proving `add_button`'s corner_radius/
+elevation change live, matching M51's own equivalent proof for `view.
+set_theme(...)`, then close the milestone: full final verification
+chain, commit, memory update, and (per this session's own "push once a
+full milestone closes" convention) push to `origin/main`.

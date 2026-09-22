@@ -126,6 +126,23 @@ Full chain green: `cargo check`/`clippy -D warnings`/`fmt` clean,
 `cargo test --workspace --release` (unchanged), `maturin develop
 --release`, `pytest tests/` (745 passed, up from 734, +11, 1 skipped
 unchanged), all 84 examples, showcase demo. Tracker generator: 52
-milestones/154 phases/268 items/2 known gaps/19 fixed gaps. **Up
-next: Phase 5, the ~9 non-`PaintProperties` stateful components,
-which also closes 5 confirmed, previously-undocumented gaps.**
+milestones/154 phases/268 items/2 known gaps/19 fixed gaps.
+
+Phase 5: real investigation before writing any code confirmed `add_
+checkbox`/`add_slider`/`add_text_field`/`add_code_editor` need **zero**
+new Rust code -- their own themed fields are the exact fields the
+pre-existing, untouched `Tree::set_all_component_tints` already re-
+tints on every `set_theme()` call. Wired the 5 confirmed, previously-
+undocumented gaps instead: `add_radio_button` (2 roles), `add_switch`
+(5 roles, the most of any component), `add_linear_progress`, `add_
+circular_progress`, `add_time_picker_dial` -- all 5 confirmed
+completely untouched by `Window.set_theme` even before this milestone.
+
+Full chain green: `cargo check`/`clippy -D warnings`/`fmt` clean,
+`cargo test --workspace --release` (`engine-py` 27, up from 25, +2 --
+exact-value tests for radio button's 2 roles and switch's all 5),
+`maturin develop --release`, `pytest tests/` (747 passed, up from 745,
++2, 1 skipped unchanged), all 84 examples, showcase demo. Tracker
+generator: 52 milestones/155 phases/270 items/2 known gaps/19 fixed
+gaps. **All 46 in-scope factories now wired. Up next: Phase 6, docs/
+example/verification wrap-up, closing the milestone.**

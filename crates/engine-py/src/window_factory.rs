@@ -2851,6 +2851,150 @@ fn menu_item_retheme_hook(
     })
 }
 
+// M52 Phase 5: non-`PaintProperties` stateful components. **Real,
+// verified-before-writing-code finding: `add_checkbox`/`add_slider`/
+// `add_text_field`/`add_code_editor` need NO new hook at all.** Each
+// one's own themed field (`CheckboxState.mark_tint`/`SliderState.
+// track_tint`/`TextFieldState.text_tint`) is already the exact field
+// `Tree::set_all_component_tints` (the pre-existing mechanism, left
+// untouched since Phase 1) unconditionally overwrites with `on_
+// surface()` on every real `set_theme` call -- confirmed by direct
+// read of `set_all_component_tints`'s own match arms
+// (`engine-core/src/tree.rs`) before writing anything here, not
+// assumed. Writing a redundant hook for these four would duplicate
+// work the existing mechanism already does correctly. Only the 5
+// components `set_all_component_tints` was confirmed to NOT reach at
+// all get real, new hooks below.
+
+/// M52 Phase 5: `add_radio_button`'s own hook -- the real gap `Tree::
+/// set_all_component_tints`'s own doc comment already names directly
+/// ("a radio button genuinely needs two different real roles... which
+/// that single-`Color`-parameter mechanism can't express"). Confirmed,
+/// previously-undocumented: before this milestone, `Window.set_theme`
+/// had zero effect on an already-built radio button at all.
+fn radio_button_retheme_hook(id: NodeId) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let role = |theme: &crate::window::ThemeState, name: &str, fallback: Color| -> Color {
+            if theme.is_set() {
+                theme.role(name).unwrap_or(fallback)
+            } else {
+                fallback
+            }
+        };
+        let unselected_tint = role(theme, "outline", Md3Baseline::OUTLINE);
+        let selected_tint = role(theme, "primary", Md3Baseline::PRIMARY);
+        if let Some(node) = tree.get_mut(id)
+            && let NodeKind::RadioButton(state) = &mut node.kind
+        {
+            state.unselected_tint = unselected_tint;
+            state.selected_tint = selected_tint;
+        }
+    })
+}
+
+/// M52 Phase 5: `add_switch`'s own hook -- 5 independent real roles,
+/// confirmed previously completely untouched by `Window.set_theme`
+/// (unlike `Checkbox`/`Slider`/`TextField`, `Switch` was never even
+/// partially covered by the existing tint-push mechanism).
+fn switch_retheme_hook(id: NodeId) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let role = |theme: &crate::window::ThemeState, name: &str, fallback: Color| -> Color {
+            if theme.is_set() {
+                theme.role(name).unwrap_or(fallback)
+            } else {
+                fallback
+            }
+        };
+        let track_off_tint = role(
+            theme,
+            "surface_container_highest",
+            Md3Baseline::SURFACE_CONTAINER_HIGHEST,
+        );
+        let track_on_tint = role(theme, "primary", Md3Baseline::PRIMARY);
+        let track_outline_tint = role(theme, "outline", Md3Baseline::OUTLINE);
+        let handle_off_tint = role(theme, "outline", Md3Baseline::OUTLINE);
+        let handle_on_tint = role(theme, "on_primary", Md3Baseline::ON_PRIMARY);
+        if let Some(node) = tree.get_mut(id)
+            && let NodeKind::Switch(state) = &mut node.kind
+        {
+            state.track_off_tint = track_off_tint;
+            state.track_on_tint = track_on_tint;
+            state.track_outline_tint = track_outline_tint;
+            state.handle_off_tint = handle_off_tint;
+            state.handle_on_tint = handle_on_tint;
+        }
+    })
+}
+
+/// M52 Phase 5: `add_linear_progress`'s own hook -- confirmed
+/// previously untouched by `Window.set_theme`.
+fn linear_progress_retheme_hook(id: NodeId) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let role = |theme: &crate::window::ThemeState, name: &str, fallback: Color| -> Color {
+            if theme.is_set() {
+                theme.role(name).unwrap_or(fallback)
+            } else {
+                fallback
+            }
+        };
+        let track_tint = role(
+            theme,
+            "surface_container_highest",
+            Md3Baseline::SURFACE_CONTAINER_HIGHEST,
+        );
+        let indicator_tint = role(theme, "primary", Md3Baseline::PRIMARY);
+        if let Some(node) = tree.get_mut(id)
+            && let NodeKind::LinearProgress(state) = &mut node.kind
+        {
+            state.track_tint = track_tint;
+            state.indicator_tint = indicator_tint;
+        }
+    })
+}
+
+/// M52 Phase 5: `add_circular_progress`'s own hook -- confirmed
+/// previously untouched by `Window.set_theme`.
+fn circular_progress_retheme_hook(id: NodeId) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let indicator_tint = if theme.is_set() {
+            theme.role("primary").unwrap_or(Md3Baseline::PRIMARY)
+        } else {
+            Md3Baseline::PRIMARY
+        };
+        if let Some(node) = tree.get_mut(id)
+            && let NodeKind::CircularProgress(state) = &mut node.kind
+        {
+            state.indicator_tint = indicator_tint;
+        }
+    })
+}
+
+/// M52 Phase 5: `add_time_picker_dial`'s own hook, closing Phase 5 --
+/// confirmed previously untouched by `Window.set_theme`.
+fn time_picker_dial_retheme_hook(id: NodeId) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let role = |theme: &crate::window::ThemeState, name: &str, fallback: Color| -> Color {
+            if theme.is_set() {
+                theme.role(name).unwrap_or(fallback)
+            } else {
+                fallback
+            }
+        };
+        let face_tint = role(
+            theme,
+            "surface_container_highest",
+            Md3Baseline::SURFACE_CONTAINER_HIGHEST,
+        );
+        let hand_tint = role(theme, "primary", Md3Baseline::PRIMARY);
+        if let Some(node) = tree.get_mut(id)
+            && let NodeKind::TimePickerDial(state) = &mut node.kind
+        {
+            state.face_tint = face_tint;
+            state.hand_tint = hand_tint;
+        }
+    })
+}
+
 #[pymethods]
 impl PyWindow {
     /// §14 step 6's own "node creation" -- one shape (a colored rect, a
@@ -4205,6 +4349,10 @@ impl PyWindow {
             PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(linear_progress_retheme_hook(id));
         self.wrap_node(id)
     }
 
@@ -4239,6 +4387,10 @@ impl PyWindow {
             PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(circular_progress_retheme_hook(id));
         self.wrap_node(id)
     }
 
@@ -4363,6 +4515,10 @@ impl PyWindow {
             PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(time_picker_dial_retheme_hook(id));
         self.wrap_node(id)
     }
 
@@ -8683,6 +8839,10 @@ impl PyWindow {
             PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(radio_button_retheme_hook(id));
         self.wrap_node(id)
     }
 
@@ -8739,6 +8899,10 @@ impl PyWindow {
             PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(switch_retheme_hook(id));
         self.wrap_node(id)
     }
 
@@ -9962,5 +10126,58 @@ mod tests {
         hook(&theme, &mut tree);
         assert!(tree.get(container).is_none());
         assert!(tree.get(label).is_none());
+    }
+
+    /// M52 Phase 5: `radio_button_retheme_hook` -- real, exact-value
+    /// proof that a gap `Tree::set_all_component_tints` itself was
+    /// never able to close (its own doc comment: "a radio button
+    /// genuinely needs two different real roles... which that single-
+    /// `Color`-parameter mechanism can't express") is now genuinely
+    /// closed by a real per-component hook.
+    #[test]
+    fn radio_button_hook_recomputes_both_real_roles_when_the_theme_changes() {
+        let mut tree = Tree::new();
+        let id = tree.insert(
+            NodeKind::RadioButton(engine_core::RadioButtonState::new(false)),
+            Style::default(),
+            PaintProperties::new(Color::TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+        let hook = radio_button_retheme_hook(id);
+        let theme = ThemeState::for_test(Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF));
+        hook(&theme, &mut tree);
+        let NodeKind::RadioButton(state) = &tree.get(id).unwrap().kind else {
+            panic!("expected a RadioButton node");
+        };
+        assert_eq!(state.unselected_tint, theme.role("outline").unwrap());
+        assert_eq!(state.selected_tint, theme.role("primary").unwrap());
+    }
+
+    /// M52 Phase 5: `switch_retheme_hook` -- exact-value proof across
+    /// all 5 real, independent roles, the component with the most of
+    /// any in this catalog, confirmed previously completely untouched
+    /// by `Window.set_theme` (unlike `Checkbox`/`Slider`, never even
+    /// partially covered by the pre-existing tint-push mechanism).
+    #[test]
+    fn switch_hook_recomputes_all_five_real_roles_when_the_theme_changes() {
+        let mut tree = Tree::new();
+        let id = tree.insert(
+            NodeKind::Switch(engine_core::SwitchState::new(false)),
+            Style::default(),
+            PaintProperties::new(Color::TRANSPARENT, 0.0, 0.0, 1.0),
+        );
+        let hook = switch_retheme_hook(id);
+        let theme = ThemeState::for_test(Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF));
+        hook(&theme, &mut tree);
+        let NodeKind::Switch(state) = &tree.get(id).unwrap().kind else {
+            panic!("expected a Switch node");
+        };
+        assert_eq!(
+            state.track_off_tint,
+            theme.role("surface_container_highest").unwrap()
+        );
+        assert_eq!(state.track_on_tint, theme.role("primary").unwrap());
+        assert_eq!(state.track_outline_tint, theme.role("outline").unwrap());
+        assert_eq!(state.handle_off_tint, theme.role("outline").unwrap());
+        assert_eq!(state.handle_on_tint, theme.role("on_primary").unwrap());
     }
 }

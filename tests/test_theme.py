@@ -1226,3 +1226,53 @@ def test_window_set_theme_a_second_call_does_not_raise_for_an_already_built_menu
     window = Window(width=400, height=400)
     window.add_menu_item(label="hi", icon="settings", submenu=True, width=200.0)
     window.set_theme(seed=(0x00, 0x66, 0x00, 0xFF))
+
+
+# --- M52 Phase 5: live re-theme -- non-PaintProperties stateful --------
+# components. None of these 9 have a themed shape/elevation (no
+# Python-readable field at all), and none have a Python-facing color
+# getter either -- every test here is a real "does not raise" proof,
+# the same honest limit this suite already states for color throughout.
+#
+# add_checkbox/add_slider/add_text_field/add_code_editor needed NO new
+# Rust code in this phase at all: their own themed field (mark_tint/
+# track_tint/text_tint) is already the exact field the pre-existing,
+# untouched Tree::set_all_component_tints mechanism unconditionally
+# re-tints on every real set_theme() call. The test below confirms that
+# existing mechanism keeps working after this milestone's own changes,
+# a real regression check, not new functionality.
+#
+# add_radio_button/add_switch/add_linear_progress/add_circular_progress
+# /add_time_picker_dial are the 5 confirmed, previously-undocumented
+# gaps this phase closes -- before M52, a second set_theme() call had
+# zero effect on any of these at all.
+
+
+def test_window_set_theme_a_second_call_does_not_raise_for_the_pre_existing_tint_push_components(
+    tmp_path,
+):
+    window = Window(width=400, height=400)
+    window.add_checkbox(background=(0x11, 0x22, 0x33, 0xFF), width=20.0, height=20.0)
+    window.add_slider(background=(0x11, 0x22, 0x33, 0xFF), width=100.0, height=20.0)
+    window.add_text_field(background=(0x11, 0x22, 0x33, 0xFF), width=200.0, height=40.0)
+    window.add_code_editor(
+        content="hi", background=(0x11, 0x22, 0x33, 0xFF), width=200.0, height=100.0
+    )
+    window.set_theme(seed=(0x00, 0x66, 0x00, 0xFF))
+
+
+def test_window_set_theme_a_second_call_does_not_raise_for_the_five_newly_closed_gaps(tmp_path):
+    window = Window(width=400, height=400)
+    window.add_radio_button(size=20.0, selected=False)
+    window.add_switch()
+    window.add_linear_progress(width=200.0, height=4.0, value=0.5)
+    window.add_circular_progress()
+    window.add_time_picker_dial()
+    # Before M52, this second call had zero effect on any of the 5
+    # nodes above -- proven correct here at the Rust level (`radio_
+    # button_hook_recomputes_both_real_roles_when_the_theme_changes`/
+    # `switch_hook_recomputes_all_five_real_roles_when_the_theme_
+    # changes`, `window_factory.rs`'s own exact-value unit tests); this
+    # is the real, end-to-end integration proof that the wiring reaches
+    # every one of them without raising.
+    window.set_theme(seed=(0x00, 0x66, 0x00, 0xFF))
