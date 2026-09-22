@@ -24,11 +24,14 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use engine_core::{
-    CompletionHandle, DispatchOutcome, EventKind, InputEvent, InteractionConfig, NodeId, Tree,
+    CompletionHandle, DispatchOutcome, EventKind, InputEvent, InteractionConfig, NodeId, NodeKind,
+    Tree,
 };
 use peniko::kurbo::Point;
 use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
+
+use crate::event::{Event, changed_value_to_py};
 
 /// M16 Phase 2 (§3, §9) real finding, not anticipated in `PLAN.md`:
 /// `App::run`'s own top is *not* the one guaranteed place a `tracing`
@@ -105,7 +108,71 @@ fn log_uncaught_exception(err: &PyErr, py: Python<'_>) {
 /// storage -- named here (clippy's own `type_complexity` lint, not just
 /// convenience) since this module is the one place that actually
 /// interprets it.
-pub(crate) type HandlerMap = Rc<RefCell<HashMap<(NodeId, EventKind), Py<PyAny>>>>;
+///
+/// M54 Phase 2 (§8, §16.2): the stored value widened from a bare
+/// `Py<PyAny>` to `(Py<PyAny>, bool)` -- the `bool` is `wants_event_
+/// payload`'s own real, one-time answer for this handler, arity-
+/// sniffed once at registration (`Node.set_on_click`/etc.), not
+/// re-inspected on every real call. Backward compatible with every
+/// pre-existing zero-argument handler by construction: `call_handler`
+/// only ever calls `handler.call1(py, (event,))` when this is `true`.
+pub(crate) type HandlerMap = Rc<RefCell<HashMap<(NodeId, EventKind), (Py<PyAny>, bool)>>>;
+
+/// M54 Phase 2 (§8, §16.2): arity-sniffs `handler` at registration time
+/// -- `true` when it declares at least one real *required* positional
+/// parameter (it wants the new `Event` argument), `false` for the
+/// 133+ pre-existing zero-argument handlers this project's own
+/// `tests`/`examples` already register, confirmed via exhaustive grep
+/// before this change (M54's own scoping investigation). Uses Python's
+/// own `inspect.signature` -- the general, correct way to introspect
+/// an arbitrary callable (a plain function, a bound method, anything
+/// with `__call__`), not `__code__.co_argcount` (which only exists on
+/// plain functions, not every callable this codebase's own real
+/// handlers can be). A parameter with a real default value (`lambda
+/// i=i: ...`, used pervasively for closing over a loop index --
+/// `examples/segmented_button.py`, `tests/test_date_picker.py`, etc.)
+/// counts as *not required*, the same real distinction Python's own
+/// call semantics already make -- `VAR_POSITIONAL`/`VAR_KEYWORD`/
+/// `KEYWORD_ONLY` parameters are skipped too, since none of them make
+/// a plain positional `Event` argument mandatory.
+fn wants_event_payload(py: Python<'_>, handler: &Py<PyAny>) -> PyResult<bool> {
+    let inspect = py.import("inspect")?;
+    let signature = inspect.call_method1("signature", (handler,))?;
+    let empty = inspect.getattr("Parameter")?.getattr("empty")?;
+    let parameters = signature.getattr("parameters")?.call_method0("values")?;
+    for param in parameters.try_iter()? {
+        let param = param?;
+        let kind: String = param.getattr("kind")?.getattr("name")?.extract()?;
+        if matches!(
+            kind.as_str(),
+            "VAR_POSITIONAL" | "VAR_KEYWORD" | "KEYWORD_ONLY"
+        ) {
+            continue;
+        }
+        let default = param.getattr("default")?;
+        if !default.eq(&empty)? {
+            continue;
+        }
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+/// `Node.set_on_click`/`set_on_hover_enter`/`set_on_hover_exit`/
+/// `set_on_change` (`node.rs`) and `view.rs`'s equivalent declarative
+/// registration path all funnel through this one real place to insert
+/// into a `HandlerMap` -- arity-sniffs once here, not duplicated at
+/// each of those five real call sites.
+pub(crate) fn register_handler(
+    handlers: &HandlerMap,
+    key: (NodeId, EventKind),
+    handler: Py<PyAny>,
+    py: Python<'_>,
+) -> PyResult<()> {
+    let wants_event = wants_event_payload(py, &handler)?;
+    handlers.borrow_mut().insert(key, (handler, wants_event));
+    Ok(())
+}
 
 /// M9 Phase 2 (§5): the real registry `Node.animate(..., on_complete=
 /// ...)` mints a fresh handle into, and `run_completions` (below)
@@ -189,33 +256,141 @@ pub(crate) fn interaction_config() -> InteractionConfig {
     }
 }
 
+/// M54 Phase 2 (§8, §16.2): `Changed`'s own real `new_value`, read
+/// fresh from `tree` -- deliberately *not* carried on `DispatchOutcome`
+/// itself (`ChangedValue` only ever holds the pre-mutation value,
+/// engine-core's own doc comment on it explains why). Covers exactly
+/// the three real `NodeKind`s `Tree::dispatch` can produce a `Changed`
+/// outcome for (`tree.rs`'s own producer sites, confirmed via grep) --
+/// `None` for any other kind, matching `Event`'s own "never fabricate
+/// a field this event's real kind has nothing to say about" contract.
+pub(crate) fn read_new_changed_value(
+    tree: &Tree,
+    node: NodeId,
+    py: Python<'_>,
+) -> PyResult<Option<Py<PyAny>>> {
+    let Some(n) = tree.get(node) else {
+        return Ok(None);
+    };
+    match &n.kind {
+        NodeKind::TextField(state) => Ok(Some(
+            state.content.clone().into_pyobject(py)?.unbind().into_any(),
+        )),
+        NodeKind::Slider(state) => Ok(Some(
+            state
+                .thumb_position
+                .current
+                .into_pyobject(py)?
+                .unbind()
+                .into_any(),
+        )),
+        NodeKind::TimePickerDial(state) => Ok(Some(
+            (state.hour, state.minute)
+                .into_pyobject(py)?
+                .unbind()
+                .into_any(),
+        )),
+        _ => Ok(None),
+    }
+}
+
 /// The real "meaning-dependent" half `Tree::dispatch` leaves for its own
 /// caller (§2 Design Principle 6) -- every mechanical consequence
 /// (hover, focus movement, ripple-spawn-on-press) already happened
-/// inside `dispatch` itself. Interprets both real outcomes today:
-/// `Activated` (look up and call a registered `Click` handler) and
+/// inside `dispatch` itself. Interprets every real outcome today:
+/// `Activated` (look up and call a registered `Click` handler),
 /// `HoverChanged` (call the old node's `HoverExit` handler, if any, and
-/// the new node's `HoverEnter` handler, if any) -- `DispatchOutcome::
-/// None` is a no-op.
+/// the new node's `HoverEnter` handler, if any), and `Changed` (a real
+/// `Slider`/`TextField`/`TimePickerDial` edit `Tree::dispatch` itself
+/// detected) -- `DispatchOutcome::None` is a no-op.
+///
+/// M54 Phase 2 (§8, §16.2): widened to also take `event: Option<&
+/// InputEvent>` -- the real, found-while-implementing-Phase-1
+/// correction to the original plan: `Activated`'s own `Click` position/
+/// button and `HoverChanged`'s own position need no new `engine-core`
+/// data at all, since every real caller that dispatched a genuine
+/// `InputEvent` already holds it in scope right here (a `PointerRelease
+/// d`/`KeyPressed` for `Activated`, a `PointerMoved` for `HoverChanged`)
+/// -- extracted by pattern-matching it directly. `Option` (not a bare
+/// `&InputEvent`) accounts for the one real caller with no originating
+/// `InputEvent` at all: `app.rs`'s real AccessKit `Action::Click`
+/// handling calls `Tree::activate` directly, a semantic action a
+/// screen reader requested, not a mechanical pointer/keyboard event --
+/// `None` there correctly yields no position/button, the same honest
+/// "don't fabricate" contract a keyboard-triggered `Click` already
+/// gets. `tree` is also new here, needed only for `Changed`'s own
+/// `new_value` (`read_new_changed_value`, above) -- borrowed
+/// immutably, released before any real callback runs, the same
+/// discipline `call_handler` itself already established for
+/// `handlers`.
 pub(crate) fn run_dispatch_outcome(
     handlers: &HandlerMap,
-    outcome: DispatchOutcome,
+    tree: &Rc<RefCell<Tree>>,
+    outcome: &DispatchOutcome,
+    event: Option<&InputEvent>,
     py: Python<'_>,
 ) {
     match outcome {
-        DispatchOutcome::Activated(node) => call_handler(handlers, node, EventKind::Click, py),
+        DispatchOutcome::Activated(node) => {
+            let node = *node;
+            let (position, button) = match event {
+                Some(InputEvent::PointerReleased { position, button }) => {
+                    (Some((position.x, position.y)), Some(*button))
+                }
+                // A real keyboard `Enter`/`Space` activation, or a real
+                // AccessKit-driven activation with no originating
+                // pointer/keyboard event at all -- no position/button
+                // exists to report; `None` rather than a fabricated
+                // `(0.0, 0.0)`/synthetic button.
+                _ => (None, None),
+            };
+            call_handler(handlers, node, EventKind::Click, py, |_py| {
+                Ok(Event::click(node, position, button))
+            });
+        }
         DispatchOutcome::HoverChanged { old, new } => {
+            let (old, new) = (*old, *new);
+            let position = match event {
+                Some(InputEvent::PointerMoved { position }) => (position.x, position.y),
+                // `update_hover` (`engine-core`) has exactly one real
+                // caller, `Tree::dispatch`'s own `PointerMoved` arm --
+                // confirmed via grep before this change -- so a
+                // `HoverChanged` outcome paired with anything but a
+                // real `PointerMoved` event is a real internal-
+                // consistency bug, not a reachable user-facing
+                // condition (unlike `Activated`, no real caller ever
+                // produces `HoverChanged` with `event: None`).
+                _ => unreachable!(
+                    "DispatchOutcome::HoverChanged is only ever produced by PointerMoved dispatch"
+                ),
+            };
             if let Some(old) = old {
-                call_handler(handlers, old, EventKind::HoverExit, py);
+                call_handler(handlers, old, EventKind::HoverExit, py, |_py| {
+                    Ok(Event::hover(EventKind::HoverExit, old, position))
+                });
             }
             if let Some(new) = new {
-                call_handler(handlers, new, EventKind::HoverEnter, py);
+                call_handler(handlers, new, EventKind::HoverEnter, py, |_py| {
+                    Ok(Event::hover(EventKind::HoverEnter, new, position))
+                });
             }
         }
-        // M14 Phase 3 (§16.7): a real `Slider` drag ending -- reuses
-        // the same real `call_handler` every other mechanical outcome
-        // already does, registered via `Node.set_on_change`.
-        DispatchOutcome::Changed(node) => call_handler(handlers, node, EventKind::Change, py),
+        // M14 Phase 3 (§16.7), widened M54 Phase 2: a real `Slider`/
+        // `TextField`/`TimePickerDial` edit `Tree::dispatch` itself
+        // detected -- reuses the same real `call_handler` every other
+        // mechanical outcome already does, registered via `Node.
+        // set_on_change`. `old_value` comes straight from `engine-
+        // core`'s own real snapshot (Phase 1); `new_value` is read
+        // fresh from `tree` here, after `dispatch()` has already
+        // returned.
+        DispatchOutcome::Changed { node, old_value } => {
+            let node = *node;
+            call_handler(handlers, node, EventKind::Change, py, |py| {
+                let old = Some(changed_value_to_py(py, old_value)?);
+                let new = read_new_changed_value(&tree.borrow(), node, py)?;
+                Ok(Event::change(node, old, new))
+            });
+        }
         // M4 Phase 7 (§11.3): `SecondaryActivated`'s real meaning is a
         // context menu, handled by `open_context_menu` below -- a
         // separate function, not a new match arm here, since it needs
@@ -239,11 +414,12 @@ pub(crate) fn open_context_menu(
     tree: &Rc<RefCell<engine_core::Tree>>,
     context_menus: &Rc<RefCell<HashMap<NodeId, NodeId>>>,
     root: NodeId,
-    outcome: DispatchOutcome,
+    outcome: &DispatchOutcome,
 ) {
     let DispatchOutcome::SecondaryActivated(anchor) = outcome else {
         return;
     };
+    let anchor = *anchor;
     let Some(&content) = context_menus.borrow().get(&anchor) else {
         return;
     };
@@ -296,7 +472,24 @@ pub(crate) fn run_completions(
 /// same real lookup-and-invoke helper directly is the one real,
 /// consistent way both components' own `Change` firing ends up going
 /// through the identical mechanism, not two divergent ones.
-pub(crate) fn call_handler(handlers: &HandlerMap, node: NodeId, kind: EventKind, py: Python<'_>) {
+/// M54 Phase 2 (§8, §16.2): widened with `make_event` -- called only
+/// when a handler is genuinely found *and* it arity-sniffed as wanting
+/// one (`wants_event_payload`, at registration) -- so building a real
+/// `Event` (which can itself borrow `tree`, `read_new_changed_value`)
+/// never happens on a dispatch nothing is even listening for. Returns
+/// `PyResult<Event>` rather than a bare `Event`: constructing one can
+/// itself fail (`changed_value_to_py`'s own `into_pyobject` calls are
+/// fallible in principle, matching pyo3's own general contract) -- a
+/// construction failure is logged the identical "uncaught exception,
+/// non-fatal" way any other callback failure already is here, not a
+/// silent swallow or a panic.
+pub(crate) fn call_handler(
+    handlers: &HandlerMap,
+    node: NodeId,
+    kind: EventKind,
+    py: Python<'_>,
+    make_event: impl FnOnce(Python<'_>) -> PyResult<Event>,
+) {
     // Cloned out and the borrow dropped *before* calling the handler: a
     // handler that itself registers a new handler (a real, plausible
     // pattern -- rebinding a button's own click behavior from inside a
@@ -305,10 +498,19 @@ pub(crate) fn call_handler(handlers: &HandlerMap, node: NodeId, kind: EventKind,
     let handler = handlers
         .borrow()
         .get(&(node, kind))
-        .map(|handler| handler.clone_ref(py));
-    if let Some(handler) = handler
-        && let Err(err) = handler.call0(py)
-    {
+        .map(|(handler, wants_event)| (handler.clone_ref(py), *wants_event));
+    let Some((handler, wants_event)) = handler else {
+        return;
+    };
+    let result = if wants_event {
+        match make_event(py).and_then(|event| Py::new(py, event)) {
+            Ok(event) => handler.call1(py, (event,)),
+            Err(err) => Err(err),
+        }
+    } else {
+        handler.call0(py)
+    };
+    if let Err(err) = result {
         // §9's own stated policy: "unhandled exceptions from a callback
         // are caught, logged via `tracing::error!`, and non-fatal" --
         // `log_uncaught_exception` (M16 Phase 2) carries the same full
@@ -372,8 +574,13 @@ pub(crate) fn cut_focused_selection_to_clipboard(
     };
     match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
         Ok(()) => {
+            let old = read_new_changed_value(&tree.borrow(), field, py);
             tree.borrow_mut().cut_text_field_selection(field);
-            call_handler(handlers, field, EventKind::Change, py);
+            call_handler(handlers, field, EventKind::Change, py, |py| {
+                let old = old?;
+                let new = read_new_changed_value(&tree.borrow(), field, py)?;
+                Ok(Event::change(field, old, new))
+            });
             true
         }
         Err(err) => {
@@ -406,13 +613,14 @@ pub(crate) fn paste_clipboard_into_focused(
 ) -> bool {
     match arboard::Clipboard::new().and_then(|mut cb| cb.get_text()) {
         Ok(text) => {
+            let event = InputEvent::TextInput(text);
             let outcome = tree.borrow_mut().dispatch(
                 root,
-                InputEvent::TextInput(text),
+                event.clone(),
                 &interaction_config(),
                 std::time::Instant::now(),
             );
-            run_dispatch_outcome(handlers, outcome, py);
+            run_dispatch_outcome(handlers, tree, &outcome, Some(&event), py);
             true
         }
         Err(err) => {

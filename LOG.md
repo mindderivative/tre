@@ -94,11 +94,124 @@
   `DispatchOutcome` losing `Copy`) -- exactly Phase 2's own scope, not
   a Phase 1 regression.
 
+## Phase 2 — `engine-py`: `Event` Pyclass + Arity-Sniffing Dispatch
+
+- New `Event` pyclass (`crates/engine-py/src/event.rs`, new file):
+  `kind: String`, `source: u64` (`engine_core::node_id_as_u64`, the
+  exact same `slotmap::KeyData::as_ffi()` encoding this crate already
+  uses for `accesskit`/`engine-render`'s own GPU texture cache keys --
+  reused, not a third id scheme), `position: Option<(f64, f64)>`,
+  `button: Option<String>`, `old_value`/`new_value: Option<Py<PyAny>>`.
+  Plain `#[pyo3(get)]` field access -- a deliberate, justified
+  departure from this crate's own usual explicit-getter-method
+  convention (`Node.get_checked()`/etc.), since `Event` is an
+  immutable snapshot handed to exactly one callback invocation, not
+  live, mutable `Tree` state.
+- `dispatch::wants_event_payload`: arity-sniffs a handler's real
+  *required* positional parameter count at registration time, via
+  Python's own `inspect.signature` (not `__code__.co_argcount`, which
+  only exists on plain functions). Correctly treats `VAR_POSITIONAL`/
+  `VAR_KEYWORD`/`KEYWORD_ONLY` parameters and any parameter with a real
+  default (`lambda i=i: ...`, used pervasively in this catalog to close
+  over a loop index) as not requiring the new argument -- confirmed
+  against the real, pervasive pattern this codebase's own examples/
+  tests already use. `HandlerMap`'s stored value widens from `Py<PyAny>`
+  to `(Py<PyAny>, bool)`; a new `dispatch::register_handler` funnels
+  all four `Node.set_on_*` registrations (and `view.rs`'s declarative
+  equivalent) through the identical arity-sniff, once.
+- `call_handler` widened to take a `impl FnOnce(Python<'_>) ->
+  PyResult<Event>` builder, invoked lazily -- only when a handler is
+  genuinely found *and* arity-sniffed as wanting one, so building an
+  `Event` never happens on a dispatch nothing is listening for.
+  `run_dispatch_outcome` widened to also take `tree: &Rc<RefCell<
+  Tree>>` and `event: Option<&InputEvent>` -- `Activated`/
+  `HoverChanged` build their own `Event.position`/`button` by
+  pattern-matching `event` directly (Phase 1's own real correction: no
+  `engine-core` data needed); `Changed` builds `old_value` from
+  `ChangedValue` and reads `new_value` fresh from `tree`. `Option`, not
+  a bare reference -- the one real caller with no originating
+  `InputEvent` at all (`app.rs`'s real AccessKit `Action::Click`
+  handling, which calls `Tree::activate` directly, a screen reader's
+  own semantic request) correctly yields `None`/`None` rather than a
+  fabricated position.
+- Every real call site rewired: `node.rs`'s four setters
+  (`set_checked`/`set_selected`/`set_on`/`set_text`) snapshot the old
+  value before mutating and build a real `Change` `Event` with both
+  values; `window_input.rs`'s `cut()` (hermetic) gets the identical
+  treatment via the newly-`pub(crate)` `read_new_changed_value`;
+  `app.rs`'s real winit path, `window_input.rs`'s six synthetic entry
+  points, and `view.rs`'s declarative equivalents all thread the real
+  `InputEvent` through. `PyWindow`/`View`'s `__traverse__` GC-traversal
+  loops updated for the widened `HandlerMap` tuple value.
+- Full chain green: `cargo check`/`clippy -D warnings`/`fmt --check`
+  clean across the whole workspace; `cargo test --workspace --release`
+  (unchanged -- every new pymethod/pyclass is GIL-bound, pytest-covered
+  instead). `maturin develop --release`; a standalone smoke script
+  confirmed every real path end to end before writing formal tests:
+  `Click` position/button, backward-compat zero-arg handlers, `lambda
+  i=i:`-style defaulted params, `Checkbox`/`TextField` `Change` (both
+  direct `set_text` and a real keyboard Backspace dispatch),
+  `HoverEnter`/`HoverExit` position. `pytest tests/` (755 passed, 2
+  skipped -- unchanged from before this phase, confirming zero
+  regressions to any pre-existing zero-argument handler across the
+  whole suite before Phase 3's own new tests were added).
+
+## Phase 3 — Python-Facing API, Tests, Example, Docs
+
+- `python/tre/_core.pyi`: new `Event` class stub with every field
+  documented; `set_on_click`/`set_on_hover_enter`/`set_on_hover_exit`/
+  `set_on_change` widened to `Callable[[], object] | Callable[[Event],
+  object]`; the module's own stale "always zero arguments, no Event
+  object exists yet" doc-comment claim corrected. `python/tre/
+  __init__.py` re-exports `Event`.
+- 12 new pytest tests: `tests/test_click_dispatch.py` (`Click`'s real
+  position/button, and `None`/`None` for a real keyboard `Tab`+`Enter`
+  activation), `tests/test_change_event.py` (`Checkbox` `Change`
+  old/new `bool`, `TextField` `Change` old/new `str` via both `set_
+  text` and a real keyboard Backspace, a `Slider` `Change` old/new
+  `float`), `tests/test_hover_events.py` (`HoverEnter`/`HoverExit`
+  real shared position), and a new `tests/test_event_payload.py` for
+  the cross-cutting arity-sniff mechanism itself (a bound method with
+  only `self`, a bound method with one real param, `lambda i=i:`-style
+  defaulted params, a keyword-only-param handler, `TimePickerDial`'s
+  own `(hour, minute)` tuple value, `Event.source`'s stability across
+  two distinct real nodes).
+- **Real, found-while-testing correction, not assumed in advance:** an
+  initial `test_hover_events.py` draft expected each hover transition's
+  own `Event.position` to be that specific node's own real center --
+  wrong. Both `HoverExit` and `HoverEnter` fire from the *identical*
+  real `PointerMoved` dispatch (the move onto the new node), so they
+  share the *same* real position (wherever the pointer now is), not
+  each node's own former center. Fixed the test's own expectation to
+  match the real, correct behavior.
+- New `examples/event_payload.py`: a real, live window demonstrating
+  `Click`/`HoverEnter`/`HoverExit`/`Change` all receiving a real
+  `Event`, side by side with one plain zero-argument handler proving
+  the two calling conventions genuinely coexist. **Deliberately does
+  not rewrite `demo/showcase.py`'s own `toggle_checkbox`** -- a real,
+  checked design point: that handler is on `Click`, not `Change`, so
+  `Event.old_value`/`new_value` wouldn't actually help its own "what to
+  toggle to" question: force-fitting it in would misrepresent what
+  this milestone's payload is for.
+- `BUILD_TRACKER.md`: Phase 2 and Phase 3 sections added, milestone
+  marked ✅ complete, Top Metrics updated to 100%, the closed "Known
+  gaps" bullet moved to "Fixed gaps". Regenerated: 54 milestones/162
+  phases/291 items/1 known gap/20 fixed gaps. Artifact republished.
+- Full chain green: `cargo check`/`clippy -D warnings`/`fmt --check`
+  clean (no Rust changes this phase); `cargo test --workspace
+  --release` (unchanged). `maturin develop --release`; `pytest tests/`
+  (767 passed, up from 755, +12, 2 skipped unchanged); all 86 examples
+  (+1, zero failures); `demo/showcase.py` (all 5 phases, exit 0).
+
 ## Status
 
-**M54 Phase 1 of 3 is complete.** `engine-core`'s own real mechanical
-data (position/button already reachable from `engine-py`'s own
-in-scope `InputEvent`; `Changed`'s real, correctly-typed `old_value`)
-is proven. Committing locally now. Up next: Phase 2, the `engine-py`
-`Event` pyclass, arity-sniffing dispatch, and threading real data
-through every call site.
+**M54 is complete -- all 3 phases.** The real capability gap this
+milestone exists to close -- every handler invoked zero-argument, no
+real `Event` object with payload data anywhere -- is closed, with zero
+breaking changes to any of the 755 pre-existing tests or 85 pre-
+existing examples. Two real, found-while-implementing corrections to
+the original plan (documented honestly, not glossed over): `Activated`/
+`HoverChanged` needed no `engine-core` widening at all; `Changed`'s
+value needed a 3-variant typed enum, not a bare `f64`. Committing
+locally now; push deferred pending explicit user confirmation, per
+this session's own established convention.

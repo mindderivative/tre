@@ -7,8 +7,10 @@
 //! later build-order step needs it.
 //!
 //! Handler callback storage (`handlers`) is an `Rc<RefCell<HashMap<
-//! (NodeId, EventKind), Py<PyAny>>>>` *shared* with the owning `PyWindow`
-//! (or `View`) -- created once there, cloned into every `Node` handed
+//! (NodeId, EventKind), (Py<PyAny>, bool)>>>` (the `bool`, M54 Phase 2,
+//! is whether this handler arity-sniffed as wanting a real `Event`
+//! argument) *shared* with the owning `PyWindow` (or `View`) -- created
+//! once there, cloned into every `Node` handed
 //! out, the exact same sharing shape `tree: Rc<RefCell<Tree>>` already
 //! uses. This is what actually resolves §8's own review note (a Python
 //! callback stored in a Rust struct is a real GC-cycle risk unless the
@@ -35,6 +37,7 @@ use taffy::prelude::{Rect as TaffyRect, Size, length};
 
 use crate::dispatch::{HandlerMap, SharedCompletions, call_handler};
 use crate::error::EngineError;
+use crate::event::Event;
 use crate::window::SharedTheme;
 
 /// `set_syntax_spans`'s own real `(start, end, (r, g, b, a))` element
@@ -446,15 +449,19 @@ impl Node {
     /// free, not just mouse-clickable; §10's own "keyboard operability
     /// ships from day one" stance applied to the one call site that
     /// actually makes a node interactive for the first time.
-    pub(crate) fn set_on_click(&self, callback: Py<PyAny>) {
-        self.handlers
-            .borrow_mut()
-            .insert((self.id, EventKind::Click), callback);
+    pub(crate) fn set_on_click(&self, callback: Py<PyAny>, py: Python<'_>) -> PyResult<()> {
+        crate::dispatch::register_handler(
+            &self.handlers,
+            (self.id, EventKind::Click),
+            callback,
+            py,
+        )?;
         if let Some(node) = self.tree.borrow_mut().get_mut(self.id)
             && !node.access.actions.contains(&Action::Click)
         {
             node.access.actions.push(Action::Click);
         }
+        Ok(())
     }
 
     /// M4 Phase 6 (§7.3, §16.2): registers `callback` to run when this
@@ -463,18 +470,24 @@ impl Node {
     /// this node ever opted into `InteractionState`'s own visual
     /// animation (`enable_interaction`, M4 Phase 5) -- §7.3's own text:
     /// "the default MD3 visual never depends on anything handling it."
-    pub(crate) fn set_on_hover_enter(&self, callback: Py<PyAny>) {
-        self.handlers
-            .borrow_mut()
-            .insert((self.id, EventKind::HoverEnter), callback);
+    pub(crate) fn set_on_hover_enter(&self, callback: Py<PyAny>, py: Python<'_>) -> PyResult<()> {
+        crate::dispatch::register_handler(
+            &self.handlers,
+            (self.id, EventKind::HoverEnter),
+            callback,
+            py,
+        )
     }
 
     /// The `HoverExit` counterpart to `set_on_hover_enter` -- fired when
     /// this node stops being the hovered node.
-    pub(crate) fn set_on_hover_exit(&self, callback: Py<PyAny>) {
-        self.handlers
-            .borrow_mut()
-            .insert((self.id, EventKind::HoverExit), callback);
+    pub(crate) fn set_on_hover_exit(&self, callback: Py<PyAny>, py: Python<'_>) -> PyResult<()> {
+        crate::dispatch::register_handler(
+            &self.handlers,
+            (self.id, EventKind::HoverExit),
+            callback,
+            py,
+        )
     }
 
     /// M14 Phase 3 (§16.7): registers `callback` to run on this node's
@@ -485,10 +498,13 @@ impl Node {
     /// a `Checkbox` (fired directly there, not through `Tree::dispatch`
     /// at all -- see `set_checked`'s own doc comment for why). The real
     /// mechanism §16.7's own two-way binding sugar is built on.
-    pub(crate) fn set_on_change(&self, callback: Py<PyAny>) {
-        self.handlers
-            .borrow_mut()
-            .insert((self.id, EventKind::Change), callback);
+    pub(crate) fn set_on_change(&self, callback: Py<PyAny>, py: Python<'_>) -> PyResult<()> {
+        crate::dispatch::register_handler(
+            &self.handlers,
+            (self.id, EventKind::Change),
+            callback,
+            py,
+        )
     }
 
     /// M4 Phase 7 (§11.3): registers `content` as this node's real
@@ -628,9 +644,23 @@ impl Node {
         let kind = kind_name(&node.kind);
         match &mut node.kind {
             NodeKind::Checkbox(state) => {
+                let old_checked = state.checked;
                 state.checked = checked;
                 drop(tree);
-                call_handler(&self.handlers, self.id, EventKind::Change, py);
+                let id = self.id;
+                call_handler(&self.handlers, id, EventKind::Change, py, |py| {
+                    Ok(Event::change(
+                        id,
+                        Some(
+                            old_checked
+                                .into_pyobject(py)?
+                                .to_owned()
+                                .unbind()
+                                .into_any(),
+                        ),
+                        Some(checked.into_pyobject(py)?.to_owned().unbind().into_any()),
+                    ))
+                });
                 Ok(())
             }
             _ => Err(EngineError::UnknownProperty {
@@ -653,9 +683,23 @@ impl Node {
         let kind = kind_name(&node.kind);
         match &mut node.kind {
             NodeKind::RadioButton(state) => {
+                let old_selected = state.selected;
                 state.selected = selected;
                 drop(tree);
-                call_handler(&self.handlers, self.id, EventKind::Change, py);
+                let id = self.id;
+                call_handler(&self.handlers, id, EventKind::Change, py, |py| {
+                    Ok(Event::change(
+                        id,
+                        Some(
+                            old_selected
+                                .into_pyobject(py)?
+                                .to_owned()
+                                .unbind()
+                                .into_any(),
+                        ),
+                        Some(selected.into_pyobject(py)?.to_owned().unbind().into_any()),
+                    ))
+                });
                 Ok(())
             }
             _ => Err(EngineError::UnknownProperty {
@@ -676,9 +720,17 @@ impl Node {
         let kind = kind_name(&node.kind);
         match &mut node.kind {
             NodeKind::Switch(state) => {
+                let old_on = state.on;
                 state.on = on;
                 drop(tree);
-                call_handler(&self.handlers, self.id, EventKind::Change, py);
+                let id = self.id;
+                call_handler(&self.handlers, id, EventKind::Change, py, |py| {
+                    Ok(Event::change(
+                        id,
+                        Some(old_on.into_pyobject(py)?.to_owned().unbind().into_any()),
+                        Some(on.into_pyobject(py)?.to_owned().unbind().into_any()),
+                    ))
+                });
                 Ok(())
             }
             _ => Err(EngineError::UnknownProperty {
@@ -708,11 +760,20 @@ impl Node {
         let kind = kind_name(&node.kind);
         match &mut node.kind {
             NodeKind::TextField(state) => {
+                let old_content = state.content.clone();
                 state.content = content.to_string();
                 state.cursor = state.content.len();
                 state.selection_anchor = None;
                 drop(tree);
-                call_handler(&self.handlers, self.id, EventKind::Change, py);
+                let id = self.id;
+                let new_content = content.to_string();
+                call_handler(&self.handlers, id, EventKind::Change, py, |py| {
+                    Ok(Event::change(
+                        id,
+                        Some(old_content.into_pyobject(py)?.unbind().into_any()),
+                        Some(new_content.into_pyobject(py)?.unbind().into_any()),
+                    ))
+                });
                 Ok(())
             }
             // M27 Phase 4: a real, genuine gap found while building the

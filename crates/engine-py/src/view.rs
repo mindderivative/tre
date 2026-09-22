@@ -611,11 +611,13 @@ pub(crate) fn attach_bindings_and_handlers(
         // to whatever named events a NodeKind exposes" -- other
         // declared event names still validate (so a typo still
         // fails at `_attach()` time) but have no real mechanism to
-        // reach yet. Called with zero arguments, the same
-        // established convention `Node.set_on_click`/`dispatch::
-        // run_dispatch_outcome` already use (see
-        // `tests/test_click_dispatch.py`) -- a real `Event` argument
-        // is deferred until a real handler needs the extra context.
+        // reach yet. M54 Phase 2 (§8, §16.2): the real `Event`
+        // argument this comment used to defer now exists -- `method_
+        // name` is arity-sniffed the identical way `Node.set_on_
+        // click`/etc. already are (`dispatch::register_handler`,
+        // reached through these same four real setters), so a
+        // declaratively-bound handler can opt into it exactly like an
+        // imperatively-registered one.
         let kind = match event.as_str() {
             "on_click" => Some(EventKind::Click),
             "on_hover_enter" => Some(EventKind::HoverEnter),
@@ -649,11 +651,11 @@ pub(crate) fn attach_bindings_and_handlers(
             // to the node's `access.actions` (§10, Tab-reachability),
             // a real side effect only the real method carries.
             match kind {
-                EventKind::Click => node.set_on_click(attr.unbind()),
-                EventKind::HoverEnter => node.set_on_hover_enter(attr.unbind()),
-                EventKind::HoverExit => node.set_on_hover_exit(attr.unbind()),
-                EventKind::Change => node.set_on_change(attr.unbind()),
-            }
+                EventKind::Click => node.set_on_click(attr.unbind(), py),
+                EventKind::HoverEnter => node.set_on_hover_enter(attr.unbind(), py),
+                EventKind::HoverExit => node.set_on_hover_exit(attr.unbind(), py),
+                EventKind::Change => node.set_on_change(attr.unbind(), py),
+            }?;
         }
     }
 
@@ -765,9 +767,16 @@ pub(crate) fn attach_bindings_and_handlers(
                     signal: signal.unbind(),
                 },
             )?;
-            handlers
-                .borrow_mut()
-                .insert((node_id, EventKind::Change), two_way_callback.into_any());
+            // M54 Phase 2: `TwoWayCallback` is a Rust-implemented
+            // `__call__`, not an app-defined Python function -- always
+            // zero-argument, inserted directly rather than through
+            // `register_handler`'s own Python-side `inspect.signature`
+            // introspection (real, but unnecessary indirection for a
+            // callable whose own arity is already known here).
+            handlers.borrow_mut().insert(
+                (node_id, EventKind::Change),
+                (two_way_callback.into_any(), false),
+            );
         }
     }
 
@@ -1252,27 +1261,31 @@ impl View {
         // -- matches `Window.click`'s own reasoning: a handler that
         // itself touches this same `Tree` would otherwise panic on a
         // re-entrant borrow.
-        let press = self.tree.borrow_mut().dispatch(
-            root,
-            InputEvent::PointerPressed {
-                position: point,
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
-        );
-        run_dispatch_outcome(&self.handlers, press, py);
+        let press_event = InputEvent::PointerPressed {
+            position: point,
+            button: PointerButton::Primary,
+        };
+        let press = self
+            .tree
+            .borrow_mut()
+            .dispatch(root, press_event.clone(), &config, now);
+        run_dispatch_outcome(&self.handlers, &self.tree, &press, Some(&press_event), py);
 
-        let release = self.tree.borrow_mut().dispatch(
-            root,
-            InputEvent::PointerReleased {
-                position: point,
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
+        let release_event = InputEvent::PointerReleased {
+            position: point,
+            button: PointerButton::Primary,
+        };
+        let release = self
+            .tree
+            .borrow_mut()
+            .dispatch(root, release_event.clone(), &config, now);
+        run_dispatch_outcome(
+            &self.handlers,
+            &self.tree,
+            &release,
+            Some(&release_event),
+            py,
         );
-        run_dispatch_outcome(&self.handlers, release, py);
     }
 
     /// M4 Phase 6 (§7.3): `click()`'s own hover counterpart, mirroring
@@ -1283,13 +1296,14 @@ impl View {
         let root = self.reconciler.root();
         let point = node_center(&self.tree, root, self.available_space(), node.id);
 
+        let event = InputEvent::PointerMoved { position: point };
         let outcome = self.tree.borrow_mut().dispatch(
             root,
-            InputEvent::PointerMoved { position: point },
+            event.clone(),
             &interaction_config(),
             std::time::Instant::now(),
         );
-        run_dispatch_outcome(&self.handlers, outcome, py);
+        run_dispatch_outcome(&self.handlers, &self.tree, &outcome, Some(&event), py);
     }
 
     /// M4 Phase 7 (§11.3): `click()`'s own secondary-button (right-click)
@@ -1309,17 +1323,22 @@ impl View {
             &config,
             now,
         );
-        let outcome = self.tree.borrow_mut().dispatch(
-            root,
-            InputEvent::PointerReleased {
-                position: point,
-                button: PointerButton::Secondary,
-            },
-            &config,
-            now,
+        let release_event = InputEvent::PointerReleased {
+            position: point,
+            button: PointerButton::Secondary,
+        };
+        let outcome = self
+            .tree
+            .borrow_mut()
+            .dispatch(root, release_event.clone(), &config, now);
+        run_dispatch_outcome(
+            &self.handlers,
+            &self.tree,
+            &outcome,
+            Some(&release_event),
+            py,
         );
-        run_dispatch_outcome(&self.handlers, outcome, py);
-        open_context_menu(&self.tree, &self.context_menus, root, outcome);
+        open_context_menu(&self.tree, &self.context_menus, root, &outcome);
     }
 
     /// Same real GC-cycle-safety obligation `PyWindow` already carries
@@ -1327,7 +1346,7 @@ impl View {
     /// `Py<PyAny>` callbacks too now, so it needs to make them visible
     /// to CPython's cyclic collector the same way.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
-        for handler in self.handlers.borrow().values() {
+        for (handler, _wants_event) in self.handlers.borrow().values() {
             visit.call(handler)?;
         }
         Ok(())

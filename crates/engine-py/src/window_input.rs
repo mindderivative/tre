@@ -149,27 +149,23 @@ impl PyWindow {
         // -- a click handler that itself touches this same `Tree` (e.g.
         // animating the very node it's attached to, a real, plausible
         // pattern) would otherwise panic on a re-entrant borrow.
-        let press = tree.borrow_mut().dispatch(
-            root,
-            InputEvent::PointerPressed {
-                position: point,
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
-        );
-        run_dispatch_outcome(&handlers, press, py);
+        let press_event = InputEvent::PointerPressed {
+            position: point,
+            button: PointerButton::Primary,
+        };
+        let press = tree
+            .borrow_mut()
+            .dispatch(root, press_event.clone(), &config, now);
+        run_dispatch_outcome(&handlers, &tree, &press, Some(&press_event), py);
 
-        let release = tree.borrow_mut().dispatch(
-            root,
-            InputEvent::PointerReleased {
-                position: point,
-                button: PointerButton::Primary,
-            },
-            &config,
-            now,
-        );
-        run_dispatch_outcome(&handlers, release, py);
+        let release_event = InputEvent::PointerReleased {
+            position: point,
+            button: PointerButton::Primary,
+        };
+        let release = tree
+            .borrow_mut()
+            .dispatch(root, release_event.clone(), &config, now);
+        run_dispatch_outcome(&handlers, &tree, &release, Some(&release_event), py);
     }
 
     /// M4 Phase 6 (§7.3): `click()`'s own hover counterpart -- the same
@@ -198,13 +194,14 @@ impl PyWindow {
             node.id,
         );
 
+        let event = InputEvent::PointerMoved { position: point };
         let outcome = tree.borrow_mut().dispatch(
             root,
-            InputEvent::PointerMoved { position: point },
+            event.clone(),
             &interaction_config(),
             std::time::Instant::now(),
         );
-        run_dispatch_outcome(&handlers, outcome, py);
+        run_dispatch_outcome(&handlers, &tree, &outcome, Some(&event), py);
     }
 
     /// M32 Phase 2 (§4, §5): a direct, programmatic "resize this
@@ -238,7 +235,12 @@ impl PyWindow {
             &interaction_config(),
             std::time::Instant::now(),
         );
-        run_dispatch_outcome(&self.handlers, outcome, py);
+        // `Resized` always dispatches to `DispatchOutcome::None`
+        // (`Tree::dispatch`'s own doc comment) -- no real click/hover/
+        // change outcome to build an `Event` for, so `event: None` here
+        // never actually reaches a handler; kept honest rather than
+        // reconstructing the `Resized` event just to thread through.
+        run_dispatch_outcome(&self.handlers, &self.tree, &outcome, None, py);
     }
 
     /// M8 Phase 3 (§11.7): `click()`/`hover()`'s own scroll counterpart
@@ -302,7 +304,10 @@ impl PyWindow {
             &interaction_config(),
             std::time::Instant::now(),
         );
-        run_dispatch_outcome(&handlers, outcome, py);
+        // `Scroll` is a true no-op for `Tree::dispatch`'s own outcome
+        // today (`InputEvent::Scroll`'s own doc comment) -- same
+        // reasoning as `resize`'s own `Resized` handling just above.
+        run_dispatch_outcome(&handlers, &tree, &outcome, None, py);
     }
 
     /// M4 Phase 7 (§11.3): `click()`'s own secondary-button (right-click)
@@ -345,17 +350,15 @@ impl PyWindow {
             &config,
             now,
         );
-        let outcome = tree.borrow_mut().dispatch(
-            root,
-            InputEvent::PointerReleased {
-                position: point,
-                button: PointerButton::Secondary,
-            },
-            &config,
-            now,
-        );
-        run_dispatch_outcome(&handlers, outcome, py);
-        open_context_menu(&tree, &context_menus, root, outcome);
+        let release_event = InputEvent::PointerReleased {
+            position: point,
+            button: PointerButton::Secondary,
+        };
+        let outcome = tree
+            .borrow_mut()
+            .dispatch(root, release_event.clone(), &config, now);
+        run_dispatch_outcome(&handlers, &tree, &outcome, Some(&release_event), py);
+        open_context_menu(&tree, &context_menus, root, &outcome);
     }
 
     /// M4 Phase 2 (§10): `click()`'s own keyboard counterpart -- the
@@ -406,11 +409,11 @@ impl PyWindow {
         }
         let outcome = self.tree.borrow_mut().dispatch(
             self.root,
-            event,
+            event.clone(),
             &interaction_config(),
             std::time::Instant::now(),
         );
-        run_dispatch_outcome(&self.handlers, outcome, py);
+        run_dispatch_outcome(&self.handlers, &self.tree, &outcome, Some(&event), py);
         Ok(())
     }
 
@@ -431,11 +434,11 @@ impl PyWindow {
         }
         let outcome = self.tree.borrow_mut().dispatch(
             self.root,
-            event,
+            event.clone(),
             &interaction_config(),
             std::time::Instant::now(),
         );
-        run_dispatch_outcome(&self.handlers, outcome, py);
+        run_dispatch_outcome(&self.handlers, &self.tree, &outcome, Some(&event), py);
     }
 
     /// M32 Phase 4 (§4, §8): the real, no-live-window-needed synthetic
@@ -513,6 +516,11 @@ impl PyWindow {
     /// pure `Tree::cut_text_field_selection`.
     fn cut(&self, py: Python<'_>) -> Option<String> {
         let field = self.tree.borrow().focused()?;
+        // M54 Phase 2: the field's own real pre-cut content, read
+        // before `cut_text_field_selection` mutates it -- the one real
+        // place it's still whole, the same "snapshot before mutate"
+        // discipline `engine-core`'s own real `Changed` producers use.
+        let old = crate::dispatch::read_new_changed_value(&self.tree.borrow(), field, py);
         let text = self.tree.borrow_mut().cut_text_field_selection(field)?;
         // A real cut genuinely edits the field's own content -- fires
         // `Change` the same way `Node.set_checked`/`set_text` already
@@ -521,7 +529,11 @@ impl PyWindow {
         // `dispatch`, so no `DispatchOutcome::Changed` exists here to
         // carry this automatically the way Backspace/Delete/typing get
         // it for free).
-        call_handler(&self.handlers, field, EventKind::Change, py);
+        call_handler(&self.handlers, field, EventKind::Change, py, |py| {
+            let old = old?;
+            let new = crate::dispatch::read_new_changed_value(&self.tree.borrow(), field, py)?;
+            Ok(crate::event::Event::change(field, old, new))
+        });
         Some(text)
     }
 

@@ -774,12 +774,17 @@ impl App {
                     &interaction_config(),
                     Instant::now(),
                 );
-                run_dispatch_outcome(&runtime.handlers, outcome, py);
+                run_dispatch_outcome(&runtime.handlers, &runtime.tree, &outcome, Some(&event), py);
                 // M4 Phase 7 (§11.3): the real, winit-driven path a
                 // genuine right-click reaches -- `Window.right_click`/
                 // `View.right_click` are the no-live-window-needed test
                 // entry points, this is where an actual mouse arrives.
-                open_context_menu(&runtime.tree, &runtime.context_menus, runtime.root, outcome);
+                open_context_menu(
+                    &runtime.tree,
+                    &runtime.context_menus,
+                    runtime.root,
+                    &outcome,
+                );
                 // M4 Phase 9 (§11.4): the real, winit-driven path a
                 // genuine panel drag reaches -- `Window.start_panel_drag`/
                 // `drop_panel_at` are the no-live-window-needed test
@@ -1128,7 +1133,13 @@ impl App {
                     engine_core::Action::Click => {
                         let outcome = tree.activate(node);
                         drop(tree);
-                        run_dispatch_outcome(&handlers, outcome, py);
+                        // M54 Phase 2: no real originating `InputEvent`
+                        // at all -- a screen reader's own semantic
+                        // "activate this" request, not a mechanical
+                        // pointer/keyboard event -- so `Event.position`/
+                        // `button` correctly come back `None`, not
+                        // fabricated.
+                        run_dispatch_outcome(&handlers, &tree_rc, &outcome, None, py);
                     }
                     engine_core::Action::Focus => {
                         let config = interaction_config();

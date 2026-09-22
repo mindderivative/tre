@@ -44,6 +44,42 @@ def test_hover_exit_fires_when_the_pointer_leaves_to_a_sibling():
     assert calls == ["a exited", "b entered"]
 
 
+def test_hover_enter_and_exit_give_a_one_arg_handler_a_real_event_with_position():
+    """M54 Phase 2 (§8, §16.2): `HoverEnter`/`HoverExit`'s own real
+    payload -- the real `PointerMoved` position, extracted the same way
+    `Click`'s own is (no `engine-core` widening needed, the position was
+    always in `InputEvent::PointerMoved` at every real caller). No
+    `button`/`old_value`/`new_value` -- a hover transition has none of
+    those, so `Event` reports `None` rather than fabricating one.
+    """
+    window = Window(width=120, height=60)
+    a = window.add_rect(background=(0xFF, 0x00, 0x00, 0xFF), width=40, height=40, x=0, y=0)
+    b = window.add_rect(background=(0x00, 0x00, 0xFF, 0xFF), width=40, height=40, x=60, y=0)
+
+    events = []
+    a.set_on_hover_exit(lambda event: events.append(event))
+    b.set_on_hover_enter(lambda event: events.append(event))
+
+    window.hover(a)
+    window.hover(b)
+
+    assert len(events) == 2
+    exit_event, enter_event = events
+    # Both fire from the identical real `PointerMoved` dispatch (the
+    # move onto `b`) -- the exit event's own position is genuinely
+    # *where the pointer now is* (over `b`), not `a`'s own former
+    # center; a real mousemove has exactly one position, shared by
+    # whatever hover transition it triggers.
+    assert exit_event.kind == "hover_exit"
+    assert exit_event.position == (80.0, 20.0)
+    assert enter_event.kind == "hover_enter"
+    assert enter_event.position == (80.0, 20.0)  # b's own real computed center
+    for event in events:
+        assert event.button is None
+        assert event.old_value is None
+        assert event.new_value is None
+
+
 def test_hovering_a_node_with_no_registered_handler_is_a_safe_no_op():
     window = Window(width=120, height=60)
     button = window.add_rect(background=(0xFF, 0xFF, 0xFF, 0xFF), width=80, height=40)

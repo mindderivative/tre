@@ -731,7 +731,7 @@ impl PyWindow {
         for draw in self.canvas_draws.borrow().values() {
             visit.call(draw)?;
         }
-        for handler in self.handlers.borrow().values() {
+        for (handler, _wants_event) in self.handlers.borrow().values() {
             visit.call(handler)?;
         }
         // M9 Phase 2: `completions` holds real `Py<PyAny>` callbacks --
@@ -769,7 +769,7 @@ impl PyWindow {
         // `active`'s handlers are genuinely a *different* map.
         let active_handlers = self.active.borrow().handlers.clone();
         if !Rc::ptr_eq(&self.handlers, &active_handlers) {
-            for handler in active_handlers.borrow().values() {
+            for (handler, _wants_event) in active_handlers.borrow().values() {
                 visit.call(handler)?;
             }
         }

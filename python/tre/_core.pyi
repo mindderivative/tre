@@ -12,7 +12,7 @@ confidence.
 
 Scope: every class `crates/engine-py/src/lib.rs`'s own `#[pymodule]`
 function registers via `m.add_class::<...>()` (`App`, `Window`, `Node`,
-`View`, `CanvasContext`), including methods on components that predate
+`View`, `CanvasContext`, `Event`), including methods on components that predate
 this stub file -- Phase 0's own explicit charge is the *current* real
 API surface, not just what M30's later phases add. Each later phase
 extends this file with its own new components in the same phase that
@@ -24,12 +24,17 @@ occurrence below: an MD3 color is always a `(r, g, b, a)` byte tuple
 (`Color`, this file's own local alias) matching every real
 `#[pyo3(signature = (..., background, ...))]` on the Rust side, which
 takes exactly that raw tuple, not a class of its own -- `engine-py`
-never exposes a dedicated Python `Color` type. Every handler parameter
-(`on_click=`, `on_change=`, `draw=`, `materialize=`, ...) is typed
-`Callable[[], object]` -- confirmed via `crates/engine-py/src/dispatch.
-rs`'s own `call_handler`, which always invokes a registered callback
-with zero arguments (§16.2's own stated, deliberate scope: no `Event`
-object exists yet) and discards whatever it returns.
+never exposes a dedicated Python `Color` type. `draw=`/`materialize=`/
+`size_hint=`/`on_complete=` stay `Callable[[], object]` (or, for
+`draw`, `Callable[[CanvasContext], object]`) -- unrelated to the real
+`Event` payload below, none of them route through `Node.set_on_click`/
+etc.'s own `HandlerMap`. `on_click=`/`on_hover_enter=`/`on_hover_exit=`/
+`on_change=` accept *either* a zero-argument callable (every
+pre-existing handler in this project's own examples/tests) or a
+one-argument callable receiving a real `Event` (M54 Phase 2, §8,
+§16.2) -- `dispatch::wants_event_payload` arity-sniffs which shape a
+given callable declared, once, at registration time, so both keep
+working, never both at once for the same handler.
 """
 
 from __future__ import annotations
@@ -38,6 +43,52 @@ from typing import Any, Callable, Sequence
 
 Color = tuple[int, int, int, int]
 """An MD3 `(r, g, b, a)` byte tuple, 0-255 per channel."""
+
+class Event:
+    """The real payload a `Node.set_on_click`/`set_on_hover_enter`/
+    `set_on_hover_exit`/`set_on_change` handler receives when it
+    declares one parameter (M54 Phase 2, §8, §16.2) -- never
+    constructed directly, always built and handed in by the engine.
+    Every field beyond `kind`/`source` is `None` when this event's own
+    real kind has nothing to say about it (never fabricated): a real
+    keyboard `Enter`/`Space` `"click"` has `position`/`button` both
+    `None`; `"hover_enter"`/`"hover_exit"` never carry `button`/
+    `old_value`/`new_value`; `"change"` never carries `position`/
+    `button`.
+    """
+
+    kind: str
+    """One of `"click"`, `"hover_enter"`, `"hover_exit"`, `"change"`."""
+    source: int
+    """A stable, opaque integer identity for the node this event fired
+    on -- not a `Node` handle (deliberately deferred, M54 scoping); a
+    real handler almost always already has the specific `Node` it
+    registered on via closure, the same way every pre-existing handler
+    in this project's own examples/tests already does.
+    """
+    position: tuple[float, float] | None
+    """The real pointer position for a pointer-driven `"click"`, or a
+    `"hover_enter"`/`"hover_exit"`'s own real `PointerMoved` position
+    -- both hover events from the same real move share one position
+    (wherever the pointer now is), not each node's own former center.
+    `None` for a keyboard-triggered `"click"` or any `"change"`.
+    """
+    button: str | None
+    """`"primary"`, `"secondary"`, or `"middle"` for a real
+    pointer-driven `"click"` -- `None` for a keyboard-triggered
+    `"click"` or any other kind.
+    """
+    old_value: Any | None
+    """`"change"` only: the value immediately before this edit -- a
+    `bool` (`Checkbox`/`RadioButton`/`Switch`), a `str` (`TextField`),
+    a `float` (`Slider`), or a `(hour, minute)` int tuple
+    (`TimePickerDial`). `None` for every other kind.
+    """
+    new_value: Any | None
+    """`"change"` only: the value immediately after this edit, same
+    real per-`NodeKind` type as `old_value`. `None` for every other
+    kind.
+    """
 
 class Node:
     """A handle to one real node in a `Window`'s (or `View`'s) tree.
@@ -76,12 +127,38 @@ class Node:
         animatable the way paint properties are.
         """
         ...
-    def set_on_click(self, callback: Callable[[], object]) -> None: ...
-    def set_on_hover_enter(self, callback: Callable[[], object]) -> None: ...
-    def set_on_hover_exit(self, callback: Callable[[], object]) -> None: ...
-    def set_on_change(self, callback: Callable[[], object]) -> None:
+    def set_on_click(
+        self, callback: Callable[[], object] | Callable[[Event], object]
+    ) -> None:
+        """`callback` may take zero arguments, or one -- a real `Event`
+        (M54 Phase 2), with `event.position`/`event.button` set for a
+        real pointer-driven click, both `None` for a keyboard `Enter`/
+        `Space` activation.
+        """
+        ...
+    def set_on_hover_enter(
+        self, callback: Callable[[], object] | Callable[[Event], object]
+    ) -> None:
+        """`callback` may take zero arguments, or one -- a real `Event`
+        (M54 Phase 2) with `event.position` set to the real pointer
+        position that triggered this transition.
+        """
+        ...
+    def set_on_hover_exit(
+        self, callback: Callable[[], object] | Callable[[Event], object]
+    ) -> None:
+        """`set_on_hover_enter`'s own real counterpart, same `Event`
+        contract.
+        """
+        ...
+    def set_on_change(
+        self, callback: Callable[[], object] | Callable[[Event], object]
+    ) -> None:
         """Fires on a real, genuine edit -- a `Slider` drag ending, or
         `set_checked`/`set_text` being called on a `Checkbox`/`TextField`.
+        `callback` may take zero arguments, or one -- a real `Event`
+        (M54 Phase 2) with `event.old_value`/`event.new_value` set to
+        this edit's own real before/after values.
         """
         ...
     def set_context_menu(self, content: Node) -> None:

@@ -28,6 +28,55 @@ def test_click_fires_the_registered_handler():
     assert calls == ["clicked"]
 
 
+def test_click_gives_a_one_arg_handler_a_real_event_with_position_and_button():
+    """M54 Phase 2 (§8, §16.2): the real `Click` payload -- a real
+    pointer-driven activation carries the real position it fired at and
+    which button, extracted from the same `InputEvent` `Window.click`
+    itself constructs (`dispatch::run_dispatch_outcome`'s own real
+    correction: `engine-core` never needed widening for this at all).
+    """
+    window = Window(width=200, height=200)
+    button = window.add_rect(background=(0, 0, 0, 255), width=50, height=50, x=20, y=30)
+
+    events = []
+    button.set_on_click(lambda event: events.append(event))
+
+    window.click(button)
+
+    assert len(events) == 1
+    event = events[0]
+    assert event.kind == "click"
+    assert event.position == (45.0, 55.0)  # node's own real computed center
+    assert event.button == "primary"
+    assert event.old_value is None
+    assert event.new_value is None
+
+
+def test_a_real_keyboard_activation_gives_a_one_arg_handler_none_position_and_button():
+    """A real `Enter`/`Space` activation while focused has no pointer
+    position/button at all -- `Event` reports `None` for both rather
+    than fabricating a synthetic value, the identical honest contract
+    `HoverEnter`/`HoverExit` already have for their own irrelevant
+    fields. `set_on_click` makes `button` Tab-reachable (its own real,
+    documented side effect); `Window.press_key("tab")` then `"enter"`
+    reaches it the same way a real keyboard-only user would.
+    """
+    window = Window(width=200, height=200)
+    button = window.add_rect(background=(0, 0, 0, 255), width=50, height=50, x=20, y=30)
+
+    events = []
+    button.set_on_click(lambda event: events.append(event))
+
+    window.press_key("tab")
+    window.press_key("enter")
+
+    assert len(events) == 1
+    event = events[0]
+    assert event.kind == "click"
+    assert event.position is None
+    assert event.button is None
+
+
 def test_click_on_a_node_with_no_registered_handler_is_a_safe_no_op():
     window = Window(width=200, height=200)
     button = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
