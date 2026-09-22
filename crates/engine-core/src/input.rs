@@ -259,9 +259,10 @@ pub enum InputEvent {
 /// M4 Phase 1) plus `HoverEnter`/`HoverExit` (§7.3's own named pair,
 /// "fires... through the ordinary handler path... independent of
 /// whether the default MD3 visual [i.e. hover's own opt-in animation]
-/// handles it"). Deliberately not the full `Change`/`Focus` set §16.2's
-/// own text eventually names -- added only when a real bound component
-/// needs one, matching Design Principle 6's own calibration.
+/// handles it"). `Change` and `FocusEnter`/`FocusExit` (M55, below)
+/// round out §16.2's own originally-sketched set -- each added only
+/// once a real bound component needed it, matching Design Principle
+/// 6's own calibration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum EventKind {
     Click,
@@ -276,6 +277,17 @@ pub enum EventKind {
     /// dispatch` at all; see `Node.set_checked`'s own doc comment).
     /// §16.7's own real "two-way binding" sugar is built on this.
     Change,
+    /// M55 (§10, §16.2): keyboard focus arriving at/leaving this node --
+    /// real click-to-focus (M18/M30/M53), Tab/Shift-Tab navigation, a
+    /// real `Node.focus()`/`Window.focus()` call, or a real AccessKit
+    /// `Action::Focus` request all produce this pair the identical way
+    /// `HoverEnter`/`HoverExit` already do. A pair, not a single
+    /// `Focus` kind, for the identical real reason `Hover` is a pair:
+    /// `HandlerMap`'s own per-node key (`(NodeId, EventKind)`) can
+    /// never give one event two real sources, so the node losing focus
+    /// and the node gaining it each need their own kind to register on.
+    FocusEnter,
+    FocusExit,
 }
 
 /// M54 Phase 1 (§8, §16.2): the real, exact set of value shapes a
@@ -363,5 +375,20 @@ pub enum DispatchOutcome {
     Changed {
         node: crate::NodeId,
         old_value: ChangedValue,
+    },
+    /// M55 (§10, §16.2): keyboard focus genuinely changed this call --
+    /// `old`/`new` are whichever node was/is focused, mirroring
+    /// `HoverChanged`'s own exact real shape and "only produced on a
+    /// real transition" contract (`transition_focus`'s own `old == new`
+    /// early return). Produced by `Tree::dispatch`'s own real
+    /// click-to-focus (`PointerPressed`) and Tab-navigation
+    /// (`KeyPressed`) arms -- a real AccessKit `Action::Focus` request
+    /// or a real `Node.focus()` call also change `self.focused` (via
+    /// `Tree::set_focus_to`) but never through `Tree::dispatch` at all,
+    /// so neither ever produces this variant; `engine-py`'s own direct
+    /// callers of `set_focus_to` read its now-widened return instead.
+    FocusChanged {
+        old: Option<crate::NodeId>,
+        new: Option<crate::NodeId>,
     },
 }

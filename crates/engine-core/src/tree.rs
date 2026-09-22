@@ -2553,6 +2553,10 @@ impl Tree {
     /// new field manufactured for this step. Animates `focus_ring` the
     /// same opt-in-only way `update_hover` animates `hover_opacity`, for
     /// the same Design Principle 6 reason.
+    ///
+    /// M55: returns the real `(old, new)` transition, `Some` only on a
+    /// genuine change -- `Tree::dispatch`'s own `KeyPressed`/`Key::Tab`
+    /// arm reads it to produce a real `DispatchOutcome::FocusChanged`.
     pub fn move_focus(
         &mut self,
         root: NodeId,
@@ -2560,7 +2564,7 @@ impl Tree {
         focus_ring_opacity: f64,
         duration: Duration,
         now: Instant,
-    ) {
+    ) -> Option<(Option<NodeId>, Option<NodeId>)> {
         self.dirty = true;
         let mut order = Vec::new();
         self.collect_interactive(root, &mut order);
@@ -2581,7 +2585,7 @@ impl Tree {
             };
             Some(order[next_index])
         };
-        self.transition_focus(new, focus_ring_opacity, duration, now);
+        self.transition_focus(new, focus_ring_opacity, duration, now)
     }
 
     /// M4 Phase 2 (§10): the direct-target counterpart to `move_focus`'s
@@ -2597,18 +2601,28 @@ impl Tree {
     /// own `access.actions` (`Tree::activate`'s own doc comment makes
     /// the identical "don't invent a stricter rule for one path than the
     /// other" argument).
+    /// M55 (§10, §16.2): the return, widened from `()`, is the real
+    /// `(old, new)` transition -- `Some` only on a genuine change,
+    /// `None` when `node` was already focused or doesn't exist (the
+    /// same "no real fact to report" contract `HoverChanged` already
+    /// has). Every real caller here and in `engine-py` (the one real
+    /// non-`Tree::dispatch` mutation path: AccessKit's `Action::Focus`,
+    /// `app.rs`) reads it to fire a real `FocusEnter`/`FocusExit` --
+    /// `Tree::dispatch`'s own callers get theirs a different way, via
+    /// `DispatchOutcome::FocusChanged`, since this method's own return
+    /// only reaches a direct caller, not `dispatch`'s own outcome.
     pub fn set_focus_to(
         &mut self,
         node: NodeId,
         focus_ring_opacity: f64,
         duration: Duration,
         now: Instant,
-    ) {
+    ) -> Option<(Option<NodeId>, Option<NodeId>)> {
         self.dirty = true;
         if !self.nodes.contains_key(node) {
-            return;
+            return None;
         }
-        self.transition_focus(Some(node), focus_ring_opacity, duration, now);
+        self.transition_focus(Some(node), focus_ring_opacity, duration, now)
     }
 
     /// Shared by `move_focus`/`set_focus_to`: animates the previously-
@@ -2616,17 +2630,23 @@ impl Tree {
     /// opt-in-only (Design Principle 6) exactly like `update_hover`
     /// animates `hover_opacity` -- factored out once a second real
     /// caller needed the identical transition logic, not duplicated.
+    ///
+    /// M55: returns the real `(old, new)` transition, `Some` only when
+    /// `old != new` -- the one real chokepoint both `move_focus`/
+    /// `set_focus_to` already shared, so this is also the one real
+    /// place to compute it, mirroring `update_hover`'s own analogous
+    /// role for `self.hovered`.
     fn transition_focus(
         &mut self,
         new: Option<NodeId>,
         focus_ring_opacity: f64,
         duration: Duration,
         now: Instant,
-    ) {
+    ) -> Option<(Option<NodeId>, Option<NodeId>)> {
         let old = self.focused;
         self.focused = new;
         if old == new {
-            return;
+            return None;
         }
         if let Some(old) = old
             && let Some(node) = self.nodes.get_mut(old)
@@ -2644,6 +2664,7 @@ impl Tree {
                 .focus_ring
                 .animate_to(focus_ring_opacity, duration, MotionCurve::Linear, now);
         }
+        Some((old, new))
     }
 
     /// M15 Phase 2 (§8, §10): real keyboard-driven `TextField` editing
@@ -3717,19 +3738,27 @@ impl Tree {
                     // focuses itself on right-click too, the identical
                     // real expectation this gate's own `Primary` case
                     // already establishes.
-                    if matches!(button, PointerButton::Primary | PointerButton::Secondary)
-                        && matches!(
-                            self.nodes.get(node).map(|n| &n.kind),
-                            Some(NodeKind::TextField(_)) | Some(NodeKind::Terminal(_))
-                        )
-                    {
-                        self.set_focus_to(
-                            node,
-                            config.focus_ring_opacity,
-                            config.focus_ring_duration,
-                            now,
-                        );
-                    }
+                    // M55 (§10, §16.2): captured so this real click-to-
+                    // focus transition can become a real `Focus
+                    // Changed` outcome below, instead of the prior
+                    // unconditional `DispatchOutcome::None` silently
+                    // discarding it.
+                    let focus_transition =
+                        if matches!(button, PointerButton::Primary | PointerButton::Secondary)
+                            && matches!(
+                                self.nodes.get(node).map(|n| &n.kind),
+                                Some(NodeKind::TextField(_)) | Some(NodeKind::Terminal(_))
+                            )
+                        {
+                            self.set_focus_to(
+                                node,
+                                config.focus_ring_opacity,
+                                config.focus_ring_duration,
+                                now,
+                            )
+                        } else {
+                            None
+                        };
                     if let Some(state) = self.interaction_mut(node) {
                         state.spawn_ripple(
                             Point::new(position.x, position.y),
@@ -3739,10 +3768,14 @@ impl Tree {
                             now,
                         );
                     }
+                    match focus_transition {
+                        Some((old, new)) => DispatchOutcome::FocusChanged { old, new },
+                        None => DispatchOutcome::None,
+                    }
                 } else {
                     self.set_pressed(None, config.hover_duration, now);
+                    DispatchOutcome::None
                 }
-                DispatchOutcome::None
             }
             InputEvent::PointerReleased { position, button } => {
                 let hit = self.hit_test(root, position);
@@ -3894,14 +3927,22 @@ impl Tree {
                         } else {
                             FocusDirection::Next
                         };
-                        self.move_focus(
+                        // M55 (§10, §16.2): a real Tab/Shift-Tab focus
+                        // transition now becomes a real `FocusChanged`
+                        // outcome, instead of the prior unconditional
+                        // `DispatchOutcome::None` silently discarding
+                        // it -- mirrors the identical real fix at the
+                        // `PointerPressed` click-to-focus site above.
+                        match self.move_focus(
                             root,
                             direction,
                             config.focus_ring_opacity,
                             config.focus_ring_duration,
                             now,
-                        );
-                        DispatchOutcome::None
+                        ) {
+                            Some((old, new)) => DispatchOutcome::FocusChanged { old, new },
+                            None => DispatchOutcome::None,
+                        }
                     }
                     Key::Enter | Key::Space => match self.focused {
                         Some(node) => DispatchOutcome::Activated(node),
@@ -8644,6 +8685,208 @@ mod tests {
             },
             "leaving every hit-testable node must still report the exit half"
         );
+    }
+
+    /// M55 (§10, §16.2): `HoverChanged`'s own real precedent, mirrored
+    /// for a real click-to-focus transition -- before this, the
+    /// `PointerPressed` arm that calls `set_focus_to` (M18/M30/M53)
+    /// always returned `DispatchOutcome::None`, silently discarding
+    /// the real transition.
+    #[test]
+    fn dispatch_reports_focus_changed_on_a_real_click_to_focus_transition() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            size: Size {
+                width: length(120.0),
+                height: length(24.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+        let field = tree.insert(
+            NodeKind::TextField(TextFieldState::new("hi", "Roboto", 400.0, 16.0)),
+            Style {
+                size: Size {
+                    width: length(120.0),
+                    height: length(24.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0xEE, 0xEE, 0xEE, 0xFF), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(root, field);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(120.0),
+                height: AvailableSpace::Definite(24.0),
+            },
+        );
+
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let now = Instant::now();
+
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(10.0, 10.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::FocusChanged {
+                old: None,
+                new: Some(field)
+            },
+            "a real click-to-focus on a previously-unfocused TextField must report the transition"
+        );
+
+        // Pressing the already-focused field again: no real transition.
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(10.0, 10.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::None,
+            "pressing an already-focused field again must not report a stale transition"
+        );
+    }
+
+    /// `dispatch_reports_focus_changed_on_a_real_click_to_focus_
+    /// transition`'s own real Tab-navigation sibling.
+    #[test]
+    fn dispatch_reports_focus_changed_on_real_tab_navigation() {
+        use crate::access::{Action, Role};
+
+        let mut tree = Tree::new();
+        let root_style = Style {
+            display: taffy::Display::Flex,
+            size: Size {
+                width: length(100.0),
+                height: length(50.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+
+        let (k, s, p) = leaf(50.0, 50.0);
+        let a = tree.insert(k, s, p);
+        tree.set_access(
+            a,
+            AccessNodeData::new(Role::Button).with_action(Action::Click),
+        );
+        tree.add_child(root, a);
+
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(100.0),
+                height: AvailableSpace::Definite(50.0),
+            },
+        );
+
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let now = Instant::now();
+
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::KeyPressed {
+                key: Key::Tab,
+                shift: false,
+            },
+            &config,
+            now,
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::FocusChanged {
+                old: None,
+                new: Some(a)
+            },
+            "a real Tab press onto the one interactive node must report the transition"
+        );
+    }
+
+    /// A real `PointerPressed` that never touches `self.focused` at all
+    /// (a plain, non-`TextField`/`Terminal` node) must not fabricate a
+    /// `FocusChanged` -- the same "no real fact, no outcome" contract
+    /// `HoverChanged`'s own no-transition case already established.
+    #[test]
+    fn dispatch_does_not_report_focus_changed_for_a_non_focusable_click() {
+        let mut tree = Tree::new();
+        let root_style = Style {
+            size: Size {
+                width: length(50.0),
+                height: length(50.0),
+            },
+            ..Default::default()
+        };
+        let (_, _, root_paint) = leaf(0.0, 0.0);
+        let root = tree.insert(NodeKind::Container, root_style, root_paint);
+        let (k, s, p) = leaf(50.0, 50.0);
+        let rect = tree.insert(k, s, p);
+        tree.add_child(root, rect);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(50.0),
+                height: AvailableSpace::Definite(50.0),
+            },
+        );
+
+        let config = InteractionConfig {
+            hover_opacity: 0.08,
+            hover_duration: Duration::from_millis(100),
+            focus_ring_opacity: 1.0,
+            focus_ring_duration: Duration::from_millis(100),
+            ripple_radius: 50.0,
+            ripple_opacity: 0.12,
+            ripple_duration: Duration::from_millis(300),
+        };
+        let now = Instant::now();
+
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(25.0, 25.0),
+                button: PointerButton::Primary,
+            },
+            &config,
+            now,
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::None,
+            "clicking a plain Rect must not fabricate a focus transition"
+        );
+        assert_eq!(tree.focused(), None);
     }
 
     #[test]

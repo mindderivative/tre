@@ -1,110 +1,63 @@
-# PLAN — M54: Real `Event` Payload for Handlers
+# PLAN — M55: Real `FocusEnter`/`FocusExit` Events
 
 ## Goal
-`BUILD_TRACKER.md`'s own "Known gaps" section names one real, still-open
-capability gap: every registered handler is invoked with zero arguments
-(`call_handler`'s own `handler.call0(py)`) -- no real `Event` object
-carrying payload data exists anywhere. User: "What do you recommend
-next?" -> I recommended scoping this. User: "Scope the event payload
-work."
+M54 closed every real, buildable "Known gaps" bullet except one it
+explicitly deferred: `EventKind` has no `Focus` variant despite
+ARCHITECTURE.md §16.2's own original sketch naming one. User: "Scope
+Focus EventKind."
 
 ## Real investigation
-Exactly one function matters: `call_handler` (`dispatch.rs:299-319`).
-`HandlerMap` is keyed `(NodeId, EventKind)`, four registration methods
-in `node.rs`, also reached via `view.rs`'s declarative bindings -- one
-map, one call site. Nothing is structurally lost for `Click`/
-`HoverChanged` -- position/button/hover-position are genuinely alive in
-`engine-py`'s own already-in-scope `InputEvent` at every real dispatch
-call site. `old_value` for `Change` is the one genuine data-loss case,
-and it comes from three genuinely different value shapes (`Slider`:
-`f64`, `TextField`: `String`, `TimePickerDial`: `{hour, minute}`), found
-while implementing Phase 1, not assumed in advance. Every real handler
-in `tests`/`examples`/`demo/showcase.py` is zero-argument today --
-133+ confirmed call sites, a naive switch to unconditional `call1`
-breaks all of them.
+A real focus-changing `Tree::dispatch()` call and a real `Activated`/
+`SecondaryActivated`/`Changed`-producing call never overlap in the same
+single `dispatch()` invocation -- both focus-mutating arms always
+returned `DispatchOutcome::None`, so a new `FocusChanged` variant slots
+in with zero restructuring. AccessKit's `Action::Focus` bypasses
+`dispatch()` entirely (the one non-dispatch mutation path). Two real
+`right_click` call sites currently discard their own dispatch outcome
+with no variable at all. No Python-facing explicit "focus this node"
+API exists. M54 already built every mechanism this milestone reuses:
+`Event`, arity-sniffing, `HandlerMap`, and `HoverChanged`'s own exact
+old/new-transition pattern to copy almost verbatim.
 
 ## Design (3 phases)
-1. `engine-core`: widen `DispatchOutcome::Changed` to carry a real,
-   correctly-typed `old_value` (`ChangedValue::Text`/`Number`/`Time`).
-   `Activated`/`HoverChanged` need no widening at all -- `engine-py`
-   already holds the data.
-2. `engine-py`: new `Event` pyclass, arity-sniffing at registration
-   (backward-compatible with every existing zero-arg handler), `call_
-   handler`/`run_dispatch_outcome` threaded to build and pass it.
-3. Python-facing API, tests, examples, docs.
+1. `engine-core`: `EventKind::FocusEnter`/`FocusExit`; `DispatchOutcome
+   ::FocusChanged{old,new}`; widen `transition_focus`/`move_focus`/
+   `set_focus_to` to return the real transition; wire `PointerPressed`/
+   `KeyPressed(Tab)` to produce it.
+2. `engine-py`: `Event::focus_transition`; `run_dispatch_outcome`'s new
+   arm + a shared `fire_focus_transition` helper (also used by
+   AccessKit's `Action::Focus`); `Node.set_on_focus_enter`/
+   `set_on_focus_exit`; `Node.focus()`/`Window.focus(node)`; fix the
+   two right-click call sites that discard their outcome.
+3. Python-facing API, tests, example, docs.
 
-## Four real design forks, resolved via `AskUserQuestion`
-1. Backward compatibility: arity-sniff at registration (not a breaking
-   change).
-2. `old_value`: capture it (the one thing no existing workaround can
-   produce).
-3. `Event.source`: a plain `NodeId` for now, not a live `Node` handle.
-4. `EventKind` scope: the existing four kinds only -- no `Focus`/
-   context-menu kind this milestone.
+## Five real design questions, resolved
+1. `FocusEnter`/`FocusExit` pair, not a single kind -- mirrors `Hover`.
+2. New `DispatchOutcome` variant, not a parallel return.
+3. AccessKit's `Action::Focus` fires the same event -- parity with
+   `Action::Click`.
+4. Add `Node.focus()`/`Window.focus(node)` -- mirrors `click()`/
+   `hover()`.
+5. `Tree::remove`/`detach`'s own silent focus-clearing stays out of
+   scope (decided directly, no real tradeoff) -- no `InputEvent`/user
+   action drives either, and `Hover` has no analogous case.
 
 ## Explicitly out of scope, named not silent
-New `EventKind` variants (`Focus`, a distinct context-menu/secondary-
-click kind). `Event.source` minting a live `Node` handle. Any change to
-`SecondaryActivated`/`open_context_menu`'s own `HandlerMap`-bypassing
-mechanism.
+`Tree::remove`/`detach` firing a "focus lost" event. Any change to
+`move_focus`'s own Tab-order computation. `Event.source`-to-`Node`
+(still the same deferred M54 decision).
 
 ## Status
 
-**All 3 phases complete. Milestone closed.**
-
-Phase 1: `DispatchOutcome::Changed` widened to `Changed { node,
-old_value: ChangedValue }`; every real producer in `tree.rs` snapshots
-the old value before mutating (TextField edits via `dispatch_text_
-field_key`/the top-level `TextInput` arm; Slider via `dispatch_slider_
-key`'s arrow-nudge; Slider/TimePickerDial pointer drag-end via a new
-`drag_start_value` field, snapshotted at drag-start since the value
-moves continuously during the drag itself). `Activated`/`HoverChanged`
-deliberately left untouched -- a real, found-while-implementing
-correction to the original plan's own assumption that they'd need
-widening too; `engine-py` already holds the relevant `InputEvent` data
-at every real call site. 20 existing Rust unit tests updated to assert
-the real, correct `old_value` for every already-covered `Changed`-
-producing scenario.
-
-Phase 2: new `Event` pyclass (`crates/engine-py/src/event.rs`) --
-`kind`/`source`/`position`/`button`/`old_value`/`new_value`, plain
-`#[pyo3(get)]` attribute access (a deliberate, justified departure from
-`Node`'s own explicit-getter convention, since `Event` is an immutable
-snapshot, not live `Tree` state). `dispatch::wants_event_payload`
-arity-sniffs a handler's real required-parameter count at registration
-(`inspect.signature`, correctly treating `lambda i=i: ...`-style
-defaulted params, `VAR_POSITIONAL`/`VAR_KEYWORD`/`KEYWORD_ONLY` as not
-requiring the new argument) -- `HandlerMap`'s stored value widens to
-`(Py<PyAny>, bool)`. `call_handler` takes a lazy `Event`-builder
-closure, invoked only when a handler is found and wants one.
-`run_dispatch_outcome` widened to take `tree`/`event: Option<&
-InputEvent>` -- `Activated`/`HoverChanged` extract position/button by
-pattern-matching `event` directly (no `engine-core` data needed, per
-Phase 1's own correction); `Changed` builds `old_value` from
-`ChangedValue` and reads `new_value` fresh from `tree`. Every real call
-site rewired: `node.rs`'s four setters, `window_input.rs`'s `cut()`,
-`app.rs`'s real winit path, six synthetic entry points, `view.rs`'s
-declarative equivalents, GC traversal loops.
-
-Phase 3: `python/tre/_core.pyi` gets a new `Event` class stub and
-widened handler-parameter types; `python/tre/__init__.py` re-exports
-`Event`. 12 new pytest tests across `test_click_dispatch.py`/`test_
-change_event.py`/`test_hover_events.py` (extended) and a new `test_
-event_payload.py` (the cross-cutting arity-sniff mechanism itself) --
-one real, found-while-testing correction along the way: `HoverExit`/
-`HoverEnter` share the *same* pointer position (wherever the pointer
-now is), not each node's own former center, since both come from one
-real `PointerMoved` dispatch. New `examples/event_payload.py` --
-deliberately does *not* rewrite `demo/showcase.py`'s own `toggle_
-checkbox` (a real `Click` handler, not `Change` -- `Event.old_value`
-wouldn't actually help its own "what to toggle to" question, a
-distinction the original investigation named up front and this phase
-honored rather than force-fitting).
-
-Full chain green: `cargo check`/`clippy -D warnings`/`fmt --check`
-clean, `cargo test --workspace --release` (unchanged -- every new
-pymethod/pyclass is GIL-bound, pytest-covered instead), `maturin
-develop --release`, `pytest tests/` (767 passed, up from 755, +12, 2
-skipped unchanged), all 86 examples (+1), showcase demo. Tracker
-generator: 54 milestones/162 phases/291 items/1 known gap/20 fixed
-gaps.
+**Phase 1 of 3 complete.** New `EventKind::FocusEnter`/`FocusExit`;
+new `DispatchOutcome::FocusChanged { old, new }`; `transition_focus`/
+`move_focus`/`set_focus_to` widened to return the real transition;
+`Tree::dispatch`'s `PointerPressed` (click-to-focus) and `KeyPressed`
+`Key::Tab` arms now produce `FocusChanged` instead of their prior
+unconditional `None`. 3 new Rust unit tests (real click-to-focus
+transition + no stale repeat, real Tab navigation, a non-focusable
+click correctly stays `None`). `cargo check -p engine-core`/`clippy -D
+warnings`/`fmt --check` clean; `cargo test -p engine-core --release`
+(227 passed, up from 224, +3). `cargo check --workspace --all-targets`
+confirms the only remaining breakage is in `engine-py`, exactly
+Phase 2's own scope. **Up next: Phase 2, the `engine-py` side.**
