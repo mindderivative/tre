@@ -536,6 +536,66 @@ impl PyWindow {
     fn paste(&self, text: &str, py: Python<'_>) {
         self.type_text(text, py);
     }
+
+    /// M53 Phase 2 (§8, §10, §11.3): `copy`'s own **real**, non-hermetic
+    /// sibling -- unlike `copy` above (which never touches the actual
+    /// OS clipboard, by design, since M17 Phase 1), this genuinely
+    /// writes the currently-focused `TextField`'s own real selection to
+    /// the real system clipboard, via the exact same shared logic
+    /// `App::run`'s own winit-driven Ctrl+C path uses (`crate::dispatch
+    /// ::copy_focused_selection_to_clipboard`, factored out of `app.rs`
+    /// this same milestone). This is the real gap this milestone was
+    /// scoped to close: a context-menu "Copy" item's own `on_click`
+    /// callback previously had nothing real to call. Returns `true`
+    /// only on a genuine, complete write -- `False` both when nothing
+    /// is focused/selected and when the real OS clipboard is
+    /// unreachable (logged via `tracing::warn!`, never a panic, the
+    /// same "real, expected, gracefully-handled" policy this crate
+    /// already established for no-GPU/no-display).
+    fn copy_to_system_clipboard(&self) -> bool {
+        crate::dispatch::copy_focused_selection_to_clipboard(&self.tree)
+    }
+
+    /// `copy_to_system_clipboard`'s own real Cut sibling -- genuinely
+    /// removes the currently-focused field's own selection and fires a
+    /// real `Change` handler, but only once the real clipboard write
+    /// actually succeeds (a failed write must never silently destroy
+    /// the user's own selected text with no way to recover it). Shares
+    /// `crate::dispatch::cut_focused_selection_to_clipboard` with
+    /// `App::run`'s own real winit-driven Ctrl+X path.
+    fn cut_to_system_clipboard(&self, py: Python<'_>) -> bool {
+        crate::dispatch::cut_focused_selection_to_clipboard(&self.tree, &self.handlers, py)
+    }
+
+    /// `copy_to_system_clipboard`'s own real Paste sibling -- reads the
+    /// real system clipboard and inserts it into whichever field is
+    /// currently focused, exactly like a real Ctrl+V (`Tree::dispatch`
+    /// already resolves the focused target internally for `TextInput`,
+    /// so this never needs its own focused-field check). Shares `crate
+    /// ::dispatch::paste_clipboard_into_focused` with `App::run`'s own
+    /// real winit-driven path. Returns whether the real clipboard
+    /// *read* succeeded, not whether a field happened to be focused to
+    /// receive it -- a real OS read can genuinely fail on its own,
+    /// independent of anything this `Window`'s own tree state.
+    fn paste_from_system_clipboard(&self, py: Python<'_>) -> bool {
+        crate::dispatch::paste_clipboard_into_focused(&self.tree, self.root, &self.handlers, py)
+    }
+
+    /// M53 Phase 2 (§8, §10, §11.3): a real "Select All" -- selects the
+    /// currently-focused `TextField`'s own entire content, matching
+    /// every real desktop text field's own Ctrl+A convention (cursor
+    /// lands at the end, not the start). Thin wrapper over `Tree::
+    /// select_all_text_field` (Phase 1), the same "acts on whatever's
+    /// currently focused" convention `copy`/`cut`/`paste`/`copy_to_
+    /// system_clipboard`/etc. all already share. Returns whether a real
+    /// `TextField` was actually focused -- a true no-op otherwise (no
+    /// field focused, or the focused node isn't a `TextField`).
+    fn select_all(&self) -> bool {
+        let Some(field) = self.tree.borrow().focused() else {
+            return false;
+        };
+        self.tree.borrow_mut().select_all_text_field(field)
+    }
 }
 
 /// M30 Phase 9 Step 4 (§5, §8, §10): `press_key`/`type_text`'s own

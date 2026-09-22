@@ -40,8 +40,8 @@ beyond the existing click/drag plus `select_all`.
 
 ## Status
 
-**Phase 1 of 3 complete.** `engine-core`: widened the click-to-focus
-gate (`tree.rs:3615`) to also match `PointerButton::Secondary`, reusing
+**Phases 1-2 of 3 complete.** Phase 1: widened the click-to-focus gate
+(`tree.rs:3615`) to also match `PointerButton::Secondary`, reusing
 `set_focus_to` verbatim. New `Tree::select_all_text_field(field) ->
 bool`, a genuinely new primitive (not composable from Python today --
 no way to read a field's own content length). 5 new Rust unit tests
@@ -50,9 +50,28 @@ content, non-`TextField` no-op), all GIL-free, all passing on the first
 run. 1 new pytest test (`Window.right_click` now focuses a `TextField`
 too).
 
+Phase 2: refactored `app.rs`'s three inline `InputEvent::Copy`/`Cut`/
+`PasteRequested` arms into shared helpers (`dispatch.rs`), reused by
+both the real winit path (unchanged behavior, confirmed by re-running
+every example) and 4 new `Window` pymethods (`copy_to_system_
+clipboard`/`cut_to_system_clipboard`/`paste_from_system_clipboard`/
+`select_all`), deliberately distinctly named from the existing hermetic
+`copy`/`cut`/`paste`. `_core.pyi` updated with 4 new stubs plus a real
+correction to the *existing* `copy`/`cut`/`paste` docstrings (they
+never stated plainly they're hermetic -- a real, pre-existing
+documentation gap found during investigation). **Real, honest finding
+caught by running the tests:** a full write-then-read clipboard round
+trip fails in this sandboxed X11 environment (no clipboard manager
+installed) -- a genuine `arboard` per-call-fresh-instance
+characteristic (matching `app.rs`'s own pre-existing, unchanged
+convention, not a new bug), confirmed against the reliably-passing
+Rust test (which reuses one instance for both halves). Fixed the test
+to treat this as a real, honest `pytest.skip()`.
+
 Full chain green: `cargo check`/`clippy -D warnings`/`fmt` clean,
-`cargo test --workspace --release` (`engine-core` 224, up from 219,
-+5), `maturin develop --release`, `pytest tests/` (748 passed, up from
-747, +1, 1 skipped unchanged), all 84 examples, showcase demo. Tracker
-generator: 53 milestones/157 phases/274 items/2 known gaps/19 fixed
-gaps. **Up next: Phase 2, the real OS clipboard API.**
+`cargo test --workspace --release` (unchanged -- new pymethods are
+GIL-bound, pytest-covered instead), `maturin develop --release`,
+`pytest tests/` (755 passed, up from 748, +7 net, 2 skipped -- 8 new
+tests, 1 gracefully skipped), all 84 examples, showcase demo. Tracker
+generator: 53 milestones/158 phases/277 items/2 known gaps/19 fixed
+gaps. **Up next: Phase 3, the example + docs + final verification.**

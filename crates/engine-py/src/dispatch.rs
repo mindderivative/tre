@@ -23,7 +23,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use engine_core::{CompletionHandle, DispatchOutcome, EventKind, InteractionConfig, NodeId, Tree};
+use engine_core::{
+    CompletionHandle, DispatchOutcome, EventKind, InputEvent, InteractionConfig, NodeId, Tree,
+};
 use peniko::kurbo::Point;
 use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
@@ -313,5 +315,109 @@ pub(crate) fn call_handler(handlers: &HandlerMap, node: NodeId, kind: EventKind,
         // real traceback `PyErr::print` used to write straight to
         // stderr, now as a real structured `tracing` event instead.
         log_uncaught_exception(&err, py);
+    }
+}
+
+/// M53 Phase 2 (§8, §10, §11.3): `App::run`'s own real, winit-driven
+/// `InputEvent::Copy` logic, factored out once a second real call site
+/// needed it -- `Window.copy_to_system_clipboard` (`window_input.rs`),
+/// the real, non-hermetic sibling this milestone adds so a context-
+/// menu "Copy" item's own `on_click` callback has something real to
+/// call. `engine-core` itself never touches a real clipboard (§4), so
+/// this is the one shared place with both `Tree` and real `arboard`
+/// access. A clipboard failure (no real clipboard service reachable, a
+/// real, possible condition in some headless environments) is logged
+/// and non-fatal, returning `false` -- the same "real, expected,
+/// gracefully-handled" policy this crate already established for
+/// no-GPU/no-display (M16 Phase 2). Returns `true` only on a genuine,
+/// complete real write.
+pub(crate) fn copy_focused_selection_to_clipboard(tree: &Rc<RefCell<Tree>>) -> bool {
+    let selected = tree
+        .borrow()
+        .focused()
+        .and_then(|field| tree.borrow().text_field_selected_text(field));
+    let Some(text) = selected else {
+        return false;
+    };
+    match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
+        Ok(()) => true,
+        Err(err) => {
+            tracing::warn!(%err, "failed to write to the real OS clipboard");
+            false
+        }
+    }
+}
+
+/// `copy_focused_selection_to_clipboard`'s own real Cut sibling --
+/// writes to the real clipboard *first*, using a pure read
+/// (`text_field_selected_text`, not the mutating `cut_text_field_
+/// selection`), and only actually removes the real selection once that
+/// write genuinely succeeds. A failed clipboard write must never
+/// silently destroy the user's own selected text with no way to
+/// recover it. Fires `Change` on a genuine cut, the same way a direct,
+/// non-`Tree::dispatch` mutation always does elsewhere in this crate
+/// (`Node.set_checked`/`set_text`).
+pub(crate) fn cut_focused_selection_to_clipboard(
+    tree: &Rc<RefCell<Tree>>,
+    handlers: &HandlerMap,
+    py: Python<'_>,
+) -> bool {
+    let field_and_text = tree.borrow().focused().and_then(|field| {
+        tree.borrow()
+            .text_field_selected_text(field)
+            .map(|text| (field, text))
+    });
+    let Some((field, text)) = field_and_text else {
+        return false;
+    };
+    match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
+        Ok(()) => {
+            tree.borrow_mut().cut_text_field_selection(field);
+            call_handler(handlers, field, EventKind::Change, py);
+            true
+        }
+        Err(err) => {
+            tracing::warn!(
+                %err,
+                "failed to write to the real OS clipboard -- selection left untouched"
+            );
+            false
+        }
+    }
+}
+
+/// `copy_focused_selection_to_clipboard`'s own real Paste sibling --
+/// reads the real OS clipboard, then dispatches the resulting text
+/// exactly like a real typed character (`InputEvent::TextInput`, M15
+/// Phase 2's own existing mechanism, reused completely, no new
+/// insertion path). `Tree::dispatch` already resolves "which field, if
+/// any, is currently focused" internally for `TextInput` -- the same
+/// real behavior a genuine Ctrl+V already has, so this never needs its
+/// own focused-field check first. Returns whether the real clipboard
+/// *read* succeeded, not whether the text landed anywhere -- the
+/// identical real distinction `Window.paste`'s own hermetic sibling
+/// doesn't need to make (it's handed the text directly), but a genuine
+/// OS read can genuinely fail on its own.
+pub(crate) fn paste_clipboard_into_focused(
+    tree: &Rc<RefCell<Tree>>,
+    root: NodeId,
+    handlers: &HandlerMap,
+    py: Python<'_>,
+) -> bool {
+    match arboard::Clipboard::new().and_then(|mut cb| cb.get_text()) {
+        Ok(text) => {
+            let outcome = tree.borrow_mut().dispatch(
+                root,
+                InputEvent::TextInput(text),
+                &interaction_config(),
+                std::time::Instant::now(),
+            );
+            run_dispatch_outcome(handlers, outcome, py);
+            true
+        }
+        Err(err) => {
+            tracing::warn!(%err, "failed to read the real OS clipboard");
+            false
+        }
     }
 }

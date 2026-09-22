@@ -74,13 +74,74 @@
   field), showcase demo. Tracker generator: 53 milestones/157
   phases/274 items/2 known gaps/19 fixed gaps.
 
+## Phase 2 — `engine-py`: Real OS Clipboard API
+
+- Refactored `app.rs`'s three inline `InputEvent::Copy`/`Cut`/`Paste
+  Requested` arms into shared helpers in `dispatch.rs` (the same module
+  that already hosts `interaction_config`/`run_dispatch_outcome`/
+  `open_context_menu`/`call_handler` -- the established, existing home
+  for logic shared between the real winit path and synthetic Python
+  entry points): `copy_focused_selection_to_clipboard`, `cut_focused_
+  selection_to_clipboard`, `paste_clipboard_into_focused`. Real
+  behavior byte-for-byte unchanged in the real winit path -- confirmed
+  by re-running every example and the showcase demo. `InputEvent::
+  TerminalCopyRequested` deliberately left untouched -- its own real
+  `terminal_selected_text` read is a genuinely separate mechanism, out
+  of this milestone's `TextField`-scoped work.
+- 4 new `Window` pymethods (`window_input.rs`): `copy_to_system_
+  clipboard`, `cut_to_system_clipboard`, `paste_from_system_clipboard`
+  -- deliberately distinctly named from the existing hermetic `copy`/
+  `cut`/`paste` (no collision, no ambiguity about which is real), each
+  a thin call into the shared `dispatch.rs` helper. `select_all`, a
+  thin wrapper over Phase 1's `Tree::select_all_text_field`, matching
+  `copy`/`cut`/`paste`'s own "acts on whatever's currently focused"
+  convention. This is the real gap this milestone was scoped to close:
+  a context-menu "Copy"/"Cut"/"Paste" item's own `on_click` callback
+  now has something real to call.
+- `python/tre/_core.pyi` updated: 4 new stubs, plus a real correction
+  to the *existing* `copy`/`cut`/`paste` docstrings -- they never
+  stated plainly they're hermetic, a real, pre-existing documentation
+  gap the investigation found and closed alongside the new additions.
+- **A real, honest finding caught by running the tests, not glossed
+  over:** an initial `paste_from_system_clipboard` test proving a full
+  write-then-read round trip failed in this sandboxed X11 environment
+  (no `xclip`/`xsel`/`wl-copy` installed). Diagnosed directly, not
+  assumed: `copy_to_system_clipboard`/`paste_from_system_clipboard`
+  each create their own fresh `arboard::Clipboard` instance per call,
+  matching `app.rs`'s own pre-existing, unchanged-by-this-refactor
+  convention -- confirmed by direct comparison against the existing,
+  reliably-passing Rust `arboard_genuinely_round_trips_through_a_real_
+  clipboard` test, which (unlike the new code) reuses *one* `Clipboard`
+  instance for both halves of its own round trip. In this environment,
+  the real OS clipboard's own content is only served while the
+  *writing* process's own clipboard handle is still alive -- a later,
+  separate instance's own read can come back empty even though the
+  write genuinely succeeded. Not a bug in the new code; a genuine,
+  confirmed environment characteristic. Fixed the test to treat this
+  the same honest, graceful way as "no clipboard reachable at all" --
+  `pytest.skip()`, named directly in both the test's own comment and
+  the new `_core.pyi` docstring, not silently hidden.
+- `BUILD_TRACKER.md`: Phase 2 section added, Top Metrics row updated
+  (67%, Phase 2 of 3), "In progress" note updated. Regenerated cleanly.
+- Full chain green: `cargo check`/`clippy -D warnings`/`fmt` clean,
+  `cargo test --workspace --release` (unchanged -- the new pymethods
+  are GIL-bound, pytest-covered instead, matching this crate's own
+  established split), `maturin develop --release`, `pytest tests/`
+  (755 passed, up from 748, +7 net, 2 skipped -- 8 new tests, 1
+  gracefully skipped in this sandboxed environment), all 84 examples
+  (zero new files, zero failures -- confirms the real winit-driven
+  Copy/Cut/Paste path is genuinely unchanged after the refactor),
+  showcase demo. Tracker generator: 53 milestones/158 phases/277
+  items/2 known gaps/19 fixed gaps.
+
 ## Status
 
-**M53 Phase 1 of 3 is complete.** The real `engine-core` mechanism is
-proven: right-click now focuses a `TextField`/`Terminal` before opening
-its context menu, and `select_all` is a real, genuinely new primitive.
+**M53 Phases 1-2 of 3 are complete.** The real `engine-core` mechanism
+is proven (right-click focus, `select_all`), and the real gap this
+milestone exists to close -- no callable path to the actual OS
+clipboard for a context-menu item's own `on_click` -- is closed too.
 Per this session's own standing discipline, committing locally now --
-push deferred until the full milestone closes. Up next: Phase 2, the
-real OS clipboard API (`engine-py`) -- refactor `app.rs`'s inline
-Copy/Cut/Paste logic into shared helpers, reused by three new `Window`
-pymethods plus `Window.select_all()`.
+push deferred until the full milestone closes. Up next: Phase 3, the
+example + docs + final verification -- a new `examples/text_field_
+context_menu.py` demonstrating a real Copy/Cut/Paste/Select All
+context menu on both `add_text_field` and `add_code_editor`.

@@ -1502,16 +1502,25 @@ class Window:
         """
         ...
     def copy(self) -> str | None:
-        """Returns the current selection's text, or `None` if nothing
-        is selected -- does not touch the system clipboard.
+        """**Hermetic** -- never touches the real system clipboard.
+        Returns the current selection's text, or `None` if nothing is
+        selected. A real, no-live-window-needed synthetic entry point
+        for testing (M17 Phase 1); use `copy_to_system_clipboard()`
+        (M53) for the real thing -- e.g. wiring a context-menu "Copy"
+        item.
         """
         ...
     def cut(self) -> str | None:
-        """Like `copy()`, but also deletes the selection."""
+        """**Hermetic** -- never touches the real system clipboard.
+        Like `copy()`, but also deletes the selection. Use `cut_to_
+        system_clipboard()` (M53) for the real thing.
+        """
         ...
     def paste(self, text: str) -> None:
-        """Inserts `text` at the current cursor position, replacing any
-        selection.
+        """**Hermetic** -- takes `text` directly rather than reading the
+        real system clipboard. Inserts it at the current cursor
+        position, replacing any selection. Use `paste_from_system_
+        clipboard()` (M53) to actually read the real clipboard first.
         """
         ...
     def copy_terminal_selection(self) -> str | None:
@@ -1521,6 +1530,50 @@ class Window:
         if nothing is focused, the focused node isn't a `Terminal`, or
         its selection is empty. Does not touch the system clipboard --
         the real live path is a genuine Ctrl+Shift+C.
+        """
+        ...
+    def select_all(self) -> bool:
+        """M53: selects the currently-focused `TextField`'s own entire
+        content -- the real `Ctrl+A` convention (cursor lands at the
+        end, not the start). Returns whether a real `TextField` was
+        actually focused to receive it; a true no-op otherwise.
+        """
+        ...
+    def copy_to_system_clipboard(self) -> bool:
+        """M53: `copy()`'s own **real**, non-hermetic sibling -- writes
+        the currently-focused `TextField`'s own real selection to the
+        real OS clipboard, the same real path a genuine Ctrl+C uses.
+        Returns `True` only on a genuine, complete write -- `False`
+        both when nothing is focused/selected and when the real OS
+        clipboard is unreachable (a real, possible condition in some
+        headless/sandboxed environments -- logged, never raised). This
+        is the real method a context-menu "Copy" item's own `on_click`
+        callback should call.
+        """
+        ...
+    def cut_to_system_clipboard(self) -> bool:
+        """`copy_to_system_clipboard()`'s own real Cut sibling --
+        genuinely removes the currently-focused field's own selection
+        and fires a real `Change` handler, but only once the real
+        clipboard write actually succeeds (a failed write never
+        destroys the selection with no way to recover it).
+        """
+        ...
+    def paste_from_system_clipboard(self) -> bool:
+        """`copy_to_system_clipboard()`'s own real Paste sibling --
+        reads the real OS clipboard and inserts it into whichever field
+        is currently focused, the same real path a genuine Ctrl+V uses.
+        Returns whether the real clipboard *read* succeeded, not
+        whether a field happened to be focused to receive it -- a
+        genuine OS read can fail on its own, independent of this
+        `Window`'s own tree state. **Real, environment-dependent limit,
+        not silently glossed over:** on some sandboxed setups (no real
+        clipboard manager installed), the OS clipboard's own content
+        may only be served while the *writing* process's own clipboard
+        handle is still alive -- a `paste_from_system_clipboard()` call
+        made after that handle has already gone out of scope can
+        legitimately return `False` even though the preceding
+        `copy_to_system_clipboard()` genuinely succeeded.
         """
         ...
 

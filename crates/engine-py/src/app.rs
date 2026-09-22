@@ -24,7 +24,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use engine_core::{EventKind, InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
+use engine_core::{InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
 use engine_platform::{WindowConfig, WindowRequest, run_windowed_multi};
 use engine_render::{FrameRenderer, GeometryCache, TextPlacement, TextRenderer, build_tree_scene};
 use peniko::kurbo::Point;
@@ -34,8 +34,9 @@ use vello_hybrid::{RenderSize, RenderTargetConfig};
 use winit::window::{Window, WindowId};
 
 use crate::dispatch::{
-    HandlerMap, SharedCompletions, call_handler, interaction_config, open_context_menu,
-    run_completions, run_dispatch_outcome,
+    HandlerMap, SharedCompletions, copy_focused_selection_to_clipboard,
+    cut_focused_selection_to_clipboard, interaction_config, open_context_menu,
+    paste_clipboard_into_focused, run_completions, run_dispatch_outcome,
 };
 use crate::dock::{self, SharedDockState};
 use crate::terminal::{TerminalSession, control_byte_for, input_bytes_for};
@@ -984,29 +985,15 @@ impl App {
                         runtime.width.set(width as u32);
                         runtime.height.set(height as u32);
                     }
-                    // M17 Phase 1 (§8): the real, winit-driven Ctrl+C
-                    // path -- `Tree::text_field_selected_text` is a pure
-                    // read (`engine-core` never touches a real
-                    // clipboard, §4), so the actual OS write happens
-                    // here, the one place with both `Tree` and real
-                    // clipboard access. A clipboard failure (no real
-                    // clipboard service reachable, a real, possible
-                    // condition in some headless environments) is
-                    // logged and non-fatal, the same "real, expected,
-                    // gracefully-handled" policy M16 Phase 2 already
-                    // established for no-GPU/no-display.
+                    // M17 Phase 1 (§8), refactored M53 Phase 2: the
+                    // real, winit-driven Ctrl+C path -- now a thin call
+                    // into `copy_focused_selection_to_clipboard`
+                    // (`dispatch.rs`), shared with `Window.copy_to_
+                    // system_clipboard`'s own identical real logic.
+                    // Real behavior byte-for-byte unchanged; only the
+                    // call site moved.
                     InputEvent::Copy => {
-                        let selected = runtime.tree.borrow().focused().and_then(|field| {
-                            runtime.tree.borrow().text_field_selected_text(field)
-                        });
-                        if let Some(text) = selected {
-                            match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
-                                Ok(()) => {}
-                                Err(err) => {
-                                    tracing::warn!(%err, "failed to write to the real OS clipboard");
-                                }
-                            }
-                        }
+                        copy_focused_selection_to_clipboard(&runtime.tree);
                     }
                     // M32 Phase 6 (§4, §5, §8): `Copy`'s own real
                     // Terminal-specific sibling -- a genuine Ctrl+
@@ -1040,66 +1027,30 @@ impl App {
                             }
                         }
                     }
-                    // M17 Phase 1 (§8): `Copy`'s own real Cut sibling --
-                    // writes to the real clipboard *first*, using a pure
-                    // read (`text_field_selected_text`, not the
-                    // mutating `cut_text_field_selection`), and only
-                    // actually removes the real selection once that
-                    // write genuinely succeeds. A failed clipboard write
-                    // must never silently destroy the user's own
-                    // selected text with no way to recover it.
+                    // M17 Phase 1 (§8), refactored M53 Phase 2: `Copy`'s
+                    // own real Cut sibling -- now a thin call into
+                    // `cut_focused_selection_to_clipboard` (`dispatch.
+                    // rs`), shared with `Window.cut_to_system_
+                    // clipboard`'s own identical real logic. Real
+                    // behavior byte-for-byte unchanged; only the call
+                    // site moved.
                     InputEvent::Cut => {
-                        let field_and_text = runtime.tree.borrow().focused().and_then(|field| {
-                            runtime
-                                .tree
-                                .borrow()
-                                .text_field_selected_text(field)
-                                .map(|text| (field, text))
-                        });
-                        if let Some((field, text)) = field_and_text {
-                            match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
-                                Ok(()) => {
-                                    runtime.tree.borrow_mut().cut_text_field_selection(field);
-                                    // A real cut genuinely edits the
-                                    // field's own content -- fires
-                                    // `Change` the same way `Window.cut`
-                                    // 's own hermetic FFI counterpart
-                                    // does, since this path also calls
-                                    // `cut_text_field_selection`
-                                    // directly, not through `Tree::
-                                    // dispatch`.
-                                    call_handler(&runtime.handlers, field, EventKind::Change, py);
-                                }
-                                Err(err) => {
-                                    tracing::warn!(
-                                        %err,
-                                        "failed to write to the real OS clipboard -- selection left untouched"
-                                    );
-                                }
-                            }
-                        }
+                        cut_focused_selection_to_clipboard(&runtime.tree, &runtime.handlers, py);
                     }
-                    // M17 Phase 1 (§8): the real, winit-driven Ctrl+V
-                    // path -- reads the real OS clipboard, then
-                    // dispatches the resulting text exactly like a real
-                    // typed character (`InputEvent::TextInput`, M15
-                    // Phase 2's own existing mechanism, reused
-                    // completely, no new insertion path).
+                    // M17 Phase 1 (§8), refactored M53 Phase 2: the
+                    // real, winit-driven Ctrl+V path -- now a thin call
+                    // into `paste_clipboard_into_focused` (`dispatch.
+                    // rs`), shared with `Window.paste_from_system_
+                    // clipboard`'s own identical real logic. Real
+                    // behavior byte-for-byte unchanged; only the call
+                    // site moved.
                     InputEvent::PasteRequested => {
-                        match arboard::Clipboard::new().and_then(|mut cb| cb.get_text()) {
-                            Ok(text) => {
-                                let outcome = runtime.tree.borrow_mut().dispatch(
-                                    runtime.root,
-                                    InputEvent::TextInput(text),
-                                    &interaction_config(),
-                                    Instant::now(),
-                                );
-                                run_dispatch_outcome(&runtime.handlers, outcome, py);
-                            }
-                            Err(err) => {
-                                tracing::warn!(%err, "failed to read the real OS clipboard");
-                            }
-                        }
+                        paste_clipboard_into_focused(
+                            &runtime.tree,
+                            runtime.root,
+                            &runtime.handlers,
+                            py,
+                        );
                     }
                     // M32 Phase 5 (§4, §8): a real mouse wheel over a
                     // `Terminal` moves its own real viewport into
