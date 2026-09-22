@@ -40,15 +40,16 @@ beyond the existing click/drag plus `select_all`.
 
 ## Status
 
-**Phases 1-2 of 3 complete.** Phase 1: widened the click-to-focus gate
-(`tree.rs:3615`) to also match `PointerButton::Secondary`, reusing
-`set_focus_to` verbatim. New `Tree::select_all_text_field(field) ->
-bool`, a genuinely new primitive (not composable from Python today --
-no way to read a field's own content length). 5 new Rust unit tests
-(right-click focus, select-all on ordinary/empty/multi-byte-UTF-8
-content, non-`TextField` no-op), all GIL-free, all passing on the first
-run. 1 new pytest test (`Window.right_click` now focuses a `TextField`
-too).
+**All 3 phases complete. Milestone closed.**
+
+Phase 1: widened the click-to-focus gate (`tree.rs:3615`) to also
+match `PointerButton::Secondary`, reusing `set_focus_to` verbatim. New
+`Tree::select_all_text_field(field) -> bool`, a genuinely new primitive
+(not composable from Python today -- no way to read a field's own
+content length). 5 new Rust unit tests (right-click focus, select-all
+on ordinary/empty/multi-byte-UTF-8 content, non-`TextField` no-op), all
+GIL-free, all passing on the first run. 1 new pytest test
+(`Window.right_click` now focuses a `TextField` too).
 
 Phase 2: refactored `app.rs`'s three inline `InputEvent::Copy`/`Cut`/
 `PasteRequested` arms into shared helpers (`dispatch.rs`), reused by
@@ -68,10 +69,31 @@ convention, not a new bug), confirmed against the reliably-passing
 Rust test (which reuses one instance for both halves). Fixed the test
 to treat this as a real, honest `pytest.skip()`.
 
+Phase 3: new `examples/text_field_context_menu.py` -- a real, live
+window with both an `add_text_field` and an `add_code_editor`, each
+with `enable_interaction()` called explicitly, each with a real
+Copy/Cut/Paste/Select All context menu built via `build_menu`/
+`add_menu_item`, wired to Phase 2's new methods, attached via `Node.
+set_context_menu`. Verified through `Window.right_click(node)` +
+`Window.click(item)` reaching that item's own registered handler
+(the same functional proof `tests/test_context_menu.py` already
+establishes) plus `select_all`'s own real effect confirmed through the
+always-real, hermetic `Window.copy()`. **Real, found-while-running bug
+in the example itself, caught by actually executing it:** right-
+clicking a second anchor while a different menu was still open was
+swallowed as an outside-click dismissal (`Tree::dispatch`'s `dismiss_
+overlays_outside`, which runs for both mouse buttons before the
+Primary/Secondary split) rather than opening the new menu -- a real,
+deliberate, already-tested engine convention, not a bug in Phase 1/2's
+own code. Fixed by adding an explicit "click elsewhere to dismiss"
+step between each menu demonstration, using a dedicated gutter rect
+genuinely clear of both fields and either menu's real computed
+footprint (`MENU_ITEM_HEIGHT = 56.0` × 4 items = 224px, taller than an
+initial placement assumed).
+
 Full chain green: `cargo check`/`clippy -D warnings`/`fmt` clean,
-`cargo test --workspace --release` (unchanged -- new pymethods are
-GIL-bound, pytest-covered instead), `maturin develop --release`,
-`pytest tests/` (755 passed, up from 748, +7 net, 2 skipped -- 8 new
-tests, 1 gracefully skipped), all 84 examples, showcase demo. Tracker
-generator: 53 milestones/158 phases/277 items/2 known gaps/19 fixed
-gaps. **Up next: Phase 3, the example + docs + final verification.**
+`cargo test --workspace --release` (unchanged from Phase 2 -- Phase 3
+is example/docs-only), `maturin develop --release`, `pytest tests/`
+(755 passed, 2 skipped -- unchanged from Phase 2), all 85 examples (+1,
+zero failures), showcase demo. Tracker generator: 53 milestones/159
+phases/279 items/2 known gaps/19 fixed gaps.
