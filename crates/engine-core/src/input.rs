@@ -278,11 +278,45 @@ pub enum EventKind {
     Change,
 }
 
+/// M54 Phase 1 (§8, §16.2): the real, exact set of value shapes a
+/// `Changed` outcome's own pre-mutation value can take -- found by
+/// tracing every real `DispatchOutcome::Changed` producer in `tree.rs`
+/// before writing this, not assumed: a `TextField` edit (`Backspace`/
+/// `Delete`/`Space`/`Enter`/`Tab`/a real typed character) owns a
+/// `String`; a `Slider` drag/arrow-nudge owns an `f64`; a
+/// `TimePickerDial` drag owns its own `{hour, minute}` pair, not a
+/// single number at all. A generic/open-ended shape was deliberately
+/// rejected (`AskUserQuestion`, M54 scoping) in favor of this small,
+/// exact enum -- three real shapes, not a speculative fourth.
+/// `new_value` is deliberately *not* a sibling field anywhere this
+/// type appears: unlike the old value (destroyed by the very mutation
+/// that produces this outcome, so it must be captured here, mechanically,
+/// or nowhere), the new value is genuinely still live in the `Tree`
+/// after `dispatch()` returns -- cheaply, correctly recoverable by
+/// `engine-py` reading it back (`get_text()`/`get_checked()`-style),
+/// the same real workaround this codebase's own examples already use
+/// today. Carrying it here too would just be a second copy of data the
+/// caller can already read for itself.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ChangedValue {
+    Text(String),
+    Number(f64),
+    Time { hour: u8, minute: u8 },
+}
+
 /// The one thing `Tree::dispatch` can't resolve by itself (§2 Design
 /// Principle 6: it's meaning-dependent, not mechanical) -- everything
 /// mechanical (hover, focus movement, ripple-spawn-on-press) already
 /// happened inside `dispatch` itself before this is ever produced.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// M54 Phase 1: dropped `Eq` from the derive below (kept `PartialEq`)
+/// -- `Changed`'s new `ChangedValue::Number(f64)` case can't derive
+/// `Eq` (`f64` only has `PartialEq`, the standard NaN-related reason).
+/// Confirmed via a full `grep` before this change: every real use of
+/// this derive across the workspace is `assert_eq!`/pattern matching,
+/// which only need `PartialEq`/`Debug` -- nothing hashes or `Eq`-bounds
+/// a `DispatchOutcome` anywhere.
+#[derive(Clone, Debug, PartialEq)]
 pub enum DispatchOutcome {
     /// Nothing meaning-dependent happened this call.
     None,
@@ -312,12 +346,22 @@ pub enum DispatchOutcome {
         old: Option<crate::NodeId>,
         new: Option<crate::NodeId>,
     },
-    /// M14 Phase 3 (§16.7): a real `Slider` drag genuinely ended (a
-    /// primary-button `PointerReleased` while `Tree`'s own internal
-    /// drag-tracking held this `NodeId`) -- the mechanical half of a
-    /// real edit `Tree::dispatch` itself can detect, the same way
-    /// `HoverChanged` already is; what a real `Change` means (call a
-    /// registered handler, or nothing) is still `call_handler`'s job
-    /// (`engine-py::dispatch.rs`), not `Tree`'s.
-    Changed(crate::NodeId),
+    /// M14 Phase 3 (§16.7), widened M54 Phase 1 (§8, §16.2): a real
+    /// mechanical edit `Tree::dispatch` itself can detect -- a `Slider`/
+    /// `TimePickerDial` drag genuinely ending, an arrow-key nudge, or a
+    /// real `TextField` keyboard edit. `old_value` is the value
+    /// immediately *before* this outcome's own mutation, snapshotted at
+    /// the one real place that already knows it's about to be
+    /// overwritten (see each producer site in `tree.rs`) -- the only
+    /// point it's still genuinely recoverable at all. What a real
+    /// `Change` means (call a registered handler, or nothing) is still
+    /// `call_handler`'s job (`engine-py::dispatch.rs`), not `Tree`'s --
+    /// `Node.set_checked`/`set_selected`/`set_on`/`set_text` fire the
+    /// identical `EventKind::Change` a different way entirely (Design
+    /// Principle 6: `engine-core` never touches that semantics), so
+    /// they never produce this variant at all.
+    Changed {
+        node: crate::NodeId,
+        old_value: ChangedValue,
+    },
 }

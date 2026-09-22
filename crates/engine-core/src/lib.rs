@@ -33,7 +33,9 @@ pub use access::{AccessNodeData, AccessStates, Action, Role};
 pub use animation::{ActiveAnimation, Animated, CompletionHandle, Interpolate, MotionCurve};
 pub use canvas::{CanvasState, CustomHitTest, DrawCommand};
 pub use dock::{DockLayout, DockSide, DockZone};
-pub use input::{DispatchOutcome, EventKind, InputEvent, Key, PointerButton, ScrollDelta};
+pub use input::{
+    ChangedValue, DispatchOutcome, EventKind, InputEvent, Key, PointerButton, ScrollDelta,
+};
 pub use interaction::{InteractionState, RippleState};
 pub use node::{
     CAROUSEL_DRAG_INDEX_THRESHOLD, CAROUSEL_GAP, CAROUSEL_HEIGHT, CAROUSEL_ITEM_RADIUS,

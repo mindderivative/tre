@@ -24,7 +24,7 @@ use crate::animation::{CompletionHandle, MotionCurve};
 #[cfg(test)]
 use crate::canvas::CanvasState;
 use crate::canvas::{CustomHitTest, DrawCommand};
-use crate::input::{DispatchOutcome, InputEvent, Key, PointerButton, ScrollDelta};
+use crate::input::{ChangedValue, DispatchOutcome, InputEvent, Key, PointerButton, ScrollDelta};
 use crate::interaction::InteractionState;
 use crate::node::{
     CAROUSEL_DRAG_INDEX_THRESHOLD, CAROUSEL_GAP, CAROUSEL_PAD_X, CAROUSEL_PAD_Y,
@@ -95,6 +95,19 @@ pub struct Tree {
     /// real OS drag semantics). `update_drag` is what actually branches
     /// on which real kind this is.
     dragging: Option<NodeId>,
+    /// M54 Phase 1 (§8, §16.2): the `Slider`/`TimePickerDial` value
+    /// immediately *before* the drag currently held in `dragging`
+    /// began -- deliberately a separate field, not folded into
+    /// `dragging` itself, since several other real drag kinds
+    /// (`Splitter`, `Carousel`, `ScrollView`/`VirtualList` thumb) also
+    /// set `dragging` and must stay completely unaffected. Set only in
+    /// the real Slider/TimePickerDial branch of the drag-start site,
+    /// read and cleared at drag-end to build `DispatchOutcome::
+    /// Changed`'s own `old_value` -- the release-time value alone
+    /// can't serve this (a drag continuously overwrites the live value
+    /// as the pointer moves, so by release time the "old" value is
+    /// already gone).
+    drag_start_value: Option<ChangedValue>,
     /// §14 step 13 (§11.3): keyed by the overlay root's own `NodeId` --
     /// metadata only, never the node itself, which already lives in
     /// `nodes` like any other.
@@ -141,6 +154,7 @@ impl Tree {
             hovered: None,
             pressed: None,
             dragging: None,
+            drag_start_value: None,
             overlays: HashMap::new(),
             dirty: true,
         }
@@ -2801,8 +2815,16 @@ impl Tree {
         }
         match key {
             Key::Backspace => {
+                // M54 Phase 1 (§8, §16.2): the real pre-edit content,
+                // snapshotted before either real mutation path below --
+                // `DispatchOutcome::Changed`'s own `old_value` needs it
+                // captured here, the one real place it's still whole.
+                let old_content = state.content.clone();
                 if Self::delete_selection(state) {
-                    return Some(DispatchOutcome::Changed(field));
+                    return Some(DispatchOutcome::Changed {
+                        node: field,
+                        old_value: ChangedValue::Text(old_content),
+                    });
                 }
                 if state.cursor == 0 {
                     return Some(DispatchOutcome::None);
@@ -2813,11 +2835,18 @@ impl Tree {
                     .map_or(0, |(i, _)| i);
                 state.content.replace_range(prev..state.cursor, "");
                 state.cursor = prev;
-                Some(DispatchOutcome::Changed(field))
+                Some(DispatchOutcome::Changed {
+                    node: field,
+                    old_value: ChangedValue::Text(old_content),
+                })
             }
             Key::Delete => {
+                let old_content = state.content.clone();
                 if Self::delete_selection(state) {
-                    return Some(DispatchOutcome::Changed(field));
+                    return Some(DispatchOutcome::Changed {
+                        node: field,
+                        old_value: ChangedValue::Text(old_content),
+                    });
                 }
                 if state.cursor >= state.content.len() {
                     return Some(DispatchOutcome::None);
@@ -2827,7 +2856,10 @@ impl Tree {
                     .nth(1)
                     .map_or(state.content.len(), |(i, _)| state.cursor + i);
                 state.content.replace_range(state.cursor..next, "");
-                Some(DispatchOutcome::Changed(field))
+                Some(DispatchOutcome::Changed {
+                    node: field,
+                    old_value: ChangedValue::Text(old_content),
+                })
             }
             Key::ArrowLeft => {
                 if !shift && let Some(anchor) = state.selection_anchor.take() {
@@ -2958,10 +2990,14 @@ impl Tree {
             // not fall through to `Key::Enter | Key::Space =>
             // Activated`'s own generic button-activation meaning.
             Key::Space => {
+                let old_content = state.content.clone();
                 Self::delete_selection(state);
                 state.content.insert(state.cursor, ' ');
                 state.cursor += 1;
-                Some(DispatchOutcome::Changed(field))
+                Some(DispatchOutcome::Changed {
+                    node: field,
+                    old_value: ChangedValue::Text(old_content),
+                })
             }
             // A single-line field: `Enter` is consumed (no activation,
             // matching `Space`'s own reasoning above) but deliberately
@@ -2973,10 +3009,14 @@ impl Tree {
             // already establishes.
             Key::Enter => {
                 if state.multiline {
+                    let old_content = state.content.clone();
                     Self::delete_selection(state);
                     state.content.insert(state.cursor, '\n');
                     state.cursor += 1;
-                    Some(DispatchOutcome::Changed(field))
+                    Some(DispatchOutcome::Changed {
+                        node: field,
+                        old_value: ChangedValue::Text(old_content),
+                    })
                 } else {
                     Some(DispatchOutcome::None)
                 }
@@ -2999,10 +3039,14 @@ impl Tree {
             // capture never traps the keyboard.
             Key::Tab => {
                 if state.multiline {
+                    let old_content = state.content.clone();
                     Self::delete_selection(state);
                     state.content.insert(state.cursor, '\t');
                     state.cursor += 1;
-                    Some(DispatchOutcome::Changed(field))
+                    Some(DispatchOutcome::Changed {
+                        node: field,
+                        old_value: ChangedValue::Text(old_content),
+                    })
                 } else {
                     None
                 }
@@ -3038,13 +3082,17 @@ impl Tree {
         let NodeKind::Slider(state) = &self.nodes[id].kind else {
             return None;
         };
+        let old_value = state.thumb_position.current;
         let target = match key {
-            Key::ArrowLeft => state.thumb_position.current - STEP,
-            Key::ArrowRight => state.thumb_position.current + STEP,
+            Key::ArrowLeft => old_value - STEP,
+            Key::ArrowRight => old_value + STEP,
             _ => return None,
         };
         self.set_slider_position(id, target, now);
-        Some(DispatchOutcome::Changed(id))
+        Some(DispatchOutcome::Changed {
+            node: id,
+            old_value: ChangedValue::Number(old_value),
+        })
     }
 
     /// M15 Phase 3 (§16.7): deletes a real, active selection (`anchor
@@ -3572,15 +3620,33 @@ impl Tree {
                     // here for everything else), a real, stated v1
                     // simplification -- see `TimePickerDialState`'s
                     // own doc comment.
-                    if button == PointerButton::Primary
-                        && matches!(
-                            self.nodes.get(node).map(|n| &n.kind),
-                            Some(NodeKind::Splitter(_))
-                                | Some(NodeKind::Slider(_))
-                                | Some(NodeKind::TimePickerDial(_))
-                        )
-                    {
-                        self.dragging = Some(node);
+                    if button == PointerButton::Primary {
+                        // M54 Phase 1 (§8, §16.2): snapshotted *before*
+                        // `self.dragging = Some(node)` below -- the real
+                        // pre-drag value, read once here since a drag
+                        // continuously overwrites it as the pointer
+                        // moves, and consumed at drag-end (below) to
+                        // build `DispatchOutcome::Changed`'s own
+                        // `old_value`. `Splitter` sets no value at all
+                        // (it never produces a real `Changed` outcome).
+                        match self.nodes.get(node).map(|n| &n.kind) {
+                            Some(NodeKind::Slider(state)) => {
+                                self.drag_start_value =
+                                    Some(ChangedValue::Number(state.thumb_position.current));
+                                self.dragging = Some(node);
+                            }
+                            Some(NodeKind::TimePickerDial(state)) => {
+                                self.drag_start_value = Some(ChangedValue::Time {
+                                    hour: state.hour,
+                                    minute: state.minute,
+                                });
+                                self.dragging = Some(node);
+                            }
+                            Some(NodeKind::Splitter(_)) => {
+                                self.dragging = Some(node);
+                            }
+                            _ => {}
+                        }
                     }
                     // M30 Phase 9 Step 5 (§5, §7, §11.7): a real
                     // carousel's own drag-to-scroll must start no
@@ -3716,7 +3782,18 @@ impl Tree {
                         self.dragging.map(|id| &self.nodes[id].kind),
                         Some(NodeKind::Slider(_)) | Some(NodeKind::TimePickerDial(_))
                     ) {
-                    DispatchOutcome::Changed(self.dragging.expect("checked by matches! above"))
+                    DispatchOutcome::Changed {
+                        node: self.dragging.expect("checked by matches! above"),
+                        // M54 Phase 1: the real pre-drag value, snapshotted
+                        // at drag-start (`drag_start_value`) -- `expect`
+                        // is safe here since every real path that sets
+                        // `dragging` to a `Slider`/`TimePickerDial` also
+                        // sets this in the same branch (see the drag-
+                        // start site above).
+                        old_value: self.drag_start_value.clone().expect(
+                            "Slider/TimePickerDial drag-start always sets drag_start_value",
+                        ),
+                    }
                 } else {
                     outcome
                 };
@@ -3754,6 +3831,7 @@ impl Tree {
                         state.thumb_drag_anchor = None;
                     }
                     self.dragging = None;
+                    self.drag_start_value = None;
                 }
                 outcome
             }
@@ -3871,6 +3949,7 @@ impl Tree {
                 let NodeKind::TextField(state) = &mut self.nodes[field].kind else {
                     return DispatchOutcome::None;
                 };
+                let old_content = state.content.clone();
                 // M15 Phase 3 (§16.7): typing over a real, active
                 // selection replaces it -- the same real desktop-editor
                 // behavior `Backspace`/`Delete`/`Space` already apply,
@@ -3889,7 +3968,10 @@ impl Tree {
                 // the moment composition ends either way.
                 state.preedit = None;
                 self.scroll_text_field_caret_into_view(field);
-                DispatchOutcome::Changed(field)
+                DispatchOutcome::Changed {
+                    node: field,
+                    old_value: ChangedValue::Text(old_content),
+                }
             }
             // M4 Phase 8 (§11.7/§11.8 groundwork): a true no-op today,
             // deliberately -- wiring this to VirtualList's window
@@ -5846,9 +5928,12 @@ mod tests {
         );
         assert_eq!(
             outcome,
-            DispatchOutcome::Changed(slider),
-            "a real release ending a real slider drag must produce Changed(slider), not \
-             Activated or None"
+            DispatchOutcome::Changed {
+                node: slider,
+                old_value: ChangedValue::Number(0.0),
+            },
+            "a real release ending a real slider drag must produce Changed(slider) with the \
+             real pre-drag value (0.0, from SliderState::new(0.0)), not Activated or None"
         );
     }
 
@@ -6149,7 +6234,13 @@ mod tests {
             &config,
             now,
         );
-        assert_eq!(outcome, DispatchOutcome::Changed(dial));
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Changed {
+                node: dial,
+                old_value: ChangedValue::Time { hour: 0, minute: 0 },
+            }
+        );
     }
 
     /// M24 Phase 1 (§10): a focused slider's own real ArrowRight
@@ -6162,7 +6253,13 @@ mod tests {
         tree.set_focus_to(slider, 1.0, Duration::from_millis(100), now);
 
         let outcome = dispatch_key(&mut tree, root, Key::ArrowRight);
-        assert_eq!(outcome, DispatchOutcome::Changed(slider));
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Changed {
+                node: slider,
+                old_value: ChangedValue::Number(0.0),
+            }
+        );
 
         let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
             panic!("expected a Slider");
@@ -6183,7 +6280,13 @@ mod tests {
         tree.set_focus_to(slider, 1.0, Duration::from_millis(100), now);
 
         let outcome = dispatch_key(&mut tree, root, Key::ArrowLeft);
-        assert_eq!(outcome, DispatchOutcome::Changed(slider));
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Changed {
+                node: slider,
+                old_value: ChangedValue::Number(0.5),
+            }
+        );
 
         let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
             panic!("expected a Slider");
@@ -6205,7 +6308,13 @@ mod tests {
         tree.set_focus_to(slider, 1.0, Duration::from_millis(100), now);
 
         let outcome = dispatch_key(&mut tree, root, Key::ArrowLeft);
-        assert_eq!(outcome, DispatchOutcome::Changed(slider));
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Changed {
+                node: slider,
+                old_value: ChangedValue::Number(0.0),
+            }
+        );
 
         let NodeKind::Slider(state) = &tree.get(slider).unwrap().kind else {
             panic!("expected a Slider");
@@ -9046,7 +9155,13 @@ mod tests {
             &config,
             Instant::now(),
         );
-        assert_eq!(outcome, DispatchOutcome::Changed(field));
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Changed {
+                node: field,
+                old_value: ChangedValue::Text("hllo".to_string()),
+            }
+        );
         let state = field_state(&tree, field);
         assert_eq!(state.content, "hello");
         assert_eq!(
@@ -9059,7 +9174,13 @@ mod tests {
     fn backspace_removes_the_real_char_before_the_cursor() {
         let (mut tree, root, field) = text_field_scene("hello");
         let outcome = dispatch_key(&mut tree, root, Key::Backspace);
-        assert_eq!(outcome, DispatchOutcome::Changed(field));
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Changed {
+                node: field,
+                old_value: ChangedValue::Text("hello".to_string()),
+            }
+        );
         let state = field_state(&tree, field);
         assert_eq!(state.content, "hell");
         assert_eq!(state.cursor, 4);
@@ -9083,7 +9204,13 @@ mod tests {
         let (mut tree, root, field) = text_field_scene("hello");
         dispatch_key(&mut tree, root, Key::Home);
         let outcome = dispatch_key(&mut tree, root, Key::Delete);
-        assert_eq!(outcome, DispatchOutcome::Changed(field));
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Changed {
+                node: field,
+                old_value: ChangedValue::Text("hello".to_string()),
+            }
+        );
         let state = field_state(&tree, field);
         assert_eq!(state.content, "ello");
         assert_eq!(state.cursor, 0);
@@ -9131,7 +9258,10 @@ mod tests {
         let outcome = dispatch_key(&mut tree, root, Key::Space);
         assert_eq!(
             outcome,
-            DispatchOutcome::Changed(field),
+            DispatchOutcome::Changed {
+                node: field,
+                old_value: ChangedValue::Text("ab".to_string()),
+            },
             "Space on a focused TextField must be a real inserted character, not Activated"
         );
         assert_eq!(field_state(&tree, field).content, "a b");
@@ -9171,7 +9301,13 @@ mod tests {
         // byte-at-a-time backspace would corrupt it into invalid UTF-8.
         let (mut tree, root, field) = text_field_scene("café");
         let outcome = dispatch_key(&mut tree, root, Key::Backspace);
-        assert_eq!(outcome, DispatchOutcome::Changed(field));
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Changed {
+                node: field,
+                old_value: ChangedValue::Text("café".to_string()),
+            }
+        );
         assert_eq!(field_state(&tree, field).content, "caf");
     }
 
@@ -9195,7 +9331,10 @@ mod tests {
         let outcome = dispatch_key(&mut tree, root, Key::Enter);
         assert_eq!(
             outcome,
-            DispatchOutcome::Changed(field),
+            DispatchOutcome::Changed {
+                node: field,
+                old_value: ChangedValue::Text("ab".to_string()),
+            },
             "Enter on a multiline TextField must be a real inserted newline, not consumed"
         );
         assert_eq!(field_state(&tree, field).content, "a\nb");
@@ -9214,7 +9353,10 @@ mod tests {
         let outcome = dispatch_key(&mut tree, root, Key::Tab);
         assert_eq!(
             outcome,
-            DispatchOutcome::Changed(field),
+            DispatchOutcome::Changed {
+                node: field,
+                old_value: ChangedValue::Text("ab".to_string()),
+            },
             "Tab on a multiline TextField must be a real inserted \\t, not consumed as a no-op"
         );
         assert_eq!(field_state(&tree, field).content, "a\tb");
@@ -9235,7 +9377,13 @@ mod tests {
         dispatch_shift_key(&mut tree, root, Key::ArrowRight);
         dispatch_shift_key(&mut tree, root, Key::ArrowRight); // selects "ab" (0..2)
         let outcome = dispatch_key(&mut tree, root, Key::Tab);
-        assert_eq!(outcome, DispatchOutcome::Changed(field));
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Changed {
+                node: field,
+                old_value: ChangedValue::Text("abcd".to_string()),
+            }
+        );
         assert_eq!(
             field_state(&tree, field).content,
             "\tcd",
@@ -9607,7 +9755,13 @@ mod tests {
         dispatch_shift_key(&mut tree, root, Key::ArrowRight); // selects "he"
 
         let outcome = dispatch_key(&mut tree, root, Key::Backspace);
-        assert_eq!(outcome, DispatchOutcome::Changed(field));
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Changed {
+                node: field,
+                old_value: ChangedValue::Text("hello".to_string()),
+            }
+        );
         let state = field_state(&tree, field);
         assert_eq!(state.content, "llo");
         assert_eq!(state.cursor, 0);
@@ -9622,7 +9776,13 @@ mod tests {
         dispatch_shift_key(&mut tree, root, Key::ArrowRight); // selects "he"
 
         let outcome = dispatch_key(&mut tree, root, Key::Delete);
-        assert_eq!(outcome, DispatchOutcome::Changed(field));
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Changed {
+                node: field,
+                old_value: ChangedValue::Text("hello".to_string()),
+            }
+        );
         assert_eq!(field_state(&tree, field).content, "llo");
     }
 
@@ -9648,7 +9808,13 @@ mod tests {
             &config,
             Instant::now(),
         );
-        assert_eq!(outcome, DispatchOutcome::Changed(field));
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Changed {
+                node: field,
+                old_value: ChangedValue::Text("hello".to_string()),
+            }
+        );
         let state = field_state(&tree, field);
         assert_eq!(state.content, "HIllo");
         assert_eq!(state.cursor, 2);
