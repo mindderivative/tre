@@ -1,11 +1,15 @@
-# M51: a second custom theme, swapped in live via `View.set_theme`
-# after the window is already showing -- proves the declarative surface
-# re-themes an already-built node in place, not just at construction
-# time. Deliberately a different corner_radius than theme_customization_
-# custom_theme.yaml's own 10, so the example can assert the new value
-# actually took effect.
+# M51/M52: a second custom theme, swapped in live via `View.set_theme`/
+# `Window.set_theme` after the window is already showing -- proves both
+# the declarative and imperative surfaces re-theme an already-built
+# node in place, not just at construction time. Deliberately different
+# values than theme_customization_custom_theme.yaml's own (corner_
+# radius 10 for the checkbox, {corner_radius: 4, elevation: 2} for
+# button.filled), so the example can assert the new values actually
+# took effect live.
 colors:
   primary: "#00695C"
 styles:
   - kind: Checkbox
     style: {corner_radius: 18}
+components:
+  button.filled: {corner_radius: 20, elevation: 6}

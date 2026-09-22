@@ -292,21 +292,29 @@ class Window:
         custom_theme: str | None = None,
     ) -> None:
         """Builds a real MD3 `DynamicTheme` from `seed` and makes it
-        this window's active theme. `colors:` role overrides (in
-        `custom_theme`, if given) re-tint a small, fixed set of
-        already-created components live (checkbox marks, slider
-        tracks, ripple/hover tint) the moment this is called, the same
-        as always -- but every `add_*` call *after* this one picks up
-        the full override for real, through the identical `ColorScheme
-        ::role` lookup every component already resolves colors through.
+        this window's active theme.
 
-        `components:` (shape/elevation overrides, e.g. `{button.filled:
-        {corner_radius: 8, elevation: 2}}`) only affects nodes an
-        `add_*` factory creates *after* this call -- there is no live
-        re-theming of an already-built node's own corner radius or
-        elevation (a real, honest limit, not silently glossed over; see
-        `crates/engine-spec/src/theme.rs`'s own `components:` doc
-        comment for the full key convention). `default_theme`'s own
+        M52: every real, already-built node this `Window` has created
+        via an `add_*` factory is live re-themed in place, the moment
+        this is called -- both `colors:` role overrides (a button's own
+        real container/label color, not just the small, fixed ripple/
+        hover/checkbox-mark/slider-track tint this method always pushed)
+        and `components:` shape/elevation overrides (e.g. `{button.
+        filled: {corner_radius: 8, elevation: 2}}`) recompute and
+        overwrite every matching node's own real paint in place, the
+        same "recompute from scratch, snap the result in" convention
+        `View.set_theme` (§16.2) already established for the declarative
+        surface. A later `add_*` call also picks up the new theme, for
+        real, through the identical `ColorScheme::role` lookup every
+        component already resolves colors through. **Real, honest limit,
+        not silently glossed over:** a component's own real, app-owned
+        interaction/selection state (a `Checkbox`'s `checked`, a `Radio
+        Button`'s `selected`, which page a `Pagination` currently shows,
+        etc.) is never re-derived by this call -- only each node's own
+        theme-tier paint is recomputed, exactly the fields that state's
+        own color/shape depends on, never the state itself (see `crates/
+        engine-spec/src/theme.rs`'s own `components:` doc comment for the
+        full key convention). `default_theme`'s own
         `components:` (omit for the engine's own shipped defaults,
         mirroring `View.__init__`'s identical convention) supplies the
         baseline, with `custom_theme`'s own `components:` layered on

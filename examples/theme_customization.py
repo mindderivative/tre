@@ -41,6 +41,16 @@ reaches a real imperative component's own corner radius/elevation too:
   `Node`, while `stylesheet_checkbox`/`inline_checkbox` are unaffected
   (the app's own stylesheet and each widget's own inline style still
   win, exactly like at construction time).
+- M52: the same real live re-theme, now on `Window`'s own imperative
+  catalog -- `window.set_theme(custom_theme=...)` re-resolves the exact
+  same already-built `button` node's own container color and
+  `corner_radius`/`elevation` live, through the milestone's own new
+  `RetitheHook` mechanism (`crates/engine-py/src/window.rs`/`window_
+  factory.rs`). Before M52, a second `Window.set_theme` call only ever
+  pushed one blind, uniform on-surface tint into 4 unrelated fields
+  (ripple/hover, checkbox mark, slider track, text caret) -- it never
+  touched a button's own real container/label color or shape/elevation
+  at all.
 
 `Node.get` only returns `f64`, so `corner_radius`/`elevation` (real
 numbers) are asserted directly below; there is still no Python-facing
@@ -104,6 +114,19 @@ assert theme_checkbox.get("corner_radius") == 18.0, "expected the new custom the
 assert stylesheet_checkbox.get("corner_radius") == 6.0, "the app's own stylesheet still wins"
 assert inline_checkbox.get("corner_radius") == 12.0, "the widget's own inline style still wins"
 print(f"live re-theme verified: theme_checkbox={theme_checkbox.get('corner_radius')!r}")
+
+# M52: the same real live re-theme, now on Window's own imperative
+# catalog -- the exact same already-built `button` node, no rebuild.
+# Before M52, this second call only ever pushed one blind uniform
+# on-surface tint into 4 unrelated fields; it never touched a button's
+# own real container/label color or corner_radius/elevation at all.
+window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), custom_theme=retheme_path)
+assert button.get("corner_radius") == 20.0, "expected the new custom theme's own live override"
+assert button.get("elevation") == 6.0, "expected the new custom theme's own live override"
+print(
+    f"imperative live re-theme verified: corner_radius={button.get('corner_radius')!r}, "
+    f"elevation={button.get('elevation')!r}"
+)
 
 app = App()
 app.add_window(window)
