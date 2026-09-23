@@ -1,65 +1,62 @@
-# PLAN — M66: Zero-Allocation Cache-Hit Path in `shaped_layout`
+# PLAN — M67: Eliminate Redundant Full-Content Clones in `draw_field`/`hit_test_position`
 
-*(Replaces the prior M65 plan in this file — M65 is complete,
-committed. Third of four milestones scoped from the `/review-project`
-audit; see this file's own Milestone 66 section in `BUILD_TRACKER.md`
-for the full real investigation.)*
+*(Replaces the prior M66 plan in this file — M66 is complete, committed.
+Last of four milestones scoped from the `/review-project` audit; see
+this file's own Milestone 67 section in `BUILD_TRACKER.md` for the full
+real investigation.)*
 
 ## Goal
-`TextRenderer::shaped_layout` -- the one real, working text-shaping
-cache in this codebase -- unconditionally built an owned `LayoutCacheKey`
-(a content string clone, a syntax-span vec clone) *before* the
-staleness check that decides whether a cache hit even needs it. Found
-and adversarially verified by the review's Performance lens.
+`draw_field` unconditionally called `elide_folded_ranges(&state.content,
+&state.folded_ranges)`, which itself always allocated a full content
+copy even when nothing was folded — then cloned that already-fresh
+result a second time on the common no-preedit path. Found by the
+review's Performance lens; the independent verification pass found the
+real cost was worse than first reported: a third, wholly wasted
+`state.content.clone()` in `draw_field`'s no-preedit match arm, shadowed
+and discarded before use.
 
 ## Real investigation
-Called once per visible `Text`/`Link` node (via `draw`) and once per
-`TextField` (via `draw_field`) on every dirty-frame scene rebuild, so
-the intended-cheap common case (an unchanged node whose shaping is
-genuinely being reused) still paid a full clone just to build a
-comparison key that got discarded once the comparison confirmed
-nothing changed.
+The identical `elide_folded_ranges(...)` + conditional `.clone()`
+pattern also exists at `hit_test_position`, called on every click/hit-
+test against a `TextField` — the fix needed to cover both call sites,
+not just `draw_field`. Tracing `draw_field`'s control flow confirmed the
+no-preedit match arm's `state.content.clone()` was always immediately
+discarded and reassigned, pure dead work.
 
 ## Design (1 milestone, 2 phases)
-1. Compare-before-clone.
+1. Remove the dead clone; `Cow`-ify the folding path.
 2. Tests, docs, verification.
 
 ## Status
 
 **Complete, both phases.**
 
-`shaped_layout` restructured so the staleness check compares the
-*borrowed* new inputs directly against the cached key's own fields
-(`cached.key.content != content`, `cached.key.spans != spans`, etc. --
-`String`/`Vec` both compare against a borrowed `&str`/`&[T]` via std's
-own blanket `PartialEq` impls, no allocation needed). The owned
-`LayoutCacheKey` (and the reshape itself) now only ever constructed
-inside the real stale/miss branch, at `layout_cache.insert` time -- the
-exact same "compare borrowed inputs before allocating" technique M64's
-own new `shaped_terminal_run` was already written with from the start,
-now applied back to the original code it was deliberately written to
-not repeat.
+`elide_folded_ranges` widened from returning `String` to `Cow<'a, str>`,
+with an early `Cow::Borrowed(content)` return (zero allocation) when
+`folded_ranges` is empty, `Cow::Owned` only when something is actually
+folded. `draw_field`'s first match restructured to return
+`Option<String>` (`preedit_display`) instead of a placeholder value,
+eliminating the dead `state.content.clone()` entirely rather than just
+making it harder to reach. Both real call sites (`draw_field`,
+`hit_test_position`) updated for the new `Cow`-typed return.
 
-Tests: 1 new Rust unit test, real per-field regression coverage for the
-hand-written comparison -- changes exactly one of the 9 real shaping
-inputs at a time, keeping every other one identical, and confirms the
-cached key's own field actually updated after each change. This is the
-concrete risk a hand-written comparison has that a derived `PartialEq`
-doesn't: a field silently missing from it would stop invalidating on
-that one input, with nothing else catching it.
+Tests: existing `hit_test_position`/selection/cursor test suite re-ran
+and passed completely unchanged as the real regression bar, plus 1 new
+test (`elide_folded_ranges_borrows_when_nothing_is_folded_and_owns_when
+_something_is`) asserting the `Cow::Borrowed`/`Cow::Owned` variant
+directly via `matches!`.
 
 Full chain green: `cargo check`/`clippy -D warnings`/`fmt --check`
-clean; `cargo test --workspace --release` (`engine-render` 33, up from
-32, +1; every other crate unchanged, including all 32 pre-existing
-tests in this same file passing completely unchanged -- real, direct
-proof this is a pure internal restructuring, not a behavior change);
-`maturin develop --release`; `pytest tests/` 831 passed, unchanged;
-every example ran clean; `demo/showcase.py` all 5 phases, exit 0.
-`BUILD_TRACKER.md` updated (Top Metrics, full Milestone 66 section,
+clean; `cargo test --workspace --release` (`engine-render` 34, up from
+33, +1; every other crate unchanged, including all pre-existing tests
+in this same file passing completely unchanged — real, direct proof
+this restructuring is a pure internal change); `maturin develop
+--release`; `pytest tests/` 831 passed, 2 skipped, unchanged; every
+example ran clean; `demo/showcase.py` all 5 phases, exit 0.
+`BUILD_TRACKER.md` updated (Top Metrics, full Milestone 67 section,
 Just-closed/Up-next refreshed), tracker regenerated (18 milestones/55
 phases/137 items/3 known gaps/25 fixed gaps), artifact republished.
 Committing locally now.
 
-Next: M67 (`draw_field`/`hit_test_position`'s redundant full-content
-clones during code folding) -- the last of the four `/review-project`
-performance findings.
+Next: nothing currently scoped. All four `/review-project` performance
+findings (M64-M67) are closed. Further work is the user's to direct.

@@ -9,6 +9,7 @@
 //! "get real signal on parley's current line-breaking/BiDi/font-fallback
 //! behavior before component work depends on it."
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
@@ -543,8 +544,12 @@ impl TextRenderer {
         // into `state.content`'s own real byte space before this
         // returns it.
         let folded_content = elide_folded_ranges(&state.content, &state.folded_ranges);
-        let content = if state.show_whitespace {
-            substitute_whitespace(&folded_content)
+        // M67 (§8): `Cow` rather than `String` -- when `folded_content`
+        // is already `Cow::Borrowed` (nothing folded, the common real
+        // case), `.clone()` in the `!show_whitespace` branch is a
+        // cheap reference copy, not a real allocation.
+        let content: Cow<'_, str> = if state.show_whitespace {
+            Cow::Owned(substitute_whitespace(&folded_content))
         } else {
             folded_content.clone()
         };
@@ -600,14 +605,21 @@ impl TextRenderer {
         // caret behavior: while composing, the caret sits at the end of
         // the in-progress composition, not at the real, frozen `cursor`
         // underneath it.
-        let (display_content, preedit_range, caret_at) = match &state.preedit {
+        // M67 (§8): `preedit_display` only ever holds a real value in
+        // the real-preedit arm -- the old `_ => (state.content.clone(),
+        // ...)` placeholder was a real, wasted full-content clone,
+        // unconditionally discarded a few lines below the instant
+        // `preedit_range.is_none()` (exactly this arm's own condition)
+        // -- found and adversarially verified by a `/review-project`
+        // pass.
+        let (preedit_display, preedit_range, caret_at) = match &state.preedit {
             Some(preedit) if !preedit.is_empty() => {
                 let mut combined = state.content.clone();
                 combined.insert_str(state.cursor, preedit);
                 let end = state.cursor + preedit.len();
-                (combined, Some(state.cursor..end), end)
+                (Some(combined), Some(state.cursor..end), end)
             }
-            _ => (state.content.clone(), None, state.cursor),
+            _ => (None, None, state.cursor),
         };
 
         // M31 Phase 5 (§5, §8) then M31 Phase 3 (§5, §8): two real,
@@ -636,14 +648,19 @@ impl TextRenderer {
             }
         };
 
-        let display_content = if preedit_range.is_none() {
-            if state.show_whitespace {
-                substitute_whitespace(&folded_content)
-            } else {
-                folded_content.clone()
+        // M67 (§8): `Cow` rather than `String` -- when `folded_content`
+        // is already `Cow::Borrowed` (nothing folded, the common real
+        // case), `.clone()` in the no-preedit/`!show_whitespace` branch
+        // is a cheap reference copy, not a real allocation.
+        let display_content: Cow<'_, str> = match preedit_display {
+            Some(combined) => Cow::Owned(combined),
+            None => {
+                if state.show_whitespace {
+                    Cow::Owned(substitute_whitespace(&folded_content))
+                } else {
+                    folded_content.clone()
+                }
             }
-        } else {
-            display_content
         };
 
         let cursor_for_layout = to_display(state.cursor);
@@ -1221,8 +1238,16 @@ fn fold_segments(content_len: usize, folded: &[Range<usize>]) -> Vec<FoldSegment
 /// `draw_field`'s own real, paint-only transform -- `state.content`
 /// itself is never touched (`TextFieldState.folded_ranges`'s own doc
 /// comment); every real folded byte range collapses into one real
-/// `FOLD_MARKER` glyph.
-fn elide_folded_ranges(content: &str, folded: &[Range<usize>]) -> String {
+/// `FOLD_MARKER` glyph. M67 (§8): returns `Cow<'_, str>` -- `folded`
+/// empty (a text field with no active folding at all, the overwhelming
+/// common real case) borrows `content` directly with zero allocation;
+/// only a real, non-empty fold set pays the real `String::with_
+/// capacity`/copy this always paid unconditionally before -- found and
+/// adversarially verified by a `/review-project` pass.
+fn elide_folded_ranges<'a>(content: &'a str, folded: &[Range<usize>]) -> Cow<'a, str> {
+    if folded.is_empty() {
+        return Cow::Borrowed(content);
+    }
     let mut out = String::with_capacity(content.len());
     for segment in fold_segments(content.len(), folded) {
         match segment {
@@ -1230,7 +1255,7 @@ fn elide_folded_ranges(content: &str, folded: &[Range<usize>]) -> String {
             FoldSegment::Folded(_) => out.push(FOLD_MARKER),
         }
     }
-    out
+    Cow::Owned(out)
 }
 
 /// Maps a real byte offset into `content` to the corresponding byte
@@ -1867,6 +1892,25 @@ mod tests {
         );
         // No real folds at all -- byte-for-byte unchanged.
         assert_eq!(elide_folded_ranges("hello", &[]), "hello");
+    }
+
+    /// M67 (§8): the actual real point of Cow-ifying this function --
+    /// an empty `folded` (a text field with no active folding at all,
+    /// the overwhelming common real case) must genuinely borrow
+    /// `content` with zero allocation, not merely *equal* it after
+    /// still copying. A real, non-empty fold set must still allocate,
+    /// since it genuinely produces different content.
+    #[test]
+    #[allow(clippy::single_range_in_vec_init)]
+    fn elide_folded_ranges_borrows_when_nothing_is_folded_and_owns_when_something_is() {
+        assert!(
+            matches!(elide_folded_ranges("hello", &[]), Cow::Borrowed(_)),
+            "an empty fold set must borrow, not allocate a copy"
+        );
+        assert!(
+            matches!(elide_folded_ranges("0123456789", &[3..6]), Cow::Owned(_)),
+            "a real, non-empty fold set genuinely produces different content and must own it"
+        );
     }
 
     #[test]
