@@ -1,64 +1,43 @@
-# PLAN — M70: Rename Declarative `flex_direction`'s `Row`/`Column` to `Horizontal`/`Vertical`
+# PLAN — Branch `0.3.1`: Release Prep
 
-*(Replaces the prior M69 plan in this file — M69 is complete, pushed,
-live. This is a new, unrelated request, opened as a PR per the user's
-own explicit instruction rather than pushed directly to `main`.)*
+*(Replaces the prior M70 plan in this file — M70 is complete, merged
+to `main` via PR #1. This is a new, workflow-establishing request, not
+a numbered milestone: see this file's own "Branch: 0.3.1" section in
+`BUILD_TRACKER.md` for the full context.)*
 
 ## Goal
-`engine-spec`'s declarative `style: {flex_direction: ...}` accepted
-`Row`/`Column` — MD3/CSS-standard vocabulary, but one that collides
-with the different, established meaning "row"/"column" already carry
-in spreadsheet/datasheet tools, a real, common desktop-app background
-for someone designing a UI. User-directed: rename to `Horizontal`/
-`Vertical`, which name the same real axis with no possible ambiguity.
+Release M70's rename (currently merged to `main` but untagged) as
+`v0.3.1`. Establish a new, deliberate branch workflow going forward:
+work accumulates on a dedicated `0.3.1` branch rather than `main`
+directly, gets merged back into `main` when ready (so `main` always
+reflects the latest released state, matching the existing tags-off-
+main precedent), and only then gets tagged/pushed for real.
 
-## Real investigation
-Confirmed `align_items`/`justify_content` have zero row/column
-vocabulary (`Start`/`End`/`Center`/etc. only) — the real, complete
-scope is `FlexDirectionSpec` alone. Confirmed this value is
-declarative-YAML-only: `Node.set_layout` (imperative Python API) never
-exposed `flex_direction` at all. Confirmed every other `Row`/`Column`
-in the codebase is `taffy::FlexDirection`'s own third-party vocabulary,
-correctly left untouched. Full real usage sites found via repo-wide
-grep: the enum + its one match arm in `engine-spec`, 14 real example/
-demo YAML files, `tests/test_component.py`, and
-`docs/guide/declarative-views.md`.
-
-## Design (1 milestone, 2 phases)
-1. Rename the enum, update every real call site.
-2. Tests, verification, PR.
+## Real clarification
+This repo has always tagged releases straight off `main`, with no
+prior release-branch pattern — genuinely ambiguous how a "0.3.1
+branch" should relate to `main` going forward. Resolved via
+`AskUserQuestion`: merge-back-then-tag (not a permanently-diverging
+branch); version bump + branch creation now, actual tag/push held for
+a later, separate, explicit confirmation.
 
 ## Status
 
-**Complete, both phases.**
-
-`FlexDirectionSpec::Row`/`Column` renamed to `::Horizontal`/
-`::Vertical` — a deliberate, hard rename, not an alias, matching both
-the user's own "I want ... to use" framing and this project's
-established "no back-compat shims for their own sake" discipline.
-`build.rs::layout_style`'s match arm updated, with a comment noting
-`taffy::FlexDirection` itself stays `Row`/`Column` underneath. All 14
-real example/demo YAML files, `tests/test_component.py`, and
-`docs/guide/declarative-views.md` updated to the new values.
-
-Tests: 2 new Rust unit tests — one proving both new values parse to
-the correct enum variant, one proving the old `Row` value now
-correctly fails to parse (real regression coverage for the breaking
-rename, not silently still accepted).
+**In progress.** Branch `0.3.1` created off `main` post-M70-merge.
+`Cargo.toml`/`pyproject.toml` bumped 0.3.0 → 0.3.1, mirroring the
+`019e7d4`/M69 precedent exactly. `Cargo.lock` updated.
 
 Full chain green: `cargo check`/`clippy -D warnings`/`fmt --check`
-clean; `cargo test --workspace --release` (`engine-spec` 85, up from
-83, +2; every other crate unchanged); `maturin develop --release`;
-`pytest tests/` 831 passed, 2 skipped, unchanged — every real example
-YAML re-parsed and ran clean under its new values; `demo/showcase.py`
-all 5 phases, exit 0 (its own declarative panel uses the renamed
-value); `mkdocs build --strict` clean, 0 warnings. `BUILD_TRACKER.md`
-updated (Top Metrics, full Milestone 70 section, Up-next refreshed),
-tracker regenerated (21 milestones/61 phases/161 items/3 known gaps/25
-fixed gaps), artifact republished.
+clean; `cargo test --workspace --release` every crate's own count
+unchanged from M70's own state (engine-core 229, engine-md3 24,
+engine-platform 11, engine-py 30, engine-render 34, engine-spec 85);
+`maturin develop --release` (tre 0.3.1 installed); `pytest tests/` 831
+passed, 2 skipped, unchanged; every example ran clean; `demo/
+showcase.py` all 5 phases, exit 0. `BUILD_TRACKER.md` updated (new
+"Branch: 0.3.1" section, Up-next refreshed), tracker regenerated (21
+milestones/61 phases/161 items/3 known gaps/25 fixed gaps), artifact
+republished. Committing on the `0.3.1` branch now.
 
-Committed on a dedicated branch (`flex-direction-horizontal-vertical`),
-not `main` directly, per the user's own explicit "Add a PR" request.
-Opening the PR now.
-
-Next: nothing else currently scoped beyond this PR awaiting review.
+Next: further work continues on this branch. When ready, merge back
+into `main` and tag/push `v0.3.1` for real — both wait on a later,
+separate, explicit confirmation.

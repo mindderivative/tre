@@ -882,7 +882,7 @@ checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
 
 [[package]]
 name = "engine-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "accesskit",
  "peniko",
@@ -893,7 +893,7 @@ dependencies = [
 
 [[package]]
 name = "engine-md3"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "engine-core",
  "material-colors",
@@ -903,7 +903,7 @@ dependencies = [
 
 [[package]]
 name = "engine-platform"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -915,7 +915,7 @@ dependencies = [
 
 [[package]]
 name = "engine-py"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "arboard",
  "engine-core",
@@ -940,7 +940,7 @@ dependencies = [
 
 [[package]]
 name = "engine-render"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "accesskit",
  "engine-core",
@@ -962,7 +962,7 @@ dependencies = [
 
 [[package]]
 name = "engine-spec"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "engine-core",
  "engine-md3",
