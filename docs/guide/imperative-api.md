@@ -32,25 +32,35 @@ attaches its new node as a direct child of that root, in call order.
 
 ## Creating nodes
 
+These are the primitive, general-purpose factories every composite MD3
+component (`Button`, `Card`, `Dialog`, and 50-odd others) is itself built
+from — see [MD3 Components](components.md) for the full catalog, and
+[Docking & Shell Layout](docking-and-shell.md) for `build_shell` and the
+docking methods:
+
 | Method | Creates |
 | --- | --- |
-| `add_rect(background, width, height, x=None, y=None)` | A plain colored rectangle |
-| `add_text(content, background, width, height, font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None)` | A plain, non-editable text label |
+| `add_rect(background, width, height, x=None, y=None, border_color=None, border_width=None)` | A plain colored rectangle, optionally bordered |
+| `add_text(content, background, width, height, typography_role=None, font_family="Roboto", font_weight=None, font_size=None, line_height=None, x=None, y=None)` | A plain, non-editable text label — `typography_role` resolves an MD3 type-scale role instead of literal font values, see [Theming & Accessibility](theming-and-accessibility.md) |
 | `add_checkbox(background, width, height, checked=False, x=None, y=None)` | An MD3 checkbox |
 | `add_slider(background, width, height, value=0.0, x=None, y=None)` | An MD3 slider (drag-to-set built in) |
 | `add_text_field(background, width, height, content="", font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None)` | An MD3 text field |
+| `add_code_editor(content, background, width, height, font_weight=400.0, font_size=14.0, x=None, y=None)` | A monospace code editor — folding, syntax spans, whitespace glyphs |
+| `add_terminal(shell, cols, rows, background, font_size=14.0, scrollback_lines=1000, x=None, y=None)` | A real PTY-backed terminal emulator |
 | `add_image(path, width, height, fit="fill", x=None, y=None)` | A GPU-texture-backed image loaded from disk |
+| `add_video(width, height, fit="fill", x=None, y=None)` | A GPU-texture-backed video surface — frames pushed via `node.push_frame(...)` |
 | `add_icon(name, color, size, x=None, y=None)` | A curated Material Symbols vector icon |
+| `add_scroll_view(width, height, horizontal=False, x=None, y=None)` | A scrollable viewport over exactly one child |
 | `add_splitter(background, width, height, initial_position=0.5)` | A drag-resizable pane divider |
 | `add_canvas(width, height, draw, x=None, y=None)` | A custom-drawn surface — see [Canvas & Virtualized Lists](canvas-and-lists.md) |
 | `add_virtual_list(item_count, materialize, item_extent=None, size_hint=None, width=None, height=None)` | A virtualized list — see [Canvas & Virtualized Lists](canvas-and-lists.md) |
 
 `x`/`y` are independently optional: give either to absolutely-position
 the node (relative to the window's own root padding box), or omit both to
-use the default flex-row flow. See [MD3 Components](components.md) for a
-deeper look at `Checkbox`/`Slider`/`TextField`/`Image`/`Icon`, and
-[Docking & Shell Layout](docking-and-shell.md) for `build_shell` and the
-docking methods.
+use the default flex-row flow. `border_color`/`border_width` follow
+`add_rect`'s lead across most `Rect`-backed factories in the full
+catalog (components.md) — omitted above where a factory has no
+meaningful "behind the content" border (`Image`/`Video`/`Icon`).
 
 ## Events
 
@@ -60,11 +70,33 @@ Every `Node` supports these handler registrations:
 node.set_on_click(lambda: ...)
 node.set_on_hover_enter(lambda: ...)
 node.set_on_hover_exit(lambda: ...)
-node.set_on_change(lambda: ...)   # a Slider drag ending, or set_checked/set_text
+node.set_on_change(lambda: ...)        # a Slider drag ending, or set_checked/set_text
+node.set_on_focus_enter(lambda: ...)
+node.set_on_focus_exit(lambda: ...)
 ```
 
-Handlers are called with no arguments. An exception raised inside a
-handler is caught, logged, and non-fatal — it never crashes the app.
+A handler may take zero arguments (as above) or exactly one — a real
+`Event` object with `kind` (a string: `"click"`, `"hover_enter"`,
+`"hover_exit"`, `"change"`, `"focus_enter"`, `"focus_exit"`), `node`
+(the live `Node` the event fired on — useful when the same function is
+registered on several nodes), `source` (a stable, opaque integer id for
+that same node), and, only when the firing `kind` genuinely has one:
+`position` (an `(x, y)` tuple), `button` (`"primary"`/`"secondary"`/
+`"middle"`), and `old_value`/`new_value` (a `Change` event's before/
+after value). Fields the current `kind` has nothing to say about are
+`None`, never fabricated:
+
+```python
+def on_any_click(event):
+    print(f"{event.kind} on {event.node} at {event.position}")
+
+node.set_on_click(on_any_click)
+```
+
+Which shape a given handler wants is detected once, at registration
+time, by inspecting its arity — not re-checked per call. An exception
+raised inside a handler is caught, logged, and non-fatal — it never
+crashes the app.
 
 `set_on_click` also makes the node keyboard-Tab-reachable (it adds a
 `Focus`/`Click` accessibility action), so a node only becomes part of the

@@ -753,9 +753,9 @@ python -c "import yourframework; print(yourframework.__version__)"
 | `cargo run -p engine-render --example smoke` | Standalone Rust rendering, bypasses Python entirely — first milestone, see §14 |
 | `maturin develop` | Rebuild + reinstall the Python extension after touching `engine-py` |
 
-### Packaging (later, not needed for early development)
+### Packaging
 
-Cross-platform wheel builds: `maturin-action` in GitHub Actions, matrixed across Linux/macOS/Windows × supported Python versions. Don't set this up until the API surface has stabilized past the spike stage.
+**Built (Milestone 21, both phases):** real cross-platform wheel builds via `maturin-action` in GitHub Actions (`.github/workflows/wheels.yml`), matrixed across Linux (manylinux-repaired, built inside the real manylinux Docker container)/macOS/Windows × supported Python versions, plus a source distribution, triggered on a `v*` tag push. The API surface has long since stabilized past the spike stage this section originally deferred the matrix past.
 
 > **Review note (from the TRE archive):** the "later" framing here is worth pushing back on for one specific piece — not the full packaging matrix, but a bare CI smoke test. TRE ran with **zero** CI coverage of its Python bindings for roughly three-quarters of the project's life; the first real run, added very late, found three genuine, previously-undetected bugs in a single pass (a packaging default silently duplicating system libraries — see the next note — a demo hardcoding a core count the CI runner didn't have, and a real GPU-resource teardown use-after-free). A minimal job — `maturin develop` succeeds, `python -c "import yourframework"` succeeds — costs almost nothing and should exist as soon as `engine-py` exists (build-order step 6), not deferred until the API stabilizes. Save the full cross-platform release matrix for later; don't save *all* CI for later.
 >

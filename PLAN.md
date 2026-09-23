@@ -1,62 +1,74 @@
-# PLAN — M67: Eliminate Redundant Full-Content Clones in `draw_field`/`hit_test_position`
+# PLAN — M68: Documentation Refresh: Full Content Pass
 
-*(Replaces the prior M66 plan in this file — M66 is complete, committed.
-Last of four milestones scoped from the `/review-project` audit; see
-this file's own Milestone 67 section in `BUILD_TRACKER.md` for the full
-real investigation.)*
+*(Replaces the prior M67 plan in this file — M67 is complete,
+committed. First of two milestones from the "wrap up before Tesserae"
+request; see this file's own Milestone 68 section in `BUILD_TRACKER.md`
+for the full real investigation.)*
 
 ## Goal
-`draw_field` unconditionally called `elide_folded_ranges(&state.content,
-&state.folded_ranges)`, which itself always allocated a full content
-copy even when nothing was folded — then cloned that already-fresh
-result a second time on the common no-preedit path. Found by the
-review's Performance lens; the independent verification pass found the
-real cost was worse than first reported: a third, wholly wasted
-`state.content.clone()` in `draw_field`'s no-preedit match arm, shadowed
-and discarded before use.
+Bring all documentation -- the MkDocs site under `docs/`, `README.md`,
+and `ARCHITECTURE.md`'s stale operational claims -- current with the
+real scope of the project. The MkDocs site's content was frozen at
+roughly milestone 27; the project is now at M67, with a 56-factory MD3
+component catalog where the docs covered 5.
 
 ## Real investigation
-The identical `elide_folded_ranges(...)` + conditional `.clone()`
-pattern also exists at `hit_test_position`, called on every click/hit-
-test against a `TextField` — the fix needed to cover both call sites,
-not just `draw_field`. Tracing `draw_field`'s control flow confirmed the
-no-preedit match arm's `state.content.clone()` was always immediately
-discarded and reassigned, pure dead work.
+Two parallel Explore agents: one audited every page under `docs/`
+against the current codebase (recorded in full in `BUILD_TRACKER.md`'s
+own M68 section), the other investigated the release mechanism for the
+companion M69. Real signatures for all 56 `Window.add_*` factories were
+extracted programmatically via a Python regex pass over
+`window_factory.rs`'s own `#[pyo3(signature = ...)]` attributes, not
+hand-copied.
 
 ## Design (1 milestone, 2 phases)
-1. Remove the dead clone; `Cow`-ify the folding path.
-2. Tests, docs, verification.
+1. Guide pages & the component catalog.
+2. API reference, overview pages, root docs.
 
 ## Status
 
 **Complete, both phases.**
 
-`elide_folded_ranges` widened from returning `String` to `Cow<'a, str>`,
-with an early `Cow::Borrowed(content)` return (zero allocation) when
-`folded_ranges` is empty, `Cow::Owned` only when something is actually
-folded. `draw_field`'s first match restructured to return
-`Option<String>` (`preedit_display`) instead of a placeholder value,
-eliminating the dead `state.content.clone()` entirely rather than just
-making it harder to reach. Both real call sites (`draw_field`,
-`hit_test_position`) updated for the new `Cow`-typed return.
+`docs/guide/components.md` fully rewritten -- all 56 factories across
+12 real usage categories, plus the previously-undocumented overlay
+lifecycle methods. `docs/guide/declarative-views.md`'s `style:` table
+widened for the real current `StyleSpec` (per-side spacing, flex/align,
+border kwargs, token-ref `corner_radius`/`elevation`); its `kind:` list
+verified already-correct against `NodeKindSpec` rather than assumed
+stale. `docs/guide/theming-and-accessibility.md` gained real typography
+and shape/elevation token sections. `docs/guide/docking-and-shell.md`
+gained shell-composition widget coverage. `docs/guide/imperative-api.md`
+and `docs/api/python/window.md`/`node.md` widened for the real factory
+catalog, the real `Event` payload fields, and previously-missing
+methods. `docs/index.md`/`README.md`/`docs/architecture.md` milestone
+counts and feature lists corrected. `ARCHITECTURE.md` §13's stale
+"later, not needed for early development" Packaging framing corrected
+to state the wheel matrix has existed since M21.
 
-Tests: existing `hit_test_position`/selection/cursor test suite re-ran
-and passed completely unchanged as the real regression bar, plus 1 new
-test (`elide_folded_ranges_borrows_when_nothing_is_folded_and_owns_when
-_something_is`) asserting the `Cow::Borrowed`/`Cow::Owned` variant
-directly via `matches!`.
+**Two real errors caught and fixed during writing itself, not just at
+plan time:** an early draft claimed `Event.source` was a
+`"mouse"`/`"keyboard"`/`"synthetic"` string -- direct source read of
+`event.rs` found it's actually a stable opaque `u64` node id. A second
+early draft invented a `node.scroll_terminal(...)` method that doesn't
+exist -- terminal scrolling is pure mouse-wheel dispatch with no
+Python-callable method, and `resize_terminal`/`get_monospace_cell_size`/
+`copy_terminal_selection` are real `Window`-level methods, not
+`Node`-level. Both fixed before any of it was committed.
 
-Full chain green: `cargo check`/`clippy -D warnings`/`fmt --check`
-clean; `cargo test --workspace --release` (`engine-render` 34, up from
-33, +1; every other crate unchanged, including all pre-existing tests
-in this same file passing completely unchanged — real, direct proof
-this restructuring is a pure internal change); `maturin develop
---release`; `pytest tests/` 831 passed, 2 skipped, unchanged; every
-example ran clean; `demo/showcase.py` all 5 phases, exit 0.
-`BUILD_TRACKER.md` updated (Top Metrics, full Milestone 67 section,
-Just-closed/Up-next refreshed), tracker regenerated (18 milestones/55
-phases/137 items/3 known gaps/25 fixed gaps), artifact republished.
-Committing locally now.
+Verification: `mkdocs build --strict` -- caught 6 broken anchor links
+in `window.md` pointing at `components.md`'s old per-component headers,
+which the category-based rewrite removed; fixed, then clean with zero
+warnings. Every non-trivial new Python snippet (buttons, overlays, the
+search-bar 4-tuple return, code editor folding/syntax spans, terminal
+spawn plus all 3 window-level terminal methods, carousel, badge, video
+`push_frame`, `set_clip_children`, focus handlers, and the `Event`
+payload's real fields) was actually run against the real built `tre`
+module in this session -- all passed as documented. Docs-only
+milestone, so the Rust/pytest chain doesn't apply. `BUILD_TRACKER.md`
+updated (Top Metrics, full Milestone 68 section, Just-closed/Up-next
+refreshed), tracker regenerated (20 milestones/59 phases/155 items/3
+known gaps/25 fixed gaps), artifact republished. Committing locally
+now.
 
-Next: nothing currently scoped. All four `/review-project` performance
-findings (M64-M67) are closed. Further work is the user's to direct.
+Next: M69 (Release Engineering: automated publish + standalone `.so`,
+v0.3.0) -- the last item before shifting focus to Tesserae.

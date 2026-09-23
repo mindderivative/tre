@@ -39,16 +39,24 @@ mkdocs serve   # live preview at http://127.0.0.1:8000
   tonal-palette scheme resolution), elevation shadows, hover/press
   state layers with real ripple, shape morphing, and MD3 motion
   curves.
-- **Real MD3 components** — `Checkbox`, `Slider` (with keyboard
-  arrow-key increments), `TextField` (real keyboard editing, mouse
-  click-to-position and drag-to-select, IME composition, clipboard),
-  `Image` (GPU-texture-backed, with `Cover`/`Contain`/`Fill` content
-  fit), and `Icon` (a curated set of real Material Symbols icons,
-  rendered as vector fills).
+- **A real, wide MD3 component catalog** — 56 `Window.add_*` factories
+  spanning buttons, selection controls, cards, chips, navigation,
+  overlays (dialogs, menus, snackbars), a real PTY-backed `Terminal`,
+  and a `CodeEditor` with folding and syntax highlighting — not just a
+  handful of samples. See `docs/guide/components.md` for the full
+  catalog.
+- **Full theming, not just color** — MD3 dynamic color (HCT/tonal-
+  palette resolution), a named shape/elevation token system
+  (`corner_radius: small`, `elevation: level_2`), and a real,
+  Flutter-sourced MD3 type scale apps can reference by role instead of
+  literal font values.
 - **Desktop shell primitives** — multi-window apps, a fixed-zone
   docking system, splitters, virtualized/variable-height lists,
   context menus and other overlays, an `AppShell` navigation pattern,
   and MD3's container-transform choreography.
+- **A real, wide layout/styling surface** — per-side padding/margin,
+  flex-grow/shrink/basis, align/justify, and border kwargs across the
+  catalog, both from Python and from declarative YAML `style:` blocks.
 - **Two authoring paths, one engine** — build a UI imperatively from
   Python, or declaratively from YAML view files (`engine-spec`), with
   a real stylesheet cascade, hot-reload, `include:`-based composition,

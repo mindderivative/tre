@@ -50,10 +50,29 @@ Every widget has:
 | --- | --- |
 | `width`, `height` | number |
 | `flex_direction` | `Row` or `Column` |
-| `padding`, `gap` | number |
-| `background` | a hex (`"#6750A4"`, `"#6750A4FF"`) or CSS named color string |
-| `corner_radius` | number |
+| `padding`, `margin` | number, **or** a per-side object `{top, right, bottom, left}` (each defaults to `0`) |
+| `gap` | number |
+| `flex_grow`, `flex_shrink` | number |
+| `flex_basis` | number (a pixel length, not a percentage) |
+| `align_items` | `Start`, `End`, `FlexStart`, `FlexEnd`, `Center`, `Baseline`, `Stretch` |
+| `justify_content` | `Start`, `End`, `FlexStart`, `FlexEnd`, `Center`, `Stretch`, `SpaceBetween`, `SpaceAround`, `SpaceEvenly` |
+| `background` | a hex (`"#6750A4"`, `"#6750A4FF"`) or CSS named color string, or (with `theme_seed=`) an MD3 role name — see below |
+| `corner_radius` | number, **or** a named shape token: `none`, `extra_small`, `small`, `medium`, `large`, `extra_large` |
+| `elevation` | number, **or** a named elevation token: `level_0` through `level_5` |
 | `opacity` | number |
+| `border_width` | number |
+| `border_color` | a hex/CSS-name/MD3-role string, same parsing as `background` |
+
+```yaml
+style:
+  padding: {top: 16, right: 12, bottom: 16, left: 12}
+  flex_grow: 1
+  align_items: Center
+  corner_radius: small     # resolves to 8.0 via engine_md3::shape
+  elevation: level_2       # resolves to 2.0
+  border_width: 1
+  border_color: outline
+```
 
 Kind-specific blocks:
 
@@ -98,14 +117,19 @@ styles:
     style: {corner_radius: 16, background: secondary}
 ```
 
-With a real `theme_seed` given, `style.background` values that name a
-recognized MD3 role (`primary`, `on_primary`, `secondary`, `surface`,
-`error`, and every other real `ColorScheme` role) resolve against that
-scheme instead of being parsed as a literal color — a role name always
-wins over a same-named coincidental CSS color. Anything that isn't a
-recognized role name still falls back to literal color parsing
-(`"#6750A4"`, `"transparent"`), so a stylesheet can freely mix token
-names and literal colors.
+With a real `theme_seed` given, `style.background`/`border_color` values
+that name a recognized MD3 role (`primary`, `on_primary`, `secondary`,
+`surface`, `error`, and every other real `ColorScheme` role) resolve
+against that scheme instead of being parsed as a literal color — a role
+name always wins over a same-named coincidental CSS color. Anything
+that isn't a recognized role name still falls back to literal color
+parsing (`"#6750A4"`, `"transparent"`), so a stylesheet can freely mix
+token names and literal colors. `corner_radius`/`elevation` use the
+same "named token first, literal number always still valid" contract,
+just against `engine_md3::shape`'s own vocabulary (`small`, `level_2`,
+etc., see the `style:` table above) instead of a color scheme — an
+unrecognized token name for either is a real, clear parse-time error,
+never a silent fallback to `0`.
 
 !!! note
     `stylesheet=`/`theme_seed=` are both optional and independent — a
@@ -198,9 +222,10 @@ children:
   properties (routed through the same path as `Node.animate(prop, v, 0)`),
   `bool` for `checked`, `str` for `text`.
 - **`handlers: {on_click: "method_name"}`** — looks up `method_name` on
-  the `ViewModel` and calls it with no arguments on the real event. Only
-  `on_click`, `on_hover_enter`, `on_hover_exit`, and `on_change` actually
-  fire today.
+  the `ViewModel` and calls it with no arguments on the real event.
+  `on_click`, `on_hover_enter`, `on_hover_exit`, `on_change`,
+  `on_focus_enter`, and `on_focus_exit` all fire today, the same real
+  `EventKind` set `Node.set_on_click`/etc. dispatch from imperatively.
 - **`two_way: <binding-key>`** — makes that binding a two-way write-back:
   on a real `Change` (a `Slider` drag ending, or `Node.set_checked`/
   `set_text` being called), the node's new value is read back and written

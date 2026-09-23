@@ -66,6 +66,34 @@ whether `enable_interaction()` was ever called.
 Fires on a real `Change` — a `Slider` drag ending, or
 `set_checked`/`set_text` being called.
 
+### `set_on_focus_enter` / `set_on_focus_exit`
+
+**`set_on_focus_enter(callback)`** / **`set_on_focus_exit(callback)`**
+
+Fire when the node becomes/stops being the keyboard-focused node.
+
+### The `Event` payload
+
+A `callback` may take zero arguments (as above) or exactly one — a real
+`Event` object, detected once at registration time by inspecting the
+callback's own arity:
+
+| Field | Type | Set for |
+| --- | --- | --- |
+| `kind` | `str` | always — `"click"`, `"hover_enter"`, `"hover_exit"`, `"change"`, `"focus_enter"`, `"focus_exit"` |
+| `node` | `Node` | always — the live node this event fired on |
+| `source` | `int` | always — a stable, opaque id for that same node |
+| `position` | `(float, float)` or `None` | a pointer-driven `click`/`hover_*` |
+| `button` | `str` or `None` | a `click` — `"primary"`/`"secondary"`/`"middle"` |
+| `old_value`, `new_value` | varies or `None` | a `change` — type matches the changed property (`bool` for `checked`, `str` for `text`) |
+
+```python
+def on_any_click(event):
+    print(f"{event.kind} on {event.node} at {event.position}")
+
+node.set_on_click(on_any_click)
+```
+
 An exception raised inside any handler is caught, logged, and non-fatal.
 
 ## Interaction visuals
@@ -145,3 +173,46 @@ Reads the current content of a `TextField` or a plain `Text` label.
 **`is_focused() -> bool`**
 
 Whether this node currently has keyboard focus. Works for any node kind.
+
+## Code editor-specific
+
+### `set_syntax_spans`
+
+**`set_syntax_spans(spans)`**
+
+`spans` is a list of `(start, end, (r, g, b, a))` tuples, each a byte
+range into `get_text()`'s own content and the color to paint it.
+Replaces the whole list on every call — the app re-tokenizes and calls
+this again on every real edit; `tre` never interprets or validates the
+ranges itself. `CodeEditor`-only (raises `ValueError` otherwise).
+
+### `set_folded_ranges`
+
+**`set_folded_ranges(ranges)`**
+
+`ranges` is a list of `(start, end)` byte-offset tuples, each collapsed
+to one visible "⋯" marker line. Replaces the whole list on every call.
+Cursor movement (`Home`/`End`/arrow keys) is fold-aware — a move that
+would land inside a folded range snaps forward past its marker instead.
+`CodeEditor`-only.
+
+## Video-specific
+
+### `push_frame`
+
+**`push_frame(rgba, width, height)`**
+
+Uploads one new frame — `rgba` a flat `bytes`/`bytearray` of
+`width * height * 4` RGBA bytes — as the `Video` node's current GPU
+texture, replacing the previous frame. `Video`-only; the app owns
+decoding and pacing (there's no bundled video decoder).
+
+## Clipping
+
+### `set_clip_children`
+
+**`set_clip_children(clip)`**
+
+When `True`, children are visually clipped to this node's own bounds
+instead of painting past them. Works on any node kind — most useful on
+a plain `Container` used purely as a clipping mask.

@@ -36,21 +36,21 @@ support to size a label from its own content). For editable text, see
 
 **`add_checkbox(background, width, height, checked=False, x=None, y=None)`**
 
-An MD3 checkbox. See [MD3 Components → Checkbox](../../guide/components.md#checkbox).
+An MD3 checkbox. See [MD3 Components → Selection & Input](../../guide/components.md#selection-input).
 
 ### `add_slider`
 
 **`add_slider(background, width, height, value=0.0, x=None, y=None)`**
 
 An MD3 slider with drag-to-set built in. `value` seeds `thumb_position`,
-clamped to `0.0..=1.0`. See [MD3 Components → Slider](../../guide/components.md#slider).
+clamped to `0.0..=1.0`. See [MD3 Components → Selection & Input](../../guide/components.md#selection-input).
 
 ### `add_text_field`
 
 **`add_text_field(background, width, height, content="", font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None)`**
 
 An MD3 text field with real keyboard editing. See
-[MD3 Components → TextField](../../guide/components.md#textfield).
+[MD3 Components → Text Fields, Code Editor & Terminal](../../guide/components.md#text-fields-code-editor-terminal).
 
 ### `add_image`
 
@@ -59,7 +59,7 @@ An MD3 text field with real keyboard editing. See
 Loads and decodes a real image file (`png`/`jpeg`) and uploads it as a
 GPU texture. `fit` is `"cover"`, `"contain"`, or `"fill"`. Raises
 `OSError` if the file can't be read or decoded, `ValueError` for an
-unknown `fit`. See [MD3 Components → Image](../../guide/components.md#image).
+unknown `fit`. See [MD3 Components → Media & Graphics](../../guide/components.md#media-graphics).
 
 ### `add_icon`
 
@@ -67,14 +67,14 @@ unknown `fit`. See [MD3 Components → Image](../../guide/components.md#image).
 
 A curated Material Symbols vector icon (`home`, `search`, `menu`,
 `close`, `check`, `arrow_back`, `add`, `settings`). Raises `ValueError`
-for an unknown `name`. See [MD3 Components → Icon](../../guide/components.md#icon).
+for an unknown `name`. See [MD3 Components → Media & Graphics](../../guide/components.md#media-graphics).
 
 ### `add_splitter`
 
 **`add_splitter(background, width, height, initial_position=0.5)`**
 
 A drag-resizable pane divider. See
-[MD3 Components → Splitter](../../guide/components.md#splitter).
+[MD3 Components → Layout & Structure](../../guide/components.md#layout-structure).
 
 ### `add_canvas`
 
@@ -91,6 +91,58 @@ stored, not invoked yet — see [`redraw_canvas`](#redraw_canvas) and
 A virtualized list of `item_count` logical rows. Give exactly one of
 `item_extent`/`size_hint`. Raises `ValueError` if neither or both are
 given. See [Canvas & Virtualized Lists](../../guide/canvas-and-lists.md#virtualized-lists).
+
+## The full MD3 catalog
+
+The 6 factories above are the general-purpose primitives. `Window` also
+exposes 50 more `add_*` factories for real MD3 components (buttons,
+cards, dialogs, navigation, a terminal, a code editor, and more) — see
+[MD3 Components](../../guide/components.md) for the complete, organized
+catalog rather than duplicating all 56 signatures here.
+
+## Overlays
+
+Dialogs, menus, snackbars, the side sheet, and a modal navigation
+drawer each open/close via a matched pair of `Window` methods, all real
+thin wrappers over the same `Tree::open_overlay`/`close_overlay`
+primitive:
+
+| Open | Close |
+| --- | --- |
+| `open_dialog(dialog)` | `close_dialog(dialog)` |
+| `open_menu(anchor, menu)` | `close_menu(menu)` |
+| `open_snackbar(snackbar)` | `close_snackbar(snackbar)` |
+| `open_side_sheet(sheet)` | `close_side_sheet(sheet)` |
+| `open_navigation_drawer(drawer)` | `close_navigation_drawer(drawer)` |
+
+See [MD3 Components → Overlays](../../guide/components.md#overlays).
+
+## Terminal
+
+`add_terminal`'s returned `Node` is driven by real mouse/keyboard
+dispatch like any other focusable node; these three `Window`-level
+methods cover what isn't reachable through the node itself:
+
+### `resize_terminal`
+
+**`resize_terminal(node, cols, rows)`**
+
+Resizes a live terminal session's PTY and VT100 grid in place.
+
+### `get_monospace_cell_size`
+
+**`get_monospace_cell_size(font_size) -> (float, float)`**
+
+Returns `(width, height)` of one character cell in the engine's bundled
+monospace face at `font_size` — the same real measurement
+`add_terminal` itself uses to size a new terminal from `cols`/`rows`.
+
+### `copy_terminal_selection`
+
+**`copy_terminal_selection() -> str | None`**
+
+Returns the focused terminal's current text selection, or `None` — the
+terminal counterpart to `copy()` below.
 
 ## Layout composition
 

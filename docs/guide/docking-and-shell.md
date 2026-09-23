@@ -20,6 +20,45 @@ regions don't take. `build_shell` is a composition convenience; it
 doesn't build the chrome nodes' own content, only names which node plays
 which role.
 
+## Shell chrome widgets
+
+`build_shell`'s `menu_bar`/`toolbar`/`status_bar` regions, and a window's
+own content area, are typically built from these real MD3 navigation/
+chrome components — see [MD3 Components](components.md) for every
+factory's full signature:
+
+```python
+bar = window.add_top_app_bar("Inbox", leading_icon="menu")
+tabs = window.add_tabs(["All", "Unread", "Starred"], selected=0)
+rail = window.add_navigation_rail(["Home", "Search", "Profile"], icons=["home", "search", None])
+
+content = window.build_shell(menu_bar=bar, toolbar=None, status_bar=None)
+content.add_child(tabs)
+```
+
+- `add_top_app_bar(title, leading_icon=None, trailing_icons=None,
+  width=None)` — the window's own title/action strip, the most common
+  `menu_bar=` argument to `build_shell`.
+- `add_toolbar(variant="docked", orientation=None, color=None,
+  width=None, height=None)` — `variant` is `"docked"` (part of the
+  shell) or `"floating"` (a raised, positioned strip, typically placed
+  with explicit `x`/`y` instead of via `build_shell`).
+- `add_tabs(labels, icons=None, selected=None, width=None)` — a real
+  animated-indicator tab row; the app owns switching visible content on
+  `set_on_change`, `add_tabs` itself only tracks which label is active.
+- `add_navigation_rail(labels, icons, selected=None)` — the compact,
+  always-icon side rail, MD3's own recommended nav pattern at desktop
+  window widths.
+- `add_navigation_drawer(labels, icons, selected=None, modal=False,
+  width=..., height=None)` — the wider, label-and-icon drawer.
+  `modal=True` makes it a real dismissable overlay
+  (`Window.open_navigation_drawer`/`close_navigation_drawer`, the same
+  `open_overlay`/`close_overlay` primitive [Overlays](components.md#overlays)
+  uses); `modal=False` is a permanent layout child instead, typically
+  docked via the mechanism below rather than shown/hidden.
+- `add_status_bar(text, width=None)` — a plain bottom strip, the usual
+  `status_bar=` argument to `build_shell`.
+
 ## Docking
 
 ```python

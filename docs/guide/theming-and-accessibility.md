@@ -26,6 +26,75 @@ A `Window` that never calls `set_theme` sees zero behavior change from
 every component's own plain historical default (black interaction tint,
 white checkmark, gray track, dark text).
 
+## Shape & elevation tokens
+
+Beyond color, a theme can override a component's own corner radius and
+elevation by name, and both accept the same named-token vocabulary
+declarative YAML `style:` blocks do (see
+[Declarative Views](declarative-views.md)):
+
+```yaml
+# theme.yaml
+components:
+  button: {corner_radius: small}
+  button.filled: {corner_radius: medium, elevation: level_1}  # variant-specific beats bare
+  card: {elevation: level_2}
+```
+
+Pass `custom_theme=` (a path to this file) to `Window.set_theme(...)` to
+load it. Lookup is per-field and two-tier: a `"<component>.<variant>"`
+key is checked first, then the bare `"<component>"` key, independently
+for `corner_radius` and `elevation` — a variant entry that only sets one
+of the two doesn't block the bare key's own value for the other. A
+component with no override anywhere falls back to its own built-in
+formula default (usually `height / 2.0`, MD3's own real "fully rounded"
+shape). The real named tokens, resolved against `engine_md3::shape`:
+
+| Kind | Names |
+|---|---|
+| `corner_radius` | `none`, `extra_small`, `small`, `medium`, `large`, `extra_large` |
+| `elevation` | `level_0` through `level_5` |
+
+## Typography theming
+
+A real, published MD3 type scale — 15 roles (`display_large/medium/
+small`, `headline_large/medium/small`, `title_large/medium/small`,
+`body_large/medium/small`, `label_large/medium/small`), each a real
+`family`/`weight`/`size`/`line_height` — lives in `engine_md3::
+typography`, sourced directly from Flutter's own published MD3 type
+scale rather than approximated. Reference a role by name instead of
+literal font values:
+
+```python
+heading = window.add_text(
+    "Settings", background=(0, 0, 0, 0), width=300, height=32,
+    typography_role="headline_small",
+)
+```
+
+```yaml
+# a declarative view.yaml
+- id: heading
+  kind: Text
+  text: {content: "Settings", role: headline_small}
+```
+
+Any of `font_family`/`font_weight`/`font_size`/`line_height` given
+*alongside* `role`/`typography_role` overrides just that one field on
+top of the role's own resolved default — the same per-field-override
+shape a theme's own `typography:` section (below) uses. An unrecognized
+role name is a real, clear error, never a silent fallback.
+
+A theme can also override individual fields of a role globally, the
+same `components:` shape shape/elevation already use:
+
+```yaml
+# theme.yaml
+typography:
+  body_large: {font_family: Inter}
+  headline_small: {font_size: 26, line_height: 1.4}
+```
+
 ## Keyboard focus & Tab order
 
 A node becomes part of the Tab order once it's given real interactive

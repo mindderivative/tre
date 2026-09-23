@@ -1,8 +1,8 @@
 # Architecture
 
 This page is a short orientation. The full design reference —
-`ARCHITECTURE.md`, the living document 25 milestones have been built
-against — lives in the repository root:
+`ARCHITECTURE.md`, the living document 67 milestones have been built
+against as of this writing — lives in the repository root:
 
 [**Read the full `ARCHITECTURE.md`**](https://github.com/mindderivative/tre/blob/main/ARCHITECTURE.md){ .md-button }
 
@@ -39,7 +39,9 @@ everything layers on top of it, and only `engine-py` ever depends on
 | Accessibility | §10 |
 | Desktop shell & workspace (docking, splitters, lists, overlays) | §11 |
 | Project structure | §12 |
-| Environment setup | §13 |
+| Environment setup & packaging | §13 |
+| Suggested build order | §14 |
+| Risk register | §15 |
 | Declarative authoring: YAML views & stylesheets | §16 |
 
 ## Build history

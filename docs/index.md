@@ -27,22 +27,29 @@ project's design decisions.
 - **Material Design 3 visual language** — dynamic color (full HCT/
   tonal-palette scheme resolution), elevation shadows, hover/press state
   layers with real ripple, shape morphing, and MD3 motion curves.
-- **Real MD3 components** — [`Checkbox`, `Slider`](guide/components.md),
-  [`TextField`](guide/components.md) (real keyboard editing, mouse
-  click-to-position and drag-to-select, IME composition, clipboard),
-  [`Image`](guide/components.md) (GPU-texture-backed, with
-  cover/contain/fill content fit), and [`Icon`](guide/components.md) (a
-  curated set of real Material Symbols icons, rendered as vector fills).
+- **A real, wide MD3 component catalog** — 56 factories spanning
+  [buttons, selection controls, cards, chips, navigation, overlays
+  (dialogs, menus, snackbars), a real PTY-backed `Terminal`, and a
+  `CodeEditor` with folding and syntax highlighting](guide/components.md),
+  not just a handful of samples.
+- **Full theming, not just color** — MD3 dynamic color (HCT/tonal-
+  palette resolution), a named shape/elevation token system
+  (`corner_radius: small`, `elevation: level_2`), and a real,
+  Flutter-sourced MD3 type scale apps can reference by role instead of
+  literal font values — see [Theming & Accessibility](guide/theming-and-accessibility.md).
 - **Desktop shell primitives** — multi-window apps, a
   [fixed-zone docking system](guide/docking-and-shell.md), splitters,
   [virtualized/variable-height lists](guide/canvas-and-lists.md), context
   menus and other overlays, an `AppShell` navigation pattern, and MD3's
   container-transform choreography.
+- **A real, wide layout/styling surface** — per-side padding/margin,
+  flex-grow/shrink/basis, align/justify, and border kwargs across the
+  catalog, both from Python and from declarative YAML `style:` blocks.
 - **Two authoring paths, one engine** — build a UI
   [imperatively from Python](guide/imperative-api.md), or
   [declaratively from YAML view files](guide/declarative-views.md), with
-  `include:`-based composition and one- and two-way data binding against
-  a plain Python `ViewModel`.
+  a real stylesheet cascade, `include:`-based composition, and one- and
+  two-way data binding against a plain Python `ViewModel`.
 - **Accessibility from day one** — a real AccessKit tree built fresh
   every frame from the same node tree, keyboard focus/Tab order, and
   screen-reader-driven actions routed through the same input pipeline as
@@ -76,8 +83,8 @@ keyboard-navigable.
 
 ## Project status
 
-27 milestones have been built against [`ARCHITECTURE.md`](architecture.md)
-as of `v0.2.0` — see
+67 milestones have been built against [`ARCHITECTURE.md`](architecture.md)
+as of this writing — see
 [`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md)
 in the repository for the complete phase-by-phase build history. Every
 real engine capability has its own headless, GPU-backed pixel test
