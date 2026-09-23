@@ -400,15 +400,15 @@ fn apply_binding_value(
             "gap" => (None, None, None, Some(numeric)),
             _ => unreachable!("matched by the outer `matches!` above"),
         };
-        // M59 (§5, §16.3): `set_layout` widened with per-side padding/
-        // margin, flex-grow/shrink/basis, and align-items/justify-
-        // content -- none of those are reachable from a `{{ }}` binding
+        // M59/M71 (§5, §16.3): `set_layout` widened with per-side padding/
+        // margin, flex-grow/shrink/basis, align-items/justify-content,
+        // and flex-direction -- none of those are reachable from a `{{ }}` binding
         // (this call site's own real scope stays `width`/`height`/
         // `padding`/`gap`, matching the `matches!` guard above), so
         // every new parameter is `None` here.
         temp_node.set_layout(
             width, height, padding, None, None, None, None, None, None, None, None, None, gap,
-            None, None, None, None, None,
+            None, None, None, None, None, None,
         )?;
         return Ok(());
     }
