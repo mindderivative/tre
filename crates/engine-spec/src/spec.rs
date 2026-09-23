@@ -175,14 +175,53 @@ pub enum ContentFitSpec {
 #[serde(deny_unknown_fields)]
 pub struct TextSpec {
     pub content: String,
-    pub font_family: String,
-    #[serde(default = "default_font_weight")]
-    pub font_weight: f32,
-    pub font_size: f32,
-}
-
-fn default_font_weight() -> f32 {
-    400.0 // CSS/OpenType "normal" -- matches parley::FontWeight::NORMAL.
+    /// M62 Phase 4 (§7.1, §16.3): a real MD3 typography role name
+    /// (`"body_large"`, etc., `engine_md3::type_style_named`'s own real
+    /// vocabulary) -- when given, supplies `font_family`/`font_weight`/
+    /// `font_size`/`line_height` as real defaults, resolved at build
+    /// time (`build.rs`), not here (this struct stays parse-time data,
+    /// the same "parsed at apply time" precedent every other role/token
+    /// reference in this codebase already follows, e.g. `StyleSpec.
+    /// corner_radius`'s own `ShapeOrElevationSpec`). Any of the 4 fields
+    /// below, if *also* given, override just that one field on top of
+    /// the role's own resolved default -- the identical per-field-
+    /// override shape `TypographyOverride` (`theme.rs`) already
+    /// establishes for a theme's own role overrides.
+    #[serde(default)]
+    pub role: Option<String>,
+    /// M62 Phase 4: widened from a plain required `String` to
+    /// `Option<String>` -- now derivable from `role` above, so no
+    /// longer unconditionally required. Still required in the real,
+    /// final sense (a build-time `SpecError::MissingField` if *neither*
+    /// this nor `role` supplies one), just validated one stage later
+    /// than serde's own automatic "missing required field" check used
+    /// to catch it -- an inherent, real consequence of making the field
+    /// genuinely derivable, not an oversight.
+    #[serde(default)]
+    pub font_family: Option<String>,
+    /// M62 Phase 4: widened from a defaulted `f32` (`default_font_
+    /// weight`, always `400.0` when unset) to `Option<f32>` -- unset
+    /// now means "derive from `role`, or fall back to `400.0`" instead
+    /// of "always `400.0`," resolved at build time so a role's own real
+    /// weight (e.g. `title_medium`'s real `500.0`) can supply it.
+    #[serde(default)]
+    pub font_weight: Option<f32>,
+    /// M62 Phase 4: the same real widening `font_family` above got, and
+    /// for the identical reason.
+    #[serde(default)]
+    pub font_size: Option<f32>,
+    /// M62 Phase 1 (§7.1, §16.3): `engine_core::TextState.line_height`'s
+    /// own real declarative counterpart -- only reachable from `kind:
+    /// Text` (`build.rs`'s `TextField` arm builds a `TextFieldState`,
+    /// which has no equivalent field at all, matching `engine-render::
+    /// draw_field`'s own out-of-scope decision for this milestone).
+    /// Absent/`None` means exactly what it always has: `parley`'s own
+    /// real font-metrics-relative default, not a new fallback number --
+    /// unless `role` supplies one, the identical real "role supplies a
+    /// default, a literal field overrides it" resolution the 3 fields
+    /// above now also follow.
+    #[serde(default)]
+    pub line_height: Option<f32>,
 }
 
 /// Row/Column only -- `taffy::style::FlexDirection` also has
@@ -418,10 +457,10 @@ children:
             .as_ref()
             .expect("kind: Text must carry a text: block");
         assert_eq!(text.content, "Hello");
-        assert_eq!(
-            text.font_weight, 400.0,
-            "unset font_weight must default to 400 (normal)"
-        );
+        // M62 Phase 4: the real 400.0 (normal) default now resolves at
+        // build time (`resolve_text_style`); at parse time, unset is a
+        // real `None`.
+        assert_eq!(text.font_weight, None);
     }
 
     #[test]
@@ -488,11 +527,13 @@ style: {width: 200, height: 32, background: "#EEEEEE"}
             .as_ref()
             .expect("kind: TextField must carry a text: block");
         assert_eq!(text.content, "jane");
-        assert_eq!(text.font_family, "Roboto");
-        assert_eq!(
-            text.font_weight, 400.0,
-            "unset font_weight must default to 400 (normal), the same as kind: Text"
-        );
+        assert_eq!(text.font_family.as_deref(), Some("Roboto"));
+        // M62 Phase 4: font_weight defaulting to 400 (normal) when
+        // unset is now a build-time resolution (`resolve_text_style`),
+        // not a parse-time serde default -- at parse time, unset is a
+        // real `None`, the same as every other now-Option TextSpec
+        // field.
+        assert_eq!(text.font_weight, None);
         assert_eq!(spec.two_way.as_deref(), Some("text"));
     }
 

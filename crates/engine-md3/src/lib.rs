@@ -24,6 +24,7 @@ mod color;
 mod container_transform;
 pub mod icons;
 mod shape;
+mod typography;
 
 pub use color::{ColorScheme, DynamicTheme};
 pub use container_transform::{
@@ -35,3 +36,4 @@ pub use shape::{
     ELEVATION_LEVEL_5, SHAPE_EXTRA_LARGE, SHAPE_EXTRA_SMALL, SHAPE_LARGE, SHAPE_MEDIUM, SHAPE_NONE,
     SHAPE_SMALL, elevation_named, named,
 };
+pub use typography::{TypeStyle, type_style_named};

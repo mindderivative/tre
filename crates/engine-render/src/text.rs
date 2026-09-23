@@ -50,6 +50,11 @@ struct LayoutCacheKey {
     font_size: f32,
     max_width: f32,
     align: TextAlign,
+    /// M62 Phase 1 (§7.1, §16.3): part of the real cache-invalidation
+    /// key for the identical reason every other shaping input already
+    /// is -- a changed `StyleProperty::LineHeight` push changes the
+    /// real glyph-run vertical advance `Layout::lines()` reports.
+    line_height: Option<f32>,
     /// M31 Phase 4 (§5, §8): real per-byte-range syntax coloring, part
     /// of the real cache-invalidation key for the identical reason
     /// every other shaping input already is -- a different real
@@ -186,6 +191,7 @@ impl TextRenderer {
         font_size: f32,
         max_width: f32,
         align: TextAlign,
+        line_height: Option<f32>,
         spans: &[(Range<usize>, Color)],
         default_color: Color,
     ) -> &parley::Layout<[u8; 4]> {
@@ -196,6 +202,7 @@ impl TextRenderer {
             font_size,
             max_width,
             align,
+            line_height,
             spans: spans.to_vec(),
             default_color,
         };
@@ -213,6 +220,18 @@ impl TextRenderer {
             builder.push_default(StyleProperty::FontFamily(FontFamily::named(font_family)));
             builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));
             builder.push_default(StyleProperty::FontSize(font_size));
+            // M62 Phase 1 (§7.1, §16.3): `None` deliberately pushes
+            // nothing at all here, rather than an explicit `parley::
+            // LineHeight::MetricsRelative(1.0)` -- `parley`'s own real
+            // default (verified via direct source read) is already
+            // exactly that, so an un-set `TextState.line_height` must
+            // produce byte-for-byte the same `Layout` as before this
+            // field existed, not merely an equivalent one.
+            if let Some(ratio) = line_height {
+                builder.push_default(StyleProperty::LineHeight(
+                    parley::LineHeight::FontSizeRelative(ratio),
+                ));
+            }
             // M31 Phase 4 (§5, §8): a real default brush covering the
             // *whole* content, then a real per-range override for each
             // real syntax span -- `draw_field`'s own paint loop reads
@@ -306,6 +325,7 @@ impl TextRenderer {
             state.font_size,
             at.max_width,
             state.align,
+            state.line_height,
             &[],
             at.color,
         );
@@ -518,6 +538,12 @@ impl TextRenderer {
             state.font_size,
             field_max_width(state, at.max_width),
             TextAlign::Start,
+            // M62 Phase 1 (§7.1, §16.3): `TextFieldState` is a distinct
+            // real struct from `TextState` and outside this milestone's
+            // own scope (MD3's typography *type scale* targets display
+            // text, not editable fields) -- always `None`, the exact
+            // pre-M62 behavior, never wired to any real per-field value.
+            None,
             &display_spans,
             at.color,
         );
@@ -1204,6 +1230,7 @@ mod tests {
                 font_weight: 400.0,
                 font_size: 16.0,
                 align: TextAlign::Start,
+                line_height: None,
             }),
             Style {
                 size: Size {
@@ -1330,6 +1357,7 @@ mod tests {
                 16.0,
                 100.0,
                 TextAlign::Start,
+                None,
                 &[],
                 Color::from_rgba8(0, 0, 0, 255),
             )
@@ -1345,6 +1373,7 @@ mod tests {
                 16.0,
                 f32::MAX,
                 TextAlign::Start,
+                None,
                 &[],
                 Color::from_rgba8(0, 0, 0, 255),
             )
@@ -1361,6 +1390,69 @@ mod tests {
             gutter_ys, field_ys,
             "a plain Text's own per-line Y offsets must exactly match a matching multiline \
              TextField's, real proof that a gutter can be composed as an ordinary sibling node"
+        );
+    }
+
+    /// M62 Phase 1 (§7.1, §16.3): real proof `line_height` isn't just
+    /// inert stored data -- a `Some(ratio)` must genuinely change the
+    /// real `parley::Layout`'s own per-line vertical advance, read back
+    /// via `Layout::lines()`'s own real geometry (the identical real
+    /// verification technique the gutter-alignment test above already
+    /// established for this module), not merely "doesn't panic."
+    #[test]
+    fn a_larger_line_height_genuinely_widens_the_real_per_line_advance() {
+        let mut tree = Tree::new();
+        let default_id = text_node(&mut tree, "one\ntwo");
+        let doubled_id = text_node(&mut tree, "one\ntwo"); // a second, distinct real NodeId
+
+        let mut renderer = TextRenderer::new();
+        let default_ys: Vec<f32> = renderer
+            .shaped_layout(
+                default_id,
+                "one\ntwo",
+                "Roboto",
+                400.0,
+                16.0,
+                100.0,
+                TextAlign::Start,
+                None,
+                &[],
+                Color::from_rgba8(0, 0, 0, 255),
+            )
+            .lines()
+            .map(|line| line.metrics().block_min_coord)
+            .collect();
+        let doubled_ys: Vec<f32> = renderer
+            .shaped_layout(
+                doubled_id,
+                "one\ntwo",
+                "Roboto",
+                400.0,
+                16.0,
+                100.0,
+                TextAlign::Start,
+                Some(2.0),
+                &[],
+                Color::from_rgba8(0, 0, 0, 255),
+            )
+            .lines()
+            .map(|line| line.metrics().block_min_coord)
+            .collect();
+
+        assert_eq!(default_ys.len(), 2);
+        assert_eq!(doubled_ys.len(), 2);
+        // A larger line_height distributes extra leading on both sides
+        // of each line (real `parley` behavior, confirmed here rather
+        // than assumed -- it also nudges the first line's own top up
+        // slightly to fit half the extra leading above it), so the
+        // real claim isn't "the first line never moves," it's "the gap
+        // between consecutive lines genuinely widens."
+        let default_advance = default_ys[1] - default_ys[0];
+        let doubled_advance = doubled_ys[1] - doubled_ys[0];
+        assert!(
+            doubled_advance > default_advance * 1.5,
+            "a 2.0x font-size-relative line_height must produce a real, substantially larger \
+             per-line advance than the default (font-metrics-relative) one -- got default={default_advance}, doubled={doubled_advance}"
         );
     }
 

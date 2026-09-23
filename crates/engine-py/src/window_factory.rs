@@ -3110,7 +3110,7 @@ impl PyWindow {
     /// `add_icon` (a single `size`) -- no measure-function/intrinsic-
     /// sizing wiring exists for `Text` to lean on instead, confirmed
     /// before choosing this shape rather than assumed.
-    #[pyo3(signature = (content, background, width, height, font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None))]
+    #[pyo3(signature = (content, background, width, height, typography_role=None, font_family=None, font_weight=None, font_size=None, line_height=None, x=None, y=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_text(
         &self,
@@ -3118,21 +3118,58 @@ impl PyWindow {
         background: (u8, u8, u8, u8),
         width: f32,
         height: f32,
-        font_family: &str,
-        font_weight: f32,
-        font_size: f32,
+        typography_role: Option<&str>,
+        font_family: Option<&str>,
+        font_weight: Option<f32>,
+        font_size: Option<f32>,
+        line_height: Option<f32>,
         x: Option<f32>,
         y: Option<f32>,
-    ) -> Node {
+    ) -> PyResult<Node> {
+        // M62 Phase 4 (§7.1, §16.3): `add_text`'s own real imperative
+        // parity with declarative `kind: Text`'s `text.role` -- `role_
+        // style`, if given, supplies each of the 4 real fields below as
+        // a default; any of `font_family`/`font_weight`/`font_size`/
+        // `line_height`, if *also* given, overrides just that one field
+        // on top of it. With no role at all, the exact pre-Phase-4
+        // fallbacks below (`"Roboto"`/`400.0`/`16.0`) reproduce this
+        // method's own real, pre-existing Python-level defaults
+        // byte-for-byte -- widening these 3 params from concrete
+        // defaulted values to `Option` is what makes "the caller didn't
+        // pass this" distinguishable from "the caller passed exactly
+        // the old default," the real reason this signature had to
+        // change at all.
+        let role_style = typography_role
+            .map(|role| {
+                engine_md3::type_style_named(role).ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(format!(
+                        "add_text: unknown typography_role {role:?}"
+                    ))
+                })
+            })
+            .transpose()?;
+        let resolved_family = font_family
+            .map(str::to_string)
+            .or_else(|| role_style.map(|s| s.font_family.to_string()))
+            .unwrap_or_else(|| "Roboto".to_string());
+        let resolved_weight = font_weight
+            .or(role_style.map(|s| s.font_weight))
+            .unwrap_or(400.0);
+        let resolved_size = font_size
+            .or(role_style.map(|s| s.font_size))
+            .unwrap_or(16.0);
+        let resolved_line_height = line_height.or(role_style.map(|s| s.line_height));
+
         let (r, g, b, a) = background;
         let mut tree = self.tree.borrow_mut();
         let id = tree.insert(
             NodeKind::Text(TextState {
                 content: content.to_string(),
-                font_family: font_family.to_string(),
-                font_weight,
-                font_size,
+                font_family: resolved_family,
+                font_weight: resolved_weight,
+                font_size: resolved_size,
                 align: TextAlign::Start,
+                line_height: resolved_line_height,
             }),
             positioned_style(
                 Size {
@@ -3145,7 +3182,7 @@ impl PyWindow {
             PaintProperties::new(Color::from_rgba8(r, g, b, a), 0.0, 0.0, 1.0),
         );
         tree.add_child(self.root, id);
-        self.wrap_node(id)
+        Ok(self.wrap_node(id))
     }
 
     /// M30 Phase 1 (§5, §7): `Button`, MD3's five real variants --
@@ -3219,6 +3256,7 @@ impl PyWindow {
                 font_weight: BUTTON_LABEL_FONT_WEIGHT,
                 font_size: BUTTON_LABEL_FONT_SIZE,
                 align: TextAlign::Center,
+                line_height: None,
             }),
             Style {
                 size: Size {
@@ -3560,6 +3598,7 @@ impl PyWindow {
                 font_weight: BUTTON_LABEL_FONT_WEIGHT,
                 font_size: BUTTON_LABEL_FONT_SIZE,
                 align: TextAlign::Start,
+                line_height: None,
             }),
             Style {
                 size: Size {
@@ -3796,6 +3835,7 @@ impl PyWindow {
                     font_weight: BUTTON_LABEL_FONT_WEIGHT,
                     font_size: BUTTON_LABEL_FONT_SIZE,
                     align: TextAlign::Center,
+                    line_height: None,
                 }),
                 Style {
                     size: Size {
@@ -3971,6 +4011,7 @@ impl PyWindow {
                 font_weight: BUTTON_LABEL_FONT_WEIGHT,
                 font_size: BUTTON_LABEL_FONT_SIZE,
                 align: TextAlign::Start,
+                line_height: None,
             }),
             Style {
                 size: Size {
@@ -4131,6 +4172,7 @@ impl PyWindow {
                 font_weight: BUTTON_LABEL_FONT_WEIGHT,
                 font_size: BUTTON_LABEL_FONT_SIZE,
                 align: TextAlign::Start,
+                line_height: None,
             }),
             Style {
                 size: Size {
@@ -4411,6 +4453,7 @@ impl PyWindow {
                 font_weight: BADGE_LABEL_FONT_WEIGHT,
                 font_size: BADGE_LABEL_FONT_SIZE,
                 align: TextAlign::Center,
+                line_height: None,
             }),
             Style {
                 size: Size {
@@ -4857,6 +4900,7 @@ impl PyWindow {
                 font_weight: TOOLTIP_FONT_WEIGHT,
                 font_size: TOOLTIP_FONT_SIZE,
                 align: TextAlign::Center,
+                line_height: None,
             }),
             Style {
                 size: Size {
@@ -4987,6 +5031,7 @@ impl PyWindow {
                 font_weight: DIALOG_HEADLINE_FONT_WEIGHT,
                 font_size: DIALOG_HEADLINE_FONT_SIZE,
                 align: TextAlign::Start,
+                line_height: None,
             }),
             Style {
                 size: Size {
@@ -5011,6 +5056,7 @@ impl PyWindow {
                 font_weight: DIALOG_BODY_FONT_WEIGHT,
                 font_size: DIALOG_BODY_FONT_SIZE,
                 align: TextAlign::Start,
+                line_height: None,
             }),
             Style {
                 size: Size {
@@ -5211,6 +5257,7 @@ impl PyWindow {
                 font_weight: DIALOG_BODY_FONT_WEIGHT,
                 font_size: DIALOG_BODY_FONT_SIZE,
                 align: TextAlign::Start,
+                line_height: None,
             }),
             Style {
                 flex_grow: 1.0,
@@ -5247,6 +5294,7 @@ impl PyWindow {
                     font_weight: BUTTON_LABEL_FONT_WEIGHT,
                     font_size: BUTTON_LABEL_FONT_SIZE,
                     align: TextAlign::Center,
+                    line_height: None,
                 }),
                 Style {
                     size: Size {
@@ -5857,6 +5905,7 @@ impl PyWindow {
                     font_weight: label_weight,
                     font_size: NAV_RAIL_LABEL_FONT_SIZE,
                     align: TextAlign::Center,
+                    line_height: None,
                 }),
                 Style {
                     size: Size {
@@ -6146,6 +6195,7 @@ impl PyWindow {
                     font_weight: label_weight,
                     font_size: BUTTON_LABEL_FONT_SIZE,
                     align: TextAlign::Start,
+                    line_height: None,
                 }),
                 Style {
                     size: Size {
@@ -6438,6 +6488,7 @@ impl PyWindow {
                 font_weight: TOP_APP_BAR_HEADLINE_FONT_WEIGHT,
                 font_size: TOP_APP_BAR_HEADLINE_FONT_SIZE,
                 align: TextAlign::Start,
+                line_height: None,
             }),
             headline_style,
             PaintProperties::new(headline_color, 0.0, 0.0, 1.0),
@@ -7252,6 +7303,7 @@ impl PyWindow {
                     font_weight: TAB_LABEL_FONT_WEIGHT,
                     font_size: TAB_LABEL_FONT_SIZE,
                     align: TextAlign::Center,
+                    line_height: None,
                 }),
                 Style {
                     size: Size {
@@ -7725,6 +7777,7 @@ impl PyWindow {
                     font_weight: BUTTON_LABEL_FONT_WEIGHT,
                     font_size: BUTTON_LABEL_FONT_SIZE,
                     align: TextAlign::Start,
+                    line_height: None,
                 }),
                 Style {
                     size: Size {
@@ -7744,6 +7797,7 @@ impl PyWindow {
                     font_weight: DIALOG_BODY_FONT_WEIGHT,
                     font_size: DIALOG_BODY_FONT_SIZE,
                     align: TextAlign::Start,
+                    line_height: None,
                 }),
                 Style {
                     size: Size {
@@ -7766,6 +7820,7 @@ impl PyWindow {
                     font_weight: BUTTON_LABEL_FONT_WEIGHT,
                     font_size: BUTTON_LABEL_FONT_SIZE,
                     align: TextAlign::Start,
+                    line_height: None,
                 }),
                 Style {
                     size: Size {
@@ -7965,6 +8020,7 @@ impl PyWindow {
                 font_weight: BUTTON_LABEL_FONT_WEIGHT,
                 font_size: BUTTON_LABEL_FONT_SIZE,
                 align: TextAlign::Start,
+                line_height: None,
             }),
             Style {
                 flex_grow: 1.0,
@@ -8125,6 +8181,7 @@ impl PyWindow {
                 font_weight: BUTTON_LABEL_FONT_WEIGHT,
                 font_size: BUTTON_LABEL_FONT_SIZE,
                 align: TextAlign::Start,
+                line_height: None,
             }),
             Style {
                 flex_grow: 1.0,
@@ -8234,6 +8291,7 @@ impl PyWindow {
                 font_weight: SEARCH_INPUT_FONT_WEIGHT,
                 font_size: SEARCH_INPUT_FONT_SIZE,
                 align: TextAlign::Center,
+                line_height: None,
             }),
             Style {
                 size: Size {
@@ -8438,6 +8496,7 @@ impl PyWindow {
                         font_weight: BUTTON_LABEL_FONT_WEIGHT,
                         font_size: BUTTON_LABEL_FONT_SIZE,
                         align: TextAlign::Center,
+                        line_height: None,
                     }),
                     Style {
                         size: Size {
@@ -8565,6 +8624,7 @@ impl PyWindow {
                 font_weight: POPOVER_SUBHEAD_FONT_WEIGHT,
                 font_size: POPOVER_SUBHEAD_FONT_SIZE,
                 align: TextAlign::Start,
+                line_height: None,
             }),
             Style {
                 size: Size {
@@ -8589,6 +8649,7 @@ impl PyWindow {
                 font_weight: DIALOG_BODY_FONT_WEIGHT,
                 font_size: DIALOG_BODY_FONT_SIZE,
                 align: TextAlign::Start,
+                line_height: None,
             }),
             Style {
                 size: Size {
@@ -8632,6 +8693,7 @@ impl PyWindow {
                 font_weight: LINK_FONT_WEIGHT,
                 font_size: LINK_FONT_SIZE,
                 align: TextAlign::Start,
+                line_height: None,
             }),
             positioned_style(
                 Size {
@@ -8980,6 +9042,7 @@ impl PyWindow {
                     font_weight: BUTTON_LABEL_FONT_WEIGHT,
                     font_size: BUTTON_LABEL_FONT_SIZE,
                     align: TextAlign::Center,
+                    line_height: None,
                 }),
                 Style {
                     size: Size {
@@ -9093,6 +9156,7 @@ impl PyWindow {
                 font_weight: BADGE_LABEL_FONT_WEIGHT,
                 font_size: BADGE_LABEL_FONT_SIZE,
                 align: TextAlign::Start,
+                line_height: None,
             }),
             Style {
                 size: Size {
@@ -9729,6 +9793,7 @@ impl PyWindow {
                 font_weight: TAB_LABEL_FONT_WEIGHT,
                 font_size: TAB_LABEL_FONT_SIZE,
                 align: TextAlign::Start,
+                line_height: None,
             }),
             Style {
                 position: Position::Absolute,
@@ -10420,6 +10485,7 @@ mod tests {
                 font_weight: BUTTON_LABEL_FONT_WEIGHT,
                 font_size: BUTTON_LABEL_FONT_SIZE,
                 align: TextAlign::Center,
+                line_height: None,
             }),
             Style::default(),
             PaintProperties::new(Color::TRANSPARENT, 0.0, 0.0, 1.0),
@@ -10480,6 +10546,7 @@ mod tests {
                 font_weight: BUTTON_LABEL_FONT_WEIGHT,
                 font_size: BUTTON_LABEL_FONT_SIZE,
                 align: TextAlign::Center,
+                line_height: None,
             }),
             Style::default(),
             PaintProperties::new(Color::TRANSPARENT, 0.0, 0.0, 1.0),
@@ -10527,6 +10594,7 @@ mod tests {
                 font_weight: BUTTON_LABEL_FONT_WEIGHT,
                 font_size: BUTTON_LABEL_FONT_SIZE,
                 align: TextAlign::Center,
+                line_height: None,
             }),
             Style::default(),
             PaintProperties::new(Color::TRANSPARENT, 0.0, 0.0, 1.0),

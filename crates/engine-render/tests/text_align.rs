@@ -54,6 +54,7 @@ async fn render(align: TextAlign) -> Readback {
             font_weight: 500.0,
             font_size: 20.0,
             align,
+            line_height: None,
         }),
         Style {
             size: Size {

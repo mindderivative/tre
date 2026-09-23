@@ -19,7 +19,7 @@ use taffy::style_helpers::FromLength;
 use crate::cascade::{Stylesheet, resolve_style_layered};
 use crate::spec::{
     AlignItemsSpec, ContentFitSpec, FlexDirectionSpec, JustifyContentSpec, NodeKindSpec,
-    ShapeOrElevationSpec, SpacingSpec, StyleSpec, WidgetSpec, parse_view,
+    ShapeOrElevationSpec, SpacingSpec, StyleSpec, TextSpec, WidgetSpec, parse_view,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -51,6 +51,13 @@ pub enum SpecError {
         field: &'static str,
         token: String,
     },
+    /// M62 Phase 4 (§7.1, §16.3): `text.role` named a token that
+    /// doesn't resolve against `engine_md3::type_style_named`'s own
+    /// real 15-role vocabulary -- `UnknownShapeToken`'s own real
+    /// typography sibling, the identical "fail loudly at the boundary"
+    /// reasoning.
+    #[error("widget \"{id}\": unknown text.role {role:?}")]
+    UnknownTypographyRole { id: String, role: String },
     /// M19 Phase 2 (§16.6): `include: {path}` appeared but no `base_dir`
     /// was given to resolve it against -- a real, stated error, not a
     /// silent no-op (an include with nowhere to resolve from must fail
@@ -412,6 +419,65 @@ fn resolve_shape_value(
     })
 }
 
+/// M62 Phase 4 (§7.1, §16.3): resolves a `TextSpec`'s real, final
+/// `(font_family, font_weight, font_size, line_height)` -- if `role` is
+/// given, it supplies each of the 4 as a real default (`engine_md3::
+/// type_style_named`, an unrecognized name a real, clear `SpecError::
+/// UnknownTypographyRole`); any of `text_spec`'s own literal fields, if
+/// *also* given, override just that one field on top of the role's own
+/// default. With no `role` at all, behaves exactly as before this
+/// milestone: `font_weight` unset falls back to `400.0` (CSS/OpenType
+/// "normal," the same real number `default_font_weight` used to supply
+/// at parse time), `font_family`/`font_size` unset is a real, build-time
+/// `SpecError::MissingField` (previously caught by serde's own
+/// "required field" check instead -- a real, inherent consequence of
+/// widening both to genuinely role-derivable `Option`s, not silently
+/// different behavior for a case that used to succeed). `kind` is
+/// threaded through purely so the resulting error names the real
+/// `NodeKindSpec` variant that called this (`"Text"` vs. `"TextField"`),
+/// matching `required_background`'s own identical parameter.
+fn resolve_text_style(
+    spec: &WidgetSpec,
+    text_spec: &TextSpec,
+    kind: &'static str,
+) -> Result<(String, f32, f32, Option<f32>), SpecError> {
+    let role_style = text_spec
+        .role
+        .as_deref()
+        .map(|role| {
+            engine_md3::type_style_named(role).ok_or_else(|| SpecError::UnknownTypographyRole {
+                id: spec.id.clone(),
+                role: role.to_string(),
+            })
+        })
+        .transpose()?;
+
+    let font_family = text_spec
+        .font_family
+        .clone()
+        .or_else(|| role_style.map(|s| s.font_family.to_string()))
+        .ok_or_else(|| SpecError::MissingField {
+            id: spec.id.clone(),
+            kind,
+            field: "text.font_family (or text.role)",
+        })?;
+    let font_weight = text_spec
+        .font_weight
+        .or(role_style.map(|s| s.font_weight))
+        .unwrap_or(400.0);
+    let font_size = text_spec
+        .font_size
+        .or(role_style.map(|s| s.font_size))
+        .ok_or_else(|| SpecError::MissingField {
+            id: spec.id.clone(),
+            kind,
+            field: "text.font_size (or text.role)",
+        })?;
+    let line_height = text_spec.line_height.or(role_style.map(|s| s.line_height));
+
+    Ok((font_family, font_weight, font_size, line_height))
+}
+
 fn node_kind_and_paint(
     spec: &WidgetSpec,
     style: &StyleSpec,
@@ -481,13 +547,16 @@ fn node_kind_and_base_paint(
                 kind: "Text",
                 field: "text",
             })?;
+            let (font_family, font_weight, font_size, line_height) =
+                resolve_text_style(spec, text_spec, "Text")?;
             Ok((
                 NodeKind::Text(TextState {
                     content: text_spec.content.clone(),
-                    font_family: text_spec.font_family.clone(),
-                    font_weight: text_spec.font_weight,
-                    font_size: text_spec.font_size,
+                    font_family,
+                    font_weight,
+                    font_size,
                     align: TextAlign::Start,
+                    line_height,
                 }),
                 PaintProperties::new(background, corner_radius, 0.0, opacity),
             ))
@@ -543,12 +612,14 @@ fn node_kind_and_base_paint(
                 kind: "TextField",
                 field: "text",
             })?;
+            let (font_family, font_weight, font_size, _line_height) =
+                resolve_text_style(spec, text_spec, "TextField")?;
             Ok((
                 NodeKind::TextField(TextFieldState::new(
                     text_spec.content.clone(),
-                    text_spec.font_family.clone(),
-                    text_spec.font_weight,
-                    text_spec.font_size,
+                    font_family,
+                    font_weight,
+                    font_size,
                 )),
                 PaintProperties::new(background, corner_radius, 0.0, opacity),
             ))
@@ -1024,6 +1095,143 @@ style: {width: 10, height: 10, background: red, corner_radius: 6.0}
         let root = load_view(&mut tree, yaml).expect("a literal corner_radius must still parse");
         let node = tree.get(root).unwrap();
         assert_eq!(node.paint.corner_radius.current, 6.0);
+    }
+
+    /// M62 Phase 1 (§7.1, §16.3): `text: {line_height: ...}`'s own real
+    /// end-to-end declarative round-trip -- a real number in the YAML
+    /// must reach `TextState.line_height` as `Some(...)`, the exact
+    /// value that later drives a real, wider per-line advance
+    /// (`engine-render::text`'s own `a_larger_line_height_genuinely_
+    /// widens_the_real_per_line_advance` proves that half; this test
+    /// proves the parse-to-`TextState` half).
+    #[test]
+    fn text_line_height_reaches_the_real_text_state() {
+        let yaml = r#"
+id: label
+kind: Text
+text: {content: "Hi", font_family: Roboto, font_size: 16, line_height: 1.5}
+style: {width: 90, height: 30, background: white}
+"#;
+        let mut tree = Tree::new();
+        let root = load_view(&mut tree, yaml).expect("a real line_height must parse");
+        let node = tree.get(root).unwrap();
+        let NodeKind::Text(text) = &node.kind else {
+            panic!("expected a Text node");
+        };
+        assert_eq!(text.line_height, Some(1.5));
+    }
+
+    /// The pre-M62 implicit behavior -- omitting `line_height` entirely
+    /// -- must still parse and produce `None`, not a manufactured
+    /// default number.
+    #[test]
+    fn text_line_height_defaults_to_none_when_omitted() {
+        let yaml = r#"
+id: label
+kind: Text
+text: {content: "Hi", font_family: Roboto, font_size: 16}
+style: {width: 90, height: 30, background: white}
+"#;
+        let mut tree = Tree::new();
+        let root = load_view(&mut tree, yaml).expect("a view with no line_height must still parse");
+        let node = tree.get(root).unwrap();
+        let NodeKind::Text(text) = &node.kind else {
+            panic!("expected a Text node");
+        };
+        assert_eq!(text.line_height, None);
+    }
+
+    /// M62 Phase 4 (§7.1, §16.3): the actual end-to-end claim for
+    /// typography roles, mirroring `corner_radius_token_name_resolves_
+    /// to_the_real_named_constant` above -- a real `role: title_medium`
+    /// in a real `view.yaml`, resolved through a real `load_view` call,
+    /// must produce the exact same `font_family`/`font_weight`/
+    /// `font_size`/`line_height` `engine_md3::type_style_named` itself
+    /// returns for `"title_medium"`.
+    #[test]
+    fn text_role_resolves_every_field_to_the_real_named_type_style() {
+        let yaml = r#"
+id: label
+kind: Text
+text: {content: "Hi", role: title_medium}
+style: {width: 90, height: 30, background: white}
+"#;
+        let mut tree = Tree::new();
+        let root = load_view(&mut tree, yaml).expect("a real typography role must resolve");
+        let node = tree.get(root).unwrap();
+        let NodeKind::Text(text) = &node.kind else {
+            panic!("expected a Text node");
+        };
+        let expected = engine_md3::type_style_named("title_medium").unwrap();
+        assert_eq!(text.font_family, expected.font_family);
+        assert_eq!(text.font_weight, expected.font_weight);
+        assert_eq!(text.font_size, expected.font_size);
+        assert_eq!(text.line_height, Some(expected.line_height));
+    }
+
+    /// A literal field alongside `role:` must override just that one
+    /// field, the rest still resolving from the role's own real
+    /// default -- proves the per-field-override cascade, not just "role
+    /// works in isolation."
+    #[test]
+    fn a_literal_field_overrides_just_that_one_field_on_top_of_the_role() {
+        let yaml = r#"
+id: label
+kind: Text
+text: {content: "Hi", role: title_medium, font_size: 20}
+style: {width: 90, height: 30, background: white}
+"#;
+        let mut tree = Tree::new();
+        let root = load_view(&mut tree, yaml).expect("role plus a literal override must resolve");
+        let node = tree.get(root).unwrap();
+        let NodeKind::Text(text) = &node.kind else {
+            panic!("expected a Text node");
+        };
+        let expected = engine_md3::type_style_named("title_medium").unwrap();
+        assert_eq!(text.font_size, 20.0, "the literal override must win");
+        assert_eq!(
+            text.font_weight, expected.font_weight,
+            "every field not literally overridden must still come from the role"
+        );
+    }
+
+    /// An unrecognized role name must be a real, clear
+    /// `SpecError::UnknownTypographyRole` naming the widget's own id
+    /// and the bad role -- not a silent fallback to some default role.
+    #[test]
+    fn unknown_text_role_names_the_offending_widget_and_role() {
+        let yaml = r#"
+id: bad-role
+kind: Text
+text: {content: "Hi", role: subtitle_huge}
+style: {width: 90, height: 30, background: white}
+"#;
+        let mut tree = Tree::new();
+        let err = load_view(&mut tree, yaml).expect_err("an unrecognized role must fail");
+        let SpecError::UnknownTypographyRole { id, role } = err else {
+            panic!("expected UnknownTypographyRole, got {err:?}");
+        };
+        assert_eq!(id, "bad-role");
+        assert_eq!(role, "subtitle_huge");
+    }
+
+    /// With neither `role` nor a literal `font_family`/`font_size`,
+    /// the real, final "missing required field" error must still fire
+    /// -- now at build time (`resolve_text_style`) rather than serde's
+    /// own automatic parse-time check, a real, inherent consequence of
+    /// widening both to genuinely role-derivable `Option`s.
+    #[test]
+    fn neither_role_nor_literal_font_fields_is_a_clear_missing_field_error() {
+        let yaml = r#"
+id: label
+kind: Text
+text: {content: "Hi"}
+style: {width: 90, height: 30, background: white}
+"#;
+        let mut tree = Tree::new();
+        let err =
+            load_view(&mut tree, yaml).expect_err("no role and no literal font fields must fail");
+        assert!(matches!(err, SpecError::MissingField { kind: "Text", .. }));
     }
 
     // M22 Phase 2 (§16.1): a real, tiny, decodable 4x4 PNG -- the

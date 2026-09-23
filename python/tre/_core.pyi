@@ -485,14 +485,23 @@ class Window:
         background: Color,
         width: float,
         height: float,
-        font_family: str = "Roboto",
-        font_weight: float = 400.0,
-        font_size: float = 16.0,
+        typography_role: str | None = None,
+        font_family: str | None = None,
+        font_weight: float | None = None,
+        font_size: float | None = None,
+        line_height: float | None = None,
         x: float | None = None,
         y: float | None = None,
     ) -> Node:
         """A plain label -- `background` is repurposed as the glyph
-        color (no visible box of its own).
+        color (no visible box of its own). `typography_role` is a real
+        MD3 type-scale role name (e.g. `"body_large"`); it supplies
+        `font_family`/`font_weight`/`font_size`/`line_height` as
+        defaults, each of which may still be individually overridden.
+        With no role and no explicit values, falls back to `"Roboto"`/
+        `400.0`/`16.0`/the font's own natural line-height metrics --
+        this method's own pre-existing defaults. Raises `ValueError` for
+        an unrecognized `typography_role`.
         """
         ...
     def add_button(

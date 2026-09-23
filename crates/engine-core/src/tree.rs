@@ -11150,6 +11150,7 @@ mod tests {
                 font_weight: 400.0,
                 font_size: 14.0,
                 align: TextAlign::Start,
+                line_height: None,
             }
         }
 

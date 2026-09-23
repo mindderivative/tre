@@ -447,3 +447,82 @@ bindings: {width: "{{ label.get() }}"}
 
     with pytest.raises(ValueError, match="expects a numeric binding"):
         VM(view)
+
+
+# --- M62 Phase 1 (§7.1, §16.3): real line_height support -------------------
+
+
+def test_add_text_accepts_a_line_height_kwarg():
+    # No Python-level getter exists for a Text node's own real per-line
+    # advance (`font_size`/`font_weight` have the identical honest
+    # limitation, confirmed via grep -- `Node.get` supports neither) --
+    # this proves the real FFI call succeeds with a real, non-default
+    # value, the same "fire-and-forget" bar `set_layout`'s own tests
+    # above already establish. `crates/engine-render/src/text.rs`'s own
+    # `a_larger_line_height_genuinely_widens_the_real_per_line_advance`
+    # is where the actual geometry change is proven, at the Rust layer.
+    window = Window(width=200, height=200)
+    node = window.add_text(
+        content="Hello",
+        background=(0, 0, 0, 0),
+        width=100,
+        height=40,
+        line_height=1.5,
+    )
+    assert isinstance(node, Node)
+
+
+def test_add_text_line_height_defaults_to_none():
+    # The pre-M62 implicit behavior (the font's own natural metrics)
+    # must still be reachable with zero change to an existing call --
+    # must not raise.
+    window = Window(width=200, height=200)
+    node = window.add_text(content="Hello", background=(0, 0, 0, 0), width=100, height=40)
+    assert isinstance(node, Node)
+
+
+# --- M62 Phase 4 (§7.1, §16.3): add_text's real typography_role parity ----
+
+
+def test_add_text_accepts_a_typography_role():
+    # No Python-level getter exists for a Text node's own real font
+    # properties (the identical honest limitation `line_height`'s own
+    # tests above already state) -- proves the real FFI call succeeds
+    # with a real MD3 role name. `crates/engine-spec/src/build.rs`'s own
+    # `text_role_resolves_every_field_to_the_real_named_type_style` is
+    # where the actual field-by-field resolution is proven, for the
+    # declarative surface -- the real mechanism both surfaces share.
+    window = Window(width=200, height=200)
+    node = window.add_text(
+        content="Heading",
+        background=(0, 0, 0, 0),
+        width=200,
+        height=40,
+        typography_role="headline_small",
+    )
+    assert isinstance(node, Node)
+
+
+def test_add_text_typography_role_can_be_overridden_by_a_literal_field():
+    window = Window(width=200, height=200)
+    node = window.add_text(
+        content="Heading",
+        background=(0, 0, 0, 0),
+        width=200,
+        height=40,
+        typography_role="headline_small",
+        font_size=30.0,
+    )
+    assert isinstance(node, Node)
+
+
+def test_add_text_unknown_typography_role_raises_value_error():
+    window = Window(width=200, height=200)
+    with pytest.raises(ValueError, match="typography_role"):
+        window.add_text(
+            content="Heading",
+            background=(0, 0, 0, 0),
+            width=200,
+            height=40,
+            typography_role="subtitle_huge",
+        )

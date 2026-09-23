@@ -226,6 +226,7 @@ impl GpuState {
                 font_weight: 400.0,
                 font_size: BODY_FONT_SIZE,
                 align: TextAlign::Start,
+                line_height: None,
             }),
             Style {
                 size: Size {
@@ -243,6 +244,7 @@ impl GpuState {
                 font_weight: 500.0,
                 font_size: HEADLINE_FONT_SIZE,
                 align: TextAlign::Start,
+                line_height: None,
             }),
             Style {
                 size: Size {
@@ -260,6 +262,7 @@ impl GpuState {
                 font_weight: 400.0,
                 font_size: ARABIC_FONT_SIZE,
                 align: TextAlign::Start,
+                line_height: None,
             }),
             Style {
                 size: Size {

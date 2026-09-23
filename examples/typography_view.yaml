@@ -1,0 +1,20 @@
+id: root
+kind: Container
+style: {flex_direction: Column, width: 360, height: 300, gap: 8, padding: 16, background: "#FFFFFF"}
+children:
+  - id: heading
+    kind: Text
+    text: {content: "Section heading", role: headline_small}
+    style: {width: 328, height: 32, background: "#FFFFFF"}
+  - id: body
+    kind: Text
+    text: {content: "The quick brown fox jumps over the lazy dog and keeps running.", role: body_large}
+    style: {width: 200, height: 90, background: "#FFFFFF"}
+  - id: loose_body
+    kind: Text
+    text: {content: "The quick brown fox jumps over the lazy dog and keeps running.", role: body_large, line_height: 3.0}
+    style: {width: 200, height: 140, background: "#FFFFFF"}
+  - id: overridden_label
+    kind: Text
+    text: {content: "label_large, but font_size overridden to 20", role: label_large, font_size: 20}
+    style: {width: 328, height: 24, background: "#FFFFFF"}

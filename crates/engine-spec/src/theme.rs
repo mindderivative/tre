@@ -68,6 +68,18 @@ pub struct ThemeSpec {
     /// in the shared struct so one theme file can serve both surfaces.
     #[serde(default)]
     pub components: HashMap<String, ComponentOverride>,
+    /// M62 Phase 3 (§7.1, §16.3): per-role overrides for `engine_md3::
+    /// typography`'s own real, shipped MD3 type scale -- keyed by one
+    /// of its 15 real role names (`"body_large"`, `"headline_small"`,
+    /// etc.), the identical real "parse-time data, resolved at apply
+    /// time" precedent `components:` above already establishes. A given
+    /// role's own shipped default (`engine_md3::type_style_named`)
+    /// still applies to every field an override here leaves unset --
+    /// each `TypographyOverride` field is independently optional so a
+    /// theme can, say, only widen `body_large`'s own `font_family`
+    /// without touching its real MD3 size/weight/line-height at all.
+    #[serde(default)]
+    pub typography: HashMap<String, TypographyOverride>,
 }
 
 /// M50: one imperative MD3 component's shape/elevation override --
@@ -89,6 +101,27 @@ pub struct ComponentOverride {
     pub corner_radius: Option<ShapeOrElevationSpec>,
     #[serde(default)]
     pub elevation: Option<ShapeOrElevationSpec>,
+}
+
+/// M62 Phase 3 (§7.1, §16.3): one MD3 type-scale role's own real
+/// override -- every field optional, the same per-field-optional shape
+/// `ComponentOverride` above already establishes, so a theme can widen
+/// just one real attribute of a role (e.g. only `font_size`) while
+/// leaving the rest at `engine_md3::type_style_named`'s own shipped
+/// default. Resolution (start from the named role's real default, then
+/// apply whichever of these 4 fields are `Some`) happens at apply time
+/// (Phase 4), not here -- this struct stays plain parse-time data.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TypographyOverride {
+    #[serde(default)]
+    pub font_family: Option<String>,
+    #[serde(default)]
+    pub font_weight: Option<f32>,
+    #[serde(default)]
+    pub font_size: Option<f32>,
+    #[serde(default)]
+    pub line_height: Option<f32>,
 }
 
 /// Parses a theme document -- mirrors `cascade::parse_stylesheet`'s own
@@ -176,6 +209,47 @@ styles:
     #[test]
     fn a_component_override_with_an_unknown_field_is_a_clear_error() {
         let err = parse_theme("components:\n  card: {not_a_real_field: 1}\n").unwrap_err();
+        assert!(err.to_string().contains("not_a_real_field"));
+    }
+
+    // --- M62 Phase 3: typography: ---
+
+    #[test]
+    fn typography_section_parses_a_real_role_override_with_some_fields_set() {
+        let theme = parse_theme(
+            "typography:\n  body_large: {font_family: Inter}\n  headline_small: {font_size: 26, line_height: 1.4}\n",
+        )
+        .unwrap();
+        assert_eq!(theme.typography.len(), 2);
+        assert_eq!(
+            theme.typography["body_large"],
+            TypographyOverride {
+                font_family: Some("Inter".to_string()),
+                font_weight: None,
+                font_size: None,
+                line_height: None,
+            }
+        );
+        assert_eq!(
+            theme.typography["headline_small"],
+            TypographyOverride {
+                font_family: None,
+                font_weight: None,
+                font_size: Some(26.0),
+                line_height: Some(1.4),
+            }
+        );
+    }
+
+    #[test]
+    fn an_empty_theme_documents_typography_section_is_empty() {
+        let theme = parse_theme("{}").unwrap();
+        assert!(theme.typography.is_empty());
+    }
+
+    #[test]
+    fn a_typography_override_with_an_unknown_field_is_a_clear_error() {
+        let err = parse_theme("typography:\n  body_large: {not_a_real_field: 1}\n").unwrap_err();
         assert!(err.to_string().contains("not_a_real_field"));
     }
 }

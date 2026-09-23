@@ -1521,6 +1521,19 @@ pub struct TextState {
     pub font_size: f32,
     /// M30 Phase 1 (§5, §7): see `TextAlign`'s own doc comment.
     pub align: TextAlign,
+    /// M62 Phase 1 (§7.1, §16.3): a font-size-relative line-height
+    /// multiplier (`parley::LineHeight::FontSizeRelative`'s own real
+    /// shape -- verified against `parley` 0.11.1's own vendored source,
+    /// not assumed), matching MD3's own published type-scale convention
+    /// of stating line-height as `size` × ratio. `None` is a real,
+    /// distinct value, not a stand-in for some concrete default: it
+    /// means "use the font's own natural metrics" (`parley::LineHeight
+    /// ::MetricsRelative(1.0)`, the library's own real default, and
+    /// this codebase's exact real behavior for every `TextState` ever
+    /// built before this field existed) -- `Some(1.0)` is a different,
+    /// real, explicit choice (exactly the font size, no leading at
+    /// all), not the same thing spelled two ways.
+    pub line_height: Option<f32>,
 }
 
 /// Universal paint state every node has, regardless of `NodeKind`.
