@@ -17,19 +17,25 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M54 — Real `Event` Payload for Handlers (§8, §16.2) | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-22) |
 | M55 — Real `FocusEnter`/`FocusExit` Events (§10, §16.2) | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-22) |
 | M56 — `Event.node`: a Real Live `Node` Handle (§8, §16.2) | `██████████` 100% | ✅ Complete — both phases done (2026-09-23) |
+| M57 — Fix `Window`'s `self.active` Bypass (§8) | `██████████` 100% | ✅ Complete — all 5 phases done (2026-09-23) |
+| M58 — MD3 Theming Catalog Loose Ends (§7.1) | `⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜` 0% | ⬜ Scoped, not started (2026-09-23) |
+| M59 — Layout API Breadth: Per-Side Padding/Margin + Flex/Align (§5, §16.3) | `⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜` 0% | ⬜ Scoped, not started (2026-09-23) |
+| M60 — Styling API Breadth I: Border Kwargs Across the Catalog (§5, §7) | `⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜` 0% | ⬜ Scoped, not started (2026-09-23) |
+| M61 — Styling API Breadth II: Token-Reference Substitution in `StyleSpec` (§16.3) | `⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜` 0% | ⬜ Scoped, not started (2026-09-23) |
+| M62 — Styling API Breadth III: Typography Theming (§7.1, §16.3) | `⬜⬜⬜⬜⬜⬜⬜⬜⬜⬜` 0% | ⬜ Scoped, not started (2026-09-23) |
 
 **Just closed:** M56 — `Event.node`: a Real Live `Node` Handle. User: "What do you recommend next?" I recommended `Event.source` -> `Node`, the one design fork both M54 and M55 explicitly deferred. User: "Scope Event.source -> Node." A dedicated Explore agent traced every real `Event`-construction call site against `Node`'s own real constructor requirements before designing anything. **Key finding: needed zero `engine-core` changes** -- every field `Node` needs (`tree`/`handlers`/`context_menus`/`theme`/`completions`) was already reachable at every real call site; the only real gaps were a handful of those fields not yet pulled into local scope at ~9 call sites, purely mechanical plumbing. **Re-entrancy confirmed safe by existing precedent, not assumed:** `call_handler`'s own `make_event` closure always completes -- `Event` fully built, `Py<Node>` included -- before the real Python handler runs; building a `Node` costs only cheap `Rc` clones, never a live `Tree` borrow. Three real design forks resolved via `AskUserQuestion`: additive `Event.node: Node`, `source: int` unchanged; eager construction every dispatch; and -- the one non-default choice, overriding this session's own stated recommendation -- also fixing `copy_to_system_clipboard`/`cut_to_system_clipboard`/`paste_from_system_clipboard`'s own real, pre-existing `active`-bundle bypass (stale after a `show_view` switch) as part of this same milestone rather than deferring it. Both phases complete: engine-py threading through every real call site plus the adjacent clipboard fix (Phase 1); Python-facing docs, 8 new tests, and an extended example (Phase 2). See this file's own Milestone 56 section below for the full writeup.
 
-**Up next:** nothing scoped yet -- M56 just closed and the user hasn't directed a next milestone. This file's own "Known gaps" section below was re-audited 2026-09-23 (cross-checking every M48-M56 "explicitly out of scope" note against live source, not just trusted from its own prior mention) and now names 5 real, currently-open items, none of them scoped as "next": a genuine environmental accessibility-client limitation, a real `Window`-API inconsistency found during M56 itself, and three residual gaps from the M48-M52 theming/layout/styling work, all detailed below. None is currently chosen; the next milestone will come from the user's own direction.
+**Up next:** M58 through M62 — the user asked to scope all 4 non-environmental "Known gaps" bullets below at once ("Scope the following Known Gaps"). Four parallel Explore agents investigated each gap's real fix shape before any design decisions were made; the investigation found the four gaps are very different sizes, so this became 6 separate milestones rather than one, matching this project's own established precedent (M49-M52 kept a related theming roadmap as 4 separate milestones): **M57** (✅ complete, see its own section below) fixed the `Window`/`self.active` bypass gap -- plus 2 more real call sites (`copy_terminal_selection`, `route_control_char_to_terminal`) the investigation found beyond the 6 originally named. **M58** closes the 5 MD3 theming catalog loose ends. **M59** widens the layout API (per-side padding/margin, flex-grow/shrink/basis, align-items/justify-content) -- confirmed `engine-core` needs zero changes, `Tree::set_layout_style` is already fully general. **M60/M61/M62** split the styling API breadth gap into its three genuinely separate real pieces the investigation found bundled in one bullet: border kwargs (mechanical), token-reference substitution in `StyleSpec` (a new literal-or-token enum), and typography theming (the largest, an entirely new `engine_md3::typography` subsystem with no existing infrastructure to build on). See each milestone's own section below for the full scope and the two real design forks the user resolved via `AskUserQuestion` (unifying `add_pagination`'s theme key despite the shipped visual change it causes; fixing `add_time_input_field`'s color gate despite its small un-themed color change). Scoped 2026-09-23, not yet all complete -- this file tracks the full planned roadmap, filled in as each milestone/phase actually closes, per the user's own explicit request.
 
 **Known gaps:**
 - No live AT-SPI/UIA/NSAccessibility client is available in this dev/CI environment (M4 Phase 2's own real, stated constraint) — `Action::Click`/`Action::Focus` dispatch is real and unit-tested at every layer that doesn't need one, but a genuinely interactive screen reader driving a real request through the full stack is real, separate follow-up work whenever such an environment exists (M3 step 7's original wiring *did* have one at the time). An environmental limitation, not something more code alone fixes.
-- `Window`'s own "act on the currently focused node" methods — `select_all`/`press_key`/`type_text`/`copy`/`cut`/`resize` — still read `self.tree`/`self.handlers`/`self.root` directly instead of through `self.active`, unlike `click`/`hover`/`scroll`/`focus` and the M56-fixed `copy_to_system_clipboard`/`cut_to_system_clipboard`/`paste_from_system_clipboard` trio. Found while writing M56's own tests (2026-09-23, confirmed via direct source read, not assumed): none of these methods follow a real `Window.show_view()` switch — a real, currently-open staleness risk for any app that calls one of them after switching views, explicitly left out of M56's own approved scope.
-- Several real MD3 theming loose ends remain even after M49–M52's own theme-as-YAML/live-re-theme work — found and named, not fixed, during M52's own investigation, confirmed unchanged since: `add_tooltip`'s own color and `build_menu`'s own panel shape/elevation are still not theme-resolved at all; `add_search_bar`'s icon-button corner radius is a hardcoded literal rather than looked up via `theme.shape`; `add_pagination`'s previous/next icon buttons key off `"pagination"` rather than `"icon_button"`, a third inconsistent real convention among this catalog's icon-button-shaped elements; `add_time_input_field`'s text tint has no `is_set()` gate unlike its `TextField`/`CodeEditor` siblings.
-- Layout API breadth gaps, real and unbuilt since M48's own investigation, confirmed still true (no `padding_top`/`margin`/`flex_grow`/`justify_content`/etc. anywhere in `StyleSpec`/`Node.set_layout`): per-side padding/margin both stay uniform-scalar-only; flex-grow/shrink/basis and align-items/justify-content are real taffy-level gaps with no source anywhere in this codebase.
-- Styling API breadth gaps, also real and unbuilt since M48/M49: border kwargs (`border_color`/`border_width`) exist as a constructor option only on `add_rect`, no other widget factory in the 58-entry catalog; token-reference substitution inside `StyleSpec` (writing `corner_radius: small` and having it resolve by name against a theme's own shape/elevation scale) doesn't exist — values stay plain literal numbers; typography theming (font family/weight/size stay per-node literals in `TextSpec`, no theme-driven typography scale at all).
+- Several real MD3 theming loose ends remain even after M49–M52's own theme-as-YAML/live-re-theme work — found and named, not fixed, during M52's own investigation, confirmed unchanged since: `add_tooltip`'s own color and `build_menu`'s own panel shape/elevation are still not theme-resolved at all; `add_search_bar`'s icon-button corner radius is a hardcoded literal rather than looked up via `theme.shape`; `add_pagination`'s previous/next icon buttons key off `"pagination"` rather than `"icon_button"`, a third inconsistent real convention among this catalog's icon-button-shaped elements; `add_time_input_field`'s text tint has no `is_set()` gate unlike its `TextField`/`CodeEditor` siblings. **Scoped as M58.**
+- Layout API breadth gaps, real and unbuilt since M48's own investigation, confirmed still true (no `padding_top`/`margin`/`flex_grow`/`justify_content`/etc. anywhere in `StyleSpec`/`Node.set_layout`): per-side padding/margin both stay uniform-scalar-only; flex-grow/shrink/basis and align-items/justify-content are real taffy-level gaps with no source anywhere in this codebase. **Scoped as M59.**
+- Styling API breadth gaps, also real and unbuilt since M48/M49: border kwargs (`border_color`/`border_width`) exist as a constructor option only on `add_rect`, no other widget factory in the 58-entry catalog; token-reference substitution inside `StyleSpec` (writing `corner_radius: small` and having it resolve by name against a theme's own shape/elevation scale) doesn't exist — values stay plain literal numbers; typography theming (font family/weight/size stay per-node literals in `TextSpec`, no theme-driven typography scale at all). **Scoped as M60/M61/M62 (three genuinely separate pieces, not one).**
 
 **Fixed gaps:**
+- ~~`Window`'s own "act on the currently focused node" methods — `select_all`/`press_key`/`type_text`/`copy`/`cut`/`resize` — read `self.tree`/`self.handlers`/`self.root` directly instead of through `self.active`, unlike `click`/`hover`/`scroll`/`focus` and the M56-fixed `copy_to_system_clipboard`/`cut_to_system_clipboard`/`paste_from_system_clipboard` trio, so none of them followed a real `Window.show_view()` switch.~~ **Fixed (M57, all 5 phases).** All 6 named methods plus 2 more real call sites the investigation found beyond the original bullet (`copy_terminal_selection`, `route_control_char_to_terminal`) now route through `self.active`.
 - ~~Every registered handler, of any kind, stays zero-argument — no real `Event` object with payload data exists anywhere in this codebase.~~ **Fixed (M54, all 3 phases).** A real `Event` pyclass (`kind`/`source`/`position`/`button`/`old_value`/`new_value`) now reaches any handler that arity-sniffed as wanting one (`dispatch::wants_event_payload`, checked once at registration) — every pre-existing zero-argument handler keeps working unmodified, confirmed by the full 755-test suite passing unchanged before Phase 3's own 12 new tests were added.
 - ~~§14 didn't sequence `engine-spec`/YAML-view work.~~ **Fixed.**
 - ~~`PLAN.md`/`LOG.md` archiving to `planning/archive/` (this section's own prior claim) actually stopped after Phase 4 step 6.~~ **Resolved — corrected 2026-09-21: not a gap, a stale process claim.** The project's own now-settled convention (overwrite `PLAN.md`/`LOG.md` per step, `BUILD_TRACKER.md` is the one durable record, no per-step archiving) already supersedes what this bullet complained about — confirmed current in the project's own memory record of this correction.
@@ -304,6 +310,125 @@ M54 already built every real mechanism this milestone reuses wholesale: the `Eve
 - Step 4: `BUILD_TRACKER.md`/`PLAN.md`/`LOG.md` — ✅ (this section; Top Metrics row added at 100%/complete; tracker regenerated, artifact republished.)
 
 **Verification (Phase 2, full milestone re-verification):** `cargo check`/`clippy -D warnings`/`fmt --check` clean (no Rust changes this phase); `cargo test --workspace --release` (unchanged). `maturin develop --release`; `pytest tests/` (784 passed, up from 776, +8, 2 skipped unchanged); all 88 examples (zero failures); `demo/showcase.py` (all 5 phases, exit 0).
+
+---
+
+## Milestone 57 — Fix `Window`'s `self.active` Bypass (§8)
+
+**Status: ✅ Complete — all 5 phases done (2026-09-23).** User pasted this file's own "Known gaps" bullet and asked to scope it, alongside the other 3 remaining bullets (see Milestones 58-62). A dedicated Explore agent traced every real call site before any code was written. **Real finding beyond the bullet's own text:** the same bug exists at 2 more real call sites the bullet never named — `copy_terminal_selection` (identical shape to `copy`) and `route_control_char_to_terminal` (used by `press_ctrl`, identical shape to `route_to_terminal`) — both confirmed via direct source read, not assumed. `resize` is architecturally split: `self.width`/`height.set()` correctly stay window-level (`SharedSize`, shared regardless of active view), but its own `Tree::dispatch` call must route through `active`. `View` has no equivalent bug at all — no `active`/swap concept exists there.
+
+### Phase 1 — Trivial Reads: `select_all`/`copy`/`copy_terminal_selection` ✅
+- Step 1: all three switched to `self.active.borrow().tree.clone()` — ✅ (`window_input.rs`, mirroring `copy_to_system_clipboard`'s own exact M56 pattern.)
+
+### Phase 2 — `press_key`/`type_text` + Terminal Routing ✅
+- Step 1: `press_key`/`type_text` route through `active` — ✅ (`window_input.rs`: clones `(tree, root, handlers, context_menus)` from `self.active.borrow()`, mirroring `click`'s own pattern.)
+- Step 2: `route_to_terminal`/`route_control_char_to_terminal` fixed — ✅ (both now read `window.active.borrow().tree` instead of `window.tree` directly, no signature change needed since both already take `&PyWindow`; `window.terminals` stays a plain window-level read, correctly unaffected by `show_view`. Fixes `press_ctrl` too, which calls `route_control_char_to_terminal`.)
+
+### Phase 3 — `cut` ✅
+- Step 1: `cut` routes through `active` — ✅ (`window_input.rs`: clones `(tree, handlers, context_menus)` from `self.active.borrow()`, rebuilds its local `NodeContext` from those; `theme`/`completions` stay plain `self.*` reads per `ActiveTree`'s own doc comment.)
+
+### Phase 4 — `resize` ✅
+- Step 1: split `self.width`/`height.set()` (stays window-level) from the `Tree::dispatch`/`run_dispatch_outcome` call (routes through `active`) — ✅
+
+### Phase 5 — Tests, Docs, Verification ✅
+- Step 1: new `tests/test_window_active_bypass.py` (4 new tests) — ✅ (extends `test_view_in_window.py`'s own established `show_view`-switch pattern to `select_all`/`copy`/`press_key`/`type_text`/`cut`/`resize`. **Real, honest finding, not glossed over:** `route_to_terminal`/`route_control_char_to_terminal`'s own fix can't be proven through a `show_view` switch at all — confirmed via grep that `NodeKind::Terminal` has no declarative YAML representation anywhere in `engine-spec`, so a `Terminal` can never live inside a `View`'s own tree; `tests/test_terminal.py`'s existing, unmodified coverage on a plain `Window` already gives full regression proof for the ordinary case instead. `resize`'s own test proves "does not raise + the active view's own node stays clickable afterward," the same honest limit `test_view_in_window.py`'s own `test_from_view_shares_the_same_live_size_cell_as_the_window` already names -- no layout-inspection API is exposed to Python to prove more precisely.)
+- Step 2: full verification chain — ✅ (`cargo check`/`clippy -D warnings`/`fmt --check` clean, zero `engine-core` changes; `cargo test --workspace --release` unchanged; `maturin develop --release`; `pytest tests/` 788 passed, up from 784, +4, 2 skipped unchanged; all 88 examples; `demo/showcase.py` all 5 phases, exit 0.)
+
+---
+
+## Milestone 58 — MD3 Theming Catalog Loose Ends (§7.1)
+
+**Status: ⬜ Scoped, not started (2026-09-23).** Same investigation as M57 (this file's own "Known gaps" bullet, scoped alongside the other 3). Five specific, confirmed-via-direct-source-read gaps in `window_factory.rs`'s 58-entry catalog, three of them safe/additive and two needing (and receiving, via `AskUserQuestion`) explicit user sign-off since they change real shipped visual output.
+
+### Phase 1 — Safe/Additive: `add_tooltip`, `build_menu`, `add_search_bar` ⬜
+- Step 1: `add_tooltip` color theme-resolution — ⬜ (currently only `corner_radius` is theme-resolved; add `theme.role("inverse_surface")`/`role("inverse_on_surface")`, `is_set()`-gated, at construction and in its retheme hook.)
+- Step 2: `build_menu` panel gains a real retheme hook — ⬜ (currently hardcodes `MENU_PANEL_CORNER_RADIUS`/`MENU_PANEL_ELEVATION` with no `theme.shape`/`elevation` lookup and no hook at all; add both plus a new `menu_retheme_hook`.)
+- Step 3: `add_search_bar` icon-button corner radius — ⬜ (switch both containers from the hardcoded `SEARCH_ICON_BUTTON_SIZE / 2.0` literal to `theme.shape("icon_button", None).unwrap_or(...)`, matching `add_top_app_bar`/`add_spin_box`'s own established pattern; extend the hook to match.)
+
+### Phase 2 — `add_time_input_field` Color Gate (Approved Visual Change) ⬜
+- Step 1: wrap `text_tint` resolution in `if theme.is_set() { ... }` — ⬜ (currently reads `theme.on_surface()` unconditionally; real, approved, near-imperceptible un-themed color change from pure black `#000000` to `TextFieldState`'s own real default `#1C1B1F`, matching `TextField`/`CodeEditor`'s established convention. User explicitly approved this via `AskUserQuestion`.)
+
+### Phase 3 — `add_pagination` Key Unification (Approved Visual Change) ⬜
+- Step 1: `previous`/`next` switch to `theme.shape("icon_button", None)` — ⬜ (page-number items unchanged, stay on `"pagination"`; real, approved visual change for `previous`/`next` specifically, user explicitly approved via `AskUserQuestion`.)
+- Step 2: `default_theme.yaml` doc-comment update, not a new override — ⬜ (the existing `pagination:` entry stays as-is, still correctly serving page-number items; add a comment clarifying its narrowed scope. Deliberately **not** adding a new blanket `icon_button:` override, which the investigation found would silently ripple into `add_top_app_bar`/`add_spin_box`/`add_search_bar`'s own shipped appearance too.)
+
+### Phase 4 — Tests, Docs, Verification ⬜
+- Step 1: pytest coverage extending each factory's own established M50/M52-era construction-time + `set_theme()`-live fixtures — ⬜
+- Step 2: full verification chain + docs/tracker/artifact — ⬜
+
+---
+
+## Milestone 59 — Layout API Breadth: Per-Side Padding/Margin + Flex/Align (§5, §16.3)
+
+**Status: ⬜ Scoped, not started (2026-09-23).** Same investigation/scoping round as M57/M58. **Key finding: `engine-core` needs zero changes** — `Tree::set_layout_style` (`tree.rs:1289-1298`) already takes a raw `taffy::Style` and is fully general; the gap is entirely at the Python/YAML-facing API surface (`Node.set_layout` only patches 4 scalar fields; `StyleSpec` has no `margin` at all and only uniform-scalar `padding`/`gap`; no `flex_grow`/`flex_shrink`/`flex_basis`/`align_items`/`justify_content` anywhere, confirmed via grep).
+
+### Phase 1 — `engine-spec`: Per-Side Padding/Margin ⬜
+- Step 1: new scalar-or-per-side `StyleSpec.padding`, new `StyleSpec.margin` field — ⬜ (the first real `#[serde(untagged)]` union in `spec.rs` — no existing precedent to mirror, verify `serde_yaml_ng` handles it cleanly before committing to the shape.)
+- Step 2: `build.rs::layout_style` builds real per-side `taffy::Rect<LengthPercentage>`/`Rect<LengthPercentageAuto>` — ⬜
+
+### Phase 2 — `engine-spec`: Flex-Grow/Shrink/Basis + Align/Justify ⬜
+- Step 1: new `StyleSpec` fields `flex_grow`/`flex_shrink`/`flex_basis`/`align_items`/`justify_content` — ⬜ (the two alignment fields as new small unit-variant enums mirroring `FlexDirectionSpec`'s existing, already-working serde shape — a real precedent, unlike Phase 1's per-side padding.)
+- Step 2: wired into `layout_style` — ⬜
+
+### Phase 3 — `engine-py`: `Node.set_layout` Widened ⬜
+- Step 1: new kwargs for all of the above, building a full `taffy::Style` and calling the already-general `Tree::set_layout_style` directly — ⬜
+
+**Explicitly out of scope for this milestone, named not silent:** widening `Window.add_rect`/other factories' own constructor kwargs with the same fields — `Node.set_layout` already gives every already-built node the imperative path regardless of which factory created it, so a dedicated per-factory kwarg would be pure duplication, not a real gap.
+
+### Phase 4 — Tests, Docs, Verification ⬜
+- Step 1: new `engine-spec` unit tests (scalar vs. per-side YAML; each new enum's real string forms) + pytest coverage for `Node.set_layout`'s widened kwargs — ⬜
+- Step 2: full verification chain + docs/tracker/artifact — ⬜
+
+---
+
+## Milestone 60 — Styling API Breadth I: Border Kwargs Across the Catalog (§5, §7)
+
+**Status: ⬜ Scoped, not started (2026-09-23).** The first of 3 genuinely separate pieces the investigation found bundled in one "styling API breadth" Known Gaps bullet — kept as 3 separate milestones rather than 3 phases of one, since they're very different sizes (this one mechanical, M61 substantial, M62 the largest). `add_rect`'s own existing `border_color`/`border_width` pattern (`window_factory.rs:3013-3033`) is mechanical to extend — `PaintProperties` (`engine-core/src/node.rs:1527-1558`) is universal — but `paint_node` (`engine-render/src/lib.rs:354-543`) only strokes a border for `NodeKind::Rect | Splitter | LoadingIndicator`, so only the ~35-40 factories whose primary node is `NodeKind::Rect` are in scope.
+
+### Phase 1 — Extend Border Kwargs to Every Rect-Backed Factory ⬜
+- Step 1: `border_color`/`border_width` optional kwargs added, mirroring `add_rect`'s own exact conditional-overwrite pattern — ⬜ (batched across however many phases keeps each reviewable; no custom retheme-hook logic needed per-factory, unlike M52's own catalog work, since this is the same 4-line pattern repeated.)
+
+**Explicitly out of scope for this milestone, named not silent (the author's own default, flagged for visibility since it wasn't separately confirmed with the user):** Container/Text/ScrollView/Carousel-backed factories, which would need real `paint_node` (`engine-render`) changes to even honor a border; the ~12-14 factories with their own dedicated `NodeKind` state (`Checkbox`/`Slider`/etc.), which raise a genuine "does a border even make visual sense here" design question. Both real, separate, un-scoped future candidates, not silently dropped.
+
+### Phase 2 — Tests, Docs, Verification ⬜
+- Step 1: pytest coverage + a small extension to an existing styling example — ⬜
+- Step 2: full verification chain + docs/tracker/artifact — ⬜
+
+---
+
+## Milestone 61 — Styling API Breadth II: Token-Reference Substitution in `StyleSpec` (§16.3)
+
+**Status: ⬜ Scoped, not started (2026-09-23).** The second of the 3 styling-breadth pieces (see M60). `engine_md3::shape` (`shape.rs:25-44`) already has real named constants (`SHAPE_NONE`/`EXTRA_SMALL`/`SMALL`/`MEDIUM`/`LARGE`/`EXTRA_LARGE`, `ELEVATION_LEVEL_0..5`); the precedent to mirror is `StyleSpec.background: Option<String>`, resolved by `resolve_color` (`build.rs:521-528`, tries a theme role first, falls back to a literal parse) — but `corner_radius`/`elevation` are `f32`, not `String`, so this needs a genuinely new type, not just new logic.
+
+### Phase 1 — New `Literal | TokenRef` Enum ⬜
+- Step 1: new enum with custom `Deserialize` (accepts either a bare YAML number or a string token name), applied to `StyleSpec.corner_radius`/`elevation` and `ComponentOverride.corner_radius`/`elevation` — ⬜
+
+### Phase 2 — Resolution ⬜
+- Step 1: wired into `build.rs`'s `node_kind_and_paint`/`patch_node`, resolving named tokens against `engine_md3::shape`'s real constants — ⬜ (an unrecognized token name is a real, clear `SpecError`, not a silent fallback to 0.)
+
+### Phase 3 — Tests, Docs, Verification ⬜
+- Step 1: `engine-spec` unit tests (literal still parses as before; a real token name resolves correctly; an unknown token name errors clearly) + a YAML example demonstrating `corner_radius: small` — ⬜
+- Step 2: full verification chain + docs/tracker/artifact — ⬜
+
+---
+
+## Milestone 62 — Styling API Breadth III: Typography Theming (§7.1, §16.3)
+
+**Status: ⬜ Scoped, not started (2026-09-23).** The third and largest of the 3 styling-breadth pieces (see M60/M61). `TextSpec` (`spec.rs:176-182`) is per-node literals only; **no typography-scale module exists anywhere** in `engine-md3` (confirmed via grep) — dozens of scattered per-factory font-size/weight constants in `window_factory.rs` are exactly the "pre-centralization" state `shape.rs` itself was in before M49. No existing data or plumbing to build on at all, unlike M60/M61.
+
+### Phase 1 — New `engine_md3::typography` Module ⬜
+- Step 1: a real MD3 type scale (role → family/weight/size/line-height), mirroring `shape.rs`'s own structure and doc-comment style — ⬜
+
+### Phase 2 — `typography:` `ThemeSpec` YAML Section ⬜
+- Step 1: role overrides, parsed the same way `colors:`/`components:` already are — ⬜
+
+### Phase 3 — `TextSpec` Wiring ⬜
+- Step 1: optional role-reference field, reusing M61's own `Literal | TokenRef`-shaped machinery where it fits — ⬜
+- Step 2: resolved in `build.rs` and threaded into `window_factory.rs`'s text-creating factories for imperative parity with the declarative path — ⬜
+
+### Phase 4 — Tests, Docs, Verification ⬜
+- Step 1: tests + a YAML/imperative example demonstrating a themed heading vs. body-text role — ⬜
+- Step 2: full verification chain + docs/tracker/artifact — ⬜
 
 ---
 

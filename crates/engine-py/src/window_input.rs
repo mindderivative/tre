@@ -303,8 +303,25 @@ impl PyWindow {
     fn resize(&mut self, width: u32, height: u32, py: Python<'_>) {
         self.width.set(width);
         self.height.set(height);
-        let outcome = self.tree.borrow_mut().dispatch(
-            self.root,
+        // M57 (§8): the `Tree::dispatch` call routes through `self.
+        // active`, not `self.tree`/`self.root`/`self.handlers`/`self.
+        // context_menus` directly -- a real resize must mutate whichever
+        // View is currently shown, the identical real staleness fix
+        // every other "act on the currently active view" method already
+        // got. `self.width`/`height.set()` above stay window-level,
+        // correctly unaffected -- a real, shared `SharedSize` regardless
+        // of which View is currently active.
+        let (tree, root, handlers, context_menus) = {
+            let active = self.active.borrow();
+            (
+                active.tree.clone(),
+                active.root,
+                active.handlers.clone(),
+                active.context_menus.clone(),
+            )
+        };
+        let outcome = tree.borrow_mut().dispatch(
+            root,
             InputEvent::Resized {
                 width: width as f32,
                 height: height as f32,
@@ -318,9 +335,9 @@ impl PyWindow {
         // never actually reaches a handler; kept honest rather than
         // reconstructing the `Resized` event just to thread through.
         run_dispatch_outcome(
-            &self.handlers,
-            &self.tree,
-            &self.context_menus,
+            &handlers,
+            &tree,
+            &context_menus,
             &self.theme,
             &self.completions,
             &outcome,
@@ -531,16 +548,30 @@ impl PyWindow {
         if route_to_terminal(self, &event) {
             return Ok(());
         }
-        let outcome = self.tree.borrow_mut().dispatch(
-            self.root,
+        // M57 (§8): reads through `self.active`, not `self.tree`/
+        // `self.root`/`self.handlers`/`self.context_menus` directly --
+        // the identical real staleness fix `click`/`hover`/`scroll`/
+        // `focus` already established, so a real key press reaches
+        // whatever View is currently shown after a `show_view` switch.
+        let (tree, root, handlers, context_menus) = {
+            let active = self.active.borrow();
+            (
+                active.tree.clone(),
+                active.root,
+                active.handlers.clone(),
+                active.context_menus.clone(),
+            )
+        };
+        let outcome = tree.borrow_mut().dispatch(
+            root,
             event.clone(),
             &interaction_config(),
             std::time::Instant::now(),
         );
         run_dispatch_outcome(
-            &self.handlers,
-            &self.tree,
-            &self.context_menus,
+            &handlers,
+            &tree,
+            &context_menus,
             &self.theme,
             &self.completions,
             &outcome,
@@ -565,16 +596,28 @@ impl PyWindow {
         if route_to_terminal(self, &event) {
             return;
         }
-        let outcome = self.tree.borrow_mut().dispatch(
-            self.root,
+        // M57 (§8): see `press_key`'s own identical `active`-routing
+        // fix just above -- `paste()` forwards to this method, so it
+        // gets the same fix for free, with no separate change needed.
+        let (tree, root, handlers, context_menus) = {
+            let active = self.active.borrow();
+            (
+                active.tree.clone(),
+                active.root,
+                active.handlers.clone(),
+                active.context_menus.clone(),
+            )
+        };
+        let outcome = tree.borrow_mut().dispatch(
+            root,
             event.clone(),
             &interaction_config(),
             std::time::Instant::now(),
         );
         run_dispatch_outcome(
-            &self.handlers,
-            &self.tree,
-            &self.context_menus,
+            &handlers,
+            &tree,
+            &context_menus,
             &self.theme,
             &self.completions,
             &outcome,
@@ -635,8 +678,14 @@ impl PyWindow {
     /// real category of gap this codebase's own "no live AT-SPI client"
     /// note already states honestly elsewhere.
     fn copy(&self) -> Option<String> {
-        let field = self.tree.borrow().focused()?;
-        self.tree.borrow().text_field_selected_text(field)
+        // M57 (§8): reads through `self.active`, not `self.tree`
+        // directly -- the identical real staleness fix `click`/`hover`/
+        // etc. already established, so a real `TextField` selection
+        // survives a `show_view` switch, matching every other real
+        // "act on the currently focused node" method.
+        let tree = self.active.borrow().tree.clone();
+        let field = tree.borrow().focused()?;
+        tree.borrow().text_field_selected_text(field)
     }
 
     /// M32 Phase 6 (§4, §5, §8): `copy`'s own real `Terminal` sibling
@@ -649,21 +698,41 @@ impl PyWindow {
     /// is currently focused -- use `Node.set_terminal_selection` first
     /// to seed a real selection without a live mouse drag.
     fn copy_terminal_selection(&self) -> Option<String> {
-        let terminal = self.tree.borrow().focused()?;
-        self.tree.borrow().terminal_selected_text(terminal)
+        // M57 (§8): reads through `self.active`, the identical real
+        // staleness fix `copy`'s own sibling above just got.
+        let tree = self.active.borrow().tree.clone();
+        let terminal = tree.borrow().focused()?;
+        tree.borrow().terminal_selected_text(terminal)
     }
 
     /// `copy`'s own real Cut sibling -- same real scope boundary
     /// (hermetic, no real OS clipboard touched), reusing the real,
     /// pure `Tree::cut_text_field_selection`.
     fn cut(&self, py: Python<'_>) -> Option<String> {
-        let field = self.tree.borrow().focused()?;
+        // M57 (§8): reads through `self.active`, not `self.tree`/
+        // `self.handlers`/`self.context_menus` directly -- the
+        // identical real staleness fix every other "act on the
+        // currently focused node" method already got, so a real cut
+        // (and the `Change` handler it fires) targets whatever View is
+        // currently shown after a `show_view` switch. `theme`/
+        // `completions` stay plain `self.*` reads -- deliberately
+        // outside the swapped `active` bundle, per `ActiveTree`'s own
+        // doc comment.
+        let (tree, handlers, context_menus) = {
+            let active = self.active.borrow();
+            (
+                active.tree.clone(),
+                active.handlers.clone(),
+                active.context_menus.clone(),
+            )
+        };
+        let field = tree.borrow().focused()?;
         // M54 Phase 2: the field's own real pre-cut content, read
         // before `cut_text_field_selection` mutates it -- the one real
         // place it's still whole, the same "snapshot before mutate"
         // discipline `engine-core`'s own real `Changed` producers use.
-        let old = crate::dispatch::read_new_changed_value(&self.tree.borrow(), field, py);
-        let text = self.tree.borrow_mut().cut_text_field_selection(field)?;
+        let old = crate::dispatch::read_new_changed_value(&tree.borrow(), field, py);
+        let text = tree.borrow_mut().cut_text_field_selection(field)?;
         // A real cut genuinely edits the field's own content -- fires
         // `Change` the same way `Node.set_checked`/`set_text` already
         // do for a direct, non-`Tree::dispatch` mutation (`cut_text_
@@ -672,15 +741,15 @@ impl PyWindow {
         // carry this automatically the way Backspace/Delete/typing get
         // it for free).
         let ctx = crate::event::NodeContext {
-            tree: &self.tree,
-            handlers: &self.handlers,
-            context_menus: &self.context_menus,
+            tree: &tree,
+            handlers: &handlers,
+            context_menus: &context_menus,
             theme: &self.theme,
             completions: &self.completions,
         };
-        call_handler(&self.handlers, field, EventKind::Change, py, |py| {
+        call_handler(&handlers, field, EventKind::Change, py, |py| {
             let old = old?;
-            let new = crate::dispatch::read_new_changed_value(&self.tree.borrow(), field, py)?;
+            let new = crate::dispatch::read_new_changed_value(&tree.borrow(), field, py)?;
             crate::event::Event::change(py, field, &ctx, old, new)
         });
         Some(text)
@@ -785,10 +854,13 @@ impl PyWindow {
     /// `TextField` was actually focused -- a true no-op otherwise (no
     /// field focused, or the focused node isn't a `TextField`).
     fn select_all(&self) -> bool {
-        let Some(field) = self.tree.borrow().focused() else {
+        // M57 (§8): reads through `self.active`, the identical real
+        // staleness fix `copy`/`copy_terminal_selection` above just got.
+        let tree = self.active.borrow().tree.clone();
+        let Some(field) = tree.borrow().focused() else {
             return false;
         };
-        self.tree.borrow_mut().select_all_text_field(field)
+        tree.borrow_mut().select_all_text_field(field)
     }
 }
 
@@ -804,8 +876,17 @@ fn route_to_terminal(window: &PyWindow, event: &InputEvent) -> bool {
     let Some(bytes) = crate::terminal::input_bytes_for(event) else {
         return false;
     };
+    // M57 (§8): reads through `window.active`, not `window.tree`
+    // directly -- a focused `Terminal` in a `show_view`-switched View
+    // must be reachable from here too, the identical real staleness
+    // fix every other "act on the currently focused node" method
+    // already got. `window.terminals` stays a plain window-level read
+    // (terminal PTY sessions are owned by the `Window` itself, never
+    // swapped by `show_view`, the same real reason `theme`/
+    // `completions` also stay outside the `active` bundle).
     let focused_terminal = {
-        let tree = window.tree.borrow();
+        let active = window.active.borrow();
+        let tree = active.tree.borrow();
         tree.focused().filter(|&id| {
             matches!(
                 tree.get(id).map(|node| &node.kind),
@@ -832,8 +913,11 @@ fn route_control_char_to_terminal(window: &PyWindow, event: &InputEvent) -> bool
     let Some(byte) = crate::terminal::control_byte_for(event) else {
         return false;
     };
+    // M57 (§8): the identical real `active`-routing fix `route_to_
+    // terminal`'s own sibling just above got.
     let focused_terminal = {
-        let tree = window.tree.borrow();
+        let active = window.active.borrow();
+        let tree = active.tree.borrow();
         tree.focused().filter(|&id| {
             matches!(
                 tree.get(id).map(|node| &node.kind),
