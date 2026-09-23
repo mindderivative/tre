@@ -37,7 +37,7 @@ use taffy::prelude::{Rect as TaffyRect, Size, length};
 
 use crate::dispatch::{HandlerMap, SharedCompletions, call_handler};
 use crate::error::EngineError;
-use crate::event::Event;
+use crate::event::{Event, NodeContext};
 use crate::window::SharedTheme;
 
 /// `set_syntax_spans`'s own real `(start, end, (r, g, b, a))` element
@@ -674,9 +674,18 @@ impl Node {
                 state.checked = checked;
                 drop(tree);
                 let id = self.id;
+                let ctx = NodeContext {
+                    tree: &self.tree,
+                    handlers: &self.handlers,
+                    context_menus: &self.context_menus,
+                    theme: &self.theme,
+                    completions: &self.completions,
+                };
                 call_handler(&self.handlers, id, EventKind::Change, py, |py| {
-                    Ok(Event::change(
+                    Event::change(
+                        py,
                         id,
+                        &ctx,
                         Some(
                             old_checked
                                 .into_pyobject(py)?
@@ -685,7 +694,7 @@ impl Node {
                                 .into_any(),
                         ),
                         Some(checked.into_pyobject(py)?.to_owned().unbind().into_any()),
-                    ))
+                    )
                 });
                 Ok(())
             }
@@ -713,9 +722,18 @@ impl Node {
                 state.selected = selected;
                 drop(tree);
                 let id = self.id;
+                let ctx = NodeContext {
+                    tree: &self.tree,
+                    handlers: &self.handlers,
+                    context_menus: &self.context_menus,
+                    theme: &self.theme,
+                    completions: &self.completions,
+                };
                 call_handler(&self.handlers, id, EventKind::Change, py, |py| {
-                    Ok(Event::change(
+                    Event::change(
+                        py,
                         id,
+                        &ctx,
                         Some(
                             old_selected
                                 .into_pyobject(py)?
@@ -724,7 +742,7 @@ impl Node {
                                 .into_any(),
                         ),
                         Some(selected.into_pyobject(py)?.to_owned().unbind().into_any()),
-                    ))
+                    )
                 });
                 Ok(())
             }
@@ -750,12 +768,21 @@ impl Node {
                 state.on = on;
                 drop(tree);
                 let id = self.id;
+                let ctx = NodeContext {
+                    tree: &self.tree,
+                    handlers: &self.handlers,
+                    context_menus: &self.context_menus,
+                    theme: &self.theme,
+                    completions: &self.completions,
+                };
                 call_handler(&self.handlers, id, EventKind::Change, py, |py| {
-                    Ok(Event::change(
+                    Event::change(
+                        py,
                         id,
+                        &ctx,
                         Some(old_on.into_pyobject(py)?.to_owned().unbind().into_any()),
                         Some(on.into_pyobject(py)?.to_owned().unbind().into_any()),
-                    ))
+                    )
                 });
                 Ok(())
             }
@@ -793,12 +820,21 @@ impl Node {
                 drop(tree);
                 let id = self.id;
                 let new_content = content.to_string();
+                let ctx = NodeContext {
+                    tree: &self.tree,
+                    handlers: &self.handlers,
+                    context_menus: &self.context_menus,
+                    theme: &self.theme,
+                    completions: &self.completions,
+                };
                 call_handler(&self.handlers, id, EventKind::Change, py, |py| {
-                    Ok(Event::change(
+                    Event::change(
+                        py,
                         id,
+                        &ctx,
                         Some(old_content.into_pyobject(py)?.unbind().into_any()),
                         Some(new_content.into_pyobject(py)?.unbind().into_any()),
-                    ))
+                    )
                 });
                 Ok(())
             }

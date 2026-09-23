@@ -774,7 +774,16 @@ impl App {
                     &interaction_config(),
                     Instant::now(),
                 );
-                run_dispatch_outcome(&runtime.handlers, &runtime.tree, &outcome, Some(&event), py);
+                run_dispatch_outcome(
+                    &runtime.handlers,
+                    &runtime.tree,
+                    &runtime.context_menus,
+                    &runtime.theme,
+                    &runtime.completions,
+                    &outcome,
+                    Some(&event),
+                    py,
+                );
                 // M4 Phase 7 (§11.3): the real, winit-driven path a
                 // genuine right-click reaches -- `Window.right_click`/
                 // `View.right_click` are the no-live-window-needed test
@@ -1040,7 +1049,14 @@ impl App {
                     // behavior byte-for-byte unchanged; only the call
                     // site moved.
                     InputEvent::Cut => {
-                        cut_focused_selection_to_clipboard(&runtime.tree, &runtime.handlers, py);
+                        cut_focused_selection_to_clipboard(
+                            &runtime.tree,
+                            &runtime.handlers,
+                            &runtime.context_menus,
+                            &runtime.theme,
+                            &runtime.completions,
+                            py,
+                        );
                     }
                     // M17 Phase 1 (§8), refactored M53 Phase 2: the
                     // real, winit-driven Ctrl+V path -- now a thin call
@@ -1054,6 +1070,9 @@ impl App {
                             &runtime.tree,
                             runtime.root,
                             &runtime.handlers,
+                            &runtime.context_menus,
+                            &runtime.theme,
+                            &runtime.completions,
                             py,
                         );
                     }
@@ -1123,9 +1142,13 @@ impl App {
                 // real bug caught and fixed in `window_input.rs`'s
                 // `click`/`hover`/`scroll`/`right_click`, for the
                 // identical reason.
-                let (tree_rc, handlers) = {
+                let (tree_rc, handlers, context_menus) = {
                     let active = runtime.active.borrow();
-                    (active.tree.clone(), active.handlers.clone())
+                    (
+                        active.tree.clone(),
+                        active.handlers.clone(),
+                        active.context_menus.clone(),
+                    )
                 };
                 let node = from_access_id(request.target_node);
                 let mut tree = tree_rc.borrow_mut();
@@ -1139,7 +1162,16 @@ impl App {
                         // pointer/keyboard event -- so `Event.position`/
                         // `button` correctly come back `None`, not
                         // fabricated.
-                        run_dispatch_outcome(&handlers, &tree_rc, &outcome, None, py);
+                        run_dispatch_outcome(
+                            &handlers,
+                            &tree_rc,
+                            &context_menus,
+                            &runtime.theme,
+                            &runtime.completions,
+                            &outcome,
+                            None,
+                            py,
+                        );
                     }
                     // M55 (§10, §16.2): parity with `Action::Click`
                     // just above -- a screen-reader-driven focus
@@ -1162,7 +1194,16 @@ impl App {
                         );
                         drop(tree);
                         if let Some((old, new)) = transition {
-                            crate::dispatch::fire_focus_transition(&handlers, old, new, py);
+                            crate::dispatch::fire_focus_transition(
+                                &handlers,
+                                &tree_rc,
+                                &context_menus,
+                                &runtime.theme,
+                                &runtime.completions,
+                                old,
+                                new,
+                                py,
+                            );
                         }
                     }
                     // No other accesskit action has real dispatch

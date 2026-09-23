@@ -1276,7 +1276,16 @@ impl View {
             .tree
             .borrow_mut()
             .dispatch(root, press_event.clone(), &config, now);
-        run_dispatch_outcome(&self.handlers, &self.tree, &press, Some(&press_event), py);
+        run_dispatch_outcome(
+            &self.handlers,
+            &self.tree,
+            &self.context_menus,
+            &self.theme,
+            &self.completions,
+            &press,
+            Some(&press_event),
+            py,
+        );
 
         let release_event = InputEvent::PointerReleased {
             position: point,
@@ -1289,6 +1298,9 @@ impl View {
         run_dispatch_outcome(
             &self.handlers,
             &self.tree,
+            &self.context_menus,
+            &self.theme,
+            &self.completions,
             &release,
             Some(&release_event),
             py,
@@ -1310,7 +1322,16 @@ impl View {
             &interaction_config(),
             std::time::Instant::now(),
         );
-        run_dispatch_outcome(&self.handlers, &self.tree, &outcome, Some(&event), py);
+        run_dispatch_outcome(
+            &self.handlers,
+            &self.tree,
+            &self.context_menus,
+            &self.theme,
+            &self.completions,
+            &outcome,
+            Some(&event),
+            py,
+        );
     }
 
     /// M55 (§10, §16.2): `Window.focus`'s own real `View` sibling,
@@ -1327,7 +1348,16 @@ impl View {
             std::time::Instant::now(),
         );
         if let Some((old, new)) = transition {
-            crate::dispatch::fire_focus_transition(&self.handlers, old, new, py);
+            crate::dispatch::fire_focus_transition(
+                &self.handlers,
+                &self.tree,
+                &self.context_menus,
+                &self.theme,
+                &self.completions,
+                old,
+                new,
+                py,
+            );
         }
     }
 
@@ -1354,7 +1384,16 @@ impl View {
             .tree
             .borrow_mut()
             .dispatch(root, press_event.clone(), &config, now);
-        run_dispatch_outcome(&self.handlers, &self.tree, &press, Some(&press_event), py);
+        run_dispatch_outcome(
+            &self.handlers,
+            &self.tree,
+            &self.context_menus,
+            &self.theme,
+            &self.completions,
+            &press,
+            Some(&press_event),
+            py,
+        );
         let release_event = InputEvent::PointerReleased {
             position: point,
             button: PointerButton::Secondary,
@@ -1366,6 +1405,9 @@ impl View {
         run_dispatch_outcome(
             &self.handlers,
             &self.tree,
+            &self.context_menus,
+            &self.theme,
+            &self.completions,
             &outcome,
             Some(&release_event),
             py,

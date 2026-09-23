@@ -31,7 +31,8 @@ use peniko::kurbo::Point;
 use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
 
-use crate::event::{Event, changed_value_to_py};
+use crate::event::{Event, NodeContext, changed_value_to_py};
+use crate::window::SharedTheme;
 
 /// M16 Phase 2 (§3, §9) real finding, not anticipated in `PLAN.md`:
 /// `App::run`'s own top is *not* the one guaranteed place a `tracing`
@@ -323,13 +324,24 @@ pub(crate) fn read_new_changed_value(
 /// immutably, released before any real callback runs, the same
 /// discipline `call_handler` itself already established for
 /// `handlers`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_dispatch_outcome(
     handlers: &HandlerMap,
     tree: &Rc<RefCell<Tree>>,
+    context_menus: &Rc<RefCell<HashMap<NodeId, NodeId>>>,
+    theme: &SharedTheme,
+    completions: &SharedCompletions,
     outcome: &DispatchOutcome,
     event: Option<&InputEvent>,
     py: Python<'_>,
 ) {
+    let ctx = NodeContext {
+        tree,
+        handlers,
+        context_menus,
+        theme,
+        completions,
+    };
     match outcome {
         DispatchOutcome::Activated(node) => {
             let node = *node;
@@ -344,8 +356,8 @@ pub(crate) fn run_dispatch_outcome(
                 // `(0.0, 0.0)`/synthetic button.
                 _ => (None, None),
             };
-            call_handler(handlers, node, EventKind::Click, py, |_py| {
-                Ok(Event::click(node, position, button))
+            call_handler(handlers, node, EventKind::Click, py, |py| {
+                Event::click(py, node, &ctx, position, button)
             });
         }
         DispatchOutcome::HoverChanged { old, new } => {
@@ -365,13 +377,13 @@ pub(crate) fn run_dispatch_outcome(
                 ),
             };
             if let Some(old) = old {
-                call_handler(handlers, old, EventKind::HoverExit, py, |_py| {
-                    Ok(Event::hover(EventKind::HoverExit, old, position))
+                call_handler(handlers, old, EventKind::HoverExit, py, |py| {
+                    Event::hover(py, EventKind::HoverExit, old, &ctx, position)
                 });
             }
             if let Some(new) = new {
-                call_handler(handlers, new, EventKind::HoverEnter, py, |_py| {
-                    Ok(Event::hover(EventKind::HoverEnter, new, position))
+                call_handler(handlers, new, EventKind::HoverEnter, py, |py| {
+                    Event::hover(py, EventKind::HoverEnter, new, &ctx, position)
                 });
             }
         }
@@ -388,7 +400,7 @@ pub(crate) fn run_dispatch_outcome(
             call_handler(handlers, node, EventKind::Change, py, |py| {
                 let old = Some(changed_value_to_py(py, old_value)?);
                 let new = read_new_changed_value(&tree.borrow(), node, py)?;
-                Ok(Event::change(node, old, new))
+                Event::change(py, node, &ctx, old, new)
             });
         }
         // M55 (§10, §16.2): a real click-to-focus or Tab-navigation
@@ -398,7 +410,16 @@ pub(crate) fn run_dispatch_outcome(
         // (`app.rs`) calls directly, since that path never reaches
         // `Tree::dispatch`/this function at all.
         DispatchOutcome::FocusChanged { old, new } => {
-            fire_focus_transition(handlers, *old, *new, py);
+            fire_focus_transition(
+                handlers,
+                tree,
+                context_menus,
+                theme,
+                completions,
+                *old,
+                *new,
+                py,
+            );
         }
         // M4 Phase 7 (§11.3): `SecondaryActivated`'s real meaning is a
         // context menu, handled by `open_context_menu` below -- a
@@ -421,20 +442,32 @@ pub(crate) fn run_dispatch_outcome(
 /// registered `FocusEnter` handler, if any -- never one event with two
 /// sources, the same real reason `HandlerMap`'s per-node key forced a
 /// kind *pair* in the first place.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn fire_focus_transition(
     handlers: &HandlerMap,
+    tree: &Rc<RefCell<Tree>>,
+    context_menus: &Rc<RefCell<HashMap<NodeId, NodeId>>>,
+    theme: &SharedTheme,
+    completions: &SharedCompletions,
     old: Option<NodeId>,
     new: Option<NodeId>,
     py: Python<'_>,
 ) {
+    let ctx = NodeContext {
+        tree,
+        handlers,
+        context_menus,
+        theme,
+        completions,
+    };
     if let Some(old) = old {
-        call_handler(handlers, old, EventKind::FocusExit, py, |_py| {
-            Ok(Event::focus_transition(EventKind::FocusExit, old))
+        call_handler(handlers, old, EventKind::FocusExit, py, |py| {
+            Event::focus_transition(py, EventKind::FocusExit, old, &ctx)
         });
     }
     if let Some(new) = new {
-        call_handler(handlers, new, EventKind::FocusEnter, py, |_py| {
-            Ok(Event::focus_transition(EventKind::FocusEnter, new))
+        call_handler(handlers, new, EventKind::FocusEnter, py, |py| {
+            Event::focus_transition(py, EventKind::FocusEnter, new, &ctx)
         });
     }
 }
@@ -598,11 +631,22 @@ pub(crate) fn copy_focused_selection_to_clipboard(tree: &Rc<RefCell<Tree>>) -> b
 /// recover it. Fires `Change` on a genuine cut, the same way a direct,
 /// non-`Tree::dispatch` mutation always does elsewhere in this crate
 /// (`Node.set_checked`/`set_text`).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn cut_focused_selection_to_clipboard(
     tree: &Rc<RefCell<Tree>>,
     handlers: &HandlerMap,
+    context_menus: &Rc<RefCell<HashMap<NodeId, NodeId>>>,
+    theme: &SharedTheme,
+    completions: &SharedCompletions,
     py: Python<'_>,
 ) -> bool {
+    let ctx = NodeContext {
+        tree,
+        handlers,
+        context_menus,
+        theme,
+        completions,
+    };
     let field_and_text = tree.borrow().focused().and_then(|field| {
         tree.borrow()
             .text_field_selected_text(field)
@@ -618,7 +662,7 @@ pub(crate) fn cut_focused_selection_to_clipboard(
             call_handler(handlers, field, EventKind::Change, py, |py| {
                 let old = old?;
                 let new = read_new_changed_value(&tree.borrow(), field, py)?;
-                Ok(Event::change(field, old, new))
+                Event::change(py, field, &ctx, old, new)
             });
             true
         }
@@ -644,10 +688,14 @@ pub(crate) fn cut_focused_selection_to_clipboard(
 /// identical real distinction `Window.paste`'s own hermetic sibling
 /// doesn't need to make (it's handed the text directly), but a genuine
 /// OS read can genuinely fail on its own.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn paste_clipboard_into_focused(
     tree: &Rc<RefCell<Tree>>,
     root: NodeId,
     handlers: &HandlerMap,
+    context_menus: &Rc<RefCell<HashMap<NodeId, NodeId>>>,
+    theme: &SharedTheme,
+    completions: &SharedCompletions,
     py: Python<'_>,
 ) -> bool {
     match arboard::Clipboard::new().and_then(|mut cb| cb.get_text()) {
@@ -659,7 +707,16 @@ pub(crate) fn paste_clipboard_into_focused(
                 &interaction_config(),
                 std::time::Instant::now(),
             );
-            run_dispatch_outcome(handlers, tree, &outcome, Some(&event), py);
+            run_dispatch_outcome(
+                handlers,
+                tree,
+                context_menus,
+                theme,
+                completions,
+                &outcome,
+                Some(&event),
+                py,
+            );
             true
         }
         Err(err) => {

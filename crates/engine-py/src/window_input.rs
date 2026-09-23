@@ -128,9 +128,14 @@ impl PyWindow {
         // immediately, before any dispatch/callback runs, is what
         // actually avoids that -- the identical pattern `app.rs`'s own
         // `frame`/`input` closures already use for the same real reason.
-        let (tree, root, handlers) = {
+        let (tree, root, handlers, context_menus) = {
             let active = self.active.borrow();
-            (active.tree.clone(), active.root, active.handlers.clone())
+            (
+                active.tree.clone(),
+                active.root,
+                active.handlers.clone(),
+                active.context_menus.clone(),
+            )
         };
         let point = node_center(
             &tree,
@@ -156,7 +161,16 @@ impl PyWindow {
         let press = tree
             .borrow_mut()
             .dispatch(root, press_event.clone(), &config, now);
-        run_dispatch_outcome(&handlers, &tree, &press, Some(&press_event), py);
+        run_dispatch_outcome(
+            &handlers,
+            &tree,
+            &context_menus,
+            &self.theme,
+            &self.completions,
+            &press,
+            Some(&press_event),
+            py,
+        );
 
         let release_event = InputEvent::PointerReleased {
             position: point,
@@ -165,7 +179,16 @@ impl PyWindow {
         let release = tree
             .borrow_mut()
             .dispatch(root, release_event.clone(), &config, now);
-        run_dispatch_outcome(&handlers, &tree, &release, Some(&release_event), py);
+        run_dispatch_outcome(
+            &handlers,
+            &tree,
+            &context_menus,
+            &self.theme,
+            &self.completions,
+            &release,
+            Some(&release_event),
+            py,
+        );
     }
 
     /// M4 Phase 6 (§7.3): `click()`'s own hover counterpart -- the same
@@ -180,9 +203,14 @@ impl PyWindow {
         // M42 Phase 2: see `click()`'s own identical real reasoning --
         // clone-then-drop, never a live borrow held across a dispatch
         // call that can call back into a real Python handler.
-        let (tree, root, handlers) = {
+        let (tree, root, handlers, context_menus) = {
             let active = self.active.borrow();
-            (active.tree.clone(), active.root, active.handlers.clone())
+            (
+                active.tree.clone(),
+                active.root,
+                active.handlers.clone(),
+                active.context_menus.clone(),
+            )
         };
         let point = node_center(
             &tree,
@@ -201,7 +229,16 @@ impl PyWindow {
             &interaction_config(),
             std::time::Instant::now(),
         );
-        run_dispatch_outcome(&handlers, &tree, &outcome, Some(&event), py);
+        run_dispatch_outcome(
+            &handlers,
+            &tree,
+            &context_menus,
+            &self.theme,
+            &self.completions,
+            &outcome,
+            Some(&event),
+            py,
+        );
     }
 
     /// M55 (§10, §16.2): `click`/`hover`'s own real `Focus` sibling --
@@ -215,9 +252,13 @@ impl PyWindow {
     /// transition`, the identical real mechanism `run_dispatch_outcome`
     /// 's own `FocusChanged` arm uses.
     fn focus(&self, node: PyRef<'_, Node>, py: Python<'_>) {
-        let (tree, handlers) = {
+        let (tree, handlers, context_menus) = {
             let active = self.active.borrow();
-            (active.tree.clone(), active.handlers.clone())
+            (
+                active.tree.clone(),
+                active.handlers.clone(),
+                active.context_menus.clone(),
+            )
         };
         let config = interaction_config();
         let transition = tree.borrow_mut().set_focus_to(
@@ -227,7 +268,16 @@ impl PyWindow {
             std::time::Instant::now(),
         );
         if let Some((old, new)) = transition {
-            crate::dispatch::fire_focus_transition(&handlers, old, new, py);
+            crate::dispatch::fire_focus_transition(
+                &handlers,
+                &tree,
+                &context_menus,
+                &self.theme,
+                &self.completions,
+                old,
+                new,
+                py,
+            );
         }
     }
 
@@ -267,7 +317,16 @@ impl PyWindow {
         // change outcome to build an `Event` for, so `event: None` here
         // never actually reaches a handler; kept honest rather than
         // reconstructing the `Resized` event just to thread through.
-        run_dispatch_outcome(&self.handlers, &self.tree, &outcome, None, py);
+        run_dispatch_outcome(
+            &self.handlers,
+            &self.tree,
+            &self.context_menus,
+            &self.theme,
+            &self.completions,
+            &outcome,
+            None,
+            py,
+        );
     }
 
     /// M8 Phase 3 (§11.7): `click()`/`hover()`'s own scroll counterpart
@@ -297,9 +356,14 @@ impl PyWindow {
         // M42 Phase 2: see `click()`'s own identical real reasoning --
         // clone-then-drop, never a live borrow held across a dispatch
         // call that can call back into a real Python handler.
-        let (tree, root, handlers) = {
+        let (tree, root, handlers, context_menus) = {
             let active = self.active.borrow();
-            (active.tree.clone(), active.root, active.handlers.clone())
+            (
+                active.tree.clone(),
+                active.root,
+                active.handlers.clone(),
+                active.context_menus.clone(),
+            )
         };
         let is_terminal = matches!(
             tree.borrow().get(node.id).map(|n| &n.kind),
@@ -334,7 +398,16 @@ impl PyWindow {
         // `Scroll` is a true no-op for `Tree::dispatch`'s own outcome
         // today (`InputEvent::Scroll`'s own doc comment) -- same
         // reasoning as `resize`'s own `Resized` handling just above.
-        run_dispatch_outcome(&handlers, &tree, &outcome, None, py);
+        run_dispatch_outcome(
+            &handlers,
+            &tree,
+            &context_menus,
+            &self.theme,
+            &self.completions,
+            &outcome,
+            None,
+            py,
+        );
     }
 
     /// M4 Phase 7 (§11.3): `click()`'s own secondary-button (right-click)
@@ -382,7 +455,16 @@ impl PyWindow {
         let press = tree
             .borrow_mut()
             .dispatch(root, press_event.clone(), &config, now);
-        run_dispatch_outcome(&handlers, &tree, &press, Some(&press_event), py);
+        run_dispatch_outcome(
+            &handlers,
+            &tree,
+            &context_menus,
+            &self.theme,
+            &self.completions,
+            &press,
+            Some(&press_event),
+            py,
+        );
         let release_event = InputEvent::PointerReleased {
             position: point,
             button: PointerButton::Secondary,
@@ -390,7 +472,16 @@ impl PyWindow {
         let outcome = tree
             .borrow_mut()
             .dispatch(root, release_event.clone(), &config, now);
-        run_dispatch_outcome(&handlers, &tree, &outcome, Some(&release_event), py);
+        run_dispatch_outcome(
+            &handlers,
+            &tree,
+            &context_menus,
+            &self.theme,
+            &self.completions,
+            &outcome,
+            Some(&release_event),
+            py,
+        );
         open_context_menu(&tree, &context_menus, root, &outcome);
     }
 
@@ -446,7 +537,16 @@ impl PyWindow {
             &interaction_config(),
             std::time::Instant::now(),
         );
-        run_dispatch_outcome(&self.handlers, &self.tree, &outcome, Some(&event), py);
+        run_dispatch_outcome(
+            &self.handlers,
+            &self.tree,
+            &self.context_menus,
+            &self.theme,
+            &self.completions,
+            &outcome,
+            Some(&event),
+            py,
+        );
         Ok(())
     }
 
@@ -471,7 +571,16 @@ impl PyWindow {
             &interaction_config(),
             std::time::Instant::now(),
         );
-        run_dispatch_outcome(&self.handlers, &self.tree, &outcome, Some(&event), py);
+        run_dispatch_outcome(
+            &self.handlers,
+            &self.tree,
+            &self.context_menus,
+            &self.theme,
+            &self.completions,
+            &outcome,
+            Some(&event),
+            py,
+        );
     }
 
     /// M32 Phase 4 (§4, §8): the real, no-live-window-needed synthetic
@@ -562,10 +671,17 @@ impl PyWindow {
         // `dispatch`, so no `DispatchOutcome::Changed` exists here to
         // carry this automatically the way Backspace/Delete/typing get
         // it for free).
+        let ctx = crate::event::NodeContext {
+            tree: &self.tree,
+            handlers: &self.handlers,
+            context_menus: &self.context_menus,
+            theme: &self.theme,
+            completions: &self.completions,
+        };
         call_handler(&self.handlers, field, EventKind::Change, py, |py| {
             let old = old?;
             let new = crate::dispatch::read_new_changed_value(&self.tree.borrow(), field, py)?;
-            Ok(crate::event::Event::change(field, old, new))
+            crate::event::Event::change(py, field, &ctx, old, new)
         });
         Some(text)
     }
@@ -598,7 +714,8 @@ impl PyWindow {
     /// same "real, expected, gracefully-handled" policy this crate
     /// already established for no-GPU/no-display).
     fn copy_to_system_clipboard(&self) -> bool {
-        crate::dispatch::copy_focused_selection_to_clipboard(&self.tree)
+        let tree = self.active.borrow().tree.clone();
+        crate::dispatch::copy_focused_selection_to_clipboard(&tree)
     }
 
     /// `copy_to_system_clipboard`'s own real Cut sibling -- genuinely
@@ -609,7 +726,22 @@ impl PyWindow {
     /// `crate::dispatch::cut_focused_selection_to_clipboard` with
     /// `App::run`'s own real winit-driven Ctrl+X path.
     fn cut_to_system_clipboard(&self, py: Python<'_>) -> bool {
-        crate::dispatch::cut_focused_selection_to_clipboard(&self.tree, &self.handlers, py)
+        let (tree, handlers, context_menus) = {
+            let active = self.active.borrow();
+            (
+                active.tree.clone(),
+                active.handlers.clone(),
+                active.context_menus.clone(),
+            )
+        };
+        crate::dispatch::cut_focused_selection_to_clipboard(
+            &tree,
+            &handlers,
+            &context_menus,
+            &self.theme,
+            &self.completions,
+            py,
+        )
     }
 
     /// `copy_to_system_clipboard`'s own real Paste sibling -- reads the
@@ -623,7 +755,24 @@ impl PyWindow {
     /// receive it -- a real OS read can genuinely fail on its own,
     /// independent of anything this `Window`'s own tree state.
     fn paste_from_system_clipboard(&self, py: Python<'_>) -> bool {
-        crate::dispatch::paste_clipboard_into_focused(&self.tree, self.root, &self.handlers, py)
+        let (tree, root, handlers, context_menus) = {
+            let active = self.active.borrow();
+            (
+                active.tree.clone(),
+                active.root,
+                active.handlers.clone(),
+                active.context_menus.clone(),
+            )
+        };
+        crate::dispatch::paste_clipboard_into_focused(
+            &tree,
+            root,
+            &handlers,
+            &context_menus,
+            &self.theme,
+            &self.completions,
+            py,
+        )
     }
 
     /// M53 Phase 2 (§8, §10, §11.3): a real "Select All" -- selects the
