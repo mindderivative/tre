@@ -1,101 +1,114 @@
-# LOG — M61: Styling API Breadth II: Token-Reference Substitution in `StyleSpec`
+# LOG — M60: Styling API Breadth I: Border Kwargs Across the Catalog
 
-- The second of the 3 genuinely separate pieces the "Scope the
-  following Known Gaps" investigation found bundled in one "styling API
-  breadth" bullet (see M60/M62). `engine_md3::shape` already had real
-  named shape/elevation constants; nothing let a theme YAML author
-  reference them by name (`corner_radius: small`) instead of a plain
-  literal number.
-- Investigation's key precedent: `StyleSpec.background: Option<String>`,
-  resolved by `resolve_color` (tries a theme role first, falls back to a
-  literal parse) -- but `corner_radius`/`elevation` were `f32`, not
-  `String`, so this needed a genuinely new `Literal(f64) | TokenRef
-  (String)` type, not just new logic.
+- The first, most mechanical of the 3 genuinely separate pieces the
+  "Scope the following Known Gaps" investigation found bundled in one
+  "styling API breadth" bullet (see M61/M62). `add_rect`'s own existing
+  `border_color`/`border_width` kwargs were the only place in the whole
+  58-entry catalog a caller could set a border at all.
+- Dispatched to a background agent (general-purpose, isolated git
+  worktree) given its sheer mechanical repetition -- the same real
+  4-line conditional-overwrite pattern applied to ~32 near-identical
+  factories, no custom retheme-hook logic needed per factory (unlike
+  M52's own catalog work) -- freeing the main session to work on M61's
+  design-heavier token-reference-substitution milestone in parallel
+  rather than idling on mechanical edits. Given the identical
+  verification-chain requirements as every other milestone this
+  session, plus an explicit "do NOT touch BUILD_TRACKER.md/commit
+  anything" boundary so the main session stayed the one place tracker/
+  commit state changes.
 
 ## What shipped (both phases)
 
-1. `engine_md3::shape` gained `pub fn named(name: &str) -> Option<f64>`
-   and `pub fn elevation_named(name: &str) -> Option<f64>` (exact-match
-   lookups against the 6 real shape names / 6 real elevation levels,
-   `None` for anything unrecognized), re-exported from `engine-md3`'s
-   crate root -- 2 new unit tests, cross-checking the real MD3-published
-   relative ordering and every real token name. New `ShapeOrElevation
-   Spec` enum (`Literal(f64) | TokenRef(String)`, `#[serde(untagged)]`,
-   the same real convention M59's own `SpacingSpec` established) with a
-   `.resolve(is_elevation: bool) -> Option<f64>` method, applied to both
-   `StyleSpec.corner_radius`/`elevation` (widened from `Option<f32>`)
-   and `engine_spec::theme::ComponentOverride.corner_radius`/`elevation`.
-   Widening away from `Copy` (`TokenRef` holds an owned `String`)
-   cascaded into `cascade.rs`'s `merge()` needing `.clone_from(&...)`
-   instead of a move, and every existing bare-float test literal across
-   `cascade.rs`/`theme.rs`/`window_factory.rs` needing `ShapeOrElevation
-   Spec::Literal(...)` wrapping -- all fixed and re-verified.
-2. `engine-spec::build.rs` -- new `SpecError::UnknownShapeToken { id,
-   field, token }` variant plus a new `resolve_shape_value(spec, field,
-   value, default, is_elevation) -> Result<f64, SpecError>` helper,
-   wired into `node_kind_and_paint`'s existing `corner_radius`/
-   `elevation` resolution -- an unrecognized token name is a real,
-   clear `SpecError`, never a silent fallback to `0.0`, the identical
-   "fail loudly at the boundary" contract `InvalidColor` already
-   established for `background`.
-   `engine-py::window.rs` -- **the real design fork this phase turned
-   on.** Widening `ThemeState::shape`/`elevation`'s own return type to
-   fallible would have rippled into dozens of existing `theme.shape
-   (...).unwrap_or(...)` call sites across `window_factory.rs`'s
-   58-entry catalog, way beyond this milestone's scope. Resolved instead
-   by a new `resolve_components(raw: HashMap<String, ComponentOverride>)
-   -> PyResult<HashMap<String, ResolvedComponentOverride>>` function that
-   resolves every token *eagerly*, once, inside `Window.set_theme` (a
-   real Python `ValueError` naming the offending component key and
-   field on the first unrecognized token), converting into a new
-   engine-py-local `ResolvedComponentOverride` struct (plain
-   `Option<f64>` fields) -- `ThemeState.components`'s own field type
-   changed to store the already-resolved form, so `ThemeState::shape`/
-   `elevation`'s own public signature (and every one of its call sites)
-   stays completely unchanged.
-- Tests: 5 new `engine-spec::build.rs` unit tests -- a real
-  `corner_radius: small`/`elevation: level_3` string resolves end-to-end
-  through real YAML parsing + node building to the exact same constant
-  `engine_md3::named`/`elevation_named` return; an unrecognized token on
-  either field produces a real `SpecError::UnknownShapeToken` naming the
-  widget id, field, and bad token; a plain numeric literal still works
-  unchanged. 2 new `tests/test_theme.py` pytest tests -- `Window.
-  set_theme`'s own `components: {card: {corner_radius: small, elevation:
-  level_2}}` resolves to the real `SHAPE_SMALL`/`ELEVATION_LEVEL_2`
-  constants on a real `add_card` node; an unknown component shape token
-  raises a real Python `ValueError` naming the offending component key.
-  `python/tre/_core.pyi` checked, not changed -- `Window.set_theme`'s own
-  Python signature is unchanged, this milestone's whole surface is
-  YAML-string-level, not a new Python parameter.
-- `examples/theme_customization_custom_theme.yaml` gained a new
-  `components: {card: {corner_radius: small, elevation: level_2}}` entry
-  alongside the pre-existing literal `button.filled` override;
-  `examples/theme_customization.py` extended with a real `window.
-  add_card(...)` call asserting the token resolved to `8.0`/`2.0`.
-- `BUILD_TRACKER.md`: full Milestone 61 section, Top Metrics row at
-  100%, the "token-reference substitution" clause moved from the
-  bundled "Known gaps" styling-breadth bullet into its own "Fixed gaps"
-  entry. Tracker regenerated (13 milestones/45 phases/111 items/2 known
-  gaps/24 fixed gaps), artifact republished.
-- Full chain green: `cargo check`/`clippy -D warnings`/`fmt --check`
-  clean; `cargo test --workspace --release` (`engine-md3` 21, up from
-  19, +2; `engine-spec` 74, up from 69, +5; every other suite
-  unchanged); `maturin develop --release`; `pytest tests/` (818 passed,
-  up from 816, +2, 2 skipped unchanged); every file in `examples/` ran
-  clean; `demo/showcase.py` (all 5 phases, exit 0).
+1. `border_color`/`border_width` optional kwargs added to 32 factories
+   beyond the pre-existing `add_rect` -- `add_button`, `add_icon_button`,
+   `add_fab`, `add_extended_fab`, `add_segmented_button`, `add_chip`,
+   `add_menu_item`, `add_badge`, `add_card`, `add_divider`,
+   `add_tooltip`, `add_dialog`, `add_snackbar`, `add_side_sheet`,
+   `add_navigation_rail`, `add_navigation_drawer`, `add_top_app_bar`,
+   `add_toolbar`, `add_split_button`, `add_tabs`, `add_search_bar`,
+   `add_search_view`, `add_list_item`, `add_accordion_header`,
+   `add_tree_node`, `add_date_picker_day`, `add_period_selector`,
+   `add_popover`, `add_pagination`, `add_status_bar`, `add_node_graph`,
+   `add_graph_node` -- each verified by the agent against its own real
+   `tree.insert(NodeKind::...)` call site, not guessed from name.
+   Non-Rect factories confirmed excluded by code, not name:
+   Text/Container/ScrollView/Carousel-backed factories, factories with
+   their own dedicated `NodeKind` (`Checkbox`/`Slider`/`TextField`/etc.),
+   `add_splitter` (technically also stroked by `paint_node`, but outside
+   this milestone's own stated `NodeKind::Rect`-only scope).
+   Multi-node-return handling, real judgment calls documented in code:
+   `Vec<Node>` returns (`add_segmented_button`/`add_navigation_rail`/
+   `add_tabs`) apply the border uniformly -- no single "first" element
+   is distinguishable among peers; tuple returns (`add_pagination`/
+   `add_snackbar`) apply it only to the first/primary element, per the
+   plan's own stated convention (verified with a test); `add_side_
+   sheet`/`add_navigation_drawer` (scrim-wraps-panel, modal vs.
+   standard) apply the border to whichever real `NodeKind::Rect` insert
+   actually produces the node returned to Python in each branch;
+   `add_split_button` forwards the kwargs into its own internal
+   `add_button` call rather than duplicating the logic.
+2. 6 new pytest tests in `tests/test_live_style.py`: `add_card`
+   (simple, proves the override wins over the theme-derived border),
+   `add_chip`, `add_badge` (both dot and labeled shapes), `add_snackbar`
+   (tuple, first-element-only), `add_tabs` (`Vec`, uniform),
+   `add_pagination` (tuple, explicitly asserting `next` stays
+   unbordered while `previous` isn't -- proving the convention). All use
+   `.get("border_width")` readback per `test_add_rect_accepts_border_
+   kwargs`'s own established pattern. `python/tre/_core.pyi` updated for
+   all 32 factories, cross-checked programmatically against the real
+   Rust source for an exact 1:1 match.
+
+## Merging the agent's worktree onto `main`
+
+The agent's own worktree branched from a commit before M57/M58/M59/M61
+landed on `main` -- its own uncommitted changeset (3 files:
+`window_factory.rs`/`_core.pyi`/`test_live_style.py`) was extracted as
+a diff and applied onto current `main` via `git apply -3` (a real
+3-way merge using the shared merge-base blob, not a blind patch). 2 real
+conflicts surfaced in `window_factory.rs`, both in factories M58 had
+*also* touched in the meantime:
+- `add_tooltip`: M58 added real theme-aware `container_color`/
+  `label_color` resolution (replacing a hardcoded `Md3Baseline::
+  INVERSE_SURFACE` constant); M60 added the same function's own
+  `border_color`/`border_width` kwargs. Merged by hand: kept M58's real
+  `container_color` variable feeding `PaintProperties::new(...)`, and
+  M60's conditional `border_color`/`border_width` overwrite on top of
+  it -- neither change silently reverted the other.
+- `add_pagination`: M58 unified `previous`/`next` to consult the
+  `"icon_button"` theme key instead of `"pagination"` (a new
+  `icon_button_corner_radius` local); M60 added `border_color`/
+  `border_width` params to the shared `build_icon_button` helper and
+  both call sites. Merged by hand: both call sites now pass M58's own
+  `icon_button_corner_radius` (not M60's stale pre-M58 `corner_radius`)
+  plus M60's new border params -- `next` correctly stays unbordered
+  (`None`, `None`) per the agent's own stated "border kwargs style
+  `previous` only" convention.
+The full verification chain was then re-run from scratch against the
+merged result, not just trusted from the agent's own pre-merge run.
+
+- `BUILD_TRACKER.md`: full Milestone 60 section, Top Metrics row at
+  100%, Just-closed/Up-next refreshed to reflect M60 closing after M61.
+  Tracker regenerated (13 milestones/46 phases/114 items/2 known gaps/
+  24 fixed gaps), artifact republished.
+- Full chain green (post-merge): `cargo check`/`clippy -D warnings`/
+  `fmt --check` clean; `cargo test --workspace --release` (227
+  engine-core, 21 engine-md3, 74 engine-spec, matching the M61
+  baseline exactly -- zero regressions introduced by the merge);
+  `maturin develop --release`; `pytest tests/` (824 passed, up from
+  818, +6, 2 skipped unchanged); every file in `examples/` ran clean;
+  `demo/showcase.py` (all 5 phases, exit 0).
 
 ## Status
 
-**M61 is complete, both phases.** The real design tension this
-milestone had to resolve -- propagating a newly-fallible token type
-through two structurally different real consumers (a synchronous,
-per-node YAML path in `engine-spec` vs. a once-per-theme-load path in
-`engine-py`) while keeping each crate's own error-handling convention
-intact and avoiding any signature ripple into `window_factory.rs`'s
-dozens of unrelated call sites -- is resolved and compiling cleanly
-workspace-wide, with zero regression to any pre-existing test or
-example. Committing locally now; push deferred pending explicit user
+**M60 is complete, both phases.** The real "which node gets the
+border on a multi-node-return factory" judgment calls the agent made
+are documented directly in the code and cross-checked against a real
+test for the one genuinely ambiguous case (`add_pagination`'s `next`
+staying unbordered). The merge onto a `main` that had advanced
+underneath the agent's worktree is itself a real, worth-recording
+event: background-agent work in an isolated worktree needs an explicit
+review-and-merge step before it's real, not just "the agent said tests
+passed." Committing locally now; push deferred pending explicit user
 confirmation. Next: M62 (styling API breadth III: typography theming,
-the largest and most design-heavy of the 6). M60 (border kwargs,
-dispatched to a background agent in an isolated worktree) is still
-running independently -- to be reviewed and merged in when it completes.
+now widened via `AskUserQuestion` to include real `TextState.
+line_height` plumbing, not just theme data -- see `PLAN.md`).

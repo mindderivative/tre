@@ -3168,7 +3168,8 @@ impl PyWindow {
     /// Principle 6's "only a node that opts in pays the cost" applies
     /// here exactly as it does to every other node `add_checkbox`/
     /// `add_slider`/etc already hand back un-interactive by default.
-    #[pyo3(signature = (label, width, height, variant="filled", x=None, y=None))]
+    #[pyo3(signature = (label, width, height, variant="filled", x=None, y=None, border_color=None, border_width=None))]
+    #[allow(clippy::too_many_arguments)]
     fn add_button(
         &self,
         label: &str,
@@ -3177,6 +3178,8 @@ impl PyWindow {
         variant: &str,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<Node> {
         let colors = resolve_button_colors(&self.theme.borrow(), variant, "button")?;
         let corner_radius = self
@@ -3190,6 +3193,12 @@ impl PyWindow {
             PaintProperties::new(colors.container, corner_radius, colors.elevation, 1.0);
         container_paint.border_color = Animated::new(colors.border_color);
         container_paint.border_width = Animated::new(colors.border_width);
+        if let Some((r, g, b, a)) = border_color {
+            container_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            container_paint.border_width = Animated::new(border_width);
+        }
         let mut container_style = positioned_style(
             Size {
                 width: length(width),
@@ -3259,7 +3268,8 @@ impl PyWindow {
     /// sufficient answer, not a second alignment concept). Deliberately
     /// does **not** auto-call `enable_interaction()`, matching every
     /// other `add_*` precedent including `add_button` itself.
-    #[pyo3(signature = (icon, size=40.0, variant="standard", x=None, y=None))]
+    #[pyo3(signature = (icon, size=40.0, variant="standard", x=None, y=None, border_color=None, border_width=None))]
+    #[allow(clippy::too_many_arguments)]
     fn add_icon_button(
         &self,
         icon: &str,
@@ -3267,6 +3277,8 @@ impl PyWindow {
         variant: &str,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<Node> {
         let resolved_variant = match variant {
             "standard" => "text",
@@ -3299,6 +3311,12 @@ impl PyWindow {
             PaintProperties::new(colors.container, corner_radius, colors.elevation, 1.0);
         container_paint.border_color = Animated::new(colors.border_color);
         container_paint.border_width = Animated::new(colors.border_width);
+        if let Some((r, g, b, a)) = border_color {
+            container_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            container_paint.border_width = Animated::new(border_width);
+        }
         let mut container_style = positioned_style(
             Size {
                 width: length(size),
@@ -3350,7 +3368,8 @@ impl PyWindow {
     /// Button` is not. Deliberately does **not** auto-call `enable_
     /// interaction()`, the same real contract `add_button`/`add_icon_
     /// button` already establish.
-    #[pyo3(signature = (icon, size="default", variant="surface", x=None, y=None))]
+    #[pyo3(signature = (icon, size="default", variant="surface", x=None, y=None, border_color=None, border_width=None))]
+    #[allow(clippy::too_many_arguments)]
     fn add_fab(
         &self,
         icon: &str,
@@ -3358,6 +3377,8 @@ impl PyWindow {
         variant: &str,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<Node> {
         let (container_size, default_corner_radius) = fab_shape(size)?;
         let colors = resolve_fab_colors(&self.theme.borrow(), variant)?;
@@ -3384,7 +3405,14 @@ impl PyWindow {
             .unwrap_or(FAB_REST_ELEVATION_LEVEL);
 
         let mut tree = self.tree.borrow_mut();
-        let container_paint = PaintProperties::new(colors.container, corner_radius, elevation, 1.0);
+        let mut container_paint =
+            PaintProperties::new(colors.container, corner_radius, elevation, 1.0);
+        if let Some((r, g, b, a)) = border_color {
+            container_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            container_paint.border_width = Animated::new(border_width);
+        }
         let mut container_style = positioned_style(
             Size {
                 width: length(container_size),
@@ -3435,7 +3463,8 @@ impl PyWindow {
     /// text measurement exists anywhere in this engine (`add_text`'s
     /// own stated limitation), so `width` is a required real caller
     /// input, the same shape every other `add_*` method already uses.
-    #[pyo3(signature = (label, width, icon=None, variant="primary", x=None, y=None))]
+    #[pyo3(signature = (label, width, icon=None, variant="primary", x=None, y=None, border_color=None, border_width=None))]
+    #[allow(clippy::too_many_arguments)]
     fn add_extended_fab(
         &self,
         label: &str,
@@ -3444,6 +3473,8 @@ impl PyWindow {
         variant: &str,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<Node> {
         let colors = resolve_fab_colors(&self.theme.borrow(), variant)?;
         let icon_path = icon.map(resolve_icon_path).transpose()?;
@@ -3468,7 +3499,14 @@ impl PyWindow {
             .unwrap_or(FAB_REST_ELEVATION_LEVEL);
 
         let mut tree = self.tree.borrow_mut();
-        let container_paint = PaintProperties::new(colors.container, corner_radius, elevation, 1.0);
+        let mut container_paint =
+            PaintProperties::new(colors.container, corner_radius, elevation, 1.0);
+        if let Some((r, g, b, a)) = border_color {
+            container_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            container_paint.border_width = Animated::new(border_width);
+        }
         let mut container_style = positioned_style(
             Size {
                 width: length(width),
@@ -3578,7 +3616,8 @@ impl PyWindow {
     /// (`set_on_click`, `Node.animate`, `Node.add_child`/`Node.
     /// remove()` to swap the checkmark in or out), not a new
     /// component-specific toggle method invented here.
-    #[pyo3(signature = (labels, width, selected=None, height=SEGMENTED_BUTTON_HEIGHT, x=None, y=None))]
+    #[pyo3(signature = (labels, width, selected=None, height=SEGMENTED_BUTTON_HEIGHT, x=None, y=None, border_color=None, border_width=None))]
+    #[allow(clippy::too_many_arguments)]
     fn add_segmented_button(
         &self,
         labels: Vec<String>,
@@ -3587,6 +3626,8 @@ impl PyWindow {
         height: f32,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<Vec<Node>> {
         if labels.len() < 2 {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -3696,6 +3737,12 @@ impl PyWindow {
                 1.0,
             );
             segment_paint.corner_radii_override = corner_radii_override;
+            if let Some((r, g, b, a)) = border_color {
+                segment_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+            }
+            if let Some(border_width) = border_width {
+                segment_paint.border_width = Animated::new(border_width);
+            }
             let mut segment_style = positioned_style(
                 Size {
                     width: length(segment_width),
@@ -3814,7 +3861,7 @@ impl PyWindow {
     /// differently" tolerance rather than raising. Deliberately does
     /// **not** auto-call `enable_interaction()`, the same real
     /// contract every other `add_*` composite already establishes.
-    #[pyo3(signature = (label, width, variant="assist", icon=None, selected=false, removable=false, x=None, y=None))]
+    #[pyo3(signature = (label, width, variant="assist", icon=None, selected=false, removable=false, x=None, y=None, border_color=None, border_width=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_chip(
         &self,
@@ -3826,6 +3873,8 @@ impl PyWindow {
         removable: bool,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<Node> {
         let colors = resolve_chip_colors(&self.theme.borrow(), variant, selected)?;
 
@@ -3863,6 +3912,12 @@ impl PyWindow {
         let mut container_paint = PaintProperties::new(colors.container, corner_radius, 0.0, 1.0);
         container_paint.border_color = Animated::new(colors.border_color);
         container_paint.border_width = Animated::new(colors.border_width);
+        if let Some((r, g, b, a)) = border_color {
+            container_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            container_paint.border_width = Animated::new(border_width);
+        }
         let mut container_style = positioned_style(
             Size {
                 width: length(width),
@@ -3979,7 +4034,8 @@ impl PyWindow {
     /// directly (`Tree::open_overlay` takes any `NodeId` as its own real
     /// anchor already, no special-casing for "is this a menu item"
     /// anywhere), not assumed.
-    #[pyo3(signature = (label, icon=None, submenu=false, width=200.0, x=None, y=None))]
+    #[pyo3(signature = (label, icon=None, submenu=false, width=200.0, x=None, y=None, border_color=None, border_width=None))]
+    #[allow(clippy::too_many_arguments)]
     fn add_menu_item(
         &self,
         label: &str,
@@ -3988,6 +4044,8 @@ impl PyWindow {
         width: f32,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<Node> {
         let (label_color, icon_color) = {
             let theme = self.theme.borrow();
@@ -4028,11 +4086,14 @@ impl PyWindow {
             width: length(MENU_ITEM_ICON_GAP),
             height: length(0.0),
         };
-        let container = tree.insert(
-            NodeKind::Rect,
-            container_style,
-            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
-        );
+        let mut container_paint = PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0);
+        if let Some((r, g, b, a)) = border_color {
+            container_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            container_paint.border_width = Animated::new(border_width);
+        }
+        let container = tree.insert(NodeKind::Rect, container_style, container_paint);
 
         let mut icon_count = 0.0_f32;
         let mut menu_item_icon_id: Option<NodeId> = None;
@@ -4257,13 +4318,16 @@ impl PyWindow {
     /// badge needs a wider caller-supplied `width`, the same "no
     /// intrinsic text measurement anywhere in this engine" limitation
     /// `add_text`/`add_button`/etc already state.
-    #[pyo3(signature = (label=None, width=None, x=None, y=None))]
+    #[pyo3(signature = (label=None, width=None, x=None, y=None, border_color=None, border_width=None))]
+    #[allow(clippy::too_many_arguments)]
     fn add_badge(
         &self,
         label: Option<&str>,
         width: Option<f32>,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> Node {
         let (error_color, on_error_color) = {
             let theme = self.theme.borrow();
@@ -4287,6 +4351,13 @@ impl PyWindow {
                 .borrow()
                 .shape("badge", Some("dot"))
                 .unwrap_or_else(|| f64::from(BADGE_DOT_SIZE) / 2.0);
+            let mut dot_paint = PaintProperties::new(error_color, corner_radius, 0.0, 1.0);
+            if let Some((r, g, b, a)) = border_color {
+                dot_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+            }
+            if let Some(border_width) = border_width {
+                dot_paint.border_width = Animated::new(border_width);
+            }
             let id = tree.insert(
                 NodeKind::Rect,
                 positioned_style(
@@ -4297,7 +4368,7 @@ impl PyWindow {
                     x,
                     y,
                 ),
-                PaintProperties::new(error_color, corner_radius, 0.0, 1.0),
+                dot_paint,
             );
             tree.add_child(self.root, id);
             drop(tree);
@@ -4324,11 +4395,14 @@ impl PyWindow {
         container_style.display = taffy::Display::Flex;
         container_style.justify_content = Some(JustifyContent::CENTER);
         container_style.align_items = Some(AlignItems::CENTER);
-        let container = tree.insert(
-            NodeKind::Rect,
-            container_style,
-            PaintProperties::new(error_color, corner_radius, 0.0, 1.0),
-        );
+        let mut labeled_paint = PaintProperties::new(error_color, corner_radius, 0.0, 1.0);
+        if let Some((r, g, b, a)) = border_color {
+            labeled_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            labeled_paint.border_width = Animated::new(border_width);
+        }
+        let container = tree.insert(NodeKind::Rect, container_style, labeled_paint);
 
         let label_id = tree.insert(
             NodeKind::Text(TextState {
@@ -4589,7 +4663,8 @@ impl PyWindow {
     /// not always clickable (many are purely a visual container), the
     /// same "only a node that opts in pays the cost" contract every
     /// other composite `add_*` in this catalog already establishes.
-    #[pyo3(signature = (width, height, variant="elevated", x=None, y=None))]
+    #[pyo3(signature = (width, height, variant="elevated", x=None, y=None, border_color=None, border_width=None))]
+    #[allow(clippy::too_many_arguments)]
     fn add_card(
         &self,
         width: f32,
@@ -4597,6 +4672,8 @@ impl PyWindow {
         variant: &str,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<Node> {
         let colors = resolve_card_colors(&self.theme.borrow(), variant)?;
         // M50 Phase 3: bare "card" key -- corner radius is not
@@ -4612,6 +4689,12 @@ impl PyWindow {
             PaintProperties::new(colors.container, corner_radius, colors.elevation, 1.0);
         paint.border_color = Animated::new(colors.border_color);
         paint.border_width = Animated::new(colors.border_width);
+        if let Some((r, g, b, a)) = border_color {
+            paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            paint.border_width = Animated::new(border_width);
+        }
         let id = tree.insert(
             NodeKind::Rect,
             positioned_style(
@@ -4641,8 +4724,16 @@ impl PyWindow {
     /// tall, a vertical one the reverse -- the same real single-
     /// dimension-plus-orientation shape a line naturally has, not two
     /// separate methods for what's really one real component.
-    #[pyo3(signature = (length, vertical=false, x=None, y=None))]
-    fn add_divider(&self, length: f32, vertical: bool, x: Option<f32>, y: Option<f32>) -> Node {
+    #[pyo3(signature = (length, vertical=false, x=None, y=None, border_color=None, border_width=None))]
+    fn add_divider(
+        &self,
+        length: f32,
+        vertical: bool,
+        x: Option<f32>,
+        y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
+    ) -> Node {
         let color = {
             let theme = self.theme.borrow();
             if theme.is_set() {
@@ -4659,6 +4750,13 @@ impl PyWindow {
             (length, DIVIDER_THICKNESS)
         };
         let mut tree = self.tree.borrow_mut();
+        let mut paint = PaintProperties::new(color, 0.0, 0.0, 1.0);
+        if let Some((r, g, b, a)) = border_color {
+            paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            paint.border_width = Animated::new(border_width);
+        }
         let id = tree.insert(
             NodeKind::Rect,
             positioned_style(
@@ -4669,7 +4767,7 @@ impl PyWindow {
                 x,
                 y,
             ),
-            PaintProperties::new(color, 0.0, 0.0, 1.0),
+            paint,
         );
         tree.add_child(self.root, id);
         drop(tree);
@@ -4695,8 +4793,16 @@ impl PyWindow {
     /// works on any `NodeKind`) rather than a dedicated `open_tooltip`/
     /// `close_tooltip` pair that would only ever duplicate them --
     /// `examples/tooltip.py` demonstrates the real end-to-end wiring.
-    #[pyo3(signature = (text, width, x=None, y=None))]
-    fn add_tooltip(&self, text: &str, width: f32, x: Option<f32>, y: Option<f32>) -> Node {
+    #[pyo3(signature = (text, width, x=None, y=None, border_color=None, border_width=None))]
+    fn add_tooltip(
+        &self,
+        text: &str,
+        width: f32,
+        x: Option<f32>,
+        y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
+    ) -> Node {
         let theme = self.theme.borrow();
         let corner_radius = theme
             .shape("tooltip", None)
@@ -4734,11 +4840,14 @@ impl PyWindow {
             top: zero(),
             bottom: zero(),
         };
-        let container = tree.insert(
-            NodeKind::Rect,
-            container_style,
-            PaintProperties::new(container_color, corner_radius, 0.0, 1.0),
-        );
+        let mut container_paint = PaintProperties::new(container_color, corner_radius, 0.0, 1.0);
+        if let Some((r, g, b, a)) = border_color {
+            container_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            container_paint.border_width = Animated::new(border_width);
+        }
+        let container = tree.insert(NodeKind::Rect, container_style, container_paint);
 
         let label_width = (width - 2.0 * TOOLTIP_HORIZONTAL_PADDING).max(0.0);
         let label_id = tree.insert(
@@ -4786,8 +4895,16 @@ impl PyWindow {
     /// unattached anywhere -- the same real contract `build_menu`'s
     /// own panel and `add_tooltip`'s own panel already have; `open_
     /// dialog` is what actually shows it.
-    #[pyo3(signature = (headline, text, width, height))]
-    fn add_dialog(&self, headline: &str, text: &str, width: f32, height: f32) -> Node {
+    #[pyo3(signature = (headline, text, width, height, border_color=None, border_width=None))]
+    fn add_dialog(
+        &self,
+        headline: &str,
+        text: &str,
+        width: f32,
+        height: f32,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
+    ) -> Node {
         let (scrim_color, panel_color, headline_color, body_color) = {
             let theme = self.theme.borrow();
             let role = |name: &str, fallback: Color| -> Color {
@@ -4827,11 +4944,14 @@ impl PyWindow {
             align_items: Some(AlignItems::CENTER),
             ..Default::default()
         };
-        let scrim = tree.insert(
-            NodeKind::Rect,
-            scrim_style,
-            PaintProperties::new(scrim_color, 0.0, 0.0, DIALOG_SCRIM_OPACITY),
-        );
+        let mut scrim_paint = PaintProperties::new(scrim_color, 0.0, 0.0, DIALOG_SCRIM_OPACITY);
+        if let Some((r, g, b, a)) = border_color {
+            scrim_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            scrim_paint.border_width = Animated::new(border_width);
+        }
+        let scrim = tree.insert(NodeKind::Rect, scrim_style, scrim_paint);
 
         let panel_style = Style {
             size: Size {
@@ -5014,13 +5134,16 @@ impl PyWindow {
     /// standalone interactive component already is. Returned genuinely
     /// unattached anywhere, the same real contract `add_dialog`'s own
     /// panel already has -- `open_snackbar` is what actually shows it.
-    #[pyo3(signature = (text, width, action_label=None, closable=false))]
+    #[pyo3(signature = (text, width, action_label=None, closable=false, border_color=None, border_width=None))]
+    #[allow(clippy::too_many_arguments)]
     fn add_snackbar(
         &self,
         text: &str,
         width: f32,
         action_label: Option<&str>,
         closable: bool,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<(Node, Option<Node>, Option<Node>)> {
         let (container_color, text_color, action_color, icon_color) = {
             let theme = self.theme.borrow();
@@ -5071,11 +5194,15 @@ impl PyWindow {
             },
             ..Default::default()
         };
-        let container = tree.insert(
-            NodeKind::Rect,
-            container_style,
-            PaintProperties::new(container_color, corner_radius, elevation, 1.0),
-        );
+        let mut container_paint =
+            PaintProperties::new(container_color, corner_radius, elevation, 1.0);
+        if let Some((r, g, b, a)) = border_color {
+            container_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            container_paint.border_width = Animated::new(border_width);
+        }
+        let container = tree.insert(NodeKind::Rect, container_style, container_paint);
 
         let text_id = tree.insert(
             NodeKind::Text(TextState {
@@ -5298,7 +5425,8 @@ impl PyWindow {
     /// anchored to the real right edge (flex `justify_content:
     /// FLEX_END`, full height) instead of `Dialog`'s own centered
     /// placement.
-    #[pyo3(signature = (width=SIDE_SHEET_WIDTH, height=None, modal=false, x=None, y=None))]
+    #[pyo3(signature = (width=SIDE_SHEET_WIDTH, height=None, modal=false, x=None, y=None, border_color=None, border_width=None))]
+    #[allow(clippy::too_many_arguments)]
     fn add_side_sheet(
         &self,
         width: f32,
@@ -5306,6 +5434,8 @@ impl PyWindow {
         modal: bool,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> Node {
         let (container_color, scrim_color) = {
             let theme = self.theme.borrow();
@@ -5359,11 +5489,18 @@ impl PyWindow {
                 justify_content: Some(JustifyContent::FLEX_END),
                 ..Default::default()
             };
-            let scrim = tree.insert(
-                NodeKind::Rect,
-                scrim_style,
-                PaintProperties::new(scrim_color, 0.0, 0.0, DIALOG_SCRIM_OPACITY),
-            );
+            // Border kwargs style whatever node is actually handed back
+            // to Python -- in the modal branch that's `scrim`, not the
+            // internal `panel` (never returned), so the override lands
+            // on `scrim`'s own paint, not `panel_paint`.
+            let mut scrim_paint = PaintProperties::new(scrim_color, 0.0, 0.0, DIALOG_SCRIM_OPACITY);
+            if let Some((r, g, b, a)) = border_color {
+                scrim_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+            }
+            if let Some(border_width) = border_width {
+                scrim_paint.border_width = Animated::new(border_width);
+            }
+            let scrim = tree.insert(NodeKind::Rect, scrim_style, scrim_paint);
             let panel_style = Style {
                 size: Size {
                     width: length(width),
@@ -5387,6 +5524,14 @@ impl PyWindow {
                 x,
                 y,
             );
+            // The standard (non-modal) branch directly returns `panel`,
+            // so it's the one that gets the border override here.
+            if let Some((r, g, b, a)) = border_color {
+                panel_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+            }
+            if let Some(border_width) = border_width {
+                panel_paint.border_width = Animated::new(border_width);
+            }
             let panel = tree.insert(NodeKind::Rect, panel_style, panel_paint);
             tree.add_child(self.root, panel);
             drop(tree);
@@ -5505,7 +5650,8 @@ impl PyWindow {
     /// already-generic primitives every other component uses
     /// (`set_on_click`, `Node.animate`), not a new component-specific
     /// toggle method invented here.
-    #[pyo3(signature = (labels, icons, selected=None, x=None, y=None))]
+    #[pyo3(signature = (labels, icons, selected=None, x=None, y=None, border_color=None, border_width=None))]
+    #[allow(clippy::too_many_arguments)]
     fn add_navigation_rail(
         &self,
         labels: Vec<String>,
@@ -5513,6 +5659,8 @@ impl PyWindow {
         selected: Option<usize>,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<Vec<Node>> {
         if labels.is_empty() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -5635,11 +5783,14 @@ impl PyWindow {
                 },
                 ..Default::default()
             };
-            let item = tree.insert(
-                NodeKind::Rect,
-                item_style,
-                PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
-            );
+            let mut item_paint = PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0);
+            if let Some((r, g, b, a)) = border_color {
+                item_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+            }
+            if let Some(border_width) = border_width {
+                item_paint.border_width = Animated::new(border_width);
+            }
+            let item = tree.insert(NodeKind::Rect, item_style, item_paint);
 
             let indicator_fill = if is_active {
                 indicator_color
@@ -5772,7 +5923,7 @@ impl PyWindow {
     /// `Dialog`'s own real single-`Node` shape for the container/
     /// scrim, combined the same real way `Snackbar`'s own multi-node
     /// return already did for a different reason.
-    #[pyo3(signature = (labels, icons, selected=None, modal=false, width=SIDE_SHEET_WIDTH, height=None, x=None, y=None))]
+    #[pyo3(signature = (labels, icons, selected=None, modal=false, width=SIDE_SHEET_WIDTH, height=None, x=None, y=None, border_color=None, border_width=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_navigation_drawer(
         &self,
@@ -5784,6 +5935,8 @@ impl PyWindow {
         height: Option<f32>,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<(Node, Vec<Node>)> {
         if labels.is_empty() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -5872,6 +6025,19 @@ impl PyWindow {
 
         let mut panel_paint = PaintProperties::new(container_color, 0.0, elevation, 1.0);
         panel_paint.corner_radii_override = Some([0.0, corner_radius, corner_radius, 0.0]);
+        // `panel` is inserted once below regardless of `modal`, but it's
+        // only ever the node actually returned to Python in the
+        // non-modal branch (the modal branch returns `scrim` instead,
+        // which gets its own separate border override further down) --
+        // so the override only applies here when `!modal`.
+        if !modal {
+            if let Some((r, g, b, a)) = border_color {
+                panel_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+            }
+            if let Some(border_width) = border_width {
+                panel_paint.border_width = Animated::new(border_width);
+            }
+        }
 
         let mut panel_style = Style {
             size: Size {
@@ -6007,11 +6173,14 @@ impl PyWindow {
                 justify_content: Some(JustifyContent::FLEX_START),
                 ..Default::default()
             };
-            let scrim = tree.insert(
-                NodeKind::Rect,
-                scrim_style,
-                PaintProperties::new(scrim_color, 0.0, 0.0, DIALOG_SCRIM_OPACITY),
-            );
+            let mut scrim_paint = PaintProperties::new(scrim_color, 0.0, 0.0, DIALOG_SCRIM_OPACITY);
+            if let Some((r, g, b, a)) = border_color {
+                scrim_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+            }
+            if let Some(border_width) = border_width {
+                scrim_paint.border_width = Animated::new(border_width);
+            }
+            let scrim = tree.insert(NodeKind::Rect, scrim_style, scrim_paint);
             tree.add_child(scrim, panel);
             drop(tree);
             self.retheme_hooks
@@ -6130,7 +6299,7 @@ impl PyWindow {
     /// "independently interactive sub-elements get their own real
     /// `Node`s" shape `Snackbar` already established for its own
     /// action/close.
-    #[pyo3(signature = (title, leading_icon=None, trailing_icons=None, width=None, x=None, y=None))]
+    #[pyo3(signature = (title, leading_icon=None, trailing_icons=None, width=None, x=None, y=None, border_color=None, border_width=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_top_app_bar(
         &self,
@@ -6140,6 +6309,8 @@ impl PyWindow {
         width: Option<f32>,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<(Node, Option<Node>, Vec<Node>)> {
         let trailing_icons = trailing_icons.unwrap_or_default();
         let leading_path = leading_icon.map(resolve_icon_path).transpose()?;
@@ -6198,11 +6369,14 @@ impl PyWindow {
             top: zero(),
             bottom: zero(),
         };
-        let bar = tree.insert(
-            NodeKind::Rect,
-            bar_style,
-            PaintProperties::new(container_color, 0.0, 0.0, 1.0),
-        );
+        let mut bar_paint = PaintProperties::new(container_color, 0.0, 0.0, 1.0);
+        if let Some((r, g, b, a)) = border_color {
+            bar_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            bar_paint.border_width = Animated::new(border_width);
+        }
+        let bar = tree.insert(NodeKind::Rect, bar_style, bar_paint);
 
         let mut top_app_bar_leading_ids: Option<(NodeId, NodeId)> = None;
         let leading = if let Some(path) = leading_path {
@@ -6368,7 +6542,7 @@ impl PyWindow {
     /// radius input for "fully rounded" (`thickness / 2.0`, the
     /// identical `SIZE / 2.0` pill-shape convention `FAB`/`Chip`/`Icon
     /// Button` already establish elsewhere in this catalog).
-    #[pyo3(signature = (variant="docked", orientation=None, color=None, width=None, height=None, x=None, y=None))]
+    #[pyo3(signature = (variant="docked", orientation=None, color=None, width=None, height=None, x=None, y=None, border_color=None, border_width=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_toolbar(
         &self,
@@ -6379,6 +6553,8 @@ impl PyWindow {
         height: Option<f32>,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<Node> {
         let is_floating = match variant {
             "docked" => false,
@@ -6497,11 +6673,14 @@ impl PyWindow {
             height: length(if vertical { TOOLBAR_ITEM_GAP } else { 0.0 }),
         };
 
-        let bar = tree.insert(
-            NodeKind::Rect,
-            bar_style,
-            PaintProperties::new(container_color, corner_radius, elevation, 1.0),
-        );
+        let mut bar_paint = PaintProperties::new(container_color, corner_radius, elevation, 1.0);
+        if let Some((r, g, b, a)) = border_color {
+            bar_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            bar_paint.border_width = Animated::new(border_width);
+        }
+        let bar = tree.insert(NodeKind::Rect, bar_style, bar_paint);
         tree.add_child(self.root, bar);
         drop(tree);
         self.retheme_hooks.borrow_mut().push(toolbar_retheme_hook(
@@ -6563,7 +6742,8 @@ impl PyWindow {
     /// RADIUS`) rather than a discrete XS/S/M/L/XL size-class parameter,
     /// matching `add_button`'s own existing convention of always taking
     /// a literal real `width`/`height`, never a size enum.
-    #[pyo3(signature = (label, width, height, variant="filled", x=None, y=None))]
+    #[pyo3(signature = (label, width, height, variant="filled", x=None, y=None, border_color=None, border_width=None))]
+    #[allow(clippy::too_many_arguments)]
     fn add_split_button(
         &self,
         label: &str,
@@ -6572,8 +6752,23 @@ impl PyWindow {
         variant: &str,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<(Node, Node, Node)> {
-        let leading = self.add_button(label, width, height, variant, x, y)?;
+        // Border kwargs style `leading` -- this factory's own real
+        // primary/first-returned node -- by forwarding straight into
+        // `add_button`'s own already-widened border kwargs, rather than
+        // duplicating its conditional-overwrite logic a second time.
+        let leading = self.add_button(
+            label,
+            width,
+            height,
+            variant,
+            x,
+            y,
+            border_color,
+            border_width,
+        )?;
 
         let colors = resolve_button_colors(&self.theme.borrow(), variant, "button")?;
         let trailing_path = resolve_icon_path("expand_more")?;
@@ -6821,7 +7016,7 @@ impl PyWindow {
         let mut children = Vec::with_capacity(n);
         let mut child_ids: Vec<NodeId> = Vec::with_capacity(n);
         for label in &labels {
-            let button = self.add_button(label, width, height, variant, None, None)?;
+            let button = self.add_button(label, width, height, variant, None, None, None, None)?;
             let mut tree = self.tree.borrow_mut();
             tree.try_add_child(group_id, button.id);
             if let Some(node) = tree.get_mut(button.id) {
@@ -6882,7 +7077,7 @@ impl PyWindow {
     /// identical real way: `Tree::set_hit_testable(content, false)`,
     /// this milestone's second real use of the capability `Navigation
     /// Rail` added, not a new one invented here.
-    #[pyo3(signature = (labels, icons=None, selected=None, width=None, x=None, y=None))]
+    #[pyo3(signature = (labels, icons=None, selected=None, width=None, x=None, y=None, border_color=None, border_width=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_tabs(
         &self,
@@ -6892,6 +7087,8 @@ impl PyWindow {
         width: Option<f32>,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<Vec<Node>> {
         if labels.is_empty() {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -6989,11 +7186,14 @@ impl PyWindow {
                 flex_direction: taffy::FlexDirection::Column,
                 ..Default::default()
             };
-            let tab = tree.insert(
-                NodeKind::Rect,
-                tab_style,
-                PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
-            );
+            let mut tab_paint = PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0);
+            if let Some((r, g, b, a)) = border_color {
+                tab_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+            }
+            if let Some(border_width) = border_width {
+                tab_paint.border_width = Animated::new(border_width);
+            }
+            let tab = tree.insert(NodeKind::Rect, tab_style, tab_paint);
 
             let content_style = Style {
                 flex_grow: 1.0,
@@ -7108,7 +7308,7 @@ impl PyWindow {
     /// per requested trailing icon -- the identical real "independently
     /// interactive sub-elements get their own real `Node`s" shape
     /// `Snackbar`/`Top App Bar` already established.
-    #[pyo3(signature = (placeholder, width, leading_icon=None, trailing_icons=None, x=None, y=None))]
+    #[pyo3(signature = (placeholder, width, leading_icon=None, trailing_icons=None, x=None, y=None, border_color=None, border_width=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_search_bar(
         &self,
@@ -7118,6 +7318,8 @@ impl PyWindow {
         trailing_icons: Option<Vec<String>>,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<(Node, Node, Option<Node>, Vec<Node>)> {
         let trailing_icons = trailing_icons.unwrap_or_default();
         let leading_path = leading_icon.map(resolve_icon_path).transpose()?;
@@ -7184,11 +7386,14 @@ impl PyWindow {
             top: zero(),
             bottom: zero(),
         };
-        let bar = tree.insert(
-            NodeKind::Rect,
-            bar_style,
-            PaintProperties::new(container_color, corner_radius, elevation, 1.0),
-        );
+        let mut bar_paint = PaintProperties::new(container_color, corner_radius, elevation, 1.0);
+        if let Some((r, g, b, a)) = border_color {
+            bar_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            bar_paint.border_width = Animated::new(border_width);
+        }
+        let bar = tree.insert(NodeKind::Rect, bar_style, bar_paint);
 
         let mut search_bar_leading_ids: Option<(NodeId, NodeId)> = None;
         let leading = if let Some(path) = leading_path {
@@ -7327,8 +7532,16 @@ impl PyWindow {
     /// directly, the identical real reuse `Tooltip`'s own panel
     /// (Phase 3 Step 5) already established, not a new dedicated
     /// `open_search_view`/`close_search_view` pair duplicating them.
-    #[pyo3(signature = (width, height, x=None, y=None))]
-    fn add_search_view(&self, width: f32, height: f32, x: Option<f32>, y: Option<f32>) -> Node {
+    #[pyo3(signature = (width, height, x=None, y=None, border_color=None, border_width=None))]
+    fn add_search_view(
+        &self,
+        width: f32,
+        height: f32,
+        x: Option<f32>,
+        y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
+    ) -> Node {
         let container_color = {
             let theme = self.theme.borrow();
             if theme.is_set() {
@@ -7364,11 +7577,14 @@ impl PyWindow {
             x,
             y,
         );
-        let id = tree.insert(
-            NodeKind::Rect,
-            style,
-            PaintProperties::new(container_color, corner_radius, elevation, 1.0),
-        );
+        let mut paint = PaintProperties::new(container_color, corner_radius, elevation, 1.0);
+        if let Some((r, g, b, a)) = border_color {
+            paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            paint.border_width = Animated::new(border_width);
+        }
+        let id = tree.insert(NodeKind::Rect, style, paint);
         drop(tree);
         self.retheme_hooks
             .borrow_mut()
@@ -7395,7 +7611,7 @@ impl PyWindow {
     /// real contract -- `add_list` is what re-parents it into an
     /// actual list frame, the identical real `Tree::detach`-then-
     /// `add_child` mechanism `build_menu` already established.
-    #[pyo3(signature = (headline, leading_icon=None, trailing_icon=None, supporting_text=None, width=360.0, x=None, y=None))]
+    #[pyo3(signature = (headline, leading_icon=None, trailing_icon=None, supporting_text=None, width=360.0, x=None, y=None, border_color=None, border_width=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_list_item(
         &self,
@@ -7406,6 +7622,8 @@ impl PyWindow {
         width: f32,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<Node> {
         let leading_path = leading_icon.map(resolve_icon_path).transpose()?;
         let trailing_path = trailing_icon.map(resolve_icon_path).transpose()?;
@@ -7449,11 +7667,14 @@ impl PyWindow {
             width: length(MENU_ITEM_ICON_GAP),
             height: length(0.0),
         };
-        let container = tree.insert(
-            NodeKind::Rect,
-            container_style,
-            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
-        );
+        let mut container_paint = PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0);
+        if let Some((r, g, b, a)) = border_color {
+            container_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            container_paint.border_width = Animated::new(border_width);
+        }
+        let container = tree.insert(NodeKind::Rect, container_style, container_paint);
 
         let mut side_width = 0.0_f32;
         let mut leading_icon_id: Option<NodeId> = None;
@@ -7677,7 +7898,8 @@ impl PyWindow {
     /// animate("transform", (0.0, 0.0, -1.0 if expanded else 1.0))`.
     /// `expanded` seeds the chevron's own real initial orientation --
     /// a true no-op (`scale: 1.0`, identity) when `false`.
-    #[pyo3(signature = (title, expanded=false, width=360.0, x=None, y=None))]
+    #[pyo3(signature = (title, expanded=false, width=360.0, x=None, y=None, border_color=None, border_width=None))]
+    #[allow(clippy::too_many_arguments)]
     fn add_accordion_header(
         &self,
         title: &str,
@@ -7685,6 +7907,8 @@ impl PyWindow {
         width: f32,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<(Node, Node)> {
         let chevron_path = resolve_icon_path(ACCORDION_CHEVRON_ICON)?;
 
@@ -7722,11 +7946,14 @@ impl PyWindow {
             width: length(MENU_ITEM_ICON_GAP),
             height: length(0.0),
         };
-        let header = tree.insert(
-            NodeKind::Rect,
-            header_style,
-            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
-        );
+        let mut header_paint = PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0);
+        if let Some((r, g, b, a)) = border_color {
+            header_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            header_paint.border_width = Animated::new(border_width);
+        }
+        let header = tree.insert(NodeKind::Rect, header_style, header_paint);
 
         let headline_width =
             (width - 2.0 * MENU_ITEM_LEADING_SPACE - MENU_ITEM_ICON_SIZE - MENU_ITEM_ICON_GAP)
@@ -7794,7 +8021,7 @@ impl PyWindow {
     /// real `Affine::scale(-1.0)`-as-180°-flip substitute `Accordion`
     /// already established for the identical real reason -- this
     /// engine still has no rotation primitive).
-    #[pyo3(signature = (title, depth=0, expanded=false, leaf=false, width=360.0, x=None, y=None))]
+    #[pyo3(signature = (title, depth=0, expanded=false, leaf=false, width=360.0, x=None, y=None, border_color=None, border_width=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_tree_node(
         &self,
@@ -7805,6 +8032,8 @@ impl PyWindow {
         width: f32,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<(Node, Option<Node>)> {
         let chevron_path = if leaf {
             None
@@ -7848,11 +8077,14 @@ impl PyWindow {
             width: length(MENU_ITEM_ICON_GAP),
             height: length(0.0),
         };
-        let header = tree.insert(
-            NodeKind::Rect,
-            header_style,
-            PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0),
-        );
+        let mut header_paint = PaintProperties::new(TRANSPARENT, 0.0, 0.0, 1.0);
+        if let Some((r, g, b, a)) = border_color {
+            header_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            header_paint.border_width = Animated::new(border_width);
+        }
+        let header = tree.insert(NodeKind::Rect, header_style, header_paint);
 
         let chevron_reserved = if chevron_path.is_some() {
             MENU_ITEM_ICON_SIZE + MENU_ITEM_ICON_GAP
@@ -7923,7 +8155,7 @@ impl PyWindow {
     /// filled `primary` circle, not the outline) -- both are real,
     /// independent booleans the app computes itself from its own real
     /// date model, not mutually exclusive at the type level.
-    #[pyo3(signature = (day, selected=false, today=false, outside_month=false, x=None, y=None))]
+    #[pyo3(signature = (day, selected=false, today=false, outside_month=false, x=None, y=None, border_color=None, border_width=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_date_picker_day(
         &self,
@@ -7933,8 +8165,10 @@ impl PyWindow {
         outside_month: bool,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> Node {
-        let (fill, border_color, border_width, label_color) = {
+        let (fill, cell_border_color, cell_border_width, label_color) = {
             let theme = self.theme.borrow();
             let role = |name: &str, fallback: Color| -> Color {
                 if theme.is_set() {
@@ -7972,8 +8206,14 @@ impl PyWindow {
             .unwrap_or(DATE_CELL_CORNER_RADIUS);
         let mut tree = self.tree.borrow_mut();
         let mut cell_paint = PaintProperties::new(fill, corner_radius, 0.0, 1.0);
-        cell_paint.border_color = Animated::new(border_color);
-        cell_paint.border_width = Animated::new(border_width);
+        cell_paint.border_color = Animated::new(cell_border_color);
+        cell_paint.border_width = Animated::new(cell_border_width);
+        if let Some((r, g, b, a)) = border_color {
+            cell_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            cell_paint.border_width = Animated::new(border_width);
+        }
         let mut cell_style = positioned_style(
             Size {
                 width: length(DATE_CELL_SIZE),
@@ -8110,12 +8350,14 @@ impl PyWindow {
     /// state (Design Principle 6), not a new engine `NodeKind` --
     /// returns `(am, pm)`, both real, independently `enable_
     /// interaction()`-able `Node`s the app wires up itself.
-    #[pyo3(signature = (selected="AM", x=None, y=None))]
+    #[pyo3(signature = (selected="AM", x=None, y=None, border_color=None, border_width=None))]
     fn add_period_selector(
         &self,
         selected: &str,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<(Node, Node)> {
         if selected != "AM" && selected != "PM" {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
@@ -8157,52 +8399,62 @@ impl PyWindow {
         let base_x = x.unwrap_or(0.0);
         let base_y = y.unwrap_or(0.0);
 
-        let mut build_option = |label: &str, is_selected: bool, offset_y: f32| {
-            let (fill, label_color) = if is_selected {
-                (selected_fill, selected_label)
-            } else {
-                (TRANSPARENT, unselected_label)
-            };
-            let mut option_style = positioned_style(
-                Size {
-                    width: length(PERIOD_SELECTOR_WIDTH),
-                    height: length(PERIOD_OPTION_HEIGHT),
-                },
-                Some(base_x),
-                Some(base_y + offset_y),
-            );
-            option_style.display = taffy::Display::Flex;
-            option_style.justify_content = Some(JustifyContent::CENTER);
-            option_style.align_items = Some(AlignItems::CENTER);
-            let option = tree.insert(
-                NodeKind::Rect,
-                option_style,
-                PaintProperties::new(fill, corner_radius, 0.0, 1.0),
-            );
-            let label_id = tree.insert(
-                NodeKind::Text(TextState {
-                    content: label.to_string(),
-                    font_family: "Roboto".to_string(),
-                    font_weight: BUTTON_LABEL_FONT_WEIGHT,
-                    font_size: BUTTON_LABEL_FONT_SIZE,
-                    align: TextAlign::Center,
-                }),
-                Style {
-                    size: Size {
+        // Border kwargs style `am` only -- this factory's own first/
+        // primary returned tuple element, matching this catalog's own
+        // "first tuple element is the primary node" convention -- so
+        // `apply_border` is only ever `true` for the `am` call below.
+        let mut build_option =
+            |label: &str, is_selected: bool, offset_y: f32, apply_border: bool| {
+                let (fill, label_color) = if is_selected {
+                    (selected_fill, selected_label)
+                } else {
+                    (TRANSPARENT, unselected_label)
+                };
+                let mut option_style = positioned_style(
+                    Size {
                         width: length(PERIOD_SELECTOR_WIDTH),
-                        height: length(BUTTON_LABEL_LINE_HEIGHT),
+                        height: length(PERIOD_OPTION_HEIGHT),
                     },
-                    ..Default::default()
-                },
-                PaintProperties::new(label_color, 0.0, 0.0, 1.0),
-            );
-            tree.add_child(option, label_id);
-            tree.add_child(self.root, option);
-            (option, label_id)
-        };
+                    Some(base_x),
+                    Some(base_y + offset_y),
+                );
+                option_style.display = taffy::Display::Flex;
+                option_style.justify_content = Some(JustifyContent::CENTER);
+                option_style.align_items = Some(AlignItems::CENTER);
+                let mut option_paint = PaintProperties::new(fill, corner_radius, 0.0, 1.0);
+                if apply_border {
+                    if let Some((r, g, b, a)) = border_color {
+                        option_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+                    }
+                    if let Some(border_width) = border_width {
+                        option_paint.border_width = Animated::new(border_width);
+                    }
+                }
+                let option = tree.insert(NodeKind::Rect, option_style, option_paint);
+                let label_id = tree.insert(
+                    NodeKind::Text(TextState {
+                        content: label.to_string(),
+                        font_family: "Roboto".to_string(),
+                        font_weight: BUTTON_LABEL_FONT_WEIGHT,
+                        font_size: BUTTON_LABEL_FONT_SIZE,
+                        align: TextAlign::Center,
+                    }),
+                    Style {
+                        size: Size {
+                            width: length(PERIOD_SELECTOR_WIDTH),
+                            height: length(BUTTON_LABEL_LINE_HEIGHT),
+                        },
+                        ..Default::default()
+                    },
+                    PaintProperties::new(label_color, 0.0, 0.0, 1.0),
+                );
+                tree.add_child(option, label_id);
+                tree.add_child(self.root, option);
+                (option, label_id)
+            };
 
-        let (am, am_label) = build_option("AM", selected == "AM", 0.0);
-        let (pm, pm_label) = build_option("PM", selected == "PM", PERIOD_OPTION_HEIGHT);
+        let (am, am_label) = build_option("AM", selected == "AM", 0.0, true);
+        let (pm, pm_label) = build_option("PM", selected == "PM", PERIOD_OPTION_HEIGHT, false);
         drop(tree);
         self.retheme_hooks
             .borrow_mut()
@@ -8232,8 +8484,16 @@ impl PyWindow {
     /// unattached anywhere -- the same real contract `add_dialog`/
     /// `add_tooltip`'s own panels already have; pass it to `Window.
     /// open_menu(anchor, popover)` to actually show it.
-    #[pyo3(signature = (subhead, text, width, height))]
-    fn add_popover(&self, subhead: &str, text: &str, width: f32, height: f32) -> Node {
+    #[pyo3(signature = (subhead, text, width, height, border_color=None, border_width=None))]
+    fn add_popover(
+        &self,
+        subhead: &str,
+        text: &str,
+        width: f32,
+        height: f32,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
+    ) -> Node {
         let (subhead_color, body_color) = {
             let theme = self.theme.borrow();
             let on_surface_variant = if theme.is_set() {
@@ -8288,11 +8548,14 @@ impl PyWindow {
             },
             ..Default::default()
         };
-        let panel = tree.insert(
-            NodeKind::Rect,
-            panel_style,
-            PaintProperties::new(container_color, corner_radius, elevation, 1.0),
-        );
+        let mut panel_paint = PaintProperties::new(container_color, corner_radius, elevation, 1.0);
+        if let Some((r, g, b, a)) = border_color {
+            panel_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            panel_paint.border_width = Animated::new(border_width);
+        }
+        let panel = tree.insert(NodeKind::Rect, panel_style, panel_paint);
 
         let content_width = (width - 2.0 * POPOVER_PADDING).max(0.0);
         let subhead_id = tree.insert(
@@ -8549,13 +8812,15 @@ impl PyWindow {
     /// real page indicator, `previous`/`next` each `Icon Button`'s
     /// own exact real anatomy reused a fourth time this catalog
     /// already has.
-    #[pyo3(signature = (page_count, current=0, x=None, y=None))]
+    #[pyo3(signature = (page_count, current=0, x=None, y=None, border_color=None, border_width=None))]
     fn add_pagination(
         &self,
         page_count: usize,
         current: usize,
         x: Option<f32>,
         y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<(Node, Vec<Node>, Node)> {
         if page_count == 0 {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -8624,6 +8889,8 @@ impl PyWindow {
             base_y: f32,
             offset_x: f32,
             corner_radius: f64,
+            border_color: Option<(u8, u8, u8, u8)>,
+            border_width: Option<f64>,
         ) -> (NodeId, NodeId) {
             let mut style = positioned_style(
                 Size {
@@ -8636,11 +8903,14 @@ impl PyWindow {
             style.display = taffy::Display::Flex;
             style.justify_content = Some(JustifyContent::CENTER);
             style.align_items = Some(AlignItems::CENTER);
-            let button = tree.insert(
-                NodeKind::Rect,
-                style,
-                PaintProperties::new(TRANSPARENT, corner_radius, 0.0, 1.0),
-            );
+            let mut button_paint = PaintProperties::new(TRANSPARENT, corner_radius, 0.0, 1.0);
+            if let Some((r, g, b, a)) = border_color {
+                button_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+            }
+            if let Some(border_width) = border_width {
+                button_paint.border_width = Animated::new(border_width);
+            }
+            let button = tree.insert(NodeKind::Rect, style, button_paint);
             let icon_id = tree.insert(
                 NodeKind::Icon(IconState::new(path, icon_color)),
                 Style {
@@ -8661,6 +8931,8 @@ impl PyWindow {
         let base_x = x.unwrap_or(0.0);
         let base_y = y.unwrap_or(0.0);
 
+        // Border kwargs style `previous` only -- this factory's own
+        // first/primary returned tuple element.
         let (previous, previous_icon) = build_icon_button(
             &mut tree,
             self.root,
@@ -8670,6 +8942,8 @@ impl PyWindow {
             base_y,
             0.0,
             icon_button_corner_radius,
+            border_color,
+            border_width,
         );
 
         let mut pages = Vec::with_capacity(page_count);
@@ -8733,6 +9007,8 @@ impl PyWindow {
             base_y,
             next_offset,
             icon_button_corner_radius,
+            None,
+            None,
         );
 
         drop(tree);
@@ -8754,8 +9030,14 @@ impl PyWindow {
     /// (`build_shell`)'s own already-real `status_bar` region -- pass
     /// the returned `Node` directly to `build_shell`'s own existing
     /// `status_bar` parameter, no new shell-level wiring needed.
-    #[pyo3(signature = (text, width=None))]
-    fn add_status_bar(&self, text: &str, width: Option<f32>) -> Node {
+    #[pyo3(signature = (text, width=None, border_color=None, border_width=None))]
+    fn add_status_bar(
+        &self,
+        text: &str,
+        width: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
+    ) -> Node {
         let (container_color, text_color) = {
             let theme = self.theme.borrow();
             let container = if theme.is_set() {
@@ -8794,11 +9076,14 @@ impl PyWindow {
             ..Default::default()
         };
         bar_style.flex_shrink = 0.0;
-        let bar = tree.insert(
-            NodeKind::Rect,
-            bar_style,
-            PaintProperties::new(container_color, 0.0, 0.0, 1.0),
-        );
+        let mut bar_paint = PaintProperties::new(container_color, 0.0, 0.0, 1.0);
+        if let Some((r, g, b, a)) = border_color {
+            bar_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            bar_paint.border_width = Animated::new(border_width);
+        }
+        let bar = tree.insert(NodeKind::Rect, bar_style, bar_paint);
 
         let label_width = (bar_width - 2.0 * STATUS_BAR_PADDING).max(0.0);
         let label_id = tree.insert(
@@ -9212,8 +9497,16 @@ impl PyWindow {
     /// choice this method makes; everything else is exactly `add_rect`
     /// under a name that documents its own real, intended use as
     /// `add_graph_node`'s own `graph` parameter.
-    #[pyo3(signature = (width, height, x=None, y=None))]
-    fn add_node_graph(&self, width: f32, height: f32, x: Option<f32>, y: Option<f32>) -> Node {
+    #[pyo3(signature = (width, height, x=None, y=None, border_color=None, border_width=None))]
+    fn add_node_graph(
+        &self,
+        width: f32,
+        height: f32,
+        x: Option<f32>,
+        y: Option<f32>,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
+    ) -> Node {
         let container_color = {
             let theme = self.theme.borrow();
             if theme.is_set() {
@@ -9225,6 +9518,13 @@ impl PyWindow {
             }
         };
         let mut tree = self.tree.borrow_mut();
+        let mut paint = PaintProperties::new(container_color, 0.0, 0.0, 1.0);
+        if let Some((r, g, b, a)) = border_color {
+            paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            paint.border_width = Animated::new(border_width);
+        }
         let id = tree.insert(
             NodeKind::Rect,
             positioned_style(
@@ -9235,7 +9535,7 @@ impl PyWindow {
                 x,
                 y,
             ),
-            PaintProperties::new(container_color, 0.0, 0.0, 1.0),
+            paint,
         );
         tree.add_child(self.root, id);
         drop(tree);
@@ -9315,7 +9615,7 @@ impl PyWindow {
     /// `node.animate("transform", ...)` still lets an app reposition a
     /// node programmatically (a toolbar action, a layout algorithm, a
     /// keyboard nudge) -- the real, available mechanism.
-    #[pyo3(signature = (graph, label, x, y, width, height))]
+    #[pyo3(signature = (graph, label, x, y, width, height, border_color=None, border_width=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_graph_node(
         &self,
@@ -9325,6 +9625,8 @@ impl PyWindow {
         y: f32,
         width: f32,
         height: f32,
+        border_color: Option<(u8, u8, u8, u8)>,
+        border_width: Option<f64>,
     ) -> PyResult<Node> {
         if !Rc::ptr_eq(&self.tree, &graph.tree) {
             return Err(EngineError::ForeignNode.into());
@@ -9367,6 +9669,13 @@ impl PyWindow {
         let mut tree = self.tree.borrow_mut();
         let title_height = NODE_GRAPH_TITLE_HEIGHT.min(height);
 
+        let mut wrapper_paint = PaintProperties::new(body_color, corner_radius, 0.0, 1.0);
+        if let Some((r, g, b, a)) = border_color {
+            wrapper_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
+        }
+        if let Some(border_width) = border_width {
+            wrapper_paint.border_width = Animated::new(border_width);
+        }
         let wrapper = tree.insert(
             NodeKind::Rect,
             positioned_style(
@@ -9377,7 +9686,7 @@ impl PyWindow {
                 Some(x),
                 Some(y),
             ),
-            PaintProperties::new(body_color, corner_radius, 0.0, 1.0),
+            wrapper_paint,
         );
 
         let title_bar = tree.insert(

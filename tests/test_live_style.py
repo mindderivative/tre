@@ -241,6 +241,95 @@ def test_add_rect_without_border_kwargs_still_defaults_to_zero_width():
     assert node.get("border_width") == pytest.approx(0.0)
 
 
+# --- border at construction (M60: widened to every other Rect-backed
+# factory in the catalog, mirroring add_rect's own exact kwarg pair) -----
+
+
+def test_add_card_accepts_border_kwargs():
+    # A simple single-`Node`-returning factory -- `add_card`'s own
+    # `PaintProperties` is already themed with a (usually zero-width)
+    # border from `resolve_card_colors`, so this also proves the new
+    # kwargs win over that pre-existing theme-derived value, the same
+    # "explicit literal always wins" contract `add_rect` establishes.
+    window = Window(width=300, height=300)
+    node = window.add_card(
+        width=120,
+        height=80,
+        border_color=(10, 20, 30, 255),
+        border_width=2.0,
+    )
+    assert isinstance(node, Node)
+    assert node.get("border_width") == pytest.approx(2.0)
+
+
+def test_add_chip_accepts_border_kwargs():
+    window = Window(width=300, height=300)
+    node = window.add_chip(
+        label="Filter",
+        width=100,
+        border_color=(0, 0, 0, 255),
+        border_width=1.0,
+    )
+    assert isinstance(node, Node)
+    assert node.get("border_width") == pytest.approx(1.0)
+
+
+def test_add_badge_accepts_border_kwargs_for_both_the_dot_and_labeled_shapes():
+    window = Window(width=200, height=200)
+    dot = window.add_badge(border_color=(255, 0, 0, 255), border_width=1.0)
+    labeled = window.add_badge(
+        label="9+", border_color=(255, 0, 0, 255), border_width=1.0
+    )
+    assert dot.get("border_width") == pytest.approx(1.0)
+    assert labeled.get("border_width") == pytest.approx(1.0)
+
+
+def test_add_snackbar_accepts_border_kwargs_and_styles_only_the_returned_container():
+    # `add_snackbar` returns a `(container, action, close)` tuple -- by
+    # this catalog's own "first tuple element is the primary node"
+    # convention, the border kwargs style `container` only.
+    window = Window(width=300, height=300)
+    container, action, close = window.add_snackbar(
+        text="Saved",
+        width=250,
+        action_label="Undo",
+        closable=True,
+        border_color=(255, 255, 255, 255),
+        border_width=1.0,
+    )
+    assert isinstance(container, Node)
+    assert container.get("border_width") == pytest.approx(1.0)
+    assert action is not None
+    assert close is not None
+
+
+def test_add_tabs_accepts_border_kwargs_and_applies_uniformly_to_every_tab():
+    # `add_tabs` returns a `Vec<Node>` of peer tab containers (no single
+    # "primary" one distinguishable the way a tuple's first element is),
+    # so the border kwargs apply uniformly to every returned tab.
+    window = Window(width=300, height=300)
+    tabs = window.add_tabs(labels=["One", "Two", "Three"], border_color=(1, 2, 3, 255), border_width=1.5)
+    assert len(tabs) == 3
+    for tab in tabs:
+        assert tab.get("border_width") == pytest.approx(1.5)
+
+
+def test_add_pagination_accepts_border_kwargs_and_styles_only_previous():
+    # `add_pagination` returns `(previous, pages, next)` -- the border
+    # kwargs style `previous` (the first/primary tuple element) only;
+    # `next` is deliberately left un-bordered, the same literal "first
+    # tuple element" convention `add_snackbar`'s own test above proves.
+    window = Window(width=300, height=300)
+    previous, pages, next_ = window.add_pagination(
+        page_count=3,
+        border_color=(9, 9, 9, 255),
+        border_width=1.0,
+    )
+    assert previous.get("border_width") == pytest.approx(1.0)
+    assert next_.get("border_width") == pytest.approx(0.0)
+    assert len(pages) == 3
+
+
 # --- border via static YAML (StyleSpec) ----------------------------------
 
 

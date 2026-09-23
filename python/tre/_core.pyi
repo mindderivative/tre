@@ -503,6 +503,8 @@ class Window:
         variant: str = "filled",
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> Node:
         """MD3's five real button variants: `"elevated"`, `"filled"`,
         `"filled_tonal"`, `"outlined"`, `"text"`. Raises `ValueError`
@@ -519,6 +521,8 @@ class Window:
         variant: str = "standard",
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> Node:
         """MD3's four real Icon Button variants: `"filled"`,
         `"filled_tonal"`, `"outlined"`, `"standard"`. `icon` is a
@@ -535,6 +539,8 @@ class Window:
         variant: str = "surface",
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> Node:
         """MD3's three real FAB sizes (`"small"`, `"default"`,
         `"large"`) and four real color variants (`"surface"`,
@@ -552,6 +558,8 @@ class Window:
         variant: str = "primary",
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> Node:
         """`add_fab`'s own real color/elevation system with a real
         icon-plus-label anatomy -- one MD3 size (56dp tall). `icon` is
@@ -568,6 +576,8 @@ class Window:
         height: float = 40.0,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> list[Node]:
         """MD3's real group-of-connected-segments anatomy -- one
         shared outline frame, a real divider between each pair of
@@ -597,6 +607,8 @@ class Window:
         removable: bool = False,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> Node:
         """MD3's four real chip variants: `"assist"`, `"filter"`,
         `"input"`, `"suggestion"`. `icon` is an optional leading icon
@@ -615,6 +627,8 @@ class Window:
         width: float = 200.0,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> Node:
         """One real MD3 menu row. `submenu=True` adds a real trailing
         chevron indicator ("this item opens a nested menu") -- a
@@ -656,6 +670,8 @@ class Window:
         width: float | None = None,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> Node:
         """A real MD3 badge -- a 6dp dot with no `label`, or a 16dp
         labeled pill with one. Always overlaid on a corner of some
@@ -743,6 +759,8 @@ class Window:
         variant: str = "elevated",
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> Node:
         """MD3's three real card variants: `"elevated"`, `"filled"`,
         `"outlined"`. A plain container -- add arbitrary content with
@@ -756,6 +774,8 @@ class Window:
         vertical: bool = False,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> Node:
         """A real MD3 1dp divider line -- `length` wide and 1dp tall
         when horizontal (the default), or the reverse when
@@ -768,6 +788,8 @@ class Window:
         width: float,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> Node:
         """A real MD3 plain tooltip panel -- returned **not yet
         attached anywhere**, the same real contract `build_menu`'s own
@@ -778,7 +800,15 @@ class Window:
         `open_menu`/`close_menu`.
         """
         ...
-    def add_dialog(self, headline: str, text: str, width: float, height: float) -> Node:
+    def add_dialog(
+        self,
+        headline: str,
+        text: str,
+        width: float,
+        height: float,
+        border_color: Color | None = None,
+        border_width: float | None = None,
+    ) -> Node:
         """A real MD3 modal dialog -- a full-window scrim with the
         panel (headline + supporting text) centered inside it.
         Deliberately has no `x`/`y` -- a real dialog is always
@@ -805,6 +835,8 @@ class Window:
         width: float,
         action_label: str | None = None,
         closable: bool = False,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> tuple[Node, Node | None, Node | None]:
         """A real MD3 snackbar -- a transient notification. Returns
         `(container, action, close)`: `action`/`close` are `None`
@@ -840,6 +872,8 @@ class Window:
         modal: bool = False,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> Node:
         """A real MD3 side sheet, docked to the right edge. When
         `modal` is `False` (the default, MD3's real *Standard*
@@ -876,6 +910,8 @@ class Window:
         selected: int | None = None,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> list[Node]:
         """A real MD3 navigation rail, the desktop counterpart to
         Navigation Bar. `labels`/`icons` must be the same length (one
@@ -896,6 +932,8 @@ class Window:
         height: float | None = None,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> tuple[Node, list[Node]]:
         """A real MD3 navigation drawer, docked to the left edge.
         Returns `(container, items)`: one real, independently
@@ -935,6 +973,8 @@ class Window:
         width: float | None = None,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> tuple[Node, Node | None, list[Node]]:
         """A real MD3 top app bar, the *Small* variant. Returns `(bar,
         leading, trailing)`: `leading` is `None` unless `leading_icon`
@@ -953,6 +993,8 @@ class Window:
         height: float | None = None,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> Node:
         """A real MD3 Toolbar -- `variant` is `"docked"` (spans the
         full window width by default, square corners) or `"floating"`
@@ -977,6 +1019,8 @@ class Window:
         variant: str = "filled",
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> tuple[Node, Node, Node]:
         """A real MD3 Split Button -- a leading button (the same real
         color variants as `add_button`: `"elevated"`/`"filled"`/
@@ -1022,6 +1066,8 @@ class Window:
         width: float | None = None,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> list[Node]:
         """Real MD3 tabs, the *Primary Navigation Tab* variant.
         `icons`, if given, must be the same length as `labels`.
@@ -1041,6 +1087,8 @@ class Window:
         trailing_icons: list[str] | None = None,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> tuple[Node, Node, Node | None, list[Node]]:
         """A real MD3 search bar. Returns `(bar, text_field, leading,
         trailing)`: `text_field` is a real `NodeKind.TextField` node
@@ -1056,6 +1104,8 @@ class Window:
         height: float,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> Node:
         """A real MD3 search view -- the *docked* dropdown suggestions
         panel (MD3's own *full-screen* variant is a mobile pattern,
@@ -1076,6 +1126,8 @@ class Window:
         width: float = ...,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> Node:
         """A real MD3 list item -- one-line (56dp) by default, or a
         real two-line (72dp) variant when `supporting_text` is given.
@@ -1106,6 +1158,8 @@ class Window:
         width: float = ...,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> tuple[Node, Node]:
         """An `Accordion` header -- MD3 has no official Accordion
         page; this reuses List Item's own real anatomy (a headline +
@@ -1129,6 +1183,8 @@ class Window:
         width: float = ...,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> tuple[Node, Node | None]:
         """One real `Tree View` row -- the identical real grounding
         `add_accordion_header` already has, applied recursively:
@@ -1148,6 +1204,8 @@ class Window:
         outside_month: bool = False,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> Node:
         """A real MD3 date-picker day cell -- the *docked* variant's
         own real anatomy (48x48dp, `corner-full`). `selected` wins
@@ -1179,6 +1237,8 @@ class Window:
         selected: str = "AM",
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> tuple[Node, Node]:
         """A real MD3 AM/PM period selector -- two real, independently
         `enable_interaction()`-able `Node`s (`am`, `pm`) stacked
@@ -1189,7 +1249,15 @@ class Window:
         `ValueError` if `selected` isn't `"AM"` or `"PM"`.
         """
         ...
-    def add_popover(self, subhead: str, text: str, width: float, height: float) -> Node:
+    def add_popover(
+        self,
+        subhead: str,
+        text: str,
+        width: float,
+        height: float,
+        border_color: Color | None = None,
+        border_width: float | None = None,
+    ) -> Node:
         """A real MD3 popover, grounded in MD3's own Rich Tooltip
         anatomy (`surface_container`, real `corner-medium` shape, a
         subhead + supporting text). Genuinely *persistent* -- unlike
@@ -1237,6 +1305,8 @@ class Window:
         current: int = 0,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> tuple[Node, list[Node], Node]:
         """A real MD3 pagination control. Returns `(previous, pages,
         next)`: `pages` is one real, independently `enable_
@@ -1247,7 +1317,13 @@ class Window:
         is `0` or `current` is out of range.
         """
         ...
-    def add_status_bar(self, text: str, width: float | None = None) -> Node:
+    def add_status_bar(
+        self,
+        text: str,
+        width: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
+    ) -> Node:
         """A real, styled status bar (24dp, `surface_container`,
         Label Small text). Pass the returned `Node` directly to
         `build_shell`'s own already-real `status_bar` parameter --
@@ -1343,6 +1419,8 @@ class Window:
         height: float,
         x: float | None = None,
         y: float | None = None,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> Node:
         """The pannable/zoomable viewport half of a Node Graph -- pass
         the returned `Node` as `add_graph_node`'s own `graph` parameter.
@@ -1359,6 +1437,8 @@ class Window:
         y: float,
         width: float,
         height: float,
+        border_color: Color | None = None,
+        border_width: float | None = None,
     ) -> Node:
         """A real, styled node (a title bar over a body) for a Node
         Graph, attached directly under `graph` (not the window root)
