@@ -22,3 +22,11 @@ components:
   # StyleSpec path already uses -- an author no longer has to know or
   # re-derive the raw dp number (8.0) for "small," just its real MD3 name.
   card: {corner_radius: small, elevation: level_2}
+# M63 (§7.1, §16.3): `typography:` overrides the imperative MD3
+# catalog's own centralized type scale (`engine_md3::typography`) by
+# real role name -- every `add_button`'s own label resolves its font
+# family/weight/size through `ThemeState::typography("label_large")`
+# (window_factory.rs), so this override reaches the same button below
+# without touching a single literal font constant.
+typography:
+  label_large: {font_family: Roboto, font_size: 15}

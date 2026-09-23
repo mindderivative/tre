@@ -28,5 +28,5 @@ pub use spec::{
     FlexDirectionSpec, NodeKindSpec, ShapeOrElevationSpec, StyleSpec, TextSpec, WidgetSpec,
     parse_view,
 };
-pub use theme::{ComponentOverride, ThemeSpec, parse_theme};
+pub use theme::{ComponentOverride, ThemeSpec, TypographyOverride, parse_theme};
 pub use watch::ViewWatcher;

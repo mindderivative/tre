@@ -478,8 +478,6 @@ const MENU_PANEL_ELEVATION: f64 = 2.0;
 /// same size fits.
 const BADGE_DOT_SIZE: f32 = 6.0;
 const BADGE_LABELED_HEIGHT: f32 = 16.0;
-const BADGE_LABEL_FONT_SIZE: f32 = 11.0;
-const BADGE_LABEL_FONT_WEIGHT: f32 = 500.0;
 
 /// M30 Phase 3 Step 3 (§5, §7): `Card`'s real three MD3 variants,
 /// verified against Material Web's own token source (`_md-comp-
@@ -578,8 +576,6 @@ const NODE_GRAPH_TITLE_PADDING: f32 = 12.0;
 const TOOLTIP_HEIGHT: f32 = 24.0;
 const TOOLTIP_CORNER_RADIUS: f64 = 4.0;
 const TOOLTIP_HORIZONTAL_PADDING: f32 = 8.0;
-const TOOLTIP_FONT_SIZE: f32 = 12.0;
-const TOOLTIP_FONT_WEIGHT: f32 = 400.0;
 
 /// M30 Phase 4 Step 1 (§5, §7, §11.3): `Dialog`'s real anatomy,
 /// verified against Material Web's own token source (`_md-comp-
@@ -603,10 +599,6 @@ const DIALOG_CORNER_RADIUS: f64 = 28.0;
 const DIALOG_ELEVATION: f64 = 3.0;
 const DIALOG_PADDING: f32 = 24.0;
 const DIALOG_HEADLINE_GAP: f32 = 16.0;
-const DIALOG_HEADLINE_FONT_SIZE: f32 = 24.0;
-const DIALOG_HEADLINE_FONT_WEIGHT: f32 = 400.0;
-const DIALOG_BODY_FONT_SIZE: f32 = 14.0;
-const DIALOG_BODY_FONT_WEIGHT: f32 = 400.0;
 const DIALOG_SCRIM_OPACITY: f64 = 0.32;
 
 /// MD3's own real Snackbar anatomy (M30 Phase 4 Step 2), verified
@@ -674,8 +666,6 @@ const NAV_RAIL_ICON_SIZE: f32 = 24.0;
 const NAV_RAIL_INDICATOR_WIDTH: f32 = 56.0;
 const NAV_RAIL_INDICATOR_HEIGHT: f32 = 32.0;
 const NAV_RAIL_INDICATOR_CORNER_RADIUS: f64 = NAV_RAIL_INDICATOR_HEIGHT as f64 / 2.0;
-const NAV_RAIL_LABEL_FONT_SIZE: f32 = 12.0;
-const NAV_RAIL_LABEL_WEIGHT_INACTIVE: f32 = 500.0;
 const NAV_RAIL_LABEL_WEIGHT_ACTIVE: f32 = 700.0;
 /// Not a discrete token in the rail's own token file (confirmed by
 /// the same fetch) -- reasonable, MD3-consistent values, the
@@ -737,8 +727,6 @@ const NAV_DRAWER_TOP_PADDING: f32 = 12.0;
 /// role, trailing the variant), not assumed identical.
 const TOP_APP_BAR_HEIGHT: f32 = 64.0;
 const TOP_APP_BAR_ICON_SIZE: f32 = 24.0;
-const TOP_APP_BAR_HEADLINE_FONT_SIZE: f32 = 22.0;
-const TOP_APP_BAR_HEADLINE_FONT_WEIGHT: f32 = 400.0;
 /// Not discrete tokens in the small-variant's own token file
 /// (confirmed by the same fetch) -- reasonable, MD3-consistent
 /// values, the identical honest caveat `Dialog`'s own padding
@@ -852,8 +840,6 @@ fn button_group_pressed_corner_radius(height: f64) -> f64 {
 /// match. Icon (optional, "with-icon" token set): 24dp, same real
 /// active/inactive color pair as the label.
 const TAB_HEIGHT: f32 = 48.0;
-const TAB_LABEL_FONT_SIZE: f32 = 14.0;
-const TAB_LABEL_FONT_WEIGHT: f32 = 500.0;
 const TAB_ICON_SIZE: f32 = 24.0;
 const TAB_INDICATOR_HEIGHT: f32 = 3.0;
 const TAB_INDICATOR_CORNER_RADIUS: f64 = 3.0;
@@ -1110,8 +1096,6 @@ const PERIOD_OPTION_HEIGHT: f32 = PERIOD_SELECTOR_HEIGHT / 2.0;
 /// for free -- no new persistence mechanism needed.
 const POPOVER_CORNER_RADIUS: f64 = CARD_CORNER_RADIUS;
 const POPOVER_ELEVATION: f64 = MENU_PANEL_ELEVATION;
-const POPOVER_SUBHEAD_FONT_SIZE: f32 = TAB_LABEL_FONT_SIZE;
-const POPOVER_SUBHEAD_FONT_WEIGHT: f32 = TAB_LABEL_FONT_WEIGHT;
 /// Not a discrete token in the rich-tooltip's own token file
 /// (confirmed by the same fetch) -- a reasonable, MD3-consistent
 /// value, the identical honest caveat `Dialog`'s own padding
@@ -1153,9 +1137,6 @@ const POPOVER_SUBHEAD_GAP: f32 = 8.0;
 /// with a bare `Text` child (defers, the parent claims the hit) and
 /// once with a `Link` child (claims it directly) -- a real, concrete
 /// contrast, not assumed from the enum shape alone.
-const LINK_FONT_SIZE: f32 = SEARCH_INPUT_FONT_SIZE;
-const LINK_FONT_WEIGHT: f32 = SEARCH_INPUT_FONT_WEIGHT;
-
 /// `SpinBox`, a real numeric increment control (M30 Phase 8 Step 3).
 /// **Real, deliberate naming, not the obvious guess:** pyCopper's own
 /// real prior naming-risk finding, reused directly per `BUILD_TRACKER
@@ -1235,6 +1216,13 @@ const STATUS_BAR_PADDING: f32 = 8.0;
 /// weight) for the button's own label.
 const BUTTON_HORIZONTAL_PADDING: f32 = 24.0;
 const BUTTON_LABEL_FONT_SIZE: f32 = 14.0;
+/// M63 (§7.1, §16.3): every real factory now resolves its own label
+/// weight via `theme.typography("label_large")` instead -- this real
+/// historical value (MD3's own real Label Large weight) survives only
+/// as a `#[cfg(test)]` fixture constant for the retheme-hook unit tests
+/// below, which need a real, concrete `TextState` to construct but
+/// aren't testing typography theming at all.
+#[cfg(test)]
 const BUTTON_LABEL_FONT_WEIGHT: f32 = 500.0;
 /// A real line-height a 14sp label comfortably fits inside without
 /// clipping ascenders/descenders (`text_align.rs`'s own real ink-
@@ -3224,6 +3212,16 @@ impl PyWindow {
             .borrow()
             .shape("button", Some(variant))
             .unwrap_or_else(|| f64::from(height) / 2.0);
+        // M63 (§7.1, §16.3): the real MD3 button-label role -- shipped
+        // as literal `BUTTON_LABEL_FONT_SIZE`/`_WEIGHT` constants
+        // (14.0/500.0) before this milestone, an exact match for
+        // `engine_md3::LABEL_LARGE`, confirmed by direct comparison,
+        // not assumed -- now themeable via `ThemeSpec.typography`.
+        let label_style = self
+            .theme
+            .borrow()
+            .typography("label_large")
+            .expect("label_large is a real MD3 role");
         let mut tree = self.tree.borrow_mut();
 
         let mut container_paint =
@@ -3252,9 +3250,9 @@ impl PyWindow {
         let label_id = tree.insert(
             NodeKind::Text(TextState {
                 content: label.to_string(),
-                font_family: "Roboto".to_string(),
-                font_weight: BUTTON_LABEL_FONT_WEIGHT,
-                font_size: BUTTON_LABEL_FONT_SIZE,
+                font_family: label_style.font_family.clone(),
+                font_weight: label_style.font_weight,
+                font_size: label_style.font_size,
                 align: TextAlign::Center,
                 line_height: None,
             }),
@@ -3535,6 +3533,11 @@ impl PyWindow {
             .borrow()
             .elevation("extended_fab", None)
             .unwrap_or(FAB_REST_ELEVATION_LEVEL);
+        let label_style = self
+            .theme
+            .borrow()
+            .typography("label_large")
+            .expect("label_large is a real MD3 role");
 
         let mut tree = self.tree.borrow_mut();
         let mut container_paint =
@@ -3594,9 +3597,9 @@ impl PyWindow {
         let label_id = tree.insert(
             NodeKind::Text(TextState {
                 content: label.to_string(),
-                font_family: "Roboto".to_string(),
-                font_weight: BUTTON_LABEL_FONT_WEIGHT,
-                font_size: BUTTON_LABEL_FONT_SIZE,
+                font_family: label_style.font_family.clone(),
+                font_weight: label_style.font_weight,
+                font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
             }),
@@ -3733,6 +3736,11 @@ impl PyWindow {
             .borrow()
             .shape("segmented_button", None)
             .unwrap_or_else(|| f64::from(height) / 2.0);
+        let label_style = self
+            .theme
+            .borrow()
+            .typography("label_large")
+            .expect("label_large is a real MD3 role");
 
         let mut tree = self.tree.borrow_mut();
 
@@ -3831,9 +3839,9 @@ impl PyWindow {
             let label_id = tree.insert(
                 NodeKind::Text(TextState {
                     content: label,
-                    font_family: "Roboto".to_string(),
-                    font_weight: BUTTON_LABEL_FONT_WEIGHT,
-                    font_size: BUTTON_LABEL_FONT_SIZE,
+                    font_family: label_style.font_family.clone(),
+                    font_weight: label_style.font_weight,
+                    font_size: label_style.font_size,
                     align: TextAlign::Center,
                     line_height: None,
                 }),
@@ -3948,6 +3956,11 @@ impl PyWindow {
             .borrow()
             .shape("chip", None)
             .unwrap_or(CHIP_CORNER_RADIUS);
+        let label_style = self
+            .theme
+            .borrow()
+            .typography("label_large")
+            .expect("label_large is a real MD3 role");
         let mut tree = self.tree.borrow_mut();
         let mut container_paint = PaintProperties::new(colors.container, corner_radius, 0.0, 1.0);
         container_paint.border_color = Animated::new(colors.border_color);
@@ -4007,9 +4020,9 @@ impl PyWindow {
         let label_id = tree.insert(
             NodeKind::Text(TextState {
                 content: label.to_string(),
-                font_family: "Roboto".to_string(),
-                font_weight: BUTTON_LABEL_FONT_WEIGHT,
-                font_size: BUTTON_LABEL_FONT_SIZE,
+                font_family: label_style.font_family.clone(),
+                font_weight: label_style.font_weight,
+                font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
             }),
@@ -4105,6 +4118,11 @@ impl PyWindow {
         } else {
             None
         };
+        let label_style = self
+            .theme
+            .borrow()
+            .typography("label_large")
+            .expect("label_large is a real MD3 role");
 
         let mut tree = self.tree.borrow_mut();
         let mut container_style = positioned_style(
@@ -4168,9 +4186,9 @@ impl PyWindow {
         let label_id = tree.insert(
             NodeKind::Text(TextState {
                 content: label.to_string(),
-                font_family: "Roboto".to_string(),
-                font_weight: BUTTON_LABEL_FONT_WEIGHT,
-                font_size: BUTTON_LABEL_FONT_SIZE,
+                font_family: label_style.font_family.clone(),
+                font_weight: label_style.font_weight,
+                font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
             }),
@@ -4426,6 +4444,11 @@ impl PyWindow {
             .borrow()
             .shape("badge", Some("labeled"))
             .unwrap_or_else(|| f64::from(BADGE_LABELED_HEIGHT) / 2.0);
+        let label_style = self
+            .theme
+            .borrow()
+            .typography("label_small")
+            .expect("label_small is a real MD3 role");
         let mut container_style = positioned_style(
             Size {
                 width: length(badge_width),
@@ -4449,16 +4472,16 @@ impl PyWindow {
         let label_id = tree.insert(
             NodeKind::Text(TextState {
                 content: label.to_string(),
-                font_family: "Roboto".to_string(),
-                font_weight: BADGE_LABEL_FONT_WEIGHT,
-                font_size: BADGE_LABEL_FONT_SIZE,
+                font_family: label_style.font_family.clone(),
+                font_weight: label_style.font_weight,
+                font_size: label_style.font_size,
                 align: TextAlign::Center,
                 line_height: None,
             }),
             Style {
                 size: Size {
                     width: length(badge_width),
-                    height: length(BADGE_LABEL_FONT_SIZE + 2.0),
+                    height: length(label_style.font_size + 2.0),
                 },
                 ..Default::default()
             },
@@ -4864,6 +4887,9 @@ impl PyWindow {
         };
         let container_color = role("inverse_surface", Md3Baseline::INVERSE_SURFACE);
         let label_color = role("inverse_on_surface", Md3Baseline::INVERSE_ON_SURFACE);
+        let label_style = theme
+            .typography("body_small")
+            .expect("body_small is a real MD3 role");
         drop(theme);
         let mut tree = self.tree.borrow_mut();
         let mut container_style = positioned_style(
@@ -4896,16 +4922,16 @@ impl PyWindow {
         let label_id = tree.insert(
             NodeKind::Text(TextState {
                 content: text.to_string(),
-                font_family: "Roboto".to_string(),
-                font_weight: TOOLTIP_FONT_WEIGHT,
-                font_size: TOOLTIP_FONT_SIZE,
+                font_family: label_style.font_family.clone(),
+                font_weight: label_style.font_weight,
+                font_size: label_style.font_size,
                 align: TextAlign::Center,
                 line_height: None,
             }),
             Style {
                 size: Size {
                     width: length(label_width),
-                    height: length(TOOLTIP_FONT_SIZE + 2.0),
+                    height: length(label_style.font_size + 2.0),
                 },
                 ..Default::default()
             },
@@ -4975,6 +5001,17 @@ impl PyWindow {
                 theme.elevation("dialog", None).unwrap_or(DIALOG_ELEVATION),
             )
         };
+        let (headline_style, body_style) = {
+            let theme = self.theme.borrow();
+            (
+                theme
+                    .typography("headline_small")
+                    .expect("headline_small is a real MD3 role"),
+                theme
+                    .typography("body_medium")
+                    .expect("body_medium is a real MD3 role"),
+            )
+        };
 
         let mut tree = self.tree.borrow_mut();
 
@@ -5027,16 +5064,16 @@ impl PyWindow {
         let headline_id = tree.insert(
             NodeKind::Text(TextState {
                 content: headline.to_string(),
-                font_family: "Roboto".to_string(),
-                font_weight: DIALOG_HEADLINE_FONT_WEIGHT,
-                font_size: DIALOG_HEADLINE_FONT_SIZE,
+                font_family: headline_style.font_family.clone(),
+                font_weight: headline_style.font_weight,
+                font_size: headline_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
             }),
             Style {
                 size: Size {
                     width: length(content_width),
-                    height: length(DIALOG_HEADLINE_FONT_SIZE + 4.0),
+                    height: length(headline_style.font_size + 4.0),
                 },
                 ..Default::default()
             },
@@ -5047,14 +5084,14 @@ impl PyWindow {
         let body_height = (height
             - 2.0 * DIALOG_PADDING
             - DIALOG_HEADLINE_GAP
-            - (DIALOG_HEADLINE_FONT_SIZE + 4.0))
+            - (headline_style.font_size + 4.0))
             .max(0.0);
         let body_id = tree.insert(
             NodeKind::Text(TextState {
                 content: text.to_string(),
-                font_family: "Roboto".to_string(),
-                font_weight: DIALOG_BODY_FONT_WEIGHT,
-                font_size: DIALOG_BODY_FONT_SIZE,
+                font_family: body_style.font_family.clone(),
+                font_weight: body_style.font_weight,
+                font_size: body_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
             }),
@@ -5218,6 +5255,17 @@ impl PyWindow {
                     .unwrap_or(SNACKBAR_ELEVATION),
             )
         };
+        let (body_style, label_style) = {
+            let theme = self.theme.borrow();
+            (
+                theme
+                    .typography("body_medium")
+                    .expect("body_medium is a real MD3 role"),
+                theme
+                    .typography("label_large")
+                    .expect("label_large is a real MD3 role"),
+            )
+        };
 
         let mut tree = self.tree.borrow_mut();
 
@@ -5253,9 +5301,9 @@ impl PyWindow {
         let text_id = tree.insert(
             NodeKind::Text(TextState {
                 content: text.to_string(),
-                font_family: "Roboto".to_string(),
-                font_weight: DIALOG_BODY_FONT_WEIGHT,
-                font_size: DIALOG_BODY_FONT_SIZE,
+                font_family: body_style.font_family.clone(),
+                font_weight: body_style.font_weight,
+                font_size: body_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
             }),
@@ -5263,7 +5311,7 @@ impl PyWindow {
                 flex_grow: 1.0,
                 size: Size {
                     width: auto(),
-                    height: length(DIALOG_BODY_FONT_SIZE + 4.0),
+                    height: length(body_style.font_size + 4.0),
                 },
                 ..Default::default()
             },
@@ -5290,9 +5338,9 @@ impl PyWindow {
             let label_id = tree.insert(
                 NodeKind::Text(TextState {
                     content: label.to_string(),
-                    font_family: "Roboto".to_string(),
-                    font_weight: BUTTON_LABEL_FONT_WEIGHT,
-                    font_size: BUTTON_LABEL_FONT_SIZE,
+                    font_family: label_style.font_family.clone(),
+                    font_weight: label_style.font_weight,
+                    font_size: label_style.font_size,
                     align: TextAlign::Center,
                     line_height: None,
                 }),
@@ -5776,10 +5824,26 @@ impl PyWindow {
             .borrow()
             .shape("navigation_rail", Some("indicator"))
             .unwrap_or(NAV_RAIL_INDICATOR_CORNER_RADIUS);
+        // M63 (§7.1, §16.3): the real MD3 nav-rail-label role -- shipped
+        // as `NAV_RAIL_LABEL_FONT_SIZE` (12.0) with `NAV_RAIL_LABEL_
+        // WEIGHT_INACTIVE` (500.0) before this milestone, an exact
+        // match for `engine_md3::LABEL_MEDIUM` (confirmed by direct
+        // comparison). The real, deliberate active-state emphasis
+        // (`NAV_RAIL_LABEL_WEIGHT_ACTIVE`, `700.0`) isn't part of MD3's
+        // own named type scale at all -- a genuine per-interaction-state
+        // override, kept as its own literal constant below rather than
+        // folded into the theme, matching `is_active`'s own real,
+        // per-item nature (a role name is per-*component*, not
+        // per-item-state).
+        let label_style = self
+            .theme
+            .borrow()
+            .typography("label_medium")
+            .expect("label_medium is a real MD3 role");
 
         let mut tree = self.tree.borrow_mut();
         let item_height =
-            NAV_RAIL_INDICATOR_HEIGHT + NAV_RAIL_ITEM_GAP + NAV_RAIL_LABEL_FONT_SIZE + 4.0;
+            NAV_RAIL_INDICATOR_HEIGHT + NAV_RAIL_ITEM_GAP + label_style.font_size + 4.0;
         let rail_height = NAV_RAIL_TOP_PADDING
             + (labels.len() as f32) * item_height
             + (labels.len().saturating_sub(1) as f32) * NAV_RAIL_ITEM_SPACING;
@@ -5896,21 +5960,21 @@ impl PyWindow {
             let label_weight = if is_active {
                 NAV_RAIL_LABEL_WEIGHT_ACTIVE
             } else {
-                NAV_RAIL_LABEL_WEIGHT_INACTIVE
+                label_style.font_weight
             };
             let label_id = tree.insert(
                 NodeKind::Text(TextState {
                     content: label,
-                    font_family: "Roboto".to_string(),
+                    font_family: label_style.font_family.clone(),
                     font_weight: label_weight,
-                    font_size: NAV_RAIL_LABEL_FONT_SIZE,
+                    font_size: label_style.font_size,
                     align: TextAlign::Center,
                     line_height: None,
                 }),
                 Style {
                     size: Size {
                         width: length(NAV_RAIL_WIDTH),
-                        height: length(NAV_RAIL_LABEL_FONT_SIZE + 4.0),
+                        height: length(label_style.font_size + 4.0),
                     },
                     ..Default::default()
                 },
@@ -6068,6 +6132,18 @@ impl PyWindow {
                     .unwrap_or(NAV_DRAWER_INDICATOR_CORNER_RADIUS),
             )
         };
+        // M63 (§7.1, §16.3): the real MD3 nav-drawer-item-label role --
+        // shipped as `BUTTON_LABEL_FONT_SIZE`/`500.0` (14.0/500.0)
+        // before this milestone, an exact match for `engine_md3::
+        // LABEL_LARGE` (confirmed by direct comparison) -- a genuinely
+        // different role than `add_navigation_rail`'s own `label_
+        // medium` (12sp), despite both sharing the identical real
+        // active/inactive weight-emphasis technique below.
+        let label_style = self
+            .theme
+            .borrow()
+            .typography("label_large")
+            .expect("label_large is a real MD3 role");
 
         let mut tree = self.tree.borrow_mut();
         let panel_height = height.unwrap_or(self.height.get() as f32);
@@ -6142,7 +6218,7 @@ impl PyWindow {
             let label_weight = if is_active {
                 NAV_RAIL_LABEL_WEIGHT_ACTIVE
             } else {
-                NAV_RAIL_LABEL_WEIGHT_INACTIVE
+                label_style.font_weight
             };
 
             let indicator_style = Style {
@@ -6191,9 +6267,9 @@ impl PyWindow {
             let label_id = tree.insert(
                 NodeKind::Text(TextState {
                     content: label,
-                    font_family: "Roboto".to_string(),
+                    font_family: label_style.font_family.clone(),
                     font_weight: label_weight,
-                    font_size: BUTTON_LABEL_FONT_SIZE,
+                    font_size: label_style.font_size,
                     align: TextAlign::Start,
                     line_height: None,
                 }),
@@ -6399,6 +6475,11 @@ impl PyWindow {
             .borrow()
             .shape("icon_button", None)
             .unwrap_or(TOP_APP_BAR_ICON_BUTTON_SIZE as f64 / 2.0);
+        let headline_type_style = self
+            .theme
+            .borrow()
+            .typography("title_large")
+            .expect("title_large is a real MD3 role");
 
         let mut tree = self.tree.borrow_mut();
         let bar_width = width.unwrap_or(self.width.get() as f32);
@@ -6467,7 +6548,7 @@ impl PyWindow {
             flex_grow: 1.0,
             size: Size {
                 width: auto(),
-                height: length(TOP_APP_BAR_HEADLINE_FONT_SIZE + 4.0),
+                height: length(headline_type_style.font_size + 4.0),
             },
             margin: TaffyRect {
                 left: length(if leading.is_some() {
@@ -6484,9 +6565,9 @@ impl PyWindow {
         let headline_id = tree.insert(
             NodeKind::Text(TextState {
                 content: title.to_string(),
-                font_family: "Roboto".to_string(),
-                font_weight: TOP_APP_BAR_HEADLINE_FONT_WEIGHT,
-                font_size: TOP_APP_BAR_HEADLINE_FONT_SIZE,
+                font_family: headline_type_style.font_family.clone(),
+                font_weight: headline_type_style.font_weight,
+                font_size: headline_type_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
             }),
@@ -7197,6 +7278,19 @@ impl PyWindow {
             .borrow()
             .shape("tabs", Some("indicator"))
             .unwrap_or(TAB_INDICATOR_CORNER_RADIUS);
+        // M63 (§7.1, §16.3): the real MD3 tab-label role -- shipped as
+        // `TAB_LABEL_FONT_SIZE`/`_WEIGHT` (14.0/500.0) before this
+        // milestone, an exact numeric match for BOTH `title_small` and
+        // `label_large` (a genuine real MD3 coincidence -- both roles
+        // share the identical size/weight). Resolved via a real source
+        // (material-web's own `--md-sys-typescale-title-small-font`
+        // token, confirmed as this component's real role), not by
+        // number-matching alone.
+        let label_style = self
+            .theme
+            .borrow()
+            .typography("title_small")
+            .expect("title_small is a real MD3 role");
 
         let mut tree = self.tree.borrow_mut();
         let row_width = width.unwrap_or(self.width.get() as f32);
@@ -7299,16 +7393,16 @@ impl PyWindow {
             let label_id = tree.insert(
                 NodeKind::Text(TextState {
                     content: label,
-                    font_family: "Roboto".to_string(),
-                    font_weight: TAB_LABEL_FONT_WEIGHT,
-                    font_size: TAB_LABEL_FONT_SIZE,
+                    font_family: label_style.font_family.clone(),
+                    font_weight: label_style.font_weight,
+                    font_size: label_style.font_size,
                     align: TextAlign::Center,
                     line_height: None,
                 }),
                 Style {
                     size: Size {
                         width: length(tab_width),
-                        height: length(TAB_LABEL_FONT_SIZE + 4.0),
+                        height: length(label_style.font_size + 4.0),
                     },
                     ..Default::default()
                 },
@@ -7691,6 +7785,17 @@ impl PyWindow {
             };
             (theme.on_surface(), on_surface_variant, on_surface_variant)
         };
+        let (label_style, body_style) = {
+            let theme = self.theme.borrow();
+            (
+                theme
+                    .typography("label_large")
+                    .expect("label_large is a real MD3 role"),
+                theme
+                    .typography("body_medium")
+                    .expect("body_medium is a real MD3 role"),
+            )
+        };
 
         let mut tree = self.tree.borrow_mut();
         let height = if supporting_text.is_some() {
@@ -7773,9 +7878,9 @@ impl PyWindow {
             let headline_id = tree.insert(
                 NodeKind::Text(TextState {
                     content: headline.to_string(),
-                    font_family: "Roboto".to_string(),
-                    font_weight: BUTTON_LABEL_FONT_WEIGHT,
-                    font_size: BUTTON_LABEL_FONT_SIZE,
+                    font_family: label_style.font_family.clone(),
+                    font_weight: label_style.font_weight,
+                    font_size: label_style.font_size,
                     align: TextAlign::Start,
                     line_height: None,
                 }),
@@ -7793,16 +7898,16 @@ impl PyWindow {
             let supporting_id = tree.insert(
                 NodeKind::Text(TextState {
                     content: supporting.to_string(),
-                    font_family: "Roboto".to_string(),
-                    font_weight: DIALOG_BODY_FONT_WEIGHT,
-                    font_size: DIALOG_BODY_FONT_SIZE,
+                    font_family: body_style.font_family.clone(),
+                    font_weight: body_style.font_weight,
+                    font_size: body_style.font_size,
                     align: TextAlign::Start,
                     line_height: None,
                 }),
                 Style {
                     size: Size {
                         width: length(text_width),
-                        height: length(DIALOG_BODY_FONT_SIZE + 4.0),
+                        height: length(body_style.font_size + 4.0),
                     },
                     ..Default::default()
                 },
@@ -7816,9 +7921,9 @@ impl PyWindow {
             let headline_id = tree.insert(
                 NodeKind::Text(TextState {
                     content: headline.to_string(),
-                    font_family: "Roboto".to_string(),
-                    font_weight: BUTTON_LABEL_FONT_WEIGHT,
-                    font_size: BUTTON_LABEL_FONT_SIZE,
+                    font_family: label_style.font_family.clone(),
+                    font_weight: label_style.font_weight,
+                    font_size: label_style.font_size,
                     align: TextAlign::Start,
                     line_height: None,
                 }),
@@ -7978,6 +8083,11 @@ impl PyWindow {
             };
             (theme.on_surface(), on_surface_variant)
         };
+        let label_style = self
+            .theme
+            .borrow()
+            .typography("label_large")
+            .expect("label_large is a real MD3 role");
 
         let mut tree = self.tree.borrow_mut();
 
@@ -8016,9 +8126,9 @@ impl PyWindow {
         let headline_id = tree.insert(
             NodeKind::Text(TextState {
                 content: title.to_string(),
-                font_family: "Roboto".to_string(),
-                font_weight: BUTTON_LABEL_FONT_WEIGHT,
-                font_size: BUTTON_LABEL_FONT_SIZE,
+                font_family: label_style.font_family.clone(),
+                font_weight: label_style.font_weight,
+                font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
             }),
@@ -8108,6 +8218,11 @@ impl PyWindow {
             };
             (theme.on_surface(), on_surface_variant)
         };
+        let label_style = self
+            .theme
+            .borrow()
+            .typography("label_large")
+            .expect("label_large is a real MD3 role");
 
         let mut tree = self.tree.borrow_mut();
         let indent = depth as f32 * TREE_NODE_INDENT_WIDTH;
@@ -8177,9 +8292,9 @@ impl PyWindow {
         let headline_id = tree.insert(
             NodeKind::Text(TextState {
                 content: title.to_string(),
-                font_family: "Roboto".to_string(),
-                font_weight: BUTTON_LABEL_FONT_WEIGHT,
-                font_size: BUTTON_LABEL_FONT_SIZE,
+                font_family: label_style.font_family.clone(),
+                font_weight: label_style.font_weight,
+                font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
             }),
@@ -8261,6 +8376,11 @@ impl PyWindow {
             .borrow()
             .shape("date_picker_day", None)
             .unwrap_or(DATE_CELL_CORNER_RADIUS);
+        let label_style = self
+            .theme
+            .borrow()
+            .typography("body_large")
+            .expect("body_large is a real MD3 role");
         let mut tree = self.tree.borrow_mut();
         let mut cell_paint = PaintProperties::new(fill, corner_radius, 0.0, 1.0);
         cell_paint.border_color = Animated::new(cell_border_color);
@@ -8287,16 +8407,16 @@ impl PyWindow {
         let label_id = tree.insert(
             NodeKind::Text(TextState {
                 content: day.to_string(),
-                font_family: "Roboto".to_string(),
-                font_weight: SEARCH_INPUT_FONT_WEIGHT,
-                font_size: SEARCH_INPUT_FONT_SIZE,
+                font_family: label_style.font_family.clone(),
+                font_weight: label_style.font_weight,
+                font_size: label_style.font_size,
                 align: TextAlign::Center,
                 line_height: None,
             }),
             Style {
                 size: Size {
                     width: length(DATE_CELL_SIZE),
-                    height: length(SEARCH_INPUT_FONT_SIZE + 4.0),
+                    height: length(label_style.font_size + 4.0),
                 },
                 ..Default::default()
             },
@@ -8453,6 +8573,11 @@ impl PyWindow {
             .borrow()
             .shape("period_selector", None)
             .unwrap_or(CHIP_CORNER_RADIUS);
+        let label_style = self
+            .theme
+            .borrow()
+            .typography("label_large")
+            .expect("label_large is a real MD3 role");
         let mut tree = self.tree.borrow_mut();
         let base_x = x.unwrap_or(0.0);
         let base_y = y.unwrap_or(0.0);
@@ -8492,9 +8617,9 @@ impl PyWindow {
                 let label_id = tree.insert(
                     NodeKind::Text(TextState {
                         content: label.to_string(),
-                        font_family: "Roboto".to_string(),
-                        font_weight: BUTTON_LABEL_FONT_WEIGHT,
-                        font_size: BUTTON_LABEL_FONT_SIZE,
+                        font_family: label_style.font_family.clone(),
+                        font_weight: label_style.font_weight,
+                        font_size: label_style.font_size,
                         align: TextAlign::Center,
                         line_height: None,
                     }),
@@ -8585,6 +8710,17 @@ impl PyWindow {
                     .unwrap_or(POPOVER_ELEVATION),
             )
         };
+        let (subhead_style, body_style) = {
+            let theme = self.theme.borrow();
+            (
+                theme
+                    .typography("title_small")
+                    .expect("title_small is a real MD3 role"),
+                theme
+                    .typography("body_medium")
+                    .expect("body_medium is a real MD3 role"),
+            )
+        };
 
         let mut tree = self.tree.borrow_mut();
 
@@ -8620,16 +8756,16 @@ impl PyWindow {
         let subhead_id = tree.insert(
             NodeKind::Text(TextState {
                 content: subhead.to_string(),
-                font_family: "Roboto".to_string(),
-                font_weight: POPOVER_SUBHEAD_FONT_WEIGHT,
-                font_size: POPOVER_SUBHEAD_FONT_SIZE,
+                font_family: subhead_style.font_family.clone(),
+                font_weight: subhead_style.font_weight,
+                font_size: subhead_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
             }),
             Style {
                 size: Size {
                     width: length(content_width),
-                    height: length(POPOVER_SUBHEAD_FONT_SIZE + 4.0),
+                    height: length(subhead_style.font_size + 4.0),
                 },
                 ..Default::default()
             },
@@ -8640,14 +8776,14 @@ impl PyWindow {
         let body_height = (height
             - 2.0 * POPOVER_PADDING
             - POPOVER_SUBHEAD_GAP
-            - (POPOVER_SUBHEAD_FONT_SIZE + 4.0))
+            - (subhead_style.font_size + 4.0))
             .max(0.0);
         let body_id = tree.insert(
             NodeKind::Text(TextState {
                 content: text.to_string(),
-                font_family: "Roboto".to_string(),
-                font_weight: DIALOG_BODY_FONT_WEIGHT,
-                font_size: DIALOG_BODY_FONT_SIZE,
+                font_family: body_style.font_family.clone(),
+                font_weight: body_style.font_weight,
+                font_size: body_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
             }),
@@ -8684,21 +8820,26 @@ impl PyWindow {
                 Md3Baseline::PRIMARY
             }
         };
+        let label_style = self
+            .theme
+            .borrow()
+            .typography("body_large")
+            .expect("body_large is a real MD3 role");
 
         let mut tree = self.tree.borrow_mut();
         let id = tree.insert(
             NodeKind::Link(TextState {
                 content: text.to_string(),
-                font_family: "Roboto".to_string(),
-                font_weight: LINK_FONT_WEIGHT,
-                font_size: LINK_FONT_SIZE,
+                font_family: label_style.font_family.clone(),
+                font_weight: label_style.font_weight,
+                font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
             }),
             positioned_style(
                 Size {
                     width: length(width),
-                    height: length(LINK_FONT_SIZE + 4.0),
+                    height: length(label_style.font_size + 4.0),
                 },
                 x,
                 y,
@@ -8933,6 +9074,11 @@ impl PyWindow {
             .borrow()
             .shape("icon_button", None)
             .unwrap_or(PAGE_ITEM_CORNER_RADIUS);
+        let label_style = self
+            .theme
+            .borrow()
+            .typography("label_large")
+            .expect("label_large is a real MD3 role");
 
         // A plain, non-capturing `fn` rather than a closure -- shared
         // across this method's own three real call sites (`previous`,
@@ -9038,9 +9184,9 @@ impl PyWindow {
             let label_id = tree.insert(
                 NodeKind::Text(TextState {
                     content: (i + 1).to_string(),
-                    font_family: "Roboto".to_string(),
-                    font_weight: BUTTON_LABEL_FONT_WEIGHT,
-                    font_size: BUTTON_LABEL_FONT_SIZE,
+                    font_family: label_style.font_family.clone(),
+                    font_weight: label_style.font_weight,
+                    font_size: label_style.font_size,
                     align: TextAlign::Center,
                     line_height: None,
                 }),
@@ -9119,6 +9265,11 @@ impl PyWindow {
             };
             (container, on_surface_variant)
         };
+        let label_style = self
+            .theme
+            .borrow()
+            .typography("label_small")
+            .expect("label_small is a real MD3 role");
 
         let mut tree = self.tree.borrow_mut();
         let bar_width = width.unwrap_or(self.width.get() as f32);
@@ -9152,16 +9303,16 @@ impl PyWindow {
         let label_id = tree.insert(
             NodeKind::Text(TextState {
                 content: text.to_string(),
-                font_family: "Roboto".to_string(),
-                font_weight: BADGE_LABEL_FONT_WEIGHT,
-                font_size: BADGE_LABEL_FONT_SIZE,
+                font_family: label_style.font_family.clone(),
+                font_weight: label_style.font_weight,
+                font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
             }),
             Style {
                 size: Size {
                     width: length(label_width),
-                    height: length(BADGE_LABEL_FONT_SIZE + 2.0),
+                    height: length(label_style.font_size + 2.0),
                 },
                 ..Default::default()
             },
@@ -9730,6 +9881,11 @@ impl PyWindow {
             .borrow()
             .shape("graph_node", None)
             .unwrap_or(CARD_CORNER_RADIUS);
+        let label_style = self
+            .theme
+            .borrow()
+            .typography("title_small")
+            .expect("title_small is a real MD3 role");
         let mut tree = self.tree.borrow_mut();
         let title_height = NODE_GRAPH_TITLE_HEIGHT.min(height);
 
@@ -9789,9 +9945,9 @@ impl PyWindow {
         let label_id = tree.insert(
             NodeKind::Text(TextState {
                 content: label.to_string(),
-                font_family: "Roboto".to_string(),
-                font_weight: TAB_LABEL_FONT_WEIGHT,
-                font_size: TAB_LABEL_FONT_SIZE,
+                font_family: label_style.font_family.clone(),
+                font_weight: label_style.font_weight,
+                font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
             }),
@@ -9799,13 +9955,13 @@ impl PyWindow {
                 position: Position::Absolute,
                 inset: TaffyRect {
                     left: length(NODE_GRAPH_TITLE_PADDING),
-                    top: length((title_height - TAB_LABEL_FONT_SIZE) / 2.0),
+                    top: length((title_height - label_style.font_size) / 2.0),
                     right: auto(),
                     bottom: auto(),
                 },
                 size: Size {
                     width: length(label_width),
-                    height: length(TAB_LABEL_FONT_SIZE + 2.0),
+                    height: length(label_style.font_size + 2.0),
                 },
                 ..Default::default()
             },

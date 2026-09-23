@@ -57,6 +57,33 @@ pub(crate) struct ThemeState {
     /// `window_factory.rs`'s dozens of existing `theme.shape(...)`
     /// call sites.
     components: HashMap<String, ResolvedComponentOverride>,
+    /// M63 (§7.1, §16.3): per-role overrides for the imperative MD3
+    /// catalog's own typography, populated from `Window.set_theme`'s
+    /// `custom_theme` (`ThemeSpec.typography`, `engine-spec/src/
+    /// theme.rs`) -- `components` above's own real sibling, one real
+    /// tier simpler: `TypographyOverride`'s 4 fields are already plain
+    /// literals (`Option<String>`/`Option<f32>`), no token-reference
+    /// machinery like `ComponentOverride`'s `ShapeOrElevationSpec` at
+    /// all, so nothing needs eager resolution at `set_theme` time --
+    /// the parse-time struct is stored directly. Empty (the default) is
+    /// a true no-op, the identical contract `components`'s own doc
+    /// comment already states: `typography()` below still returns the
+    /// real, shipped MD3 default for every role regardless.
+    typography: HashMap<String, engine_spec::TypographyOverride>,
+}
+
+/// M63 (§7.1, §16.3): `engine_md3::TypeStyle`'s own real theme-resolved
+/// form -- `font_family` widened from `&'static str` to an owned
+/// `String` since a theme's own override is real caller-supplied data,
+/// not a compile-time constant, the identical real reason `Resolved
+/// ComponentOverride` exists as its own distinct type rather than
+/// reusing the parse-time struct directly.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ResolvedTypeStyle {
+    pub(crate) font_family: String,
+    pub(crate) font_weight: f32,
+    pub(crate) font_size: f32,
+    pub(crate) line_height: f32,
 }
 
 /// M61 (§16.3): `engine_spec::ComponentOverride`'s own real resolved
@@ -170,6 +197,38 @@ impl ThemeState {
         self.theme.is_some()
     }
 
+    /// M63 (§7.1, §16.3): resolves one real MD3 typography role
+    /// (`"label_large"`, etc.) to its final, real values -- `engine_md3
+    /// ::type_style_named`'s own shipped default first, then any of
+    /// `self.typography[role]`'s own 4 fields, independently, on top
+    /// (the identical per-field-override cascade `engine-spec::build.rs
+    /// ::resolve_text_style` already establishes for the declarative
+    /// surface). Unlike `shape`/`elevation` above, this never needs an
+    /// external `.unwrap_or(SHIPPED_CONST)` at each call site: `engine_
+    /// md3::type_style_named` already *is* the real, correct un-themed
+    /// default, whether or not a theme has been set at all -- `None` is
+    /// reserved for a genuinely unrecognized role name, which every
+    /// real internal call site (a fixed string literal this catalog
+    /// itself chose) should never actually produce.
+    pub(crate) fn typography(&self, role: &str) -> Option<ResolvedTypeStyle> {
+        let base = engine_md3::type_style_named(role)?;
+        let override_ = self.typography.get(role);
+        Some(ResolvedTypeStyle {
+            font_family: override_
+                .and_then(|o| o.font_family.clone())
+                .unwrap_or_else(|| base.font_family.to_string()),
+            font_weight: override_
+                .and_then(|o| o.font_weight)
+                .unwrap_or(base.font_weight),
+            font_size: override_
+                .and_then(|o| o.font_size)
+                .unwrap_or(base.font_size),
+            line_height: override_
+                .and_then(|o| o.line_height)
+                .unwrap_or(base.line_height),
+        })
+    }
+
     /// M50 Phase 1: the real 2-tier lookup every `add_*` factory's own
     /// corner-radius consults, from Phase 2 onward -- `"<component>.
     /// <variant>"` first (when `variant` is given), then the bare
@@ -204,6 +263,7 @@ impl ThemeState {
             theme: Some(DynamicTheme::from_seed(seed)),
             dark: false,
             components: HashMap::new(),
+            typography: HashMap::new(),
         }
     }
 
@@ -226,6 +286,24 @@ impl ThemeState {
             dark: false,
             components: resolve_components(components)
                 .expect("test-supplied components must all resolve"),
+            typography: HashMap::new(),
+        }
+    }
+
+    /// `for_test`'s own sibling with a real `typography:` override --
+    /// no `resolve_*` call needed (unlike `for_test_with_components`),
+    /// since `TypographyOverride`'s own fields are already plain
+    /// literals with nothing to fail on.
+    #[cfg(test)]
+    pub(crate) fn for_test_with_typography(
+        seed: Color,
+        typography: HashMap<String, engine_spec::TypographyOverride>,
+    ) -> Self {
+        Self {
+            theme: Some(DynamicTheme::from_seed(seed)),
+            dark: false,
+            components: HashMap::new(),
+            typography,
         }
     }
 
@@ -726,6 +804,17 @@ impl PyWindow {
         }
         let resolved_components = resolve_components(components)?;
 
+        // M63 (§7.1, §16.3): `typography:` -- the identical real merge
+        // `components:` above already establishes (default theme first,
+        // custom theme's own entries layered on top, custom wins on any
+        // overlapping key). No fallible resolution needed here (unlike
+        // `components:`'s own `resolve_components` call) -- `Typography
+        // Override`'s 4 fields are already plain literals.
+        let mut typography = default_theme_spec.typography.clone();
+        if let Some(custom) = &custom_theme_spec {
+            typography.extend(custom.typography.clone());
+        }
+
         let seed = match custom_theme_spec
             .as_ref()
             .map(crate::view::theme_spec_seed)
@@ -762,6 +851,7 @@ impl PyWindow {
         // an incremental patch onto the last one. (M61: built and
         // resolved earlier, before any `state` mutation began.)
         state.components = resolved_components;
+        state.typography = typography;
         let tint = state.on_surface();
         let mut tree = self.tree.borrow_mut();
         tree.set_all_interaction_tints(tint);
@@ -912,6 +1002,62 @@ mod tests {
         assert_eq!(state.shape("fab", Some("small")), Some(12.0));
         // A variant not named by any override falls back to the bare key.
         assert_eq!(state.shape("fab", Some("large")), Some(16.0));
+    }
+
+    // --- M63 (§7.1, §16.3): typography ---
+
+    /// Unlike `shape`/`elevation` above, `typography` never needs an
+    /// external `.unwrap_or(SHIPPED_CONST)` -- `engine_md3::type_style_
+    /// named` itself already *is* the real, correct un-themed default,
+    /// with or without a real theme ever being set at all.
+    #[test]
+    fn typography_with_no_override_returns_the_real_shipped_default() {
+        let state = ThemeState::default();
+        let resolved = state.typography("label_large").unwrap();
+        let expected = engine_md3::type_style_named("label_large").unwrap();
+        assert_eq!(resolved.font_family, expected.font_family);
+        assert_eq!(resolved.font_weight, expected.font_weight);
+        assert_eq!(resolved.font_size, expected.font_size);
+        assert_eq!(resolved.line_height, expected.line_height);
+    }
+
+    #[test]
+    fn typography_with_an_unrecognized_role_returns_none() {
+        let state = ThemeState::default();
+        assert_eq!(state.typography("subtitle_huge"), None);
+    }
+
+    /// The actual `ThemeSpec.typography` end-to-end claim: a real
+    /// per-field override must win over the role's own shipped default,
+    /// and every field the override leaves unset must still come from
+    /// the shipped default -- the identical per-field cascade `engine-
+    /// spec::build.rs::resolve_text_style` already establishes for the
+    /// declarative surface, proven here for the imperative one.
+    #[test]
+    fn typography_applies_a_real_per_field_override_on_top_of_the_shipped_default() {
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            "label_large".to_string(),
+            engine_spec::TypographyOverride {
+                font_family: Some("Inter".to_string()),
+                font_weight: None,
+                font_size: Some(20.0),
+                line_height: None,
+            },
+        );
+        let state = ThemeState::for_test_with_typography(
+            Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF),
+            overrides,
+        );
+        let resolved = state.typography("label_large").unwrap();
+        let expected = engine_md3::type_style_named("label_large").unwrap();
+        assert_eq!(resolved.font_family, "Inter", "the override must win");
+        assert_eq!(
+            resolved.font_weight, expected.font_weight,
+            "a field the override leaves unset must still come from the shipped default"
+        );
+        assert_eq!(resolved.font_size, 20.0, "the override must win");
+        assert_eq!(resolved.line_height, expected.line_height);
     }
 
     /// The real bug caught before this shipped: a variant-specific

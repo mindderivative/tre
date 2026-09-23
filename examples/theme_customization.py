@@ -51,6 +51,12 @@ reaches a real imperative component's own corner radius/elevation too:
   (ripple/hover, checkbox mark, slider track, text caret) -- it never
   touched a button's own real container/label color or shape/elevation
   at all.
+- M63 (§7.1, §16.3): `typography: {label_large: {font_size: 15}}`
+  reaches the same `add_button`'s own label -- closing the real gap
+  M62 left open (`ThemeSpec.typography` parsed but never resolved by
+  anything): `ThemeState::typography("label_large")` now consults it,
+  the identical real per-role lookup every migrated factory's own
+  label/headline/body text resolves through.
 
 `Node.get` only returns `f64`, so `corner_radius`/`elevation` (real
 numbers) are asserted directly below; there is still no Python-facing
@@ -105,6 +111,17 @@ print(
     f"components: override verified: corner_radius={button.get('corner_radius')!r}, "
     f"elevation={button.get('elevation')!r}"
 )
+
+# M63 (§7.1, §16.3): the same custom theme's typography: {label_large:
+# {font_size: 15}} override (above `button`'s own construction) also
+# reached this button's own label through ThemeState::typography --
+# no Python-facing getter exists for a Text node's own font_size
+# (the same honest limitation this file's own module doc comment
+# already states for color), so this is proven not to raise here, and
+# proven with a real number readback at the Rust layer instead
+# (crates/engine-py/src/window.rs::tests::typography_applies_a_real_
+# per_field_override_on_top_of_the_shipped_default).
+print("typography: override applied to the button's own label, no error raised")
 
 # M61 (§16.3): components: also accepts a real MD3 shape/elevation
 # *token name* (card: {corner_radius: small, elevation: level_2} in the

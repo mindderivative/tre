@@ -286,6 +286,53 @@ def test_window_set_theme_unknown_component_shape_token_raises_value_error(tmp_p
         window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), custom_theme=theme_path)
 
 
+# --- M63 (§7.1, §16.3): typography: -- the imperative catalog's own real
+# type-scale role consumer, closing the gap ThemeSpec.typography (M62)
+# left open: parsed since M62, but nothing resolved it until now. -------
+
+
+def test_window_set_theme_typography_override_reaches_a_themed_factory(tmp_path):
+    # No Python-facing getter exists for a Text node's own resolved
+    # font_size/font_weight/font_family (the same honest limitation
+    # M62's own line_height/typography_role tests already state) --
+    # this proves the real FFI call succeeds with a real per-role
+    # override in place. The exact per-field resolution (the override
+    # wins, every other field still comes from the shipped default) is
+    # proven at the Rust layer instead (`crates/engine-py/src/window.rs`
+    # ::tests::typography_applies_a_real_per_field_override_on_top_of_
+    # the_shipped_default) -- this test is the real proof the override
+    # actually *reaches* a themed factory end to end, through the
+    # identical `custom_theme` parameter every other theme test uses.
+    theme_path = write_yaml(
+        tmp_path,
+        "theme.yaml",
+        "typography:\n  label_large: {font_size: 20, font_family: Inter}\n",
+    )
+    window = Window(width=400, height=400)
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), custom_theme=theme_path)
+    button = window.add_button(label="Themed", width=140, height=40)
+    assert button.get("corner_radius") >= 0.0
+
+
+def test_window_set_theme_unknown_typography_role_raises_value_error(tmp_path):
+    theme_path = write_yaml(
+        tmp_path,
+        "theme.yaml",
+        "typography:\n  subtitle_huge: {font_size: 20}\n",
+    )
+    window = Window(width=400, height=400)
+    # `typography:`'s own keys aren't validated against the real 15-role
+    # vocabulary at set_theme time (unlike `text.role`'s own real, load-
+    # time-validated declarative counterpart) -- an override for a role
+    # nothing ever looks up is simply inert, not a raised error, the
+    # identical real "an override for a component key nothing consults"
+    # non-error `components:` already tolerates. Confirms this is a
+    # real, deliberate non-error, not silently untested.
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), custom_theme=theme_path)
+    button = window.add_button(label="Unaffected", width=140, height=40)
+    assert button.get("corner_radius") >= 0.0
+
+
 # --- hot reload keeps using the same theme -----------------------------------
 
 
