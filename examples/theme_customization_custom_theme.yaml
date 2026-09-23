@@ -16,3 +16,9 @@ styles:
 # kinds, never window_factory.rs's real MD3 component catalog).
 components:
   button.filled: {corner_radius: 4, elevation: 2}
+  # M61 (§16.3): corner_radius/elevation also accept a real MD3 shape/
+  # elevation *token name* here, resolved through the identical
+  # engine_md3::shape::named/elevation_named lookup the declarative
+  # StyleSpec path already uses -- an author no longer has to know or
+  # re-derive the raw dp number (8.0) for "small," just its real MD3 name.
+  card: {corner_radius: small, elevation: level_2}

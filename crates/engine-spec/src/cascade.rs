@@ -161,7 +161,7 @@ fn merge(base: &mut StyleSpec, overlay: &StyleSpec) {
         base.background.clone_from(&overlay.background);
     }
     if overlay.corner_radius.is_some() {
-        base.corner_radius = overlay.corner_radius;
+        base.corner_radius.clone_from(&overlay.corner_radius);
     }
     if overlay.opacity.is_some() {
         base.opacity = overlay.opacity;
@@ -173,13 +173,14 @@ fn merge(base: &mut StyleSpec, overlay: &StyleSpec) {
         base.border_color.clone_from(&overlay.border_color);
     }
     if overlay.elevation.is_some() {
-        base.elevation = overlay.elevation;
+        base.elevation.clone_from(&overlay.elevation);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::spec::ShapeOrElevationSpec;
 
     fn widget(id: &str, kind: NodeKindSpec, classes: &[&str]) -> WidgetSpec {
         WidgetSpec {
@@ -212,11 +213,17 @@ mod tests {
         )
         .unwrap();
         let resolved = resolve_style(&widget("r", NodeKindSpec::Rect, &[]), &sheet);
-        assert_eq!(resolved.corner_radius, Some(20.0));
+        assert_eq!(
+            resolved.corner_radius,
+            Some(ShapeOrElevationSpec::Literal(20.0))
+        );
 
         // A Text widget doesn't match the `kind: Rect` rule -- baseline still applies.
         let resolved_text = resolve_style(&widget("t", NodeKindSpec::Text, &[]), &sheet);
-        assert_eq!(resolved_text.corner_radius, Some(4.0));
+        assert_eq!(
+            resolved_text.corner_radius,
+            Some(ShapeOrElevationSpec::Literal(4.0))
+        );
     }
 
     #[test]
@@ -233,14 +240,17 @@ mod tests {
         );
         assert_eq!(
             resolved.corner_radius,
-            Some(24.0),
+            Some(ShapeOrElevationSpec::Literal(24.0)),
             "the two-class rule is more specific and must win"
         );
 
         // A widget with only `primary` doesn't match the two-class rule at all.
         let resolved_small =
             resolve_style(&widget("btn2", NodeKindSpec::Rect, &["primary"]), &sheet);
-        assert_eq!(resolved_small.corner_radius, Some(8.0));
+        assert_eq!(
+            resolved_small.corner_radius,
+            Some(ShapeOrElevationSpec::Literal(8.0))
+        );
     }
 
     #[test]
@@ -277,7 +287,10 @@ mod tests {
         )
         .unwrap();
         let resolved = resolve_style(&widget("w", NodeKindSpec::Rect, &[]), &sheet);
-        assert_eq!(resolved.corner_radius, Some(12.0));
+        assert_eq!(
+            resolved.corner_radius,
+            Some(ShapeOrElevationSpec::Literal(12.0))
+        );
         assert_eq!(resolved.opacity, Some(0.7));
     }
 
@@ -316,7 +329,10 @@ mod tests {
             Some(&custom_theme),
             None,
         );
-        assert_eq!(resolved.corner_radius, Some(16.0));
+        assert_eq!(
+            resolved.corner_radius,
+            Some(ShapeOrElevationSpec::Literal(16.0))
+        );
     }
 
     #[test]
@@ -342,7 +358,10 @@ mod tests {
             None,
             Some(&app_sheet),
         );
-        assert_eq!(resolved.corner_radius, Some(8.0));
+        assert_eq!(
+            resolved.corner_radius,
+            Some(ShapeOrElevationSpec::Literal(8.0))
+        );
         assert_eq!(resolved.opacity, Some(0.9));
     }
 

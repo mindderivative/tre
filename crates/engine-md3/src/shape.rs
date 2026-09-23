@@ -43,6 +43,46 @@ pub const ELEVATION_LEVEL_3: f64 = 3.0;
 pub const ELEVATION_LEVEL_4: f64 = 4.0;
 pub const ELEVATION_LEVEL_5: f64 = 5.0;
 
+/// M61 (§16.3): the real name a theme YAML author writes to reference
+/// `SHAPE_*` above by name (`corner_radius: small`) instead of a plain
+/// literal number -- MD3's own published shape-scale names, lowercase-
+/// snake-case to match this codebase's own YAML-string-token convention
+/// elsewhere (`FlexDirectionSpec`/`AlignItemsSpec`'s own PascalCase is a
+/// different, unrelated real convention: those are YAML *enum tag*
+/// values, parsed by serde directly; this is a runtime string lookup
+/// against a fixed, small vocabulary, the identical real shape `Node.
+/// set_layout`'s own `align_items=`/`justify_content=` string kwargs
+/// already established in `engine-py`). `None` for an unrecognized
+/// name -- the caller turns that into its own real, crate-appropriate
+/// error (`engine-spec::SpecError`/a Python `ValueError`), never a
+/// silent fallback to `0.0`.
+pub fn named(name: &str) -> Option<f64> {
+    match name {
+        "none" => Some(SHAPE_NONE),
+        "extra_small" => Some(SHAPE_EXTRA_SMALL),
+        "small" => Some(SHAPE_SMALL),
+        "medium" => Some(SHAPE_MEDIUM),
+        "large" => Some(SHAPE_LARGE),
+        "extra_large" => Some(SHAPE_EXTRA_LARGE),
+        _ => None,
+    }
+}
+
+/// `named`'s own real `elevation` sibling -- a genuinely different
+/// vocabulary (MD3's elevation scale is 6 numbered levels, not named
+/// sizes), so a separate function rather than one shared lookup table.
+pub fn elevation_named(name: &str) -> Option<f64> {
+    match name {
+        "level_0" => Some(ELEVATION_LEVEL_0),
+        "level_1" => Some(ELEVATION_LEVEL_1),
+        "level_2" => Some(ELEVATION_LEVEL_2),
+        "level_3" => Some(ELEVATION_LEVEL_3),
+        "level_4" => Some(ELEVATION_LEVEL_4),
+        "level_5" => Some(ELEVATION_LEVEL_5),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -88,5 +128,27 @@ mod tests {
         assert_eq!(SHAPE_EXTRA_LARGE, 28.0); // DIALOG_CORNER_RADIUS
         assert_eq!(SHAPE_SMALL, 8.0); // CHIP_CORNER_RADIUS
         assert_eq!(ELEVATION_LEVEL_3, 3.0); // DIALOG_ELEVATION, FAB_REST_ELEVATION_LEVEL
+    }
+
+    #[test]
+    fn named_resolves_every_real_shape_token_to_its_own_real_constant() {
+        assert_eq!(named("none"), Some(SHAPE_NONE));
+        assert_eq!(named("extra_small"), Some(SHAPE_EXTRA_SMALL));
+        assert_eq!(named("small"), Some(SHAPE_SMALL));
+        assert_eq!(named("medium"), Some(SHAPE_MEDIUM));
+        assert_eq!(named("large"), Some(SHAPE_LARGE));
+        assert_eq!(named("extra_large"), Some(SHAPE_EXTRA_LARGE));
+        assert_eq!(
+            named("smol"),
+            None,
+            "an unrecognized token must not silently resolve"
+        );
+    }
+
+    #[test]
+    fn elevation_named_resolves_every_real_level_token_to_its_own_real_constant() {
+        assert_eq!(elevation_named("level_0"), Some(ELEVATION_LEVEL_0));
+        assert_eq!(elevation_named("level_5"), Some(ELEVATION_LEVEL_5));
+        assert_eq!(elevation_named("level_9"), None);
     }
 }

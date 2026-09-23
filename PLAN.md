@@ -1,90 +1,91 @@
-# PLAN — M59: Layout API Breadth: Per-Side Padding/Margin + Flex/Align
+# PLAN — M61: Styling API Breadth II: Token-Reference Substitution in `StyleSpec`
 
-*(Replaces the prior M58 plan in this file — M58 is complete, committed.
-Third of six milestones from the approved M57-M62 plan; see
+*(Replaces the prior M59 plan in this file — M59 is complete, committed.
+Fifth of six milestones from the approved M57-M62 plan; see
 `/home/phil/.claude/plans/reflective-sleeping-falcon.md` for the full
-roadmap.)*
+roadmap. M60, dispatched to a background agent in an isolated worktree,
+is still running as of this writeup — tracked separately, not part of
+this plan.)*
 
 ## Goal
-Same "scope the following Known Gaps" request as M57/M58. This gap:
-per-side padding/margin stayed uniform-scalar-only; flex-grow/shrink/
-basis and align-items/justify-content didn't exist anywhere in this
-codebase.
+The second of the 3 genuinely separate pieces the "Scope the following
+Known Gaps" investigation found bundled in one "styling API breadth"
+bullet (see M60/M62). `engine_md3::shape` already had real named shape/
+elevation constants; nothing let a theme YAML author reference them by
+name (`corner_radius: small`) instead of a plain literal number.
 
 ## Real investigation
-**Key finding: `engine-core` needs zero changes** -- `Tree::
-set_layout_style` (`tree.rs:1289-1298`) already takes a raw `taffy::
-Style` and is fully general. The gap was entirely at the Python/YAML-
-facing API surface: `Node.set_layout` only patched 4 scalar fields;
-`StyleSpec` had no `margin` at all and only uniform-scalar `padding`/
-`gap`; no `flex_grow`/`flex_shrink`/`flex_basis`/`align_items`/
-`justify_content` anywhere (confirmed via grep). No existing "scalar-
-or-object" serde precedent in `spec.rs` for per-side padding/margin --
-this milestone establishes the first one (`#[serde(untagged)]`).
-`FlexDirectionSpec`'s existing unit-variant shape *is* a real precedent
-for the new alignment enums, unlike the per-side spacing shape.
+`engine_md3::shape` (`shape.rs:25-44`) already has real named constants
+(`SHAPE_NONE`/`EXTRA_SMALL`/`SMALL`/`MEDIUM`/`LARGE`/`EXTRA_LARGE`,
+`ELEVATION_LEVEL_0..5`). The precedent to mirror is `StyleSpec.
+background: Option<String>`, resolved by `resolve_color` (tries a theme
+role first, falls back to a literal parse) -- but `corner_radius`/
+`elevation` are `f32`, not `String`, so this needed a genuinely new
+type: `Literal(f64) | TokenRef(String)`, applied to both `StyleSpec`
+(declarative) and `ComponentOverride` (imperative theme path).
 
-## Design (4 phases)
-1. `engine-spec`: per-side padding/margin (`SpacingSpec`).
-2. `engine-spec`: flex-grow/shrink/basis + align/justify.
-3. `engine-py`: `Node.set_layout` widened.
-4. Tests, docs, verification.
+## Design (2 phases)
+1. New `ShapeOrElevationSpec` enum + `engine_md3::shape::named`/
+   `elevation_named` lookups.
+2. Resolution wired into both crates' real consumers.
 
 ## Status
 
-**Complete, all 4 phases.**
+**Complete, both phases.**
 
-1: new `SpacingSpec` enum (`Uniform(f32) | PerSide{top,right,bottom,
-left}`, `#[serde(untagged)]`) applied to widened `StyleSpec.padding`
-and new `StyleSpec.margin`. `build.rs`'s new `spacing_to_rect<T:
-FromLength>` helper builds the real per-side `taffy::Rect` for both
-(`LengthPercentage`/`LengthPercentageAuto` respectively, generic over
-the same helper since taffy's own `length()`/`auto()` are already
-generic).
+1: `engine_md3::shape` gained `pub fn named`/`elevation_named` (exact-
+match lookups, `None` for anything unrecognized, re-exported from the
+crate root). New `ShapeOrElevationSpec` enum (`#[serde(untagged)]`, the
+same real convention M59's own `SpacingSpec` established) with a
+`.resolve(is_elevation) -> Option<f64>` method, applied to `StyleSpec.
+corner_radius`/`elevation` and `engine_spec::theme::ComponentOverride.
+corner_radius`/`elevation`. Widening away from `Copy` (`TokenRef` holds
+an owned `String`) cascaded into `cascade.rs`'s `merge()` needing
+`.clone_from(&...)` and every existing bare-float test literal across
+`cascade.rs`/`theme.rs`/`window_factory.rs` needing `ShapeOrElevation
+Spec::Literal(...)` wrapping -- all fixed and re-verified.
 
-2: new `AlignItemsSpec`/`JustifyContentSpec` enums (7/9 variants, the
-real common flexbox vocabulary, deliberately skipping taffy's own
-niche `Self*`/`Safe*` overflow-position variants -- the same bounded-
-subset precedent `FlexDirectionSpec` already set). New `StyleSpec`
-fields `flex_grow`/`flex_shrink`/`flex_basis`. `build.rs` gained
-`align_items`/`justify_content` resolver functions (exhaustive matches
-to taffy's own real associated consts) and `flex_grow`/`flex_shrink`
-fallbacks confirmed to match `Style::default()`'s own real values
-(`0.0`/`1.0`) exactly, so un-set YAML behaves identically to before.
+2: `engine-spec::build.rs` -- new `SpecError::UnknownShapeToken { id,
+field, token }` variant + `resolve_shape_value(...)` helper wired into
+`node_kind_and_paint`. `engine-py::window.rs` -- the real design fork
+this phase turned on: widening `ThemeState::shape`/`elevation`'s own
+return type to fallible would have rippled into dozens of existing
+`theme.shape(...).unwrap_or(...)` call sites across `window_factory.
+rs`'s 58-entry catalog, way beyond scope. Resolved instead by a new
+`resolve_components(...)` function that resolves every `ComponentOverride`
+token *eagerly*, once, inside `Window.set_theme` (a real Python
+`ValueError` naming the offending component key/field on the first bad
+token), converting into a new engine-py-local `ResolvedComponentOverride`
+struct -- `ThemeState::shape`/`elevation`'s own public signature (and
+every one of its call sites) stays completely unchanged.
 
-3: `Node.set_layout` widened with per-side padding/margin (each layers
-on top of the uniform `padding=`/`margin=` when both given), `flex_
-grow`/`flex_shrink`/`flex_basis`, and `align_items`/`justify_content`
-(plain lowercase-snake-case strings, `ValueError` on unrecognized,
-matching `press_key`'s own established convention -- no dedicated
-Python-facing enum type). `view.rs`'s own `apply_binding_value` call
-site updated for the widened signature (all new params `None`, since
-none of the new fields are reachable from a `{{ }}` binding).
-
-4: 5 new `engine-spec` unit tests (scalar vs. per-side padding/margin;
-all new fields' real YAML string forms; an unknown `align_items`
-keyword errors clearly). 18 new pytest tests in `tests/test_live_
-style.py`, extending M48's own established "no pixel-box readback,
-prove the FFI call succeeds" honest limit. `_core.pyi` widened.
-`examples/live_style.py` extended: per-side `padding_top` applied to
-`root` (the real flex container, layered on top of its existing
-uniform `padding: 16` from YAML -- a real demonstration of the "per-
-side wins for that one side" contract) plus a real `align_items`/
-`justify_content` pair, cycled alongside the existing border/size demo.
-
-**Explicitly out of scope, named not silent:** widening `Window.
-add_rect`/other factories' own constructor kwargs with the same fields
--- `Node.set_layout` already gives every already-built node the
-identical imperative path regardless of which factory created it.
+Tests: 5 new `engine-spec::build.rs` unit tests (a real `corner_radius:
+small`/`elevation: level_3` string resolves end-to-end through real YAML
+parsing + node building to the exact same constant `engine_md3::named`/
+`elevation_named` return; an unrecognized token on either field produces
+a real `SpecError::UnknownShapeToken`; a plain literal still works
+unchanged). 2 new `tests/test_theme.py` pytest tests (`Window.set_theme`'s
+`components: {card: {corner_radius: small, elevation: level_2}}`
+resolves to the real constants on a real `add_card` node; an unknown
+component shape token raises a real Python `ValueError`). `_core.pyi`
+checked, not changed -- `Window.set_theme`'s own Python signature is
+unchanged, this milestone's whole surface is YAML-string-level.
+`examples/theme_customization_custom_theme.yaml` gained a new
+`components: {card: {corner_radius: small, elevation: level_2}}` entry;
+`examples/theme_customization.py` extended with a real `add_card(...)`
+call asserting the token resolved correctly.
 
 Full chain green: `cargo check`/`clippy -D warnings`/`fmt --check`
-clean (zero `engine-core` changes); `cargo test --workspace --release`
-(`engine-spec` 69, up from 65, +4; every other suite unchanged);
-`maturin develop --release`; `pytest tests/` (816 passed, up from 794,
-+22, 2 skipped unchanged); all 88 examples; `demo/showcase.py` all 5
-phases, exit 0. `BUILD_TRACKER.md` updated (Top Metrics, full Milestone
-59 section, the closed gap moved to "Fixed gaps"), tracker regenerated
-(13 milestones/45 phases/105 items/2 known gaps/23 fixed gaps),
-artifact republished. Committing locally now.
+clean; `cargo test --workspace --release` (`engine-md3` 21 up from 19,
+`engine-spec` 74 up from 69, every other suite unchanged); `maturin
+develop --release`; `pytest tests/` (818 passed, up from 816, +2, 2
+skipped unchanged); all examples; `demo/showcase.py` all 5 phases, exit
+0. `BUILD_TRACKER.md` updated (Top Metrics, full Milestone 61 section,
+the closed "token-reference substitution" clause moved out of "Known
+gaps" into "Fixed gaps"), tracker regenerated (13 milestones/45 phases/
+111 items/2 known gaps/24 fixed gaps), artifact republished. Committing
+locally now.
 
-Next: M60 (styling API breadth I: border kwargs).
+Next: M62 (styling API breadth III: typography theming, largest of the
+6). M60 (border kwargs, dispatched to a background agent) still running
+independently -- to be reviewed and merged in when it completes.

@@ -10182,7 +10182,7 @@ mod tests {
         overrides.insert(
             "button.filled".to_string(),
             engine_spec::ComponentOverride {
-                corner_radius: Some(4.0),
+                corner_radius: Some(engine_spec::ShapeOrElevationSpec::Literal(4.0)),
                 elevation: None,
             },
         );

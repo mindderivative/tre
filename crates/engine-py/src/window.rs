@@ -47,8 +47,64 @@ pub(crate) struct ThemeState {
     /// return `None` for every key, so every existing `add_*` factory's
     /// own hardcoded fallback survives untouched, the identical
     /// "un-themed default survives" contract `is_set()`'s own callers
-    /// already rely on for color.
-    components: HashMap<String, engine_spec::ComponentOverride>,
+    /// already rely on for color. M61 (§16.3): stores `Resolved
+    /// ComponentOverride`, not the parse-time `engine_spec::
+    /// ComponentOverride` directly -- `resolve_components` (below)
+    /// converts each entry's own `corner_radius`/`elevation` (a literal
+    /// or a named token) into a plain `f64` exactly once, at real
+    /// `set_theme` time, so `shape`/`elevation` below stay the simple,
+    /// infallible `Option<f64>` they always were -- zero ripple into
+    /// `window_factory.rs`'s dozens of existing `theme.shape(...)`
+    /// call sites.
+    components: HashMap<String, ResolvedComponentOverride>,
+}
+
+/// M61 (§16.3): `engine_spec::ComponentOverride`'s own real resolved
+/// form -- both fields already-concrete `f64`s, a token name (if any)
+/// already looked up. See `ThemeState.components`'s own doc comment for
+/// why this exists as a distinct type rather than storing the parse-
+/// time struct directly.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct ResolvedComponentOverride {
+    corner_radius: Option<f64>,
+    elevation: Option<f64>,
+}
+
+/// M61 (§16.3): resolves every `engine_spec::ComponentOverride` in
+/// `raw` into a `ResolvedComponentOverride`, failing loudly (a real
+/// Python `ValueError`, naming the offending component key and token)
+/// on the first unrecognized token name -- the identical "fail loudly
+/// at the boundary" contract `engine-spec::build.rs`'s own `Spec
+/// Error::UnknownShapeToken` already established for the declarative
+/// `StyleSpec` path, mirrored here for the imperative one.
+fn resolve_components(
+    raw: HashMap<String, engine_spec::ComponentOverride>,
+) -> PyResult<HashMap<String, ResolvedComponentOverride>> {
+    raw.into_iter()
+        .map(|(key, override_)| {
+            let resolve = |field: &str,
+                           value: &Option<engine_spec::ShapeOrElevationSpec>,
+                           is_elevation: bool| {
+                value
+                    .as_ref()
+                    .map(|v| {
+                        v.resolve(is_elevation).ok_or_else(|| {
+                            pyo3::exceptions::PyValueError::new_err(format!(
+                                "components: {key:?} has an unknown {field} token: {v:?}"
+                            ))
+                        })
+                    })
+                    .transpose()
+            };
+            Ok((
+                key.clone(),
+                ResolvedComponentOverride {
+                    corner_radius: resolve("corner_radius", &override_.corner_radius, false)?,
+                    elevation: resolve("elevation", &override_.elevation, true)?,
+                },
+            ))
+        })
+        .collect()
 }
 
 impl ThemeState {
@@ -154,6 +210,12 @@ impl ThemeState {
     /// `for_test`'s own sibling with a real `components:` override --
     /// needed by any `RetitheHook` test that also proves a corner_
     /// radius/elevation override re-resolves live, not just color.
+    /// Takes the real parse-time `engine_spec::ComponentOverride` (what
+    /// a test naturally constructs, matching real theme YAML shape) and
+    /// resolves it through the identical real `resolve_components` path
+    /// `Window.set_theme` itself uses -- `expect`s success, since a
+    /// test passing a deliberately-unresolvable token would be testing
+    /// the wrong thing here (that path has its own dedicated test).
     #[cfg(test)]
     pub(crate) fn for_test_with_components(
         seed: Color,
@@ -162,7 +224,8 @@ impl ThemeState {
         Self {
             theme: Some(DynamicTheme::from_seed(seed)),
             dark: false,
-            components,
+            components: resolve_components(components)
+                .expect("test-supplied components must all resolve"),
         }
     }
 
@@ -170,7 +233,7 @@ impl ThemeState {
         &self,
         component: &str,
         variant: Option<&str>,
-        field: impl Fn(&engine_spec::ComponentOverride) -> Option<f64>,
+        field: impl Fn(&ResolvedComponentOverride) -> Option<f64>,
     ) -> Option<f64> {
         if let Some(variant) = variant
             && let Some(value) = self
@@ -650,6 +713,19 @@ impl PyWindow {
             .map(crate::view::load_theme_spec)
             .transpose()?;
 
+        // M61 (§16.3): resolved *before* any `state` mutation begins
+        // below (matching `apply_overrides`'s own identical "fail
+        // before touching state" discipline just below this) -- a
+        // theme with an unresolvable `components:` token must leave
+        // `ThemeState` completely untouched, the same real "a failed
+        // `set_theme` call is a true no-op" contract every other real
+        // failure path in this method already gives.
+        let mut components = default_theme_spec.components.clone();
+        if let Some(custom) = &custom_theme_spec {
+            components.extend(custom.components.clone());
+        }
+        let resolved_components = resolve_components(components)?;
+
         let seed = match custom_theme_spec
             .as_ref()
             .map(crate::view::theme_spec_seed)
@@ -683,12 +759,9 @@ impl PyWindow {
         // merges with) whatever a *previous* `set_theme` call may have
         // set, matching `state.theme`/`state.dark` right above -- each
         // `set_theme` call is a complete, fresh theme selection, not
-        // an incremental patch onto the last one.
-        let mut components = default_theme_spec.components;
-        if let Some(custom) = custom_theme_spec {
-            components.extend(custom.components);
-        }
-        state.components = components;
+        // an incremental patch onto the last one. (M61: built and
+        // resolved earlier, before any `state` mutation began.)
+        state.components = resolved_components;
         let tint = state.on_surface();
         let mut tree = self.tree.borrow_mut();
         tree.set_all_interaction_tints(tint);
@@ -788,9 +861,8 @@ impl PyWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine_spec::ComponentOverride;
 
-    fn state_with(components: &[(&str, ComponentOverride)]) -> ThemeState {
+    fn state_with(components: &[(&str, ResolvedComponentOverride)]) -> ThemeState {
         ThemeState {
             components: components
                 .iter()
@@ -811,7 +883,7 @@ mod tests {
     fn shape_reads_the_bare_component_key_when_no_variant_is_given() {
         let state = state_with(&[(
             "card",
-            ComponentOverride {
+            ResolvedComponentOverride {
                 corner_radius: Some(16.0),
                 elevation: None,
             },
@@ -824,14 +896,14 @@ mod tests {
         let state = state_with(&[
             (
                 "fab",
-                ComponentOverride {
+                ResolvedComponentOverride {
                     corner_radius: Some(16.0),
                     elevation: None,
                 },
             ),
             (
                 "fab.small",
-                ComponentOverride {
+                ResolvedComponentOverride {
                     corner_radius: Some(12.0),
                     elevation: None,
                 },
@@ -851,14 +923,14 @@ mod tests {
         let state = state_with(&[
             (
                 "card",
-                ComponentOverride {
+                ResolvedComponentOverride {
                     corner_radius: Some(16.0),
                     elevation: None,
                 },
             ),
             (
                 "card.elevated",
-                ComponentOverride {
+                ResolvedComponentOverride {
                     corner_radius: None,
                     elevation: Some(2.0),
                 },
@@ -873,14 +945,14 @@ mod tests {
         let state = state_with(&[
             (
                 "button",
-                ComponentOverride {
+                ResolvedComponentOverride {
                     corner_radius: None,
                     elevation: Some(0.0),
                 },
             ),
             (
                 "button.elevated",
-                ComponentOverride {
+                ResolvedComponentOverride {
                     corner_radius: None,
                     elevation: Some(1.0),
                 },

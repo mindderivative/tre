@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 
 use crate::cascade::StyleRule;
+use crate::spec::ShapeOrElevationSpec;
 
 /// A parsed theme document: `{seed, dark, colors, styles}`, every field
 /// optional so a theme can override just one thing (a single role, say)
@@ -73,14 +74,21 @@ pub struct ThemeSpec {
 /// both fields optional so a theme can set just one (e.g. only
 /// `corner_radius`) while leaving the other at its existing hardcoded
 /// default, the same per-field-optional shape `StyleSpec` already
-/// establishes.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+/// establishes. M61 (§16.3): both widened to `crate::spec::
+/// ShapeOrElevationSpec` (a literal or a named token, e.g.
+/// `corner_radius: small`) -- no longer `Copy` (a `TokenRef` carries a
+/// real owned `String`), resolved into plain `f64`s once, at real
+/// theme-load time (`engine-py::window.rs`'s `Window.set_theme`), not
+/// here -- this struct stays parse-time data, matching every other
+/// `ThemeSpec` field's own "parsed at apply time, not parse time"
+/// precedent.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ComponentOverride {
     #[serde(default)]
-    pub corner_radius: Option<f64>,
+    pub corner_radius: Option<ShapeOrElevationSpec>,
     #[serde(default)]
-    pub elevation: Option<f64>,
+    pub elevation: Option<ShapeOrElevationSpec>,
 }
 
 /// Parses a theme document -- mirrors `cascade::parse_stylesheet`'s own
@@ -146,15 +154,15 @@ styles:
         assert_eq!(
             theme.components["card"],
             ComponentOverride {
-                corner_radius: Some(16.0),
+                corner_radius: Some(ShapeOrElevationSpec::Literal(16.0)),
                 elevation: None,
             }
         );
         assert_eq!(
             theme.components["fab.small"],
             ComponentOverride {
-                corner_radius: Some(12.0),
-                elevation: Some(2.0),
+                corner_radius: Some(ShapeOrElevationSpec::Literal(12.0)),
+                elevation: Some(ShapeOrElevationSpec::Literal(2.0)),
             }
         );
     }

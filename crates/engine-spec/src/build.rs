@@ -19,7 +19,7 @@ use taffy::style_helpers::FromLength;
 use crate::cascade::{Stylesheet, resolve_style_layered};
 use crate::spec::{
     AlignItemsSpec, ContentFitSpec, FlexDirectionSpec, JustifyContentSpec, NodeKindSpec,
-    SpacingSpec, StyleSpec, WidgetSpec, parse_view,
+    ShapeOrElevationSpec, SpacingSpec, StyleSpec, WidgetSpec, parse_view,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -38,6 +38,18 @@ pub enum SpecError {
         value: String,
         #[source]
         source: peniko::color::ParseError,
+    },
+    /// M61 (§16.3): `style.corner_radius`/`elevation` (or a theme's own
+    /// `components:` override, `engine-py::window.rs`) named a token
+    /// that doesn't resolve against `engine_md3::shape`'s own real
+    /// vocabulary -- a real, stated authoring error, not a silent
+    /// fallback to `0.0`, the same "fail loudly at the boundary"
+    /// reasoning `InvalidColor` above already follows for `background`.
+    #[error("widget \"{id}\": unknown style.{field} token {token:?}")]
+    UnknownShapeToken {
+        id: String,
+        field: &'static str,
+        token: String,
     },
     /// M19 Phase 2 (§16.6): `include: {path}` appeared but no `base_dir`
     /// was given to resolve it against -- a real, stated error, not a
@@ -372,13 +384,47 @@ fn layout_style(style: &StyleSpec) -> Style {
     }
 }
 
+/// M61 (§16.3): resolves a `StyleSpec.corner_radius`/`elevation` value
+/// (a literal or a named token) to a real `f64`, or `default` when
+/// unset -- `spec`/`field` exist purely to build a real, specific
+/// `SpecError::UnknownShapeToken` if the token name doesn't resolve,
+/// matching `resolve_color`'s own identical "fail loudly with the
+/// widget's own id and field name" contract for `background`.
+fn resolve_shape_value(
+    spec: &WidgetSpec,
+    field: &'static str,
+    value: Option<&ShapeOrElevationSpec>,
+    default: f64,
+    is_elevation: bool,
+) -> Result<f64, SpecError> {
+    let Some(value) = value else {
+        return Ok(default);
+    };
+    value.resolve(is_elevation).ok_or_else(|| {
+        let ShapeOrElevationSpec::TokenRef(token) = value else {
+            unreachable!("ShapeOrElevationSpec::Literal always resolves")
+        };
+        SpecError::UnknownShapeToken {
+            id: spec.id.clone(),
+            field,
+            token: token.clone(),
+        }
+    })
+}
+
 fn node_kind_and_paint(
     spec: &WidgetSpec,
     style: &StyleSpec,
     scheme: Option<&ColorScheme>,
     base_dir: Option<&std::path::Path>,
 ) -> Result<(NodeKind, PaintProperties), SpecError> {
-    let corner_radius = f64::from(style.corner_radius.unwrap_or(0.0));
+    let corner_radius = resolve_shape_value(
+        spec,
+        "corner_radius",
+        style.corner_radius.as_ref(),
+        0.0,
+        false,
+    )?;
     let opacity = f64::from(style.opacity.unwrap_or(1.0));
 
     let (kind, mut paint) =
@@ -403,8 +449,10 @@ fn node_kind_and_paint(
     // the match" shape border just established above -- `elevation`
     // was a real, existing `PaintProperties` field never reachable from
     // `StyleSpec` at all until this milestone.
-    if let Some(elevation) = style.elevation {
-        paint.elevation = Animated::new(f64::from(elevation));
+    if style.elevation.is_some() {
+        let elevation =
+            resolve_shape_value(spec, "elevation", style.elevation.as_ref(), 0.0, true)?;
+        paint.elevation = Animated::new(elevation);
     }
 
     Ok((kind, paint))
@@ -876,6 +924,106 @@ style: {width: 10, height: 10, background: primary}
         let err = load_view(&mut tree, yaml)
             .expect_err("a token name with no scheme to resolve it against must fail");
         assert!(matches!(err, SpecError::InvalidColor { .. }));
+    }
+
+    /// M61 (§16.3): the actual end-to-end claim for shape tokens,
+    /// mirroring `load_styled_view_resolves_an_md3_token_name_to_the_
+    /// real_scheme_color` above -- a real `corner_radius: small` string
+    /// in a real `view.yaml`, resolved through a real `load_view` call,
+    /// must produce the exact same value `engine_md3::named`
+    /// itself returns for `"small"`, not merely "some number came out."
+    #[test]
+    fn corner_radius_token_name_resolves_to_the_real_named_constant() {
+        let yaml = r#"
+id: swatch
+kind: Rect
+style: {width: 10, height: 10, background: red, corner_radius: small}
+"#;
+        let mut tree = Tree::new();
+        let root = load_view(&mut tree, yaml).expect("a token-named corner_radius must resolve");
+        let node = tree.get(root).unwrap();
+        assert_eq!(
+            node.paint.corner_radius.current,
+            engine_md3::named("small").unwrap()
+        );
+    }
+
+    /// The `elevation` sibling of the test above -- a real `level_3`
+    /// string must resolve to `engine_md3::elevation_named`'s own
+    /// real constant.
+    #[test]
+    fn elevation_token_name_resolves_to_the_real_named_constant() {
+        let yaml = r#"
+id: swatch
+kind: Rect
+style: {width: 10, height: 10, background: red, elevation: level_3}
+"#;
+        let mut tree = Tree::new();
+        let root = load_view(&mut tree, yaml).expect("a token-named elevation must resolve");
+        let node = tree.get(root).unwrap();
+        assert_eq!(
+            node.paint.elevation.current,
+            engine_md3::elevation_named("level_3").unwrap()
+        );
+    }
+
+    /// An unrecognized shape token must be a real, clear
+    /// `SpecError::UnknownShapeToken` naming the widget's own id, the
+    /// field it appeared on, and the bad token itself -- not a silent
+    /// fallback to `0.0`, the same "fail loudly at the boundary"
+    /// discipline `invalid_color_names_the_offending_widget_and_value`
+    /// above already establishes for `background`.
+    #[test]
+    fn unknown_corner_radius_token_names_the_offending_widget_field_and_token() {
+        let yaml = r#"
+id: bad-shape
+kind: Rect
+style: {width: 10, height: 10, background: red, corner_radius: smol}
+"#;
+        let mut tree = Tree::new();
+        let err =
+            load_view(&mut tree, yaml).expect_err("an unrecognized corner_radius token must fail");
+        let SpecError::UnknownShapeToken { id, field, token } = err else {
+            panic!("expected UnknownShapeToken, got {err:?}");
+        };
+        assert_eq!(id, "bad-shape");
+        assert_eq!(field, "corner_radius");
+        assert_eq!(token, "smol");
+    }
+
+    /// The `elevation` sibling of the test above.
+    #[test]
+    fn unknown_elevation_token_names_the_offending_widget_field_and_token() {
+        let yaml = r#"
+id: bad-elevation
+kind: Rect
+style: {width: 10, height: 10, background: red, elevation: level_9}
+"#;
+        let mut tree = Tree::new();
+        let err =
+            load_view(&mut tree, yaml).expect_err("an unrecognized elevation token must fail");
+        let SpecError::UnknownShapeToken { id, field, token } = err else {
+            panic!("expected UnknownShapeToken, got {err:?}");
+        };
+        assert_eq!(id, "bad-elevation");
+        assert_eq!(field, "elevation");
+        assert_eq!(token, "level_9");
+    }
+
+    /// A plain numeric literal must still work exactly as before M61 --
+    /// token resolution is only attempted for a bare YAML string, never
+    /// forced onto a widget that just wants a fixed number.
+    #[test]
+    fn corner_radius_literal_still_works_alongside_token_support() {
+        let yaml = r#"
+id: swatch
+kind: Rect
+style: {width: 10, height: 10, background: red, corner_radius: 6.0}
+"#;
+        let mut tree = Tree::new();
+        let root = load_view(&mut tree, yaml).expect("a literal corner_radius must still parse");
+        let node = tree.get(root).unwrap();
+        assert_eq!(node.paint.corner_radius.current, 6.0);
     }
 
     // M22 Phase 2 (§16.1): a real, tiny, decodable 4x4 PNG -- the

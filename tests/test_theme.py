@@ -257,6 +257,35 @@ def test_window_set_theme_custom_default_theme_path_replaces_the_shipped_one(tmp
     )
 
 
+# --- M61 (§16.3): components: corner_radius/elevation accept a real MD3
+# shape/elevation token name, not just a plain literal number. ------------
+
+
+def test_window_set_theme_component_override_accepts_a_shape_token_name(tmp_path):
+    theme_path = write_yaml(
+        tmp_path,
+        "theme.yaml",
+        "components:\n  card: {corner_radius: small, elevation: level_2}\n",
+    )
+    window = Window(width=200, height=200)
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), custom_theme=theme_path)
+    card = window.add_card(width=200.0, height=100.0, variant="filled")
+    # engine_md3::shape::SHAPE_SMALL / ELEVATION_LEVEL_2, the exact same
+    # constants crates/engine-md3/src/shape.rs::named/elevation_named
+    # themselves resolve these token names to.
+    assert card.get("corner_radius") == pytest.approx(8.0)
+    assert card.get("elevation") == pytest.approx(2.0)
+
+
+def test_window_set_theme_unknown_component_shape_token_raises_value_error(tmp_path):
+    theme_path = write_yaml(
+        tmp_path, "theme.yaml", "components:\n  card: {corner_radius: smol}\n"
+    )
+    window = Window(width=200, height=200)
+    with pytest.raises(ValueError, match="card"):
+        window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), custom_theme=theme_path)
+
+
 # --- hot reload keeps using the same theme -----------------------------------
 
 

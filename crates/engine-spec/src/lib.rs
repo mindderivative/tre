@@ -24,6 +24,9 @@ pub use build::{SpecError, build_tree, load_styled_view, load_view};
 pub use cascade::{StyleRule, Stylesheet, parse_stylesheet, resolve_style, resolve_style_layered};
 pub use include::parse_view_with_includes;
 pub use reconcile::Reconciler;
-pub use spec::{FlexDirectionSpec, NodeKindSpec, StyleSpec, TextSpec, WidgetSpec, parse_view};
+pub use spec::{
+    FlexDirectionSpec, NodeKindSpec, ShapeOrElevationSpec, StyleSpec, TextSpec, WidgetSpec,
+    parse_view,
+};
 pub use theme::{ComponentOverride, ThemeSpec, parse_theme};
 pub use watch::ViewWatcher;

@@ -106,6 +106,19 @@ print(
     f"elevation={button.get('elevation')!r}"
 )
 
+# M61 (§16.3): components: also accepts a real MD3 shape/elevation
+# *token name* (card: {corner_radius: small, elevation: level_2} in the
+# same custom theme file above), resolved to the identical constants
+# engine_md3::shape::named/elevation_named themselves define -- not just
+# a plain literal number like button.filled above.
+card = window.add_card(width=140, height=80, variant="filled", x=176, y=180)
+assert card.get("corner_radius") == 8.0, "expected 'small' to resolve to SHAPE_SMALL (8.0)"
+assert card.get("elevation") == 2.0, "expected 'level_2' to resolve to ELEVATION_LEVEL_2 (2.0)"
+print(
+    f"components: shape-token override verified: corner_radius={card.get('corner_radius')!r}, "
+    f"elevation={card.get('elevation')!r}"
+)
+
 # M51: live re-theme -- swap in a second custom theme on the already-
 # built view, on the already-shown window, without rebuilding anything.
 retheme_path = str(directory / "theme_customization_retheme.yaml")

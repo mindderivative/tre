@@ -257,6 +257,49 @@ pub enum JustifyContentSpec {
     SpaceEvenly,
 }
 
+/// M61 (§16.3): a `corner_radius`/`elevation` value that accepts
+/// *either* a bare literal number (the real shape both fields already
+/// had) *or* a named token string (e.g. `"small"`), resolved against
+/// `engine_md3::shape`'s own real named constants at build time
+/// (`resolve_shape_value`, below). Mirrors `StyleSpec.background`'s own
+/// real "role name or literal" duality (`resolve_color`) -- but as a
+/// genuinely new type, since these two fields are numeric, not
+/// `String`, unlike `background`. Stores `f64` uniformly (both fields
+/// were already promoted to `f64` at their one real point of use in
+/// `build.rs`, so this loses no real precision versus the previous
+/// `Option<f32>` shape).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum ShapeOrElevationSpec {
+    Literal(f64),
+    TokenRef(String),
+}
+
+impl ShapeOrElevationSpec {
+    /// Resolves to a real `f64` -- a literal passes through unchanged;
+    /// a token name is looked up against `engine_md3::shape`'s own real
+    /// constants (`named` for shape, `elevation_named` for elevation --
+    /// a genuinely different vocabulary, never confused: the caller
+    /// states which via `is_elevation`). `None` for an unrecognized
+    /// token name -- every real caller turns that into its own crate-
+    /// appropriate error (`SpecError::UnknownShapeToken` here in
+    /// `engine-spec`; a Python `ValueError` in `engine-py`'s own
+    /// `Window.set_theme` resolution of `ComponentOverride`), never a
+    /// silent fallback.
+    pub fn resolve(&self, is_elevation: bool) -> Option<f64> {
+        match self {
+            ShapeOrElevationSpec::Literal(v) => Some(*v),
+            ShapeOrElevationSpec::TokenRef(name) => {
+                if is_elevation {
+                    engine_md3::elevation_named(name)
+                } else {
+                    engine_md3::named(name)
+                }
+            }
+        }
+    }
+}
+
 /// Literal-value styling for one widget. Every field is optional so a
 /// `view.yaml` author only states what a node actually needs -- a
 /// `Container` typically sets `flex_direction`/`padding`/`gap` and no
@@ -292,7 +335,12 @@ pub struct StyleSpec {
     /// parse failure needs the owning widget's `id` in its error
     /// message, which this struct alone doesn't have context for.
     pub background: Option<String>,
-    pub corner_radius: Option<f32>,
+    /// M61 (§16.3): widened from a bare `Option<f32>` to also accept a
+    /// named shape token (e.g. `corner_radius: small`), resolved
+    /// against `engine_md3::shape`'s own real named constants
+    /// (`resolve_shape_value`, `build.rs`) -- a plain literal number
+    /// still parses exactly as before.
+    pub corner_radius: Option<ShapeOrElevationSpec>,
     pub opacity: Option<f32>,
     /// M48 (§5, §7): `PaintProperties.border_width`/`border_color` have
     /// existed since M30 Phase 1 but were never reachable from static
@@ -306,8 +354,10 @@ pub struct StyleSpec {
     /// read of this struct's own field list before this change, the
     /// same real gap class `border_width`/`border_color` were in before
     /// M48. Lets a theme's own per-kind default styles (M49 Phase 3)
-    /// set a real elevation, not just corner radius/opacity.
-    pub elevation: Option<f32>,
+    /// set a real elevation, not just corner radius/opacity. M61
+    /// (§16.3): widened the same way `corner_radius` just was, to also
+    /// accept a named elevation-level token (e.g. `elevation: level_3`).
+    pub elevation: Option<ShapeOrElevationSpec>,
 }
 
 /// Parses one `view.yaml` document's raw text into a `WidgetSpec` tree.
