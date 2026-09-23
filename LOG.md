@@ -112,10 +112,64 @@
 - `pytest tests/`: 776 passed, 2 skipped -- byte-for-byte unchanged
   from before this phase, confirming zero regression.
 
+## Phase 2 — Python-Facing API, Tests, Example, Docs
+
+- `python/tre/_core.pyi`: new `Event.node: Node` field stub; `source`'s
+  own doc comment updated to name `node` as the real live-handle
+  counterpart, replacing the now-stale "deliberately deferred" claim.
+- 8 new pytest tests (`tests/test_event_node.py`): `event.node` is a
+  real `Node` instance; a mutation made *through* `event.node` is
+  visible on the originally-registered handle (the real identity proof
+  used, since `Node` exposes no `__eq__`/`id`); a handler calling
+  `.animate()`/`.get_checked()`/`.set_on_hover_enter()` back on `event.
+  node` immediately does not panic; `event.node` correct for a real
+  `Click`/`HoverEnter`/`FocusEnter`/`Change`; a shared handler across
+  two `Checkbox`es tells them apart via `event.node`'s own live state.
+  **Real, honest finding, not glossed over:** a testable repro for the
+  fixed `copy_to_system_clipboard` staleness case specifically through
+  a real `show_view` switch does not exist through the current public
+  API -- `select_all`/`press_key`/`copy`/`cut` (needed to create a real
+  text selection to copy) all still read `self.tree`/`self.handlers`
+  directly, unaffected by `show_view` (which only ever swaps `self.
+  active`), a real, separate, pre-existing limitation explicitly out of
+  this milestone's own approved scope. No misleading test was written
+  to paper over that gap. Also corrected `test_event_payload.py`'s own
+  now-stale docstring, which still claimed `source` was "not a live
+  `Node` handle this milestone."
+- New section in `examples/event_payload.py`: a single handler shared
+  across three real `Checkbox`es, toggling and reading back through
+  `event.node` directly -- the real scenario `Event.source`'s bare
+  opaque id couldn't serve without a caller-maintained id lookup of its
+  own -- with a real functional assertion that only the clicked node's
+  own state ever changes.
+- `BUILD_TRACKER.md`: new Milestone 56 section (both phases), Top
+  Metrics row added at 100%, fresh "Just closed"/"Up next" front-matter
+  pair prepended (matching this session's own established convention
+  for the tracker generator's own first-match `_grab()` behavior).
+  Regenerated: 56 milestones/167 phases/316 items/1 known gap/20 fixed
+  gaps. Artifact republished at the existing URL.
+- Full chain green: `cargo check`/`clippy -D warnings`/`fmt --check`
+  clean (no Rust changes this phase); `cargo test --workspace
+  --release` (unchanged). `maturin develop --release`; `pytest tests/`
+  (784 passed, up from 776, +8, 2 skipped unchanged); all 88 examples
+  (+1, zero failures); `demo/showcase.py` (all 5 phases, exit 0).
+
 ## Status
 
-**Phase 1 complete.** Phase 2 (Python-facing API stub, formal pytest
-coverage, a new/extended example, `BUILD_TRACKER.md`/tracker/artifact)
-not yet started. Committing Phase 1 locally now; push deferred pending
-explicit user confirmation once the full milestone closes, per this
-session's own established, unwavering convention.
+**M56 is complete -- both phases.** The real capability gap this
+milestone exists to close -- a handler shared generically across
+several nodes having no way to know which one just fired without a
+live handle -- is closed, additively, with zero breaking changes to
+`Event.source`'s own already-shipped `int` contract and zero
+regression to any of the 776 pre-existing tests or 87 pre-existing
+examples. Needed zero `engine-core` changes, exactly as the
+investigation predicted. One real, adjacent, pre-existing bug fixed
+along the way at the user's own explicit choice (overriding this
+session's own stated recommendation): `copy_to_system_clipboard`/
+`cut_to_system_clipboard`/`paste_from_system_clipboard`'s own real
+`active`-bundle bypass. One honest limitation found and named, not
+worked around: the fixed clipboard staleness case has no real testable
+repro through the current public API without also touching `select_
+all`/`press_key` (out of scope). Committing Phase 2 locally now; push
+deferred pending explicit user confirmation, per this session's own
+established, unwavering convention.

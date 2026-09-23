@@ -121,10 +121,12 @@ def test_a_time_picker_dial_change_gives_a_real_hour_minute_tuple():
 
 def test_event_source_is_a_stable_value_distinguishing_two_real_nodes():
     """`Event.source` (a plain opaque `u64`, M54 scoping's own resolved
-    design fork -- not a live `Node` handle this milestone) is real and
-    usable for at least the one thing a bare id is good for: telling
-    two different real nodes' own events apart when one handler is
-    shared across both.
+    design fork) is real and usable for at least the one thing a bare
+    id is good for: telling two different real nodes' own events apart
+    when one handler is shared across both. `Event.node` (M56) is now
+    the real live-handle counterpart for the same scenario -- see
+    `test_event_node.py` -- but `source` itself is unchanged, kept
+    exactly as shipped here.
     """
     window = Window(width=100, height=100)
     a = window.add_rect(background=(0, 0, 0, 255), width=20, height=20, x=0, y=0)

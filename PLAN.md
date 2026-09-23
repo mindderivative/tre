@@ -57,8 +57,28 @@ introduces no new untracked edge beyond what already isn't tracked).
 
 ## Status
 
-**Phase 1 complete.** Phase 2 (Python-facing API, tests, example, docs,
-tracker) not yet started.
+**All 2 phases complete. Milestone closed.**
+
+Phase 2: `_core.pyi` gets the new `Event.node: Node` stub; 8 new pytest
+tests in `tests/test_event_node.py` (identity via mutate-through-the-
+handle, re-entrancy, correctness across `Click`/`HoverEnter`/
+`FocusEnter`/`Change`, a shared multi-node handler); a new section in
+`examples/event_payload.py` demonstrating `event.node` used generically
+across three `Checkbox`es. **Real, honest finding:** no testable repro
+exists for the fixed `copy_to_system_clipboard` staleness case through
+a real `show_view` switch, since `select_all`/`press_key` (needed to
+create a selection) still read `self.tree` directly, unaffected by
+`show_view` -- a real, separate, pre-existing limitation out of this
+milestone's own approved scope, named rather than papered over.
+`BUILD_TRACKER.md`: new Milestone 56 section, tracker regenerated (56
+milestones/167 phases/316 items/1 known gap/20 fixed gaps), artifact
+republished.
+
+Full chain green: `cargo check`/`clippy -D warnings`/`fmt --check`
+clean (no Rust changes this phase), `cargo test --workspace --release`
+(unchanged), `maturin develop --release`, `pytest tests/` (784 passed,
+up from 776, +8, 2 skipped unchanged), all 88 examples (+1), showcase
+demo.
 
 `Event` gained `node: Py<Node>` (`event.rs`), built via a new `Event::
 build_node(py, id, ctx)` helper reusing every real `add_*` factory's own

@@ -68,10 +68,21 @@ class Event:
     """
     source: int
     """A stable, opaque integer identity for the node this event fired
-    on -- not a `Node` handle (deliberately deferred, M54 scoping); a
-    real handler almost always already has the specific `Node` it
-    registered on via closure, the same way every pre-existing handler
-    in this project's own examples/tests already does.
+    on. `node` (below) is the real, live counterpart for the case this
+    alone can't serve -- a handler shared generically across several
+    nodes, with no way to know which one just fired without it. A
+    handler that already closed over the specific `Node` it registered
+    on (the same way every pre-existing handler in this project's own
+    examples/tests already does) has no real need for either.
+    """
+    node: Node
+    """M56 (§8, §16.2): the real, live `Node` this event fired on --
+    additive alongside `source`, not a replacement. Calling back on it
+    immediately from inside the handler (`event.node.animate(...)`,
+    `.get(...)`, `.set_on_click(...)`, etc.) is safe -- this is the
+    exact same live handle a `Node.set_on_click`/etc. registration
+    already holds, built and handed in fresh for every dispatch, never
+    a stale snapshot.
     """
     position: tuple[float, float] | None
     """The real pointer position for a pointer-driven `"click"`, or a
