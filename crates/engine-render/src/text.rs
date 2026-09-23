@@ -211,10 +211,19 @@ impl TextRenderer {
     /// Returns the already-shaped `Layout` for `node_id` if `content`/
     /// `font_family`/`font_weight`/`font_size`/`max_width` still match
     /// what it was last shaped with, otherwise re-shapes and replaces
-    /// it. Equality on `LayoutCacheKey` *is* the invalidation check --
-    /// every input that can change a `Layout`'s shape is part of the
-    /// key, so there's no separate "remember to invalidate" bookkeeping
-    /// that a future change could forget to update.
+    /// it. Comparing against the cached key's own fields (below) *is*
+    /// the invalidation check -- every input that can change a
+    /// `Layout`'s shape is part of the comparison, so there's no
+    /// separate "remember to invalidate" bookkeeping that a future
+    /// change could forget to update. M66 (§8): the comparison itself
+    /// is against the *borrowed* new inputs -- no owned `LayoutCacheKey`
+    /// is ever allocated on the cache-hit path (the common case: an
+    /// unchanged node, reshaped every paint before this), only inside
+    /// the real stale/miss branch where a reshape is happening anyway.
+    /// Before this, a full `content`/`spans` clone was paid on *every*
+    /// call regardless, just to build a key that got thrown away the
+    /// instant the comparison confirmed nothing changed -- found and
+    /// adversarially verified by a `/review-project` pass.
     #[allow(clippy::too_many_arguments)]
     fn shaped_layout(
         &mut self,
@@ -229,17 +238,17 @@ impl TextRenderer {
         spans: &[(Range<usize>, Color)],
         default_color: Color,
     ) -> &parley::Layout<[u8; 4]> {
-        let key = LayoutCacheKey {
-            content: content.to_string(),
-            font_family: font_family.to_string(),
-            font_weight,
-            font_size,
-            max_width,
-            align,
-            line_height,
-            spans: spans.to_vec(),
-            default_color,
-        };
+        let stale = self.layout_cache.get(&node_id).is_none_or(|cached| {
+            cached.key.content != content
+                || cached.key.font_family != font_family
+                || cached.key.font_weight != font_weight
+                || cached.key.font_size != font_size
+                || cached.key.max_width != max_width
+                || cached.key.align != align
+                || cached.key.line_height != line_height
+                || cached.key.spans != spans
+                || cached.key.default_color != default_color
+        });
         let Self {
             font_cx,
             layout_cx,
@@ -247,9 +256,6 @@ impl TextRenderer {
             monospace_cell_cache: _,
             terminal_run_cache: _,
         } = self;
-        let stale = layout_cache
-            .get(&node_id)
-            .is_none_or(|cached| cached.key != key);
         if stale {
             let mut builder = layout_cx.ranged_builder(font_cx, content, 1.0, true);
             builder.push_default(StyleProperty::FontFamily(FontFamily::named(font_family)));
@@ -304,7 +310,23 @@ impl TextRenderer {
                 TextAlign::End => Alignment::End,
             };
             layout.align(parley_align, AlignmentOptions::default());
-            layout_cache.insert(node_id, CachedLayout { key, layout });
+            layout_cache.insert(
+                node_id,
+                CachedLayout {
+                    key: LayoutCacheKey {
+                        content: content.to_string(),
+                        font_family: font_family.to_string(),
+                        font_weight,
+                        font_size,
+                        max_width,
+                        align,
+                        line_height,
+                        spans: spans.to_vec(),
+                        default_color,
+                    },
+                    layout,
+                },
+            );
         }
         &layout_cache
             .get(&node_id)
@@ -1470,6 +1492,200 @@ mod tests {
             );
             assert!(renderer.layout_cache.contains_key(&b));
         });
+    }
+
+    /// M66 (§8): real, per-field regression coverage for `shaped_
+    /// layout`'s own hand-written staleness comparison (M66 replaced
+    /// the derived `PartialEq` whole-key comparison with one that
+    /// checks the *borrowed* new inputs against the cached key's own
+    /// fields, to avoid allocating an owned key on the cache-hit path)
+    /// -- a real, non-hypothetical risk a hand-written comparison has
+    /// that a derived one doesn't: a field silently missing from it
+    /// would make that one input stop invalidating the cache at all.
+    /// Changes exactly one real shaping input at a time, keeping every
+    /// other one identical, and confirms the cached key's own field
+    /// actually updated -- real, direct proof of a genuine reshape,
+    /// not just "the cache didn't grow" (which a bug that silently
+    /// *always* reshapes would also satisfy).
+    #[test]
+    fn shaped_layout_reshapes_on_a_change_to_any_single_real_field() {
+        let mut renderer = TextRenderer::new();
+        let id = Tree::new().insert(
+            NodeKind::Text(TextState {
+                content: "placeholder".to_string(),
+                font_family: "Roboto".to_string(),
+                font_weight: 400.0,
+                font_size: 16.0,
+                align: TextAlign::Start,
+                line_height: None,
+            }),
+            Style::default(),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+
+        let base_spans: Vec<(Range<usize>, Color)> =
+            vec![(0..2, Color::from_rgba8(255, 0, 0, 255))];
+        renderer.shaped_layout(
+            id,
+            "hello",
+            "Roboto",
+            400.0,
+            16.0,
+            100.0,
+            TextAlign::Start,
+            None,
+            &base_spans,
+            Color::from_rgba8(0, 0, 0, 255),
+        );
+
+        renderer.shaped_layout(
+            id,
+            "goodbye",
+            "Roboto",
+            400.0,
+            16.0,
+            100.0,
+            TextAlign::Start,
+            None,
+            &base_spans,
+            Color::from_rgba8(0, 0, 0, 255),
+        );
+        assert_eq!(
+            renderer.layout_cache.get(&id).unwrap().key.content,
+            "goodbye"
+        );
+
+        renderer.shaped_layout(
+            id,
+            "goodbye",
+            MONOSPACE_FONT_FAMILY,
+            400.0,
+            16.0,
+            100.0,
+            TextAlign::Start,
+            None,
+            &base_spans,
+            Color::from_rgba8(0, 0, 0, 255),
+        );
+        assert_eq!(
+            renderer.layout_cache.get(&id).unwrap().key.font_family,
+            MONOSPACE_FONT_FAMILY
+        );
+
+        renderer.shaped_layout(
+            id,
+            "goodbye",
+            MONOSPACE_FONT_FAMILY,
+            700.0,
+            16.0,
+            100.0,
+            TextAlign::Start,
+            None,
+            &base_spans,
+            Color::from_rgba8(0, 0, 0, 255),
+        );
+        assert_eq!(
+            renderer.layout_cache.get(&id).unwrap().key.font_weight,
+            700.0
+        );
+
+        renderer.shaped_layout(
+            id,
+            "goodbye",
+            MONOSPACE_FONT_FAMILY,
+            700.0,
+            24.0,
+            100.0,
+            TextAlign::Start,
+            None,
+            &base_spans,
+            Color::from_rgba8(0, 0, 0, 255),
+        );
+        assert_eq!(renderer.layout_cache.get(&id).unwrap().key.font_size, 24.0);
+
+        renderer.shaped_layout(
+            id,
+            "goodbye",
+            MONOSPACE_FONT_FAMILY,
+            700.0,
+            24.0,
+            50.0,
+            TextAlign::Start,
+            None,
+            &base_spans,
+            Color::from_rgba8(0, 0, 0, 255),
+        );
+        assert_eq!(renderer.layout_cache.get(&id).unwrap().key.max_width, 50.0);
+
+        renderer.shaped_layout(
+            id,
+            "goodbye",
+            MONOSPACE_FONT_FAMILY,
+            700.0,
+            24.0,
+            50.0,
+            TextAlign::Center,
+            None,
+            &base_spans,
+            Color::from_rgba8(0, 0, 0, 255),
+        );
+        assert_eq!(
+            renderer.layout_cache.get(&id).unwrap().key.align,
+            TextAlign::Center
+        );
+
+        renderer.shaped_layout(
+            id,
+            "goodbye",
+            MONOSPACE_FONT_FAMILY,
+            700.0,
+            24.0,
+            50.0,
+            TextAlign::Center,
+            Some(1.5),
+            &base_spans,
+            Color::from_rgba8(0, 0, 0, 255),
+        );
+        assert_eq!(
+            renderer.layout_cache.get(&id).unwrap().key.line_height,
+            Some(1.5)
+        );
+
+        let changed_spans: Vec<(Range<usize>, Color)> =
+            vec![(0..2, Color::from_rgba8(0, 255, 0, 255))];
+        renderer.shaped_layout(
+            id,
+            "goodbye",
+            MONOSPACE_FONT_FAMILY,
+            700.0,
+            24.0,
+            50.0,
+            TextAlign::Center,
+            Some(1.5),
+            &changed_spans,
+            Color::from_rgba8(0, 0, 0, 255),
+        );
+        assert_eq!(
+            renderer.layout_cache.get(&id).unwrap().key.spans,
+            changed_spans
+        );
+
+        renderer.shaped_layout(
+            id,
+            "goodbye",
+            MONOSPACE_FONT_FAMILY,
+            700.0,
+            24.0,
+            50.0,
+            TextAlign::Center,
+            Some(1.5),
+            &changed_spans,
+            Color::from_rgba8(255, 255, 255, 255),
+        );
+        assert_eq!(
+            renderer.layout_cache.get(&id).unwrap().key.default_color,
+            Color::from_rgba8(255, 255, 255, 255)
+        );
     }
 
     /// M31 Phase 1 (§5, §8): the real finding that closes this phase's
