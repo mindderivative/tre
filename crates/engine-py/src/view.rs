@@ -940,8 +940,22 @@ impl View {
     /// "no scheme, no MD3 token resolution, literal colors only"
     /// precedent this codebase already establishes for `theme_seed`
     /// alone being omitted.
+    // M71 (§8, §16.1): `source` added -- when given, used directly
+    // instead of reading `path` from disk, while `path` still supplies
+    // the real base directory `include:`/`image.src:` resolve against
+    // (below) and the real file `ViewWatcher` watches for hot-reload
+    // (also below) -- so a caller that pre-processes a view's own raw
+    // text (the sibling `Tesserae` project's own real, confirmed need:
+    // expanding its own custom `component:` macro syntax into tre-
+    // native primitive YAML *before* this constructor ever sees it) can
+    // still have `poll_reload()` react to real edits of the file the
+    // developer actually wrote, not a generated artifact with no
+    // meaningful path of its own. `None` (the default) is the real,
+    // pre-existing behavior -- read `path` directly -- unchanged for
+    // every caller that doesn't pass it.
     #[new]
-    #[pyo3(signature = (path, stylesheet=None, theme_seed=None, dark=false, default_theme=None, custom_theme=None))]
+    #[pyo3(signature = (path, stylesheet=None, theme_seed=None, dark=false, default_theme=None, custom_theme=None, source=None))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         path: String,
         stylesheet: Option<String>,
@@ -949,9 +963,14 @@ impl View {
         dark: bool,
         default_theme: Option<String>,
         custom_theme: Option<String>,
+        source: Option<String>,
     ) -> PyResult<Self> {
-        let yaml = std::fs::read_to_string(&path)
-            .map_err(|e| PyRuntimeError::new_err(format!("failed to read view {path:?}: {e}")))?;
+        let yaml = match source {
+            Some(text) => text,
+            None => std::fs::read_to_string(&path).map_err(|e| {
+                PyRuntimeError::new_err(format!("failed to read view {path:?}: {e}"))
+            })?,
+        };
         // M19 Phase 2 (§16.6): an `include:` path is only ever
         // meaningful relative to the file that named it -- `View`'s
         // own directory is the real base every include in this view
@@ -1120,16 +1139,30 @@ impl View {
     /// honest translation of that intent given `View`'s own real,
     /// pre-existing architecture: an explicit method the caller invokes
     /// wherever its own script's equivalent of "between frames" is.
-    fn poll_reload(&mut self) -> PyResult<bool> {
+    ///
+    /// M71 (§8, §16.1): `source` added -- `__new__`'s own real sibling
+    /// parameter. The real change-detection gate above (`watcher.
+    /// poll_changed()`) still watches `self.path` on disk regardless --
+    /// a caller pre-processing this view's own raw text (see `__new__`'s
+    /// doc comment) still needs to know *whether* the real underlying
+    /// file changed at all before deciding it's worth re-expanding, so
+    /// that real, cheap, inotify-backed check isn't bypassed. Only the
+    /// *content actually reconciled* changes: `source`, when given,
+    /// instead of a fresh `self.path` disk read.
+    #[pyo3(signature = (source=None))]
+    fn poll_reload(&mut self, source: Option<String>) -> PyResult<bool> {
         let Some(watcher) = &self.watcher else {
             return Ok(false);
         };
         if !watcher.poll_changed() {
             return Ok(false);
         }
-        let yaml = std::fs::read_to_string(&self.path).map_err(|e| {
-            PyRuntimeError::new_err(format!("failed to re-read view {:?}: {e}", self.path))
-        })?;
+        let yaml = match source {
+            Some(text) => text,
+            None => std::fs::read_to_string(&self.path).map_err(|e| {
+                PyRuntimeError::new_err(format!("failed to re-read view {:?}: {e}", self.path))
+            })?,
+        };
         let base_dir = std::path::Path::new(&self.path).parent();
         let mut tree = self.tree.borrow_mut();
         self.reconciler
@@ -1461,6 +1494,88 @@ mod tests {
         path
     }
 
+    /// M71 (§8, §16.1): `source=`, when given, is used instead of
+    /// reading `path` from disk -- proven directly by writing a real
+    /// on-disk file with one `width`, then constructing with `source=`
+    /// naming a *different* `width` and confirming the live `Tree`
+    /// reflects `source`'s own value, not the file's.
+    #[test]
+    fn source_override_is_used_instead_of_reading_path_from_disk() {
+        let path = write_temp_view("id: root\nkind: Container\nstyle: {width: 40, height: 20}\n");
+        let view = View::new(
+            path.to_string_lossy().into_owned(),
+            None,
+            None,
+            false,
+            None,
+            None,
+            Some("id: root\nkind: Container\nstyle: {width: 999, height: 20}\n".to_string()),
+        )
+        .expect("real View");
+
+        let tree = view.tree.borrow();
+        let root = view.reconciler.id_of("root").expect("root widget id");
+        let style = &tree.get(root).expect("root node").layout_style;
+        assert_eq!(
+            style.size.width,
+            taffy::prelude::length(999.0),
+            "source= must be used instead of the real on-disk file's own content"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// M71 (§8, §16.1): `poll_reload(source=...)`'s own real sibling
+    /// behavior -- the change-detection gate still watches the real
+    /// on-disk `path` (a real write to it is what makes `poll_changed()`
+    /// report `true` at all), but the content actually reconciled is
+    /// `source`, not a fresh read of `path`.
+    #[test]
+    fn poll_reload_source_override_is_reconciled_instead_of_the_file() {
+        let path = write_temp_view("id: root\nkind: Container\nstyle: {width: 40, height: 20}\n");
+        let mut view = View::new(
+            path.to_string_lossy().into_owned(),
+            None,
+            None,
+            false,
+            None,
+            None,
+            None,
+        )
+        .expect("real View");
+
+        // A real write to the watched file -- content doesn't matter,
+        // only that the watcher's own inotify-backed `poll_changed()`
+        // has something real to report; `source=` below overrides what
+        // actually gets reconciled regardless of what this write says.
+        std::fs::write(
+            &path,
+            "id: root\nkind: Container\nstyle: {width: 40, height: 20}\n",
+        )
+        .expect("real rewrite of the watched file");
+        // Real filesystem watchers need a moment to deliver the event.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        let reloaded = view
+            .poll_reload(Some(
+                "id: root\nkind: Container\nstyle: {width: 777, height: 20}\n".to_string(),
+            ))
+            .expect("poll_reload must not error");
+        assert!(reloaded, "a real file change must be detected");
+
+        let tree = view.tree.borrow();
+        let root = view.reconciler.id_of("root").expect("root widget id");
+        let style = &tree.get(root).expect("root node").layout_style;
+        assert_eq!(
+            style.size.width,
+            taffy::prelude::length(777.0),
+            "poll_reload's own source= must be reconciled instead of a fresh disk read"
+        );
+        drop(tree);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
     /// M42 Phase 1's own real, new behavior: `View::new` is a
     /// `#[pymethods]` constructor but takes no `Python<'_>` and touches
     /// no `Py<PyAny>` internally (its body only builds a `Tree` and
@@ -1479,6 +1594,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             None,
             None,
         )
@@ -1512,6 +1628,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             None,
             None,
         )
@@ -1549,6 +1666,7 @@ mod tests {
             None,
             None,
             false,
+            None,
             None,
             None,
         )

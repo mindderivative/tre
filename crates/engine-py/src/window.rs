@@ -331,6 +331,81 @@ impl ThemeState {
 /// scope: only `Window`-created nodes ever see a real theme.
 pub(crate) type SharedTheme = Rc<RefCell<ThemeState>>;
 
+/// M71 (§7.1, §8): a real, read-only Python-facing view onto a
+/// `Window`'s own `ThemeState` -- until now, every one of `role`/
+/// `is_set`/`shape`/`elevation`/`typography` was `pub(crate)`, reachable
+/// only from `window_factory.rs`'s own ~35 composition-only factories,
+/// with zero Python-facing equivalent anywhere (confirmed via grep
+/// before writing this). That's the one real, confirmed blocker to
+/// building those same compositions in Python instead (the sibling
+/// `Tesserae` project's own real next milestone) -- an app author
+/// reimplementing `add_button`'s own construction logic in Python needs
+/// the exact same theme lookups that Rust version already makes, or the
+/// result silently drifts from real MD3 parity the moment a theme is
+/// set. A cheap `Rc` clone, not a fresh resolve -- mirrors `Node`'s own
+/// `theme: SharedTheme` field exactly (`build_node`/every `add_*`
+/// factory's own wrapping pattern), so reading `window.theme` twice
+/// sees the identical live state a real `set_theme()` call in between
+/// would change.
+#[pyclass(unsendable, name = "Theme")]
+pub struct Theme {
+    state: SharedTheme,
+}
+
+#[pymethods]
+impl Theme {
+    /// Mirrors `ThemeState::role` exactly, converted to the same
+    /// `(r, g, b, a)` u8 tuple every other real Python-facing color
+    /// already uses (`view.rs::parse_background_color`'s own real
+    /// `Color::to_rgba8().to_u8_array()` conversion, not a fresh one).
+    /// `None` both when no theme is set yet and when `name` isn't a
+    /// real MD3 role -- the identical real "un-themed default survives"
+    /// contract every `ThemeState::role` caller already relies on, so
+    /// collapsing both cases costs nothing real here either.
+    fn role(&self, name: &str) -> Option<(u8, u8, u8, u8)> {
+        let [r, g, b, a] = self.state.borrow().role(name)?.to_rgba8().to_u8_array();
+        Some((r, g, b, a))
+    }
+
+    /// Mirrors `ThemeState::is_set` exactly.
+    fn is_set(&self) -> bool {
+        self.state.borrow().is_set()
+    }
+
+    /// Mirrors `ThemeState::shape` exactly -- same real 2-tier,
+    /// per-field lookup (`"<component>.<variant>"` first, then the bare
+    /// `"<component>"` key), same `None`-means-"no override, use your
+    /// own formula default" contract every `add_*` factory's own
+    /// `.unwrap_or(...)` call site already relies on.
+    #[pyo3(signature = (component, variant=None))]
+    fn shape(&self, component: &str, variant: Option<&str>) -> Option<f64> {
+        self.state.borrow().shape(component, variant)
+    }
+
+    /// `shape`'s own sibling for elevation -- identical contract.
+    #[pyo3(signature = (component, variant=None))]
+    fn elevation(&self, component: &str, variant: Option<&str>) -> Option<f64> {
+        self.state.borrow().elevation(component, variant)
+    }
+
+    /// Mirrors `ThemeState::typography` exactly, flattened from
+    /// `ResolvedTypeStyle`'s own 4 named fields into a plain
+    /// `(family, weight, size, line_height)` tuple -- a real, shipped
+    /// MD3 default for every recognized role regardless of whether a
+    /// theme is set, `None` reserved for a genuinely unrecognized role
+    /// name (the same real contract `ThemeState::typography`'s own doc
+    /// comment already states).
+    fn typography(&self, role: &str) -> Option<(String, f32, f32, f32)> {
+        let resolved = self.state.borrow().typography(role)?;
+        Some((
+            resolved.font_family,
+            resolved.font_weight,
+            resolved.font_size,
+            resolved.line_height,
+        ))
+    }
+}
+
 /// M52 Phase 1 (§7.1, §7.3): live re-theme for `Window`'s own imperative
 /// MD3 catalog -- the "live token-linkage" mechanism named and
 /// deliberately deferred since M49. Each themed `add_*` factory
@@ -877,6 +952,20 @@ impl PyWindow {
         }
         drop(state);
         Ok(())
+    }
+
+    /// M71 (§7.1, §8): read-only access to this window's own live theme
+    /// resolution -- `role`/`is_set`/`shape`/`elevation`/`typography`,
+    /// the exact same lookups `window_factory.rs`'s own composition-only
+    /// factories already make internally, now real and reachable from
+    /// Python. A fresh `Theme` wrapper each access (a cheap `Rc` clone,
+    /// see `Theme`'s own doc comment) -- reads always see this window's
+    /// current live state, including after a real `set_theme()` call.
+    #[getter]
+    fn theme(&self) -> Theme {
+        Theme {
+            state: self.theme.clone(),
+        }
     }
 
     /// §11.7's own claim, matching `App::run`'s existing `PyWindow::

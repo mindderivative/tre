@@ -1,43 +1,83 @@
-# PLAN — Branch `0.3.1`: Release Prep
+# PLAN — M71: Real Python API for Theme Resolution, `TextField` Composition Fields, and `View` Text Construction
 
-*(Replaces the prior M70 plan in this file — M70 is complete, merged
-to `main` via PR #1. This is a new, workflow-establishing request, not
-a numbered milestone: see this file's own "Branch: 0.3.1" section in
-`BUILD_TRACKER.md` for the full context.)*
+*(Replaces the prior "Branch: 0.3.1" version-bump entry in this file
+— that step is complete. This is Part 1 of the formal "shift to
+Tesserae" plan approved via `EnterPlanMode`/`ExitPlanMode`; see this
+file's own Milestone 71 section in `BUILD_TRACKER.md` for the full
+real investigation.)*
 
 ## Goal
-Release M70's rename (currently merged to `main` but untagged) as
-`v0.3.1`. Establish a new, deliberate branch workflow going forward:
-work accumulates on a dedicated `0.3.1` branch rather than `main`
-directly, gets merged back into `main` when ready (so `main` always
-reflects the latest released state, matching the existing tags-off-
-main precedent), and only then gets tagged/pushed for real.
+Expose the real, single, confirmed blocker to moving `window_
+factory.rs`'s ~35 composition-only MD3 factories to Tesserae (Python):
+`ThemeState::role`/`is_set`/`shape`/`elevation`/`typography` were all
+`pub(crate)`, unreachable from Python. Also widen `add_text_field`
+with the two real fields `add_code_editor` already sets internally
+(`multiline`/`show_whitespace`), and give `View` a way to construct/
+reconcile from pre-expanded YAML text while keeping hot-reload
+watching the real source file.
 
-## Real clarification
-This repo has always tagged releases straight off `main`, with no
-prior release-branch pattern — genuinely ambiguous how a "0.3.1
-branch" should relate to `main` going forward. Resolved via
-`AskUserQuestion`: merge-back-then-tag (not a permanently-diverging
-branch); version bump + branch creation now, actual tag/push held for
-a later, separate, explicit confirmation.
+## Real investigation
+2 parallel Explore agents: `engine_core::NodeKind` has exactly 21 real
+variants; the other 35 `add_*` factories are pure compositions with no
+dedicated render state, blocked only by theme resolution having no
+Python API. `View`'s own constructor reads a file path directly, no
+in-memory-text path existed.
+
+## Design (1 milestone, 4 phases)
+1. `Theme` Python API.
+2. `TextField` composition fields.
+3. `View` text construction.
+4. Verification, docs, commit.
 
 ## Status
 
-**In progress.** Branch `0.3.1` created off `main` post-M70-merge.
-`Cargo.toml`/`pyproject.toml` bumped 0.3.0 → 0.3.1, mirroring the
-`019e7d4`/M69 precedent exactly. `Cargo.lock` updated.
+**Complete, all four phases.**
+
+New `Theme` pyclass (`window.rs`) wraps a cloned `SharedTheme`,
+delegating to the exact already-correct `ThemeState` methods --
+`role`/`is_set`/`shape`/`elevation`/`typography`. `Window.theme`
+(`#[getter]`) returns a fresh wrapper each access, always live.
+Registered in `lib.rs`, re-exported from `python/tre/__init__.py`.
+
+`add_text_field` widened with `multiline`/`show_whitespace` (both
+default `false`, a true no-op for existing callers) -- the exact two
+fields `add_code_editor` already set internally with no Python
+equivalent.
+
+`View.__new__`/`poll_reload` both widened with a matching `source:
+Option<String> = None`. **Real design correction found while
+implementing:** `poll_reload()` unconditionally re-read `self.path`
+from disk, entirely bypassing a constructor-only `source=` -- caught
+by direct source reading before assuming the simpler design would
+work, fixed by widening `poll_reload` itself too. The real file-
+watcher still gates whether a reload happens at all; only the content
+actually reconciled changes when `source` is given.
+
+Tests: 2 new Rust unit tests (`view.rs`, GIL-free) proving `source=`
+overrides are actually used, not just accepted. 19 new pytest tests
+across `test_theme.py`/`test_text_field.py`/`test_hot_reload.py`, all
+real behavioral proofs -- e.g. `multiline=True` genuinely making a
+dispatched Enter key insert `\n` (confirmed via direct read of
+`Tree::dispatch`'s own `Key::Enter` arm before writing the test), not
+just "doesn't raise."
+
+**A real bug caught and fixed while writing tests, not by inspection:**
+an `Edit` to `test_text_field.py` initially displaced an existing
+test's own real closing assertion (`assert field.get_text() ==
+"untouched"`) past a large new inserted block -- caught by running the
+new tests and seeing a `NameError` from the orphaned line, fixed by
+restoring it to its rightful place.
 
 Full chain green: `cargo check`/`clippy -D warnings`/`fmt --check`
-clean; `cargo test --workspace --release` every crate's own count
-unchanged from M70's own state (engine-core 229, engine-md3 24,
-engine-platform 11, engine-py 30, engine-render 34, engine-spec 85);
-`maturin develop --release` (tre 0.3.1 installed); `pytest tests/` 831
-passed, 2 skipped, unchanged; every example ran clean; `demo/
-showcase.py` all 5 phases, exit 0. `BUILD_TRACKER.md` updated (new
-"Branch: 0.3.1" section, Up-next refreshed), tracker regenerated (21
-milestones/61 phases/161 items/3 known gaps/25 fixed gaps), artifact
-republished. Committing on the `0.3.1` branch now.
+clean; `cargo test --workspace --release` (`engine-py` 32, up from 30,
++2; every other crate unchanged); `maturin develop --release` (tre
+0.3.1 installed, into both `tre`'s own `.venv` and `tesserae/.venv`);
+`pytest tests/` 850 passed, 2 skipped, up from 831, +19; every example
+ran clean; `demo/showcase.py` all 5 phases, exit 0. `BUILD_TRACKER.md`
+updated (Top Metrics, full Milestone 71 section, Up-next refreshed),
+tracker regenerated (22 milestones/65 phases/173 items/3 known gaps/25
+fixed gaps), artifact republished. Committing locally on the `0.3.1`
+branch now.
 
-Next: further work continues on this branch. When ready, merge back
-into `main` and tag/push `v0.3.1` for real — both wait on a later,
-separate, explicit confirmation.
+Next: Tesserae-side Parts 2/3 (the widget catalog and YAML macro-
+expansion layer), tracked in Tesserae's own `BUILD_TRACKER.md`.

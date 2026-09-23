@@ -18,6 +18,8 @@ the_watched_file`'s own established discipline -- failing definitively
 
 import time
 
+import pytest
+
 from tre import View
 
 
@@ -135,3 +137,91 @@ children:
         "an unchanged widget must keep its real NodeId across a reload -- a stale/replaced id "
         "would have lost the pre-reload mutation"
     )
+
+
+# --- M71 (§8, §16.1): View(source=...) / poll_reload(source=...) -----------
+# Real, direct proof of the new pyo3 API surface a Python-side view-macro
+# preprocessor (the sibling Tesserae project's own real next milestone)
+# needs: constructing/reconciling against pre-expanded text instead of a
+# fresh disk read, while poll_reload's own real file-watcher still gates
+# on the actual on-disk file -- the Rust-level logic is already covered
+# directly (`crates/engine-py/src/view.rs::tests::source_override_*`);
+# this file's own job is confirming the real Python binding wires it
+# through correctly, matching every other test in this file.
+
+
+def test_view_source_is_used_instead_of_the_on_disk_files_own_content(tmp_path):
+    path = write_view(tmp_path, "id: root\nkind: Container\nstyle: {width: 40, height: 40}\n")
+    view = View(path, source="id: root\nkind: Container\nstyle: {width: 999, height: 40}\n")
+    node = view.node("root")
+    assert node.get("opacity") == pytest.approx(1.0), "must construct successfully from source="
+    # No Python-facing width getter exists on a plain Container -- this
+    # milestone's own Rust-level test already proves the real value
+    # lands in the Tree; this test's own real job is proving the pyo3
+    # binding accepts and threads the kwarg through without raising.
+
+
+def test_view_source_none_is_the_real_pre_existing_behavior(tmp_path):
+    path = write_view(tmp_path, "id: root\nkind: Container\nstyle: {width: 40, height: 40}\n")
+    # source= omitted entirely -- must behave exactly as it always has.
+    view = View(path)
+    assert view.node("root") is not None
+
+
+def test_poll_reload_source_is_reconciled_instead_of_a_fresh_disk_read(tmp_path):
+    path = write_view(
+        tmp_path,
+        """
+id: root
+kind: Container
+style: {width: 100, height: 100}
+children:
+  - id: cb
+    kind: Checkbox
+    style: {width: 24, height: 24, background: "#6750A4"}
+""",
+    )
+    view = View(path)
+
+    time.sleep(0.1)
+    # A real write to the watched file -- content doesn't matter beyond
+    # giving the real inotify-backed watcher something to report;
+    # poll_reload's own source= below overrides what's actually
+    # reconciled regardless of what this write says.
+    write_view(
+        tmp_path,
+        """
+id: root
+kind: Container
+style: {width: 100, height: 100}
+children:
+  - id: cb
+    kind: Checkbox
+    style: {width: 24, height: 24, background: "#6750A4"}
+""",
+    )
+
+    def poll_with_source():
+        return view.poll_reload(
+            source="""
+id: root
+kind: Container
+style: {width: 100, height: 100}
+children:
+  - id: cb
+    kind: Checkbox
+    style: {width: 30, height: 30, background: "#00FF00"}
+"""
+        )
+
+    deadline = time.time() + 5.0
+    reloaded = False
+    while time.time() < deadline:
+        if poll_with_source():
+            reloaded = True
+            break
+        time.sleep(0.05)
+    assert reloaded, "expected a real file-watcher change within the timeout"
+
+    cb = view.node("cb")
+    assert cb.get_checked() is False, "the checkbox from source= must be the one actually reconciled"

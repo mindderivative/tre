@@ -10040,7 +10040,18 @@ impl PyWindow {
     /// of `set_on_click`), so it opts into `Role::TextInput` +
     /// `Action::Focus` right here at construction, not deferred to a
     /// later opt-in call.
-    #[pyo3(signature = (background, width, height, content="", font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None))]
+    // M71 (§5, §8): `multiline`/`show_whitespace` added -- the exact
+    // two real `TextFieldState` fields `add_code_editor` already sets
+    // internally (unconditionally, with no Python-facing equivalent),
+    // confirmed the single real blocker to composing an equivalent
+    // widget from Python (the sibling `Tesserae` project's own real
+    // next milestone): every other real `add_code_editor` field
+    // (`content`/`background`/`width`/`height`/`font_weight`/
+    // `font_size`/`x`/`y`) was already a plain `add_text_field`
+    // parameter. Both default `false`, the real, pre-existing
+    // `add_text_field` behavior for every caller that doesn't pass
+    // them -- a true no-op widening.
+    #[pyo3(signature = (background, width, height, content="", font_family="Roboto", font_weight=400.0, font_size=16.0, multiline=false, show_whitespace=false, x=None, y=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_text_field(
         &self,
@@ -10051,6 +10062,8 @@ impl PyWindow {
         font_family: &str,
         font_weight: f32,
         font_size: f32,
+        multiline: bool,
+        show_whitespace: bool,
         x: Option<f32>,
         y: Option<f32>,
     ) -> Node {
@@ -10062,6 +10075,8 @@ impl PyWindow {
         // `on_surface()`'s own black no-theme default.
         let mut text_field_state =
             TextFieldState::new(content, font_family, font_weight, font_size);
+        text_field_state.multiline = multiline;
+        text_field_state.show_whitespace = show_whitespace;
         {
             let theme = self.theme.borrow();
             if theme.is_set() {

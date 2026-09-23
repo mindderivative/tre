@@ -150,6 +150,48 @@ def test_type_text_with_no_focused_field_is_a_safe_no_op():
     assert field.get_text() == "untouched"
 
 
+# --- M71 (§5, §8): multiline / show_whitespace kwargs -----------------------
+# The exact two real TextFieldState fields add_code_editor already sets
+# internally, now reachable from add_text_field directly -- the real
+# blocker to composing an equivalent widget in Python (the sibling
+# Tesserae project's own real next milestone) rather than needing a
+# second, duplicated Rust factory.
+
+
+def test_add_text_field_defaults_to_single_line_enter_does_not_insert_a_newline():
+    window = Window(width=200, height=100)
+    field = window.add_text_field(background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24)
+    window.press_key("tab")
+    window.type_text("hi")
+    window.press_key("enter")
+    assert field.get_text() == "hi", "the real, pre-existing single-line default is unaffected"
+
+
+def test_add_text_field_multiline_true_makes_enter_insert_a_real_newline():
+    window = Window(width=200, height=100)
+    field = window.add_text_field(
+        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=60, multiline=True
+    )
+    window.press_key("tab")
+    window.type_text("hi")
+    window.press_key("enter")
+    window.type_text("there")
+    assert field.get_text() == "hi\nthere", (
+        "multiline=True must reach the exact real TextFieldState.multiline field "
+        "add_code_editor already sets internally"
+    )
+
+
+def test_add_text_field_show_whitespace_does_not_raise():
+    # No Python-facing readback exists for show_whitespace (paint-only
+    # state) -- matches this suite's own established honesty for
+    # untestable internal rendering state elsewhere in this project.
+    window = Window(width=200, height=100)
+    window.add_text_field(
+        background=(0xEE, 0xEE, 0xEE, 0xFF), width=180, height=24, show_whitespace=True
+    )
+
+
 def test_backspace_and_delete_edit_the_real_focused_field():
     window = Window(width=200, height=100)
     field = window.add_text_field(
