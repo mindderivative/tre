@@ -74,22 +74,38 @@
   from here without actually pushing. `mkdocs build --strict` re-run
   clean, 0 warnings, after the `installation.md` fix.
 
+## Post-release correction (2026-09-23)
+
+On explicit user confirmation ("Push"), the accumulated local commits
+and the `v0.3.0` tag were pushed. The real `wheels.yml` publish
+workflow ran for the first time in this project's history -- every job
+succeeded, and the real Release is live at `github.com/mindderivative/
+tre/releases/tag/v0.3.0` with all 24 assets present (23 wheels + sdist
++ the standalone `.so`), confirmed via `gh release view v0.3.0`.
+
+The real run's own published asset list revealed the earlier
+`docs/installation.md` fix (above) had over-corrected: the `linux`
+job's manylinux container genuinely ships several CPython interpreters
+plus PyPy, and `--find-interpreter` builds a wheel for every one it
+finds -- the real assets include `cp39`-`cp315`, the free-threaded
+`cp314t`/`cp315t`, and `pp311` (PyPy 3.11), none hand-listed anywhere
+in the workflow. Only macOS/Windows are limited to the explicit,
+hand-maintained matrix (3.9-3.14). Fixed `docs/installation.md` a
+second time to state the true per-platform split, verified by
+rereading the real published assets rather than re-deriving from the
+workflow YAML alone -- the same "verify against the real running
+system" discipline this project applies everywhere else, here applied
+to a CI workflow's actual output instead of assumed from its source.
+
 ## Status
 
-**M69 is complete, both phases.** Both items from the user's "before
-we shift focus to Tesserae" request -- M68's documentation refresh and
-M69's release engineering -- are now done and committed locally.
-Committing this milestone now; push deferred pending explicit user
-confirmation, per standing policy.
-
-**Gated, separate from this local commit:** pushing the accumulated
-local commits and tagging/pushing `v0.3.0` -- which triggers the real
-publish workflow for the first time in this project's history -- waits
-on a final, separate, explicit confirmation, distinct from this
-conversation's broader "build a release" authorization. Matching this
-project's own standing policy, the same one the archived Phase-21
-commit itself named for v0.1.0.
+**M69 is complete, both phases, pushed, and live.** Both items from
+the user's "before we shift focus to Tesserae" request -- M68's
+documentation refresh and M69's release engineering -- are done,
+pushed, and the real v0.3.0 release is published with every asset
+correct. One small follow-up commit corrects the one real inaccuracy
+the live run itself surfaced.
 
 Next: nothing currently scoped. Further work is the user's to direct
 -- most likely the start of the separate Tesserae UI framework project
-itself, once the release is confirmed and pushed.
+itself.

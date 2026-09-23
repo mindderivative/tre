@@ -63,12 +63,18 @@ Milestone 69 section, Just-closed/Up-next refreshed), tracker
 regenerated (20 milestones/59 phases/155 items/3 known gaps/25 fixed
 gaps), artifact republished. Committing locally now.
 
-**Gated, separate from this commit:** pushing the accumulated local
-commits and tagging/pushing `v0.3.0` -- which triggers the real
-publish workflow for the first time -- waits on a final, separate,
-explicit confirmation, distinct from this conversation's broader
-"build a release" authorization.
+**Pushed and live.** On explicit user confirmation ("Push"), the
+accumulated commits and the `v0.3.0` tag were pushed -- the real
+publish workflow ran for the first time in this project's history,
+every job succeeded, and the release is live at `github.com/
+mindderivative/tre/releases/tag/v0.3.0` with all 24 assets correct.
+The real run's own asset list (`cp39`-`cp315`, free-threaded `cp314t`/
+`cp315t`, `pp311`) proved the earlier `docs/installation.md` fix had
+over-corrected -- the Linux `--find-interpreter` step genuinely builds
+that full breadth automatically, just not on macOS/Windows. Fixed a
+second time, verified against the real published assets. See `LOG.md`
+for the full post-release correction writeup.
 
 Next: nothing currently scoped. Both items from the "before we shift
-focus to Tesserae" request are complete. Further work is the user's to
-direct.
+focus to Tesserae" request are complete, pushed, and live. Further
+work is the user's to direct.
