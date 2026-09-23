@@ -391,30 +391,43 @@ impl PyNode {
 
 /// One `#[pyclass(gc)]` per OS window (§11.1), not a single process-wide
 /// instance — each window owns an independent `Tree`, so each needs its
-/// own callback-map traversal. Every stored Python callback — click
-/// handlers, animation on_complete handles (§5), and virtualized-list
-/// materializers (§11.7) alike — lives in `Tree`'s own maps, not scattered
-/// across individual `PyNode`s, so exactly one type per window needs to
+/// own callback-map traversal. **Every stored Python callback lives on
+/// `PyWindow` itself, never inside `Tree`** — `engine-core::Tree` has no
+/// `Py<PyAny>`-shaped fields at all and structurally cannot (§4's crate-
+/// boundary rule: `engine-core` carries no `pyo3` dependency), so click
+/// handlers, animation `on_complete` handles (§5), and virtualized-list
+/// materializers (§11.7) alike are `PyWindow`'s own fields — `handlers`
+/// (click/etc., defined alongside `CompletionRegistry` in `engine-py::
+/// dispatch.rs`), `materializers`/`canvas_draws` (`RefCell<HashMap
+/// <NodeId, Py<PyAny>>>`), and `completions` (`on_complete`, via
+/// `SharedCompletions`) — so exactly one type per window needs to
 /// implement PyO3's cyclic-GC protocol.
 #[pyclass(gc, unsendable)]
 pub struct PyWindow {
     tree: Rc<RefCell<Tree>>, // this window's own Tree; every PyNode created in it shares this handle
+    handlers: HandlerMap,
+    materializers: RefCell<HashMap<NodeId, Py<PyAny>>>,
+    canvas_draws: RefCell<HashMap<NodeId, Py<PyAny>>>,
+    completions: SharedCompletions,
+    // ...plus `active: SharedActiveTree` (§ M42) — after a real
+    // `show_view` switch, `active`'s own View can carry a *different*
+    // `HandlerMap` than `handlers` above, also traversed/cleared.
 }
 
 #[pymethods]
 impl PyWindow {
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
-        let tree = self.tree.borrow();
-        for cb in tree.on_click.values() { visit.call(cb)?; }
-        for cb in tree.on_complete.values() { visit.call(cb)?; }
-        for cb in tree.materializers.values() { visit.call(cb)?; }
+        for cb in self.materializers.borrow().values() { visit.call(cb)?; }
+        for cb in self.canvas_draws.borrow().values() { visit.call(cb)?; }
+        for (handler, _) in self.handlers.borrow().values() { visit.call(handler)?; }
+        for cb in self.completions.borrow().callbacks.values() { visit.call(cb)?; }
         Ok(())
     }
     fn __clear__(&mut self) {
-        let mut tree = self.tree.borrow_mut();
-        tree.on_click.clear();
-        tree.on_complete.clear();
-        tree.materializers.clear();
+        self.materializers.borrow_mut().clear();
+        self.canvas_draws.borrow_mut().clear();
+        self.handlers.borrow_mut().clear();
+        self.completions.borrow_mut().callbacks.clear();
     }
 }
 
@@ -636,7 +649,7 @@ pub struct VirtualListState {
 }
 ```
 
-`materialized`'s values are exactly the `VirtualList` node's own `children` (§5) — the map just adds "which logical index" on top of the ordinary parent/children relationship, not a second, separately-tracked child set. Only this small windowed subset are real `Node`s at any time; scrolling recycles `NodeId` slots (via §5's generational index — an old slot's generation increments on reuse, so any stray reference to a scrolled-away item's `NodeId` fails safely) rather than allocating fresh nodes per item. `taffy::Style` for the scroll container uses `item_count × item_extent` as its estimated content size, so scrollbar sizing is correct without every item existing. **New FFI shape (§8):** unlike `on_click`/`on_complete`'s event-driven callbacks, this needs an ad hoc "materialize item N" callback invoked during layout/scroll — a genuinely different callback pattern, stored in `Tree.materializers` alongside `on_click`/`on_complete` and (like every other stored `PyObject`, §8) traversed by that window's `PyWindow::__traverse__`.
+`materialized`'s values are exactly the `VirtualList` node's own `children` (§5) — the map just adds "which logical index" on top of the ordinary parent/children relationship, not a second, separately-tracked child set. Only this small windowed subset are real `Node`s at any time; scrolling recycles `NodeId` slots (via §5's generational index — an old slot's generation increments on reuse, so any stray reference to a scrolled-away item's `NodeId` fails safely) rather than allocating fresh nodes per item. `taffy::Style` for the scroll container uses `item_count × item_extent` as its estimated content size, so scrollbar sizing is correct without every item existing. **New FFI shape (§8):** unlike `on_click`/`on_complete`'s event-driven callbacks, this needs an ad hoc "materialize item N" callback invoked during layout/scroll — a genuinely different callback pattern, stored in `PyWindow.materializers`, its own field alongside `handlers`/`completions` (§8's own corrected design — not inside `Tree`) and (like every other stored `PyObject`) traversed by that window's `PyWindow::__traverse__`.
 
 ### 11.8 Culling
 
