@@ -14,7 +14,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use engine_core::{
-    NodeId, TerminalCell, TerminalState, TextAlign, TextFieldState, TextState, Tree,
+    NodeId, NodeKind, TerminalCell, TerminalState, TextAlign, TextFieldState, TextState, Tree,
 };
 use parley::fontique::{Collection, CollectionOptions};
 use parley::{
@@ -77,6 +77,26 @@ struct CachedLayout {
     layout: parley::Layout<[u8; 4]>,
 }
 
+/// M64 (§8, §11.3): `draw_terminal`'s own per-run shaping cache key --
+/// the real shaping inputs only (`content`/`font_family`/`font_weight`/
+/// `font_size`), the identical subset `build_field_layout` itself takes
+/// (no `align`/`spans`/`default_color`: `build_field_layout` always
+/// aligns `Start` and never pushes per-span brushes, and a run's own
+/// foreground color/italic-shear/underline are applied at paint time,
+/// not baked into shaping -- see `draw_terminal`'s own real call site).
+#[derive(PartialEq)]
+struct TerminalRunKey {
+    content: String,
+    font_family: String,
+    font_weight: f32,
+    font_size: f32,
+}
+
+struct CachedTerminalRun {
+    key: TerminalRunKey,
+    layout: parley::Layout<[u8; 4]>,
+}
+
 /// Owns `parley`'s font/layout state across frames -- font discovery and
 /// registration are real, one-time costs that shouldn't repeat every
 /// frame the way shaping itself reasonably can, so this is built once
@@ -112,6 +132,19 @@ pub struct TextRenderer {
     /// used -- a handful in practice (an app doesn't animate its own
     /// terminal's font size every frame), never one entry per node.
     monospace_cell_cache: HashMap<(String, u32), (f32, f32)>,
+    /// M64 (§8, §11.3): `draw_terminal`'s own real per-run shaping
+    /// cache -- terminal rows/runs have no stable `NodeId` of their
+    /// own (only the whole terminal widget does), so this is keyed by
+    /// a real compound `(NodeId, row, col)` tuple instead of the bare
+    /// `NodeId` `layout_cache` uses. `col` is the run's own starting
+    /// column -- a stable real slot for as long as the terminal's own
+    /// content at that position hasn't scrolled/changed, not a
+    /// synthetic per-row run index that would shift every later run on
+    /// the same row whenever an earlier one changed shape. See
+    /// `evict_stale_layouts` for real eviction (both "the terminal
+    /// node itself was removed" and "this row/col fell outside the
+    /// terminal's own current bounds after a resize shrunk it").
+    terminal_run_cache: HashMap<(NodeId, u16, u16), CachedTerminalRun>,
 }
 
 impl Default for TextRenderer {
@@ -142,6 +175,7 @@ impl TextRenderer {
             layout_cx: LayoutContext::new(),
             layout_cache: HashMap::new(),
             monospace_cell_cache: HashMap::new(),
+            terminal_run_cache: HashMap::new(),
         }
     }
 
@@ -211,6 +245,7 @@ impl TextRenderer {
             layout_cx,
             layout_cache,
             monospace_cell_cache: _,
+            terminal_run_cache: _,
         } = self;
         let stale = layout_cache
             .get(&node_id)
@@ -288,6 +323,80 @@ impl TextRenderer {
     /// `sync_image_textures`.
     pub fn evict_stale_layouts(&mut self, tree: &Tree) {
         self.layout_cache.retain(|id, _| tree.get(*id).is_some());
+        // M64 (§8, §11.3): the terminal run cache's own real eviction
+        // -- drop every entry whose terminal node no longer exists at
+        // all (the identical "NodeId removed" case `layout_cache`
+        // above already handles), plus every entry whose own `(row,
+        // col)` has fallen outside the terminal's own current real
+        // `rows`/`cols` bounds after a resize shrunk it. `layout_cache`
+        // has no equivalent second case -- a plain `Text`/`TextField`
+        // node has no internal sub-grid of its own that can shrink out
+        // from under a cached sub-key the way a terminal's rows/cols
+        // can.
+        self.terminal_run_cache.retain(|(id, row, col), _| {
+            let Some(node) = tree.get(*id) else {
+                return false;
+            };
+            let NodeKind::Terminal(state) = &node.kind else {
+                return false;
+            };
+            *row < state.rows && *col < state.cols
+        });
+    }
+
+    /// `draw_terminal`'s own real per-run cached shape -- the identical
+    /// "equality on the key is the whole invalidation check" contract
+    /// `shaped_layout` establishes, applied to a compound `(NodeId,
+    /// row, col)` key since one terminal `NodeId` covers many
+    /// independently-cacheable runs rather than one `Layout` per node.
+    /// Compares the cached key's own fields against the *borrowed*
+    /// new inputs before ever allocating an owned `TerminalRunKey` --
+    /// deliberately not `shaped_layout`'s own pattern (M66, tracked
+    /// separately, is the real fix for that one), written this way
+    /// from the start since this is new code, not a change to
+    /// already-shipped behavior.
+    #[allow(clippy::too_many_arguments)]
+    fn shaped_terminal_run(
+        &mut self,
+        node_id: NodeId,
+        row: u16,
+        col: u16,
+        content: &str,
+        font_family: &str,
+        font_weight: f32,
+        font_size: f32,
+    ) -> &parley::Layout<[u8; 4]> {
+        let cache_key = (node_id, row, col);
+        let stale = self
+            .terminal_run_cache
+            .get(&cache_key)
+            .is_none_or(|cached| {
+                cached.key.content != content
+                    || cached.key.font_family != font_family
+                    || cached.key.font_weight != font_weight
+                    || cached.key.font_size != font_size
+            });
+        if stale {
+            let layout =
+                self.build_field_layout(content, font_family, font_weight, font_size, f32::MAX);
+            self.terminal_run_cache.insert(
+                cache_key,
+                CachedTerminalRun {
+                    key: TerminalRunKey {
+                        content: content.to_string(),
+                        font_family: font_family.to_string(),
+                        font_weight,
+                        font_size,
+                    },
+                    layout,
+                },
+            );
+        }
+        &self
+            .terminal_run_cache
+            .get(&cache_key)
+            .expect("just inserted above, or already present")
+            .layout
     }
 
     /// Shapes `state.content` at `state.font_family`/`state.font_size`,
@@ -696,7 +805,7 @@ impl TextRenderer {
         state: &TerminalState,
         at: TextPlacement,
         show_caret: bool,
-        _node_id: NodeId,
+        node_id: NodeId,
     ) {
         let (cell_width, cell_height) =
             self.monospace_cell_size(&state.font_family, state.font_size);
@@ -819,12 +928,14 @@ impl TextRenderer {
                 let run: String = (col..end).map(|c| state.cell(row, c).ch).collect();
                 if fg != Color::TRANSPARENT && !run.trim().is_empty() {
                     let font_weight = if bold { 700.0 } else { 400.0 };
-                    let layout = self.build_field_layout(
+                    let layout = self.shaped_terminal_run(
+                        node_id,
+                        row,
+                        col,
                         &run,
                         &state.font_family,
                         font_weight,
                         state.font_size,
-                        f32::MAX,
                     );
                     let x0 = at.x + f64::from(col) * cell_width;
                     let y0 = at.y + f64::from(row) * cell_height;
@@ -1241,6 +1352,39 @@ mod tests {
             },
             PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
         )
+    }
+
+    /// M64 (§8, §11.3): a real `NodeKind::Terminal` node -- `draw_
+    /// terminal` itself never consults the tree, only `evict_stale_
+    /// layouts` does (to know whether a cached run's own terminal
+    /// still exists, and at what current `rows`/`cols`), so this is
+    /// what the eviction tests below need a real `NodeId` for.
+    fn terminal_node(tree: &mut Tree, state: TerminalState) -> engine_core::NodeId {
+        tree.insert(
+            NodeKind::Terminal(state),
+            Style {
+                size: Size {
+                    width: length(200.0),
+                    height: length(100.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        )
+    }
+
+    /// A single real, non-blank cell at `(row, col)` -- `draw_terminal`
+    /// skips a blank cell's own real transparent default foreground
+    /// entirely (no glyphs to paint), so a real cache-behavior test
+    /// needs at least one cell with a real, opaque `fg` to produce an
+    /// actual shaped run at all.
+    fn set_cell(state: &mut TerminalState, row: u16, col: u16, ch: char, fg: Color) {
+        let index = usize::from(row) * usize::from(state.cols) + usize::from(col);
+        state.cells[index] = TerminalCell {
+            ch,
+            fg,
+            ..TerminalCell::blank()
+        };
     }
 
     fn placement() -> TextPlacement {
@@ -1678,5 +1822,182 @@ mod tests {
             (0, 0),
             "a real point before the grid's own origin must clamp to the first real cell"
         );
+    }
+
+    // --- M64 (§8, §11.3): draw_terminal's own real per-row/per-run
+    // shaping cache. ------------------------------------------------
+
+    #[test]
+    fn terminal_run_cache_does_not_grow_on_an_unchanged_repaint() {
+        pollster::block_on(async {
+            let mut frame_renderer = frame_renderer_for_test().await;
+            let mut renderer = TextRenderer::new();
+            let mut scene = Scene::new(100, 100);
+            let mut tree = Tree::new();
+
+            let mut state = TerminalState::new(10, 3, MONOSPACE_FONT_FAMILY, 16.0);
+            set_cell(&mut state, 0, 0, 'h', Color::from_rgba8(255, 255, 255, 255));
+            set_cell(&mut state, 0, 1, 'i', Color::from_rgba8(255, 255, 255, 255));
+            let id = terminal_node(&mut tree, state.clone());
+
+            renderer.draw_terminal(
+                &mut scene,
+                frame_renderer.resources_mut(),
+                &state,
+                placement(),
+                false,
+                id,
+            );
+            assert_eq!(
+                renderer.terminal_run_cache.len(),
+                1,
+                "one real contiguous same-style run (\"hi\") must produce exactly one cache entry"
+            );
+
+            // Repainting the identical, unchanged terminal must not
+            // grow the cache -- the whole real point of this milestone.
+            renderer.draw_terminal(
+                &mut scene,
+                frame_renderer.resources_mut(),
+                &state,
+                placement(),
+                false,
+                id,
+            );
+            assert_eq!(
+                renderer.terminal_run_cache.len(),
+                1,
+                "repainting an unchanged terminal must not create a second entry"
+            );
+        });
+    }
+
+    #[test]
+    fn terminal_run_cache_reshapes_only_the_row_whose_content_actually_changed() {
+        pollster::block_on(async {
+            let mut frame_renderer = frame_renderer_for_test().await;
+            let mut renderer = TextRenderer::new();
+            let mut scene = Scene::new(100, 100);
+            let mut tree = Tree::new();
+
+            let mut state = TerminalState::new(10, 2, MONOSPACE_FONT_FAMILY, 16.0);
+            set_cell(&mut state, 0, 0, 'a', Color::from_rgba8(255, 255, 255, 255));
+            set_cell(&mut state, 1, 0, 'b', Color::from_rgba8(255, 255, 255, 255));
+            let id = terminal_node(&mut tree, state.clone());
+
+            renderer.draw_terminal(
+                &mut scene,
+                frame_renderer.resources_mut(),
+                &state,
+                placement(),
+                false,
+                id,
+            );
+            assert_eq!(renderer.terminal_run_cache.len(), 2, "one run per row");
+            let row0_key_before = renderer
+                .terminal_run_cache
+                .get(&(id, 0, 0))
+                .expect("row 0's own run must be cached")
+                .key
+                .content
+                .clone();
+            assert_eq!(row0_key_before, "a");
+
+            // Only row 1's own content changes -- row 0 stays identical.
+            set_cell(&mut state, 1, 0, 'c', Color::from_rgba8(255, 255, 255, 255));
+            renderer.draw_terminal(
+                &mut scene,
+                frame_renderer.resources_mut(),
+                &state,
+                placement(),
+                false,
+                id,
+            );
+            assert_eq!(
+                renderer.terminal_run_cache.len(),
+                2,
+                "still exactly one real entry per row, no leak from the reshape"
+            );
+            assert_eq!(
+                renderer
+                    .terminal_run_cache
+                    .get(&(id, 0, 0))
+                    .expect("row 0's own entry must still be present")
+                    .key
+                    .content,
+                "a",
+                "row 0's own cached run must be untouched -- its real content never changed"
+            );
+            assert_eq!(
+                renderer
+                    .terminal_run_cache
+                    .get(&(id, 1, 0))
+                    .expect("row 1's own entry must still be present")
+                    .key
+                    .content,
+                "c",
+                "row 1's own cached run must reflect the real, changed content"
+            );
+        });
+    }
+
+    #[test]
+    fn terminal_run_cache_is_evicted_on_removal_and_on_resize_shrink() {
+        pollster::block_on(async {
+            let mut frame_renderer = frame_renderer_for_test().await;
+            let mut renderer = TextRenderer::new();
+            let mut scene = Scene::new(100, 100);
+            let mut tree = Tree::new();
+
+            let mut state = TerminalState::new(10, 3, MONOSPACE_FONT_FAMILY, 16.0);
+            for row in 0..3u16 {
+                set_cell(
+                    &mut state,
+                    row,
+                    0,
+                    'x',
+                    Color::from_rgba8(255, 255, 255, 255),
+                );
+            }
+            let id = terminal_node(&mut tree, state.clone());
+            renderer.draw_terminal(
+                &mut scene,
+                frame_renderer.resources_mut(),
+                &state,
+                placement(),
+                false,
+                id,
+            );
+            assert_eq!(
+                renderer.terminal_run_cache.len(),
+                3,
+                "one run per row, 3 rows"
+            );
+
+            // A real resize down to 1 row -- `evict_stale_layouts` must
+            // drop the now-out-of-bounds rows 1/2 even though the
+            // terminal's own NodeId is still alive, the real case
+            // `layout_cache`'s own eviction has no equivalent of.
+            let NodeKind::Terminal(live_state) = &mut tree.get_mut(id).unwrap().kind else {
+                panic!("expected Terminal");
+            };
+            live_state.rows = 1;
+            renderer.evict_stale_layouts(&tree);
+            assert_eq!(
+                renderer.terminal_run_cache.len(),
+                1,
+                "rows beyond the terminal's own new, smaller real row count must be evicted"
+            );
+            assert!(renderer.terminal_run_cache.contains_key(&(id, 0, 0)));
+
+            // Removing the node entirely must evict what's left too.
+            tree.remove(id);
+            renderer.evict_stale_layouts(&tree);
+            assert_eq!(
+                renderer.terminal_run_cache.len(),
+                0,
+                "a removed terminal's own cached runs must not be kept forever"
+            );
+        });
     }
 }
