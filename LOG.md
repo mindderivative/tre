@@ -1,86 +1,91 @@
-# LOG — M64: Terminal Text-Shaping Cache
+# LOG — M65: Incremental Existence Tracking for `compute_layout`'s Per-Kind Scans
 
-- Found by a `/review-project` multi-lens code review (Performance
-  lens, adversarially verified before scoping) -- the one High-severity
-  finding of the four scoped from that audit. `TextRenderer::draw_
-  terminal` (`crates/engine-render/src/text.rs`) groups each terminal
-  row into contiguous same-style runs and, before this milestone,
-  called `build_field_layout` unconditionally for every run on every
-  row, on every single paint -- a fresh `parley` shape from scratch
-  every time, consulting neither `layout_cache` nor `monospace_cell_
-  cache`, unlike every other text path in the same file. Trigger:
-  `engine-py::terminal.rs`'s `drain_into` marks the tree dirty on every
-  batch of new PTY bytes, so any fast/chatty terminal output (a verbose
-  build, `cat` on a large file, `yes`) re-shaped every distinct-style
-  run across every visible row, every single frame, even when most of
-  the screen's own styling was unchanged from the previous one.
-- Real design constraint investigated before writing any code: terminal
-  rows/runs have no stable `NodeId` of their own (only the whole
-  terminal widget does), so `layout_cache`'s own bare-`NodeId` key
-  couldn't be reused directly -- needed a genuinely new compound key.
+- Found by the same `/review-project` Performance-lens pass that
+  surfaced M64, adversarially verified before scoping. `Tree::
+  compute_layout` unconditionally called `sync_carousel_layouts`/
+  `sync_button_group_layouts`/`sync_scroll_view_layouts`/`sync_virtual_
+  list_layouts` every time it ran -- i.e. every dirty frame, during any
+  interaction or animation -- and each of the four began with its own
+  full `self.nodes.iter().filter(...).collect::<Vec<NodeId>>()` scan
+  purely to discover whether any node of that one kind existed at all,
+  before doing anything real. `ARCHITECTURE.md`'s own stated rationale
+  ("Taffy's own internal caching makes that a cheap no-op") covers only
+  Taffy's own pass, not these four scans that ran *before* Taffy was
+  ever invoked.
+- Real investigation finding, confirmed via direct source read before
+  writing any code: `PaintProperties.button_group_reflow` (the flag
+  `sync_button_group_layouts` filters on, since `ButtonGroup` isn't its
+  own `NodeKind`) is set exactly once, at construction time inside
+  `add_button_group` (`engine-py::window_factory.rs`) -- never mutated
+  on an already-inserted node anywhere in the codebase (confirmed via
+  grep across every crate) -- so an incremental counter needed only two
+  real choke points, `Tree::insert` and `Tree::remove`, not a wider set
+  of mutation sites to hook.
 
 ## What shipped (single milestone, both phases)
 
-1. New `TerminalRunKey`/`CachedTerminalRun` types + a `terminal_run_
-   cache: HashMap<(NodeId, u16, u16), CachedTerminalRun>` field on
-   `TextRenderer`, keyed by `(terminal NodeId, row, the run's own
-   starting column)` -- a stable real slot across frames (the same row
-   tends to start the same run at the same column when nothing
-   changed), not a synthetic per-row run index that would shift every
-   later run on a row whenever an earlier one changed shape. The key
-   holds only the real shaping inputs `build_field_layout` itself takes
-   (`content`/`font_family`/`font_weight`/`font_size`) -- not `align`/
-   `spans`/`default_color`, since a run's own foreground color/italic-
-   shear/underline are applied at paint time, never baked into shaping.
-2. New `shaped_terminal_run` method mirrors `shaped_layout`'s own real
-   "equality on the key is the whole invalidation check" contract --
-   but, deliberately, compares the cached key's own fields against the
-   *borrowed* new inputs before ever allocating an owned key, rather
-   than `shaped_layout`'s own allocate-then-compare pattern. This is
-   new code with no reason to repeat a pattern already flagged as a
-   real, separate finding (M66) elsewhere in the same file.
-   `draw_terminal`'s own per-run shaping call site routed through it
-   instead of calling `build_field_layout` unconditionally --
-   `draw_terminal`'s own `_node_id` parameter un-underscored to
-   `node_id`, now genuinely used for the first time.
-3. `evict_stale_layouts` widened to also evict the new cache: both "the
-   terminal node was removed entirely" (the identical real contract
-   `layout_cache`'s own eviction already has) and a real second case
-   `layout_cache` has no equivalent of at all -- any `(row, col)` that
-   fell outside the terminal's own current `rows`/`cols` bounds after a
-   resize shrunk it, checked directly against the live `NodeKind::
-   Terminal`'s own real state (a plain `Text`/`TextField` node has no
-   internal sub-grid of its own that can shrink out from under a cached
-   sub-key the way a terminal's rows/cols can).
-- Tests: 3 new Rust unit tests -- an unchanged repaint doesn't grow the
-  cache; changing one row's own content reshapes only that row's entry
-  while sibling unchanged rows' cached content stays untouched; a real
-  resize-shrink evicts the now-out-of-bounds rows while the terminal's
-  own `NodeId` stays alive, and a subsequent node removal evicts what's
-  left. New `terminal_node`/`set_cell` test helpers, mirroring `text_
-  node`'s own already-established construction pattern for this test
-  module.
-- `BUILD_TRACKER.md`: full Milestone 64 section, Top Metrics row at
-  100%, Just-closed/Up-next refreshed to point at M65-M67 as the
-  remaining real backlog from the same review. Tracker regenerated (18
-  milestones/55 phases/137 items/3 known gaps/25 fixed gaps), artifact
-  republished.
+1. Four new `Tree` fields: `carousel_count`, `button_group_reflow_
+   count`, `scroll_view_count`, `virtual_list_count`. Incremented in
+   `Tree::insert` by matching the inserted node's own `kind` (for
+   `Carousel`/`ScrollView`/`VirtualList`) and checking `paint.button_
+   group_reflow.is_some()`. Decremented in `Tree::remove` the identical
+   way -- `remove` is recursive (it removes children before the node
+   itself), so the decrement logic reads the node's own real kind/flag
+   while `node` is still borrowed from `self.nodes.get(id)`, before
+   `self.nodes.remove(id)` invalidates it and before the recursive
+   `self.remove(child)` calls run -- each of which independently
+   re-enters this same function and does its own decrement for its own
+   child, so a subtree removed only as a side effect of an ancestor's
+   own removal is still tracked correctly.
+2. Each of the four `sync_*_layouts` functions gated on its own counter
+   being non-zero *before* the existing full-tree scan -- turning the
+   common (no-node-of-this-kind) case from an O(n) scan-and-allocate
+   into a real O(1) integer comparison. The pre-existing `if <scan_
+   result>.is_empty() { return false; }` check inside each function was
+   removed entirely, not merely made dead code -- the counter already
+   guarantees the scan will find at least one real match whenever it
+   actually runs, so the redundant post-scan check added nothing.
+- Tests: 2 new Rust unit tests. `existence_counters_track_insert_and_
+  remove_for_every_real_kind` inserts one real node of each tracked
+  kind (`Carousel`, `ScrollView`, `VirtualList`, a `button_group_
+  reflow`-flagged `Container`), confirms every counter reads exactly
+  1, confirms inserting an unrelated plain node moves none of them,
+  then removes each and confirms every counter returns to 0.
+  `existence_counters_decrement_correctly_through_recursive_removal`
+  builds a real 3-level chain (root -> middle -> Carousel), removes
+  only `root`, and confirms `carousel_count` still correctly drops to
+  0 even though `Carousel` was never removed directly -- the real path
+  a naive "decrement only in the direct top-level call" implementation
+  would have missed.
+- `BUILD_TRACKER.md`: full Milestone 65 section, Top Metrics row at
+  100%, Just-closed/Up-next refreshed to point at M66/M67 as the
+  remaining backlog. Tracker regenerated (18 milestones/55 phases/137
+  items/3 known gaps/25 fixed gaps), artifact republished.
 - Full chain green: `cargo check`/`clippy -D warnings`/`fmt --check`
-  clean; `cargo test --workspace --release` (`engine-render` 32, up
-  from 29, +3; every other crate's own count unchanged); `maturin
-  develop --release`; `pytest tests/` 831 passed, unchanged from the
-  pre-milestone baseline -- this is pure internal Rust-side caching
-  with no new Python-facing surface at all, matching `layout_cache`/
-  `monospace_cell_cache`'s own identical "Rust-tested only" precedent,
-  not a gap in this milestone's own coverage; every file in `examples/`
-  ran clean including `terminal.py`; `demo/showcase.py` (all 5 phases,
-  exit 0).
+  clean; `cargo test --workspace --release` (`engine-core` 229, up
+  from 227, +2; every other crate's own count unchanged -- notably
+  including the 2 pre-existing `sync_button_group_layouts_leaves_
+  widths_unchanged_when_nothing_is_pressed`/`sync_button_group_layouts_
+  grows_the_pressed_child_and_shrinks_its_real_neighbors` behavioral
+  tests, which pass completely unchanged -- real, direct proof the
+  counter-gated paths still do exactly what they did before whenever a
+  real match genuinely exists, not just "compiles"); `maturin develop
+  --release`; `pytest tests/` 831 passed, unchanged from the pre-
+  milestone baseline -- pure internal Rust-side caching/bookkeeping
+  with no new Python-facing surface at all, the identical "Rust-tested
+  only" precedent M64 already established for this same kind of
+  change; every file in `examples/` ran clean (specifically re-checked
+  every carousel/scroll/virtual-list/button-group-touching example and
+  pytest test by name); `demo/showcase.py` (all 5 phases, exit 0).
 
 ## Status
 
-**M64 is complete, both phases.** The highest-severity finding from
-the `/review-project` audit is closed with zero regression to any
-existing test, example, or the showcase demo. Committing locally now;
-push deferred pending explicit user confirmation. Next: M65
-(incremental existence tracking for `Tree::compute_layout`'s four
-redundant full-tree scans).
+**M65 is complete, both phases.** The second of the four `/review-
+project` performance findings is closed with zero regression to any
+existing test, example, or the showcase demo, and with a real
+behavioral proof (the two pre-existing button-group tests passing
+unchanged) that gating the scans behind a counter didn't quietly
+change what happens on the path where a real match exists. Committing
+locally now; push deferred pending explicit user confirmation. Next:
+M66 (the text-shaping cache's own allocate-before-checking-the-cache
+pattern in `shaped_layout`).

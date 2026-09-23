@@ -122,6 +122,29 @@ pub struct Tree {
     /// the very first frame always paints. Read via `take_dirty`, never
     /// this field directly, so "read" and "reset" can never drift apart.
     dirty: bool,
+    /// M65 (§5, §6): real, incremental per-kind existence counters --
+    /// `compute_layout`'s own four `sync_*_layouts` functions used to
+    /// each pay a full `self.nodes.iter()` scan (plus a `Vec`
+    /// allocation) on *every* call, purely to discover whether any
+    /// node of that one kind exists at all, before doing anything real
+    /// -- a real, confirmed cost paid on every dirty frame (interaction
+    /// or animation) even for a window containing zero `Carousel`/
+    /// `ButtonGroup`-reflow/`ScrollView`/`VirtualList` nodes anywhere.
+    /// Maintained at the two real choke points a node's own kind/flag
+    /// can change at all -- `insert` (increment) and `remove`
+    /// (decrement) -- confirmed via direct source read, not assumed,
+    /// that `PaintProperties.button_group_reflow` is never mutated on
+    /// an already-inserted node anywhere in this codebase (only ever
+    /// set once, at construction, by `engine-py::window_factory.rs`'s
+    /// `add_button_group`), so no other mutation site needs to update
+    /// these. Each `sync_*_layouts` function now checks its own
+    /// counter first and returns immediately when it's `0`, turning
+    /// the common (no-node-of-this-kind) case from an O(n) scan into a
+    /// real O(1) check.
+    carousel_count: usize,
+    button_group_reflow_count: usize,
+    scroll_view_count: usize,
+    virtual_list_count: usize,
 }
 
 impl Default for Tree {
@@ -157,6 +180,10 @@ impl Tree {
             drag_start_value: None,
             overlays: HashMap::new(),
             dirty: true,
+            carousel_count: 0,
+            button_group_reflow_count: 0,
+            scroll_view_count: 0,
+            virtual_list_count: 0,
         }
     }
 
@@ -181,6 +208,18 @@ impl Tree {
         paint: PaintProperties,
     ) -> NodeId {
         self.dirty = true;
+        // M65 (§5, §6): the real, single increment choke point for the
+        // per-kind existence counters `compute_layout`'s own sync
+        // functions consult -- see their own shared doc comment.
+        match &kind {
+            NodeKind::Carousel(_) => self.carousel_count += 1,
+            NodeKind::ScrollView(_) => self.scroll_view_count += 1,
+            NodeKind::VirtualList(_) => self.virtual_list_count += 1,
+            _ => {}
+        }
+        if paint.button_group_reflow.is_some() {
+            self.button_group_reflow_count += 1;
+        }
         let taffy_node = self
             .taffy
             .new_leaf(layout_style.clone())
@@ -347,6 +386,21 @@ impl Tree {
         };
         let children: Vec<NodeId> = node.children.clone();
         let parent = node.parent;
+        // M65 (§5, §6): the real, single decrement choke point --
+        // mirrors `insert`'s own increment above exactly. Read while
+        // `node` is still borrowed, before `self.nodes.remove(id)`
+        // below invalidates it, and before the recursive removes just
+        // below (each of which independently re-enters this same
+        // function and does its own decrement for its own child).
+        match &node.kind {
+            NodeKind::Carousel(_) => self.carousel_count -= 1,
+            NodeKind::ScrollView(_) => self.scroll_view_count -= 1,
+            NodeKind::VirtualList(_) => self.virtual_list_count -= 1,
+            _ => {}
+        }
+        if node.paint.button_group_reflow.is_some() {
+            self.button_group_reflow_count -= 1;
+        }
 
         for child in children {
             self.remove(child);
@@ -474,15 +528,17 @@ impl Tree {
     /// drag hit-testing and its real paint position can never drift
     /// apart, because both read the exact same real computed inset.
     fn sync_carousel_layouts(&mut self) -> bool {
+        // M65 (§5, §6): the real O(1) check -- the full scan below now
+        // only ever runs when at least one real `Carousel` exists.
+        if self.carousel_count == 0 {
+            return false;
+        }
         let carousels: Vec<NodeId> = self
             .nodes
             .iter()
             .filter(|(_, node)| matches!(node.kind, NodeKind::Carousel(_)))
             .map(|(id, _)| id)
             .collect();
-        if carousels.is_empty() {
-            return false;
-        }
         for carousel in carousels {
             let outer = self.layout(carousel);
             let width = f64::from(outer.size.width);
@@ -576,15 +632,18 @@ impl Tree {
     /// compensation. A group with fewer than 2 real children is a true
     /// no-op (nothing to reflow against).
     fn sync_button_group_layouts(&mut self) -> bool {
+        // M65 (§5, §6): the real O(1) check -- the full scan below now
+        // only ever runs when at least one real `button_group_reflow`
+        // marker is set.
+        if self.button_group_reflow_count == 0 {
+            return false;
+        }
         let groups: Vec<NodeId> = self
             .nodes
             .iter()
             .filter(|(_, node)| node.paint.button_group_reflow.is_some())
             .map(|(id, _)| id)
             .collect();
-        if groups.is_empty() {
-            return false;
-        }
         let pressed_id = self.pressed.map(|(_, id)| id);
 
         for group in groups {
@@ -665,15 +724,17 @@ impl Tree {
     /// real child was just removed, is a true no-op for that node --
     /// nothing to scroll.
     fn sync_scroll_view_layouts(&mut self) -> bool {
+        // M65 (§5, §6): the real O(1) check -- the full scan below now
+        // only ever runs when at least one real `ScrollView` exists.
+        if self.scroll_view_count == 0 {
+            return false;
+        }
         let views: Vec<NodeId> = self
             .nodes
             .iter()
             .filter(|(_, node)| matches!(node.kind, NodeKind::ScrollView(_)))
             .map(|(id, _)| id)
             .collect();
-        if views.is_empty() {
-            return false;
-        }
         for view in views {
             let Some(&child) = self.nodes[view].children.first() else {
                 continue;
@@ -750,15 +811,17 @@ impl Tree {
     /// transform either has to independently agree with. A `VirtualList`
     /// with nothing materialized yet is a true no-op.
     fn sync_virtual_list_layouts(&mut self) -> bool {
+        // M65 (§5, §6): the real O(1) check -- the full scan below now
+        // only ever runs when at least one real `VirtualList` exists.
+        if self.virtual_list_count == 0 {
+            return false;
+        }
         let lists: Vec<NodeId> = self
             .nodes
             .iter()
             .filter(|(_, node)| matches!(node.kind, NodeKind::VirtualList(_)))
             .map(|(id, _)| id)
             .collect();
-        if lists.is_empty() {
-            return false;
-        }
         for list in lists {
             let NodeKind::VirtualList(state) = &self.nodes[list].kind else {
                 unreachable!("checked by the filter above")
@@ -11487,6 +11550,110 @@ mod tests {
             (state.scroll_x - 764.0).abs() < 0.01,
             "scroll must clamp to the real content-extent-minus-viewport max, got {}",
             state.scroll_x
+        );
+    }
+
+    // --- M65 (§5, §6): the real per-kind existence counters
+    // `compute_layout`'s own sync_*_layouts functions consult instead
+    // of scanning. ------------------------------------------------
+
+    #[test]
+    fn existence_counters_track_insert_and_remove_for_every_real_kind() {
+        let mut tree = Tree::new();
+        assert_eq!(tree.carousel_count, 0);
+        assert_eq!(tree.scroll_view_count, 0);
+        assert_eq!(tree.virtual_list_count, 0);
+        assert_eq!(tree.button_group_reflow_count, 0);
+
+        let carousel = tree.insert(
+            NodeKind::Carousel(crate::node::CarouselState::new(
+                crate::node::CarouselLayout::Uncontained,
+            )),
+            Style::default(),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        assert_eq!(tree.carousel_count, 1);
+
+        let scroll_view = tree.insert(
+            NodeKind::ScrollView(ScrollViewState::new(false)),
+            Style::default(),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        assert_eq!(tree.scroll_view_count, 1);
+
+        let virtual_list = tree.insert(
+            NodeKind::VirtualList(VirtualListState::new(10, ItemExtent::Fixed(20.0))),
+            Style::default(),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        assert_eq!(tree.virtual_list_count, 1);
+
+        let mut group_paint = PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0);
+        group_paint.button_group_reflow = Some((12.0, 8.0));
+        let group = tree.insert(NodeKind::Container, Style::default(), group_paint);
+        assert_eq!(tree.button_group_reflow_count, 1);
+
+        // Inserting an ordinary node of no tracked kind must not move
+        // any counter -- the real "only what's actually relevant"
+        // contract every counter above depends on.
+        let plain = tree.insert(
+            NodeKind::Container,
+            Style::default(),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        assert_eq!(tree.carousel_count, 1);
+        assert_eq!(tree.scroll_view_count, 1);
+        assert_eq!(tree.virtual_list_count, 1);
+        assert_eq!(tree.button_group_reflow_count, 1);
+
+        tree.remove(carousel);
+        assert_eq!(tree.carousel_count, 0);
+        tree.remove(scroll_view);
+        assert_eq!(tree.scroll_view_count, 0);
+        tree.remove(virtual_list);
+        assert_eq!(tree.virtual_list_count, 0);
+        tree.remove(group);
+        assert_eq!(tree.button_group_reflow_count, 0);
+        tree.remove(plain);
+    }
+
+    /// A real, non-hypothetical case: an ancestor is removed, which
+    /// recursively removes a `Carousel` several levels below it --
+    /// each recursive `Tree::remove` call must independently decrement
+    /// the counter for its own child, not just the direct top-level
+    /// call.
+    #[test]
+    fn existence_counters_decrement_correctly_through_recursive_removal() {
+        let mut tree = Tree::new();
+        let root = tree.insert(
+            NodeKind::Container,
+            Style::default(),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        let middle = tree.insert(
+            NodeKind::Container,
+            Style::default(),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        let carousel = tree.insert(
+            NodeKind::Carousel(crate::node::CarouselState::new(
+                crate::node::CarouselLayout::Uncontained,
+            )),
+            Style::default(),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        tree.add_child(root, middle);
+        tree.add_child(middle, carousel);
+        assert_eq!(tree.carousel_count, 1);
+
+        // Removes `root`, which recursively removes `middle`, which
+        // recursively removes `carousel` -- the real path this test
+        // exists to cover, not `tree.remove(carousel)` directly.
+        tree.remove(root);
+        assert_eq!(
+            tree.carousel_count, 0,
+            "a Carousel removed only as a side effect of an ancestor's own removal must still \
+             decrement the real counter, not leave it stale"
         );
     }
 
