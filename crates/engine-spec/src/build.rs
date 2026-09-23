@@ -368,9 +368,13 @@ fn justify_content(spec: Option<JustifyContentSpec>) -> Option<JustifyContent> {
 fn layout_style(style: &StyleSpec) -> Style {
     Style {
         display: taffy::Display::Flex,
+        // `Horizontal`/`Vertical` are this crate's own real, deliberately
+        // un-taffy-matching names (`spec.rs`'s own `FlexDirectionSpec`
+        // doc comment has the full real reasoning) -- taffy's own
+        // `FlexDirection` still uses `Row`/`Column` underneath, unchanged.
         flex_direction: match style.flex_direction {
-            Some(FlexDirectionSpec::Row) | None => taffy::FlexDirection::Row,
-            Some(FlexDirectionSpec::Column) => taffy::FlexDirection::Column,
+            Some(FlexDirectionSpec::Horizontal) | None => taffy::FlexDirection::Row,
+            Some(FlexDirectionSpec::Vertical) => taffy::FlexDirection::Column,
         },
         size: Size {
             width: style.width.map_or_else(auto, length),
@@ -726,7 +730,7 @@ mod tests {
     const VIEW: &str = r##"
 id: root
 kind: Container
-style: {flex_direction: Row, padding: 10, gap: 5, width: 220, height: 100}
+style: {flex_direction: Horizontal, padding: 10, gap: 5, width: 220, height: 100}
 children:
   - id: swatch
     kind: Rect

@@ -24,7 +24,7 @@ watcher for hot-reload.
 ```yaml
 id: root
 kind: Container
-style: {flex_direction: Row, padding: 12, gap: 8}
+style: {flex_direction: Horizontal, padding: 12, gap: 8}
 children:
   - id: swatch
     kind: Rect
@@ -49,7 +49,7 @@ Every widget has:
 | Field | Type |
 | --- | --- |
 | `width`, `height` | number |
-| `flex_direction` | `Row` or `Column` |
+| `flex_direction` | `Horizontal` or `Vertical` |
 | `padding`, `margin` | number, **or** a per-side object `{top, right, bottom, left}` (each defaults to `0`) |
 | `gap` | number |
 | `flex_grow`, `flex_shrink` | number |
@@ -149,7 +149,7 @@ inline one once loaded:
 ```yaml
 id: root
 kind: Container
-style: {flex_direction: Column, width: 240, height: 120, gap: 8, padding: 8}
+style: {flex_direction: Vertical, width: 240, height: 120, gap: 8, padding: 8}
 children:
   - id: header
     kind: Rect
@@ -189,7 +189,7 @@ vm = SettingsVM(view)
 # settings.yaml
 id: root
 kind: Container
-style: {flex_direction: Column, width: 240, height: 120, gap: 8, padding: 8}
+style: {flex_direction: Vertical, width: 240, height: 120, gap: 8, padding: 8}
 children:
   - id: agree
     kind: Checkbox

@@ -1,6 +1,6 @@
 id: root
 kind: Container
-style: {flex_direction: Column, width: 240, height: 120, gap: 12, padding: 16}
+style: {flex_direction: Vertical, width: 240, height: 120, gap: 12, padding: 16}
 children:
   - id: label
     kind: Text

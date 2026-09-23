@@ -1,6 +1,6 @@
 id: root
 kind: Container
-style: {flex_direction: Column, width: 360, height: 300, gap: 8, padding: 16, background: "#FFFFFF"}
+style: {flex_direction: Vertical, width: 360, height: 300, gap: 8, padding: 16, background: "#FFFFFF"}
 children:
   - id: heading
     kind: Text

@@ -1,6 +1,6 @@
 id: root
 kind: Container
-style: {flex_direction: Row, width: 300, height: 100, gap: 8, padding: 8}
+style: {flex_direction: Horizontal, width: 300, height: 100, gap: 8, padding: 8}
 children:
   - id: plain
     kind: Rect

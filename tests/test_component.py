@@ -24,17 +24,17 @@ from tre import Signal, View, ViewModel
 PARENT_VIEW = """
 id: root
 kind: Container
-style: {flex_direction: Column, width: 300, height: 200, gap: 8, padding: 8}
+style: {flex_direction: Vertical, width: 300, height: 200, gap: 8, padding: 8}
 children:
   - id: card_list
     kind: Container
-    style: {flex_direction: Column, gap: 4, width: 280, height: 180}
+    style: {flex_direction: Vertical, gap: 4, width: 280, height: 180}
 """
 
 CARD_VIEW = """
 id: root
 kind: Container
-style: {flex_direction: Row, width: 260, height: 40, gap: 8}
+style: {flex_direction: Horizontal, width: 260, height: 40, gap: 8}
 children:
   - id: label
     kind: Text
