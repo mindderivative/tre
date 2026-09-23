@@ -1,86 +1,90 @@
-# LOG — M58: MD3 Theming Catalog Loose Ends
+# LOG — M59: Layout API Breadth: Per-Side Padding/Margin + Flex/Align
 
-- Same "scope the following Known Gaps" request as M57. This gap: five
-  specific, confirmed-via-direct-source-read MD3 theming loose ends,
-  found (but not fixed) during M52's own investigation.
-- Investigation confirmed via direct source read, not assumed:
-  `add_tooltip`'s container/label colors were hardcoded `Md3Baseline`
-  constants with zero `theme.role(...)` call, only `corner_radius` was
-  theme-resolved; `build_menu`'s panel hardcoded shape/elevation with
-  **no retheme hook at all**; `add_search_bar`'s icon-button containers
-  hardcoded a literal instead of consulting `theme.shape("icon_button",
-  ...)` the way `add_top_app_bar`/`add_spin_box` already do; `add_time_
-  input_field`'s `text_tint` read `theme.on_surface()` unconditionally,
-  no `is_set()` gate; `add_pagination`'s `previous`/`next` shared the
-  `"pagination"` key with the numbered page items instead of `"icon_
-  button"`. The last two were real, visible-output-changing fixes,
-  explicitly approved via `AskUserQuestion` before touching any code.
-- **Real subtlety found and handled carefully, not glossed over:**
-  unifying `add_pagination`'s key could not simply add a new `icon_
-  button:` default to `default_theme.yaml` to "preserve" the previous
-  20px look for `previous`/`next` -- that key is already consulted (with
-  no override today) by `add_top_app_bar`/`add_spin_box`/`add_search_
-  bar`, so adding one would have silently reshaped all three of those
-  unrelated factories too. Landed as: `previous`/`next` genuinely fall
-  to the formula default like their siblings now (a real, accepted
-  visual change for those two specifically), `default_theme.yaml`'s
-  `pagination:` value stays exactly as shipped, only a comment added.
+- Same "scope the following Known Gaps" request as M57/M58. This gap:
+  per-side padding/margin stayed uniform-scalar-only; flex-grow/shrink/
+  basis and align-items/justify-content didn't exist anywhere.
+- Investigation's key finding: **`engine-core` needed zero changes** --
+  `Tree::set_layout_style` was already fully general (a raw `taffy::
+  Style`). The gap was entirely at the Python/YAML-facing API surface.
+  No existing "scalar-or-object" serde precedent in `spec.rs` for per-
+  side padding/margin -- confirmed via read, this milestone establishes
+  the first real `#[serde(untagged)]` union in the file. `taffy`'s own
+  real `Style` field types (`padding`/`margin` as per-side `Rect`,
+  `align_items`/`justify_content` as real associated-const structs, not
+  bare enums) were read directly from the vendored crate source before
+  writing any code, not assumed.
 
 ## What shipped (all 4 phases)
 
-1. `add_tooltip`: `role("inverse_surface")`/`role("inverse_on_
-   surface")`, `is_set()`-gated (mirroring `resolve_button_colors`'s
-   own established pattern), applied at construction and in `tooltip_
-   retheme_hook` (widened to also take `label`, not just `container`).
-   `build_menu`: `theme.shape("menu", None)`/`theme.elevation("menu",
-   None)` at construction; a brand-new `menu_retheme_hook` (there was
-   none before) also re-resolves the panel's own `surface_container`
-   color live, not just shape/elevation -- a real completeness fix
-   beyond what the Known Gaps bullet's own text literally named, since
-   leaving color un-rethemed in a newly-added hook would have been a
-   real, if smaller, inconsistency of its own. `add_search_bar`: both
-   icon-button containers switched from `SEARCH_ICON_BUTTON_SIZE /
-   2.0` to `theme.shape("icon_button", None).unwrap_or(...)`; `search_
-   bar_retheme_hook` widened to match, touching both containers' own
-   `corner_radius`, not just their icons' tint as before.
-2. `add_time_input_field`'s `text_tint` now gated behind `theme.
-   is_set()` at construction -- un-themed output moves from pure black
-   `#000000` to `TextFieldState`'s own real default `#1C1B1F`. The
-   hook itself needed no change (only ever runs from `set_theme`,
-   where `is_set()` is always true already).
-3. `add_pagination`'s `previous`/`next` icon buttons now consult
-   `"icon_button"`; the numbered page items are unchanged, still
-   `"pagination"`. Both construction-time and `pagination_retheme_
-   hook` now compute two independent corner-radius values.
-4. `tests/test_theme.py`: 2 pre-existing pagination tests updated to
-   assert the new, deliberately-changed real behavior instead of the
-   old one (`test_pagination_corner_radius_override_applies_to_pages_
-   only`, renamed and narrowed from `..._to_arrows_and_pages`; the
-   live-retheme counterpart). 6 new tests: `add_tooltip`'s color
-   resolution reaching a real non-default seed without raising (no
-   Python-facing color getter exists anywhere in this suite -- the
-   same honest limit `test_dialog_override_does_not_raise` already
-   states, confirmed rather than worked around); `build_menu`'s panel
-   shape/elevation, both construction-time and live-retheme (directly
-   readable, a real decisive proof); `add_search_bar`'s icon-button
-   radius, both construction-time and live-retheme; `add_pagination`'s
-   new `icon_button`-key behavior.
-- `BUILD_TRACKER.md`: full Milestone 58 section, Top Metrics row at
+1. New `SpacingSpec` enum (`Uniform(f32) | PerSide{top,right,bottom,
+   left}`, `#[serde(untagged)]`) applied to widened `StyleSpec.padding`
+   and a new `StyleSpec.margin` field (previously absent entirely).
+   `build.rs`'s new `spacing_to_rect<T: FromLength>` helper builds the
+   real per-side `taffy::Rect` for both fields, generic since taffy's
+   own `length()` helper already is.
+2. New `AlignItemsSpec`/`JustifyContentSpec` enums (the real common
+   flexbox vocabulary -- 7/9 variants, deliberately skipping taffy's
+   own niche `Self*`/`Safe*` overflow-position variants, the same
+   bounded-subset precedent `FlexDirectionSpec` already set for `Row`/
+   `Column` vs. `RowReverse`/`ColumnReverse`). New `StyleSpec` fields
+   `flex_grow`/`flex_shrink`/`flex_basis`. `build.rs` gained resolver
+   functions mapping to taffy's own real associated consts (`AlignItems
+   ::CENTER` etc.) -- **real correctness check made, not assumed:**
+   confirmed `flex_grow`/`flex_shrink`'s own real fallback values
+   (`0.0`/`1.0`) match `taffy::Style::default()`'s exactly, by reading
+   the vendored source directly, so YAML that never sets these fields
+   behaves byte-for-byte identically to before this milestone.
+3. `Node.set_layout` widened with per-side padding/margin (each layers
+   on top of the uniform `padding=`/`margin=` when both are given --
+   the per-side kwarg always wins for that one side), `flex_grow`/
+   `flex_shrink`/`flex_basis`, and `align_items`/`justify_content`
+   (plain lowercase-snake-case strings, `ValueError` on unrecognized,
+   matching `press_key`'s own established "small vocabulary" convention
+   rather than inventing a dedicated Python-facing enum type). `view.rs`
+   's own `apply_binding_value` call site (the `{{ }}` binding forward-
+   write path) updated for the widened signature -- all new params stay
+   `None` there, since none of the new fields are reachable from a
+   binding (only `width`/`height`/`padding`/`gap` ever were).
+4. 5 new `engine-spec` unit tests: scalar vs. per-side padding/margin
+   both parse correctly (confirming `serde_yaml_ng`'s own untagged-enum
+   support resolves the two shapes unambiguously, not assumed); every
+   new field's real YAML string form; an unknown `align_items` keyword
+   is a clear load-time error, not silently ignored. 18 new pytest
+   tests in `tests/test_live_style.py`, extending M48's own established
+   "no pixel-box readback, prove the FFI call succeeds" honest limit
+   (the same real, stated limit this codebase already carries for
+   `Node.set_layout`/`Window.resize`) -- per-side padding/margin
+   individually and layered on top of the uniform value; flex-grow/
+   shrink/basis; every real `align_items`/`justify_content` string
+   value, parametrized; both rejecting an unknown value with a real
+   `ValueError`; a declarative `View` parsing all the new fields
+   together without raising. `_core.pyi` widened to match. `examples/
+   live_style.py` extended: per-side `padding_top` applied to `root`
+   (the real flex container `box`/`cycle_button` sit inside -- padding
+   and align/justify only have a real visible effect on a node with
+   children, a real, deliberate choice over applying them to `box`
+   itself, a childless leaf `Rect`), layered on top of `root`'s own
+   existing uniform `padding: 16` from YAML -- a real, live
+   demonstration of the "per-side wins for that one side" contract --
+   plus a real `align_items`/`justify_content` pair, cycled alongside
+   the existing border/size demo.
+- `BUILD_TRACKER.md`: full Milestone 59 section, Top Metrics row at
   100%, the closed gap moved from "Known gaps" to "Fixed gaps." Tracker
-  regenerated (13 milestones/45 phases/102 items/3 known gaps/22 fixed
+  regenerated (13 milestones/45 phases/105 items/2 known gaps/23 fixed
   gaps), artifact republished.
 - Full chain green: `cargo check`/`clippy -D warnings`/`fmt --check`
   clean (zero `engine-core` changes); `cargo test --workspace
-  --release` unchanged across every crate; `maturin develop --release`;
-  `pytest tests/` (794 passed, up from 789, +5, 2 skipped unchanged);
-  all 88 examples (zero failures); `demo/showcase.py` (all 5 phases,
-  exit 0).
+  --release` (`engine-spec` 69, up from 65, +4; every other suite
+  unchanged); `maturin develop --release`; `pytest tests/` (816
+  passed, up from 794, +22, 2 skipped unchanged); all 88 examples
+  (zero failures); `demo/showcase.py` (all 5 phases, exit 0).
 
 ## Status
 
-**M58 is complete, all 4 phases.** All 5 real, confirmed MD3 theming
-loose ends from M52's own investigation are closed, with zero
-regression to any pre-existing test or example beyond the 2 tests whose
-own assertions encoded the deliberately-changed pagination behavior
-(both updated, not deleted). Committing locally now; push deferred
-pending explicit user confirmation. Next: M59 (layout API breadth).
+**M59 is complete, all 4 phases.** The real layout API breadth gap
+this milestone closes is closed, additively, with zero regression to
+any pre-existing test or example. Confirmed the deepest real finding of
+this milestone -- `engine-core` needed zero changes at all -- rather
+than assuming it from the investigation alone. Committing locally now;
+push deferred pending explicit user confirmation. Next: M60 (styling
+API breadth I: border kwargs).

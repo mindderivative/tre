@@ -194,6 +194,69 @@ pub enum FlexDirectionSpec {
     Column,
 }
 
+/// M59 (§5, §16.3): a `padding`/`margin` value that accepts *either* a
+/// bare scalar (applied uniformly to all four sides, the real shape
+/// `StyleSpec.padding` already had before this milestone) *or* a real
+/// per-side `{top, right, bottom, left}` object -- CSS's own "shorthand
+/// vs. longhand" duality, and the first real `#[serde(untagged)]` union
+/// in this file (no existing scalar-or-object precedent to mirror; a
+/// bare number and a YAML mapping are structurally distinct enough that
+/// `serde_yaml_ng`'s own untagged-enum support resolves them
+/// unambiguously, confirmed by this milestone's own new unit tests
+/// below, not assumed). Every per-side field defaults to `0.0` when
+/// omitted, matching a real CSS `padding: {top: 4px}` shorthand's own
+/// "unset sides are zero" behavior, not "unset sides keep whatever the
+/// uniform value would have been" (there is no uniform value once the
+/// per-side form is chosen).
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum SpacingSpec {
+    Uniform(f32),
+    PerSide {
+        #[serde(default)]
+        top: f32,
+        #[serde(default)]
+        right: f32,
+        #[serde(default)]
+        bottom: f32,
+        #[serde(default)]
+        left: f32,
+    },
+}
+
+/// M59 (§5, §16.3): the real, common flexbox `align-items` vocabulary
+/// -- deliberately the same bounded subset `FlexDirectionSpec` already
+/// established the precedent for (skips taffy's own `Self*`/`Safe*`
+/// overflow-position variants, real CSS features nothing in this
+/// codebase's own scope needs yet, additive to add later).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum AlignItemsSpec {
+    Start,
+    End,
+    FlexStart,
+    FlexEnd,
+    Center,
+    Baseline,
+    Stretch,
+}
+
+/// M59 (§5, §16.3): `justify-content`'s own real vocabulary -- a
+/// superset of `AlignItemsSpec`'s (taffy's own `AlignContent`/
+/// `JustifyContent` type adds the real space-distribution keywords
+/// `AlignItems` doesn't have), the same bounded-subset precedent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum JustifyContentSpec {
+    Start,
+    End,
+    FlexStart,
+    FlexEnd,
+    Center,
+    Stretch,
+    SpaceBetween,
+    SpaceAround,
+    SpaceEvenly,
+}
+
 /// Literal-value styling for one widget. Every field is optional so a
 /// `view.yaml` author only states what a node actually needs -- a
 /// `Container` typically sets `flex_direction`/`padding`/`gap` and no
@@ -205,8 +268,24 @@ pub struct StyleSpec {
     pub width: Option<f32>,
     pub height: Option<f32>,
     pub flex_direction: Option<FlexDirectionSpec>,
-    pub padding: Option<f32>,
+    pub padding: Option<SpacingSpec>,
+    /// M59 (§5, §16.3): real, previously entirely-absent field -- `taffy
+    /// ::Style.margin` has existed since day one but was never reachable
+    /// from static YAML at all (confirmed via grep before this change),
+    /// unlike `padding`. Same `SpacingSpec` shape (scalar or per-side).
+    pub margin: Option<SpacingSpec>,
     pub gap: Option<f32>,
+    /// M59 (§5, §16.3): real taffy-level gaps, confirmed unpopulated
+    /// from any source anywhere in this codebase before this milestone
+    /// (`grep`'d, not assumed). `flex_basis` mirrors `width`/`height`'s
+    /// own plain-`f32` shape (a real pixel length, not a percentage --
+    /// nothing in this codebase's own scope needs percentage `flex_
+    /// basis` yet, additive to add later).
+    pub flex_grow: Option<f32>,
+    pub flex_shrink: Option<f32>,
+    pub flex_basis: Option<f32>,
+    pub align_items: Option<AlignItemsSpec>,
+    pub justify_content: Option<JustifyContentSpec>,
     /// A hex (`"#6750A4"`, `"#6750A4FF"`) or CSS named (`"transparent"`,
     /// `"white"`) color string -- anything `peniko::color::parse_color`
     /// accepts. Parsed at tree-build time (`build.rs`), not here: a
@@ -272,7 +351,7 @@ children:
         let spec = parse_view(yaml).expect("valid view.yaml must parse");
         assert_eq!(spec.id, "root");
         assert!(matches!(spec.kind, NodeKindSpec::Container));
-        assert_eq!(spec.style.padding, Some(12.0));
+        assert_eq!(spec.style.padding, Some(SpacingSpec::Uniform(12.0)));
         assert_eq!(spec.children.len(), 2);
 
         assert_eq!(spec.children[0].id, "swatch");
@@ -380,5 +459,82 @@ sytle: {}
             message.contains("sytle") || message.contains("unknown field"),
             "error message {message:?} doesn't name the actual problem"
         );
+    }
+
+    // --- M59 (§5, §16.3): layout API breadth ---------------------------
+
+    #[test]
+    fn padding_and_margin_each_accept_a_bare_scalar() {
+        let yaml = r#"
+id: root
+kind: Container
+style: {padding: 16, margin: 4}
+"#;
+        let spec = parse_view(yaml).expect("a bare scalar padding/margin must parse");
+        assert_eq!(spec.style.padding, Some(SpacingSpec::Uniform(16.0)));
+        assert_eq!(spec.style.margin, Some(SpacingSpec::Uniform(4.0)));
+    }
+
+    #[test]
+    fn padding_and_margin_each_accept_a_real_per_side_object() {
+        let yaml = r#"
+id: root
+kind: Container
+style: {padding: {top: 4, right: 8}, margin: {bottom: 2, left: 6}}
+"#;
+        let spec = parse_view(yaml).expect("a per-side padding/margin object must parse");
+        assert_eq!(
+            spec.style.padding,
+            Some(SpacingSpec::PerSide {
+                top: 4.0,
+                right: 8.0,
+                bottom: 0.0,
+                left: 0.0,
+            }),
+            "an omitted per-side field must default to 0.0, not the sibling scalar shorthand"
+        );
+        assert_eq!(
+            spec.style.margin,
+            Some(SpacingSpec::PerSide {
+                top: 0.0,
+                right: 0.0,
+                bottom: 2.0,
+                left: 6.0,
+            })
+        );
+    }
+
+    #[test]
+    fn flex_and_align_fields_parse_their_real_yaml_string_forms() {
+        let yaml = r#"
+id: root
+kind: Container
+style:
+  flex_grow: 1
+  flex_shrink: 0
+  flex_basis: 100
+  align_items: Center
+  justify_content: SpaceBetween
+"#;
+        let spec = parse_view(yaml).expect("the new flex/align fields must parse");
+        assert_eq!(spec.style.flex_grow, Some(1.0));
+        assert_eq!(spec.style.flex_shrink, Some(0.0));
+        assert_eq!(spec.style.flex_basis, Some(100.0));
+        assert_eq!(spec.style.align_items, Some(AlignItemsSpec::Center));
+        assert_eq!(
+            spec.style.justify_content,
+            Some(JustifyContentSpec::SpaceBetween)
+        );
+    }
+
+    #[test]
+    fn an_unknown_align_items_variant_is_a_load_time_error_not_silently_ignored() {
+        let yaml = r#"
+id: root
+kind: Container
+style: {align_items: Sideways}
+"#;
+        let err = parse_view(yaml).expect_err("an unknown align_items keyword must fail to parse");
+        assert!(err.to_string().contains("Sideways"));
     }
 }

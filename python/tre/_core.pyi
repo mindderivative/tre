@@ -137,12 +137,37 @@ class Node:
         width: float | None = None,
         height: float | None = None,
         padding: float | None = None,
+        padding_top: float | None = None,
+        padding_right: float | None = None,
+        padding_bottom: float | None = None,
+        padding_left: float | None = None,
+        margin: float | None = None,
+        margin_top: float | None = None,
+        margin_right: float | None = None,
+        margin_bottom: float | None = None,
+        margin_left: float | None = None,
         gap: float | None = None,
+        flex_grow: float | None = None,
+        flex_shrink: float | None = None,
+        flex_basis: float | None = None,
+        align_items: str | None = None,
+        justify_content: str | None = None,
     ) -> None:
         """M48: general live layout mutation. Only the fields actually
         passed are changed -- every omitted field keeps its current
         value. Applies immediately (not eased): layout fields aren't
         animatable the way paint properties are.
+
+        M59: widened with per-side padding/margin (each independently
+        optional, layered *on top of* the uniform `padding=`/`margin=`
+        when both are given -- the per-side kwarg always wins for that
+        one side), `flex_grow`/`flex_shrink`/`flex_basis`, and `align_
+        items`/`justify_content`. `align_items` accepts `"start"`,
+        `"end"`, `"flex_start"`, `"flex_end"`, `"center"`, `"baseline"`,
+        `"stretch"`; `justify_content` accepts those same seven plus
+        `"space_between"`, `"space_around"`, `"space_evenly"` -- raises
+        `ValueError` for anything else, matching `press_key`'s own
+        "unknown key" contract.
         """
         ...
     def set_on_click(

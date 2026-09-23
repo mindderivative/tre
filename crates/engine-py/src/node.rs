@@ -33,7 +33,7 @@ use engine_core::{
 use peniko::Color;
 use peniko::kurbo::{Affine, BezPath};
 use pyo3::prelude::*;
-use taffy::prelude::{Rect as TaffyRect, Size, length};
+use taffy::prelude::{AlignItems, JustifyContent, Rect as TaffyRect, Size, length};
 
 use crate::dispatch::{HandlerMap, SharedCompletions, call_handler};
 use crate::error::EngineError;
@@ -396,18 +396,56 @@ impl Node {
     /// M32 Phase 2 hit). Immediate, not eased -- these fields aren't
     /// `Animated<T>` (a layout box doesn't tween the way a paint
     /// property does in this engine), so this is a parallel dispatch
-    /// next to `animate()`, not an extra match arm inside it. `padding`/
-    /// `gap` are uniform scalars, matching `StyleSpec`'s own real scope
-    /// today (`engine-spec/src/spec.rs`) -- per-side padding/margin
-    /// remain a real, separate, un-added gap.
-    #[pyo3(signature = (width=None, height=None, padding=None, gap=None))]
+    /// next to `animate()`, not an extra match arm inside it.
+    ///
+    /// M59 (§5, §16.3): widened with per-side padding/margin (each
+    /// independently optional, layered *on top of* the uniform
+    /// `padding=`/`margin=` when both are given -- the per-side kwarg
+    /// always wins for that one side, matching `StyleSpec`'s own real
+    /// `SpacingSpec` "uniform or per-side" duality, M59's own new
+    /// `engine-spec` counterpart), `flex_grow`/`flex_shrink`/
+    /// `flex_basis`, and `align_items`/`justify_content` (plain
+    /// lowercase-snake-case strings, matching `press_key`'s own
+    /// established "small vocabulary, `ValueError` on unrecognized"
+    /// convention -- no dedicated Python-facing enum type, consistent
+    /// with every other style kwarg on this method already being a
+    /// plain scalar). `Window.add_rect`/other factories deliberately
+    /// gain none of these as constructor kwargs -- this method already
+    /// gives every already-built node (regardless of which factory
+    /// created it) the identical real imperative path, named out of
+    /// scope, not silently skipped.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (
+        width=None, height=None,
+        padding=None, padding_top=None, padding_right=None, padding_bottom=None, padding_left=None,
+        margin=None, margin_top=None, margin_right=None, margin_bottom=None, margin_left=None,
+        gap=None, flex_grow=None, flex_shrink=None, flex_basis=None,
+        align_items=None, justify_content=None,
+    ))]
     pub(crate) fn set_layout(
         &self,
         width: Option<f32>,
         height: Option<f32>,
         padding: Option<f32>,
+        padding_top: Option<f32>,
+        padding_right: Option<f32>,
+        padding_bottom: Option<f32>,
+        padding_left: Option<f32>,
+        margin: Option<f32>,
+        margin_top: Option<f32>,
+        margin_right: Option<f32>,
+        margin_bottom: Option<f32>,
+        margin_left: Option<f32>,
         gap: Option<f32>,
-    ) {
+        flex_grow: Option<f32>,
+        flex_shrink: Option<f32>,
+        flex_basis: Option<f32>,
+        align_items: Option<&str>,
+        justify_content: Option<&str>,
+    ) -> PyResult<()> {
+        let align_items = align_items.map(parse_align_items).transpose()?;
+        let justify_content = justify_content.map(parse_justify_content).transpose()?;
+
         let mut tree = self.tree.borrow_mut();
         let mut style = tree
             .get(self.id)
@@ -428,13 +466,61 @@ impl Node {
                 bottom: length(padding),
             };
         }
+        if let Some(v) = padding_top {
+            style.padding.top = length(v);
+        }
+        if let Some(v) = padding_right {
+            style.padding.right = length(v);
+        }
+        if let Some(v) = padding_bottom {
+            style.padding.bottom = length(v);
+        }
+        if let Some(v) = padding_left {
+            style.padding.left = length(v);
+        }
+        if let Some(margin) = margin {
+            style.margin = TaffyRect {
+                left: length(margin),
+                right: length(margin),
+                top: length(margin),
+                bottom: length(margin),
+            };
+        }
+        if let Some(v) = margin_top {
+            style.margin.top = length(v);
+        }
+        if let Some(v) = margin_right {
+            style.margin.right = length(v);
+        }
+        if let Some(v) = margin_bottom {
+            style.margin.bottom = length(v);
+        }
+        if let Some(v) = margin_left {
+            style.margin.left = length(v);
+        }
         if let Some(gap) = gap {
             style.gap = Size {
                 width: length(gap),
                 height: length(gap),
             };
         }
+        if let Some(flex_grow) = flex_grow {
+            style.flex_grow = flex_grow;
+        }
+        if let Some(flex_shrink) = flex_shrink {
+            style.flex_shrink = flex_shrink;
+        }
+        if let Some(flex_basis) = flex_basis {
+            style.flex_basis = length(flex_basis);
+        }
+        if let Some(align_items) = align_items {
+            style.align_items = Some(align_items);
+        }
+        if let Some(justify_content) = justify_content {
+            style.justify_content = Some(justify_content);
+        }
         tree.set_layout_style(self.id, style);
+        Ok(())
     }
 
     /// M4 Phase 1 step 3 (§4, §11.10): registers `callback` to run when
@@ -1405,6 +1491,53 @@ fn animate_field<T: engine_core::Interpolate + Clone>(
             field.animate_to_with_completion(value, duration, MotionCurve::Linear, now, handle);
         }
         None => field.animate_to(value, duration, MotionCurve::Linear, now),
+    }
+}
+
+/// M59 (§5, §16.3): `Node.set_layout`'s own `align_items=`/`justify_
+/// content=` string parsing -- the same "small vocabulary, plain
+/// string, `ValueError` on unrecognized" convention `press_key`'s own
+/// "unknown key" error already established, not a dedicated Python-
+/// facing enum type (every other style kwarg on this method is already
+/// a plain scalar). Deliberately the same bounded subset `engine-spec`
+/// ::`AlignItemsSpec`'s own real vocabulary uses, so the imperative and
+/// declarative paths agree on what's real here.
+fn parse_align_items(value: &str) -> PyResult<AlignItems> {
+    match value {
+        "start" => Ok(AlignItems::START),
+        "end" => Ok(AlignItems::END),
+        "flex_start" => Ok(AlignItems::FLEX_START),
+        "flex_end" => Ok(AlignItems::FLEX_END),
+        "center" => Ok(AlignItems::CENTER),
+        "baseline" => Ok(AlignItems::BASELINE),
+        "stretch" => Ok(AlignItems::STRETCH),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "set_layout: unknown align_items {other:?} -- expected one of \"start\", \"end\", \
+             \"flex_start\", \"flex_end\", \"center\", \"baseline\", \"stretch\""
+        ))),
+    }
+}
+
+/// `parse_align_items`'s own real `justify_content=` sibling -- a
+/// superset vocabulary (adds the real space-distribution keywords
+/// `align_items` doesn't have), mirroring `engine-spec::
+/// JustifyContentSpec`'s identical real shape.
+fn parse_justify_content(value: &str) -> PyResult<JustifyContent> {
+    match value {
+        "start" => Ok(JustifyContent::START),
+        "end" => Ok(JustifyContent::END),
+        "flex_start" => Ok(JustifyContent::FLEX_START),
+        "flex_end" => Ok(JustifyContent::FLEX_END),
+        "center" => Ok(JustifyContent::CENTER),
+        "stretch" => Ok(JustifyContent::STRETCH),
+        "space_between" => Ok(JustifyContent::SPACE_BETWEEN),
+        "space_around" => Ok(JustifyContent::SPACE_AROUND),
+        "space_evenly" => Ok(JustifyContent::SPACE_EVENLY),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "set_layout: unknown justify_content {other:?} -- expected one of \"start\", \"end\", \
+             \"flex_start\", \"flex_end\", \"center\", \"stretch\", \"space_between\", \
+             \"space_around\", \"space_evenly\""
+        ))),
     }
 }
 

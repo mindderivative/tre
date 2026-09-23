@@ -66,6 +66,119 @@ def test_set_layout_can_be_called_repeatedly():
     node.set_layout(height=90.0)
 
 
+# --- M59 (§5, §16.3): set_layout widened -- per-side padding/margin, ---
+# flex-grow/shrink/basis, align-items/justify-content. Same real "no
+# pixel-box readback, prove the FFI call succeeds" limit as above.
+
+
+def test_set_layout_accepts_per_side_padding_and_margin_individually():
+    window = Window(width=200, height=200)
+    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node.set_layout(padding_top=4.0)
+    node.set_layout(padding_right=4.0)
+    node.set_layout(padding_bottom=4.0)
+    node.set_layout(padding_left=4.0)
+    node.set_layout(margin=2.0)
+    node.set_layout(margin_top=1.0)
+    node.set_layout(margin_right=1.0)
+    node.set_layout(margin_bottom=1.0)
+    node.set_layout(margin_left=1.0)
+
+
+def test_set_layout_per_side_padding_layers_on_top_of_the_uniform_value():
+    """A per-side kwarg given alongside the uniform `padding=`/`margin=`
+    must not raise -- the real, documented "per-side always wins for
+    that one side" contract, exercised here for both at once (this
+    file's own established honest limit means the actual per-side
+    override can't be read back and asserted numerically, only proven
+    not to raise).
+    """
+    window = Window(width=200, height=200)
+    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node.set_layout(padding=8.0, padding_top=2.0, margin=4.0, margin_left=1.0)
+
+
+def test_set_layout_accepts_flex_grow_shrink_and_basis():
+    window = Window(width=200, height=200)
+    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node.set_layout(flex_grow=1.0, flex_shrink=0.0, flex_basis=40.0)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["start", "end", "flex_start", "flex_end", "center", "baseline", "stretch"],
+)
+def test_set_layout_accepts_every_real_align_items_value(value):
+    window = Window(width=200, height=200)
+    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node.set_layout(align_items=value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "start",
+        "end",
+        "flex_start",
+        "flex_end",
+        "center",
+        "stretch",
+        "space_between",
+        "space_around",
+        "space_evenly",
+    ],
+)
+def test_set_layout_accepts_every_real_justify_content_value(value):
+    window = Window(width=200, height=200)
+    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    node.set_layout(justify_content=value)
+
+
+def test_set_layout_rejects_an_unknown_align_items_value():
+    window = Window(width=200, height=200)
+    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    with pytest.raises(ValueError, match="align_items"):
+        node.set_layout(align_items="sideways")
+
+
+def test_set_layout_rejects_an_unknown_justify_content_value():
+    window = Window(width=200, height=200)
+    node = window.add_rect(background=(0, 0, 0, 255), width=50, height=50)
+    with pytest.raises(ValueError, match="justify_content"):
+        node.set_layout(justify_content="sideways")
+
+
+# --- M59 (§5, §16.3): the new engine-spec fields reach a real View too -
+
+
+def test_declarative_view_parses_per_side_padding_margin_and_flex_align(tmp_path):
+    """The real declarative-path counterpart -- `StyleSpec`'s own new
+    fields (`engine-spec`) must reach a genuinely built `View` without
+    raising, the same honest "no pixel-box readback" limit as the
+    imperative path above.
+    """
+    path = write_view(
+        tmp_path,
+        """
+id: root
+kind: Container
+style:
+  width: 200
+  height: 100
+  padding: {top: 4, right: 8, bottom: 4, left: 8}
+  margin: 2
+  flex_grow: 1
+  flex_shrink: 0
+  flex_basis: 40
+  align_items: Center
+  justify_content: SpaceBetween
+""",
+    )
+    view = View(path)
+    node = view.node("root")
+    assert isinstance(node, Node)
+
+
 # --- border via animate()/get() -----------------------------------------
 
 

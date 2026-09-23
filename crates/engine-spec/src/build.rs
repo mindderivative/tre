@@ -11,11 +11,15 @@ use engine_core::{
 };
 use engine_md3::ColorScheme;
 use peniko::Color;
-use taffy::prelude::{Rect as TaffyRect, Size, Style, auto, length, zero};
+use taffy::prelude::{
+    AlignItems, JustifyContent, Rect as TaffyRect, Size, Style, auto, length, zero,
+};
+use taffy::style_helpers::FromLength;
 
 use crate::cascade::{Stylesheet, resolve_style_layered};
 use crate::spec::{
-    ContentFitSpec, FlexDirectionSpec, NodeKindSpec, StyleSpec, WidgetSpec, parse_view,
+    AlignItemsSpec, ContentFitSpec, FlexDirectionSpec, JustifyContentSpec, NodeKindSpec,
+    SpacingSpec, StyleSpec, WidgetSpec, parse_view,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -286,6 +290,62 @@ pub(crate) fn patch_node(
     Ok(())
 }
 
+/// M59 (§5, §16.3): resolves a `SpacingSpec` (or its absence) into a
+/// real per-side `taffy::Rect` -- shared by `padding`/`margin` below,
+/// generic over `T: FromLength` since `padding`'s own real taffy type
+/// (`LengthPercentage`) and `margin`'s (`LengthPercentageAuto`) differ.
+/// `None`/omitted per-side fields resolve to `0.0`, matching a real CSS
+/// `padding: {top: 4px}` shorthand's own "unset sides are zero"
+/// behavior.
+fn spacing_to_rect<T: FromLength>(spec: Option<SpacingSpec>) -> TaffyRect<T> {
+    let (top, right, bottom, left) = match spec {
+        None => (0.0, 0.0, 0.0, 0.0),
+        Some(SpacingSpec::Uniform(v)) => (v, v, v, v),
+        Some(SpacingSpec::PerSide {
+            top,
+            right,
+            bottom,
+            left,
+        }) => (top, right, bottom, left),
+    };
+    TaffyRect {
+        left: length(left),
+        right: length(right),
+        top: length(top),
+        bottom: length(bottom),
+    }
+}
+
+/// M59 (§5, §16.3): `AlignItemsSpec`/`JustifyContentSpec` -> taffy's own
+/// real `AlignItems`/`JustifyContent` associated consts -- a plain,
+/// exhaustive match, not a lookup table, so a new variant on either
+/// enum fails to compile here until this function is updated too.
+fn align_items(spec: Option<AlignItemsSpec>) -> Option<AlignItems> {
+    spec.map(|s| match s {
+        AlignItemsSpec::Start => AlignItems::START,
+        AlignItemsSpec::End => AlignItems::END,
+        AlignItemsSpec::FlexStart => AlignItems::FLEX_START,
+        AlignItemsSpec::FlexEnd => AlignItems::FLEX_END,
+        AlignItemsSpec::Center => AlignItems::CENTER,
+        AlignItemsSpec::Baseline => AlignItems::BASELINE,
+        AlignItemsSpec::Stretch => AlignItems::STRETCH,
+    })
+}
+
+fn justify_content(spec: Option<JustifyContentSpec>) -> Option<JustifyContent> {
+    spec.map(|s| match s {
+        JustifyContentSpec::Start => JustifyContent::START,
+        JustifyContentSpec::End => JustifyContent::END,
+        JustifyContentSpec::FlexStart => JustifyContent::FLEX_START,
+        JustifyContentSpec::FlexEnd => JustifyContent::FLEX_END,
+        JustifyContentSpec::Center => JustifyContent::CENTER,
+        JustifyContentSpec::Stretch => JustifyContent::STRETCH,
+        JustifyContentSpec::SpaceBetween => JustifyContent::SPACE_BETWEEN,
+        JustifyContentSpec::SpaceAround => JustifyContent::SPACE_AROUND,
+        JustifyContentSpec::SpaceEvenly => JustifyContent::SPACE_EVENLY,
+    })
+}
+
 fn layout_style(style: &StyleSpec) -> Style {
     Style {
         display: taffy::Display::Flex,
@@ -297,16 +357,17 @@ fn layout_style(style: &StyleSpec) -> Style {
             width: style.width.map_or_else(auto, length),
             height: style.height.map_or_else(auto, length),
         },
-        padding: style.padding.map_or_else(TaffyRect::zero, |p| TaffyRect {
-            left: length(p),
-            right: length(p),
-            top: length(p),
-            bottom: length(p),
-        }),
+        padding: spacing_to_rect(style.padding),
+        margin: spacing_to_rect(style.margin),
         gap: style.gap.map_or_else(zero, |g| Size {
             width: length(g),
             height: length(g),
         }),
+        flex_grow: style.flex_grow.unwrap_or(0.0),
+        flex_shrink: style.flex_shrink.unwrap_or(1.0),
+        flex_basis: style.flex_basis.map_or_else(auto, length),
+        align_items: align_items(style.align_items),
+        justify_content: justify_content(style.justify_content),
         ..Default::default()
     }
 }

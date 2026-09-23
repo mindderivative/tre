@@ -23,6 +23,11 @@ binding path border does):
   API this milestone adds, generalizing `Window.resize_terminal`'s own
   narrow, size-only precedent.
 
+M59 (§5, §16.3) widens the same real `set_layout` call with per-side
+padding and `align_items`/`justify_content` -- the layout API breadth
+this milestone closes (before it, `padding` was uniform-scalar-only and
+neither field existed anywhere in this codebase, confirmed via grep).
+
 `tre` has no Python-facing getter for a node's currently-applied
 `border_color` or its real pixel box (`Node.get` only returns `f64`,
 and no layout-box readback exists at all -- confirmed via grep, the
@@ -48,6 +53,13 @@ BORDERS = [
     (0.0, "#000000"),
 ]
 SIZES = [(160.0, 80.0), (200.0, 100.0), (120.0, 60.0)]
+# M59: one real per-side padding value per cycle step, applied to
+# `root` (the flex container `box`/`cycle_button` sit inside -- padding
+# and align/justify only have a real visible effect on a container with
+# children, not on `box` itself, a childless leaf `Rect`) plus a real
+# align_items/justify_content pair -- the new layout API breadth.
+PADDING_TOPS = [16.0, 32.0, 8.0]
+ALIGNMENTS = [("stretch", "start"), ("center", "space_between"), ("end", "center")]
 
 
 class LiveStyleViewModel(ViewModel):
@@ -69,6 +81,16 @@ class LiveStyleViewModel(ViewModel):
         # set_layout` directly, not a `{{ }}` binding.
         width, height = SIZES[self._index]
         view.node("box").set_layout(width=width, height=height)
+
+        # M59: per-side padding and align_items/justify_content, applied
+        # to `root` (the real flex container) -- both only have a real
+        # visible effect on a node with children, unlike `box` itself.
+        align_items, justify_content = ALIGNMENTS[self._index]
+        view.node("root").set_layout(
+            padding_top=PADDING_TOPS[self._index],
+            align_items=align_items,
+            justify_content=justify_content,
+        )
 
 
 vm = LiveStyleViewModel(view)  # must not raise -- the real M48 wiring
