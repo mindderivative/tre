@@ -1,141 +1,103 @@
-# PLAN — M56: `Event.node` — a Real Live `Node` Handle
+# PLAN — Archive BUILD_TRACKER.md (Milestones 1-50) + Known Gaps Refresh + Artifact Visual Change
 
-*(Replaces the prior M55 plan in this file — M55 is complete, committed,
-and pushed. This is a new milestone.)*
+*(Replaces the prior M56 plan in this file — M56 is complete, committed,
+and pushed; its own full writeup lives permanently in `BUILD_TRACKER.md`
+'s own Milestone 56 section. This is a separate, non-milestone
+maintenance task on the tracker/tooling itself.)*
 
 ## Goal
-M54 and M55 both explicitly deferred the same real design question:
-should `Event.source` (a plain opaque id) become a live `Node` handle?
-User: "What do you recommend next?" -> recommended this exact deferred
-candidate. User: "Scope Event.source -> Node."
-
-## Real investigation
-A dedicated Explore agent traced every real `Event`-construction call
-site against `Node`'s own real constructor requirements (`id`, `tree`,
-`handlers`, `context_menus`, `theme`, `completions`). **Key finding:
-this needs zero `engine-core` changes** -- every field `Node` needs is
-already reachable at every real `Event`-building call site; the only
-real gaps were a handful of `context_menus`/`theme`/`completions`
-fields not yet pulled into local scope at ~9 call sites -- mechanical,
-not architectural. Re-entrancy confirmed safe by existing precedent:
-`call_handler`'s own `make_event` closure always completes -- `Node`
-built, `Py<Node>` included -- *before* the Python handler itself runs;
-building a `Node` costs only cheap `Rc` clones, never a `Tree` borrow.
+`BUILD_TRACKER.md` had grown to 56 milestones / ~1600 lines, with a
+front-matter section that had itself accumulated ~250 lines of stacked,
+mostly-redundant historical "Just closed"/"Up next" pairs. User:
+"Let's archive the current TRE Build Track up to Milestone 50. Give it
+a date and milestone range 1-50. Then start a new TRE Build Tracker at
+Milestone 50. This should give us some overlap. Make sure Known Gaps
+are updated with all actually known gaps. Link to the Archived Build
+Tracker for reference to Milestones 1-50." Plus a smaller visual
+request: the "Up Next"/"Just Finished"/"Known Gaps" boxes on the
+published artifact should stack vertically with expand/collapse,
+instead of the prior fixed 3-column grid.
 
 ## Three real design forks, resolved via `AskUserQuestion`
-1. Additive `Event.node: Node` field, `source: int` unchanged -- zero
-   existing code (including M54's own test) breaks.
-2. Eager construction, every dispatch -- matches every other `Event`
-   field's own existing shape.
-3. Also fix `paste_from_system_clipboard`'s (and, found while tracing
-   every call site, `copy_to_system_clipboard`'s/`cut_to_system_
-   clipboard`'s own identical) pre-existing gap: they read `self.tree`/
-   `self.handlers` directly instead of through the `active` bundle every
-   other `Window` method already uses after a real `show_view` switch --
-   a real, adjacent staleness risk, folded into this milestone at the
-   user's own explicit choice, overriding this session's own stated
-   recommendation to leave it out of scope.
+1. Archive file lives at the repo root: `BUILD_TRACKER_ARCHIVE_M1-M50.md`
+   (not under `archive/`, which holds the retired TRE v1 codebase — a
+   different kind of thing).
+2. Plain committed markdown file, not a second published Artifact —
+   keeps the "one tracker = one stable artifact URL" convention intact.
+3. The live tracker's front matter is trimmed to just the current
+   pair — older stacked pairs' substance already lives in each
+   Milestone's own write-up, and (for M1-50) in the archive file.
 
-## Design (2 phases -- no `engine-core` work needed)
-1. **engine-py: `Event.node` + threading through every real call site.**
-   `Event` gains `node: Py<Node>`; `Event::click`/`hover`/`change`/
-   `focus_transition` widen to accept `py`/a new shared `NodeContext`
-   and return `PyResult<Self>`; `run_dispatch_outcome`/`fire_focus_
-   transition` widen to accept `context_menus`/`theme`/`completions`;
-   every real caller updated; the approved adjacent clipboard fix done
-   here too.
-2. **Python-facing API, tests, example, docs.** `_core.pyi` stub;
-   pytest coverage (identity, re-entrancy, all 4 `EventKind`s, the
-   fixed clipboard staleness case); a new/extended example; `BUILD_
-   TRACKER.md`/tracker regeneration/artifact republish.
+## Real investigation
+`BUILD_TRACKER.md`'s own line map: front matter (Top Metrics, Known/
+Fixed gaps, ~250 lines of stacked historical narrative) through line
+257; `## Milestone 1` at 258; `## Milestone 50` at 1330-1365;
+`## Milestone 51` at 1366; `## Future Work` (not milestone-numbered)
+at 1583. The shared, cross-project `build-tracker` skill lives at
+`/home/phil/.claude/skills/build-tracker/` — its own stated convention
+is to never hand-edit a project's copy of `generate_tracker_
+artifact.py`, only the skill's own copy, then re-copy. Parser facts
+confirmed by reading the script directly: Top Metrics rows and
+`## Milestone <N>` sections are matched independently per-row/per-
+section (safe to trim either); "Known gaps"/"Fixed gaps" take the
+first occurrence in the file; "Just closed"/"Up next" take the first
+match within the front matter — trimming to one pair is exactly what
+this logic expects. The 3-box HTML was three plain `<div class=
+"metric">` blocks; `expandAll`/`collapseAll` already use a broad
+`querySelectorAll('details')`, so wrapping them in `<details>` needed
+zero JS changes.
 
-## Explicitly out of scope, named not silent
-Changing `Event.source`'s own type or removing it. Any new `EventKind`
-variant. Any change to `Node`'s own GC-traversal contract (still
-correctly needs none of its own -- a `Py<Node>` field on `Event`
-introduces no new untracked edge beyond what already isn't tracked).
+**Known Gaps audit** (cross-checked every M48-M56 "explicitly out of
+scope" note against live source, confirmed each still real, not
+assumed): found one brand-new, not-yet-recorded gap from M56's own
+investigation (`Window`'s `select_all`/`press_key`/`type_text`/`copy`/
+`cut`/`resize` still bypass `self.active`, unlike `click`/`hover`/
+`scroll`/`focus` and the M56-fixed clipboard trio); confirmed four more
+real, still-open candidates named-but-never-promoted from M48/M52's own
+"out of scope" notes (MD3 theming catalog loose ends; layout API
+breadth; styling API breadth); confirmed the existing accessibility-
+client gap unchanged. Explicitly did *not* add deliberate, already-
+accepted tradeoffs (handler/hook pruning on node removal, `{{ }}`
+bindings not surviving `retheme()`, app-owned state not re-derived by
+`set_theme`) — those aren't missing capability, just design decisions
+already named elsewhere.
 
 ## Status
 
-**All 2 phases complete. Milestone closed.**
+**Complete.**
 
-Phase 2: `_core.pyi` gets the new `Event.node: Node` stub; 8 new pytest
-tests in `tests/test_event_node.py` (identity via mutate-through-the-
-handle, re-entrancy, correctness across `Click`/`HoverEnter`/
-`FocusEnter`/`Change`, a shared multi-node handler); a new section in
-`examples/event_payload.py` demonstrating `event.node` used generically
-across three `Checkbox`es. **Real, honest finding:** no testable repro
-exists for the fixed `copy_to_system_clipboard` staleness case through
-a real `show_view` switch, since `select_all`/`press_key` (needed to
-create a selection) still read `self.tree` directly, unaffected by
-`show_view` -- a real, separate, pre-existing limitation out of this
-milestone's own approved scope, named rather than papered over.
-`BUILD_TRACKER.md`: new Milestone 56 section, tracker regenerated (56
-milestones/167 phases/316 items/1 known gap/20 fixed gaps), artifact
-republished.
+1. `BUILD_TRACKER_ARCHIVE_M1-M50.md` created at the repo root: dated
+   2026-09-23, Top Metrics rows M1-50, the full current "Fixed gaps"
+   list, and Milestone 1 through 50's own sections copied verbatim
+   (relocated, not rewritten). No "Known gaps" section of its own —
+   points to the live file instead.
+2. `BUILD_TRACKER.md` rewritten: Top Metrics now M50-56 (M50 repeated
+   as the requested overlap), a link to the new archive right after
+   Top Metrics, front matter trimmed to exactly the current M56 "Just
+   closed"/"Up next" pair (refreshed to reflect the real current
+   state), "Known gaps" replaced with the refreshed 5-bullet list,
+   "Fixed gaps" kept as the full, un-trimmed 20-item history, Milestone
+   50 through 56 sections retained verbatim, "Future Work" section
+   unchanged.
+3. Visual change made in the shared skill's own copy first
+   (`/home/phil/.claude/skills/build-tracker/generate_tracker_
+   artifact.py`), then re-copied verbatim to `tools/generate_tracker_
+   artifact.py` (confirmed byte-identical via `diff`): the three top
+   boxes are now `<details class="metric" open>` elements with a
+   chevron summary mirroring `details.fixed-gaps`'s existing look,
+   `.metrics` changed from a 3-column grid to a vertical stack, zero JS
+   changes needed (`expandAll`/`collapseAll`'s existing `querySelectorAll
+   ('details')` already covers the new elements). A new "Archiving a
+   large tracker" section added to `SKILL.md`, documenting this exact
+   pattern for future reuse — the same precedent "Fixed gaps" itself
+   set when it was added to the skill, not just this project.
+4. Regenerated (`Parsed 7 milestones, 23 phases, 67 items, 5 known
+   gaps, 20 fixed gaps` — matches M50-56 exactly) and republished to
+   the existing artifact URL
+   (`https://claude.ai/artifact/CaPkWjpd91oR7YFbcqC9ty`).
 
-Full chain green: `cargo check`/`clippy -D warnings`/`fmt --check`
-clean (no Rust changes this phase), `cargo test --workspace --release`
-(unchanged), `maturin develop --release`, `pytest tests/` (784 passed,
-up from 776, +8, 2 skipped unchanged), all 88 examples (+1), showcase
-demo.
-
-`Event` gained `node: Py<Node>` (`event.rs`), built via a new `Event::
-build_node(py, id, ctx)` helper reusing every real `add_*` factory's own
-6-field construction pattern. All 4 constructors (`click`/`hover`/
-`change`/`focus_transition`) widened to `(py, node, ctx: &NodeContext,
-...) -> PyResult<Self>` (previously infallible `Self`). New `pub(crate)
-struct NodeContext<'a>` (`event.rs`) bundles the 5 real handles every
-`Node` needs -- justified via this codebase's own "Rule of Three"
-precedent (the same threshold `HandlerMap`'s own doc comment already
-used), since 6+ real functions now need this exact 5-tuple.
-
-`run_dispatch_outcome`/`fire_focus_transition`/`cut_focused_selection_
-to_clipboard`/`paste_clipboard_into_focused` (`dispatch.rs`) all widened
-with `context_menus`/`theme`/`completions` parameters (`#[allow(clippy::
-too_many_arguments)]`, matching `window_factory.rs`'s own established
-20+-use convention), each building a local `NodeContext` and passing
-`&ctx` into their `Event::*` calls.
-
-Every real call site threading these three new arguments through:
-`app.rs` (the main winit dispatch closure, the `Cut`/`PasteRequested`
-`InputEvent` arms, and the AccessKit access-request closure's own
-`Action::Click`/`Action::Focus` arms -- 4 sites total); `node.rs`'s 4
-setters (`set_checked`/`set_selected`/`set_on`/`set_text`), each now
-building a local `NodeContext` from `self.*` fields; `window_input.rs`'s
-7 dispatch methods (`click`/`hover`/`scroll`/`focus`/`resize`/
-`press_key`/`type_text`) plus `cut()`'s own direct `Event::change` call;
-`view.rs`'s 4 dispatch methods (`click`/`hover`/`focus`/`right_click`),
-reading `self.context_menus`/`self.theme`/`self.completions` directly
-(no `active`-swap bundle on `View`).
-
-**The approved adjacent fix, done as part of this phase:**
-`copy_to_system_clipboard`/`cut_to_system_clipboard`/`paste_from_
-system_clipboard` (`window_input.rs`) rewritten to read `tree`/
-`handlers`/`context_menus`/`root` through `self.active.borrow()`,
-matching every other real `Window` method's established post-`show_
-view` convention, instead of the plain `self.tree`/`self.handlers`/
-`self.root` fields they used to read directly (stale after a real
-`show_view` switch) -- the real, pre-existing gap this milestone's own
-investigation found and the user explicitly chose to fix here rather
-than defer.
-
-Full chain green: `cargo check`/`clippy -D warnings`/`fmt --check`
-clean across the whole workspace (zero `engine-core` changes, exactly
-as the investigation predicted); `cargo test --workspace --release`
-(`engine-core` unchanged at 227, every `engine-py`/`engine-md3`/
-`engine-spec`/`engine-render`/`engine-platform` suite green -- zero
-regression). `maturin develop --release`; a standalone smoke script (11
-checks) confirmed every real path end to end before writing formal
-tests: `event.source` still a plain `int`; `event.node` is a real
-`Node` instance; a mutation made *through* `event.node` is visible on
-the originally-registered handle (the real identity proof, since `Node`
-has no `__eq__`/`id` to compare more directly); a handler can
-immediately call `.animate()`/`.get_checked()`/`.set_on_hover_enter()`
-back on `event.node` with no re-entrant-borrow panic; `event.node`
-resolves correctly across `HoverEnter`/`HoverExit`/`FocusEnter`/
-`Change`; a single handler shared across two `Checkbox`es correctly
-tells them apart via `event.node`'s own live state; the fixed `copy_to_
-system_clipboard` runs without panicking post-`active`-bundle fix.
-`pytest tests/` (776 passed, 2 skipped -- byte-for-byte unchanged from
-before this phase).
+No Rust or Python source touched — documentation/tooling-only, no test
+suite or build chain involved. `git add` the new archive file, the
+rewritten `BUILD_TRACKER.md`, `LOG.md`/`PLAN.md`, and `tools/generate_
+tracker_artifact.py` (never `CLAUDE.md`, never `-A`); local commit per
+standing policy; push only after separate explicit confirmation.

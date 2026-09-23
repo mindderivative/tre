@@ -473,17 +473,21 @@ PAGE_TEMPLATE = """<title>{project} Build Tracker</title>
   .btn:hover {{ filter: brightness(1.05); }}
   .btn:active {{ transform: translateY(1px); }}
 
-  .metrics {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px; }}
-  @media (max-width: 640px) {{ .metrics {{ grid-template-columns: 1fr; }} }}
-  .metric {{ background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
-    padding: 14px 16px; box-shadow: var(--shadow); }}
-  .metric .eyebrow {{ font-size: 0.68rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em;
-    color: var(--text-muted); display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }}
-  .metric .eyebrow .dot {{ width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }}
-  .metric p {{ margin: 0; font-size: 0.83rem; color: var(--text); }}
-  .metric.gaps ul {{ margin: 0; padding-left: 16px; font-size: 0.82rem; }}
-  .metric.gaps li {{ margin-bottom: 5px; }}
-  .metric.gaps li:last-child {{ margin-bottom: 0; }}
+  .metrics {{ display: grid; gap: 12px; margin-bottom: 24px; }}
+  details.metric {{ background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: var(--shadow); overflow: hidden; }}
+  details.metric > summary {{ list-style: none; cursor: pointer; padding: 14px 16px;
+    display: flex; align-items: center; gap: 10px; }}
+  details.metric > summary::-webkit-details-marker {{ display: none; }}
+  details.metric[open] > summary .chev {{ transform: rotate(90deg); }}
+  details.metric > summary .dot {{ width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0; }}
+  details.metric > summary .eyebrow-text {{ flex: 1; font-size: 0.68rem; font-weight: 800; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--text-muted); }}
+  .metric-body {{ padding: 2px 16px 14px 40px; border-top: 1px solid var(--border); padding-top: 10px; }}
+  .metric-body p {{ margin: 0; font-size: 0.83rem; color: var(--text); }}
+  details.metric.gaps .metric-body ul {{ margin: 0; padding-left: 16px; font-size: 0.82rem; }}
+  details.metric.gaps .metric-body li {{ margin-bottom: 5px; }}
+  details.metric.gaps .metric-body li:last-child {{ margin-bottom: 0; }}
 
   .fixed-gaps-wrap {{ margin-bottom: 24px; }}
   details.fixed-gaps {{ background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
@@ -565,20 +569,34 @@ PAGE_TEMPLATE = """<title>{project} Build Tracker</title>
   </header>
 
   <section class="metrics">
-    <div class="metric">
-      <div class="eyebrow"><span class="dot" style="background:var(--success)"></span>Just closed</div>
-      <p>{just_closed}</p>
-    </div>
-    <div class="metric">
-      <div class="eyebrow"><span class="dot" style="background:var(--accent)"></span>Up next</div>
-      <p>{up_next}</p>
-    </div>
-    <div class="metric gaps">
-      <div class="eyebrow"><span class="dot" style="background:var(--warn)"></span>Known gaps</div>
-      <ul>
+    <details class="metric" open>
+      <summary>
+        {chev_small}
+        <span class="dot" style="background:var(--success)"></span>
+        <span class="eyebrow-text">Just closed</span>
+      </summary>
+      <div class="metric-body"><p>{just_closed}</p></div>
+    </details>
+    <details class="metric" open>
+      <summary>
+        {chev_small}
+        <span class="dot" style="background:var(--accent)"></span>
+        <span class="eyebrow-text">Up next</span>
+      </summary>
+      <div class="metric-body"><p>{up_next}</p></div>
+    </details>
+    <details class="metric gaps" open>
+      <summary>
+        {chev_small}
+        <span class="dot" style="background:var(--warn)"></span>
+        <span class="eyebrow-text">Known gaps</span>
+      </summary>
+      <div class="metric-body">
+        <ul>
 {gaps_html}
-      </ul>
-    </div>
+        </ul>
+      </div>
+    </details>
   </section>
 
 {fixed_gaps_html}
@@ -629,6 +647,7 @@ def render_html(tracker: Tracker, project: str) -> str:
     return PAGE_TEMPLATE.format(
         project=html.escape(project, quote=False),
         commit=tracker.commit,
+        chev_small=CHEV_SMALL,
         just_closed=inline_md(tracker.just_closed),
         up_next=inline_md(tracker.up_next),
         gaps_html=gaps_html,
