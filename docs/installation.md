@@ -14,17 +14,21 @@ install a pre-built wheel, or build one yourself from source.
 ## Option 1: install a released wheel
 
 Every [tagged release](https://github.com/mindderivative/tre/releases)
-publishes real, verified wheels — portable `manylinux_2_17`/`manylinux2014`
-wheels for Linux, `arm64` wheels for macOS, and wheels for Windows — built
-across CPython 3.9–3.15 (including the free-threaded `3.14t`/`3.15t`
-builds) and PyPy 3.11, plus a source distribution.
+publishes real, verified wheels — portable `manylinux_2_17`/
+`manylinux2014` wheels for Linux (built inside the real manylinux
+Docker container, not just locally repaired), `arm64` wheels for
+macOS, and wheels for Windows — built across CPython 3.9–3.14, plus a
+source distribution. The GitHub Release also carries a standalone,
+non-wheel-packaged Linux/CPython 3.14 extension module (`_core.
+cpython-314-x86_64-linux-gnu.so`) for tooling that consumes the
+compiled module directly rather than through `pip`.
 
 Download the wheel matching your platform and interpreter from the
 [latest release](https://github.com/mindderivative/tre/releases/latest)
 and install it directly:
 
 ```bash
-pip install ./tre-0.2.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+pip install ./tre-0.3.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
 ```
 
 !!! note

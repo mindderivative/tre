@@ -36,6 +36,14 @@ on:
   push:
     tags: ["v*"]
 
+# M69 (§13): a real publish step needs `contents: write` to attach
+# release assets -- absent before this milestone, every job here ran
+# under the default read-only token, which was fine when every job's
+# own last step was `actions/upload-artifact` (CI-internal, ephemeral),
+# never anything that reaches the Release itself.
+permissions:
+  contents: write
+
 jobs:
   linux:
     runs-on: ubuntu-latest
@@ -68,7 +76,13 @@ jobs:
     runs-on: macos-latest
     strategy:
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        # M69 (§13): `3.14` added -- this project's own real dev
+        # environment (confirmed via `.venv`) is already on 3.14, but
+        # the matrix itself had never been widened past `3.13` to
+        # match, a real gap found while scoping the standalone `.so`
+        # asset below (which only makes sense built for a version the
+        # matrix itself also ships).
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -87,7 +101,8 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        # M69 (§13): same real gap and fix as the `macos` job above.
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -118,3 +133,78 @@ jobs:
         with:
           name: sdist
           path: dist/*.tar.gz
+
+  # M69 (§13): a standalone, non-wheel-packaged Python extension
+  # module -- for the separate `Tesserae` UI framework project's own
+  # direct consumption (dropped straight into a vendored `tre/`
+  # package directory), not for portable redistribution to arbitrary
+  # end-user Linux, so this deliberately does NOT run inside the
+  # `linux` job's manylinux container above -- that container's whole
+  # purpose (auditwheel-repaired, portable across glibc versions) is
+  # moot for an asset Tesserae's own matching dev environment consumes
+  # directly. `cargo build -p engine-py --features pyo3/extension-
+  # module` is the real, direct way to get `engine-py`'s raw `cdylib`
+  # without maturin's own wheel-packaging step at all (confirmed via
+  # local investigation: byte-identical to maturin's own intermediate,
+  # `target/maturin/libengine_py.so`; maturin itself has no flag to
+  # stop short of building the wheel). `3.14`, not the matrix's older
+  # versions -- this project's own real dev environment (and
+  # Tesserae's), confirmed via `.venv`, matching the version the
+  # `macos`/`windows` matrix above was just widened to include.
+  standalone-so:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install Linux build dependencies
+        # Same real fontconfig-dev requirement ci.yml's own Linux
+        # `test` job already documents -- this is a plain Ubuntu
+        # runner (not the `linux` job's manylinux container above), so
+        # the ordinary `apt-get` path applies directly, no `yum`/`dnf`
+        # fallback needed.
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+      - name: Build the raw extension module
+        run: cargo build --release -p engine-py --features pyo3/extension-module
+      - name: Name it the real CPython import-name maturin already uses locally
+        # Matches exactly what `maturin develop` drops into `python/
+        # tre/` on a real Linux x86_64/CPython 3.14 dev machine (see
+        # `.gitignore`'s own comment naming this exact filename) --
+        # Tesserae can drop this asset straight into a vendored `tre/`
+        # package directory with zero renaming.
+        run: cp target/release/libengine_py.so _core.cpython-314-x86_64-linux-gnu.so
+      - uses: actions/upload-artifact@v4
+        with:
+          name: standalone-so
+          path: _core.cpython-314-x86_64-linux-gnu.so
+
+  # M69 (§13): the real publish step this project has never had --
+  # v0.1.0/v0.2.0's own release assets were attached by hand (`gh
+  # release create`/`gh release upload`, confirmed via investigation to
+  # have no automation anywhere in this repo's history). Downloads
+  # every artifact the jobs above uploaded and attaches them to the
+  # Release for the pushed tag in one step. `softprops/action-gh-
+  # release` both creates the Release (if the tag doesn't already have
+  # one) and uploads to it -- no separate `gh release create` step
+  # needed, and no existing precedent in this repo to match, so this is
+  # the standard, well-maintained choice for this exact job, picked
+  # cold. `generate_release_notes: true` since this repo has no
+  # `CHANGELOG.md` to source notes from instead.
+  publish:
+    needs: [linux, macos, windows, sdist, standalone-so]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Flatten the per-job artifact directories
+        run: |
+          mkdir -p release
+          find dist -type f \( -name '*.whl' -o -name '*.tar.gz' -o -name '*.so' \) -exec cp {} release/ \;
+          ls -la release
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+          prerelease: false

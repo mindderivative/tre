@@ -1,102 +1,95 @@
-# LOG — M68: Documentation Refresh: Full Content Pass
+# LOG — M69: Release Engineering: Automated Publish + Standalone `.so` (v0.3.0)
 
-- User-directed: before shifting focus to the separate Tesserae UI
-  framework project, "I want all documentation updated to match the
-  current scope of the project. I want the MkDocs updated to reflect
-  the current scope of the project" -- clarified via `AskUserQuestion`
-  as a full content pass, not a targeted currency fix. Two parallel
-  Explore agents investigated first: one audited every page under
-  `docs/` against the current codebase, finding the site's content
-  frozen at roughly milestone 27 ("27 milestones... as of v0.2.0")
-  while the project is now at M67 and the real MD3 component catalog
-  has grown to 56 factories -- `docs/guide/components.md` covered 5,
-  with Terminal, CodeEditor, and every overlay lifecycle method
-  (`open_dialog`/`close_dialog`, `open_menu`/`close_menu`,
-  `open_navigation_drawer`, `open_side_sheet`, `open_snackbar`)
-  undocumented anywhere.
+- User-directed, same request as M68: "I want to build a release and
+  as part of the normal release I want a single .so library release
+  created. Tesserae will use the .so library of tre." Clarified via
+  `AskUserQuestion`: version 0.3.0; the `.so` is a standalone compiled
+  extension module attached directly as its own GitHub Release asset,
+  not an `abi3` packaging switch (which would reverse `ARCHITECTURE.
+  md`'s own recorded "per-version wheels, no abi3" decision -- full
+  PyO3 API access was the stated reason for that choice).
 
 ## What shipped (single milestone, both phases)
 
-1. `docs/guide/components.md` fully rewritten: all 56 real
-   `Window.add_*` factories, organized into 12 real usage categories
-   (Buttons & Actions, Selection & Input, Text Fields/Code Editor/
-   Terminal, Progress & Status, Navigation & Shell Composition,
-   Overlays, Cards/Lists/Chips/Structural Rows, Search, Media &
-   Graphics, Date & Time Pickers, Layout & Structure, Theming) instead
-   of the prior 5 hand-picked "hero" components -- real signatures
-   extracted programmatically via a Python regex pass over
-   `window_factory.rs`'s own `#[pyo3(signature = ...)]` attributes (56
-   matched), not hand-copied or invented. Also documents the overlay
-   lifecycle methods that existed in the real source but appeared in
-   no doc anywhere before this.
-2. `docs/guide/declarative-views.md`'s `style:` table widened for the
-   real current `StyleSpec` fields shipped across M48-M61 (per-side
-   padding/margin, flex-grow/shrink/basis, align-items/justify-content,
-   border kwargs, token-ref `corner_radius`/`elevation` with the real
-   `engine_md3::shape` vocabulary) -- its `kind:` list (`Rect`,
-   `Container`, `Text`, `Checkbox`, `Slider`, `TextField`, `Image`) was
-   verified **already correct** against `engine-spec/src/spec.rs`'s
-   real `NodeKindSpec` enum rather than assumed stale and widened
-   incorrectly; the declarative YAML layer is deliberately scoped to 7
-   primitive kinds, and new docs needed to not imply otherwise.
-3. `docs/guide/theming-and-accessibility.md` gained two entirely new
-   sections -- shape/elevation token theming and typography theming --
-   that had zero coverage before, despite both being real, shipped
-   systems (M61-M63).
-4. `docs/guide/docking-and-shell.md` gained a "Shell chrome widgets"
-   section covering Tabs/NavigationRail/NavigationDrawer/Toolbar/
-   TopAppBar/StatusBar alongside the existing dock/splitter/
-   container-transform content.
-5. `docs/guide/imperative-api.md` and `docs/api/python/window.md`/
-   `node.md` widened: the real primitive factory table (pointing to
-   `components.md` for the full catalog rather than a third duplicate
-   table), the real `Event` payload's actual fields, `on_focus_enter`/
-   `on_focus_exit`, `set_syntax_spans`/`set_folded_ranges`/
-   `push_frame`/`set_clip_children`, and a new Overlays + Terminal
-   section on `window.md`.
-6. `docs/index.md`/`README.md`/`docs/architecture.md`: stale milestone
-   counts corrected, feature lists widened to name the real 56-factory
-   catalog, typography/shape theming, and layout/styling API breadth
-   that were built but unmentioned. `ARCHITECTURE.md` §13's stale
-   "Packaging (later, not needed for early development)" heading
-   corrected to state the wheel matrix has existed since M21 -- the
-   *new* automated-release mechanism itself is left for M69 to
-   document, once it exists.
-- **Two real errors caught and fixed during the writing itself, not
-  just at plan time** -- the same "verify before documenting" discipline
-  this project applies to code, applied here to prose: an early draft
-  claimed `Event.source` was a `"mouse"`/`"keyboard"`/`"synthetic"`
-  string; a direct read of `crates/engine-py/src/event.rs` found it's
-  actually a stable, opaque `u64` node identity, unrelated to input
-  source (`.node`, a separate field, is the live `Node` handle). A
-  second early draft invented a `node.scroll_terminal(...)` method;
-  grepping the real source found no such method exists anywhere --
-  terminal scrolling is pure mouse-wheel input dispatch, and
-  `resize_terminal`/`get_monospace_cell_size`/`copy_terminal_selection`
-  are real `Window`-level methods, not `Node`-level as the plan had
-  assumed. Both caught and fixed before anything was committed.
-- Verification: `mkdocs build --strict` caught 6 real broken anchor
-  links in `window.md` pointing at `components.md`'s old per-component
-  headers (`#checkbox`, `#slider`, etc.), which the category-based
-  rewrite removed -- fixed to the new category anchors, confirmed via
-  the built site's own generated `<h2 id=...>` values, then a clean
-  rebuild with zero warnings. Every non-trivial new Python snippet
-  (buttons, overlays, the search-bar 4-tuple return, code editor
-  folding/syntax spans, terminal spawn plus all 3 window-level
-  terminal methods, carousel, badge, video `push_frame`,
-  `set_clip_children`, focus handlers, and the `Event` payload's real
-  fields) was actually run against the real built `tre` module in this
-  session -- every one passed exactly as documented. Docs-only
-  milestone, so the Rust/pytest verification chain doesn't apply.
+1. Real investigation found no release has ever been published by
+   automation -- `13bfc7f` ("Phase 21: Release prep for v0.1.0 alpha")
+   explicitly reserved tagging/`gh release create` for separate human
+   authorization, and both v0.1.0 and v0.2.0 were created entirely by
+   hand. `wheels.yml` built the real wheel matrix but only ever did
+   `actions/upload-artifact` -- CI-internal, ephemeral, never reaching
+   the Release itself.
+2. Version bumped: `Cargo.toml` workspace version + `pyproject.toml`,
+   0.2.0 → 0.3.0, mirroring `019e7d4`'s exact prior pattern.
+   `Cargo.lock` regenerated via `cargo check`.
+3. `wheels.yml` widened: `3.14` added to the `macos`/`windows` jobs'
+   Python-version matrix -- a real gap found while scoping the
+   standalone `.so`: this project's own dev environment (Python 3.14.7,
+   confirmed via `.venv`) had drifted ahead of what the matrix itself
+   covered.
+4. New `standalone-so` job: builds `engine-py`'s raw compiled
+   extension module directly via `cargo build --release -p engine-py
+   --features pyo3/extension-module` (confirmed locally, before
+   committing to it as a CI step, to produce a `.so` byte-identical to
+   maturin's own intermediate) -- bypassing maturin's wheel packaging
+   entirely, since this asset is for the separate Tesserae UI
+   framework project's own direct consumption on a matching dev
+   environment, not portable end-user redistribution, so it
+   deliberately runs on a plain `ubuntu-latest` runner rather than
+   inside the `linux` job's manylinux container. Named the real
+   CPython import-name maturin already uses locally (`_core.
+   cpython-314-x86_64-linux-gnu.so`, confirmed via `.gitignore`'s own
+   comment), so Tesserae can drop it straight into a vendored `tre/`
+   package directory with zero renaming.
+5. New `publish` job: `needs: [linux, macos, windows, sdist,
+   standalone-so]`, top-level `permissions: contents: write` added
+   (absent before -- every prior job ran under the default read-only
+   token), `softprops/action-gh-release@v2` (no existing precedent in
+   this repo to match, picked cold as the standard, well-maintained
+   choice) downloads every artifact and attaches them to the pushed
+   tag's Release in one step, `generate_release_notes: true` since
+   this repo has no `CHANGELOG.md` to source notes from instead.
+6. `ARCHITECTURE.md` §13 gained a new "Built (Milestone 69, both
+   phases)" paragraph describing this real, now-automated mechanism,
+   alongside the existing M21 wheel-matrix paragraph M68 already
+   corrected.
+- **A second real, pre-existing inaccuracy caught during Phase 2
+  verification, unrelated to what M68 already covered:**
+  `docs/installation.md` claimed the release matrix builds CPython
+  3.9-3.15 including free-threaded `3.14t`/`3.15t` builds and PyPy
+  3.11 -- none of which `wheels.yml` has ever built (no PyPy job, no
+  free-threaded feature anywhere in the workflow). Fixed alongside
+  this milestone's own real matrix widening, since it's the identical
+  §13 packaging surface this milestone already touches.
+- Verification: `cargo check`/`clippy -D warnings`/`fmt --check`
+  clean; `cargo test --workspace --release` -- every crate's own test
+  count unchanged (engine-core 229, engine-md3 24, engine-platform 11,
+  engine-py 30, engine-render 34, engine-spec 83), real, direct proof
+  the version bump introduced zero behavior change; `maturin develop
+  --release` (installed `tre` 0.3.0); `pytest tests/` 831 passed, 2
+  skipped, unchanged; every file in `examples/` ran clean; `demo/
+  showcase.py` all 5 phases, exit 0. Workflow YAML validated by
+  parsing it with `yaml.safe_load` (confirms the job graph, `needs:`,
+  and `permissions:` block are all structurally correct) plus a direct
+  manual review -- there's no way to trigger a real GitHub Actions run
+  from here without actually pushing. `mkdocs build --strict` re-run
+  clean, 0 warnings, after the `installation.md` fix.
 
 ## Status
 
-**M68 is complete, both phases.** All documentation -- the MkDocs
-site, `README.md`, and `ARCHITECTURE.md`'s stale operational claims --
-now reflects the project's real current scope, with every non-trivial
-new code example verified against the real build rather than
-eyeballed. Committing locally now; push deferred pending explicit user
-confirmation.
+**M69 is complete, both phases.** Both items from the user's "before
+we shift focus to Tesserae" request -- M68's documentation refresh and
+M69's release engineering -- are now done and committed locally.
+Committing this milestone now; push deferred pending explicit user
+confirmation, per standing policy.
 
-Next: M69 (Release Engineering: automated publish + standalone `.so`,
-v0.3.0) -- the last item before shifting focus to Tesserae.
+**Gated, separate from this local commit:** pushing the accumulated
+local commits and tagging/pushing `v0.3.0` -- which triggers the real
+publish workflow for the first time in this project's history -- waits
+on a final, separate, explicit confirmation, distinct from this
+conversation's broader "build a release" authorization. Matching this
+project's own standing policy, the same one the archived Phase-21
+commit itself named for v0.1.0.
+
+Next: nothing currently scoped. Further work is the user's to direct
+-- most likely the start of the separate Tesserae UI framework project
+itself, once the release is confirmed and pushed.
