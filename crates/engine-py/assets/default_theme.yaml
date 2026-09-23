@@ -67,6 +67,13 @@ components:
   time_input_field: {corner_radius: 8}
   period_selector: {corner_radius: 8}
   spin_box: {corner_radius: 8}
+  # M58: narrowed scope, not a value change -- this now covers only
+  # `add_pagination`'s own numbered page items. `previous`/`next` used
+  # to share this same key too (a real, confirmed inconsistency with
+  # every other icon-button-shaped element in this catalog); they now
+  # consult `icon_button` instead, which deliberately has no entry here
+  # (see the formula-based-default note above), so they fall to their
+  # own real `PAGE_ITEM_SIZE / 2.0` default unless a theme sets one.
   pagination: {corner_radius: 20}
   tabs.indicator: {corner_radius: 3}
   badge.dot: {corner_radius: 3}

@@ -1326,18 +1326,31 @@ fn divider_retheme_hook(id: NodeId) -> crate::window::RetitheHook {
     })
 }
 
-/// M52 Phase 2: `add_tooltip`'s own hook -- only `corner_radius` is
-/// theme-resolved (a real, confirmed, pre-existing M49-era gap, not
-/// fixed by this milestone: `add_tooltip`'s own container/label colors
-/// are hardcoded `Md3Baseline` constants with no `theme.role(...)` call
-/// at all). This hook correctly does strictly less than its siblings.
-fn tooltip_retheme_hook(container: NodeId) -> crate::window::RetitheHook {
+/// M58 (§7.1): `add_tooltip`'s own hook, now also resolving container/
+/// label colors -- M52's own real, confirmed gap (only `corner_radius`
+/// was theme-resolved; the colors were hardcoded `Md3Baseline`
+/// constants with no `theme.role(...)` call at all) closed here,
+/// mirroring `add_tooltip`'s own now-fixed construction-time logic.
+fn tooltip_retheme_hook(container: NodeId, label: NodeId) -> crate::window::RetitheHook {
     Box::new(move |theme, tree| {
         let corner_radius = theme
             .shape("tooltip", None)
             .unwrap_or(TOOLTIP_CORNER_RADIUS);
+        let role = |name: &str, fallback: Color| -> Color {
+            if theme.is_set() {
+                theme.role(name).unwrap_or(fallback)
+            } else {
+                fallback
+            }
+        };
         if let Some(node) = tree.get_mut(container) {
             node.paint.corner_radius = Animated::new(corner_radius);
+            node.paint.background =
+                Animated::new(role("inverse_surface", Md3Baseline::INVERSE_SURFACE));
+        }
+        if let Some(node) = tree.get_mut(label) {
+            node.paint.background =
+                Animated::new(role("inverse_on_surface", Md3Baseline::INVERSE_ON_SURFACE));
         }
     })
 }
@@ -1501,14 +1514,14 @@ fn period_selector_retheme_hook(
     })
 }
 
-/// M52 Phase 2: `add_time_input_field`'s own hook -- `TextFieldState.
-/// text_tint` is a plain field, not `Animated`, written directly.
-/// `text_tint` reads `theme.on_surface()` unconditionally, without an
-/// `is_set()` gate -- a real, pre-existing minor inconsistency vs.
-/// `add_text_field`/`add_code_editor` (both gate it), confirmed
-/// harmless (`on_surface()` has its own safe no-theme-set default
-/// built in) and deliberately reproduced as-is here, not silently
-/// "fixed" as part of this milestone's own narrower scope.
+/// M52 Phase 2 (widened M58, §7.1): `add_time_input_field`'s own hook
+/// -- `TextFieldState.text_tint` is a plain field, not `Animated`,
+/// written directly. This hook's own unconditional `theme.on_surface()`
+/// read needs no `is_set()` gate -- it only ever runs from `set_theme`,
+/// at which point a theme is always set -- but M58 gated the real,
+/// separate un-themed-at-construction-time path in `add_time_input_
+/// field` itself, matching `add_text_field`/`add_code_editor`'s own
+/// established convention.
 fn time_input_field_retheme_hook(id: NodeId) -> crate::window::RetitheHook {
     Box::new(move |theme, tree| {
         let container_color = if theme.is_set() {
@@ -2693,17 +2706,17 @@ fn tabs_retheme_hook(
     })
 }
 
-/// M52 Phase 4: `add_search_bar`'s own hook -- **a real, pre-existing
-/// inconsistency reproduced as-is, not silently fixed:** the leading/
-/// trailing icon-button containers' own `corner_radius` is a hardcoded
-/// `SEARCH_ICON_BUTTON_SIZE / 2.0` literal at construction time, never
-/// looked up via `theme.shape("icon_button", ...)` the way `add_top_
-/// app_bar`/`add_spin_box`'s own visually-identical icon buttons are --
-/// so this hook correctly never touches their `corner_radius` at all,
-/// only their `IconState.tint`. `field_id`'s own `text_tint` reads
-/// `on_surface()` unconditionally (no `is_set()` gate), the same minor
-/// pre-existing pattern `add_time_input_field`'s hook already
-/// reproduces as-is.
+/// M58 (§7.1): `add_search_bar`'s own hook, now also re-resolving the
+/// leading/trailing icon-button containers' own `corner_radius` via
+/// `theme.shape("icon_button", ...)` -- M52's own real, confirmed,
+/// then-reproduced-as-is inconsistency (a hardcoded `SEARCH_ICON_
+/// BUTTON_SIZE / 2.0` literal, never looked up the way `add_top_app_
+/// bar`/`add_spin_box`'s own visually-identical icon buttons already
+/// are) closed here, mirroring `add_search_bar`'s own now-fixed
+/// construction-time resolution. `field_id`'s own `text_tint` still
+/// reads `on_surface()` unconditionally (no `is_set()` gate) --
+/// unchanged, out of this milestone's own approved scope (only `add_
+/// time_input_field`'s equivalent gate was approved).
 fn search_bar_retheme_hook(
     bar: NodeId,
     field: NodeId,
@@ -2732,6 +2745,9 @@ fn search_bar_retheme_hook(
         let elevation = theme
             .elevation("search_bar", None)
             .unwrap_or(SEARCH_BAR_ELEVATION);
+        let icon_button_corner_radius = theme
+            .shape("icon_button", None)
+            .unwrap_or(SEARCH_ICON_BUTTON_SIZE as f64 / 2.0);
         if let Some(node) = tree.get_mut(bar) {
             node.paint.background = Animated::new(container_color);
             node.paint.corner_radius = Animated::new(corner_radius);
@@ -2742,13 +2758,20 @@ fn search_bar_retheme_hook(
         {
             state.text_tint = theme.on_surface();
         }
-        if let Some((_, icon)) = leading
-            && let Some(node) = tree.get_mut(icon)
-            && let NodeKind::Icon(state) = &mut node.kind
-        {
-            state.tint = leading_icon_color;
+        if let Some((container, icon)) = leading {
+            if let Some(node) = tree.get_mut(container) {
+                node.paint.corner_radius = Animated::new(icon_button_corner_radius);
+            }
+            if let Some(node) = tree.get_mut(icon)
+                && let NodeKind::Icon(state) = &mut node.kind
+            {
+                state.tint = leading_icon_color;
+            }
         }
-        for &(_, icon) in &trailing {
+        for &(container, icon) in &trailing {
+            if let Some(node) = tree.get_mut(container) {
+                node.paint.corner_radius = Animated::new(icon_button_corner_radius);
+            }
             if let Some(node) = tree.get_mut(icon)
                 && let NodeKind::Icon(state) = &mut node.kind
             {
@@ -2758,13 +2781,13 @@ fn search_bar_retheme_hook(
     })
 }
 
-/// M52 Phase 4: `add_pagination`'s own hook, closing Phase 4 -- **a
-/// real, pre-existing inconsistency reproduced as-is:** `previous`/
-/// `next`'s own corner_radius shares the *same* single `"pagination"`
-/// key every page item uses, not the `"icon_button"` key
-/// `add_top_app_bar`/`add_spin_box`'s own visually-identical icon
-/// buttons use -- confirmed at construction time and reproduced
-/// unchanged here, not silently "fixed" to a different key.
+/// M58 (§7.1): `add_pagination`'s own hook -- `previous`/`next` now
+/// re-resolve via the `"icon_button"` key instead of sharing
+/// `"pagination"` with the numbered page items, closing M52's own
+/// real, confirmed, then-reproduced-as-is inconsistency (`add_top_
+/// app_bar`/`add_spin_box`'s own visually-identical icon buttons
+/// already used `"icon_button"`). The numbered page items themselves
+/// are deliberately unchanged, still `"pagination"`.
 /// `is_selected` is real, app-owned state, captured at construction.
 fn pagination_retheme_hook(
     previous: NodeId,
@@ -2784,12 +2807,15 @@ fn pagination_retheme_hook(
         let selected_fill = role(theme, "primary", Md3Baseline::PRIMARY);
         let selected_label = role(theme, "on_primary", Md3Baseline::ON_PRIMARY);
         let on_surface_variant = role(theme, "on_surface_variant", Md3Baseline::ON_SURFACE_VARIANT);
-        let corner_radius = theme
+        let icon_button_corner_radius = theme
+            .shape("icon_button", None)
+            .unwrap_or(PAGE_ITEM_CORNER_RADIUS);
+        let pagination_corner_radius = theme
             .shape("pagination", None)
             .unwrap_or(PAGE_ITEM_CORNER_RADIUS);
         for button in [previous, next] {
             if let Some(node) = tree.get_mut(button) {
-                node.paint.corner_radius = Animated::new(corner_radius);
+                node.paint.corner_radius = Animated::new(icon_button_corner_radius);
             }
         }
         for icon in [previous_icon, next_icon] {
@@ -2807,7 +2833,7 @@ fn pagination_retheme_hook(
             };
             if let Some(node) = tree.get_mut(item) {
                 node.paint.background = Animated::new(fill);
-                node.paint.corner_radius = Animated::new(corner_radius);
+                node.paint.corner_radius = Animated::new(pagination_corner_radius);
             }
             if let Some(node) = tree.get_mut(label) {
                 node.paint.background = Animated::new(label_color);
@@ -2816,15 +2842,36 @@ fn pagination_retheme_hook(
     })
 }
 
+/// M58 (§7.1): `build_menu`'s own panel hook -- M52's own real,
+/// confirmed, then-deliberately-unfixed gap (hardcoded `MENU_PANEL_
+/// CORNER_RADIUS`/`MENU_PANEL_ELEVATION` constants, no `theme.shape`/
+/// `elevation` call, no retheme hook at all) closed here, mirroring
+/// `build_menu`'s own now-fixed construction-time resolution.
+fn menu_retheme_hook(panel: NodeId) -> crate::window::RetitheHook {
+    Box::new(move |theme, tree| {
+        let color = if theme.is_set() {
+            theme
+                .role("surface_container")
+                .unwrap_or(Md3Baseline::SURFACE_CONTAINER)
+        } else {
+            Md3Baseline::SURFACE_CONTAINER
+        };
+        let corner_radius = theme
+            .shape("menu", None)
+            .unwrap_or(MENU_PANEL_CORNER_RADIUS);
+        let elevation = theme
+            .elevation("menu", None)
+            .unwrap_or(MENU_PANEL_ELEVATION);
+        if let Some(node) = tree.get_mut(panel) {
+            node.paint.background = Animated::new(color);
+            node.paint.corner_radius = Animated::new(corner_radius);
+            node.paint.elevation = Animated::new(elevation);
+        }
+    })
+}
+
 /// M52 Phase 4: `add_menu_item`'s own hook -- `icon`/`chevron` are each
-/// independently `Option<NodeId>`. **A real, confirmed, pre-existing
-/// gap named but deliberately not fixed here:** `build_menu`'s own
-/// panel (the real consumer of `add_menu_item`, not itself an `add_*`
-/// factory) hardcodes `MENU_PANEL_CORNER_RADIUS`/`MENU_PANEL_ELEVATION`
-/// with no `theme.shape`/`elevation` call at all -- there is nothing
-/// for a retheme hook to recompute for the panel's own shape/elevation
-/// today (only `add_menu_item`'s own real `background` roles are in
-/// scope for this milestone).
+/// independently `Option<NodeId>`.
 fn menu_item_retheme_hook(
     label: NodeId,
     icon: Option<NodeId>,
@@ -4089,15 +4136,27 @@ impl PyWindow {
                 return Err(EngineError::ForeignNode.into());
             }
         }
-        let panel_color = {
+        let (panel_color, panel_corner_radius, panel_elevation) = {
             let theme = self.theme.borrow();
-            if theme.is_set() {
+            let panel_color = if theme.is_set() {
                 theme
                     .role("surface_container")
                     .unwrap_or(Md3Baseline::SURFACE_CONTAINER)
             } else {
                 Md3Baseline::SURFACE_CONTAINER
-            }
+            };
+            // M58 (§7.1): real, confirmed pre-existing gap, closed here
+            // -- the panel's own shape/elevation were plain hardcoded
+            // constants with no `theme.shape`/`elevation` lookup at
+            // all, and no retheme hook existed for it either (unlike
+            // every other real themed factory in this catalog).
+            let panel_corner_radius = theme
+                .shape("menu", None)
+                .unwrap_or(MENU_PANEL_CORNER_RADIUS);
+            let panel_elevation = theme
+                .elevation("menu", None)
+                .unwrap_or(MENU_PANEL_ELEVATION);
+            (panel_color, panel_corner_radius, panel_elevation)
         };
 
         let mut tree = self.tree.borrow_mut();
@@ -4114,12 +4173,7 @@ impl PyWindow {
         let panel = tree.insert(
             NodeKind::Rect,
             panel_style,
-            PaintProperties::new(
-                panel_color,
-                MENU_PANEL_CORNER_RADIUS,
-                MENU_PANEL_ELEVATION,
-                1.0,
-            ),
+            PaintProperties::new(panel_color, panel_corner_radius, panel_elevation, 1.0),
         );
 
         for item in items {
@@ -4128,6 +4182,10 @@ impl PyWindow {
             }
             tree.add_child(panel, item.id);
         }
+        drop(tree);
+        self.retheme_hooks
+            .borrow_mut()
+            .push(menu_retheme_hook(panel));
 
         Ok(self.wrap_node(panel))
     }
@@ -4639,11 +4697,25 @@ impl PyWindow {
     /// `examples/tooltip.py` demonstrates the real end-to-end wiring.
     #[pyo3(signature = (text, width, x=None, y=None))]
     fn add_tooltip(&self, text: &str, width: f32, x: Option<f32>, y: Option<f32>) -> Node {
-        let corner_radius = self
-            .theme
-            .borrow()
+        let theme = self.theme.borrow();
+        let corner_radius = theme
             .shape("tooltip", None)
             .unwrap_or(TOOLTIP_CORNER_RADIUS);
+        // M58 (§7.1): real, confirmed pre-existing M49-era gap, closed
+        // here -- these were hardcoded `Md3Baseline` constants with no
+        // `theme.role(...)` call at all, mirroring `resolve_button_
+        // colors`'s own established "is_set-gated role lookup, baseline
+        // constant as the un-themed fallback" pattern.
+        let role = |name: &str, fallback: Color| -> Color {
+            if theme.is_set() {
+                theme.role(name).unwrap_or(fallback)
+            } else {
+                fallback
+            }
+        };
+        let container_color = role("inverse_surface", Md3Baseline::INVERSE_SURFACE);
+        let label_color = role("inverse_on_surface", Md3Baseline::INVERSE_ON_SURFACE);
+        drop(theme);
         let mut tree = self.tree.borrow_mut();
         let mut container_style = positioned_style(
             Size {
@@ -4665,7 +4737,7 @@ impl PyWindow {
         let container = tree.insert(
             NodeKind::Rect,
             container_style,
-            PaintProperties::new(Md3Baseline::INVERSE_SURFACE, corner_radius, 0.0, 1.0),
+            PaintProperties::new(container_color, corner_radius, 0.0, 1.0),
         );
 
         let label_width = (width - 2.0 * TOOLTIP_HORIZONTAL_PADDING).max(0.0);
@@ -4684,13 +4756,13 @@ impl PyWindow {
                 },
                 ..Default::default()
             },
-            PaintProperties::new(Md3Baseline::INVERSE_ON_SURFACE, 0.0, 0.0, 1.0),
+            PaintProperties::new(label_color, 0.0, 0.0, 1.0),
         );
         tree.add_child(container, label_id);
         drop(tree);
         self.retheme_hooks
             .borrow_mut()
-            .push(tooltip_retheme_hook(container));
+            .push(tooltip_retheme_hook(container, label_id));
         self.wrap_node(container)
     }
 
@@ -7073,7 +7145,7 @@ impl PyWindow {
                 theme.on_surface(),
             )
         };
-        let (corner_radius, elevation) = {
+        let (corner_radius, elevation, icon_button_corner_radius) = {
             let theme = self.theme.borrow();
             (
                 theme
@@ -7082,6 +7154,15 @@ impl PyWindow {
                 theme
                     .elevation("search_bar", None)
                     .unwrap_or(SEARCH_BAR_ELEVATION),
+                // M58 (§7.1): real, confirmed pre-existing gap, closed
+                // here -- these two icon-button containers used to be a
+                // hardcoded `SEARCH_ICON_BUTTON_SIZE / 2.0` literal,
+                // never looked up via `theme.shape("icon_button", ...)`
+                // the way `add_top_app_bar`/`add_spin_box`'s own
+                // visually-identical icon buttons already are.
+                theme
+                    .shape("icon_button", None)
+                    .unwrap_or(SEARCH_ICON_BUTTON_SIZE as f64 / 2.0),
             )
         };
 
@@ -7123,7 +7204,7 @@ impl PyWindow {
                     align_items: Some(AlignItems::CENTER),
                     ..Default::default()
                 },
-                PaintProperties::new(TRANSPARENT, SEARCH_ICON_BUTTON_SIZE as f64 / 2.0, 0.0, 1.0),
+                PaintProperties::new(TRANSPARENT, icon_button_corner_radius, 0.0, 1.0),
             );
             let icon_id = tree.insert(
                 NodeKind::Icon(IconState::new(path, leading_icon_color)),
@@ -7201,7 +7282,7 @@ impl PyWindow {
                     },
                     ..Default::default()
                 },
-                PaintProperties::new(TRANSPARENT, SEARCH_ICON_BUTTON_SIZE as f64 / 2.0, 0.0, 1.0),
+                PaintProperties::new(TRANSPARENT, icon_button_corner_radius, 0.0, 1.0),
             );
             let icon_id = tree.insert(
                 NodeKind::Icon(IconState::new(path, trailing_icon_color)),
@@ -7953,14 +8034,22 @@ impl PyWindow {
     /// convention).
     #[pyo3(signature = (value, x=None, y=None))]
     fn add_time_input_field(&self, value: &str, x: Option<f32>, y: Option<f32>) -> Node {
-        let text_color = self.theme.borrow().on_surface();
         let mut text_field_state = TextFieldState::new(
             value,
             "Roboto".to_string(),
             TIME_DISPLAY_FONT_WEIGHT,
             TIME_DISPLAY_FONT_SIZE,
         );
-        text_field_state.text_tint = text_color;
+        // M58 (§7.1): real, confirmed pre-existing gap, closed here --
+        // this used to read `theme.on_surface()` unconditionally, with
+        // no `is_set()` gate, unlike `add_text_field`/`add_code_editor`'s
+        // own equivalent field. Un-themed output now correctly keeps
+        // `TextFieldState::new`'s own real default (`#1C1B1F`) instead
+        // of silently going pure black -- a real, approved, near-
+        // imperceptible un-themed color change (`AskUserQuestion`).
+        if self.theme.borrow().is_set() {
+            text_field_state.text_tint = self.theme.borrow().on_surface();
+        }
 
         let mut tree = self.tree.borrow_mut();
         let container_color = {
@@ -8503,6 +8592,20 @@ impl PyWindow {
             .borrow()
             .shape("pagination", None)
             .unwrap_or(PAGE_ITEM_CORNER_RADIUS);
+        // M58 (§7.1): real, confirmed pre-existing inconsistency,
+        // closed here -- `previous`/`next` used to share the same
+        // `"pagination"` key every page-number item uses; they now
+        // consult `"icon_button"` instead, matching `add_top_app_bar`/
+        // `add_spin_box`'s own visually-identical icon buttons. The
+        // numbered page items themselves are deliberately unchanged,
+        // still `"pagination"` -- they're not icon-button-shaped, and
+        // unifying them too was never part of this milestone's own
+        // approved scope.
+        let icon_button_corner_radius = self
+            .theme
+            .borrow()
+            .shape("icon_button", None)
+            .unwrap_or(PAGE_ITEM_CORNER_RADIUS);
 
         // A plain, non-capturing `fn` rather than a closure -- shared
         // across this method's own three real call sites (`previous`,
@@ -8566,7 +8669,7 @@ impl PyWindow {
             base_x,
             base_y,
             0.0,
-            corner_radius,
+            icon_button_corner_radius,
         );
 
         let mut pages = Vec::with_capacity(page_count);
@@ -8629,7 +8732,7 @@ impl PyWindow {
             base_x,
             base_y,
             next_offset,
-            corner_radius,
+            icon_button_corner_radius,
         );
 
         drop(tree);

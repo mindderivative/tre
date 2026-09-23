@@ -456,6 +456,42 @@ def test_tooltip_corner_radius_override(tmp_path):
     assert node.get("corner_radius") == pytest.approx(1.0)
 
 
+def test_tooltip_color_resolution_does_not_raise(tmp_path):
+    """M58 (§7.1): `add_tooltip`'s own container/label colors are now
+    theme-resolved (`role("inverse_surface")`/`role("inverse_on_
+    surface")`, real M52-era gap closed) -- no Python-facing color
+    getter exists anywhere in this suite (the same honest limit `test_
+    dialog_override_does_not_raise` already states), so a real,
+    non-default seed genuinely reaching this path without raising is
+    the strongest proof available at this level.
+    """
+    window = Window(width=400, height=400)
+    window.set_theme(seed=(0x00, 0x66, 0x00, 0xFF))
+    window.add_tooltip(text="hi", width=100.0)
+
+
+def test_menu_panel_shape_and_elevation_override(tmp_path):
+    """M58 (§7.1): `build_menu`'s own panel now has a real retheme hook
+    at all (M52's own confirmed gap: it had none) -- both a real,
+    directly-readable construction-time override and its own live-
+    retheme counterpart are provable here, unlike the panel's color.
+    """
+    window = window_with_components(tmp_path, "  menu: {corner_radius: 3, elevation: 5}\n")
+    item = window.add_menu_item(label="hi")
+    panel = window.build_menu([item])
+    assert panel.get("corner_radius") == pytest.approx(3.0)
+    assert panel.get("elevation") == pytest.approx(5.0)
+
+
+def test_window_set_theme_recomputes_an_already_built_menu_panels_shape_live(tmp_path):
+    window = Window(width=400, height=400)
+    item = window.add_menu_item(label="hi")
+    panel = window.build_menu([item])
+    retheme(window, tmp_path, "t.yaml", "  menu: {corner_radius: 3, elevation: 5}\n")
+    assert panel.get("corner_radius") == pytest.approx(3.0)
+    assert panel.get("elevation") == pytest.approx(5.0)
+
+
 def test_dialog_override_does_not_raise(tmp_path):
     # `add_dialog` returns the *scrim* node (its own `corner_radius`/
     # `elevation` always literal `0.0`, a full-window backdrop) -- the
@@ -535,6 +571,31 @@ def test_search_bar_corner_radius_and_elevation_override(tmp_path):
     bar, _field, _leading, _trailing = window.add_search_bar(placeholder="hi", width=300.0)
     assert bar.get("corner_radius") == pytest.approx(6.0)
     assert bar.get("elevation") == pytest.approx(2.0)
+
+
+def test_search_bar_icon_buttons_follow_the_icon_button_key(tmp_path):
+    """M58 (§7.1): the leading/trailing icon-button containers used to
+    hardcode `SEARCH_ICON_BUTTON_SIZE / 2.0`, never consulting
+    `theme.shape("icon_button", ...)` the way `add_top_app_bar`/`add_
+    spin_box`'s own visually-identical icon buttons already do -- a
+    real, confirmed M52-era gap, closed here.
+    """
+    window = window_with_components(tmp_path, "  icon_button: {corner_radius: 9}\n")
+    _bar, _field, leading, trailing = window.add_search_bar(
+        placeholder="hi", width=300.0, leading_icon="search", trailing_icons=["close"]
+    )
+    assert leading.get("corner_radius") == pytest.approx(9.0)
+    assert trailing[0].get("corner_radius") == pytest.approx(9.0)
+
+
+def test_window_set_theme_recomputes_an_already_built_search_bars_icon_buttons_live(tmp_path):
+    window = Window(width=400, height=400)
+    _bar, _field, leading, trailing = window.add_search_bar(
+        placeholder="hi", width=300.0, leading_icon="search", trailing_icons=["close"]
+    )
+    retheme(window, tmp_path, "t.yaml", "  icon_button: {corner_radius: 9}\n")
+    assert leading.get("corner_radius") == pytest.approx(9.0)
+    assert trailing[0].get("corner_radius") == pytest.approx(9.0)
 
 
 def test_search_view_has_its_own_key_distinct_from_dialog(tmp_path):
@@ -641,12 +702,30 @@ def test_spin_box_button_reuses_icon_button_field_has_its_own_key(tmp_path):
     assert field.get("corner_radius") == pytest.approx(5.0)
 
 
-def test_pagination_corner_radius_override_applies_to_arrows_and_pages(tmp_path):
+def test_pagination_corner_radius_override_applies_to_pages_only(tmp_path):
+    """M58 (§7.1): `previous`/`next` no longer share `"pagination"` with
+    the numbered page items -- a real, confirmed, approved fix to a
+    pre-existing inconsistency (they now consult `"icon_button"`,
+    matching every other icon-button-shaped element in this catalog).
+    A `pagination:` override therefore applies only to `pages`.
+    """
     window = window_with_components(tmp_path, "  pagination: {corner_radius: 7}\n")
     previous, pages, next_ = window.add_pagination(page_count=3, current=0)
-    assert previous.get("corner_radius") == pytest.approx(7.0)
     assert pages[0].get("corner_radius") == pytest.approx(7.0)
-    assert next_.get("corner_radius") == pytest.approx(7.0)
+    assert previous.get("corner_radius") != pytest.approx(7.0)
+    assert next_.get("corner_radius") != pytest.approx(7.0)
+
+
+def test_pagination_previous_and_next_follow_icon_button_key(tmp_path):
+    """The real M58 counterpart to the test above: an `icon_button:`
+    override now reaches `previous`/`next` (it never did before this
+    milestone), while leaving the numbered page items alone.
+    """
+    window = window_with_components(tmp_path, "  icon_button: {corner_radius: 11}\n")
+    previous, pages, next_ = window.add_pagination(page_count=3, current=0)
+    assert previous.get("corner_radius") == pytest.approx(11.0)
+    assert next_.get("corner_radius") == pytest.approx(11.0)
+    assert pages[0].get("corner_radius") != pytest.approx(11.0)
 
 
 def test_graph_node_has_its_own_key_distinct_from_card(tmp_path):
@@ -1214,12 +1293,17 @@ def test_window_set_theme_recomputes_an_already_built_search_bars_shape_live(tmp
 
 
 def test_window_set_theme_recomputes_an_already_built_paginations_shape_live(tmp_path):
+    """M58 (§7.1): the live-retheme counterpart to `test_pagination_
+    corner_radius_override_applies_to_pages_only` -- a later `set_theme
+    (custom_theme=...)` call recomputes `pages` from `pagination:` and
+    `previous`/`next` from `icon_button:`, independently.
+    """
     window = Window(width=400, height=400)
     previous, pages, next_ = window.add_pagination(page_count=3, current=0)
-    retheme(window, tmp_path, "t.yaml", "  pagination: {corner_radius: 7}\n")
-    assert previous.get("corner_radius") == pytest.approx(7.0)
+    retheme(window, tmp_path, "t.yaml", "  pagination: {corner_radius: 7}\n  icon_button: {corner_radius: 11}\n")
     assert pages[0].get("corner_radius") == pytest.approx(7.0)
-    assert next_.get("corner_radius") == pytest.approx(7.0)
+    assert previous.get("corner_radius") == pytest.approx(11.0)
+    assert next_.get("corner_radius") == pytest.approx(11.0)
 
 
 def test_window_set_theme_a_second_call_does_not_raise_for_an_already_built_menu_item(tmp_path):
