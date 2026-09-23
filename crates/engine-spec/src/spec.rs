@@ -224,13 +224,27 @@ pub struct TextSpec {
     pub line_height: Option<f32>,
 }
 
-/// Row/Column only -- `taffy::style::FlexDirection` also has
-/// `RowReverse`/`ColumnReverse`, not exposed here since nothing in this
-/// step's own scope needs them; additive to add later.
+/// `Horizontal`/`Vertical` -- deliberately not `taffy::style::
+/// FlexDirection`'s own `Row`/`Column` naming, on real user-directed
+/// feedback: "row"/"column" already have an established, *different*
+/// meaning to anyone coming from spreadsheets/datasheet tools (a real,
+/// common desktop-app background for someone laying out a UI), where a
+/// row is a horizontal line and a column is a vertical one -- which
+/// happens to agree with flexbox's own meaning here, but only by
+/// coincidence a reader can't be expected to already know, not by any
+/// obvious naming logic. `Horizontal`/`Vertical` name the same real
+/// axis directly, with no possible ambiguity. `Horizontal` maps to
+/// taffy's own `FlexDirection::Row` (main axis runs left-to-right);
+/// `Vertical` maps to `FlexDirection::Column` (main axis runs
+/// top-to-bottom) -- see `build.rs::layout_style`'s own match arm. Only
+/// these two are exposed, the same real scope `taffy::style::
+/// FlexDirection`'s own `RowReverse`/`ColumnReverse` variants were
+/// already left out of -- if those are added later, `HorizontalReverse`/
+/// `VerticalReverse` is the naming to match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 pub enum FlexDirectionSpec {
-    Row,
-    Column,
+    Horizontal,
+    Vertical,
 }
 
 /// M59 (§5, §16.3): a `padding`/`margin` value that accepts *either* a
@@ -419,7 +433,7 @@ mod tests {
 id: root
 kind: Container
 style:
-  flex_direction: Row
+  flex_direction: Horizontal
   padding: 12
   gap: 8
 children:
@@ -627,5 +641,43 @@ style: {align_items: Sideways}
 "#;
         let err = parse_view(yaml).expect_err("an unknown align_items keyword must fail to parse");
         assert!(err.to_string().contains("Sideways"));
+    }
+
+    #[test]
+    fn flex_direction_parses_horizontal_and_vertical() {
+        let horizontal = r#"
+id: root
+kind: Container
+style: {flex_direction: Horizontal}
+"#;
+        let vertical = r#"
+id: root
+kind: Container
+style: {flex_direction: Vertical}
+"#;
+        assert_eq!(
+            parse_view(horizontal).unwrap().style.flex_direction,
+            Some(FlexDirectionSpec::Horizontal)
+        );
+        assert_eq!(
+            parse_view(vertical).unwrap().style.flex_direction,
+            Some(FlexDirectionSpec::Vertical)
+        );
+    }
+
+    #[test]
+    fn flex_direction_no_longer_accepts_the_old_row_column_naming() {
+        // Real regression coverage for a deliberate breaking rename
+        // (`Row`/`Column` -> `Horizontal`/`Vertical`, on real user
+        // feedback that "row"/"column" collide with spreadsheet/
+        // datasheet vocabulary) -- proves the old values are rejected,
+        // not silently still accepted alongside the new ones.
+        let yaml = r#"
+id: root
+kind: Container
+style: {flex_direction: Row}
+"#;
+        let err = parse_view(yaml).expect_err("the old Row/Column naming must no longer parse");
+        assert!(err.to_string().contains("Row"));
     }
 }

@@ -4,7 +4,7 @@
 # real Phase 2 pipeline (steps 1-4), not just that it parses.
 id: card
 kind: Container
-style: {flex_direction: Row, padding: 16, gap: 12, width: 300, height: 100}
+style: {flex_direction: Horizontal, padding: 16, gap: 12, width: 300, height: 100}
 children:
   - id: swatch
     kind: Rect
