@@ -73,9 +73,23 @@ pub struct WidgetSpec {
     pub checked: bool,
     /// M14 Phase 3 (§5, §7.3): this widget's own initial `thumb_
     /// position` -- only meaningful for `kind: Slider`, same shape as
-    /// `checked` above.
+    /// `checked` above. Tesserae M27: also reused verbatim for `kind:
+    /// CircularProgress`/`LinearProgress`'s own initial `value` -- both
+    /// real state structs take the identical `f64` progress fraction
+    /// `SliderState::new` does, so a second, parallel field would just
+    /// duplicate this one.
     #[serde(default)]
     pub value: f64,
+    /// Tesserae M27: this widget's own initial hour/minute -- only
+    /// meaningful for `kind: TimePickerDial`, the one primitive among
+    /// this milestone's own 7 that needed a genuinely new field rather
+    /// than reusing `checked`/`value`. Both clamp the same real way
+    /// `TimePickerDialState::new` already does imperatively (`0..=23`/
+    /// `0..=59`), so no extra validation happens here.
+    #[serde(default)]
+    pub hour: u8,
+    #[serde(default)]
+    pub minute: u8,
     /// M22 Phase 2 (§16.1, §5): required (and validated as such at
     /// tree-build time, matching `text`'s own contract) when `kind:
     /// Image`; ignored otherwise.
@@ -142,6 +156,32 @@ pub enum NodeKindSpec {
     TextField,
     Image,
     Icon,
+    /// Tesserae M27: real Tesserae-side scoping (its own `BUILD_
+    /// TRACKER.md` M26) sized all 7 of these against their real
+    /// `engine-core` constructors before this landed -- `Link` reuses
+    /// `text:` verbatim (`build.rs`'s own `NodeKindSpec::Link` arm is
+    /// identical in shape to `Text`'s, just a different `NodeKind`).
+    Link,
+    /// `checked` (already real, `Checkbox`'s own field) doubles as this
+    /// kind's initial `selected` -- both are a plain `bool`, the
+    /// identical value `RadioButtonState::new` takes.
+    RadioButton,
+    /// `checked` doubles as this kind's initial `on`, the identical
+    /// real reuse `RadioButton` above makes.
+    Switch,
+    /// `value` (already real, `Slider`'s own field) doubles as this
+    /// kind's initial progress fraction.
+    CircularProgress,
+    /// `value` doubles as this kind's initial progress fraction, the
+    /// identical real reuse `CircularProgress` above makes.
+    LinearProgress,
+    /// No `WidgetSpec` field of its own -- `style.width`/`height` feed
+    /// `LoadingIndicatorState::new` directly, the identical real shape
+    /// `add_loading_indicator`'s own `size` param already has.
+    LoadingIndicator,
+    /// The one real exception among these 7 -- needs the new `hour`/
+    /// `minute` fields above, not a reuse of an existing one.
+    TimePickerDial,
 }
 
 /// M22 Phase 2 (§16.1, §5): `kind: Image`'s own sibling block, the
