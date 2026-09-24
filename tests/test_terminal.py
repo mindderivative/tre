@@ -94,6 +94,28 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
     finding means this file's one `App.run()` call must stay the only
     one across the whole pytest process, so all three real claims
     share it.
+
+    **M83: a real, CI-observed flake fixed here, not just a local
+    tuning tweak.** `max_frames` forces `ControlFlow::Poll` with zero
+    per-frame pacing (`engine-platform/src/lib.rs`'s own `still_
+    animating = real_still_animating || win.max_frames.is_some()`) --
+    a bounded run spins through its whole frame budget as fast as the
+    machine can issue redraws, never really waiting on real terminal
+    activity. On a fast, idle dev machine, 60 such frames still take
+    enough real wall-clock time for the OS to interleave the shell
+    process in. On CI (a debug, non-`--release` build, on a shared,
+    already-acknowledged-noisy-neighbor `ubuntu-latest` runner --
+    `ci.yml`'s own frame-time-benchmark comment says as much elsewhere
+    in this repo), that entire budget can burn through before the
+    shell gets scheduled at all, well before the fork/exec race the
+    pre-Ctrl+C pause below was already trying to cover. Reproduced
+    locally under both a debug build and real, taskset-pinned CPU
+    contention without triggering it (confirmed not a *local*
+    reproduction, only a CI one) -- the fix widens both real-time
+    budgets involved generously rather than guessing at a precise
+    minimum, since `ControlFlow::Poll`'s own zero-cost-when-fast
+    nature means extra headroom here is free on a fast machine and
+    only matters on a slow one.
     """
     window = Window(width=420, height=200)
     term = window.add_terminal(
@@ -123,7 +145,7 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
     # loop above.
     window.type_text("sleep 100")
     window.press_key("enter")
-    time.sleep(0.2)
+    time.sleep(0.5)
     sent = window.press_ctrl("c")
     assert sent is True, "a real focused terminal must report the control byte was sent"
     window.type_text("echo REACHED_AFTER_SIGINT")
@@ -131,7 +153,11 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
 
     app = App()
     app.add_window(window)
-    app.run(max_frames=60)
+    # M83: widened 60 -> 600 -- see this test's own module/function
+    # doc comment for why a small `max_frames` genuinely races real
+    # shell I/O on a slow/CI host under `ControlFlow::Poll`'s zero
+    # per-frame pacing.
+    app.run(max_frames=600)
 
     text = term.get_text()
     assert "REACHED_AFTER_SIGINT" in text, (
