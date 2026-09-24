@@ -27,6 +27,13 @@ image.py` already avoids the same trap: no test or example script in
 this project has an import beyond the standard library and `tre`
 itself (confirmed via grep before writing that script), so this file
 now matches.
+
+M82: `add_image_from_bytes` is `add_image`'s own decode-free sibling
+-- the real primitive `path=` decoding is convenience sugar in front
+of (`window_factory.rs`'s own `insert_image_node`, shared by both).
+Coverage below mirrors `test_video.py`'s own `push_frame` tests
+directly, since both share the identical RGBA-length validation
+(`validate_rgba_frame_len`).
 """
 
 import base64
@@ -113,3 +120,68 @@ def test_add_image_with_an_unknown_fit_raises_a_clear_error(tmp_path):
     window = Window(width=200, height=200)
     with pytest.raises(ValueError, match="unknown content fit"):
         window.add_image(path=str(png_path), width=40, height=40, fit="stretch")
+
+
+def _solid_rgba(width: int, height: int, byte: int) -> bytes:
+    return bytes([byte, 0x00, 0x00, 0xFF]) * (width * height)
+
+
+def test_add_image_from_bytes_returns_a_node():
+    window = Window(width=200, height=200)
+    node = window.add_image_from_bytes(_solid_rgba(4, 2, 0xFF), 4, 2, width=40, height=40)
+    assert isinstance(node, Node)
+
+
+def test_add_image_from_bytes_with_a_wrong_sized_buffer_raises_a_clear_error():
+    window = Window(width=200, height=200)
+    with pytest.raises(ValueError, match="add_image_from_bytes"):
+        window.add_image_from_bytes(b"\x00" * 10, 4, 2, width=40, height=40)
+
+
+def test_add_image_from_bytes_positions_like_every_other_add_method():
+    window = Window(width=200, height=200)
+    node = window.add_image_from_bytes(_solid_rgba(4, 2, 0xFF), 4, 2, width=40, height=40, x=10, y=20)
+    assert isinstance(node, Node)
+
+
+@pytest.mark.parametrize("fit", ["cover", "contain", "fill"])
+def test_add_image_from_bytes_accepts_each_real_fit_value(fit):
+    window = Window(width=200, height=200)
+    node = window.add_image_from_bytes(_solid_rgba(4, 2, 0xFF), 4, 2, width=40, height=40, fit=fit)
+    assert isinstance(node, Node)
+
+
+def test_add_image_from_bytes_defaults_to_fill_when_fit_is_omitted():
+    window = Window(width=200, height=200)
+    node = window.add_image_from_bytes(_solid_rgba(4, 2, 0xFF), 4, 2, width=40, height=40)
+    assert isinstance(node, Node)
+
+
+def test_add_image_from_bytes_with_an_unknown_fit_raises_a_clear_error():
+    window = Window(width=200, height=200)
+    with pytest.raises(ValueError, match="unknown content fit"):
+        window.add_image_from_bytes(_solid_rgba(4, 2, 0xFF), 4, 2, width=40, height=40, fit="stretch")
+
+
+def test_add_image_from_bytes_pixel_dimensions_can_differ_from_the_display_box():
+    """`pixel_width`/`pixel_height` describe the buffer; `width`/`height`
+    are the node's own fixed box -- `add_image`'s identical contract,
+    `content_fit` resolves any mismatch at paint time (`test_video.py`'s
+    own `test_push_frame_can_change_the_frame_resolution` proves the
+    identical mechanism for a node built via `add_video` instead).
+    """
+    window = Window(width=200, height=200)
+    node = window.add_image_from_bytes(_solid_rgba(4, 2, 0xFF), 4, 2, width=160, height=90)
+    assert isinstance(node, Node)
+
+
+def test_add_image_from_bytes_then_push_frame_is_a_real_ordinary_image_node():
+    """The declarative/imperative parity this primitive exists for: a
+    node built via `add_image_from_bytes` is genuinely indistinguishable
+    from one built via `add_video` -- both are `NodeKind::Image` under
+    the hood, so `push_frame` (Video's own live-update path) keeps
+    working on it, the same way it already works on any Image-kind node.
+    """
+    window = Window(width=200, height=200)
+    node = window.add_image_from_bytes(_solid_rgba(4, 2, 0xFF), 4, 2, width=40, height=40)
+    node.push_frame(_solid_rgba(4, 2, 0x80), 4, 2)

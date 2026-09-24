@@ -1013,16 +1013,7 @@ impl Node {
     /// layout involvement at all here, only a real, ordinary content
     /// replacement.
     fn push_frame(&self, rgba: Vec<u8>, width: u32, height: u32) -> PyResult<()> {
-        let expected_len = (width as usize)
-            .checked_mul(height as usize)
-            .and_then(|pixels| pixels.checked_mul(4));
-        if expected_len != Some(rgba.len()) {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "push_frame: rgba has {} bytes, but a {width}x{height} RGBA8 frame needs {}",
-                rgba.len(),
-                expected_len.map_or("too many to represent".to_string(), |n| n.to_string()),
-            )));
-        }
+        validate_rgba_frame_len("push_frame", rgba.len(), width, height)?;
 
         let mut tree = self.tree.borrow_mut();
         let node = tree.get_mut(self.id).expect(
@@ -1578,6 +1569,28 @@ fn parse_justify_content(value: &str) -> PyResult<JustifyContent> {
              \"space_around\", \"space_evenly\""
         ))),
     }
+}
+
+/// M82: shared by `push_frame` and `Window.add_image_from_bytes` --
+/// both accept a caller-decoded, straight-alpha RGBA8 buffer with no
+/// `tre`-side decoding at all, and both need the identical real length
+/// check (and identical error wording) against that contract.
+pub(crate) fn validate_rgba_frame_len(
+    context: &str,
+    rgba_len: usize,
+    width: u32,
+    height: u32,
+) -> PyResult<()> {
+    let expected_len = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4));
+    if expected_len != Some(rgba_len) {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "{context}: rgba has {rgba_len} bytes, but a {width}x{height} RGBA8 frame needs {}",
+            expected_len.map_or("too many to represent".to_string(), |n| n.to_string()),
+        )));
+    }
+    Ok(())
 }
 
 fn kind_name(kind: &NodeKind) -> &'static str {

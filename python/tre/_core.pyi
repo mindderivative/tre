@@ -1453,6 +1453,29 @@ class Window:
         `path` can't be read or decoded.
         """
         ...
+    def add_image_from_bytes(
+        self,
+        rgba: bytes,
+        pixel_width: int,
+        pixel_height: int,
+        width: float,
+        height: float,
+        fit: str = "fill",
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """`add_image`'s decode-free sibling: `rgba` is already-decoded
+        straight-alpha RGBA8 pixels (`pixel_width * pixel_height * 4`
+        bytes exactly, or a clear `ValueError`) -- no file, no `image`
+        crate involved, the caller owns decoding entirely. `width`/
+        `height` are the node's own fixed display box (`add_image`'s
+        identical contract); `pixel_width`/`pixel_height` describe
+        `rgba` itself, and `fit` resolves any mismatch between the two.
+        The node this returns is a real, ordinary `Image` node --
+        `Node.push_frame` keeps working on it afterward, identically to
+        one built via `add_video`.
+        """
+        ...
     def add_video(
         self,
         width: float,

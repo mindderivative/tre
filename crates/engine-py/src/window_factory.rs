@@ -28,7 +28,7 @@ use taffy::prelude::{
 };
 
 use crate::error::EngineError;
-use crate::node::Node;
+use crate::node::{Node, validate_rgba_frame_len};
 use crate::terminal::TerminalSession;
 use crate::window::{PyWindow, positioned_style};
 
@@ -63,6 +63,37 @@ fn parse_content_fit(fit: &str) -> PyResult<ContentFit> {
             "unknown content fit {other:?} -- expected one of \"cover\", \"contain\", \"fill\""
         ))),
     }
+}
+
+/// M82: the shared node-construction primitive `add_image` (path-based
+/// convenience) and `add_image_from_bytes` (the real, decode-free
+/// primitive) both build on, once each has its own `ImageState` ready
+/// -- keeps the tree-insert/`positioned_style`/`add_child` plumbing in
+/// one place instead of duplicated between the two, and makes "`path=`
+/// is a convenience wrapper around the real primitive" true in code.
+fn insert_image_node(
+    tree: &mut Tree,
+    root: NodeId,
+    image_state: ImageState,
+    width: f32,
+    height: f32,
+    x: Option<f32>,
+    y: Option<f32>,
+) -> NodeId {
+    let id = tree.insert(
+        NodeKind::Image(image_state),
+        positioned_style(
+            Size {
+                width: length(width),
+                height: length(height),
+            },
+            x,
+            y,
+        ),
+        PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+    );
+    tree.add_child(root, id);
+    id
 }
 
 /// M30 Phase 9 Step 5 (§5, §7, §11.7): `parse_content_fit`'s own real
@@ -9629,19 +9660,59 @@ impl PyWindow {
         image_state.content_fit = content_fit;
 
         let mut tree = self.tree.borrow_mut();
-        let id = tree.insert(
-            NodeKind::Image(image_state),
-            positioned_style(
-                Size {
-                    width: length(width),
-                    height: length(height),
-                },
-                x,
-                y,
-            ),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
-        );
-        tree.add_child(self.root, id);
+        let id = insert_image_node(&mut tree, self.root, image_state, width, height, x, y);
+        Ok(self.wrap_node(id))
+    }
+
+    /// M82: the real, decode-free primitive `add_image`'s own `image::
+    /// open(path)` convenience wraps -- takes already-decoded, straight
+    /// -alpha RGBA8 pixels directly, the identical contract and
+    /// validation `Node.push_frame` already established (that method's
+    /// own doc comment: "the app decodes however it likes ... PyAV,
+    /// OpenCV, a camera driver, frames generated on the fly"), just
+    /// reachable at construction time under an honest `Image` name
+    /// instead of the `add_video(...)` + `push_frame(...)` two-call
+    /// workaround this replaces. `width`/`height` are the node's own
+    /// fixed display box, `add_image`'s own identical existing contract;
+    /// `pixel_width`/`pixel_height` describe `rgba` itself -- `fit`
+    /// (`content_fit`) resolves any mismatch between the two at paint
+    /// time, the identical real mechanism a pushed video frame of a
+    /// different resolution than its node's box already relies on.
+    /// Shares `insert_image_node` with `add_image` so "`path=` is a
+    /// convenience wrapper around the real primitive" is true in code,
+    /// not just prose.
+    #[pyo3(signature = (rgba, pixel_width, pixel_height, width, height, fit="fill", x=None, y=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn add_image_from_bytes(
+        &self,
+        rgba: Vec<u8>,
+        pixel_width: u32,
+        pixel_height: u32,
+        width: f32,
+        height: f32,
+        fit: &str,
+        x: Option<f32>,
+        y: Option<f32>,
+    ) -> PyResult<Node> {
+        validate_rgba_frame_len(
+            "add_image_from_bytes",
+            rgba.len(),
+            pixel_width,
+            pixel_height,
+        )?;
+        let content_fit = parse_content_fit(fit)?;
+        let image_data = peniko::ImageData {
+            data: peniko::Blob::from(rgba),
+            format: peniko::ImageFormat::Rgba8,
+            alpha_type: peniko::ImageAlphaType::Alpha,
+            width: pixel_width,
+            height: pixel_height,
+        };
+        let mut image_state = ImageState::new(image_data);
+        image_state.content_fit = content_fit;
+
+        let mut tree = self.tree.borrow_mut();
+        let id = insert_image_node(&mut tree, self.root, image_state, width, height, x, y);
         Ok(self.wrap_node(id))
     }
 

@@ -42,6 +42,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M79 — Issue #3 Part C: `View.reconcile(...)`, an Ungated Trigger for a Programmatic Caller (§8, §16.4) | `██████████` 100% | ✅ Complete — single phase (2026-09-24) — closes issue #3 |
 | M80 — `/review-project` of 0.3.1: Multi-Lens Review + Autonomous Fixes | `██████████` 100% | ✅ Complete — single phase (2026-09-24) |
 | M81 — Resolving M80's 3 Deferred Review Items: `json=`, Unified Validation, `spec=` on `instantiate` | `██████████` 100% | ✅ Complete — single phase (2026-09-24) |
+| M82 — `add_image_from_bytes`: a Real, Decode-Free Image-Ingestion Primitive | `██████████` 100% | ✅ Complete — single phase (2026-09-24) |
 
 **Just closed:** M80 — a 4-lens multi-agent review (Performance/Architecture/Security/Modernization) of the full `0.3.1` diff (M71-M79) plus a lighter full-project pass, each raw finding adversarially re-verified against the real current source before being trusted. Security found nothing real. 8 findings confirmed real across the other 3 lenses; 5 fixed directly this milestone, 3 left open for explicit user input (real design/scope decisions, not mechanical).
 
@@ -844,6 +845,27 @@ New `View.reconcile(source=None, spec=None)` -- the ungated sibling. Same `spec`
 - Step 6: `BUILD_TRACKER.md`/tracker/commit, local commit only, on the `0.3.1` branch — ✅ (this section.)
 
 **With this milestone, all 3 items M80 deferred for explicit user input are resolved.**
+
+---
+
+## Milestone 82 — `add_image_from_bytes`: a Real, Decode-Free Image-Ingestion Primitive
+
+**Status: ✅ Complete (2026-09-24).** Grew out of a design conversation, not a bug report: user's own stated architectural principle is that `tre` should offer exactly one real ingestion path per concern (`WidgetSpec` for tree content, decoded pixel data for images/video) and leave *how a framework gets data into that shape* -- file reading, format decoding, network fetch, macro-expansion, change detection -- entirely to the framework; `tre` shouldn't care how the data arrived, only that it matches the shape it expects.
+
+Checked against real source before deciding scope, not assumed: `Window.add_image`/declarative `kind: Image` (`window_factory.rs:9604`, `build.rs:688`) both hardcode `image::open(path)` -- disk read *and* format decode bundled into the one entry point, no way to hand `tre` already-decoded pixels. `Window.add_video`/`Node.push_frame` (`window_factory.rs:9667`, `node.rs:1015`), by contrast, already fully embody the stated principle: `add_video` builds a blank `NodeKind::Image` with zero decoding, and the app pushes real RGBA8 pixels in afterward via `push_frame`, which already works on *any* Image-kind node regardless of how it was constructed. So video needed no fix at all -- it was already the right shape, and became the real precedent the fix for images had to match, not a second problem to solve from scratch.
+
+The gap: no honestly-named, one-call way to construct a *static* `Image` node from already-decoded bytes -- only the `image::open(path)`-forced route, or the semantically confusing `add_video(...)` + `push_frame(...)` two-call workaround (which works today, since both build the identical `NodeKind::Image`, but names the result "Video" for a static image). No declarative-side (`ImageSpec`/`spec=`) change was needed at all: a `spec=`-built `kind: Image` node with no `src:` already produces `ImageState::blank()` (`tre` issue #2's own existing behavior), and `push_frame` already fills it -- the declarative half of this gap closes for free once the imperative primitive exists.
+
+### Phase 1 — Implementation + Tests ✅
+- Step 1: `validate_rgba_frame_len(context, rgba_len, width, height)` (`node.rs`, `pub(crate)`) extracted from `push_frame`'s own inline length check, so the new primitive and `push_frame` share identical validation and error wording — ✅
+- Step 2: `insert_image_node(tree, root, image_state, width, height, x, y)` (`window_factory.rs`, private) extracted from `add_image`'s own tail (the `tree.insert`/`positioned_style`/`add_child` plumbing) so `add_image` (path-based convenience) and the new primitive share the identical node-construction code -- "`path=` is a convenience wrapper around the real primitive" is now true in code, not just prose — ✅
+- Step 3: `Window.add_image_from_bytes(rgba, pixel_width, pixel_height, width, height, fit="fill", x=None, y=None) -> Node` added -- validates `rgba`'s length via Step 1's helper, builds `peniko::ImageData` directly (no `image` crate call at all), then calls Step 2's shared helper. `width`/`height` stay the node's own fixed display box (`add_image`'s identical existing contract); `pixel_width`/`pixel_height` describe the buffer itself, resolved against the box via `fit` exactly as a pushed video frame of a different resolution already is — ✅
+- Step 4: `python/tre/_core.pyi` updated with the new method's full signature and docstring -- verified via `mypy --strict` against the stub and a new script exercising every parameter — ✅
+- Step 5: 10 new real pytest tests in `tests/test_image.py`, mirroring `test_video.py`'s own `push_frame` coverage directly (returns a node, wrong-sized-buffer error, positioning, each real `fit` value, unknown-`fit` error, pixel/box dimension independence) plus one proving the declarative-parity claim directly: a node built via `add_image_from_bytes` accepts a later `push_frame` call without error, the same as one built via `add_video` — ✅
+- Step 6: full verification chain — ✅ (`cargo check`/`clippy -D warnings`/`fmt --check` clean; `cargo test --workspace --release` 0 regressions; `maturin develop --release`; `pytest tests/` 890 passed, 2 skipped, up from 880, +10; `mypy --strict` clean against the stub and a new verification script; `examples/image.py`/`examples/video.py`/`examples/declarative_image.py`/`demo/showcase.py` all ran clean, exit 0.)
+- Step 7: `BUILD_TRACKER.md`/tracker/commit, local commit only, on the `0.3.1` branch — ✅ (this section.)
+
+**Standing plan file updated to match** (`reflective-sleeping-falcon.md`, the Tesserae shift-plan): Part 1c reframed around the already-shipped M76-M81 `spec=`/`json=`/`source=` surface, recommending Tesserae route exclusively through `spec=` and own its own file-watching rather than relying on `tre`'s `ViewWatcher`/`poll_reload()`; Part 3's macro-expansion handoff now hands `tre` a native `spec=` object directly instead of re-serializing to YAML/JSON text; new Part 1d documents this milestone. Not `tre`-scoped work, recorded here only as a pointer since the plan itself lives outside this repo.
 
 ---
 
