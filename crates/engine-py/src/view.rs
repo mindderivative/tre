@@ -953,28 +953,60 @@ impl View {
     // meaningful path of its own. `None` (the default) is the real,
     // pre-existing behavior -- read `path` directly -- unchanged for
     // every caller that doesn't pass it.
+    // tre issue #3, Part A (Tier 1): `spec` is a real Python object
+    // (a dict, shaped like `view.yaml`'s own `WidgetSpec` schema) built
+    // directly by the caller -- Tesserae's own macro-expansion layer,
+    // or any app that wants to compose a tree as native Python data --
+    // with zero YAML-text round trip. Depythonized straight into a real
+    // `WidgetSpec` (`pythonize::depythonize`) and handed to `Reconciler
+    // ::load_spec` (M77), the identical real building/id-recording
+    // logic the YAML-text path already uses. Mutually exclusive with
+    // `source` (both name a real content source; only one is
+    // meaningful). `path` becomes genuinely optional when `spec` is
+    // given -- a purely programmatic view built from a Python dict may
+    // have no real backing file at all, unlike `source`'s own M71
+    // precedent (there, a real file always exists; only its *content*
+    // is pre-processed before this constructor sees it). When `path`
+    // is omitted, `base_dir` resolves to `None` (an `include:`/`image.
+    // src:` inside the spec fails with the same real, clear error it
+    // already would for any other `base_dir: None` case) and
+    // `ViewWatcher` simply doesn't start -- the identical graceful
+    // "no watcher" path an unwatchable real file already takes below,
+    // not a new failure mode.
     #[new]
-    #[pyo3(signature = (path, stylesheet=None, theme_seed=None, dark=false, default_theme=None, custom_theme=None, source=None))]
+    #[pyo3(signature = (path=None, stylesheet=None, theme_seed=None, dark=false, default_theme=None, custom_theme=None, source=None, spec=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
-        path: String,
+        py: Python<'_>,
+        path: Option<String>,
         stylesheet: Option<String>,
         theme_seed: Option<(u8, u8, u8, u8)>,
         dark: bool,
         default_theme: Option<String>,
         custom_theme: Option<String>,
         source: Option<String>,
+        spec: Option<Py<PyAny>>,
     ) -> PyResult<Self> {
-        let yaml = match source {
-            Some(text) => text,
-            None => std::fs::read_to_string(&path).map_err(|e| {
-                PyRuntimeError::new_err(format!("failed to read view {path:?}: {e}"))
-            })?,
-        };
+        if spec.is_some() && source.is_some() {
+            return Err(PyValueError::new_err(
+                "View() cannot take both spec= and source= -- pass one real content source, not two",
+            ));
+        }
+        if spec.is_none() && path.is_none() {
+            return Err(PyValueError::new_err(
+                "View() needs path= unless spec= is given -- a purely programmatic view has no file to name",
+            ));
+        }
+        let path = path.unwrap_or_default();
+
         // M19 Phase 2 (§16.6): an `include:` path is only ever
         // meaningful relative to the file that named it -- `View`'s
         // own directory is the real base every include in this view
         // (and, recursively, every file it includes) resolves against.
+        // `Path::new("").parent()` is `None`, the same real "no base
+        // directory" outcome an explicitly omitted `path` already
+        // means elsewhere in this codebase (`include:`'s own `base_
+        // dir: None` contract).
         let base_dir = std::path::Path::new(&path).parent();
 
         let stylesheet = match stylesheet {
@@ -1001,25 +1033,49 @@ impl View {
         let default_theme_sheet = Some(default_theme_sheet);
 
         let mut tree = Tree::new();
-        let reconciler = Reconciler::load(
-            &mut tree,
-            &yaml,
-            default_theme_sheet.as_ref(),
-            custom_theme_sheet.as_ref(),
-            stylesheet.as_ref(),
-            scheme.as_ref(),
-            base_dir,
-        )
-        .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let spec = parse_view_with_includes(&yaml, base_dir)
+        let (reconciler, spec_for_bindings) = if let Some(spec_obj) = &spec {
+            let widget_spec: WidgetSpec = pythonize::depythonize(spec_obj.bind(py))
+                .map_err(|e| PyValueError::new_err(format!("spec=: {e}")))?;
+            let spec_for_bindings = widget_spec.clone();
+            let reconciler = Reconciler::load_spec(
+                &mut tree,
+                widget_spec,
+                default_theme_sheet.as_ref(),
+                custom_theme_sheet.as_ref(),
+                stylesheet.as_ref(),
+                scheme.as_ref(),
+                base_dir,
+            )
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            (reconciler, spec_for_bindings)
+        } else {
+            let yaml = match source {
+                Some(text) => text,
+                None => std::fs::read_to_string(&path).map_err(|e| {
+                    PyRuntimeError::new_err(format!("failed to read view {path:?}: {e}"))
+                })?,
+            };
+            let reconciler = Reconciler::load(
+                &mut tree,
+                &yaml,
+                default_theme_sheet.as_ref(),
+                custom_theme_sheet.as_ref(),
+                stylesheet.as_ref(),
+                scheme.as_ref(),
+                base_dir,
+            )
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            let spec_for_bindings = parse_view_with_includes(&yaml, base_dir)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            (reconciler, spec_for_bindings)
+        };
 
         let mut bindings = Vec::new();
-        collect_bindings(&spec, &mut bindings);
+        collect_bindings(&spec_for_bindings, &mut bindings);
         let mut declared_handlers = Vec::new();
-        collect_handlers(&spec, &mut declared_handlers);
+        collect_handlers(&spec_for_bindings, &mut declared_handlers);
         let mut two_way = Vec::new();
-        collect_two_way(&spec, &mut two_way);
+        collect_two_way(&spec_for_bindings, &mut two_way);
 
         // M19 Phase 1 (§16.4): a real, additive capability -- `View`
         // worked fine without it before this phase, so a failure here
@@ -1511,15 +1567,19 @@ mod tests {
     #[test]
     fn source_override_is_used_instead_of_reading_path_from_disk() {
         let path = write_temp_view("id: root\nkind: Container\nstyle: {width: 40, height: 20}\n");
-        let view = View::new(
-            path.to_string_lossy().into_owned(),
-            None,
-            None,
-            false,
-            None,
-            None,
-            Some("id: root\nkind: Container\nstyle: {width: 999, height: 20}\n".to_string()),
-        )
+        let view = Python::attach(|py| {
+            View::new(
+                py,
+                Some(path.to_string_lossy().into_owned()),
+                None,
+                None,
+                false,
+                None,
+                None,
+                Some("id: root\nkind: Container\nstyle: {width: 999, height: 20}\n".to_string()),
+                None,
+            )
+        })
         .expect("real View");
 
         let tree = view.tree.borrow();
@@ -1542,15 +1602,19 @@ mod tests {
     #[test]
     fn poll_reload_source_override_is_reconciled_instead_of_the_file() {
         let path = write_temp_view("id: root\nkind: Container\nstyle: {width: 40, height: 20}\n");
-        let mut view = View::new(
-            path.to_string_lossy().into_owned(),
-            None,
-            None,
-            false,
-            None,
-            None,
-            None,
-        )
+        let mut view = Python::attach(|py| {
+            View::new(
+                py,
+                Some(path.to_string_lossy().into_owned()),
+                None,
+                None,
+                false,
+                None,
+                None,
+                None,
+                None,
+            )
+        })
         .expect("real View");
 
         // A real write to the watched file -- content doesn't matter,
@@ -1585,28 +1649,37 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    /// M42 Phase 1's own real, new behavior: `View::new` is a
-    /// `#[pymethods]` constructor but takes no `Python<'_>` and touches
-    /// no `Py<PyAny>` internally (its body only builds a `Tree` and
-    /// plain Rust bookkeeping) -- callable directly here with no GIL, no
-    /// `pyo3::prepare_freethreaded_python()`, matching this crate's own
-    /// established real test-surface split: pyo3-facing *Python* API
-    /// behavior is covered by `tests/*.py` (needs a real interpreter),
-    /// while plain-Rust logic reachable without the GIL -- like
+    /// M42 Phase 1's own real, new behavior, updated for tre issue #3
+    /// Tier 1: `View::new` now takes a real `Python<'_>` (needed for
+    /// `pythonize::depythonize`'s own `spec_obj.bind(py)` when `spec=`
+    /// is given), so this Rust-only test wraps the call in `Python::
+    /// attach` (pyo3 0.29's real `with_gil` replacement -- confirmed
+    /// directly against its own source, not assumed; `[dev-dependencies]`
+    /// 's own `pyo3/auto-initialize` starts a real embedded interpreter
+    /// for it) -- previously callable with no GIL at all. Still matches
+    /// this crate's own established
+    /// real test-surface split: pyo3-facing *Python* API behavior is
+    /// covered by `tests/*.py` (needs a real interpreter), while
+    /// plain-Rust logic reachable without touching a live `Py<PyAny>` --
+    /// like
     /// `available_space()`'s own new branch, below -- gets a real Rust
     /// unit test the same as any other crate in this workspace.
     #[test]
     fn a_view_never_shown_live_still_lays_out_with_max_content() {
         let path = write_temp_view("id: root\nkind: Container\nstyle: {width: 40, height: 20}\n");
-        let view = View::new(
-            path.to_string_lossy().into_owned(),
-            None,
-            None,
-            false,
-            None,
-            None,
-            None,
-        )
+        let view = Python::attach(|py| {
+            View::new(
+                py,
+                Some(path.to_string_lossy().into_owned()),
+                None,
+                None,
+                false,
+                None,
+                None,
+                None,
+                None,
+            )
+        })
         .expect("real View");
 
         assert_eq!(
@@ -1632,15 +1705,19 @@ mod tests {
     #[test]
     fn setting_a_real_size_switches_available_space_to_definite() {
         let path = write_temp_view("id: root\nkind: Container\nstyle: {width: 40, height: 20}\n");
-        let view = View::new(
-            path.to_string_lossy().into_owned(),
-            None,
-            None,
-            false,
-            None,
-            None,
-            None,
-        )
+        let view = Python::attach(|py| {
+            View::new(
+                py,
+                Some(path.to_string_lossy().into_owned()),
+                None,
+                None,
+                false,
+                None,
+                None,
+                None,
+                None,
+            )
+        })
         .expect("real View");
 
         view.width.set(300);
@@ -1670,15 +1747,19 @@ mod tests {
     #[test]
     fn only_one_axis_set_still_falls_back_to_max_content_on_both() {
         let path = write_temp_view("id: root\nkind: Container\nstyle: {width: 40, height: 20}\n");
-        let view = View::new(
-            path.to_string_lossy().into_owned(),
-            None,
-            None,
-            false,
-            None,
-            None,
-            None,
-        )
+        let view = Python::attach(|py| {
+            View::new(
+                py,
+                Some(path.to_string_lossy().into_owned()),
+                None,
+                None,
+                false,
+                None,
+                None,
+                None,
+                None,
+            )
+        })
         .expect("real View");
 
         view.width.set(300);
