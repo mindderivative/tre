@@ -915,6 +915,18 @@ Deliberately did not touch `engine-platform`'s own render-loop pacing to fix thi
 
 ---
 
+## Branch: `0.3.2` — Release Prep
+
+**Status: 🚧 In progress (2026-09-24).** Same real, deliberate workflow `0.3.1` itself established (`072a7b9`/M70's own precedent): work accumulates on a dedicated `0.3.2` branch, gets merged back into `main` when ready, and only then does `v0.3.2` get tagged/pushed.
+
+- Branch `0.3.2` created off `main`, post-`v0.3.1`-release commit (`957f15f`) — ✅
+- `Cargo.toml`/`pyproject.toml` version bumped 0.3.1 → 0.3.2 (mirrors the `072a7b9`/M70 precedent exactly); `Cargo.lock` updated via `cargo check` — ✅
+- Full verification chain confirms the bump alone breaks nothing — ✅ (`cargo check`/`clippy -D warnings`/`fmt --check` clean; `cargo test --workspace --release` all passing, 0 regressions; `maturin develop --release` (`tre` 0.3.2 installed); `pytest tests/` 890 passed, 2 skipped, unchanged.)
+- `PLAN.md`/`LOG.md` reset for this branch, per this project's own standing "overwritten per phase, `BUILD_TRACKER.md` is the durable record" convention — ✅
+- Committed on the `0.3.2` branch, not `main` — further work continues here until it's ready to merge back and tag, per the workflow above.
+
+---
+
 ## Future Work — `vello_hybrid` Fork for Real GPU-Level Partial Redraw
 
 **Tracked as [`tre` issue #4](https://github.com/mindderivative/tre/issues/4), milestone `0.3.2` (2026-09-24).** Not a milestone in this file, still documented only, per explicit user instruction ("Add the vello_hybrid fork for future performance feature"), scoped down via `AskUserQuestion` to "document it only": no git remote/fork created, no `Cargo.toml` change, no code written. This is the real, actionable technical plan for the option M34's own scoping investigation identified but the user declined in favor of the smaller, forkless CPU-side win ("reconsider forking vello_hybrid for a bigger win" — real fork-maintenance risk on a pre-1.0, actively-rewritten crate). Recorded here in full so a future milestone can start directly from real, cited facts instead of re-investigating from scratch; the GitHub issue carries the identical content for anyone tracking work through issues rather than this file.
