@@ -6,7 +6,7 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "YAML view/stylesheet parsing, reconciliation, and the BindingResolver trait. Depends on engine-core and engine-md3; no pyo3, no winit. See ARCHITECTURE.md §4, §16."
+description = "YAML/JSON view/stylesheet parsing, reconciliation, and the BindingResolver trait. Depends on engine-core and engine-md3; no pyo3, no winit. See ARCHITECTURE.md §4, §16."
 
 [dependencies]
 engine-core = { path = "../engine-core" }
@@ -32,6 +32,12 @@ serde = { version = "1.0.229", features = ["derive"] }
 # continuation fork. Checked directly (`cargo add serde_yaml_ng --dry-run`)
 # before adding either, not assumed.
 serde_yaml_ng = "0.10.0"
+# tre issue #3, Part A (Tier 2): a second, non-YAML front end onto the
+# exact same `WidgetSpec`/`Stylesheet`/`ThemeSpec` types -- every real
+# JSON-parsing need this crate has is `serde_json::from_str` against a
+# type that already derives plain `Deserialize`, no special features
+# needed beyond the default `std` one.
+serde_json = "1.0.151"
 # For building taffy::Style values directly from a parsed StyleSpec --
 # already pinned at the exact version engine-core/engine-render use.
 taffy = "0.14.0"

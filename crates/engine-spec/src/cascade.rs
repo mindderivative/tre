@@ -44,6 +44,13 @@ pub fn parse_stylesheet(yaml: &str) -> Result<Stylesheet, serde_yaml_ng::Error> 
     serde_yaml_ng::from_str(yaml)
 }
 
+/// tre issue #3, Part A (Tier 2): `parse_stylesheet`'s own JSON sibling
+/// -- see `spec::parse_view_json`'s own doc comment for the real
+/// reasoning, identical here.
+pub fn parse_stylesheet_json(json: &str) -> Result<Stylesheet, serde_json::Error> {
+    serde_json::from_str(json)
+}
+
 /// Resolves `spec`'s final `StyleSpec` by applying every matching rule
 /// in `sheet`, in §16.3's precedence order, then the widget's own
 /// inline `style:` last. Each tier does a per-field merge (a field
@@ -198,6 +205,16 @@ mod tests {
             two_way: None,
             children: Vec::new(),
         }
+    }
+
+    #[test]
+    fn parse_stylesheet_json_parses_the_same_real_sheet_parse_stylesheet_does() {
+        // tre issue #3, Part A (Tier 2).
+        let json = r#"{"styles": [{"style": {"opacity": 0.9}}]}"#;
+        let sheet = parse_stylesheet_json(json)
+            .expect("valid stylesheet JSON must parse into a real Stylesheet");
+        let resolved = resolve_style(&widget("any", NodeKindSpec::Rect, &[]), &sheet);
+        assert_eq!(resolved.opacity, Some(0.9));
     }
 
     #[test]

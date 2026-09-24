@@ -20,12 +20,19 @@ use crate::cascade::{Stylesheet, resolve_style_layered};
 use crate::spec::{
     AlignItemsSpec, ContentFitSpec, FlexDirectionSpec, JustifyContentSpec, NodeKindSpec,
     ShapeOrElevationSpec, SpacingSpec, StyleSpec, TextSpec, WidgetSpec, parse_view,
+    parse_view_json,
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum SpecError {
     #[error("failed to parse view YAML: {0}")]
     Parse(#[from] serde_yaml_ng::Error),
+    /// tre issue #3, Part A (Tier 2): `Parse`'s own JSON-front-end
+    /// sibling -- a distinct variant, not a reused `Parse`, since
+    /// `serde_json::Error` and `serde_yaml_ng::Error` are different
+    /// types and `#[from]` only supports one source type per variant.
+    #[error("failed to parse view JSON: {0}")]
+    ParseJson(#[from] serde_json::Error),
     #[error("widget \"{id}\": {kind} requires {field}, none given")]
     MissingField {
         id: String,
@@ -204,6 +211,13 @@ pub fn load_view(tree: &mut Tree, yaml: &str) -> Result<NodeId, SpecError> {
     build_tree(tree, &spec, None, None, None, None, None)
 }
 
+/// tre issue #3, Part A (Tier 2): `load_view`'s own JSON sibling --
+/// identical behavior, `parse_view_json` instead of `parse_view`.
+pub fn load_view_json(tree: &mut Tree, json: &str) -> Result<NodeId, SpecError> {
+    let spec = parse_view_json(json)?;
+    build_tree(tree, &spec, None, None, None, None, None)
+}
+
 /// The full §16.3 path: parses `yaml`, resolves every widget's style
 /// through `sheet`'s cascade, and resolves any MD3 token name
 /// (`background: primary`) against `scheme` -- falling back to literal
@@ -225,6 +239,30 @@ pub fn load_styled_view(
     base_dir: Option<&std::path::Path>,
 ) -> Result<NodeId, SpecError> {
     let spec = parse_view(yaml)?;
+    build_tree(
+        tree,
+        &spec,
+        default_theme,
+        custom_theme,
+        Some(sheet),
+        Some(scheme),
+        base_dir,
+    )
+}
+
+/// tre issue #3, Part A (Tier 2): `load_styled_view`'s own JSON sibling
+/// -- identical behavior, `parse_view_json` instead of `parse_view`.
+#[allow(clippy::too_many_arguments)]
+pub fn load_styled_view_json(
+    tree: &mut Tree,
+    json: &str,
+    default_theme: Option<&Stylesheet>,
+    custom_theme: Option<&Stylesheet>,
+    sheet: &Stylesheet,
+    scheme: &ColorScheme,
+    base_dir: Option<&std::path::Path>,
+) -> Result<NodeId, SpecError> {
+    let spec = parse_view_json(json)?;
     build_tree(
         tree,
         &spec,
@@ -778,6 +816,36 @@ children:
     text: {content: "Hi", font_family: Roboto, font_size: 16}
     style: {width: 90, height: 30, background: white}
 "##;
+
+    #[test]
+    fn load_view_json_builds_the_same_real_tree_load_view_does() {
+        // tre issue #3, Part A (Tier 2): the identical real construction
+        // `load_view_builds_a_real_tree_matching_the_spec` below proves
+        // for YAML, proven here for JSON.
+        let json = r##"{
+            "id": "root",
+            "kind": "Container",
+            "style": {"flex_direction": "Horizontal", "padding": 10, "gap": 5, "width": 220, "height": 100},
+            "children": [
+                {
+                    "id": "swatch",
+                    "kind": "Rect",
+                    "style": {"width": 100, "height": 80, "background": "#6750A4", "corner_radius": 8}
+                }
+            ]
+        }"##;
+        let mut tree = Tree::new();
+        let root = load_view_json(&mut tree, json).expect("valid view JSON must build");
+        let root_node = tree.get(root).expect("root must exist");
+        assert!(matches!(root_node.kind, NodeKind::Container));
+        assert_eq!(root_node.children.len(), 1);
+        let swatch_node = tree.get(root_node.children[0]).unwrap();
+        assert_eq!(swatch_node.paint.corner_radius.current, 8.0);
+        assert_eq!(
+            swatch_node.paint.background.current,
+            Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF)
+        );
+    }
 
     #[test]
     fn load_view_builds_a_real_tree_matching_the_spec() {

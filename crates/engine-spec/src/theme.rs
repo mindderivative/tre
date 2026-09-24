@@ -131,6 +131,13 @@ pub fn parse_theme(yaml: &str) -> Result<ThemeSpec, serde_yaml_ng::Error> {
     serde_yaml_ng::from_str(yaml)
 }
 
+/// tre issue #3, Part A (Tier 2): `parse_theme`'s own JSON sibling --
+/// see `spec::parse_view_json`'s own doc comment for the real
+/// reasoning, identical here.
+pub fn parse_theme_json(json: &str) -> Result<ThemeSpec, serde_json::Error> {
+    serde_json::from_str(json)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,6 +150,15 @@ mod tests {
         assert_eq!(theme.dark, None);
         assert!(theme.colors.is_empty());
         assert!(theme.styles.is_empty());
+    }
+
+    #[test]
+    fn parse_theme_json_parses_the_same_real_theme_parse_theme_does() {
+        // tre issue #3, Part A (Tier 2).
+        let theme = parse_theme_json(r##"{"seed": "#6750A4", "dark": false}"##)
+            .expect("valid theme JSON must parse into a real ThemeSpec");
+        assert_eq!(theme.seed.as_deref(), Some("#6750A4"));
+        assert_eq!(theme.dark, Some(false));
     }
 
     #[test]

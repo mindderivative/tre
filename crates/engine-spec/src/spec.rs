@@ -456,9 +456,52 @@ pub fn parse_view(yaml: &str) -> Result<WidgetSpec, serde_yaml_ng::Error> {
     serde_yaml_ng::from_str(yaml)
 }
 
+/// tre issue #3, Part A (Tier 2): the identical real parse `parse_view`
+/// already does, against JSON instead of YAML -- `WidgetSpec` derives
+/// plain `Deserialize`, so this is genuinely just a second `Deserializer`
+/// on the same type, not a second parsing implementation. Lets any
+/// caller that can produce JSON (a non-Python language, a tool with no
+/// YAML library handy, a generated fixture) construct a real `WidgetSpec`
+/// without `tre` needing to know anything about that caller at all.
+pub fn parse_view_json(json: &str) -> Result<WidgetSpec, serde_json::Error> {
+    serde_json::from_str(json)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_view_json_parses_the_same_real_tree_parse_view_does() {
+        // tre issue #3, Part A (Tier 2): the identical structure
+        // `parses_a_nested_widget_tree` below proves for YAML, proven
+        // here for JSON -- both are just different `Deserializer`s
+        // against the same `WidgetSpec`.
+        let json = r##"{
+            "id": "root",
+            "kind": "Container",
+            "style": {"flex_direction": "Horizontal", "padding": 12, "gap": 8},
+            "children": [
+                {
+                    "id": "swatch",
+                    "kind": "Rect",
+                    "style": {"width": 40, "height": 40, "background": "#6750A4", "corner_radius": 8}
+                }
+            ]
+        }"##;
+        let spec = parse_view_json(json).expect("valid JSON must parse into a real WidgetSpec");
+        assert_eq!(spec.id, "root");
+        assert!(matches!(spec.kind, NodeKindSpec::Container));
+        assert_eq!(spec.children.len(), 1);
+        assert_eq!(spec.children[0].id, "swatch");
+    }
+
+    #[test]
+    fn parse_view_json_with_invalid_json_is_a_clear_error_not_a_panic() {
+        let err =
+            parse_view_json("{ not valid json").expect_err("malformed JSON must fail clearly");
+        assert!(!err.to_string().is_empty());
+    }
 
     #[test]
     fn parses_a_nested_widget_tree() {

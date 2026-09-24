@@ -20,13 +20,18 @@ pub use binding::{
     BinOp, BindingResolver, Expression, ExpressionError, ResolveError, Value, evaluate,
     parse_binding,
 };
-pub use build::{SpecError, build_tree, load_styled_view, load_view};
-pub use cascade::{StyleRule, Stylesheet, parse_stylesheet, resolve_style, resolve_style_layered};
+pub use build::{
+    SpecError, build_tree, load_styled_view, load_styled_view_json, load_view, load_view_json,
+};
+pub use cascade::{
+    StyleRule, Stylesheet, parse_stylesheet, parse_stylesheet_json, resolve_style,
+    resolve_style_layered,
+};
 pub use include::parse_view_with_includes;
 pub use reconcile::Reconciler;
 pub use spec::{
     FlexDirectionSpec, NodeKindSpec, ShapeOrElevationSpec, StyleSpec, TextSpec, WidgetSpec,
-    parse_view,
+    parse_view, parse_view_json,
 };
-pub use theme::{ComponentOverride, ThemeSpec, TypographyOverride, parse_theme};
+pub use theme::{ComponentOverride, ThemeSpec, TypographyOverride, parse_theme, parse_theme_json};
 pub use watch::ViewWatcher;
