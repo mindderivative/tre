@@ -107,6 +107,19 @@ pub struct Component {
 /// only" default when no stylesheet is given; a component-level
 /// stylesheet is real, additive, deferred work if a real need surfaces,
 /// not manufactured ahead of one.
+///
+/// `source` (widened alongside `View::new`'s own M71 real precedent):
+/// when given, used directly instead of reading `path` from disk, while
+/// `path` still supplies the real base directory `include:` resolves
+/// against below. `None` (the default) is the real, pre-existing
+/// behavior -- read `path` directly -- unchanged for every existing
+/// caller. Closes the real, confirmed gap `View::new`'s own M71 doc
+/// comment already named: the sibling `Tesserae` project's `component:`
+/// macro-expansion layer could reach a top-level `View` via this same
+/// mechanism, but had no way to reach an *embedded* component, since
+/// this function always read `path` straight from disk with no
+/// override at all.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn instantiate_component(
     tree: &Rc<RefCell<Tree>>,
     into: NodeId,
@@ -115,9 +128,14 @@ pub(crate) fn instantiate_component(
     theme: &SharedTheme,
     completions: &SharedCompletions,
     path: &str,
+    source: Option<String>,
 ) -> PyResult<Component> {
-    let yaml = std::fs::read_to_string(path)
-        .map_err(|e| PyRuntimeError::new_err(format!("failed to read component {path:?}: {e}")))?;
+    let yaml = match source {
+        Some(text) => text,
+        None => std::fs::read_to_string(path).map_err(|e| {
+            PyRuntimeError::new_err(format!("failed to read component {path:?}: {e}"))
+        })?,
+    };
     let base_dir = std::path::Path::new(path).parent();
 
     let reconciler = {
@@ -198,8 +216,16 @@ impl Component {
 
     /// Instantiates another component *inside* this one -- components
     /// nest for free, the same real `instantiate_component` helper
-    /// `View.instantiate` itself calls.
-    fn instantiate(&self, path: &str, into: PyRef<'_, Node>) -> PyResult<Component> {
+    /// `View.instantiate` itself calls. `source` mirrors `View.
+    /// instantiate`'s own M71-style widening -- see `instantiate_
+    /// component`'s own doc comment for the real reasoning.
+    #[pyo3(signature = (path, into, source=None))]
+    fn instantiate(
+        &self,
+        path: &str,
+        into: PyRef<'_, Node>,
+        source: Option<String>,
+    ) -> PyResult<Component> {
         instantiate_component(
             &self.tree,
             into.id,
@@ -208,6 +234,7 @@ impl Component {
             &self.theme,
             &self.completions,
             path,
+            source,
         )
     }
 
@@ -242,5 +269,134 @@ impl Component {
         }
         self.tree.borrow_mut().remove(self.reconciler.root());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Same real "genuinely fresh file per run" pattern `view.rs`'s own
+    /// M71 tests already established -- `instantiate_component` reads a
+    /// real path from disk absent `source`, so these tests need one.
+    fn write_temp_component(yaml: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "engine_py_component_test_{}_{}.yaml",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, yaml).expect("create test component file");
+        path
+    }
+
+    /// A real outer `Tree` + root node to instantiate a component into
+    /// -- built the identical way `View::new` itself builds these same
+    /// fields (`view.rs`), not `View::new` directly (a private, pyo3-
+    /// only constructor `component.rs`'s own module has no access to).
+    struct OuterFixture {
+        tree: Rc<RefCell<Tree>>,
+        into: NodeId,
+        handlers: HandlerMap,
+        context_menus: Rc<RefCell<HashMap<NodeId, NodeId>>>,
+        theme: SharedTheme,
+        completions: SharedCompletions,
+    }
+
+    fn outer_fixture() -> OuterFixture {
+        let mut tree = Tree::new();
+        let reconciler = Reconciler::load(
+            &mut tree,
+            "id: root\nkind: Container\nstyle: {width: 100, height: 100}\n",
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("real outer Reconciler");
+        OuterFixture {
+            into: reconciler.root(),
+            tree: Rc::new(RefCell::new(tree)),
+            handlers: Rc::new(RefCell::new(HashMap::new())),
+            context_menus: Rc::new(RefCell::new(HashMap::new())),
+            theme: Rc::new(RefCell::new(crate::window::ThemeState::default())),
+            completions: Rc::new(RefCell::new(crate::dispatch::CompletionRegistry::new())),
+        }
+    }
+
+    /// `source=`, when given, is used instead of reading `path` from
+    /// disk -- the real, confirmed gap this milestone closes: proven
+    /// directly by writing a real on-disk component file with one
+    /// `width`, then instantiating with `source=` naming a *different*
+    /// `width` and confirming the live `Tree` reflects `source`'s own
+    /// value, not the file's (the identical real proof `view.rs`'s own
+    /// `source_override_is_used_instead_of_reading_path_from_disk`
+    /// already uses for `View::new`).
+    #[test]
+    fn instantiate_component_source_override_is_used_instead_of_reading_path_from_disk() {
+        let outer = outer_fixture();
+
+        let component_path =
+            write_temp_component("id: inner\nkind: Container\nstyle: {width: 40, height: 20}\n");
+        let component = instantiate_component(
+            &outer.tree,
+            outer.into,
+            &outer.handlers,
+            &outer.context_menus,
+            &outer.theme,
+            &outer.completions,
+            &component_path.to_string_lossy(),
+            Some("id: inner\nkind: Container\nstyle: {width: 999, height: 20}\n".to_string()),
+        )
+        .expect("real Component");
+
+        let tree = outer.tree.borrow();
+        let inner = component
+            .reconciler
+            .id_of("inner")
+            .expect("inner widget id");
+        let style = &tree.get(inner).expect("inner node").layout_style;
+        assert_eq!(
+            style.size.width,
+            taffy::prelude::length(999.0),
+            "source= must be used instead of the real on-disk component file's own content"
+        );
+
+        let _ = std::fs::remove_file(&component_path);
+    }
+
+    /// `source=None` (the default) is the real, pre-existing behavior,
+    /// unchanged -- a component instantiated with no override still
+    /// reads its real file from disk exactly as it always has.
+    #[test]
+    fn instantiate_component_with_no_source_reads_the_real_file() {
+        let outer = outer_fixture();
+
+        let component_path =
+            write_temp_component("id: inner\nkind: Container\nstyle: {width: 40, height: 20}\n");
+        let component = instantiate_component(
+            &outer.tree,
+            outer.into,
+            &outer.handlers,
+            &outer.context_menus,
+            &outer.theme,
+            &outer.completions,
+            &component_path.to_string_lossy(),
+            None,
+        )
+        .expect("real Component");
+
+        let tree = outer.tree.borrow();
+        let inner = component
+            .reconciler
+            .id_of("inner")
+            .expect("inner widget id");
+        let style = &tree.get(inner).expect("inner node").layout_style;
+        assert_eq!(style.size.width, taffy::prelude::length(40.0));
+
+        let _ = std::fs::remove_file(&component_path);
     }
 }

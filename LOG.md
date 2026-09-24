@@ -1,58 +1,54 @@
-# LOG — M72: `Node.set_layout(flex_direction=...)`
+# LOG — M73: `instantiate(..., source=...)` — the Embedded-Component Macro-Expansion Gap
 
-- Real, genuinely necessary gap found immediately upon starting
-  Tesserae-side Part 2 (the widget catalog) on top of M71's own new
-  `window.theme` API: no imperative way existed anywhere to set a
-  node's own flex main axis. Every `Window.add_*` factory returns a
-  node whose real taffy default (`Display::DEFAULT = Display::Flex`,
-  confirmed directly from the vendored `taffy` source) is already
-  flex-capable, but `flex_direction` itself had no constructor kwarg
-  on any factory and `Node.set_layout` (M59's own real widening) never
-  included it either -- confirmed via direct re-read of its exact
-  signature before assuming otherwise. No `add_container`/generic-
-  container factory exists either. A Python-composed widget needing a
-  real vertical stack (a dialog's headline/body/actions, a snackbar's
-  text/action, any list) had no way to ask for one at all.
+- User-directed, continuing Tesserae-side follow-up work from M15:
+  "Start 3, then move to 2 and then 1" — this is item 3. Real,
+  confirmed gap, checked directly before writing any code: `View::
+  new`'s own M71 doc comment had already named the real need
+  (Tesserae's `component:` macro-expansion layer reaching an
+  *embedded* component, not just a top-level `View`), but
+  `instantiate_component` (`component.rs`) always read `path` straight
+  from disk with no override at all.
 
 ## What shipped
 
-1. `Node.set_layout` widened with `flex_direction: Option<&str> =
-   None`, accepting `"horizontal"`/`"vertical"` -- deliberately not
-   taffy's own `"row"`/`"column"`, extending the identical real
-   vocabulary fix M70 already made to the declarative
-   `FlexDirectionSpec` layer, so an app author sees one consistent
-   axis vocabulary across both the imperative and declarative
-   surfaces instead of two competing ones.
-2. New `parse_flex_direction` helper (`node.rs`), mirroring `parse_
-   align_items`/`parse_justify_content`'s own exact "small vocabulary,
-   `ValueError` on unrecognized" shape.
-3. One pre-existing internal caller (`view.rs`'s own binding-
-   application `temp_node.set_layout(...)` call, M59's own scoped-
-   `None` pattern) updated for the new argument count.
-- Tests: 5 new pytest tests (`test_set_layout_flex_direction.py`) --
-  both real values accepted, the old taffy `"row"` vocabulary
-  correctly rejected (naming it), composes with `align_items`/
-  `justify_content`/`gap`, and omitting it entirely is a true no-op.
-  Same real, honest limitation `test_live_style.py` already states for
-  `set_layout` generally (no Python-facing pixel-box/position readback
-  exists) -- matches the established precedent rather than inventing a
-  new testing standard.
+1. `instantiate_component` (`crates/engine-py/src/component.rs`)
+   widened with `source: Option<String>` -- when given, used directly
+   instead of reading `path` from disk, mirroring `View::new`'s own
+   exact M71 pattern; `path` still supplies the real base directory
+   `include:` resolves against.
+2. `View.instantiate` (`view.rs`) and `Component.instantiate`
+   (`component.rs`, the nested-component call site) both widened with
+   `#[pyo3(signature = (path, into, source=None))]`, forwarding
+   straight through.
+3. `#[allow(clippy::too_many_arguments)]` added to `instantiate_
+   component` (now 8 real params) -- the one real clippy finding this
+   milestone hit.
+4. 2 new Rust unit tests (`component.rs`, GIL-free), mirroring
+   `view.rs`'s own M71 `source_override_is_used_instead_of_reading_
+   path_from_disk` test exactly. Real correction while writing them:
+   `View::new` is private to its own module, unreachable from
+   `component.rs`'s test module -- built a real outer `Tree`/
+   `Reconciler` by hand instead, matching `View::new`'s own internal
+   construction recipe (confirmed by reading it first, not guessed).
+5. 3 new pytest tests (`test_component.py`) -- the real Python binding
+   wiring end to end for both `view.instantiate(..., source=...)` and
+   nested `component.instantiate(..., source=...)`, plus a no-`source`
+   regression check.
 - Verification: `cargo check`/`clippy -D warnings`/`fmt --check`
   clean; `cargo test --workspace --release` every crate's own count
-  unchanged; `maturin develop --release`; `pytest tests/` 855 passed,
-  2 skipped, up from 850, +5; every file in `examples/` ran clean;
-  `demo/showcase.py` all 5 phases, exit 0. A real, direct dispatched-
-  click sanity check -- two children vertically stacked via `set_
-  layout(flex_direction="vertical")`, both independently clickable via
-  `Window.click(node)` -- also run manually before committing.
+  unchanged except `engine-py` +2; `maturin develop --release`;
+  `pytest tests/` 858 passed, 2 skipped, up from 855, +3;
+  `examples/component_list.py` (the one example that actually
+  exercises `instantiate`, confirmed via `grep -l instantiate
+  examples/*.py`) ran clean; `demo/showcase.py` all 5 phases, exit 0.
 
 ## Status
 
-**M72 is complete, both phases.** The real, last remaining primitive
-gap blocking Tesserae's own Python widget composition is closed.
+**M73 is complete, both phases.** The real, last piece blocking
+Tesserae's embedded-component `component:` support is closed.
 Committed locally on the `0.3.1` branch, not `main`; push deferred
 pending explicit user confirmation, per standing policy.
 
-Next: reinstall into `tesserae/.venv`, then resume Tesserae-side Part
-2 of the approved plan (the widget catalog), tracked in Tesserae's own
-`BUILD_TRACKER.md`.
+Next: reinstall into `tesserae/.venv`, then item 2 of the user's own
+ordering -- wiring Tesserae's `App.load()`/`tesserae.instantiate()` to
+use `load_view`/macro-expansion by default.

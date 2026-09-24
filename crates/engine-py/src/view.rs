@@ -1099,10 +1099,18 @@ impl View {
     /// of its own -- dispatch on an embedded node goes through this
     /// `View`'s own `click`/`hover`/`right_click` instead, e.g.
     /// `view.click(component.node("button"))`).
+    ///
+    /// `source` (widened alongside `View::new`'s own M71 real
+    /// precedent, above): when given, used directly instead of reading
+    /// `path` from disk -- see `instantiate_component`'s own doc
+    /// comment (`component.rs`) for the real reasoning, and why this
+    /// was a real, confirmed gap (not a hypothetical one) before now.
+    #[pyo3(signature = (path, into, source=None))]
     fn instantiate(
         &self,
         path: &str,
         into: PyRef<'_, Node>,
+        source: Option<String>,
     ) -> PyResult<crate::component::Component> {
         crate::component::instantiate_component(
             &self.tree,
@@ -1112,6 +1120,7 @@ impl View {
             &self.theme,
             &self.completions,
             path,
+            source,
         )
     }
 
