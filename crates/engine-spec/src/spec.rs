@@ -81,6 +81,14 @@ pub struct WidgetSpec {
     /// Image`; ignored otherwise.
     #[serde(default)]
     pub image: Option<ImageSpec>,
+    /// Required (and validated at tree-build time, matching `image`'s
+    /// own contract) when `kind: Icon`; ignored otherwise. The glyph's
+    /// own color reuses `style.background` -- the identical "background
+    /// means paint color, not a literal fill" precedent `kind: Text`
+    /// already established (`required_background`, `build.rs`), rather
+    /// than inventing a second, parallel color field.
+    #[serde(default)]
+    pub icon: Option<IconSpec>,
     /// `property name -> "{{ expression }}"` (§16.2). Raw strings --
     /// see this module's own doc comment for why parsing is deferred to
     /// whoever actually attaches a `ViewModel`.
@@ -133,6 +141,7 @@ pub enum NodeKindSpec {
     Slider,
     TextField,
     Image,
+    Icon,
 }
 
 /// M22 Phase 2 (§16.1, §5): `kind: Image`'s own sibling block, the
@@ -149,6 +158,21 @@ pub struct ImageSpec {
     pub src: String,
     #[serde(default)]
     pub fit: ContentFitSpec,
+}
+
+/// `kind: Icon`'s own sibling block -- deliberately just `name`, not a
+/// `color`/`size` field too: the glyph's own paint reuses `style.
+/// background` (see `WidgetSpec.icon`'s own doc comment for why), and
+/// its box size is `style.width`/`height` like every other kind, not a
+/// new, Icon-specific dimension. `name` is resolved against `engine_
+/// md3::icons::path_for`'s own curated vocabulary at build time
+/// (`build.rs`), the identical name space `Window.add_icon` already
+/// uses imperatively -- confirmed by direct read before mirroring it,
+/// not assumed to match.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IconSpec {
+    pub name: String,
 }
 
 /// Mirrors `engine_core::ContentFit` exactly -- see `ImageState.

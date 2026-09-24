@@ -1,54 +1,57 @@
-# LOG — M73: `instantiate(..., source=...)` — the Embedded-Component Macro-Expansion Gap
+# LOG — M74: Declarative `kind: Icon`
 
-- User-directed, continuing Tesserae-side follow-up work from M15:
-  "Start 3, then move to 2 and then 1" — this is item 3. Real,
-  confirmed gap, checked directly before writing any code: `View::
-  new`'s own M71 doc comment had already named the real need
-  (Tesserae's `component:` macro-expansion layer reaching an
-  *embedded* component, not just a top-level `View`), but
-  `instantiate_component` (`component.rs`) always read `path` straight
-  from disk with no override at all.
+- User-directed via `AskUserQuestion`, while scoping Tesserae's own
+  component-fragment catalog: roughly two-thirds of the real MD3
+  catalog was blocked from being expressible as a fragment at all,
+  confirmed directly (`kind: Icon` failed with `unknown variant
+  "Icon"`) -- `engine-spec`'s `NodeKindSpec` supported only 7 of
+  `engine-core`'s real 21 primitive kinds. Chose to fix this at the
+  source rather than scope fragment work down to the ~10 icon-free
+  widgets.
 
 ## What shipped
 
-1. `instantiate_component` (`crates/engine-py/src/component.rs`)
-   widened with `source: Option<String>` -- when given, used directly
-   instead of reading `path` from disk, mirroring `View::new`'s own
-   exact M71 pattern; `path` still supplies the real base directory
-   `include:` resolves against.
-2. `View.instantiate` (`view.rs`) and `Component.instantiate`
-   (`component.rs`, the nested-component call site) both widened with
-   `#[pyo3(signature = (path, into, source=None))]`, forwarding
-   straight through.
-3. `#[allow(clippy::too_many_arguments)]` added to `instantiate_
-   component` (now 8 real params) -- the one real clippy finding this
-   milestone hit.
-4. 2 new Rust unit tests (`component.rs`, GIL-free), mirroring
-   `view.rs`'s own M71 `source_override_is_used_instead_of_reading_
-   path_from_disk` test exactly. Real correction while writing them:
-   `View::new` is private to its own module, unreachable from
-   `component.rs`'s test module -- built a real outer `Tree`/
-   `Reconciler` by hand instead, matching `View::new`'s own internal
-   construction recipe (confirmed by reading it first, not guessed).
-5. 3 new pytest tests (`test_component.py`) -- the real Python binding
-   wiring end to end for both `view.instantiate(..., source=...)` and
-   nested `component.instantiate(..., source=...)`, plus a no-`source`
-   regression check.
+1. `spec.rs` -- `NodeKindSpec::Icon`; `WidgetSpec.icon: Option<
+   IconSpec>`; new `IconSpec { name: String }`, mirroring `ImageSpec`'s
+   own shape (simpler -- no `fit:` concept for a glyph).
+2. `build.rs` -- new `SpecError::UnknownIcon { id, name }`; the real
+   `NodeKindSpec::Icon` match arm, resolving `icon.name` against
+   `engine_md3::icons::path_for` (the identical vocabulary `Window.
+   add_icon` already uses imperatively, confirmed by direct read
+   before mirroring it), parsing the real curated SVG path data,
+   resolving the glyph's tint via the existing `required_background`
+   helper -- reusing `style.background`, the same precedent `kind:
+   Text` already established, not a new, parallel color field.
+3. One real, unrelated compile break fixed: `cascade.rs`'s own
+   `#[cfg(test)]`-only `WidgetSpec` fixture literal needed the new
+   `icon: None` field.
+4. 4 new Rust unit tests (`build.rs`). Real bug caught and fixed while
+   writing them, not shipped: the test YAML's own `"#1C1B1FFF"` hex
+   color collided with a single-hash `r#"..."#` raw string delimiter
+   (`expected ';', found '1C1B1FFF'`) -- fixed with `r##"..."##`, the
+   identical real fix this same file's own pre-existing `VIEW` test
+   constant already needed for the same reason.
+5. 4 new pytest tests (`tests/test_declarative_icon.py`, new file) --
+   the real Python binding surface end to end.
 - Verification: `cargo check`/`clippy -D warnings`/`fmt --check`
-  clean; `cargo test --workspace --release` every crate's own count
-  unchanged except `engine-py` +2; `maturin develop --release`;
-  `pytest tests/` 858 passed, 2 skipped, up from 855, +3;
-  `examples/component_list.py` (the one example that actually
-  exercises `instantiate`, confirmed via `grep -l instantiate
-  examples/*.py`) ran clean; `demo/showcase.py` all 5 phases, exit 0.
+  clean; `cargo test --workspace --release` (`engine-spec` 89, up from
+  85, +4; every other crate unchanged); `maturin develop --release`;
+  `pytest tests/` 862 passed, 2 skipped, up from 858, +4;
+  `examples/animate_rect.py` (the CI-representative smoke example) and
+  `demo/showcase.py` both ran clean, exit 0.
 
 ## Status
 
-**M73 is complete, both phases.** The real, last piece blocking
-Tesserae's embedded-component `component:` support is closed.
-Committed locally on the `0.3.1` branch, not `main`; push deferred
-pending explicit user confirmation, per standing policy.
+**M74 is complete, both phases.** Declarative `kind: Icon` is real,
+tested, and closes the single largest real blocker to Tesserae's own
+component-fragment catalog work. Committed locally on the `0.3.1`
+branch, not `main`; push deferred pending explicit user confirmation,
+per standing policy.
 
-Next: reinstall into `tesserae/.venv`, then item 2 of the user's own
-ordering -- wiring Tesserae's `App.load()`/`tesserae.instantiate()` to
-use `load_view`/macro-expansion by default.
+Real, deliberate scope boundary: only `Icon` was added this milestone
+-- `RadioButton`/`Switch`/`CircularProgress`/`LinearProgress`/
+`LoadingIndicator`/`Link` and the rest of the real-but-declaratively-
+unreachable `NodeKind` variants stay real, un-scoped future candidates.
+
+Next: reinstall into `tesserae/.venv`, then resume item 1 of the
+user's own 3-item ordering -- the real component-fragment catalog.

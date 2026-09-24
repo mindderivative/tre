@@ -6,7 +6,7 @@
 //! one built imperatively.
 
 use engine_core::{
-    Animated, CheckboxState, NodeId, NodeKind, PaintProperties, SliderState, TextAlign,
+    Animated, CheckboxState, IconState, NodeId, NodeKind, PaintProperties, SliderState, TextAlign,
     TextFieldState, TextState, Tree,
 };
 use engine_md3::ColorScheme;
@@ -58,6 +58,12 @@ pub enum SpecError {
     /// reasoning.
     #[error("widget \"{id}\": unknown text.role {role:?}")]
     UnknownTypographyRole { id: String, role: String },
+    /// `icon.name` named something outside `engine_md3::icons`'s own
+    /// curated vocabulary -- the identical real "fail loudly, name what
+    /// was expected" shape `UnknownTypographyRole` already follows,
+    /// mirroring `Window.add_icon`'s own imperative `ValueError`.
+    #[error("widget \"{id}\": unknown icon {name:?}")]
+    UnknownIcon { id: String, name: String },
     /// M19 Phase 2 (§16.6): `include: {path}` appeared but no `base_dir`
     /// was given to resolve it against -- a real, stated error, not a
     /// silent no-op (an include with nowhere to resolve from must fail
@@ -673,6 +679,30 @@ fn node_kind_and_base_paint(
             Ok((
                 NodeKind::Image(image_state),
                 PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), corner_radius, 0.0, opacity),
+            ))
+        }
+        NodeKindSpec::Icon => {
+            let icon_spec = spec.icon.as_ref().ok_or_else(|| SpecError::MissingField {
+                id: spec.id.clone(),
+                kind: "Icon",
+                field: "icon",
+            })?;
+            let svg_data = engine_md3::icons::path_for(&icon_spec.name).ok_or_else(|| {
+                SpecError::UnknownIcon {
+                    id: spec.id.clone(),
+                    name: icon_spec.name.clone(),
+                }
+            })?;
+            let path = peniko::kurbo::BezPath::from_svg(svg_data).unwrap_or_else(|e| {
+                panic!(
+                    "engine_md3::icons's own curated path data for {:?} must parse: {e}",
+                    icon_spec.name
+                )
+            });
+            let tint = required_background(spec, style, scheme, "Icon")?;
+            Ok((
+                NodeKind::Icon(IconState::new(path, tint)),
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, opacity),
             ))
         }
     }
@@ -1381,5 +1411,84 @@ style: {width: 40, height: 40}
     ) -> Result<NodeId, SpecError> {
         let spec = parse_view(yaml)?;
         build_tree(tree, &spec, None, None, None, None, base_dir)
+    }
+
+    #[test]
+    fn kind_icon_builds_a_real_icon_node_with_the_named_glyph_and_color() {
+        let yaml = r##"
+id: gear
+kind: Icon
+icon: {name: settings}
+style: {width: 24, height: 24, background: "#1C1B1FFF"}
+"##;
+        let mut tree = Tree::new();
+        let root = load_view(&mut tree, yaml).expect("a real, known icon name must build");
+        let node = tree.get(root).expect("root must exist");
+        let NodeKind::Icon(icon) = &node.kind else {
+            panic!("expected an Icon node");
+        };
+        assert_eq!(icon.tint, Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF));
+        assert!(
+            !icon.path.elements().is_empty(),
+            "the real curated SVG path data for \"settings\" must have parsed into real path elements"
+        );
+    }
+
+    #[test]
+    fn kind_icon_with_no_icon_block_is_a_clear_missing_field_error() {
+        let yaml = r##"
+id: gear
+kind: Icon
+style: {width: 24, height: 24, background: "#1C1B1FFF"}
+"##;
+        let mut tree = Tree::new();
+        let err = load_view(&mut tree, yaml).expect_err("a Icon with no icon: block must fail");
+        assert!(matches!(
+            err,
+            SpecError::MissingField {
+                kind: "Icon",
+                field: "icon",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn kind_icon_with_an_unknown_name_is_a_clear_error_naming_it() {
+        let yaml = r##"
+id: gear
+kind: Icon
+icon: {name: not_a_real_icon}
+style: {width: 24, height: 24, background: "#1C1B1FFF"}
+"##;
+        let mut tree = Tree::new();
+        let err = load_view(&mut tree, yaml).expect_err("an unknown icon name must fail clearly");
+        match err {
+            SpecError::UnknownIcon { name, .. } => assert_eq!(name, "not_a_real_icon"),
+            other => panic!("expected UnknownIcon, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn kind_icon_with_no_background_is_a_clear_missing_field_error() {
+        // Reuses the exact `required_background` contract `kind: Text`
+        // already has -- the glyph's own color is `style.background`,
+        // required the same way.
+        let yaml = r#"
+id: gear
+kind: Icon
+icon: {name: settings}
+style: {width: 24, height: 24}
+"#;
+        let mut tree = Tree::new();
+        let err = load_view(&mut tree, yaml).expect_err("Icon with no background must fail");
+        assert!(matches!(
+            err,
+            SpecError::MissingField {
+                kind: "Icon",
+                field: "style.background",
+                ..
+            }
+        ));
     }
 }

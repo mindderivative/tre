@@ -192,6 +192,7 @@ mod tests {
             checked: false,
             value: 0.0,
             image: None,
+            icon: None,
             bindings: std::collections::HashMap::new(),
             handlers: std::collections::HashMap::new(),
             two_way: None,
