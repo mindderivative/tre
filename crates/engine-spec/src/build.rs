@@ -653,24 +653,32 @@ fn node_kind_and_base_paint(
                 kind: "Image",
                 field: "image",
             })?;
-            let base_dir = base_dir.ok_or_else(|| SpecError::ImageSrcNoBaseDir {
-                path: image_spec.src.clone(),
-            })?;
-            let resolved_path = resolve_image_src(base_dir, &image_spec.src)?;
-            let decoded = image::open(&resolved_path)
-                .map_err(|source| SpecError::ImageDecodeFailed {
-                    path: resolved_path.clone(),
-                    source,
-                })?
-                .to_rgba8();
-            let (img_width, img_height) = decoded.dimensions();
-            let mut image_state = engine_core::ImageState::new(peniko::ImageData {
-                data: peniko::Blob::from(decoded.into_raw()),
-                format: peniko::ImageFormat::Rgba8,
-                alpha_type: peniko::ImageAlphaType::Alpha,
-                width: img_width,
-                height: img_height,
-            });
+            let mut image_state = match &image_spec.src {
+                Some(src) => {
+                    let base_dir = base_dir
+                        .ok_or_else(|| SpecError::ImageSrcNoBaseDir { path: src.clone() })?;
+                    let resolved_path = resolve_image_src(base_dir, src)?;
+                    let decoded = image::open(&resolved_path)
+                        .map_err(|source| SpecError::ImageDecodeFailed {
+                            path: resolved_path.clone(),
+                            source,
+                        })?
+                        .to_rgba8();
+                    let (img_width, img_height) = decoded.dimensions();
+                    engine_core::ImageState::new(peniko::ImageData {
+                        data: peniko::Blob::from(decoded.into_raw()),
+                        format: peniko::ImageFormat::Rgba8,
+                        alpha_type: peniko::ImageAlphaType::Alpha,
+                        width: img_width,
+                        height: img_height,
+                    })
+                }
+                // tre issue #2: no `src:` at all -- the same synthetic
+                // 1x1 transparent placeholder `Window.add_video`'s own
+                // real default builds, letting a declarative fragment
+                // express that shape without a backing file.
+                None => engine_core::ImageState::blank(),
+            };
             image_state.content_fit = match image_spec.fit {
                 ContentFitSpec::Cover => engine_core::ContentFit::Cover,
                 ContentFitSpec::Contain => engine_core::ContentFit::Contain,
@@ -1340,6 +1348,35 @@ style: {width: 40, height: 40}
             panic!("expected an Image node");
         };
         assert_eq!(state.content_fit, engine_core::ContentFit::Fill);
+    }
+
+    #[test]
+    fn kind_image_with_no_src_builds_the_same_blank_placeholder_add_video_uses() {
+        // tre issue #2: `src:` is optional -- omitted entirely, no
+        // base_dir required at all (there's no file to resolve), and
+        // the resulting node is the identical 1x1 transparent
+        // placeholder `Window.add_video`'s own default already builds
+        // (`ImageState::blank`).
+        let yaml = r#"
+id: placeholder
+kind: Image
+image: {fit: Cover}
+style: {width: 40, height: 40}
+"#;
+        let mut tree = Tree::new();
+        let root = load_view(&mut tree, yaml)
+            .expect("kind: Image with no src: must build, no base_dir needed");
+        let NodeKind::Image(state) = &tree.get(root).unwrap().kind else {
+            panic!("expected an Image node");
+        };
+        let blank = engine_core::ImageState::blank();
+        assert_eq!(state.image.width, blank.image.width);
+        assert_eq!(state.image.height, blank.image.height);
+        // `peniko::Blob`'s own `PartialEq` compares by allocation
+        // identity, not byte content -- two independently-built blobs
+        // with identical bytes aren't `==`, so compare the real bytes.
+        assert_eq!(state.image.data.data(), blank.image.data.data());
+        assert_eq!(state.content_fit, engine_core::ContentFit::Cover);
     }
 
     #[test]

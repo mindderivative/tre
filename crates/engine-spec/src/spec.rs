@@ -152,10 +152,19 @@ pub enum NodeKindSpec {
 /// paths (`include.rs`'s `resolve_confined`, reused rather than a
 /// second path-confinement scheme), not relative to the current
 /// working directory or the running process's own location.
+///
+/// tre issue #2: `src` is optional -- omitted entirely, `build.rs`
+/// builds the identical synthetic 1x1 transparent placeholder `Window.
+/// add_video`'s own default already does (`ImageState::blank`), rather
+/// than requiring a real file on disk. Lets a declarative `kind: Image`
+/// with no `src:` express `add_video`'s own real default shape, which
+/// was previously not expressible at all (no way to say "blank,
+/// waiting for frames" without a backing file).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ImageSpec {
-    pub src: String,
+    #[serde(default)]
+    pub src: Option<String>,
     #[serde(default)]
     pub fit: ContentFitSpec,
 }

@@ -9673,14 +9673,7 @@ impl PyWindow {
         y: Option<f32>,
     ) -> PyResult<Node> {
         let content_fit = parse_content_fit(fit)?;
-        let placeholder = peniko::ImageData {
-            data: peniko::Blob::from(vec![0u8, 0, 0, 0]),
-            format: peniko::ImageFormat::Rgba8,
-            alpha_type: peniko::ImageAlphaType::Alpha,
-            width: 1,
-            height: 1,
-        };
-        let mut image_state = ImageState::new(placeholder);
+        let mut image_state = ImageState::blank();
         image_state.content_fit = content_fit;
 
         let mut tree = self.tree.borrow_mut();

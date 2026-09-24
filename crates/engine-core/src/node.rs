@@ -1085,6 +1085,22 @@ impl ImageState {
             content_fit: ContentFit::Fill,
         }
     }
+
+    /// A 1x1 fully-transparent placeholder -- the same real "nothing to
+    /// show yet" image `Window.add_video`'s own synthetic default
+    /// already builds (`window_factory.rs`), factored out here so a
+    /// declarative `kind: Image` with no `src:` (`engine-spec::build`)
+    /// can express the identical shape without duplicating the literal
+    /// in a second crate.
+    pub fn blank() -> Self {
+        Self::new(peniko::ImageData {
+            data: peniko::Blob::from(vec![0u8, 0, 0, 0]),
+            format: peniko::ImageFormat::Rgba8,
+            alpha_type: peniko::ImageAlphaType::Alpha,
+            width: 1,
+            height: 1,
+        })
+    }
 }
 
 /// M22 Phase 2 (§16.1): see `ImageState.content_fit`'s own doc comment.
