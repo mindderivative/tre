@@ -101,6 +101,18 @@ impl Reconciler {
         self.root
     }
 
+    /// 0.3.1 review finding (performance): callers that already build a
+    /// `Reconciler` via `load`/`load_spec` had no way to get back the
+    /// `WidgetSpec` it just built without parsing/cloning a second one
+    /// themselves -- `engine-py`'s own `View::new` did exactly that
+    /// (a redundant second YAML parse in the `source=` path, a full
+    /// `WidgetSpec` clone in the `spec=` path) purely to walk it for
+    /// `bindings:`/`handlers:`/`two_way:` collection. This accessor
+    /// closes that gap directly.
+    pub fn spec(&self) -> &WidgetSpec {
+        &self.spec
+    }
+
     /// M51: re-resolves *every* node's `PaintProperties`/`layout_style`
     /// against a new set of theme layers -- the real, live-re-theme
     /// counterpart to `reconcile` above, for the case where the spec

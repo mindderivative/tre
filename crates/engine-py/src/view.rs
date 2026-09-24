@@ -60,7 +60,7 @@ use engine_core::{EventKind, InputEvent, NodeId, PointerButton, Tree};
 use engine_md3::{ColorScheme, DynamicTheme};
 use engine_spec::{
     Expression, Reconciler, Stylesheet, ThemeSpec, ViewWatcher, WidgetSpec, evaluate,
-    parse_binding, parse_stylesheet, parse_theme, parse_view_with_includes,
+    parse_binding, parse_stylesheet, parse_theme,
 };
 use peniko::Color;
 use pyo3::IntoPyObjectExt;
@@ -993,8 +993,15 @@ impl View {
             ));
         }
         if spec.is_none() && path.is_none() {
+            // 0.3.1 review finding (architecture): this message used to
+            // say only "needs path= unless spec= is given" even when
+            // the caller *did* pass `source=` -- `source=` alone was
+            // never enough (`path=` still supplies base_dir and the
+            // real watched file, M71's own design), but the old text
+            // never said so, letting a `source=`-only caller wrongly
+            // read their own view as "purely programmatic."
             return Err(PyValueError::new_err(
-                "View() needs path= unless spec= is given -- a purely programmatic view has no file to name",
+                "View() needs path= (even with source=, to supply a base directory and hot-reload target) unless spec= is given -- a purely programmatic view has no file to name",
             ));
         }
         let path = path.unwrap_or_default();
@@ -1033,11 +1040,17 @@ impl View {
         let default_theme_sheet = Some(default_theme_sheet);
 
         let mut tree = Tree::new();
-        let (reconciler, spec_for_bindings) = if let Some(spec_obj) = &spec {
+        // 0.3.1 review finding (performance): both branches used to
+        // build a second, separate `WidgetSpec` (a redundant YAML
+        // re-parse in the `source=` path, a full clone in the `spec=`
+        // path) purely to walk it for bindings/handlers/two-way
+        // collection below -- `Reconciler` already keeps the one it
+        // built internally; `Reconciler::spec()` reads that directly
+        // instead.
+        let reconciler = if let Some(spec_obj) = &spec {
             let widget_spec: WidgetSpec = pythonize::depythonize(spec_obj.bind(py))
                 .map_err(|e| PyValueError::new_err(format!("spec=: {e}")))?;
-            let spec_for_bindings = widget_spec.clone();
-            let reconciler = Reconciler::load_spec(
+            Reconciler::load_spec(
                 &mut tree,
                 widget_spec,
                 default_theme_sheet.as_ref(),
@@ -1046,8 +1059,7 @@ impl View {
                 scheme.as_ref(),
                 base_dir,
             )
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-            (reconciler, spec_for_bindings)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?
         } else {
             let yaml = match source {
                 Some(text) => text,
@@ -1055,7 +1067,7 @@ impl View {
                     PyRuntimeError::new_err(format!("failed to read view {path:?}: {e}"))
                 })?,
             };
-            let reconciler = Reconciler::load(
+            Reconciler::load(
                 &mut tree,
                 &yaml,
                 default_theme_sheet.as_ref(),
@@ -1064,29 +1076,40 @@ impl View {
                 scheme.as_ref(),
                 base_dir,
             )
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
-            let spec_for_bindings = parse_view_with_includes(&yaml, base_dir)
-                .map_err(|e| PyValueError::new_err(e.to_string()))?;
-            (reconciler, spec_for_bindings)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?
         };
 
         let mut bindings = Vec::new();
-        collect_bindings(&spec_for_bindings, &mut bindings);
+        collect_bindings(reconciler.spec(), &mut bindings);
         let mut declared_handlers = Vec::new();
-        collect_handlers(&spec_for_bindings, &mut declared_handlers);
+        collect_handlers(reconciler.spec(), &mut declared_handlers);
         let mut two_way = Vec::new();
-        collect_two_way(&spec_for_bindings, &mut two_way);
+        collect_two_way(reconciler.spec(), &mut two_way);
 
         // M19 Phase 1 (§16.4): a real, additive capability -- `View`
         // worked fine without it before this phase, so a failure here
         // (an unusual filesystem with no real inotify-equivalent) is
         // non-fatal, logged and skipped, not propagated as a
         // constructor error.
-        let watcher = match ViewWatcher::watch(std::path::Path::new(&path)) {
-            Ok(watcher) => Some(watcher),
-            Err(err) => {
-                tracing::warn!(%err, path = %path, "failed to start watching this view file for hot-reload -- poll_reload will always report no change");
-                None
+        //
+        // 0.3.1 review finding (architecture): a `spec=`-only `View`
+        // (M78) has no `path` at all, `path` defaults to `""` -- that
+        // used to reach `ViewWatcher::watch` unconditionally, which
+        // predictably failed every single time and logged a `warn!`
+        // framed around "an unusual filesystem," misleading for what
+        // is actually the guaranteed, expected outcome of this
+        // legitimate construction path. Skip the attempt entirely when
+        // there was never a real path to watch, so the `warn!` below
+        // stays meaningful for genuine filesystem failures only.
+        let watcher = if path.is_empty() {
+            None
+        } else {
+            match ViewWatcher::watch(std::path::Path::new(&path)) {
+                Ok(watcher) => Some(watcher),
+                Err(err) => {
+                    tracing::warn!(%err, path = %path, "failed to start watching this view file for hot-reload -- poll_reload will always report no change");
+                    None
+                }
             }
         };
 

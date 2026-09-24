@@ -10044,7 +10044,15 @@ impl PyWindow {
     // parameter. Both default `false`, the real, pre-existing
     // `add_text_field` behavior for every caller that doesn't pass
     // them -- a true no-op widening.
-    #[pyo3(signature = (background, width, height, content="", font_family="Roboto", font_weight=400.0, font_size=16.0, multiline=false, show_whitespace=false, x=None, y=None))]
+    // 0.3.1 review finding (architecture, High): `multiline`/`show_
+    // whitespace` originally landed *before* the pre-existing trailing
+    // `x`/`y` params, breaking positional-call compatibility with
+    // every other 0.3.0 caller -- the one real inconsistency with this
+    // branch's own established convention of always appending new
+    // params at the end (`View::new`'s `source`/`spec`, `Node.set_
+    // layout`'s `flex_direction`, both `instantiate`'s `source`, all
+    // appended). Moved to the end to match.
+    #[pyo3(signature = (background, width, height, content="", font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None, multiline=false, show_whitespace=false))]
     #[allow(clippy::too_many_arguments)]
     fn add_text_field(
         &self,
@@ -10055,10 +10063,10 @@ impl PyWindow {
         font_family: &str,
         font_weight: f32,
         font_size: f32,
-        multiline: bool,
-        show_whitespace: bool,
         x: Option<f32>,
         y: Option<f32>,
+        multiline: bool,
+        show_whitespace: bool,
     ) -> Node {
         let (r, g, b, a) = background;
         // M20 Phase 2 (§7.1, §7.3): same real "themed-at-construction,
