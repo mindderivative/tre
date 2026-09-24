@@ -398,3 +398,66 @@ def test_instantiate_with_no_source_still_reads_the_real_file(tmp_path):
     card = view.instantiate(card_path, container)
 
     assert card.node("label") is not None
+
+
+# --- 0.3.1 review, user-requested follow-up (item 3): spec= on
+# View.instantiate/Component.instantiate, mirroring View::new's own
+# M78 widening. path= stays a required (but may be empty) positional
+# param here, unlike View::new -- every real call site in this file
+# already calls instantiate(path, into) positionally, and reordering
+# `into` ahead of `path` to make `path` optional would have broken
+# every one of them (see instantiate_component's own doc comment).
+
+
+def test_instantiate_spec_builds_a_real_component_with_no_backing_file(tmp_path):
+    parent_path = write(tmp_path, PARENT_VIEW, "parent.yaml")
+    view = View(parent_path)
+    container = view.node("card_list")
+
+    spec = {
+        "id": "root",
+        "kind": "Rect",
+        "style": {"width": 40, "height": 40, "background": "#112233", "corner_radius": 5},
+    }
+    card = view.instantiate("", container, spec=spec)
+
+    assert card.node("root").get("corner_radius") == 5.0
+
+
+def test_component_instantiate_also_accepts_spec_for_nested_components():
+    """`Component.instantiate` (nesting a component inside another
+    component) gets the identical real widening -- `instantiate_
+    component`'s own single, shared implementation, confirmed by
+    reading `component.rs` before writing this, not assumed."""
+    outer = View(spec={"id": "root", "kind": "Container", "style": {"width": 200, "height": 200}})
+    outer_component = outer.instantiate(
+        "", outer.node("root"), spec={"id": "inner", "kind": "Container", "style": {"width": 100, "height": 100}}
+    )
+    nested_component = outer_component.instantiate(
+        "",
+        outer_component.node("inner"),
+        spec={
+            "id": "nested",
+            "kind": "Rect",
+            "style": {"width": 10, "height": 10, "background": "#000000", "corner_radius": 2},
+        },
+    )
+
+    assert nested_component.node("nested").get("corner_radius") == 2.0
+
+
+def test_instantiate_spec_and_source_together_is_a_clear_error():
+    view = View(spec={"id": "root", "kind": "Container", "style": {"width": 10, "height": 10}})
+    with pytest.raises(ValueError, match="spec=, source="):
+        view.instantiate(
+            "",
+            view.node("root"),
+            source="id: x\nkind: Container\n",
+            spec={"id": "x", "kind": "Container"},
+        )
+
+
+def test_instantiate_with_no_path_source_or_spec_is_a_clear_error():
+    view = View(spec={"id": "root", "kind": "Container", "style": {"width": 10, "height": 10}})
+    with pytest.raises(ValueError, match="path=.*spec=/source="):
+        view.instantiate("", view.node("root"))

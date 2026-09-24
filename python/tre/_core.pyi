@@ -1947,6 +1947,7 @@ class View:
         custom_theme: str | None = None,
         source: str | None = None,
         spec: object | None = None,
+        json: str | None = None,
     ) -> None:
         """`stylesheet` is a path to a stylesheet YAML file (§16.3's
         cascade); `theme_seed` builds a real MD3 `DynamicTheme` the
@@ -1982,10 +1983,19 @@ class View:
         directly into the tree -- no YAML text at all. `path` becomes
         optional: omitted, there's no base directory to resolve against
         and no file to watch for hot-reload (`poll_reload()` then
-        always returns `False`; use `reconcile()` instead). `spec` and
-        `source` are mutually exclusive; at least one of `spec`/`path`
-        is required. Raises `ValueError` if both `spec` and `source`
-        are given, or if neither `spec` nor `path` is given.
+        always returns `False`; use `reconcile()` instead).
+
+        0.3.1 review, item 2: `json`, when given, is JSON text parsed
+        directly into the tree -- the real first consumer of `engine_
+        spec::parse_view_json`. Grouped with `spec`, not `source`: both
+        are just different ways to obtain the tree data directly, with
+        no real backing file implied by either, so `path` is optional
+        with `json` too. `source`'s own `path` requirement is specific
+        to it -- pre-processed *real file* content still wanting real
+        hot-reload. At most one of `spec`/`source`/`json` may be given;
+        at least one of `spec`/`json`/`path` is required. Raises
+        `ValueError` if more than one of `spec`/`source`/`json` is
+        given, or if none of `spec`/`json`/`path` is given.
         """
         ...
     def node(self, widget_id: str) -> Node:
@@ -2006,16 +2016,19 @@ class View:
         see `reconcile()` for the ungated equivalent.
         """
         ...
-    def reconcile(self, source: str | None = None, spec: object | None = None) -> None:
+    def reconcile(
+        self, source: str | None = None, spec: object | None = None, json: str | None = None
+    ) -> None:
         """M79 (tre issue #3 Part C): the ungated sibling of
         `poll_reload` for a `View` built with `spec=` and no backing
-        file to watch. Reconciles against `source` (YAML text) or
-        `spec` (a real Python object, depythonized directly) --
-        unconditionally, with no "did anything change" check, since the
-        caller's own explicit call already is the change signal
-        (typically driven by `tre.Effect`). `spec`/`source` are
-        mutually exclusive; exactly one is required. Raises
-        `ValueError` if both or neither are given.
+        file to watch. Reconciles against `source` (YAML text), `spec`
+        (a real Python object, depythonized directly), or `json` (JSON
+        text, 0.3.1 review item 2) -- unconditionally, with no "did
+        anything change" check, since the caller's own explicit call
+        already is the change signal (typically driven by `tre.Effect`).
+        At most one of `spec`/`source`/`json` may be given; exactly one
+        is required. Raises `ValueError` if more than one is given, or
+        if none is given.
         """
         ...
     def set_theme(
@@ -2053,7 +2066,9 @@ class View:
         elevation section has nothing to apply to here.
         """
         ...
-    def instantiate(self, path: str, into: Node, source: str | None = None) -> Component:
+    def instantiate(
+        self, path: str, into: Node, source: str | None = None, spec: object | None = None
+    ) -> Component:
         """M43 Phase 1: embeds another view's own YAML as a real,
         independent `Component` -- its own bindings/handlers, ready for
         its own separate `ViewModel` to `_attach` to -- spliced into
@@ -2066,6 +2081,18 @@ class View:
         `path` from disk -- the same real `View.__init__`/`source=`
         precedent, widened here for the embedded-component macro-
         expansion case (Tesserae's own pre-processed component YAML).
+
+        0.3.1 review, item 3: `spec`, when given, is a real Python
+        object built directly into the tree, mirroring `View.__init__`
+        's own `spec=` (M78) -- no YAML text at all. Unlike `View.
+        __init__`, `path` stays **required** here (every real call site
+        already calls `instantiate(path, into)` positionally, and `into`
+        -- also required -- comes right after it, so making `path`
+        optional would break every one of them). Pass `path=""` when
+        using `spec=`/`source=` with no real file to name -- the same
+        "no base directory" outcome an omitted `path` means for `View.
+        __init__`. At most one of `spec`/`source` may be given; at
+        least one of `spec`/`source`/a non-empty `path` is required.
         """
         ...
     def click(self, node: Node) -> None: ...
@@ -2089,13 +2116,19 @@ class Component:
         """Looks up a declared widget by its own `id:`, scoped to this
         component instance."""
         ...
-    def instantiate(self, path: str, into: Node, source: str | None = None) -> Component:
+    def instantiate(
+        self, path: str, into: Node, source: str | None = None, spec: object | None = None
+    ) -> Component:
         """Embeds another component inside this one -- components nest
         recursively, the identical real mechanism `View.instantiate`
         itself uses.
 
         M73: `source`, when given, is used directly instead of reading
         `path` from disk -- see `View.instantiate`'s own docstring.
+
+        0.3.1 review, item 3: `spec`, when given, mirrors `View.
+        instantiate`'s own -- see its docstring for the real reasoning,
+        including why `path` stays required here.
         """
         ...
     def remove(self) -> None:

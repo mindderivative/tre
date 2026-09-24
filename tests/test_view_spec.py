@@ -6,7 +6,18 @@ proves the same real capability reaches `View`, the actual entry point
 a Python app (or Tesserae's own macro-expansion layer) uses. `View.
 reconcile(...)` (Part C) is the ungated sibling of `poll_reload` for a
 caller with no backing file to watch.
+
+0.3.1 review, user-requested follow-up (item 2): `json=` is the real,
+first consumer of `engine_spec::parse_view_json` (tre issue #3, Part A
+Tier 2) -- previously shipped with zero callers anywhere in the
+workspace. `json=`/`spec=` both hand off to the identical `Reconciler
+::load_spec` path (parallel content sources, no real backing file
+implied by either), while `source=` alone still requires `path=` for
+its own different reason (pre-processed *real file* content still
+wanting real hot-reload) -- see `View.__init__`'s own docstring.
 """
+
+import json as jsonlib
 
 import pytest
 from tre import View
@@ -103,3 +114,49 @@ def test_reconcile_with_neither_spec_nor_source_is_a_clear_error():
     view = View(spec={"id": "root", "kind": "Container"})
     with pytest.raises(ValueError, match="source=.*spec="):
         view.reconcile()
+
+
+def test_json_builds_a_real_view_with_no_path_needed():
+    # json= is self-sufficient like spec=, not like source= -- no real
+    # backing file is implied, so no path= is required alongside it.
+    json_text = jsonlib.dumps(
+        {
+            "id": "root",
+            "kind": "Rect",
+            "style": {"width": 40, "height": 40, "background": "#112233", "corner_radius": 4},
+        }
+    )
+    view = View(json=json_text)
+    assert view.node("root").get("corner_radius") == 4.0
+
+
+def test_reconcile_json_form_also_works():
+    view = View(json=jsonlib.dumps({"id": "root", "kind": "Container", "style": {"width": 10, "height": 10}}))
+    new_json = jsonlib.dumps(
+        {
+            "id": "root",
+            "kind": "Rect",
+            "style": {"width": 10, "height": 10, "background": "#334455", "corner_radius": 6},
+        }
+    )
+    view.reconcile(json=new_json)
+    assert view.node("root").get("corner_radius") == 6.0
+
+
+def test_spec_and_json_together_is_a_clear_error():
+    # The real, shared 3-way validation (spec=/source=/json=) --
+    # confirms it's not just a pairwise check that missed this
+    # combination.
+    with pytest.raises(ValueError, match="spec=, source=, json="):
+        View(spec={"id": "root", "kind": "Container"}, json="{}")
+
+
+def test_source_and_json_together_is_a_clear_error(tmp_path):
+    with pytest.raises(ValueError, match="spec=, source=, json="):
+        View(path=str(tmp_path / "v.yaml"), source="id: root\nkind: Container\n", json="{}")
+
+
+def test_reconcile_json_and_source_together_is_a_clear_error():
+    view = View(spec={"id": "root", "kind": "Container"})
+    with pytest.raises(ValueError, match="spec=, source=, json="):
+        view.reconcile(source="id: root\nkind: Container\n", json="{}")

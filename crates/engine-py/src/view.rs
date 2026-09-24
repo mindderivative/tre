@@ -60,7 +60,7 @@ use engine_core::{EventKind, InputEvent, NodeId, PointerButton, Tree};
 use engine_md3::{ColorScheme, DynamicTheme};
 use engine_spec::{
     Expression, Reconciler, Stylesheet, ThemeSpec, ViewWatcher, WidgetSpec, evaluate,
-    parse_binding, parse_stylesheet, parse_theme,
+    parse_binding, parse_stylesheet, parse_theme, parse_view_json,
 };
 use peniko::Color;
 use pyo3::IntoPyObjectExt;
@@ -445,6 +445,43 @@ fn apply_binding_value(
     };
     temp_node.animate(property, bound, 0, None)?;
     tree.borrow_mut().tick_all(std::time::Instant::now());
+    Ok(())
+}
+
+/// 0.3.1 review finding (architecture): `View::new`/`View::reconcile`
+/// each wrote out a near-verbatim "at most one of these content
+/// sources may be given" check, differing only in the method name in
+/// the error text and which options apply. `pub(crate)`, not private:
+/// `component.rs`'s own `instantiate_component` (shared by `View.
+/// instantiate`/`Component.instantiate`) needs the identical real
+/// check for its own `spec=`/`source=` pair.
+///
+/// Deliberately does **not** also unify the "at least one is required"
+/// half -- that check's own real target differs per caller (`View::
+/// new`/`instantiate_component` fall back to requiring `path=`; `View
+/// ::reconcile` has no `path` concept at all and requires one of its
+/// own options directly), so forcing it into this same helper would
+/// either lose that real distinction or need enough parameters to
+/// defeat the point of sharing it at all. Each call site keeps that
+/// second check as its own short, explicit line with its own accurate
+/// message.
+pub(crate) fn require_at_most_one_content_source(
+    method: &str,
+    options: &[(&str, bool)],
+) -> PyResult<()> {
+    let given: Vec<&str> = options
+        .iter()
+        .filter(|(_, is_given)| *is_given)
+        .map(|(name, _)| *name)
+        .collect();
+    if given.len() > 1 {
+        let all: Vec<&str> = options.iter().map(|(name, _)| *name).collect();
+        return Err(PyValueError::new_err(format!(
+            "{method}() takes at most one of {} -- pass one real content source, not {}",
+            all.join(", "),
+            given.join(" and "),
+        )));
+    }
     Ok(())
 }
 
@@ -974,7 +1011,7 @@ impl View {
     // "no watcher" path an unwatchable real file already takes below,
     // not a new failure mode.
     #[new]
-    #[pyo3(signature = (path=None, stylesheet=None, theme_seed=None, dark=false, default_theme=None, custom_theme=None, source=None, spec=None))]
+    #[pyo3(signature = (path=None, stylesheet=None, theme_seed=None, dark=false, default_theme=None, custom_theme=None, source=None, spec=None, json=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
@@ -986,22 +1023,33 @@ impl View {
         custom_theme: Option<String>,
         source: Option<String>,
         spec: Option<Py<PyAny>>,
+        json: Option<String>,
     ) -> PyResult<Self> {
-        if spec.is_some() && source.is_some() {
-            return Err(PyValueError::new_err(
-                "View() cannot take both spec= and source= -- pass one real content source, not two",
-            ));
-        }
-        if spec.is_none() && path.is_none() {
+        require_at_most_one_content_source(
+            "View",
+            &[
+                ("spec=", spec.is_some()),
+                ("source=", source.is_some()),
+                ("json=", json.is_some()),
+            ],
+        )?;
+        if spec.is_none() && json.is_none() && path.is_none() {
             // 0.3.1 review finding (architecture): this message used to
             // say only "needs path= unless spec= is given" even when
             // the caller *did* pass `source=` -- `source=` alone was
             // never enough (`path=` still supplies base_dir and the
             // real watched file, M71's own design), but the old text
             // never said so, letting a `source=`-only caller wrongly
-            // read their own view as "purely programmatic."
+            // read their own view as "purely programmatic." `json=` is
+            // grouped with `spec=` here, not `source=`: both are just
+            // different ways to obtain a `WidgetSpec` directly (via
+            // `Reconciler::load_spec`), with no real backing file
+            // implied either way -- `source=`'s own `path=` requirement
+            // is specifically about pre-processed *real file* content
+            // still wanting real hot-reload, a concern `json=` doesn't
+            // share.
             return Err(PyValueError::new_err(
-                "View() needs path= (even with source=, to supply a base directory and hot-reload target) unless spec= is given -- a purely programmatic view has no file to name",
+                "View() needs path= (even with source=, to supply a base directory and hot-reload target) unless spec=/json= is given -- a purely programmatic view has no file to name",
             ));
         }
         let path = path.unwrap_or_default();
@@ -1047,9 +1095,31 @@ impl View {
         // collection below -- `Reconciler` already keeps the one it
         // built internally; `Reconciler::spec()` reads that directly
         // instead.
-        let reconciler = if let Some(spec_obj) = &spec {
-            let widget_spec: WidgetSpec = pythonize::depythonize(spec_obj.bind(py))
-                .map_err(|e| PyValueError::new_err(format!("spec=: {e}")))?;
+        //
+        // 0.3.1 review finding (architecture): `parse_view_json` et al.
+        // (tre issue #3, Part A Tier 2) had zero real consumers anywhere
+        // in the workspace -- `json=` is that real consumer. It's
+        // deliberately just "another way to obtain a `WidgetSpec`,
+        // textually," parallel to `spec=`'s own `pythonize::depythonize`
+        // -- both hand off to the identical `Reconciler::load_spec`
+        // path `spec=` already uses, not a third, separate construction
+        // route. Real, named limit: `parse_view_json` doesn't go
+        // through `parse_view_with_includes` (that mechanism operates
+        // on the raw, untyped `serde_yaml_ng::Value` tree specifically
+        // because `{include: path}` can't deserialize into `WidgetSpec`
+        // -- there is no equivalent for JSON), so a `json=`-constructed
+        // view has no `include:` splicing available, unlike `source=`.
+        let widget_spec: Option<WidgetSpec> = if let Some(spec_obj) = &spec {
+            Some(
+                pythonize::depythonize(spec_obj.bind(py))
+                    .map_err(|e| PyValueError::new_err(format!("spec=: {e}")))?,
+            )
+        } else if let Some(json_text) = &json {
+            Some(parse_view_json(json_text).map_err(|e| PyValueError::new_err(e.to_string()))?)
+        } else {
+            None
+        };
+        let reconciler = if let Some(widget_spec) = widget_spec {
             Reconciler::load_spec(
                 &mut tree,
                 widget_spec,
@@ -1184,13 +1254,24 @@ impl View {
     /// `path` from disk -- see `instantiate_component`'s own doc
     /// comment (`component.rs`) for the real reasoning, and why this
     /// was a real, confirmed gap (not a hypothetical one) before now.
-    #[pyo3(signature = (path, into, source=None))]
+    /// `spec` (0.3.1 review item 3) mirrors `View::new`'s own M78
+    /// widening -- see `instantiate_component`'s own doc comment for
+    /// the real reasoning, including why `path` stays required here
+    /// unlike `View::new`.
+    #[pyo3(signature = (path, into, source=None, spec=None))]
     fn instantiate(
         &self,
+        py: Python<'_>,
         path: &str,
         into: PyRef<'_, Node>,
         source: Option<String>,
+        spec: Option<Py<PyAny>>,
     ) -> PyResult<crate::component::Component> {
+        let widget_spec = spec
+            .as_ref()
+            .map(|obj| pythonize::depythonize(obj.bind(py)))
+            .transpose()
+            .map_err(|e| PyValueError::new_err(format!("spec=: {e}")))?;
         crate::component::instantiate_component(
             &self.tree,
             into.id,
@@ -1200,6 +1281,7 @@ impl View {
             &self.completions,
             path,
             source,
+            widget_spec,
         )
     }
 
@@ -1285,28 +1367,40 @@ impl View {
     /// reconciles when given valid input, matching `__new__`'s own
     /// `spec`/`source` shape and validation exactly (mutually
     /// exclusive; at least one required).
-    #[pyo3(signature = (source=None, spec=None))]
+    #[pyo3(signature = (source=None, spec=None, json=None))]
     fn reconcile(
         &mut self,
         py: Python<'_>,
         source: Option<String>,
         spec: Option<Py<PyAny>>,
+        json: Option<String>,
     ) -> PyResult<()> {
-        if spec.is_some() && source.is_some() {
+        require_at_most_one_content_source(
+            "reconcile",
+            &[
+                ("spec=", spec.is_some()),
+                ("source=", source.is_some()),
+                ("json=", json.is_some()),
+            ],
+        )?;
+        if spec.is_none() && source.is_none() && json.is_none() {
             return Err(PyValueError::new_err(
-                "reconcile() cannot take both spec= and source= -- pass one real content source, not two",
-            ));
-        }
-        if spec.is_none() && source.is_none() {
-            return Err(PyValueError::new_err(
-                "reconcile() needs source= or spec= -- nothing to reconcile against",
+                "reconcile() needs source=, spec=, or json= -- nothing to reconcile against",
             ));
         }
         let base_dir = std::path::Path::new(&self.path).parent();
         let mut tree = self.tree.borrow_mut();
-        if let Some(spec_obj) = &spec {
-            let widget_spec: WidgetSpec = pythonize::depythonize(spec_obj.bind(py))
-                .map_err(|e| PyValueError::new_err(format!("spec=: {e}")))?;
+        let widget_spec: Option<WidgetSpec> = if let Some(spec_obj) = &spec {
+            Some(
+                pythonize::depythonize(spec_obj.bind(py))
+                    .map_err(|e| PyValueError::new_err(format!("spec=: {e}")))?,
+            )
+        } else if let Some(json_text) = &json {
+            Some(parse_view_json(json_text).map_err(|e| PyValueError::new_err(e.to_string()))?)
+        } else {
+            None
+        };
+        if let Some(widget_spec) = widget_spec {
             self.reconciler
                 .reconcile_spec(
                     &mut tree,
@@ -1324,7 +1418,7 @@ impl View {
                     &mut tree,
                     source
                         .as_deref()
-                        .expect("validated above: source is Some when spec is None"),
+                        .expect("validated above: source is Some when spec/json are None"),
                     self.default_theme.as_ref(),
                     self.custom_theme.as_ref(),
                     self.stylesheet.as_ref(),
@@ -1670,6 +1764,7 @@ mod tests {
                 None,
                 Some("id: root\nkind: Container\nstyle: {width: 999, height: 20}\n".to_string()),
                 None,
+                None,
             )
         })
         .expect("real View");
@@ -1701,6 +1796,7 @@ mod tests {
                 None,
                 None,
                 false,
+                None,
                 None,
                 None,
                 None,
@@ -1770,6 +1866,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
         })
         .expect("real View");
@@ -1804,6 +1901,7 @@ mod tests {
                 None,
                 None,
                 false,
+                None,
                 None,
                 None,
                 None,
@@ -1846,6 +1944,7 @@ mod tests {
                 None,
                 None,
                 false,
+                None,
                 None,
                 None,
                 None,
