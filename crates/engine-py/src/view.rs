@@ -60,7 +60,7 @@ use engine_core::{EventKind, InputEvent, NodeId, PointerButton, Tree};
 use engine_md3::{ColorScheme, DynamicTheme};
 use engine_spec::{
     Expression, Reconciler, Stylesheet, ThemeSpec, ViewWatcher, WidgetSpec, evaluate,
-    parse_binding, parse_stylesheet, parse_theme, parse_view_with_includes,
+    parse_binding, parse_stylesheet, parse_theme, parse_view_json,
 };
 use peniko::Color;
 use pyo3::IntoPyObjectExt;
@@ -400,15 +400,15 @@ fn apply_binding_value(
             "gap" => (None, None, None, Some(numeric)),
             _ => unreachable!("matched by the outer `matches!` above"),
         };
-        // M59 (§5, §16.3): `set_layout` widened with per-side padding/
-        // margin, flex-grow/shrink/basis, and align-items/justify-
-        // content -- none of those are reachable from a `{{ }}` binding
+        // M59/M71 (§5, §16.3): `set_layout` widened with per-side padding/
+        // margin, flex-grow/shrink/basis, align-items/justify-content,
+        // and flex-direction -- none of those are reachable from a `{{ }}` binding
         // (this call site's own real scope stays `width`/`height`/
         // `padding`/`gap`, matching the `matches!` guard above), so
         // every new parameter is `None` here.
         temp_node.set_layout(
             width, height, padding, None, None, None, None, None, None, None, None, None, gap,
-            None, None, None, None, None,
+            None, None, None, None, None, None,
         )?;
         return Ok(());
     }
@@ -445,6 +445,43 @@ fn apply_binding_value(
     };
     temp_node.animate(property, bound, 0, None)?;
     tree.borrow_mut().tick_all(std::time::Instant::now());
+    Ok(())
+}
+
+/// 0.3.1 review finding (architecture): `View::new`/`View::reconcile`
+/// each wrote out a near-verbatim "at most one of these content
+/// sources may be given" check, differing only in the method name in
+/// the error text and which options apply. `pub(crate)`, not private:
+/// `component.rs`'s own `instantiate_component` (shared by `View.
+/// instantiate`/`Component.instantiate`) needs the identical real
+/// check for its own `spec=`/`source=` pair.
+///
+/// Deliberately does **not** also unify the "at least one is required"
+/// half -- that check's own real target differs per caller (`View::
+/// new`/`instantiate_component` fall back to requiring `path=`; `View
+/// ::reconcile` has no `path` concept at all and requires one of its
+/// own options directly), so forcing it into this same helper would
+/// either lose that real distinction or need enough parameters to
+/// defeat the point of sharing it at all. Each call site keeps that
+/// second check as its own short, explicit line with its own accurate
+/// message.
+pub(crate) fn require_at_most_one_content_source(
+    method: &str,
+    options: &[(&str, bool)],
+) -> PyResult<()> {
+    let given: Vec<&str> = options
+        .iter()
+        .filter(|(_, is_given)| *is_given)
+        .map(|(name, _)| *name)
+        .collect();
+    if given.len() > 1 {
+        let all: Vec<&str> = options.iter().map(|(name, _)| *name).collect();
+        return Err(PyValueError::new_err(format!(
+            "{method}() takes at most one of {} -- pass one real content source, not {}",
+            all.join(", "),
+            given.join(" and "),
+        )));
+    }
     Ok(())
 }
 
@@ -940,22 +977,91 @@ impl View {
     /// "no scheme, no MD3 token resolution, literal colors only"
     /// precedent this codebase already establishes for `theme_seed`
     /// alone being omitted.
+    // M71 (§8, §16.1): `source` added -- when given, used directly
+    // instead of reading `path` from disk, while `path` still supplies
+    // the real base directory `include:`/`image.src:` resolve against
+    // (below) and the real file `ViewWatcher` watches for hot-reload
+    // (also below) -- so a caller that pre-processes a view's own raw
+    // text (the sibling `Tesserae` project's own real, confirmed need:
+    // expanding its own custom `component:` macro syntax into tre-
+    // native primitive YAML *before* this constructor ever sees it) can
+    // still have `poll_reload()` react to real edits of the file the
+    // developer actually wrote, not a generated artifact with no
+    // meaningful path of its own. `None` (the default) is the real,
+    // pre-existing behavior -- read `path` directly -- unchanged for
+    // every caller that doesn't pass it.
+    // tre issue #3, Part A (Tier 1): `spec` is a real Python object
+    // (a dict, shaped like `view.yaml`'s own `WidgetSpec` schema) built
+    // directly by the caller -- Tesserae's own macro-expansion layer,
+    // or any app that wants to compose a tree as native Python data --
+    // with zero YAML-text round trip. Depythonized straight into a real
+    // `WidgetSpec` (`pythonize::depythonize`) and handed to `Reconciler
+    // ::load_spec` (M77), the identical real building/id-recording
+    // logic the YAML-text path already uses. Mutually exclusive with
+    // `source` (both name a real content source; only one is
+    // meaningful). `path` becomes genuinely optional when `spec` is
+    // given -- a purely programmatic view built from a Python dict may
+    // have no real backing file at all, unlike `source`'s own M71
+    // precedent (there, a real file always exists; only its *content*
+    // is pre-processed before this constructor sees it). When `path`
+    // is omitted, `base_dir` resolves to `None` (an `include:`/`image.
+    // src:` inside the spec fails with the same real, clear error it
+    // already would for any other `base_dir: None` case) and
+    // `ViewWatcher` simply doesn't start -- the identical graceful
+    // "no watcher" path an unwatchable real file already takes below,
+    // not a new failure mode.
     #[new]
-    #[pyo3(signature = (path, stylesheet=None, theme_seed=None, dark=false, default_theme=None, custom_theme=None))]
+    #[pyo3(signature = (path=None, stylesheet=None, theme_seed=None, dark=false, default_theme=None, custom_theme=None, source=None, spec=None, json=None))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
-        path: String,
+        py: Python<'_>,
+        path: Option<String>,
         stylesheet: Option<String>,
         theme_seed: Option<(u8, u8, u8, u8)>,
         dark: bool,
         default_theme: Option<String>,
         custom_theme: Option<String>,
+        source: Option<String>,
+        spec: Option<Py<PyAny>>,
+        json: Option<String>,
     ) -> PyResult<Self> {
-        let yaml = std::fs::read_to_string(&path)
-            .map_err(|e| PyRuntimeError::new_err(format!("failed to read view {path:?}: {e}")))?;
+        require_at_most_one_content_source(
+            "View",
+            &[
+                ("spec=", spec.is_some()),
+                ("source=", source.is_some()),
+                ("json=", json.is_some()),
+            ],
+        )?;
+        if spec.is_none() && json.is_none() && path.is_none() {
+            // 0.3.1 review finding (architecture): this message used to
+            // say only "needs path= unless spec= is given" even when
+            // the caller *did* pass `source=` -- `source=` alone was
+            // never enough (`path=` still supplies base_dir and the
+            // real watched file, M71's own design), but the old text
+            // never said so, letting a `source=`-only caller wrongly
+            // read their own view as "purely programmatic." `json=` is
+            // grouped with `spec=` here, not `source=`: both are just
+            // different ways to obtain a `WidgetSpec` directly (via
+            // `Reconciler::load_spec`), with no real backing file
+            // implied either way -- `source=`'s own `path=` requirement
+            // is specifically about pre-processed *real file* content
+            // still wanting real hot-reload, a concern `json=` doesn't
+            // share.
+            return Err(PyValueError::new_err(
+                "View() needs path= (even with source=, to supply a base directory and hot-reload target) unless spec=/json= is given -- a purely programmatic view has no file to name",
+            ));
+        }
+        let path = path.unwrap_or_default();
+
         // M19 Phase 2 (§16.6): an `include:` path is only ever
         // meaningful relative to the file that named it -- `View`'s
         // own directory is the real base every include in this view
         // (and, recursively, every file it includes) resolves against.
+        // `Path::new("").parent()` is `None`, the same real "no base
+        // directory" outcome an explicitly omitted `path` already
+        // means elsewhere in this codebase (`include:`'s own `base_
+        // dir: None` contract).
         let base_dir = std::path::Path::new(&path).parent();
 
         let stylesheet = match stylesheet {
@@ -982,36 +1088,98 @@ impl View {
         let default_theme_sheet = Some(default_theme_sheet);
 
         let mut tree = Tree::new();
-        let reconciler = Reconciler::load(
-            &mut tree,
-            &yaml,
-            default_theme_sheet.as_ref(),
-            custom_theme_sheet.as_ref(),
-            stylesheet.as_ref(),
-            scheme.as_ref(),
-            base_dir,
-        )
-        .map_err(|e| PyValueError::new_err(e.to_string()))?;
-        let spec = parse_view_with_includes(&yaml, base_dir)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        // 0.3.1 review finding (performance): both branches used to
+        // build a second, separate `WidgetSpec` (a redundant YAML
+        // re-parse in the `source=` path, a full clone in the `spec=`
+        // path) purely to walk it for bindings/handlers/two-way
+        // collection below -- `Reconciler` already keeps the one it
+        // built internally; `Reconciler::spec()` reads that directly
+        // instead.
+        //
+        // 0.3.1 review finding (architecture): `parse_view_json` et al.
+        // (tre issue #3, Part A Tier 2) had zero real consumers anywhere
+        // in the workspace -- `json=` is that real consumer. It's
+        // deliberately just "another way to obtain a `WidgetSpec`,
+        // textually," parallel to `spec=`'s own `pythonize::depythonize`
+        // -- both hand off to the identical `Reconciler::load_spec`
+        // path `spec=` already uses, not a third, separate construction
+        // route. Real, named limit: `parse_view_json` doesn't go
+        // through `parse_view_with_includes` (that mechanism operates
+        // on the raw, untyped `serde_yaml_ng::Value` tree specifically
+        // because `{include: path}` can't deserialize into `WidgetSpec`
+        // -- there is no equivalent for JSON), so a `json=`-constructed
+        // view has no `include:` splicing available, unlike `source=`.
+        let widget_spec: Option<WidgetSpec> = if let Some(spec_obj) = &spec {
+            Some(
+                pythonize::depythonize(spec_obj.bind(py))
+                    .map_err(|e| PyValueError::new_err(format!("spec=: {e}")))?,
+            )
+        } else if let Some(json_text) = &json {
+            Some(parse_view_json(json_text).map_err(|e| PyValueError::new_err(e.to_string()))?)
+        } else {
+            None
+        };
+        let reconciler = if let Some(widget_spec) = widget_spec {
+            Reconciler::load_spec(
+                &mut tree,
+                widget_spec,
+                default_theme_sheet.as_ref(),
+                custom_theme_sheet.as_ref(),
+                stylesheet.as_ref(),
+                scheme.as_ref(),
+                base_dir,
+            )
+            .map_err(|e| PyValueError::new_err(e.to_string()))?
+        } else {
+            let yaml = match source {
+                Some(text) => text,
+                None => std::fs::read_to_string(&path).map_err(|e| {
+                    PyRuntimeError::new_err(format!("failed to read view {path:?}: {e}"))
+                })?,
+            };
+            Reconciler::load(
+                &mut tree,
+                &yaml,
+                default_theme_sheet.as_ref(),
+                custom_theme_sheet.as_ref(),
+                stylesheet.as_ref(),
+                scheme.as_ref(),
+                base_dir,
+            )
+            .map_err(|e| PyValueError::new_err(e.to_string()))?
+        };
 
         let mut bindings = Vec::new();
-        collect_bindings(&spec, &mut bindings);
+        collect_bindings(reconciler.spec(), &mut bindings);
         let mut declared_handlers = Vec::new();
-        collect_handlers(&spec, &mut declared_handlers);
+        collect_handlers(reconciler.spec(), &mut declared_handlers);
         let mut two_way = Vec::new();
-        collect_two_way(&spec, &mut two_way);
+        collect_two_way(reconciler.spec(), &mut two_way);
 
         // M19 Phase 1 (§16.4): a real, additive capability -- `View`
         // worked fine without it before this phase, so a failure here
         // (an unusual filesystem with no real inotify-equivalent) is
         // non-fatal, logged and skipped, not propagated as a
         // constructor error.
-        let watcher = match ViewWatcher::watch(std::path::Path::new(&path)) {
-            Ok(watcher) => Some(watcher),
-            Err(err) => {
-                tracing::warn!(%err, path = %path, "failed to start watching this view file for hot-reload -- poll_reload will always report no change");
-                None
+        //
+        // 0.3.1 review finding (architecture): a `spec=`-only `View`
+        // (M78) has no `path` at all, `path` defaults to `""` -- that
+        // used to reach `ViewWatcher::watch` unconditionally, which
+        // predictably failed every single time and logged a `warn!`
+        // framed around "an unusual filesystem," misleading for what
+        // is actually the guaranteed, expected outcome of this
+        // legitimate construction path. Skip the attempt entirely when
+        // there was never a real path to watch, so the `warn!` below
+        // stays meaningful for genuine filesystem failures only.
+        let watcher = if path.is_empty() {
+            None
+        } else {
+            match ViewWatcher::watch(std::path::Path::new(&path)) {
+                Ok(watcher) => Some(watcher),
+                Err(err) => {
+                    tracing::warn!(%err, path = %path, "failed to start watching this view file for hot-reload -- poll_reload will always report no change");
+                    None
+                }
             }
         };
 
@@ -1080,11 +1248,30 @@ impl View {
     /// of its own -- dispatch on an embedded node goes through this
     /// `View`'s own `click`/`hover`/`right_click` instead, e.g.
     /// `view.click(component.node("button"))`).
+    ///
+    /// `source` (widened alongside `View::new`'s own M71 real
+    /// precedent, above): when given, used directly instead of reading
+    /// `path` from disk -- see `instantiate_component`'s own doc
+    /// comment (`component.rs`) for the real reasoning, and why this
+    /// was a real, confirmed gap (not a hypothetical one) before now.
+    /// `spec` (0.3.1 review item 3) mirrors `View::new`'s own M78
+    /// widening -- see `instantiate_component`'s own doc comment for
+    /// the real reasoning, including why `path` stays required here
+    /// unlike `View::new`.
+    #[pyo3(signature = (path, into, source=None, spec=None))]
     fn instantiate(
         &self,
+        py: Python<'_>,
         path: &str,
         into: PyRef<'_, Node>,
+        source: Option<String>,
+        spec: Option<Py<PyAny>>,
     ) -> PyResult<crate::component::Component> {
+        let widget_spec = spec
+            .as_ref()
+            .map(|obj| pythonize::depythonize(obj.bind(py)))
+            .transpose()
+            .map_err(|e| PyValueError::new_err(format!("spec=: {e}")))?;
         crate::component::instantiate_component(
             &self.tree,
             into.id,
@@ -1093,6 +1280,8 @@ impl View {
             &self.theme,
             &self.completions,
             path,
+            source,
+            widget_spec,
         )
     }
 
@@ -1120,16 +1309,30 @@ impl View {
     /// honest translation of that intent given `View`'s own real,
     /// pre-existing architecture: an explicit method the caller invokes
     /// wherever its own script's equivalent of "between frames" is.
-    fn poll_reload(&mut self) -> PyResult<bool> {
+    ///
+    /// M71 (§8, §16.1): `source` added -- `__new__`'s own real sibling
+    /// parameter. The real change-detection gate above (`watcher.
+    /// poll_changed()`) still watches `self.path` on disk regardless --
+    /// a caller pre-processing this view's own raw text (see `__new__`'s
+    /// doc comment) still needs to know *whether* the real underlying
+    /// file changed at all before deciding it's worth re-expanding, so
+    /// that real, cheap, inotify-backed check isn't bypassed. Only the
+    /// *content actually reconciled* changes: `source`, when given,
+    /// instead of a fresh `self.path` disk read.
+    #[pyo3(signature = (source=None))]
+    fn poll_reload(&mut self, source: Option<String>) -> PyResult<bool> {
         let Some(watcher) = &self.watcher else {
             return Ok(false);
         };
         if !watcher.poll_changed() {
             return Ok(false);
         }
-        let yaml = std::fs::read_to_string(&self.path).map_err(|e| {
-            PyRuntimeError::new_err(format!("failed to re-read view {:?}: {e}", self.path))
-        })?;
+        let yaml = match source {
+            Some(text) => text,
+            None => std::fs::read_to_string(&self.path).map_err(|e| {
+                PyRuntimeError::new_err(format!("failed to re-read view {:?}: {e}", self.path))
+            })?,
+        };
         let base_dir = std::path::Path::new(&self.path).parent();
         let mut tree = self.tree.borrow_mut();
         self.reconciler
@@ -1144,6 +1347,87 @@ impl View {
             )
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(true)
+    }
+
+    /// tre issue #3, Part C: `poll_reload`'s own change-detection gate
+    /// (`self.watcher`'s `poll_changed()`) is hard-wired to a real
+    /// filesystem event -- a `View` built with no `path` at all (M78's
+    /// own `spec=`-only construction) has no `watcher` and can *never*
+    /// open that gate, so `poll_reload` would always report `false`
+    /// for it, regardless of `source=`. This is not "teach `watch.rs`
+    /// to detect programmatic changes" (a real, deliberately rejected
+    /// design considered while scoping this) -- a caller with no
+    /// backing file already knows precisely when its own data changed
+    /// (typically via `tre.Effect`'s own real dependency tracking), so
+    /// its own explicit call to this method already *is* the change
+    /// signal. No new Rust-side dirty-flag/channel mechanism needed;
+    /// `watch.rs`/`ViewWatcher` stay completely untouched by this
+    /// milestone. Unconditional -- unlike `poll_reload`, there's no
+    /// "did anything change" ambiguity to report, so this always
+    /// reconciles when given valid input, matching `__new__`'s own
+    /// `spec`/`source` shape and validation exactly (mutually
+    /// exclusive; at least one required).
+    #[pyo3(signature = (source=None, spec=None, json=None))]
+    fn reconcile(
+        &mut self,
+        py: Python<'_>,
+        source: Option<String>,
+        spec: Option<Py<PyAny>>,
+        json: Option<String>,
+    ) -> PyResult<()> {
+        require_at_most_one_content_source(
+            "reconcile",
+            &[
+                ("spec=", spec.is_some()),
+                ("source=", source.is_some()),
+                ("json=", json.is_some()),
+            ],
+        )?;
+        if spec.is_none() && source.is_none() && json.is_none() {
+            return Err(PyValueError::new_err(
+                "reconcile() needs source=, spec=, or json= -- nothing to reconcile against",
+            ));
+        }
+        let base_dir = std::path::Path::new(&self.path).parent();
+        let mut tree = self.tree.borrow_mut();
+        let widget_spec: Option<WidgetSpec> = if let Some(spec_obj) = &spec {
+            Some(
+                pythonize::depythonize(spec_obj.bind(py))
+                    .map_err(|e| PyValueError::new_err(format!("spec=: {e}")))?,
+            )
+        } else if let Some(json_text) = &json {
+            Some(parse_view_json(json_text).map_err(|e| PyValueError::new_err(e.to_string()))?)
+        } else {
+            None
+        };
+        if let Some(widget_spec) = widget_spec {
+            self.reconciler
+                .reconcile_spec(
+                    &mut tree,
+                    widget_spec,
+                    self.default_theme.as_ref(),
+                    self.custom_theme.as_ref(),
+                    self.stylesheet.as_ref(),
+                    self.scheme.as_ref(),
+                    base_dir,
+                )
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        } else {
+            self.reconciler
+                .reconcile(
+                    &mut tree,
+                    source
+                        .as_deref()
+                        .expect("validated above: source is Some when spec/json are None"),
+                    self.default_theme.as_ref(),
+                    self.custom_theme.as_ref(),
+                    self.stylesheet.as_ref(),
+                    self.scheme.as_ref(),
+                    base_dir,
+                )
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        }
+        Ok(())
     }
 
     /// M51: live re-theme -- re-resolves *every* node's `PaintProperties`
@@ -1461,27 +1745,130 @@ mod tests {
         path
     }
 
-    /// M42 Phase 1's own real, new behavior: `View::new` is a
-    /// `#[pymethods]` constructor but takes no `Python<'_>` and touches
-    /// no `Py<PyAny>` internally (its body only builds a `Tree` and
-    /// plain Rust bookkeeping) -- callable directly here with no GIL, no
-    /// `pyo3::prepare_freethreaded_python()`, matching this crate's own
-    /// established real test-surface split: pyo3-facing *Python* API
-    /// behavior is covered by `tests/*.py` (needs a real interpreter),
-    /// while plain-Rust logic reachable without the GIL -- like
+    /// M71 (§8, §16.1): `source=`, when given, is used instead of
+    /// reading `path` from disk -- proven directly by writing a real
+    /// on-disk file with one `width`, then constructing with `source=`
+    /// naming a *different* `width` and confirming the live `Tree`
+    /// reflects `source`'s own value, not the file's.
+    #[test]
+    fn source_override_is_used_instead_of_reading_path_from_disk() {
+        let path = write_temp_view("id: root\nkind: Container\nstyle: {width: 40, height: 20}\n");
+        let view = Python::attach(|py| {
+            View::new(
+                py,
+                Some(path.to_string_lossy().into_owned()),
+                None,
+                None,
+                false,
+                None,
+                None,
+                Some("id: root\nkind: Container\nstyle: {width: 999, height: 20}\n".to_string()),
+                None,
+                None,
+            )
+        })
+        .expect("real View");
+
+        let tree = view.tree.borrow();
+        let root = view.reconciler.id_of("root").expect("root widget id");
+        let style = &tree.get(root).expect("root node").layout_style;
+        assert_eq!(
+            style.size.width,
+            taffy::prelude::length(999.0),
+            "source= must be used instead of the real on-disk file's own content"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// M71 (§8, §16.1): `poll_reload(source=...)`'s own real sibling
+    /// behavior -- the change-detection gate still watches the real
+    /// on-disk `path` (a real write to it is what makes `poll_changed()`
+    /// report `true` at all), but the content actually reconciled is
+    /// `source`, not a fresh read of `path`.
+    #[test]
+    fn poll_reload_source_override_is_reconciled_instead_of_the_file() {
+        let path = write_temp_view("id: root\nkind: Container\nstyle: {width: 40, height: 20}\n");
+        let mut view = Python::attach(|py| {
+            View::new(
+                py,
+                Some(path.to_string_lossy().into_owned()),
+                None,
+                None,
+                false,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+        })
+        .expect("real View");
+
+        // A real write to the watched file -- content doesn't matter,
+        // only that the watcher's own inotify-backed `poll_changed()`
+        // has something real to report; `source=` below overrides what
+        // actually gets reconciled regardless of what this write says.
+        std::fs::write(
+            &path,
+            "id: root\nkind: Container\nstyle: {width: 40, height: 20}\n",
+        )
+        .expect("real rewrite of the watched file");
+        // Real filesystem watchers need a moment to deliver the event.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        let reloaded = view
+            .poll_reload(Some(
+                "id: root\nkind: Container\nstyle: {width: 777, height: 20}\n".to_string(),
+            ))
+            .expect("poll_reload must not error");
+        assert!(reloaded, "a real file change must be detected");
+
+        let tree = view.tree.borrow();
+        let root = view.reconciler.id_of("root").expect("root widget id");
+        let style = &tree.get(root).expect("root node").layout_style;
+        assert_eq!(
+            style.size.width,
+            taffy::prelude::length(777.0),
+            "poll_reload's own source= must be reconciled instead of a fresh disk read"
+        );
+        drop(tree);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// M42 Phase 1's own real, new behavior, updated for tre issue #3
+    /// Tier 1: `View::new` now takes a real `Python<'_>` (needed for
+    /// `pythonize::depythonize`'s own `spec_obj.bind(py)` when `spec=`
+    /// is given), so this Rust-only test wraps the call in `Python::
+    /// attach` (pyo3 0.29's real `with_gil` replacement -- confirmed
+    /// directly against its own source, not assumed; `[dev-dependencies]`
+    /// 's own `pyo3/auto-initialize` starts a real embedded interpreter
+    /// for it) -- previously callable with no GIL at all. Still matches
+    /// this crate's own established
+    /// real test-surface split: pyo3-facing *Python* API behavior is
+    /// covered by `tests/*.py` (needs a real interpreter), while
+    /// plain-Rust logic reachable without touching a live `Py<PyAny>` --
+    /// like
     /// `available_space()`'s own new branch, below -- gets a real Rust
     /// unit test the same as any other crate in this workspace.
     #[test]
     fn a_view_never_shown_live_still_lays_out_with_max_content() {
         let path = write_temp_view("id: root\nkind: Container\nstyle: {width: 40, height: 20}\n");
-        let view = View::new(
-            path.to_string_lossy().into_owned(),
-            None,
-            None,
-            false,
-            None,
-            None,
-        )
+        let view = Python::attach(|py| {
+            View::new(
+                py,
+                Some(path.to_string_lossy().into_owned()),
+                None,
+                None,
+                false,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+        })
         .expect("real View");
 
         assert_eq!(
@@ -1507,14 +1894,20 @@ mod tests {
     #[test]
     fn setting_a_real_size_switches_available_space_to_definite() {
         let path = write_temp_view("id: root\nkind: Container\nstyle: {width: 40, height: 20}\n");
-        let view = View::new(
-            path.to_string_lossy().into_owned(),
-            None,
-            None,
-            false,
-            None,
-            None,
-        )
+        let view = Python::attach(|py| {
+            View::new(
+                py,
+                Some(path.to_string_lossy().into_owned()),
+                None,
+                None,
+                false,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+        })
         .expect("real View");
 
         view.width.set(300);
@@ -1544,14 +1937,20 @@ mod tests {
     #[test]
     fn only_one_axis_set_still_falls_back_to_max_content_on_both() {
         let path = write_temp_view("id: root\nkind: Container\nstyle: {width: 40, height: 20}\n");
-        let view = View::new(
-            path.to_string_lossy().into_owned(),
-            None,
-            None,
-            false,
-            None,
-            None,
-        )
+        let view = Python::attach(|py| {
+            View::new(
+                py,
+                Some(path.to_string_lossy().into_owned()),
+                None,
+                None,
+                false,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+        })
         .expect("real View");
 
         view.width.set(300);

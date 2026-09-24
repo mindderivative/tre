@@ -33,7 +33,7 @@ use engine_core::{
 use peniko::Color;
 use peniko::kurbo::{Affine, BezPath};
 use pyo3::prelude::*;
-use taffy::prelude::{AlignItems, JustifyContent, Rect as TaffyRect, Size, length};
+use taffy::prelude::{AlignItems, FlexDirection, JustifyContent, Rect as TaffyRect, Size, length};
 
 use crate::dispatch::{HandlerMap, SharedCompletions, call_handler};
 use crate::error::EngineError;
@@ -414,13 +414,30 @@ impl Node {
     /// gives every already-built node (regardless of which factory
     /// created it) the identical real imperative path, named out of
     /// scope, not silently skipped.
+    // M71 (§5, §8, §16.1): `flex_direction` added -- a real, confirmed
+    // gap found while building Tesserae's own Python widget catalog on
+    // top of this method: no imperative way existed anywhere to set a
+    // node's own main axis at all (`Window.add_rect`/every other
+    // factory returns a node whose real taffy default is already
+    // `Row` -- `taffy::style::Display::DEFAULT`/its own sibling
+    // `FlexDirection` default -- with no constructor kwarg or `Node`
+    // method to ever change it), so a Python-composed widget needing a
+    // real vertical stack (a dialog's headline/body/actions, a
+    // snackbar's text/action, a list) had no way to ask for one.
+    // `"horizontal"`/`"vertical"`, not taffy's own `"row"`/`"column"`
+    // -- the identical real vocabulary fix M70 already made to the
+    // declarative `FlexDirectionSpec` layer, extended here for the
+    // identical real reason (`spec.rs`'s own doc comment: "row"/
+    // "column" collide with spreadsheet/datasheet vocabulary), so an
+    // app author sees one consistent axis vocabulary across both the
+    // declarative and imperative surfaces, not two competing ones.
     #[allow(clippy::too_many_arguments)]
     #[pyo3(signature = (
         width=None, height=None,
         padding=None, padding_top=None, padding_right=None, padding_bottom=None, padding_left=None,
         margin=None, margin_top=None, margin_right=None, margin_bottom=None, margin_left=None,
         gap=None, flex_grow=None, flex_shrink=None, flex_basis=None,
-        align_items=None, justify_content=None,
+        align_items=None, justify_content=None, flex_direction=None,
     ))]
     pub(crate) fn set_layout(
         &self,
@@ -442,9 +459,11 @@ impl Node {
         flex_basis: Option<f32>,
         align_items: Option<&str>,
         justify_content: Option<&str>,
+        flex_direction: Option<&str>,
     ) -> PyResult<()> {
         let align_items = align_items.map(parse_align_items).transpose()?;
         let justify_content = justify_content.map(parse_justify_content).transpose()?;
+        let flex_direction = flex_direction.map(parse_flex_direction).transpose()?;
 
         let mut tree = self.tree.borrow_mut();
         let mut style = tree
@@ -518,6 +537,9 @@ impl Node {
         }
         if let Some(justify_content) = justify_content {
             style.justify_content = Some(justify_content);
+        }
+        if let Some(flex_direction) = flex_direction {
+            style.flex_direction = flex_direction;
         }
         tree.set_layout_style(self.id, style);
         Ok(())
@@ -991,16 +1013,7 @@ impl Node {
     /// layout involvement at all here, only a real, ordinary content
     /// replacement.
     fn push_frame(&self, rgba: Vec<u8>, width: u32, height: u32) -> PyResult<()> {
-        let expected_len = (width as usize)
-            .checked_mul(height as usize)
-            .and_then(|pixels| pixels.checked_mul(4));
-        if expected_len != Some(rgba.len()) {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "push_frame: rgba has {} bytes, but a {width}x{height} RGBA8 frame needs {}",
-                rgba.len(),
-                expected_len.map_or("too many to represent".to_string(), |n| n.to_string()),
-            )));
-        }
+        validate_rgba_frame_len("push_frame", rgba.len(), width, height)?;
 
         let mut tree = self.tree.borrow_mut();
         let node = tree.get_mut(self.id).expect(
@@ -1502,6 +1515,23 @@ fn animate_field<T: engine_core::Interpolate + Clone>(
 /// a plain scalar). Deliberately the same bounded subset `engine-spec`
 /// ::`AlignItemsSpec`'s own real vocabulary uses, so the imperative and
 /// declarative paths agree on what's real here.
+/// M71 (§5, §8, §16.1): `set_layout`'s own real `flex_direction=`
+/// string parsing -- the identical "small vocabulary, plain string,
+/// `ValueError` on unrecognized" convention `parse_align_items`/
+/// `parse_justify_content` (below) already establish. `"horizontal"`/
+/// `"vertical"`, not taffy's own `"row"`/`"column"` -- see `set_layout`'s
+/// own doc comment for the real reasoning (the identical vocabulary
+/// fix M70 already made to the declarative `FlexDirectionSpec` layer).
+fn parse_flex_direction(value: &str) -> PyResult<FlexDirection> {
+    match value {
+        "horizontal" => Ok(FlexDirection::Row),
+        "vertical" => Ok(FlexDirection::Column),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "set_layout: unknown flex_direction {other:?} -- expected one of \"horizontal\", \"vertical\""
+        ))),
+    }
+}
+
 fn parse_align_items(value: &str) -> PyResult<AlignItems> {
     match value {
         "start" => Ok(AlignItems::START),
@@ -1539,6 +1569,28 @@ fn parse_justify_content(value: &str) -> PyResult<JustifyContent> {
              \"space_around\", \"space_evenly\""
         ))),
     }
+}
+
+/// M82: shared by `push_frame` and `Window.add_image_from_bytes` --
+/// both accept a caller-decoded, straight-alpha RGBA8 buffer with no
+/// `tre`-side decoding at all, and both need the identical real length
+/// check (and identical error wording) against that contract.
+pub(crate) fn validate_rgba_frame_len(
+    context: &str,
+    rgba_len: usize,
+    width: u32,
+    height: u32,
+) -> PyResult<()> {
+    let expected_len = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4));
+    if expected_len != Some(rgba_len) {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "{context}: rgba has {rgba_len} bytes, but a {width}x{height} RGBA8 frame needs {}",
+            expected_len.map_or("too many to represent".to_string(), |n| n.to_string()),
+        )));
+    }
+    Ok(())
 }
 
 fn kind_name(kind: &NodeKind) -> &'static str {

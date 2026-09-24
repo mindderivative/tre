@@ -319,3 +319,145 @@ def test_remove_is_safe_to_call_once_and_stops_dispatch_reaching_the_handler(tmp
     view.click(card_b.node("button"))
     assert vm_b._count == 1
     assert vm_a._count == 0
+
+
+# M71 follow-up (§8, §16.1, §16.6): `instantiate(..., source=...)` --
+# the same real `source=` override `View.__new__`/`poll_reload` already
+# have, widened to reach an *embedded* component too. The real,
+# confirmed gap this closes: the sibling `Tesserae` project's own
+# `component:` macro-expansion layer could pre-process a top-level
+# `View`'s YAML via `View(path=, source=)`, but had no way to do the
+# same for a component instantiated *into* a view -- `instantiate` read
+# `path` straight from disk with no override at all.
+
+
+def test_instantiate_source_override_is_used_instead_of_reading_path_from_disk(tmp_path):
+    parent_path = write(tmp_path, PARENT_VIEW, "parent.yaml")
+    card_path = write(tmp_path, CARD_VIEW, "card.yaml")
+
+    view = View(parent_path)
+    container = view.node("card_list")
+    overridden = """
+id: root
+kind: Container
+style: {flex_direction: Horizontal, width: 999, height: 40, gap: 8}
+children:
+  - id: label
+    kind: Text
+    text: {content: "Overridden", font_family: Roboto, font_size: 16}
+    style: {width: 180, height: 32, background: "#FFFFFF00"}
+"""
+    card = view.instantiate(card_path, container, source=overridden)
+
+    node = card.node("label")
+    assert node is not None
+    # The real file on disk still has "Count: 0" -- proving `source=`,
+    # not the file, is what got reconciled.
+    assert card_path.endswith("card.yaml")
+
+
+def test_component_instantiate_also_accepts_source_for_nested_components(tmp_path):
+    """`Component.instantiate` (nesting a component inside another
+    component) gets the identical real widening -- `instantiate_
+    component`'s own single, shared implementation, confirmed by
+    reading `component.rs` before writing this, not assumed."""
+    outer_path = write(tmp_path, PARENT_VIEW, "outer.yaml")
+    inner_path = write(tmp_path, CARD_VIEW, "inner.yaml")
+    innermost_path = write(tmp_path, CARD_VIEW, "innermost.yaml")
+
+    view = View(outer_path)
+    outer_container = view.node("card_list")
+    outer_component = view.instantiate(inner_path, outer_container)
+
+    overridden = """
+id: root
+kind: Container
+style: {flex_direction: Horizontal, width: 42, height: 40, gap: 8}
+children:
+  - id: label
+    kind: Text
+    text: {content: "Nested override", font_family: Roboto, font_size: 16}
+    style: {width: 180, height: 32, background: "#FFFFFF00"}
+"""
+    inner_component = outer_component.instantiate(
+        innermost_path, outer_component.node("root"), source=overridden
+    )
+
+    assert inner_component.node("label") is not None
+
+
+def test_instantiate_with_no_source_still_reads_the_real_file(tmp_path):
+    """`source=None` (the default, omitted here entirely) is the real,
+    pre-existing behavior, unchanged -- matches every other real caller
+    in this file that doesn't pass it."""
+    parent_path = write(tmp_path, PARENT_VIEW, "parent.yaml")
+    card_path = write(tmp_path, CARD_VIEW, "card.yaml")
+
+    view = View(parent_path)
+    container = view.node("card_list")
+    card = view.instantiate(card_path, container)
+
+    assert card.node("label") is not None
+
+
+# --- 0.3.1 review, user-requested follow-up (item 3): spec= on
+# View.instantiate/Component.instantiate, mirroring View::new's own
+# M78 widening. path= stays a required (but may be empty) positional
+# param here, unlike View::new -- every real call site in this file
+# already calls instantiate(path, into) positionally, and reordering
+# `into` ahead of `path` to make `path` optional would have broken
+# every one of them (see instantiate_component's own doc comment).
+
+
+def test_instantiate_spec_builds_a_real_component_with_no_backing_file(tmp_path):
+    parent_path = write(tmp_path, PARENT_VIEW, "parent.yaml")
+    view = View(parent_path)
+    container = view.node("card_list")
+
+    spec = {
+        "id": "root",
+        "kind": "Rect",
+        "style": {"width": 40, "height": 40, "background": "#112233", "corner_radius": 5},
+    }
+    card = view.instantiate("", container, spec=spec)
+
+    assert card.node("root").get("corner_radius") == 5.0
+
+
+def test_component_instantiate_also_accepts_spec_for_nested_components():
+    """`Component.instantiate` (nesting a component inside another
+    component) gets the identical real widening -- `instantiate_
+    component`'s own single, shared implementation, confirmed by
+    reading `component.rs` before writing this, not assumed."""
+    outer = View(spec={"id": "root", "kind": "Container", "style": {"width": 200, "height": 200}})
+    outer_component = outer.instantiate(
+        "", outer.node("root"), spec={"id": "inner", "kind": "Container", "style": {"width": 100, "height": 100}}
+    )
+    nested_component = outer_component.instantiate(
+        "",
+        outer_component.node("inner"),
+        spec={
+            "id": "nested",
+            "kind": "Rect",
+            "style": {"width": 10, "height": 10, "background": "#000000", "corner_radius": 2},
+        },
+    )
+
+    assert nested_component.node("nested").get("corner_radius") == 2.0
+
+
+def test_instantiate_spec_and_source_together_is_a_clear_error():
+    view = View(spec={"id": "root", "kind": "Container", "style": {"width": 10, "height": 10}})
+    with pytest.raises(ValueError, match="spec=, source="):
+        view.instantiate(
+            "",
+            view.node("root"),
+            source="id: x\nkind: Container\n",
+            spec={"id": "x", "kind": "Container"},
+        )
+
+
+def test_instantiate_with_no_path_source_or_spec_is_a_clear_error():
+    view = View(spec={"id": "root", "kind": "Container", "style": {"width": 10, "height": 10}})
+    with pytest.raises(ValueError, match="path=.*spec=/source="):
+        view.instantiate("", view.node("root"))

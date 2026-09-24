@@ -81,6 +81,14 @@ pub struct WidgetSpec {
     /// Image`; ignored otherwise.
     #[serde(default)]
     pub image: Option<ImageSpec>,
+    /// Required (and validated at tree-build time, matching `image`'s
+    /// own contract) when `kind: Icon`; ignored otherwise. The glyph's
+    /// own color reuses `style.background` -- the identical "background
+    /// means paint color, not a literal fill" precedent `kind: Text`
+    /// already established (`required_background`, `build.rs`), rather
+    /// than inventing a second, parallel color field.
+    #[serde(default)]
+    pub icon: Option<IconSpec>,
     /// `property name -> "{{ expression }}"` (§16.2). Raw strings --
     /// see this module's own doc comment for why parsing is deferred to
     /// whoever actually attaches a `ViewModel`.
@@ -133,6 +141,7 @@ pub enum NodeKindSpec {
     Slider,
     TextField,
     Image,
+    Icon,
 }
 
 /// M22 Phase 2 (§16.1, §5): `kind: Image`'s own sibling block, the
@@ -143,12 +152,36 @@ pub enum NodeKindSpec {
 /// paths (`include.rs`'s `resolve_confined`, reused rather than a
 /// second path-confinement scheme), not relative to the current
 /// working directory or the running process's own location.
+///
+/// tre issue #2: `src` is optional -- omitted entirely, `build.rs`
+/// builds the identical synthetic 1x1 transparent placeholder `Window.
+/// add_video`'s own default already does (`ImageState::blank`), rather
+/// than requiring a real file on disk. Lets a declarative `kind: Image`
+/// with no `src:` express `add_video`'s own real default shape, which
+/// was previously not expressible at all (no way to say "blank,
+/// waiting for frames" without a backing file).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ImageSpec {
-    pub src: String,
+    #[serde(default)]
+    pub src: Option<String>,
     #[serde(default)]
     pub fit: ContentFitSpec,
+}
+
+/// `kind: Icon`'s own sibling block -- deliberately just `name`, not a
+/// `color`/`size` field too: the glyph's own paint reuses `style.
+/// background` (see `WidgetSpec.icon`'s own doc comment for why), and
+/// its box size is `style.width`/`height` like every other kind, not a
+/// new, Icon-specific dimension. `name` is resolved against `engine_
+/// md3::icons::path_for`'s own curated vocabulary at build time
+/// (`build.rs`), the identical name space `Window.add_icon` already
+/// uses imperatively -- confirmed by direct read before mirroring it,
+/// not assumed to match.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct IconSpec {
+    pub name: String,
 }
 
 /// Mirrors `engine_core::ContentFit` exactly -- see `ImageState.
@@ -423,9 +456,52 @@ pub fn parse_view(yaml: &str) -> Result<WidgetSpec, serde_yaml_ng::Error> {
     serde_yaml_ng::from_str(yaml)
 }
 
+/// tre issue #3, Part A (Tier 2): the identical real parse `parse_view`
+/// already does, against JSON instead of YAML -- `WidgetSpec` derives
+/// plain `Deserialize`, so this is genuinely just a second `Deserializer`
+/// on the same type, not a second parsing implementation. Lets any
+/// caller that can produce JSON (a non-Python language, a tool with no
+/// YAML library handy, a generated fixture) construct a real `WidgetSpec`
+/// without `tre` needing to know anything about that caller at all.
+pub fn parse_view_json(json: &str) -> Result<WidgetSpec, serde_json::Error> {
+    serde_json::from_str(json)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_view_json_parses_the_same_real_tree_parse_view_does() {
+        // tre issue #3, Part A (Tier 2): the identical structure
+        // `parses_a_nested_widget_tree` below proves for YAML, proven
+        // here for JSON -- both are just different `Deserializer`s
+        // against the same `WidgetSpec`.
+        let json = r##"{
+            "id": "root",
+            "kind": "Container",
+            "style": {"flex_direction": "Horizontal", "padding": 12, "gap": 8},
+            "children": [
+                {
+                    "id": "swatch",
+                    "kind": "Rect",
+                    "style": {"width": 40, "height": 40, "background": "#6750A4", "corner_radius": 8}
+                }
+            ]
+        }"##;
+        let spec = parse_view_json(json).expect("valid JSON must parse into a real WidgetSpec");
+        assert_eq!(spec.id, "root");
+        assert!(matches!(spec.kind, NodeKindSpec::Container));
+        assert_eq!(spec.children.len(), 1);
+        assert_eq!(spec.children[0].id, "swatch");
+    }
+
+    #[test]
+    fn parse_view_json_with_invalid_json_is_a_clear_error_not_a_panic() {
+        let err =
+            parse_view_json("{ not valid json").expect_err("malformed JSON must fail clearly");
+        assert!(!err.to_string().is_empty());
+    }
 
     #[test]
     fn parses_a_nested_widget_tree() {

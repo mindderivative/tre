@@ -6,7 +6,7 @@
 //! one built imperatively.
 
 use engine_core::{
-    Animated, CheckboxState, NodeId, NodeKind, PaintProperties, SliderState, TextAlign,
+    Animated, CheckboxState, IconState, NodeId, NodeKind, PaintProperties, SliderState, TextAlign,
     TextFieldState, TextState, Tree,
 };
 use engine_md3::ColorScheme;
@@ -20,12 +20,19 @@ use crate::cascade::{Stylesheet, resolve_style_layered};
 use crate::spec::{
     AlignItemsSpec, ContentFitSpec, FlexDirectionSpec, JustifyContentSpec, NodeKindSpec,
     ShapeOrElevationSpec, SpacingSpec, StyleSpec, TextSpec, WidgetSpec, parse_view,
+    parse_view_json,
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum SpecError {
     #[error("failed to parse view YAML: {0}")]
     Parse(#[from] serde_yaml_ng::Error),
+    /// tre issue #3, Part A (Tier 2): `Parse`'s own JSON-front-end
+    /// sibling -- a distinct variant, not a reused `Parse`, since
+    /// `serde_json::Error` and `serde_yaml_ng::Error` are different
+    /// types and `#[from]` only supports one source type per variant.
+    #[error("failed to parse view JSON: {0}")]
+    ParseJson(#[from] serde_json::Error),
     #[error("widget \"{id}\": {kind} requires {field}, none given")]
     MissingField {
         id: String,
@@ -58,6 +65,12 @@ pub enum SpecError {
     /// reasoning.
     #[error("widget \"{id}\": unknown text.role {role:?}")]
     UnknownTypographyRole { id: String, role: String },
+    /// `icon.name` named something outside `engine_md3::icons`'s own
+    /// curated vocabulary -- the identical real "fail loudly, name what
+    /// was expected" shape `UnknownTypographyRole` already follows,
+    /// mirroring `Window.add_icon`'s own imperative `ValueError`.
+    #[error("widget \"{id}\": unknown icon {name:?}")]
+    UnknownIcon { id: String, name: String },
     /// M19 Phase 2 (§16.6): `include: {path}` appeared but no `base_dir`
     /// was given to resolve it against -- a real, stated error, not a
     /// silent no-op (an include with nowhere to resolve from must fail
@@ -198,6 +211,13 @@ pub fn load_view(tree: &mut Tree, yaml: &str) -> Result<NodeId, SpecError> {
     build_tree(tree, &spec, None, None, None, None, None)
 }
 
+/// tre issue #3, Part A (Tier 2): `load_view`'s own JSON sibling --
+/// identical behavior, `parse_view_json` instead of `parse_view`.
+pub fn load_view_json(tree: &mut Tree, json: &str) -> Result<NodeId, SpecError> {
+    let spec = parse_view_json(json)?;
+    build_tree(tree, &spec, None, None, None, None, None)
+}
+
 /// The full §16.3 path: parses `yaml`, resolves every widget's style
 /// through `sheet`'s cascade, and resolves any MD3 token name
 /// (`background: primary`) against `scheme` -- falling back to literal
@@ -219,6 +239,30 @@ pub fn load_styled_view(
     base_dir: Option<&std::path::Path>,
 ) -> Result<NodeId, SpecError> {
     let spec = parse_view(yaml)?;
+    build_tree(
+        tree,
+        &spec,
+        default_theme,
+        custom_theme,
+        Some(sheet),
+        Some(scheme),
+        base_dir,
+    )
+}
+
+/// tre issue #3, Part A (Tier 2): `load_styled_view`'s own JSON sibling
+/// -- identical behavior, `parse_view_json` instead of `parse_view`.
+#[allow(clippy::too_many_arguments)]
+pub fn load_styled_view_json(
+    tree: &mut Tree,
+    json: &str,
+    default_theme: Option<&Stylesheet>,
+    custom_theme: Option<&Stylesheet>,
+    sheet: &Stylesheet,
+    scheme: &ColorScheme,
+    base_dir: Option<&std::path::Path>,
+) -> Result<NodeId, SpecError> {
+    let spec = parse_view_json(json)?;
     build_tree(
         tree,
         &spec,
@@ -647,24 +691,32 @@ fn node_kind_and_base_paint(
                 kind: "Image",
                 field: "image",
             })?;
-            let base_dir = base_dir.ok_or_else(|| SpecError::ImageSrcNoBaseDir {
-                path: image_spec.src.clone(),
-            })?;
-            let resolved_path = resolve_image_src(base_dir, &image_spec.src)?;
-            let decoded = image::open(&resolved_path)
-                .map_err(|source| SpecError::ImageDecodeFailed {
-                    path: resolved_path.clone(),
-                    source,
-                })?
-                .to_rgba8();
-            let (img_width, img_height) = decoded.dimensions();
-            let mut image_state = engine_core::ImageState::new(peniko::ImageData {
-                data: peniko::Blob::from(decoded.into_raw()),
-                format: peniko::ImageFormat::Rgba8,
-                alpha_type: peniko::ImageAlphaType::Alpha,
-                width: img_width,
-                height: img_height,
-            });
+            let mut image_state = match &image_spec.src {
+                Some(src) => {
+                    let base_dir = base_dir
+                        .ok_or_else(|| SpecError::ImageSrcNoBaseDir { path: src.clone() })?;
+                    let resolved_path = resolve_image_src(base_dir, src)?;
+                    let decoded = image::open(&resolved_path)
+                        .map_err(|source| SpecError::ImageDecodeFailed {
+                            path: resolved_path.clone(),
+                            source,
+                        })?
+                        .to_rgba8();
+                    let (img_width, img_height) = decoded.dimensions();
+                    engine_core::ImageState::new(peniko::ImageData {
+                        data: peniko::Blob::from(decoded.into_raw()),
+                        format: peniko::ImageFormat::Rgba8,
+                        alpha_type: peniko::ImageAlphaType::Alpha,
+                        width: img_width,
+                        height: img_height,
+                    })
+                }
+                // tre issue #2: no `src:` at all -- the same synthetic
+                // 1x1 transparent placeholder `Window.add_video`'s own
+                // real default builds, letting a declarative fragment
+                // express that shape without a backing file.
+                None => engine_core::ImageState::blank(),
+            };
             image_state.content_fit = match image_spec.fit {
                 ContentFitSpec::Cover => engine_core::ContentFit::Cover,
                 ContentFitSpec::Contain => engine_core::ContentFit::Contain,
@@ -673,6 +725,30 @@ fn node_kind_and_base_paint(
             Ok((
                 NodeKind::Image(image_state),
                 PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), corner_radius, 0.0, opacity),
+            ))
+        }
+        NodeKindSpec::Icon => {
+            let icon_spec = spec.icon.as_ref().ok_or_else(|| SpecError::MissingField {
+                id: spec.id.clone(),
+                kind: "Icon",
+                field: "icon",
+            })?;
+            let svg_data = engine_md3::icons::path_for(&icon_spec.name).ok_or_else(|| {
+                SpecError::UnknownIcon {
+                    id: spec.id.clone(),
+                    name: icon_spec.name.clone(),
+                }
+            })?;
+            let path = peniko::kurbo::BezPath::from_svg(svg_data).unwrap_or_else(|e| {
+                panic!(
+                    "engine_md3::icons's own curated path data for {:?} must parse: {e}",
+                    icon_spec.name
+                )
+            });
+            let tint = required_background(spec, style, scheme, "Icon")?;
+            Ok((
+                NodeKind::Icon(IconState::new(path, tint)),
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, opacity),
             ))
         }
     }
@@ -740,6 +816,36 @@ children:
     text: {content: "Hi", font_family: Roboto, font_size: 16}
     style: {width: 90, height: 30, background: white}
 "##;
+
+    #[test]
+    fn load_view_json_builds_the_same_real_tree_load_view_does() {
+        // tre issue #3, Part A (Tier 2): the identical real construction
+        // `load_view_builds_a_real_tree_matching_the_spec` below proves
+        // for YAML, proven here for JSON.
+        let json = r##"{
+            "id": "root",
+            "kind": "Container",
+            "style": {"flex_direction": "Horizontal", "padding": 10, "gap": 5, "width": 220, "height": 100},
+            "children": [
+                {
+                    "id": "swatch",
+                    "kind": "Rect",
+                    "style": {"width": 100, "height": 80, "background": "#6750A4", "corner_radius": 8}
+                }
+            ]
+        }"##;
+        let mut tree = Tree::new();
+        let root = load_view_json(&mut tree, json).expect("valid view JSON must build");
+        let root_node = tree.get(root).expect("root must exist");
+        assert!(matches!(root_node.kind, NodeKind::Container));
+        assert_eq!(root_node.children.len(), 1);
+        let swatch_node = tree.get(root_node.children[0]).unwrap();
+        assert_eq!(swatch_node.paint.corner_radius.current, 8.0);
+        assert_eq!(
+            swatch_node.paint.background.current,
+            Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF)
+        );
+    }
 
     #[test]
     fn load_view_builds_a_real_tree_matching_the_spec() {
@@ -1313,6 +1419,35 @@ style: {width: 40, height: 40}
     }
 
     #[test]
+    fn kind_image_with_no_src_builds_the_same_blank_placeholder_add_video_uses() {
+        // tre issue #2: `src:` is optional -- omitted entirely, no
+        // base_dir required at all (there's no file to resolve), and
+        // the resulting node is the identical 1x1 transparent
+        // placeholder `Window.add_video`'s own default already builds
+        // (`ImageState::blank`).
+        let yaml = r#"
+id: placeholder
+kind: Image
+image: {fit: Cover}
+style: {width: 40, height: 40}
+"#;
+        let mut tree = Tree::new();
+        let root = load_view(&mut tree, yaml)
+            .expect("kind: Image with no src: must build, no base_dir needed");
+        let NodeKind::Image(state) = &tree.get(root).unwrap().kind else {
+            panic!("expected an Image node");
+        };
+        let blank = engine_core::ImageState::blank();
+        assert_eq!(state.image.width, blank.image.width);
+        assert_eq!(state.image.height, blank.image.height);
+        // `peniko::Blob`'s own `PartialEq` compares by allocation
+        // identity, not byte content -- two independently-built blobs
+        // with identical bytes aren't `==`, so compare the real bytes.
+        assert_eq!(state.image.data.data(), blank.image.data.data());
+        assert_eq!(state.content_fit, engine_core::ContentFit::Cover);
+    }
+
+    #[test]
     fn kind_image_with_no_image_block_is_a_clear_error_not_a_panic() {
         let yaml = "id: logo\nkind: Image\nstyle: {width: 40, height: 40}\n";
         let mut tree = Tree::new();
@@ -1381,5 +1516,84 @@ style: {width: 40, height: 40}
     ) -> Result<NodeId, SpecError> {
         let spec = parse_view(yaml)?;
         build_tree(tree, &spec, None, None, None, None, base_dir)
+    }
+
+    #[test]
+    fn kind_icon_builds_a_real_icon_node_with_the_named_glyph_and_color() {
+        let yaml = r##"
+id: gear
+kind: Icon
+icon: {name: settings}
+style: {width: 24, height: 24, background: "#1C1B1FFF"}
+"##;
+        let mut tree = Tree::new();
+        let root = load_view(&mut tree, yaml).expect("a real, known icon name must build");
+        let node = tree.get(root).expect("root must exist");
+        let NodeKind::Icon(icon) = &node.kind else {
+            panic!("expected an Icon node");
+        };
+        assert_eq!(icon.tint, Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF));
+        assert!(
+            !icon.path.elements().is_empty(),
+            "the real curated SVG path data for \"settings\" must have parsed into real path elements"
+        );
+    }
+
+    #[test]
+    fn kind_icon_with_no_icon_block_is_a_clear_missing_field_error() {
+        let yaml = r##"
+id: gear
+kind: Icon
+style: {width: 24, height: 24, background: "#1C1B1FFF"}
+"##;
+        let mut tree = Tree::new();
+        let err = load_view(&mut tree, yaml).expect_err("a Icon with no icon: block must fail");
+        assert!(matches!(
+            err,
+            SpecError::MissingField {
+                kind: "Icon",
+                field: "icon",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn kind_icon_with_an_unknown_name_is_a_clear_error_naming_it() {
+        let yaml = r##"
+id: gear
+kind: Icon
+icon: {name: not_a_real_icon}
+style: {width: 24, height: 24, background: "#1C1B1FFF"}
+"##;
+        let mut tree = Tree::new();
+        let err = load_view(&mut tree, yaml).expect_err("an unknown icon name must fail clearly");
+        match err {
+            SpecError::UnknownIcon { name, .. } => assert_eq!(name, "not_a_real_icon"),
+            other => panic!("expected UnknownIcon, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn kind_icon_with_no_background_is_a_clear_missing_field_error() {
+        // Reuses the exact `required_background` contract `kind: Text`
+        // already has -- the glyph's own color is `style.background`,
+        // required the same way.
+        let yaml = r#"
+id: gear
+kind: Icon
+icon: {name: settings}
+style: {width: 24, height: 24}
+"#;
+        let mut tree = Tree::new();
+        let err = load_view(&mut tree, yaml).expect_err("Icon with no background must fail");
+        assert!(matches!(
+            err,
+            SpecError::MissingField {
+                kind: "Icon",
+                field: "style.background",
+                ..
+            }
+        ));
     }
 }

@@ -882,7 +882,7 @@ checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
 
 [[package]]
 name = "engine-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "accesskit",
  "peniko",
@@ -893,7 +893,7 @@ dependencies = [
 
 [[package]]
 name = "engine-md3"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "engine-core",
  "material-colors",
@@ -903,7 +903,7 @@ dependencies = [
 
 [[package]]
 name = "engine-platform"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -915,7 +915,7 @@ dependencies = [
 
 [[package]]
 name = "engine-py"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "arboard",
  "engine-core",
@@ -928,6 +928,7 @@ dependencies = [
  "pollster",
  "portable-pty",
  "pyo3",
+ "pythonize",
  "taffy",
  "thiserror 2.0.20",
  "tracing",
@@ -940,7 +941,7 @@ dependencies = [
 
 [[package]]
 name = "engine-render"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "accesskit",
  "engine-core",
@@ -962,7 +963,7 @@ dependencies = [
 
 [[package]]
 name = "engine-spec"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "engine-core",
  "engine-md3",
@@ -970,6 +971,7 @@ dependencies = [
  "notify",
  "peniko",
  "serde",
+ "serde_json",
  "serde_yaml_ng",
  "taffy",
  "thiserror 2.0.20",
@@ -2960,6 +2962,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pythonize"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ec376e1216e0c929a74964ce2020012a1a39f32d80e78aa688721219ea7fb89"
+dependencies = [
+ "pyo3",
+ "serde",
+]
+
+[[package]]
 name = "quick-xml"
 version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3216,6 +3228,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.5",
+]
+
+[[package]]
+name = "serde_json"
+version = "1.0.151"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
+dependencies = [
+ "itoa",
+ "memchr",
+ "serde",
+ "serde_core",
+ "zmij",
 ]
 
 [[package]]
@@ -4946,6 +4971,12 @@ name = "zlib-rs"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
+
+[[package]]
+name = "zmij"
+version = "1.0.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "zune-core"

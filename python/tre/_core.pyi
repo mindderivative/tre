@@ -152,11 +152,17 @@ class Node:
         flex_basis: float | None = None,
         align_items: str | None = None,
         justify_content: str | None = None,
+        flex_direction: str | None = None,
     ) -> None:
         """M48: general live layout mutation. Only the fields actually
         passed are changed -- every omitted field keeps its current
         value. Applies immediately (not eased): layout fields aren't
         animatable the way paint properties are.
+
+        M71: `flex_direction` (`"horizontal"`/`"vertical"`, not taffy's
+        own `"row"`/`"column"`) sets a node's own main axis -- the one
+        layout property every other `add_*` factory previously gave no
+        way to change after construction at all.
 
         M59: widened with per-side padding/margin (each independently
         optional, layered *on top of* the uniform `padding=`/`margin=`
@@ -388,6 +394,41 @@ class Node:
         """
         ...
 
+class Theme:
+    """M71: read-only access to a `Window`'s live theme resolution --
+    the exact same lookups `window_factory.rs`'s own composition-only
+    factories already make internally, now reachable from Python via
+    `Window.theme`. A fresh wrapper each access (cheap) -- reads always
+    see the window's current live state, including after a real
+    `set_theme()` call.
+    """
+
+    def role(self, name: str) -> tuple[int, int, int, int] | None:
+        """The resolved MD3 color for a role name (e.g. `"primary"`),
+        or `None` both when no theme is set yet and when `name` isn't a
+        real MD3 role.
+        """
+        ...
+    def is_set(self) -> bool:
+        """Whether a real theme has been resolved (`set_theme()`/a real
+        `theme_seed` was given) at all.
+        """
+        ...
+    def shape(self, component: str, variant: str | None = None) -> float | None:
+        """The resolved corner-radius override for `component` (and
+        `variant`, if given), or `None` if there's no override --
+        callers fall back to their own real formula default.
+        """
+        ...
+    def elevation(self, component: str, variant: str | None = None) -> float | None:
+        """`shape`'s own sibling for elevation -- identical contract."""
+        ...
+    def typography(self, role: str) -> tuple[str, float, float, float] | None:
+        """`(family, weight, size, line_height)` for a real MD3
+        typography role, or `None` for an unrecognized role name.
+        """
+        ...
+
 class Window:
     """One real OS window and the node tree painted into it. Add one or
     more to an `App`, then call `App.run()`.
@@ -420,6 +461,14 @@ class Window:
         synced to this window's current size once, at switch time -- a
         later live resize while a *different* `View` is showing won't
         keep this one in sync until `show_view` is called on it again.
+        """
+        ...
+    @property
+    def theme(self) -> Theme:
+        """M71: read-only access to this window's own live theme
+        resolution. A fresh `Theme` wrapper each access -- reads always
+        see this window's current live state, including after a real
+        `set_theme()` call.
         """
         ...
     def set_theme(
@@ -1404,6 +1453,29 @@ class Window:
         `path` can't be read or decoded.
         """
         ...
+    def add_image_from_bytes(
+        self,
+        rgba: bytes,
+        pixel_width: int,
+        pixel_height: int,
+        width: float,
+        height: float,
+        fit: str = "fill",
+        x: float | None = None,
+        y: float | None = None,
+    ) -> Node:
+        """`add_image`'s decode-free sibling: `rgba` is already-decoded
+        straight-alpha RGBA8 pixels (`pixel_width * pixel_height * 4`
+        bytes exactly, or a clear `ValueError`) -- no file, no `image`
+        crate involved, the caller owns decoding entirely. `width`/
+        `height` are the node's own fixed display box (`add_image`'s
+        identical contract); `pixel_width`/`pixel_height` describe
+        `rgba` itself, and `fit` resolves any mismatch between the two.
+        The node this returns is a real, ordinary `Image` node --
+        `Node.push_frame` keeps working on it afterward, identically to
+        one built via `add_video`.
+        """
+        ...
     def add_video(
         self,
         width: float,
@@ -1485,7 +1557,15 @@ class Window:
         font_size: float = 16.0,
         x: float | None = None,
         y: float | None = None,
-    ) -> Node: ...
+        multiline: bool = False,
+        show_whitespace: bool = False,
+    ) -> Node:
+        """M71: `multiline`/`show_whitespace` mirror `add_code_editor`'s
+        own two real `TextFieldState` fields -- both default `False`,
+        the pre-existing behavior for every caller that doesn't pass
+        them.
+        """
+        ...
     def add_code_editor(
         self,
         content: str,
@@ -1882,12 +1962,15 @@ class View:
 
     def __init__(
         self,
-        path: str,
+        path: str | None = None,
         stylesheet: str | None = None,
         theme_seed: tuple[int, int, int, int] | None = None,
         dark: bool = False,
         default_theme: str | None = None,
         custom_theme: str | None = None,
+        source: str | None = None,
+        spec: object | None = None,
+        json: str | None = None,
     ) -> None:
         """`stylesheet` is a path to a stylesheet YAML file (§16.3's
         cascade); `theme_seed` builds a real MD3 `DynamicTheme` the
@@ -1911,16 +1994,64 @@ class View:
         imperative factories to apply it to. Present in the shared
         `ThemeSpec` type so one theme file can serve both `View` and
         `Window`; see `Window.set_theme`'s own docstring for what it does.
+
+        M71: `source`, when given, is used directly as the view's YAML
+        text instead of reading `path` from disk -- `path` still
+        supplies the real base directory `include:`/`image.src:`
+        resolve against, and the real file `poll_reload()`/hot-reload
+        watches.
+
+        M78 (tre issue #3 Tier 1): `spec`, when given, is a real Python
+        object (a dict shaped like the view's own YAML tree) built
+        directly into the tree -- no YAML text at all. `path` becomes
+        optional: omitted, there's no base directory to resolve against
+        and no file to watch for hot-reload (`poll_reload()` then
+        always returns `False`; use `reconcile()` instead).
+
+        0.3.1 review, item 2: `json`, when given, is JSON text parsed
+        directly into the tree -- the real first consumer of `engine_
+        spec::parse_view_json`. Grouped with `spec`, not `source`: both
+        are just different ways to obtain the tree data directly, with
+        no real backing file implied by either, so `path` is optional
+        with `json` too. `source`'s own `path` requirement is specific
+        to it -- pre-processed *real file* content still wanting real
+        hot-reload. At most one of `spec`/`source`/`json` may be given;
+        at least one of `spec`/`json`/`path` is required. Raises
+        `ValueError` if more than one of `spec`/`source`/`json` is
+        given, or if none of `spec`/`json`/`path` is given.
         """
         ...
     def node(self, widget_id: str) -> Node:
         """Looks up a declared widget by its own `id:` from the YAML."""
         ...
-    def poll_reload(self) -> bool:
+    def poll_reload(self, source: str | None = None) -> bool:
         """Checks whether the underlying YAML file changed on disk
         since it was last loaded and, if so, reconciles the tree in
         place (preserving `NodeId`/focus/in-flight animations where
         possible). Returns whether a reload actually happened.
+
+        M71: `source`, when given, is reconciled instead of a fresh
+        disk read of `path` -- the real change-detection gate still
+        watches `path` on disk regardless, so this only changes what
+        gets reconciled once a real file change is detected, not
+        whether one is. A `View` with no `path` at all (M78's `spec=`
+        construction) has no watcher and always returns `False` here --
+        see `reconcile()` for the ungated equivalent.
+        """
+        ...
+    def reconcile(
+        self, source: str | None = None, spec: object | None = None, json: str | None = None
+    ) -> None:
+        """M79 (tre issue #3 Part C): the ungated sibling of
+        `poll_reload` for a `View` built with `spec=` and no backing
+        file to watch. Reconciles against `source` (YAML text), `spec`
+        (a real Python object, depythonized directly), or `json` (JSON
+        text, 0.3.1 review item 2) -- unconditionally, with no "did
+        anything change" check, since the caller's own explicit call
+        already is the change signal (typically driven by `tre.Effect`).
+        At most one of `spec`/`source`/`json` may be given; exactly one
+        is required. Raises `ValueError` if more than one is given, or
+        if none is given.
         """
         ...
     def set_theme(
@@ -1958,7 +2089,9 @@ class View:
         elevation section has nothing to apply to here.
         """
         ...
-    def instantiate(self, path: str, into: Node) -> Component:
+    def instantiate(
+        self, path: str, into: Node, source: str | None = None, spec: object | None = None
+    ) -> Component:
         """M43 Phase 1: embeds another view's own YAML as a real,
         independent `Component` -- its own bindings/handlers, ready for
         its own separate `ViewModel` to `_attach` to -- spliced into
@@ -1966,6 +2099,23 @@ class View:
         instance for multiple simultaneous instances (e.g. one per row
         in a list); each instantiation is fully independent, even when
         the same `path` is used repeatedly.
+
+        M73: `source`, when given, is used directly instead of reading
+        `path` from disk -- the same real `View.__init__`/`source=`
+        precedent, widened here for the embedded-component macro-
+        expansion case (Tesserae's own pre-processed component YAML).
+
+        0.3.1 review, item 3: `spec`, when given, is a real Python
+        object built directly into the tree, mirroring `View.__init__`
+        's own `spec=` (M78) -- no YAML text at all. Unlike `View.
+        __init__`, `path` stays **required** here (every real call site
+        already calls `instantiate(path, into)` positionally, and `into`
+        -- also required -- comes right after it, so making `path`
+        optional would break every one of them). Pass `path=""` when
+        using `spec=`/`source=` with no real file to name -- the same
+        "no base directory" outcome an omitted `path` means for `View.
+        __init__`. At most one of `spec`/`source` may be given; at
+        least one of `spec`/`source`/a non-empty `path` is required.
         """
         ...
     def click(self, node: Node) -> None: ...
@@ -1989,10 +2139,19 @@ class Component:
         """Looks up a declared widget by its own `id:`, scoped to this
         component instance."""
         ...
-    def instantiate(self, path: str, into: Node) -> Component:
+    def instantiate(
+        self, path: str, into: Node, source: str | None = None, spec: object | None = None
+    ) -> Component:
         """Embeds another component inside this one -- components nest
         recursively, the identical real mechanism `View.instantiate`
         itself uses.
+
+        M73: `source`, when given, is used directly instead of reading
+        `path` from disk -- see `View.instantiate`'s own docstring.
+
+        0.3.1 review, item 3: `spec`, when given, mirrors `View.
+        instantiate`'s own -- see its docstring for the real reasoning,
+        including why `path` stays required here.
         """
         ...
     def remove(self) -> None:

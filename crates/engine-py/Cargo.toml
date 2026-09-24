@@ -34,6 +34,13 @@ engine-spec = { path = "../engine-spec" }
 # cost is `inventory`-based registration not supporting Wasm, which this
 # desktop-only project (winit/wgpu throughout) never targets.
 pyo3 = { version = "0.29.2", features = ["macros", "multiple-pymethods"] }
+# tre issue #3, Part A (Tier 1): a real Python object (a dict, built by
+# an app or by Tesserae's own macro-expansion layer) -> any
+# `serde::Deserialize` type -- lets `View`'s new `spec:` param build a
+# real `WidgetSpec` directly, no YAML-text round trip. Version tracks
+# pyo3's own (`0.29.x` for pyo3 `0.29.2`), confirmed via `cargo add
+# pythonize --dry-run` before adding, not assumed.
+pythonize = "0.29.0"
 thiserror = "2.0.20"
 # `App::run` builds and drives its own GPU/window state directly (§8's
 # PyApp.run(), Design Principle 1's one blocking call) -- Rust doesn't
@@ -86,3 +93,16 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 # guess" scope pyCopper's own real `Terminal` already chose).
 portable-pty = "0.9.0"
 vt100 = "0.16.2"
+
+[dev-dependencies]
+# tre issue #3, Part A (Tier 1): `View::new` now takes a real
+# `Python<'_>` token (needed for `pythonize::depythonize`'s own
+# `spec_obj.bind(py)` call) -- this crate's own existing Rust-only
+# `#[test]`s call it directly, outside any real embedded Python
+# process, so they need pyo3 to start one itself to produce that
+# token. Scoped to `[dev-dependencies]` (test builds only, unioned
+# with the main `pyo3` dependency's own features by Cargo) so the real
+# shipped `cdylib` -- always loaded *into* an already-running Python
+# process via maturin -- never carries an embedded interpreter it
+# doesn't need.
+pyo3 = { version = "0.29.2", features = ["auto-initialize"] }

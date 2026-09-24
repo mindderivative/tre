@@ -32,7 +32,7 @@ pub use error::EngineError;
 pub use event::Event;
 pub use node::Node;
 pub use view::View;
-pub use window::PyWindow;
+pub use window::{PyWindow, Theme};
 
 /// The compiled extension module Python actually imports, as
 /// `tre._core` (`pyproject.toml`'s `module-name`) -- `python/tre/
@@ -48,6 +48,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Component>()?;
     m.add_class::<CanvasContext>()?;
     m.add_class::<Event>()?;
+    m.add_class::<Theme>()?;
     m.add_function(wrap_pyfunction!(view::_record_read, m)?)?;
     m.add_function(wrap_pyfunction!(view::_begin_recording, m)?)?;
     m.add_function(wrap_pyfunction!(view::_end_recording, m)?)?;

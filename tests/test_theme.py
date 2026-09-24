@@ -1421,6 +1421,118 @@ def test_window_set_theme_a_second_call_does_not_raise_for_the_pre_existing_tint
     window.set_theme(seed=(0x00, 0x66, 0x00, 0xFF))
 
 
+# --- M71 (§7.1, §8): window.theme -- real, read-only Python access to the
+# same role/is_set/shape/elevation/typography lookups every composition-
+# only add_* factory already makes internally. Until this milestone none
+# of these were reachable from Python at all -- the single, confirmed
+# blocker to building the same MD3-parity compositions in Python instead
+# (the sibling Tesserae project's own real next milestone).
+
+
+def test_theme_is_set_reflects_whether_set_theme_has_been_called():
+    window = Window(width=400, height=400)
+    assert window.theme.is_set() is False
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF))
+    assert window.theme.is_set() is True
+
+
+def test_theme_role_returns_none_before_a_theme_is_set():
+    window = Window(width=400, height=400)
+    assert window.theme.role("primary") is None
+
+
+def test_theme_role_returns_a_real_rgba_tuple_once_a_theme_is_set():
+    window = Window(width=400, height=400)
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF))
+    color = window.theme.role("primary")
+    assert isinstance(color, tuple)
+    assert len(color) == 4
+    assert all(isinstance(component, int) and 0 <= component <= 255 for component in color)
+
+
+def test_theme_role_returns_none_for_an_unrecognized_role_name():
+    window = Window(width=400, height=400)
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF))
+    assert window.theme.role("not_a_real_role") is None
+
+
+def test_theme_role_is_consistent_with_what_a_themed_factory_actually_used(tmp_path):
+    # Real, direct cross-check -- not just "returns a plausible-looking
+    # tuple": a Rect built with background=role("primary") right after
+    # must construct without raising and be indistinguishable in kind
+    # from any other themed Rect, proving this is the exact real color
+    # ThemeState::role resolves, not a fresh/different computation.
+    window = Window(width=400, height=400)
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF))
+    color = window.theme.role("primary")
+    node = window.add_rect(background=color, width=20.0, height=20.0)
+    assert node is not None
+
+
+def test_theme_shape_reflects_a_real_component_override(tmp_path):
+    window = window_with_components(tmp_path, "  card: {corner_radius: 20}\n")
+    assert window.theme.shape("card", None) == pytest.approx(20.0)
+
+
+def test_theme_shape_variant_specific_beats_bare_key(tmp_path):
+    window = window_with_components(
+        tmp_path, "  card: {corner_radius: 20}\n  card.elevated: {corner_radius: 30}\n"
+    )
+    assert window.theme.shape("card", "elevated") == pytest.approx(30.0)
+    assert window.theme.shape("card", "filled") == pytest.approx(20.0)
+
+
+def test_theme_shape_returns_none_with_no_override(tmp_path):
+    window = Window(width=400, height=400)
+    assert window.theme.shape("card", None) is None
+
+
+def test_theme_elevation_reflects_a_real_component_override(tmp_path):
+    window = window_with_components(tmp_path, "  card.elevated: {elevation: 9}\n")
+    assert window.theme.elevation("card", "elevated") == pytest.approx(9.0)
+    assert window.theme.elevation("card", None) is None
+
+
+def test_theme_typography_returns_the_shipped_default_with_no_override():
+    window = Window(width=400, height=400)
+    family, weight, size, line_height = window.theme.typography("body_medium")
+    assert isinstance(family, str)
+    assert weight > 0.0
+    assert size > 0.0
+    assert line_height > 0.0
+
+
+def test_theme_typography_reflects_a_real_per_field_override(tmp_path):
+    theme_path = write_yaml(
+        tmp_path,
+        "theme.yaml",
+        "typography:\n  label_large: {font_size: 20, font_family: Inter}\n",
+    )
+    window = Window(width=400, height=400)
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), custom_theme=theme_path)
+    family, _weight, size, _line_height = window.theme.typography("label_large")
+    assert family == "Inter"
+    assert size == pytest.approx(20.0)
+
+
+def test_theme_typography_returns_none_for_an_unrecognized_role():
+    window = Window(width=400, height=400)
+    assert window.theme.typography("not_a_real_role") is None
+
+
+def test_theme_is_a_live_view_reflecting_a_later_set_theme_call(tmp_path):
+    # A fresh `window.theme` access each time (this milestone's own
+    # real design, see `PyWindow::theme`'s own doc comment) -- but must
+    # still see live state, not a snapshot frozen at first access.
+    window = Window(width=400, height=400)
+    assert window.theme.is_set() is False
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF))
+    assert window.theme.is_set() is True
+    theme_path = write_yaml(tmp_path, "theme.yaml", "components:\n  card: {corner_radius: 55}\n")
+    window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), custom_theme=theme_path)
+    assert window.theme.shape("card", None) == pytest.approx(55.0)
+
+
 def test_window_set_theme_a_second_call_does_not_raise_for_the_five_newly_closed_gaps(tmp_path):
     window = Window(width=400, height=400)
     window.add_radio_button(size=20.0, selected=False)

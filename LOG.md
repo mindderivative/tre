@@ -1,78 +1,57 @@
-# LOG — M70: Rename Declarative `flex_direction`'s `Row`/`Column` to `Horizontal`/`Vertical`
+# LOG — M74: Declarative `kind: Icon`
 
-- User-directed: "I want the designations row and column for flex and
-  alignments to use vertical and horizontal. I know column and row are
-  the standard vocabulary for MD3 but with datasheets and other excel
-  types on a desktop it is confusing and can lead to misunderstanding
-  during design of a UI." A real, named usability concern: "row"/
-  "column" already carry an established, different meaning in
-  spreadsheet/datasheet tools -- a real, common desktop-app background
-  for someone designing a UI -- which happens to agree with flexbox's
-  own meaning here, but only by coincidence a reader can't be expected
-  to already know. Requested as a PR, not a direct push, matching a
-  deliberate, reviewable change to the declarative YAML schema's own
-  public surface.
+- User-directed via `AskUserQuestion`, while scoping Tesserae's own
+  component-fragment catalog: roughly two-thirds of the real MD3
+  catalog was blocked from being expressible as a fragment at all,
+  confirmed directly (`kind: Icon` failed with `unknown variant
+  "Icon"`) -- `engine-spec`'s `NodeKindSpec` supported only 7 of
+  `engine-core`'s real 21 primitive kinds. Chose to fix this at the
+  source rather than scope fragment work down to the ~10 icon-free
+  widgets.
 
-## What shipped (single milestone, both phases)
+## What shipped
 
-1. Real investigation confirmed the full, exact scope before touching
-   anything: `align_items`/`justify_content` (the "and alignments"
-   half of the request) have zero row/column vocabulary anywhere --
-   their real values are `Start`/`End`/`FlexStart`/`FlexEnd`/`Center`/
-   `Baseline`/`Stretch`/`SpaceBetween`/`SpaceAround`/`SpaceEvenly`,
-   verified directly against `AlignItemsSpec`/`JustifyContentSpec` --
-   so the real, complete scope is `engine-spec`'s own
-   `FlexDirectionSpec` enum alone. Confirmed this value is
-   declarative-YAML-only: `Node.set_layout` (`engine-py::node.rs`, the
-   imperative Python API) exposes `align_items`/`justify_content` as
-   free strings but never exposed `flex_direction` at all -- no
-   imperative-API surface needed touching. Confirmed every other real
-   `Row`/`Column` occurrence in the codebase is `taffy::FlexDirection`
-   itself, the vendored layout engine's own third-party vocabulary,
-   used internally throughout `window_factory.rs`/`engine-core`/
-   `engine-render`'s own tests -- correctly left untouched, not this
-   crate's naming to change.
-2. `FlexDirectionSpec::Row`/`Column` renamed to `::Horizontal`/
-   `::Vertical` in `engine-spec/src/spec.rs`, with a real doc comment
-   explaining the naming departure from `taffy`'s own vocabulary and
-   the exact axis mapping (`Horizontal` -> main axis left-to-right,
-   `Vertical` -> main axis top-to-bottom). A deliberate, hard rename,
-   not an alias -- the old values are meant to stop parsing, matching
-   this project's own "no back-compat shims for their own sake"
-   discipline and the user's own clear "I want ... to use" framing.
-3. `build.rs::layout_style`'s match arm updated for the renamed
-   variants, with a comment noting `taffy::FlexDirection` itself stays
-   `Row`/`Column` underneath, unchanged.
-4. All 14 real example/demo YAML files shipping `flex_direction: Row`/
-   `Column` updated (13 files under `examples/` plus
-   `demo/data_panel.yaml` plus `engine-spec/examples/view.yaml`),
-   along with `tests/test_component.py` (3 occurrences) and
-   `docs/guide/declarative-views.md` (written earlier this session in
-   M68 -- its schema table and 3 real YAML snippets, 4 occurrences
-   total).
-- Tests: 2 new Rust unit tests in `spec.rs` -- `flex_direction_parses_
-  horizontal_and_vertical` (real, direct proof both new values parse
-  to the correct enum variant) and
-  `flex_direction_no_longer_accepts_the_old_row_column_naming` (real
-  regression coverage proving the old `Row` value now fails to parse
-  with a clear error, not silently still accepted alongside the new
-  names).
+1. `spec.rs` -- `NodeKindSpec::Icon`; `WidgetSpec.icon: Option<
+   IconSpec>`; new `IconSpec { name: String }`, mirroring `ImageSpec`'s
+   own shape (simpler -- no `fit:` concept for a glyph).
+2. `build.rs` -- new `SpecError::UnknownIcon { id, name }`; the real
+   `NodeKindSpec::Icon` match arm, resolving `icon.name` against
+   `engine_md3::icons::path_for` (the identical vocabulary `Window.
+   add_icon` already uses imperatively, confirmed by direct read
+   before mirroring it), parsing the real curated SVG path data,
+   resolving the glyph's tint via the existing `required_background`
+   helper -- reusing `style.background`, the same precedent `kind:
+   Text` already established, not a new, parallel color field.
+3. One real, unrelated compile break fixed: `cascade.rs`'s own
+   `#[cfg(test)]`-only `WidgetSpec` fixture literal needed the new
+   `icon: None` field.
+4. 4 new Rust unit tests (`build.rs`). Real bug caught and fixed while
+   writing them, not shipped: the test YAML's own `"#1C1B1FFF"` hex
+   color collided with a single-hash `r#"..."#` raw string delimiter
+   (`expected ';', found '1C1B1FFF'`) -- fixed with `r##"..."##`, the
+   identical real fix this same file's own pre-existing `VIEW` test
+   constant already needed for the same reason.
+5. 4 new pytest tests (`tests/test_declarative_icon.py`, new file) --
+   the real Python binding surface end to end.
 - Verification: `cargo check`/`clippy -D warnings`/`fmt --check`
-  clean; `cargo test --workspace --release` (`engine-spec` 85, up from
-  83, +2; every other crate's own count unchanged); `maturin develop
-  --release`; `pytest tests/` 831 passed, 2 skipped, unchanged -- every
-  real example YAML re-parsed and ran clean under its new values, real
-  proof the rename didn't silently break anything; `demo/showcase.py`
-  all 5 phases, exit 0 (its own declarative panel uses the renamed
-  value); `mkdocs build --strict` clean, 0 warnings.
+  clean; `cargo test --workspace --release` (`engine-spec` 89, up from
+  85, +4; every other crate unchanged); `maturin develop --release`;
+  `pytest tests/` 862 passed, 2 skipped, up from 858, +4;
+  `examples/animate_rect.py` (the CI-representative smoke example) and
+  `demo/showcase.py` both ran clean, exit 0.
 
 ## Status
 
-**M70 is complete, both phases.** A deliberate, hard rename of the
-declarative schema's `flex_direction` values, closing a real usability
-gap the user named directly from their own desktop-UI-design
-experience. Committed on a dedicated branch
-(`flex-direction-horizontal-vertical`), not `main`, per the user's own
-explicit "Add a PR" request -- opening the PR now.
+**M74 is complete, both phases.** Declarative `kind: Icon` is real,
+tested, and closes the single largest real blocker to Tesserae's own
+component-fragment catalog work. Committed locally on the `0.3.1`
+branch, not `main`; push deferred pending explicit user confirmation,
+per standing policy.
 
-Next: nothing else currently scoped beyond this PR awaiting review.
+Real, deliberate scope boundary: only `Icon` was added this milestone
+-- `RadioButton`/`Switch`/`CircularProgress`/`LinearProgress`/
+`LoadingIndicator`/`Link` and the rest of the real-but-declaratively-
+unreachable `NodeKind` variants stay real, un-scoped future candidates.
+
+Next: reinstall into `tesserae/.venv`, then resume item 1 of the
+user's own 3-item ordering -- the real component-fragment catalog.
