@@ -1244,6 +1244,75 @@ impl View {
         Ok(true)
     }
 
+    /// tre issue #3, Part C: `poll_reload`'s own change-detection gate
+    /// (`self.watcher`'s `poll_changed()`) is hard-wired to a real
+    /// filesystem event -- a `View` built with no `path` at all (M78's
+    /// own `spec=`-only construction) has no `watcher` and can *never*
+    /// open that gate, so `poll_reload` would always report `false`
+    /// for it, regardless of `source=`. This is not "teach `watch.rs`
+    /// to detect programmatic changes" (a real, deliberately rejected
+    /// design considered while scoping this) -- a caller with no
+    /// backing file already knows precisely when its own data changed
+    /// (typically via `tre.Effect`'s own real dependency tracking), so
+    /// its own explicit call to this method already *is* the change
+    /// signal. No new Rust-side dirty-flag/channel mechanism needed;
+    /// `watch.rs`/`ViewWatcher` stay completely untouched by this
+    /// milestone. Unconditional -- unlike `poll_reload`, there's no
+    /// "did anything change" ambiguity to report, so this always
+    /// reconciles when given valid input, matching `__new__`'s own
+    /// `spec`/`source` shape and validation exactly (mutually
+    /// exclusive; at least one required).
+    #[pyo3(signature = (source=None, spec=None))]
+    fn reconcile(
+        &mut self,
+        py: Python<'_>,
+        source: Option<String>,
+        spec: Option<Py<PyAny>>,
+    ) -> PyResult<()> {
+        if spec.is_some() && source.is_some() {
+            return Err(PyValueError::new_err(
+                "reconcile() cannot take both spec= and source= -- pass one real content source, not two",
+            ));
+        }
+        if spec.is_none() && source.is_none() {
+            return Err(PyValueError::new_err(
+                "reconcile() needs source= or spec= -- nothing to reconcile against",
+            ));
+        }
+        let base_dir = std::path::Path::new(&self.path).parent();
+        let mut tree = self.tree.borrow_mut();
+        if let Some(spec_obj) = &spec {
+            let widget_spec: WidgetSpec = pythonize::depythonize(spec_obj.bind(py))
+                .map_err(|e| PyValueError::new_err(format!("spec=: {e}")))?;
+            self.reconciler
+                .reconcile_spec(
+                    &mut tree,
+                    widget_spec,
+                    self.default_theme.as_ref(),
+                    self.custom_theme.as_ref(),
+                    self.stylesheet.as_ref(),
+                    self.scheme.as_ref(),
+                    base_dir,
+                )
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        } else {
+            self.reconciler
+                .reconcile(
+                    &mut tree,
+                    source
+                        .as_deref()
+                        .expect("validated above: source is Some when spec is None"),
+                    self.default_theme.as_ref(),
+                    self.custom_theme.as_ref(),
+                    self.stylesheet.as_ref(),
+                    self.scheme.as_ref(),
+                    base_dir,
+                )
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        }
+        Ok(())
+    }
+
     /// M51: live re-theme -- re-resolves *every* node's `PaintProperties`
     /// /`layout_style` against a new set of theme layers, in place
     /// (`Reconciler::retheme`, `reconcile.rs`), without needing the

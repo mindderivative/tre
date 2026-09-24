@@ -1,9 +1,11 @@
-"""tre issue #3, Part A (Tier 1): `View(spec=...)` builds a real tree
-directly from a Python dict, with no YAML text and no backing file at
-all -- `engine-spec`'s own tests already prove `Reconciler::load_spec`
-in isolation; this file proves the same real capability reaches
-`View`, the actual entry point a Python app (or Tesserae's own
-macro-expansion layer) uses.
+"""tre issue #3, Part A (Tier 1) and Part C: `View(spec=...)` builds a
+real tree directly from a Python dict, with no YAML text and no
+backing file at all -- `engine-spec`'s own tests already prove
+`Reconciler::load_spec`/`reconcile_spec` in isolation; this file
+proves the same real capability reaches `View`, the actual entry point
+a Python app (or Tesserae's own macro-expansion layer) uses. `View.
+reconcile(...)` (Part C) is the ungated sibling of `poll_reload` for a
+caller with no backing file to watch.
 """
 
 import pytest
@@ -62,3 +64,42 @@ def test_path_given_alongside_spec_is_used_only_as_a_base_dir_hint(tmp_path):
     spec = {"id": "root", "kind": "Container", "style": {"width": 10, "height": 10}}
     view = View(path=str(tmp_path / "virtual.yaml"), spec=spec)
     assert view.node("root") is not None
+
+
+def test_reconcile_spec_updates_a_purely_programmatic_view_with_no_watcher():
+    # tre issue #3, Part C: a spec=-only View has no watcher at all, so
+    # poll_reload() can never open its own file-change gate -- reconcile()
+    # is the real, ungated sibling for exactly this caller.
+    spec = {
+        "id": "root",
+        "kind": "Rect",
+        "style": {"width": 40, "height": 40, "background": "#112233", "corner_radius": 4},
+    }
+    view = View(spec=spec)
+    assert view.poll_reload() is False
+
+    new_spec = {
+        "id": "root",
+        "kind": "Rect",
+        "style": {"width": 40, "height": 40, "background": "#112233", "corner_radius": 20},
+    }
+    view.reconcile(spec=new_spec)
+    assert view.node("root").get("corner_radius") == 20.0
+
+
+def test_reconcile_source_form_also_works():
+    view = View(spec={"id": "root", "kind": "Container", "style": {"width": 10, "height": 10}})
+    view.reconcile(source="id: root\nkind: Container\nstyle: {width: 10, height: 10}\n")
+    assert view.node("root") is not None
+
+
+def test_reconcile_spec_and_source_together_is_a_clear_error():
+    view = View(spec={"id": "root", "kind": "Container"})
+    with pytest.raises(ValueError, match="spec=.*source="):
+        view.reconcile(spec={"id": "root", "kind": "Container"}, source="id: root\nkind: Container\n")
+
+
+def test_reconcile_with_neither_spec_nor_source_is_a_clear_error():
+    view = View(spec={"id": "root", "kind": "Container"})
+    with pytest.raises(ValueError, match="source=.*spec="):
+        view.reconcile()
