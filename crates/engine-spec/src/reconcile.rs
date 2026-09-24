@@ -55,6 +55,34 @@ impl Reconciler {
         base_dir: Option<&Path>,
     ) -> Result<Self, SpecError> {
         let spec = parse_view_with_includes(yaml, base_dir)?;
+        Self::load_spec(
+            tree,
+            spec,
+            default_theme,
+            custom_theme,
+            sheet,
+            scheme,
+            base_dir,
+        )
+    }
+
+    /// tre issue #3, Part B: `load`'s own real building/id-recording
+    /// logic, factored out so a caller that already has a `WidgetSpec`
+    /// -- constructed programmatically (`engine-py`'s own `pythonize`-
+    /// based Tier 1), or via one of the JSON siblings (Tier 2) -- can
+    /// build/reconcile from it directly, without a YAML-text round
+    /// trip. `load` above is now just `parse_view_with_includes` then
+    /// this, byte-for-byte the same external behavior it always had.
+    #[allow(clippy::too_many_arguments)]
+    pub fn load_spec(
+        tree: &mut Tree,
+        spec: WidgetSpec,
+        default_theme: Option<&Stylesheet>,
+        custom_theme: Option<&Stylesheet>,
+        sheet: Option<&Stylesheet>,
+        scheme: Option<&ColorScheme>,
+        base_dir: Option<&Path>,
+    ) -> Result<Self, SpecError> {
         let root = build_tree(
             tree,
             &spec,
@@ -130,7 +158,34 @@ impl Reconciler {
         base_dir: Option<&Path>,
     ) -> Result<(), SpecError> {
         let new_spec = parse_view_with_includes(yaml, base_dir)?;
+        self.reconcile_spec(
+            tree,
+            new_spec,
+            default_theme,
+            custom_theme,
+            sheet,
+            scheme,
+            base_dir,
+        )
+    }
 
+    /// tre issue #3, Part B: `reconcile`'s own real diffing/patching
+    /// logic, factored out so a caller that already has a `WidgetSpec`
+    /// can reconcile against it directly -- see `load_spec`'s own doc
+    /// comment for the real motivation, identical here. `reconcile`
+    /// above is now just `parse_view_with_includes` then this,
+    /// byte-for-byte the same external behavior it always had.
+    #[allow(clippy::too_many_arguments)]
+    pub fn reconcile_spec(
+        &mut self,
+        tree: &mut Tree,
+        new_spec: WidgetSpec,
+        default_theme: Option<&Stylesheet>,
+        custom_theme: Option<&Stylesheet>,
+        sheet: Option<&Stylesheet>,
+        scheme: Option<&ColorScheme>,
+        base_dir: Option<&Path>,
+    ) -> Result<(), SpecError> {
         if new_spec.id != self.spec.id || new_spec.kind != self.spec.kind {
             tree.remove(self.root);
             let new_root = build_tree(
@@ -354,6 +409,62 @@ fn reconcile_node(
 mod tests {
     use super::*;
     use engine_core::NodeKind;
+
+    #[test]
+    fn load_spec_and_reconcile_spec_build_and_patch_from_an_already_parsed_widgetspec() {
+        // tre issue #3, Part B: a caller that already has a real
+        // `WidgetSpec` (constructed programmatically, or via one of the
+        // JSON siblings) can build/reconcile from it directly, with the
+        // identical real behavior `load`/`reconcile`'s own YAML-text
+        // path already has -- proven here by driving both through
+        // `crate::spec::parse_view` first, then handing the resulting
+        // `WidgetSpec` values straight to `load_spec`/`reconcile_spec`.
+        let before = crate::spec::parse_view(
+            r##"
+id: root
+kind: Container
+children:
+  - id: swatch
+    kind: Rect
+    style: {width: 10, height: 10, background: "#112233"}
+"##,
+        )
+        .unwrap();
+        let after = crate::spec::parse_view(
+            r##"
+id: root
+kind: Container
+children:
+  - id: swatch
+    kind: Rect
+    style: {width: 10, height: 10, background: "#445566"}
+"##,
+        )
+        .unwrap();
+
+        let mut tree = Tree::new();
+        let mut reconciler =
+            Reconciler::load_spec(&mut tree, before, None, None, None, None, None).unwrap();
+        let swatch_id = reconciler.id_of("swatch").unwrap();
+
+        reconciler
+            .reconcile_spec(&mut tree, after, None, None, None, None, None)
+            .unwrap();
+
+        assert_eq!(
+            reconciler.id_of("swatch"),
+            Some(swatch_id),
+            "an unchanged widget id must keep the exact same NodeId across reconcile_spec"
+        );
+        let node = tree.get(swatch_id).unwrap();
+        let NodeKind::Rect = node.kind else {
+            panic!("expected a Rect node");
+        };
+        assert_eq!(
+            node.paint.background.current,
+            peniko::Color::from_rgba8(0x44, 0x55, 0x66, 0xFF)
+        );
+    }
 
     #[test]
     fn unchanged_node_keeps_its_nodeid_and_is_never_patched() {
