@@ -1,70 +1,98 @@
-# PLAN — Branch `0.3.4`: Milestone 95, Paint and Animation Building Blocks
+# PLAN — Branch `0.3.4`: Milestone 96, Layer, Structure, and Update Building Blocks
 
-*(Replaces the M94 plan — M94 is complete and pushed. Every step is in
-`BUILD_TRACKER.md`.)*
+*(Replaces the M95 plan — M95 and the M94 focus follow-up are complete and
+pushed. Every step is in `BUILD_TRACKER.md`.)*
 
 ## Goal
 
-Generic replacements for the MD3-specific visuals:
-- vector paths with trim and morph;
-- the target paint names;
-- per-corner radii;
-- shadows;
-- group opacity;
-- bezier easing;
-- a theme-free text input, scrollbar, and terminal.
+The last additive milestone before the Tesserae migration gate:
+- the tree operations a keyed reconciler needs;
+- node lifetime that can't leak and can't crash off-thread (issue #10);
+- deterministic headless time;
+- `create` for every kind and `set`/`get` for every property;
+- text measurement and truncation;
+- one layer mechanism for dialogs, menus, tooltips, snackbars, and sheets.
 
-Additive: legacy names and behavior stay until 0.3.5.
+Legacy names and behavior stay until 0.3.5.
 
-## Design (from the source)
+## Findings from the source
 
-- **`path` kind.** `NodeKind::Path(PathState)` holds:
-  - `data: Animated<PathData>`, a `BezPath` parsed from SVG `d` by
-    `kurbo`;
-  - `view_box: Option<Rect>`, fitted uniformly and centered into the
-    layout box;
-  - `trim_start`/`trim_end: Animated<f64>`.
-
-  Fill comes from `paint.background` (the target `fill`). The stroke
-  comes from `border_color`/`border_width`, centered on the path as in
-  SVG, and trim applies to the stroke. The path is transformed before
-  stroking, so `stroke_width` stays in pixels.
-- **Morph.** `PathData`'s `Interpolate` resamples each subpath by arc
-  length to a shared count and lerps. A closed subpath is aligned by
-  the starting offset with the least travel. A different subpath count,
-  or open against closed, switches at `t = 0.5`. `t = 1` gives the exact
-  target path.
-- **`window.create`.** `window.create(kind, **props)` builds a detached
-  `box` (`Rect`) or `path` and applies `set`. `width`/`height` join
-  `set`.
-- **Paint names on every node.**
-  - `fill` maps to `background` (the icon tint on an icon).
-  - `stroke_color`/`stroke_width` map to `border_*`.
-  - `corner_radius` takes a number, or a 4-tuple through
-    `corner_radii_override`, which becomes `Option<Animated<[f64; 4]>>`.
-  - `shadows` is `Animated<Shadows>`, padded pairwise with transparent
-    shadows when lengths differ.
-  - `opacity` becomes group opacity: `push_layer(opacity)` around the
-    node and its subtree, with the node's own paints at full alpha.
-    Legacy scrims carry their 32% as color alpha instead.
-- **Easing.** `MotionCurve::Bezier(x1, y1, x2, y2)`. `animate` gains
-  `easing`, which defaults to linear as today.
-- **Semantics.** `stop_animation(name)` and `get_target(name)`.
-- **Text input.**
-  - `placeholder` text drawn in `placeholder_fill` when the input is
-    empty;
-  - `caret_color` and `selection_fill`;
-  - `obscured` draws bullets, and copy/cut refuse.
-- **Other colors.** `ScrollView` gets `scrollbar_fill`/`scrollbar_width`.
-  The terminal gets a `palette` of 16 ANSI colors plus foreground,
-  background, cursor and selection.
+- **Structure.**
+  - `Tree` has `add_child`, `try_add_child` (checked, reparents),
+    `detach` (keeps the node), and `remove` (frees the subtree).
+  - Python's `Node.remove()` currently *frees*; R5 makes it detach.
+  - There's no insert-at-index, `children()`, `parent()`, or `destroy()`.
+  - `detach` clears focus, so a move must keep focus explicitly.
+- **Lifetime (issue #10).**
+  - `App`, `Window`, `Node`, `Theme`, `View`, `Component`, and two
+    `view.rs` binding callbacks are `#[pyclass(unsendable)]`.
+  - pyo3 0.29 leaks such an object when the cyclic collector frees it on
+    another thread, and panics in `__clear__`.
+  - A class that isn't `unsendable` must be `Send + Sync`. So each class
+    becomes a thin `Send + Sync` shell around a thread-checked value
+    (`ThreadBound<T>`):
+    - using it from another thread panics, as today;
+    - dropping it there hands the value to a queue drained on the
+      owning thread;
+    - `__traverse__`/`__clear__` do nothing off-thread.
+- **Auto-free.**
+  - Only a node detached through the new API (`create`, `remove()`,
+    `hide_layer`) is collectible; legacy detached content (context menus,
+    inactive dock panels) never is.
+  - Handle counts live in `Tree`. When the last handle to anything in a
+    collectible subtree goes, the subtree is freed and its listeners are
+    pruned.
+- **Time.**
+  - `engine-core` never reads the clock; timestamps are parameters.
+  - `engine-py` reads `Instant::now()` at 24 sites. `window.advance(ms)`
+    pins a per-tree virtual clock (`Tree::now`) that those sites use;
+    `App.run()` unpins it.
+- **Batching.**
+  - Layout runs once per frame (`app.rs` frame closure), never per
+    property change, and no frame can run inside a Python call.
+  - So `window.batch()` has nothing to defer unless a measurement shows
+    otherwise. It is measured in Phase 2 and dropped from the spec if
+    it's a no-op.
+- **Window content.**
+  - `show_view` swaps a whole tree because each `View` owns one. With
+    every node in the window's one tree, `set_content` is
+    `root.remove()`-children plus `add_child`, so it is likely redundant
+    too (decided in Phase 2).
+- **Text.**
+  - Text nodes have no intrinsic size; every factory passes one.
+  - Parley 0.11 has `LetterSpacing`, `FontStyle`, and `TextWrapMode`,
+    but no line limit or ellipsis. The renderer truncates to `max_lines`
+    and fits an ellipsis itself.
+  - `get_monospace_cell_size` builds a new `TextRenderer` (re-registering
+    every font) per call; `measure_text` and it share one per thread.
+- **Layers.**
+  - The legacy overlay mechanism already appends absolutely positioned
+    content to the root, so layout, paint, hit-testing, and access work
+    unchanged, and has modal blocking and outside/Escape dismissal.
+  - It is extended rather than duplicated:
+    - ordered stacking instead of a `HashMap`;
+    - an optional anchor with flip/shift placement and a reported side;
+    - dismissal reported as a `dismiss` event instead of self-closing,
+      for new layers;
+    - focus trap and restore;
+    - per-layer focus scope;
+    - bubbling stops at the layer.
+  - `add_child` inserts before open layers so content never paints over
+    them.
+- **Missing properties.**
+  - `visible` (not painted, not hit, no layout space, not in access or
+    tab order) and `z_index` (sibling paint and hit order) don't exist.
+  - `flex_wrap`, `align_self`, `aspect_ratio`, and min/max sizes are
+    plain taffy fields.
 
 ## Phases
 
-1. Vector paths.
-2. Paint, shadows, and easing.
-3. Pixel tests, a proof ripple, stubs, docs, and the full chain.
+1. Structure, lifetime, and time.
+2. Creation and properties.
+3. Text measurement and truncation.
+4. Layers.
+5. Verification: stubs, docs, spec, full chain.
 
 ## Status
 
-Complete (2026-09-25): all three phases done.
+Scoped (2026-09-25). Phase 1 next.

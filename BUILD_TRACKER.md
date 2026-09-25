@@ -59,7 +59,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M93 — Target API Spec and Naming Convention | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-25) |
 | M94 — Input and Accessibility Building Blocks | `██████████` 100% | ✅ Complete — all 3 phases done, plus a focus follow-up (2026-09-25) |
 | M95 — Paint and Animation Building Blocks | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-25) |
-| M96 — Layer, Structure, and Update Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, next (2026-09-25) |
+| M96 — Layer, Structure, and Update Building Blocks | `░░░░░░░░░░` 0% | 🚧 Scoped, Phase 1 next (2026-09-25) |
 | M97 — Tesserae Migration Gate | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M98 — Remove the Declarative Layer | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M99 — Remove MD3 Components, Kinds, and Theming | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
@@ -1357,26 +1357,35 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Milestone 96 — Layer, Structure, and Update Building Blocks
 
-**Status: ⬜ Proposed.** Additive. One generic layer mechanism replacing the six component-specific open/close pairs, plus the tree and update operations a framework-side reconciler needs to be correct and fast (Tesserae's needs 1–4).
+**Status: 🚧 In progress (2026-09-25).** Additive. One generic layer mechanism replacing the six component-specific open/close pairs, plus the tree and update operations a framework-side reconciler needs to be correct and fast (Tesserae's needs 1–4).
 
-### Phase 1 — Layers ⬜
-- Step 1: show and hide any node as an overlay layer, with anchoring that flips or shifts to fit and reports the final placement, stacking in show order, modal input blocking with a focus trap and focus restored on hide, each layer its own focus scope with key events stopping at the layer, and an outside-click and Escape dismissal event -- the one mechanism dialogs, menus, snackbars, side sheets, drawers, tooltips, and context menus reduce to; the scrim is the framework's — ⬜
+**Scoped against the source (2026-09-25):** `Tree` can append, reparent, detach, and free, but has no insert-at-index, and Python's `Node.remove()` frees rather than detaching as R5 says; `detach` clears focus, so a move must keep it. Every `tre` object Python holds is `#[pyclass(unsendable)]`, which pyo3 0.29 leaks, and panics in `__clear__`, when the cyclic collector frees it on another thread (issue #10) -- a non-`unsendable` class must be `Send + Sync`, so each becomes a thread-checked shell whose off-thread drop is handed back to the owning thread. `engine-core` never reads the clock, so headless time only needs a per-tree virtual clock at `engine-py`'s 24 `Instant::now()` sites. Layout already runs once per frame and never inside a Python call, so `window.batch()` may have nothing to defer, and with every node in one window tree `set_content` may reduce to the structure operations -- both are measured and decided in Phase 2, not assumed. Text nodes have no intrinsic size, parley 0.11 has letter spacing, italics, and a no-wrap mode but no line limit or ellipsis, and `get_monospace_cell_size` builds a fresh font collection per call. The legacy overlay mechanism already appends absolutely positioned content to the root with modal blocking and dismissal, so layers extend it -- ordered, anchored, reporting `dismiss` -- rather than adding a second one. `visible` and `z_index` don't exist in the engine yet.
+
+### Phase 1 — Structure, Lifetime, and Time ⬜
+- Step 1: `insert_child(index, child)`, `children()`, `parent()`, `remove()` detaching and keeping the node alive (R5), and `destroy()` freeing it; moving a node keeps its `NodeId`, listeners, focus, and running animations -- what a keyed reconciler needs — ⬜
+- Step 2: every `tre` object safe to drop from any thread -- used off-thread it still raises, but a drop or `destroy()` there is handed to the owning thread instead of leaking or panicking, fixing issue #10 — ⬜
+- Step 3: a detached node with no remaining Python handle is freed automatically, subtree and listeners with it; legacy detached content is never collected — ⬜
+- Step 4: `window.advance(ms)`, deterministic headless time for animation tests on displayless CI — ⬜
+- Step 5: tests, including a proof keyed-list reorder that preserves node identity, focus, and a running animation — ⬜
+
+### Phase 2 — Creation and Properties ⬜
+- Step 1: `window.create(kind, **props)` extended from M95's `box`/`path` to every kind, with each kind's required properties — ⬜
+- Step 2: the atomic `set` and `get` extended to every property -- size and position including min/max sizes, `aspect_ratio`, and percentages; flex layout including `flex_wrap` and `align_self`; transform; `visible`; `clip_children`; `z_index`; and the text, text input, image, scroll view, virtual list, and terminal properties — ⬜
+- Step 3: read-only `layout_x`/`layout_y`/`layout_width`/`layout_height` and `focused`, running pending layout; a batch update scope measured against unbatched updates, kept only if it saves real work — ⬜
+- Step 4: showing any kept-alive subtree as a window's content, replacing `Window.show_view`'s `View`-only form, or recording that the structure operations already cover it — ⬜
+- Step 5: tests, including a wrapped chip row — ⬜
+
+### Phase 3 — Text Measurement and Truncation ⬜
+- Step 1: `window.measure_text(...)` -- a string's size under given text properties -- on one shared per-thread text shaper, which `get_monospace_cell_size` moves to as well — ⬜
+- Step 2: `max_lines`, ellipsis overflow, wrap mode, `letter_spacing`, and italic `font_style` on text nodes, also accepted by `measure_text` — ⬜
+- Step 3: tests, including an ellipsized list item — ⬜
+
+### Phase 4 — Layers ⬜
+- Step 1: `show_layer(node, anchor, placement, modal, dismissible)` and `hide_layer(node)`, extending the legacy overlay mechanism -- stacking in show order, anchoring that flips or shifts to fit and reports the final side as `layer_placement`, modal input blocking with a focus trap and focus restored on hide, each layer its own focus scope with key events stopping at the layer, and an outside-press and Escape `dismiss` event -- the one mechanism dialogs, menus, snackbars, side sheets, drawers, tooltips, and context menus reduce to; the scrim is the framework's — ⬜
 - Step 2: tests, including a proof modal dialog and an anchored menu built from primitives — ⬜
 
-### Phase 2 — Structure and Updates ⬜
-- Step 1: insert a child at an index and move an existing child, keeping its `NodeId`, handlers, focus, and running animations -- what a keyed reconciler needs — ⬜
-- Step 2: show any kept-alive subtree as a window's content, replacing `Window.show_view`'s `View`-only form — ⬜
-- Step 3: a batch update scope that defers layout and paint until it ends, so re-theming or reconciling from Python doesn't cost a layout per property; measured against unbatched updates rather than assumed — ⬜
-- Step 4: text measurement -- a string's size under given text properties -- for content-sized widgets (color readback landed in M95); reading computed layout runs pending layout, even inside a batch — ⬜
-- Step 5: `window.create(kind, **props)` extended from M95's `box`/`path` to every kind, and the atomic `set` extended to every property — ⬜
-- Step 6: node lifetime -- a detached node with no remaining Python handle is freed automatically, and dropping or destroying a node is safe from any thread by deferring the free to the event-loop thread, fixing issue #10 — ⬜
-- Step 7: `window.advance(ms)`, deterministic headless time for animation tests on displayless CI — ⬜
-- Step 8: tests, including a proof keyed-list reorder that preserves node identity — ⬜
-
-### Phase 3 — Layout and Text Properties ⬜
-- Step 1: flex wrap, `align_self`, `"auto"` and percentage sizes, and `aspect_ratio` — ⬜
-- Step 2: text truncation and style -- `max_lines`, ellipsis overflow, wrap mode, `letter_spacing`, and italic `font_style`, also accepted by `measure_text` — ⬜
-- Step 3: tests, including a wrapped chip row and an ellipsized list item — ⬜
+### Phase 5 — Verification ⬜
+- Step 1: `_core.pyi` stubs, docs for the new surface, the spec updated with anything this milestone corrected, and the full standing chain — ⬜
 
 ---
 
