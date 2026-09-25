@@ -1239,6 +1239,16 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ---
 
+## Branch: `0.3.5` — Release Prep
+
+**Status: 🚧 In progress (2026-09-25).** The removals and renames of the approved program (M98–M103, per D11), after M97 Phase 2 hands Tesserae what it needs to stop using them.
+
+- Branch `0.3.5` created off `main` at `68c3883` (post-`v0.3.4`) — ✅
+- `Cargo.toml`/`pyproject.toml` bumped 0.3.4 → 0.3.5; `Cargo.lock` updated via `cargo check` — ✅
+- `PLAN.md`/`LOG.md` reset for M97 Phase 2 — ✅
+
+---
+
 ## Program: `tre` as a Minimal Building-Block Engine (M93–M103) — Approved
 
 **Status: 🚧 Approved (2026-09-25).** User: "Approved, release 0.3.3 and start M93." All eleven decisions answered by the user; D10 changed from the recommendation. User: "I want TRE to drop the declarative option entirely. I also want TRE to drop the MD3 components while keeping all primitives used to create the MD3 components. I also want the MD3 specific theme to be decided and created on the framework side while TRE provides all of the functions/hooks to make that possible. I want TRE to provide the building blocks while the framework has the freedom to build what it wants ... TRE needs to be small and efficient. No duplicate code, no unnecessary functions ... TRE naming conventions need to be normalized and easy to understand. When a developer uses TRE to make a framework they should know what a function, property, handler, animation, etc. is at a glance." Then: "Scope out all sequentially, then update the build tracker and once I approve the overall plan we will get started on this."
@@ -1411,8 +1421,15 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - Step 1: release M93–M96 as `0.3.4` per D11, with the old API still present, so Tesserae migrates against a published version — ✅ (`v0.3.4`: PR #11 merged as `29800f3` and tagged; see "`v0.3.4` Released")
 
 ### Phase 2 — Tesserae Migrates ⬜
-- Step 1: hand Tesserae the spec and a per-feature migration guide -- its own reactivity per D5, its own declarative layer and reconciler, its own MD3 theme with HCT color, its own widgets on the new primitives — ⬜
-- Step 2: Tesserae confirms it no longer calls anything M98–M99 removes, verified by running its suite with those names stubbed out rather than taken on trust — ⬜
+
+**Scoped (2026-09-25),** from Tesserae's request (sent at the user's request): the guide's most useful form is data Tesserae can check its rebuilt widgets against while `0.3.4` still has the old factories, so the widget mapping is generated from the factories themselves rather than written by hand; only what a static tree can't show is written up from the source. `tre`'s compiled classes accept attribute replacement (checked on `0.3.4`), so the gate's switch is pure Python.
+
+- Step 1: `tools/dump_widget.py` -- dumps any node's subtree (kind, and every layout, paint, transform, and accessibility property) as diffable JSON -- and a reference generated from it for all 57 legacy `add_*` factories at their defaults — ⬜
+- Step 2: what a static tree can't show, written up from the source -- the hover, press, and focus state layers and ripple timings, each widget's state-change animations, and how the Rust-painted kinds (checkbox, radio, switch, slider, progress, loading indicator, time picker dial, carousel, splitter) draw — ⬜
+- Step 3: the `engine-md3` handover as data -- colour science (HCT, tonal palettes, schemes), the type, shape, and motion scales, and the 12 icons as SVG path strings with their view box — ⬜
+- Step 4: an audit of `binding.rs` and `cascade.rs` (`resolve_style_layered`) against their doc comments, listing every difference — ⬜
+- Step 5: the gate's switch -- `TRE_FORBID_REMOVED=1` makes every name `0.3.5` removes or renames raise, naming its replacement, from a machine-readable list a test keeps in step with the spec's migration table — ⬜
+- Step 6: Tesserae confirms it no longer calls anything `0.3.5` removes, by running its suite and examples with the switch on rather than on trust — ⬜
 
 ---
 
