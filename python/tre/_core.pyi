@@ -210,7 +210,8 @@ class Node:
         """Reads one property: an animatable number's current, possibly
         mid-animation value (a `float`), or -- M94 -- any property `set`
         accepts, plus `focused`. On a built-in slider or progress
-        indicator, `value` stays that widget's numeric value.
+        indicator, `value` stays that widget's numeric value. M97:
+        `kind` is the node's kind, by the name `create` takes.
         """
         ...
     def set(self, **props: Any) -> None:

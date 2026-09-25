@@ -784,6 +784,9 @@ impl Node {
             let access = &node.access;
             let any = |v: Bound<'_, PyAny>| v.unbind();
             match name {
+                "kind" => any(crate::node::kind_id(&node.kind)
+                    .into_pyobject(py)?
+                    .into_any()),
                 "role" => ROLES
                     .iter()
                     .find(|(_, r)| *r == access.role)

@@ -1943,6 +1943,36 @@ fn kind_name(kind: &NodeKind) -> &'static str {
     }
 }
 
+/// M97: `get("kind")` -- a node's kind by the name `window.create` takes
+/// it under; the 0.3.5-removed widget kinds keep their own (snake-cased)
+/// names.
+pub(crate) fn kind_id(kind: &NodeKind) -> &'static str {
+    match kind {
+        NodeKind::Rect => "box",
+        NodeKind::Container => "container",
+        NodeKind::Text(_) => "text",
+        NodeKind::Splitter(_) => "splitter",
+        NodeKind::VirtualList(_) => "virtual_list",
+        NodeKind::Canvas(_) => "canvas",
+        NodeKind::Checkbox(_) => "checkbox",
+        NodeKind::RadioButton(_) => "radio_button",
+        NodeKind::Switch(_) => "switch",
+        NodeKind::LinearProgress(_) => "linear_progress",
+        NodeKind::CircularProgress(_) => "circular_progress",
+        NodeKind::Slider(_) => "slider",
+        NodeKind::TextField(_) => "text_input",
+        NodeKind::Image(_) => "image",
+        NodeKind::Icon(_) => "icon",
+        NodeKind::Path(_) => "path",
+        NodeKind::Link(_) => "link",
+        NodeKind::Terminal(_) => "terminal",
+        NodeKind::Carousel(_) => "carousel",
+        NodeKind::ScrollView(_) => "scroll_view",
+        NodeKind::LoadingIndicator(_) => "loading_indicator",
+        NodeKind::TimePickerDial(_) => "time_picker_dial",
+    }
+}
+
 fn type_name_of(value: &Bound<'_, PyAny>) -> String {
     value
         .get_type()

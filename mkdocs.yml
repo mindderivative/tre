@@ -73,4 +73,5 @@ nav:
   - Architecture: architecture.md
   - Design:
       - Target API: design/target-api.md
+      - Legacy widget reference: design/legacy-widgets.md
   - Contributing: contributing.md

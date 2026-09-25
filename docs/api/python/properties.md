@@ -182,6 +182,7 @@ Plus `font_size` and the `palette` on
 
 | Property | Value |
 | --- | --- |
+| `kind` | The node's kind, by the name `create` takes — `"box"`, `"text"`, `"text_input"`, ... (*new in 0.3.5*) |
 | `focused` | Whether the node has keyboard focus |
 | `layer_placement` | A shown [layer](layers.md)'s side of its anchor — `"below"`, `"above"`, `"start"`, `"end"` — or `None` |
 | `layout_x`, `layout_y` | The node's computed position in the window |
