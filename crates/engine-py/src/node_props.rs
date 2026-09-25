@@ -971,7 +971,7 @@ impl Node {
         }
     }
 
-    /// Moves keyboard focus to this node, firing `blur` and `focus` (and
+    /// Moves keyboard focus to this node, firing `unfocus` and `focus` (and
     /// the legacy focus handlers) as any focus change does.
     fn focus(&self, py: Python<'_>) {
         let config = interaction_config();

@@ -45,7 +45,7 @@ Three principles run through every section:
 | 13 | Event `input` (was `text_input`); `change` is text-only; `Event.target` + `current` | [Events](#events), [Event](#event) | M94 |
 | 14 | Lifetime of detached nodes; drop and destroy safe off-thread (issue #10) | [Lifetime](#lifetime) | M96 |
 | 15 | Atomic `set`; unknown names raise listing valid ones; `window.create(kind, **props)` | [`set`, `get`, `animate`](#set-get-animate), R9 | M96 |
-| (b) | Focus-within: `focus`/`blur` bubble; capture and propagation | R10, [Events](#events) | M94 |
+| (b) | Focus-within: `focus`/`unfocus` bubble; capture and propagation | R10, [Events](#events) | M94 |
 | (c) | Colors interpolate in sRGB; readback is the exact tuple | R4 | M95 |
 
 ## Naming convention
@@ -72,16 +72,16 @@ revision 2.
 | --- | --- | --- |
 | R1 | Paint naming | Every node paints `fill`, with optional `stroke_color`/`stroke_width`, replacing `background`, `foreground`, `border_color`, `border_width`. Renames names M90 introduced, once, in 0.3.5 |
 | R2 | Creating nodes | Creation always makes a detached node; attach it with `add_child`/`insert_child`. No create-and-attach shortcuts |
-| R3 | Propagation | Pointer, wheel, key, `click`, `secondary_click`, `focus`, `blur`, `input`, and `a11y_action` bubble from the target; `event.stop()` ends it. `pointer_enter`/`pointer_leave` are non-bubbling **subtree** events. `change`, `scroll`, `dismiss` don't bubble |
+| R3 | Propagation | Pointer, wheel, key, `click`, `secondary_click`, `focus`, `unfocus`, `input`, and `a11y_action` bubble from the target; `event.stop()` ends it. `pointer_enter`/`pointer_leave` are non-bubbling **subtree** events. `change`, `scroll`, `dismiss` don't bubble |
 | R4 | Colors | Tuples only; `animate` interpolates them component-wise in sRGB; `get` returns exactly the tuple that was set |
 | R5 | Remove vs destroy | `remove()` detaches and keeps the node alive; `destroy()` frees it; a detached node nothing refers to is freed automatically ([Lifetime](#lifetime)) |
 | R6 | Setting properties | One atomic `node.set(**props)` |
 | R7 | Headless testing (D9) | One `window.simulate(...)`, plus `window.advance(ms)` for deterministic time |
 | R8 | Tab order | `tab_index`: a sort key within a focus scope; default is tree order; `-1` means focusable only programmatically; each open layer is its own scope |
 | R9 | One creation entry point (item 15) | **`window.create(kind, **props)` only**, with no `create_box`/`create_text`/… beside it, since two ways to create would be duplicates. Every creation argument becomes a property (`create("text", text="Hi")`). That includes an image's pixels, so `push_frame`/`set_pixels` folds into atomic `set(rgba=..., pixel_width=..., pixel_height=...)` |
-| R10 | Focus-within (answer b) | `focus` and `blur` **bubble**, with `event.target` naming the node that actually gained or lost focus; no separate `focus_in`/`focus_out` events |
+| R10 | Focus-within (answer b) | `focus` and `unfocus` **bubble**, with `event.target` naming the node that actually gained or lost focus; no separate `focus_in`/`focus_out` events |
 | R11 | Typing event name (item 13) | `input` |
-| R12 | Scrims and focus rings | `tre` draws neither. A modal's scrim is a window-sized `box` the framework puts in the layer; focus indication is drawn by the framework from `focus`/`blur` |
+| R12 | Scrims and focus rings | `tre` draws neither. A modal's scrim is a window-sized `box` the framework puts in the layer; focus indication is drawn by the framework from `focus`/`unfocus` |
 
 ## Classes and functions
 
@@ -244,11 +244,14 @@ receives an `Event` (below), or nothing if it takes no parameters.
 | `wheel` | Wheel or trackpad scroll | yes |
 | `key_down`, `key_up` | A key, with modifiers, to the focused node | yes |
 | `input` | Committed text arrives for the focused `text_input` (R11) | yes |
-| `focus`, `blur` | A node gains or loses keyboard focus; `event.target` is that node (R10) | yes |
+| `focus`, `unfocus` | A node gains or loses keyboard focus; `event.target` is that node (R10) | yes |
 | `change` | A `text_input`'s text was changed by the user | no |
 | `scroll` | A `scroll_view`'s offset changed | no |
 | `dismiss` | A layer was dismissed by an outside click or Escape | no |
-| `a11y_action` | An assistive technology invoked `action`: `"increment"`, `"decrement"`, `"expand"`, `"collapse"`, `"scroll_into_view"`, or `"set_value"`. Its activate request arrives as `click` and its focus requests as `focus`/`blur`, as from a pointer or keyboard, so a widget handling `click` is accessible with no more code; the platform accessibility layer has no dismiss action (Escape reaches `key_down`) | yes |
+| `a11y_action` | An assistive technology invoked `action`: `"increment"`, `"decrement"`, `"expand"`, `"collapse"`, `"scroll_into_view"`, or `"set_value"`. Its activate request arrives as `click` and its focus requests as `focus`/`unfocus`, as from a pointer or keyboard, so a widget handling `click` is accessible with no more code; the platform accessibility layer has no dismiss action (Escape reaches `key_down`) | yes |
+
+*`unfocus`, not the DOM's `blur` (user decision, 2026-09-25): `blur` names the
+visual effect -- a shadow's blur radius today, blur shaders later.*
 
 **Pointer capture:** `node.capture_pointer()` during `pointer_down`
 routes every later pointer event to this node until `pointer_up` or
@@ -273,7 +276,7 @@ and events still bubble from it.
 | `text` | `input` |
 | `old_value`, `new_value` | `change` |
 | `action`, `value` | `a11y_action` (`value` for `"set_value"`) |
-| `related_target` | `focus`, `blur`: the node losing focus (for `focus`) or gaining it (for `blur`); `None` when focus comes from, or goes to, outside the window. Lets a composite tell focus moving between its own children from focus leaving it (added 2026-09-25 at Tesserae's request) |
+| `related_target` | `focus`, `unfocus`: the node losing focus (for `focus`) or gaining it (for `unfocus`); `None` when focus comes from, or goes to, outside the window. Lets a composite tell focus moving between its own children from focus leaving it (added 2026-09-25 at Tesserae's request) |
 | `focus_visible` | `focus`: `True` when focus arrived by keyboard or an assistive technology, or programmatically after keyboard input; `False` after a pointer press — the browsers' `:focus-visible` heuristic, so the framework shows its focus indicator only for keyboard focus (added 2026-09-25) |
 | `stop()` | bubbling events: ends propagation |
 | `cancel()` | cancellable events (`close_requested`): prevents the default |
@@ -398,7 +401,7 @@ the ones not yet present.
 | Ripple / state layer (D8) | `box` with `clip_children` + a circle `path` animated by `scale` and `opacity`, positioned from `pointer_down`'s `x`/`y`; hover from the `pointer_enter`/`pointer_leave` subtree events; `a11y_hidden` |
 | Elevation | `shadows`: MD3's key and ambient shadow for each level, supplied by the framework |
 | Sheets, split buttons | asymmetric `corner_radius` 4-tuples |
-| Text fields, search bars | `text_input` with `placeholder`, `placeholder_fill`, `caret_color`, `selection_fill`, `obscured` for passwords; the wrapping widget tracks focus through bubbling `focus`/`blur` |
+| Text fields, search bars | `text_input` with `placeholder`, `placeholder_fill`, `caret_color`, `selection_fill`, `obscured` for passwords; the wrapping widget tracks focus through bubbling `focus`/`unfocus` |
 | Chip groups | `flex_wrap="wrap"` |
 | List items, app-bar titles | `max_lines` + `overflow="ellipsis"` |
 | Dialogs, menus, tooltips, snackbars, sheets, drawers, context menus | `show_layer` (`modal`, focus trap, `dismissible`, `anchor`, flip/fit); a scrim `box`; `dismiss`; `live="polite"` for snackbars; `secondary_click` for context menus |
@@ -414,7 +417,7 @@ the ones not yet present.
 | Set and read every property | atomic `set` (R6), `get`/`get_target`, exact color readback |
 | Batched updates | not needed: layout already runs once per frame, never per property (M96 measurement) |
 | Resize, OS light/dark, scale factor, close | window events |
-| Focus, focus-within, Tab order | bubbling `focus`/`blur` (R10), `tab_index` (R8) |
+| Focus, focus-within, Tab order | bubbling `focus`/`unfocus` (R10), `tab_index` (R8) |
 | Flex layout stays | Flex properties, including `flex_wrap`, `align_self`, percentages, and `aspect_ratio` |
 | Text measurement | `measure_text` |
 | Stable, safe node handles | `Node` handles **(exist)**; [Lifetime](#lifetime) |
@@ -472,7 +475,7 @@ Every current public name, and what it becomes.
 | `get(property)` | `get(name)` |
 | `set_layout(...)`, `set_text`, `set_checked`, `set_selected`, `set_clip_children`, `set_syntax_spans`, `set_folded_ranges`, `set_terminal_selection` | `set(...)` |
 | `get_text`, `get_checked`, `get_selected`, `is_focused` | `get("text")`, `get("focused")`; checked/selected become framework state |
-| `set_on_click`, `set_on_hover_enter`, `set_on_hover_exit`, `set_on_change`, `set_on_focus_enter`, `set_on_focus_exit` | `on("click")`, `on("pointer_enter")`, `on("pointer_leave")`, `on("change")`, `on("focus")`, `on("blur")` |
+| `set_on_click`, `set_on_hover_enter`, `set_on_hover_exit`, `set_on_change`, `set_on_focus_enter`, `set_on_focus_exit` | `on("click")`, `on("pointer_enter")`, `on("pointer_leave")`, `on("change")`, `on("focus")`, `on("unfocus")` |
 | `set_context_menu` | `on("secondary_click")` + `show_layer` |
 | `enable_interaction` | framework (D8) |
 | `add_child` | unchanged |

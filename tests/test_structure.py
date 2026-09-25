@@ -139,7 +139,7 @@ def test_proof_keyed_reorder_preserves_identity_listeners_and_animation() -> Non
     assert rows["c"].get("opacity") == 1.0
 
 
-def test_a_screen_swap_blurs_and_keeps_the_screen_as_it_was_left() -> None:
+def test_a_screen_swap_unfocuses_and_keeps_the_screen_as_it_was_left() -> None:
     """App.show(): `old.remove(); root.add_child(new)`, and back again."""
     w = window()
     w.advance(0)
@@ -152,15 +152,15 @@ def test_a_screen_swap_blurs_and_keeps_the_screen_as_it_was_left() -> None:
     fading = w.create("box", opacity=0.0)
     for node in (field, view, fading):
         first.add_child(node)
-    blurs: list[object] = []
-    shell.on("blur", lambda e: blurs.append(e.target))
+    unfocuses: list[object] = []
+    shell.on("unfocus", lambda e: unfocuses.append(e.target))
     w.simulate("focus", node=field)
     field.set(selection=(1, 3))
     fading.animate("opacity", 1.0, 100)
 
     first.remove()
     shell.add_child(second)
-    assert blurs == [field], "blur bubbles through the tree as it was"
+    assert unfocuses == [field], "unfocus bubbles through the tree as it was"
     assert field.get("focused") is False
     w.simulate("input", text="x")
     assert field.get("text") == "draft", "keys don't reach a detached screen"
@@ -174,14 +174,14 @@ def test_a_screen_swap_blurs_and_keeps_the_screen_as_it_was_left() -> None:
     assert fading.get("opacity") == 1.0, "animations kept advancing while detached"
 
 
-def test_destroy_blurs_before_freeing() -> None:
+def test_destroy_unfocuses_before_freeing() -> None:
     w = window()
     shell = w.create("box")
     w.root.add_child(shell)
     field = w.create("text_input")
     shell.add_child(field)
-    blurs: list[object] = []
-    shell.on("blur", lambda e: blurs.append(e.target))
+    unfocuses: list[object] = []
+    shell.on("unfocus", lambda e: unfocuses.append(e.target))
     w.simulate("focus", node=field)
     field.destroy()
-    assert len(blurs) == 1
+    assert len(unfocuses) == 1

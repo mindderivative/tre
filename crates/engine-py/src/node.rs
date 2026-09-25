@@ -76,9 +76,9 @@ impl NodeState {
         })
     }
 
-    /// When focus is on this node or inside it, clears it and fires `blur`
+    /// When focus is on this node or inside it, clears it and fires `unfocus`
     /// (and the legacy focus-exit handler) -- before a detach or free, so
-    /// `blur` bubbles through the tree as it still is.
+    /// `unfocus` bubbles through the tree as it still is.
     fn release_focus_within(&self, py: Python<'_>) {
         let inside = {
             let tree = self.tree.borrow();
@@ -1072,7 +1072,7 @@ impl Node {
     /// be attached again while any handle to it, or to anything under it,
     /// exists; after that it's freed automatically.
     ///
-    /// Focus inside it leaves with it: the focused node gets `blur`, and
+    /// Focus inside it leaves with it: the focused node gets `unfocus`, and
     /// nothing is focused until something else is. Everything else it
     /// holds -- scroll offsets, a text input's text and selection, running
     /// animations, which keep advancing -- is kept for when it's attached

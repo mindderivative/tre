@@ -26,7 +26,7 @@ listing the valid ones.
 | `wheel` | A wheel or trackpad scroll | yes |
 | `key_down`, `key_up` | A key is pressed or released while the node, or a descendant, has focus (the root gets keys when nothing is focused) | yes |
 | `input` | Committed text arrives for the focused text field | yes |
-| `focus`, `blur` | A node gains or loses keyboard focus | yes |
+| `focus`, `unfocus` | A node gains or loses keyboard focus | yes |
 | `change` | A text field's text was changed by the user | no |
 | `dismiss` | An outside press or Escape asked a [layer](layers.md) to close | no |
 | `a11y_action` | An assistive technology requested `increment`, `decrement`, `expand`, `collapse`, `scroll_into_view`, or `set_value` (its activate and focus requests arrive as `click` and `focus`) | yes |
@@ -36,23 +36,23 @@ listing the valid ones.
 A bubbling event runs the target's listener, then its parent's, and so on to
 the root. Any listener can call `event.stop()` to end it. `event.target` is
 where the event happened and `event.current` is the node whose listener is
-running. Because `focus` and `blur` bubble, a container knows focus moved
+running. Because `focus` and `unfocus` bubble, a container knows focus moved
 somewhere inside it, and `event.target` says where.
 
 ### Focus
 
-`focus` and `blur` each carry `event.related_target`: the node on the other
+`focus` and `unfocus` each carry `event.related_target`: the node on the other
 side of the move. It's the node losing focus for `focus` and the node gaining
-it for `blur`. It's `None` when focus comes from, or goes to, nowhere in the
+it for `unfocus`. It's `None` when focus comes from, or goes to, nowhere in the
 window. A search bar wrapping a text field and a clear button can use it to
 tell focus moving between its own children from focus leaving it:
 
 ```python
-def on_blur(e):
+def on_unfocus(e):
     if e.related_target not in (field, clear_button):
         close_suggestions()
 
-bar.on("blur", on_blur)
+bar.on("unfocus", on_unfocus)
 ```
 
 `focus` also carries `event.focus_visible`, which says whether to draw a focus
@@ -133,7 +133,7 @@ is the window's root node.
 | `text` | `input` |
 | `old_value`, `new_value` | `change` |
 | `action`, `value` | `a11y_action` |
-| `related_target` | `focus`, `blur` — the node on the other side of the move |
+| `related_target` | `focus`, `unfocus` — the node on the other side of the move |
 | `focus_visible` | `focus` — whether focus arrived by keyboard |
 | `width`, `height` / `dark` / `scale_factor` | `resize` / `color_scheme` / `scale_factor` |
 
@@ -167,7 +167,7 @@ window.simulate("resize", width=800, height=600)
 | `pointer_leave` | — (the pointer leaves the window) |
 | `key_down`, `key_up` | `key`; `repeat` |
 | `input` | `text` |
-| `focus`, `blur` | `node` |
+| `focus`, `unfocus` | `node` |
 | `a11y_action` | `node`, `action`; `value` for `set_value` |
 | `resize` | `width`, `height` |
 | `color_scheme` | `dark` |

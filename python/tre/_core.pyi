@@ -156,8 +156,8 @@ class Event:
     scale_factor: float | None
     """`scale_factor`: the window's new scale factor."""
     related_target: Node | None
-    """`focus`/`blur`: the node on the other side of the move -- the one
-    losing focus for `focus`, the one gaining it for `blur`. `None` when
+    """`focus`/`unfocus`: the node on the other side of the move -- the one
+    losing focus for `focus`, the one gaining it for `unfocus`. `None` when
     focus comes from, or goes to, nowhere in the window."""
     focus_visible: bool | None
     """`focus`: `True` when focus arrived by keyboard or an assistive
@@ -229,7 +229,7 @@ class Node:
         other kind."""
         ...
     def focus(self) -> None:
-        """M94: moves keyboard focus to this node, firing `blur`/`focus`."""
+        """M94: moves keyboard focus to this node, firing `unfocus`/`focus`."""
         ...
     def set_layout(
         self,
@@ -341,7 +341,7 @@ class Node:
         listener for it. Events: `pointer_enter`, `pointer_leave`,
         `pointer_down`, `pointer_move`, `pointer_up`, `click`,
         `secondary_click`, `wheel`, `key_down`, `key_up`, `input`,
-        `focus`, `blur`, `change`, `a11y_action`. All but
+        `focus`, `unfocus`, `change`, `a11y_action`. All but
         `pointer_enter`/`pointer_leave`/`change` bubble to ancestors
         until a listener calls `event.stop()`. `handler` receives an
         `Event`, or nothing if it takes no parameters. Raises
@@ -387,12 +387,12 @@ class Node:
         """M96 (R5): detaches this node from its parent. It stays alive,
         and can be attached again, while any handle to it or to anything
         under it exists; then it's freed automatically. Focus inside it
-        gets `blur` first and isn't moved anywhere; everything else --
+        gets `unfocus` first and isn't moved anywhere; everything else --
         scroll offsets, text and selection, running animations -- is kept."""
         ...
     def destroy(self) -> None:
         """M96: frees this node and its whole subtree now, with their
-        listeners; focus inside it gets `blur` first. Using a handle to a
+        listeners; focus inside it gets `unfocus` first. Using a handle to a
         freed node raises `ValueError`."""
         ...
     def set_checked(self, checked: bool) -> None:
@@ -670,7 +670,7 @@ class Window:
         window-space `x`/`y`; `button` and `delta_x`/`delta_y` where they
         apply. `pointer_leave` moves the pointer out of the window.
         `key_down`/`key_up` take `key` and `repeat`; `input` takes `text`;
-        `focus`/`blur` take `node`; `a11y_action` takes `node`, `action`
+        `focus`/`unfocus` take `node`; `a11y_action` takes `node`, `action`
         (`increment`, `decrement`, `expand`, `collapse`,
         `scroll_into_view`, `set_value`), and `value`. `shift`/`ctrl`/`alt`/`meta` hold
         modifiers. Window events: `resize` (`width`, `height`),

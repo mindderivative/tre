@@ -116,4 +116,4 @@ interpolate component-wise in sRGB.
 
 A terminal resolves each cell's color against its palette when it paints, so a
 new palette recolors what's already on screen. `tre` draws no focus ring on a
-node you build: show focus yourself from the `focus` and `blur` events.
+node you build: show focus yourself from the `focus` and `unfocus` events.

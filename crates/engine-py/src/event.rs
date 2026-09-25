@@ -194,8 +194,8 @@ pub struct Event {
     pub(crate) dark: Option<bool>,
     #[pyo3(get)]
     pub(crate) scale_factor: Option<f64>,
-    /// `focus`/`blur`: the node on the other side of the move -- losing
-    /// focus for `focus`, gaining it for `blur`.
+    /// `focus`/`unfocus`: the node on the other side of the move -- losing
+    /// focus for `focus`, gaining it for `unfocus`.
     #[pyo3(get)]
     pub(crate) related_target: Option<Py<Node>>,
     /// `focus`: whether focus arrived by keyboard or assistive technology

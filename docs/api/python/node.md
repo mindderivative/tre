@@ -45,7 +45,7 @@ expand/collapse. Requests arrive as the [`a11y_action`](events.md) event.
 animatable number's current value (below). On a built-in slider or progress
 indicator, `value` stays that widget's numeric value.
 
-**`focus()`** moves keyboard focus to the node, firing `blur` and `focus`.
+**`focus()`** moves keyboard focus to the node, firing `unfocus` and `focus`.
 
 ## `animate`
 
@@ -222,7 +222,7 @@ for index, key in enumerate(new_order):
 Switching screens is `old.remove()` then `window.root.add_child(new)`:
 
 - **Focus leaves with a removed or destroyed subtree.** When focus is inside
-  it, the focused node gets `blur` first — bubbling through the tree as it
+  it, the focused node gets `unfocus` first — bubbling through the tree as it
   was — and nothing is focused afterwards.
 - **A detached subtree keeps everything else**: scroll offsets, a text
   input's text, caret, and selection, and running animations, which keep

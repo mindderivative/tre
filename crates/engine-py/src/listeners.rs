@@ -11,7 +11,7 @@
 //!   pointer, and the event belongs to where it happened.
 //! - **Outcomes** (`dispatch::run_dispatch_outcome`,
 //!   `dispatch::fire_focus_transition`): `click`, `secondary_click`,
-//!   `pointer_enter`/`pointer_leave`, `focus`/`blur`, `change` -- the same
+//!   `pointer_enter`/`pointer_leave`, `focus`/`unfocus`, `change` -- the same
 //!   places the legacy handlers fire, so every path that already reaches
 //!   those (live input, accessibility requests, the synthetic
 //!   `Window.click` family) reaches listeners too.
@@ -102,7 +102,7 @@ pub(crate) enum EventType {
     KeyUp,
     Input,
     Focus,
-    Blur,
+    Unfocus,
     Change,
     A11yAction,
     Dismiss,
@@ -122,7 +122,7 @@ impl EventType {
         Self::KeyUp,
         Self::Input,
         Self::Focus,
-        Self::Blur,
+        Self::Unfocus,
         Self::Change,
         Self::A11yAction,
         Self::Dismiss,
@@ -142,7 +142,7 @@ impl EventType {
             Self::KeyUp => "key_up",
             Self::Input => "input",
             Self::Focus => "focus",
-            Self::Blur => "blur",
+            Self::Unfocus => "unfocus",
             Self::Change => "change",
             Self::A11yAction => "a11y_action",
             Self::Dismiss => "dismiss",
@@ -377,7 +377,7 @@ pub(crate) fn route_hover(
     }
 }
 
-/// `blur` on the node losing focus, then `focus` on the node gaining it --
+/// `unfocus` on the node losing focus, then `focus` on the node gaining it --
 /// both bubbling, so an ancestor learns that focus moved within it. Each
 /// carries the other node as `related_target` (`None` when focus comes
 /// from, or goes to, nowhere in the window), so a composite widget can
@@ -396,7 +396,7 @@ pub(crate) fn route_focus(
         })
     };
     if let Some(old) = old {
-        deliver(ctx, py, EventType::Blur, old, None, |e| {
+        deliver(ctx, py, EventType::Unfocus, old, None, |e| {
             e.related_target = related(new);
         });
     }

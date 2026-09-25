@@ -53,7 +53,7 @@ const SIMULATED_EVENTS: [&str; 20] = [
     "key_up",
     "input",
     "focus",
-    "blur",
+    "unfocus",
     "a11y_action",
     "resize",
     "color_scheme",
@@ -694,7 +694,7 @@ impl PyWindow {
                 f.done()?;
                 process_input(&ctx, root, &InputEvent::TextInput(text), py);
             }
-            "focus" | "blur" => {
+            "focus" | "unfocus" => {
                 let id = need_node(&f)?;
                 f.done()?;
                 let config = interaction_config();

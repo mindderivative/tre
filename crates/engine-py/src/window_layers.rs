@@ -135,7 +135,7 @@ impl PyWindow {
 }
 
 impl PyWindow {
-    /// Fires `focus`/`blur` (and the legacy focus handlers) for a focus
+    /// Fires `focus`/`unfocus` (and the legacy focus handlers) for a focus
     /// change a layer made.
     fn fire_focus(&self, transition: FocusTransition, py: Python<'_>) {
         let Some((old, new)) = transition else {

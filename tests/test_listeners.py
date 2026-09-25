@@ -281,7 +281,7 @@ def test_input_and_change_for_typing() -> None:
     assert field.get_text() == "hi"
 
 
-def test_focus_and_blur_bubble_for_focus_within() -> None:
+def test_focus_and_unfocus_bubble_for_focus_within() -> None:
     w = window()
     box = w.add_rect(BLACK, 200, 150)
     field = w.add_text_field(WHITE, 150, 30)
@@ -293,10 +293,10 @@ def test_focus_and_blur_bubble_for_focus_within() -> None:
         seen.append((e.type, e.target == field))
 
     box.on("focus", record)
-    box.on("blur", record)
+    box.on("unfocus", record)
     w.simulate("focus", node=field)
-    w.simulate("blur", node=field)
-    assert seen == [("focus", True), ("blur", True)]
+    w.simulate("unfocus", node=field)
+    assert seen == [("focus", True), ("unfocus", True)]
 
 
 def test_tab_moves_focus_and_fires_focus_listeners() -> None:
@@ -304,14 +304,14 @@ def test_tab_moves_focus_and_fires_focus_listeners() -> None:
     a = w.add_text_field(WHITE, 100, 30)
     b = w.add_text_field(WHITE, 100, 30)
     seen: list[str] = []
-    a.on("blur", lambda e: seen.append("a blur"))
+    a.on("unfocus", lambda e: seen.append("a unfocus"))
     b.on("focus", lambda e: seen.append("b focus"))
     w.simulate("focus", node=a)
     w.simulate("key_down", key="tab")
-    assert seen == ["a blur", "b focus"]
+    assert seen == ["a unfocus", "b focus"]
 
 
-def test_focus_and_blur_name_the_node_on_the_other_side() -> None:
+def test_focus_and_unfocus_name_the_node_on_the_other_side() -> None:
     w = window()
     bar = w.add_rect(BLACK, 300, 40)
     field = w.add_text_field(WHITE, 200, 30)
@@ -319,12 +319,12 @@ def test_focus_and_blur_name_the_node_on_the_other_side() -> None:
     bar.add_child(field)
     bar.add_child(clear)
     seen: list[tuple[str, tre.Node | None]] = []
-    bar.on("blur", lambda e: seen.append(("blur", e.related_target)))
+    bar.on("unfocus", lambda e: seen.append(("unfocus", e.related_target)))
     bar.on("focus", lambda e: seen.append(("focus", e.related_target)))
     w.simulate("focus", node=field)
     w.simulate("key_down", key="tab")
-    w.simulate("blur", node=clear)
-    assert seen == [("focus", None), ("blur", clear), ("focus", field), ("blur", None)]
+    w.simulate("unfocus", node=clear)
+    assert seen == [("focus", None), ("unfocus", clear), ("focus", field), ("unfocus", None)]
 
 
 def test_focus_visible_follows_the_input_that_moved_focus() -> None:
@@ -334,7 +334,7 @@ def test_focus_visible_follows_the_input_that_moved_focus() -> None:
     visible: list[bool | None] = []
     a.on("focus", lambda e: visible.append(e.focus_visible))
     b.on("focus", lambda e: visible.append(e.focus_visible))
-    a.on("blur", lambda e: visible.append(e.focus_visible))
+    a.on("unfocus", lambda e: visible.append(e.focus_visible))
     w.simulate("pointer_down", node=a)
     w.simulate("key_down", key="tab")
     # Programmatic focus follows the last interaction -- here the keyboard.
@@ -351,7 +351,7 @@ def test_a_shortcut_doesnt_count_as_keyboard_navigation() -> None:
     field.on("focus", lambda e: visible.append(e.focus_visible))
     w.simulate("pointer_down", node=field)
     w.simulate("key_down", key="a", ctrl=True)
-    w.simulate("blur", node=field)
+    w.simulate("unfocus", node=field)
     w.simulate("focus", node=field)
     assert visible == [False, False]
 
