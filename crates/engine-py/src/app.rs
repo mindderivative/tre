@@ -24,7 +24,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use engine_core::{InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
+use engine_core::{Cursor, InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
 use engine_platform::{WindowConfig, WindowLifecycle, WindowRequest, run_windowed_multi};
 use engine_render::{FrameRenderer, GeometryCache, TextPlacement, TextRenderer, build_tree_scene};
 use peniko::kurbo::Point;
@@ -315,6 +315,52 @@ impl GpuState {
     }
 }
 
+/// M94: the pointer shape for `position` -- the capturing node's, or the
+/// node under the pointer's, or the nearest ancestor's that sets one.
+fn cursor_at(tree: &Tree, root: NodeId, position: Point) -> Cursor {
+    let mut current = tree
+        .pointer_capture()
+        .or_else(|| tree.hit_test(root, position));
+    while let Some(id) = current {
+        let Some(node) = tree.get(id) else { break };
+        if let Some(cursor) = node.cursor {
+            return cursor;
+        }
+        current = node.parent;
+    }
+    Cursor::Default
+}
+
+/// M94: `winit`'s icon for each of the engine's cursor shapes.
+fn cursor_icon(cursor: Cursor) -> winit::window::CursorIcon {
+    use winit::window::CursorIcon as Icon;
+    match cursor {
+        Cursor::Default => Icon::Default,
+        Cursor::Pointer => Icon::Pointer,
+        Cursor::Text => Icon::Text,
+        Cursor::Grab => Icon::Grab,
+        Cursor::Grabbing => Icon::Grabbing,
+        Cursor::Move => Icon::Move,
+        Cursor::NotAllowed => Icon::NotAllowed,
+        Cursor::Wait => Icon::Wait,
+        Cursor::Progress => Icon::Progress,
+        Cursor::Crosshair => Icon::Crosshair,
+        Cursor::Help => Icon::Help,
+        Cursor::ColResize => Icon::ColResize,
+        Cursor::RowResize => Icon::RowResize,
+        Cursor::EwResize => Icon::EwResize,
+        Cursor::NsResize => Icon::NsResize,
+        Cursor::NeswResize => Icon::NeswResize,
+        Cursor::NwseResize => Icon::NwseResize,
+        Cursor::Copy => Icon::Copy,
+        Cursor::Cell => Icon::Cell,
+        Cursor::ContextMenu => Icon::ContextMenu,
+        Cursor::ZoomIn => Icon::ZoomIn,
+        Cursor::ZoomOut => Icon::ZoomOut,
+        Cursor::AllScroll => Icon::AllScroll,
+    }
+}
+
 struct WindowRuntime {
     tree: Rc<RefCell<Tree>>,
     root: NodeId,
@@ -352,6 +398,9 @@ struct WindowRuntime {
     /// ever hit one real `NodeKind` at a time (`text_field_hit_offset`/
     /// `terminal_hit_cell` are mutually exclusive per node).
     terminal_drag: Option<NodeId>,
+    /// M94: the pointer shape last applied to this window, so it's set on
+    /// the OS window only when it changes.
+    cursor: Cursor,
     /// M30 Phase 9 Step 4 (§5, §8, §10): the same real, shared session
     /// table `PyWindow.terminals` owns -- see `WindowSetup.terminals`'s
     /// own doc comment.
@@ -506,6 +555,7 @@ impl App {
                         completions: setup.completions.clone(),
                         text_drag: None,
                         terminal_drag: None,
+                        cursor: Cursor::Default,
                         terminals: setup.terminals.clone(),
                         active: setup.active.clone(),
                         window_listeners: setup.window_listeners.clone(),
@@ -831,6 +881,20 @@ impl App {
                     &event,
                     py,
                 );
+                // M94: the pointer shape follows the node under the
+                // pointer (or the capturing node).
+                if let InputEvent::PointerMoved { position }
+                | InputEvent::PointerPressed { position, .. }
+                | InputEvent::PointerReleased { position, .. } = &event
+                {
+                    let wanted = cursor_at(&runtime.tree.borrow(), runtime.root, *position);
+                    if wanted != runtime.cursor {
+                        if let Some(window) = runtime.os_window.borrow().as_ref() {
+                            window.set_cursor(cursor_icon(wanted));
+                        }
+                        runtime.cursor = wanted;
+                    }
+                }
                 // M4 Phase 9 (§11.4): the real, winit-driven path a
                 // genuine panel drag reaches -- `Window.start_panel_drag`/
                 // `drop_panel_at` are the no-live-window-needed test
@@ -1267,12 +1331,64 @@ impl App {
                             );
                         }
                     }
-                    // No other accesskit action has real dispatch
-                    // meaning yet (§14 step 7's own original minimal
-                    // scope, still the right boundary here -- nothing
-                    // in this codebase models scrolling, text
-                    // selection, or custom actions).
-                    _ => {}
+                    // M94: a screen reader asking to move focus away.
+                    engine_core::Action::Blur => {
+                        let config = interaction_config();
+                        let transition = if tree.focused() == Some(node) {
+                            tree.clear_focus(
+                                config.focus_ring_opacity,
+                                config.focus_ring_duration,
+                                Instant::now(),
+                            )
+                        } else {
+                            None
+                        };
+                        drop(tree);
+                        if let Some((old, new)) = transition {
+                            crate::dispatch::fire_focus_transition(
+                                &handlers,
+                                &tree_rc,
+                                &context_menus,
+                                &runtime.theme,
+                                &runtime.completions,
+                                old,
+                                new,
+                                py,
+                            );
+                        }
+                    }
+                    // M94: the rest reach the framework as `a11y_action`
+                    // -- what incrementing a slider means is its call.
+                    action => {
+                        drop(tree);
+                        let Some(name) = listeners::a11y_action_name(action) else {
+                            return;
+                        };
+                        let value = match &request.data {
+                            Some(engine_core::ActionData::Value(text)) => text
+                                .to_string()
+                                .into_pyobject(py)
+                                .ok()
+                                .map(|v| v.into_any().unbind()),
+                            Some(engine_core::ActionData::NumericValue(number)) => {
+                                number.into_pyobject(py).ok().map(|v| v.into_any().unbind())
+                            }
+                            _ => None,
+                        };
+                        listeners::deliver_a11y_action(
+                            &NodeContext {
+                                tree: &tree_rc,
+                                handlers: &handlers,
+                                context_menus: &context_menus,
+                                theme: &runtime.theme,
+                                completions: &runtime.completions,
+                            },
+                            node,
+                            name,
+                            value,
+                            py,
+                        );
+                    }
                 }
             },
             // M94: `close_requested` (cancellable) and `closed` window
@@ -1360,6 +1476,59 @@ impl App {
 
 #[cfg(test)]
 mod tests {
+    use super::{Cursor, cursor_at};
+    use engine_core::{NodeKind, PaintProperties, Tree};
+    use peniko::Color;
+    use peniko::kurbo::Point;
+    use taffy::prelude::{AvailableSpace, Size, Style, length};
+
+    /// M94: the cursor comes from the node under the pointer or its nearest
+    /// ancestor that sets one, the capturing node wins while it holds
+    /// capture, and it falls back to the default arrow.
+    #[test]
+    fn cursor_at_inherits_and_follows_capture() {
+        let mut tree = Tree::new();
+        let boxed = |w: f32, h: f32| {
+            (
+                NodeKind::Rect,
+                Style {
+                    size: Size {
+                        width: length(w),
+                        height: length(h),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 0.0, 1.0),
+            )
+        };
+        let (k, s, p) = boxed(200.0, 200.0);
+        let root = tree.insert(k, s, p);
+        let (k, s, p) = boxed(100.0, 100.0);
+        let parent = tree.insert(k, s, p);
+        let (k, s, p) = boxed(50.0, 50.0);
+        let child = tree.insert(k, s, p);
+        tree.add_child(root, parent);
+        tree.add_child(parent, child);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(200.0),
+            },
+        );
+        let over_child = Point::new(10.0, 10.0);
+        let outside = Point::new(150.0, 150.0);
+        assert_eq!(cursor_at(&tree, root, over_child), Cursor::Default);
+
+        tree.get_mut(parent).unwrap().cursor = Some(Cursor::Pointer);
+        assert_eq!(cursor_at(&tree, root, over_child), Cursor::Pointer);
+        assert_eq!(cursor_at(&tree, root, outside), Cursor::Default);
+
+        tree.get_mut(child).unwrap().cursor = Some(Cursor::Grab);
+        tree.set_pointer_capture(Some(child));
+        assert_eq!(cursor_at(&tree, root, outside), Cursor::Grab);
+    }
+
     /// M17 Phase 1 (§8): the one real, permanent regression check that
     /// `arboard` genuinely connects to a live OS clipboard in *this*
     /// environment -- manually verified once via a throwaway probe

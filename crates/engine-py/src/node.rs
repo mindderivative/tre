@@ -335,70 +335,6 @@ impl Node {
         Ok(())
     }
 
-    /// Reads a numeric property's current (possibly still-animating)
-    /// value -- `animate()`'s missing counterpart, added at §14 step 12
-    /// once something (a binding's own applied value, §16.2) actually
-    /// needed to be observed from Python rather than only ever written.
-    /// `background` isn't included: it isn't a single `f64`, and
-    /// nothing yet needs to read it back.
-    pub(crate) fn get(&self, property: &str) -> PyResult<f64> {
-        renamed_property(property)?;
-        let tree = self.tree.borrow();
-        let node = tree.get(self.id).expect(
-            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
-        );
-        let kind = kind_name(&node.kind);
-        match property {
-            "opacity" => Ok(node.paint.opacity.current),
-            "corner_radius" => Ok(node.paint.corner_radius.current),
-            "elevation" => Ok(node.paint.elevation.current),
-            // M48: `border_width` is a plain `Animated<f64>`, the same
-            // shape as `corner_radius`/`elevation` above -- `border_
-            // color` stays excluded, the same real reason `background`
-            // already is (not a single `f64`).
-            "border_width" => Ok(node.paint.border_width.current),
-            "check_progress" => match &node.kind {
-                NodeKind::Checkbox(state) => Ok(state.check_progress.current),
-                _ => Err(EngineError::UnknownProperty {
-                    kind,
-                    property: property.to_string(),
-                }
-                .into()),
-            },
-            "select_progress" => match &node.kind {
-                NodeKind::RadioButton(state) => Ok(state.select_progress.current),
-                _ => Err(EngineError::UnknownProperty {
-                    kind,
-                    property: property.to_string(),
-                }
-                .into()),
-            },
-            "toggle_progress" => match &node.kind {
-                NodeKind::Switch(state) => Ok(state.toggle_progress.current),
-                _ => Err(EngineError::UnknownProperty {
-                    kind,
-                    property: property.to_string(),
-                }
-                .into()),
-            },
-            "value" => match &node.kind {
-                NodeKind::Slider(state) => Ok(state.thumb_position.current),
-                NodeKind::LinearProgress(state) => Ok(state.value.current),
-                NodeKind::CircularProgress(state) => Ok(state.value.current),
-                _ => Err(EngineError::UnknownProperty {
-                    kind,
-                    property: property.to_string(),
-                }
-                .into()),
-            },
-            _ => Err(EngineError::UnknownProperty {
-                kind,
-                property: property.to_string(),
-            }
-            .into()),
-        }
-    }
-
     /// M48 (§5, §7, §11): the general live layout-mutation API this
     /// engine never had -- `width`/`height`/`padding`/`gap` were fixed
     /// at construction with no way to change them afterward from Python
@@ -1673,4 +1609,73 @@ fn extract_shape_points(
             expected: "a list of (x, y) float tuples",
             actual: type_name_of(to),
         })
+}
+
+impl Node {
+    /// Reads a numeric property's current (possibly still-animating)
+    /// M94: no longer a Python method itself -- `Node.get`
+    /// (`node_events.rs`) serves the M94 properties and falls back to
+    /// this for the animatable numeric ones.
+    /// value -- `animate()`'s missing counterpart, added at §14 step 12
+    /// once something (a binding's own applied value, §16.2) actually
+    /// needed to be observed from Python rather than only ever written.
+    /// `background` isn't included: it isn't a single `f64`, and
+    /// nothing yet needs to read it back.
+    pub(crate) fn get_number(&self, property: &str) -> PyResult<f64> {
+        renamed_property(property)?;
+        let tree = self.tree.borrow();
+        let node = tree.get(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        let kind = kind_name(&node.kind);
+        match property {
+            "opacity" => Ok(node.paint.opacity.current),
+            "corner_radius" => Ok(node.paint.corner_radius.current),
+            "elevation" => Ok(node.paint.elevation.current),
+            // M48: `border_width` is a plain `Animated<f64>`, the same
+            // shape as `corner_radius`/`elevation` above -- `border_
+            // color` stays excluded, the same real reason `background`
+            // already is (not a single `f64`).
+            "border_width" => Ok(node.paint.border_width.current),
+            "check_progress" => match &node.kind {
+                NodeKind::Checkbox(state) => Ok(state.check_progress.current),
+                _ => Err(EngineError::UnknownProperty {
+                    kind,
+                    property: property.to_string(),
+                }
+                .into()),
+            },
+            "select_progress" => match &node.kind {
+                NodeKind::RadioButton(state) => Ok(state.select_progress.current),
+                _ => Err(EngineError::UnknownProperty {
+                    kind,
+                    property: property.to_string(),
+                }
+                .into()),
+            },
+            "toggle_progress" => match &node.kind {
+                NodeKind::Switch(state) => Ok(state.toggle_progress.current),
+                _ => Err(EngineError::UnknownProperty {
+                    kind,
+                    property: property.to_string(),
+                }
+                .into()),
+            },
+            "value" => match &node.kind {
+                NodeKind::Slider(state) => Ok(state.thumb_position.current),
+                NodeKind::LinearProgress(state) => Ok(state.value.current),
+                NodeKind::CircularProgress(state) => Ok(state.value.current),
+                _ => Err(EngineError::UnknownProperty {
+                    kind,
+                    property: property.to_string(),
+                }
+                .into()),
+            },
+            _ => Err(EngineError::UnknownProperty {
+                kind,
+                property: property.to_string(),
+            }
+            .into()),
+        }
+    }
 }

@@ -23,7 +23,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use engine_core::{InputEvent, Modifiers, NodeId, NodeKind, ScrollDelta, Tree};
+use engine_core::{Action, InputEvent, Modifiers, NodeId, NodeKind, ScrollDelta, Tree};
 use peniko::kurbo::Point;
 use pyo3::prelude::*;
 
@@ -353,6 +353,47 @@ pub(crate) fn route_focus(
     if let Some(new) = new {
         deliver(ctx, py, EventType::Focus, new, None, |_| {});
     }
+}
+
+/// The actions `a11y_action` reports, by name. Activation arrives as
+/// `click` and focus requests as `focus`, as they would from a pointer or
+/// keyboard, so neither is here.
+pub(crate) const A11Y_ACTIONS: [&str; 6] = [
+    "increment",
+    "decrement",
+    "expand",
+    "collapse",
+    "scroll_into_view",
+    "set_value",
+];
+
+/// An assistive-technology action request's `a11y_action` name, if it has
+/// one.
+pub(crate) fn a11y_action_name(action: Action) -> Option<&'static str> {
+    Some(match action {
+        Action::Increment => "increment",
+        Action::Decrement => "decrement",
+        Action::Expand => "expand",
+        Action::Collapse => "collapse",
+        Action::ScrollIntoView => "scroll_into_view",
+        Action::SetValue => "set_value",
+        _ => return None,
+    })
+}
+
+/// Delivers `a11y_action` to `node`'s listeners, bubbling. `value` is the
+/// requested value for `set_value`.
+pub(crate) fn deliver_a11y_action(
+    ctx: &NodeContext<'_>,
+    node: NodeId,
+    action: &str,
+    value: Option<Py<PyAny>>,
+    py: Python<'_>,
+) {
+    deliver(ctx, py, EventType::A11yAction, node, None, |e| {
+        e.action = Some(action.to_string());
+        e.value = value;
+    });
 }
 
 /// `node` and every ancestor up to its root, innermost first.

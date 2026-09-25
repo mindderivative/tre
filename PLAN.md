@@ -60,4 +60,4 @@ their exact behavior until M100.
 
 ## Status
 
-Phase 1 in progress.
+Complete (2026-09-25): all three phases done.

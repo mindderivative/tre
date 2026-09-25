@@ -185,8 +185,25 @@ class Node:
         node -- see this stub module's own module-level doc comment).
         """
         ...
-    def get(self, property: str) -> float:
-        """Reads one property's current, possibly-mid-animation value."""
+    def get(self, property: str) -> Any:
+        """Reads one property: an animatable number's current, possibly
+        mid-animation value (a `float`), or -- M94 -- any property `set`
+        accepts, plus `focused`. On a built-in slider or progress
+        indicator, `value` stays that widget's numeric value.
+        """
+        ...
+    def set(self, **props: Any) -> None:
+        """M94: sets properties atomically -- every value is checked
+        first, and a bad one raises `ValueError` without changing
+        anything. Today: `role`, `label`, `value` (str or number),
+        `value_min`, `value_max`, `value_step`, `checked`, `selected`,
+        `expanded`, `disabled`, `level`, `live` (`"off"`, `"polite"`,
+        `"assertive"`), `a11y_hidden`, `focusable`, `tab_index`,
+        `cursor`, `hit_testable`. Optional ones take `None` to clear.
+        """
+        ...
+    def focus(self) -> None:
+        """M94: moves keyboard focus to this node, firing `blur`/`focus`."""
         ...
     def set_layout(
         self,
@@ -540,7 +557,9 @@ class Window:
         window-space `x`/`y`; `button` and `delta_x`/`delta_y` where they
         apply. `pointer_leave` moves the pointer out of the window.
         `key_down`/`key_up` take `key` and `repeat`; `input` takes `text`;
-        `focus`/`blur` take `node`. `shift`/`ctrl`/`alt`/`meta` hold
+        `focus`/`blur` take `node`; `a11y_action` takes `node`, `action`
+        (`increment`, `decrement`, `expand`, `collapse`,
+        `scroll_into_view`, `set_value`), and `value`. `shift`/`ctrl`/`alt`/`meta` hold
         modifiers. Window events: `resize` (`width`, `height`),
         `color_scheme` (`dark`), `scale_factor` (`scale_factor`),
         `close_requested`, `closed`. Unknown events or fields raise

@@ -659,7 +659,9 @@ impl TwoWayCallback {
             // `Animated<f64>` property `Node.get` dispatches to.
             temp_node.get_text()?.into_bound_py_any(py)?
         } else {
-            temp_node.get(&self.property)?.into_bound_py_any(py)?
+            temp_node
+                .get_number(&self.property)?
+                .into_bound_py_any(py)?
         };
         self.signal.bind(py).call_method1("set", (value,))?;
         Ok(())

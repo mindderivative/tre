@@ -29,7 +29,7 @@ mod overlay;
 mod shape_morph;
 mod tree;
 
-pub use access::{AccessNodeData, AccessStates, Action, Role};
+pub use access::{AccessNodeData, AccessStates, AccessValue, Action, ActionData, Live, Role};
 pub use animation::{ActiveAnimation, Animated, CompletionHandle, Interpolate, MotionCurve};
 pub use canvas::{CanvasState, CustomHitTest, DrawCommand};
 pub use dock::{DockLayout, DockSide, DockZone};
@@ -42,9 +42,9 @@ pub use node::{
     CAROUSEL_DRAG_INDEX_THRESHOLD, CAROUSEL_GAP, CAROUSEL_HEIGHT, CAROUSEL_ITEM_RADIUS,
     CAROUSEL_MEDIUM, CAROUSEL_PAD_X, CAROUSEL_PAD_Y, CAROUSEL_SMALL_MAX,
     CAROUSEL_UNCONTAINED_WIDTH, CarouselLayout, CarouselState, CheckboxState,
-    CircularProgressState, ContentFit, ICON_VIEWBOX_SIZE, IconState, ImageState, ItemExtent,
-    LinearProgressState, LoadingIndicatorState, Node, NodeId, NodeKind, PaintProperties,
-    RadioButtonState, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN, SCROLLBAR_MIN_LENGTH,
+    CircularProgressState, ContentFit, Cursor, ICON_VIEWBOX_SIZE, IconState, ImageState,
+    ItemExtent, LinearProgressState, LoadingIndicatorState, Node, NodeId, NodeKind,
+    PaintProperties, RadioButtonState, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN, SCROLLBAR_MIN_LENGTH,
     SCROLLBAR_THICKNESS, ScrollViewState, SliderState, SplitterState, SwitchState, TerminalCell,
     TerminalState, TextAlign, TextFieldState, TextState, TimePickerDialMode, TimePickerDialState,
     VirtualListState,

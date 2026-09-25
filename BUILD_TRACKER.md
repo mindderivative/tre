@@ -57,8 +57,8 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M92 — Animatable `Icon` Color | `██████████` 100% | ✅ Complete — single phase (2026-09-25) |
 | `v0.3.3` Release: PR #9 Merged to `main`, Tagged and Pushed | — | ✅ Released (2026-09-25) |
 | M93 — Target API Spec and Naming Convention | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-25) |
-| M94 — Input and Accessibility Building Blocks | `███░░░░░░░` 35% | 🚧 In progress — Phase 1 done, Phase 2 of 3 (2026-09-25) |
-| M95 — Paint and Animation Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
+| M94 — Input and Accessibility Building Blocks | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-25) |
+| M95 — Paint and Animation Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, next (2026-09-25) |
 | M96 — Layer, Structure, and Update Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M97 — Tesserae Migration Gate | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M98 — Remove the Declarative Layer | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
@@ -1307,7 +1307,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Milestone 94 — Input and Accessibility Building Blocks
 
-**Status: 🚧 In progress (started 2026-09-25).** Additive -- nothing removed yet; the legacy `set_on_*` handlers keep their exact non-bubbling behavior beside the new `on()` listeners, so Tesserae can migrate against 0.3.4. These are the pieces a framework needs to build interactive widgets itself.
+**Status: ✅ Complete (2026-09-25).** Additive -- nothing removed yet; the legacy `set_on_*` handlers keep their exact non-bubbling behavior beside the new `on()` listeners, so Tesserae can migrate against 0.3.4. These are the pieces a framework needs to build interactive widgets itself.
 
 **Scoped against the source (2026-09-25):** the engine already receives raw pointer, key, text, wheel, theme, and resize input (`engine_core::InputEvent`), but only five `DispatchOutcome`s reach Python, `Key` is a 12-key vocabulary with Shift as the only modifier, and legacy handlers are keyed `(NodeId, EventKind)` in one shared map touched in only a handful of places. So the new listeners share that map under a widened key rather than adding a field to every one of the 34 `Node` construction sites; routing captures the pre-dispatch target -- the focused node for keys, the hit or captured node for pointers -- then runs after `Tree::dispatch`, in one function the live loop and the headless `simulate` both call. `Text` and `Icon` nodes are never hit targets today, so a label's pointer events already land on its container.
 
@@ -1319,15 +1319,15 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - Step 5: the M93 propagation model for `click`, `secondary_click`, `focus`, `blur`, and `change` -- bubbling with `event.stop()`, `change` text-only and non-bubbling — ✅ (legacy handlers still fire, unchanged and non-bubbling; `pointer_up` is delivered before `click`)
 - Step 6: window events and properties -- `window.on`/`off` for `resize`, `color_scheme`, `scale_factor`, a cancellable `close_requested`, and `closed`; `window.set(title=...)`; `window.get` for `width`, `height`, `scale_factor`, and `title` — ✅ (`run_windowed_multi` gained an `on_lifecycle` callback whose `false` keeps the window open; `closed` fires on every close including `max_frames`; `PyWindow` shares the OS window with the run loop for the live title and scale factor)
 
-### Phase 2 — Accessibility, Focus, and `set` ⬜
-- Step 1: accessibility properties -- `role` from the M93 role list, `label`, `value` with `value_min`/`value_max`/`value_step`, `checked`, `selected`, `expanded`, `disabled`, heading `level`, `live` politeness, and `a11y_hidden`; the actions offered to assistive technology derived from role and state; requests arrive as the `a11y_action` event — ⬜
-- Step 2: `focusable` for any node, `tab_index` ordering with `-1` meaning programmatic focus only, `cursor` shape applied from the node under the pointer, and `hit_testable` — ⬜
-- Step 3: an atomic `node.set(**props)` for these properties -- every value validated before any is applied, an unknown name listing the valid ones -- and `node.get` reading them back; M96 extends the same entry point to every property — ⬜
+### Phase 2 — Accessibility, Focus, and `set` ✅
+- Step 1: accessibility properties -- `role` from the M93 role list, `label`, `value` with `value_min`/`value_max`/`value_step`, `checked`, `selected`, `expanded`, `disabled`, heading `level`, `live` politeness, and `a11y_hidden`; the actions offered to assistive technology derived from role and state; requests arrive as the `a11y_action` event — ✅ (`AccessNodeData` gained the M93 fields, applied after the built-in kinds' derivations so explicit values win; `offered_actions` derives focus, activation, increment/decrement/set-value, and expand/collapse from role and state; the spec's `a11y_action` list lost `activate` and `dismiss` -- a screen reader's activate already arrives as `click` and its focus as `focus`, and accesskit has no dismiss action -- recorded in the spec)
+- Step 2: `focusable` for any node, `tab_index` ordering with `-1` meaning programmatic focus only, `cursor` shape applied from the node under the pointer, and `hit_testable` — ✅ (HTML Tab semantics in `move_focus`; a press focuses the nearest `focusable` ancestor; 23 CSS-named cursors, inherited, applied to the OS window only on change; `node.focus()`)
+- Step 3: an atomic `node.set(**props)` for these properties -- every value validated before any is applied, an unknown name listing the valid ones -- and `node.get` reading them back; M96 extends the same entry point to every property — ✅ (the old numeric `get` became `get_number`, the fallback for animatable names; `value` stays numeric on the three built-in kinds that have one; reading `value` on a plain rect now returns `None` instead of raising, so two older tests were updated to the new contract)
 
-### Phase 3 — Verification ⬜
-- Step 1: `window.simulate(event, node=None, **fields)` for every new event, through the same router as the live loop (D9, R7); the 13 legacy synthetic-input methods stay until M100 — 🚧 (every Phase 1 event, window events included, with strict field checking; `a11y_action` arrives with Phase 2)
-- Step 2: tests for every new event, property, and window event, plus a proof widget -- a working slider built only from these primitives, behaving like today's built-in one — ⬜
-- Step 3: `_core.pyi` stubs, docs for the new surface, and the full standing chain — ⬜
+### Phase 3 — Verification ✅
+- Step 1: `window.simulate(event, node=None, **fields)` for every new event, through the same router as the live loop (D9, R7); the 13 legacy synthetic-input methods stay until M100 — ✅ (every event, window events and `a11y_action` included, with strict field checking)
+- Step 2: tests for every new event, property, and window event, plus a proof widget -- a working slider built only from these primitives, behaving like today's built-in one — ✅ (`tests/test_listeners.py` 30, `tests/test_node_props.py` 18, `tests/test_primitive_slider.py` 4: press-to-set, a captured drag off the track that clamps, click focus and arrow-key steps, and assistive increment/decrement/set-value; 9 new engine-core tests and a `cursor_at` unit test)
+- Step 3: `_core.pyi` stubs, docs for the new surface, and the full standing chain — ✅ (new `docs/api/python/events.md` and a `set`/`get`/`focus` section in `node.md`; `mypy --strict` clean; pytest 1025 passed; cargo release 558 passed; clippy and fmt clean; all 89 examples and the showcase clean; `mkdocs build --strict` clean)
 
 ---
 

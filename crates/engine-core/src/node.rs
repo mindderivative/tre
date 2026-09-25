@@ -1773,4 +1773,96 @@ pub struct Node {
     /// is a true no-op -- only `Tree::set_hit_testable(id, false)`
     /// changes anything.
     pub hit_testable: bool,
+    /// M94: the pointer shape shown over this node; `None` inherits the
+    /// nearest ancestor's, and the default arrow when none sets one.
+    pub cursor: Option<Cursor>,
+}
+
+/// M94: the pointer shapes a node can ask for -- CSS's own vocabulary, in
+/// snake_case, so a framework author already knows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cursor {
+    Default,
+    Pointer,
+    Text,
+    Grab,
+    Grabbing,
+    Move,
+    NotAllowed,
+    Wait,
+    Progress,
+    Crosshair,
+    Help,
+    ColResize,
+    RowResize,
+    EwResize,
+    NsResize,
+    NeswResize,
+    NwseResize,
+    Copy,
+    Cell,
+    ContextMenu,
+    ZoomIn,
+    ZoomOut,
+    AllScroll,
+}
+
+impl Cursor {
+    pub const ALL: [Cursor; 23] = [
+        Self::Default,
+        Self::Pointer,
+        Self::Text,
+        Self::Grab,
+        Self::Grabbing,
+        Self::Move,
+        Self::NotAllowed,
+        Self::Wait,
+        Self::Progress,
+        Self::Crosshair,
+        Self::Help,
+        Self::ColResize,
+        Self::RowResize,
+        Self::EwResize,
+        Self::NsResize,
+        Self::NeswResize,
+        Self::NwseResize,
+        Self::Copy,
+        Self::Cell,
+        Self::ContextMenu,
+        Self::ZoomIn,
+        Self::ZoomOut,
+        Self::AllScroll,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Pointer => "pointer",
+            Self::Text => "text",
+            Self::Grab => "grab",
+            Self::Grabbing => "grabbing",
+            Self::Move => "move",
+            Self::NotAllowed => "not_allowed",
+            Self::Wait => "wait",
+            Self::Progress => "progress",
+            Self::Crosshair => "crosshair",
+            Self::Help => "help",
+            Self::ColResize => "col_resize",
+            Self::RowResize => "row_resize",
+            Self::EwResize => "ew_resize",
+            Self::NsResize => "ns_resize",
+            Self::NeswResize => "nesw_resize",
+            Self::NwseResize => "nwse_resize",
+            Self::Copy => "copy",
+            Self::Cell => "cell",
+            Self::ContextMenu => "context_menu",
+            Self::ZoomIn => "zoom_in",
+            Self::ZoomOut => "zoom_out",
+            Self::AllScroll => "all_scroll",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|cursor| cursor.name() == name)
+    }
 }

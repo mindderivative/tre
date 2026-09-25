@@ -159,6 +159,13 @@ window's root `box`.
 | **Interaction** | `focusable`, `tab_index` (R8), `cursor` (`"default"`, `"pointer"`, `"text"`, `"grab"`, …), `hit_testable` |
 | **Accessibility** | `role`, `label`, `value`, `value_min`, `value_max`, `value_step`, `checked`, `selected`, `expanded`, `disabled`, `level` (headings), `live` (`"off"`, `"polite"`, `"assertive"`), `a11y_hidden` |
 
+The actions offered to assistive technology follow from role and state:
+focusable nodes offer focus; `button`, `link`, `checkbox`, `radio`,
+`switch`, `menuitem`, `tab`, and `treeitem` offer activation; `slider`, or
+any node with a value range except a progress bar, offers increment,
+decrement, and set-value; a node with `expanded` set offers expand and
+collapse.
+
 Accessibility roles: `button`, `checkbox`, `radio`, `switch`, `slider`,
 `progressbar`, `link`, `textbox`, `tab`, `tablist`, `tabpanel`, `menu`,
 `menuitem`, `dialog`, `alert`, `list`, `listitem`, `tree`, `treeitem`,
@@ -222,7 +229,7 @@ receives an `Event` (below), or nothing if it takes no parameters.
 | `change` | A `text_input`'s text was changed by the user | no |
 | `scroll` | A `scroll_view`'s offset changed | no |
 | `dismiss` | A layer was dismissed by an outside click or Escape | no |
-| `a11y_action` | An assistive technology invoked `action`: `"activate"`, `"increment"`, `"decrement"`, `"expand"`, `"collapse"`, `"dismiss"`, `"scroll_into_view"`, or `"set_value"` | yes |
+| `a11y_action` | An assistive technology invoked `action`: `"increment"`, `"decrement"`, `"expand"`, `"collapse"`, `"scroll_into_view"`, or `"set_value"`. Its activate request arrives as `click` and its focus requests as `focus`/`blur`, as from a pointer or keyboard, so a widget handling `click` is accessible with no more code; the platform accessibility layer has no dismiss action (Escape reaches `key_down`) | yes |
 
 **Pointer capture:** `node.capture_pointer()` during `pointer_down`
 routes every later pointer event to this node until `pointer_up` or

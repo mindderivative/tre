@@ -35,6 +35,29 @@
    - clippy is clean and `mkdocs --strict` passes.
    - The new `docs/api/python/events.md` documents all of it.
 
+4. Phase 2 done:
+   - The atomic `node.set` and the wider `node.get`, for role, label,
+     value and its range, checked/selected/expanded, disabled, level,
+     live, `a11y_hidden`, focusable, `tab_index`, cursor, and
+     `hit_testable`.
+   - `node.focus()`.
+   - Tab order by `tab_index`, with HTML semantics.
+   - A press focuses the nearest focusable ancestor.
+   - Accessibility actions are derived from role and state, and arrive
+     as `a11y_action`.
+   - Cursor shapes are applied live.
+   - Spec correction: `a11y_action` drops `activate` and `dismiss`.
+     Activation already arrives as `click`, and accesskit has no dismiss
+     action.
+5. Phase 3 done:
+   - `simulate` covers `a11y_action`.
+   - Proof slider (`tests/test_primitive_slider.py`), built only from
+     the M94 primitives.
+   - Stubs and docs updated.
+   - Full chain: pytest 1025 passed; cargo release 558 passed; clippy
+     and fmt clean; 89 examples and the showcase clean; `mkdocs
+     --strict` clean.
+
 ## Status
 
-**M94 Phase 2 in progress.**
+**M94 complete.** M95 (paint and animation building blocks) is next.

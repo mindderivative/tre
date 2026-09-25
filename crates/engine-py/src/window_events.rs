@@ -473,9 +473,18 @@ impl PyWindow {
                 }
             }
             "a11y_action" => {
-                return Err(PyValueError::new_err(
-                    "simulate(\"a11y_action\") arrives with M94 Phase 2",
-                ));
+                let id = need_node(&f)?;
+                let action = f.string("action")?;
+                let action = f.required("action", action)?;
+                let value = f.take("value").map(Bound::unbind);
+                f.done()?;
+                if !listeners::A11Y_ACTIONS.contains(&action.as_str()) {
+                    return Err(PyValueError::new_err(format!(
+                        "unknown a11y action {action:?} -- valid actions: {}",
+                        listeners::A11Y_ACTIONS.join(", ")
+                    )));
+                }
+                listeners::deliver_a11y_action(&ctx, id, &action, value, py);
             }
             "change" => {
                 return Err(PyValueError::new_err(

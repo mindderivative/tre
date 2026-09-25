@@ -28,7 +28,7 @@ listing the valid ones.
 | `input` | Committed text arrives for the focused text field | yes |
 | `focus`, `blur` | A node gains or loses keyboard focus | yes |
 | `change` | A text field's text was changed by the user | no |
-| `a11y_action` | An assistive technology requested an action | yes |
+| `a11y_action` | An assistive technology requested `increment`, `decrement`, `expand`, `collapse`, `scroll_into_view`, or `set_value` (its activate and focus requests arrive as `click` and `focus`) | yes |
 
 ### Propagation
 
@@ -136,6 +136,7 @@ window.simulate("resize", width=800, height=600)
 | `key_down`, `key_up` | `key`; `repeat` |
 | `input` | `text` |
 | `focus`, `blur` | `node` |
+| `a11y_action` | `node`, `action`; `value` for `set_value` |
 | `resize` | `width`, `height` |
 | `color_scheme` | `dark` |
 | `scale_factor` | `scale_factor` |

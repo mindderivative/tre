@@ -4,7 +4,46 @@ A handle to one node in a [`Window`](window.md)'s or [`View`](view.md)'s
 tree. Returned by every `add_*` method; never constructed directly.
 
 *New in 0.3.4:* `on`/`off` listeners, `capture_pointer`/`release_pointer`,
-and handle equality — see [Events and Listeners](events.md).
+and handle equality — see [Events and Listeners](events.md) — plus `set`,
+the wider `get`, and `focus`, below.
+
+## `set`, `get`, and `focus`
+
+**`set(**props)`** sets any number of properties at once, atomically: every
+value is checked first, and a bad name or value raises `ValueError` without
+changing anything. Optional properties take `None` to clear them.
+
+```python
+thumb.set(role="slider", label="Volume", value=0.4, value_min=0.0,
+          value_max=1.0, value_step=0.1, focusable=True, cursor="pointer")
+```
+
+| Property | Value |
+| --- | --- |
+| `role` | `"button"`, `"checkbox"`, `"radio"`, `"switch"`, `"slider"`, `"progressbar"`, `"link"`, `"textbox"`, `"tab"`, `"tablist"`, `"tabpanel"`, `"menu"`, `"menuitem"`, `"dialog"`, `"alert"`, `"list"`, `"listitem"`, `"tree"`, `"treeitem"`, `"heading"`, `"img"`, `"group"`, `"none"` |
+| `label` | `str` or `None` — the name assistive technology reads |
+| `value` | `str`, number, or `None` |
+| `value_min`, `value_max`, `value_step` | number or `None` |
+| `checked`, `selected`, `expanded` | `bool` or `None` |
+| `disabled` | `bool` |
+| `level` | positive `int` or `None` — a heading's level |
+| `live` | `"off"`, `"polite"`, `"assertive"`, or `None` — how changes are announced |
+| `a11y_hidden` | `bool` — hidden from assistive technology |
+| `focusable` | `bool` — focusable by Tab, click, and `focus()`; a click on a descendant focuses the nearest focusable ancestor |
+| `tab_index` | `int` — positive values come first in Tab order, ascending; then `0` in tree order; negative leaves the node out of Tab order but focusable by click and `focus()` |
+| `cursor` | the pointer shape over the node, inherited by descendants: `"default"`, `"pointer"`, `"text"`, `"grab"`, `"grabbing"`, `"move"`, `"not_allowed"`, `"wait"`, `"progress"`, `"crosshair"`, `"help"`, `"col_resize"`, `"row_resize"`, `"ew_resize"`, `"ns_resize"`, `"nesw_resize"`, `"nwse_resize"`, `"copy"`, `"cell"`, `"context_menu"`, `"zoom_in"`, `"zoom_out"`, `"all_scroll"`, or `None` |
+| `hit_testable` | `bool` — whether the node can be the target of pointer events |
+
+The actions assistive technology is offered follow from role and state:
+focusable nodes offer focus, button-like roles offer activation, a slider
+or a value range offers increment/decrement/set-value, and `expanded` offers
+expand/collapse. Requests arrive as the [`a11y_action`](events.md) event.
+
+**`get(name)`** reads any of those back exactly as set, `focused`, or an
+animatable number's current value (below). On a built-in slider or progress
+indicator, `value` stays that widget's numeric value.
+
+**`focus()`** moves keyboard focus to the node, firing `blur` and `focus`.
 
 ## `animate`
 

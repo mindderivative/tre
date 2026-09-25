@@ -237,6 +237,7 @@ impl Tree {
             access: AccessNodeData::default(),
             interaction: None,
             hit_testable: true,
+            cursor: None,
         });
         self.taffy_nodes.insert(id, taffy_node);
         id
@@ -2662,6 +2663,12 @@ impl Tree {
         self.dirty = true;
         let mut order = Vec::new();
         self.collect_interactive(root, &mut order);
+        // M94: positive `tab_index` values first, ascending; then the
+        // rest in tree order (the sort is stable).
+        order.sort_by_key(|&id| match self.nodes[id].access.tab_index {
+            index if index > 0 => (0, index),
+            _ => (1, 0),
+        });
 
         let old = self.focused;
         let new = if order.is_empty() {
@@ -2720,9 +2727,8 @@ impl Tree {
     }
 
     /// M94: `set_focus_to`'s counterpart that leaves nothing focused --
-    /// how `node.blur()` and a simulated `blur` clear focus through the
-    /// same transition (and `(old, new)` report) as every other focus
-    /// change.
+    /// how a simulated `blur` clears focus through the same transition
+    /// (and `(old, new)` report) as every other focus change.
     pub fn clear_focus(
         &mut self,
         focus_ring_opacity: f64,
@@ -3589,13 +3595,27 @@ impl Tree {
         }
     }
 
+    /// M94: `node` or its nearest ancestor that a framework marked
+    /// `focusable`.
+    fn focusable_ancestor(&self, node: NodeId) -> Option<NodeId> {
+        let mut current = Some(node);
+        while let Some(id) = current {
+            let n = self.nodes.get(id)?;
+            if n.access.focusable == Some(true) {
+                return Some(id);
+            }
+            current = n.parent;
+        }
+        None
+    }
+
     /// Pre-order walk collecting every node whose `access.actions` is
     /// non-empty, in tree order -- `move_focus`'s own Tab-order.
     fn collect_interactive(&self, id: NodeId, out: &mut Vec<NodeId>) {
         let Some(node) = self.nodes.get(id) else {
             return;
         };
-        if !node.access.actions.is_empty() {
+        if node.access.in_tab_order() {
             out.push(id);
         }
         for &child in &node.children {
@@ -3851,22 +3871,30 @@ impl Tree {
                     // Changed` outcome below, instead of the prior
                     // unconditional `DispatchOutcome::None` silently
                     // discarding it.
-                    let focus_transition =
-                        if matches!(button, PointerButton::Primary | PointerButton::Secondary)
-                            && matches!(
-                                self.nodes.get(node).map(|n| &n.kind),
-                                Some(NodeKind::TextField(_)) | Some(NodeKind::Terminal(_))
-                            )
-                        {
-                            self.set_focus_to(
-                                node,
-                                config.focus_ring_opacity,
-                                config.focus_ring_duration,
-                                now,
-                            )
-                        } else {
+                    //
+                    // M94: widened to any node a framework marked
+                    // `focusable` -- the press focuses the nearest such
+                    // node, itself or an ancestor, the way a browser
+                    // focuses the focusable element containing a click.
+                    let focus_target =
+                        if !matches!(button, PointerButton::Primary | PointerButton::Secondary) {
                             None
+                        } else if matches!(
+                            self.nodes.get(node).map(|n| &n.kind),
+                            Some(NodeKind::TextField(_)) | Some(NodeKind::Terminal(_))
+                        ) {
+                            Some(node)
+                        } else {
+                            self.focusable_ancestor(node)
                         };
+                    let focus_transition = focus_target.and_then(|target| {
+                        self.set_focus_to(
+                            target,
+                            config.focus_ring_opacity,
+                            config.focus_ring_duration,
+                            now,
+                        )
+                    });
                     if let Some(state) = self.interaction_mut(node) {
                         state.spawn_ripple(
                             Point::new(position.x, position.y),
@@ -4369,7 +4397,7 @@ impl Tree {
         if let Some(description) = &node.access.description {
             access_node.set_description(description.clone());
         }
-        for &action in &node.access.actions {
+        for action in node.access.offered_actions() {
             access_node.add_action(action);
         }
         if node.access.states.disabled {
@@ -4403,6 +4431,41 @@ impl Tree {
         // into a second copy here.
         if let NodeKind::TextField(state) = &node.kind {
             access_node.set_value(state.content.clone());
+        }
+        // M94: what a framework set explicitly -- applied last, so it
+        // wins over anything derived from a built-in kind above.
+        let access = &node.access;
+        match &access.value {
+            Some(crate::access::AccessValue::Text(text)) => access_node.set_value(text.clone()),
+            Some(crate::access::AccessValue::Number(n)) => access_node.set_numeric_value(*n),
+            None => {}
+        }
+        if let Some(min) = access.value_min {
+            access_node.set_min_numeric_value(min);
+        }
+        if let Some(max) = access.value_max {
+            access_node.set_max_numeric_value(max);
+        }
+        if let Some(step) = access.value_step {
+            access_node.set_numeric_value_step(step);
+        }
+        if let Some(checked) = access.checked {
+            access_node.set_toggled(checked.into());
+        }
+        if let Some(selected) = access.selected {
+            access_node.set_selected(selected);
+        }
+        if let Some(expanded) = access.expanded {
+            access_node.set_expanded(expanded);
+        }
+        if let Some(level) = access.level {
+            access_node.set_level(level);
+        }
+        if let Some(live) = access.live {
+            access_node.set_live(live);
+        }
+        if access.hidden {
+            access_node.set_hidden();
         }
         access_node.set_bounds(accesskit::Rect {
             x0: x,
@@ -5246,6 +5309,138 @@ mod tests {
                 DispatchOutcome::None
             );
         }
+    }
+
+    /// M94: three 40x40 focusable children of a root, laid out.
+    fn three_focusable() -> (Tree, NodeId, [NodeId; 3]) {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(300.0, 300.0);
+        let root = tree.insert(k, s, p);
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            let (k, s, p) = leaf(40.0, 40.0);
+            let id = tree.insert(k, s, p);
+            tree.get_mut(id).unwrap().access.focusable = Some(true);
+            tree.add_child(root, id);
+            ids.push(id);
+        }
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+        (tree, root, [ids[0], ids[1], ids[2]])
+    }
+
+    #[test]
+    fn tab_index_orders_positive_first_then_tree_order_and_skips_negative() {
+        let (mut tree, root, [a, b, c]) = three_focusable();
+        tree.get_mut(c).unwrap().access.tab_index = 1;
+        tree.get_mut(b).unwrap().access.tab_index = -1;
+        let now = Instant::now();
+        let mut visited = Vec::new();
+        for _ in 0..3 {
+            tree.move_focus(
+                root,
+                FocusDirection::Next,
+                1.0,
+                Duration::from_millis(1),
+                now,
+            );
+            visited.push(tree.focused().unwrap());
+        }
+        assert_eq!(visited, vec![c, a, c]);
+    }
+
+    #[test]
+    fn a_press_focuses_the_nearest_focusable_ancestor() {
+        let (mut tree, root, [a, ..]) = three_focusable();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let inner = tree.insert(k, s, p);
+        tree.add_child(a, inner);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+        let (x, y) = tree.absolute_position(inner);
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(x + 5.0, y + 5.0),
+                button: PointerButton::Primary,
+            },
+            &dispatch_config(),
+            Instant::now(),
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::FocusChanged {
+                old: None,
+                new: Some(a),
+            }
+        );
+    }
+
+    #[test]
+    fn explicit_accessibility_fields_reach_the_access_tree() {
+        use crate::access::{AccessValue, Action, Live, Role};
+        let (mut tree, root, [a, ..]) = three_focusable();
+        {
+            let access = &mut tree.get_mut(a).unwrap().access;
+            access.role = Role::Slider;
+            access.value = Some(AccessValue::Number(3.0));
+            access.value_min = Some(0.0);
+            access.value_max = Some(10.0);
+            access.value_step = Some(1.0);
+            access.expanded = Some(false);
+            access.level = Some(2);
+            access.live = Some(Live::Polite);
+            access.hidden = true;
+        }
+        let update = tree.build_access_update(root);
+        let (_, node) = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == to_access_id(a))
+            .unwrap();
+        assert_eq!(node.numeric_value(), Some(3.0));
+        assert_eq!(node.min_numeric_value(), Some(0.0));
+        assert_eq!(node.max_numeric_value(), Some(10.0));
+        assert_eq!(node.numeric_value_step(), Some(1.0));
+        assert_eq!(node.is_expanded(), Some(false));
+        assert_eq!(node.level(), Some(2));
+        assert_eq!(node.live(), Some(Live::Polite));
+        assert!(node.is_hidden());
+        for action in [
+            Action::Focus,
+            Action::Increment,
+            Action::Decrement,
+            Action::SetValue,
+            Action::Expand,
+            Action::Collapse,
+        ] {
+            assert!(node.supports_action(action), "{action:?} offered");
+        }
+    }
+
+    #[test]
+    fn button_roles_offer_click_and_focusable_offers_focus() {
+        use crate::access::{AccessNodeData, Action, Role};
+        let mut access = AccessNodeData::new(Role::Button);
+        assert_eq!(access.offered_actions(), vec![Action::Click]);
+        access.focusable = Some(true);
+        assert!(access.offered_actions().contains(&Action::Focus));
+        assert!(access.in_tab_order());
+        access.tab_index = -1;
+        assert!(!access.in_tab_order());
+        let group = AccessNodeData::new(Role::Group);
+        assert!(group.offered_actions().is_empty());
+        assert!(!group.in_tab_order());
     }
 
     #[test]
