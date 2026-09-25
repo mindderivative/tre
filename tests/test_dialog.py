@@ -13,20 +13,20 @@ from tre import Node, Window
 
 def test_add_dialog_returns_a_node():
     window = Window(width=300, height=300)
-    node = window.add_dialog(headline="Delete file?", text="This cannot be undone.", width=240, height=140)
+    node = window.add_dialog(headline="Delete file?", supporting_text="This cannot be undone.", width=240, height=140)
     assert isinstance(node, Node)
 
 
 def test_a_themed_dialog_does_not_raise():
     window = Window(width=300, height=300)
     window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), dark=False)
-    node = window.add_dialog(headline="Delete file?", text="This cannot be undone.", width=240, height=140)
+    node = window.add_dialog(headline="Delete file?", supporting_text="This cannot be undone.", width=240, height=140)
     assert isinstance(node, Node)
 
 
 def test_open_dialog_and_close_dialog_do_not_raise():
     window = Window(width=300, height=300)
-    dialog = window.add_dialog(headline="Title", text="Body", width=240, height=140)
+    dialog = window.add_dialog(headline="Title", supporting_text="Body", width=240, height=140)
 
     window.open_dialog(dialog)  # must not raise
     window.open_dialog(dialog)  # a real, safe no-op -- already open
@@ -35,7 +35,7 @@ def test_open_dialog_and_close_dialog_do_not_raise():
 
 def test_reopening_a_dialog_after_closing_it_does_not_raise():
     window = Window(width=300, height=300)
-    dialog = window.add_dialog(headline="Title", text="Body", width=240, height=140)
+    dialog = window.add_dialog(headline="Title", supporting_text="Body", width=240, height=140)
 
     window.open_dialog(dialog)
     window.close_dialog(dialog)
@@ -45,7 +45,7 @@ def test_reopening_a_dialog_after_closing_it_does_not_raise():
 def test_open_dialog_rejects_a_dialog_from_a_different_window():
     window_a = Window(width=300, height=300)
     window_b = Window(width=300, height=300)
-    foreign_dialog = window_b.add_dialog(headline="Title", text="Body", width=240, height=140)
+    foreign_dialog = window_b.add_dialog(headline="Title", supporting_text="Body", width=240, height=140)
     with pytest.raises(ValueError, match="different Window"):
         window_a.open_dialog(foreign_dialog)
 
@@ -68,7 +68,7 @@ def test_an_open_modal_dialog_blocks_a_real_click_on_the_background():
     assert calls == ["clicked"]
     calls.clear()
 
-    dialog = window.add_dialog(headline="Title", text="Body", width=100, height=80)
+    dialog = window.add_dialog(headline="Title", supporting_text="Body", width=100, height=80)
     window.open_dialog(dialog)
 
     # A point on the background button, well outside the dialog's own
@@ -87,7 +87,7 @@ def test_after_closing_the_dialog_the_background_is_clickable_again():
     calls = []
     background_button.set_on_click(lambda: calls.append("clicked"))
 
-    dialog = window.add_dialog(headline="Title", text="Body", width=100, height=80)
+    dialog = window.add_dialog(headline="Title", supporting_text="Body", width=100, height=80)
     window.open_dialog(dialog)
     window.close_dialog(dialog)
 

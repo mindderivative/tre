@@ -189,8 +189,8 @@ def test_two_way_on_a_computed_expression_is_a_clear_load_time_error(tmp_path):
 id: volume
 kind: Slider
 style: {width: 180, height: 32, background: "#03DAC6"}
-bindings: {thumb_position: "{{ level.get() + 0.1 }}"}
-two_way: thumb_position
+bindings: {value: "{{ level.get() + 0.1 }}"}
+two_way: value
 """,
     )
     view = View(path)

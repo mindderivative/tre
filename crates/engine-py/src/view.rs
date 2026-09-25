@@ -385,11 +385,11 @@ fn resolve_theme_layers(
 /// real type-mismatch error instead of silently accepting whatever
 /// value happened to be a `Bool`. Every other property (numeric --
 /// `opacity`/`corner_radius`/`elevation`/`rotation`/`check_progress`/
-/// `thumb_position`/`select_progress`/`toggle_progress` -- and
+/// `value`/`select_progress`/`toggle_progress` -- and
 /// composite -- `background`/`transform`/`shape`) forwards to `animate
 /// ()`, which already knows how to validate/extract whatever Python
 /// value shape each one needs; a bound `Value::Str` is parsed as a
-/// color only for `property == "background"` (the same real hex/CSS-
+/// color only for `background`/`foreground`/`border_color` (the same real hex/CSS-
 /// named parser `engine_spec::build::resolve_color` already uses for
 /// *static* YAML colors -- MD3 theme-role token strings are explicitly
 /// out of scope here, since this function's own `throwaway_node` below
@@ -422,6 +422,16 @@ fn apply_binding_value(
             )));
         };
         return temp_node.set_checked(*checked, py);
+    }
+    // M90: `Switch`/`RadioButton` state -- `selected`, MD3's own term
+    // for both (`Checkbox` keeps `checked`, above).
+    if property == "selected" {
+        let engine_spec::Value::Bool(selected) = value else {
+            return Err(PyValueError::new_err(format!(
+                "widget property {property:?} expects a boolean binding, got {value:?}"
+            )));
+        };
+        return temp_node.set_selected(*selected, py);
     }
     // M15 Phase 3 (§16.7): the same real, direct dispatch the `checked`
     // branch above already established -- `text` is the one other
@@ -482,7 +492,9 @@ fn apply_binding_value(
         // why MD3 theme-role tokens aren't handled here. M48: `border_
         // color` gets the identical treatment -- same `(u8,u8,u8,u8)`
         // shape `Node::animate`'s own new `"border_color"` arm expects.
-        engine_spec::Value::Str(s) if matches!(property, "background" | "border_color") => {
+        engine_spec::Value::Str(s)
+            if matches!(property, "background" | "foreground" | "border_color") =>
+        {
             let rgba = parse_background_color(s).map_err(|e| {
                 PyValueError::new_err(format!("binding for property {property:?} resolved to {e}"))
             })?;
@@ -638,6 +650,8 @@ impl TwoWayCallback {
         );
         let value: Bound<'_, PyAny> = if self.property == "checked" {
             temp_node.get_checked()?.into_bound_py_any(py)?
+        } else if self.property == "selected" {
+            temp_node.get_selected()?.into_bound_py_any(py)?
         } else if self.property == "text" {
             // M15 Phase 3 (§16.7): the same real read-back split
             // `checked` already established -- `text` isn't an

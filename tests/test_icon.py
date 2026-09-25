@@ -24,17 +24,17 @@ KNOWN_ICONS = ["home", "search", "menu", "close", "check", "arrow_back", "add", 
 @pytest.mark.parametrize("name", KNOWN_ICONS)
 def test_add_icon_returns_a_node_for_every_real_curated_icon(name):
     window = Window(width=200, height=200)
-    node = window.add_icon(name=name, color=(0x1C, 0x1B, 0x1F, 0xFF), size=24)
+    node = window.add_icon(name=name, foreground=(0x1C, 0x1B, 0x1F, 0xFF), size=24)
     assert isinstance(node, Node)
 
 
 def test_add_icon_with_an_unknown_name_raises_a_clear_error():
     window = Window(width=200, height=200)
     with pytest.raises(ValueError, match="unknown icon"):
-        window.add_icon(name="not_a_real_icon", color=(0, 0, 0, 255), size=24)
+        window.add_icon(name="not_a_real_icon", foreground=(0, 0, 0, 255), size=24)
 
 
 def test_add_icon_positions_like_every_other_add_method():
     window = Window(width=200, height=200)
-    node = window.add_icon(name="home", color=(0, 0, 0, 255), size=24, x=10, y=20)
+    node = window.add_icon(name="home", foreground=(0, 0, 0, 255), size=24, x=10, y=20)
     assert isinstance(node, Node)

@@ -24,7 +24,7 @@ def test_a_floating_toolbar_does_not_raise():
 
 def test_a_floating_vertical_vibrant_toolbar_does_not_raise():
     window = Window(width=800, height=600)
-    bar = window.add_toolbar(variant="floating", orientation="vertical", color="vibrant")
+    bar = window.add_toolbar(variant="floating", orientation="vertical", vibrant=True)
     assert isinstance(bar, Node)
 
 
@@ -40,10 +40,12 @@ def test_an_unknown_orientation_raises_a_clear_value_error():
         window.add_toolbar(orientation="bogus")
 
 
-def test_an_unknown_color_raises_a_clear_value_error():
+def test_the_pre_0_3_3_color_keyword_is_gone():
+    # M90: `color="standard"|"vibrant"` was never a color -- it's the
+    # boolean `vibrant=`.
     window = Window(width=800, height=600)
-    with pytest.raises(ValueError, match="unknown toolbar color"):
-        window.add_toolbar(color="bogus")
+    with pytest.raises(TypeError, match="color"):
+        window.add_toolbar(color="vibrant")
 
 
 def test_a_vertical_docked_toolbar_raises_a_clear_value_error():
@@ -57,7 +59,7 @@ def test_a_vertical_docked_toolbar_raises_a_clear_value_error():
 def test_a_themed_toolbar_does_not_raise():
     window = Window(width=800, height=600)
     window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), dark=False)
-    bar = window.add_toolbar(color="vibrant")
+    bar = window.add_toolbar(vibrant=True)
     assert isinstance(bar, Node)
 
 

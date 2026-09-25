@@ -18,11 +18,11 @@ window = Window(width=520, height=160, title="tre v2 -- card")
 def build_card(x: float, variant: str, title: str) -> None:
     card = window.add_card(width=160, height=120, variant=variant, x=x, y=16)
     heading = window.add_text(
-        content=title, background=(0x1C, 0x1B, 0x1F, 0xFF), width=128, height=20, x=16, y=16
+        content=title, foreground=(0x1C, 0x1B, 0x1F, 0xFF), width=128, height=20, x=16, y=16
     )
     body = window.add_text(
         content="Supporting text goes here.",
-        background=(0x49, 0x45, 0x4F, 0xFF),
+        foreground=(0x49, 0x45, 0x4F, 0xFF),
         width=128,
         height=40,
         x=16,

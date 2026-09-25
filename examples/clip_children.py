@@ -45,7 +45,7 @@ content = window.add_text(
         "everything past the card's own real edge instead of letting "
         "it spill out over whatever sits below."
     ),
-    background=(0x1D, 0x1B, 0x20, 0xFF),
+    foreground=(0x1D, 0x1B, 0x20, 0xFF),
     width=280,
     height=300,
     font_size=14.0,

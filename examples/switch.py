@@ -15,14 +15,14 @@ from tre import App, Window
 window = Window(width=200, height=100, title="tre v2 -- switch")
 
 off_switch = window.add_switch(x=16, y=16)
-on_switch = window.add_switch(on=True, x=16, y=56)
+on_switch = window.add_switch(selected=True, x=16, y=56)
 
 window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), dark=False)
 
 
 def toggle() -> None:
-    now_on = not off_switch.get_on()
-    off_switch.set_on(now_on)
+    now_on = not off_switch.get_selected()
+    off_switch.set_selected(now_on)
     off_switch.animate("toggle_progress", 1.0 if now_on else 0.0, duration_ms=120)
 
 
@@ -33,4 +33,4 @@ window.click(off_switch)
 app = App()
 app.add_window(window)
 app.run(max_frames=60)
-print(f"switch.py: exited cleanly after 60 frames, off_switch now on={off_switch.get_on()}")
+print(f"switch.py: exited cleanly after 60 frames, off_switch now on={off_switch.get_selected()}")

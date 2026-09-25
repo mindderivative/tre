@@ -12,14 +12,14 @@ from tre import Node, Window
 
 def test_add_link_returns_a_node():
     window = Window(width=400, height=100)
-    link = window.add_link(text="Learn more", width=120)
+    link = window.add_link(content="Learn more", width=120)
     assert isinstance(link, Node)
 
 
 def test_a_themed_link_does_not_raise():
     window = Window(width=400, height=100)
     window.set_theme(seed=(0x67, 0x50, 0xA4, 0xFF), dark=False)
-    link = window.add_link(text="Learn more", width=120)
+    link = window.add_link(content="Learn more", width=120)
     assert isinstance(link, Node)
 
 
@@ -29,7 +29,7 @@ def test_a_link_is_a_real_independently_clickable_node():
     other independently-clickable node in this catalog already is.
     """
     window = Window(width=400, height=100)
-    link = window.add_link(text="Learn more", width=120)
+    link = window.add_link(content="Learn more", width=120)
 
     calls = []
     link.enable_interaction()
@@ -47,8 +47,8 @@ def test_a_link_claims_its_own_click_where_a_plain_text_label_would_not():
     new to this step) -- a `Link` at otherwise-identical anatomy does.
     """
     window = Window(width=400, height=100)
-    label = window.add_text(content="Plain label", background=(0, 0, 0, 0), width=120, height=20)
-    link = window.add_link(text="Learn more", width=120)
+    label = window.add_text(content="Plain label", foreground=(0, 0, 0, 0), width=120, height=20)
+    link = window.add_link(content="Learn more", width=120)
 
     label_calls = []
     label.enable_interaction()

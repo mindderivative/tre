@@ -43,7 +43,7 @@ content = window.add_rect(background=(0xEC, 0xE6, 0xF0, 0xFF), width=360, height
 shell.add_child(content)
 row = window.add_text(
     content="Ships in 3-5 business days.",
-    background=(0, 0, 0, 0),
+    foreground=(0x1D, 0x1B, 0x20, 0xFF),
     width=320,
     height=20,
 )

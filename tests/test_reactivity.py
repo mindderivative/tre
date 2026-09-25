@@ -103,7 +103,7 @@ def test_a_yaml_binding_can_bind_directly_to_a_computed(tmp_path):
         """
 id: root
 kind: Text
-style: {width: 200, height: 30, background: "#000000"}
+style: {width: 200, height: 30, foreground: "#000000"}
 text: {content: "", font_family: Roboto, font_size: 14}
 bindings: {text: "{{ full_name.get() }}"}
 """,
@@ -344,7 +344,7 @@ def test_nested_recording_does_not_corrupt_an_outer_bindings_own_dependencies(tm
         """
 id: root
 kind: Text
-style: {width: 200, height: 30, background: "#000000"}
+style: {width: 200, height: 30, foreground: "#000000"}
 text: {content: "", font_family: Roboto, font_size: 14}
 bindings: {text: "{{ a.get() }}"}
 """,
@@ -486,7 +486,7 @@ def test_the_original_read_before_write_binding_hazard_now_raises_clearly(tmp_pa
         """
 id: root
 kind: Text
-style: {width: 200, height: 30, background: "#000000"}
+style: {width: 200, height: 30, foreground: "#000000"}
 text: {content: "", font_family: Roboto, font_size: 14}
 bindings: {text: "{{ a.get() }}"}
 """,
@@ -531,7 +531,7 @@ def test_untrack_is_the_real_documented_fix_for_the_read_before_write_hazard(tmp
         """
 id: root
 kind: Text
-style: {width: 200, height: 30, background: "#000000"}
+style: {width: 200, height: 30, foreground: "#000000"}
 text: {content: "", font_family: Roboto, font_size: 14}
 bindings: {text: "{{ a.get() }}"}
 """,

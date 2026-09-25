@@ -250,12 +250,9 @@ class Node:
         """`Checkbox`-only -- raises `ValueError` for any other kind."""
         ...
     def set_selected(self, selected: bool) -> None:
-        """`RadioButton`-only -- raises `ValueError` for any other
-        kind.
+        """`RadioButton`/`Switch`-only (M90: `Switch` joined, replacing
+        `set_on`) -- raises `ValueError` for any other kind.
         """
-        ...
-    def set_on(self, on: bool) -> None:
-        """`Switch`-only -- raises `ValueError` for any other kind."""
         ...
     def set_text(self, content: str) -> None:
         """`TextField`/`Text`-only -- raises `ValueError` for any other
@@ -275,12 +272,9 @@ class Node:
         """`Checkbox`-only -- raises `ValueError` for any other kind."""
         ...
     def get_selected(self) -> bool:
-        """`RadioButton`-only -- raises `ValueError` for any other
-        kind.
+        """`RadioButton`/`Switch`-only (M90: `Switch` joined, replacing
+        `get_on`) -- raises `ValueError` for any other kind.
         """
-        ...
-    def get_on(self) -> bool:
-        """`Switch`-only -- raises `ValueError` for any other kind."""
         ...
     def get_text(self) -> str:
         """`TextField`/`Text`/`Terminal`-only -- raises `ValueError` for
@@ -539,7 +533,7 @@ class Window:
     def add_text(
         self,
         content: str,
-        background: Color,
+        foreground: Color,
         width: float,
         height: float,
         typography_role: str | None = None,
@@ -777,7 +771,7 @@ class Window:
     def add_loading_indicator(
         self,
         size: float = 48.0,
-        color: Color | None = None,
+        foreground: Color | None = None,
         x: float | None = None,
         y: float | None = None,
     ) -> Node:
@@ -837,7 +831,7 @@ class Window:
     def add_divider(
         self,
         length: float,
-        vertical: bool = False,
+        orientation: str = "horizontal",
         x: float | None = None,
         y: float | None = None,
         border_color: Color | None = None,
@@ -869,7 +863,7 @@ class Window:
     def add_dialog(
         self,
         headline: str,
-        text: str,
+        supporting_text: str,
         width: float,
         height: float,
         border_color: Color | None = None,
@@ -1054,7 +1048,7 @@ class Window:
         self,
         variant: str = "docked",
         orientation: str | None = None,
-        color: str | None = None,
+        vibrant: bool = False,
         width: float | None = None,
         height: float | None = None,
         x: float | None = None,
@@ -1318,7 +1312,7 @@ class Window:
     def add_popover(
         self,
         subhead: str,
-        text: str,
+        supporting_text: str,
         width: float,
         height: float,
         border_color: Color | None = None,
@@ -1336,7 +1330,7 @@ class Window:
         ...
     def add_link(
         self,
-        text: str,
+        content: str,
         width: float,
         x: float | None = None,
         y: float | None = None,
@@ -1426,7 +1420,7 @@ class Window:
         self,
         width: float = 52.0,
         height: float = 32.0,
-        on: bool = False,
+        selected: bool = False,
         x: float | None = None,
         y: float | None = None,
     ) -> Node:
@@ -1446,7 +1440,7 @@ class Window:
         x: float | None = None,
         y: float | None = None,
     ) -> Node:
-        """`value` is the initial `thumb_position`, clamped `0.0..=1.0`."""
+        """`value` is the initial position, clamped `0.0..=1.0`; read and animate it as the `"value"` property."""
         ...
     def add_image(
         self,
@@ -1545,7 +1539,7 @@ class Window:
     def add_icon(
         self,
         name: str,
-        color: Color,
+        foreground: Color,
         size: float,
         x: float | None = None,
         y: float | None = None,
@@ -1675,7 +1669,7 @@ class Window:
         self,
         width: float,
         height: float,
-        horizontal: bool = False,
+        orientation: str = "vertical",
         x: float | None = None,
         y: float | None = None,
     ) -> Node:

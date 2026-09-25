@@ -50,7 +50,7 @@ style: {width: 220, height: 220, padding: 20}
 children:
   - id: logo
     kind: Image
-    image: {src: logo.png, fit: Cover}
+    image: {src: logo.png, fit: cover}
     style: {width: 160, height: 160}
 """
 )

@@ -98,7 +98,7 @@ def test_search_view_can_be_populated_and_opened_via_open_menu():
 
     suggestion = window.add_text(
         content="Recent search",
-        background=(0, 0, 0, 0),
+        foreground=(0, 0, 0, 0),
         width=380,
         height=20,
     )

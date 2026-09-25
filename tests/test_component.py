@@ -24,22 +24,22 @@ from tre import Signal, View, ViewModel
 PARENT_VIEW = """
 id: root
 kind: Container
-style: {flex_direction: Vertical, width: 300, height: 200, gap: 8, padding: 8}
+style: {flex_direction: vertical, width: 300, height: 200, gap: 8, padding: 8}
 children:
   - id: card_list
     kind: Container
-    style: {flex_direction: Vertical, gap: 4, width: 280, height: 180}
+    style: {flex_direction: vertical, gap: 4, width: 280, height: 180}
 """
 
 CARD_VIEW = """
 id: root
 kind: Container
-style: {flex_direction: Horizontal, width: 260, height: 40, gap: 8}
+style: {flex_direction: horizontal, width: 260, height: 40, gap: 8}
 children:
   - id: label
     kind: Text
     text: {content: "Count: 0", font_family: Roboto, font_size: 16}
-    style: {width: 180, height: 32, background: "#FFFFFF00"}
+    style: {width: 180, height: 32, foreground: "#FFFFFF00"}
     bindings: {text: "{{ label.get() }}"}
   - id: button
     kind: Rect
@@ -340,12 +340,12 @@ def test_instantiate_source_override_is_used_instead_of_reading_path_from_disk(t
     overridden = """
 id: root
 kind: Container
-style: {flex_direction: Horizontal, width: 999, height: 40, gap: 8}
+style: {flex_direction: horizontal, width: 999, height: 40, gap: 8}
 children:
   - id: label
     kind: Text
     text: {content: "Overridden", font_family: Roboto, font_size: 16}
-    style: {width: 180, height: 32, background: "#FFFFFF00"}
+    style: {width: 180, height: 32, foreground: "#FFFFFF00"}
 """
     card = view.instantiate(card_path, container, source=overridden)
 
@@ -372,12 +372,12 @@ def test_component_instantiate_also_accepts_source_for_nested_components(tmp_pat
     overridden = """
 id: root
 kind: Container
-style: {flex_direction: Horizontal, width: 42, height: 40, gap: 8}
+style: {flex_direction: horizontal, width: 42, height: 40, gap: 8}
 children:
   - id: label
     kind: Text
     text: {content: "Nested override", font_family: Roboto, font_size: 16}
-    style: {width: 180, height: 32, background: "#FFFFFF00"}
+    style: {width: 180, height: 32, foreground: "#FFFFFF00"}
 """
     inner_component = outer_component.instantiate(
         innermost_path, outer_component.node("root"), source=overridden

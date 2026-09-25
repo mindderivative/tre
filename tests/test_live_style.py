@@ -170,8 +170,8 @@ style:
   flex_grow: 1
   flex_shrink: 0
   flex_basis: 40
-  align_items: Center
-  justify_content: SpaceBetween
+  align_items: center
+  justify_content: space_between
 """,
     )
     view = View(path)
@@ -464,7 +464,7 @@ def test_add_text_accepts_a_line_height_kwarg():
     window = Window(width=200, height=200)
     node = window.add_text(
         content="Hello",
-        background=(0, 0, 0, 0),
+        foreground=(0, 0, 0, 0),
         width=100,
         height=40,
         line_height=1.5,
@@ -477,7 +477,7 @@ def test_add_text_line_height_defaults_to_none():
     # must still be reachable with zero change to an existing call --
     # must not raise.
     window = Window(width=200, height=200)
-    node = window.add_text(content="Hello", background=(0, 0, 0, 0), width=100, height=40)
+    node = window.add_text(content="Hello", foreground=(0, 0, 0, 0), width=100, height=40)
     assert isinstance(node, Node)
 
 
@@ -495,7 +495,7 @@ def test_add_text_accepts_a_typography_role():
     window = Window(width=200, height=200)
     node = window.add_text(
         content="Heading",
-        background=(0, 0, 0, 0),
+        foreground=(0, 0, 0, 0),
         width=200,
         height=40,
         typography_role="headline_small",
@@ -507,7 +507,7 @@ def test_add_text_typography_role_can_be_overridden_by_a_literal_field():
     window = Window(width=200, height=200)
     node = window.add_text(
         content="Heading",
-        background=(0, 0, 0, 0),
+        foreground=(0, 0, 0, 0),
         width=200,
         height=40,
         typography_role="headline_small",
@@ -521,7 +521,7 @@ def test_add_text_unknown_typography_role_raises_value_error():
     with pytest.raises(ValueError, match="typography_role"):
         window.add_text(
             content="Heading",
-            background=(0, 0, 0, 0),
+            foreground=(0, 0, 0, 0),
             width=200,
             height=40,
             typography_role="subtitle_huge",

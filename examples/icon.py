@@ -18,10 +18,10 @@ from tre import App, Window
 
 window = Window(width=280, height=120, title="tre v2 -- icon")
 
-home = window.add_icon(name="home", color=(0x1C, 0x1B, 0x1F, 0xFF), size=48, x=20, y=36)
-search = window.add_icon(name="search", color=(0x67, 0x50, 0xA4, 0xFF), size=48, x=90, y=36)
-check = window.add_icon(name="check", color=(0x38, 0x8E, 0x3C, 0xFF), size=48, x=160, y=36)
-close = window.add_icon(name="close", color=(0xB3, 0x26, 0x1E, 0xFF), size=48, x=230, y=36)
+home = window.add_icon(name="home", foreground=(0x1C, 0x1B, 0x1F, 0xFF), size=48, x=20, y=36)
+search = window.add_icon(name="search", foreground=(0x67, 0x50, 0xA4, 0xFF), size=48, x=90, y=36)
+check = window.add_icon(name="check", foreground=(0x38, 0x8E, 0x3C, 0xFF), size=48, x=160, y=36)
+close = window.add_icon(name="close", foreground=(0xB3, 0x26, 0x1E, 0xFF), size=48, x=230, y=36)
 
 app = App()
 app.add_window(window)

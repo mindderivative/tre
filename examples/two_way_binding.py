@@ -48,11 +48,11 @@ slider = view.node("volume")
 field = view.node("username")
 
 assert checkbox.get_checked() is False, "the initial bindings: apply must seed from agreed's own starting value"
-assert slider.get("thumb_position") == 0.3, "the initial bindings: apply must seed from level's own starting value"
+assert slider.get("value") == 0.3, "the initial bindings: apply must seed from level's own starting value"
 assert field.get_text() == "jane", "the initial bindings: apply must seed from name's own starting value"
 print(
     f"initial: agreed={vm.agreed.get()} checked={checkbox.get_checked()}, "
-    f"level={vm.level.get()} thumb_position={slider.get('thumb_position')}, "
+    f"level={vm.level.get()} thumb_position={slider.get('value')}, "
     f"name={vm.name.get()!r} text={field.get_text()!r}"
 )
 
@@ -71,7 +71,7 @@ print(f"after editing the field: name signal is now {vm.name.get()!r}")
 # The forward direction still works unmodified -- setting the Signal
 # from the ViewModel side re-applies through the ordinary one-way path.
 vm.level.set(0.9)
-assert slider.get("thumb_position") == 0.9
-print(f"after vm.level.set(0.9): slider thumb_position is now {slider.get('thumb_position')}")
+assert slider.get("value") == 0.9
+print(f"after vm.level.set(0.9): slider thumb_position is now {slider.get('value')}")
 
 print("two_way_binding.py: exited cleanly, both directions of every two-way binding proved")

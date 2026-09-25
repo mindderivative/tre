@@ -36,7 +36,7 @@ docked.add_child(share_icon)
 floating = window.add_toolbar(
     variant="floating",
     orientation="vertical",
-    color="vibrant",
+    vibrant=True,
     x=740.0,
     y=200.0,
 )

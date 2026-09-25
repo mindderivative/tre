@@ -24,7 +24,7 @@ radios = [window.add_radio_button(selected=(i == 0), x=16, y=16 + i * 32) for i 
 for i, radio in enumerate(radios):
     window.add_text(
         content=LABELS[i],
-        background=(0xE6, 0xE1, 0xE5, 0xFF),
+        foreground=(0xE6, 0xE1, 0xE5, 0xFF),
         width=100,
         height=20,
         x=48,

@@ -47,7 +47,7 @@ editor = window.add_code_editor(
 
 gutter = window.add_text(
     content="",
-    background=(0x49, 0x45, 0x4F, 0xFF),  # on-surface-variant-ish grey
+    foreground=(0x49, 0x45, 0x4F, 0xFF),  # on-surface-variant-ish grey
     width=GUTTER_WIDTH,
     height=200,
     # M32 Phase 1 (§5, §8, §10): `add_code_editor` now always shapes

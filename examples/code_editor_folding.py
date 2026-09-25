@@ -62,7 +62,7 @@ editor = window.add_code_editor(
 
 gutter = window.add_text(
     content="",
-    background=(0x49, 0x45, 0x4F, 0xFF),
+    foreground=(0x49, 0x45, 0x4F, 0xFF),
     width=GUTTER_WIDTH,
     height=220,
     # M32 Phase 1 (§5, §8, §10): must match `add_code_editor`'s own

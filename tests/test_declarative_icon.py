@@ -29,7 +29,7 @@ def test_kind_icon_builds_a_real_node(tmp_path):
 id: gear
 kind: Icon
 icon: {name: settings}
-style: {width: 24, height: 24, background: "#1C1B1FFF"}
+style: {width: 24, height: 24, foreground: "#1C1B1FFF"}
 """
     path = write(tmp_path, yaml)
     view = View(path)
@@ -41,7 +41,7 @@ def test_kind_icon_with_no_icon_block_raises_clearly(tmp_path):
     yaml = """
 id: gear
 kind: Icon
-style: {width: 24, height: 24, background: "#1C1B1FFF"}
+style: {width: 24, height: 24, foreground: "#1C1B1FFF"}
 """
     path = write(tmp_path, yaml)
     with pytest.raises(ValueError, match="icon"):
@@ -53,7 +53,7 @@ def test_kind_icon_with_an_unknown_name_raises_naming_it(tmp_path):
 id: gear
 kind: Icon
 icon: {name: not_a_real_icon}
-style: {width: 24, height: 24, background: "#1C1B1FFF"}
+style: {width: 24, height: 24, foreground: "#1C1B1FFF"}
 """
     path = write(tmp_path, yaml)
     with pytest.raises(ValueError, match="not_a_real_icon"):
@@ -64,16 +64,16 @@ def test_kind_icon_composes_inside_a_container_like_any_other_kind(tmp_path):
     yaml = """
 id: root
 kind: Container
-style: {flex_direction: Horizontal, width: 100, height: 40, gap: 8}
+style: {flex_direction: horizontal, width: 100, height: 40, gap: 8}
 children:
   - id: gear
     kind: Icon
     icon: {name: settings}
-    style: {width: 24, height: 24, background: "#1C1B1FFF"}
+    style: {width: 24, height: 24, foreground: "#1C1B1FFF"}
   - id: label
     kind: Text
     text: {content: Settings, font_family: Roboto, font_size: 14}
-    style: {width: 60, height: 24, background: "#1C1B1FFF"}
+    style: {width: 60, height: 24, foreground: "#1C1B1FFF"}
 """
     path = write(tmp_path, yaml)
     view = View(path)

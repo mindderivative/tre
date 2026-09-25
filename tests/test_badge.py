@@ -42,7 +42,7 @@ def test_a_badge_is_positioned_independently_via_x_and_y():
     not something with special anchoring machinery of its own.
     """
     window = Window(width=200, height=200)
-    icon = window.add_icon(name="add", color=(0, 0, 0, 255), size=24, x=16, y=16)
+    icon = window.add_icon(name="add", foreground=(0, 0, 0, 255), size=24, x=16, y=16)
     badge = window.add_badge(x=32, y=12)
     assert isinstance(icon, Node)
     assert isinstance(badge, Node)

@@ -16,7 +16,7 @@ def test_add_divider_returns_a_node():
 
 def test_add_divider_vertical_does_not_raise():
     window = Window(width=200, height=200)
-    node = window.add_divider(length=100, vertical=True)
+    node = window.add_divider(length=100, orientation="vertical")
     assert isinstance(node, Node)
 
 

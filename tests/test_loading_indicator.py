@@ -37,7 +37,7 @@ def test_a_custom_size_does_not_raise():
 
 def test_a_custom_color_does_not_raise():
     window = Window(width=400, height=200)
-    indicator = window.add_loading_indicator(color=(0xB0, 0x00, 0x20, 0xFF))
+    indicator = window.add_loading_indicator(foreground=(0xB0, 0x00, 0x20, 0xFF))
     assert isinstance(indicator, Node)
 
 

@@ -51,6 +51,19 @@ fn resolve_icon_path(name: &str) -> PyResult<peniko::kurbo::BezPath> {
     }))
 }
 
+/// M90: the one `orientation=` vocabulary shared by `add_divider`,
+/// `add_scroll_view`, and `add_toolbar` -- returns whether it's
+/// vertical. Replaces the old `vertical=`/`horizontal=` booleans.
+fn parse_orientation(method: &str, orientation: &str) -> PyResult<bool> {
+    match orientation {
+        "horizontal" => Ok(false),
+        "vertical" => Ok(true),
+        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "{method}: unknown orientation {other:?} -- expected \"horizontal\" or \"vertical\""
+        ))),
+    }
+}
+
 /// M22 Phase 2 (§16.1): `Window.add_image`'s own real `fit:` string
 /// vocabulary -- `parse_dock_side`'s own established pattern
 /// (`dock.rs`), applied to `ContentFit`'s three real variants.
@@ -1375,7 +1388,7 @@ fn tooltip_retheme_hook(container: NodeId, label: NodeId) -> crate::window::Reti
 }
 
 /// M52 Phase 2: `add_toolbar`'s own hook -- both the container color
-/// (branches on `color`, `"standard"` vs `"vibrant"`) and the shape/
+/// (branches on `vibrant`: `surface_container` vs `primary_container`) and the shape/
 /// elevation fallback (branches on `is_floating`/`vertical`/the
 /// caller's own original `width`/`height`) must be reproduced exactly,
 /// since `add_toolbar` itself computes conditional *defaults*, not
@@ -1384,7 +1397,7 @@ fn tooltip_retheme_hook(container: NodeId, label: NodeId) -> crate::window::Reti
 fn toolbar_retheme_hook(
     bar: NodeId,
     variant: String,
-    color: Option<String>,
+    vibrant: bool,
     is_floating: bool,
     vertical: bool,
     width: Option<f32>,
@@ -1398,10 +1411,10 @@ fn toolbar_retheme_hook(
                 fallback
             }
         };
-        let container_color = match color.as_deref().unwrap_or("standard") {
-            "standard" => role("surface_container", Md3Baseline::SURFACE_CONTAINER),
-            "vibrant" => role("primary_container", Md3Baseline::PRIMARY_CONTAINER),
-            _ => return,
+        let container_color = if vibrant {
+            role("primary_container", Md3Baseline::PRIMARY_CONTAINER)
+        } else {
+            role("surface_container", Md3Baseline::SURFACE_CONTAINER)
         };
         let default_corner_radius = if is_floating {
             f64::from(if vertical {
@@ -3129,12 +3142,12 @@ impl PyWindow {
     /// `add_icon` (a single `size`) -- no measure-function/intrinsic-
     /// sizing wiring exists for `Text` to lean on instead, confirmed
     /// before choosing this shape rather than assumed.
-    #[pyo3(signature = (content, background, width, height, typography_role=None, font_family=None, font_weight=None, font_size=None, line_height=None, x=None, y=None))]
+    #[pyo3(signature = (content, foreground, width, height, typography_role=None, font_family=None, font_weight=None, font_size=None, line_height=None, x=None, y=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_text(
         &self,
         content: &str,
-        background: (u8, u8, u8, u8),
+        foreground: (u8, u8, u8, u8),
         width: f32,
         height: f32,
         typography_role: Option<&str>,
@@ -3145,6 +3158,7 @@ impl PyWindow {
         x: Option<f32>,
         y: Option<f32>,
     ) -> PyResult<Node> {
+        let background = foreground;
         // M62 Phase 4 (§7.1, §16.3): `add_text`'s own real imperative
         // parity with declarative `kind: Text`'s `text.role` -- `role_
         // style`, if given, supplies each of the 4 real fields below as
@@ -4639,14 +4653,15 @@ impl PyWindow {
     /// -- a minor visual refinement, not essential to the real "loops
     /// forever, morphs between real shapes" behavior this step exists
     /// for.
-    #[pyo3(signature = (size=48.0, color=None, x=None, y=None))]
+    #[pyo3(signature = (size=48.0, foreground=None, x=None, y=None))]
     fn add_loading_indicator(
         &self,
         size: f32,
-        color: Option<(u8, u8, u8, u8)>,
+        foreground: Option<(u8, u8, u8, u8)>,
         x: Option<f32>,
         y: Option<f32>,
     ) -> Node {
+        let color = foreground;
         let tint = match color {
             Some((r, g, b, a)) => Color::from_rgba8(r, g, b, a),
             None => {
@@ -4821,16 +4836,17 @@ impl PyWindow {
     /// tall, a vertical one the reverse -- the same real single-
     /// dimension-plus-orientation shape a line naturally has, not two
     /// separate methods for what's really one real component.
-    #[pyo3(signature = (length, vertical=false, x=None, y=None, border_color=None, border_width=None))]
+    #[pyo3(signature = (length, orientation="horizontal", x=None, y=None, border_color=None, border_width=None))]
     fn add_divider(
         &self,
         length: f32,
-        vertical: bool,
+        orientation: &str,
         x: Option<f32>,
         y: Option<f32>,
         border_color: Option<(u8, u8, u8, u8)>,
         border_width: Option<f64>,
-    ) -> Node {
+    ) -> PyResult<Node> {
+        let vertical = parse_orientation("add_divider", orientation)?;
         let color = {
             let theme = self.theme.borrow();
             if theme.is_set() {
@@ -4871,7 +4887,7 @@ impl PyWindow {
         self.retheme_hooks
             .borrow_mut()
             .push(divider_retheme_hook(id));
-        self.wrap_node(id)
+        Ok(self.wrap_node(id))
     }
 
     /// M30 Phase 3 Step 5 (§5, §7, §11.3): `Tooltip` (Plain variant),
@@ -4996,16 +5012,17 @@ impl PyWindow {
     /// unattached anywhere -- the same real contract `build_menu`'s
     /// own panel and `add_tooltip`'s own panel already have; `open_
     /// dialog` is what actually shows it.
-    #[pyo3(signature = (headline, text, width, height, border_color=None, border_width=None))]
+    #[pyo3(signature = (headline, supporting_text, width, height, border_color=None, border_width=None))]
     fn add_dialog(
         &self,
         headline: &str,
-        text: &str,
+        supporting_text: &str,
         width: f32,
         height: f32,
         border_color: Option<(u8, u8, u8, u8)>,
         border_width: Option<f64>,
     ) -> Node {
+        let text = supporting_text;
         let (scrim_color, panel_color, headline_color, body_color) = {
             let theme = self.theme.borrow();
             let role = |name: &str, fallback: Color| -> Color {
@@ -6705,13 +6722,13 @@ impl PyWindow {
     /// radius input for "fully rounded" (`thickness / 2.0`, the
     /// identical `SIZE / 2.0` pill-shape convention `FAB`/`Chip`/`Icon
     /// Button` already establish elsewhere in this catalog).
-    #[pyo3(signature = (variant="docked", orientation=None, color=None, width=None, height=None, x=None, y=None, border_color=None, border_width=None))]
+    #[pyo3(signature = (variant="docked", orientation=None, vibrant=false, width=None, height=None, x=None, y=None, border_color=None, border_width=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_toolbar(
         &self,
         variant: &str,
         orientation: Option<&str>,
-        color: Option<&str>,
+        vibrant: bool,
         width: Option<f32>,
         height: Option<f32>,
         x: Option<f32>,
@@ -6755,15 +6772,10 @@ impl PyWindow {
                     fallback
                 }
             };
-            match color.unwrap_or("standard") {
-                "standard" => role("surface_container", Md3Baseline::SURFACE_CONTAINER),
-                "vibrant" => role("primary_container", Md3Baseline::PRIMARY_CONTAINER),
-                other => {
-                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "unknown toolbar color {other:?} -- expected one of \"standard\", \
-                         \"vibrant\""
-                    )));
-                }
+            if vibrant {
+                role("primary_container", Md3Baseline::PRIMARY_CONTAINER)
+            } else {
+                role("surface_container", Md3Baseline::SURFACE_CONTAINER)
             }
         };
 
@@ -6849,7 +6861,7 @@ impl PyWindow {
         self.retheme_hooks.borrow_mut().push(toolbar_retheme_hook(
             bar,
             variant.to_string(),
-            color.map(str::to_string),
+            vibrant,
             is_floating,
             vertical,
             width,
@@ -8699,16 +8711,17 @@ impl PyWindow {
     /// unattached anywhere -- the same real contract `add_dialog`/
     /// `add_tooltip`'s own panels already have; pass it to `Window.
     /// open_menu(anchor, popover)` to actually show it.
-    #[pyo3(signature = (subhead, text, width, height, border_color=None, border_width=None))]
+    #[pyo3(signature = (subhead, supporting_text, width, height, border_color=None, border_width=None))]
     fn add_popover(
         &self,
         subhead: &str,
-        text: &str,
+        supporting_text: &str,
         width: f32,
         height: f32,
         border_color: Option<(u8, u8, u8, u8)>,
         border_width: Option<f64>,
     ) -> Node {
+        let text = supporting_text;
         let (subhead_color, body_color) = {
             let theme = self.theme.borrow();
             let on_surface_variant = if theme.is_set() {
@@ -8841,8 +8854,9 @@ impl PyWindow {
     /// engine-core capability this step fulfills. Deliberately does
     /// *not* auto-call `enable_interaction()`, matching every other
     /// composite `add_*` in this catalog.
-    #[pyo3(signature = (text, width, x=None, y=None))]
-    fn add_link(&self, text: &str, width: f32, x: Option<f32>, y: Option<f32>) -> Node {
+    #[pyo3(signature = (content, width, x=None, y=None))]
+    fn add_link(&self, content: &str, width: f32, x: Option<f32>, y: Option<f32>) -> Node {
+        let text = content;
         let color = {
             let theme = self.theme.borrow();
             if theme.is_set() {
@@ -9491,15 +9505,16 @@ impl PyWindow {
     /// source) -- unlike `add_radio_button`'s single `size`, a switch
     /// track is genuinely non-square in real MD3, so two real
     /// parameters is the honest shape here.
-    #[pyo3(signature = (width=52.0, height=32.0, on=false, x=None, y=None))]
+    #[pyo3(signature = (width=52.0, height=32.0, selected=false, x=None, y=None))]
     fn add_switch(
         &self,
         width: f32,
         height: f32,
-        on: bool,
+        selected: bool,
         x: Option<f32>,
         y: Option<f32>,
     ) -> Node {
+        let on = selected;
         let mut switch_state = SwitchState::new(on);
         {
             let theme = self.theme.borrow();
@@ -10060,15 +10075,16 @@ impl PyWindow {
     /// through `EngineError` since this is a pure name-lookup failure
     /// with no I/O involved, the same reason those two live directly
     /// here rather than in `error.rs`.
-    #[pyo3(signature = (name, color, size, x=None, y=None))]
+    #[pyo3(signature = (name, foreground, size, x=None, y=None))]
     fn add_icon(
         &self,
         name: &str,
-        color: (u8, u8, u8, u8),
+        foreground: (u8, u8, u8, u8),
         size: f32,
         x: Option<f32>,
         y: Option<f32>,
     ) -> PyResult<Node> {
+        let color = foreground;
         let path = resolve_icon_path(name)?;
         let (r, g, b, a) = color;
 
@@ -10525,15 +10541,16 @@ impl PyWindow {
     /// joins `Tree::dispatch`'s existing "walk up to the nearest
     /// scrollable ancestor" mechanism the same way `VirtualList`/
     /// `Carousel` already do.
-    #[pyo3(signature = (width, height, horizontal=false, x=None, y=None))]
+    #[pyo3(signature = (width, height, orientation="vertical", x=None, y=None))]
     fn add_scroll_view(
         &self,
         width: f32,
         height: f32,
-        horizontal: bool,
+        orientation: &str,
         x: Option<f32>,
         y: Option<f32>,
     ) -> PyResult<Node> {
+        let horizontal = !parse_orientation("add_scroll_view", orientation)?;
         let mut tree = self.tree.borrow_mut();
         let id = tree.insert(
             NodeKind::ScrollView(engine_core::ScrollViewState::new(horizontal)),

@@ -27,7 +27,7 @@ background.set_on_click(lambda: clicks.__setitem__("background", clicks["backgro
 
 dialog = window.add_dialog(
     headline="Discard changes?",
-    text="Your edits have not been saved. This action cannot be undone.",
+    supporting_text="Your edits have not been saved. This action cannot be undone.",
     width=260,
     height=140,
 )
