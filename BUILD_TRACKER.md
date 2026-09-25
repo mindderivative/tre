@@ -47,7 +47,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | `v0.3.1` Release: PR #5 Merged to `main`, Tagged and Pushed | — | ✅ Released (2026-09-24) |
 | M84 — Declarative `NodeKindSpec` Support for 7 Real Primitives (Tesserae M27) | `██████████` 100% | ✅ Complete — single phase (2026-09-24) |
 | M85 — Sync MkDocs with M71-M84's Real API Growth | `██████████` 100% | ✅ Complete — single phase (2026-09-24) |
-| M86 — Data-Not-Paths Ingestion for Themes, Stylesheets, and Fonts | `░░░░░░░░░░` 0% | ⬜ Scoped, not started — 3 phases (2026-09-24) |
+| M86 — Data-Not-Paths Ingestion for Themes, Stylesheets, and Fonts | `███░░░░░░░` 33% | 🚧 In progress — Phase 1 of 3 done (2026-09-24) |
 
 **Just closed:** M80 — a 4-lens multi-agent review (Performance/Architecture/Security/Modernization) of the full `0.3.1` diff (M71-M79) plus a lighter full-project pass, each raw finding adversarially re-verified against the real current source before being trusted. Security found nothing real. 8 findings confirmed real across the other 3 lenses; 5 fixed directly this milestone, 3 left open for explicit user input (real design/scope decisions, not mechanical).
 
@@ -974,7 +974,7 @@ Two real, small, pre-existing gaps found and fixed along the way, beyond M71-M84
 
 ## Milestone 86 — Data-Not-Paths Ingestion for Themes, Stylesheets, and Fonts
 
-**Status: ⬜ Not started (scoped 2026-09-24).** User, after asking where `tre` stands on file ingestion: "Although we can, Tesserae should not be pushing files directly to tre. It should be pushing spec information and handling the files itself." A full audit of every real file read in `crates/` (`read_to_string`/`image::open`/font registration) confirmed tree content (`spec=`, M78/M81), images (`add_image_from_bytes`, M82), and video (`add_video` + `push_frame`) already have a real data primitive with path-reading layered on top as convenience. Three concerns still accept **only** a file path, leaving a framework no way to hand `tre` data it already loaded itself:
+**Status: 🚧 In progress (started 2026-09-24).** User, after asking where `tre` stands on file ingestion: "Although we can, Tesserae should not be pushing files directly to tre. It should be pushing spec information and handling the files itself." A full audit of every real file read in `crates/` (`read_to_string`/`image::open`/font registration) confirmed tree content (`spec=`, M78/M81), images (`add_image_from_bytes`, M82), and video (`add_video` + `push_frame`) already have a real data primitive with path-reading layered on top as convenience. Three concerns still accept **only** a file path, leaving a framework no way to hand `tre` data it already loaded itself:
 
 1. **Themes** -- `Window.set_theme(default_theme=, custom_theme=)`, `View(default_theme=, custom_theme=)`, and `View.set_theme(...)` all route through `load_theme_spec(path)` (`engine-py/src/view.rs:205`), which reads the file and calls `parse_theme`. `ThemeSpec` (`engine-spec/src/theme.rs`) already derives plain `Deserialize` (M76 proved it format-agnostic), so `pythonize::depythonize` works on it directly -- the identical mechanism `View(spec=)` already uses for `WidgetSpec`.
 2. **Stylesheets** -- `View(stylesheet=)` reads the file at `view.rs:1069` and calls `parse_stylesheet`. `Stylesheet` (`engine-spec/src/cascade.rs:22`) also derives plain `Deserialize`.
@@ -987,12 +987,12 @@ Two real, small, pre-existing gaps found and fixed along the way, beyond M71-M84
 - **`instantiate(path, into, spec=)` needs no change** -- confirmed via `component.rs`'s own doc comment: a `spec=` caller with no base directory passes `path=""`, the real, already-supported "no base directory" value (0.3.1 review item 3's own reasoning for keeping `path` positional-required).
 - **Existing path params stay** as bare-`tre` convenience, reimplemented as thin wrappers that read + parse, then hand off to the same resolution the `*_spec=` path uses -- the same "path is sugar over the real primitive" relationship `add_image`/`add_image_from_bytes` have since M82.
 
-### Phase 1 — Theme and Stylesheet Specs ⬜
-- Step 1: internal `ThemeInput`-style resolution in `engine-py/src/view.rs` -- a single helper turning `(path: Option<&str>, spec: Option<ThemeSpec>)` into `Option<ThemeSpec>` with mutual-exclusion validation, so `resolve_theme_layers` and `Window.set_theme` both take already-resolved `ThemeSpec`s instead of paths — ⬜
-- Step 2: `View(..., default_theme_spec=None, custom_theme_spec=None, stylesheet_spec=None)` and `View.set_theme(..., default_theme_spec=None, custom_theme_spec=None)` -- depythonized via `pythonize`, errors prefixed with the kwarg name matching `spec=`'s own `"spec=: ..."` convention — ⬜
-- Step 3: `Window.set_theme(seed, dark=False, default_theme=None, custom_theme=None, default_theme_spec=None, custom_theme_spec=None)` -- same helper, same validation — ⬜
-- Step 4: Rust unit tests for the resolution helper plus pytest coverage -- dict-built theme produces the identical resolved roles/shape/elevation/typography as the equivalent YAML file, both-given is a clear `ValueError`, a typo'd key fails via `deny_unknown_fields`, and `stylesheet_spec=` cascades identically to `stylesheet=` — ⬜
-- Step 5: `_core.pyi` stubs updated, `mypy --strict` clean — ⬜
+### Phase 1 — Theme and Stylesheet Specs ✅
+- Step 1: internal `ThemeInput`-style resolution in `engine-py/src/view.rs` -- a single helper turning `(path: Option<&str>, spec: Option<ThemeSpec>)` into `Option<ThemeSpec>` with mutual-exclusion validation, so `resolve_theme_layers` and `Window.set_theme` both take already-resolved `ThemeSpec`s instead of paths — ✅ (`resolve_theme_input`/`resolve_stylesheet_input`/`shipped_default_theme_spec` in `view.rs`, reusing M81's `require_at_most_one_content_source` for the mutual-exclusion error)
+- Step 2: `View(..., default_theme_spec=None, custom_theme_spec=None, stylesheet_spec=None)` and `View.set_theme(..., default_theme_spec=None, custom_theme_spec=None)` -- depythonized via `pythonize`, errors prefixed with the kwarg name matching `spec=`'s own `"spec=: ..."` convention — ✅
+- Step 3: `Window.set_theme(seed, dark=False, default_theme=None, custom_theme=None, default_theme_spec=None, custom_theme_spec=None)` -- same helper, same validation — ✅
+- Step 4: Rust unit tests for the resolution helper plus pytest coverage -- dict-built theme produces the identical resolved roles/shape/elevation/typography as the equivalent YAML file, both-given is a clear `ValueError`, a typo'd key fails via `deny_unknown_fields`, and `stylesheet_spec=` cascades identically to `stylesheet=` — ✅ (4 new Rust tests in `view.rs`, 18 new pytest cases in `tests/test_theme_spec.py` including a view built with zero files on disk across all four cascade tiers; 908 pytest passed, 2 skipped)
+- Step 5: `_core.pyi` stubs updated, `mypy --strict` clean — ✅ (on `_core.pyi`, the established check; `python/tre/__init__.py`'s 27 untyped-def errors are pre-existing and unchanged)
 
 ### Phase 2 — Font Registration ⬜
 - Step 1: new `engine-render` font registry -- a process-global list of registered font blobs plus a generation counter, deduplicated by content so re-registering the same bytes is a no-op; `TextRenderer::new` registers the 4 vendored faces then every registered blob — ⬜

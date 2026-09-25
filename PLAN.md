@@ -1,31 +1,33 @@
-# PLAN — Branch `0.3.2`: Release Prep
+# PLAN — Milestone 86: Data-Not-Paths Ingestion for Themes, Stylesheets, and Fonts
 
-*(Replaces the prior M74 plan in this file — M74 through M83 are all
-complete, released as `v0.3.1`. This is a new, workflow-continuing
-branch scaffold, not a numbered milestone: see this file's own
-"Branch: 0.3.2" section in `BUILD_TRACKER.md` for the full context.)*
+*(Replaces the `0.3.2` branch-scaffold plan. Full scope, design
+decisions, and step list live in `BUILD_TRACKER.md`'s own "Milestone
+86" section — this file is the working plan for the phase in flight.)*
 
 ## Goal
 
-`v0.3.1` is tagged and released (`github.com/mindderivative/tre/releases/tag/v0.3.1`),
-`main` merged and up to date. Start the next real release-prep branch,
-`0.3.2`, per the same deliberate workflow `0.3.1` itself established
-(`072a7b9`/M70's own precedent): work accumulates here rather than on
-`main` directly, merges back when ready, and only then gets tagged/
-pushed for real.
+User: "Tesserae should not be pushing files directly to tre. It should
+be pushing spec information and handling the files itself." Themes,
+stylesheets, and fonts are the last three concerns where `tre` only
+accepts a file path. Give each a data-shaped entry point; keep the path
+forms as bare-`tre` convenience layered on top.
+
+## Phases
+
+1. **Theme and stylesheet specs:** `default_theme_spec=`/
+   `custom_theme_spec=` on `View(...)`, `View.set_theme`, and
+   `Window.set_theme`; `stylesheet_spec=` on `View(...)`. Each is
+   depythonized into `ThemeSpec`/`Stylesheet` through `pythonize`, the
+   same path `View(spec=)` uses. Each spec kwarg is mutually exclusive
+   with its path counterpart (`require_at_most_one_content_source`).
+   `resolve_theme_layers` and `Window.set_theme` take already-resolved
+   `ThemeSpec`s, so path and spec share one code path after input
+   resolution.
+2. **Font registration:** process-global registry in `engine-render`,
+   `tre.register_font(data: bytes) -> list[str]`, live renderers
+   sync by generation counter.
+3. **Docs and verification.**
 
 ## Status
 
-**In progress.** Branch `0.3.2` created off `main`, post-`v0.3.1`
-release. `Cargo.toml`/`pyproject.toml` bumped 0.3.1 → 0.3.2, `Cargo.lock`
-updated via `cargo check`.
-
-Full chain green: `cargo check`/`clippy -D warnings`/`fmt --check`
-clean; `cargo test --workspace --release` all passing, 0 failures,
-counts unchanged from `v0.3.1`'s own released state; `maturin develop
---release` (tre 0.3.2 installed); `pytest tests/` 890 passed, 2
-skipped, unchanged. `BUILD_TRACKER.md` updated (new "Branch: 0.3.2"
-section), tracker regenerated and republished. Committing on the
-`0.3.2` branch now.
-
-Next: whatever the user directs next, on the `0.3.2` branch.
+Phase 1 in progress.

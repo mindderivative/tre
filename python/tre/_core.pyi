@@ -477,9 +477,17 @@ class Window:
         dark: bool = False,
         default_theme: str | None = None,
         custom_theme: str | None = None,
+        default_theme_spec: object | None = None,
+        custom_theme_spec: object | None = None,
     ) -> None:
         """Builds a real MD3 `DynamicTheme` from `seed` and makes it
         this window's active theme.
+
+        M86: `default_theme_spec`/`custom_theme_spec` are the dict forms
+        of `default_theme`/`custom_theme` -- the same schema the theme
+        YAML file holds (`colors`, `components`, `typography`, `seed`,
+        ...), for a caller that loads its own files. Each is mutually
+        exclusive with its path twin; passing both raises `ValueError`.
 
         M52: every real, already-built node this `Window` has created
         via an `add_*` factory is live re-themed in place, the moment
@@ -1971,8 +1979,17 @@ class View:
         source: str | None = None,
         spec: object | None = None,
         json: str | None = None,
+        stylesheet_spec: object | None = None,
+        default_theme_spec: object | None = None,
+        custom_theme_spec: object | None = None,
     ) -> None:
-        """`stylesheet` is a path to a stylesheet YAML file (§16.3's
+        """M86: `stylesheet_spec`/`default_theme_spec`/`custom_theme_spec`
+        are the dict forms of `stylesheet`/`default_theme`/`custom_theme`
+        (the same schema each YAML file holds), for a caller that loads
+        its own files and hands `tre` data only. Each is mutually
+        exclusive with its path twin; passing both raises `ValueError`.
+
+        `stylesheet` is a path to a stylesheet YAML file (§16.3's
         cascade); `theme_seed` builds a real MD3 `DynamicTheme` the
         same way `Window.set_theme` does, resolving any `background:
         primary`-style MD3 token name in the view/stylesheet.
@@ -2060,8 +2077,12 @@ class View:
         custom_theme: str | None = None,
         theme_seed: tuple[int, int, int, int] | None = None,
         dark: bool = False,
+        default_theme_spec: object | None = None,
+        custom_theme_spec: object | None = None,
     ) -> None:
-        """M51: live re-theme. Re-resolves `default_theme`/`custom_theme`/
+        """M51: live re-theme. M86: `default_theme_spec`/
+        `custom_theme_spec` are the dict forms of `default_theme`/
+        `custom_theme`, same contract as `__init__`. Re-resolves `default_theme`/`custom_theme`/
         `theme_seed`/`dark` exactly like `__init__` does, then walks
         every already-built node in this `View`'s tree and recomputes
         its `PaintProperties`/`layout_style` from its own YAML spec

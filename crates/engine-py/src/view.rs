@@ -208,6 +208,68 @@ pub(crate) fn load_theme_spec(path: &str) -> PyResult<ThemeSpec> {
     parse_theme(&yaml).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
+/// M86: the one place a theme argument pair -- a file path (`path_kwarg`)
+/// or an already-built Python dict (`spec_kwarg`) -- becomes a real
+/// `ThemeSpec`. Everything downstream (`resolve_theme_layers`, `Window.
+/// set_theme`) only ever sees the resolved `ThemeSpec`, so the path form
+/// is literally "read + parse, then the same code the spec form runs."
+/// `None` means neither was given; both given is a clear `ValueError`.
+pub(crate) fn resolve_theme_input(
+    py: Python<'_>,
+    method: &str,
+    (path_kwarg, path): (&str, Option<&str>),
+    (spec_kwarg, spec): (&str, Option<&Py<PyAny>>),
+) -> PyResult<Option<ThemeSpec>> {
+    require_at_most_one_content_source(
+        method,
+        &[(path_kwarg, path.is_some()), (spec_kwarg, spec.is_some())],
+    )?;
+    match (path, spec) {
+        (Some(theme_path), _) => load_theme_spec(theme_path).map(Some),
+        (None, Some(obj)) => pythonize::depythonize(obj.bind(py))
+            .map(Some)
+            .map_err(|e| PyValueError::new_err(format!("{spec_kwarg}: {e}"))),
+        (None, None) => Ok(None),
+    }
+}
+
+/// M86: `View(stylesheet=...)`/`stylesheet_spec=...`'s equivalent of
+/// `resolve_theme_input` above.
+fn resolve_stylesheet_input(
+    py: Python<'_>,
+    path: Option<&str>,
+    spec: Option<&Py<PyAny>>,
+) -> PyResult<Option<Stylesheet>> {
+    require_at_most_one_content_source(
+        "View",
+        &[
+            ("stylesheet=", path.is_some()),
+            ("stylesheet_spec=", spec.is_some()),
+        ],
+    )?;
+    match (path, spec) {
+        (Some(sheet_path), _) => {
+            let sheet_yaml = std::fs::read_to_string(sheet_path).map_err(|e| {
+                PyRuntimeError::new_err(format!("failed to read stylesheet {sheet_path:?}: {e}"))
+            })?;
+            parse_stylesheet(&sheet_yaml)
+                .map(Some)
+                .map_err(|e| PyValueError::new_err(e.to_string()))
+        }
+        (None, Some(obj)) => pythonize::depythonize(obj.bind(py))
+            .map(Some)
+            .map_err(|e| PyValueError::new_err(format!("stylesheet_spec=: {e}"))),
+        (None, None) => Ok(None),
+    }
+}
+
+/// M86: the engine's own shipped default theme, parsed -- what an
+/// omitted `default_theme`/`default_theme_spec` means everywhere.
+pub(crate) fn shipped_default_theme_spec() -> ThemeSpec {
+    parse_theme(SHIPPED_DEFAULT_THEME_YAML)
+        .expect("the engine's own shipped default_theme.yaml must always parse")
+}
+
 /// M49 Phase 4: a `ThemeSpec`'s `styles:` section, wrapped as a
 /// `Stylesheet` -- the exact shape `resolve_style_layered`'s own
 /// `default_theme`/`custom_theme` parameters expect (`cascade.rs`).
@@ -244,18 +306,16 @@ pub(crate) fn theme_spec_seed(theme: &ThemeSpec) -> PyResult<Option<(u8, u8, u8,
 /// `theme_seed` > `custom_theme`'s own `seed:` > `default_theme`'s.
 /// `colors:` overrides apply to whichever scheme that precedence
 /// resolves to, default's first then custom's.
+///
+/// M86: takes already-resolved `ThemeSpec`s (`resolve_theme_input`),
+/// not paths -- the path and `*_spec=` forms share everything below.
 fn resolve_theme_layers(
-    default_theme: Option<&str>,
-    custom_theme: Option<&str>,
+    default_theme_spec: Option<ThemeSpec>,
+    custom_theme_spec: Option<ThemeSpec>,
     theme_seed: Option<(u8, u8, u8, u8)>,
     dark: bool,
 ) -> PyResult<(Stylesheet, Option<Stylesheet>, Option<ColorScheme>)> {
-    let default_theme_spec = match default_theme {
-        Some(theme_path) => load_theme_spec(theme_path)?,
-        None => parse_theme(SHIPPED_DEFAULT_THEME_YAML)
-            .expect("the engine's own shipped default_theme.yaml must always parse"),
-    };
-    let custom_theme_spec = custom_theme.map(load_theme_spec).transpose()?;
+    let default_theme_spec = default_theme_spec.unwrap_or_else(shipped_default_theme_spec);
 
     let default_theme_sheet = theme_spec_to_stylesheet(&default_theme_spec);
     let custom_theme_sheet = custom_theme_spec.as_ref().map(theme_spec_to_stylesheet);
@@ -1010,8 +1070,14 @@ impl View {
     // `ViewWatcher` simply doesn't start -- the identical graceful
     // "no watcher" path an unwatchable real file already takes below,
     // not a new failure mode.
+    //
+    // M86: `stylesheet_spec`/`default_theme_spec`/`custom_theme_spec`
+    // are the data-shaped equivalents of `stylesheet`/`default_theme`/
+    // `custom_theme` -- a plain dict in the same schema the YAML file
+    // would hold, so a framework that loads its own files never has to
+    // hand `tre` a path. Each is mutually exclusive with its path twin.
     #[new]
-    #[pyo3(signature = (path=None, stylesheet=None, theme_seed=None, dark=false, default_theme=None, custom_theme=None, source=None, spec=None, json=None))]
+    #[pyo3(signature = (path=None, stylesheet=None, theme_seed=None, dark=false, default_theme=None, custom_theme=None, source=None, spec=None, json=None, stylesheet_spec=None, default_theme_spec=None, custom_theme_spec=None))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
@@ -1024,6 +1090,9 @@ impl View {
         source: Option<String>,
         spec: Option<Py<PyAny>>,
         json: Option<String>,
+        stylesheet_spec: Option<Py<PyAny>>,
+        default_theme_spec: Option<Py<PyAny>>,
+        custom_theme_spec: Option<Py<PyAny>>,
     ) -> PyResult<Self> {
         require_at_most_one_content_source(
             "View",
@@ -1064,27 +1133,23 @@ impl View {
         // dir: None` contract).
         let base_dir = std::path::Path::new(&path).parent();
 
-        let stylesheet = match stylesheet {
-            Some(sheet_path) => {
-                let sheet_yaml = std::fs::read_to_string(&sheet_path).map_err(|e| {
-                    PyRuntimeError::new_err(format!(
-                        "failed to read stylesheet {sheet_path:?}: {e}"
-                    ))
-                })?;
-                Some(
-                    parse_stylesheet(&sheet_yaml)
-                        .map_err(|e| PyValueError::new_err(e.to_string()))?,
-                )
-            }
-            None => None,
-        };
+        let stylesheet =
+            resolve_stylesheet_input(py, stylesheet.as_deref(), stylesheet_spec.as_ref())?;
 
-        let (default_theme_sheet, custom_theme_sheet, scheme) = resolve_theme_layers(
-            default_theme.as_deref(),
-            custom_theme.as_deref(),
-            theme_seed,
-            dark,
+        let default_theme_spec = resolve_theme_input(
+            py,
+            "View",
+            ("default_theme=", default_theme.as_deref()),
+            ("default_theme_spec=", default_theme_spec.as_ref()),
         )?;
+        let custom_theme_spec = resolve_theme_input(
+            py,
+            "View",
+            ("custom_theme=", custom_theme.as_deref()),
+            ("custom_theme_spec=", custom_theme_spec.as_ref()),
+        )?;
+        let (default_theme_sheet, custom_theme_sheet, scheme) =
+            resolve_theme_layers(default_theme_spec, custom_theme_spec, theme_seed, dark)?;
         let default_theme_sheet = Some(default_theme_sheet);
 
         let mut tree = Tree::new();
@@ -1452,20 +1517,35 @@ impl View {
     /// (inside `retheme`) only recomputes the *static* cascade, the
     /// identical real behavior a content-only `poll_reload()` already
     /// has today, not a new interaction this method introduces.
-    #[pyo3(signature = (default_theme=None, custom_theme=None, theme_seed=None, dark=false))]
+    ///
+    /// M86: `default_theme_spec`/`custom_theme_spec` -- the dict forms
+    /// of `default_theme`/`custom_theme`, same as on `View(...)`.
+    #[pyo3(signature = (default_theme=None, custom_theme=None, theme_seed=None, dark=false, default_theme_spec=None, custom_theme_spec=None))]
+    #[allow(clippy::too_many_arguments)]
     fn set_theme(
         &mut self,
+        py: Python<'_>,
         default_theme: Option<String>,
         custom_theme: Option<String>,
         theme_seed: Option<(u8, u8, u8, u8)>,
         dark: bool,
+        default_theme_spec: Option<Py<PyAny>>,
+        custom_theme_spec: Option<Py<PyAny>>,
     ) -> PyResult<()> {
-        let (default_theme_sheet, custom_theme_sheet, scheme) = resolve_theme_layers(
-            default_theme.as_deref(),
-            custom_theme.as_deref(),
-            theme_seed,
-            dark,
+        let default_theme_spec = resolve_theme_input(
+            py,
+            "View.set_theme",
+            ("default_theme=", default_theme.as_deref()),
+            ("default_theme_spec=", default_theme_spec.as_ref()),
         )?;
+        let custom_theme_spec = resolve_theme_input(
+            py,
+            "View.set_theme",
+            ("custom_theme=", custom_theme.as_deref()),
+            ("custom_theme_spec=", custom_theme_spec.as_ref()),
+        )?;
+        let (default_theme_sheet, custom_theme_sheet, scheme) =
+            resolve_theme_layers(default_theme_spec, custom_theme_spec, theme_seed, dark)?;
         let base_dir = std::path::Path::new(&self.path).parent();
         let mut tree = self.tree.borrow_mut();
         self.reconciler
@@ -1765,6 +1845,9 @@ mod tests {
                 Some("id: root\nkind: Container\nstyle: {width: 999, height: 20}\n".to_string()),
                 None,
                 None,
+                None,
+                None,
+                None,
             )
         })
         .expect("real View");
@@ -1796,6 +1879,9 @@ mod tests {
                 None,
                 None,
                 false,
+                None,
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -1867,6 +1953,9 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
+                None,
+                None,
             )
         })
         .expect("real View");
@@ -1901,6 +1990,9 @@ mod tests {
                 None,
                 None,
                 false,
+                None,
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -1944,6 +2036,9 @@ mod tests {
                 None,
                 None,
                 false,
+                None,
+                None,
+                None,
                 None,
                 None,
                 None,
@@ -2000,5 +2095,117 @@ mod tests {
             err.contains("not a color"),
             "the real bad input must appear in the error message, not a generic failure: {err}"
         );
+    }
+
+    const CUSTOM_THEME_YAML: &str = "seed: \"#006A6A\"\ncolors: {primary: \"#FF0000\"}\n";
+
+    /// M86: a theme handed over as a Python dict resolves to exactly the
+    /// same `ColorScheme` as the identical theme read from a YAML file --
+    /// the spec form is not a second, divergent code path.
+    #[test]
+    fn custom_theme_spec_resolves_identically_to_the_equivalent_yaml_file() {
+        let path = write_temp_view(CUSTOM_THEME_YAML);
+        let (from_file, from_dict) = Python::attach(|py| {
+            let dict = py
+                .eval(
+                    c"{'seed': '#006A6A', 'colors': {'primary': '#FF0000'}}",
+                    None,
+                    None,
+                )
+                .expect("real dict")
+                .unbind();
+            let from_file = resolve_theme_input(
+                py,
+                "View",
+                ("custom_theme=", Some(path.to_str().unwrap())),
+                ("custom_theme_spec=", None),
+            )
+            .expect("path form");
+            let from_dict = resolve_theme_input(
+                py,
+                "View",
+                ("custom_theme=", None),
+                ("custom_theme_spec=", Some(&dict)),
+            )
+            .expect("dict form");
+            (from_file, from_dict)
+        });
+        let _ = std::fs::remove_file(&path);
+
+        let (_, _, file_scheme) = resolve_theme_layers(None, from_file, None, false).unwrap();
+        let (_, _, dict_scheme) = resolve_theme_layers(None, from_dict, None, false).unwrap();
+        let (file_scheme, dict_scheme) = (file_scheme.unwrap(), dict_scheme.unwrap());
+        for role in [
+            "primary",
+            "on_primary",
+            "surface",
+            "on_surface",
+            "secondary",
+        ] {
+            assert_eq!(
+                file_scheme.role(role),
+                dict_scheme.role(role),
+                "role {role:?} must resolve identically from a dict and a YAML file"
+            );
+        }
+        assert_eq!(
+            dict_scheme.role("primary"),
+            Some(Color::from_rgba8(0xFF, 0, 0, 0xFF)),
+            "the dict's own colors: override must actually apply"
+        );
+    }
+
+    /// M86: a path and its `*_spec=` twin together is ambiguous -- a
+    /// clear error naming both, never a silent pick of one.
+    #[test]
+    fn theme_path_and_spec_together_is_a_clear_error() {
+        Python::attach(|py| {
+            let dict = py.eval(c"{}", None, None).unwrap().unbind();
+            let err = resolve_theme_input(
+                py,
+                "Window.set_theme",
+                ("custom_theme=", Some("unused.yaml")),
+                ("custom_theme_spec=", Some(&dict)),
+            )
+            .expect_err("both given must fail");
+            let message = err.to_string();
+            assert!(
+                message.contains("custom_theme=") && message.contains("custom_theme_spec="),
+                "error must name both kwargs: {message}"
+            );
+        });
+    }
+
+    /// M86: `ThemeSpec`'s own `deny_unknown_fields` still applies to the
+    /// dict form -- a typo'd key fails loudly, prefixed with the kwarg.
+    #[test]
+    fn theme_spec_with_an_unknown_key_is_rejected() {
+        Python::attach(|py| {
+            let dict = py.eval(c"{'colours': {}}", None, None).unwrap().unbind();
+            let err = resolve_theme_input(
+                py,
+                "View",
+                ("default_theme=", None),
+                ("default_theme_spec=", Some(&dict)),
+            )
+            .expect_err("unknown key must fail");
+            let message = err.to_string();
+            assert!(
+                message.contains("default_theme_spec=") && message.contains("colours"),
+                "error must name the kwarg and the bad key: {message}"
+            );
+        });
+    }
+
+    /// M86: `stylesheet_spec=` and `stylesheet=` together is a clear
+    /// error, same contract as the theme pair.
+    #[test]
+    fn stylesheet_path_and_spec_together_is_a_clear_error() {
+        Python::attach(|py| {
+            let dict = py.eval(c"{'styles': []}", None, None).unwrap().unbind();
+            let err = resolve_stylesheet_input(py, Some("unused.yaml"), Some(&dict))
+                .expect_err("both given must fail");
+            assert!(err.to_string().contains("stylesheet_spec="));
+        });
     }
 }

@@ -1,31 +1,34 @@
-# LOG — Branch `0.3.2`: Release Prep
+# LOG — Milestone 86, Phase 1: Theme and Stylesheet Specs
 
-- User-directed: "push, and if everything is green then release 0.3.1
-  and scaffold 0.3.2." `v0.3.1` merged (PR #5) and tagged after a real
-  CI investigation (M83 fixed a pre-existing, unrelated
-  `test_terminal.py` flake) and, since GitHub Actions itself was not
-  reachable to confirm a live CI green for the PR (appears to be an
-  Actions-minutes/billing limit, not a code issue), the release
-  proceeded on this session's own thorough local verification per the
-  user's own explicit choice when asked.
+- User-directed: "Start M86" (scoped in `c257580` after the user said
+  "Tesserae should not be pushing files directly to tre. It should be
+  pushing spec information and handling the files itself.")
 
 ## What shipped
 
-1. Branch `0.3.2` created off `main`, post-`v0.3.1` merge.
-2. `Cargo.toml`/`pyproject.toml` bumped 0.3.1 → 0.3.2, mirroring the
-   `072a7b9`/M70 precedent exactly. `Cargo.lock` updated.
-- Verification: `cargo check`/`clippy -D warnings`/`fmt --check`
-  clean; `cargo test --workspace --release` all passing, 0 regressions
-  from `v0.3.1`'s own released state; `maturin develop --release`
-  (installed `tre` 0.3.2); `pytest tests/` 890 passed, 2 skipped,
-  unchanged.
+1. `view.rs`: `resolve_theme_input` turns a `(path, dict)` argument
+   pair into one `Option<ThemeSpec>`; `resolve_stylesheet_input` does
+   the same for `Stylesheet`; `shipped_default_theme_spec` replaces two
+   duplicated inline parses of the shipped default. Mutual exclusion
+   reuses M81's `require_at_most_one_content_source`.
+2. `resolve_theme_layers` now takes resolved `ThemeSpec`s instead of
+   paths, so the file and dict forms share every step after input
+   resolution.
+3. New kwargs: `View(stylesheet_spec=, default_theme_spec=,
+   custom_theme_spec=)`, `View.set_theme(default_theme_spec=,
+   custom_theme_spec=)`, `Window.set_theme(default_theme_spec=,
+   custom_theme_spec=)`. All appended after existing params, so no
+   positional caller changes.
+4. `_core.pyi` stubs updated for all three.
+- Tests: 4 new Rust tests (dict/YAML parity on resolved roles, both-
+  given error, unknown-key rejection, stylesheet both-given error); 18
+  new pytest cases in `tests/test_theme_spec.py`, including a `View`
+  built from data alone across all four cascade tiers.
+- Verification: `cargo fmt --check`/`clippy -D warnings` clean;
+  `maturin develop --release`; `pytest tests/` 908 passed, 2 skipped
+  (was 890); `mypy --strict` on `_core.pyi` clean.
 
 ## Status
 
-**Version bump complete, committed on the `0.3.2` branch.** Further
-work continues on this branch going forward. When ready, the plan is:
-merge `0.3.2` back into `main`, then tag and push `v0.3.2` for real --
-both steps wait on a later, separate, explicit confirmation, matching
-`0.3.1`'s own precedent.
-
-Next: whatever the user directs next, on the `0.3.2` branch.
+**Phase 1 complete.** Next: Phase 2, font registration
+(`tre.register_font`).
