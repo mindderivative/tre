@@ -1,30 +1,30 @@
-# PLAN — Branch `0.3.3`: Milestone 90, Consistent Property Naming
+# PLAN — Branch `0.3.4`: Milestone 93, Target API Spec and Naming Convention
 
-*(Replaces the M87 plan — M84 through M89 are complete, `v0.3.2` is
-released. Full scope, the audit findings table, and the step list live
-in `BUILD_TRACKER.md`'s "Branch: 0.3.3" and "Milestone 90" sections.)*
+*(Replaces the M87 plan — `v0.3.3` is released. The approved M93–M103
+program, its decisions D1–D11, and every step live in `BUILD_TRACKER.md`'s
+"Program" section.)*
 
 ## Goal
 
-A breaking rename so one concept has one name across the imperative
-(`Window.add_*`, `Node`) and declarative (`WidgetSpec`) APIs: `foreground`
-for glyph/text color, `background` only for real fills, MD3's own
-`checked`/`selected` state names, `value` for a slider, one
-`orientation` parameter, lowercase `snake_case` enum values, and
-consistent text-string parameter names.
-
-User's versioning call: this ships as `0.3.3`; `0.4.0` is reserved for
-the `vello_hybrid` fork (issue #4).
+Design only, no code. Produce the target API of `tre` as a minimal
+building-block engine: every surviving class, function, property, event,
+and animation, with final names under one written naming convention, and
+an old-to-new migration table covering every current public name.
 
 ## Phases
 
-1. Renames in `engine-spec` and `engine-py`, with migration errors that
-   name each replacement.
-2. Tests, all examples, `demo/showcase.py`.
-3. Docs, including a "Migrating to 0.3.3" page.
-4. Full verification chain, then the Tesserae handoff.
+1. **Inventory and classification:** every current public name classed as
+   keep, replace-with-primitive, move-to-framework, or remove; the exact
+   primitives each MD3 widget needs; the bare-bones docking surface (D10);
+   every Tesserae capability mapped to a named primitive.
+2. **Naming convention:** the written rules, applied to every survivor.
+3. **Spec review:** published as a docs design page, sent to Tesserae,
+   approved by the user. Nothing in M94 onward starts before approval.
+
+## Deliverable
+
+`docs/design/target-api.md`.
 
 ## Status
 
-**Scoped, not started.** Findings A–H are recommendations awaiting the
-user's confirmation before implementation.
+Phase 1 in progress.

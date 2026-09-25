@@ -1,19 +1,19 @@
-# LOG — Branch `0.3.3`
+# LOG — Branch `0.3.4`
 
-- User-directed: "Scope M90 on a new 0.3.3 branch. We wont move to
-  0.4.0 until vello_hybrid fix/clone feature is put into place."
+- User-directed: "Approved, release 0.3.3 and start M93."
 
 ## Done
 
-1. Branch `0.3.3` created off `main` at `cb9eea2`.
-2. `Cargo.toml`/`pyproject.toml` bumped 0.3.2 → 0.3.3; `Cargo.lock`
-   updated via `cargo check --workspace`.
-3. M90 scoped from a scripted audit of all 60 `Window.add_*` factories'
-   parameters, the `Node` accessors, and every declarative schema
-   field — eight findings (A–H) recorded in `BUILD_TRACKER.md` with a
-   recommended fix each.
+1. `v0.3.3` released: PR #9 merged as `bc5e9b6` after CI went green on
+   all three platforms; `main` re-verified; release note `73e0711`;
+   annotated tag `v0.3.3` on the merge commit, pushed.
+2. Branch `0.3.4` created off `main` at `73e0711`; version bumped
+   0.3.3 → 0.3.4; `Cargo.lock` updated via `cargo check`.
+3. M93 started: a raw inventory of all 171 public signatures generated
+   from `_core.pyi`, plus the engine's internal input events, dispatch
+   outcomes, node kinds, paint properties, motion curves, and the docking
+   model, read from source.
 
 ## Status
 
-**Scoped, not started.** Waiting on the user to confirm or amend
-findings A–H before Phase 1.
+**M93 Phase 1 in progress.**

@@ -56,7 +56,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M91 — Live View Updates Keep Bound Values + `View.set_stylesheet` (issue #8) | `██████████` 100% | ✅ Complete — both phases done (2026-09-25) — closes issue #8 |
 | M92 — Animatable `Icon` Color | `██████████` 100% | ✅ Complete — single phase (2026-09-25) |
 | `v0.3.3` Release: PR #9 Merged to `main`, Tagged and Pushed | — | ✅ Released (2026-09-25) |
-| M93 — Target API Spec and Naming Convention | `░░░░░░░░░░` 0% | ⬜ Approved, next after the v0.3.3 release (2026-09-25) |
+| M93 — Target API Spec and Naming Convention | `░░░░░░░░░░` 0% | 🚧 In progress — Phase 1 of 3 (2026-09-25) |
 | M94 — Input and Accessibility Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M95 — Paint and Animation Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M96 — Layer and Overlay Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
@@ -1215,6 +1215,16 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ---
 
+## Branch: `0.3.4` — Release Prep
+
+**Status: 🚧 In progress (2026-09-25).** The first release of the approved building-block program: M93–M96, additive only, per D11 -- the old API stays present so Tesserae can migrate against a published version (M97).
+
+- Branch `0.3.4` created off `main` at `73e0711` (post-`v0.3.3`) — ✅
+- `Cargo.toml`/`pyproject.toml` bumped 0.3.3 → 0.3.4; `Cargo.lock` updated via `cargo check` — ✅
+- `PLAN.md`/`LOG.md` reset for M93 — ✅
+
+---
+
 ## Program: `tre` as a Minimal Building-Block Engine (M93–M103) — Approved
 
 **Status: 🚧 Approved (2026-09-25).** User: "Approved, release 0.3.3 and start M93." All eleven decisions answered by the user; D10 changed from the recommendation. User: "I want TRE to drop the declarative option entirely. I also want TRE to drop the MD3 components while keeping all primitives used to create the MD3 components. I also want the MD3 specific theme to be decided and created on the framework side while TRE provides all of the functions/hooks to make that possible. I want TRE to provide the building blocks while the framework has the freedom to build what it wants ... TRE needs to be small and efficient. No duplicate code, no unnecessary functions ... TRE naming conventions need to be normalized and easy to understand. When a developer uses TRE to make a framework they should know what a function, property, handler, animation, etc. is at a glance." Then: "Scope out all sequentially, then update the build tracker and once I approve the overall plan we will get started on this."
@@ -1278,7 +1288,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Milestone 93 — Target API Spec and Naming Convention
 
-**Status: ⬜ Proposed.** Design only, no code. Every later milestone implements this spec, so names are decided once, here, instead of renamed twice.
+**Status: 🚧 In progress (started 2026-09-25).** Design only, no code. Every later milestone implements this spec, so names are decided once, here, instead of renamed twice.
 
 ### Phase 1 — Inventory and Classification ⬜
 - Step 1: classify every public name -- all 7 classes' methods, the 60 factories, all 21 node kinds, every `PaintProperties` field, every event, every animatable property, every motion curve -- as keep, replace-with-primitive, move-to-framework, or remove, with a one-line reason each — ⬜
