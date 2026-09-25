@@ -1947,6 +1947,13 @@ class App:
 
     def __init__(self) -> None: ...
     def add_window(self, window: Window) -> None: ...
+    def thread_handle(self) -> LoopHandle:
+        """M87: a thread-safe handle to this `App`'s event loop. `App`,
+        `Window` and `View` may only be used from the thread that created
+        them; this handle may be passed to and used from any thread.
+        Every handle from one `App` shares the same queue.
+        """
+        ...
     def run(self, max_frames: int | None = None) -> None:
         """Blocks, pumping every added window's real event loop, until
         every window closes (or, if given, `max_frames` is reached on
@@ -1954,6 +1961,27 @@ class App:
         `None` (rather than raising) if no real display is reachable,
         the same headless-CI-safe convention every example in this
         project relies on.
+        """
+        ...
+
+class LoopHandle:
+    """M87: a thread-safe handle to an `App`'s event loop, from
+    `App.thread_handle()`. The one `tre` object a background thread
+    (a file watcher, a network client) may use.
+    """
+
+    def call_soon(self, callback: Callable[[], object]) -> None:
+        """Queues `callback` (called with no arguments) to run on the
+        `App`'s event-loop thread, and wakes the loop -- including an
+        idle one. There it can touch `View`/`Window`/`Node` like an input
+        handler can, e.g. `view.reconcile(spec=...)` for hot reload.
+
+        Safe from any thread, before, during, or after `App.run()`.
+        Callbacks run in FIFO order at the top of the next frame; one
+        queued outside a run waits for the next run's first frame. An
+        exception is logged like one from an input handler and doesn't
+        stop the loop or later callbacks. Raises `TypeError` if
+        `callback` isn't callable.
         """
         ...
 

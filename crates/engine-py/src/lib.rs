@@ -16,6 +16,7 @@ mod error;
 mod event;
 mod node;
 mod terminal;
+mod thread_handle;
 mod view;
 mod window;
 mod window_docking;
@@ -31,6 +32,7 @@ pub use component::Component;
 pub use error::EngineError;
 pub use event::Event;
 pub use node::Node;
+pub use thread_handle::LoopHandle;
 pub use view::View;
 pub use window::{PyWindow, Theme};
 
@@ -49,6 +51,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CanvasContext>()?;
     m.add_class::<Event>()?;
     m.add_class::<Theme>()?;
+    m.add_class::<LoopHandle>()?;
     m.add_function(wrap_pyfunction!(view::_record_read, m)?)?;
     m.add_function(wrap_pyfunction!(view::_begin_recording, m)?)?;
     m.add_function(wrap_pyfunction!(view::_end_recording, m)?)?;

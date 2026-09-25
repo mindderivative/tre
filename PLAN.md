@@ -1,34 +1,28 @@
-# PLAN — Milestone 86: Data-Not-Paths Ingestion for Themes, Stylesheets, and Fonts
+# PLAN — Milestone 87: Thread-Safe Callbacks into a Running `App`
 
-*(Replaces the `0.3.2` branch-scaffold plan. Full scope, design
+*(Replaces the M86 plan — M86 is complete. Full scope, design
 decisions, and step list live in `BUILD_TRACKER.md`'s own "Milestone
-86" section — this file is the working plan for the phase in flight.)*
+87" section.)*
 
 ## Goal
 
-User: "Tesserae should not be pushing files directly to tre. It should
-be pushing spec information and handling the files itself." Themes,
-stylesheets, and fonts are the last three concerns where `tre` only
-accepts a file path. Give each a data-shaped entry point; keep the path
-forms as bare-`tre` convenience layered on top.
+[`tre` issue #6](https://github.com/mindderivative/tre/issues/6):
+nothing can hot-reload a live window, because `App.run()` never calls
+back into Python and `App`/`Window`/`View` are single-threaded. User's
+direction: "I would prefer the threadsafe option more and tesserae will
+end up moving to a watcher driven by file-change events."
+
+`App.thread_handle()` returns a `Send + Sync` `LoopHandle`; a
+background thread calls `handle.call_soon(fn)`, the loop wakes, and
+`fn` runs on the event-loop thread — the same queue + `EventLoopWaker`
+pattern `Terminal`'s PTY reader thread already uses.
 
 ## Phases
 
-1. **Theme and stylesheet specs:** `default_theme_spec=`/
-   `custom_theme_spec=` on `View(...)`, `View.set_theme`, and
-   `Window.set_theme`; `stylesheet_spec=` on `View(...)`. Each is
-   depythonized into `ThemeSpec`/`Stylesheet` through `pythonize`, the
-   same path `View(spec=)` uses. Each spec kwarg is mutually exclusive
-   with its path counterpart (`require_at_most_one_content_source`).
-   `resolve_theme_layers` and `Window.set_theme` take already-resolved
-   `ThemeSpec`s, so path and spec share one code path after input
-   resolution.
-2. **Font registration:** process-global registry in `engine-render`,
-   `tre.register_font(data: bytes) -> list[str]`, live renderers
-   sync by generation counter.
-3. **Docs and verification.**
+1. **Callback queue, `LoopHandle`, drain** — done.
+2. **Example, docs, verification:** `examples/threadsafe_reload.py`,
+   MkDocs (`app.md`, declarative-views hot-reload section), full chain.
 
 ## Status
 
-**Complete.** Phase 1 `babef68`, Phase 2 `abcba45`, Phase 3 docs and
-full verification committed after. See `LOG.md`.
+Phase 1 complete; Phase 2 next.

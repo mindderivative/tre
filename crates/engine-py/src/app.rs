@@ -40,11 +40,15 @@ use crate::dispatch::{
 };
 use crate::dock::{self, SharedDockState};
 use crate::terminal::{TerminalSession, control_byte_for, input_bytes_for};
+use crate::thread_handle::{CallQueue, LoopHandle};
 use crate::window::{PyWindow, SharedActiveTree, SharedSize, SharedTheme};
 
 #[pyclass(unsendable)]
 pub struct App {
     windows: Vec<Py<PyWindow>>,
+    /// M87: callables queued from other threads via `LoopHandle`,
+    /// drained at the top of every frame -- see `thread_handle.rs`.
+    calls: CallQueue,
 }
 
 /// One registered window's data, extracted once (up front, while the
@@ -363,7 +367,17 @@ impl App {
     fn new() -> Self {
         Self {
             windows: Vec::new(),
+            calls: CallQueue::default(),
         }
+    }
+
+    /// M87 (tre issue #6): a `Send + Sync` handle a background thread can
+    /// hold, since `App` itself is `unsendable`. `handle.call_soon(fn)`
+    /// queues `fn` to run on this `App`'s event-loop thread and wakes the
+    /// loop -- how a file watcher thread drives hot reload inside
+    /// `run()`. Every handle from one `App` shares the same queue.
+    fn thread_handle(&self) -> LoopHandle {
+        LoopHandle::new(self.calls.clone())
     }
 
     /// Registers `window` to be opened the next time `run()` is called
@@ -457,6 +471,8 @@ impl App {
         let runtimes_for_input = runtimes.clone();
         let runtimes_for_access_action = runtimes;
         let setups_for_setup = setups;
+        let calls_for_frame = self.calls.clone();
+        let calls_for_setup = self.calls.clone();
 
         let result = run_windowed_multi(
             move |window_id, token, window| {
@@ -483,6 +499,13 @@ impl App {
                 );
             },
             move |window_id, _frame| -> bool {
+                // M87: run anything a background thread queued via
+                // `LoopHandle.call_soon` first -- before the `active`
+                // re-sync below, so a queued `show_view`/`reconcile`
+                // is what this very frame ticks and paints. No borrow of
+                // `runtimes` or any tree is held here, so the callable
+                // is free to touch any window's tree.
+                calls_for_frame.drain(py);
                 let mut runtimes = runtimes_for_frame.borrow_mut();
                 let Some(runtime) = runtimes.get_mut(&window_id) else {
                     return false;
@@ -1222,6 +1245,9 @@ impl App {
                 }
             },
             move |opener, waker| {
+                // M87: from here on, `LoopHandle.call_soon` wakes this
+                // run's loop -- including one idle in `ControlFlow::Wait`.
+                calls_for_setup.set_waker(Some(waker.clone()));
                 for (index, setup) in setups_for_setup.iter().enumerate() {
                     opener.open_window(WindowRequest {
                         config: WindowConfig {
@@ -1246,6 +1272,11 @@ impl App {
                 }
             },
         );
+
+        // M87: this run's loop is gone -- a `call_soon` from now on just
+        // queues, waiting for a later `run()`'s first frame, rather than
+        // waking a proxy with no loop behind it.
+        self.calls.set_waker(None);
 
         match result {
             Ok(()) => Ok(()),
