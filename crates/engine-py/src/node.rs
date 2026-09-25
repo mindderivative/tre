@@ -39,6 +39,7 @@ use crate::dispatch::{HandlerMap, SharedCompletions, call_handler};
 use crate::error::EngineError;
 use crate::event::{Event, NodeContext};
 use crate::node_handles;
+use crate::node_layout::{ALIGN, FLEX_DIRECTION, JUSTIFY, lookup};
 use crate::thread_bound::ThreadBound;
 use crate::window::SharedTheme;
 
@@ -256,6 +257,24 @@ impl Node {
                     now,
                     handle,
                 );
+            }
+            // M96: the target API's transform parts, each with its own
+            // animation (`NodeTransform`).
+            "translate_x" | "translate_y" | "scale" | "rotation_deg" => {
+                let value = if property == "scale" {
+                    crate::node_props::parse_non_negative(&to, property)?
+                } else {
+                    extract_f64(&to, property)?
+                };
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let parts = &mut node.paint.node_transform;
+                let field = match property {
+                    "translate_x" => &mut parts.translate_x,
+                    "translate_y" => &mut parts.translate_y,
+                    "scale" => &mut parts.scale,
+                    _ => &mut parts.rotation_deg,
+                };
+                animate_field(field, value, duration, curve, now, handle);
             }
             "stroke_width" => {
                 let value = crate::node_props::parse_non_negative(&to, property)?;
@@ -1805,52 +1824,24 @@ fn is_glyph_kind(kind: &NodeKind) -> bool {
 }
 
 fn parse_flex_direction(value: &str) -> PyResult<FlexDirection> {
-    match value {
-        "horizontal" => Ok(FlexDirection::Row),
-        "vertical" => Ok(FlexDirection::Column),
-        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "set_layout: unknown flex_direction {other:?} -- expected one of \"horizontal\", \"vertical\""
-        ))),
-    }
+    layout_keyword(&FLEX_DIRECTION, "flex_direction", value)
 }
 
 fn parse_align_items(value: &str) -> PyResult<AlignItems> {
-    match value {
-        "start" => Ok(AlignItems::START),
-        "end" => Ok(AlignItems::END),
-        "flex_start" => Ok(AlignItems::FLEX_START),
-        "flex_end" => Ok(AlignItems::FLEX_END),
-        "center" => Ok(AlignItems::CENTER),
-        "baseline" => Ok(AlignItems::BASELINE),
-        "stretch" => Ok(AlignItems::STRETCH),
-        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "set_layout: unknown align_items {other:?} -- expected one of \"start\", \"end\", \
-             \"flex_start\", \"flex_end\", \"center\", \"baseline\", \"stretch\""
-        ))),
-    }
+    layout_keyword(&ALIGN, "align_items", value)
 }
 
-/// `parse_align_items`'s own real `justify_content=` sibling -- a
-/// superset vocabulary (adds the real space-distribution keywords
-/// `align_items` doesn't have), mirroring `engine-spec::
-/// JustifyContentSpec`'s identical real shape.
 fn parse_justify_content(value: &str) -> PyResult<JustifyContent> {
-    match value {
-        "start" => Ok(JustifyContent::START),
-        "end" => Ok(JustifyContent::END),
-        "flex_start" => Ok(JustifyContent::FLEX_START),
-        "flex_end" => Ok(JustifyContent::FLEX_END),
-        "center" => Ok(JustifyContent::CENTER),
-        "stretch" => Ok(JustifyContent::STRETCH),
-        "space_between" => Ok(JustifyContent::SPACE_BETWEEN),
-        "space_around" => Ok(JustifyContent::SPACE_AROUND),
-        "space_evenly" => Ok(JustifyContent::SPACE_EVENLY),
-        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "set_layout: unknown justify_content {other:?} -- expected one of \"start\", \"end\", \
-             \"flex_start\", \"flex_end\", \"center\", \"stretch\", \"space_between\", \
-             \"space_around\", \"space_evenly\""
-        ))),
-    }
+    layout_keyword(&JUSTIFY, "justify_content", value)
+}
+
+/// `set_layout`'s keyword kwargs, read from the same tables `node.set` uses.
+fn layout_keyword<T: Copy>(table: &[(&str, T)], name: &str, value: &str) -> PyResult<T> {
+    lookup(table, value).map_err(|expected| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "set_layout: unknown {name} {value:?} -- expected {expected}"
+        ))
+    })
 }
 
 /// M82: shared by `push_frame` and `Window.add_image_from_bytes` --

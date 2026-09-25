@@ -1724,6 +1724,54 @@ impl Shadow {
     }
 }
 
+/// M96: a node's own transform, as four independently animatable parts
+/// applied about the center of its box, like CSS's default
+/// `transform-origin`: scale and rotation first, then translation. Each
+/// part has its own animation, so easing one never retargets another, and
+/// a rotation sweeps through its arc.
+pub struct NodeTransform {
+    pub translate_x: Animated<f64>,
+    pub translate_y: Animated<f64>,
+    pub scale: Animated<f64>,
+    pub rotation_deg: Animated<f64>,
+}
+
+impl Default for NodeTransform {
+    fn default() -> Self {
+        Self {
+            translate_x: Animated::new(0.0),
+            translate_y: Animated::new(0.0),
+            scale: Animated::new(1.0),
+            rotation_deg: Animated::new(0.0),
+        }
+    }
+}
+
+impl NodeTransform {
+    /// The current affine for a `width` x `height` box.
+    pub fn to_affine(&self, width: f64, height: f64) -> peniko::kurbo::Affine {
+        use peniko::kurbo::Affine;
+        let (tx, ty) = (self.translate_x.current, self.translate_y.current);
+        let (scale, degrees) = (self.scale.current, self.rotation_deg.current);
+        if scale == 1.0 && degrees == 0.0 {
+            return Affine::translate((tx, ty));
+        }
+        let center = (width / 2.0, height / 2.0);
+        Affine::translate((tx + center.0, ty + center.1))
+            * Affine::rotate(degrees.to_radians())
+            * Affine::scale(scale)
+            * Affine::translate((-center.0, -center.1))
+    }
+
+    fn tick(&mut self, now: Instant, completed: &mut Vec<crate::CompletionHandle>) -> bool {
+        let x = self.translate_x.tick(now, completed);
+        let y = self.translate_y.tick(now, completed);
+        let scale = self.scale.tick(now, completed);
+        let rotation = self.rotation_deg.tick(now, completed);
+        x || y || scale || rotation
+    }
+}
+
 /// M95: a node's drop shadows, the first painted on top, like CSS.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Shadows(pub Vec<Shadow>);
@@ -1804,6 +1852,11 @@ pub struct PaintProperties {
     /// M95: drop shadows (`Shadows`), independent of the legacy MD3
     /// `elevation`, which keeps drawing its own until M99 removes it.
     pub shadows: Animated<Shadows>,
+    /// M96: the target API's `translate_x`/`translate_y`/`scale`/
+    /// `rotation_deg`, composed after the legacy `transform` above (which
+    /// keeps its top-left origin for canvas pan/zoom until M101 merges
+    /// the two). Read both through `local_transform`.
+    pub node_transform: NodeTransform,
     /// M32 Phase 3 (§5, §7, §11.7/§11.8): the real, general form of the
     /// clip `VirtualList`/`Carousel` each already bake into their own
     /// paint -- confirmed via direct read of `engine-render::paint_node`
@@ -1904,6 +1957,7 @@ impl PaintProperties {
             border_width: Animated::new(0.0),
             corner_radii_override: None,
             shadows: Animated::new(Shadows::default()),
+            node_transform: NodeTransform::default(),
             clip_children: false,
             button_group_reflow: None,
             interactive_shape: None,
@@ -1920,6 +1974,12 @@ impl PaintProperties {
     /// ahead of a step that profiles it as actually necessary; the
     /// frame-time CI benchmark this same step adds is exactly what would
     /// catch it if a naive walk ever stopped meeting the 16.6ms budget.
+    /// M96: this node's whole transform relative to its layout position,
+    /// for a `width` x `height` box -- what paint and hit-testing apply.
+    pub fn local_transform(&self, width: f64, height: f64) -> peniko::kurbo::Affine {
+        self.transform.current * self.node_transform.to_affine(width, height)
+    }
+
     pub fn tick(&mut self, now: Instant, completed: &mut Vec<crate::CompletionHandle>) -> bool {
         let background = self.background.tick(now, completed);
         let corner_radius = self.corner_radius.tick(now, completed);
@@ -1934,8 +1994,10 @@ impl PaintProperties {
             .as_mut()
             .is_some_and(|radii| radii.tick(now, completed));
         let shadows = self.shadows.tick(now, completed);
+        let node_transform = self.node_transform.tick(now, completed);
         radii
             || shadows
+            || node_transform
             || background
             || corner_radius
             || elevation
@@ -1951,6 +2013,13 @@ pub struct Node {
     pub id: NodeId,
     pub parent: Option<NodeId>,
     pub children: Vec<NodeId>,
+    /// M96: `false` hides the node and its subtree -- not painted, not
+    /// hit, not in the accessibility tree or tab order, and (through
+    /// `Display::None`, set alongside) taking no layout space.
+    pub visible: bool,
+    /// M96: paint and hit-test order among siblings -- higher paints later,
+    /// on top; equal values keep child order.
+    pub z_index: i32,
     pub kind: NodeKind,
     pub layout_style: Style,
     pub paint: PaintProperties,

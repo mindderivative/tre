@@ -13,16 +13,23 @@ use peniko::kurbo::Rect;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use taffy::prelude::Dimension;
+use taffy::prelude::{AvailableSpace, Dimension};
 use taffy::style::ExpandedDimension;
 
 use crate::dispatch::{fire_focus_transition, interaction_config};
 use crate::node::Node;
+use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
 
-/// Every property `set` accepts today, in the order its error lists them.
-const SETTABLE: [&str; 37] = [
-    "width",
-    "height",
+/// Every property `set` accepts besides the layout ones
+/// (`node_layout::LAYOUT_PROPS`), in the order its error lists them.
+const SETTABLE: [&str; 42] = [
+    "visible",
+    "z_index",
+    "clip_children",
+    "translate_x",
+    "translate_y",
+    "scale",
+    "rotation_deg",
     "fill",
     "stroke_color",
     "stroke_width",
@@ -112,8 +119,14 @@ pub(crate) enum Change {
     TabIndex(i32),
     Cursor(Option<Cursor>),
     HitTestable(bool),
-    Width(Dimension),
-    Height(Dimension),
+    Style(StyleEdit),
+    Visible(bool),
+    ZIndex(i32),
+    ClipChildren(bool),
+    TranslateX(f64),
+    TranslateY(f64),
+    Scale(f64),
+    RotationDeg(f64),
     Data(PathData),
     ViewBox(Option<Rect>),
     TrimStart(f64),
@@ -313,6 +326,10 @@ pub(crate) fn animatable_to_py(
         )?,
         "stroke_color" => color_to_py(*pick(&node.paint.border_color, target), py)?,
         "stroke_width" => number(*pick(&node.paint.border_width, target))?,
+        "translate_x" => number(*pick(&node.paint.node_transform.translate_x, target))?,
+        "translate_y" => number(*pick(&node.paint.node_transform.translate_y, target))?,
+        "scale" => number(*pick(&node.paint.node_transform.scale, target))?,
+        "rotation_deg" => number(*pick(&node.paint.node_transform.rotation_deg, target))?,
         "opacity" => number(*pick(&node.paint.opacity, target))?,
         "corner_radius" => match &node.paint.corner_radii_override {
             Some(radii) => {
@@ -365,6 +382,10 @@ pub(crate) fn stop_animatable(node: &mut engine_core::Node, name: &str) -> PyRes
         },
         "stroke_color" => node.paint.border_color.stop(),
         "stroke_width" => node.paint.border_width.stop(),
+        "translate_x" => node.paint.node_transform.translate_x.stop(),
+        "translate_y" => node.paint.node_transform.translate_y.stop(),
+        "scale" => node.paint.node_transform.scale.stop(),
+        "rotation_deg" => node.paint.node_transform.rotation_deg.stop(),
         "opacity" => node.paint.opacity.stop(),
         "corner_radius" => {
             node.paint.corner_radius.stop();
@@ -428,41 +449,6 @@ impl Change {
     }
 }
 
-/// A size: a number of logical pixels, `"auto"`, or a percentage string.
-fn dimension(value: &Bound<'_, PyAny>, name: &str) -> PyResult<Dimension> {
-    let expected = "a number, \"auto\", or a percentage like \"50%\"";
-    if value.is_instance_of::<pyo3::types::PyBool>() {
-        return Err(invalid(name, expected));
-    }
-    if let Ok(number) = value.extract::<f64>() {
-        if number < 0.0 || !number.is_finite() {
-            return Err(invalid(name, expected));
-        }
-        return Ok(Dimension::length(number as f32));
-    }
-    let text: String = value.extract().map_err(|_| invalid(name, expected))?;
-    if text == "auto" {
-        return Ok(Dimension::auto());
-    }
-    text.strip_suffix('%')
-        .and_then(|number| number.trim().parse::<f32>().ok())
-        .filter(|percent| *percent >= 0.0 && percent.is_finite())
-        .map(|percent| Dimension::percent(percent / 100.0))
-        .ok_or_else(|| invalid(name, expected))
-}
-
-/// A size read back the way it was set.
-fn dimension_to_py(dim: Dimension, py: Python<'_>) -> PyResult<Py<PyAny>> {
-    Ok(match ExpandedDimension::from(dim) {
-        ExpandedDimension::Length(v) => f64::from(v).into_pyobject(py)?.into_any().unbind(),
-        ExpandedDimension::Percent(p) => format!("{}%", f64::from(p) * 100.0)
-            .into_pyobject(py)?
-            .into_any()
-            .unbind(),
-        _ => "auto".into_pyobject(py)?.into_any().unbind(),
-    })
-}
-
 /// A trim fraction, `0.0..=1.0`.
 fn fraction(value: &Bound<'_, PyAny>, name: &str) -> PyResult<f64> {
     let fraction: f64 = required(value, name, "a number from 0.0 to 1.0")?;
@@ -523,7 +509,29 @@ fn optional_bool(value: &Bound<'_, PyAny>, name: &str) -> PyResult<Option<bool>>
 }
 
 fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
+    if let Some(edit) = parse_layout(name, value) {
+        return edit.map(Change::Style);
+    }
+    let number = |expected: &str| -> PyResult<f64> {
+        let number: f64 = required(value, name, expected)?;
+        if !number.is_finite() || value.is_instance_of::<pyo3::types::PyBool>() {
+            return Err(invalid(name, expected));
+        }
+        Ok(number)
+    };
     Ok(match name {
+        "visible" => Change::Visible(boolean(value, name)?),
+        "z_index" => {
+            if value.is_instance_of::<pyo3::types::PyBool>() {
+                return Err(invalid(name, "an int"));
+            }
+            Change::ZIndex(required(value, name, "an int")?)
+        }
+        "clip_children" => Change::ClipChildren(boolean(value, name)?),
+        "translate_x" => Change::TranslateX(number("a number")?),
+        "translate_y" => Change::TranslateY(number("a number")?),
+        "scale" => Change::Scale(parse_non_negative(value, name)?),
+        "rotation_deg" => Change::RotationDeg(number("a number")?),
         "role" => {
             let role: String = required(value, name, "a str")?;
             let role = ROLES
@@ -585,8 +593,6 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
             })
         }
         "hit_testable" => Change::HitTestable(boolean(value, name)?),
-        "width" => Change::Width(dimension(value, name)?),
-        "height" => Change::Height(dimension(value, name)?),
         "data" => {
             let data: String = required(value, name, "SVG path data (a str)")?;
             Change::Data(PathData::from_svg(&data).map_err(|err| {
@@ -623,7 +629,8 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
         "palette" => Change::Palette(Box::new(parse_palette(value, name)?)),
         _ => {
             return Err(PyValueError::new_err(format!(
-                "unknown node property {name:?} -- settable: {}",
+                "unknown node property {name:?} -- settable: {}, {}",
+                LAYOUT_PROPS.join(", "),
                 SETTABLE.join(", ")
             )));
         }
@@ -694,6 +701,9 @@ impl Node {
             if let Some(value) = animatable_to_py(node, name, false, py)? {
                 return Ok(value);
             }
+            if let Some(value) = read_layout(name, &node.layout_style, py) {
+                return value;
+            }
             let access = &node.access;
             let any = |v: Bound<'_, PyAny>| v.unbind();
             match name {
@@ -745,8 +755,25 @@ impl Node {
                     .into_any()
                     .unbind(),
                 "hit_testable" => any(node.hit_testable.into_pyobject(py)?.to_owned().into_any()),
-                "width" => dimension_to_py(node.layout_style.size.width, py)?,
-                "height" => dimension_to_py(node.layout_style.size.height, py)?,
+                "visible" => any(node.visible.into_pyobject(py)?.to_owned().into_any()),
+                "z_index" => any(node.z_index.into_pyobject(py)?.into_any()),
+                "clip_children" => any(node
+                    .paint
+                    .clip_children
+                    .into_pyobject(py)?
+                    .to_owned()
+                    .into_any()),
+                "layout_x" | "layout_y" | "layout_width" | "layout_height" => {
+                    drop(tree);
+                    let (x, y, w, h) = self.layout_box();
+                    let value = match name {
+                        "layout_x" => x,
+                        "layout_y" => y,
+                        "layout_width" => w,
+                        _ => h,
+                    };
+                    return Ok(any(value.into_pyobject(py)?.into_any()));
+                }
                 "placeholder" | "placeholder_fill" | "caret_color" | "selection_fill"
                 | "obscured" => {
                     let NodeKind::TextField(state) = &node.kind else {
@@ -875,6 +902,37 @@ impl Node {
 }
 
 impl Node {
+    /// M96: this node's computed box in window space -- `(x, y, width,
+    /// height)` -- running any pending layout of its tree first, so it
+    /// always matches the current tree. A detached subtree is laid out on
+    /// its own, at its content size.
+    pub(crate) fn layout_box(&self) -> (f64, f64, f64, f64) {
+        let mut tree = self.tree.borrow_mut();
+        let root = tree.root_of(self.id);
+        let available = |dim: Dimension| match ExpandedDimension::from(dim) {
+            ExpandedDimension::Length(v) => AvailableSpace::Definite(v),
+            _ => AvailableSpace::MaxContent,
+        };
+        let size = tree.get(root).map(|n| n.layout_style.size);
+        if let Some(size) = size {
+            tree.compute_layout(
+                root,
+                taffy::prelude::Size {
+                    width: available(size.width),
+                    height: available(size.height),
+                },
+            );
+        }
+        let (x, y) = tree.absolute_position(self.id);
+        let layout = tree.layout(self.id);
+        (
+            x,
+            y,
+            f64::from(layout.size.width),
+            f64::from(layout.size.height),
+        )
+    }
+
     /// Applies already-checked changes (`parse_all`) -- the second half of
     /// an atomic `set`, shared with `Window.create`.
     pub(crate) fn apply(&self, changes: Vec<Change>) {
@@ -903,17 +961,24 @@ impl Node {
                 Change::TabIndex(index) => access.tab_index = index,
                 Change::Cursor(cursor) => node.cursor = cursor,
                 Change::HitTestable(hit_testable) => node.hit_testable = hit_testable,
-                Change::Width(width) => {
+                Change::Style(edit) => edit(style.get_or_insert_with(|| node.layout_style.clone())),
+                Change::Visible(visible) => {
+                    node.visible = visible;
                     style
                         .get_or_insert_with(|| node.layout_style.clone())
-                        .size
-                        .width = width;
+                        .display = if visible {
+                        taffy::Display::DEFAULT
+                    } else {
+                        taffy::Display::None
+                    };
                 }
-                Change::Height(height) => {
-                    style
-                        .get_or_insert_with(|| node.layout_style.clone())
-                        .size
-                        .height = height;
+                Change::ZIndex(z) => node.z_index = z,
+                Change::ClipChildren(clip) => node.paint.clip_children = clip,
+                Change::TranslateX(v) => node.paint.node_transform.translate_x = Animated::new(v),
+                Change::TranslateY(v) => node.paint.node_transform.translate_y = Animated::new(v),
+                Change::Scale(v) => node.paint.node_transform.scale = Animated::new(v),
+                Change::RotationDeg(v) => {
+                    node.paint.node_transform.rotation_deg = Animated::new(v);
                 }
                 Change::Data(data) => {
                     if let NodeKind::Path(state) = &mut node.kind {

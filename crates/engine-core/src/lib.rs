@@ -45,10 +45,10 @@ pub use node::{
     CAROUSEL_UNCONTAINED_WIDTH, CarouselLayout, CarouselState, CellColor, CheckboxState,
     CircularProgressState, ContentFit, CornerRadii, Cursor, ICON_VIEWBOX_SIZE, IconState,
     ImageState, ItemExtent, LinearProgressState, LoadingIndicatorState, Node, NodeId, NodeKind,
-    PaintProperties, RadioButtonState, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN, SCROLLBAR_MIN_LENGTH,
-    SCROLLBAR_THICKNESS, ScrollViewState, Shadow, Shadows, SliderState, SplitterState, SwitchState,
-    TerminalCell, TerminalPalette, TerminalState, TextAlign, TextFieldState, TextState,
-    TimePickerDialMode, TimePickerDialState, VirtualListState,
+    NodeTransform, PaintProperties, RadioButtonState, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN,
+    SCROLLBAR_MIN_LENGTH, SCROLLBAR_THICKNESS, ScrollViewState, Shadow, Shadows, SliderState,
+    SplitterState, SwitchState, TerminalCell, TerminalPalette, TerminalState, TextAlign,
+    TextFieldState, TextState, TimePickerDialMode, TimePickerDialState, VirtualListState,
 };
 pub use overlay::OverlayMeta;
 pub use path::{PathData, PathState, fit_transform, trim};

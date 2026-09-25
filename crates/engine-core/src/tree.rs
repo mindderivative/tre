@@ -297,6 +297,8 @@ impl Tree {
             interaction: None,
             hit_testable: true,
             cursor: None,
+            visible: true,
+            z_index: 0,
         });
         self.taffy_nodes.insert(id, taffy_node);
         id
@@ -404,6 +406,22 @@ impl Tree {
             self.forget_interaction_in(child);
         }
         true
+    }
+
+    /// M96: `id`'s children in paint order -- bottom first, by `z_index`,
+    /// equal values keeping child order. Borrows the child list unless a
+    /// child has a nonzero `z_index`.
+    pub fn children_in_paint_order(&self, id: NodeId) -> std::borrow::Cow<'_, [NodeId]> {
+        let Some(node) = self.nodes.get(id) else {
+            return std::borrow::Cow::Borrowed(&[]);
+        };
+        let z = |child: &NodeId| self.nodes.get(*child).map_or(0, |n| n.z_index);
+        if node.children.iter().all(|child| z(child) == 0) {
+            return std::borrow::Cow::Borrowed(&node.children);
+        }
+        let mut ordered = node.children.clone();
+        ordered.sort_by_key(z);
+        std::borrow::Cow::Owned(ordered)
     }
 
     /// `id` and every ancestor up to its root, innermost first.
@@ -1473,7 +1491,9 @@ impl Tree {
                 .expect("absolute_position: NodeId not found in this Tree");
             composed = composed
                 * Affine::translate((f64::from(layout.location.x), f64::from(layout.location.y)))
-                * node.paint.transform.current;
+                * node
+                    .paint
+                    .local_transform(f64::from(layout.size.width), f64::from(layout.size.height));
         }
         composed
     }
@@ -2555,12 +2575,17 @@ impl Tree {
         parent_transform: Affine,
     ) -> Option<(NodeId, Point)> {
         let node = self.nodes.get(id)?;
+        if !node.visible {
+            return None;
+        }
         let layout = self.layout(id);
         let composed = parent_transform
             * Affine::translate((f64::from(layout.location.x), f64::from(layout.location.y)))
-            * node.paint.transform.current;
+            * node
+                .paint
+                .local_transform(f64::from(layout.size.width), f64::from(layout.size.height));
 
-        for &child in node.children.iter().rev() {
+        for &child in self.children_in_paint_order(id).iter().rev() {
             if let Some(hit) = self.hit_test_at(child, point, composed) {
                 return Some(hit);
             }
@@ -3749,6 +3774,9 @@ impl Tree {
         let Some(node) = self.nodes.get(id) else {
             return;
         };
+        if !node.visible {
+            return;
+        }
         if node.access.in_tab_order() {
             out.push(id);
         }
@@ -4607,13 +4635,17 @@ impl Tree {
             x1: x + w,
             y1: y + h,
         });
-        let children: Vec<accesskit::NodeId> =
-            node.children.iter().copied().map(to_access_id).collect();
-        access_node.set_children(children);
+        let visible_children = || {
+            node.children
+                .iter()
+                .copied()
+                .filter(|&child| self.nodes.get(child).is_some_and(|c| c.visible))
+        };
+        access_node.set_children(visible_children().map(to_access_id).collect::<Vec<_>>());
 
         out.push((to_access_id(id), access_node));
 
-        for &child in &node.children {
+        for child in visible_children() {
             self.collect_access_nodes(child, x, y, out);
         }
     }

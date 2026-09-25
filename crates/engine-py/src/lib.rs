@@ -19,6 +19,7 @@ mod listeners;
 mod node;
 mod node_events;
 mod node_handles;
+mod node_layout;
 mod node_props;
 mod terminal;
 mod thread_bound;

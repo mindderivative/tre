@@ -364,12 +364,16 @@ fn paint_node(
     let node = tree
         .get(id)
         .expect("build_tree_scene: NodeId not found in this Tree");
+    // M96: a hidden node paints nothing, subtree included.
+    if !node.visible {
+        return;
+    }
     let layout = tree.layout(id);
     let w = f64::from(layout.size.width);
     let h = f64::from(layout.size.height);
     let composed = parent_transform
         * Affine::translate((f64::from(layout.location.x), f64::from(layout.location.y)))
-        * node.paint.transform.current;
+        * node.paint.local_transform(w, h);
 
     // M8 Phase 1 (§11.8): a whole-subtree skip, not a per-pixel clip --
     // this node's own real, composed, absolute bounding box (all four
@@ -1280,7 +1284,7 @@ fn paint_node(
         scene.push_layer(Some(clip), None, None, None, None);
 
         let narrowed = visible.intersect(bounds);
-        for &child in &node.children {
+        for &child in tree.children_in_paint_order(id).iter() {
             paint_node(
                 tree, child, composed, narrowed, scene, resources, text, geometry,
             );
@@ -1309,7 +1313,7 @@ fn paint_node(
             paint_virtual_list_thumb(state, w, h, composed, scene);
         }
     } else {
-        for &child in &node.children {
+        for &child in tree.children_in_paint_order(id).iter() {
             paint_node(
                 tree, child, composed, visible, scene, resources, text, geometry,
             );
