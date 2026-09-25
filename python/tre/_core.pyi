@@ -2093,6 +2093,19 @@ class View:
         if none is given.
         """
         ...
+    def set_stylesheet(
+        self,
+        stylesheet_spec: object | None = None,
+        stylesheet: str | None = None,
+    ) -> None:
+        """M91 (issue #8): replaces this view's stylesheet and
+        re-resolves every node in place, like `set_theme` -- `NodeId`s,
+        focus, and in-flight animations are preserved, and the attached
+        ViewModel's bindings are re-applied afterward. `stylesheet_spec`
+        (a dict) and `stylesheet` (a YAML file path) are mutually
+        exclusive; passing neither clears the stylesheet.
+        """
+        ...
     def set_theme(
         self,
         default_theme: str | None = None,
@@ -2123,11 +2136,8 @@ class View:
         previous call used." A `poll_reload()` called after this
         continues resolving against the theme this call installed.
 
-        Real, named limit, not silently glossed over: only the static
-        style cascade is recomputed -- a `{{ }}` binding's own
-        currently-applied value is not re-run, so a bound field reverts
-        to its spec's own static value (same as any content-only
-        `poll_reload` already does today). `View` has no imperative
+        M91 (issue #8): the attached ViewModel's bindings are re-applied
+        afterward, so a bound field keeps its live value. `View` has no imperative
         factories, so `Window.set_theme`'s own `components:` shape/
         elevation section has nothing to apply to here.
         """

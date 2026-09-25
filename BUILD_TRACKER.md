@@ -53,7 +53,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | `v0.3.2` Release: PR #7 Merged to `main`, Tagged and Pushed | — | ✅ Released (2026-09-25) |
 | M89 — MkDocs Completeness Pass + "Working with Files" Section for Pure-`tre` Users | `██████████` 100% | ✅ Complete — single phase (2026-09-25) |
 | M90 — Consistent Property Naming Across the Imperative and Declarative APIs (breaking) | `██████████` 100% | ✅ Complete — all 4 phases done (2026-09-25) |
-| M91 — Live View Updates Keep Bound Values + `View.set_stylesheet` (issue #8) | `█████░░░░░` 50% | 🚧 In progress — Phase 1 of 2 done (2026-09-25) |
+| M91 — Live View Updates Keep Bound Values + `View.set_stylesheet` (issue #8) | `█████████░` 90% | 🚧 In progress — code, docs, and verification done; closing issue #8 awaits the user (2026-09-25) |
 | M92 — Animatable `Icon` Color | `░░░░░░░░░░` 0% | ⬜ Scoped, not started — single phase (2026-09-25) |
 
 **Just closed:** M80 — a 4-lens multi-agent review (Performance/Architecture/Security/Modernization) of the full `0.3.1` diff (M71-M79) plus a lighter full-project pass, each raw finding adversarially re-verified against the real current source before being trusted. Security found nothing real. 8 findings confirmed real across the other 3 lenses; 5 fixed directly this milestone, 3 left open for explicit user input (real design/scope decisions, not mechanical).
@@ -1168,10 +1168,10 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - Step 4: check whether embedded `Component`s (their own reconciler and attachment) are touched by `View.set_theme`/`set_stylesheet` at all; fix or document what is found rather than assuming — ✅ (checked by running it: an embedded component's bindings are unaffected by the view's updates -- its nodes aren't in the view's spec and it keeps its own attachment. The converse is a pre-existing gap, recorded under Known gaps: `View.set_theme`/`set_stylesheet` don't re-resolve a component's static styles, since it has its own reconciler)
 - Step 5: tests -- the issue's reproduction as a regression test (bound text survives `set_theme`, and survives a `reconcile` that edits the bound node's style or static content); a binding added by a reconcile takes effect; a removed bound node's callback no longer fires; `set_stylesheet` restyles in place with `NodeId`s preserved; a `Signal` write after re-attach updates exactly once, not once per stale callback — ✅ (19 cases in new `tests/test_live_bindings.py`, including the issue's reproduction verbatim, `poll_reload`, a view shown in a `Window`, and handler add/remove; one pre-existing `test_theme.py` test had pinned the old revert-to-static behavior -- the bug itself -- and now asserts the bound value survives; pytest 973 passed, 2 skipped, and 964 passed, 0 failed with no display)
 
-### Phase 2 — Docs, Verification, Issue ⬜
-- Step 1: MkDocs -- `set_stylesheet` in the `View` reference; the "bindings are not re-resolved" caveats removed from `view.md`, `declarative-views.md`, and `working-with-files.md`; `mkdocs build --strict` clean — ⬜
-- Step 2: full standing chain, including the suite with `DISPLAY` unset to match CI — ⬜
-- Step 3: tell the Tesserae session (its M29 hot reload and M30 theming both benefit), and comment on and close issue #8 once the user approves — ⬜
+### Phase 2 — Docs, Verification, Issue 🚧
+- Step 1: MkDocs -- `set_stylesheet` in the `View` reference; the "bindings are not re-resolved" caveats removed from `view.md`, `declarative-views.md`, and `working-with-files.md`; `mkdocs build --strict` clean — ✅ (`view.md` gains `set_stylesheet`; caveats rewritten in `view.md`, `declarative-views.md`, `working-with-files.md`, and the `_core.pyi` `set_theme` docstring, plus a new `set_stylesheet` stub; the migration page lists the behavior change, including that re-applying a `checked`/`text` binding fires `Change`, so a declared `on_change` runs once per update -- verified by running it; API-coverage audit at zero)
+- Step 2: full standing chain, including the suite with `DISPLAY` unset to match CI — ✅ (`cargo test --workspace --release` 47 suites, 545 passed, 0 failed; pytest 973 passed, 2 skipped; 964 passed, 0 failed with no display; all 89 examples plus `demo/showcase.py` clean; `clippy -D warnings`/`fmt --check` clean)
+- Step 3: tell the Tesserae session (its M29 hot reload and M30 theming both benefit), and comment on and close issue #8 once the user approves — 🚧 (Tesserae told; the issue comment and close await the user's approval)
 
 ---
 

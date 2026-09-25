@@ -65,6 +65,14 @@ above. Review its diff: a widget whose `kind:` is written after a nested
   color there drew invisible text — `tre`'s own examples had nine such
   labels. Migrating makes the intent explicit; a `foreground` of
   `(0, 0, 0, 0)` is still invisible.
+- **Live updates keep bound values** ([issue #8](https://github.com/mindderivative/tre/issues/8)).
+  `set_theme`, `reconcile`, and `poll_reload` now re-apply the attached
+  `ViewModel` afterward. In 0.3.2 a bound field fell back to its static
+  spec value until its `Signal` next changed, and bindings or handlers a
+  reload added needed another `_attach`. One consequence: re-applying a
+  `checked`/`text` binding fires `Change`, so a declared `on_change`
+  handler runs once per update. New: `View.set_stylesheet` replaces a
+  view's stylesheet in place.
 - **An `Icon`'s color isn't animated.** `Node.animate("foreground", ...)`
   on an `Icon` sets the color immediately rather than easing it; on
   `Text`/`Link`/`LoadingIndicator` it animates normally.

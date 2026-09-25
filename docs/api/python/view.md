@@ -74,9 +74,9 @@ in place. Returns `False` if nothing changed. Raises `RuntimeError` if
 re-reading fails, `ValueError` if reconciliation fails.
 
 An unchanged widget (same `id`, same `kind`) keeps its runtime identity —
-preserving focus, scroll position, and in-flight animations.
-`bindings:`/`handlers:`/`two_way:` are **not** re-resolved automatically;
-call `_attach` again if a reload adds a genuinely new one.
+preserving focus, scroll position, and in-flight animations. After every update the attached `ViewModel` is re-applied against the
+new spec: bound fields keep their live values, bindings and handlers the
+update added start working, and ones it removed stop.
 
 `source`, when given, is reconciled instead of a fresh disk read of
 `path` once a change is detected — the change-detection gate itself
@@ -93,7 +93,8 @@ unconditionally, with no "did anything change" check, since the call
 itself is the change signal (typically driven by a `tre.Effect`). Takes
 `spec` (a Python object), `json` (JSON text), or `source` (YAML text).
 An unchanged widget (same `id`, same `kind`) keeps its runtime
-identity. To call it from a background thread while `App.run()` is
+identity, and the attached `ViewModel`'s bindings are re-applied. To
+call it from a background thread while `App.run()` is
 running, go through [`App.thread_handle()`](app.md#thread_handle).
 
 ```python
@@ -122,10 +123,25 @@ no custom override, not "keep whatever the previous call used." A
 `poll_reload()` called after this continues resolving against the theme
 this call installed.
 
-Only the static style cascade is recomputed — a `{{ }}` binding's own
-currently-applied value is not re-run, so a bound field reverts to its
-spec's own static value (the same as any content-only `poll_reload()`
-already does).
+The attached `ViewModel`'s bindings are re-applied afterward, so a
+bound field keeps its live value. Re-applying a `checked` or `text` binding fires `Change`, as the initial
+`_attach` does, so a declared `on_change` handler runs once per update.
+
+## `set_stylesheet`
+
+**`set_stylesheet(stylesheet_spec=None, stylesheet=None)`**
+
+Replaces this view's stylesheet and re-resolves every node in place,
+like [`set_theme`](#set_theme) — `NodeId`s, focus, and in-flight
+animations are preserved, and bindings are re-applied afterward.
+`stylesheet_spec` (a `dict`) and `stylesheet` *(file convenience — a
+YAML path)* are mutually exclusive; passing neither clears the
+stylesheet. The new stylesheet is kept for later `set_theme`/`reconcile`/
+`poll_reload` calls.
+
+```python
+view.set_stylesheet(stylesheet_spec={"styles": [{"kind": "Rect", "style": {"corner_radius": 8}}]})
+```
 
 ## `instantiate`
 

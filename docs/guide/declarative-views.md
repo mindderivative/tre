@@ -300,9 +300,9 @@ An unchanged widget (same `id`, same `kind`) keeps its runtime identity,
 preserving focus, scroll position, and in-flight animations. There's no
 "did anything change" check to skip — the call itself is the change
 signal. Exactly one content argument is required; `ValueError`
-otherwise. **`bindings:`/`handlers:`/`two_way:` are not re-resolved** —
-if an update adds a new binding or handler, call `_attach` again
-(construct a fresh `ViewModel`, or call `view._attach(vm)`).
+otherwise. After every update the attached `ViewModel` is re-applied against the
+new spec: bound fields keep their live values, bindings and handlers the
+update added start working, and ones it removed stop.
 
 ### Updating from another thread
 
@@ -331,9 +331,15 @@ own spec against the new theme layers, in place — `NodeId`s, children,
 and focus are preserved, and a widget's own inline `style:` still wins
 over any theme layer. Each call is a complete, fresh theme selection —
 omitting the theme arguments resets to no override, not "keep whatever
-the previous call used." Only the static style cascade is recomputed; a
-`{{ }}` binding's currently-applied value isn't re-run (it reverts to
-its spec's static value until the binding next fires).
+the previous call used." Bindings are re-applied afterward, so a bound
+field keeps its live value.
+
+`view.set_stylesheet(stylesheet_spec=...)` replaces the stylesheet the
+same way — every node re-resolved in place, bindings re-applied. Pass
+nothing to clear it.
+
+Re-applying a `checked` or `text` binding fires `Change`, as the initial
+`_attach` does, so a declared `on_change` handler runs once per update.
 
 ## Testing without a live window
 
