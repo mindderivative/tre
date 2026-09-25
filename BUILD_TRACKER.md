@@ -1227,12 +1227,32 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - D10 Docking and `build_shell` -- remove; pointer capture (M94) is the building block a framework needs to build them.
 - D11 Versioning -- existing policy keeps `0.4.0` reserved for the `vello_hybrid` fork. Recommended: release the additive building blocks (M93–M96) as `0.3.4` so Tesserae can migrate against a published version while the old API still exists, then the removals and renames (M98–M102) as `0.3.5`. Flagged because this is the largest break in the project's history; the user may prefer to spend a minor version on it.
 
+**Prerequisite: release `v0.3.3` (M90–M92) first.** Tesserae's own 0.3.3 migration comes before any of this program, and its M31 (theme and stylesheet hot reload) depends on M91's fix for issue #8.
+
+**Stays in `tre`, stated explicitly:** flex layout (`taffy`), text shaping and fonts, clipping, opacity, transforms, the animation engine, rendering, the event loop and `App.thread_handle()`, accessibility, clipboard, and the node tree with cheap, stable `Node` handles.
+
+**Tesserae's capability needs (sent 2026-09-25 at the user's request, answering "what's missing"), checked against the source:**
+
+| Need | Today | Where the plan covers it |
+|---|---|---|
+| The `{{ }}` binding evaluator (`binding.rs`, the safe non-`eval` whitelist) | Missing from the first draft's move list | M98 -- listed as moving to Tesserae |
+| Reorder and move children (a keyed reconciler needs it) | Gap: `Tree` only has `add_child`, which appends | M96 Phase 2 |
+| Show any kept-alive subtree in a window, keeping its `NodeId`s, handlers, and focus | `Window.show_view` only accepts a `View` | M96 Phase 2 |
+| Set and read every style and layout property on an existing node | Mostly there: `Node.set_layout` covers layout; paint is set through `animate(..., duration_ms=0)`; `Node.get` reads numbers but not colors | M93 names one set API; M96 Phase 2 adds color readback |
+| Batch updates, deferring layout and paint until the end | Gap | M96 Phase 2 |
+| OS light/dark switch and window resize, delivered to Python | Gap: the OS switch is consumed internally by `Theme` | M94 Phase 1 |
+| Focus and blur events, Tab order | Already exists: `set_on_focus_enter`/`set_on_focus_exit`, `is_focused`, Tab order | Covered; whether explicit ordering is needed is decided in M93 |
+| Flex layout stays | Implied | Stated above |
+| Text measurement, for content-sized widgets | Gap | M96 Phase 2 |
+| Stable, cheap `Node` handles | Already the case | Covered |
+| Clip, z-order, and opacity for overlays | Clip and opacity exist | z-order in M96 Phase 1 |
+
 | Milestone | Delivers | Kind |
 |---|---|---|
 | M93 | Target API spec and naming convention | Design, approval gate |
 | M94 | Input and accessibility building blocks | Additive |
 | M95 | Paint and animation building blocks | Additive |
-| M96 | Layer and overlay building blocks | Additive |
+| M96 | Layer, structure, and update building blocks | Additive |
 | M97 | Tesserae migration gate | Cross-repo gate |
 | M98 | Remove the declarative layer | Removal |
 | M99 | Remove MD3 components, kinds, and theming | Removal |
@@ -1250,6 +1270,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 ### Phase 1 — Inventory and Classification ⬜
 - Step 1: classify every public name -- all 7 classes' methods, the 60 factories, all 21 node kinds, every `PaintProperties` field, every event, every animatable property, every motion curve -- as keep, replace-with-primitive, move-to-framework, or remove, with a one-line reason each — ⬜
 - Step 2: for each MD3 widget kind, list the exact primitives a framework needs to rebuild it, so M94–M96 add exactly those and nothing speculative — ⬜
+- Step 3: map every capability Tesserae uses today, and every need in its capability list above, to a named primitive in the target API -- none left unaccounted for — ⬜
 
 ### Phase 2 — Naming Convention ⬜
 - Step 1: a written convention -- verbs for methods (`add_`, `set_`, `get_`, `remove_`), `on_` for events, nouns for properties, units in names where ambiguous, boolean naming, lowercase snake_case enum strings, one name per concept -- with the M90 rules folded in — ⬜
@@ -1270,6 +1291,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - Step 2: pointer capture, so a drag keeps reporting to the node that started it after the pointer leaves it -- what sliders, splitters, and docking need — ⬜
 - Step 3: key down and key up events with key and modifiers, alongside text input, to the focused node — ⬜
 - Step 4: a defined propagation model -- whether events bubble to ancestors, and how a handler stops them -- decided in M93 and implemented here — ⬜
+- Step 5: window-level events to Python -- resize, and the OS light/dark switch, which `tre` stops handling itself once theming moves out — ⬜
 
 ### Phase 2 — Accessibility and Focus ⬜
 - Step 1: set a node's accessibility role, label, value, and checked or selected state, and its available actions, so framework-built widgets are as accessible as today's built-in ones — ⬜
@@ -1298,13 +1320,20 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ---
 
-## Milestone 96 — Layer and Overlay Building Blocks
+## Milestone 96 — Layer, Structure, and Update Building Blocks
 
-**Status: ⬜ Proposed.** Additive. One generic layer mechanism replacing the six component-specific open/close pairs.
+**Status: ⬜ Proposed.** Additive. One generic layer mechanism replacing the six component-specific open/close pairs, plus the tree and update operations a framework-side reconciler needs to be correct and fast (Tesserae's needs 1–4).
 
 ### Phase 1 — Layers ⬜
 - Step 1: show and hide any node as an overlay layer, with position anchoring, z-order, modal input blocking, and an outside-click and Escape dismissal event -- the one mechanism dialogs, menus, snackbars, side sheets, drawers, tooltips, and context menus reduce to — ⬜
 - Step 2: tests, including a proof modal dialog and an anchored menu built from primitives — ⬜
+
+### Phase 2 — Structure and Updates ⬜
+- Step 1: insert a child at an index and move an existing child, keeping its `NodeId`, handlers, focus, and running animations -- what a keyed reconciler needs — ⬜
+- Step 2: show any kept-alive subtree as a window's content, replacing `Window.show_view`'s `View`-only form — ⬜
+- Step 3: a batch update scope that defers layout and paint until it ends, so re-theming or reconciling from Python doesn't cost a layout per property; measured against unbatched updates rather than assumed — ⬜
+- Step 4: color readback and text measurement -- a string's size under given text properties -- for content-sized widgets — ⬜
+- Step 5: tests, including a proof keyed-list reorder that preserves node identity — ⬜
 
 ---
 
@@ -1326,7 +1355,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 **Status: ⬜ Proposed.** Starts only after M97's gate.
 
 ### Phase 1 — Removal ⬜
-- Step 1: delete the `engine-spec` crate, `View`, `Component`, and their `engine-py` code; the reactivity layer per D5; `tools/migrate_views_0_3_3.py` — ⬜
+- Step 1: delete the `engine-spec` crate, `View`, `Component`, and their `engine-py` code, including the `{{ }}` binding evaluator (`binding.rs`), which moves to Tesserae; the reactivity layer per D5; `tools/migrate_views_0_3_3.py` — ⬜
 - Step 2: remove the dependencies only they used -- `serde_yaml_ng`, `pythonize`, the file watcher -- and their tests, examples, and docs pages — ⬜
 - Step 3: full standing chain — ⬜
 
