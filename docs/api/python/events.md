@@ -38,6 +38,35 @@ where the event happened and `event.current` is the node whose listener is
 running. Because `focus` and `blur` bubble, a container knows focus moved
 somewhere inside it, and `event.target` says where.
 
+### Focus
+
+`focus` and `blur` each carry `event.related_target`: the node on the other
+side of the move. It's the node losing focus for `focus` and the node gaining
+it for `blur`. It's `None` when focus comes from, or goes to, nowhere in the
+window. A search bar wrapping a text field and a clear button can use it to
+tell focus moving between its own children from focus leaving it:
+
+```python
+def on_blur(e):
+    if e.related_target not in (field, clear_button):
+        close_suggestions()
+
+bar.on("blur", on_blur)
+```
+
+`focus` also carries `event.focus_visible`, which says whether to draw a focus
+indicator (`tre` draws none itself):
+
+- `True` when focus arrived by keyboard: Tab, Shift+Tab, or an assistive
+  technology's focus request.
+- `False` when focus arrived from a pointer press.
+- For `node.focus()` and other programmatic focus, whatever the last
+  interaction was. Before any pointer press, that's `True`.
+
+Key presses with Ctrl, Alt, or Meta held are shortcuts, not navigation, so they
+don't count as keyboard input for this. This is the heuristic browsers use for
+`:focus-visible`.
+
 Raw input is delivered before what it caused, so a click delivers
 `pointer_down`, then `pointer_up`, then `click`.
 
@@ -103,6 +132,8 @@ is the window's root node.
 | `text` | `input` |
 | `old_value`, `new_value` | `change` |
 | `action`, `value` | `a11y_action` |
+| `related_target` | `focus`, `blur` — the node on the other side of the move |
+| `focus_visible` | `focus` — whether focus arrived by keyboard |
 | `width`, `height` / `dark` / `scale_factor` | `resize` / `color_scheme` / `scale_factor` |
 
 Methods: `stop()` ends propagation; `cancel()` prevents `close_requested`'s

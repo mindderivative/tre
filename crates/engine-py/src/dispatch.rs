@@ -525,6 +525,7 @@ pub(crate) fn process_input(
     event: &InputEvent,
     py: Python<'_>,
 ) -> DispatchOutcome {
+    listeners::note_input_modality(event);
     let target = listeners::target_before(&ctx.tree.borrow(), root, event);
     let outcome = ctx.tree.borrow_mut().dispatch(
         root,

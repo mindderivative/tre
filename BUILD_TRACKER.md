@@ -57,7 +57,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M92 — Animatable `Icon` Color | `██████████` 100% | ✅ Complete — single phase (2026-09-25) |
 | `v0.3.3` Release: PR #9 Merged to `main`, Tagged and Pushed | — | ✅ Released (2026-09-25) |
 | M93 — Target API Spec and Naming Convention | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-25) |
-| M94 — Input and Accessibility Building Blocks | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-25) |
+| M94 — Input and Accessibility Building Blocks | `██████████` 100% | ✅ Complete — all 3 phases done, plus a focus follow-up (2026-09-25) |
 | M95 — Paint and Animation Building Blocks | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-25) |
 | M96 — Layer, Structure, and Update Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, next (2026-09-25) |
 | M97 — Tesserae Migration Gate | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
@@ -1328,6 +1328,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - Step 1: `window.simulate(event, node=None, **fields)` for every new event, through the same router as the live loop (D9, R7); the 13 legacy synthetic-input methods stay until M100 — ✅ (every event, window events and `a11y_action` included, with strict field checking)
 - Step 2: tests for every new event, property, and window event, plus a proof widget -- a working slider built only from these primitives, behaving like today's built-in one — ✅ (`tests/test_listeners.py` 30, `tests/test_node_props.py` 18, `tests/test_primitive_slider.py` 4: press-to-set, a captured drag off the track that clamps, click focus and arrow-key steps, and assistive increment/decrement/set-value; 9 new engine-core tests and a `cursor_at` unit test)
 - Step 3: `_core.pyi` stubs, docs for the new surface, and the full standing chain — ✅ (new `docs/api/python/events.md` and a `set`/`get`/`focus` section in `node.md`; `mypy --strict` clean; pytest 1025 passed; cargo release 558 passed; clippy and fmt clean; all 89 examples and the showcase clean; `mkdocs build --strict` clean)
+- Step 4: a follow-up at Tesserae's request -- `focus`/`blur` carry `related_target`, the node on the other side of the move, and `focus` carries `focus_visible`, whether focus arrived by keyboard -- so a composite can tell focus moving inside it from focus leaving it, and a framework can show its focus indicator for keyboard focus only, per R12 — ✅ (both additive `Event` fields; `focus_visible` is the browsers' `:focus-visible` heuristic, a per-thread input modality that `process_input` sets from key presses without Ctrl/Alt/Meta and from pointer presses, that a screen reader's focus request sets to keyboard, and that programmatic focus follows; 3 new tests in `tests/test_listeners.py`; the spec and `events.md` record both; pytest 1060 passed; cargo release 576 passed; clippy, fmt, stub `mypy --strict`, and `mkdocs build --strict` clean; 89 examples and the showcase clean)
 
 ---
 

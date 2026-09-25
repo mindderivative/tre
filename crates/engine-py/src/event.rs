@@ -194,6 +194,14 @@ pub struct Event {
     pub(crate) dark: Option<bool>,
     #[pyo3(get)]
     pub(crate) scale_factor: Option<f64>,
+    /// `focus`/`blur`: the node on the other side of the move -- losing
+    /// focus for `focus`, gaining it for `blur`.
+    #[pyo3(get)]
+    pub(crate) related_target: Option<Py<Node>>,
+    /// `focus`: whether focus arrived by keyboard or assistive technology
+    /// rather than a pointer press (`listeners::note_input_modality`).
+    #[pyo3(get)]
+    pub(crate) focus_visible: Option<bool>,
     pub(crate) stopped: bool,
     pub(crate) cancelled: bool,
     pub(crate) cancellable: bool,
@@ -299,6 +307,8 @@ impl Event {
             height: None,
             dark: None,
             scale_factor: None,
+            related_target: None,
+            focus_visible: None,
             stopped: false,
             cancelled: false,
             cancellable: false,

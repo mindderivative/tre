@@ -1310,6 +1310,9 @@ impl App {
                     // `fire_focus_transition` is called directly here
                     // instead.
                     engine_core::Action::Focus => {
+                        // Assistive-technology navigation shows focus, as
+                        // the keyboard does.
+                        listeners::set_keyboard_modality(true);
                         let config = interaction_config();
                         let transition = tree.set_focus_to(
                             node,

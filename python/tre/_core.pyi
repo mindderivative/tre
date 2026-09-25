@@ -155,6 +155,14 @@ class Event:
     """`color_scheme`: whether the OS switched to dark mode."""
     scale_factor: float | None
     """`scale_factor`: the window's new scale factor."""
+    related_target: Node | None
+    """`focus`/`blur`: the node on the other side of the move -- the one
+    losing focus for `focus`, the one gaining it for `blur`. `None` when
+    focus comes from, or goes to, nowhere in the window."""
+    focus_visible: bool | None
+    """`focus`: `True` when focus arrived by keyboard or an assistive
+    technology (or programmatically, after keyboard input), `False` after
+    a pointer press -- whether to show a focus indicator."""
     def stop(self) -> None:
         """Ends propagation: no listener on a further ancestor runs."""
         ...

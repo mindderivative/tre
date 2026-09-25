@@ -262,6 +262,8 @@ and events still bubble from it.
 | `text` | `input` |
 | `old_value`, `new_value` | `change` |
 | `action`, `value` | `a11y_action` (`value` for `"set_value"`) |
+| `related_target` | `focus`, `blur`: the node losing focus (for `focus`) or gaining it (for `blur`); `None` when focus comes from, or goes to, outside the window. Lets a composite tell focus moving between its own children from focus leaving it (added 2026-09-25 at Tesserae's request) |
+| `focus_visible` | `focus`: `True` when focus arrived by keyboard or an assistive technology, or programmatically after keyboard input; `False` after a pointer press — the browsers' `:focus-visible` heuristic, so the framework shows its focus indicator only for keyboard focus (added 2026-09-25) |
 | `stop()` | bubbling events: ends propagation |
 | `cancel()` | cancellable events (`close_requested`): prevents the default |
 

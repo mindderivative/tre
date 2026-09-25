@@ -44,6 +44,35 @@ thread_local! {
             meta: false,
         })
     };
+
+    /// Whether the user's last interaction was the keyboard (or an
+    /// assistive technology) rather than a pointer press -- the browsers'
+    /// `:focus-visible` heuristic, reported as a `focus` event's
+    /// `focus_visible`. Starts `true`: focus given before any pointer
+    /// press is shown. Per-thread for the same reason as `MODIFIERS`.
+    static KEYBOARD_MODALITY: Cell<bool> = const { Cell::new(true) };
+}
+
+/// Records the input modality `event` implies: a key press (without Ctrl,
+/// Alt, or Meta, which are shortcuts, not navigation) means the keyboard,
+/// a pointer press the pointer. Anything else leaves it as it was.
+pub(crate) fn note_input_modality(event: &InputEvent) {
+    let keyboard = match event {
+        InputEvent::Key { pressed: true, .. } => {
+            let held = modifiers();
+            if held.ctrl || held.alt || held.meta {
+                return;
+            }
+            true
+        }
+        InputEvent::PointerPressed { .. } => false,
+        _ => return,
+    };
+    set_keyboard_modality(keyboard);
+}
+
+pub(crate) fn set_keyboard_modality(keyboard: bool) {
+    KEYBOARD_MODALITY.with(|cell| cell.set(keyboard));
 }
 
 pub(crate) fn modifiers() -> Modifiers {
@@ -340,18 +369,33 @@ pub(crate) fn route_hover(
 }
 
 /// `blur` on the node losing focus, then `focus` on the node gaining it --
-/// both bubbling, so an ancestor learns that focus moved within it.
+/// both bubbling, so an ancestor learns that focus moved within it. Each
+/// carries the other node as `related_target` (`None` when focus comes
+/// from, or goes to, nowhere in the window), so a composite widget can
+/// tell focus moving between its own children from focus leaving it.
 pub(crate) fn route_focus(
     ctx: &NodeContext<'_>,
     old: Option<NodeId>,
     new: Option<NodeId>,
     py: Python<'_>,
 ) {
+    let related = |id: Option<NodeId>| {
+        id.and_then(|id| {
+            Event::build_node(py, id, ctx)
+                .map_err(|err| log_uncaught_exception(&err, py))
+                .ok()
+        })
+    };
     if let Some(old) = old {
-        deliver(ctx, py, EventType::Blur, old, None, |_| {});
+        deliver(ctx, py, EventType::Blur, old, None, |e| {
+            e.related_target = related(new);
+        });
     }
     if let Some(new) = new {
-        deliver(ctx, py, EventType::Focus, new, None, |_| {});
+        deliver(ctx, py, EventType::Focus, new, None, |e| {
+            e.related_target = related(old);
+            e.focus_visible = Some(KEYBOARD_MODALITY.with(Cell::get));
+        });
     }
 }
 
