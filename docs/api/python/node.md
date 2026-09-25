@@ -5,7 +5,9 @@ tree. Returned by every `add_*` method; never constructed directly.
 
 *New in 0.3.4:* `on`/`off` listeners, `capture_pointer`/`release_pointer`,
 and handle equality — see [Events and Listeners](events.md) — plus `set`,
-the wider `get`, and `focus`, below.
+the wider `get`, and `focus`, below, and the paint, path, and animation
+properties, `get_target`, `stop_animation`, and `animate`'s `easing` — see
+[Paint, Paths, and Animation](paint.md).
 
 ## `set`, `get`, and `focus`
 

@@ -283,6 +283,8 @@ if window.theme.is_set():
 `scale_factor`, `close_requested`, `closed`), `window.set(title=...)`,
 `window.get(name)`, `window.root`, and `window.simulate(event, node=None,
 **fields)` for headless tests — see [Events and Listeners](events.md).
+`window.create(kind, **props)` makes detached nodes — see
+[Paint, Paths, and Animation](paint.md#creating-nodes).
 
 ## Synthetic input dispatch
 

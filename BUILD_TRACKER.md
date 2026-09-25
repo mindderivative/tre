@@ -58,8 +58,8 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | `v0.3.3` Release: PR #9 Merged to `main`, Tagged and Pushed | — | ✅ Released (2026-09-25) |
 | M93 — Target API Spec and Naming Convention | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-25) |
 | M94 — Input and Accessibility Building Blocks | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-25) |
-| M95 — Paint and Animation Building Blocks | `███████░░░` 70% | 🚧 In progress — Phases 1-2 done, Phase 3 of 3 (2026-09-25) |
-| M96 — Layer, Structure, and Update Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
+| M95 — Paint and Animation Building Blocks | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-25) |
+| M96 — Layer, Structure, and Update Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, next (2026-09-25) |
 | M97 — Tesserae Migration Gate | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M98 — Remove the Declarative Layer | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M99 — Remove MD3 Components, Kinds, and Theming | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
@@ -1333,7 +1333,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Milestone 95 — Paint and Animation Building Blocks
 
-**Status: 🚧 In progress (started 2026-09-25).** Additive. Generic replacements for the MD3-specific visuals inside the engine.
+**Status: ✅ Complete (2026-09-25).** Additive. Generic replacements for the MD3-specific visuals inside the engine.
 
 **Scoped against the source (2026-09-25):** `Animated<T>::animate_to` already starts from the current value and a replaced animation's completion never fires, and `Node.animate` already defaults to linear, so the animation semantics need only `stop_animation`, `get_target`, and a bezier curve. The MD3 morph (`ShapeKey`) keeps only a single closed contour's vertices, so paths get their own arc-length resampling. `kurbo` 0.13 already parses SVG `d` data, arcs included. Opacity today is per node -- children never fade with a parent -- and the legacy dialog and sheet scrims are the *parents* of their panels at 32% opacity, so group opacity needs those three scrims to carry their 32% as color alpha instead (identical pixels for a flat scrim). About 99 places read `corner_radius`/`corner_radii_override`, 46 in soon-deleted factories, so the per-corner override becomes animatable in place and M101 merges the two. Placeholder text and password obscuring don't exist yet, so the text-input colors bring those two features with them. Creating a `path` needs a creation entry point, so `window.create` starts here for `box` and `path`, with `width`/`height` in `set`.
 
@@ -1348,9 +1348,9 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - Step 3: animation semantics -- `stop_animation` and `get_target` beside the existing from-the-current-value retargeting and single-fire completion; colors interpolate in sRGB — ✅ (`Animated::stop`/`target`; one `animatable_to_py` reader serves `get` and `get_target`)
 - Step 4: no hidden theme colors -- text-input `placeholder` text with `placeholder_fill`, `caret_color`, `selection_fill`, and `obscured` password display that never copies out; `scrollbar_fill`/`scrollbar_width` for scroll views; the terminal `palette`; `tre` draws no focus ring on framework nodes — ✅ (password bullets share the whitespace-marker substitution, one character for one, so cursor and click offsets map unchanged; an obscured field's selected text reads as none, which refuses copy and cut on every path; terminal cells now store the color the program asked for -- `CellColor` -- resolved against `TerminalPalette` at paint, so a palette change recolors text already on screen; each kind-specific property is checked against the kind before anything applies; framework nodes have no interaction state, so no focus ring was ever drawn for them)
 
-### Phase 3 — Verification ⬜
-- Step 1: pixel tests for paths, view-box fitting, trim, morph, shadows, per-corner radii, group opacity, and the text-input colors; a proof ripple built from primitives, matching today's built-in one visually — ⬜
-- Step 2: `_core.pyi` stubs, docs for the new surface, and the full standing chain — ⬜
+### Phase 3 — Verification ✅
+- Step 1: pixel tests for paths, view-box fitting, trim, morph, shadows, per-corner radii, group opacity, and the text-input colors; a proof ripple built from primitives, matching today's built-in one visually — ✅ (`engine-render/tests/m95_paint.rs`, 11 tests, every one passing on its first run; the proof ripple -- a clipping box holding a circle `path` at the press point, its group opacity the ripple's -- matches the built-in ripple within 2 of 255 at its center, inside it, beyond it, and outside the card)
+- Step 2: `_core.pyi` stubs, docs for the new surface, and the full standing chain — ✅ (new `docs/api/python/paint.md`; the spec records the path stroke, radius readback, shadow radius, and palette format; `mypy --strict` clean; pytest 1057 passed; cargo release 576 passed; clippy and fmt clean; 89 examples and the showcase clean; `mkdocs build --strict` clean)
 
 ---
 

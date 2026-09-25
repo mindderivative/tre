@@ -42,6 +42,15 @@
    - pytest 1057 passed; cargo release 565 passed; 89 examples and the
      showcase clean.
 
+5. Phase 3 done:
+   - 11 pixel tests in `engine-render/tests/m95_paint.rs`, including a
+     proof ripple built from primitives that matches the built-in one
+     within 2/255.
+   - `docs/api/python/paint.md`, and the spec updated.
+   - Full chain: pytest 1057 passed; cargo release 576 passed; clippy,
+     fmt, mypy and `mkdocs --strict` clean.
+
 ## Status
 
-**M95 Phase 3 in progress** (pixel tests, proof ripple, docs).
+**M95 complete.** M96 (layer, structure, and update building blocks)
+is next.

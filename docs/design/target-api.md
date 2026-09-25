@@ -185,9 +185,17 @@ painting stays deferred), so the value always matches the current tree.
   Nothing has a hidden default theme color. `tre` draws no focus ring and
   no scrim (R12).
 - `stroke_width` is paint-only and never changes layout; the stroke sits
-  inside the node's box.
+  inside the node's box. A path's stroke is the exception: it's centered
+  on the path, as in SVG, with round caps and joins.
 - `opacity` is group opacity: it fades the node and its subtree as one
-  layer.
+  layer. A color's own alpha multiplies with it.
+- `corner_radius` reads back as a number while the four corners are
+  uniform, and as a 4-tuple once they're set or animated separately. A
+  shadow under differing corners uses their mean radius.
+- `palette` is a dict with any of `ansi` (16 colors), `foreground`,
+  `background`, `cursor`, and `selection`; keys left out keep their
+  colors. Cells resolve against it when painted, so a new palette
+  recolors what's on screen.
 
 ### Structure
 
@@ -318,10 +326,13 @@ layout box. A Material Symbols SVG drops straight in: pass its `d` and
 its `viewBox`.
 
 **Morphing:** animating `data` from one path to another works for any
-two closed paths, or any two open ones, because `tre` resamples both to a
-common set of points. It looks most faithful when both paths wind the
-same way and start at corresponding points. An open path doesn't morph
-into a closed one.
+two closed paths, or any two open ones: `tre` resamples both by length,
+subpath by subpath, and aligns each closed pair by the starting point and
+winding that move the samples least. A different subpath count, or an
+open path against a closed one, switches at the halfway point. The last
+frame is exactly the target path.
+
+**Trim** applies to the stroke, by length across every subpath in order.
 
 ## Painter (canvas)
 

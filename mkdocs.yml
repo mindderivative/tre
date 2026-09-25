@@ -63,6 +63,7 @@ nav:
       - Window: api/python/window.md
       - Node: api/python/node.md
       - Events and Listeners: api/python/events.md
+      - Paint, Paths, and Animation: api/python/paint.md
       - View: api/python/view.md
       - Reactivity (Signal, Computed, Effect, ViewModel): api/python/signal-and-viewmodel.md
       - CanvasContext: api/python/canvas-context.md

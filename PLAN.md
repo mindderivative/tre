@@ -67,4 +67,4 @@ Additive: legacy names and behavior stay until 0.3.5.
 
 ## Status
 
-Phase 1 in progress.
+Complete (2026-09-25): all three phases done.
