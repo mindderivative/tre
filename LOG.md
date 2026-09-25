@@ -1,39 +1,36 @@
-# LOG — Milestone 87, Phase 1: Callback Queue, `LoopHandle`, Drain
+# LOG — Milestone 87, Phase 2: Example, Docs, Verification
 
-- User-directed: "Post the comment and start M87" (direction comment
-  posted on issue #6).
+- User-directed: "Post the comment and start M87". Phase 1 (`1c1013f`)
+  added `App.thread_handle()` / `LoopHandle.call_soon`.
 
 ## What shipped
 
-1. New `engine-py/src/thread_handle.rs`: `CallQueue` (queue of
-   `Py<PyAny>` + an `Option<EventLoopWaker>` slot behind one
-   `Arc<Mutex<...>>`) and the `LoopHandle` pyclass (`frozen`,
-   `Send + Sync`) with `call_soon(fn)`.
-2. `App` owns a `CallQueue`; `App.thread_handle()` returns a
-   `LoopHandle` over it. `run()`'s `setup` closure installs the waker,
-   the per-frame closure drains the queue first thing (before the
-   `active` re-sync), and the waker is cleared when `run()` returns.
-3. Drain takes the whole queue under the lock and releases it before
-   running Python, so a callback that calls `call_soon` itself can't
-   deadlock. Exceptions go through `dispatch::log_uncaught_exception`
-   (widened to `pub(crate)`). After running anything, the loop is
-   woken once more so every window re-checks its dirty flag.
-4. `tre.LoopHandle` exported; `_core.pyi` stubs for
-   `App.thread_handle` and `LoopHandle.call_soon`.
-- Tests: 4 Rust tests (FIFO, raising callable doesn't stop the rest,
-  re-queue during drain runs next drain, non-callable `TypeError`); 9
-  pytest cases, the live ones in a fresh subprocess each with an
-  honest skip when no frame ran.
-- Found: pyo3 refuses an `unsendable` object on another thread with a
-  `PanicException`, which derives from `BaseException` — pinned in a
-  test, since it is exactly why `LoopHandle` exists.
-- Not tested end-to-end: a callable queued after `run()` returns
-  waiting for a later `run()` — needs two `App.run()` calls in one
-  process.
-- Verification: `fmt --check`/`clippy -D warnings` clean; `maturin
-  develop --release`; `pytest tests/` 923 passed, 2 skipped; `mypy
-  --strict` on `_core.pyi` clean.
+1. `examples/threadsafe_reload.py`: a dependency-free `os.stat`
+   watcher thread that reads the changed file itself and hands
+   `view.reconcile(source=text)` to the loop via `call_soon`. Works on a
+   temp copy of `hot_reload.yaml`. Asserts the reload landed whenever a
+   frame ran; skips only when none did.
+2. Docs: `api/python/app.md` gains `thread_handle` and `LoopHandle`;
+   `declarative-views.md` gains "Hot reload inside `App.run()`";
+   `api/python/index.md` lists `LoopHandle` (and drops a class count
+   that had been wrong since M85).
+
+## Real finding
+
+A `max_frames`-bounded run counts idle frames too, and an idle frame
+costs microseconds — 6000 frames finished in 63 ms. The example's first
+draft never saw its reload, and the Phase 1 live pytest was passing
+only because its worker thread happened to be fast. Both now make the
+first-frame callable wait for the background thread to finish queueing:
+deterministic, and the queueing still happens on a different thread.
+
+## Verification
+
+`mkdocs build --strict` clean; `fmt --check`/`clippy -D warnings`
+clean; `cargo test --workspace --release` 47 suites, 540 passed, 0
+failed; `pytest tests/` 923 passed, 2 skipped; all 89 examples plus
+`demo/showcase.py` run clean.
 
 ## Status
 
-**Phase 1 complete.** Next: Phase 2 — example, docs, full chain.
+**M87 complete.** Nothing further is scoped on the `0.3.2` branch.

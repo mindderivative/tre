@@ -1,13 +1,14 @@
 # Python API Reference
 
-The `tre` package exposes eight public classes. `App`, `Window`, `Node`,
-`View`, `Component`, `Theme`, and `CanvasContext` are compiled pyo3
-bindings (`tre._core`); `Signal` and `ViewModel` are plain Python,
+The `tre` package's public classes. `App`, `Window`, `Node`, `View`,
+`Component`, `Theme`, `LoopHandle`, and `CanvasContext` are compiled
+pyo3 bindings (`tre._core`); `Signal` and `ViewModel` are plain Python,
 layered on top.
 
 | Class | Purpose |
 | --- | --- |
 | [`App`](app.md) | Opens and drives one or more `Window`s together in one blocking call |
+| [`LoopHandle`](app.md#loophandle) | The one thread-safe object: queues a callable onto a running `App`'s event loop, via `App.thread_handle()` |
 | [`Window`](window.md) | Owns a node tree, its size/title; creates nodes, dispatches input, docking, theming |
 | [`Node`](node.md) | A handle to one node — events, animation, property reads/writes |
 | [`View`](view.md) | Loads a declarative `view.yaml` file into its own node tree |

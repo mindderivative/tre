@@ -10,6 +10,10 @@ in one pytest process can break unrelated render-loop tests. Each
 script queues a marker callable *before* `run()`; if it never ran, no
 frame ever happened (no display reachable -- `run()` returns
 immediately then), and the test skips instead of passing vacuously.
+
+Timing is made deterministic rather than raced: a `max_frames`-bounded
+run counts idle frames too, and those take microseconds, so a worker
+thread that sleeps even briefly would miss the run entirely.
 """
 
 import subprocess
@@ -42,7 +46,13 @@ def from_worker():
 
 def first_frame():
     events.append(("first_frame", threading.get_ident() == main_thread))
-    threading.Thread(target=from_worker).start()
+    # Joined here so the run can't finish before the worker has queued
+    # anything: a max_frames-bounded run spins idle frames in
+    # microseconds. The worker still queues from a genuinely different
+    # thread; its callables run on a later frame of this same run.
+    worker = threading.Thread(target=from_worker)
+    worker.start()
+    worker.join()
 
 handle.call_soon(first_frame)
 app.run(max_frames=300)

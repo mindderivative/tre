@@ -52,4 +52,51 @@ app.run(max_frames=60)  # each window individually stops after 60 frames
 - Installs a `tracing` log subscriber as early as possible — set
   `RUST_LOG` to control verbosity (e.g. `RUST_LOG=warn python app.py`).
 
-`App` has no other public methods.
+## `thread_handle`
+
+**`thread_handle() -> LoopHandle`**
+
+`App`, `Window`, and `View` may only be used from the thread that
+created them — pyo3 raises `PanicException` (a `BaseException`, not an
+`Exception`) if another thread touches one. `thread_handle()` returns
+the one object a background thread may use: a
+[`LoopHandle`](#loophandle) onto this `App`'s event loop. Every handle
+from one `App` shares the same queue.
+
+```python
+handle = app.thread_handle()
+threading.Thread(target=watch_files, args=(handle,), daemon=True).start()
+app.run()
+```
+
+## `LoopHandle`
+
+### `call_soon`
+
+**`call_soon(callback)`**
+
+Queues `callback` (called with no arguments) to run on the `App`'s
+event-loop thread and wakes the loop — including an idle one waiting
+for input. There it can touch `View`/`Window`/`Node` exactly like an
+input handler can:
+
+```python
+# on a background thread, after detecting a file change:
+text = path.read_text()                              # I/O off the UI thread
+handle.call_soon(lambda: view.reconcile(source=text))
+```
+
+- Safe from any thread, before, during, or after `run()`.
+- Callbacks run in the order they were queued, at the top of the next
+  frame. One queued before `run()` runs on the first frame; one queued
+  after `run()` returns waits for a later `run()`.
+- A callback that itself calls `call_soon` doesn't run again in the
+  same frame — its new entry runs on the next one.
+- An exception is logged the same way as one from an input handler and
+  doesn't stop the loop or later callbacks.
+- A callback that changes any window's tree gets that window redrawn,
+  even if another window's frame ran it.
+- Raises `TypeError` if `callback` isn't callable.
+
+`examples/threadsafe_reload.py` is a complete, runnable file watcher
+built on this.

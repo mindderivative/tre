@@ -332,6 +332,31 @@ fresh disk read of `path` — the change-detection gate still watches
 `path` on disk regardless, so this only changes what gets reconciled
 once a real file change is detected, not whether one is.
 
+### Hot reload inside `App.run()`
+
+`poll_reload()`/`reconcile()` above have to be called from somewhere —
+but once `App.run()` starts, it owns the main thread, and `View` can't
+be touched from any other thread. Use `App.thread_handle()`: a
+background watcher thread detects the change, does the file I/O itself,
+and hands only the reconcile to the event loop with `call_soon`, which
+wakes the loop even when it's idle:
+
+```python
+handle = app.thread_handle()
+
+def watch():  # runs on a background thread
+    for _changes in watchfiles.watch(view_path):   # or any watcher
+        text = Path(view_path).read_text()
+        handle.call_soon(lambda text=text: view.reconcile(source=text))
+
+threading.Thread(target=watch, daemon=True).start()
+app.run()
+```
+
+See [`App.thread_handle`](../api/python/app.md#thread_handle) and the
+runnable `examples/threadsafe_reload.py` (a dependency-free `os.stat`
+watcher in the same shape).
+
 ### `reconcile`
 
 A `View` built with `spec=`/`json=` and no `path=` has no file to watch

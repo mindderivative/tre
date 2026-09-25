@@ -25,4 +25,5 @@ pattern `Terminal`'s PTY reader thread already uses.
 
 ## Status
 
-Phase 1 complete; Phase 2 next.
+**Complete.** Phase 1 `1c1013f`; Phase 2 (example, docs, full chain)
+committed after. See `LOG.md`.
