@@ -137,3 +137,51 @@ def test_proof_keyed_reorder_preserves_identity_listeners_and_animation() -> Non
     assert rows["c"].get("opacity") == pytest.approx(0.5)
     w.advance(50)
     assert rows["c"].get("opacity") == 1.0
+
+
+def test_a_screen_swap_blurs_and_keeps_the_screen_as_it_was_left() -> None:
+    """App.show(): `old.remove(); root.add_child(new)`, and back again."""
+    w = window()
+    w.advance(0)
+    shell = w.create("box")
+    w.root.add_child(shell)
+    first, second = w.create("box"), w.create("box")
+    shell.add_child(first)
+    field = w.create("text_input", text="draft", width=100, height=30)
+    view = w.create("scroll_view", scroll_offset=40)
+    fading = w.create("box", opacity=0.0)
+    for node in (field, view, fading):
+        first.add_child(node)
+    blurs: list[object] = []
+    shell.on("blur", lambda e: blurs.append(e.target))
+    w.simulate("focus", node=field)
+    field.set(selection=(1, 3))
+    fading.animate("opacity", 1.0, 100)
+
+    first.remove()
+    shell.add_child(second)
+    assert blurs == [field], "blur bubbles through the tree as it was"
+    assert field.get("focused") is False
+    w.simulate("input", text="x")
+    assert field.get("text") == "draft", "keys don't reach a detached screen"
+    w.advance(100)
+
+    second.remove()
+    shell.add_child(first)
+    assert field.get("text") == "draft"
+    assert field.get("selection") == (1, 3)
+    assert view.get("scroll_offset") == 40.0
+    assert fading.get("opacity") == 1.0, "animations kept advancing while detached"
+
+
+def test_destroy_blurs_before_freeing() -> None:
+    w = window()
+    shell = w.create("box")
+    w.root.add_child(shell)
+    field = w.create("text_input")
+    shell.add_child(field)
+    blurs: list[object] = []
+    shell.on("blur", lambda e: blurs.append(e.target))
+    w.simulate("focus", node=field)
+    field.destroy()
+    assert len(blurs) == 1

@@ -219,6 +219,15 @@ for index, key in enumerate(new_order):
 - Nodes made by the older `add_*` methods start attached, and are never
   freed this way unless you `remove()` them.
 
+Switching screens is `old.remove()` then `window.root.add_child(new)`:
+
+- **Focus leaves with a removed or destroyed subtree.** When focus is inside
+  it, the focused node gets `blur` first — bubbling through the tree as it
+  was — and nothing is focused afterwards.
+- **A detached subtree keeps everything else**: scroll offsets, a text
+  input's text, caret, and selection, and running animations, which keep
+  advancing on the window's clock. Attach it again and it's as you left it.
+
 ### `set_context_menu`
 
 **`set_context_menu(content)`**

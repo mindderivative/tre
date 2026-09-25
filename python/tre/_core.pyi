@@ -386,11 +386,14 @@ class Node:
     def remove(self) -> None:
         """M96 (R5): detaches this node from its parent. It stays alive,
         and can be attached again, while any handle to it or to anything
-        under it exists; then it's freed automatically."""
+        under it exists; then it's freed automatically. Focus inside it
+        gets `blur` first and isn't moved anywhere; everything else --
+        scroll offsets, text and selection, running animations -- is kept."""
         ...
     def destroy(self) -> None:
         """M96: frees this node and its whole subtree now, with their
-        listeners. Using a handle to a freed node raises `ValueError`."""
+        listeners; focus inside it gets `blur` first. Using a handle to a
+        freed node raises `ValueError`."""
         ...
     def set_checked(self, checked: bool) -> None:
         """`Checkbox`-only -- raises `ValueError` for any other kind."""

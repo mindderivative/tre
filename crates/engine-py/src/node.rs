@@ -76,6 +76,38 @@ impl NodeState {
         })
     }
 
+    /// When focus is on this node or inside it, clears it and fires `blur`
+    /// (and the legacy focus-exit handler) -- before a detach or free, so
+    /// `blur` bubbles through the tree as it still is.
+    fn release_focus_within(&self, py: Python<'_>) {
+        let inside = {
+            let tree = self.tree.borrow();
+            tree.focused()
+                .is_some_and(|focused| tree.ancestors(focused).any(|id| id == self.id))
+        };
+        if !inside {
+            return;
+        }
+        let config = crate::dispatch::interaction_config();
+        let transition = self.tree.borrow_mut().clear_focus(
+            config.focus_ring_opacity,
+            config.focus_ring_duration,
+            crate::clock::now(&self.tree),
+        );
+        if let Some((old, new)) = transition {
+            crate::dispatch::fire_focus_transition(
+                &self.handlers,
+                &self.tree,
+                &self.context_menus,
+                &self.theme,
+                &self.completions,
+                old,
+                new,
+                py,
+            );
+        }
+    }
+
     /// `Err(Destroyed)` once this handle's node has been freed.
     pub(crate) fn check_alive(&self) -> PyResult<()> {
         if self.tree.borrow().get(self.id).is_some() {
@@ -1039,16 +1071,24 @@ impl Node {
     /// M96 (R5): detaches this node from its parent. It stays alive and can
     /// be attached again while any handle to it, or to anything under it,
     /// exists; after that it's freed automatically.
-    fn remove(&self) -> PyResult<()> {
+    ///
+    /// Focus inside it leaves with it: the focused node gets `blur`, and
+    /// nothing is focused until something else is. Everything else it
+    /// holds -- scroll offsets, a text input's text and selection, running
+    /// animations, which keep advancing -- is kept for when it's attached
+    /// again.
+    fn remove(&self, py: Python<'_>) -> PyResult<()> {
         self.check_alive()?;
+        self.release_focus_within(py);
         self.tree.borrow_mut().detach_collectible(self.id);
         Ok(())
     }
 
     /// M96: frees this node and its whole subtree now, with their
     /// listeners. Any handle to a freed node raises `ValueError` on use.
-    fn destroy(&self) -> PyResult<()> {
+    fn destroy(&self, py: Python<'_>) -> PyResult<()> {
         self.check_alive()?;
+        self.release_focus_within(py);
         let freed = self.tree.borrow_mut().destroy(self.id);
         node_handles::prune(&self.handlers, &freed);
         Ok(())
