@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "tre"
-version = "0.3.2"
+version = "0.3.3"
 description = "Python-facing GUI framework backend: Rust-native rendering, layout, animation, and accessibility engine with Material Design 3 components."
 authors = [{ name = "Phil Hodgins", email = "philip.a.hodgins@gmail.com" }]
 requires-python = ">=3.9"

@@ -52,6 +52,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M88 — Fix `test_terminal.py`'s CI Failure: No Display, Not Timing (corrects M83) | `██████████` 100% | ✅ Complete — single phase (2026-09-25) |
 | `v0.3.2` Release: PR #7 Merged to `main`, Tagged and Pushed | — | ✅ Released (2026-09-25) |
 | M89 — MkDocs Completeness Pass + "Working with Files" Section for Pure-`tre` Users | `██████████` 100% | ✅ Complete — single phase (2026-09-25) |
+| M90 — Consistent Property Naming Across the Imperative and Declarative APIs (breaking) | `░░░░░░░░░░` 0% | ⬜ Scoped, not started — 4 phases (2026-09-25) |
 
 **Just closed:** M80 — a 4-lens multi-agent review (Performance/Architecture/Security/Modernization) of the full `0.3.1` diff (M71-M79) plus a lighter full-project pass, each raw finding adversarially re-verified against the real current source before being trusted. Security found nothing real. 8 findings confirmed real across the other 3 lenses; 5 fixed directly this milestone, 3 left open for explicit user input (real design/scope decisions, not mechanical).
 
@@ -59,7 +60,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 **Left open, real design/scope decisions, not mechanical:** (a) the `spec`/`source` mutual-exclusion validation is now duplicated near-verbatim between `View::new` and `View::reconcile` -- unifying it cleanly is a small API design call (the two call sites' second requirement genuinely differs: `path` required vs. `source`-or-`spec` required), not a safe mechanical extraction. (b) the Tier 2 JSON parsing functions (`parse_view_json` et al., M76) have zero consumers anywhere in the workspace -- real, premature public-surface growth on a stability-contract-adjacent crate, against this same codebase's own repeatedly-stated "real, confirmed need, not manufactured ahead of one" precedent; needs a real decision (wire up a consumer, or hold the surface back) not a code change. (c) `spec=` construction exists on `View` (M78) but not on `View.instantiate`/`Component.instantiate` for embedded components -- a real, deliberately-scoped Tier 1 boundary per the M78 commit's own framing, not an oversight, but worth a standing note so it isn't mistaken for complete parity (noted here).
 
-**Up next:** all 3 of M80's deferred items were resolved in M81; M82 added a decode-free image-ingestion primitive; M83 fixed a real, pre-existing, CI-observed `test_terminal.py` flake unrelated to this branch's own work, found blocking a clean CI signal on [PR #5](https://github.com/mindderivative/tre/pull/5). Both open `tre` issues from Tesserae's own scoping work (#2, #3) remain resolved. **`v0.3.1` is released** (see this file's own "`v0.3.1` Released" section) -- Tesserae-side work is now unblocked and underway on the `0.3.2` branch. M84 added declarative support for 7 real primitives Tesserae's own scoping (its own M26) identified as needed for its widget-fragment catalog; Tesserae's own M27/M28 (fragments + macro-layer `repeat:` construct) both landed on Tesserae's own side afterward. M85 brought `tre`'s own MkDocs up to date with M71-M84's real API growth, user-directed after the user asked whether the docs already reflected it and confirmed they did not. **M86 is complete:** `*_spec=` dict kwargs for themes and stylesheets, and `tre.register_font(bytes)` for fonts -- every concern `tre` ingests now has a data-shaped entry point, so a framework (Tesserae) can own all file handling and hand `tre` data only. Tesserae's consuming half is its own M29. **M87 is complete:** `App.thread_handle()` returns a thread-safe `LoopHandle` whose `call_soon(fn)` runs `fn` on a running `App`'s event-loop thread ([issue #6](https://github.com/mindderivative/tre/issues/6)), so a background file watcher can drive hot reload inside `App.run()`. M88 fixed the CI failure blocking the `v0.3.2` release PR ([#7](https://github.com/mindderivative/tre/pull/7)), correcting M83's diagnosis. **`v0.3.2` is released** (see this file's own "`v0.3.2` Released" section). M89 then brought MkDocs fully up to date, with file-based usage in its own "Working with Files" guide page. Nothing further is scoped.
+**Up next:** all 3 of M80's deferred items were resolved in M81; M82 added a decode-free image-ingestion primitive; M83 fixed a real, pre-existing, CI-observed `test_terminal.py` flake unrelated to this branch's own work, found blocking a clean CI signal on [PR #5](https://github.com/mindderivative/tre/pull/5). Both open `tre` issues from Tesserae's own scoping work (#2, #3) remain resolved. **`v0.3.1` is released** (see this file's own "`v0.3.1` Released" section) -- Tesserae-side work is now unblocked and underway on the `0.3.2` branch. M84 added declarative support for 7 real primitives Tesserae's own scoping (its own M26) identified as needed for its widget-fragment catalog; Tesserae's own M27/M28 (fragments + macro-layer `repeat:` construct) both landed on Tesserae's own side afterward. M85 brought `tre`'s own MkDocs up to date with M71-M84's real API growth, user-directed after the user asked whether the docs already reflected it and confirmed they did not. **M86 is complete:** `*_spec=` dict kwargs for themes and stylesheets, and `tre.register_font(bytes)` for fonts -- every concern `tre` ingests now has a data-shaped entry point, so a framework (Tesserae) can own all file handling and hand `tre` data only. Tesserae's consuming half is its own M29. **M87 is complete:** `App.thread_handle()` returns a thread-safe `LoopHandle` whose `call_soon(fn)` runs `fn` on a running `App`'s event-loop thread ([issue #6](https://github.com/mindderivative/tre/issues/6)), so a background file watcher can drive hot reload inside `App.run()`. M88 fixed the CI failure blocking the `v0.3.2` release PR ([#7](https://github.com/mindderivative/tre/pull/7)), correcting M83's diagnosis. **`v0.3.2` is released** (see this file's own "`v0.3.2` Released" section). M89 then brought MkDocs fully up to date, with file-based usage in its own "Working with Files" guide page. **Branch `0.3.3` is open; M90 is scoped, not started:** a breaking rename of every inconsistently named property found by a scripted audit. `0.4.0` is reserved for the `vello_hybrid` fork ([issue #4](https://github.com/mindderivative/tre/issues/4)), per the user.
 
 **Known gaps:**
 - No live AT-SPI/UIA/NSAccessibility client is available in this dev/CI environment (M4 Phase 2's own real, stated constraint) — `Action::Click`/`Action::Focus` dispatch is real and unit-tested at every layer that doesn't need one, but a genuinely interactive screen reader driving a real request through the full stack is real, separate follow-up work whenever such an environment exists (M3 step 7's original wiring *did* have one at the time). An environmental limitation, not something more code alone fixes.
@@ -1080,6 +1081,59 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - Step 4: real doc bugs found by running every new snippet rather than trusting prose -- `components.md` said `add_switch` uses `set_checked`/`get_checked` (it raises; the real accessors are `set_on`/`get_on`); the declarative guide said `kind: Image` may omit its `image:` block (it's required -- only `src:` is optional); the schema example's `Text` widget had no `style.background` (required -- it errors); `node.md` called `push_frame` video-only (it works on any `Image` node); `get_text` omitted `Link`/`Terminal` — ✅
 - Step 5: stale facts corrected -- "67 milestones" -> 88, "56 factories" -> 60, `v0.3.0` wheel names -> `v0.3.2`, `engine-spec`/`engine-render`/`engine-platform` crate descriptions (format-agnostic schema, font registry, `EventLoopWaker`), a class count removed rather than kept drifting — ✅
 - Step 6: verification — ✅ (`mkdocs build --strict` clean with no anchor notices; all 85 Python code blocks parse; every snippet in the rewritten declarative and theming pages executed against the installed `tre` 0.3.2)
+
+---
+
+## Branch: `0.3.3` — Release Prep
+
+**Status: 🚧 In progress (2026-09-25).** Same workflow as `0.3.1`/`0.3.2`: work accumulates on `0.3.3`, merges back into `main` when ready, then gets tagged. User's versioning call: "We won't move to 0.4.0 until vello_hybrid fix/clone feature is put into place" -- so M90's breaking rename ships as `0.3.3`, and `0.4.0` stays reserved for [issue #4](https://github.com/mindderivative/tre/issues/4).
+
+- Branch `0.3.3` created off `main` at `cb9eea2` (post-`v0.3.2`, post-M89) — ✅
+- `Cargo.toml`/`pyproject.toml` bumped 0.3.2 → 0.3.3; `Cargo.lock` updated via `cargo check` — ✅
+- `PLAN.md`/`LOG.md` reset for this branch — ✅
+
+---
+
+## Milestone 90 — Consistent Property Naming Across the Imperative and Declarative APIs (breaking)
+
+**Status: ⬜ Not started (scoped 2026-09-25).** User: "I thought we changed the text color from background to foreground and fixed all the off named properties?" -- they hadn't been. The 2026-09-23 naming rule (`background` = a real fill, `foreground` = glyph/text color) was adopted for **Tesserae's wrapper API only**, and Tesserae applied it in just two wrappers (`icon`, `loading_indicator`); `tre` was never changed beyond M70's `Row`/`Column` rename. User then: "Scope M90 on a new 0.3.3 branch."
+
+**Audit method:** scripted, not from memory -- every parameter of all 60 `Window.add_*` factories aggregated by name, every `Node` accessor, and every field of `WidgetSpec`/`TextSpec`/`StyleSpec`/`ImageSpec`/`IconSpec`, then each suspicious name checked against its docstring or Rust source for what it actually does.
+
+**Findings, each with the recommended fix:**
+
+| # | Concept | Today | Recommended |
+|---|---|---|---|
+| A | Glyph/text color | `background` on `add_text` and on declarative `style.background` for `Text`/`Link`/`Icon`/`LoadingIndicator`; `color` on `add_icon`/`add_loading_indicator` | `foreground` everywhere, imperative and `style.foreground`; `style.background` on those kinds becomes a clear error pointing at `foreground` |
+| B | Toolbar color style | `add_toolbar(color="standard"\|"vibrant")` -- not a color at all | `vibrant: bool = False` |
+| C | Selection state | `add_checkbox(checked=)`, `add_switch(on=)`, `add_radio_button(selected=)`; `Node.set_on`/`get_on`, `set_selected`/`get_selected`, `set_checked`/`get_checked`; declarative `checked:` for all three; `on` is also a YAML 1.1 boolean literal (Tesserae M27 hit this) | MD3's own terms: `checked` for `Checkbox`, `selected` for `Switch` and `RadioButton` -- `add_switch(selected=)`, `Node.set_selected`/`get_selected` on `Switch` (dropping `set_on`/`get_on`), declarative `selected:` for `Switch`/`RadioButton`, binding property names to match |
+| D | Slider value | `add_slider(value=)` and declarative `value:`, but `Node.get`/`animate`/`bindings:` call it `thumb_position` | `value` everywhere |
+| E | Orientation | `add_divider(vertical=bool)`, `add_scroll_view(horizontal=bool)`, `add_toolbar(orientation="horizontal"\|"vertical")` | `orientation="horizontal"\|"vertical"` on all three |
+| F | Enum string casing | Imperative lowercase (`fit="cover"`, `variant="filled"`, `layout="hero"`), declarative and `Node.set_layout` PascalCase (`fit: Cover`, `flex_direction: Horizontal`, `align_items: FlexStart`), tokens and roles lowercase snake (`small`, `level_2`, `body_large`) | lowercase `snake_case` everywhere (`fit: cover`, `flex_direction: horizontal`, `align_items: flex_start`) |
+| G | Text-string params | `content` on `add_text`/`add_text_field`/`add_code_editor` and declarative `text.content`, but `add_link(text=)`; MD3 supporting text is `supporting_text` on `add_list_item` but `text` on `add_dialog`/`add_popover` | `add_link(content=)`; `add_dialog`/`add_popover(supporting_text=)`. `text` stays on `add_snackbar`/`add_tooltip`/`add_status_bar`, where it's the only string |
+| H | Typography role | `add_text(typography_role=)` vs declarative `text.role` | `typography_role` in both -- a bare `role` collides with MD3 color roles and accessibility roles |
+
+**Checked and deliberately left alone:** `add_slider(background=)` paints the thumb -- a real fill, so it follows the rule, just documented more precisely; `label`/`title`/`headline`/`subhead` are distinct MD3 anatomy names, not synonyms; `size` vs `width`/`height` reflects genuinely square vs rectangular components; `initial_position` on `add_splitter` is a divider position, not a value.
+
+**Before implementation:** A-H are recommendations. Confirm or amend them with the user first -- especially F, which touches every view file and every Tesserae fragment.
+
+### Phase 1 — Renames in `engine-spec` and `engine-py` ⬜
+- Step 1: declarative schema -- `style.foreground` (A), `selected:` for `Switch`/`RadioButton` (C), `typography_role` in `text:` (H), lowercase `snake_case` enum values via `serde(rename_all)` (F); `build.rs` reads the new fields — ⬜
+- Step 2: imperative factories -- the parameter renames in A, B, C, E, G, H across `window_factory.rs`; the `Node` accessor and property renames in C and D (`node.rs`, `view.rs` binding dispatch) — ⬜
+- Step 3: migration errors -- an old name gets a clear error naming its replacement (e.g. "`Switch` has no field `checked`; use `selected`", "`style.background` on `Text` is not a fill; use `foreground`") rather than only a generic unknown-field message — ⬜
+- Step 4: `_core.pyi` stubs updated; `mypy --strict` on the stub clean — ⬜
+
+### Phase 2 — Tests, Examples, Demo ⬜
+- Step 1: Rust and pytest suites updated to the new names, plus a test per rename proving the old name fails with its migration hint — ⬜
+- Step 2: all 89 examples, `demo/showcase.py`, and every example YAML file updated; each run clean — ⬜
+
+### Phase 3 — Docs ⬜
+- Step 1: MkDocs updated to the new names throughout, including fixing the theming guide's `add_text(..., background=(0, 0, 0, 0))` example, which renders invisible text today — ⬜
+- Step 2: a "Migrating to 0.3.3" page with the full old → new table; `mkdocs build --strict` clean and the API-coverage audit at zero — ⬜
+
+### Phase 4 — Verification + Tesserae Handoff ⬜
+- Step 1: full standing chain -- `cargo check`/`clippy -D warnings`/`fmt --check`/`cargo test --workspace --release`/`maturin develop --release`/`pytest tests/`/all examples/`demo/showcase.py`, plus the suite with `DISPLAY` unset to match CI — ⬜
+- Step 2: send the Tesserae session the migration table -- its wrappers, component fragments, and tests all use today's names, and its `foreground` translation layer mostly disappears — ⬜
 
 ---
 
