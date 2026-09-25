@@ -56,7 +56,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M91 — Live View Updates Keep Bound Values + `View.set_stylesheet` (issue #8) | `██████████` 100% | ✅ Complete — both phases done (2026-09-25) — closes issue #8 |
 | M92 — Animatable `Icon` Color | `██████████` 100% | ✅ Complete — single phase (2026-09-25) |
 | `v0.3.3` Release: PR #9 Merged to `main`, Tagged and Pushed | — | ✅ Released (2026-09-25) |
-| M93 — Target API Spec and Naming Convention | `░░░░░░░░░░` 0% | 🚧 In progress — Phase 1 of 3 (2026-09-25) |
+| M93 — Target API Spec and Naming Convention | `███████░░░` 70% | 🚧 In progress — spec written; awaiting review (2026-09-25) |
 | M94 — Input and Accessibility Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M95 — Paint and Animation Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M96 — Layer and Overlay Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
@@ -1290,18 +1290,18 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 **Status: 🚧 In progress (started 2026-09-25).** Design only, no code. Every later milestone implements this spec, so names are decided once, here, instead of renamed twice.
 
-### Phase 1 — Inventory and Classification ⬜
-- Step 1: classify every public name -- all 7 classes' methods, the 60 factories, all 21 node kinds, every `PaintProperties` field, every event, every animatable property, every motion curve -- as keep, replace-with-primitive, move-to-framework, or remove, with a one-line reason each — ⬜
-- Step 2: for each MD3 widget kind, list the exact primitives a framework needs to rebuild it, so M94–M96 add exactly those and nothing speculative; define the bare-bones docking surface per D10 — ⬜
-- Step 3: map every capability Tesserae uses today, and every need in its capability list above, to a named primitive in the target API -- none left unaccounted for — ⬜
+### Phase 1 — Inventory and Classification ✅
+- Step 1: classify every public name -- all 7 classes' methods, the 60 factories, all 21 node kinds, every `PaintProperties` field, every event, every animatable property, every motion curve -- as keep, replace-with-primitive, move-to-framework, or remove, with a one-line reason each — ✅ (`docs/design/target-api.md`'s migration table; a script confirms every one of the 171 public names in `_core.pyi` and every `tre.__all__` export is accounted for)
+- Step 2: for each MD3 widget kind, list the exact primitives a framework needs to rebuild it, so M94–M96 add exactly those and nothing speculative; define the bare-bones docking surface per D10 — ✅ (a building-blocks table covering all eleven removed widget kinds plus ripple, elevation, overlays, and the MD3 theme; it surfaced needs the plan hadn't listed -- `visible`, `z_index`, animatable `scroll_offset` for carousel snapping, and readable computed layout; docking reduced to zones, `dock_panel`, `set_active_panel`, `start_panel_drag`, and `dock_target`/`dock_drop` window events, with its presentation moving to the framework)
+- Step 3: map every capability Tesserae uses today, and every need in its capability list above, to a named primitive in the target API -- none left unaccounted for — ✅ ("Tesserae's needs" table)
 
-### Phase 2 — Naming Convention ⬜
-- Step 1: a written convention -- verbs for methods (`add_`, `set_`, `get_`, `remove_`), `on_` for events, nouns for properties, units in names where ambiguous, boolean naming, lowercase snake_case enum strings, one name per concept -- with the M90 rules folded in — ⬜
-- Step 2: apply it to every surviving name, producing the final target API and an old-to-new migration table — ⬜
+### Phase 2 — Naming Convention ✅
+- Step 1: a written convention -- verbs for methods (`add_`, `set_`, `get_`, `remove_`), `on_` for events, nouns for properties, units in names where ambiguous, boolean naming, lowercase snake_case enum strings, one name per concept -- with the M90 rules folded in — ✅
+- Step 2: apply it to every surviving name, producing the final target API and an old-to-new migration table — ✅ (eight design choices R1–R8 flagged for the user's review, notably R1: one `fill` plus `stroke_color`/`stroke_width` for every node, replacing `background`/`foreground`/`border_*`)
 
-### Phase 3 — Spec Review ⬜
-- Step 1: publish the spec as a docs design page and hand it to the Tesserae session for feedback — ⬜
-- Step 2: user approval of the spec; nothing in M94 onward starts before this — ⬜
+### Phase 3 — Spec Review 🚧
+- Step 1: publish the spec as a docs design page and hand it to the Tesserae session for feedback — ✅ (MkDocs "Design → Target API (proposed)"; `mkdocs build --strict` clean)
+- Step 2: user approval of the spec; nothing in M94 onward starts before this — 🚧 (awaiting the user's review of R1–R8)
 
 ---
 

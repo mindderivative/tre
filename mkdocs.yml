@@ -67,4 +67,6 @@ nav:
       - CanvasContext: api/python/canvas-context.md
   - Rust Crates: api/rust.md
   - Architecture: architecture.md
+  - Design:
+      - Target API (proposed): design/target-api.md
   - Contributing: contributing.md
