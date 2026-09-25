@@ -92,6 +92,18 @@ pub enum ScrollDelta {
     Pixels(f64, f64),
 }
 
+/// M94: the modifier keys held while an event happens. Tracked by
+/// `engine-platform` from `winit`'s own `ModifiersChanged` and delivered as
+/// `InputEvent::ModifiersChanged`; `engine-py` keeps the latest value per
+/// window and stamps it onto every pointer and key event it routes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Modifiers {
+    pub shift: bool,
+    pub ctrl: bool,
+    pub alt: bool,
+    pub meta: bool,
+}
+
 /// The generic input vocabulary `engine-platform` translates real
 /// `winit` events into (§4). `position` is already in the same
 /// coordinate space `Tree::hit_test`/`Tree::absolute_position` use --
@@ -252,6 +264,28 @@ pub enum InputEvent {
         width: f32,
         height: f32,
     },
+    /// M94: every key press and release, named -- sent alongside (before)
+    /// whichever narrow `KeyPressed`/`TextInput`/clipboard event the same
+    /// key also produces, so the engine's own text editing and focus
+    /// handling are unchanged. `name` is a lowercase snake_case key name
+    /// (`"enter"`, `"arrow_left"`, `"f5"`) or, for a character key, the
+    /// character it produces (`"a"`, `"A"` with Shift). `Tree::dispatch`
+    /// ignores it; `engine-py` routes it as `key_down`/`key_up`.
+    Key {
+        name: String,
+        pressed: bool,
+        repeat: bool,
+    },
+    /// M94: the held modifier keys changed. `Tree::dispatch` ignores it.
+    ModifiersChanged(Modifiers),
+    /// M94: the window moved to a display with a different scale factor.
+    /// `Tree::dispatch` ignores it.
+    ScaleFactorChanged {
+        scale_factor: f64,
+    },
+    /// M94: the pointer left the window -- clears hover, so the last
+    /// hovered subtree receives its `pointer_leave`.
+    PointerLeft,
 }
 
 /// M4 Phase 6 (§16.2): the small, real vocabulary of named events a

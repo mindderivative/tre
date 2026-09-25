@@ -3,6 +3,9 @@
 A handle to one node in a [`Window`](window.md)'s or [`View`](view.md)'s
 tree. Returned by every `add_*` method; never constructed directly.
 
+*New in 0.3.4:* `on`/`off` listeners, `capture_pointer`/`release_pointer`,
+and handle equality — see [Events and Listeners](events.md).
+
 ## `animate`
 
 **`animate(property, to, duration_ms=0, on_complete=None)`**

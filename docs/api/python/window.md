@@ -277,6 +277,13 @@ if window.theme.is_set():
 | `elevation(component, variant=None) -> float \| None` | `shape`'s own sibling for elevation — identical contract |
 | `typography(role) -> (family, weight, size, line_height) \| None` | A real, shipped MD3 default for a recognized typography role, regardless of whether a theme is set; `None` only for an unrecognized role name |
 
+## Events, properties, and `simulate` (0.3.4)
+
+`window.on`/`off` for window events (`resize`, `color_scheme`,
+`scale_factor`, `close_requested`, `closed`), `window.set(title=...)`,
+`window.get(name)`, `window.root`, and `window.simulate(event, node=None,
+**fields)` for headless tests — see [Events and Listeners](events.md).
+
 ## Synthetic input dispatch
 
 These work without a live rendered window — each computes layout, then

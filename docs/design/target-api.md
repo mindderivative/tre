@@ -1,4 +1,4 @@
-# Target API (M93, proposed)
+# Target API (M93)
 
 !!! warning "Approved design — being implemented"
     This page specifies where `tre` is heading under the approved
@@ -17,7 +17,7 @@ the framework (Tesserae). Every name is chosen so a framework author can
 tell at a glance what it is.
 
 Decisions D1–D11 (approved) are in `BUILD_TRACKER.md`'s Program section.
-This page adds design choices **R1–R12** for review.
+This page adds design choices **R1–R12**, approved with it.
 
 Three principles run through every section:
 
@@ -62,7 +62,7 @@ Three principles run through every section:
 | **No abbreviations** beyond universal ones, and `a11y_` where a plain word would be ambiguous | `rgba`, `id`, `a11y_action`, `a11y_hidden` |
 | **Colors are `(r, g, b, a)` tuples of ints 0–255**; parsing hex or theme names is the framework's job (R4) | `(0x67, 0x50, 0xA4, 0xFF)` |
 
-## Design choices for review
+## Design choices
 
 R1–R8 are from revision 1; Tesserae's review agreed with all eight and
 refined R3, R4, R5, and R8 (folded in below). R9–R12 are new in
@@ -238,11 +238,11 @@ and events still bubble from it.
 | `type` | every event (was `kind`) |
 | `target` | every event: the node the event is about (was `node`) |
 | `current` | bubbling events: the node whose handler is running |
-| `x`, `y` | pointer and wheel events, node-local |
+| `x`, `y` | pointer and wheel events, local to `current` |
 | `window_x`, `window_y` | pointer and wheel events |
 | `button` | pointer events (`"primary"`, `"secondary"`, `"middle"`) |
-| `delta_x`, `delta_y` | `wheel`, `scroll` |
-| `key` | `key_down`, `key_up`: full key names (`"a"`, `"enter"`, `"arrow_left"`, `"f5"`, …) |
+| `delta_x`, `delta_y` | `wheel`, `scroll` — pixels (20 per wheel line), positive scrolling right and down |
+| `key`, `repeat` | `key_down`, `key_up`: snake_case names for named keys (`"enter"`, `"arrow_left"`, `"f5"`, …), the produced character for character keys (`"a"`, `"A"` with Shift); `repeat` for auto-repeat |
 | `shift`, `ctrl`, `alt`, `meta` | pointer and key events |
 | `text` | `input` |
 | `old_value`, `new_value` | `change` |

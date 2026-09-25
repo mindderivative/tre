@@ -62,11 +62,12 @@ nav:
       - App: api/python/app.md
       - Window: api/python/window.md
       - Node: api/python/node.md
+      - Events and Listeners: api/python/events.md
       - View: api/python/view.md
       - Reactivity (Signal, Computed, Effect, ViewModel): api/python/signal-and-viewmodel.md
       - CanvasContext: api/python/canvas-context.md
   - Rust Crates: api/rust.md
   - Architecture: architecture.md
   - Design:
-      - Target API (proposed): design/target-api.md
+      - Target API: design/target-api.md
   - Contributing: contributing.md

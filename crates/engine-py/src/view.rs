@@ -71,7 +71,7 @@ use taffy::prelude::{AvailableSpace, Size};
 use crate::binding::PyViewModelResolver;
 use crate::dispatch::CompletionRegistry;
 use crate::dispatch::{
-    HandlerMap, SharedCompletions, interaction_config, node_center, open_context_menu,
+    HandlerKey, HandlerMap, SharedCompletions, interaction_config, node_center, open_context_menu,
     run_dispatch_outcome,
 };
 use crate::node::Node;
@@ -902,7 +902,7 @@ pub(crate) fn attach_bindings_and_handlers(
             // introspection (real, but unnecessary indirection for a
             // callable whose own arity is already known here).
             handlers.borrow_mut().insert(
-                (node_id, EventKind::Change),
+                (node_id, HandlerKey::Legacy(EventKind::Change)),
                 (two_way_callback.into_any(), false),
             );
         }
@@ -1033,7 +1033,7 @@ struct Attachment {
     /// callable it stored. Detach removes an entry only if it still holds
     /// that same object, so a handler the app registered imperatively on
     /// the same node and event afterward survives.
-    handlers: Vec<((NodeId, EventKind), Py<PyAny>)>,
+    handlers: Vec<((NodeId, HandlerKey), Py<PyAny>)>,
 }
 
 impl View {
@@ -1049,7 +1049,7 @@ impl View {
         let mut two_way = Vec::new();
         collect_two_way(spec, &mut two_way);
 
-        let before: HashMap<(NodeId, EventKind), usize> = self
+        let before: HashMap<(NodeId, HandlerKey), usize> = self
             .handlers
             .borrow()
             .iter()

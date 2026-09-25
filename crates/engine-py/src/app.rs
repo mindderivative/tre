@@ -25,7 +25,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use engine_core::{InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
-use engine_platform::{WindowConfig, WindowRequest, run_windowed_multi};
+use engine_platform::{WindowConfig, WindowLifecycle, WindowRequest, run_windowed_multi};
 use engine_render::{FrameRenderer, GeometryCache, TextPlacement, TextRenderer, build_tree_scene};
 use peniko::kurbo::Point;
 use pyo3::prelude::*;
@@ -35,13 +35,15 @@ use winit::window::{Window, WindowId};
 
 use crate::dispatch::{
     HandlerMap, SharedCompletions, copy_focused_selection_to_clipboard,
-    cut_focused_selection_to_clipboard, interaction_config, open_context_menu,
-    paste_clipboard_into_focused, run_completions, run_dispatch_outcome,
+    cut_focused_selection_to_clipboard, interaction_config, paste_clipboard_into_focused,
+    process_input, run_completions, run_dispatch_outcome,
 };
 use crate::dock::{self, SharedDockState};
+use crate::event::NodeContext;
+use crate::listeners::{self, WindowEventType, WindowListenerMap};
 use crate::terminal::{TerminalSession, control_byte_for, input_bytes_for};
 use crate::thread_handle::{CallQueue, LoopHandle};
-use crate::window::{PyWindow, SharedActiveTree, SharedSize, SharedTheme};
+use crate::window::{PyWindow, SharedActiveTree, SharedOsWindow, SharedSize, SharedTheme};
 
 #[pyclass(unsendable)]
 pub struct App {
@@ -99,6 +101,9 @@ struct WindowSetup {
     /// frame/input, picking up a `Window.show_view` call made from a
     /// Python handler while `App.run()` is already blocking.
     active: SharedActiveTree,
+    /// M94: see `PyWindow::window_listeners`/`os_window`.
+    window_listeners: WindowListenerMap,
+    os_window: SharedOsWindow,
 }
 
 /// M18 Phase 1/2 (§8, §10, §11.9, §11.10): the real per-glyph hit-test
@@ -359,6 +364,9 @@ struct WindowRuntime {
     /// dozens of pre-existing `runtime.tree`/`.root`/`.handlers`/
     /// `.context_menus` call sites need to change at all.
     active: SharedActiveTree,
+    /// M94: see `PyWindow::window_listeners`/`os_window`.
+    window_listeners: WindowListenerMap,
+    os_window: SharedOsWindow,
 }
 
 #[pymethods]
@@ -429,6 +437,8 @@ impl App {
                     completions: window.completions.clone(),
                     terminals: window.terminals.clone(),
                     active: window.active.clone(),
+                    window_listeners: window.window_listeners.clone(),
+                    os_window: window.os_window.clone(),
                 }
             })
             .collect();
@@ -469,7 +479,9 @@ impl App {
         let runtimes_for_frame = runtimes.clone();
         let runtimes_for_access = runtimes.clone();
         let runtimes_for_input = runtimes.clone();
+        let runtimes_for_lifecycle = runtimes.clone();
         let runtimes_for_access_action = runtimes;
+        let setups_for_cleanup = setups.clone();
         let setups_for_setup = setups;
         let calls_for_frame = self.calls.clone();
         let calls_for_setup = self.calls.clone();
@@ -477,6 +489,7 @@ impl App {
         let result = run_windowed_multi(
             move |window_id, token, window| {
                 let setup = &setups_for_created[token as usize];
+                *setup.os_window.borrow_mut() = Some(window.clone());
                 let gpu = GpuState::new(window, setup.width.get(), setup.height.get());
                 runtimes_for_created.borrow_mut().insert(
                     window_id,
@@ -495,6 +508,8 @@ impl App {
                         terminal_drag: None,
                         terminals: setup.terminals.clone(),
                         active: setup.active.clone(),
+                        window_listeners: setup.window_listeners.clone(),
+                        os_window: setup.os_window.clone(),
                     },
                 );
             },
@@ -738,6 +753,13 @@ impl App {
                     runtime.context_menus = active.context_menus.clone();
                 }
 
+                // M94: modifier state is shared by every window's event
+                // routing (`listeners::modifiers`), nothing more to do.
+                if let InputEvent::ModifiersChanged(modifiers) = event {
+                    listeners::set_modifiers(modifiers);
+                    return;
+                }
+
                 // M30 Phase 9 Step 4 (§5, §8, §10): a real, live
                 // Terminal's own keyboard routing -- inspects the raw
                 // `event` directly, the identical real "meaning-
@@ -792,37 +814,22 @@ impl App {
                     }
                     return;
                 }
-                let outcome = runtime.tree.borrow_mut().dispatch(
+                // M94: dispatch, `node.on(...)` listeners, legacy handlers,
+                // and the context menu a right-click opens -- one pipeline
+                // shared with `Window.simulate` (`dispatch::process_input`).
+                // `event` itself is still needed below, for the
+                // winit-driven dock-drag/theme-switch match.
+                process_input(
+                    &NodeContext {
+                        tree: &runtime.tree,
+                        handlers: &runtime.handlers,
+                        context_menus: &runtime.context_menus,
+                        theme: &runtime.theme,
+                        completions: &runtime.completions,
+                    },
                     runtime.root,
-                    // M15 Phase 2: `InputEvent` is no longer `Copy`
-                    // (the new `TextInput(String)` variant owns a real
-                    // `String`) -- `event` itself is still needed below
-                    // (the real, winit-driven dock-drag/theme-switch
-                    // match), so this clones once rather than
-                    // restructuring the two real, independent uses.
-                    event.clone(),
-                    &interaction_config(),
-                    Instant::now(),
-                );
-                run_dispatch_outcome(
-                    &runtime.handlers,
-                    &runtime.tree,
-                    &runtime.context_menus,
-                    &runtime.theme,
-                    &runtime.completions,
-                    &outcome,
-                    Some(&event),
+                    &event,
                     py,
-                );
-                // M4 Phase 7 (§11.3): the real, winit-driven path a
-                // genuine right-click reaches -- `Window.right_click`/
-                // `View.right_click` are the no-live-window-needed test
-                // entry points, this is where an actual mouse arrives.
-                open_context_menu(
-                    &runtime.tree,
-                    &runtime.context_menus,
-                    runtime.root,
-                    &outcome,
                 );
                 // M4 Phase 9 (§11.4): the real, winit-driven path a
                 // genuine panel drag reaches -- `Window.start_panel_drag`/
@@ -982,6 +989,13 @@ impl App {
                         // component colors too, the identical way
                         // `Window.set_theme` itself already does.
                         tree.set_all_component_tints(tint);
+                        drop(tree);
+                        listeners::deliver_window(
+                            &runtime.window_listeners,
+                            py,
+                            WindowEventType::ColorScheme,
+                            |e| e.dark = Some(dark),
+                        );
                     }
                     // M32 Phase 2 (§4, §5): the real, winit-driven
                     // window resize -- `Tree::dispatch` (called just
@@ -1028,6 +1042,23 @@ impl App {
                     InputEvent::Resized { width, height } => {
                         runtime.width.set(width as u32);
                         runtime.height.set(height as u32);
+                        listeners::deliver_window(
+                            &runtime.window_listeners,
+                            py,
+                            WindowEventType::Resize,
+                            |e| {
+                                e.width = Some(f64::from(width));
+                                e.height = Some(f64::from(height));
+                            },
+                        );
+                    }
+                    InputEvent::ScaleFactorChanged { scale_factor } => {
+                        listeners::deliver_window(
+                            &runtime.window_listeners,
+                            py,
+                            WindowEventType::ScaleFactor,
+                            |e| e.scale_factor = Some(scale_factor),
+                        );
                     }
                     // M17 Phase 1 (§8), refactored M53 Phase 2: the
                     // real, winit-driven Ctrl+C path -- now a thin call
@@ -1244,6 +1275,33 @@ impl App {
                     _ => {}
                 }
             },
+            // M94: `close_requested` (cancellable) and `closed` window
+            // events. A cancelled request keeps the window open; `closed`
+            // also drops the window's handle to its OS window.
+            move |window_id, lifecycle| {
+                let runtimes = runtimes_for_lifecycle.borrow();
+                let Some(runtime) = runtimes.get(&window_id) else {
+                    return true;
+                };
+                match lifecycle {
+                    WindowLifecycle::CloseRequested => !listeners::deliver_window(
+                        &runtime.window_listeners,
+                        py,
+                        WindowEventType::CloseRequested,
+                        |_| {},
+                    ),
+                    WindowLifecycle::Closed => {
+                        listeners::deliver_window(
+                            &runtime.window_listeners,
+                            py,
+                            WindowEventType::Closed,
+                            |_| {},
+                        );
+                        *runtime.os_window.borrow_mut() = None;
+                        true
+                    }
+                }
+            },
             move |opener, waker| {
                 // M87: from here on, `LoopHandle.call_soon` wakes this
                 // run's loop -- including one idle in `ControlFlow::Wait`.
@@ -1277,6 +1335,10 @@ impl App {
         // queues, waiting for a later `run()`'s first frame, rather than
         // waking a proxy with no loop behind it.
         self.calls.set_waker(None);
+        // M94: no window is open any more.
+        for setup in setups_for_cleanup.iter() {
+            *setup.os_window.borrow_mut() = None;
+        }
 
         match result {
             Ok(()) => Ok(()),

@@ -17,6 +17,7 @@ use taffy::prelude::{Position, Rect as TaffyRect, Size, Style, auto, length};
 
 use crate::dispatch::{CompletionRegistry, HandlerMap, SharedCompletions};
 use crate::dock::{self, SharedDockState};
+use crate::listeners::WindowListenerMap;
 use crate::node::Node;
 use crate::terminal::TerminalSession;
 use crate::view::View;
@@ -618,7 +619,17 @@ pub struct PyWindow {
     /// unchanged) -- only `App::run`'s own `WindowSetup`/`WindowRuntime`
     /// and `show_view` (below) ever touch it.
     pub(crate) active: SharedActiveTree,
+    /// M94: `window.on(...)` listeners -- the window's own, independent of
+    /// which tree it shows.
+    pub(crate) window_listeners: WindowListenerMap,
+    /// M94: the OS window while `App.run()` has it open -- `None` before
+    /// and after. `window.set(title=...)` and `window.get("scale_factor")`
+    /// reach it here; `App.run()` fills and clears it.
+    pub(crate) os_window: SharedOsWindow,
 }
+
+/// M94: see `PyWindow::os_window`.
+pub(crate) type SharedOsWindow = Rc<RefCell<Option<std::sync::Arc<winit::window::Window>>>>;
 
 /// Real review finding: every `add_*`/`build_shell` method below used
 /// to build an identical 6-field `Node` struct literal by hand (the
@@ -697,6 +708,8 @@ impl PyWindow {
             terminals: Rc::new(RefCell::new(HashMap::new())),
             retheme_hooks: RefCell::new(Vec::new()),
             active,
+            window_listeners: Rc::new(RefCell::new(HashMap::new())),
+            os_window: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -767,6 +780,8 @@ impl PyWindow {
             // registered hook for that node going forward.
             retheme_hooks: RefCell::new(Vec::new()),
             active,
+            window_listeners: Rc::new(RefCell::new(HashMap::new())),
+            os_window: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -1005,6 +1020,10 @@ impl PyWindow {
         for callback in self.completions.borrow().callbacks.values() {
             visit.call(callback)?;
         }
+        // M94: window listeners are stored callbacks too.
+        for (handler, _wants_event) in self.window_listeners.borrow().values() {
+            visit.call(handler)?;
+        }
         // M42 Phase 2: after a real `show_view` switch, `self.active`'s
         // own `handlers` can be a *different* `HandlerMap` than
         // `self.handlers` above (the newly-shown `View`'s own) -- its
@@ -1048,6 +1067,7 @@ impl PyWindow {
         self.handlers.borrow_mut().clear();
         self.completions.borrow_mut().callbacks.clear();
         self.active.borrow().handlers.borrow_mut().clear();
+        self.window_listeners.borrow_mut().clear();
     }
 }
 

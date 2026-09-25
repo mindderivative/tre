@@ -57,7 +57,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M92 — Animatable `Icon` Color | `██████████` 100% | ✅ Complete — single phase (2026-09-25) |
 | `v0.3.3` Release: PR #9 Merged to `main`, Tagged and Pushed | — | ✅ Released (2026-09-25) |
 | M93 — Target API Spec and Naming Convention | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-25) |
-| M94 — Input and Accessibility Building Blocks | `░░░░░░░░░░` 0% | 🚧 In progress — Phase 1 of 3 (2026-09-25) |
+| M94 — Input and Accessibility Building Blocks | `███░░░░░░░` 35% | 🚧 In progress — Phase 1 done, Phase 2 of 3 (2026-09-25) |
 | M95 — Paint and Animation Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M96 — Layer, Structure, and Update Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M97 — Tesserae Migration Gate | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
@@ -1311,13 +1311,13 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 **Scoped against the source (2026-09-25):** the engine already receives raw pointer, key, text, wheel, theme, and resize input (`engine_core::InputEvent`), but only five `DispatchOutcome`s reach Python, `Key` is a 12-key vocabulary with Shift as the only modifier, and legacy handlers are keyed `(NodeId, EventKind)` in one shared map touched in only a handful of places. So the new listeners share that map under a widened key rather than adding a field to every one of the 34 `Node` construction sites; routing captures the pre-dispatch target -- the focused node for keys, the hit or captured node for pointers -- then runs after `Tree::dispatch`, in one function the live loop and the headless `simulate` both call. `Text` and `Icon` nodes are never hit targets today, so a label's pointer events already land on its container.
 
-### Phase 1 — Event Routing, Pointer, and Keyboard ⬜
-- Step 1: `node.on(event, handler)`/`off(event)` stored beside the legacy handlers under a widened key; `Event` gains `type`, `target`, `current`, `stop()`, and the new payload fields; one bubbling router shared by the live loop and the headless path — ⬜
-- Step 2: `pointer_down`/`pointer_move`/`pointer_up` and `wheel` with node-local and window coordinates, button, and Shift/Ctrl/Alt/Meta; `pointer_enter`/`pointer_leave` as non-bubbling subtree events, including when the pointer leaves the window — ⬜
-- Step 3: pointer capture -- `capture_pointer()`/`release_pointer()`, so a drag keeps reporting to the node that started it; released automatically on `pointer_up` — ⬜
-- Step 4: `key_down`/`key_up` with full key names and modifiers, and the `input` text event, to the focused node; the platform translates every key, not only the internal 12-key set — ⬜
-- Step 5: the M93 propagation model for `click`, `secondary_click`, `focus`, `blur`, and `change` -- bubbling with `event.stop()`, `change` text-only and non-bubbling — ⬜
-- Step 6: window events and properties -- `window.on`/`off` for `resize`, `color_scheme`, `scale_factor`, a cancellable `close_requested`, and `closed`; `window.set(title=...)`; `window.get` for `width`, `height`, `scale_factor`, and `title` — ⬜
+### Phase 1 — Event Routing, Pointer, and Keyboard ✅
+- Step 1: `node.on(event, handler)`/`off(event)` stored beside the legacy handlers under a widened key; `Event` gains `type`, `target`, `current`, `stop()`, and the new payload fields; one bubbling router shared by the live loop and the headless path — ✅ (`HandlerKey::{Legacy, Listener}` in the one `HandlerMap`, so no `Node` field and no GC change; new `listeners.rs` routes raw input from a target resolved before dispatch, and outcome events from the same `run_dispatch_outcome`/`fire_focus_transition` the legacy handlers use, so accessibility and synthetic paths reach listeners too; `dispatch::process_input` is the one pipeline `App.run()` and `simulate` share; `Node` handles gained `__eq__`/`__hash__` and `Window.root` arrived, found needed the moment a listener tried to tell nodes apart)
+- Step 2: `pointer_down`/`pointer_move`/`pointer_up` and `wheel` with node-local and window coordinates, button, and Shift/Ctrl/Alt/Meta; `pointer_enter`/`pointer_leave` as non-bubbling subtree events, including when the pointer leaves the window — ✅ (`x`/`y` local to `current` through the transform-aware `Tree::window_to_local`; modifiers from a per-thread `Modifiers` fed by the platform's `ModifiersChanged`; `wheel` in pixels at 20 per line with the web's positive-down sign; new `InputEvent::PointerLeft` from winit's `CursorLeft` clears hover, which also gives the legacy hover-exit a leave it never had)
+- Step 3: pointer capture -- `capture_pointer()`/`release_pointer()`, so a drag keeps reporting to the node that started it; released automatically on `pointer_up` — ✅ (`Tree::pointer_capture`, cleared when the node is removed; engine-internal widget drags unaffected)
+- Step 4: `key_down`/`key_up` with full key names and modifiers, and the `input` text event, to the focused node; the platform translates every key, not only the internal 12-key set — ✅ (new `InputEvent::Key` sent before the existing narrow translation, so text editing and Tab focus are unchanged; named keys snake_cased from winit's `NamedKey`, character keys as produced; `repeat` carried)
+- Step 5: the M93 propagation model for `click`, `secondary_click`, `focus`, `blur`, and `change` -- bubbling with `event.stop()`, `change` text-only and non-bubbling — ✅ (legacy handlers still fire, unchanged and non-bubbling; `pointer_up` is delivered before `click`)
+- Step 6: window events and properties -- `window.on`/`off` for `resize`, `color_scheme`, `scale_factor`, a cancellable `close_requested`, and `closed`; `window.set(title=...)`; `window.get` for `width`, `height`, `scale_factor`, and `title` — ✅ (`run_windowed_multi` gained an `on_lifecycle` callback whose `false` keeps the window open; `closed` fires on every close including `max_frames`; `PyWindow` shares the OS window with the run loop for the live title and scale factor)
 
 ### Phase 2 — Accessibility, Focus, and `set` ⬜
 - Step 1: accessibility properties -- `role` from the M93 role list, `label`, `value` with `value_min`/`value_max`/`value_step`, `checked`, `selected`, `expanded`, `disabled`, heading `level`, `live` politeness, and `a11y_hidden`; the actions offered to assistive technology derived from role and state; requests arrive as the `a11y_action` event — ⬜
@@ -1325,7 +1325,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - Step 3: an atomic `node.set(**props)` for these properties -- every value validated before any is applied, an unknown name listing the valid ones -- and `node.get` reading them back; M96 extends the same entry point to every property — ⬜
 
 ### Phase 3 — Verification ⬜
-- Step 1: `window.simulate(event, node=None, **fields)` for every new event, through the same router as the live loop (D9, R7); the 13 legacy synthetic-input methods stay until M100 — ⬜
+- Step 1: `window.simulate(event, node=None, **fields)` for every new event, through the same router as the live loop (D9, R7); the 13 legacy synthetic-input methods stay until M100 — 🚧 (every Phase 1 event, window events included, with strict field checking; `a11y_action` arrives with Phase 2)
 - Step 2: tests for every new event, property, and window event, plus a proof widget -- a working slider built only from these primitives, behaving like today's built-in one — ⬜
 - Step 3: `_core.pyi` stubs, docs for the new surface, and the full standing chain — ⬜
 

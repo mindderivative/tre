@@ -50,6 +50,7 @@ fn main() {
         },
         |_window_id, _event| {},
         |_window_id, _request| {},
+        |_window_id, _lifecycle| true,
         |opener, waker| {
             opener.open_window(WindowRequest {
                 config: WindowConfig {

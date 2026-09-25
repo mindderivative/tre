@@ -145,6 +145,8 @@ pub struct Tree {
     button_group_reflow_count: usize,
     scroll_view_count: usize,
     virtual_list_count: usize,
+    /// M94: the node holding pointer capture (`set_pointer_capture`).
+    pointer_capture: Option<NodeId>,
 }
 
 impl Default for Tree {
@@ -184,6 +186,7 @@ impl Tree {
             button_group_reflow_count: 0,
             scroll_view_count: 0,
             virtual_list_count: 0,
+            pointer_capture: None,
         }
     }
 
@@ -427,6 +430,12 @@ impl Tree {
         self.overlays.remove(&id);
         if self.focused == Some(id) {
             self.focused = None;
+        }
+        if self.pointer_capture == Some(id) {
+            self.pointer_capture = None;
+        }
+        if self.hovered == Some(id) {
+            self.hovered = None;
         }
 
         true
@@ -1312,6 +1321,13 @@ impl Tree {
     /// same concern it would be for `paint_node`/`hit_test_at`'s own
     /// per-frame walks.
     pub fn absolute_position(&self, id: NodeId) -> (f64, f64) {
+        let p = self.composed_transform(id) * Point::ORIGIN;
+        (p.x, p.y)
+    }
+
+    /// The root-to-`id` composition of every node's layout offset and own
+    /// transform -- shared by `absolute_position` and `window_to_local`.
+    fn composed_transform(&self, id: NodeId) -> Affine {
         let mut chain = vec![id];
         let mut current = id;
         while let Some(parent) = self
@@ -1335,9 +1351,7 @@ impl Tree {
                 * Affine::translate((f64::from(layout.location.x), f64::from(layout.location.y)))
                 * node.paint.transform.current;
         }
-
-        let p = composed * Point::ORIGIN;
-        (p.x, p.y)
+        composed
     }
 
     /// Updates `id`'s `layout_style` and keeps `taffy`'s own internal
@@ -2522,8 +2536,21 @@ impl Tree {
         duration: Duration,
         now: Instant,
     ) -> Option<NodeId> {
-        self.dirty = true;
         let hit = self.hit_test(root, point);
+        self.set_hovered(hit, hover_opacity, duration, now)
+    }
+
+    /// M94: `update_hover`'s own transition half, split out so
+    /// `InputEvent::PointerLeft` can clear hover without a hit-test.
+    /// Returns `hit`.
+    pub fn set_hovered(
+        &mut self,
+        hit: Option<NodeId>,
+        hover_opacity: f64,
+        duration: Duration,
+        now: Instant,
+    ) -> Option<NodeId> {
+        self.dirty = true;
         if hit == self.hovered {
             return hit;
         }
@@ -2690,6 +2717,20 @@ impl Tree {
             return None;
         }
         self.transition_focus(Some(node), focus_ring_opacity, duration, now)
+    }
+
+    /// M94: `set_focus_to`'s counterpart that leaves nothing focused --
+    /// how `node.blur()` and a simulated `blur` clear focus through the
+    /// same transition (and `(old, new)` report) as every other focus
+    /// change.
+    pub fn clear_focus(
+        &mut self,
+        focus_ring_opacity: f64,
+        duration: Duration,
+        now: Instant,
+    ) -> Option<(Option<NodeId>, Option<NodeId>)> {
+        self.dirty = true;
+        self.transition_focus(None, focus_ring_opacity, duration, now)
     }
 
     /// Shared by `move_focus`/`set_focus_to`: animates the previously-
@@ -4230,7 +4271,57 @@ impl Tree {
                 }
                 DispatchOutcome::None
             }
+            // M94: plumbing only -- named keys, modifier changes, and
+            // scale-factor changes mean nothing to the tree itself;
+            // `engine-py` routes them to Python listeners.
+            InputEvent::Key { .. }
+            | InputEvent::ModifiersChanged(_)
+            | InputEvent::ScaleFactorChanged { .. } => DispatchOutcome::None,
+            // M94: the pointer left the window, so nothing is hovered --
+            // the same transition `PointerMoved` reports when the pointer
+            // moves off every node.
+            InputEvent::PointerLeft => {
+                let old_hovered = self.hovered;
+                self.set_hovered(None, config.hover_opacity, config.hover_duration, now);
+                if old_hovered.is_some() {
+                    DispatchOutcome::HoverChanged {
+                        old: old_hovered,
+                        new: None,
+                    }
+                } else {
+                    DispatchOutcome::None
+                }
+            }
         }
+    }
+
+    /// M94: the node currently holding pointer capture, if any
+    /// (`set_pointer_capture`).
+    pub fn pointer_capture(&self) -> Option<NodeId> {
+        self.pointer_capture
+    }
+
+    /// M94: routes every later pointer event to `node` until it is
+    /// released -- by `None` here, by the pointer button's release
+    /// (`engine-py`'s router releases it after delivering `pointer_up`),
+    /// or by `node` leaving the tree. Only Python listener routing reads
+    /// it; the engine's own built-in widget dispatch is unaffected.
+    pub fn set_pointer_capture(&mut self, node: Option<NodeId>) {
+        self.pointer_capture = node.filter(|&id| self.nodes.contains_key(id));
+    }
+
+    /// M94: maps a window-space point into `id`'s own local space, through
+    /// the same composed layout-and-transform chain `hit_test_at` and
+    /// `paint_node` use -- how a bubbling pointer event reports `x`/`y`
+    /// relative to each node its listeners run on. Needs a computed layout.
+    pub fn window_to_local(&self, id: NodeId, point: Point) -> Point {
+        self.composed_transform(id).inverse() * point
+    }
+
+    /// M94: `window_to_local`'s inverse -- a point in `id`'s own local
+    /// space, in window space.
+    pub fn local_to_window(&self, id: NodeId, point: Point) -> Point {
+        self.composed_transform(id) * point
     }
 
     /// Builds a fresh `accesskit::TreeUpdate` from the current `Node`
@@ -5053,6 +5144,120 @@ mod tests {
             ripple_opacity: 0.12,
             ripple_duration: Duration::from_millis(300),
         }
+    }
+
+    /// M94: a root with one 50x50 child at (20, 30), laid out.
+    fn one_child_scene() -> (Tree, NodeId, NodeId) {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(200.0, 200.0);
+        let root = tree.insert(k, s, p);
+        let (k, mut s, p) = leaf(50.0, 50.0);
+        s.position = taffy::style::Position::Absolute;
+        s.inset = taffy::geometry::Rect {
+            left: taffy::style::LengthPercentageAuto::length(20.0),
+            top: taffy::style::LengthPercentageAuto::length(30.0),
+            right: taffy::style::LengthPercentageAuto::auto(),
+            bottom: taffy::style::LengthPercentageAuto::auto(),
+        };
+        let child = tree.insert(k, s, p);
+        tree.add_child(root, child);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(200.0),
+            },
+        );
+        (tree, root, child)
+    }
+
+    #[test]
+    fn window_to_local_and_local_to_window_are_inverses() {
+        let (tree, _, child) = one_child_scene();
+        let local = tree.window_to_local(child, Point::new(25.0, 40.0));
+        assert!((local.x - 5.0).abs() < 1e-9 && (local.y - 10.0).abs() < 1e-9);
+        let back = tree.local_to_window(child, local);
+        assert!((back.x - 25.0).abs() < 1e-9 && (back.y - 40.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pointer_capture_is_released_when_its_node_is_removed() {
+        let (mut tree, _, child) = one_child_scene();
+        tree.set_pointer_capture(Some(child));
+        assert_eq!(tree.pointer_capture(), Some(child));
+        tree.remove(child);
+        assert_eq!(tree.pointer_capture(), None);
+        // A stale id can't take capture.
+        tree.set_pointer_capture(Some(child));
+        assert_eq!(tree.pointer_capture(), None);
+    }
+
+    #[test]
+    fn pointer_left_clears_hover_with_a_hover_changed_outcome() {
+        let (mut tree, root, child) = one_child_scene();
+        tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(25.0, 40.0),
+            },
+            &dispatch_config(),
+            Instant::now(),
+        );
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerLeft,
+            &dispatch_config(),
+            Instant::now(),
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::HoverChanged {
+                old: Some(child),
+                new: None,
+            }
+        );
+        // Nothing hovered any more, so a second leave reports nothing.
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerLeft,
+            &dispatch_config(),
+            Instant::now(),
+        );
+        assert_eq!(outcome, DispatchOutcome::None);
+    }
+
+    #[test]
+    fn named_keys_modifiers_and_scale_changes_are_plumbing_only() {
+        let (mut tree, root, _) = one_child_scene();
+        for event in [
+            InputEvent::Key {
+                name: "f5".into(),
+                pressed: true,
+                repeat: false,
+            },
+            InputEvent::ModifiersChanged(crate::Modifiers {
+                shift: true,
+                ..Default::default()
+            }),
+            InputEvent::ScaleFactorChanged { scale_factor: 2.0 },
+        ] {
+            assert_eq!(
+                tree.dispatch(root, event, &dispatch_config(), Instant::now()),
+                DispatchOutcome::None
+            );
+        }
+    }
+
+    #[test]
+    fn clear_focus_reports_the_transition_once() {
+        let (mut tree, _, child) = one_child_scene();
+        let now = Instant::now();
+        tree.set_focus_to(child, 1.0, Duration::from_millis(1), now);
+        assert_eq!(
+            tree.clear_focus(1.0, Duration::from_millis(1), now),
+            Some((Some(child), None))
+        );
+        assert_eq!(tree.clear_focus(1.0, Duration::from_millis(1), now), None);
     }
 
     #[test]

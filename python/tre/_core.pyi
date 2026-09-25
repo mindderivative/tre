@@ -108,6 +108,62 @@ class Event:
     kind.
     """
 
+    # M94: the M93 target-API fields, set for `node.on(...)`/`window.on(...)`
+    # listener events. Legacy `set_on_*` events set `type` (equal to `kind`)
+    # and `target` (equal to `node`) too. Every other field is `None` unless
+    # the event has something to say about it.
+    type: str
+    """The event's name, e.g. `"click"`, `"pointer_down"`, `"resize"`."""
+    target: Node | None
+    """The node the event is about -- where it happened. `None` for a
+    window event."""
+    current: Node | None
+    """The node whose listener is running: `target` itself, or an
+    ancestor it bubbled to."""
+    x: float | None
+    """Pointer and wheel events: the pointer's position, local to
+    `current`."""
+    y: float | None
+    window_x: float | None
+    """Pointer and wheel events: the pointer's position in the window."""
+    window_y: float | None
+    delta_x: float | None
+    """`wheel`: pixels, positive scrolling right."""
+    delta_y: float | None
+    """`wheel`: pixels, positive scrolling down."""
+    key: str | None
+    """`key_down`/`key_up`: a snake_case key name (`"enter"`,
+    `"arrow_left"`, `"f5"`) or the character a character key produces
+    (`"a"`, `"A"` with Shift)."""
+    repeat: bool | None
+    """`key_down`: whether this is an auto-repeat of a held key."""
+    shift: bool | None
+    """Pointer, wheel, key, and click events: modifier keys held."""
+    ctrl: bool | None
+    alt: bool | None
+    meta: bool | None
+    text: str | None
+    """`input`: the committed text."""
+    action: str | None
+    """`a11y_action`: the requested action."""
+    value: Any | None
+    """`a11y_action` with action `"set_value"`: the requested value."""
+    width: float | None
+    """`resize`: the window's new width."""
+    height: float | None
+    dark: bool | None
+    """`color_scheme`: whether the OS switched to dark mode."""
+    scale_factor: float | None
+    """`scale_factor`: the window's new scale factor."""
+    def stop(self) -> None:
+        """Ends propagation: no listener on a further ancestor runs."""
+        ...
+    def cancel(self) -> None:
+        """Prevents a cancellable event's default -- only the window's
+        `close_requested`, which then leaves the window open. Raises
+        `ValueError` for any other event."""
+        ...
+
 class Node:
     """A handle to one real node in a `Window`'s (or `View`'s) tree.
     Never constructed directly -- always returned by a `Window.add_*`
@@ -237,6 +293,32 @@ class Node:
     def enable_interaction(self) -> None:
         """Opts this node into MD3 ripple/hover visual feedback."""
         ...
+    def on(self, event: str, handler: Callable[..., object]) -> None:
+        """M94: registers `handler` for `event`, replacing any earlier
+        listener for it. Events: `pointer_enter`, `pointer_leave`,
+        `pointer_down`, `pointer_move`, `pointer_up`, `click`,
+        `secondary_click`, `wheel`, `key_down`, `key_up`, `input`,
+        `focus`, `blur`, `change`, `a11y_action`. All but
+        `pointer_enter`/`pointer_leave`/`change` bubble to ancestors
+        until a listener calls `event.stop()`. `handler` receives an
+        `Event`, or nothing if it takes no parameters. Raises
+        `ValueError` for an unknown event.
+        """
+        ...
+    def off(self, event: str) -> None:
+        """M94: removes this node's listener for `event`, if any."""
+        ...
+    def capture_pointer(self) -> None:
+        """M94: routes every later pointer event to this node until the
+        button is released or `release_pointer()` is called."""
+        ...
+    def release_pointer(self) -> None:
+        """M94: ends this node's pointer capture, if it holds it."""
+        ...
+    def __eq__(self, other: object) -> bool:
+        """M94: equal when both handles name the same node."""
+        ...
+    def __hash__(self) -> int: ...
     def add_child(self, child: Node) -> None:
         """Attaches `child` under this node. Raises if `child` would
         become its own ancestor (a cycle), or already belongs to a
@@ -429,6 +511,42 @@ class Window:
     """
 
     def __init__(self, width: int = 480, height: int = 200, title: str = "tre v2") -> None: ...
+    @property
+    def root(self) -> Node:
+        """M94: the window's root node (the shown one, after `show_view`)."""
+        ...
+    def on(self, event: str, handler: Callable[..., object]) -> None:
+        """M94: registers `handler` for a window event -- `resize`,
+        `color_scheme`, `scale_factor`, `close_requested` (cancellable
+        with `event.cancel()`), or `closed` -- replacing any earlier one.
+        Raises `ValueError` for an unknown event.
+        """
+        ...
+    def off(self, event: str) -> None:
+        """M94: removes the window's listener for `event`, if any."""
+        ...
+    def set(self, *, title: str = ...) -> None:
+        """M94: sets window properties -- today only `title`."""
+        ...
+    def get(self, name: str) -> Any:
+        """M94: reads `width`, `height`, `title`, or `scale_factor`
+        (`1.0` until `App.run()` opens the window)."""
+        ...
+    def simulate(self, event: str, node: Node | None = None, **fields: Any) -> None:
+        """M94: delivers a synthetic event exactly as real input would,
+        for headless tests. Pointer events (`pointer_down`, `pointer_up`,
+        `pointer_move`, `pointer_enter`, `click`, `secondary_click`,
+        `wheel`) aim at `node`'s center, at `x`/`y` local to `node`, or at
+        window-space `x`/`y`; `button` and `delta_x`/`delta_y` where they
+        apply. `pointer_leave` moves the pointer out of the window.
+        `key_down`/`key_up` take `key` and `repeat`; `input` takes `text`;
+        `focus`/`blur` take `node`. `shift`/`ctrl`/`alt`/`meta` hold
+        modifiers. Window events: `resize` (`width`, `height`),
+        `color_scheme` (`dark`), `scale_factor` (`scale_factor`),
+        `close_requested`, `closed`. Unknown events or fields raise
+        `ValueError`.
+        """
+        ...
     @staticmethod
     def from_view(view: View, width: int = 480, height: int = 200, title: str = "tre v2") -> Window:
         """M42 Phase 1: shows a `View` (a declarative `view.yaml` +

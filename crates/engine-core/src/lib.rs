@@ -34,7 +34,8 @@ pub use animation::{ActiveAnimation, Animated, CompletionHandle, Interpolate, Mo
 pub use canvas::{CanvasState, CustomHitTest, DrawCommand};
 pub use dock::{DockLayout, DockSide, DockZone};
 pub use input::{
-    ChangedValue, DispatchOutcome, EventKind, InputEvent, Key, PointerButton, ScrollDelta,
+    ChangedValue, DispatchOutcome, EventKind, InputEvent, Key, Modifiers, PointerButton,
+    ScrollDelta,
 };
 pub use interaction::{InteractionState, RippleState};
 pub use node::{
