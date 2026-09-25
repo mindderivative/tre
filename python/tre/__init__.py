@@ -52,6 +52,7 @@ from tre._core import (
     _begin_recording,
     _end_recording,
     _record_read,
+    register_font,
 )
 
 #: M32 Phase 1 (§5, §8, §10): the real bundled monospace face
@@ -440,5 +441,6 @@ __all__ = [
     "Signal",
     "ViewModel",
     "batch",
+    "register_font",
     "untrack",
 ]

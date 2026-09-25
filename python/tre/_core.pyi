@@ -2214,6 +2214,20 @@ class CanvasContext:
         """
         ...
 
+def register_font(data: bytes) -> list[str]:
+    """M86: registers a font the caller already loaded -- a `.ttf`/
+    `.otf`/`.ttc` file's raw bytes -- with every current and future
+    window in this process. `tre` never reads a font file itself; the
+    caller (a framework like Tesserae) owns that.
+
+    Returns the family names the data contains: the exact strings a
+    theme's `typography:` `font_family` must use to resolve to it.
+    Registering identical bytes twice is a no-op that still returns the
+    names. A window already running picks the font up on its next frame.
+    Raises `ValueError` if `data` holds no parseable font face.
+    """
+    ...
+
 def _record_read(signal: object) -> None:
     """Internal -- called from `Signal.get()`. Only appends `signal` to
     the current binding evaluation's dependency list while one is

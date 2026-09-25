@@ -26,6 +26,8 @@ use peniko::kurbo::{Affine, Point, Rect, Shape};
 use peniko::{Blob, Color};
 use vello_hybrid::{Resources, Scene};
 
+use crate::fonts;
+
 const ROBOTO_REGULAR: &[u8] = include_bytes!("../assets/fonts/Roboto-Regular.ttf");
 const ROBOTO_MEDIUM: &[u8] = include_bytes!("../assets/fonts/Roboto-Medium.ttf");
 const NOTO_SANS_ARABIC: &[u8] = include_bytes!("../assets/fonts/NotoSansArabic-Regular.ttf");
@@ -146,6 +148,11 @@ pub struct TextRenderer {
     /// node itself was removed" and "this row/col fell outside the
     /// terminal's own current bounds after a resize shrunk it").
     terminal_run_cache: HashMap<(NodeId, u16, u16), CachedTerminalRun>,
+    /// M86: the `fonts::generation()` this renderer last synced to, and
+    /// how many registry blobs it has registered so far (the registry is
+    /// append-only, so the next sync only needs the ones past this).
+    font_generation: u64,
+    registered_font_count: usize,
 }
 
 impl Default for TextRenderer {
@@ -156,17 +163,29 @@ impl Default for TextRenderer {
 
 impl TextRenderer {
     pub fn new() -> Self {
-        let mut collection = Collection::new(CollectionOptions {
-            shared: false,
-            system_fonts: false,
-        });
-        for bytes in [
+        Self::with_bundled_fonts(&[
             ROBOTO_REGULAR,
             ROBOTO_MEDIUM,
             NOTO_SANS_ARABIC,
             HACK_NERD_FONT_MONO,
-        ] {
+        ])
+    }
+
+    /// `new`'s body, parameterized over which vendored faces get
+    /// registered -- lets a test build a renderer that genuinely lacks a
+    /// family, to prove a later `fonts::register_font` is what supplies
+    /// it. Every font already in the M86 registry is registered too.
+    fn with_bundled_fonts(bundled: &[&[u8]]) -> Self {
+        let mut collection = Collection::new(CollectionOptions {
+            shared: false,
+            system_fonts: false,
+        });
+        for bytes in bundled {
             collection.register_fonts(Blob::new(Arc::new(bytes.to_vec())), None);
+        }
+        let (font_generation, registered_font_count, registered) = fonts::registered_since(0);
+        for blob in registered {
+            collection.register_fonts(blob, None);
         }
         Self {
             font_cx: FontContext {
@@ -177,7 +196,32 @@ impl TextRenderer {
             layout_cache: HashMap::new(),
             monospace_cell_cache: HashMap::new(),
             terminal_run_cache: HashMap::new(),
+            font_generation,
+            registered_font_count,
         }
+    }
+
+    /// M86: registers any fonts added to the process-global registry
+    /// (`fonts::register_font`) since this renderer last synced.
+    /// Returns `true` when something new was registered -- every shaping
+    /// cache is cleared then, since a family that used to fall back may
+    /// now resolve to a real face, and the caller should repaint.
+    /// Cheap when nothing changed: one atomic load.
+    pub fn sync_registered_fonts(&mut self) -> bool {
+        if fonts::generation() == self.font_generation {
+            return false;
+        }
+        let (font_generation, registered_font_count, new_blobs) =
+            fonts::registered_since(self.registered_font_count);
+        for blob in new_blobs {
+            self.font_cx.collection.register_fonts(blob, None);
+        }
+        self.font_generation = font_generation;
+        self.registered_font_count = registered_font_count;
+        self.layout_cache.clear();
+        self.monospace_cell_cache.clear();
+        self.terminal_run_cache.clear();
+        true
     }
 
     /// M32 Phase 1 (§5, §8, §10): the real per-font-size monospace cell
@@ -256,6 +300,8 @@ impl TextRenderer {
             layout_cache,
             monospace_cell_cache: _,
             terminal_run_cache: _,
+            font_generation: _,
+            registered_font_count: _,
         } = self;
         if stale {
             let mut builder = layout_cx.ranged_builder(font_cx, content, 1.0, true);
@@ -2259,5 +2305,58 @@ mod tests {
                 "a removed terminal's own cached runs must not be kept forever"
             );
         });
+    }
+
+    /// M86: a family registered through `fonts::register_font` is what a
+    /// renderer actually shapes with -- not a silent fallback. Hack's
+    /// real advance is ~0.6em; Roboto (what a missing family falls back
+    /// to here) is ~0.85em for "M", so the two are distinguishable.
+    ///
+    /// The renderer is built with Roboto only, then forced to look
+    /// stale (as if built before the registration) so the real
+    /// `sync_registered_fonts` path does the work, independent of test
+    /// ordering against the process-global registry.
+    #[test]
+    fn a_registered_font_is_synced_into_a_live_renderer_and_actually_used() {
+        crate::fonts::register_font(HACK_NERD_FONT_MONO.to_vec()).expect("real font");
+
+        let mut renderer = TextRenderer::with_bundled_fonts(&[ROBOTO_REGULAR]);
+        let (roboto_m, _) = renderer.monospace_cell_size("Roboto", 100.0);
+        assert!(
+            roboto_m > 70.0,
+            "Roboto's M must be wide enough to tell apart: {roboto_m}"
+        );
+
+        renderer.font_generation = u64::MAX;
+        renderer.registered_font_count = 0;
+        renderer.monospace_cell_cache.clear();
+        renderer.font_cx.collection = Collection::new(CollectionOptions {
+            shared: false,
+            system_fonts: false,
+        });
+        renderer
+            .font_cx
+            .collection
+            .register_fonts(Blob::new(Arc::new(ROBOTO_REGULAR.to_vec())), None);
+        renderer.monospace_cell_size(MONOSPACE_FONT_FAMILY, 100.0);
+        assert!(!renderer.monospace_cell_cache.is_empty());
+
+        assert!(
+            renderer.sync_registered_fonts(),
+            "a stale renderer must pick up the registry"
+        );
+        assert!(
+            renderer.monospace_cell_cache.is_empty(),
+            "shaping caches must be cleared when fonts change"
+        );
+        let (hack_m, _) = renderer.monospace_cell_size(MONOSPACE_FONT_FAMILY, 100.0);
+        assert!(
+            (55.0..65.0).contains(&hack_m),
+            "the registered Hack face (~60) must be used, not a Roboto fallback: {hack_m}"
+        );
+        assert!(
+            !renderer.sync_registered_fonts(),
+            "nothing new: a second sync is a no-op"
+        );
     }
 }

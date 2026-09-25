@@ -21,6 +21,7 @@
 //! over a `wgpu::Device`/`Queue`/`TextureView` the caller already has,
 //! matching §4's crate-boundary rule.
 
+mod fonts;
 mod geometry_cache;
 mod image_cache;
 mod text;
@@ -33,6 +34,7 @@ use peniko::Color;
 use peniko::kurbo::{Affine, BezPath, Circle, Line, Point, Rect, RoundedRect, Shape, Stroke, Vec2};
 use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
+pub use fonts::{NoFontFacesFound, register_font};
 pub use geometry_cache::GeometryCache;
 pub use text::{MONOSPACE_FONT_FAMILY, TextPlacement, TextRenderer};
 

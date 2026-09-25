@@ -1,34 +1,33 @@
-# LOG — Milestone 86, Phase 1: Theme and Stylesheet Specs
+# LOG — Milestone 86, Phase 2: Font Registration
 
-- User-directed: "Start M86" (scoped in `c257580` after the user said
-  "Tesserae should not be pushing files directly to tre. It should be
-  pushing spec information and handling the files itself.")
+- User-directed: "Start M86". Phase 1 (theme/stylesheet `*_spec=`
+  kwargs) landed in `babef68`.
 
 ## What shipped
 
-1. `view.rs`: `resolve_theme_input` turns a `(path, dict)` argument
-   pair into one `Option<ThemeSpec>`; `resolve_stylesheet_input` does
-   the same for `Stylesheet`; `shipped_default_theme_spec` replaces two
-   duplicated inline parses of the shipped default. Mutual exclusion
-   reuses M81's `require_at_most_one_content_source`.
-2. `resolve_theme_layers` now takes resolved `ThemeSpec`s instead of
-   paths, so the file and dict forms share every step after input
-   resolution.
-3. New kwargs: `View(stylesheet_spec=, default_theme_spec=,
-   custom_theme_spec=)`, `View.set_theme(default_theme_spec=,
-   custom_theme_spec=)`, `Window.set_theme(default_theme_spec=,
-   custom_theme_spec=)`. All appended after existing params, so no
-   positional caller changes.
-4. `_core.pyi` stubs updated for all three.
-- Tests: 4 new Rust tests (dict/YAML parity on resolved roles, both-
-  given error, unknown-key rejection, stylesheet both-given error); 18
-  new pytest cases in `tests/test_theme_spec.py`, including a `View`
-  built from data alone across all four cascade tiers.
-- Verification: `cargo fmt --check`/`clippy -D warnings` clean;
-  `maturin develop --release`; `pytest tests/` 908 passed, 2 skipped
-  (was 890); `mypy --strict` on `_core.pyi` clean.
+1. `engine-render/src/fonts.rs`: a process-global, append-only font
+   registry. `register_font(data)` parses into a scratch
+   `fontique::Collection` first (validation + family names), then
+   appends the blob unless identical bytes are already registered, and
+   bumps a generation counter.
+2. `TextRenderer::new` registers the 4 vendored faces plus every
+   registered blob. New `TextRenderer::sync_registered_fonts` registers
+   blobs added since the renderer last synced and clears all three
+   shaping caches; one atomic load when nothing changed.
+3. `engine-py/src/app.rs`: the per-frame gate treats "fonts changed" as
+   a third repaint reason beside `take_dirty` and `resized`. Limit: an
+   idle window under `ControlFlow::Wait` repaints on its next wake.
+4. Python `tre.register_font(data: bytes) -> list[str]`, exported from
+   `tre`, stubbed in `_core.pyi`. Takes `&[u8]`, borrowing the `bytes`
+   object directly; a `str` path is a `TypeError`.
+- Tests: 4 Rust tests, including a render-level one that builds a
+  Roboto-only renderer and proves the synced Hack face measures ~0.6em
+  rather than a Roboto fallback; 6 pytest cases.
+- Verification: `fmt --check`/`clippy -D warnings` clean; `maturin
+  develop --release`; `pytest tests/` 914 passed, 2 skipped; `mypy
+  --strict` on `_core.pyi` clean.
 
 ## Status
 
-**Phase 1 complete.** Next: Phase 2, font registration
-(`tre.register_font`).
+**Phase 2 complete.** Next: Phase 3, MkDocs and the full verification
+chain.

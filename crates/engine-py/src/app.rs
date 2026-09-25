@@ -567,7 +567,14 @@ impl App {
                 let resized = runtime
                     .gpu
                     .needs_resize(runtime.width.get(), runtime.height.get());
-                if !runtime.tree.borrow_mut().take_dirty() && !resized {
+                // M86: a `tre.register_font` call touches no `Tree`
+                // state either -- same reasoning as `resized` above. A
+                // family that fell back before may resolve to a real
+                // face now, so this frame must repaint. One atomic load
+                // when nothing was registered.
+                let fonts_changed = runtime.gpu.text_renderer.sync_registered_fonts();
+                let dirty = runtime.tree.borrow_mut().take_dirty();
+                if !dirty && !resized && !fonts_changed {
                     return any_active;
                 }
 
