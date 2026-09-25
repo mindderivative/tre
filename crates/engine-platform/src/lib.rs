@@ -83,7 +83,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use engine_core::{InputEvent, Key, PointerButton, ScrollDelta};
+use engine_core::{InputEvent, Key, Modifiers, PointerButton, ScrollDelta};
 use peniko::kurbo::Point;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
@@ -202,6 +202,55 @@ fn translate_scroll_delta(delta: MouseScrollDelta) -> ScrollDelta {
 /// own shape) so it's directly unit-testable with no live `EventLoop`.
 fn translate_theme(theme: winit::window::Theme) -> bool {
     theme == winit::window::Theme::Dark
+}
+
+/// M94: the name `InputEvent::Key` carries for every key -- a named key's
+/// `winit` variant in lowercase snake_case (`ArrowLeft` -> `"arrow_left"`,
+/// `F5` -> `"f5"`), or a character key's produced character (`"a"`, `"A"`
+/// with Shift). `None` for dead and unidentified keys, which produce no
+/// `key_down`/`key_up`.
+fn key_name(logical_key: &WinitKey) -> Option<String> {
+    match logical_key {
+        WinitKey::Named(named) => {
+            let camel = format!("{named:?}");
+            let mut name = String::with_capacity(camel.len() + 4);
+            let mut previous: Option<char> = None;
+            for ch in camel.chars() {
+                if ch.is_ascii_uppercase()
+                    && previous.is_some_and(|p| p.is_ascii_lowercase() || p.is_ascii_digit())
+                {
+                    name.push('_');
+                }
+                name.push(ch.to_ascii_lowercase());
+                previous = Some(ch);
+            }
+            Some(name)
+        }
+        WinitKey::Character(text) => Some(text.to_string()),
+        WinitKey::Dead(_) | WinitKey::Unidentified(_) => None,
+    }
+}
+
+/// M94: `winit`'s modifier state as the engine's own `Modifiers`.
+fn translate_modifiers(state: ModifiersState) -> Modifiers {
+    Modifiers {
+        shift: state.shift_key(),
+        ctrl: state.control_key(),
+        alt: state.alt_key(),
+        meta: state.super_key(),
+    }
+}
+
+/// M94: a window's lifecycle moments `run_windowed_multi`'s
+/// `on_lifecycle` callback is told about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowLifecycle {
+    /// The user asked to close the window. The callback returns `true`
+    /// to close it, `false` to keep it open.
+    CloseRequested,
+    /// The window is closing now -- closed by the user, or by reaching
+    /// its own `max_frames`. The callback's return value is ignored.
+    Closed,
 }
 
 pub struct WindowConfig {
@@ -372,12 +421,14 @@ impl EventLoopWaker {
 /// (a real, live PTY reader thread, for one) -- `setup` is the one
 /// real place able to reach both a fresh proxy and any real,
 /// already-built per-window state to wire it into.
-pub fn run_windowed_multi<C, F, A, S, N, X>(
+#[allow(clippy::too_many_arguments)]
+pub fn run_windowed_multi<C, F, A, S, N, X, L>(
     on_window_created: C,
     on_frame: F,
     build_access_update: A,
     on_input: N,
     on_access_action: X,
+    on_lifecycle: L,
     setup: S,
 ) -> Result<(), winit::error::EventLoopError>
 where
@@ -386,6 +437,7 @@ where
     A: FnMut(WindowId) -> accesskit::TreeUpdate,
     N: FnMut(WindowId, InputEvent),
     X: FnMut(WindowId, accesskit::ActionRequest),
+    L: FnMut(WindowId, WindowLifecycle) -> bool,
     S: FnOnce(&WindowOpener, &EventLoopWaker),
 {
     let event_loop = EventLoop::<PlatformEvent>::with_user_event().build()?;
@@ -409,6 +461,7 @@ where
         build_access_update,
         on_input,
         on_access_action,
+        on_lifecycle,
     };
     event_loop.run_app(&mut app)
 }
@@ -455,6 +508,7 @@ where
         // contract.
         |_id, _event| {},
         |_id, _request| {},
+        |_id, _lifecycle| true,
         |opener, _waker| {
             opener.open_window(WindowRequest { config, token: 0 });
         },
@@ -485,7 +539,7 @@ struct PerWindow {
     animating: bool,
 }
 
-struct MultiWindowApp<C, F, A, N, X> {
+struct MultiWindowApp<C, F, A, N, X, L> {
     windows: HashMap<WindowId, PerWindow>,
     proxy: EventLoopProxy<PlatformEvent>,
     on_window_created: C,
@@ -493,15 +547,17 @@ struct MultiWindowApp<C, F, A, N, X> {
     build_access_update: A,
     on_input: N,
     on_access_action: X,
+    on_lifecycle: L,
 }
 
-impl<C, F, A, N, X> ApplicationHandler<PlatformEvent> for MultiWindowApp<C, F, A, N, X>
+impl<C, F, A, N, X, L> ApplicationHandler<PlatformEvent> for MultiWindowApp<C, F, A, N, X, L>
 where
     C: FnMut(WindowId, u64, Arc<Window>),
     F: FnMut(WindowId, u32) -> bool,
     A: FnMut(WindowId) -> accesskit::TreeUpdate,
     N: FnMut(WindowId, InputEvent),
     X: FnMut(WindowId, accesskit::ActionRequest),
+    L: FnMut(WindowId, WindowLifecycle) -> bool,
 {
     fn resumed(&mut self, _event_loop: &ActiveEventLoop) {
         // Windows are created lazily, in `user_event`, as `OpenWindow`
@@ -631,6 +687,7 @@ where
             on_frame,
             build_access_update,
             on_input,
+            on_lifecycle,
             ..
         } = self;
         let Some(win) = windows.get_mut(&window_id) else {
@@ -639,10 +696,15 @@ where
         win.access_adapter.process_event(&win.window, &event);
 
         match event {
+            // M94: the app decides -- `on_lifecycle` returning `false`
+            // keeps the window open (a cancelled `close_requested`).
             WindowEvent::CloseRequested => {
-                windows.remove(&window_id);
-                if windows.is_empty() {
-                    event_loop.exit();
+                if on_lifecycle(window_id, WindowLifecycle::CloseRequested) {
+                    on_lifecycle(window_id, WindowLifecycle::Closed);
+                    windows.remove(&window_id);
+                    if windows.is_empty() {
+                        event_loop.exit();
+                    }
                 }
             }
             WindowEvent::RedrawRequested => {
@@ -667,6 +729,7 @@ where
                 if let Some(max) = win.max_frames
                     && win.frame >= max
                 {
+                    on_lifecycle(window_id, WindowLifecycle::Closed);
                     windows.remove(&window_id);
                     if windows.is_empty() {
                         event_loop.exit();
@@ -718,6 +781,21 @@ where
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 win.modifiers = modifiers.state();
+                on_input(
+                    window_id,
+                    InputEvent::ModifiersChanged(translate_modifiers(win.modifiers)),
+                );
+            }
+            // M94: nothing is hovered once the pointer leaves the window.
+            WindowEvent::CursorLeft { .. } => {
+                on_input(window_id, InputEvent::PointerLeft);
+                win.window.request_redraw();
+            }
+            // M94: delivered to Python as the window's `scale_factor`
+            // event.
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                on_input(window_id, InputEvent::ScaleFactorChanged { scale_factor });
+                win.window.request_redraw();
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 if let Some(button) = translate_pointer_button(button) {
@@ -739,6 +817,20 @@ where
             WindowEvent::KeyboardInput {
                 event: key_event, ..
             } => {
+                // M94: every named or character key reaches Python as
+                // `key_down`/`key_up`, before (and independently of) the
+                // engine's own narrow key, clipboard, and text handling
+                // below.
+                if let Some(name) = key_name(&key_event.logical_key) {
+                    on_input(
+                        window_id,
+                        InputEvent::Key {
+                            name,
+                            pressed: key_event.state == ElementState::Pressed,
+                            repeat: key_event.repeat,
+                        },
+                    );
+                }
                 if let Some(key) = translate_key(&key_event.logical_key) {
                     let shift = win.modifiers.shift_key();
                     let event = match key_event.state {
@@ -943,6 +1035,62 @@ mod tests {
         assert_eq!(
             translate_key(&WinitKey::Named(NamedKey::End)),
             Some(Key::End)
+        );
+    }
+
+    #[test]
+    fn key_name_snake_cases_named_keys_and_passes_characters_through() {
+        use winit::keyboard::SmolStr;
+        assert_eq!(
+            key_name(&WinitKey::Named(NamedKey::ArrowLeft)).as_deref(),
+            Some("arrow_left")
+        );
+        assert_eq!(
+            key_name(&WinitKey::Named(NamedKey::F5)).as_deref(),
+            Some("f5")
+        );
+        assert_eq!(
+            key_name(&WinitKey::Named(NamedKey::F12)).as_deref(),
+            Some("f12")
+        );
+        assert_eq!(
+            key_name(&WinitKey::Named(NamedKey::Enter)).as_deref(),
+            Some("enter")
+        );
+        assert_eq!(
+            key_name(&WinitKey::Named(NamedKey::Space)).as_deref(),
+            Some("space")
+        );
+        assert_eq!(
+            key_name(&WinitKey::Named(NamedKey::PageUp)).as_deref(),
+            Some("page_up")
+        );
+        assert_eq!(
+            key_name(&WinitKey::Character(SmolStr::new("a"))).as_deref(),
+            Some("a")
+        );
+        assert_eq!(
+            key_name(&WinitKey::Character(SmolStr::new("A"))).as_deref(),
+            Some("A")
+        );
+        assert_eq!(key_name(&WinitKey::Dead(None)), None);
+    }
+
+    #[test]
+    fn translate_modifiers_maps_all_four_keys() {
+        let state = ModifiersState::SHIFT | ModifiersState::SUPER;
+        assert_eq!(
+            translate_modifiers(state),
+            Modifiers {
+                shift: true,
+                ctrl: false,
+                alt: false,
+                meta: true,
+            }
+        );
+        assert_eq!(
+            translate_modifiers(ModifiersState::empty()),
+            Modifiers::default()
         );
     }
 

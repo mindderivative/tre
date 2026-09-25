@@ -22,10 +22,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Instant;
 
-use engine_core::{InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
-use engine_platform::{WindowConfig, WindowRequest, run_windowed_multi};
+use engine_core::{Cursor, InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
+use engine_platform::{WindowConfig, WindowLifecycle, WindowRequest, run_windowed_multi};
 use engine_render::{FrameRenderer, GeometryCache, TextPlacement, TextRenderer, build_tree_scene};
 use peniko::kurbo::Point;
 use pyo3::prelude::*;
@@ -35,16 +34,23 @@ use winit::window::{Window, WindowId};
 
 use crate::dispatch::{
     HandlerMap, SharedCompletions, copy_focused_selection_to_clipboard,
-    cut_focused_selection_to_clipboard, interaction_config, open_context_menu,
-    paste_clipboard_into_focused, run_completions, run_dispatch_outcome,
+    cut_focused_selection_to_clipboard, interaction_config, paste_clipboard_into_focused,
+    process_input, run_completions, run_dispatch_outcome,
 };
 use crate::dock::{self, SharedDockState};
+use crate::event::NodeContext;
+use crate::listeners::{self, WindowEventType, WindowListenerMap};
 use crate::terminal::{TerminalSession, control_byte_for, input_bytes_for};
+use crate::thread_bound::{ThreadBound, thread_bound_shell};
 use crate::thread_handle::{CallQueue, LoopHandle};
-use crate::window::{PyWindow, SharedActiveTree, SharedSize, SharedTheme};
+use crate::window::{PyWindow, SharedActiveTree, SharedOsWindow, SharedSize, SharedTheme};
 
-#[pyclass(unsendable)]
-pub struct App {
+#[pyclass]
+pub struct App(ThreadBound<AppState>);
+thread_bound_shell!(App => AppState);
+
+/// `App`'s state (M96: behind a `ThreadBound`, see `thread_bound`).
+pub struct AppState {
     windows: Vec<Py<PyWindow>>,
     /// M87: callables queued from other threads via `LoopHandle`,
     /// drained at the top of every frame -- see `thread_handle.rs`.
@@ -99,6 +105,9 @@ struct WindowSetup {
     /// frame/input, picking up a `Window.show_view` call made from a
     /// Python handler while `App.run()` is already blocking.
     active: SharedActiveTree,
+    /// M94: see `PyWindow::window_listeners`/`os_window`.
+    window_listeners: WindowListenerMap,
+    os_window: SharedOsWindow,
 }
 
 /// M18 Phase 1/2 (§8, §10, §11.9, §11.10): the real per-glyph hit-test
@@ -310,6 +319,52 @@ impl GpuState {
     }
 }
 
+/// M94: the pointer shape for `position` -- the capturing node's, or the
+/// node under the pointer's, or the nearest ancestor's that sets one.
+fn cursor_at(tree: &Tree, root: NodeId, position: Point) -> Cursor {
+    let mut current = tree
+        .pointer_capture()
+        .or_else(|| tree.hit_test(root, position));
+    while let Some(id) = current {
+        let Some(node) = tree.get(id) else { break };
+        if let Some(cursor) = node.cursor {
+            return cursor;
+        }
+        current = node.parent;
+    }
+    Cursor::Default
+}
+
+/// M94: `winit`'s icon for each of the engine's cursor shapes.
+fn cursor_icon(cursor: Cursor) -> winit::window::CursorIcon {
+    use winit::window::CursorIcon as Icon;
+    match cursor {
+        Cursor::Default => Icon::Default,
+        Cursor::Pointer => Icon::Pointer,
+        Cursor::Text => Icon::Text,
+        Cursor::Grab => Icon::Grab,
+        Cursor::Grabbing => Icon::Grabbing,
+        Cursor::Move => Icon::Move,
+        Cursor::NotAllowed => Icon::NotAllowed,
+        Cursor::Wait => Icon::Wait,
+        Cursor::Progress => Icon::Progress,
+        Cursor::Crosshair => Icon::Crosshair,
+        Cursor::Help => Icon::Help,
+        Cursor::ColResize => Icon::ColResize,
+        Cursor::RowResize => Icon::RowResize,
+        Cursor::EwResize => Icon::EwResize,
+        Cursor::NsResize => Icon::NsResize,
+        Cursor::NeswResize => Icon::NeswResize,
+        Cursor::NwseResize => Icon::NwseResize,
+        Cursor::Copy => Icon::Copy,
+        Cursor::Cell => Icon::Cell,
+        Cursor::ContextMenu => Icon::ContextMenu,
+        Cursor::ZoomIn => Icon::ZoomIn,
+        Cursor::ZoomOut => Icon::ZoomOut,
+        Cursor::AllScroll => Icon::AllScroll,
+    }
+}
+
 struct WindowRuntime {
     tree: Rc<RefCell<Tree>>,
     root: NodeId,
@@ -347,6 +402,9 @@ struct WindowRuntime {
     /// ever hit one real `NodeKind` at a time (`text_field_hit_offset`/
     /// `terminal_hit_cell` are mutually exclusive per node).
     terminal_drag: Option<NodeId>,
+    /// M94: the pointer shape last applied to this window, so it's set on
+    /// the OS window only when it changes.
+    cursor: Cursor,
     /// M30 Phase 9 Step 4 (§5, §8, §10): the same real, shared session
     /// table `PyWindow.terminals` owns -- see `WindowSetup.terminals`'s
     /// own doc comment.
@@ -359,16 +417,19 @@ struct WindowRuntime {
     /// dozens of pre-existing `runtime.tree`/`.root`/`.handlers`/
     /// `.context_menus` call sites need to change at all.
     active: SharedActiveTree,
+    /// M94: see `PyWindow::window_listeners`/`os_window`.
+    window_listeners: WindowListenerMap,
+    os_window: SharedOsWindow,
 }
 
 #[pymethods]
 impl App {
     #[new]
     fn new() -> Self {
-        Self {
+        Self(ThreadBound::new(AppState {
             windows: Vec::new(),
             calls: CallQueue::default(),
-        }
+        }))
     }
 
     /// M87 (tre issue #6): a `Send + Sync` handle a background thread can
@@ -408,6 +469,14 @@ impl App {
         // for a real app, not because it's the sole guarantor.
         crate::dispatch::ensure_tracing_subscriber();
 
+        // M96: a live window runs on real time, whatever `Window.advance`
+        // pinned before.
+        for window in &self.windows {
+            let window = window.borrow(py);
+            crate::clock::unpin(&window.tree);
+            crate::clock::unpin(&window.active.borrow().tree);
+        }
+
         // Extracted once, up front, while `py` is already held --
         // see `WindowSetup`'s own doc comment for why nothing below
         // this point ever touches a Python object again.
@@ -429,6 +498,8 @@ impl App {
                     completions: window.completions.clone(),
                     terminals: window.terminals.clone(),
                     active: window.active.clone(),
+                    window_listeners: window.window_listeners.clone(),
+                    os_window: window.os_window.clone(),
                 }
             })
             .collect();
@@ -469,7 +540,9 @@ impl App {
         let runtimes_for_frame = runtimes.clone();
         let runtimes_for_access = runtimes.clone();
         let runtimes_for_input = runtimes.clone();
+        let runtimes_for_lifecycle = runtimes.clone();
         let runtimes_for_access_action = runtimes;
+        let setups_for_cleanup = setups.clone();
         let setups_for_setup = setups;
         let calls_for_frame = self.calls.clone();
         let calls_for_setup = self.calls.clone();
@@ -477,6 +550,7 @@ impl App {
         let result = run_windowed_multi(
             move |window_id, token, window| {
                 let setup = &setups_for_created[token as usize];
+                *setup.os_window.borrow_mut() = Some(window.clone());
                 let gpu = GpuState::new(window, setup.width.get(), setup.height.get());
                 runtimes_for_created.borrow_mut().insert(
                     window_id,
@@ -493,8 +567,11 @@ impl App {
                         completions: setup.completions.clone(),
                         text_drag: None,
                         terminal_drag: None,
+                        cursor: Cursor::Default,
                         terminals: setup.terminals.clone(),
                         active: setup.active.clone(),
+                        window_listeners: setup.window_listeners.clone(),
+                        os_window: setup.os_window.clone(),
                     },
                 );
             },
@@ -506,6 +583,9 @@ impl App {
                 // `runtimes` or any tree is held here, so the callable
                 // is free to touch any window's tree.
                 calls_for_frame.drain(py);
+                // M96: finish drops other threads handed back, and free
+                // any detached subtree that lost its last handle.
+                crate::node_handles::reclaim();
                 let mut runtimes = runtimes_for_frame.borrow_mut();
                 let Some(runtime) = runtimes.get_mut(&window_id) else {
                     return false;
@@ -529,7 +609,7 @@ impl App {
                     runtime.context_menus = active.context_menus.clone();
                 }
 
-                let now = Instant::now();
+                let now = crate::clock::now(&runtime.tree);
                 let (any_active, completed) = runtime.tree.borrow_mut().tick_all(now);
                 // M9 Phase 2 (§5): the real drain -- invokes each
                 // just-completed animation's registered `on_complete`
@@ -601,12 +681,16 @@ impl App {
                     return any_active;
                 }
 
-                runtime.tree.borrow_mut().compute_layout(
+                // M96: also builds virtual lists' newly visible rows.
+                crate::node_callbacks::layout(
+                    &runtime.tree,
                     runtime.root,
                     Size {
                         width: AvailableSpace::Definite(runtime.width.get() as f32),
                         height: AvailableSpace::Definite(runtime.height.get() as f32),
                     },
+                    &runtime.handlers,
+                    py,
                 );
 
                 // M40 Phase 1 (§4, §6, §9): the one real place `GpuState::
@@ -738,6 +822,13 @@ impl App {
                     runtime.context_menus = active.context_menus.clone();
                 }
 
+                // M94: modifier state is shared by every window's event
+                // routing (`listeners::modifiers`), nothing more to do.
+                if let InputEvent::ModifiersChanged(modifiers) = event {
+                    listeners::set_modifiers(modifiers);
+                    return;
+                }
+
                 // M30 Phase 9 Step 4 (§5, §8, §10): a real, live
                 // Terminal's own keyboard routing -- inspects the raw
                 // `event` directly, the identical real "meaning-
@@ -792,38 +883,37 @@ impl App {
                     }
                     return;
                 }
-                let outcome = runtime.tree.borrow_mut().dispatch(
+                // M94: dispatch, `node.on(...)` listeners, legacy handlers,
+                // and the context menu a right-click opens -- one pipeline
+                // shared with `Window.simulate` (`dispatch::process_input`).
+                // `event` itself is still needed below, for the
+                // winit-driven dock-drag/theme-switch match.
+                process_input(
+                    &NodeContext {
+                        tree: &runtime.tree,
+                        handlers: &runtime.handlers,
+                        context_menus: &runtime.context_menus,
+                        theme: &runtime.theme,
+                        completions: &runtime.completions,
+                    },
                     runtime.root,
-                    // M15 Phase 2: `InputEvent` is no longer `Copy`
-                    // (the new `TextInput(String)` variant owns a real
-                    // `String`) -- `event` itself is still needed below
-                    // (the real, winit-driven dock-drag/theme-switch
-                    // match), so this clones once rather than
-                    // restructuring the two real, independent uses.
-                    event.clone(),
-                    &interaction_config(),
-                    Instant::now(),
-                );
-                run_dispatch_outcome(
-                    &runtime.handlers,
-                    &runtime.tree,
-                    &runtime.context_menus,
-                    &runtime.theme,
-                    &runtime.completions,
-                    &outcome,
-                    Some(&event),
+                    &event,
                     py,
                 );
-                // M4 Phase 7 (§11.3): the real, winit-driven path a
-                // genuine right-click reaches -- `Window.right_click`/
-                // `View.right_click` are the no-live-window-needed test
-                // entry points, this is where an actual mouse arrives.
-                open_context_menu(
-                    &runtime.tree,
-                    &runtime.context_menus,
-                    runtime.root,
-                    &outcome,
-                );
+                // M94: the pointer shape follows the node under the
+                // pointer (or the capturing node).
+                if let InputEvent::PointerMoved { position }
+                | InputEvent::PointerPressed { position, .. }
+                | InputEvent::PointerReleased { position, .. } = &event
+                {
+                    let wanted = cursor_at(&runtime.tree.borrow(), runtime.root, *position);
+                    if wanted != runtime.cursor {
+                        if let Some(window) = runtime.os_window.borrow().as_ref() {
+                            window.set_cursor(cursor_icon(wanted));
+                        }
+                        runtime.cursor = wanted;
+                    }
+                }
                 // M4 Phase 9 (§11.4): the real, winit-driven path a
                 // genuine panel drag reaches -- `Window.start_panel_drag`/
                 // `drop_panel_at` are the no-live-window-needed test
@@ -982,6 +1072,13 @@ impl App {
                         // component colors too, the identical way
                         // `Window.set_theme` itself already does.
                         tree.set_all_component_tints(tint);
+                        drop(tree);
+                        listeners::deliver_window(
+                            &runtime.window_listeners,
+                            py,
+                            WindowEventType::ColorScheme,
+                            |e| e.dark = Some(dark),
+                        );
                     }
                     // M32 Phase 2 (§4, §5): the real, winit-driven
                     // window resize -- `Tree::dispatch` (called just
@@ -1028,6 +1125,23 @@ impl App {
                     InputEvent::Resized { width, height } => {
                         runtime.width.set(width as u32);
                         runtime.height.set(height as u32);
+                        listeners::deliver_window(
+                            &runtime.window_listeners,
+                            py,
+                            WindowEventType::Resize,
+                            |e| {
+                                e.width = Some(f64::from(width));
+                                e.height = Some(f64::from(height));
+                            },
+                        );
+                    }
+                    InputEvent::ScaleFactorChanged { scale_factor } => {
+                        listeners::deliver_window(
+                            &runtime.window_listeners,
+                            py,
+                            WindowEventType::ScaleFactor,
+                            |e| e.scale_factor = Some(scale_factor),
+                        );
                     }
                     // M17 Phase 1 (§8), refactored M53 Phase 2: the
                     // real, winit-driven Ctrl+C path -- now a thin call
@@ -1215,12 +1329,15 @@ impl App {
                     // `fire_focus_transition` is called directly here
                     // instead.
                     engine_core::Action::Focus => {
+                        // Assistive-technology navigation shows focus, as
+                        // the keyboard does.
+                        listeners::set_keyboard_modality(true);
                         let config = interaction_config();
                         let transition = tree.set_focus_to(
                             node,
                             config.focus_ring_opacity,
                             config.focus_ring_duration,
-                            Instant::now(),
+                            crate::clock::now(&tree_rc),
                         );
                         drop(tree);
                         if let Some((old, new)) = transition {
@@ -1236,12 +1353,91 @@ impl App {
                             );
                         }
                     }
-                    // No other accesskit action has real dispatch
-                    // meaning yet (§14 step 7's own original minimal
-                    // scope, still the right boundary here -- nothing
-                    // in this codebase models scrolling, text
-                    // selection, or custom actions).
-                    _ => {}
+                    // M94: a screen reader asking to move focus away.
+                    engine_core::Action::Blur => {
+                        let config = interaction_config();
+                        let transition = if tree.focused() == Some(node) {
+                            tree.clear_focus(
+                                config.focus_ring_opacity,
+                                config.focus_ring_duration,
+                                crate::clock::now(&tree_rc),
+                            )
+                        } else {
+                            None
+                        };
+                        drop(tree);
+                        if let Some((old, new)) = transition {
+                            crate::dispatch::fire_focus_transition(
+                                &handlers,
+                                &tree_rc,
+                                &context_menus,
+                                &runtime.theme,
+                                &runtime.completions,
+                                old,
+                                new,
+                                py,
+                            );
+                        }
+                    }
+                    // M94: the rest reach the framework as `a11y_action`
+                    // -- what incrementing a slider means is its call.
+                    action => {
+                        drop(tree);
+                        let Some(name) = listeners::a11y_action_name(action) else {
+                            return;
+                        };
+                        let value = match &request.data {
+                            Some(engine_core::ActionData::Value(text)) => text
+                                .to_string()
+                                .into_pyobject(py)
+                                .ok()
+                                .map(|v| v.into_any().unbind()),
+                            Some(engine_core::ActionData::NumericValue(number)) => {
+                                number.into_pyobject(py).ok().map(|v| v.into_any().unbind())
+                            }
+                            _ => None,
+                        };
+                        listeners::deliver_a11y_action(
+                            &NodeContext {
+                                tree: &tree_rc,
+                                handlers: &handlers,
+                                context_menus: &context_menus,
+                                theme: &runtime.theme,
+                                completions: &runtime.completions,
+                            },
+                            node,
+                            name,
+                            value,
+                            py,
+                        );
+                    }
+                }
+            },
+            // M94: `close_requested` (cancellable) and `closed` window
+            // events. A cancelled request keeps the window open; `closed`
+            // also drops the window's handle to its OS window.
+            move |window_id, lifecycle| {
+                let runtimes = runtimes_for_lifecycle.borrow();
+                let Some(runtime) = runtimes.get(&window_id) else {
+                    return true;
+                };
+                match lifecycle {
+                    WindowLifecycle::CloseRequested => !listeners::deliver_window(
+                        &runtime.window_listeners,
+                        py,
+                        WindowEventType::CloseRequested,
+                        |_| {},
+                    ),
+                    WindowLifecycle::Closed => {
+                        listeners::deliver_window(
+                            &runtime.window_listeners,
+                            py,
+                            WindowEventType::Closed,
+                            |_| {},
+                        );
+                        *runtime.os_window.borrow_mut() = None;
+                        true
+                    }
                 }
             },
             move |opener, waker| {
@@ -1277,6 +1473,10 @@ impl App {
         // queues, waiting for a later `run()`'s first frame, rather than
         // waking a proxy with no loop behind it.
         self.calls.set_waker(None);
+        // M94: no window is open any more.
+        for setup in setups_for_cleanup.iter() {
+            *setup.os_window.borrow_mut() = None;
+        }
 
         match result {
             Ok(()) => Ok(()),
@@ -1298,6 +1498,59 @@ impl App {
 
 #[cfg(test)]
 mod tests {
+    use super::{Cursor, cursor_at};
+    use engine_core::{NodeKind, PaintProperties, Tree};
+    use peniko::Color;
+    use peniko::kurbo::Point;
+    use taffy::prelude::{AvailableSpace, Size, Style, length};
+
+    /// M94: the cursor comes from the node under the pointer or its nearest
+    /// ancestor that sets one, the capturing node wins while it holds
+    /// capture, and it falls back to the default arrow.
+    #[test]
+    fn cursor_at_inherits_and_follows_capture() {
+        let mut tree = Tree::new();
+        let boxed = |w: f32, h: f32| {
+            (
+                NodeKind::Rect,
+                Style {
+                    size: Size {
+                        width: length(w),
+                        height: length(h),
+                    },
+                    ..Default::default()
+                },
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 0.0, 1.0),
+            )
+        };
+        let (k, s, p) = boxed(200.0, 200.0);
+        let root = tree.insert(k, s, p);
+        let (k, s, p) = boxed(100.0, 100.0);
+        let parent = tree.insert(k, s, p);
+        let (k, s, p) = boxed(50.0, 50.0);
+        let child = tree.insert(k, s, p);
+        tree.add_child(root, parent);
+        tree.add_child(parent, child);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(200.0),
+            },
+        );
+        let over_child = Point::new(10.0, 10.0);
+        let outside = Point::new(150.0, 150.0);
+        assert_eq!(cursor_at(&tree, root, over_child), Cursor::Default);
+
+        tree.get_mut(parent).unwrap().cursor = Some(Cursor::Pointer);
+        assert_eq!(cursor_at(&tree, root, over_child), Cursor::Pointer);
+        assert_eq!(cursor_at(&tree, root, outside), Cursor::Default);
+
+        tree.get_mut(child).unwrap().cursor = Some(Cursor::Grab);
+        tree.set_pointer_capture(Some(child));
+        assert_eq!(cursor_at(&tree, root, outside), Cursor::Grab);
+    }
+
     /// M17 Phase 1 (§8): the one real, permanent regression check that
     /// `arboard` genuinely connects to a live OS clipboard in *this*
     /// environment -- manually verified once via a throwaway probe

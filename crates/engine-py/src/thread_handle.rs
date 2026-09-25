@@ -1,7 +1,7 @@
 //! M87 (tre issue #6): running a Python callable on a live `App`'s
 //! event-loop thread, queued from any other thread.
 //!
-//! `App`/`Window`/`View` are all `#[pyclass(unsendable)]`, so a
+//! `App`/`Window`/`View`/`Node` are all thread-bound (`thread_bound`), so a
 //! background thread -- a file watcher driving hot reload, a network
 //! client, a subprocess reader -- can't touch them, and once `App.run()`
 //! starts, Python otherwise only runs inside input handlers. `LoopHandle`

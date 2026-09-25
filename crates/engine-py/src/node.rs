@@ -38,6 +38,9 @@ use taffy::prelude::{AlignItems, FlexDirection, JustifyContent, Rect as TaffyRec
 use crate::dispatch::{HandlerMap, SharedCompletions, call_handler};
 use crate::error::EngineError;
 use crate::event::{Event, NodeContext};
+use crate::node_handles;
+use crate::node_layout::{ALIGN, FLEX_DIRECTION, JUSTIFY, lookup};
+use crate::thread_bound::ThreadBound;
 use crate::window::SharedTheme;
 
 /// `set_syntax_spans`'s own real `(start, end, (r, g, b, a))` element
@@ -45,8 +48,100 @@ use crate::window::SharedTheme;
 /// complexity lint -- not a real domain concept reused anywhere else.
 type SyntaxSpanInput = (usize, usize, (u8, u8, u8, u8));
 
-#[pyclass(unsendable)]
-pub struct Node {
+/// A Python handle to one node. M96: a thread-checked shell around
+/// `NodeState` (see `thread_bound`), so the cyclic collector can free it on
+/// any thread; every method reaches the state through `Deref`. Built only
+/// through `From<NodeState>`, which counts the handle (`node_handles`).
+#[pyclass]
+pub struct Node(ThreadBound<NodeState>);
+
+impl std::ops::Deref for Node {
+    type Target = NodeState;
+
+    fn deref(&self) -> &NodeState {
+        &self.0
+    }
+}
+
+impl NodeState {
+    /// A new handle to `id`, another node in this node's tree.
+    pub(crate) fn handle_to(&self, id: NodeId) -> Node {
+        Node::from(NodeState {
+            id,
+            tree: self.tree.clone(),
+            handlers: self.handlers.clone(),
+            context_menus: self.context_menus.clone(),
+            theme: self.theme.clone(),
+            completions: self.completions.clone(),
+        })
+    }
+
+    /// When focus is on this node or inside it, clears it and fires `unfocus`
+    /// (and the legacy focus-exit handler) -- before a detach or free, so
+    /// `unfocus` bubbles through the tree as it still is.
+    fn release_focus_within(&self, py: Python<'_>) {
+        let inside = {
+            let tree = self.tree.borrow();
+            tree.focused()
+                .is_some_and(|focused| tree.ancestors(focused).any(|id| id == self.id))
+        };
+        if !inside {
+            return;
+        }
+        let config = crate::dispatch::interaction_config();
+        let transition = self.tree.borrow_mut().clear_focus(
+            config.focus_ring_opacity,
+            config.focus_ring_duration,
+            crate::clock::now(&self.tree),
+        );
+        if let Some((old, new)) = transition {
+            crate::dispatch::fire_focus_transition(
+                &self.handlers,
+                &self.tree,
+                &self.context_menus,
+                &self.theme,
+                &self.completions,
+                old,
+                new,
+                py,
+            );
+        }
+    }
+
+    /// `Err(Destroyed)` once this handle's node has been freed.
+    pub(crate) fn check_alive(&self) -> PyResult<()> {
+        if self.tree.borrow().get(self.id).is_some() {
+            Ok(())
+        } else {
+            Err(EngineError::Destroyed.into())
+        }
+    }
+
+    /// Both nodes alive and in the same tree -- what attaching one under
+    /// the other needs.
+    fn check_pair(&self, child: &NodeState) -> PyResult<()> {
+        if !Rc::ptr_eq(&self.tree, &child.tree) {
+            return Err(EngineError::ForeignNode.into());
+        }
+        self.check_alive()?;
+        child.check_alive()
+    }
+}
+
+impl From<NodeState> for Node {
+    fn from(state: NodeState) -> Self {
+        node_handles::retain(&state);
+        Node(ThreadBound::new(state))
+    }
+}
+
+impl Drop for NodeState {
+    fn drop(&mut self) {
+        node_handles::release(self);
+    }
+}
+
+pub struct NodeState {
     pub(crate) id: NodeId,
     pub(crate) tree: Rc<RefCell<Tree>>,
     pub(crate) handlers: HandlerMap,
@@ -96,16 +191,18 @@ impl Node {
     /// real per-frame render loop to drain it through, the same stated
     /// scope limit `Window.set_theme` vs. `View`'s own theme already
     /// established, M7 Phase 3).
-    #[pyo3(signature = (property, to, duration_ms=0, on_complete=None))]
+    #[pyo3(signature = (property, to, duration_ms=0, easing=None, on_complete=None))]
     pub(crate) fn animate(
         &self,
         property: &str,
         to: Bound<'_, PyAny>,
         duration_ms: u64,
+        easing: Option<Bound<'_, PyAny>>,
         on_complete: Option<Py<PyAny>>,
     ) -> PyResult<()> {
         let duration = Duration::from_millis(duration_ms);
-        let now = Instant::now();
+        let now = crate::clock::now(&self.tree);
+        let curve = parse_easing(easing.as_ref())?;
         renamed_property(property)?;
         let mut tree = self.tree.borrow_mut();
         let node = tree.get_mut(self.id).expect(
@@ -117,17 +214,142 @@ impl Node {
             "opacity" => {
                 let value = extract_f64(&to, property)?;
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(&mut node.paint.opacity, value, duration, now, handle);
+                animate_field(&mut node.paint.opacity, value, duration, curve, now, handle);
             }
+            // M95: a number animates the uniform radius, or all four
+            // corners when they're set separately; a 4-tuple animates the
+            // four corners, starting from the uniform radius if they
+            // weren't separate yet.
             "corner_radius" => {
-                let value = extract_f64(&to, property)?;
+                let radius = crate::node_props::parse_radius(&to, property)?;
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(&mut node.paint.corner_radius, value, duration, now, handle);
+                match (radius, &mut node.paint.corner_radii_override) {
+                    (crate::node_props::Radius::Uniform(value), None) => {
+                        animate_field(
+                            &mut node.paint.corner_radius,
+                            value,
+                            duration,
+                            curve,
+                            now,
+                            handle,
+                        );
+                    }
+                    (crate::node_props::Radius::Uniform(value), Some(radii)) => {
+                        animate_field(
+                            radii,
+                            engine_core::CornerRadii([value; 4]),
+                            duration,
+                            curve,
+                            now,
+                            handle,
+                        );
+                    }
+                    (crate::node_props::Radius::Corners(corners), radii) => {
+                        let uniform = node.paint.corner_radius.current;
+                        let radii = radii.get_or_insert_with(|| {
+                            engine_core::Animated::new(engine_core::CornerRadii([uniform; 4]))
+                        });
+                        animate_field(
+                            radii,
+                            engine_core::CornerRadii(corners),
+                            duration,
+                            curve,
+                            now,
+                            handle,
+                        );
+                    }
+                }
+            }
+            // M95: the target API's paint names.
+            "fill" => {
+                let value = crate::node_props::parse_color(&to, property)?;
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                match &mut node.kind {
+                    NodeKind::Icon(state) => {
+                        animate_field(&mut state.tint, value, duration, curve, now, handle);
+                    }
+                    NodeKind::TextField(state) => {
+                        animate_field(&mut state.text_tint, value, duration, curve, now, handle);
+                    }
+                    _ => animate_field(
+                        &mut node.paint.background,
+                        value,
+                        duration,
+                        curve,
+                        now,
+                        handle,
+                    ),
+                }
+            }
+            "stroke_color" => {
+                let value = crate::node_props::parse_color(&to, property)?;
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                animate_field(
+                    &mut node.paint.border_color,
+                    value,
+                    duration,
+                    curve,
+                    now,
+                    handle,
+                );
+            }
+            // M96: a scroll view's offset, eased -- how a carousel snaps.
+            "scroll_offset" => {
+                let value = crate::node_props::parse_non_negative(&to, property)?;
+                let NodeKind::ScrollView(state) = &mut node.kind else {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "node property `scroll_offset` applies only to a scroll_view node",
+                    ));
+                };
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                animate_field(&mut state.scroll, value, duration, curve, now, handle);
+            }
+            // M96: the target API's transform parts, each with its own
+            // animation (`NodeTransform`).
+            "translate_x" | "translate_y" | "scale" | "rotation_deg" => {
+                let value = if property == "scale" {
+                    crate::node_props::parse_non_negative(&to, property)?
+                } else {
+                    extract_f64(&to, property)?
+                };
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                let parts = &mut node.paint.node_transform;
+                let field = match property {
+                    "translate_x" => &mut parts.translate_x,
+                    "translate_y" => &mut parts.translate_y,
+                    "scale" => &mut parts.scale,
+                    _ => &mut parts.rotation_deg,
+                };
+                animate_field(field, value, duration, curve, now, handle);
+            }
+            "stroke_width" => {
+                let value = crate::node_props::parse_non_negative(&to, property)?;
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                animate_field(
+                    &mut node.paint.border_width,
+                    value,
+                    duration,
+                    curve,
+                    now,
+                    handle,
+                );
+            }
+            "shadows" => {
+                let value = engine_core::Shadows(crate::node_props::parse_shadows(&to, property)?);
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                animate_field(&mut node.paint.shadows, value, duration, curve, now, handle);
             }
             "elevation" => {
                 let value = extract_f64(&to, property)?;
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(&mut node.paint.elevation, value, duration, now, handle);
+                animate_field(
+                    &mut node.paint.elevation,
+                    value,
+                    duration,
+                    curve,
+                    now,
+                    handle,
+                );
             }
             "background" => {
                 if is_glyph_kind(&node.kind) {
@@ -138,7 +360,14 @@ impl Node {
                 }
                 let value = extract_color(&to, property)?;
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(&mut node.paint.background, value, duration, now, handle);
+                animate_field(
+                    &mut node.paint.background,
+                    value,
+                    duration,
+                    curve,
+                    now,
+                    handle,
+                );
             }
             // M90: the glyph/text color of `Text`/`Link`/`Icon`/
             // `LoadingIndicator`. `Text`/`Link`/`LoadingIndicator` store
@@ -150,12 +379,19 @@ impl Node {
                     NodeKind::Icon(state) => {
                         let handle =
                             on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                        animate_field(&mut state.tint, value, duration, now, handle);
+                        animate_field(&mut state.tint, value, duration, curve, now, handle);
                     }
                     NodeKind::Text(_) | NodeKind::Link(_) | NodeKind::LoadingIndicator(_) => {
                         let handle =
                             on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                        animate_field(&mut node.paint.background, value, duration, now, handle);
+                        animate_field(
+                            &mut node.paint.background,
+                            value,
+                            duration,
+                            curve,
+                            now,
+                            handle,
+                        );
                     }
                     _ => {
                         return Err(EngineError::UnknownProperty {
@@ -175,12 +411,26 @@ impl Node {
             "border_color" => {
                 let value = extract_color(&to, property)?;
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(&mut node.paint.border_color, value, duration, now, handle);
+                animate_field(
+                    &mut node.paint.border_color,
+                    value,
+                    duration,
+                    curve,
+                    now,
+                    handle,
+                );
             }
             "border_width" => {
                 let value = extract_f64(&to, property)?;
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(&mut node.paint.border_width, value, duration, now, handle);
+                animate_field(
+                    &mut node.paint.border_width,
+                    value,
+                    duration,
+                    curve,
+                    now,
+                    handle,
+                );
             }
             // M6 Phase 2 (§8): "pan offset × zoom scale" (§11.9's own
             // text), not a raw 6-coefficient `Affine` -- matches
@@ -193,7 +443,14 @@ impl Node {
                 let (tx, ty, scale) = extract_translate_scale(&to, property)?;
                 let value = Affine::translate((tx, ty)) * Affine::scale(scale);
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(&mut node.paint.transform, value, duration, now, handle);
+                animate_field(
+                    &mut node.paint.transform,
+                    value,
+                    duration,
+                    curve,
+                    now,
+                    handle,
+                );
             }
             // M7 Phase 4 (§7.4): a list of `(x, y)` vertices, since
             // Python has no `BezPath` type to hand over directly --
@@ -218,7 +475,7 @@ impl Node {
                 }
                 let value = ShapeKey::from_path(&path);
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(&mut node.paint.shape, value, duration, now, handle);
+                animate_field(&mut node.paint.shape, value, duration, curve, now, handle);
             }
             // M14 Phase 1 (§8): the first real arm of the "two-level
             // dispatch" ARCHITECTURE.md §8 describes -- `property`
@@ -229,7 +486,14 @@ impl Node {
                 NodeKind::Checkbox(state) => {
                     let value = extract_f64(&to, property)?;
                     let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(&mut state.check_progress, value, duration, now, handle);
+                    animate_field(
+                        &mut state.check_progress,
+                        value,
+                        duration,
+                        curve,
+                        now,
+                        handle,
+                    );
                 }
                 _ => {
                     return Err(EngineError::UnknownProperty {
@@ -250,7 +514,14 @@ impl Node {
                 NodeKind::RadioButton(state) => {
                     let value = extract_f64(&to, property)?;
                     let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(&mut state.select_progress, value, duration, now, handle);
+                    animate_field(
+                        &mut state.select_progress,
+                        value,
+                        duration,
+                        curve,
+                        now,
+                        handle,
+                    );
                 }
                 _ => {
                     return Err(EngineError::UnknownProperty {
@@ -271,7 +542,7 @@ impl Node {
                 NodeKind::Icon(state) => {
                     let value = extract_f64(&to, property)?;
                     let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(&mut state.rotation, value, duration, now, handle);
+                    animate_field(&mut state.rotation, value, duration, curve, now, handle);
                 }
                 _ => {
                     return Err(EngineError::UnknownProperty {
@@ -287,7 +558,14 @@ impl Node {
                 NodeKind::Switch(state) => {
                     let value = extract_f64(&to, property)?;
                     let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(&mut state.toggle_progress, value, duration, now, handle);
+                    animate_field(
+                        &mut state.toggle_progress,
+                        value,
+                        duration,
+                        curve,
+                        now,
+                        handle,
+                    );
                 }
                 _ => {
                     return Err(EngineError::UnknownProperty {
@@ -300,21 +578,79 @@ impl Node {
             // M30 Phase 3 Step 2 (§8): the progress indicators' own
             // arm. M90: `Slider` joins it -- a slider's position was
             // `thumb_position` here but `value` everywhere else.
+            // M95: a path's data morphs; its stroke trim animates.
+            "data" | "trim_start" | "trim_end" => {
+                let NodeKind::Path(state) = &mut node.kind else {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "node property `{property}` applies only to a path node"
+                    )));
+                };
+                let handle = |completions: &SharedCompletions| {
+                    on_complete.map(|cb| completions.borrow_mut().register(cb))
+                };
+                if property == "data" {
+                    let data: String = to.extract().map_err(|_| {
+                        pyo3::exceptions::PyValueError::new_err(
+                            "node property `data` must be SVG path data (a str)",
+                        )
+                    })?;
+                    let value = engine_core::PathData::from_svg(&data).map_err(|err| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "node property `data` isn't valid SVG path data: {err}"
+                        ))
+                    })?;
+                    animate_field(
+                        &mut state.data,
+                        value,
+                        duration,
+                        curve,
+                        now,
+                        handle(&self.completions),
+                    );
+                } else {
+                    let value = extract_f64(&to, property)?;
+                    if !(0.0..=1.0).contains(&value) {
+                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                            "node property `{property}` must be a number from 0.0 to 1.0"
+                        )));
+                    }
+                    let field = if property == "trim_start" {
+                        &mut state.trim_start
+                    } else {
+                        &mut state.trim_end
+                    };
+                    animate_field(
+                        field,
+                        value,
+                        duration,
+                        curve,
+                        now,
+                        handle(&self.completions),
+                    );
+                }
+            }
             "value" => match &mut node.kind {
                 NodeKind::Slider(state) => {
                     let value = extract_f64(&to, property)?;
                     let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(&mut state.thumb_position, value, duration, now, handle);
+                    animate_field(
+                        &mut state.thumb_position,
+                        value,
+                        duration,
+                        curve,
+                        now,
+                        handle,
+                    );
                 }
                 NodeKind::LinearProgress(state) => {
                     let value = extract_f64(&to, property)?;
                     let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(&mut state.value, value, duration, now, handle);
+                    animate_field(&mut state.value, value, duration, curve, now, handle);
                 }
                 NodeKind::CircularProgress(state) => {
                     let value = extract_f64(&to, property)?;
                     let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(&mut state.value, value, duration, now, handle);
+                    animate_field(&mut state.value, value, duration, curve, now, handle);
                 }
                 _ => {
                     return Err(EngineError::UnknownProperty {
@@ -333,70 +669,6 @@ impl Node {
             }
         }
         Ok(())
-    }
-
-    /// Reads a numeric property's current (possibly still-animating)
-    /// value -- `animate()`'s missing counterpart, added at §14 step 12
-    /// once something (a binding's own applied value, §16.2) actually
-    /// needed to be observed from Python rather than only ever written.
-    /// `background` isn't included: it isn't a single `f64`, and
-    /// nothing yet needs to read it back.
-    pub(crate) fn get(&self, property: &str) -> PyResult<f64> {
-        renamed_property(property)?;
-        let tree = self.tree.borrow();
-        let node = tree.get(self.id).expect(
-            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
-        );
-        let kind = kind_name(&node.kind);
-        match property {
-            "opacity" => Ok(node.paint.opacity.current),
-            "corner_radius" => Ok(node.paint.corner_radius.current),
-            "elevation" => Ok(node.paint.elevation.current),
-            // M48: `border_width` is a plain `Animated<f64>`, the same
-            // shape as `corner_radius`/`elevation` above -- `border_
-            // color` stays excluded, the same real reason `background`
-            // already is (not a single `f64`).
-            "border_width" => Ok(node.paint.border_width.current),
-            "check_progress" => match &node.kind {
-                NodeKind::Checkbox(state) => Ok(state.check_progress.current),
-                _ => Err(EngineError::UnknownProperty {
-                    kind,
-                    property: property.to_string(),
-                }
-                .into()),
-            },
-            "select_progress" => match &node.kind {
-                NodeKind::RadioButton(state) => Ok(state.select_progress.current),
-                _ => Err(EngineError::UnknownProperty {
-                    kind,
-                    property: property.to_string(),
-                }
-                .into()),
-            },
-            "toggle_progress" => match &node.kind {
-                NodeKind::Switch(state) => Ok(state.toggle_progress.current),
-                _ => Err(EngineError::UnknownProperty {
-                    kind,
-                    property: property.to_string(),
-                }
-                .into()),
-            },
-            "value" => match &node.kind {
-                NodeKind::Slider(state) => Ok(state.thumb_position.current),
-                NodeKind::LinearProgress(state) => Ok(state.value.current),
-                NodeKind::CircularProgress(state) => Ok(state.value.current),
-                _ => Err(EngineError::UnknownProperty {
-                    kind,
-                    property: property.to_string(),
-                }
-                .into()),
-            },
-            _ => Err(EngineError::UnknownProperty {
-                kind,
-                property: property.to_string(),
-            }
-            .into()),
-        }
     }
 
     /// M48 (§5, §7, §11): the general live layout-mutation API this
@@ -743,9 +1015,7 @@ impl Node {
     /// rather than corrupting the tree the "`add_child` has no dedup"
     /// way M4 Phase 7/9 each already found once.
     fn add_child(&self, child: PyRef<'_, Node>) -> PyResult<()> {
-        if !Rc::ptr_eq(&self.tree, &child.tree) {
-            return Err(EngineError::ForeignNode.into());
-        }
+        self.check_pair(&child)?;
         if self.tree.borrow_mut().try_add_child(self.id, child.id) {
             Ok(())
         } else {
@@ -753,21 +1023,75 @@ impl Node {
         }
     }
 
-    /// M13 Phase 2 (§11.2): the one missing half `add_child` already
-    /// had a counterpart for at the `engine-core` level (`Tree::remove`,
-    /// real since §5) but never a Python-facing one -- "navigating"
-    /// (§11.2's own text) means replacing `content`'s own children, an
-    /// ordinary remove-then-add, and `add_child` alone could only ever
-    /// do the "add" half. Recursively removes this node and its whole
-    /// subtree, unlinking it from its own parent first (`Tree::remove`'s
-    /// own real behavior) -- no return value: a `Node` handle Python
-    /// already holds always refers to a real, present `NodeId` at the
-    /// point this is called, the same assumption every other `Node`
-    /// method already makes, so `Tree::remove`'s own bare `bool` ("was
-    /// it actually present") would be dead API surface here, not real
-    /// information.
-    fn remove(&self) {
-        self.tree.borrow_mut().remove(self.id);
+    /// M96: attaches `child` so it ends up at `index` among this node's
+    /// children, moving it if it's already attached anywhere -- the
+    /// keyed-reorder primitive. A moved node keeps its identity, listeners,
+    /// focus, and running animations. `index` counts the children as they
+    /// are once `child` has left its old place, so afterwards
+    /// `children()[index] == child`.
+    fn insert_child(&self, index: usize, child: PyRef<'_, Node>) -> PyResult<()> {
+        self.check_pair(&child)?;
+        let mut tree = self.tree.borrow_mut();
+        let siblings = tree.content_children(self.id).len();
+        let already_here = tree.content_children(self.id).contains(&child.id);
+        let limit = siblings - usize::from(already_here);
+        if index > limit {
+            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                "index {index} is out of range: this node would have {} children, so the \
+                 index must be 0 to {limit}",
+                limit + 1
+            )));
+        }
+        if tree.insert_child(self.id, index, child.id) {
+            Ok(())
+        } else {
+            Err(EngineError::CycleRejected.into())
+        }
+    }
+
+    /// M96: this node's children, in order -- open layers aren't among
+    /// the root's.
+    fn children(&self) -> PyResult<Vec<Node>> {
+        self.check_alive()?;
+        let ids = self.tree.borrow().content_children(self.id).to_vec();
+        Ok(ids.into_iter().map(|id| self.handle_to(id)).collect())
+    }
+
+    /// M96: this node's parent, or `None` for a detached node, the root, or
+    /// a shown layer.
+    fn parent(&self) -> PyResult<Option<Node>> {
+        let parent = {
+            let tree = self.tree.borrow();
+            let parent = tree.get(self.id).ok_or(EngineError::Destroyed)?.parent;
+            parent.filter(|_| !tree.is_layer(self.id))
+        };
+        Ok(parent.map(|id| self.handle_to(id)))
+    }
+
+    /// M96 (R5): detaches this node from its parent. It stays alive and can
+    /// be attached again while any handle to it, or to anything under it,
+    /// exists; after that it's freed automatically.
+    ///
+    /// Focus inside it leaves with it: the focused node gets `unfocus`, and
+    /// nothing is focused until something else is. Everything else it
+    /// holds -- scroll offsets, a text input's text and selection, running
+    /// animations, which keep advancing -- is kept for when it's attached
+    /// again.
+    fn remove(&self, py: Python<'_>) -> PyResult<()> {
+        self.check_alive()?;
+        self.release_focus_within(py);
+        self.tree.borrow_mut().detach_collectible(self.id);
+        Ok(())
+    }
+
+    /// M96: frees this node and its whole subtree now, with their
+    /// listeners. Any handle to a freed node raises `ValueError` on use.
+    fn destroy(&self, py: Python<'_>) -> PyResult<()> {
+        self.check_alive()?;
+        self.release_focus_within(py);
+        let freed = self.tree.borrow_mut().destroy(self.id);
+        node_handles::prune(&self.handlers, &freed);
+        Ok(())
     }
 
     /// M14 Phase 1 (§5, §7.3): the real, plain (non-animated) write to
@@ -1089,7 +1413,7 @@ impl Node {
             }
             .into());
         }
-        tree.set_carousel_index(self.id, index, Instant::now());
+        tree.set_carousel_index(self.id, index, crate::clock::now(&self.tree));
         Ok(())
     }
 
@@ -1469,18 +1793,47 @@ impl Node {
 /// six match arms needs one call, not its own copy of this branch.
 /// `MotionCurve::Linear` matches every one of those arms' own existing,
 /// unchanged choice.
+/// M95: `animate`'s `easing` -- `None` or `"linear"`, or a cubic bezier
+/// `(x1, y1, x2, y2)` with `x1` and `x2` in `0.0..=1.0`, as CSS
+/// `cubic-bezier()` takes them.
+fn parse_easing(easing: Option<&Bound<'_, PyAny>>) -> PyResult<MotionCurve> {
+    let expected = "easing must be \"linear\" or a cubic bezier (x1, y1, x2, y2) with x1 and x2 \
+                    from 0.0 to 1.0";
+    let Some(easing) = easing else {
+        return Ok(MotionCurve::Linear);
+    };
+    if easing.is_none() {
+        return Ok(MotionCurve::Linear);
+    }
+    if let Ok(name) = easing.extract::<String>() {
+        return if name == "linear" {
+            Ok(MotionCurve::Linear)
+        } else {
+            Err(pyo3::exceptions::PyValueError::new_err(expected))
+        };
+    }
+    let (x1, y1, x2, y2): (f64, f64, f64, f64) = easing
+        .extract()
+        .map_err(|_| pyo3::exceptions::PyValueError::new_err(expected))?;
+    if !(0.0..=1.0).contains(&x1) || !(0.0..=1.0).contains(&x2) {
+        return Err(pyo3::exceptions::PyValueError::new_err(expected));
+    }
+    Ok(MotionCurve::Bezier(x1, y1, x2, y2))
+}
+
 fn animate_field<T: engine_core::Interpolate + Clone>(
     field: &mut engine_core::Animated<T>,
     value: T,
     duration: Duration,
+    curve: MotionCurve,
     now: Instant,
     handle: Option<engine_core::CompletionHandle>,
 ) {
     match handle {
         Some(handle) => {
-            field.animate_to_with_completion(value, duration, MotionCurve::Linear, now, handle);
+            field.animate_to_with_completion(value, duration, curve, now, handle);
         }
-        None => field.animate_to(value, duration, MotionCurve::Linear, now),
+        None => field.animate_to(value, duration, curve, now),
     }
 }
 
@@ -1521,52 +1874,24 @@ fn is_glyph_kind(kind: &NodeKind) -> bool {
 }
 
 fn parse_flex_direction(value: &str) -> PyResult<FlexDirection> {
-    match value {
-        "horizontal" => Ok(FlexDirection::Row),
-        "vertical" => Ok(FlexDirection::Column),
-        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "set_layout: unknown flex_direction {other:?} -- expected one of \"horizontal\", \"vertical\""
-        ))),
-    }
+    layout_keyword(&FLEX_DIRECTION, "flex_direction", value)
 }
 
 fn parse_align_items(value: &str) -> PyResult<AlignItems> {
-    match value {
-        "start" => Ok(AlignItems::START),
-        "end" => Ok(AlignItems::END),
-        "flex_start" => Ok(AlignItems::FLEX_START),
-        "flex_end" => Ok(AlignItems::FLEX_END),
-        "center" => Ok(AlignItems::CENTER),
-        "baseline" => Ok(AlignItems::BASELINE),
-        "stretch" => Ok(AlignItems::STRETCH),
-        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "set_layout: unknown align_items {other:?} -- expected one of \"start\", \"end\", \
-             \"flex_start\", \"flex_end\", \"center\", \"baseline\", \"stretch\""
-        ))),
-    }
+    layout_keyword(&ALIGN, "align_items", value)
 }
 
-/// `parse_align_items`'s own real `justify_content=` sibling -- a
-/// superset vocabulary (adds the real space-distribution keywords
-/// `align_items` doesn't have), mirroring `engine-spec::
-/// JustifyContentSpec`'s identical real shape.
 fn parse_justify_content(value: &str) -> PyResult<JustifyContent> {
-    match value {
-        "start" => Ok(JustifyContent::START),
-        "end" => Ok(JustifyContent::END),
-        "flex_start" => Ok(JustifyContent::FLEX_START),
-        "flex_end" => Ok(JustifyContent::FLEX_END),
-        "center" => Ok(JustifyContent::CENTER),
-        "stretch" => Ok(JustifyContent::STRETCH),
-        "space_between" => Ok(JustifyContent::SPACE_BETWEEN),
-        "space_around" => Ok(JustifyContent::SPACE_AROUND),
-        "space_evenly" => Ok(JustifyContent::SPACE_EVENLY),
-        other => Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "set_layout: unknown justify_content {other:?} -- expected one of \"start\", \"end\", \
-             \"flex_start\", \"flex_end\", \"center\", \"stretch\", \"space_between\", \
-             \"space_around\", \"space_evenly\""
-        ))),
-    }
+    layout_keyword(&JUSTIFY, "justify_content", value)
+}
+
+/// `set_layout`'s keyword kwargs, read from the same tables `node.set` uses.
+fn layout_keyword<T: Copy>(table: &[(&str, T)], name: &str, value: &str) -> PyResult<T> {
+    lookup(table, value).map_err(|expected| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "set_layout: unknown {name} {value:?} -- expected {expected}"
+        ))
+    })
 }
 
 /// M82: shared by `push_frame` and `Window.add_image_from_bytes` --
@@ -1608,6 +1933,7 @@ fn kind_name(kind: &NodeKind) -> &'static str {
         NodeKind::TextField(_) => "TextField",
         NodeKind::Image(_) => "Image",
         NodeKind::Icon(_) => "Icon",
+        NodeKind::Path(_) => "Path",
         NodeKind::Link(_) => "Link",
         NodeKind::Terminal(_) => "Terminal",
         NodeKind::Carousel(_) => "Carousel",
@@ -1673,4 +1999,73 @@ fn extract_shape_points(
             expected: "a list of (x, y) float tuples",
             actual: type_name_of(to),
         })
+}
+
+impl Node {
+    /// Reads a numeric property's current (possibly still-animating)
+    /// M94: no longer a Python method itself -- `Node.get`
+    /// (`node_events.rs`) serves the M94 properties and falls back to
+    /// this for the animatable numeric ones.
+    /// value -- `animate()`'s missing counterpart, added at §14 step 12
+    /// once something (a binding's own applied value, §16.2) actually
+    /// needed to be observed from Python rather than only ever written.
+    /// `background` isn't included: it isn't a single `f64`, and
+    /// nothing yet needs to read it back.
+    pub(crate) fn get_number(&self, property: &str) -> PyResult<f64> {
+        renamed_property(property)?;
+        let tree = self.tree.borrow();
+        let node = tree.get(self.id).expect(
+            "Node holds a NodeId missing from its own Tree -- an engine-py bug, not a user error",
+        );
+        let kind = kind_name(&node.kind);
+        match property {
+            "opacity" => Ok(node.paint.opacity.current),
+            "corner_radius" => Ok(node.paint.corner_radius.current),
+            "elevation" => Ok(node.paint.elevation.current),
+            // M48: `border_width` is a plain `Animated<f64>`, the same
+            // shape as `corner_radius`/`elevation` above -- `border_
+            // color` stays excluded, the same real reason `background`
+            // already is (not a single `f64`).
+            "border_width" => Ok(node.paint.border_width.current),
+            "check_progress" => match &node.kind {
+                NodeKind::Checkbox(state) => Ok(state.check_progress.current),
+                _ => Err(EngineError::UnknownProperty {
+                    kind,
+                    property: property.to_string(),
+                }
+                .into()),
+            },
+            "select_progress" => match &node.kind {
+                NodeKind::RadioButton(state) => Ok(state.select_progress.current),
+                _ => Err(EngineError::UnknownProperty {
+                    kind,
+                    property: property.to_string(),
+                }
+                .into()),
+            },
+            "toggle_progress" => match &node.kind {
+                NodeKind::Switch(state) => Ok(state.toggle_progress.current),
+                _ => Err(EngineError::UnknownProperty {
+                    kind,
+                    property: property.to_string(),
+                }
+                .into()),
+            },
+            "value" => match &node.kind {
+                NodeKind::Slider(state) => Ok(state.thumb_position.current),
+                NodeKind::LinearProgress(state) => Ok(state.value.current),
+                NodeKind::CircularProgress(state) => Ok(state.value.current),
+                _ => Err(EngineError::UnknownProperty {
+                    kind,
+                    property: property.to_string(),
+                }
+                .into()),
+            },
+            _ => Err(EngineError::UnknownProperty {
+                kind,
+                property: property.to_string(),
+            }
+            .into()),
+        }
+    }
 }

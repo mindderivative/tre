@@ -31,7 +31,7 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use engine_core::{InputEvent, Key, NodeId, NodeKind, TerminalCell, Tree};
+use engine_core::{CellColor, InputEvent, Key, NodeId, NodeKind, TerminalCell, Tree};
 use engine_platform::EventLoopWaker;
 use peniko::Color;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -272,6 +272,18 @@ impl TerminalSession {
     /// Returns `true` exactly when it did -- the caller's own real
     /// "does this frame need to repaint" signal.
     pub(crate) fn drain_into(&mut self, tree: &mut Tree, node_id: NodeId) -> bool {
+        // M96: `node.set(cols=, rows=)` resizes the grid in the tree; the
+        // PTY and parser follow here.
+        let grid = match tree.get(node_id).map(|n| &n.kind) {
+            Some(NodeKind::Terminal(state)) => Some((state.cols, state.rows)),
+            _ => None,
+        };
+        let (rows, cols) = self.parser.screen().size();
+        if let Some((want_cols, want_rows)) = grid
+            && (want_cols, want_rows) != (cols, rows)
+        {
+            self.resize(tree, node_id, want_cols, want_rows);
+        }
         let bytes = {
             let mut guard = self
                 .incoming
@@ -412,8 +424,8 @@ fn screen_cell_to_terminal_cell(cell: Option<&vt100::Cell>) -> TerminalCell {
     let ch = cell.contents().chars().next().unwrap_or(' ');
     TerminalCell {
         ch,
-        fg: vt100_color_to_peniko(cell.fgcolor(), DEFAULT_FG),
-        bg: vt100_color_to_peniko(cell.bgcolor(), Color::TRANSPARENT),
+        fg: cell_color(cell.fgcolor()),
+        bg: cell_color(cell.bgcolor()),
         bold: cell.bold(),
         // M39 Phase 4 (§5, §7): `vt100::Cell`'s own real, already-
         // parsed attributes -- confirmed via direct source read
@@ -427,71 +439,14 @@ fn screen_cell_to_terminal_cell(cell: Option<&vt100::Cell>) -> TerminalCell {
     }
 }
 
-/// The real base ink color a cell's own `vt100::Color::Default`
-/// foreground resolves to -- the identical real default `TextField`'s
-/// own `text_tint` already uses before a theme is set (`TextFieldState
-/// ::new`'s own hardcoded `0x1C1B1F`), reused directly rather than a
-/// second, differently-chosen "default text color."
-const DEFAULT_FG: Color = Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF);
-
-fn vt100_color_to_peniko(color: vt100::Color, default: Color) -> Color {
+/// M95: a `vt100` color as the program set it -- resolved against the
+/// terminal's palette when painted (`engine_core::TerminalPalette`).
+fn cell_color(color: vt100::Color) -> CellColor {
     match color {
-        vt100::Color::Default => default,
-        vt100::Color::Rgb(r, g, b) => Color::from_rgba8(r, g, b, 0xFF),
-        vt100::Color::Idx(index) => ansi_index_to_color(index),
+        vt100::Color::Default => CellColor::Default,
+        vt100::Color::Idx(index) => CellColor::Indexed(index),
+        vt100::Color::Rgb(r, g, b) => CellColor::Rgb(Color::from_rgba8(r, g, b, 0xFF)),
     }
-}
-
-/// The conventional 16-color ANSI palette (indices 0-15), reused
-/// directly from the sibling `pyCopper` project's own real, already-
-/// tuned `_ANSI_COLORS` table (its own real sRGB float values,
-/// converted to the 0-255 `u8` triples `peniko::Color::from_rgba8`
-/// expects) -- not M3/MD3-sourced, the identical real "no semantic
-/// role exists to map any of this onto" reasoning `Code Editor`'s own
-/// syntax-highlighting scoping note already gives for a comparable
-/// literal-color need. Indices 16-255 use the real, standard xterm
-/// 256-color formula (a 6x6x6 color cube, then a grayscale ramp) --
-/// deterministic and well-known, not invented here.
-const ANSI_16: [(u8, u8, u8); 16] = [
-    (28, 28, 33),
-    (222, 89, 89),
-    (140, 191, 102),
-    (217, 178, 89),
-    (102, 153, 230),
-    (191, 128, 217),
-    (102, 191, 204),
-    (204, 204, 209),
-    (102, 107, 117),
-    (242, 115, 115),
-    (166, 217, 128),
-    (242, 204, 115),
-    (140, 178, 242),
-    (217, 153, 242),
-    (140, 217, 230),
-    (242, 242, 247),
-];
-
-fn ansi_index_to_color(index: u8) -> Color {
-    if let Some(&(r, g, b)) = ANSI_16.get(usize::from(index)) {
-        return Color::from_rgba8(r, g, b, 0xFF);
-    }
-    if index < 232 {
-        // The real xterm 6x6x6 color cube: index 16 is (0,0,0), each
-        // of the three channels steps through the same real six-value
-        // ramp (0, 95, 135, 175, 215, 255) -- the well-known standard
-        // formula, not invented here.
-        let n = index - 16;
-        let levels = [0u8, 95, 135, 175, 215, 255];
-        let r = levels[usize::from(n / 36)];
-        let g = levels[usize::from((n / 6) % 6)];
-        let b = levels[usize::from(n % 6)];
-        return Color::from_rgba8(r, g, b, 0xFF);
-    }
-    // 232-255: the real xterm grayscale ramp, 24 steps from near-black
-    // to near-white.
-    let level = 8 + (index - 232) as u16 * 10;
-    let level = level.min(255) as u8;
-    Color::from_rgba8(level, level, level, 0xFF)
 }
 
 #[cfg(test)]

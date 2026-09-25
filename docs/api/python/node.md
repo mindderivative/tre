@@ -3,6 +3,50 @@
 A handle to one node in a [`Window`](window.md)'s or [`View`](view.md)'s
 tree. Returned by every `add_*` method; never constructed directly.
 
+*New in 0.3.4:* `on`/`off` listeners, `capture_pointer`/`release_pointer`,
+and handle equality — see [Events and Listeners](events.md) — plus `set`,
+the wider `get`, and `focus`, below, and the paint, path, and animation
+properties, `get_target`, `stop_animation`, and `animate`'s `easing` — see
+[Paint, Paths, and Animation](paint.md).
+
+## `set`, `get`, and `focus`
+
+**`set(**props)`** sets any number of properties at once, atomically: every
+value is checked first, and a bad name or value raises `ValueError` without
+changing anything. Optional properties take `None` to clear them.
+
+```python
+thumb.set(role="slider", label="Volume", value=0.4, value_min=0.0,
+          value_max=1.0, value_step=0.1, focusable=True, cursor="pointer")
+```
+
+| Property | Value |
+| --- | --- |
+| `role` | `"button"`, `"checkbox"`, `"radio"`, `"switch"`, `"slider"`, `"progressbar"`, `"link"`, `"textbox"`, `"tab"`, `"tablist"`, `"tabpanel"`, `"menu"`, `"menuitem"`, `"dialog"`, `"alert"`, `"list"`, `"listitem"`, `"tree"`, `"treeitem"`, `"heading"`, `"img"`, `"group"`, `"none"` |
+| `label` | `str` or `None` — the name assistive technology reads |
+| `value` | `str`, number, or `None` |
+| `value_min`, `value_max`, `value_step` | number or `None` |
+| `checked`, `selected`, `expanded` | `bool` or `None` |
+| `disabled` | `bool` |
+| `level` | positive `int` or `None` — a heading's level |
+| `live` | `"off"`, `"polite"`, `"assertive"`, or `None` — how changes are announced |
+| `a11y_hidden` | `bool` — hidden from assistive technology |
+| `focusable` | `bool` — focusable by Tab, click, and `focus()`; a click on a descendant focuses the nearest focusable ancestor |
+| `tab_index` | `int` — positive values come first in Tab order, ascending; then `0` in tree order; negative leaves the node out of Tab order but focusable by click and `focus()` |
+| `cursor` | the pointer shape over the node, inherited by descendants: `"default"`, `"pointer"`, `"text"`, `"grab"`, `"grabbing"`, `"move"`, `"not_allowed"`, `"wait"`, `"progress"`, `"crosshair"`, `"help"`, `"col_resize"`, `"row_resize"`, `"ew_resize"`, `"ns_resize"`, `"nesw_resize"`, `"nwse_resize"`, `"copy"`, `"cell"`, `"context_menu"`, `"zoom_in"`, `"zoom_out"`, `"all_scroll"`, or `None` |
+| `hit_testable` | `bool` — whether the node can be the target of pointer events |
+
+The actions assistive technology is offered follow from role and state:
+focusable nodes offer focus, button-like roles offer activation, a slider
+or a value range offers increment/decrement/set-value, and `expanded` offers
+expand/collapse. Requests arrive as the [`a11y_action`](events.md) event.
+
+**`get(name)`** reads any of those back exactly as set, `focused`, or an
+animatable number's current value (below). On a built-in slider or progress
+indicator, `value` stays that widget's numeric value.
+
+**`focus()`** moves keyboard focus to the node, firing `unfocus` and `focus`.
+
 ## `animate`
 
 **`animate(property, to, duration_ms=0, on_complete=None)`**
@@ -141,20 +185,48 @@ on-surface tint.
 
 ## Tree structure
 
-### `add_child`
+*Changed in 0.3.4:* `remove()` detaches rather than freeing, and nodes
+have a lifetime of their own — see [Lifetime](#lifetime).
 
-**`add_child(child)`**
+| Method | Does |
+| --- | --- |
+| `add_child(child)` | Appends `child`, moving it if it's attached elsewhere |
+| `insert_child(index, child)` | Attaches `child` so it ends up at `index` — afterwards `children()[index] == child` — moving it if it's attached anywhere. `index` counts the children once `child` has left its old place; past the end raises `IndexError` |
+| `children()` | This node's children, in order |
+| `parent()` | Its parent, or `None` for the root or a detached node |
+| `remove()` | Detaches this node from its parent; it stays alive and can be attached again |
+| `destroy()` | Frees this node and its whole subtree now, with their listeners |
 
-Attaches `child` under this node. Raises `ValueError` if that would
-create a cycle (`child` is an ancestor of this node), or if `child`
-belongs to a different `Window`'s tree.
+Attaching raises `ValueError` if `child` is this node or one of its
+ancestors, or belongs to a different `Window`. **Moving a node keeps
+everything about it** — the same `Node`, its listeners, its focus, and any
+running animation — which is what a keyed list reconciler needs:
 
-### `remove`
+```python
+for index, key in enumerate(new_order):
+    list_box.insert_child(index, rows[key])
+```
 
-**`remove()`**
+### Lifetime
 
-Recursively removes this node and its whole subtree, unlinking it from
-its parent.
+- A node **attached** to a window lives while it's attached.
+- A node made by `window.create`, or detached by `remove()`, lives while
+  any `Node` handle to it — or to anything in its subtree — exists. When
+  the last one goes, the subtree is freed with its listeners, so a
+  forgotten `destroy()` never leaks.
+- `destroy()` frees now. Using a handle to a freed node raises
+  `ValueError`.
+- Nodes made by the older `add_*` methods start attached, and are never
+  freed this way unless you `remove()` them.
+
+Switching screens is `old.remove()` then `window.root.add_child(new)`:
+
+- **Focus leaves with a removed or destroyed subtree.** When focus is inside
+  it, the focused node gets `unfocus` first — bubbling through the tree as it
+  was — and nothing is focused afterwards.
+- **A detached subtree keeps everything else**: scroll offsets, a text
+  input's text, caret, and selection, and running animations, which keep
+  advancing on the window's clock. Attach it again and it's as you left it.
 
 ### `set_context_menu`
 

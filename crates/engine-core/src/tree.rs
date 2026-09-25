@@ -11,7 +11,7 @@
 //! which the CI benchmark this step adds would be exactly what catches
 //! that.
 
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use slotmap::{Key as SlotMapKey, KeyData, SecondaryMap, SlotMap};
@@ -20,7 +20,7 @@ use taffy::prelude::{
 };
 
 use crate::access::AccessNodeData;
-use crate::animation::{CompletionHandle, MotionCurve};
+use crate::animation::{Animated, CompletionHandle, MotionCurve};
 #[cfg(test)]
 use crate::canvas::CanvasState;
 use crate::canvas::{CustomHitTest, DrawCommand};
@@ -36,7 +36,7 @@ use crate::node::{
     CheckboxState, IconState, ItemExtent, SliderState, TerminalCell, TerminalState,
     TimePickerDialState, VirtualListState,
 };
-use crate::overlay::OverlayMeta;
+use crate::overlay::{OverlayMeta, Placement};
 #[cfg(test)]
 use peniko::kurbo::BezPath;
 use peniko::kurbo::{Affine, ParamCurveNearest, Point, Rect};
@@ -111,7 +111,10 @@ pub struct Tree {
     /// §14 step 13 (§11.3): keyed by the overlay root's own `NodeId` --
     /// metadata only, never the node itself, which already lives in
     /// `nodes` like any other.
-    overlays: HashMap<NodeId, OverlayMeta>,
+    overlays: Vec<(NodeId, OverlayMeta)>,
+    /// M96: layers an outside press or Escape asked to dismiss, since the
+    /// last `take_dismissals`.
+    dismissals: Vec<NodeId>,
     /// M29 Phase 1 (§5, §6): coarse, whole-tree "does the next frame
     /// need real paint/GPU work at all" signal -- set `true` by every
     /// real mutating method below (deliberately conservative: a method
@@ -145,6 +148,14 @@ pub struct Tree {
     button_group_reflow_count: usize,
     scroll_view_count: usize,
     virtual_list_count: usize,
+    /// M94: the node holding pointer capture (`set_pointer_capture`).
+    pointer_capture: Option<NodeId>,
+    /// M96: detached subtree roots that are freed once nothing outside the
+    /// tree references anything in their subtree (`detach_collectible`,
+    /// `collect_unreferenced`). A root leaves the set when it's attached
+    /// again. Content detached any other way (legacy context menus,
+    /// inactive dock panels) is never collected.
+    collectible: HashSet<NodeId>,
 }
 
 impl Default for Tree {
@@ -178,13 +189,68 @@ impl Tree {
             pressed: None,
             dragging: None,
             drag_start_value: None,
-            overlays: HashMap::new(),
+            overlays: Vec::new(),
+            dismissals: Vec::new(),
             dirty: true,
             carousel_count: 0,
             button_group_reflow_count: 0,
             scroll_view_count: 0,
             virtual_list_count: 0,
+            pointer_capture: None,
+            collectible: HashSet::new(),
         }
+    }
+
+    /// M96: detaches `id` from its parent, if it has one, and makes it a
+    /// collectible root: it stays alive, and reattachable, until
+    /// `collect_unreferenced` finds nothing referencing its subtree.
+    pub fn detach_collectible(&mut self, id: NodeId) {
+        if let Some(parent) = self.nodes.get(id).and_then(|n| n.parent) {
+            self.detach(parent, id);
+        }
+        self.collectible.insert(id);
+    }
+
+    /// M96: frees `id` and its whole subtree, returning every freed id.
+    pub fn destroy(&mut self, id: NodeId) -> Vec<NodeId> {
+        let mut freed = Vec::new();
+        let mut stack = vec![id];
+        while let Some(next) = stack.pop() {
+            if let Some(node) = self.nodes.get(next) {
+                freed.push(next);
+                stack.extend(node.children.iter().copied());
+            }
+        }
+        self.remove(id);
+        freed
+    }
+
+    /// M96: frees the collectible subtree `id` belongs to if `referenced`
+    /// is false for every node in it -- the caller's own record of which
+    /// nodes it still holds handles to. Returns every freed id; nothing is
+    /// freed when `id`'s root isn't collectible.
+    pub fn collect_unreferenced(
+        &mut self,
+        id: NodeId,
+        referenced: impl Fn(NodeId) -> bool,
+    ) -> Vec<NodeId> {
+        if !self.nodes.contains_key(id) {
+            return Vec::new();
+        }
+        let root = self.root_of(id);
+        if !self.collectible.contains(&root) {
+            return Vec::new();
+        }
+        let mut stack = vec![root];
+        while let Some(next) = stack.pop() {
+            if referenced(next) {
+                return Vec::new();
+            }
+            if let Some(node) = self.nodes.get(next) {
+                stack.extend(node.children.iter().copied());
+            }
+        }
+        self.destroy(root)
     }
 
     /// M29 Phase 1 (§5, §6): reads and clears the dirty flag in one
@@ -234,6 +300,9 @@ impl Tree {
             access: AccessNodeData::default(),
             interaction: None,
             hit_testable: true,
+            cursor: None,
+            visible: true,
+            z_index: 0,
         });
         self.taffy_nodes.insert(id, taffy_node);
         id
@@ -261,6 +330,13 @@ impl Tree {
     /// runtime condition (unlike the GPU/display absence this codebase
     /// exits gracefully for elsewhere).
     pub fn add_child(&mut self, parent: NodeId, child: NodeId) {
+        // M96: below any open overlay, so content never paints over one.
+        let index = self.content_len(parent);
+        self.attach_at(parent, index, child);
+    }
+
+    /// Attaches `child` under `parent` at `index`, in both structures.
+    fn attach_at(&mut self, parent: NodeId, index: usize, child: NodeId) {
         self.dirty = true;
         let parent_taffy = *self
             .taffy_nodes
@@ -271,11 +347,33 @@ impl Tree {
             .get(child)
             .expect("add_child: child NodeId not found in this Tree");
         self.taffy
-            .add_child(parent_taffy, child_taffy)
+            .insert_child_at_index(parent_taffy, index, child_taffy)
             .expect("add_child: taffy rejected the parent/child pair");
-
-        self.nodes[parent].children.push(child);
+        self.nodes[parent].children.insert(index, child);
         self.nodes[child].parent = Some(parent);
+        self.collectible.remove(&child);
+    }
+
+    /// M96: how many of `parent`'s children come before its open
+    /// overlays -- its content, which open overlays always sit above.
+    fn content_len(&self, parent: NodeId) -> usize {
+        self.nodes[parent]
+            .children
+            .iter()
+            .take_while(|child| !self.is_overlay(**child))
+            .count()
+    }
+
+    /// M96: `parent`'s children other than its open overlays, in order.
+    pub fn content_children(&self, parent: NodeId) -> &[NodeId] {
+        match self.nodes.get(parent) {
+            Some(node) => &node.children[..self.content_len(parent)],
+            None => &[],
+        }
+    }
+
+    fn is_overlay(&self, id: NodeId) -> bool {
+        self.overlays.iter().any(|(content, _)| *content == id)
     }
 
     /// M6 Phase 1 (§8): the checked counterpart to `add_child`, for the
@@ -301,20 +399,105 @@ impl Tree {
     /// this is the first general-purpose, arbitrary-reparenting entry
     /// point, and the one most likely to hit it a third time.
     pub fn try_add_child(&mut self, parent: NodeId, child: NodeId) -> bool {
-        self.dirty = true;
-        let mut current = Some(parent);
-        while let Some(id) = current {
-            if id == child {
-                return false;
-            }
-            current = self.nodes.get(id).and_then(|n| n.parent);
-        }
+        let end = self.content_len(parent);
+        let end = if self.content_children(parent).contains(&child) {
+            end - 1
+        } else {
+            end
+        };
+        self.insert_child(parent, end, child)
+    }
 
-        if let Some(current_parent) = self.nodes[child].parent {
-            self.detach(current_parent, child);
+    /// M96: attaches `child` under `parent` so it ends up at `index` in
+    /// `parent`'s children -- the keyed-reorder primitive. A child that
+    /// already has a parent (the same one or another) is *moved*: it keeps
+    /// its `NodeId`, state, and running animations, and keeps focus as long
+    /// as it stays under the same root. `index` counts the children as they
+    /// are once `child` has been taken out of its old place; past the end
+    /// it appends. Returns `false`, changing nothing, if `child` is
+    /// `parent` or one of its ancestors.
+    pub fn insert_child(&mut self, parent: NodeId, index: usize, child: NodeId) -> bool {
+        if self.ancestors(parent).any(|id| id == child) {
+            return false;
         }
-        self.add_child(parent, child);
+        self.dirty = true;
+        let root_before = self.root_of(child);
+        if let Some(old_parent) = self.nodes[child].parent {
+            self.unlink(old_parent, child);
+        }
+        let index = index.min(self.content_len(parent));
+        self.attach_at(parent, index, child);
+        if self.root_of(child) != root_before {
+            self.forget_interaction_in(child);
+        }
         true
+    }
+
+    /// M96: `id`'s children in paint order -- bottom first, by `z_index`,
+    /// equal values keeping child order. Borrows the child list unless a
+    /// child has a nonzero `z_index`.
+    pub fn children_in_paint_order(&self, id: NodeId) -> std::borrow::Cow<'_, [NodeId]> {
+        let Some(node) = self.nodes.get(id) else {
+            return std::borrow::Cow::Borrowed(&[]);
+        };
+        let z = |child: &NodeId| self.nodes.get(*child).map_or(0, |n| n.z_index);
+        if node.children.iter().all(|child| z(child) == 0) {
+            return std::borrow::Cow::Borrowed(&node.children);
+        }
+        let mut ordered = node.children.clone();
+        ordered.sort_by_key(z);
+        std::borrow::Cow::Owned(ordered)
+    }
+
+    /// `id` and every ancestor up to its root, innermost first.
+    pub fn ancestors(&self, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+        std::iter::successors(Some(id), |&id| self.nodes.get(id).and_then(|n| n.parent))
+            .filter(|&id| self.nodes.contains_key(id))
+    }
+
+    /// The top of `id`'s tree: `id` itself when it has no parent.
+    pub fn root_of(&self, id: NodeId) -> NodeId {
+        self.ancestors(id).last().unwrap_or(id)
+    }
+
+    /// Takes `child` out of `parent`'s children in both structures, and
+    /// nothing else -- `detach` and `insert_child` decide what else a
+    /// detach or a move means.
+    fn unlink(&mut self, parent: NodeId, child: NodeId) {
+        let parent_taffy = *self
+            .taffy_nodes
+            .get(parent)
+            .expect("detach: parent NodeId not found in this Tree");
+        let child_taffy = *self
+            .taffy_nodes
+            .get(child)
+            .expect("detach: child NodeId not found in this Tree");
+        self.taffy
+            .remove_child(parent_taffy, child_taffy)
+            .expect("detach: taffy rejected removing this parent/child pair");
+        self.nodes[parent].children.retain(|&c| c != child);
+        self.nodes[child].parent = None;
+    }
+
+    /// Clears focus, hover, press, and pointer capture held by `id` or a
+    /// descendant -- for a subtree that left the tree it was reachable in,
+    /// where none of them can stay meaningful.
+    fn forget_interaction_in(&mut self, id: NodeId) {
+        let inside = |tree: &Self, held: Option<NodeId>| {
+            held.is_some_and(|held| tree.ancestors(held).any(|a| a == id))
+        };
+        if inside(self, self.focused) {
+            self.focused = None;
+        }
+        if inside(self, self.hovered) {
+            self.hovered = None;
+        }
+        if inside(self, self.pointer_capture) {
+            self.pointer_capture = None;
+        }
+        if inside(self, self.pressed.map(|(_, node)| node)) {
+            self.pressed = None;
+        }
     }
 
     /// The inverse of `add_child`: detaches `child` from `parent`
@@ -329,28 +512,13 @@ impl Tree {
     /// previous parent") before using it.
     pub fn detach(&mut self, parent: NodeId, child: NodeId) {
         self.dirty = true;
-        let parent_taffy = *self
-            .taffy_nodes
-            .get(parent)
-            .expect("detach: parent NodeId not found in this Tree");
-        let child_taffy = *self
-            .taffy_nodes
-            .get(child)
-            .expect("detach: child NodeId not found in this Tree");
-        self.taffy
-            .remove_child(parent_taffy, child_taffy)
-            .expect("detach: taffy rejected removing this parent/child pair");
-
-        self.nodes[parent].children.retain(|&c| c != child);
-        self.nodes[child].parent = None;
+        self.unlink(parent, child);
         // A detached node is no longer reachable from any root, the
         // same "can't stay meaningfully focused" reasoning `remove`
         // already applies -- if it's reattached later, its own
         // eventual re-focus is whatever caller reattached it decides,
         // not a stale pointer surviving from before.
-        if self.focused == Some(child) {
-            self.focused = None;
-        }
+        self.forget_interaction_in(child);
     }
 
     pub fn get(&self, id: NodeId) -> Option<&Node> {
@@ -416,6 +584,7 @@ impl Tree {
             let _ = self.taffy.remove(taffy_node);
         }
         self.nodes.remove(id);
+        self.collectible.remove(&id);
         // Review follow-through (M28 Phase 1, §11.3): `close_overlay` is
         // the only other place that ever cleared a `self.overlays`
         // entry -- a caller removing the same content through this
@@ -424,9 +593,15 @@ impl Tree {
         // forever. A plain `HashMap::remove` is a no-op for the (vast
         // majority of) ids that were never overlay content, so this
         // costs nothing on the common path.
-        self.overlays.remove(&id);
+        self.overlays.retain(|(content, _)| *content != id);
         if self.focused == Some(id) {
             self.focused = None;
+        }
+        if self.pointer_capture == Some(id) {
+            self.pointer_capture = None;
+        }
+        if self.hovered == Some(id) {
+            self.hovered = None;
         }
 
         true
@@ -500,6 +675,12 @@ impl Tree {
             self.taffy
                 .compute_layout(root_taffy, available_space)
                 .expect("compute_layout: taffy layout computation failed (virtual list sync pass)");
+        }
+        // M96: anchored layers go where they fit, once their sizes are known.
+        if self.place_layers(root) {
+            self.taffy
+                .compute_layout(root_taffy, available_space)
+                .expect("compute_layout: taffy layout computation failed (layer placement pass)");
         }
     }
 
@@ -950,15 +1131,16 @@ impl Tree {
         let (ox, oy) = self.absolute_position(view);
         let size = self.layout(view).size;
         let slop = SCROLLBAR_GRAB_SLOP;
+        let thickness = state.scrollbar_width;
         if horizontal {
             let tx = ox + along;
-            let ty = oy + f64::from(size.height) - SCROLLBAR_THICKNESS - SCROLLBAR_MARGIN;
+            let ty = oy + f64::from(size.height) - thickness - SCROLLBAR_MARGIN;
             (tx - slop..=tx + thumb + slop).contains(&point.x)
-                && (ty - slop..=ty + SCROLLBAR_THICKNESS + slop).contains(&point.y)
+                && (ty - slop..=ty + thickness + slop).contains(&point.y)
         } else {
-            let tx = ox + f64::from(size.width) - SCROLLBAR_THICKNESS - SCROLLBAR_MARGIN;
+            let tx = ox + f64::from(size.width) - thickness - SCROLLBAR_MARGIN;
             let ty = oy + along;
-            (tx - slop..=tx + SCROLLBAR_THICKNESS + slop).contains(&point.x)
+            (tx - slop..=tx + thickness + slop).contains(&point.x)
                 && (ty - slop..=ty + thumb + slop).contains(&point.y)
         }
     }
@@ -1312,6 +1494,13 @@ impl Tree {
     /// same concern it would be for `paint_node`/`hit_test_at`'s own
     /// per-frame walks.
     pub fn absolute_position(&self, id: NodeId) -> (f64, f64) {
+        let p = self.composed_transform(id) * Point::ORIGIN;
+        (p.x, p.y)
+    }
+
+    /// The root-to-`id` composition of every node's layout offset and own
+    /// transform -- shared by `absolute_position` and `window_to_local`.
+    fn composed_transform(&self, id: NodeId) -> Affine {
         let mut chain = vec![id];
         let mut current = id;
         while let Some(parent) = self
@@ -1333,11 +1522,11 @@ impl Tree {
                 .expect("absolute_position: NodeId not found in this Tree");
             composed = composed
                 * Affine::translate((f64::from(layout.location.x), f64::from(layout.location.y)))
-                * node.paint.transform.current;
+                * node
+                    .paint
+                    .local_transform(f64::from(layout.size.width), f64::from(layout.size.height));
         }
-
-        let p = composed * Point::ORIGIN;
-        (p.x, p.y)
+        composed
     }
 
     /// Updates `id`'s `layout_style` and keeps `taffy`'s own internal
@@ -1400,8 +1589,10 @@ impl Tree {
         };
         self.set_layout_style(content, style);
 
-        self.add_child(root, content);
-        self.overlays.insert(content, meta);
+        let top = self.nodes[root].children.len();
+        self.attach_at(root, top, content);
+        self.overlays.retain(|(open, _)| *open != content);
+        self.overlays.push((content, meta));
     }
 
     /// M10 Phase 3 (§11.4): `open_overlay`'s own missing "cover an
@@ -1469,10 +1660,10 @@ impl Tree {
     /// afterward.
     pub fn close_overlay(&mut self, id: NodeId) -> bool {
         self.dirty = true;
-        let had_overlay = self.overlays.remove(&id).is_some();
-        if !had_overlay {
+        let Some(index) = self.overlays.iter().position(|(content, _)| *content == id) else {
             return false;
-        }
+        };
+        self.overlays.remove(index);
         if let Some(parent) = self.get(id).and_then(|node| node.parent) {
             self.detach(parent, id);
         }
@@ -1484,7 +1675,10 @@ impl Tree {
     /// dispatch (below, M10 Phase 1) reads, alongside `dispatch::
     /// open_context_menu`'s own re-open guard.
     pub fn overlay_meta(&self, id: NodeId) -> Option<&OverlayMeta> {
-        self.overlays.get(&id)
+        self.overlays
+            .iter()
+            .find(|(content, _)| *content == id)
+            .map(|(_, meta)| meta)
     }
 
     /// M10 Phase 1 (§11.3): closes every currently-open overlay whose
@@ -1528,18 +1722,18 @@ impl Tree {
         // this overlay" are the identical real condition.
         let inside_any_overlay = self
             .overlays
-            .keys()
-            .any(|&content| self.hit_test(content, point).is_some());
+            .iter()
+            .any(|(content, _)| self.hit_test(*content, point).is_some());
         let to_dismiss: Vec<NodeId> = self
             .overlays
             .iter()
             .filter(|(content, meta)| {
                 meta.dismiss_on_outside_click
                     && !inside_any_overlay
-                    && self.hit_test(**content, point).is_none()
-                    && self.hit_test(meta.anchor, point).is_none()
+                    && self.hit_test(*content, point).is_none()
+                    && !self.anchor_hit(meta, point)
             })
-            .map(|(&content, _)| content)
+            .map(|(content, _)| *content)
             .collect();
         let dismissed_any = !to_dismiss.is_empty();
         for content in to_dismiss {
@@ -1559,11 +1753,183 @@ impl Tree {
     /// it, the same real split that arm already has for the dismiss
     /// case.
     fn press_blocked_by_modal_overlay(&self, point: Point) -> bool {
-        self.overlays.iter().any(|(&content, meta)| {
-            meta.modal
-                && self.hit_test(content, point).is_none()
-                && self.hit_test(meta.anchor, point).is_none()
+        self.overlays.iter().any(|(content, meta)| {
+            meta.modal && self.hit_test(*content, point).is_none() && !self.anchor_hit(meta, point)
         })
+    }
+
+    /// Whether `point` lands on `meta`'s anchor.
+    fn anchor_hit(&self, meta: &OverlayMeta, point: Point) -> bool {
+        meta.anchor
+            .is_some_and(|anchor| self.hit_test(anchor, point).is_some())
+    }
+
+    /// M96: a press at `point` outside open layers -- from the top down,
+    /// each dismissible layer it misses asks to be dismissed, stopping at
+    /// the layer it lands in (so a press inside a submenu leaves its
+    /// parent menu open) or at a modal one. Returns whether it asked any,
+    /// so the press is consumed, as a legacy outside press is.
+    fn report_outside_press(&mut self, point: Point) -> bool {
+        let mut asked = Vec::new();
+        for (content, meta) in self.overlays.iter().rev() {
+            if self.hit_test(*content, point).is_some() || self.anchor_hit(meta, point) {
+                break;
+            }
+            if meta.dismissible {
+                asked.push(*content);
+            }
+            if meta.modal {
+                break;
+            }
+        }
+        let any = !asked.is_empty();
+        self.dismissals.extend(asked);
+        any
+    }
+
+    /// M96: shows `node` as a layer over `root`'s content -- on top of every
+    /// layer already open -- positioned absolutely: against `meta.anchor`
+    /// at every layout (`place_layers`), or at its own `x`/`y` without
+    /// one. A node attached elsewhere moves. Returns `false`, changing
+    /// nothing, if `node` is `root` or one of its ancestors.
+    pub fn show_layer(&mut self, root: NodeId, node: NodeId, meta: OverlayMeta) -> bool {
+        if self.ancestors(root).any(|id| id == node) {
+            return false;
+        }
+        self.dirty = true;
+        self.overlays.retain(|(open, _)| *open != node);
+        if let Some(parent) = self.nodes[node].parent {
+            self.unlink(parent, node);
+        }
+        let mut style = self.nodes[node].layout_style.clone();
+        style.position = Position::Absolute;
+        self.set_layout_style(node, style);
+        let top = self.nodes[root].children.len();
+        self.attach_at(root, top, node);
+        self.overlays.push((node, meta));
+        true
+    }
+
+    /// M96: closes the layer `node`, detaching it, still alive and
+    /// collectible (`detach_collectible`), and returns what it was opened
+    /// with -- `restore_focus` for the caller to hand focus back to.
+    pub fn hide_layer(&mut self, node: NodeId) -> Option<OverlayMeta> {
+        let index = self.overlays.iter().position(|(open, _)| *open == node)?;
+        let (_, meta) = self.overlays.remove(index);
+        self.detach_collectible(node);
+        Some(meta)
+    }
+
+    /// M96: whether `id` is an open layer or legacy overlay.
+    pub fn is_layer(&self, id: NodeId) -> bool {
+        self.is_overlay(id)
+    }
+
+    /// M96: the topmost open modal layer, if any.
+    fn top_modal(&self) -> Option<usize> {
+        self.overlays.iter().rposition(|(_, meta)| meta.modal)
+    }
+
+    /// M96: the node input at `point` is aimed at -- `hit_test`, except
+    /// that an open modal layer blocks everything beneath it, so a point
+    /// outside it (and outside every layer above it) hits nothing.
+    pub fn hit_test_input(&self, root: NodeId, point: Point) -> Option<NodeId> {
+        let Some(modal) = self.top_modal() else {
+            return self.hit_test(root, point);
+        };
+        self.overlays[modal..]
+            .iter()
+            .rev()
+            .find_map(|(content, _)| self.hit_test(*content, point))
+    }
+
+    /// M96: the subtree Tab moves through -- the topmost modal layer while
+    /// one is open, else the layer holding focus, else `root` without its
+    /// layers. Each open layer is its own focus scope (R8).
+    fn focus_scope(&self, root: NodeId) -> (NodeId, bool) {
+        if let Some(modal) = self.top_modal() {
+            return (self.overlays[modal].0, false);
+        }
+        let holding = self
+            .focused
+            .and_then(|focused| self.ancestors(focused).find(|id| self.is_overlay(*id)));
+        match holding {
+            Some(layer) => (layer, false),
+            None => (root, true),
+        }
+    }
+
+    /// M96: places every anchored layer against its anchor, preferring
+    /// `placement`, flipping to the opposite side when that side lacks
+    /// the room and the other has more, then shifting along both axes to
+    /// stay inside `root`. Records the side used as `placed`. Returns
+    /// whether any layer moved, so layout runs again.
+    fn place_layers(&mut self, root: NodeId) -> bool {
+        let window = {
+            let size = self.layout(root).size;
+            (f64::from(size.width), f64::from(size.height))
+        };
+        let mut moved = false;
+        for index in 0..self.overlays.len() {
+            let (layer, meta) = self.overlays[index];
+            let (Some(anchor), Some(preferred)) = (meta.anchor, meta.placement) else {
+                continue;
+            };
+            if self.nodes.get(anchor).is_none() {
+                continue;
+            }
+            let (ax, ay) = self.absolute_position(anchor);
+            let anchor_size = self.layout(anchor).size;
+            let (aw, ah) = (f64::from(anchor_size.width), f64::from(anchor_size.height));
+            let size = self.layout(layer).size;
+            let (w, h) = (f64::from(size.width), f64::from(size.height));
+            // Room on each side of the anchor.
+            let room = |side: Placement| match side {
+                Placement::Below => window.1 - (ay + ah),
+                Placement::Above => ay,
+                Placement::Start => ax,
+                Placement::End => window.0 - (ax + aw),
+            };
+            let needed = |side: Placement| match side {
+                Placement::Below | Placement::Above => h,
+                Placement::Start | Placement::End => w,
+            };
+            let side = if room(preferred) < needed(preferred)
+                && room(preferred.opposite()) > room(preferred)
+            {
+                preferred.opposite()
+            } else {
+                preferred
+            };
+            let (x, y) = match side {
+                Placement::Below => (ax, ay + ah),
+                Placement::Above => (ax, ay - h),
+                Placement::Start => (ax - w, ay),
+                Placement::End => (ax + aw, ay),
+            };
+            let fit = |at: f64, extent: f64, limit: f64| at.min(limit - extent).max(0.0);
+            let (x, y) = (fit(x, w, window.0) as f32, fit(y, h, window.1) as f32);
+            let mut style = self.nodes[layer].layout_style.clone();
+            let inset = TaffyRect {
+                left: length(x),
+                top: length(y),
+                right: auto(),
+                bottom: auto(),
+            };
+            if style.inset != inset {
+                style.inset = inset;
+                self.set_layout_style(layer, style);
+                moved = true;
+            }
+            self.overlays[index].1.placed = Some(side);
+        }
+        moved
+    }
+
+    /// M96: the layers an outside press or Escape asked to dismiss since
+    /// the last call -- `engine-py` delivers each a `dismiss` event.
+    pub fn take_dismissals(&mut self) -> Vec<NodeId> {
+        std::mem::take(&mut self.dismissals)
     }
 
     /// M10 Phase 1 (§11.3): closes every currently-open overlay whose
@@ -1575,10 +1941,19 @@ impl Tree {
             .overlays
             .iter()
             .filter(|(_, meta)| meta.dismiss_on_escape)
-            .map(|(&content, _)| content)
+            .map(|(content, _)| *content)
             .collect();
         for content in to_dismiss {
             self.close_overlay(content);
+        }
+        // M96: Escape asks only the topmost dismissible layer.
+        if let Some((content, _)) = self
+            .overlays
+            .iter()
+            .rev()
+            .find(|(_, meta)| meta.dismissible)
+        {
+            self.dismissals.push(*content);
         }
     }
 
@@ -2062,6 +2437,89 @@ impl Tree {
             (state.scroll_offset.current + delta_y).clamp(0.0, max_offset);
     }
 
+    /// M96: the rows of `list` its viewport shows -- every row whose extent
+    /// meets `[scroll, scroll + height)` -- by binary search over the
+    /// rows' offsets, so a long list costs `log n`. Needs a computed
+    /// layout.
+    pub fn virtual_list_visible(&self, list: NodeId) -> std::ops::Range<usize> {
+        let Some(NodeKind::VirtualList(state)) = self.nodes.get(list).map(|n| &n.kind) else {
+            return 0..0;
+        };
+        let top = state.scroll_offset.current;
+        let bottom = top + f64::from(self.layout(list).size.height);
+        // The first row whose `edge_of` passes `past`, for a list whose
+        // offsets only grow.
+        let first = |edge_of: &dyn Fn(usize) -> f64, past: &dyn Fn(f64) -> bool| {
+            let (mut lo, mut hi) = (0, state.item_count);
+            while lo < hi {
+                let mid = (lo + hi) / 2;
+                if past(edge_of(mid)) {
+                    hi = mid;
+                } else {
+                    lo = mid + 1;
+                }
+            }
+            lo
+        };
+        // Visible rows end after `top` and start before `bottom`.
+        let start = first(&|idx| state.offset_of(idx + 1), &|end| end > top);
+        let end = first(&|idx| state.offset_of(idx), &|begin| begin >= bottom);
+        start..end.max(start)
+    }
+
+    /// M96: detaches every materialized row of `list` outside `keep`, and
+    /// returns them -- still alive, for the caller to free or keep.
+    pub fn virtual_list_release_outside(
+        &mut self,
+        list: NodeId,
+        keep: std::ops::Range<usize>,
+    ) -> Vec<NodeId> {
+        let released: Vec<NodeId> = match self.nodes.get(list).map(|n| &n.kind) {
+            Some(NodeKind::VirtualList(state)) => state
+                .materialized
+                .iter()
+                .filter(|(idx, _)| !keep.contains(idx))
+                .map(|(_, &id)| id)
+                .collect(),
+            _ => return Vec::new(),
+        };
+        if let NodeKind::VirtualList(state) = &mut self.nodes[list].kind {
+            state.materialized.retain(|idx, _| keep.contains(idx));
+        }
+        for &row in &released {
+            if self.nodes.get(row).and_then(|n| n.parent) == Some(list) {
+                self.detach(list, row);
+            }
+        }
+        released
+    }
+
+    /// M96: attaches `row` -- a node the caller built -- as row `index` of
+    /// `list`, the list's full width and the row's own extent tall; layout
+    /// places it at its offset (`sync_virtual_list_layouts`). Returns
+    /// `false`, changing nothing, if `row` is `list` or an ancestor.
+    pub fn virtual_list_adopt(&mut self, list: NodeId, index: usize, row: NodeId) -> bool {
+        let extent = match self.nodes.get(list).map(|n| &n.kind) {
+            Some(NodeKind::VirtualList(state)) => {
+                state.offset_of(index + 1) - state.offset_of(index)
+            }
+            _ => return false,
+        };
+        if !self.try_add_child(list, row) {
+            return false;
+        }
+        let mut style = self.nodes[row].layout_style.clone();
+        style.size = Size {
+            width: taffy::prelude::percent(1.0),
+            height: length(extent as f32),
+        };
+        self.set_layout_style(row, style);
+        if let NodeKind::VirtualList(state) = &mut self.nodes[list].kind {
+            state.materialized.insert(index, row);
+        }
+        true
+    }
+
     /// M12 Phase 1 (§11.7): the real way a caller supplies resolved
     /// cumulative offsets for a `Variable`-extent list -- `engine-core`
     /// itself never computes a cumulative sum from raw per-item heights
@@ -2214,12 +2672,30 @@ impl Tree {
             // own real "menu icon rotates inwards 180°" need. M92: its
             // `tint` too. Both ticked unconditionally (no short-circuit),
             // so neither animation stalls while the other runs.
+            // M95: a path's data (morphing) and stroke trim.
+            if let NodeKind::Path(state) = &mut node.kind
+                && state.tick(now, &mut completed)
+            {
+                any_active = true;
+            }
             if let NodeKind::Icon(state) = &mut node.kind {
                 let rotating = state.rotation.tick(now, &mut completed);
                 let tinting = state.tint.tick(now, &mut completed);
                 if rotating || tinting {
                     any_active = true;
                 }
+            }
+            // M96: a text input's animatable `fill` (its text color), and
+            // a scroll view's animatable `scroll_offset`.
+            if let NodeKind::TextField(state) = &mut node.kind
+                && state.text_tint.tick(now, &mut completed)
+            {
+                any_active = true;
+            }
+            if let NodeKind::ScrollView(state) = &mut node.kind
+                && state.scroll.tick(now, &mut completed)
+            {
+                any_active = true;
             }
             // M30 Phase 9 Step 5 (§5, §7, §11.7): `CarouselState.
             // position`'s own real central-ticking need -- unlike
@@ -2308,7 +2784,7 @@ impl Tree {
                 NodeKind::Slider(state) => state.track_tint = tint,
                 // M20 Phase 2 (§7.1, §7.3): `TextField`'s own real
                 // sibling, closing the milestone's own real mechanism.
-                NodeKind::TextField(state) => state.text_tint = tint,
+                NodeKind::TextField(state) => state.text_tint = Animated::new(tint),
                 _ => {}
             }
         }
@@ -2411,12 +2887,17 @@ impl Tree {
         parent_transform: Affine,
     ) -> Option<(NodeId, Point)> {
         let node = self.nodes.get(id)?;
+        if !node.visible {
+            return None;
+        }
         let layout = self.layout(id);
         let composed = parent_transform
             * Affine::translate((f64::from(layout.location.x), f64::from(layout.location.y)))
-            * node.paint.transform.current;
+            * node
+                .paint
+                .local_transform(f64::from(layout.size.width), f64::from(layout.size.height));
 
-        for &child in node.children.iter().rev() {
+        for &child in self.children_in_paint_order(id).iter().rev() {
             if let Some(hit) = self.hit_test_at(child, point, composed) {
                 return Some(hit);
             }
@@ -2522,8 +3003,21 @@ impl Tree {
         duration: Duration,
         now: Instant,
     ) -> Option<NodeId> {
+        let hit = self.hit_test_input(root, point);
+        self.set_hovered(hit, hover_opacity, duration, now)
+    }
+
+    /// M94: `update_hover`'s own transition half, split out so
+    /// `InputEvent::PointerLeft` can clear hover without a hit-test.
+    /// Returns `hit`.
+    pub fn set_hovered(
+        &mut self,
+        hit: Option<NodeId>,
+        hover_opacity: f64,
+        duration: Duration,
+        now: Instant,
+    ) -> Option<NodeId> {
         self.dirty = true;
-        let hit = self.hit_test(root, point);
         if hit == self.hovered {
             return hit;
         }
@@ -2634,7 +3128,14 @@ impl Tree {
     ) -> Option<(Option<NodeId>, Option<NodeId>)> {
         self.dirty = true;
         let mut order = Vec::new();
-        self.collect_interactive(root, &mut order);
+        let (scope, skip_layers) = self.focus_scope(root);
+        self.collect_interactive(scope, skip_layers, &mut order);
+        // M94: positive `tab_index` values first, ascending; then the
+        // rest in tree order (the sort is stable).
+        order.sort_by_key(|&id| match self.nodes[id].access.tab_index {
+            index if index > 0 => (0, index),
+            _ => (1, 0),
+        });
 
         let old = self.focused;
         let new = if order.is_empty() {
@@ -2690,6 +3191,19 @@ impl Tree {
             return None;
         }
         self.transition_focus(Some(node), focus_ring_opacity, duration, now)
+    }
+
+    /// M94: `set_focus_to`'s counterpart that leaves nothing focused --
+    /// how a simulated `blur` clears focus through the same transition
+    /// (and `(old, new)` report) as every other focus change.
+    pub fn clear_focus(
+        &mut self,
+        focus_ring_opacity: f64,
+        duration: Duration,
+        now: Instant,
+    ) -> Option<(Option<NodeId>, Option<NodeId>)> {
+        self.dirty = true;
+        self.transition_focus(None, focus_ring_opacity, duration, now)
     }
 
     /// Shared by `move_focus`/`set_focus_to`: animates the previously-
@@ -3320,6 +3834,11 @@ impl Tree {
         let NodeKind::TextField(state) = &self.nodes.get(field)?.kind else {
             return None;
         };
+        // M95: an obscured (password) field's text never leaves it --
+        // copy and cut both read through here.
+        if state.obscured {
+            return None;
+        }
         let anchor = state.selection_anchor?;
         if anchor == state.cursor {
             return None;
@@ -3548,17 +4067,36 @@ impl Tree {
         }
     }
 
+    /// M94: `node` or its nearest ancestor that a framework marked
+    /// `focusable`.
+    fn focusable_ancestor(&self, node: NodeId) -> Option<NodeId> {
+        let mut current = Some(node);
+        while let Some(id) = current {
+            let n = self.nodes.get(id)?;
+            if n.access.focusable == Some(true) {
+                return Some(id);
+            }
+            current = n.parent;
+        }
+        None
+    }
+
     /// Pre-order walk collecting every node whose `access.actions` is
     /// non-empty, in tree order -- `move_focus`'s own Tab-order.
-    fn collect_interactive(&self, id: NodeId, out: &mut Vec<NodeId>) {
+    fn collect_interactive(&self, id: NodeId, skip_layers: bool, out: &mut Vec<NodeId>) {
         let Some(node) = self.nodes.get(id) else {
             return;
         };
-        if !node.access.actions.is_empty() {
+        if !node.visible {
+            return;
+        }
+        if node.access.in_tab_order() {
             out.push(id);
         }
         for &child in &node.children {
-            self.collect_interactive(child, out);
+            if !(skip_layers && self.is_overlay(child)) {
+                self.collect_interactive(child, skip_layers, out);
+            }
         }
     }
 
@@ -3615,6 +4153,12 @@ impl Tree {
                 }
             }
             InputEvent::PointerPressed { position, button } => {
+                // M96: a press outside dismissible layers asks them to be
+                // dismissed, and is consumed like a legacy outside press.
+                if self.report_outside_press(position) {
+                    self.set_pressed(None, config.hover_duration, now);
+                    return DispatchOutcome::None;
+                }
                 // M10 Phase 1 (§11.3): a real press outside every open
                 // dismiss_on_outside_click overlay's own subtree closes
                 // it and consumes this press -- skips the normal hit/
@@ -3636,7 +4180,7 @@ impl Tree {
                     self.set_pressed(None, config.hover_duration, now);
                     return DispatchOutcome::None;
                 }
-                let hit = self.hit_test(root, position);
+                let hit = self.hit_test_input(root, position);
                 // M38 Phase 6 (§5, §7, §11.7): a real scrollbar-thumb
                 // grab takes priority over the ordinary hit -- the
                 // thumb is a paint-only overlay drawn *over* the real
@@ -3810,22 +4354,30 @@ impl Tree {
                     // Changed` outcome below, instead of the prior
                     // unconditional `DispatchOutcome::None` silently
                     // discarding it.
-                    let focus_transition =
-                        if matches!(button, PointerButton::Primary | PointerButton::Secondary)
-                            && matches!(
-                                self.nodes.get(node).map(|n| &n.kind),
-                                Some(NodeKind::TextField(_)) | Some(NodeKind::Terminal(_))
-                            )
-                        {
-                            self.set_focus_to(
-                                node,
-                                config.focus_ring_opacity,
-                                config.focus_ring_duration,
-                                now,
-                            )
-                        } else {
+                    //
+                    // M94: widened to any node a framework marked
+                    // `focusable` -- the press focuses the nearest such
+                    // node, itself or an ancestor, the way a browser
+                    // focuses the focusable element containing a click.
+                    let focus_target =
+                        if !matches!(button, PointerButton::Primary | PointerButton::Secondary) {
                             None
+                        } else if matches!(
+                            self.nodes.get(node).map(|n| &n.kind),
+                            Some(NodeKind::TextField(_)) | Some(NodeKind::Terminal(_))
+                        ) {
+                            Some(node)
+                        } else {
+                            self.focusable_ancestor(node)
                         };
+                    let focus_transition = focus_target.and_then(|target| {
+                        self.set_focus_to(
+                            target,
+                            config.focus_ring_opacity,
+                            config.focus_ring_duration,
+                            now,
+                        )
+                    });
                     if let Some(state) = self.interaction_mut(node) {
                         state.spawn_ripple(
                             Point::new(position.x, position.y),
@@ -3845,7 +4397,7 @@ impl Tree {
                 }
             }
             InputEvent::PointerReleased { position, button } => {
-                let hit = self.hit_test(root, position);
+                let hit = self.hit_test_input(root, position);
                 let outcome = match self.pressed {
                     // M4 Phase 7 (§11.3): a same-node press/release pair
                     // means something different per button -- Primary
@@ -4100,7 +4652,16 @@ impl Tree {
             // press/hover-update already use -- still DispatchOutcome::
             // None, nothing for the app layer to be told happened.
             InputEvent::Scroll { delta, position } => {
-                if let Some(hit) = self.hit_test(root, position) {
+                // M96: winit's sign scrolls toward the start; every offset
+                // below grows toward the end, so it flips once, here. (It
+                // used to pass through unflipped, so a real wheel scrolled
+                // backwards -- only synthetic input, which used the offset's
+                // own sign, was ever tested.)
+                let delta = match delta {
+                    ScrollDelta::Lines(x, y) => ScrollDelta::Lines(-x, -y),
+                    ScrollDelta::Pixels(x, y) => ScrollDelta::Pixels(-x, -y),
+                };
+                if let Some(hit) = self.hit_test_input(root, position) {
                     let mut current = Some(hit);
                     while let Some(id) = current {
                         let node = &self.nodes[id];
@@ -4230,7 +4791,57 @@ impl Tree {
                 }
                 DispatchOutcome::None
             }
+            // M94: plumbing only -- named keys, modifier changes, and
+            // scale-factor changes mean nothing to the tree itself;
+            // `engine-py` routes them to Python listeners.
+            InputEvent::Key { .. }
+            | InputEvent::ModifiersChanged(_)
+            | InputEvent::ScaleFactorChanged { .. } => DispatchOutcome::None,
+            // M94: the pointer left the window, so nothing is hovered --
+            // the same transition `PointerMoved` reports when the pointer
+            // moves off every node.
+            InputEvent::PointerLeft => {
+                let old_hovered = self.hovered;
+                self.set_hovered(None, config.hover_opacity, config.hover_duration, now);
+                if old_hovered.is_some() {
+                    DispatchOutcome::HoverChanged {
+                        old: old_hovered,
+                        new: None,
+                    }
+                } else {
+                    DispatchOutcome::None
+                }
+            }
         }
+    }
+
+    /// M94: the node currently holding pointer capture, if any
+    /// (`set_pointer_capture`).
+    pub fn pointer_capture(&self) -> Option<NodeId> {
+        self.pointer_capture
+    }
+
+    /// M94: routes every later pointer event to `node` until it is
+    /// released -- by `None` here, by the pointer button's release
+    /// (`engine-py`'s router releases it after delivering `pointer_up`),
+    /// or by `node` leaving the tree. Only Python listener routing reads
+    /// it; the engine's own built-in widget dispatch is unaffected.
+    pub fn set_pointer_capture(&mut self, node: Option<NodeId>) {
+        self.pointer_capture = node.filter(|&id| self.nodes.contains_key(id));
+    }
+
+    /// M94: maps a window-space point into `id`'s own local space, through
+    /// the same composed layout-and-transform chain `hit_test_at` and
+    /// `paint_node` use -- how a bubbling pointer event reports `x`/`y`
+    /// relative to each node its listeners run on. Needs a computed layout.
+    pub fn window_to_local(&self, id: NodeId, point: Point) -> Point {
+        self.composed_transform(id).inverse() * point
+    }
+
+    /// M94: `window_to_local`'s inverse -- a point in `id`'s own local
+    /// space, in window space.
+    pub fn local_to_window(&self, id: NodeId, point: Point) -> Point {
+        self.composed_transform(id) * point
     }
 
     /// Builds a fresh `accesskit::TreeUpdate` from the current `Node`
@@ -4278,7 +4889,7 @@ impl Tree {
         if let Some(description) = &node.access.description {
             access_node.set_description(description.clone());
         }
-        for &action in &node.access.actions {
+        for action in node.access.offered_actions() {
             access_node.add_action(action);
         }
         if node.access.states.disabled {
@@ -4313,19 +4924,58 @@ impl Tree {
         if let NodeKind::TextField(state) = &node.kind {
             access_node.set_value(state.content.clone());
         }
+        // M94: what a framework set explicitly -- applied last, so it
+        // wins over anything derived from a built-in kind above.
+        let access = &node.access;
+        match &access.value {
+            Some(crate::access::AccessValue::Text(text)) => access_node.set_value(text.clone()),
+            Some(crate::access::AccessValue::Number(n)) => access_node.set_numeric_value(*n),
+            None => {}
+        }
+        if let Some(min) = access.value_min {
+            access_node.set_min_numeric_value(min);
+        }
+        if let Some(max) = access.value_max {
+            access_node.set_max_numeric_value(max);
+        }
+        if let Some(step) = access.value_step {
+            access_node.set_numeric_value_step(step);
+        }
+        if let Some(checked) = access.checked {
+            access_node.set_toggled(checked.into());
+        }
+        if let Some(selected) = access.selected {
+            access_node.set_selected(selected);
+        }
+        if let Some(expanded) = access.expanded {
+            access_node.set_expanded(expanded);
+        }
+        if let Some(level) = access.level {
+            access_node.set_level(level);
+        }
+        if let Some(live) = access.live {
+            access_node.set_live(live);
+        }
+        if access.hidden {
+            access_node.set_hidden();
+        }
         access_node.set_bounds(accesskit::Rect {
             x0: x,
             y0: y,
             x1: x + w,
             y1: y + h,
         });
-        let children: Vec<accesskit::NodeId> =
-            node.children.iter().copied().map(to_access_id).collect();
-        access_node.set_children(children);
+        let visible_children = || {
+            node.children
+                .iter()
+                .copied()
+                .filter(|&child| self.nodes.get(child).is_some_and(|c| c.visible))
+        };
+        access_node.set_children(visible_children().map(to_access_id).collect::<Vec<_>>());
 
         out.push((to_access_id(id), access_node));
 
-        for &child in &node.children {
+        for child in visible_children() {
             self.collect_access_nodes(child, x, y, out);
         }
     }
@@ -4601,6 +5251,211 @@ mod tests {
         );
     }
 
+    /// M96: `insert_child` reorders siblings by final index, and a move
+    /// within one tree keeps the node's identity and focus.
+    #[test]
+    fn insert_child_reorders_and_keeps_focus_within_a_tree() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let parent = tree.insert(k, s, p);
+        let kids: Vec<NodeId> = (0..3)
+            .map(|_| {
+                let (k, s, p) = leaf(10.0, 10.0);
+                let id = tree.insert(k, s, p);
+                tree.add_child(parent, id);
+                id
+            })
+            .collect();
+        tree.focused = Some(kids[0]);
+
+        assert!(tree.insert_child(parent, 2, kids[0]));
+        assert_eq!(
+            tree.get(parent).unwrap().children,
+            vec![kids[1], kids[2], kids[0]]
+        );
+        assert!(tree.insert_child(parent, 0, kids[2]));
+        assert_eq!(
+            tree.get(parent).unwrap().children,
+            vec![kids[2], kids[1], kids[0]]
+        );
+        assert_eq!(
+            tree.focused,
+            Some(kids[0]),
+            "a move within one tree keeps focus"
+        );
+        let taffy_order: Vec<taffy::NodeId> =
+            tree.taffy.children(tree.taffy_nodes[parent]).unwrap();
+        let expected: Vec<taffy::NodeId> = [kids[2], kids[1], kids[0]]
+            .iter()
+            .map(|&id| tree.taffy_nodes[id])
+            .collect();
+        assert_eq!(
+            taffy_order, expected,
+            "taffy's child order follows the tree's"
+        );
+    }
+
+    /// M96: moving a subtree into a different, detached tree clears focus
+    /// held inside it, since it's no longer reachable where it was.
+    #[test]
+    fn insert_child_into_another_root_forgets_focus() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let root = tree.insert(k, s, p);
+        let (k, s, p) = leaf(10.0, 10.0);
+        let detached = tree.insert(k, s, p);
+        let (k, s, p) = leaf(10.0, 10.0);
+        let child = tree.insert(k, s, p);
+        tree.add_child(root, child);
+        tree.focused = Some(child);
+
+        assert!(tree.insert_child(detached, 0, child));
+        assert_eq!(tree.focused, None);
+        assert_eq!(tree.root_of(child), detached);
+        assert!(
+            !tree.insert_child(child, 0, detached),
+            "an ancestor can't become a child"
+        );
+    }
+
+    /// M96: a collectible subtree lives while anything references any node
+    /// in it, and is freed once nothing does.
+    #[test]
+    fn a_collectible_subtree_is_freed_once_unreferenced() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let root = tree.insert(k, s, p);
+        let (k, s, p) = leaf(10.0, 10.0);
+        let child = tree.insert(k, s, p);
+        tree.add_child(root, child);
+
+        tree.detach_collectible(root);
+        assert!(tree.collect_unreferenced(root, |id| id == child).is_empty());
+        let freed = tree.collect_unreferenced(child, |_| false);
+        assert_eq!(freed.len(), 2);
+        assert!(tree.get(root).is_none() && tree.get(child).is_none());
+    }
+
+    /// M96: attaching a collectible root makes it ordinary again, and a
+    /// node detached the legacy way is never collected.
+    #[test]
+    fn attached_and_legacy_detached_nodes_are_never_collected() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let root = tree.insert(k, s, p);
+        let (k, s, p) = leaf(10.0, 10.0);
+        let made = tree.insert(k, s, p);
+        tree.detach_collectible(made);
+        assert!(tree.try_add_child(root, made));
+        assert!(tree.collect_unreferenced(made, |_| false).is_empty());
+        assert!(tree.get(made).is_some(), "attached: kept");
+
+        let (k, s, p) = leaf(10.0, 10.0);
+        let legacy = tree.insert(k, s, p);
+        tree.add_child(root, legacy);
+        tree.detach(root, legacy);
+        assert!(tree.collect_unreferenced(legacy, |_| false).is_empty());
+        assert!(tree.get(legacy).is_some(), "legacy-detached: kept");
+    }
+
+    /// M96: a virtual list shows exactly the rows its viewport meets, adopts
+    /// a caller-built row, and releases rows scrolled away without freeing
+    /// them.
+    #[test]
+    fn a_virtual_list_adopts_visible_rows_and_releases_the_rest() {
+        let mut tree = Tree::new();
+        let list = tree.insert(
+            NodeKind::VirtualList(VirtualListState::new(100, ItemExtent::Fixed(10.0))),
+            Style {
+                size: Size {
+                    width: length(50.0),
+                    height: length(35.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        let available = Size {
+            width: AvailableSpace::Definite(50.0),
+            height: AvailableSpace::Definite(35.0),
+        };
+        tree.compute_layout(list, available);
+        assert_eq!(tree.virtual_list_visible(list), 0..4, "rows 0-3 meet 0..35");
+
+        let rows: Vec<NodeId> = (0..4)
+            .map(|idx| {
+                let (k, s, p) = leaf(1.0, 1.0);
+                let row = tree.insert(k, s, p);
+                assert!(tree.virtual_list_adopt(list, idx, row));
+                row
+            })
+            .collect();
+        tree.compute_layout(list, available);
+        assert_eq!(tree.layout(rows[3]).location.y, 30.0);
+        assert_eq!(tree.layout(rows[3]).size.width, 50.0, "full width");
+
+        tree.scroll_virtual_list_by(list, 25.0);
+        let visible = tree.virtual_list_visible(list);
+        assert_eq!(visible, 2..6);
+        let released = tree.virtual_list_release_outside(list, visible);
+        assert_eq!(released, vec![rows[0], rows[1]]);
+        assert!(
+            tree.get(rows[0]).is_some_and(|n| n.parent.is_none()),
+            "detached, alive"
+        );
+    }
+
+    /// M96: content added while a layer is open goes beneath it, and an
+    /// anchored layer with no room on its preferred side flips, then shifts
+    /// to stay inside the root.
+    #[test]
+    fn layers_stay_on_top_and_flip_and_shift_to_fit() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(200.0, 100.0);
+        let root = tree.insert(k, s, p);
+        let (k, mut s, p) = leaf(20.0, 10.0);
+        s.position = Position::Absolute;
+        s.inset = TaffyRect {
+            left: length(190.0),
+            top: length(85.0),
+            right: auto(),
+            bottom: auto(),
+        };
+        let anchor = tree.insert(k, s, p);
+        tree.add_child(root, anchor);
+        let (k, s, p) = leaf(50.0, 40.0);
+        let layer = tree.insert(k, s, p);
+        let meta = OverlayMeta {
+            anchor: Some(anchor),
+            placement: Some(Placement::Below),
+            ..Default::default()
+        };
+        assert!(tree.show_layer(root, layer, meta));
+        let (k, s, p) = leaf(5.0, 5.0);
+        let later = tree.insert(k, s, p);
+        tree.add_child(root, later);
+        assert_eq!(tree.get(root).unwrap().children, vec![anchor, later, layer]);
+        assert_eq!(tree.content_children(root), &[anchor, later]);
+
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+        assert_eq!(
+            tree.overlay_meta(layer).unwrap().placed,
+            Some(Placement::Above)
+        );
+        let at = tree.layout(layer).location;
+        assert_eq!(
+            (at.x, at.y),
+            (150.0, 45.0),
+            "above the anchor, shifted inside"
+        );
+    }
+
     #[test]
     fn remove_of_an_unknown_id_is_a_harmless_no_op() {
         let mut tree = Tree::new();
@@ -4762,10 +5617,11 @@ mod tests {
             anchor,
             menu,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
 
@@ -4796,7 +5652,7 @@ mod tests {
         let meta = tree
             .overlay_meta(menu)
             .expect("the overlay's metadata must be stored, keyed by its own NodeId");
-        assert_eq!(meta.anchor, anchor);
+        assert_eq!(meta.anchor, Some(anchor));
         assert!(meta.dismiss_on_outside_click);
         assert!(meta.dismiss_on_escape);
     }
@@ -4885,10 +5741,11 @@ mod tests {
             anchor,
             menu,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
 
@@ -4950,10 +5807,11 @@ mod tests {
             anchor,
             menu,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
         assert!(tree.overlay_meta(menu).is_some());
@@ -4976,10 +5834,11 @@ mod tests {
             anchor,
             menu2,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
         assert!(tree.overlay_meta(menu2).is_some());
@@ -5027,10 +5886,11 @@ mod tests {
             anchor,
             menu,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click,
                 dismiss_on_escape,
                 modal: false,
+                ..Default::default()
             },
         );
         tree.compute_layout(
@@ -5053,6 +5913,252 @@ mod tests {
             ripple_opacity: 0.12,
             ripple_duration: Duration::from_millis(300),
         }
+    }
+
+    /// M94: a root with one 50x50 child at (20, 30), laid out.
+    fn one_child_scene() -> (Tree, NodeId, NodeId) {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(200.0, 200.0);
+        let root = tree.insert(k, s, p);
+        let (k, mut s, p) = leaf(50.0, 50.0);
+        s.position = taffy::style::Position::Absolute;
+        s.inset = taffy::geometry::Rect {
+            left: taffy::style::LengthPercentageAuto::length(20.0),
+            top: taffy::style::LengthPercentageAuto::length(30.0),
+            right: taffy::style::LengthPercentageAuto::auto(),
+            bottom: taffy::style::LengthPercentageAuto::auto(),
+        };
+        let child = tree.insert(k, s, p);
+        tree.add_child(root, child);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(200.0),
+            },
+        );
+        (tree, root, child)
+    }
+
+    #[test]
+    fn window_to_local_and_local_to_window_are_inverses() {
+        let (tree, _, child) = one_child_scene();
+        let local = tree.window_to_local(child, Point::new(25.0, 40.0));
+        assert!((local.x - 5.0).abs() < 1e-9 && (local.y - 10.0).abs() < 1e-9);
+        let back = tree.local_to_window(child, local);
+        assert!((back.x - 25.0).abs() < 1e-9 && (back.y - 40.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pointer_capture_is_released_when_its_node_is_removed() {
+        let (mut tree, _, child) = one_child_scene();
+        tree.set_pointer_capture(Some(child));
+        assert_eq!(tree.pointer_capture(), Some(child));
+        tree.remove(child);
+        assert_eq!(tree.pointer_capture(), None);
+        // A stale id can't take capture.
+        tree.set_pointer_capture(Some(child));
+        assert_eq!(tree.pointer_capture(), None);
+    }
+
+    #[test]
+    fn pointer_left_clears_hover_with_a_hover_changed_outcome() {
+        let (mut tree, root, child) = one_child_scene();
+        tree.dispatch(
+            root,
+            InputEvent::PointerMoved {
+                position: Point::new(25.0, 40.0),
+            },
+            &dispatch_config(),
+            Instant::now(),
+        );
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerLeft,
+            &dispatch_config(),
+            Instant::now(),
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::HoverChanged {
+                old: Some(child),
+                new: None,
+            }
+        );
+        // Nothing hovered any more, so a second leave reports nothing.
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerLeft,
+            &dispatch_config(),
+            Instant::now(),
+        );
+        assert_eq!(outcome, DispatchOutcome::None);
+    }
+
+    #[test]
+    fn named_keys_modifiers_and_scale_changes_are_plumbing_only() {
+        let (mut tree, root, _) = one_child_scene();
+        for event in [
+            InputEvent::Key {
+                name: "f5".into(),
+                pressed: true,
+                repeat: false,
+            },
+            InputEvent::ModifiersChanged(crate::Modifiers {
+                shift: true,
+                ..Default::default()
+            }),
+            InputEvent::ScaleFactorChanged { scale_factor: 2.0 },
+        ] {
+            assert_eq!(
+                tree.dispatch(root, event, &dispatch_config(), Instant::now()),
+                DispatchOutcome::None
+            );
+        }
+    }
+
+    /// M94: three 40x40 focusable children of a root, laid out.
+    fn three_focusable() -> (Tree, NodeId, [NodeId; 3]) {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(300.0, 300.0);
+        let root = tree.insert(k, s, p);
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            let (k, s, p) = leaf(40.0, 40.0);
+            let id = tree.insert(k, s, p);
+            tree.get_mut(id).unwrap().access.focusable = Some(true);
+            tree.add_child(root, id);
+            ids.push(id);
+        }
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+        (tree, root, [ids[0], ids[1], ids[2]])
+    }
+
+    #[test]
+    fn tab_index_orders_positive_first_then_tree_order_and_skips_negative() {
+        let (mut tree, root, [a, b, c]) = three_focusable();
+        tree.get_mut(c).unwrap().access.tab_index = 1;
+        tree.get_mut(b).unwrap().access.tab_index = -1;
+        let now = Instant::now();
+        let mut visited = Vec::new();
+        for _ in 0..3 {
+            tree.move_focus(
+                root,
+                FocusDirection::Next,
+                1.0,
+                Duration::from_millis(1),
+                now,
+            );
+            visited.push(tree.focused().unwrap());
+        }
+        assert_eq!(visited, vec![c, a, c]);
+    }
+
+    #[test]
+    fn a_press_focuses_the_nearest_focusable_ancestor() {
+        let (mut tree, root, [a, ..]) = three_focusable();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let inner = tree.insert(k, s, p);
+        tree.add_child(a, inner);
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(300.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+        let (x, y) = tree.absolute_position(inner);
+        let outcome = tree.dispatch(
+            root,
+            InputEvent::PointerPressed {
+                position: Point::new(x + 5.0, y + 5.0),
+                button: PointerButton::Primary,
+            },
+            &dispatch_config(),
+            Instant::now(),
+        );
+        assert_eq!(
+            outcome,
+            DispatchOutcome::FocusChanged {
+                old: None,
+                new: Some(a),
+            }
+        );
+    }
+
+    #[test]
+    fn explicit_accessibility_fields_reach_the_access_tree() {
+        use crate::access::{AccessValue, Action, Live, Role};
+        let (mut tree, root, [a, ..]) = three_focusable();
+        {
+            let access = &mut tree.get_mut(a).unwrap().access;
+            access.role = Role::Slider;
+            access.value = Some(AccessValue::Number(3.0));
+            access.value_min = Some(0.0);
+            access.value_max = Some(10.0);
+            access.value_step = Some(1.0);
+            access.expanded = Some(false);
+            access.level = Some(2);
+            access.live = Some(Live::Polite);
+            access.hidden = true;
+        }
+        let update = tree.build_access_update(root);
+        let (_, node) = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == to_access_id(a))
+            .unwrap();
+        assert_eq!(node.numeric_value(), Some(3.0));
+        assert_eq!(node.min_numeric_value(), Some(0.0));
+        assert_eq!(node.max_numeric_value(), Some(10.0));
+        assert_eq!(node.numeric_value_step(), Some(1.0));
+        assert_eq!(node.is_expanded(), Some(false));
+        assert_eq!(node.level(), Some(2));
+        assert_eq!(node.live(), Some(Live::Polite));
+        assert!(node.is_hidden());
+        for action in [
+            Action::Focus,
+            Action::Increment,
+            Action::Decrement,
+            Action::SetValue,
+            Action::Expand,
+            Action::Collapse,
+        ] {
+            assert!(node.supports_action(action), "{action:?} offered");
+        }
+    }
+
+    #[test]
+    fn button_roles_offer_click_and_focusable_offers_focus() {
+        use crate::access::{AccessNodeData, Action, Role};
+        let mut access = AccessNodeData::new(Role::Button);
+        assert_eq!(access.offered_actions(), vec![Action::Click]);
+        access.focusable = Some(true);
+        assert!(access.offered_actions().contains(&Action::Focus));
+        assert!(access.in_tab_order());
+        access.tab_index = -1;
+        assert!(!access.in_tab_order());
+        let group = AccessNodeData::new(Role::Group);
+        assert!(group.offered_actions().is_empty());
+        assert!(!group.in_tab_order());
+    }
+
+    #[test]
+    fn clear_focus_reports_the_transition_once() {
+        let (mut tree, _, child) = one_child_scene();
+        let now = Instant::now();
+        tree.set_focus_to(child, 1.0, Duration::from_millis(1), now);
+        assert_eq!(
+            tree.clear_focus(1.0, Duration::from_millis(1), now),
+            Some((Some(child), None))
+        );
+        assert_eq!(tree.clear_focus(1.0, Duration::from_millis(1), now), None);
     }
 
     #[test]
@@ -5198,10 +6304,11 @@ mod tests {
             anchor,
             dialog,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: false,
                 dismiss_on_escape: true,
                 modal: true,
+                ..Default::default()
             },
         );
         tree.compute_layout(
@@ -5280,10 +6387,11 @@ mod tests {
             anchor,
             menu,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: false,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
         tree.compute_layout(
@@ -5382,10 +6490,11 @@ mod tests {
             anchor,
             menu,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
 
@@ -5450,10 +6559,11 @@ mod tests {
             trigger,
             parent_menu,
             OverlayMeta {
-                anchor: trigger,
+                anchor: Some(trigger),
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
         tree.compute_layout(
@@ -5486,10 +6596,11 @@ mod tests {
             parent_item,
             submenu,
             OverlayMeta {
-                anchor: parent_item,
+                anchor: Some(parent_item),
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
         tree.compute_layout(
@@ -7296,7 +8407,7 @@ mod tests {
         let outcome = tree.dispatch(
             list,
             InputEvent::Scroll {
-                delta: ScrollDelta::Lines(0.0, 2.0),
+                delta: ScrollDelta::Lines(0.0, -2.0),
                 position: Point::new(100.0, 30.0),
             },
             &config,
@@ -7392,7 +8503,7 @@ mod tests {
         let outcome = tree.dispatch(
             root,
             InputEvent::Scroll {
-                delta: ScrollDelta::Lines(0.0, 2.0),
+                delta: ScrollDelta::Lines(0.0, -2.0),
                 position: Point::new(25.0, 25.0),
             },
             &config,
@@ -7777,10 +8888,11 @@ mod tests {
             anchor,
             menu,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
         tree.compute_layout(
@@ -9000,7 +10112,7 @@ mod tests {
         let outcome = tree.dispatch(
             root,
             InputEvent::Scroll {
-                delta: ScrollDelta::Lines(0.0, 3.0),
+                delta: ScrollDelta::Lines(0.0, -3.0),
                 position: Point::new(25.0, 25.0),
             },
             &config,
@@ -9019,7 +10131,7 @@ mod tests {
         let outcome = tree.dispatch(
             root,
             InputEvent::Scroll {
-                delta: ScrollDelta::Pixels(0.0, -40.0),
+                delta: ScrollDelta::Pixels(0.0, 40.0),
                 position: Point::new(25.0, 25.0),
             },
             &config,
@@ -11074,7 +12186,7 @@ mod tests {
         let NodeKind::TextField(state) = &tree.get(text_field).unwrap().kind else {
             panic!("expected a TextField node");
         };
-        assert_eq!(state.text_tint, real_color);
+        assert_eq!(state.text_tint.current, real_color);
 
         assert!(
             matches!(tree.get(rect).unwrap().kind, NodeKind::Rect),
@@ -11262,6 +12374,7 @@ mod tests {
                 font_size: 14.0,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }
         }
 
@@ -11454,7 +12567,7 @@ mod tests {
         tree.dispatch(
             root,
             InputEvent::Scroll {
-                delta: ScrollDelta::Lines(0.0, 1.0),
+                delta: ScrollDelta::Lines(0.0, -1.0),
                 position: point,
             },
             &config,
@@ -12033,7 +13146,7 @@ mod tests {
         let outcome = tree.dispatch(
             view,
             InputEvent::Scroll {
-                delta: ScrollDelta::Lines(0.0, 2.0),
+                delta: ScrollDelta::Lines(0.0, -2.0),
                 position: Point::new(50.0, 50.0),
             },
             &config,

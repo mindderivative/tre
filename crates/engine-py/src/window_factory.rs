@@ -14,12 +14,12 @@
 use std::rc::Rc;
 
 use engine_core::{
-    AccessNodeData, Action, Animated, CheckboxState, CircularProgressState, ContentFit, IconState,
-    ImageState, LinearProgressState, LoadingIndicatorState, NodeId, NodeKind, OverlayMeta,
-    PaintProperties, RadioButtonState, Role, ShapeKey, SliderState, SplitterState, SwitchState,
-    TextAlign, TextFieldState, TextState, TimePickerDialState, Tree,
+    AccessNodeData, Action, Animated, CheckboxState, CircularProgressState, ContentFit,
+    CornerRadii, IconState, ImageState, LinearProgressState, LoadingIndicatorState, NodeId,
+    NodeKind, OverlayMeta, PaintProperties, RadioButtonState, Role, ShapeKey, SliderState,
+    SplitterState, SwitchState, TextAlign, TextFieldState, TextState, TimePickerDialState, Tree,
 };
-use engine_render::{MONOSPACE_FONT_FAMILY, TextRenderer};
+use engine_render::MONOSPACE_FONT_FAMILY;
 use peniko::Color;
 use peniko::kurbo::{Affine, RoundedRect, Shape};
 use pyo3::prelude::*;
@@ -644,6 +644,13 @@ const DIALOG_ELEVATION: f64 = 3.0;
 const DIALOG_PADDING: f32 = 24.0;
 const DIALOG_HEADLINE_GAP: f32 = 16.0;
 const DIALOG_SCRIM_OPACITY: f64 = 0.32;
+
+/// M95: a scrim's color at `DIALOG_SCRIM_OPACITY` -- the 32% lives in the
+/// color's alpha, not the node's opacity, because a scrim is the parent of
+/// its panel and opacity now fades a whole subtree (group opacity).
+fn scrim_fill(color: Color) -> Color {
+    color.multiply_alpha(DIALOG_SCRIM_OPACITY as f32)
+}
 
 /// MD3's own real Snackbar anatomy (M30 Phase 4 Step 2), verified
 /// against Material Web's own token source (`_md-comp-snackbar.scss`)
@@ -1490,7 +1497,7 @@ fn spin_box_retheme_hook(
             node.paint.background = Animated::new(field_color);
             node.paint.corner_radius = Animated::new(field_corner_radius);
             if let NodeKind::TextField(state) = &mut node.kind {
-                state.text_tint = text_color;
+                state.text_tint = Animated::new(text_color);
             }
         }
     })
@@ -1570,7 +1577,7 @@ fn time_input_field_retheme_hook(id: NodeId) -> crate::window::RetitheHook {
             node.paint.background = Animated::new(container_color);
             node.paint.corner_radius = Animated::new(corner_radius);
             if let NodeKind::TextField(state) = &mut node.kind {
-                state.text_tint = theme.on_surface();
+                state.text_tint = Animated::new(theme.on_surface());
             }
         }
     })
@@ -1917,7 +1924,7 @@ fn dialog_retheme_hook(
         let corner_radius = theme.shape("dialog", None).unwrap_or(DIALOG_CORNER_RADIUS);
         let elevation = theme.elevation("dialog", None).unwrap_or(DIALOG_ELEVATION);
         if let Some(node) = tree.get_mut(scrim) {
-            node.paint.background = Animated::new(scrim_color);
+            node.paint.background = Animated::new(scrim_fill(scrim_color));
         }
         if let Some(node) = tree.get_mut(panel) {
             node.paint.background = Animated::new(panel_color);
@@ -2206,7 +2213,8 @@ fn segmented_button_retheme_hook(
                 } else {
                     TRANSPARENT
                 });
-                node.paint.corner_radii_override = corner_radii_override;
+                node.paint.corner_radii_override =
+                    corner_radii_override.map(|r| Animated::new(CornerRadii(r)));
             }
             let label_color = if is_selected {
                 on_secondary_container
@@ -2457,12 +2465,17 @@ fn side_sheet_retheme_hook(
         if let Some(node) = tree.get_mut(panel) {
             node.paint.background = Animated::new(container_color);
             node.paint.elevation = Animated::new(elevation);
-            node.paint.corner_radii_override = Some([corner_radius, 0.0, 0.0, corner_radius]);
+            node.paint.corner_radii_override = Some(Animated::new(CornerRadii([
+                corner_radius,
+                0.0,
+                0.0,
+                corner_radius,
+            ])));
         }
         if let Some(id) = scrim
             && let Some(node) = tree.get_mut(id)
         {
-            node.paint.background = Animated::new(scrim_color);
+            node.paint.background = Animated::new(scrim_fill(scrim_color));
         }
     })
 }
@@ -2528,12 +2541,17 @@ fn navigation_drawer_retheme_hook(
         if let Some(node) = tree.get_mut(panel) {
             node.paint.background = Animated::new(container_color);
             node.paint.elevation = Animated::new(elevation);
-            node.paint.corner_radii_override = Some([0.0, corner_radius, corner_radius, 0.0]);
+            node.paint.corner_radii_override = Some(Animated::new(CornerRadii([
+                0.0,
+                corner_radius,
+                corner_radius,
+                0.0,
+            ])));
         }
         if let Some(id) = scrim
             && let Some(node) = tree.get_mut(id)
         {
-            node.paint.background = Animated::new(scrim_color);
+            node.paint.background = Animated::new(scrim_fill(scrim_color));
         }
         for &(indicator, icon, label, is_active) in &items {
             let fill = if is_active {
@@ -2731,8 +2749,12 @@ fn tabs_retheme_hook(
             if let Some(node) = tree.get_mut(indicator) {
                 let indicator_fill = if is_active { active_color } else { TRANSPARENT };
                 node.paint.background = Animated::new(indicator_fill);
-                node.paint.corner_radii_override =
-                    Some([indicator_corner_radius, indicator_corner_radius, 0.0, 0.0]);
+                node.paint.corner_radii_override = Some(Animated::new(CornerRadii([
+                    indicator_corner_radius,
+                    indicator_corner_radius,
+                    0.0,
+                    0.0,
+                ])));
             }
         }
     })
@@ -2788,7 +2810,7 @@ fn search_bar_retheme_hook(
         if let Some(node) = tree.get_mut(field)
             && let NodeKind::TextField(state) = &mut node.kind
         {
-            state.text_tint = theme.on_surface();
+            state.text_tint = Animated::new(theme.on_surface());
         }
         if let Some((container, icon)) = leading {
             if let Some(node) = tree.get_mut(container) {
@@ -3203,6 +3225,7 @@ impl PyWindow {
                 font_size: resolved_size,
                 align: TextAlign::Start,
                 line_height: resolved_line_height,
+                options: Default::default(),
             }),
             positioned_style(
                 Size {
@@ -3300,6 +3323,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Center,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -3647,6 +3671,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -3828,7 +3853,8 @@ impl PyWindow {
                 0.0,
                 1.0,
             );
-            segment_paint.corner_radii_override = corner_radii_override;
+            segment_paint.corner_radii_override =
+                corner_radii_override.map(|r| Animated::new(CornerRadii(r)));
             if let Some((r, g, b, a)) = border_color {
                 segment_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
             }
@@ -3889,6 +3915,7 @@ impl PyWindow {
                     font_size: label_style.font_size,
                     align: TextAlign::Center,
                     line_height: None,
+                    options: Default::default(),
                 }),
                 Style {
                     size: Size {
@@ -4070,6 +4097,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -4236,6 +4264,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -4385,10 +4414,11 @@ impl PyWindow {
             anchor.id,
             menu.id,
             OverlayMeta {
-                anchor: anchor.id,
+                anchor: Some(anchor.id),
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
         Ok(())
@@ -4522,6 +4552,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Center,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -4974,6 +5005,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Center,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -5073,7 +5105,7 @@ impl PyWindow {
             align_items: Some(AlignItems::CENTER),
             ..Default::default()
         };
-        let mut scrim_paint = PaintProperties::new(scrim_color, 0.0, 0.0, DIALOG_SCRIM_OPACITY);
+        let mut scrim_paint = PaintProperties::new(scrim_fill(scrim_color), 0.0, 0.0, 1.0);
         if let Some((r, g, b, a)) = border_color {
             scrim_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
         }
@@ -5117,6 +5149,7 @@ impl PyWindow {
                 font_size: headline_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -5142,6 +5175,7 @@ impl PyWindow {
                 font_size: body_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -5205,10 +5239,11 @@ impl PyWindow {
             anchor,
             dialog.id,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: false,
                 dismiss_on_escape: true,
                 modal: true,
+                ..Default::default()
             },
         );
         Ok(())
@@ -5225,7 +5260,7 @@ impl PyWindow {
             return Err(EngineError::ForeignNode.into());
         }
         let mut tree = self.tree.borrow_mut();
-        let anchor = tree.overlay_meta(dialog.id).map(|meta| meta.anchor);
+        let anchor = tree.overlay_meta(dialog.id).and_then(|meta| meta.anchor);
         tree.close_overlay(dialog.id);
         if let Some(anchor) = anchor {
             tree.remove(anchor);
@@ -5354,6 +5389,7 @@ impl PyWindow {
                 font_size: body_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 flex_grow: 1.0,
@@ -5391,6 +5427,7 @@ impl PyWindow {
                     font_size: label_style.font_size,
                     align: TextAlign::Center,
                     line_height: None,
+                    options: Default::default(),
                 }),
                 Style {
                     size: Size {
@@ -5509,10 +5546,11 @@ impl PyWindow {
             anchor,
             snackbar.id,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: false,
                 dismiss_on_escape: false,
                 modal: false,
+                ..Default::default()
             },
         );
         Ok(())
@@ -5528,7 +5566,7 @@ impl PyWindow {
             return Err(EngineError::ForeignNode.into());
         }
         let mut tree = self.tree.borrow_mut();
-        let anchor = tree.overlay_meta(snackbar.id).map(|meta| meta.anchor);
+        let anchor = tree.overlay_meta(snackbar.id).and_then(|meta| meta.anchor);
         tree.close_overlay(snackbar.id);
         if let Some(anchor) = anchor {
             tree.remove(anchor);
@@ -5621,7 +5659,12 @@ impl PyWindow {
         let panel_height = height.unwrap_or(self.height.get() as f32);
 
         let mut panel_paint = PaintProperties::new(container_color, 0.0, elevation, 1.0);
-        panel_paint.corner_radii_override = Some([corner_radius, 0.0, 0.0, corner_radius]);
+        panel_paint.corner_radii_override = Some(Animated::new(CornerRadii([
+            corner_radius,
+            0.0,
+            0.0,
+            corner_radius,
+        ])));
 
         if modal {
             let scrim_style = Style {
@@ -5637,7 +5680,7 @@ impl PyWindow {
             // to Python -- in the modal branch that's `scrim`, not the
             // internal `panel` (never returned), so the override lands
             // on `scrim`'s own paint, not `panel_paint`.
-            let mut scrim_paint = PaintProperties::new(scrim_color, 0.0, 0.0, DIALOG_SCRIM_OPACITY);
+            let mut scrim_paint = PaintProperties::new(scrim_fill(scrim_color), 0.0, 0.0, 1.0);
             if let Some((r, g, b, a)) = border_color {
                 scrim_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
             }
@@ -5739,10 +5782,11 @@ impl PyWindow {
             anchor,
             side_sheet.id,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: false,
                 dismiss_on_escape: true,
                 modal: true,
+                ..Default::default()
             },
         );
         Ok(())
@@ -5757,7 +5801,9 @@ impl PyWindow {
             return Err(EngineError::ForeignNode.into());
         }
         let mut tree = self.tree.borrow_mut();
-        let anchor = tree.overlay_meta(side_sheet.id).map(|meta| meta.anchor);
+        let anchor = tree
+            .overlay_meta(side_sheet.id)
+            .and_then(|meta| meta.anchor);
         tree.close_overlay(side_sheet.id);
         if let Some(anchor) = anchor {
             tree.remove(anchor);
@@ -6018,6 +6064,7 @@ impl PyWindow {
                     font_size: label_style.font_size,
                     align: TextAlign::Center,
                     line_height: None,
+                    options: Default::default(),
                 }),
                 Style {
                     size: Size {
@@ -6197,7 +6244,12 @@ impl PyWindow {
         let panel_height = height.unwrap_or(self.height.get() as f32);
 
         let mut panel_paint = PaintProperties::new(container_color, 0.0, elevation, 1.0);
-        panel_paint.corner_radii_override = Some([0.0, corner_radius, corner_radius, 0.0]);
+        panel_paint.corner_radii_override = Some(Animated::new(CornerRadii([
+            0.0,
+            corner_radius,
+            corner_radius,
+            0.0,
+        ])));
         // `panel` is inserted once below regardless of `modal`, but it's
         // only ever the node actually returned to Python in the
         // non-modal branch (the modal branch returns `scrim` instead,
@@ -6320,6 +6372,7 @@ impl PyWindow {
                     font_size: label_style.font_size,
                     align: TextAlign::Start,
                     line_height: None,
+                    options: Default::default(),
                 }),
                 Style {
                     size: Size {
@@ -6347,7 +6400,7 @@ impl PyWindow {
                 justify_content: Some(JustifyContent::FLEX_START),
                 ..Default::default()
             };
-            let mut scrim_paint = PaintProperties::new(scrim_color, 0.0, 0.0, DIALOG_SCRIM_OPACITY);
+            let mut scrim_paint = PaintProperties::new(scrim_fill(scrim_color), 0.0, 0.0, 1.0);
             if let Some((r, g, b, a)) = border_color {
                 scrim_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
             }
@@ -6423,10 +6476,11 @@ impl PyWindow {
             anchor,
             drawer.id,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: false,
                 dismiss_on_escape: true,
                 modal: true,
+                ..Default::default()
             },
         );
         Ok(())
@@ -6441,7 +6495,7 @@ impl PyWindow {
             return Err(EngineError::ForeignNode.into());
         }
         let mut tree = self.tree.borrow_mut();
-        let anchor = tree.overlay_meta(drawer.id).map(|meta| meta.anchor);
+        let anchor = tree.overlay_meta(drawer.id).and_then(|meta| meta.anchor);
         tree.close_overlay(drawer.id);
         if let Some(anchor) = anchor {
             tree.remove(anchor);
@@ -6618,6 +6672,7 @@ impl PyWindow {
                 font_size: headline_type_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             headline_style,
             PaintProperties::new(headline_color, 0.0, 0.0, 1.0),
@@ -7441,6 +7496,7 @@ impl PyWindow {
                     font_size: label_style.font_size,
                     align: TextAlign::Center,
                     line_height: None,
+                    options: Default::default(),
                 }),
                 Style {
                     size: Size {
@@ -7456,8 +7512,12 @@ impl PyWindow {
 
             let indicator_fill = if is_active { active_color } else { TRANSPARENT };
             let mut indicator_paint = PaintProperties::new(indicator_fill, 0.0, 0.0, 1.0);
-            indicator_paint.corner_radii_override =
-                Some([indicator_corner_radius, indicator_corner_radius, 0.0, 0.0]);
+            indicator_paint.corner_radii_override = Some(Animated::new(CornerRadii([
+                indicator_corner_radius,
+                indicator_corner_radius,
+                0.0,
+                0.0,
+            ])));
             let indicator = tree.insert(
                 NodeKind::Rect,
                 Style {
@@ -7634,7 +7694,7 @@ impl PyWindow {
             SEARCH_INPUT_FONT_WEIGHT,
             SEARCH_INPUT_FONT_SIZE,
         );
-        text_field_state.text_tint = input_color;
+        text_field_state.text_tint = Animated::new(input_color);
         let field_id = tree.insert(
             NodeKind::TextField(text_field_state),
             Style {
@@ -7926,6 +7986,7 @@ impl PyWindow {
                     font_size: label_style.font_size,
                     align: TextAlign::Start,
                     line_height: None,
+                    options: Default::default(),
                 }),
                 Style {
                     size: Size {
@@ -7946,6 +8007,7 @@ impl PyWindow {
                     font_size: body_style.font_size,
                     align: TextAlign::Start,
                     line_height: None,
+                    options: Default::default(),
                 }),
                 Style {
                     size: Size {
@@ -7969,6 +8031,7 @@ impl PyWindow {
                     font_size: label_style.font_size,
                     align: TextAlign::Start,
                     line_height: None,
+                    options: Default::default(),
                 }),
                 Style {
                     size: Size {
@@ -8174,6 +8237,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 flex_grow: 1.0,
@@ -8340,6 +8404,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 flex_grow: 1.0,
@@ -8455,6 +8520,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Center,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -8509,7 +8575,7 @@ impl PyWindow {
         // of silently going pure black -- a real, approved, near-
         // imperceptible un-themed color change (`AskUserQuestion`).
         if self.theme.borrow().is_set() {
-            text_field_state.text_tint = self.theme.borrow().on_surface();
+            text_field_state.text_tint = Animated::new(self.theme.borrow().on_surface());
         }
 
         let mut tree = self.tree.borrow_mut();
@@ -8665,6 +8731,7 @@ impl PyWindow {
                         font_size: label_style.font_size,
                         align: TextAlign::Center,
                         line_height: None,
+                        options: Default::default(),
                     }),
                     Style {
                         size: Size {
@@ -8805,6 +8872,7 @@ impl PyWindow {
                 font_size: subhead_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -8830,6 +8898,7 @@ impl PyWindow {
                 font_size: body_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -8880,6 +8949,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             positioned_style(
                 Size {
@@ -9022,7 +9092,7 @@ impl PyWindow {
             SEARCH_INPUT_FONT_WEIGHT,
             BUTTON_LABEL_FONT_SIZE,
         );
-        text_field_state.text_tint = text_color;
+        text_field_state.text_tint = Animated::new(text_color);
         let field = tree.insert(
             NodeKind::TextField(text_field_state),
             field_style,
@@ -9234,6 +9304,7 @@ impl PyWindow {
                     font_size: label_style.font_size,
                     align: TextAlign::Center,
                     line_height: None,
+                    options: Default::default(),
                 }),
                 Style {
                     size: Size {
@@ -9353,6 +9424,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -10029,6 +10101,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 position: Position::Absolute,
@@ -10168,7 +10241,7 @@ impl PyWindow {
         {
             let theme = self.theme.borrow();
             if theme.is_set() {
-                text_field_state.text_tint = theme.on_surface();
+                text_field_state.text_tint = Animated::new(theme.on_surface());
             }
         }
         let mut tree = self.tree.borrow_mut();
@@ -10300,7 +10373,7 @@ impl PyWindow {
         {
             let theme = self.theme.borrow();
             if theme.is_set() {
-                text_field_state.text_tint = theme.on_surface();
+                text_field_state.text_tint = Animated::new(theme.on_surface());
             }
         }
         let mut tree = self.tree.borrow_mut();
@@ -10373,16 +10446,12 @@ impl PyWindow {
             })?;
 
         let (r, g, b, a) = background;
-        // M32 Phase 1 (§5, §8, §10): a throwaway `TextRenderer` solely
-        // to measure the real bundled monospace face -- a real, one-
-        // time cost per `add_terminal` call (font registration, not a
-        // per-frame cost), the identical real "font discovery is a
-        // one-time cost" reasoning `TextRenderer::new`'s own doc comment
-        // already states, just paid here rather than amortized across
-        // an app's whole lifetime the way the real render-loop's own
-        // `TextRenderer` instance is.
-        let (cell_width, cell_height) =
-            TextRenderer::new().monospace_cell_size(MONOSPACE_FONT_FAMILY, font_size);
+        // M32 Phase 1 (§5, §8, §10): measures the real bundled monospace
+        // face -- M96: on the thread's shared shaper (`shaper.rs`), not a
+        // fresh `TextRenderer` per call.
+        let (cell_width, cell_height) = crate::shaper::with(|shaper| {
+            shaper.monospace_cell_size(MONOSPACE_FONT_FAMILY, font_size)
+        });
         let width = cell_width * f32::from(cols);
         let height = cell_height * f32::from(rows);
 
@@ -10427,7 +10496,7 @@ impl PyWindow {
     /// now-removed doc comment) had to before a real font existed to
     /// measure.
     fn get_monospace_cell_size(&self, font_size: f32) -> (f32, f32) {
-        TextRenderer::new().monospace_cell_size(MONOSPACE_FONT_FAMILY, font_size)
+        crate::shaper::with(|shaper| shaper.monospace_cell_size(MONOSPACE_FONT_FAMILY, font_size))
     }
 
     /// M33 Phase 1 (§4, §5, §8): resizes a real, live `Terminal`'s own
@@ -10461,7 +10530,7 @@ impl PyWindow {
         }
 
         let (cell_width, cell_height) =
-            TextRenderer::new().monospace_cell_size(&font_family, font_size);
+            crate::shaper::with(|shaper| shaper.monospace_cell_size(&font_family, font_size));
         let width = cell_width * f32::from(cols);
         let height = cell_height * f32::from(rows);
         {
@@ -10746,6 +10815,7 @@ mod tests {
                 font_size: BUTTON_LABEL_FONT_SIZE,
                 align: TextAlign::Center,
                 line_height: None,
+                options: Default::default(),
             }),
             Style::default(),
             PaintProperties::new(Color::TRANSPARENT, 0.0, 0.0, 1.0),
@@ -10807,6 +10877,7 @@ mod tests {
                 font_size: BUTTON_LABEL_FONT_SIZE,
                 align: TextAlign::Center,
                 line_height: None,
+                options: Default::default(),
             }),
             Style::default(),
             PaintProperties::new(Color::TRANSPARENT, 0.0, 0.0, 1.0),
@@ -10855,6 +10926,7 @@ mod tests {
                 font_size: BUTTON_LABEL_FONT_SIZE,
                 align: TextAlign::Center,
                 line_height: None,
+                options: Default::default(),
             }),
             Style::default(),
             PaintProperties::new(Color::TRANSPARENT, 0.0, 0.0, 1.0),

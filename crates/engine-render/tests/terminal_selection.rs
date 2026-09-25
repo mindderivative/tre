@@ -4,7 +4,7 @@
 //! set. Same headless render-to-texture-then-readback discipline as
 //! `clip_children.rs`/`virtual_list_scroll.rs`.
 
-use engine_core::{NodeKind, PaintProperties, TerminalCell, TerminalState, Tree};
+use engine_core::{CellColor, NodeKind, PaintProperties, TerminalCell, TerminalState, Tree};
 use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
 use peniko::Color;
 use taffy::prelude::{Size, Style, length};
@@ -139,8 +139,8 @@ fn build_scene(with_selection: bool) -> (Tree, engine_core::NodeId) {
     for cell in &mut state.cells {
         *cell = TerminalCell {
             ch: 'x',
-            fg: Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF),
-            bg: Color::TRANSPARENT,
+            fg: CellColor::Rgb(Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF)),
+            bg: CellColor::Default,
             bold: false,
             dim: false,
             italic: false,

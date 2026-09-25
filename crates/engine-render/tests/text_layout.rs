@@ -79,6 +79,7 @@ fn type_roles_and_rtl_string_render_real_ink() {
                 font_size: 16.0,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -97,6 +98,7 @@ fn type_roles_and_rtl_string_render_real_ink() {
                 font_size: 32.0,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -115,6 +117,7 @@ fn type_roles_and_rtl_string_render_real_ink() {
                 font_size: 24.0,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {

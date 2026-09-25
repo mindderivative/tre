@@ -53,6 +53,10 @@ pub enum EngineError {
     /// real corruption, not just a wrong result.
     #[error("this Node belongs to a different Window's Tree")]
     ForeignNode,
+    /// M96: the node behind this handle was destroyed (`Node.destroy()`,
+    /// or an ancestor's).
+    #[error("this Node was destroyed")]
+    Destroyed,
     /// M22 Phase 1 (§5): `Window.add_image` couldn't read or decode
     /// the file at `path` -- a real I/O/format failure, not a value or
     /// type mismatch the way the two variants above represent, so this
@@ -76,7 +80,8 @@ impl From<EngineError> for PyErr {
             | EngineError::NotACanvas
             | EngineError::NotATerminal
             | EngineError::CycleRejected
-            | EngineError::ForeignNode => PyValueError::new_err(e.to_string()),
+            | EngineError::ForeignNode
+            | EngineError::Destroyed => PyValueError::new_err(e.to_string()),
             EngineError::TypeMismatch { .. } => PyTypeError::new_err(e.to_string()),
             EngineError::ImageLoadFailed { .. } | EngineError::TerminalSpawnFailed { .. } => {
                 PyIOError::new_err(e.to_string())

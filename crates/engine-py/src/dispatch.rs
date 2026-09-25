@@ -32,6 +32,7 @@ use pyo3::prelude::*;
 use taffy::prelude::{AvailableSpace, Size};
 
 use crate::event::{Event, NodeContext, changed_value_to_py};
+use crate::listeners::{self, EventType};
 use crate::window::SharedTheme;
 
 /// M16 Phase 2 (§3, §9) real finding, not anticipated in `PLAN.md`:
@@ -117,7 +118,25 @@ pub(crate) fn log_uncaught_exception(err: &PyErr, py: Python<'_>) {
 /// re-inspected on every real call. Backward compatible with every
 /// pre-existing zero-argument handler by construction: `call_handler`
 /// only ever calls `handler.call1(py, (event,))` when this is `true`.
-pub(crate) type HandlerMap = Rc<RefCell<HashMap<(NodeId, EventKind), (Py<PyAny>, bool)>>>;
+pub(crate) type HandlerMap = Rc<RefCell<HashMap<(NodeId, HandlerKey), (Py<PyAny>, bool)>>>;
+
+/// M94: what a `HandlerMap` entry is registered for -- a legacy
+/// `set_on_*` handler (`Legacy`, non-bubbling, fired exactly as before) or
+/// a `node.on(...)` listener (`Listener`, routed by `listeners.rs` with the
+/// M93 propagation model). One map for both, so no `Node` needed a new
+/// field and every existing GC traversal already covers listeners. M100
+/// deletes `Legacy`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum HandlerKey {
+    Legacy(EventKind),
+    Listener(EventType),
+    /// M96: a node's own callbacks -- a canvas's `draw`, a virtual list's
+    /// `materialize` and `size_hint` -- stored here for the same GC and
+    /// pruning every listener gets.
+    Draw,
+    Materialize,
+    SizeHint,
+}
 
 /// M54 Phase 2 (§8, §16.2): arity-sniffs `handler` at registration time
 /// -- `true` when it declares at least one real *required* positional
@@ -171,8 +190,32 @@ pub(crate) fn register_handler(
     py: Python<'_>,
 ) -> PyResult<()> {
     let wants_event = wants_event_payload(py, &handler)?;
-    handlers.borrow_mut().insert(key, (handler, wants_event));
+    handlers
+        .borrow_mut()
+        .insert((key.0, HandlerKey::Legacy(key.1)), (handler, wants_event));
     Ok(())
+}
+
+/// M94: `node.on(event, handler)`'s own registration -- the same
+/// arity-sniffing as `register_handler`, under a `Listener` key.
+pub(crate) fn register_listener(
+    handlers: &HandlerMap,
+    node: NodeId,
+    event: EventType,
+    handler: Py<PyAny>,
+    py: Python<'_>,
+) -> PyResult<()> {
+    let wants_event = wants_event_payload(py, &handler)?;
+    handlers
+        .borrow_mut()
+        .insert((node, HandlerKey::Listener(event)), (handler, wants_event));
+    Ok(())
+}
+
+/// M94: how `Window.on` registers a window-level listener -- the same
+/// arity-sniffing as node listeners, into the window's own map.
+pub(crate) fn wants_event(py: Python<'_>, handler: &Py<PyAny>) -> PyResult<bool> {
+    wants_event_payload(py, handler)
 }
 
 /// M9 Phase 2 (§5): the real registry `Node.animate(..., on_complete=
@@ -359,23 +402,17 @@ pub(crate) fn run_dispatch_outcome(
             call_handler(handlers, node, EventKind::Click, py, |py| {
                 Event::click(py, node, &ctx, position, button)
             });
+            deliver_click(&ctx, EventType::Click, node, event, py);
         }
         DispatchOutcome::HoverChanged { old, new } => {
             let (old, new) = (*old, *new);
-            let position = match event {
-                Some(InputEvent::PointerMoved { position }) => (position.x, position.y),
-                // `update_hover` (`engine-core`) has exactly one real
-                // caller, `Tree::dispatch`'s own `PointerMoved` arm --
-                // confirmed via grep before this change -- so a
-                // `HoverChanged` outcome paired with anything but a
-                // real `PointerMoved` event is a real internal-
-                // consistency bug, not a reachable user-facing
-                // condition (unlike `Activated`, no real caller ever
-                // produces `HoverChanged` with `event: None`).
-                _ => unreachable!(
-                    "DispatchOutcome::HoverChanged is only ever produced by PointerMoved dispatch"
-                ),
+            // `PointerMoved` carries the pointer's position; M94's
+            // `PointerLeft` (the pointer left the window) has none.
+            let point = match event {
+                Some(InputEvent::PointerMoved { position }) => Some(*position),
+                _ => None,
             };
+            let position = point.map(|p| (p.x, p.y));
             if let Some(old) = old {
                 call_handler(handlers, old, EventKind::HoverExit, py, |py| {
                     Event::hover(py, EventKind::HoverExit, old, &ctx, position)
@@ -386,6 +423,7 @@ pub(crate) fn run_dispatch_outcome(
                     Event::hover(py, EventKind::HoverEnter, new, &ctx, position)
                 });
             }
+            listeners::route_hover(&ctx, old, new, point, py);
         }
         // M14 Phase 3 (§16.7), widened M54 Phase 2: a real `Slider`/
         // `TextField`/`TimePickerDial` edit `Tree::dispatch` itself
@@ -402,6 +440,10 @@ pub(crate) fn run_dispatch_outcome(
                 let new = read_new_changed_value(&tree.borrow(), node, py)?;
                 Event::change(py, node, &ctx, old, new)
             });
+            match changed_value_to_py(py, old_value) {
+                Ok(old) => deliver_change(&ctx, node, Some(old), py),
+                Err(err) => log_uncaught_exception(&err, py),
+            }
         }
         // M55 (§10, §16.2): a real click-to-focus or Tab-navigation
         // transition `Tree::dispatch` itself detected -- reuses the
@@ -426,8 +468,95 @@ pub(crate) fn run_dispatch_outcome(
         // separate function, not a new match arm here, since it needs
         // `&mut Tree` access this function's callback-only signature
         // doesn't carry.
-        DispatchOutcome::SecondaryActivated(_) | DispatchOutcome::None => {}
+        DispatchOutcome::SecondaryActivated(node) => {
+            deliver_click(&ctx, EventType::SecondaryClick, *node, event, py);
+        }
+        DispatchOutcome::None => {}
     }
+}
+
+/// M94: `click`/`secondary_click` listeners, bubbling from `node`. A
+/// pointer activation carries its position and button; a keyboard or
+/// accessibility activation has neither.
+fn deliver_click(
+    ctx: &NodeContext<'_>,
+    event_type: EventType,
+    node: NodeId,
+    event: Option<&InputEvent>,
+    py: Python<'_>,
+) {
+    let (point, button) = match event {
+        Some(InputEvent::PointerReleased { position, button }) => (Some(*position), Some(*button)),
+        _ => (None, None),
+    };
+    listeners::deliver(ctx, py, event_type, node, point, |e| {
+        e.button = button.map(|b| crate::event::button_name(b).to_string());
+        listeners::stamp_modifiers(e);
+    });
+}
+
+/// M94: the `change` listener on a `text_input` whose text the user just
+/// changed -- text-only, per M93 (the MD3 slider and dial keep their
+/// legacy `set_on_change`), and non-bubbling. `old` is the text before.
+fn deliver_change(ctx: &NodeContext<'_>, node: NodeId, old: Option<Py<PyAny>>, py: Python<'_>) {
+    let is_text_input = matches!(
+        ctx.tree.borrow().get(node).map(|n| &n.kind),
+        Some(NodeKind::TextField(_))
+    );
+    if !is_text_input {
+        return;
+    }
+    let new = match read_new_changed_value(&ctx.tree.borrow(), node, py) {
+        Ok(new) => new,
+        Err(err) => {
+            log_uncaught_exception(&err, py);
+            return;
+        }
+    };
+    listeners::deliver(ctx, py, EventType::Change, node, None, |e| {
+        e.old_value = old;
+        e.new_value = new;
+    });
+}
+
+/// M94: the one input pipeline, shared by `App.run()`'s live loop and
+/// `Window.simulate`: resolve the listener target before dispatch, let
+/// `Tree::dispatch` do everything mechanical, deliver the raw event to
+/// `node.on(...)` listeners, then the outcome to legacy handlers and
+/// listeners alike, then open whatever context menu a right-click
+/// requested. The caller has already computed layout.
+pub(crate) fn process_input(
+    ctx: &NodeContext<'_>,
+    root: NodeId,
+    event: &InputEvent,
+    py: Python<'_>,
+) -> DispatchOutcome {
+    listeners::note_input_modality(event);
+    let target = listeners::target_before(&ctx.tree.borrow(), root, event);
+    let outcome = ctx.tree.borrow_mut().dispatch(
+        root,
+        event.clone(),
+        &interaction_config(),
+        crate::clock::now(ctx.tree),
+    );
+    listeners::route_input(ctx, target, event, py);
+    // M96: layers an outside press or Escape asked to dismiss.
+    let dismissed = ctx.tree.borrow_mut().take_dismissals();
+    for layer in dismissed {
+        listeners::deliver(ctx, py, listeners::EventType::Dismiss, layer, None, |_| {});
+    }
+    run_dispatch_outcome(
+        ctx.handlers,
+        ctx.tree,
+        ctx.context_menus,
+        ctx.theme,
+        ctx.completions,
+        &outcome,
+        Some(event),
+        py,
+    );
+    open_context_menu(ctx.tree, ctx.context_menus, root, &outcome);
+    outcome
 }
 
 /// M55 (§10, §16.2): the real `FocusEnter`/`FocusExit` firing logic,
@@ -470,6 +599,7 @@ pub(crate) fn fire_focus_transition(
             Event::focus_transition(py, EventKind::FocusEnter, new, &ctx)
         });
     }
+    listeners::route_focus(&ctx, old, new, py);
 }
 
 /// M4 Phase 7 (§11.3): `SecondaryActivated`'s real meaning -- opens
@@ -504,10 +634,11 @@ pub(crate) fn open_context_menu(
         anchor,
         content,
         engine_core::OverlayMeta {
-            anchor,
+            anchor: Some(anchor),
             dismiss_on_outside_click: true,
             dismiss_on_escape: true,
             modal: false,
+            ..Default::default()
         },
     );
 }
@@ -569,7 +700,7 @@ pub(crate) fn call_handler(
     // this same `handlers` map.
     let handler = handlers
         .borrow()
-        .get(&(node, kind))
+        .get(&(node, HandlerKey::Legacy(kind)))
         .map(|(handler, wants_event)| (handler.clone_ref(py), *wants_event));
     let Some((handler, wants_event)) = handler else {
         return;
@@ -658,12 +789,17 @@ pub(crate) fn cut_focused_selection_to_clipboard(
     match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
         Ok(()) => {
             let old = read_new_changed_value(&tree.borrow(), field, py);
+            let old_for_listeners = old
+                .as_ref()
+                .ok()
+                .and_then(|o| o.as_ref().map(|v| v.clone_ref(py)));
             tree.borrow_mut().cut_text_field_selection(field);
             call_handler(handlers, field, EventKind::Change, py, |py| {
                 let old = old?;
                 let new = read_new_changed_value(&tree.borrow(), field, py)?;
                 Event::change(py, field, &ctx, old, new)
             });
+            deliver_change(&ctx, field, old_for_listeners, py);
             true
         }
         Err(err) => {
@@ -705,7 +841,7 @@ pub(crate) fn paste_clipboard_into_focused(
                 root,
                 event.clone(),
                 &interaction_config(),
-                std::time::Instant::now(),
+                crate::clock::now(tree),
             );
             run_dispatch_outcome(
                 handlers,

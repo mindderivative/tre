@@ -71,10 +71,11 @@ use taffy::prelude::{AvailableSpace, Size};
 use crate::binding::PyViewModelResolver;
 use crate::dispatch::CompletionRegistry;
 use crate::dispatch::{
-    HandlerMap, SharedCompletions, interaction_config, node_center, open_context_menu,
+    HandlerKey, HandlerMap, SharedCompletions, interaction_config, node_center, open_context_menu,
     run_dispatch_outcome,
 };
-use crate::node::Node;
+use crate::node::{Node, NodeState};
+use crate::thread_bound::{ThreadBound, thread_bound_shell};
 use crate::window::{SharedSize, SharedTheme, ThemeState};
 
 thread_local! {
@@ -152,14 +153,14 @@ pub(crate) fn _end_recording() -> Vec<Py<PyAny>> {
 /// sharing none of `View`'s own persistent ones) -- differing only in
 /// which `handlers` map to give it. Factored out once.
 fn throwaway_node(tree: &Rc<RefCell<Tree>>, id: NodeId, handlers: HandlerMap) -> Node {
-    Node {
+    Node::from(NodeState {
         id,
         tree: tree.clone(),
         handlers,
         context_menus: Rc::new(RefCell::new(HashMap::new())),
         theme: Rc::new(RefCell::new(ThemeState::default())),
         completions: Rc::new(RefCell::new(CompletionRegistry::new())),
-    }
+    })
 }
 
 /// Parses a bound `background:` string the same way `engine_spec::
@@ -516,8 +517,8 @@ fn apply_binding_value(
             )));
         }
     };
-    temp_node.animate(property, bound, 0, None)?;
-    tree.borrow_mut().tick_all(std::time::Instant::now());
+    temp_node.animate(property, bound, 0, None, None)?;
+    tree.borrow_mut().tick_all(crate::clock::now(tree));
     Ok(())
 }
 
@@ -597,8 +598,11 @@ pub(crate) fn collect_two_way(spec: &WidgetSpec, out: &mut Vec<(String, String)>
 /// A binding's own re-evaluation trigger, subscribed onto every
 /// `Signal` its expression read during its initial evaluation.
 /// `Signal._notify` calls this like any other zero-arg Python callable.
-#[pyclass(unsendable)]
-struct BindingCallback {
+#[pyclass]
+struct BindingCallback(ThreadBound<BindingCallbackState>);
+thread_bound_shell!(BindingCallback => BindingCallbackState);
+
+struct BindingCallbackState {
     tree: Rc<RefCell<Tree>>,
     handlers: HandlerMap,
     node_id: NodeId,
@@ -633,8 +637,11 @@ impl BindingCallback {
 /// `apply_binding_value`'s own forward direction: `checked` via `Node.
 /// get_checked`, everything else via `Node.get`) and writes it into
 /// the bound `Signal` via its own real, public `.set(value)`.
-#[pyclass(unsendable)]
-struct TwoWayCallback {
+#[pyclass]
+struct TwoWayCallback(ThreadBound<TwoWayCallbackState>);
+thread_bound_shell!(TwoWayCallback => TwoWayCallbackState);
+
+struct TwoWayCallbackState {
     tree: Rc<RefCell<Tree>>,
     node_id: NodeId,
     property: String,
@@ -659,7 +666,9 @@ impl TwoWayCallback {
             // `Animated<f64>` property `Node.get` dispatches to.
             temp_node.get_text()?.into_bound_py_any(py)?
         } else {
-            temp_node.get(&self.property)?.into_bound_py_any(py)?
+            temp_node
+                .get_number(&self.property)?
+                .into_bound_py_any(py)?
         };
         self.signal.bind(py).call_method1("set", (value,))?;
         Ok(())
@@ -762,14 +771,14 @@ pub(crate) fn attach_bindings_and_handlers(
                          into the Tree"
                 ))
             })?;
-            let node = Node {
+            let node = Node::from(NodeState {
                 id: node_id,
                 tree: tree.clone(),
                 handlers: handlers.clone(),
                 context_menus: context_menus.clone(),
                 theme: theme.clone(),
                 completions: completions.clone(),
-            };
+            });
             // Reuses `Node`'s own real setters verbatim (same
             // construction `apply_binding_value` already uses for
             // `animate`) rather than inserting into `handlers`
@@ -815,14 +824,14 @@ pub(crate) fn attach_bindings_and_handlers(
 
         let callback = Py::new(
             py,
-            BindingCallback {
+            BindingCallback(ThreadBound::new(BindingCallbackState {
                 tree: tree.clone(),
                 handlers: handlers.clone(),
                 node_id,
                 property: property.clone(),
                 expr: expr.clone(),
                 viewmodel: viewmodel.clone_ref(py),
-            },
+            })),
         )?;
         for signal in &touched {
             signal
@@ -888,12 +897,12 @@ pub(crate) fn attach_bindings_and_handlers(
                 })?;
             let two_way_callback = Py::new(
                 py,
-                TwoWayCallback {
+                TwoWayCallback(ThreadBound::new(TwoWayCallbackState {
                     tree: tree.clone(),
                     node_id,
                     property: property.clone(),
                     signal: signal.unbind(),
-                },
+                })),
             )?;
             // M54 Phase 2: `TwoWayCallback` is a Rust-implemented
             // `__call__`, not an app-defined Python function -- always
@@ -902,7 +911,7 @@ pub(crate) fn attach_bindings_and_handlers(
             // introspection (real, but unnecessary indirection for a
             // callable whose own arity is already known here).
             handlers.borrow_mut().insert(
-                (node_id, EventKind::Change),
+                (node_id, HandlerKey::Legacy(EventKind::Change)),
                 (two_way_callback.into_any(), false),
             );
         }
@@ -911,8 +920,12 @@ pub(crate) fn attach_bindings_and_handlers(
     Ok(subscriptions)
 }
 
-#[pyclass(unsendable)]
-pub struct View {
+#[pyclass]
+pub struct View(ThreadBound<ViewState>);
+thread_bound_shell!(View => ViewState);
+
+/// `View`'s state (M96: behind a `ThreadBound`, see `thread_bound`).
+pub struct ViewState {
     /// `pub(crate)`, unlike most of this struct's other fields: M42
     /// Phase 1's own `crate::window::PyWindow::from_view` (a different
     /// module) needs to clone this same `Rc<RefCell<Tree>>` into a real,
@@ -1033,7 +1046,7 @@ struct Attachment {
     /// callable it stored. Detach removes an entry only if it still holds
     /// that same object, so a handler the app registered imperatively on
     /// the same node and event afterward survives.
-    handlers: Vec<((NodeId, EventKind), Py<PyAny>)>,
+    handlers: Vec<((NodeId, HandlerKey), Py<PyAny>)>,
 }
 
 impl View {
@@ -1049,7 +1062,7 @@ impl View {
         let mut two_way = Vec::new();
         collect_two_way(spec, &mut two_way);
 
-        let before: HashMap<(NodeId, EventKind), usize> = self
+        let before: HashMap<(NodeId, HandlerKey), usize> = self
             .handlers
             .borrow()
             .iter()
@@ -1352,7 +1365,7 @@ impl View {
             }
         };
 
-        Ok(Self {
+        Ok(Self(ThreadBound::new(ViewState {
             tree: Rc::new(RefCell::new(tree)),
             reconciler,
             attachment: RefCell::new(None),
@@ -1368,7 +1381,7 @@ impl View {
             scheme,
             default_theme: default_theme_sheet,
             custom_theme: custom_theme_sheet,
-        })
+        })))
     }
 
     /// The `Node` for one widget's author-assigned `id`, e.g. for a
@@ -1378,7 +1391,7 @@ impl View {
         let id = self.reconciler.id_of(widget_id).ok_or_else(|| {
             PyValueError::new_err(format!("no widget with id {widget_id:?} in this view"))
         })?;
-        Ok(Node {
+        Ok(Node::from(NodeState {
             id,
             tree: self.tree.clone(),
             handlers: self.handlers.clone(),
@@ -1397,7 +1410,7 @@ impl View {
             // `on_complete` drain loop instead of a fresh, never-drained
             // instance (M9 Phase 2's own original, narrower scope).
             completions: self.completions.clone(),
-        })
+        }))
     }
 
     /// M43 Phase 1 (§4, §5, §8, §16.2, §16.6): instantiates another
@@ -1500,16 +1513,20 @@ impl View {
                 PyRuntimeError::new_err(format!("failed to re-read view {:?}: {e}", self.path))
             })?,
         };
-        let base_dir = std::path::Path::new(&self.path).parent();
-        let mut tree = self.tree.borrow_mut();
-        self.reconciler
+        // M96: one plain borrow of the state, so the fields below can be
+        // borrowed separately (split borrows don't pass through `DerefMut`).
+        let state = &mut *self.0;
+        let base_dir = std::path::Path::new(&state.path).parent();
+        let mut tree = state.tree.borrow_mut();
+        state
+            .reconciler
             .reconcile(
                 &mut tree,
                 &yaml,
-                self.default_theme.as_ref(),
-                self.custom_theme.as_ref(),
-                self.stylesheet.as_ref(),
-                self.scheme.as_ref(),
+                state.default_theme.as_ref(),
+                state.custom_theme.as_ref(),
+                state.stylesheet.as_ref(),
+                state.scheme.as_ref(),
                 base_dir,
             )
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -1557,8 +1574,11 @@ impl View {
                 "reconcile() needs source=, spec=, or json= -- nothing to reconcile against",
             ));
         }
-        let base_dir = std::path::Path::new(&self.path).parent();
-        let mut tree = self.tree.borrow_mut();
+        // M96: one plain borrow of the state, so the fields below can be
+        // borrowed separately (split borrows don't pass through `DerefMut`).
+        let state = &mut *self.0;
+        let base_dir = std::path::Path::new(&state.path).parent();
+        let mut tree = state.tree.borrow_mut();
         let widget_spec: Option<WidgetSpec> = if let Some(spec_obj) = &spec {
             Some(
                 pythonize::depythonize(spec_obj.bind(py))
@@ -1570,28 +1590,30 @@ impl View {
             None
         };
         if let Some(widget_spec) = widget_spec {
-            self.reconciler
+            state
+                .reconciler
                 .reconcile_spec(
                     &mut tree,
                     widget_spec,
-                    self.default_theme.as_ref(),
-                    self.custom_theme.as_ref(),
-                    self.stylesheet.as_ref(),
-                    self.scheme.as_ref(),
+                    state.default_theme.as_ref(),
+                    state.custom_theme.as_ref(),
+                    state.stylesheet.as_ref(),
+                    state.scheme.as_ref(),
                     base_dir,
                 )
                 .map_err(|e| PyValueError::new_err(e.to_string()))?;
         } else {
-            self.reconciler
+            state
+                .reconciler
                 .reconcile(
                     &mut tree,
                     source
                         .as_deref()
                         .expect("validated above: source is Some when spec/json are None"),
-                    self.default_theme.as_ref(),
-                    self.custom_theme.as_ref(),
-                    self.stylesheet.as_ref(),
-                    self.scheme.as_ref(),
+                    state.default_theme.as_ref(),
+                    state.custom_theme.as_ref(),
+                    state.stylesheet.as_ref(),
+                    state.scheme.as_ref(),
                     base_dir,
                 )
                 .map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -1770,7 +1792,7 @@ impl View {
         let root = self.reconciler.root();
         let point = node_center(&self.tree, root, self.available_space(), node.id);
 
-        let now = std::time::Instant::now();
+        let now = crate::clock::now(&self.tree);
         let config = interaction_config();
         // Each `dispatch` call's own `self.tree.borrow_mut()` is a
         // short-lived temporary, released before `run_dispatch_outcome` runs
@@ -1829,7 +1851,7 @@ impl View {
             root,
             event.clone(),
             &interaction_config(),
-            std::time::Instant::now(),
+            crate::clock::now(&self.tree),
         );
         run_dispatch_outcome(
             &self.handlers,
@@ -1854,7 +1876,7 @@ impl View {
             node.id,
             config.focus_ring_opacity,
             config.focus_ring_duration,
-            std::time::Instant::now(),
+            crate::clock::now(&self.tree),
         );
         if let Some((old, new)) = transition {
             crate::dispatch::fire_focus_transition(
@@ -1876,7 +1898,7 @@ impl View {
         let root = self.reconciler.root();
         let point = node_center(&self.tree, root, self.available_space(), node.id);
 
-        let now = std::time::Instant::now();
+        let now = crate::clock::now(&self.tree);
         let config = interaction_config();
         // M55 (§10, §16.2): a real gap found while scoping `Focus`
         // events -- this press's own outcome used to be discarded
@@ -1929,6 +1951,10 @@ impl View {
     /// `Py<PyAny>` callbacks too now, so it needs to make them visible
     /// to CPython's cyclic collector the same way.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        // M96: nothing off the owning thread (see `thread_bound`).
+        if !self.0.is_owner() {
+            return Ok(());
+        }
         for (handler, _wants_event) in self.handlers.borrow().values() {
             visit.call(handler)?;
         }
@@ -1936,7 +1962,9 @@ impl View {
     }
 
     fn __clear__(&mut self) {
-        self.handlers.borrow_mut().clear();
+        if self.0.is_owner() {
+            self.handlers.borrow_mut().clear();
+        }
     }
 }
 

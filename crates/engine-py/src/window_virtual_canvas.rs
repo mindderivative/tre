@@ -1,8 +1,9 @@
 //! `PyWindow`'s virtual-list and canvas plumbing (review follow-through,
 //! M28 Phase 2, §4/§8): `add_virtual_list`/`set_virtual_list_window`/
 //! `add_canvas`/`redraw_canvas` -- the two `NodeKind`s whose real
-//! content is supplied by a Python callback (`materializers`/
-//! `canvas_draws`) rather than built once at creation time, the one
+//! content is supplied by a Python callback (`materializers`; M96: a
+//! canvas's `draw` lives in the handler map, `node_callbacks.rs`) rather
+//! than built once at creation time, the one
 //! real thing that sets this pair apart from every plain `add_*` in
 //! `window_factory.rs`. See its own doc comment for why this was split
 //! out.
@@ -15,6 +16,7 @@ use peniko::Color;
 use pyo3::prelude::*;
 use taffy::prelude::{Size, Style, auto, length};
 
+use crate::dispatch::HandlerKey;
 use crate::error::EngineError;
 use crate::node::Node;
 use crate::window::{PyWindow, positioned_style};
@@ -265,7 +267,9 @@ impl PyWindow {
         );
         tree.add_child(self.root, id);
         drop(tree);
-        self.canvas_draws.borrow_mut().insert(id, draw);
+        self.handlers
+            .borrow_mut()
+            .insert((id, HandlerKey::Draw), (draw, false));
         self.wrap_node(id)
     }
 
@@ -278,34 +282,7 @@ impl PyWindow {
     /// a raised exception propagates as a real `PyErr` directly, no
     /// error slot needed.
     fn redraw_canvas(&self, canvas: PyRef<'_, Node>, py: Python<'_>) -> PyResult<()> {
-        let draw = self
-            .canvas_draws
-            .borrow()
-            .get(&canvas.id)
-            .ok_or(EngineError::NotACanvas)?
-            .clone_ref(py);
-
-        {
-            let tree = self.tree.borrow();
-            if !matches!(
-                tree.get(canvas.id)
-                    .expect("redraw_canvas: Node holds a NodeId missing from its own Tree")
-                    .kind,
-                NodeKind::Canvas(_)
-            ) {
-                return Err(EngineError::NotACanvas.into());
-            }
-        }
-
-        let ctx = Py::new(py, crate::canvas::CanvasContext::default())?;
-        draw.call1(py, (ctx.clone_ref(py),))?;
-
-        let ctx = ctx.borrow(py);
-        self.tree.borrow_mut().set_canvas_content(
-            canvas.id,
-            ctx.commands.clone(),
-            ctx.hit_test.clone(),
-        );
-        Ok(())
+        // M96: the same redraw `Node.redraw()` runs.
+        crate::node_callbacks::redraw(&self.tree, &self.handlers, canvas.id, py)
     }
 }

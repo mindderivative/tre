@@ -161,6 +161,9 @@ catalog rather than duplicating all 56 signatures here.
 
 ## Overlays
 
+*New in 0.3.4:* `show_layer`/`hide_layer` build all of these from your own
+nodes — see [Layers](layers.md). The older pairs below stay until 0.3.5.
+
 Dialogs, menus, snackbars, the side sheet, and a modal navigation
 drawer each open/close via a matched pair of `Window` methods, all real
 thin wrappers over the same `Tree::open_overlay`/`close_overlay`
@@ -276,6 +279,48 @@ if window.theme.is_set():
 | `shape(component, variant=None) -> float \| None` | The resolved corner-radius override for `component` (and `variant`, if given); `None` if there's no override — fall back to your own formula default |
 | `elevation(component, variant=None) -> float \| None` | `shape`'s own sibling for elevation — identical contract |
 | `typography(role) -> (family, weight, size, line_height) \| None` | A real, shipped MD3 default for a recognized typography role, regardless of whether a theme is set; `None` only for an unrecognized role name |
+
+## Events, properties, and `simulate` (0.3.4)
+
+`window.on`/`off` for window events (`resize`, `color_scheme`,
+`scale_factor`, `close_requested`, `closed`), `window.set(title=...)`,
+`window.get(name)`, `window.root`, and `window.simulate(event, node=None,
+**fields)` for headless tests — see [Events and Listeners](events.md).
+`window.create(kind, **props)` makes detached nodes — see
+[Paint, Paths, and Animation](paint.md#creating-nodes).
+
+### `measure_text`
+
+**`measure_text(text, font_family="Roboto", font_size=16, font_weight=400,
+font_style="normal", letter_spacing=0, line_height=None, max_width=None,
+wrap="word", max_lines=None, overflow="clip") -> (width, height)`** *(new in 0.3.4)*
+
+The size `text` takes, laid out exactly as a text node with those properties
+paints it: wrapped within `max_width` when given, cut to `max_lines`, ended with
+an ellipsis for `overflow="ellipsis"`. The width is the widest shown line
+without its trailing whitespace. A text node has no size of its own — this is
+how a content-sized widget gets one. See
+[Nodes and Properties](properties.md#text).
+
+### `advance`
+
+**`advance(ms)`** *(new in 0.3.4)*
+
+Moves this window's time forward by exactly `ms` milliseconds, then runs
+animations, their `on_complete` callbacks, and layout at the new time —
+deterministic time for headless tests, where `App.run()` renders no
+frames:
+
+```python
+window.advance(0)            # pin the clock before starting animations
+card.animate("opacity", 1.0, 200)
+window.advance(100)
+assert card.get("opacity") == 0.5
+```
+
+The first call pins the window's clock at the real current time; from then
+on only `advance` moves it. Each window keeps its own time, and
+`App.run()` returns every window it opens to the real clock.
 
 ## Synthetic input dispatch
 

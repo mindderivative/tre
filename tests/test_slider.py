@@ -61,5 +61,6 @@ def test_thumb_position_property_is_unknown_on_a_non_slider_node():
     rect = window.add_rect(background=(0, 0, 0, 255), width=24, height=24)
     with pytest.raises(ValueError, match="Rect has no property 'value'"):
         rect.animate("value", 0.5)
-    with pytest.raises(ValueError, match="Rect has no property 'value'"):
-        rect.get("value")
+    # M94: `value` is also the accessibility value every node has, so
+    # reading it on a plain rect returns that -- unset, `None`.
+    assert rect.get("value") is None

@@ -227,6 +227,7 @@ impl GpuState {
                 font_size: BODY_FONT_SIZE,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -245,6 +246,7 @@ impl GpuState {
                 font_size: HEADLINE_FONT_SIZE,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -263,6 +265,7 @@ impl GpuState {
                 font_size: ARABIC_FONT_SIZE,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {

@@ -17,8 +17,10 @@ use taffy::prelude::{Position, Rect as TaffyRect, Size, Style, auto, length};
 
 use crate::dispatch::{CompletionRegistry, HandlerMap, SharedCompletions};
 use crate::dock::{self, SharedDockState};
-use crate::node::Node;
+use crate::listeners::WindowListenerMap;
+use crate::node::{Node, NodeState};
 use crate::terminal::TerminalSession;
+use crate::thread_bound::{ThreadBound, thread_bound_shell};
 use crate::view::View;
 
 const PADDING: f32 = 16.0;
@@ -347,8 +349,12 @@ pub(crate) type SharedTheme = Rc<RefCell<ThemeState>>;
 /// factory's own wrapping pattern), so reading `window.theme` twice
 /// sees the identical live state a real `set_theme()` call in between
 /// would change.
-#[pyclass(unsendable, name = "Theme")]
-pub struct Theme {
+#[pyclass(name = "Theme")]
+pub struct Theme(ThreadBound<ThemeHandle>);
+thread_bound_shell!(Theme => ThemeHandle);
+
+/// `Theme`'s state (M96: behind a `ThreadBound`, see `thread_bound`).
+pub struct ThemeHandle {
     state: SharedTheme,
 }
 
@@ -542,8 +548,12 @@ pub(crate) fn positioned_style(
 /// map from a `Node` Python object that holds no back-reference to this
 /// `PyWindow` -- shared the exact way `tree: Rc<RefCell<Tree>>` already
 /// is between a `Window` and every `Node` it hands out.
-#[pyclass(unsendable, name = "Window")]
-pub struct PyWindow {
+#[pyclass(name = "Window")]
+pub struct PyWindow(ThreadBound<WindowState>);
+thread_bound_shell!(PyWindow => WindowState);
+
+/// `Window`'s state (M96: behind a `ThreadBound`, see `thread_bound`).
+pub struct WindowState {
     pub(crate) tree: Rc<RefCell<Tree>>,
     pub(crate) root: NodeId,
     pub(crate) title: String,
@@ -558,14 +568,6 @@ pub struct PyWindow {
     /// hitting the exact predicted "Already borrowed" panic while
     /// building the showcase demo's own motion screen.
     pub(crate) materializers: RefCell<HashMap<NodeId, Py<PyAny>>>,
-    /// M5 Phase 3 (§11.10/§11.11): the "draw callback" storage,
-    /// mirroring `materializers`'s own shape exactly -- stored by
-    /// `add_canvas`, invoked (exactly once per call) only by the real
-    /// entry point `redraw_canvas`, never automatically every frame
-    /// (see `PLAN.md`: no consumer has asked for that yet). Also
-    /// `RefCell`-wrapped as of M27 Phase 3, for the identical real
-    /// reason `materializers` is.
-    pub(crate) canvas_draws: RefCell<HashMap<NodeId, Py<PyAny>>>,
     pub(crate) handlers: HandlerMap,
     /// M4 Phase 7 (§11.3): `anchor NodeId -> content NodeId`, shared
     /// with every `Node` this `Window` hands out (`Node.
@@ -601,7 +603,7 @@ pub struct PyWindow {
     /// `RefCell<Vec<...>>`, not `Rc`-shared like `theme`/`handlers` --
     /// only this `Window`'s own `add_*` methods (push) and `set_theme`
     /// (replay) ever touch it, the same "not shared with `Node`" shape
-    /// `materializers`/`canvas_draws` already have. **Real, deliberately
+    /// `materializers` already has. **Real, deliberately
     /// accepted limitation, named not hidden:** never pruned when a
     /// hook's own node(s) are later removed (`Node.remove()`) -- a
     /// stale hook becomes a silent no-op on the next `set_theme` call
@@ -618,7 +620,17 @@ pub struct PyWindow {
     /// unchanged) -- only `App::run`'s own `WindowSetup`/`WindowRuntime`
     /// and `show_view` (below) ever touch it.
     pub(crate) active: SharedActiveTree,
+    /// M94: `window.on(...)` listeners -- the window's own, independent of
+    /// which tree it shows.
+    pub(crate) window_listeners: WindowListenerMap,
+    /// M94: the OS window while `App.run()` has it open -- `None` before
+    /// and after. `window.set(title=...)` and `window.get("scale_factor")`
+    /// reach it here; `App.run()` fills and clears it.
+    pub(crate) os_window: SharedOsWindow,
 }
+
+/// M94: see `PyWindow::os_window`.
+pub(crate) type SharedOsWindow = Rc<RefCell<Option<std::sync::Arc<winit::window::Window>>>>;
 
 /// Real review finding: every `add_*`/`build_shell` method below used
 /// to build an identical 6-field `Node` struct literal by hand (the
@@ -632,14 +644,14 @@ pub struct PyWindow {
 /// ever called from Rust, never from Python.
 impl PyWindow {
     pub(crate) fn wrap_node(&self, id: NodeId) -> Node {
-        Node {
+        Node::from(NodeState {
             id,
             tree: self.tree.clone(),
             handlers: self.handlers.clone(),
             context_menus: self.context_menus.clone(),
             theme: self.theme.clone(),
             completions: self.completions.clone(),
-        }
+        })
     }
 }
 
@@ -681,14 +693,13 @@ impl PyWindow {
             handlers: handlers.clone(),
             context_menus: context_menus.clone(),
         }));
-        Self {
+        Self(ThreadBound::new(WindowState {
             tree,
             root,
             title: title.to_string(),
             width: Rc::new(Cell::new(width)),
             height: Rc::new(Cell::new(height)),
             materializers: RefCell::new(HashMap::new()),
-            canvas_draws: RefCell::new(HashMap::new()),
             handlers,
             context_menus,
             dock: Rc::new(RefCell::new(dock::DockState::new())),
@@ -697,7 +708,9 @@ impl PyWindow {
             terminals: Rc::new(RefCell::new(HashMap::new())),
             retheme_hooks: RefCell::new(Vec::new()),
             active,
-        }
+            window_listeners: Rc::new(RefCell::new(HashMap::new())),
+            os_window: Rc::new(RefCell::new(None)),
+        }))
     }
 
     /// M42 Phase 1 (§4, §5, §8, §16.2, §16.4): the real, first entry
@@ -718,7 +731,7 @@ impl PyWindow {
     /// shown, see the window's true current size immediately, not a
     /// stale value captured at `from_view` time.
     ///
-    /// `dock`/`materializers`/`canvas_draws`/`terminals` default-empty,
+    /// `dock`/`materializers`/`terminals` default-empty,
     /// confirmed safe: `engine-spec`'s own YAML builder (`Reconciler::
     /// load`, which built `view`'s tree) has no `Terminal`/`VirtualList`/
     /// `Canvas` case, so a View-built tree can never contain a `NodeKind`
@@ -743,14 +756,13 @@ impl PyWindow {
             handlers: view.handlers.clone(),
             context_menus: view.context_menus.clone(),
         }));
-        Self {
+        Self(ThreadBound::new(WindowState {
             tree: view.tree.clone(),
             root,
             title: title.to_string(),
             width: view.width.clone(),
             height: view.height.clone(),
             materializers: RefCell::new(HashMap::new()),
-            canvas_draws: RefCell::new(HashMap::new()),
             handlers: view.handlers.clone(),
             context_menus: view.context_menus.clone(),
             dock: Rc::new(RefCell::new(dock::DockState::new())),
@@ -767,7 +779,9 @@ impl PyWindow {
             // registered hook for that node going forward.
             retheme_hooks: RefCell::new(Vec::new()),
             active,
-        }
+            window_listeners: Rc::new(RefCell::new(HashMap::new())),
+            os_window: Rc::new(RefCell::new(None)),
+        }))
     }
 
     /// M42 Phase 2 (§4, §5, §8, §16.2, §16.4): switches which `View` a
@@ -977,9 +991,9 @@ impl PyWindow {
     /// current live state, including after a real `set_theme()` call.
     #[getter]
     fn theme(&self) -> Theme {
-        Theme {
+        Theme(ThreadBound::new(ThemeHandle {
             state: self.theme.clone(),
-        }
+        }))
     }
 
     /// §11.7's own claim, matching `App::run`'s existing `PyWindow::
@@ -989,13 +1003,13 @@ impl PyWindow {
     /// `Window` (a plausible, real pattern -- e.g. a bound method) forms
     /// a reference cycle the refcounting GC alone can never collect.
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        // M96: the collector may run on any thread; elsewhere, report
+        // nothing (see `thread_bound`).
+        if !self.0.is_owner() {
+            return Ok(());
+        }
         for materializer in self.materializers.borrow().values() {
             visit.call(materializer)?;
-        }
-        // M5 Phase 3: `canvas_draws` is exactly the same class of stored
-        // `PyObject` as `materializers` -- same cyclic-GC obligation.
-        for draw in self.canvas_draws.borrow().values() {
-            visit.call(draw)?;
         }
         for (handler, _wants_event) in self.handlers.borrow().values() {
             visit.call(handler)?;
@@ -1004,6 +1018,10 @@ impl PyWindow {
         // the same cyclic-GC obligation as `handlers`.
         for callback in self.completions.borrow().callbacks.values() {
             visit.call(callback)?;
+        }
+        // M94: window listeners are stored callbacks too.
+        for (handler, _wants_event) in self.window_listeners.borrow().values() {
+            visit.call(handler)?;
         }
         // M42 Phase 2: after a real `show_view` switch, `self.active`'s
         // own `handlers` can be a *different* `HandlerMap` than
@@ -1043,11 +1061,14 @@ impl PyWindow {
     }
 
     fn __clear__(&mut self) {
+        if !self.0.is_owner() {
+            return;
+        }
         self.materializers.borrow_mut().clear();
-        self.canvas_draws.borrow_mut().clear();
         self.handlers.borrow_mut().clear();
         self.completions.borrow_mut().callbacks.clear();
         self.active.borrow().handlers.borrow_mut().clear();
+        self.window_listeners.borrow_mut().clear();
     }
 }
 

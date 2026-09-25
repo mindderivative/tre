@@ -40,7 +40,7 @@ use crate::canvas::CanvasState;
 use peniko::Color;
 use taffy::Style;
 
-use crate::animation::Animated;
+use crate::animation::{Animated, Interpolate};
 
 slotmap::new_key_type! {
     /// A generational index (slot index + reuse generation), matching
@@ -141,6 +141,8 @@ pub enum NodeKind {
     /// solid-`tint` `BezPath` fill -- see `IconState`'s own doc
     /// comment for the real crate-boundary reasoning.
     Icon(IconState),
+    /// M95 (D4): any vector path -- fill, stroke, trim, morph.
+    Path(crate::path::PathState),
     /// M30 Phase 2 Step 1 (§5, §7.3): a real MD3 radio button.
     /// `selected` is plain, app-owned state -- the identical Design
     /// Principle 6 shape `CheckboxState.checked` already establishes
@@ -424,11 +426,102 @@ impl LoadingIndicatorState {
 /// pass" -- pyCopper's own comment predates this project's own direct
 /// confirmation that strikethrough specifically has no real source
 /// data to render in the first place).
+/// M95: a terminal cell's color as the program set it -- the palette's
+/// own foreground/background, one of its 256 indexed colors, or an exact
+/// RGB value. Resolved against `TerminalState::palette` when painted, so
+/// changing the palette recolors what's already on screen.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CellColor {
+    Default,
+    Indexed(u8),
+    Rgb(Color),
+}
+
+/// M95: every color a terminal paints -- the 16 ANSI colors (the rest of
+/// the 256 are the standard cube and grey ramp), the default foreground
+/// and background, the cursor, and the selection highlight.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TerminalPalette {
+    pub ansi: [Color; 16],
+    pub foreground: Color,
+    pub background: Color,
+    pub cursor: Color,
+    pub selection: Color,
+}
+
+impl Default for TerminalPalette {
+    fn default() -> Self {
+        const ANSI_16: [(u8, u8, u8); 16] = [
+            (28, 28, 33),
+            (222, 89, 89),
+            (140, 191, 102),
+            (217, 178, 89),
+            (102, 153, 230),
+            (191, 128, 217),
+            (102, 191, 204),
+            (204, 204, 209),
+            (102, 107, 117),
+            (242, 115, 115),
+            (166, 217, 128),
+            (242, 204, 115),
+            (140, 178, 242),
+            (217, 153, 242),
+            (140, 217, 230),
+            (242, 242, 247),
+        ];
+        Self {
+            ansi: ANSI_16.map(|(r, g, b)| Color::from_rgba8(r, g, b, 0xFF)),
+            foreground: Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF),
+            background: Color::TRANSPARENT,
+            cursor: Color::from_rgba8(0x1C, 0x1B, 0x1F, 0x80),
+            selection: Color::from_rgba8(0x1C, 0x1B, 0x1F, 0x4D),
+        }
+    }
+}
+
+impl TerminalPalette {
+    /// One of the 256 indexed colors: the palette's 16, then the 6x6x6
+    /// color cube, then the 24-step grey ramp.
+    pub fn indexed(&self, index: u8) -> Color {
+        if let Some(&color) = self.ansi.get(usize::from(index)) {
+            return color;
+        }
+        if index < 232 {
+            let n = index - 16;
+            let levels = [0u8, 95, 135, 175, 215, 255];
+            return Color::from_rgba8(
+                levels[usize::from(n / 36)],
+                levels[usize::from((n / 6) % 6)],
+                levels[usize::from(n % 6)],
+                0xFF,
+            );
+        }
+        let level = (8 + u16::from(index - 232) * 10).min(255) as u8;
+        Color::from_rgba8(level, level, level, 0xFF)
+    }
+
+    pub fn foreground_of(&self, color: CellColor) -> Color {
+        match color {
+            CellColor::Default => self.foreground,
+            CellColor::Indexed(index) => self.indexed(index),
+            CellColor::Rgb(color) => color,
+        }
+    }
+
+    pub fn background_of(&self, color: CellColor) -> Color {
+        match color {
+            CellColor::Default => self.background,
+            CellColor::Indexed(index) => self.indexed(index),
+            CellColor::Rgb(color) => color,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TerminalCell {
     pub ch: char,
-    pub fg: Color,
-    pub bg: Color,
+    pub fg: CellColor,
+    pub bg: CellColor,
     pub bold: bool,
     pub dim: bool,
     pub italic: bool,
@@ -448,8 +541,8 @@ impl TerminalCell {
     pub fn blank() -> Self {
         Self {
             ch: ' ',
-            fg: Color::TRANSPARENT,
-            bg: Color::TRANSPARENT,
+            fg: CellColor::Default,
+            bg: CellColor::Default,
             bold: false,
             dim: false,
             italic: false,
@@ -500,9 +593,29 @@ pub struct TerminalState {
     /// `PointerReleased` ends it, so the selection visibly persists
     /// until a new press starts one (or clears it).
     pub selection_end: Option<(u16, u16)>,
+    /// M95: the colors this terminal paints.
+    pub palette: TerminalPalette,
 }
 
 impl TerminalState {
+    /// M96: resizes the grid to `cols` x `rows`, keeping the cells that
+    /// still fit where they were and blanking the rest -- the terminal's
+    /// session catches its PTY up at its next drain.
+    pub fn resize_grid(&mut self, cols: u16, rows: u16) {
+        let mut cells = vec![TerminalCell::blank(); usize::from(cols) * usize::from(rows)];
+        for row in 0..rows.min(self.rows) {
+            for col in 0..cols.min(self.cols) {
+                cells[usize::from(row) * usize::from(cols) + usize::from(col)] =
+                    self.cells[usize::from(row) * usize::from(self.cols) + usize::from(col)];
+            }
+        }
+        self.cells = cells;
+        self.cols = cols;
+        self.rows = rows;
+        self.cursor_col = self.cursor_col.min(cols.saturating_sub(1));
+        self.cursor_row = self.cursor_row.min(rows.saturating_sub(1));
+    }
+
     /// Seeds a real, fully blank `cols * rows` grid -- the real
     /// "nothing to show yet" state before the app's own first real PTY
     /// bytes ever arrive, the identical real placeholder-first-frame
@@ -522,6 +635,7 @@ impl TerminalState {
             font_size,
             selection_start: None,
             selection_end: None,
+            palette: TerminalPalette::default(),
         }
     }
 
@@ -792,6 +906,10 @@ pub struct ScrollViewState {
     /// anchor data belongs to the kind, `Tree.dragging` alone only
     /// ever names *which* node is being dragged.
     pub thumb_drag_anchor: Option<(f64, f64)>,
+    /// M95: the scrollbar thumb's color; `None` paints the default.
+    pub scrollbar_fill: Option<Color>,
+    /// M95: the scrollbar thumb's thickness -- painted and hit-tested.
+    pub scrollbar_width: f64,
 }
 
 impl ScrollViewState {
@@ -800,6 +918,8 @@ impl ScrollViewState {
             scroll: Animated::new(0.0),
             horizontal,
             thumb_drag_anchor: None,
+            scrollbar_fill: None,
+            scrollbar_width: SCROLLBAR_THICKNESS,
         }
     }
 
@@ -906,7 +1026,7 @@ pub struct TextFieldState {
     /// real sibling, same reasoning. Defaults to real, byte-for-byte
     /// the historical hardcoded `0x1C1B1F` `engine-render`'s own
     /// `TextField` paint used before this phase.
-    pub text_tint: Color,
+    pub text_tint: Animated<Color>,
     /// M30 Phase 9 Step 3 (§8, §10): `false` (the default, every
     /// existing construction site's own byte-for-byte unchanged
     /// behavior) is the original real, stated single-line scope --
@@ -1014,6 +1134,18 @@ pub struct TextFieldState {
     /// line field and every multiline field whose own longest real
     /// line still fits the box, unchanged.
     pub horizontal_scroll_offset: Animated<f64>,
+    /// M95: the hint shown while `content` is empty; empty shows none.
+    pub placeholder: String,
+    /// M95: the placeholder's color; `None` is `text_tint` at 60% alpha.
+    pub placeholder_fill: Option<Color>,
+    /// M95: the caret's color; `None` is `text_tint`.
+    pub caret_color: Option<Color>,
+    /// M95: the selection highlight's color; `None` is `text_tint` at 30%
+    /// alpha.
+    pub selection_fill: Option<Color>,
+    /// M95: a password field -- every character paints as a bullet, and
+    /// its text never leaves through copy or cut.
+    pub obscured: bool,
 }
 
 impl TextFieldState {
@@ -1036,7 +1168,7 @@ impl TextFieldState {
             cursor,
             selection_anchor: None,
             preedit: None,
-            text_tint: Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF),
+            text_tint: Animated::new(Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF)),
             multiline: false,
             show_whitespace: false,
             syntax_spans: Vec::new(),
@@ -1044,6 +1176,11 @@ impl TextFieldState {
             goal_column: None,
             scroll_offset: Animated::new(0.0),
             horizontal_scroll_offset: Animated::new(0.0),
+            placeholder: String::new(),
+            placeholder_fill: None,
+            caret_color: None,
+            selection_fill: None,
+            obscured: false,
         }
     }
 }
@@ -1524,6 +1661,38 @@ pub enum TextAlign {
 /// name table) rather than carrying a weight/style axis: this step's two type
 /// roles are two distinct font files (Roboto Regular vs. Medium), not
 /// one variable font interpolated at draw time.
+/// M96: how a text node lays out its lines, beyond its font -- italics,
+/// letter spacing, wrapping, a line limit, and whether an overflowing last
+/// line ends in an ellipsis. The default is plain wrapped text.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextOptions {
+    /// Italic. Synthesized by slanting the glyphs when the family has no
+    /// italic face.
+    pub italic: bool,
+    /// Extra space after each character, in pixels.
+    pub letter_spacing: f32,
+    /// `true` wraps lines at word boundaries within the node's width;
+    /// `false` keeps each paragraph on one line.
+    pub wrap: bool,
+    /// The most lines shown; the rest are cut.
+    pub max_lines: Option<usize>,
+    /// Ends a cut last line -- by `max_lines`, or by the width when not
+    /// wrapping -- with "…".
+    pub ellipsis: bool,
+}
+
+impl Default for TextOptions {
+    fn default() -> Self {
+        Self {
+            italic: false,
+            letter_spacing: 0.0,
+            wrap: true,
+            max_lines: None,
+            ellipsis: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextState {
     pub content: String,
@@ -1553,6 +1722,133 @@ pub struct TextState {
     /// real, explicit choice (exactly the font size, no leading at
     /// all), not the same thing spelled two ways.
     pub line_height: Option<f32>,
+    /// M96: line layout beyond the font (`TextOptions`).
+    pub options: TextOptions,
+}
+
+/// M95: four corner radii -- `[top_left, top_right, bottom_right,
+/// bottom_left]` -- animatable as one value.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CornerRadii(pub [f64; 4]);
+
+impl Interpolate for CornerRadii {
+    fn interpolate(&self, other: &Self, t: f64) -> Self {
+        let mut out = [0.0; 4];
+        for (i, corner) in out.iter_mut().enumerate() {
+            *corner = self.0[i].interpolate(&other.0[i], t);
+        }
+        Self(out)
+    }
+}
+
+/// M95: one drop shadow, as CSS `box-shadow` draws it -- the node's own
+/// rounded box, offset, grown by `spread`, and blurred by `blur` (a CSS
+/// blur radius in pixels).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shadow {
+    pub color: Color,
+    pub offset_x: f64,
+    pub offset_y: f64,
+    pub blur: f64,
+    pub spread: f64,
+}
+
+impl Interpolate for Shadow {
+    fn interpolate(&self, other: &Self, t: f64) -> Self {
+        Self {
+            color: self.color.interpolate(&other.color, t),
+            offset_x: self.offset_x.interpolate(&other.offset_x, t),
+            offset_y: self.offset_y.interpolate(&other.offset_y, t),
+            blur: self.blur.interpolate(&other.blur, t),
+            spread: self.spread.interpolate(&other.spread, t),
+        }
+    }
+}
+
+impl Shadow {
+    /// The same shadow, fully transparent -- what a shadow fades from or
+    /// to when two lists of different lengths animate.
+    fn invisible(self) -> Self {
+        Self {
+            color: self.color.with_alpha(0.0),
+            ..self
+        }
+    }
+}
+
+/// M96: a node's own transform, as four independently animatable parts
+/// applied about the center of its box, like CSS's default
+/// `transform-origin`: scale and rotation first, then translation. Each
+/// part has its own animation, so easing one never retargets another, and
+/// a rotation sweeps through its arc.
+pub struct NodeTransform {
+    pub translate_x: Animated<f64>,
+    pub translate_y: Animated<f64>,
+    pub scale: Animated<f64>,
+    pub rotation_deg: Animated<f64>,
+}
+
+impl Default for NodeTransform {
+    fn default() -> Self {
+        Self {
+            translate_x: Animated::new(0.0),
+            translate_y: Animated::new(0.0),
+            scale: Animated::new(1.0),
+            rotation_deg: Animated::new(0.0),
+        }
+    }
+}
+
+impl NodeTransform {
+    /// The current affine for a `width` x `height` box.
+    pub fn to_affine(&self, width: f64, height: f64) -> peniko::kurbo::Affine {
+        use peniko::kurbo::Affine;
+        let (tx, ty) = (self.translate_x.current, self.translate_y.current);
+        let (scale, degrees) = (self.scale.current, self.rotation_deg.current);
+        if scale == 1.0 && degrees == 0.0 {
+            return Affine::translate((tx, ty));
+        }
+        let center = (width / 2.0, height / 2.0);
+        Affine::translate((tx + center.0, ty + center.1))
+            * Affine::rotate(degrees.to_radians())
+            * Affine::scale(scale)
+            * Affine::translate((-center.0, -center.1))
+    }
+
+    fn tick(&mut self, now: Instant, completed: &mut Vec<crate::CompletionHandle>) -> bool {
+        let x = self.translate_x.tick(now, completed);
+        let y = self.translate_y.tick(now, completed);
+        let scale = self.scale.tick(now, completed);
+        let rotation = self.rotation_deg.tick(now, completed);
+        x || y || scale || rotation
+    }
+}
+
+/// M95: a node's drop shadows, the first painted on top, like CSS.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Shadows(pub Vec<Shadow>);
+
+impl Interpolate for Shadows {
+    /// Pairwise; a shadow with no partner fades in or out in place.
+    fn interpolate(&self, other: &Self, t: f64) -> Self {
+        if t >= 1.0 {
+            return other.clone();
+        }
+        let len = self.0.len().max(other.0.len());
+        let shadows = (0..len)
+            .map(|i| {
+                let from = self.0.get(i).copied();
+                let to = other.0.get(i).copied();
+                match (from, to) {
+                    (Some(a), Some(b)) => a.interpolate(&b, t),
+                    (Some(a), None) => a.interpolate(&a.invisible(), t),
+                    (None, Some(b)) => b.invisible().interpolate(&b, t),
+                    (None, None) => unreachable!("i < the longer list's length"),
+                }
+            })
+            .collect();
+        Self(shadows)
+    }
 }
 
 /// Universal paint state every node has, regardless of `NodeKind`.
@@ -1604,7 +1900,15 @@ pub struct PaintProperties {
     /// deliberate, honest scope limit: nothing in this catalog yet
     /// needs a *smooth transition* between two different corner-radii
     /// shapes, only a static per-node choice made once at construction.
-    pub corner_radii_override: Option<[f64; 4]>,
+    pub corner_radii_override: Option<Animated<CornerRadii>>,
+    /// M95: drop shadows (`Shadows`), independent of the legacy MD3
+    /// `elevation`, which keeps drawing its own until M99 removes it.
+    pub shadows: Animated<Shadows>,
+    /// M96: the target API's `translate_x`/`translate_y`/`scale`/
+    /// `rotation_deg`, composed after the legacy `transform` above (which
+    /// keeps its top-left origin for canvas pan/zoom until M101 merges
+    /// the two). Read both through `local_transform`.
+    pub node_transform: NodeTransform,
     /// M32 Phase 3 (§5, §7, §11.7/§11.8): the real, general form of the
     /// clip `VirtualList`/`Carousel` each already bake into their own
     /// paint -- confirmed via direct read of `engine-render::paint_node`
@@ -1704,6 +2008,8 @@ impl PaintProperties {
             border_color: Animated::new(Color::from_rgba8(0, 0, 0, 0)),
             border_width: Animated::new(0.0),
             corner_radii_override: None,
+            shadows: Animated::new(Shadows::default()),
+            node_transform: NodeTransform::default(),
             clip_children: false,
             button_group_reflow: None,
             interactive_shape: None,
@@ -1720,6 +2026,12 @@ impl PaintProperties {
     /// ahead of a step that profiles it as actually necessary; the
     /// frame-time CI benchmark this same step adds is exactly what would
     /// catch it if a naive walk ever stopped meeting the 16.6ms budget.
+    /// M96: this node's whole transform relative to its layout position,
+    /// for a `width` x `height` box -- what paint and hit-testing apply.
+    pub fn local_transform(&self, width: f64, height: f64) -> peniko::kurbo::Affine {
+        self.transform.current * self.node_transform.to_affine(width, height)
+    }
+
     pub fn tick(&mut self, now: Instant, completed: &mut Vec<crate::CompletionHandle>) -> bool {
         let background = self.background.tick(now, completed);
         let corner_radius = self.corner_radius.tick(now, completed);
@@ -1729,7 +2041,16 @@ impl PaintProperties {
         let shape = self.shape.tick(now, completed);
         let border_color = self.border_color.tick(now, completed);
         let border_width = self.border_width.tick(now, completed);
-        background
+        let radii = self
+            .corner_radii_override
+            .as_mut()
+            .is_some_and(|radii| radii.tick(now, completed));
+        let shadows = self.shadows.tick(now, completed);
+        let node_transform = self.node_transform.tick(now, completed);
+        radii
+            || shadows
+            || node_transform
+            || background
             || corner_radius
             || elevation
             || opacity
@@ -1744,6 +2065,13 @@ pub struct Node {
     pub id: NodeId,
     pub parent: Option<NodeId>,
     pub children: Vec<NodeId>,
+    /// M96: `false` hides the node and its subtree -- not painted, not
+    /// hit, not in the accessibility tree or tab order, and (through
+    /// `Display::None`, set alongside) taking no layout space.
+    pub visible: bool,
+    /// M96: paint and hit-test order among siblings -- higher paints later,
+    /// on top; equal values keep child order.
+    pub z_index: i32,
     pub kind: NodeKind,
     pub layout_style: Style,
     pub paint: PaintProperties,
@@ -1773,4 +2101,96 @@ pub struct Node {
     /// is a true no-op -- only `Tree::set_hit_testable(id, false)`
     /// changes anything.
     pub hit_testable: bool,
+    /// M94: the pointer shape shown over this node; `None` inherits the
+    /// nearest ancestor's, and the default arrow when none sets one.
+    pub cursor: Option<Cursor>,
+}
+
+/// M94: the pointer shapes a node can ask for -- CSS's own vocabulary, in
+/// snake_case, so a framework author already knows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cursor {
+    Default,
+    Pointer,
+    Text,
+    Grab,
+    Grabbing,
+    Move,
+    NotAllowed,
+    Wait,
+    Progress,
+    Crosshair,
+    Help,
+    ColResize,
+    RowResize,
+    EwResize,
+    NsResize,
+    NeswResize,
+    NwseResize,
+    Copy,
+    Cell,
+    ContextMenu,
+    ZoomIn,
+    ZoomOut,
+    AllScroll,
+}
+
+impl Cursor {
+    pub const ALL: [Cursor; 23] = [
+        Self::Default,
+        Self::Pointer,
+        Self::Text,
+        Self::Grab,
+        Self::Grabbing,
+        Self::Move,
+        Self::NotAllowed,
+        Self::Wait,
+        Self::Progress,
+        Self::Crosshair,
+        Self::Help,
+        Self::ColResize,
+        Self::RowResize,
+        Self::EwResize,
+        Self::NsResize,
+        Self::NeswResize,
+        Self::NwseResize,
+        Self::Copy,
+        Self::Cell,
+        Self::ContextMenu,
+        Self::ZoomIn,
+        Self::ZoomOut,
+        Self::AllScroll,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Pointer => "pointer",
+            Self::Text => "text",
+            Self::Grab => "grab",
+            Self::Grabbing => "grabbing",
+            Self::Move => "move",
+            Self::NotAllowed => "not_allowed",
+            Self::Wait => "wait",
+            Self::Progress => "progress",
+            Self::Crosshair => "crosshair",
+            Self::Help => "help",
+            Self::ColResize => "col_resize",
+            Self::RowResize => "row_resize",
+            Self::EwResize => "ew_resize",
+            Self::NsResize => "ns_resize",
+            Self::NeswResize => "nesw_resize",
+            Self::NwseResize => "nwse_resize",
+            Self::Copy => "copy",
+            Self::Cell => "cell",
+            Self::ContextMenu => "context_menu",
+            Self::ZoomIn => "zoom_in",
+            Self::ZoomOut => "zoom_out",
+            Self::AllScroll => "all_scroll",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|cursor| cursor.name() == name)
+    }
 }

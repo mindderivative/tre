@@ -39,7 +39,7 @@ use engine_core::{ChangedValue, EventKind, NodeId, PointerButton, Tree, node_id_
 use pyo3::prelude::*;
 
 use crate::dispatch::{HandlerMap, SharedCompletions};
-use crate::node::Node;
+use crate::node::{Node, NodeState};
 use crate::window::SharedTheme;
 
 /// M56 (§8, §16.2): the 5 real handles every `Node` needs besides its
@@ -82,7 +82,7 @@ fn kind_name(kind: EventKind) -> &'static str {
 /// Rust variant name -- no existing cross-boundary convention to match
 /// (`PointerButton` has never reached Python before this), so this is
 /// simply the plainest honest mapping.
-fn button_name(button: PointerButton) -> &'static str {
+pub(crate) fn button_name(button: PointerButton) -> &'static str {
     match button {
         PointerButton::Primary => "primary",
         PointerButton::Secondary => "secondary",
@@ -126,28 +126,120 @@ pub struct Event {
     /// for a third real foreign-handle consumer rather than inventing
     /// a fourth id scheme. Kept unchanged since M54 shipped it
     /// (`AskUserQuestion`, M56 scoping) -- `node` (below) is the real,
-    /// live counterpart for the case this alone can't serve.
+    /// live counterpart for the case this alone can't serve. `0` for a
+    /// window event (M94), which has no node.
     #[pyo3(get)]
     source: u64,
     /// M56 (§8, §16.2): the real, live `Node` this event fired on --
-    /// additive alongside `source`, not a replacement (`AskUserQuestion`,
-    /// M56 scoping: a breaking type change would have broken M54's own
-    /// already-shipped `source: int` contract, test-asserted in `tests/
-    /// test_event_payload.py`). The one real thing `source`'s bare id
-    /// can't serve: a single handler registered generically across
-    /// several nodes has no way to know *which* one just fired without
-    /// this -- `source` alone only helps a handler that already closed
-    /// over its own specific `Node`.
-    #[pyo3(get)]
-    node: Py<Node>,
+    /// additive alongside `source`, not a replacement. The one real thing
+    /// `source`'s bare id can't serve: a single handler registered
+    /// generically across several nodes has no way to know *which* one
+    /// just fired without this. M94: `None` only for a window event, whose
+    /// `node` getter raises instead (see `Event::node`).
+    node: Option<Py<Node>>,
     #[pyo3(get)]
     position: Option<(f64, f64)>,
     #[pyo3(get)]
-    button: Option<String>,
+    pub(crate) button: Option<String>,
     #[pyo3(get)]
-    old_value: Option<Py<PyAny>>,
+    pub(crate) old_value: Option<Py<PyAny>>,
     #[pyo3(get)]
-    new_value: Option<Py<PyAny>>,
+    pub(crate) new_value: Option<Py<PyAny>>,
+    // M94: the M93 target-API fields. `type`/`target` are set for every
+    // event (legacy ones too); the rest only where the event has
+    // something to say, never fabricated.
+    #[pyo3(get, name = "type")]
+    event_type: String,
+    #[pyo3(get)]
+    target: Option<Py<Node>>,
+    /// The node whose listener is running -- updated at each step of
+    /// bubbling, as are `x`/`y`, which are local to it.
+    #[pyo3(get)]
+    pub(crate) current: Option<Py<Node>>,
+    #[pyo3(get)]
+    pub(crate) x: Option<f64>,
+    #[pyo3(get)]
+    pub(crate) y: Option<f64>,
+    #[pyo3(get)]
+    pub(crate) window_x: Option<f64>,
+    #[pyo3(get)]
+    pub(crate) window_y: Option<f64>,
+    #[pyo3(get)]
+    pub(crate) delta_x: Option<f64>,
+    #[pyo3(get)]
+    pub(crate) delta_y: Option<f64>,
+    #[pyo3(get)]
+    pub(crate) key: Option<String>,
+    #[pyo3(get)]
+    pub(crate) repeat: Option<bool>,
+    #[pyo3(get)]
+    pub(crate) shift: Option<bool>,
+    #[pyo3(get)]
+    pub(crate) ctrl: Option<bool>,
+    #[pyo3(get)]
+    pub(crate) alt: Option<bool>,
+    #[pyo3(get)]
+    pub(crate) meta: Option<bool>,
+    #[pyo3(get)]
+    pub(crate) text: Option<String>,
+    #[pyo3(get)]
+    pub(crate) action: Option<String>,
+    #[pyo3(get)]
+    pub(crate) value: Option<Py<PyAny>>,
+    #[pyo3(get)]
+    pub(crate) width: Option<f64>,
+    #[pyo3(get)]
+    pub(crate) height: Option<f64>,
+    #[pyo3(get)]
+    pub(crate) dark: Option<bool>,
+    #[pyo3(get)]
+    pub(crate) scale_factor: Option<f64>,
+    /// `focus`/`unfocus`: the node on the other side of the move -- losing
+    /// focus for `focus`, gaining it for `unfocus`.
+    #[pyo3(get)]
+    pub(crate) related_target: Option<Py<Node>>,
+    /// `focus`: whether focus arrived by keyboard or assistive technology
+    /// rather than a pointer press (`listeners::note_input_modality`).
+    #[pyo3(get)]
+    pub(crate) focus_visible: Option<bool>,
+    pub(crate) stopped: bool,
+    pub(crate) cancelled: bool,
+    pub(crate) cancellable: bool,
+}
+
+#[pymethods]
+impl Event {
+    /// The node the event fired on (legacy name for `target`). A window
+    /// event has none, so this raises rather than returning `None` --
+    /// keeping the long-standing `node: Node` type exact.
+    #[getter]
+    fn node(&self, py: Python<'_>) -> PyResult<Py<Node>> {
+        self.node.as_ref().map(|n| n.clone_ref(py)).ok_or_else(|| {
+            pyo3::exceptions::PyAttributeError::new_err(format!(
+                "a `{}` window event has no node -- window events have no target",
+                self.event_type
+            ))
+        })
+    }
+
+    /// Ends propagation: no listener on a further ancestor runs. A no-op
+    /// on an event that doesn't bubble.
+    fn stop(&mut self) {
+        self.stopped = true;
+    }
+
+    /// Prevents a cancellable event's default -- today only the window's
+    /// `close_requested`, which then leaves the window open.
+    fn cancel(&mut self) -> PyResult<()> {
+        if !self.cancellable {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "`{}` can't be cancelled -- only `close_requested` can",
+                self.event_type
+            )));
+        }
+        self.cancelled = true;
+        Ok(())
+    }
 }
 
 impl Event {
@@ -158,18 +250,107 @@ impl Event {
     /// out"), reused here rather than reinvented. Fallible (`Py::new`)
     /// -- the same reason every other real place this crate builds a
     /// fresh pyclass instance inside a dispatch path is fallible too.
-    fn build_node(py: Python<'_>, id: NodeId, ctx: &NodeContext<'_>) -> PyResult<Py<Node>> {
+    pub(crate) fn build_node(
+        py: Python<'_>,
+        id: NodeId,
+        ctx: &NodeContext<'_>,
+    ) -> PyResult<Py<Node>> {
         Py::new(
             py,
-            Node {
+            Node::from(NodeState {
                 id,
                 tree: ctx.tree.clone(),
                 handlers: ctx.handlers.clone(),
                 context_menus: ctx.context_menus.clone(),
                 theme: ctx.theme.clone(),
                 completions: ctx.completions.clone(),
-            },
+            }),
         )
+    }
+
+    /// M94: an event with only its names and node set -- every other
+    /// field `None`, for the constructor to fill in what applies.
+    fn blank(
+        kind: &str,
+        event_type: &str,
+        source: u64,
+        node: Option<Py<Node>>,
+        py: Python<'_>,
+    ) -> Self {
+        Self {
+            kind: kind.to_string(),
+            source,
+            target: node.as_ref().map(|n| n.clone_ref(py)),
+            node,
+            position: None,
+            button: None,
+            old_value: None,
+            new_value: None,
+            event_type: event_type.to_string(),
+            current: None,
+            x: None,
+            y: None,
+            window_x: None,
+            window_y: None,
+            delta_x: None,
+            delta_y: None,
+            key: None,
+            repeat: None,
+            shift: None,
+            ctrl: None,
+            alt: None,
+            meta: None,
+            text: None,
+            action: None,
+            value: None,
+            width: None,
+            height: None,
+            dark: None,
+            scale_factor: None,
+            related_target: None,
+            focus_visible: None,
+            stopped: false,
+            cancelled: false,
+            cancellable: false,
+        }
+    }
+
+    /// M94: a legacy event, `type` equal to its legacy `kind`.
+    fn legacy(
+        py: Python<'_>,
+        kind: EventKind,
+        node: NodeId,
+        ctx: &NodeContext<'_>,
+    ) -> PyResult<Self> {
+        let name = kind_name(kind);
+        Ok(Self::blank(
+            name,
+            name,
+            node_id_as_u64(node),
+            Some(Self::build_node(py, node, ctx)?),
+            py,
+        ))
+    }
+
+    /// M94: a `node.on(...)` listener event aimed at `target`.
+    pub(crate) fn for_node(
+        py: Python<'_>,
+        event_type: &str,
+        target: NodeId,
+        ctx: &NodeContext<'_>,
+    ) -> PyResult<Self> {
+        Ok(Self::blank(
+            event_type,
+            event_type,
+            node_id_as_u64(target),
+            Some(Self::build_node(py, target, ctx)?),
+            py,
+        ))
+    }
+
+    /// M94: a `window.on(...)` listener event -- no node at all.
+    pub(crate) fn for_window(py: Python<'_>, event_type: &str) -> Self {
+        Self::blank(event_type, event_type, 0, None, py)
     }
 
     pub(crate) fn click(
@@ -179,34 +360,25 @@ impl Event {
         position: Option<(f64, f64)>,
         button: Option<PointerButton>,
     ) -> PyResult<Self> {
-        Ok(Self {
-            kind: kind_name(EventKind::Click).to_string(),
-            source: node_id_as_u64(node),
-            node: Self::build_node(py, node, ctx)?,
-            position,
-            button: button.map(button_name).map(str::to_string),
-            old_value: None,
-            new_value: None,
-        })
+        let mut event = Self::legacy(py, EventKind::Click, node, ctx)?;
+        event.position = position;
+        event.button = button.map(button_name).map(str::to_string);
+        Ok(event)
     }
 
+    /// M94: `position` is `None` for a hover exit caused by the pointer
+    /// leaving the window, which has no position inside it.
     pub(crate) fn hover(
         py: Python<'_>,
         kind: EventKind,
         node: NodeId,
         ctx: &NodeContext<'_>,
-        position: (f64, f64),
+        position: Option<(f64, f64)>,
     ) -> PyResult<Self> {
         debug_assert!(matches!(kind, EventKind::HoverEnter | EventKind::HoverExit));
-        Ok(Self {
-            kind: kind_name(kind).to_string(),
-            source: node_id_as_u64(node),
-            node: Self::build_node(py, node, ctx)?,
-            position: Some(position),
-            button: None,
-            old_value: None,
-            new_value: None,
-        })
+        let mut event = Self::legacy(py, kind, node, ctx)?;
+        event.position = position;
+        Ok(event)
     }
 
     pub(crate) fn change(
@@ -216,25 +388,17 @@ impl Event {
         old_value: Option<Py<PyAny>>,
         new_value: Option<Py<PyAny>>,
     ) -> PyResult<Self> {
-        Ok(Self {
-            kind: kind_name(EventKind::Change).to_string(),
-            source: node_id_as_u64(node),
-            node: Self::build_node(py, node, ctx)?,
-            position: None,
-            button: None,
-            old_value,
-            new_value,
-        })
+        let mut event = Self::legacy(py, EventKind::Change, node, ctx)?;
+        event.old_value = old_value;
+        event.new_value = new_value;
+        Ok(event)
     }
 
     /// M55 (§10, §16.2): `Event::hover`'s own real `Focus` sibling --
-    /// mirrors its exact shape, but `position` stays `None`: unlike a
-    /// hover transition (always produced by a real `PointerMoved`), a
-    /// focus transition can come from a real keyboard Tab press, a
-    /// real AccessKit `Action::Focus` request, or a real `Window.
-    /// focus()`/`View.focus()` call, none of which carry a pointer
-    /// position at all -- `None` rather than fabricating one for the
-    /// one real case (click-to-focus) that happens to have one.
+    /// `position` stays `None`: a focus transition can come from a real
+    /// keyboard Tab press, a real AccessKit `Action::Focus` request, or a
+    /// real `Window.focus()`/`View.focus()` call, none of which carry a
+    /// pointer position at all.
     pub(crate) fn focus_transition(
         py: Python<'_>,
         kind: EventKind,
@@ -242,14 +406,6 @@ impl Event {
         ctx: &NodeContext<'_>,
     ) -> PyResult<Self> {
         debug_assert!(matches!(kind, EventKind::FocusEnter | EventKind::FocusExit));
-        Ok(Self {
-            kind: kind_name(kind).to_string(),
-            source: node_id_as_u64(node),
-            node: Self::build_node(py, node, ctx)?,
-            position: None,
-            button: None,
-            old_value: None,
-            new_value: None,
-        })
+        Self::legacy(py, kind, node, ctx)
     }
 }

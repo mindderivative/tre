@@ -26,29 +26,33 @@ mod input;
 mod interaction;
 mod node;
 mod overlay;
+mod path;
 mod shape_morph;
 mod tree;
 
-pub use access::{AccessNodeData, AccessStates, Action, Role};
+pub use access::{AccessNodeData, AccessStates, AccessValue, Action, ActionData, Live, Role};
 pub use animation::{ActiveAnimation, Animated, CompletionHandle, Interpolate, MotionCurve};
 pub use canvas::{CanvasState, CustomHitTest, DrawCommand};
 pub use dock::{DockLayout, DockSide, DockZone};
 pub use input::{
-    ChangedValue, DispatchOutcome, EventKind, InputEvent, Key, PointerButton, ScrollDelta,
+    ChangedValue, DispatchOutcome, EventKind, InputEvent, Key, Modifiers, PointerButton,
+    ScrollDelta,
 };
 pub use interaction::{InteractionState, RippleState};
 pub use node::{
     CAROUSEL_DRAG_INDEX_THRESHOLD, CAROUSEL_GAP, CAROUSEL_HEIGHT, CAROUSEL_ITEM_RADIUS,
     CAROUSEL_MEDIUM, CAROUSEL_PAD_X, CAROUSEL_PAD_Y, CAROUSEL_SMALL_MAX,
-    CAROUSEL_UNCONTAINED_WIDTH, CarouselLayout, CarouselState, CheckboxState,
-    CircularProgressState, ContentFit, ICON_VIEWBOX_SIZE, IconState, ImageState, ItemExtent,
-    LinearProgressState, LoadingIndicatorState, Node, NodeId, NodeKind, PaintProperties,
-    RadioButtonState, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN, SCROLLBAR_MIN_LENGTH,
-    SCROLLBAR_THICKNESS, ScrollViewState, SliderState, SplitterState, SwitchState, TerminalCell,
-    TerminalState, TextAlign, TextFieldState, TextState, TimePickerDialMode, TimePickerDialState,
+    CAROUSEL_UNCONTAINED_WIDTH, CarouselLayout, CarouselState, CellColor, CheckboxState,
+    CircularProgressState, ContentFit, CornerRadii, Cursor, ICON_VIEWBOX_SIZE, IconState,
+    ImageState, ItemExtent, LinearProgressState, LoadingIndicatorState, Node, NodeId, NodeKind,
+    NodeTransform, PaintProperties, RadioButtonState, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN,
+    SCROLLBAR_MIN_LENGTH, SCROLLBAR_THICKNESS, ScrollViewState, Shadow, Shadows, SliderState,
+    SplitterState, SwitchState, TerminalCell, TerminalPalette, TerminalState, TextAlign,
+    TextFieldState, TextOptions, TextState, TimePickerDialMode, TimePickerDialState,
     VirtualListState,
 };
-pub use overlay::OverlayMeta;
+pub use overlay::{OverlayMeta, Placement};
+pub use path::{PathData, PathState, fit_transform, trim};
 pub use shape_morph::ShapeKey;
 pub use tree::{
     FocusDirection, InteractionConfig, Tree, from_access_id, node_id_as_u64, to_access_id,

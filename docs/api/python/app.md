@@ -56,12 +56,14 @@ app.run(max_frames=60)  # each window individually stops after 60 frames
 
 **`thread_handle() -> LoopHandle`**
 
-`App`, `Window`, and `View` may only be used from the thread that
-created them — pyo3 raises `PanicException` (a `BaseException`, not an
-`Exception`) if another thread touches one. `thread_handle()` returns
-the one object a background thread may use: a
-[`LoopHandle`](#loophandle) onto this `App`'s event loop. Every handle
-from one `App` shares the same queue.
+`App`, `Window`, `Node`, and every other `tre` object may only be used
+from the thread that created them — using one from another thread
+raises `PanicException` (a `BaseException`, not an `Exception`).
+*Dropping* one there is safe: if Python's garbage collector frees a `tre`
+object on a background thread, the actual free happens on its own thread
+at the next frame or `tre` call. `thread_handle()` returns the one object a
+background thread may use: a [`LoopHandle`](#loophandle) onto this
+`App`'s event loop. Every handle from one `App` shares the same queue.
 
 ```python
 handle = app.thread_handle()

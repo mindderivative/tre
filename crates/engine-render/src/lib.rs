@@ -36,7 +36,7 @@ use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
 pub use fonts::{NoFontFacesFound, register_font};
 pub use geometry_cache::GeometryCache;
-pub use text::{MONOSPACE_FONT_FAMILY, TextPlacement, TextRenderer};
+pub use text::{FontSpec, MONOSPACE_FONT_FAMILY, TextPlacement, TextRenderer};
 
 /// MD3 seed-adjacent purple (#6750A4) -- an arbitrary but deliberate
 /// starting color, not vello_hybrid's own default, so a wrong pixel in a
@@ -44,19 +44,17 @@ pub use text::{MONOSPACE_FONT_FAMILY, TextPlacement, TextRenderer};
 /// left its own default."
 pub const INITIAL_COLOR: Color = Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF);
 
-/// Returns `color` with its alpha channel replaced by `opacity`
-/// (0.0..=1.0), independent of whatever alpha `color` already carried --
-/// this is how step 2's demo composes an `Animated<Color>` and a
-/// separate `Animated<f64>` opacity into one paint value each frame,
-/// rather than conflating "which color" and "how visible" into a single
-/// animated type.
+/// Returns `color` with its alpha multiplied by `opacity` (0.0..=1.0).
+/// M95: multiplied, where it used to *replace* the alpha -- so a color's
+/// own alpha (a translucent fill, a transparent box) finally renders, as
+/// the M93 target API's `(r, g, b, a)` colors require.
 pub fn with_opacity(color: Color, opacity: f64) -> Color {
     Color {
         components: [
             color.components[0],
             color.components[1],
             color.components[2],
-            opacity as f32,
+            color.components[3] * opacity as f32,
         ],
         cs: std::marker::PhantomData,
     }
@@ -366,12 +364,16 @@ fn paint_node(
     let node = tree
         .get(id)
         .expect("build_tree_scene: NodeId not found in this Tree");
+    // M96: a hidden node paints nothing, subtree included.
+    if !node.visible {
+        return;
+    }
     let layout = tree.layout(id);
     let w = f64::from(layout.size.width);
     let h = f64::from(layout.size.height);
     let composed = parent_transform
         * Affine::translate((f64::from(layout.location.x), f64::from(layout.location.y)))
-        * node.paint.transform.current;
+        * node.paint.local_transform(w, h);
 
     // M8 Phase 1 (§11.8): a whole-subtree skip, not a per-pixel clip --
     // this node's own real, composed, absolute bounding box (all four
@@ -404,6 +406,21 @@ fn paint_node(
         return;
     }
 
+    // M95: group opacity -- the node and its whole subtree composite as
+    // one layer at `opacity`, so a fading container fades its children
+    // too. The node's own paints below are then fully opaque
+    // (`own_alpha`), their colors' own alpha applying through
+    // `with_opacity`. A fully transparent node skips its subtree.
+    let opacity = node.paint.opacity.current;
+    if opacity <= 0.0 {
+        return;
+    }
+    let layered = opacity < 1.0;
+    if layered {
+        scene.push_layer(None, None, Some(opacity as f32), None, None);
+    }
+    let own_alpha = 1.0;
+
     scene.set_transform(composed);
 
     // M7 Phase 2 (§7.2): a real shadow, for any NodeKind, painted
@@ -422,7 +439,7 @@ fn paint_node(
     // separate, always-opaque layer underneath it). `<= 0.0` also
     // skips the shadow now, matching `elevation <= 0.0`'s own existing
     // "don't draw an invisible thing" precedent.
-    let node_opacity = node.paint.opacity.current;
+    let node_opacity = own_alpha;
     if elevation > 0.0 && node_opacity > 0.0 {
         let radius = node.paint.corner_radius.current as f32;
 
@@ -449,6 +466,42 @@ fn paint_node(
         scene.fill_blurred_rounded_rect(&key_rect, radius, blur_to_std_dev(key_blur), false);
     }
 
+    // M95: the `shadows` list, CSS `box-shadow`'s model -- each is the
+    // node's own rounded box, offset, grown by `spread` (its corners too),
+    // and blurred; the first listed paints on top, so the list paints in
+    // reverse. A node with differing corner radii shadows with their mean,
+    // the blurred rounded rect taking one radius.
+    let shadows = &node.paint.shadows.current.0;
+    if !shadows.is_empty() {
+        let radius = match &node.paint.corner_radii_override {
+            Some(radii) => radii.current.0.iter().sum::<f64>() / 4.0,
+            None => node.paint.corner_radius.current,
+        };
+        for shadow in shadows.iter().rev() {
+            if shadow.color.components[3] <= 0.0 {
+                continue;
+            }
+            let rect = Rect::new(
+                shadow.offset_x - shadow.spread,
+                shadow.offset_y - shadow.spread,
+                w + shadow.offset_x + shadow.spread,
+                h + shadow.offset_y + shadow.spread,
+            );
+            let shadow_radius = (radius + shadow.spread).max(0.0);
+            scene.set_paint(with_opacity(shadow.color, own_alpha));
+            if shadow.blur > 0.0 {
+                scene.fill_blurred_rounded_rect(
+                    &rect,
+                    shadow_radius as f32,
+                    blur_to_std_dev(shadow.blur as f32),
+                    false,
+                );
+            } else {
+                scene.fill_path(&RoundedRect::from_rect(rect, shadow_radius).to_path(0.1));
+            }
+        }
+    }
+
     match &node.kind {
         NodeKind::Rect | NodeKind::Splitter(_) | NodeKind::LoadingIndicator(_) => {
             // A splitter's own visible grip/handle paints exactly like
@@ -464,7 +517,7 @@ fn paint_node(
             // real "active shape morph paints the current silhouette"
             // branch just below already paints it correctly with zero
             // new paint code.
-            let color = with_opacity(node.paint.background.current, node.paint.opacity.current);
+            let color = with_opacity(node.paint.background.current, own_alpha);
             scene.set_paint(color);
             // M7 Phase 4 (§7.4): a real, active shape morph (`node.
             // paint.shape.current` non-empty) paints the current
@@ -486,7 +539,12 @@ fn paint_node(
                 // last paint, not rebuilt from scratch every frame
                 // (`GeometryCache`'s own doc comment has the real,
                 // measured motivation).
-                let path = match node.paint.corner_radii_override {
+                let path = match node
+                    .paint
+                    .corner_radii_override
+                    .as_ref()
+                    .map(|r| r.current.0)
+                {
                     Some(radii) => geometry.rounded_rect_fill_per_corner(id, w, h, radii),
                     None => geometry.rounded_rect_fill(id, w, h, node.paint.corner_radius.current),
                 };
@@ -526,7 +584,12 @@ fn paint_node(
                         // could sit up to half its own width outside
                         // the fill's own edge.
                         std::borrow::Cow::Owned(node.paint.shape.current.inset_path(inset))
-                    } else if let Some(radii) = node.paint.corner_radii_override {
+                    } else if let Some(radii) = node
+                        .paint
+                        .corner_radii_override
+                        .as_ref()
+                        .map(|r| r.current.0)
+                    {
                         std::borrow::Cow::Borrowed(
                             geometry.rounded_rect_border_per_corner(id, w, h, radii, inset),
                         )
@@ -536,15 +599,14 @@ fn paint_node(
                             geometry.rounded_rect_border(id, w, h, radius, inset),
                         )
                     };
-                let border_color =
-                    with_opacity(node.paint.border_color.current, node.paint.opacity.current);
+                let border_color = with_opacity(node.paint.border_color.current, own_alpha);
                 scene.set_paint(border_color);
                 scene.set_stroke(Stroke::new(border_width));
                 scene.stroke_path(&border_path);
             }
         }
         NodeKind::Text(state) | NodeKind::Link(state) => {
-            let color = with_opacity(node.paint.background.current, node.paint.opacity.current);
+            let color = with_opacity(node.paint.background.current, own_alpha);
             text.draw(
                 scene,
                 resources,
@@ -571,7 +633,7 @@ fn paint_node(
         // on-surface token from here).
         NodeKind::TextField(state) => {
             let radius = node.paint.corner_radius.current;
-            let bg = with_opacity(node.paint.background.current, node.paint.opacity.current);
+            let bg = with_opacity(node.paint.background.current, own_alpha);
             scene.set_paint(bg);
             // M38 Phase 7 (§5, §8): a real, previously-uncached fill --
             // direct grep before this phase found this arm still built
@@ -590,7 +652,7 @@ fn paint_node(
             // (byte-for-byte the old hardcoded literal), a real
             // resolved MD3 "on-surface" color once `Window.set_theme`
             // has pushed one in.
-            let text_color = with_opacity(state.text_tint, node.paint.opacity.current);
+            let text_color = with_opacity(state.text_tint.current, own_alpha);
             // M38 Phase 7 (§5, §8): a real, genuinely overflowing
             // `multiline` field now clips its own painted content to
             // its own box and shifts it up by `scroll_offset` -- a
@@ -638,14 +700,12 @@ fn paint_node(
         // from here, §4).
         NodeKind::Terminal(state) => {
             let radius = node.paint.corner_radius.current;
-            let bg = with_opacity(node.paint.background.current, node.paint.opacity.current);
+            let bg = with_opacity(node.paint.background.current, own_alpha);
             scene.set_paint(bg);
             scene.fill_path(geometry.rounded_rect_fill(id, w, h, radius));
 
-            let cursor_color = with_opacity(
-                peniko::Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF),
-                node.paint.opacity.current,
-            );
+            let cursor_color =
+                with_opacity(peniko::Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF), own_alpha);
             text.draw_terminal(
                 scene,
                 resources,
@@ -695,7 +755,7 @@ fn paint_node(
         // every other `NodeKind`, with zero special-casing beyond this
         // one match arm.
         // M25 Phase 2 (§5, §6): every real `DrawCommand`'s own color
-        // now compounds with `node.paint.opacity.current` -- a real,
+        // now compounds with `own_alpha` -- a real,
         // previously-missing gap (confirmed via direct read: this arm
         // painted every command's own raw color, the only real
         // `NodeKind` arm in this whole match that never touched the
@@ -710,7 +770,7 @@ fn paint_node(
                         height,
                         color,
                     } => {
-                        scene.set_paint(with_opacity(*color, node.paint.opacity.current));
+                        scene.set_paint(with_opacity(*color, own_alpha));
                         scene.fill_path(&Rect::new(*x, *y, x + width, y + height).to_path(0.1));
                     }
                     DrawCommand::FillCircle {
@@ -719,11 +779,11 @@ fn paint_node(
                         radius,
                         color,
                     } => {
-                        scene.set_paint(with_opacity(*color, node.paint.opacity.current));
+                        scene.set_paint(with_opacity(*color, own_alpha));
                         scene.fill_path(&Circle::new((*cx, *cy), *radius).to_path(0.1));
                     }
                     DrawCommand::StrokePath { path, color, width } => {
-                        scene.set_paint(with_opacity(*color, node.paint.opacity.current));
+                        scene.set_paint(with_opacity(*color, own_alpha));
                         scene.set_stroke(Stroke::new(*width));
                         scene.stroke_path(path);
                     }
@@ -741,7 +801,7 @@ fn paint_node(
         // the old hardcoded literal), a real resolved MD3 "on-surface"
         // color once `Window.set_theme` has pushed one in.
         NodeKind::Checkbox(state) => {
-            let color = with_opacity(node.paint.background.current, node.paint.opacity.current);
+            let color = with_opacity(node.paint.background.current, own_alpha);
             scene.set_paint(color);
             let radius = node.paint.corner_radius.current;
             // M38 Phase 1 (§5, §7, §8): the real box path is byte-for-
@@ -758,7 +818,7 @@ fn paint_node(
                 // M25 Phase 2 (§5, §6): a real, previously-missing
                 // compounding -- the checkmark's own real alpha
                 // multiplied only `check_progress` before this, never
-                // `node.paint.opacity.current` too, so a checked
+                // `own_alpha` too, so a checked
                 // checkbox mid-fade-out would show its own checkmark
                 // at full alpha while its box correctly faded. Two
                 // independent real "how visible" factors, multiplied
@@ -766,7 +826,7 @@ fn paint_node(
                 // compounds independent alpha sources.
                 scene.set_paint(with_opacity(
                     state.mark_tint,
-                    state.check_progress.current * node.paint.opacity.current,
+                    state.check_progress.current * own_alpha,
                 ));
                 scene.set_stroke(Stroke::new((w.min(h) * 0.12).max(1.0)));
                 scene.stroke_path(&mark);
@@ -787,7 +847,7 @@ fn paint_node(
                 .interpolate(&state.selected_tint, state.select_progress.current);
             let stroke_width = (w.min(h) * 0.1).max(2.0);
             let ring_radius = (w.min(h) / 2.0) - stroke_width / 2.0;
-            scene.set_paint(with_opacity(ring_color, node.paint.opacity.current));
+            scene.set_paint(with_opacity(ring_color, own_alpha));
             scene.set_stroke(Stroke::new(stroke_width));
             // M38 Phase 1 (§5, §7, §8): the real ring/dot paths, now
             // cached -- see `GeometryCache::circle_primary`/
@@ -799,7 +859,7 @@ fn paint_node(
                 let dot_radius = (w.min(h) / 2.0) * 0.5 * state.select_progress.current;
                 scene.set_paint(with_opacity(
                     state.selected_tint,
-                    state.select_progress.current * node.paint.opacity.current,
+                    state.select_progress.current * own_alpha,
                 ));
                 scene.fill_path(geometry.circle_secondary(id, w / 2.0, h / 2.0, dot_radius));
             }
@@ -823,7 +883,7 @@ fn paint_node(
             let t = state.toggle_progress.current;
             let track_color = state.track_off_tint.interpolate(&state.track_on_tint, t);
             let track_radius = h / 2.0;
-            scene.set_paint(with_opacity(track_color, node.paint.opacity.current));
+            scene.set_paint(with_opacity(track_color, own_alpha));
             // M38 Phase 1 (§5, §7, §8): the real track/outline/handle
             // paths, now cached -- the track and outline are byte-for-
             // byte the same real geometry `Rect`'s own fill/border
@@ -840,7 +900,7 @@ fn paint_node(
                 let outline_radius = (track_radius - inset).max(0.0);
                 scene.set_paint(with_opacity(
                     state.track_outline_tint,
-                    (1.0 - t) * node.paint.opacity.current,
+                    (1.0 - t) * own_alpha,
                 ));
                 scene.set_stroke(Stroke::new(stroke_width));
                 scene.stroke_path(geometry.rounded_rect_border(id, w, h, outline_radius, inset));
@@ -849,7 +909,7 @@ fn paint_node(
             let handle_radius = h * (0.25 + 0.125 * t);
             let handle_color = state.handle_off_tint.interpolate(&state.handle_on_tint, t);
             let cx = h * 0.5 + t * (w - h);
-            scene.set_paint(with_opacity(handle_color, node.paint.opacity.current));
+            scene.set_paint(with_opacity(handle_color, own_alpha));
             scene.fill_path(geometry.circle_primary(id, cx, h / 2.0, handle_radius));
         }
         // M30 Phase 3 Step 2 (§5, §7): a real MD3 linear progress
@@ -864,15 +924,12 @@ fn paint_node(
         // token source, not assumed rounded like most of this
         // catalog's other shapes.
         NodeKind::LinearProgress(state) => {
-            scene.set_paint(with_opacity(state.track_tint, node.paint.opacity.current));
+            scene.set_paint(with_opacity(state.track_tint, own_alpha));
             scene.fill_path(&Rect::new(0.0, 0.0, w, h).to_path(0.1));
 
             let indicator_width = state.value.current.clamp(0.0, 1.0) * w;
             if indicator_width > 0.0 {
-                scene.set_paint(with_opacity(
-                    state.indicator_tint,
-                    node.paint.opacity.current,
-                ));
+                scene.set_paint(with_opacity(state.indicator_tint, own_alpha));
                 scene.fill_path(&Rect::new(0.0, 0.0, indicator_width, h).to_path(0.1));
             }
         }
@@ -902,10 +959,7 @@ fn paint_node(
                     -std::f64::consts::FRAC_PI_2,
                     sweep,
                 );
-                scene.set_paint(with_opacity(
-                    state.indicator_tint,
-                    node.paint.opacity.current,
-                ));
+                scene.set_paint(with_opacity(state.indicator_tint, own_alpha));
                 scene.set_stroke(Stroke::new(stroke_width));
                 scene.stroke_path(arc_path);
             }
@@ -924,16 +978,15 @@ fn paint_node(
             let track_rect = Rect::new(0.0, (h - track_height) / 2.0, w, (h + track_height) / 2.0);
             // M25 Phase 2 (§5, §6): a real, previously-missing
             // compounding -- only the thumb (below) multiplied by
-            // `node.paint.opacity.current`; the track painted its own
+            // `own_alpha`; the track painted its own
             // real `track_tint` raw, a real internal inconsistency
             // within this one `NodeKind`.
-            scene.set_paint(with_opacity(state.track_tint, node.paint.opacity.current));
+            scene.set_paint(with_opacity(state.track_tint, own_alpha));
             scene.fill_path(&track_rect.to_path(0.1));
 
             let thumb_radius = (h * 0.4).max(4.0);
             let thumb_x = state.thumb_position.current * w;
-            let thumb_color =
-                with_opacity(node.paint.background.current, node.paint.opacity.current);
+            let thumb_color = with_opacity(node.paint.background.current, own_alpha);
             scene.set_paint(thumb_color);
             scene.fill_path(&Circle::new((thumb_x, h / 2.0), thumb_radius).to_path(0.1));
         }
@@ -970,7 +1023,7 @@ fn paint_node(
         NodeKind::Image(state) => {
             let img_width = state.image.width;
             let img_height = state.image.height;
-            let node_opacity = node.paint.opacity.current;
+            let node_opacity = own_alpha;
             if img_width > 0 && img_height > 0 && node_opacity > 0.0 {
                 let (source_region, transform) =
                     image_sample_rect(w, h, img_width, img_height, state.content_fit);
@@ -1001,6 +1054,29 @@ fn paint_node(
         // argument needing no such restore) -- `composed` is put back
         // immediately after, since the post-match ripple/hover overlay
         // below relies on it still being active.
+        // M95 (D4): any vector path, in node-local pixels once fitted
+        // into the view box. The fill is the whole path; the stroke is
+        // the trimmed outline, centered on the path as in SVG, with round
+        // caps and joins, and its width stays in pixels however the view
+        // box scales the path.
+        NodeKind::Path(state) => {
+            let (fill, stroke) = state.geometry(w, h);
+            let fill_color = node.paint.background.current;
+            if fill_color.components[3] > 0.0 {
+                scene.set_paint(with_opacity(fill_color, own_alpha));
+                scene.fill_path(&fill);
+            }
+            let stroke_width = node.paint.border_width.current;
+            if stroke_width > 0.0 && !stroke.elements().is_empty() {
+                scene.set_paint(with_opacity(node.paint.border_color.current, own_alpha));
+                scene.set_stroke(
+                    Stroke::new(stroke_width)
+                        .with_caps(peniko::kurbo::Cap::Round)
+                        .with_join(peniko::kurbo::Join::Round),
+                );
+                scene.stroke_path(&stroke);
+            }
+        }
         NodeKind::Icon(state) => {
             let icon_scale = 1.0 / ICON_VIEWBOX_SIZE;
             let icon_transform = Affine::scale_non_uniform(w * icon_scale, h * icon_scale)
@@ -1023,7 +1099,7 @@ fn paint_node(
                 Affine::IDENTITY
             };
             scene.set_transform(composed * rotation * icon_transform);
-            scene.set_paint(with_opacity(state.tint.current, node.paint.opacity.current));
+            scene.set_paint(with_opacity(state.tint.current, own_alpha));
             scene.fill_path(&state.path);
             scene.set_transform(composed);
         }
@@ -1042,13 +1118,13 @@ fn paint_node(
             let (cx, cy) = (w / 2.0, h / 2.0);
             let center = Point::new(cx, cy);
 
-            scene.set_paint(with_opacity(state.face_tint, node.paint.opacity.current));
+            scene.set_paint(with_opacity(state.face_tint, own_alpha));
             scene.fill_path(&Circle::new(center, face_radius).to_path(0.1));
 
             // 12 real tick-dot positions -- the honest v1 stand-in for
             // real MD3's own painted digit labels (see the struct doc
             // comment for why no text is shaped here).
-            let tick_tint = with_opacity(state.hand_tint, 0.4 * node.paint.opacity.current);
+            let tick_tint = with_opacity(state.hand_tint, 0.4 * own_alpha);
             let tick_radius = (face_radius * 0.04).max(1.0);
             let tick_orbit = face_radius * 0.84;
             scene.set_paint(tick_tint);
@@ -1060,7 +1136,7 @@ fn paint_node(
             }
 
             let hand_width = (face_radius * 0.05).max(1.5);
-            let hand_paint = with_opacity(state.hand_tint, node.paint.opacity.current);
+            let hand_paint = with_opacity(state.hand_tint, own_alpha);
             scene.set_stroke(Stroke::new(hand_width));
             scene.set_paint(hand_paint);
 
@@ -1122,7 +1198,7 @@ fn paint_node(
         // else around it faded.
         scene.set_paint(with_opacity(
             interaction.tint,
-            interaction.hover_opacity.current * node.paint.opacity.current,
+            interaction.hover_opacity.current * own_alpha,
         ));
         scene.fill_path(bounds);
 
@@ -1143,7 +1219,7 @@ fn paint_node(
             scene.push_layer(
                 Some(&circle),
                 None,
-                Some((ripple.opacity.current * node.paint.opacity.current) as f32),
+                Some((ripple.opacity.current * own_alpha) as f32),
                 None,
                 None,
             );
@@ -1208,7 +1284,7 @@ fn paint_node(
         scene.push_layer(Some(clip), None, None, None, None);
 
         let narrowed = visible.intersect(bounds);
-        for &child in &node.children {
+        for &child in tree.children_in_paint_order(id).iter() {
             paint_node(
                 tree, child, composed, narrowed, scene, resources, text, geometry,
             );
@@ -1237,11 +1313,14 @@ fn paint_node(
             paint_virtual_list_thumb(state, w, h, composed, scene);
         }
     } else {
-        for &child in &node.children {
+        for &child in tree.children_in_paint_order(id).iter() {
             paint_node(
                 tree, child, composed, visible, scene, resources, text, geometry,
             );
         }
+    }
+    if layered {
+        scene.pop_layer();
     }
 }
 
@@ -1294,23 +1373,24 @@ fn paint_scroll_view_thumb(
         return;
     }
 
+    let thickness = state.scrollbar_width;
     let (x, y, w, h) = if state.horizontal {
         (
             along,
-            viewport_h - SCROLLBAR_THICKNESS - SCROLLBAR_MARGIN,
+            viewport_h - thickness - SCROLLBAR_MARGIN,
             thumb,
-            SCROLLBAR_THICKNESS,
+            thickness,
         )
     } else {
         (
-            viewport_w - SCROLLBAR_THICKNESS - SCROLLBAR_MARGIN,
+            viewport_w - thickness - SCROLLBAR_MARGIN,
             along,
-            SCROLLBAR_THICKNESS,
+            thickness,
             thumb,
         )
     };
-
-    fill_scrollbar_thumb(x, y, w, h, composed, scene);
+    let color = state.scrollbar_fill.unwrap_or(DEFAULT_SCROLLBAR_FILL);
+    fill_scrollbar_thumb(x, y, w, h, color, composed, scene);
 }
 
 /// M47 (§5, §7, §11.7): a real `VirtualList`'s own real scrollbar
@@ -1343,7 +1423,7 @@ fn paint_virtual_list_thumb(
         SCROLLBAR_THICKNESS,
         thumb,
     );
-    fill_scrollbar_thumb(x, y, w, h, composed, scene);
+    fill_scrollbar_thumb(x, y, w, h, DEFAULT_SCROLLBAR_FILL, composed, scene);
 }
 
 /// M47 (§5, §7, §11.7): the real geometry-to-pixels fill both `paint_
@@ -1352,19 +1432,28 @@ fn paint_virtual_list_thumb(
 /// at the identical color/opacity/radius, the same "two real call
 /// sites justify factoring out" precedent this codebase already uses
 /// throughout.
-fn fill_scrollbar_thumb(x: f64, y: f64, w: f64, h: f64, composed: Affine, scene: &mut Scene) {
+/// M95: the thumb color when a scroll view sets no `scrollbar_fill` --
+/// MD3's `outline_variant` at 55%.
+const DEFAULT_SCROLLBAR_FILL: Color = Color::from_rgba8(0xCA, 0xC4, 0xD0, 0x8C);
+
+fn fill_scrollbar_thumb(
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    color: Color,
+    composed: Affine,
+    scene: &mut Scene,
+) {
     scene.set_transform(composed);
-    let color = with_opacity(
-        Color::from_rgba8(0xCA, 0xC4, 0xD0, 0xFF),
-        SCROLLBAR_THUMB_OPACITY,
-    );
     scene.set_paint(color);
     scene.fill_path(&RoundedRect::new(x, y, x + w, y + h, SCROLLBAR_THUMB_RADIUS).to_path(0.1));
 }
 
 /// M38 Phase 6 (§5, §7, §11.7): pure-paint scrollbar tokens -- ported
-/// directly from pyCopper's own real `BAR_RADIUS`/`BAR_OPACITY`
-/// (`widgets/scroll.py`). Live here, not `engine-core`, since neither
+/// directly from pyCopper's own real `BAR_RADIUS` (`widgets/scroll.py`;
+/// its `BAR_OPACITY` of 0.55 now lives in `DEFAULT_SCROLLBAR_FILL`'s
+/// alpha, M95). Live here, not `engine-core`, since neither
 /// `Tree::grabs_scroll_view_thumb` nor `update_scroll_view_thumb_drag`
 /// needs a fill radius or an opacity to do real hit-testing/dragging --
 /// the identical real "geometry constants both crates need live in
@@ -1372,7 +1461,6 @@ fn fill_scrollbar_thumb(x: f64, y: f64, w: f64, h: f64, composed: Affine, scene:
 /// `SCROLLBAR_THICKNESS`/`SCROLLBAR_MARGIN`'s own doc comment already
 /// states for the reverse case.
 const SCROLLBAR_THUMB_RADIUS: f64 = 2.0;
-const SCROLLBAR_THUMB_OPACITY: f64 = 0.55;
 
 /// Thin wrapper around `vello_hybrid::Renderer` -- it needs a mutable
 /// `Resources` alongside it for every render call, which is easy to get

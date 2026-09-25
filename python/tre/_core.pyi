@@ -108,6 +108,70 @@ class Event:
     kind.
     """
 
+    # M94: the M93 target-API fields, set for `node.on(...)`/`window.on(...)`
+    # listener events. Legacy `set_on_*` events set `type` (equal to `kind`)
+    # and `target` (equal to `node`) too. Every other field is `None` unless
+    # the event has something to say about it.
+    type: str
+    """The event's name, e.g. `"click"`, `"pointer_down"`, `"resize"`."""
+    target: Node | None
+    """The node the event is about -- where it happened. `None` for a
+    window event."""
+    current: Node | None
+    """The node whose listener is running: `target` itself, or an
+    ancestor it bubbled to."""
+    x: float | None
+    """Pointer and wheel events: the pointer's position, local to
+    `current`."""
+    y: float | None
+    window_x: float | None
+    """Pointer and wheel events: the pointer's position in the window."""
+    window_y: float | None
+    delta_x: float | None
+    """`wheel`: pixels, positive scrolling right."""
+    delta_y: float | None
+    """`wheel`: pixels, positive scrolling down."""
+    key: str | None
+    """`key_down`/`key_up`: a snake_case key name (`"enter"`,
+    `"arrow_left"`, `"f5"`) or the character a character key produces
+    (`"a"`, `"A"` with Shift)."""
+    repeat: bool | None
+    """`key_down`: whether this is an auto-repeat of a held key."""
+    shift: bool | None
+    """Pointer, wheel, key, and click events: modifier keys held."""
+    ctrl: bool | None
+    alt: bool | None
+    meta: bool | None
+    text: str | None
+    """`input`: the committed text."""
+    action: str | None
+    """`a11y_action`: the requested action."""
+    value: Any | None
+    """`a11y_action` with action `"set_value"`: the requested value."""
+    width: float | None
+    """`resize`: the window's new width."""
+    height: float | None
+    dark: bool | None
+    """`color_scheme`: whether the OS switched to dark mode."""
+    scale_factor: float | None
+    """`scale_factor`: the window's new scale factor."""
+    related_target: Node | None
+    """`focus`/`unfocus`: the node on the other side of the move -- the one
+    losing focus for `focus`, the one gaining it for `unfocus`. `None` when
+    focus comes from, or goes to, nowhere in the window."""
+    focus_visible: bool | None
+    """`focus`: `True` when focus arrived by keyboard or an assistive
+    technology (or programmatically, after keyboard input), `False` after
+    a pointer press -- whether to show a focus indicator."""
+    def stop(self) -> None:
+        """Ends propagation: no listener on a further ancestor runs."""
+        ...
+    def cancel(self) -> None:
+        """Prevents a cancellable event's default -- only the window's
+        `close_requested`, which then leaves the window open. Raises
+        `ValueError` for any other event."""
+        ...
+
 class Node:
     """A handle to one real node in a `Window`'s (or `View`'s) tree.
     Never constructed directly -- always returned by a `Window.add_*`
@@ -117,20 +181,55 @@ class Node:
     def animate(
         self,
         property: str,
-        to: float | Color | Sequence[float],
+        to: float | Color | Sequence[float] | Sequence[Any] | str,
         duration_ms: int = 0,
+        easing: str | tuple[float, float, float, float] | None = None,
         on_complete: Callable[[], object] | None = None,
     ) -> None:
-        """Starts (or retargets) an animation on one property. Returns
-        immediately -- never blocks. `duration_ms=0` snaps instantly on
-        the next tick rather than easing. `on_complete`, when given, is
-        called with no arguments exactly once, the real frame this
-        specific animation finishes (only fires for a `Window`-created
-        node -- see this stub module's own module-level doc comment).
+        """Starts (or retargets) an animation on one property, from its
+        current value. Returns immediately -- never blocks.
+        `duration_ms=0` snaps instantly on the next tick rather than
+        easing. M95: `easing` is `"linear"` (the default) or a cubic
+        bezier `(x1, y1, x2, y2)` as CSS `cubic-bezier()` takes it; the
+        M93 paint names -- `fill`, `stroke_color`, `stroke_width`,
+        `opacity`, `corner_radius` (a number or a 4-tuple), `shadows`,
+        and on a path `data`/`trim_start`/`trim_end` -- animate here.
+        `on_complete`, when given, is called with no arguments exactly
+        once, the real frame this specific animation finishes; an
+        animation replaced or stopped before then never calls it.
         """
         ...
-    def get(self, property: str) -> float:
-        """Reads one property's current, possibly-mid-animation value."""
+    def get_target(self, name: str) -> Any:
+        """M95: the value `name`'s running animation is heading to --
+        the same as `get(name)` when nothing is animating it."""
+        ...
+    def stop_animation(self, name: str) -> None:
+        """M95: stops `name`'s running animation where it is."""
+        ...
+    def get(self, property: str) -> Any:
+        """Reads one property: an animatable number's current, possibly
+        mid-animation value (a `float`), or -- M94 -- any property `set`
+        accepts, plus `focused`. On a built-in slider or progress
+        indicator, `value` stays that widget's numeric value.
+        """
+        ...
+    def set(self, **props: Any) -> None:
+        """Sets properties atomically: every value is checked first, and a
+        bad one raises `ValueError` without changing anything. Optional
+        properties take `None` to clear. Every node has the layout,
+        paint, transform, visibility, interaction, and accessibility
+        properties; each kind adds its own (text, text input, image,
+        path, canvas, scroll view, virtual list, terminal). An unknown
+        name lists the valid ones. See the Properties reference.
+        """
+        ...
+    def redraw(self) -> None:
+        """M96: runs this canvas's `draw` callback now, replacing what it
+        shows with what the callback draws. Raises `ValueError` for any
+        other kind."""
+        ...
+    def focus(self) -> None:
+        """M94: moves keyboard focus to this node, firing `unfocus`/`focus`."""
         ...
     def set_layout(
         self,
@@ -237,14 +336,64 @@ class Node:
     def enable_interaction(self) -> None:
         """Opts this node into MD3 ripple/hover visual feedback."""
         ...
-    def add_child(self, child: Node) -> None:
-        """Attaches `child` under this node. Raises if `child` would
-        become its own ancestor (a cycle), or already belongs to a
-        different `Window`.
+    def on(self, event: str, handler: Callable[..., object]) -> None:
+        """M94: registers `handler` for `event`, replacing any earlier
+        listener for it. Events: `pointer_enter`, `pointer_leave`,
+        `pointer_down`, `pointer_move`, `pointer_up`, `click`,
+        `secondary_click`, `wheel`, `key_down`, `key_up`, `input`,
+        `focus`, `unfocus`, `change`, `a11y_action`. All but
+        `pointer_enter`/`pointer_leave`/`change` bubble to ancestors
+        until a listener calls `event.stop()`. `handler` receives an
+        `Event`, or nothing if it takes no parameters. Raises
+        `ValueError` for an unknown event.
         """
         ...
+    def off(self, event: str) -> None:
+        """M94: removes this node's listener for `event`, if any."""
+        ...
+    def capture_pointer(self) -> None:
+        """M94: routes every later pointer event to this node until the
+        button is released or `release_pointer()` is called."""
+        ...
+    def release_pointer(self) -> None:
+        """M94: ends this node's pointer capture, if it holds it."""
+        ...
+    def __eq__(self, other: object) -> bool:
+        """M94: equal when both handles name the same node."""
+        ...
+    def __hash__(self) -> int: ...
+    def add_child(self, child: Node) -> None:
+        """Appends `child` under this node, moving it if it's attached
+        elsewhere. Raises if `child` would become its own ancestor (a
+        cycle), or already belongs to a different `Window`.
+        """
+        ...
+    def insert_child(self, index: int, child: Node) -> None:
+        """M96: attaches `child` so that afterwards `children()[index] ==
+        child`, moving it if it's already attached anywhere -- the
+        keyed-reorder primitive. A moved node keeps its identity,
+        listeners, focus, and running animations. `index` counts the
+        children once `child` has left its old place; past the end raises
+        `IndexError`."""
+        ...
+    def children(self) -> list[Node]:
+        """M96: this node's children, in order."""
+        ...
+    def parent(self) -> Node | None:
+        """M96: this node's parent, or `None` for the root or a detached
+        node."""
+        ...
     def remove(self) -> None:
-        """Removes this node and its whole subtree from the tree."""
+        """M96 (R5): detaches this node from its parent. It stays alive,
+        and can be attached again, while any handle to it or to anything
+        under it exists; then it's freed automatically. Focus inside it
+        gets `unfocus` first and isn't moved anywhere; everything else --
+        scroll offsets, text and selection, running animations -- is kept."""
+        ...
+    def destroy(self) -> None:
+        """M96: frees this node and its whole subtree now, with their
+        listeners; focus inside it gets `unfocus` first. Using a handle to a
+        freed node raises `ValueError`."""
         ...
     def set_checked(self, checked: bool) -> None:
         """`Checkbox`-only -- raises `ValueError` for any other kind."""
@@ -429,6 +578,107 @@ class Window:
     """
 
     def __init__(self, width: int = 480, height: int = 200, title: str = "tre v2") -> None: ...
+    def create(self, kind: str, **props: Any) -> Node:
+        """M96: makes a detached node of `kind` -- `"box"`, `"text"`,
+        `"text_input"`, `"image"`, `"path"`, `"canvas"`, `"scroll_view"`,
+        `"virtual_list"`, or `"terminal"` -- and applies `props`
+        atomically, as `Node.set` does. Required: `text` for a text,
+        `rgba`/`pixel_width`/`pixel_height` for an image, `data` for a
+        path, `draw` for a canvas, `item_count`, `materialize`, and one of
+        `item_extent`/`size_hint` for a virtual list, and `shell`, `cols`,
+        `rows` for a terminal (which also takes `scrollback_lines`, at
+        creation only). Attach it with `add_child`; until it's attached it
+        is freed once no handle points into it. Raises `ValueError` for an
+        unknown kind or a bad property, creating nothing. See the
+        Properties reference for every property.
+        """
+        ...
+    @property
+    def root(self) -> Node:
+        """M94: the window's root node (the shown one, after `show_view`)."""
+        ...
+    def on(self, event: str, handler: Callable[..., object]) -> None:
+        """M94: registers `handler` for a window event -- `resize`,
+        `color_scheme`, `scale_factor`, `close_requested` (cancellable
+        with `event.cancel()`), or `closed` -- replacing any earlier one.
+        Raises `ValueError` for an unknown event.
+        """
+        ...
+    def off(self, event: str) -> None:
+        """M94: removes the window's listener for `event`, if any."""
+        ...
+    def set(self, *, title: str = ...) -> None:
+        """M94: sets window properties -- today only `title`."""
+        ...
+    def get(self, name: str) -> Any:
+        """M94: reads `width`, `height`, `title`, or `scale_factor`
+        (`1.0` until `App.run()` opens the window)."""
+        ...
+    def show_layer(
+        self,
+        node: Node,
+        anchor: Node | None = None,
+        placement: str = "below",
+        modal: bool = False,
+        dismissible: bool = True,
+    ) -> None:
+        """M96: shows `node` over the window's content, above every layer
+        already open. With `anchor`, it's placed against that node on the
+        `placement` side (`"below"`, `"above"`, `"start"`, `"end"`),
+        flipped or shifted to fit at every layout; without one it sits at
+        its own `x`/`y`. `modal` blocks input beneath it and moves focus
+        into it; `dismissible` delivers `dismiss` to it on an outside press
+        (which it consumes) or Escape (the topmost dismissible layer only).
+        Events inside a layer stop at it, and it's its own Tab scope."""
+        ...
+    def hide_layer(self, node: Node) -> None:
+        """M96: hides the layer `node`, detaching it (alive while held), and
+        returns focus inside it to the node that held focus when it
+        opened."""
+        ...
+    def measure_text(
+        self,
+        text: str,
+        font_family: str = "Roboto",
+        font_size: float = 16.0,
+        font_weight: float = 400.0,
+        font_style: str = "normal",
+        letter_spacing: float = 0.0,
+        line_height: float | None = None,
+        max_width: float | None = None,
+        wrap: str = "word",
+        max_lines: int | None = None,
+        overflow: str = "clip",
+    ) -> tuple[float, float]:
+        """M96: the `(width, height)` `text` takes, laid out exactly as a
+        text node with these properties paints it -- wrapped within
+        `max_width` when given, cut to `max_lines`, ended with "…" for
+        `overflow="ellipsis"`. For sizing a widget to its content."""
+        ...
+    def advance(self, ms: float) -> None:
+        """M96: moves this window's time forward by exactly `ms`
+        milliseconds, then runs animations, their `on_complete` callbacks,
+        and layout at the new time -- headless tests, where `App.run()`
+        renders no frames. The first call pins the window's clock at the
+        real current time; `App.run()` returns it to the real clock."""
+        ...
+    def simulate(self, event: str, node: Node | None = None, **fields: Any) -> None:
+        """M94: delivers a synthetic event exactly as real input would,
+        for headless tests. Pointer events (`pointer_down`, `pointer_up`,
+        `pointer_move`, `pointer_enter`, `click`, `secondary_click`,
+        `wheel`) aim at `node`'s center, at `x`/`y` local to `node`, or at
+        window-space `x`/`y`; `button` and `delta_x`/`delta_y` where they
+        apply. `pointer_leave` moves the pointer out of the window.
+        `key_down`/`key_up` take `key` and `repeat`; `input` takes `text`;
+        `focus`/`unfocus` take `node`; `a11y_action` takes `node`, `action`
+        (`increment`, `decrement`, `expand`, `collapse`,
+        `scroll_into_view`, `set_value`), and `value`. `shift`/`ctrl`/`alt`/`meta` hold
+        modifiers. Window events: `resize` (`width`, `height`),
+        `color_scheme` (`dark`), `scale_factor` (`scale_factor`),
+        `close_requested`, `closed`. Unknown events or fields raise
+        `ValueError`.
+        """
+        ...
     @staticmethod
     def from_view(view: View, width: int = 480, height: int = 200, title: str = "tre v2") -> Window:
         """M42 Phase 1: shows a `View` (a declarative `view.yaml` +

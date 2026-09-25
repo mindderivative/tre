@@ -19,6 +19,11 @@ and `ViewModel` are plain Python, layered on top.
 | [`ViewModel`](signal-and-viewmodel.md#viewmodel) | Wires a `View`'s declared bindings and handlers to Python state |
 | [`CanvasContext`](canvas-context.md) | The draw surface passed to a `Canvas` node's `draw` callback |
 
+*New in 0.3.4*, the [target API](../../design/target-api.md)'s building
+blocks: [Nodes and Properties](properties.md) (`window.create` and every
+property), [Events and Listeners](events.md), [Paint, Paths, and
+Animation](paint.md), and [Layers](layers.md).
+
 ```python
 from tre import App, Computed, Effect, Signal, View, ViewModel, Window
 ```

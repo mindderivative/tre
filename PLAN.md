@@ -1,30 +1,101 @@
-# PLAN — Branch `0.3.3`: Milestone 90, Consistent Property Naming
+# PLAN — Branch `0.3.4`: Milestone 96, Layer, Structure, and Update Building Blocks
 
-*(Replaces the M87 plan — M84 through M89 are complete, `v0.3.2` is
-released. Full scope, the audit findings table, and the step list live
-in `BUILD_TRACKER.md`'s "Branch: 0.3.3" and "Milestone 90" sections.)*
+*(Replaces the M95 plan — M95 and the M94 focus follow-up are complete and
+pushed. Every step is in `BUILD_TRACKER.md`.)*
 
 ## Goal
 
-A breaking rename so one concept has one name across the imperative
-(`Window.add_*`, `Node`) and declarative (`WidgetSpec`) APIs: `foreground`
-for glyph/text color, `background` only for real fills, MD3's own
-`checked`/`selected` state names, `value` for a slider, one
-`orientation` parameter, lowercase `snake_case` enum values, and
-consistent text-string parameter names.
+The last additive milestone before the Tesserae migration gate:
+- the tree operations a keyed reconciler needs;
+- node lifetime that can't leak and can't crash off-thread (issue #10);
+- deterministic headless time;
+- `create` for every kind and `set`/`get` for every property;
+- text measurement and truncation;
+- one layer mechanism for dialogs, menus, tooltips, snackbars, and sheets.
 
-User's versioning call: this ships as `0.3.3`; `0.4.0` is reserved for
-the `vello_hybrid` fork (issue #4).
+Legacy names and behavior stay until 0.3.5.
+
+## Findings from the source
+
+- **Structure.**
+  - `Tree` has `add_child`, `try_add_child` (checked, reparents),
+    `detach` (keeps the node), and `remove` (frees the subtree).
+  - Python's `Node.remove()` currently *frees*; R5 makes it detach.
+  - There's no insert-at-index, `children()`, `parent()`, or `destroy()`.
+  - `detach` clears focus, so a move must keep focus explicitly.
+- **Lifetime (issue #10).**
+  - `App`, `Window`, `Node`, `Theme`, `View`, `Component`, and two
+    `view.rs` binding callbacks are `#[pyclass(unsendable)]`.
+  - pyo3 0.29 leaks such an object when the cyclic collector frees it on
+    another thread, and panics in `__clear__`.
+  - A class that isn't `unsendable` must be `Send + Sync`. So each class
+    becomes a thin `Send + Sync` shell around a thread-checked value
+    (`ThreadBound<T>`):
+    - using it from another thread panics, as today;
+    - dropping it there hands the value to a queue drained on the
+      owning thread;
+    - `__traverse__`/`__clear__` do nothing off-thread.
+- **Auto-free.**
+  - Only a node detached through the new API (`create`, `remove()`,
+    `hide_layer`) is collectible; legacy detached content (context menus,
+    inactive dock panels) never is.
+  - When the last handle to anything in a collectible subtree goes, the
+    subtree is freed and its listeners are pruned. *As built:* the counts
+    live per thread in `node_handles.rs`, not in `Tree` -- factories build
+    handles while holding a tree borrow.
+- **Time.**
+  - `engine-core` never reads the clock; timestamps are parameters.
+  - `engine-py` reads `Instant::now()` at 24 sites. `window.advance(ms)`
+    pins a per-window virtual clock that those sites use; `App.run()`
+    unpins it. *As built:* `clock.rs`, keyed by a weak reference to the
+    tree, so reading the time never borrows it.
+- **Batching.**
+  - Layout runs once per frame (`app.rs` frame closure), never per
+    property change, and no frame can run inside a Python call.
+  - So `window.batch()` has nothing to defer unless a measurement shows
+    otherwise. It is measured in Phase 2 and dropped from the spec if
+    it's a no-op.
+- **Window content.**
+  - `show_view` swaps a whole tree because each `View` owns one. With
+    every node in the window's one tree, `set_content` is
+    `root.remove()`-children plus `add_child`, so it is likely redundant
+    too (decided in Phase 2).
+- **Text.**
+  - Text nodes have no intrinsic size; every factory passes one.
+  - Parley 0.11 has `LetterSpacing`, `FontStyle`, and `TextWrapMode`,
+    but no line limit or ellipsis. The renderer truncates to `max_lines`
+    and fits an ellipsis itself.
+  - `get_monospace_cell_size` builds a new `TextRenderer` (re-registering
+    every font) per call; `measure_text` and it share one per thread.
+- **Layers.**
+  - The legacy overlay mechanism already appends absolutely positioned
+    content to the root, so layout, paint, hit-testing, and access work
+    unchanged, and has modal blocking and outside/Escape dismissal.
+  - It is extended rather than duplicated:
+    - ordered stacking instead of a `HashMap`;
+    - an optional anchor with flip/shift placement and a reported side;
+    - dismissal reported as a `dismiss` event instead of self-closing,
+      for new layers;
+    - focus trap and restore;
+    - per-layer focus scope;
+    - bubbling stops at the layer.
+  - `add_child` inserts before open layers so content never paints over
+    them.
+- **Missing properties.**
+  - `visible` (not painted, not hit, no layout space, not in access or
+    tab order) and `z_index` (sibling paint and hit order) don't exist.
+  - `flex_wrap`, `align_self`, `aspect_ratio`, and min/max sizes are
+    plain taffy fields.
 
 ## Phases
 
-1. Renames in `engine-spec` and `engine-py`, with migration errors that
-   name each replacement.
-2. Tests, all examples, `demo/showcase.py`.
-3. Docs, including a "Migrating to 0.3.3" page.
-4. Full verification chain, then the Tesserae handoff.
+1. Structure, lifetime, and time.
+2. Creation and properties.
+3. Text measurement and truncation.
+4. Layers.
+5. Verification: stubs, docs, spec, full chain.
 
 ## Status
 
-**Scoped, not started.** Findings A–H are recommendations awaiting the
-user's confirmation before implementation.
+Complete (2026-09-25): all five phases done. Two spec items were dropped as
+corrections after measurement (`window.batch()`, `window.set_content`).
