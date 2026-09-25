@@ -9,6 +9,7 @@
 mod app;
 mod binding;
 mod canvas;
+mod clock;
 mod component;
 mod dispatch;
 mod dock;
@@ -17,8 +18,10 @@ mod event;
 mod listeners;
 mod node;
 mod node_events;
+mod node_handles;
 mod node_props;
 mod terminal;
+mod thread_bound;
 mod thread_handle;
 mod view;
 mod window;

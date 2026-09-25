@@ -286,6 +286,26 @@ if window.theme.is_set():
 `window.create(kind, **props)` makes detached nodes — see
 [Paint, Paths, and Animation](paint.md#creating-nodes).
 
+### `advance`
+
+**`advance(ms)`** *(new in 0.3.4)*
+
+Moves this window's time forward by exactly `ms` milliseconds, then runs
+animations, their `on_complete` callbacks, and layout at the new time —
+deterministic time for headless tests, where `App.run()` renders no
+frames:
+
+```python
+window.advance(0)            # pin the clock before starting animations
+card.animate("opacity", 1.0, 200)
+window.advance(100)
+assert card.get("opacity") == 0.5
+```
+
+The first call pins the window's clock at the real current time; from then
+on only `advance` moves it. Each window keeps its own time, and
+`App.run()` returns every window it opens to the real clock.
+
 ## Synthetic input dispatch
 
 These work without a live rendered window — each computes layout, then

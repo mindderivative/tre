@@ -58,15 +58,20 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 
 use crate::dispatch::{HandlerMap, SharedCompletions};
-use crate::node::Node;
+use crate::node::{Node, NodeState};
+use crate::thread_bound::{ThreadBound, thread_bound_shell};
 use crate::view::{
     attach_bindings_and_handlers, collect_bindings, collect_handlers, collect_two_way,
     require_at_most_one_content_source,
 };
 use crate::window::SharedTheme;
 
-#[pyclass(unsendable, name = "Component")]
-pub struct Component {
+#[pyclass(name = "Component")]
+pub struct Component(ThreadBound<ComponentState>);
+thread_bound_shell!(Component => ComponentState);
+
+/// `Component`'s state (M96: behind a `ThreadBound`, see `thread_bound`).
+pub struct ComponentState {
     tree: Rc<RefCell<Tree>>,
     reconciler: Reconciler,
     bindings: Vec<(String, String, String)>,
@@ -192,7 +197,7 @@ pub(crate) fn instantiate_component(
     let mut two_way = Vec::new();
     collect_two_way(reconciler.spec(), &mut two_way);
 
-    Ok(Component {
+    Ok(Component(ThreadBound::new(ComponentState {
         tree: tree.clone(),
         reconciler,
         bindings,
@@ -203,7 +208,7 @@ pub(crate) fn instantiate_component(
         theme: theme.clone(),
         completions: completions.clone(),
         subscriptions: Vec::new(),
-    })
+    })))
 }
 
 #[pymethods]
@@ -218,14 +223,14 @@ impl Component {
         let id = self.reconciler.id_of(widget_id).ok_or_else(|| {
             PyValueError::new_err(format!("no widget with id {widget_id:?} in this component"))
         })?;
-        Ok(Node {
+        Ok(Node::from(NodeState {
             id,
             tree: self.tree.clone(),
             handlers: self.handlers.clone(),
             context_menus: self.context_menus.clone(),
             theme: self.theme.clone(),
             completions: self.completions.clone(),
-        })
+        }))
     }
 
     /// §16.2's real inversion point, scoped to this component instance

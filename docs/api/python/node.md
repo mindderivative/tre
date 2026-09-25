@@ -185,20 +185,39 @@ on-surface tint.
 
 ## Tree structure
 
-### `add_child`
+*Changed in 0.3.4:* `remove()` detaches rather than freeing, and nodes
+have a lifetime of their own — see [Lifetime](#lifetime).
 
-**`add_child(child)`**
+| Method | Does |
+| --- | --- |
+| `add_child(child)` | Appends `child`, moving it if it's attached elsewhere |
+| `insert_child(index, child)` | Attaches `child` so it ends up at `index` — afterwards `children()[index] == child` — moving it if it's attached anywhere. `index` counts the children once `child` has left its old place; past the end raises `IndexError` |
+| `children()` | This node's children, in order |
+| `parent()` | Its parent, or `None` for the root or a detached node |
+| `remove()` | Detaches this node from its parent; it stays alive and can be attached again |
+| `destroy()` | Frees this node and its whole subtree now, with their listeners |
 
-Attaches `child` under this node. Raises `ValueError` if that would
-create a cycle (`child` is an ancestor of this node), or if `child`
-belongs to a different `Window`'s tree.
+Attaching raises `ValueError` if `child` is this node or one of its
+ancestors, or belongs to a different `Window`. **Moving a node keeps
+everything about it** — the same `Node`, its listeners, its focus, and any
+running animation — which is what a keyed list reconciler needs:
 
-### `remove`
+```python
+for index, key in enumerate(new_order):
+    list_box.insert_child(index, rows[key])
+```
 
-**`remove()`**
+### Lifetime
 
-Recursively removes this node and its whole subtree, unlinking it from
-its parent.
+- A node **attached** to a window lives while it's attached.
+- A node made by `window.create`, or detached by `remove()`, lives while
+  any `Node` handle to it — or to anything in its subtree — exists. When
+  the last one goes, the subtree is freed with its listeners, so a
+  forgotten `destroy()` never leaks.
+- `destroy()` frees now. Using a handle to a freed node raises
+  `ValueError`.
+- Nodes made by the older `add_*` methods start attached, and are never
+  freed this way unless you `remove()` them.
 
 ### `set_context_menu`
 

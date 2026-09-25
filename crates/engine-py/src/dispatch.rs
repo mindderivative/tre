@@ -531,7 +531,7 @@ pub(crate) fn process_input(
         root,
         event.clone(),
         &interaction_config(),
-        std::time::Instant::now(),
+        crate::clock::now(ctx.tree),
     );
     listeners::route_input(ctx, target, event, py);
     run_dispatch_outcome(
@@ -829,7 +829,7 @@ pub(crate) fn paste_clipboard_into_focused(
                 root,
                 event.clone(),
                 &interaction_config(),
-                std::time::Instant::now(),
+                crate::clock::now(tree),
             );
             run_dispatch_outcome(
                 handlers,

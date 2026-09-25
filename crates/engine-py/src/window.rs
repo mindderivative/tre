@@ -18,8 +18,9 @@ use taffy::prelude::{Position, Rect as TaffyRect, Size, Style, auto, length};
 use crate::dispatch::{CompletionRegistry, HandlerMap, SharedCompletions};
 use crate::dock::{self, SharedDockState};
 use crate::listeners::WindowListenerMap;
-use crate::node::Node;
+use crate::node::{Node, NodeState};
 use crate::terminal::TerminalSession;
+use crate::thread_bound::{ThreadBound, thread_bound_shell};
 use crate::view::View;
 
 const PADDING: f32 = 16.0;
@@ -348,8 +349,12 @@ pub(crate) type SharedTheme = Rc<RefCell<ThemeState>>;
 /// factory's own wrapping pattern), so reading `window.theme` twice
 /// sees the identical live state a real `set_theme()` call in between
 /// would change.
-#[pyclass(unsendable, name = "Theme")]
-pub struct Theme {
+#[pyclass(name = "Theme")]
+pub struct Theme(ThreadBound<ThemeHandle>);
+thread_bound_shell!(Theme => ThemeHandle);
+
+/// `Theme`'s state (M96: behind a `ThreadBound`, see `thread_bound`).
+pub struct ThemeHandle {
     state: SharedTheme,
 }
 
@@ -543,8 +548,12 @@ pub(crate) fn positioned_style(
 /// map from a `Node` Python object that holds no back-reference to this
 /// `PyWindow` -- shared the exact way `tree: Rc<RefCell<Tree>>` already
 /// is between a `Window` and every `Node` it hands out.
-#[pyclass(unsendable, name = "Window")]
-pub struct PyWindow {
+#[pyclass(name = "Window")]
+pub struct PyWindow(ThreadBound<WindowState>);
+thread_bound_shell!(PyWindow => WindowState);
+
+/// `Window`'s state (M96: behind a `ThreadBound`, see `thread_bound`).
+pub struct WindowState {
     pub(crate) tree: Rc<RefCell<Tree>>,
     pub(crate) root: NodeId,
     pub(crate) title: String,
@@ -643,14 +652,14 @@ pub(crate) type SharedOsWindow = Rc<RefCell<Option<std::sync::Arc<winit::window:
 /// ever called from Rust, never from Python.
 impl PyWindow {
     pub(crate) fn wrap_node(&self, id: NodeId) -> Node {
-        Node {
+        Node::from(NodeState {
             id,
             tree: self.tree.clone(),
             handlers: self.handlers.clone(),
             context_menus: self.context_menus.clone(),
             theme: self.theme.clone(),
             completions: self.completions.clone(),
-        }
+        })
     }
 }
 
@@ -692,7 +701,7 @@ impl PyWindow {
             handlers: handlers.clone(),
             context_menus: context_menus.clone(),
         }));
-        Self {
+        Self(ThreadBound::new(WindowState {
             tree,
             root,
             title: title.to_string(),
@@ -710,7 +719,7 @@ impl PyWindow {
             active,
             window_listeners: Rc::new(RefCell::new(HashMap::new())),
             os_window: Rc::new(RefCell::new(None)),
-        }
+        }))
     }
 
     /// M42 Phase 1 (§4, §5, §8, §16.2, §16.4): the real, first entry
@@ -756,7 +765,7 @@ impl PyWindow {
             handlers: view.handlers.clone(),
             context_menus: view.context_menus.clone(),
         }));
-        Self {
+        Self(ThreadBound::new(WindowState {
             tree: view.tree.clone(),
             root,
             title: title.to_string(),
@@ -782,7 +791,7 @@ impl PyWindow {
             active,
             window_listeners: Rc::new(RefCell::new(HashMap::new())),
             os_window: Rc::new(RefCell::new(None)),
-        }
+        }))
     }
 
     /// M42 Phase 2 (§4, §5, §8, §16.2, §16.4): switches which `View` a
@@ -992,9 +1001,9 @@ impl PyWindow {
     /// current live state, including after a real `set_theme()` call.
     #[getter]
     fn theme(&self) -> Theme {
-        Theme {
+        Theme(ThreadBound::new(ThemeHandle {
             state: self.theme.clone(),
-        }
+        }))
     }
 
     /// §11.7's own claim, matching `App::run`'s existing `PyWindow::
@@ -1004,6 +1013,11 @@ impl PyWindow {
     /// `Window` (a plausible, real pattern -- e.g. a bound method) forms
     /// a reference cycle the refcounting GC alone can never collect.
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        // M96: the collector may run on any thread; elsewhere, report
+        // nothing (see `thread_bound`).
+        if !self.0.is_owner() {
+            return Ok(());
+        }
         for materializer in self.materializers.borrow().values() {
             visit.call(materializer)?;
         }
@@ -1062,6 +1076,9 @@ impl PyWindow {
     }
 
     fn __clear__(&mut self) {
+        if !self.0.is_owner() {
+            return;
+        }
         self.materializers.borrow_mut().clear();
         self.canvas_draws.borrow_mut().clear();
         self.handlers.borrow_mut().clear();

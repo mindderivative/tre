@@ -6,6 +6,7 @@
 //! exactly as a real one would.
 
 use std::rc::Rc;
+use std::time::Duration;
 
 use engine_core::{
     InputEvent, Key, Modifiers, NodeId, NodeKind, PaintProperties, PathData, PathState,
@@ -20,11 +21,15 @@ use pyo3::types::PyDict;
 use taffy::prelude::Style;
 use taffy::prelude::{AvailableSpace, Size};
 
-use crate::dispatch::{fire_focus_transition, interaction_config, process_input, wants_event};
+use crate::clock;
+use crate::dispatch::{
+    fire_focus_transition, interaction_config, process_input, run_completions, wants_event,
+};
 use crate::error::EngineError;
 use crate::event::NodeContext;
 use crate::listeners::{self, WindowEventType};
-use crate::node::Node;
+use crate::node::{Node, NodeState};
+use crate::node_handles;
 use crate::node_props::parse_all;
 use crate::window::PyWindow;
 
@@ -207,14 +212,14 @@ impl PyWindow {
     #[getter]
     fn root(&self) -> Node {
         let active = self.active.borrow();
-        Node {
+        Node::from(NodeState {
             id: active.root,
             tree: active.tree.clone(),
             handlers: active.handlers.clone(),
             context_menus: active.context_menus.clone(),
             theme: self.theme.clone(),
             completions: self.completions.clone(),
-        }
+        })
     }
 
     /// M95: makes a detached node of `kind` in this window's tree and
@@ -243,19 +248,26 @@ impl PyWindow {
         };
         let changes = parse_all(props, &node_kind)?;
         let active = self.active.borrow();
-        let id = active.tree.borrow_mut().insert(
-            node_kind,
-            Style::default(),
-            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
-        );
-        let node = Node {
+        let id = {
+            let mut tree = active.tree.borrow_mut();
+            let id = tree.insert(
+                node_kind,
+                Style::default(),
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+            );
+            // M96: freed automatically once no handle points into it
+            // (`node_handles`), until it's attached somewhere.
+            tree.detach_collectible(id);
+            id
+        };
+        let node = Node::from(NodeState {
             id,
             tree: active.tree.clone(),
             handlers: active.handlers.clone(),
             context_menus: active.context_menus.clone(),
             theme: self.theme.clone(),
             completions: self.completions.clone(),
-        };
+        });
         drop(active);
         node.apply(changes);
         Ok(node)
@@ -344,6 +356,35 @@ impl PyWindow {
                 )));
             }
         })
+    }
+
+    /// M96 (R7): moves time forward by exactly `ms` milliseconds, then runs
+    /// animations, their `on_complete` callbacks, and layout at the new
+    /// time -- deterministic headless time for tests, where `App.run()`
+    /// renders no frames. The first call pins this window's clock at the
+    /// real current time; `App.run()` returns it to the real clock.
+    fn advance(&self, ms: f64, py: Python<'_>) -> PyResult<()> {
+        if !(ms.is_finite() && ms >= 0.0) {
+            return Err(PyValueError::new_err(format!(
+                "advance(ms): ms must be a non-negative number, got {ms}"
+            )));
+        }
+        node_handles::reclaim();
+        let (tree, root) = {
+            let active = self.active.borrow();
+            (active.tree.clone(), active.root)
+        };
+        let now = clock::advance(&tree, Duration::from_secs_f64(ms / 1000.0));
+        let (_, completed) = tree.borrow_mut().tick_all(now);
+        run_completions(&self.completions, completed, py);
+        tree.borrow_mut().compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(self.width.get() as f32),
+                height: AvailableSpace::Definite(self.height.get() as f32),
+            },
+        );
+        Ok(())
     }
 
     /// Delivers a synthetic `event` exactly as real input would -- for
@@ -493,7 +534,7 @@ impl PyWindow {
                 let id = need_node(&f)?;
                 f.done()?;
                 let config = interaction_config();
-                let now = std::time::Instant::now();
+                let now = crate::clock::now(&tree);
                 let transition = if event == "focus" {
                     tree.borrow_mut().set_focus_to(
                         id,
@@ -557,7 +598,7 @@ impl PyWindow {
                         height: height as f32,
                     },
                     &interaction_config(),
-                    std::time::Instant::now(),
+                    crate::clock::now(&tree),
                 );
                 listeners::deliver_window(
                     &self.window_listeners,

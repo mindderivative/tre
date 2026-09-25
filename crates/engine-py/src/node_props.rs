@@ -857,7 +857,7 @@ impl Node {
             self.id,
             config.focus_ring_opacity,
             config.focus_ring_duration,
-            std::time::Instant::now(),
+            crate::clock::now(&self.tree),
         );
         if let Some((old, new)) = transition {
             fire_focus_transition(

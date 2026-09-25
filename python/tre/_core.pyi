@@ -369,13 +369,34 @@ class Node:
         ...
     def __hash__(self) -> int: ...
     def add_child(self, child: Node) -> None:
-        """Attaches `child` under this node. Raises if `child` would
-        become its own ancestor (a cycle), or already belongs to a
-        different `Window`.
+        """Appends `child` under this node, moving it if it's attached
+        elsewhere. Raises if `child` would become its own ancestor (a
+        cycle), or already belongs to a different `Window`.
         """
         ...
+    def insert_child(self, index: int, child: Node) -> None:
+        """M96: attaches `child` so that afterwards `children()[index] ==
+        child`, moving it if it's already attached anywhere -- the
+        keyed-reorder primitive. A moved node keeps its identity,
+        listeners, focus, and running animations. `index` counts the
+        children once `child` has left its old place; past the end raises
+        `IndexError`."""
+        ...
+    def children(self) -> list[Node]:
+        """M96: this node's children, in order."""
+        ...
+    def parent(self) -> Node | None:
+        """M96: this node's parent, or `None` for the root or a detached
+        node."""
+        ...
     def remove(self) -> None:
-        """Removes this node and its whole subtree from the tree."""
+        """M96 (R5): detaches this node from its parent. It stays alive,
+        and can be attached again, while any handle to it or to anything
+        under it exists; then it's freed automatically."""
+        ...
+    def destroy(self) -> None:
+        """M96: frees this node and its whole subtree now, with their
+        listeners. Using a handle to a freed node raises `ValueError`."""
         ...
     def set_checked(self, checked: bool) -> None:
         """`Checkbox`-only -- raises `ValueError` for any other kind."""
@@ -587,6 +608,13 @@ class Window:
     def get(self, name: str) -> Any:
         """M94: reads `width`, `height`, `title`, or `scale_factor`
         (`1.0` until `App.run()` opens the window)."""
+        ...
+    def advance(self, ms: float) -> None:
+        """M96: moves this window's time forward by exactly `ms`
+        milliseconds, then runs animations, their `on_complete` callbacks,
+        and layout at the new time -- headless tests, where `App.run()`
+        renders no frames. The first call pins the window's clock at the
+        real current time; `App.run()` returns it to the real clock."""
         ...
     def simulate(self, event: str, node: Node | None = None, **fields: Any) -> None:
         """M94: delivers a synthetic event exactly as real input would,

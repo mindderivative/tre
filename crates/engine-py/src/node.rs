@@ -38,6 +38,8 @@ use taffy::prelude::{AlignItems, FlexDirection, JustifyContent, Rect as TaffyRec
 use crate::dispatch::{HandlerMap, SharedCompletions, call_handler};
 use crate::error::EngineError;
 use crate::event::{Event, NodeContext};
+use crate::node_handles;
+use crate::thread_bound::ThreadBound;
 use crate::window::SharedTheme;
 
 /// `set_syntax_spans`'s own real `(start, end, (r, g, b, a))` element
@@ -45,8 +47,68 @@ use crate::window::SharedTheme;
 /// complexity lint -- not a real domain concept reused anywhere else.
 type SyntaxSpanInput = (usize, usize, (u8, u8, u8, u8));
 
-#[pyclass(unsendable)]
-pub struct Node {
+/// A Python handle to one node. M96: a thread-checked shell around
+/// `NodeState` (see `thread_bound`), so the cyclic collector can free it on
+/// any thread; every method reaches the state through `Deref`. Built only
+/// through `From<NodeState>`, which counts the handle (`node_handles`).
+#[pyclass]
+pub struct Node(ThreadBound<NodeState>);
+
+impl std::ops::Deref for Node {
+    type Target = NodeState;
+
+    fn deref(&self) -> &NodeState {
+        &self.0
+    }
+}
+
+impl NodeState {
+    /// A new handle to `id`, another node in this node's tree.
+    pub(crate) fn handle_to(&self, id: NodeId) -> Node {
+        Node::from(NodeState {
+            id,
+            tree: self.tree.clone(),
+            handlers: self.handlers.clone(),
+            context_menus: self.context_menus.clone(),
+            theme: self.theme.clone(),
+            completions: self.completions.clone(),
+        })
+    }
+
+    /// `Err(Destroyed)` once this handle's node has been freed.
+    pub(crate) fn check_alive(&self) -> PyResult<()> {
+        if self.tree.borrow().get(self.id).is_some() {
+            Ok(())
+        } else {
+            Err(EngineError::Destroyed.into())
+        }
+    }
+
+    /// Both nodes alive and in the same tree -- what attaching one under
+    /// the other needs.
+    fn check_pair(&self, child: &NodeState) -> PyResult<()> {
+        if !Rc::ptr_eq(&self.tree, &child.tree) {
+            return Err(EngineError::ForeignNode.into());
+        }
+        self.check_alive()?;
+        child.check_alive()
+    }
+}
+
+impl From<NodeState> for Node {
+    fn from(state: NodeState) -> Self {
+        node_handles::retain(&state);
+        Node(ThreadBound::new(state))
+    }
+}
+
+impl Drop for NodeState {
+    fn drop(&mut self) {
+        node_handles::release(self);
+    }
+}
+
+pub struct NodeState {
     pub(crate) id: NodeId,
     pub(crate) tree: Rc<RefCell<Tree>>,
     pub(crate) handlers: HandlerMap,
@@ -106,7 +168,7 @@ impl Node {
         on_complete: Option<Py<PyAny>>,
     ) -> PyResult<()> {
         let duration = Duration::from_millis(duration_ms);
-        let now = Instant::now();
+        let now = crate::clock::now(&self.tree);
         let curve = parse_easing(easing.as_ref())?;
         renamed_property(property)?;
         let mut tree = self.tree.borrow_mut();
@@ -888,9 +950,7 @@ impl Node {
     /// rather than corrupting the tree the "`add_child` has no dedup"
     /// way M4 Phase 7/9 each already found once.
     fn add_child(&self, child: PyRef<'_, Node>) -> PyResult<()> {
-        if !Rc::ptr_eq(&self.tree, &child.tree) {
-            return Err(EngineError::ForeignNode.into());
-        }
+        self.check_pair(&child)?;
         if self.tree.borrow_mut().try_add_child(self.id, child.id) {
             Ok(())
         } else {
@@ -898,21 +958,71 @@ impl Node {
         }
     }
 
-    /// M13 Phase 2 (§11.2): the one missing half `add_child` already
-    /// had a counterpart for at the `engine-core` level (`Tree::remove`,
-    /// real since §5) but never a Python-facing one -- "navigating"
-    /// (§11.2's own text) means replacing `content`'s own children, an
-    /// ordinary remove-then-add, and `add_child` alone could only ever
-    /// do the "add" half. Recursively removes this node and its whole
-    /// subtree, unlinking it from its own parent first (`Tree::remove`'s
-    /// own real behavior) -- no return value: a `Node` handle Python
-    /// already holds always refers to a real, present `NodeId` at the
-    /// point this is called, the same assumption every other `Node`
-    /// method already makes, so `Tree::remove`'s own bare `bool` ("was
-    /// it actually present") would be dead API surface here, not real
-    /// information.
-    fn remove(&self) {
-        self.tree.borrow_mut().remove(self.id);
+    /// M96: attaches `child` so it ends up at `index` among this node's
+    /// children, moving it if it's already attached anywhere -- the
+    /// keyed-reorder primitive. A moved node keeps its identity, listeners,
+    /// focus, and running animations. `index` counts the children as they
+    /// are once `child` has left its old place, so afterwards
+    /// `children()[index] == child`.
+    fn insert_child(&self, index: usize, child: PyRef<'_, Node>) -> PyResult<()> {
+        self.check_pair(&child)?;
+        let mut tree = self.tree.borrow_mut();
+        let siblings = tree.get(self.id).map_or(0, |n| n.children.len());
+        let already_here = tree.get(child.id).and_then(|n| n.parent) == Some(self.id);
+        let limit = siblings - usize::from(already_here);
+        if index > limit {
+            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                "index {index} is out of range: this node would have {} children, so the \
+                 index must be 0 to {limit}",
+                limit + 1
+            )));
+        }
+        if tree.insert_child(self.id, index, child.id) {
+            Ok(())
+        } else {
+            Err(EngineError::CycleRejected.into())
+        }
+    }
+
+    /// M96: this node's children, in order.
+    fn children(&self) -> PyResult<Vec<Node>> {
+        let ids = {
+            let tree = self.tree.borrow();
+            tree.get(self.id)
+                .ok_or(EngineError::Destroyed)?
+                .children
+                .clone()
+        };
+        Ok(ids.into_iter().map(|id| self.handle_to(id)).collect())
+    }
+
+    /// M96: this node's parent, or `None` for a detached node or the root.
+    fn parent(&self) -> PyResult<Option<Node>> {
+        let parent = self
+            .tree
+            .borrow()
+            .get(self.id)
+            .ok_or(EngineError::Destroyed)?
+            .parent;
+        Ok(parent.map(|id| self.handle_to(id)))
+    }
+
+    /// M96 (R5): detaches this node from its parent. It stays alive and can
+    /// be attached again while any handle to it, or to anything under it,
+    /// exists; after that it's freed automatically.
+    fn remove(&self) -> PyResult<()> {
+        self.check_alive()?;
+        self.tree.borrow_mut().detach_collectible(self.id);
+        Ok(())
+    }
+
+    /// M96: frees this node and its whole subtree now, with their
+    /// listeners. Any handle to a freed node raises `ValueError` on use.
+    fn destroy(&self) -> PyResult<()> {
+        self.check_alive()?;
+        let freed = self.tree.borrow_mut().destroy(self.id);
+        node_handles::prune(&self.handlers, &freed);
+        Ok(())
     }
 
     /// M14 Phase 1 (§5, §7.3): the real, plain (non-animated) write to
@@ -1234,7 +1344,7 @@ impl Node {
             }
             .into());
         }
-        tree.set_carousel_index(self.id, index, Instant::now());
+        tree.set_carousel_index(self.id, index, crate::clock::now(&self.tree));
         Ok(())
     }
 

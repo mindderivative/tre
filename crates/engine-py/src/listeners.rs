@@ -342,8 +342,10 @@ pub(crate) fn route_hover(
     let (old_chain, new_chain) = {
         let tree = ctx.tree.borrow();
         (
-            old.map(|id| ancestors(&tree, id)).unwrap_or_default(),
-            new.map(|id| ancestors(&tree, id)).unwrap_or_default(),
+            old.map(|id| tree.ancestors(id).collect::<Vec<_>>())
+                .unwrap_or_default(),
+            new.map(|id| tree.ancestors(id).collect::<Vec<_>>())
+                .unwrap_or_default(),
         )
     };
     for &left in old_chain.iter().filter(|id| !new_chain.contains(id)) {
@@ -440,18 +442,6 @@ pub(crate) fn deliver_a11y_action(
     });
 }
 
-/// `node` and every ancestor up to its root, innermost first.
-fn ancestors(tree: &Tree, node: NodeId) -> Vec<NodeId> {
-    let mut chain = Vec::new();
-    let mut current = Some(node);
-    while let Some(id) = current {
-        let Some(n) = tree.get(id) else { break };
-        chain.push(id);
-        current = n.parent;
-    }
-    chain
-}
-
 pub(crate) fn stamp_modifiers(event: &mut Event) {
     let held = modifiers();
     event.shift = Some(held.shift);
@@ -480,7 +470,7 @@ pub(crate) fn deliver(
             return;
         }
         if event_type.bubbles() {
-            ancestors(&tree, target)
+            tree.ancestors(target).collect()
         } else {
             vec![target]
         }

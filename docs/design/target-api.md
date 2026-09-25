@@ -212,12 +212,19 @@ painting stays deferred), so the value always matches the current tree.
 
 - A node attached to a window lives while it's attached.
 - A detached node (never attached, or `remove()`d) lives while any Python
-  `Node` handle to it exists. When the last handle goes, the node is
-  destroyed automatically, so a forgotten `destroy()` never leaks.
-- Dropping handles and calling `destroy()` are safe from any thread: `tre`
-  hands the actual free to the event-loop thread. This covers Python's
-  cyclic garbage collector freeing handles off-thread
+  `Node` handle to it, or to anything in its subtree, exists. When the last
+  one goes, the subtree is destroyed automatically, so a forgotten
+  `destroy()` never leaks.
+- Dropping a handle, or any other `tre` object, is safe from any thread:
+  `tre` hands the actual free to the owning thread. This covers Python's
+  cyclic garbage collector freeing objects off-thread
   ([issue #10](https://github.com/mindderivative/tre/issues/10)).
+- Every other use, `destroy()` included, belongs on the event-loop thread
+  (reach it through `LoopHandle.call_soon`); elsewhere it raises, as it
+  always has. *(M96 correction: the first revision also called `destroy()`
+  safe from any thread. Freeing belongs to the owning thread either way,
+  and a method that alone skipped the thread check would be the one
+  exception to an otherwise uniform rule.)*
 
 ### Events
 

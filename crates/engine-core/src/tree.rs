@@ -11,7 +11,7 @@
 //! which the CI benchmark this step adds would be exactly what catches
 //! that.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use slotmap::{Key as SlotMapKey, KeyData, SecondaryMap, SlotMap};
@@ -147,6 +147,12 @@ pub struct Tree {
     virtual_list_count: usize,
     /// M94: the node holding pointer capture (`set_pointer_capture`).
     pointer_capture: Option<NodeId>,
+    /// M96: detached subtree roots that are freed once nothing outside the
+    /// tree references anything in their subtree (`detach_collectible`,
+    /// `collect_unreferenced`). A root leaves the set when it's attached
+    /// again. Content detached any other way (legacy context menus,
+    /// inactive dock panels) is never collected.
+    collectible: HashSet<NodeId>,
 }
 
 impl Default for Tree {
@@ -187,7 +193,60 @@ impl Tree {
             scroll_view_count: 0,
             virtual_list_count: 0,
             pointer_capture: None,
+            collectible: HashSet::new(),
         }
+    }
+
+    /// M96: detaches `id` from its parent, if it has one, and makes it a
+    /// collectible root: it stays alive, and reattachable, until
+    /// `collect_unreferenced` finds nothing referencing its subtree.
+    pub fn detach_collectible(&mut self, id: NodeId) {
+        if let Some(parent) = self.nodes.get(id).and_then(|n| n.parent) {
+            self.detach(parent, id);
+        }
+        self.collectible.insert(id);
+    }
+
+    /// M96: frees `id` and its whole subtree, returning every freed id.
+    pub fn destroy(&mut self, id: NodeId) -> Vec<NodeId> {
+        let mut freed = Vec::new();
+        let mut stack = vec![id];
+        while let Some(next) = stack.pop() {
+            if let Some(node) = self.nodes.get(next) {
+                freed.push(next);
+                stack.extend(node.children.iter().copied());
+            }
+        }
+        self.remove(id);
+        freed
+    }
+
+    /// M96: frees the collectible subtree `id` belongs to if `referenced`
+    /// is false for every node in it -- the caller's own record of which
+    /// nodes it still holds handles to. Returns every freed id; nothing is
+    /// freed when `id`'s root isn't collectible.
+    pub fn collect_unreferenced(
+        &mut self,
+        id: NodeId,
+        referenced: impl Fn(NodeId) -> bool,
+    ) -> Vec<NodeId> {
+        if !self.nodes.contains_key(id) {
+            return Vec::new();
+        }
+        let root = self.root_of(id);
+        if !self.collectible.contains(&root) {
+            return Vec::new();
+        }
+        let mut stack = vec![root];
+        while let Some(next) = stack.pop() {
+            if referenced(next) {
+                return Vec::new();
+            }
+            if let Some(node) = self.nodes.get(next) {
+                stack.extend(node.children.iter().copied());
+            }
+        }
+        self.destroy(root)
     }
 
     /// M29 Phase 1 (§5, §6): reads and clears the dirty flag in one
@@ -280,6 +339,7 @@ impl Tree {
 
         self.nodes[parent].children.push(child);
         self.nodes[child].parent = Some(parent);
+        self.collectible.remove(&child);
     }
 
     /// M6 Phase 1 (§8): the checked counterpart to `add_child`, for the
@@ -305,20 +365,96 @@ impl Tree {
     /// this is the first general-purpose, arbitrary-reparenting entry
     /// point, and the one most likely to hit it a third time.
     pub fn try_add_child(&mut self, parent: NodeId, child: NodeId) -> bool {
-        self.dirty = true;
-        let mut current = Some(parent);
-        while let Some(id) = current {
-            if id == child {
-                return false;
-            }
-            current = self.nodes.get(id).and_then(|n| n.parent);
-        }
+        let end = self.nodes[parent].children.len();
+        let end = if self.nodes[child].parent == Some(parent) {
+            end - 1
+        } else {
+            end
+        };
+        self.insert_child(parent, end, child)
+    }
 
-        if let Some(current_parent) = self.nodes[child].parent {
-            self.detach(current_parent, child);
+    /// M96: attaches `child` under `parent` so it ends up at `index` in
+    /// `parent`'s children -- the keyed-reorder primitive. A child that
+    /// already has a parent (the same one or another) is *moved*: it keeps
+    /// its `NodeId`, state, and running animations, and keeps focus as long
+    /// as it stays under the same root. `index` counts the children as they
+    /// are once `child` has been taken out of its old place; past the end
+    /// it appends. Returns `false`, changing nothing, if `child` is
+    /// `parent` or one of its ancestors.
+    pub fn insert_child(&mut self, parent: NodeId, index: usize, child: NodeId) -> bool {
+        if self.ancestors(parent).any(|id| id == child) {
+            return false;
         }
-        self.add_child(parent, child);
+        self.dirty = true;
+        let root_before = self.root_of(child);
+        if let Some(old_parent) = self.nodes[child].parent {
+            self.unlink(old_parent, child);
+        }
+        let index = index.min(self.nodes[parent].children.len());
+        let parent_taffy = self.taffy_nodes[parent];
+        let child_taffy = self.taffy_nodes[child];
+        self.taffy
+            .insert_child_at_index(parent_taffy, index, child_taffy)
+            .expect("insert_child: taffy rejected the parent/child pair");
+        self.nodes[parent].children.insert(index, child);
+        self.nodes[child].parent = Some(parent);
+        self.collectible.remove(&child);
+        if self.root_of(child) != root_before {
+            self.forget_interaction_in(child);
+        }
         true
+    }
+
+    /// `id` and every ancestor up to its root, innermost first.
+    pub fn ancestors(&self, id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+        std::iter::successors(Some(id), |&id| self.nodes.get(id).and_then(|n| n.parent))
+            .filter(|&id| self.nodes.contains_key(id))
+    }
+
+    /// The top of `id`'s tree: `id` itself when it has no parent.
+    pub fn root_of(&self, id: NodeId) -> NodeId {
+        self.ancestors(id).last().unwrap_or(id)
+    }
+
+    /// Takes `child` out of `parent`'s children in both structures, and
+    /// nothing else -- `detach` and `insert_child` decide what else a
+    /// detach or a move means.
+    fn unlink(&mut self, parent: NodeId, child: NodeId) {
+        let parent_taffy = *self
+            .taffy_nodes
+            .get(parent)
+            .expect("detach: parent NodeId not found in this Tree");
+        let child_taffy = *self
+            .taffy_nodes
+            .get(child)
+            .expect("detach: child NodeId not found in this Tree");
+        self.taffy
+            .remove_child(parent_taffy, child_taffy)
+            .expect("detach: taffy rejected removing this parent/child pair");
+        self.nodes[parent].children.retain(|&c| c != child);
+        self.nodes[child].parent = None;
+    }
+
+    /// Clears focus, hover, press, and pointer capture held by `id` or a
+    /// descendant -- for a subtree that left the tree it was reachable in,
+    /// where none of them can stay meaningful.
+    fn forget_interaction_in(&mut self, id: NodeId) {
+        let inside = |tree: &Self, held: Option<NodeId>| {
+            held.is_some_and(|held| tree.ancestors(held).any(|a| a == id))
+        };
+        if inside(self, self.focused) {
+            self.focused = None;
+        }
+        if inside(self, self.hovered) {
+            self.hovered = None;
+        }
+        if inside(self, self.pointer_capture) {
+            self.pointer_capture = None;
+        }
+        if inside(self, self.pressed.map(|(_, node)| node)) {
+            self.pressed = None;
+        }
     }
 
     /// The inverse of `add_child`: detaches `child` from `parent`
@@ -333,28 +469,13 @@ impl Tree {
     /// previous parent") before using it.
     pub fn detach(&mut self, parent: NodeId, child: NodeId) {
         self.dirty = true;
-        let parent_taffy = *self
-            .taffy_nodes
-            .get(parent)
-            .expect("detach: parent NodeId not found in this Tree");
-        let child_taffy = *self
-            .taffy_nodes
-            .get(child)
-            .expect("detach: child NodeId not found in this Tree");
-        self.taffy
-            .remove_child(parent_taffy, child_taffy)
-            .expect("detach: taffy rejected removing this parent/child pair");
-
-        self.nodes[parent].children.retain(|&c| c != child);
-        self.nodes[child].parent = None;
+        self.unlink(parent, child);
         // A detached node is no longer reachable from any root, the
         // same "can't stay meaningfully focused" reasoning `remove`
         // already applies -- if it's reattached later, its own
         // eventual re-focus is whatever caller reattached it decides,
         // not a stale pointer surviving from before.
-        if self.focused == Some(child) {
-            self.focused = None;
-        }
+        self.forget_interaction_in(child);
     }
 
     pub fn get(&self, id: NodeId) -> Option<&Node> {
@@ -420,6 +541,7 @@ impl Tree {
             let _ = self.taffy.remove(taffy_node);
         }
         self.nodes.remove(id);
+        self.collectible.remove(&id);
         // Review follow-through (M28 Phase 1, §11.3): `close_overlay` is
         // the only other place that ever cleared a `self.overlays`
         // entry -- a caller removing the same content through this
@@ -4765,6 +4887,113 @@ mod tests {
             Some(new_parent),
             "the child's own parent pointer must point at its new parent"
         );
+    }
+
+    /// M96: `insert_child` reorders siblings by final index, and a move
+    /// within one tree keeps the node's identity and focus.
+    #[test]
+    fn insert_child_reorders_and_keeps_focus_within_a_tree() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let parent = tree.insert(k, s, p);
+        let kids: Vec<NodeId> = (0..3)
+            .map(|_| {
+                let (k, s, p) = leaf(10.0, 10.0);
+                let id = tree.insert(k, s, p);
+                tree.add_child(parent, id);
+                id
+            })
+            .collect();
+        tree.focused = Some(kids[0]);
+
+        assert!(tree.insert_child(parent, 2, kids[0]));
+        assert_eq!(
+            tree.get(parent).unwrap().children,
+            vec![kids[1], kids[2], kids[0]]
+        );
+        assert!(tree.insert_child(parent, 0, kids[2]));
+        assert_eq!(
+            tree.get(parent).unwrap().children,
+            vec![kids[2], kids[1], kids[0]]
+        );
+        assert_eq!(
+            tree.focused,
+            Some(kids[0]),
+            "a move within one tree keeps focus"
+        );
+        let taffy_order: Vec<taffy::NodeId> =
+            tree.taffy.children(tree.taffy_nodes[parent]).unwrap();
+        let expected: Vec<taffy::NodeId> = [kids[2], kids[1], kids[0]]
+            .iter()
+            .map(|&id| tree.taffy_nodes[id])
+            .collect();
+        assert_eq!(
+            taffy_order, expected,
+            "taffy's child order follows the tree's"
+        );
+    }
+
+    /// M96: moving a subtree into a different, detached tree clears focus
+    /// held inside it, since it's no longer reachable where it was.
+    #[test]
+    fn insert_child_into_another_root_forgets_focus() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let root = tree.insert(k, s, p);
+        let (k, s, p) = leaf(10.0, 10.0);
+        let detached = tree.insert(k, s, p);
+        let (k, s, p) = leaf(10.0, 10.0);
+        let child = tree.insert(k, s, p);
+        tree.add_child(root, child);
+        tree.focused = Some(child);
+
+        assert!(tree.insert_child(detached, 0, child));
+        assert_eq!(tree.focused, None);
+        assert_eq!(tree.root_of(child), detached);
+        assert!(
+            !tree.insert_child(child, 0, detached),
+            "an ancestor can't become a child"
+        );
+    }
+
+    /// M96: a collectible subtree lives while anything references any node
+    /// in it, and is freed once nothing does.
+    #[test]
+    fn a_collectible_subtree_is_freed_once_unreferenced() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let root = tree.insert(k, s, p);
+        let (k, s, p) = leaf(10.0, 10.0);
+        let child = tree.insert(k, s, p);
+        tree.add_child(root, child);
+
+        tree.detach_collectible(root);
+        assert!(tree.collect_unreferenced(root, |id| id == child).is_empty());
+        let freed = tree.collect_unreferenced(child, |_| false);
+        assert_eq!(freed.len(), 2);
+        assert!(tree.get(root).is_none() && tree.get(child).is_none());
+    }
+
+    /// M96: attaching a collectible root makes it ordinary again, and a
+    /// node detached the legacy way is never collected.
+    #[test]
+    fn attached_and_legacy_detached_nodes_are_never_collected() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(10.0, 10.0);
+        let root = tree.insert(k, s, p);
+        let (k, s, p) = leaf(10.0, 10.0);
+        let made = tree.insert(k, s, p);
+        tree.detach_collectible(made);
+        assert!(tree.try_add_child(root, made));
+        assert!(tree.collect_unreferenced(made, |_| false).is_empty());
+        assert!(tree.get(made).is_some(), "attached: kept");
+
+        let (k, s, p) = leaf(10.0, 10.0);
+        let legacy = tree.insert(k, s, p);
+        tree.add_child(root, legacy);
+        tree.detach(root, legacy);
+        assert!(tree.collect_unreferenced(legacy, |_| false).is_empty());
+        assert!(tree.get(legacy).is_some(), "legacy-detached: kept");
     }
 
     #[test]

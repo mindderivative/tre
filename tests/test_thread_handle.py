@@ -146,9 +146,9 @@ def test_call_soon_works_from_a_background_thread_without_raising():
 
 
 def test_app_itself_is_rejected_from_a_background_thread():
-    # Why LoopHandle exists: App is single-threaded. pyo3 refuses an
-    # `unsendable` object on another thread with a PanicException,
-    # which derives from BaseException, not Exception.
+    # Why LoopHandle exists: App is single-threaded. Every tre object
+    # refuses use from another thread with a PanicException, which derives
+    # from BaseException, not Exception (M96: `thread_bound`).
     app = App()
     errors = []
 
@@ -162,4 +162,4 @@ def test_app_itself_is_rejected_from_a_background_thread():
     thread.start()
     thread.join()
     assert len(errors) == 1
-    assert "unsendable" in str(errors[0])
+    assert "belongs to the thread that created it" in str(errors[0])

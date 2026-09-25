@@ -22,7 +22,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Instant;
 
 use engine_core::{Cursor, InputEvent, NodeId, NodeKind, PointerButton, Tree, from_access_id};
 use engine_platform::{WindowConfig, WindowLifecycle, WindowRequest, run_windowed_multi};
@@ -42,11 +41,16 @@ use crate::dock::{self, SharedDockState};
 use crate::event::NodeContext;
 use crate::listeners::{self, WindowEventType, WindowListenerMap};
 use crate::terminal::{TerminalSession, control_byte_for, input_bytes_for};
+use crate::thread_bound::{ThreadBound, thread_bound_shell};
 use crate::thread_handle::{CallQueue, LoopHandle};
 use crate::window::{PyWindow, SharedActiveTree, SharedOsWindow, SharedSize, SharedTheme};
 
-#[pyclass(unsendable)]
-pub struct App {
+#[pyclass]
+pub struct App(ThreadBound<AppState>);
+thread_bound_shell!(App => AppState);
+
+/// `App`'s state (M96: behind a `ThreadBound`, see `thread_bound`).
+pub struct AppState {
     windows: Vec<Py<PyWindow>>,
     /// M87: callables queued from other threads via `LoopHandle`,
     /// drained at the top of every frame -- see `thread_handle.rs`.
@@ -422,10 +426,10 @@ struct WindowRuntime {
 impl App {
     #[new]
     fn new() -> Self {
-        Self {
+        Self(ThreadBound::new(AppState {
             windows: Vec::new(),
             calls: CallQueue::default(),
-        }
+        }))
     }
 
     /// M87 (tre issue #6): a `Send + Sync` handle a background thread can
@@ -464,6 +468,14 @@ impl App {
         // it too only to get the subscriber live as early as possible
         // for a real app, not because it's the sole guarantor.
         crate::dispatch::ensure_tracing_subscriber();
+
+        // M96: a live window runs on real time, whatever `Window.advance`
+        // pinned before.
+        for window in &self.windows {
+            let window = window.borrow(py);
+            crate::clock::unpin(&window.tree);
+            crate::clock::unpin(&window.active.borrow().tree);
+        }
 
         // Extracted once, up front, while `py` is already held --
         // see `WindowSetup`'s own doc comment for why nothing below
@@ -571,6 +583,9 @@ impl App {
                 // `runtimes` or any tree is held here, so the callable
                 // is free to touch any window's tree.
                 calls_for_frame.drain(py);
+                // M96: finish drops other threads handed back, and free
+                // any detached subtree that lost its last handle.
+                crate::node_handles::reclaim();
                 let mut runtimes = runtimes_for_frame.borrow_mut();
                 let Some(runtime) = runtimes.get_mut(&window_id) else {
                     return false;
@@ -594,7 +609,7 @@ impl App {
                     runtime.context_menus = active.context_menus.clone();
                 }
 
-                let now = Instant::now();
+                let now = crate::clock::now(&runtime.tree);
                 let (any_active, completed) = runtime.tree.borrow_mut().tick_all(now);
                 // M9 Phase 2 (§5): the real drain -- invokes each
                 // just-completed animation's registered `on_complete`
@@ -1318,7 +1333,7 @@ impl App {
                             node,
                             config.focus_ring_opacity,
                             config.focus_ring_duration,
-                            Instant::now(),
+                            crate::clock::now(&tree_rc),
                         );
                         drop(tree);
                         if let Some((old, new)) = transition {
@@ -1341,7 +1356,7 @@ impl App {
                             tree.clear_focus(
                                 config.focus_ring_opacity,
                                 config.focus_ring_duration,
-                                Instant::now(),
+                                crate::clock::now(&tree_rc),
                             )
                         } else {
                             None

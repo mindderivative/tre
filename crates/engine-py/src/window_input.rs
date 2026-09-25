@@ -74,7 +74,7 @@ impl PyWindow {
             trigger.id,
             destination.id,
             &config,
-            std::time::Instant::now(),
+            crate::clock::now(&self.tree),
             handle,
         );
         Ok(())
@@ -147,7 +147,7 @@ impl PyWindow {
             node.id,
         );
 
-        let now = std::time::Instant::now();
+        let now = crate::clock::now(&tree);
         let config = interaction_config();
         // Each `dispatch` call's own `tree.borrow_mut()` is a short-
         // lived temporary, released before `run_dispatch_outcome` runs
@@ -227,7 +227,7 @@ impl PyWindow {
             root,
             event.clone(),
             &interaction_config(),
-            std::time::Instant::now(),
+            crate::clock::now(&tree),
         );
         run_dispatch_outcome(
             &handlers,
@@ -265,7 +265,7 @@ impl PyWindow {
             node.id,
             config.focus_ring_opacity,
             config.focus_ring_duration,
-            std::time::Instant::now(),
+            crate::clock::now(&tree),
         );
         if let Some((old, new)) = transition {
             crate::dispatch::fire_focus_transition(
@@ -327,7 +327,7 @@ impl PyWindow {
                 height: height as f32,
             },
             &interaction_config(),
-            std::time::Instant::now(),
+            crate::clock::now(&tree),
         );
         // `Resized` always dispatches to `DispatchOutcome::None`
         // (`Tree::dispatch`'s own doc comment) -- no real click/hover/
@@ -410,7 +410,7 @@ impl PyWindow {
                 position: point,
             },
             &interaction_config(),
-            std::time::Instant::now(),
+            crate::clock::now(&tree),
         );
         // `Scroll` is a true no-op for `Tree::dispatch`'s own outcome
         // today (`InputEvent::Scroll`'s own doc comment) -- same
@@ -456,7 +456,7 @@ impl PyWindow {
             node.id,
         );
 
-        let now = std::time::Instant::now();
+        let now = crate::clock::now(&tree);
         let config = interaction_config();
         // M55 (§10, §16.2): a real gap found while scoping `Focus`
         // events -- this press's own outcome used to be discarded
@@ -566,7 +566,7 @@ impl PyWindow {
             root,
             event.clone(),
             &interaction_config(),
-            std::time::Instant::now(),
+            crate::clock::now(&tree),
         );
         run_dispatch_outcome(
             &handlers,
@@ -612,7 +612,7 @@ impl PyWindow {
             root,
             event.clone(),
             &interaction_config(),
-            std::time::Instant::now(),
+            crate::clock::now(&tree),
         );
         run_dispatch_outcome(
             &handlers,
