@@ -300,6 +300,49 @@ impl Node {
             // M30 Phase 3 Step 2 (§8): the progress indicators' own
             // arm. M90: `Slider` joins it -- a slider's position was
             // `thumb_position` here but `value` everywhere else.
+            // M95: a path's data morphs; its stroke trim animates.
+            "data" | "trim_start" | "trim_end" => {
+                let NodeKind::Path(state) = &mut node.kind else {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "node property `{property}` applies only to a path node"
+                    )));
+                };
+                let handle = |completions: &SharedCompletions| {
+                    on_complete.map(|cb| completions.borrow_mut().register(cb))
+                };
+                if property == "data" {
+                    let data: String = to.extract().map_err(|_| {
+                        pyo3::exceptions::PyValueError::new_err(
+                            "node property `data` must be SVG path data (a str)",
+                        )
+                    })?;
+                    let value = engine_core::PathData::from_svg(&data).map_err(|err| {
+                        pyo3::exceptions::PyValueError::new_err(format!(
+                            "node property `data` isn't valid SVG path data: {err}"
+                        ))
+                    })?;
+                    animate_field(
+                        &mut state.data,
+                        value,
+                        duration,
+                        now,
+                        handle(&self.completions),
+                    );
+                } else {
+                    let value = extract_f64(&to, property)?;
+                    if !(0.0..=1.0).contains(&value) {
+                        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                            "node property `{property}` must be a number from 0.0 to 1.0"
+                        )));
+                    }
+                    let field = if property == "trim_start" {
+                        &mut state.trim_start
+                    } else {
+                        &mut state.trim_end
+                    };
+                    animate_field(field, value, duration, now, handle(&self.completions));
+                }
+            }
             "value" => match &mut node.kind {
                 NodeKind::Slider(state) => {
                     let value = extract_f64(&to, property)?;
@@ -1544,6 +1587,7 @@ fn kind_name(kind: &NodeKind) -> &'static str {
         NodeKind::TextField(_) => "TextField",
         NodeKind::Image(_) => "Image",
         NodeKind::Icon(_) => "Icon",
+        NodeKind::Path(_) => "Path",
         NodeKind::Link(_) => "Link",
         NodeKind::Terminal(_) => "Terminal",
         NodeKind::Carousel(_) => "Carousel",

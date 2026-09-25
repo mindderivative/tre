@@ -2229,6 +2229,12 @@ impl Tree {
             // own real "menu icon rotates inwards 180°" need. M92: its
             // `tint` too. Both ticked unconditionally (no short-circuit),
             // so neither animation stalls while the other runs.
+            // M95: a path's data (morphing) and stroke trim.
+            if let NodeKind::Path(state) = &mut node.kind
+                && state.tick(now, &mut completed)
+            {
+                any_active = true;
+            }
             if let NodeKind::Icon(state) = &mut node.kind {
                 let rotating = state.rotation.tick(now, &mut completed);
                 let tinting = state.tint.tick(now, &mut completed);

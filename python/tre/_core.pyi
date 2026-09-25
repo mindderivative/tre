@@ -173,7 +173,7 @@ class Node:
     def animate(
         self,
         property: str,
-        to: float | Color | Sequence[float],
+        to: float | Color | Sequence[float] | str,
         duration_ms: int = 0,
         on_complete: Callable[[], object] | None = None,
     ) -> None:
@@ -199,7 +199,10 @@ class Node:
         `value_min`, `value_max`, `value_step`, `checked`, `selected`,
         `expanded`, `disabled`, `level`, `live` (`"off"`, `"polite"`,
         `"assertive"`), `a11y_hidden`, `focusable`, `tab_index`,
-        `cursor`, `hit_testable`. Optional ones take `None` to clear.
+        `cursor`, `hit_testable`, `width`/`height` (a number, `"auto"`,
+        or `"50%"`), and on a path `data` (SVG path data), `view_box`
+        (`(min_x, min_y, width, height)`), `trim_start`/`trim_end`.
+        Optional ones take `None` to clear.
         """
         ...
     def focus(self) -> None:
@@ -528,6 +531,13 @@ class Window:
     """
 
     def __init__(self, width: int = 480, height: int = 200, title: str = "tre v2") -> None: ...
+    def create(self, kind: str, **props: Any) -> Node:
+        """M95: makes a detached `"box"` or `"path"` node (a path needs
+        `data`) and applies `props` atomically, as `Node.set` does.
+        Attach it with `add_child`. Raises `ValueError` for an unknown
+        kind or a bad property, creating nothing.
+        """
+        ...
     @property
     def root(self) -> Node:
         """M94: the window's root node (the shown one, after `show_view`)."""

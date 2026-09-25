@@ -26,6 +26,7 @@ mod input;
 mod interaction;
 mod node;
 mod overlay;
+mod path;
 mod shape_morph;
 mod tree;
 
@@ -50,6 +51,7 @@ pub use node::{
     VirtualListState,
 };
 pub use overlay::OverlayMeta;
+pub use path::{PathData, PathState, fit_transform, trim};
 pub use shape_morph::ShapeKey;
 pub use tree::{
     FocusDirection, InteractionConfig, Tree, from_access_id, node_id_as_u64, to_access_id,

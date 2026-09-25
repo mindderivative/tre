@@ -141,6 +141,8 @@ pub enum NodeKind {
     /// solid-`tint` `BezPath` fill -- see `IconState`'s own doc
     /// comment for the real crate-boundary reasoning.
     Icon(IconState),
+    /// M95 (D4): any vector path -- fill, stroke, trim, morph.
+    Path(crate::path::PathState),
     /// M30 Phase 2 Step 1 (§5, §7.3): a real MD3 radio button.
     /// `selected` is plain, app-owned state -- the identical Design
     /// Principle 6 shape `CheckboxState.checked` already establishes

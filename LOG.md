@@ -16,6 +16,18 @@
    - About 99 sites read corner radii.
    - Placeholder text and password obscuring don't exist yet.
 
+3. Phase 1 done:
+   - `engine-core` gained a `path` module: SVG data, view-box fitting,
+     arc-length trim, and a resampling morph.
+   - `NodeKind::Path` is ticked and painted.
+   - `window.create("box" | "path", **props)`.
+   - `set`/`get` gained `width`/`height` (a number, `"auto"`, or a
+     percentage) and the path properties; `animate` gained
+     `data`/`trim_*`.
+   - Finding: `with_opacity` replaces each color's alpha instead of
+     multiplying it. Fixed in Phase 2.
+   - pytest 1036 passed; cargo release 564 passed.
+
 ## Status
 
-**M95 Phase 1 in progress.**
+**M95 Phase 2 in progress.**

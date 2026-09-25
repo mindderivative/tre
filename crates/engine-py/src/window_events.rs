@@ -7,11 +7,17 @@
 
 use std::rc::Rc;
 
-use engine_core::{InputEvent, Key, Modifiers, NodeId, PointerButton, ScrollDelta, Tree};
+use engine_core::{
+    InputEvent, Key, Modifiers, NodeId, NodeKind, PaintProperties, PathData, PathState,
+    PointerButton, ScrollDelta, Tree,
+};
+use peniko::Color;
+use peniko::kurbo::BezPath;
 use peniko::kurbo::Point;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use taffy::prelude::Style;
 use taffy::prelude::{AvailableSpace, Size};
 
 use crate::dispatch::{fire_focus_transition, interaction_config, process_input, wants_event};
@@ -19,6 +25,7 @@ use crate::error::EngineError;
 use crate::event::NodeContext;
 use crate::listeners::{self, WindowEventType};
 use crate::node::Node;
+use crate::node_props::parse_all;
 use crate::window::PyWindow;
 
 /// Every event `simulate` accepts, for its own error message.
@@ -208,6 +215,50 @@ impl PyWindow {
             theme: self.theme.clone(),
             completions: self.completions.clone(),
         }
+    }
+
+    /// M95: makes a detached node of `kind` in this window's tree and
+    /// applies `props` atomically, as `node.set` does -- attach it with
+    /// `add_child`. Builds `"box"` and `"path"` (which needs `data`);
+    /// M96 adds the remaining kinds.
+    #[pyo3(signature = (kind, **props))]
+    fn create(&self, kind: &str, props: Option<&Bound<'_, PyDict>>) -> PyResult<Node> {
+        let node_kind = match kind {
+            "box" => NodeKind::Rect,
+            "path" => {
+                let has_data = match props {
+                    Some(props) => props.contains("data")?,
+                    None => false,
+                };
+                if !has_data {
+                    return Err(PyValueError::new_err("create(\"path\") needs `data`"));
+                }
+                NodeKind::Path(PathState::new(PathData(BezPath::new())))
+            }
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown node kind {kind:?} -- create builds: box, path"
+                )));
+            }
+        };
+        let changes = parse_all(props, &node_kind)?;
+        let active = self.active.borrow();
+        let id = active.tree.borrow_mut().insert(
+            node_kind,
+            Style::default(),
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        let node = Node {
+            id,
+            tree: active.tree.clone(),
+            handlers: active.handlers.clone(),
+            context_menus: active.context_menus.clone(),
+            theme: self.theme.clone(),
+            completions: self.completions.clone(),
+        };
+        drop(active);
+        node.apply(changes);
+        Ok(node)
     }
 
     /// Registers `handler` for the window event `event` (`resize`,

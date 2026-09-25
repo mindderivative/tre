@@ -1001,6 +1001,32 @@ fn paint_node(
         // argument needing no such restore) -- `composed` is put back
         // immediately after, since the post-match ripple/hover overlay
         // below relies on it still being active.
+        // M95 (D4): any vector path, in node-local pixels once fitted
+        // into the view box. The fill is the whole path; the stroke is
+        // the trimmed outline, centered on the path as in SVG, with round
+        // caps and joins, and its width stays in pixels however the view
+        // box scales the path.
+        NodeKind::Path(state) => {
+            let (fill, stroke) = state.geometry(w, h);
+            let fill_color = node.paint.background.current;
+            if fill_color.components[3] > 0.0 {
+                scene.set_paint(with_opacity(fill_color, node.paint.opacity.current));
+                scene.fill_path(&fill);
+            }
+            let stroke_width = node.paint.border_width.current;
+            if stroke_width > 0.0 && !stroke.elements().is_empty() {
+                scene.set_paint(with_opacity(
+                    node.paint.border_color.current,
+                    node.paint.opacity.current,
+                ));
+                scene.set_stroke(
+                    Stroke::new(stroke_width)
+                        .with_caps(peniko::kurbo::Cap::Round)
+                        .with_join(peniko::kurbo::Join::Round),
+                );
+                scene.stroke_path(&stroke);
+            }
+        }
         NodeKind::Icon(state) => {
             let icon_scale = 1.0 / ICON_VIEWBOX_SIZE;
             let icon_transform = Affine::scale_non_uniform(w * icon_scale, h * icon_scale)

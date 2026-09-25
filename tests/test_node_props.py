@@ -66,7 +66,7 @@ def test_set_is_atomic() -> None:
 @pytest.mark.parametrize(
     ("props", "message"),
     [
-        ({"colour": 1}, "settable: role, label"),
+        ({"colour": 1}, "settable: width, height"),
         ({"role": "widget"}, "one of: button, checkbox"),
         ({"cursor": "hand"}, "one of: default, pointer"),
         ({"live": "loud"}, "one of: off, polite, assertive"),
