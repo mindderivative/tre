@@ -21,3 +21,5 @@ peniko = "0.6.1"
 # only, production code never touches `taffy` directly. Pinned to the
 # same version `engine-core` itself uses.
 taffy = "0.14.0"
+# M97: `tests/handover.rs` writes the MD3 handover as JSON -- test-only.
+serde_json = "1.0.151"

@@ -898,6 +898,7 @@ dependencies = [
  "engine-core",
  "material-colors",
  "peniko",
+ "serde_json",
  "taffy",
 ]
 

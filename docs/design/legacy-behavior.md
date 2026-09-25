@@ -132,7 +132,7 @@ arrows.
 | --- | --- |
 | `add_linear_progress` | Two square-cornered rectangles: the track across the full box in `surface_container_highest`, and the indicator from the left, `value × w` wide, in `primary`. No indeterminate mode. |
 | `add_circular_progress` | An arc stroked `max(min(w, h) × 4/48, 1)` wide, of radius `min(w, h)/2 − width/2`, starting at 12 o'clock and sweeping clockwise `value × 360°`, in `primary`. No track ring. |
-| `add_loading_indicator` | A filled shape in `primary` (or `foreground`) that morphs forever through four shapes — pentagon, pill, cookie, oval, then back — `650` per step, linear, from its first tick. The shapes fill the whole box and are built once, at construction size. Their outlines come with the engine-md3 handover. |
+| `add_loading_indicator` | A filled shape in `primary` (or `foreground`) that morphs forever through four shapes — pentagon, pill, cookie, oval, then back — `650` per step, linear, from its first tick. The shapes fill the whole box and are built once, at construction size; the pill and the oval come out as diamonds, since a morph shape keeps only its curves' end points. Their outlines are in the [MD3 handover](md3-handover.md#loading-indicator). |
 
 Rebuilt: `box`es for the linear bar; a `path` circle with `trim_end = value`,
 its start rotated to 12 o'clock, for the arc; and a `path` whose `data`
@@ -242,4 +242,4 @@ itself.
 Every color in the legacy reference is the no-theme baseline. With a theme set,
 each factory resolved its colors from theme roles when built, and again on every
 `set_theme`. The role names on this page are those roles; the baseline scheme
-that maps them to the reference's values comes with the engine-md3 handover.
+that maps them to the reference's values is in the [MD3 handover](md3-handover.md#colour).

@@ -75,4 +75,5 @@ nav:
       - Target API: design/target-api.md
       - Legacy widget reference: design/legacy-widgets.md
       - Legacy widget behavior: design/legacy-behavior.md
+      - MD3 handover: design/md3-handover.md
   - Contributing: contributing.md
