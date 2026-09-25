@@ -39,7 +39,7 @@ content.add_child(tabs)
 - `add_top_app_bar(title, leading_icon=None, trailing_icons=None,
   width=None)` — the window's own title/action strip, the most common
   `menu_bar=` argument to `build_shell`.
-- `add_toolbar(variant="docked", orientation=None, color=None,
+- `add_toolbar(variant="docked", orientation=None, vibrant=False,
   width=None, height=None)` — `variant` is `"docked"` (part of the
   shell) or `"floating"` (a raised, positioned strip, typically placed
   with explicit `x`/`y` instead of via `build_shell`).

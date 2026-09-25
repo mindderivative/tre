@@ -58,11 +58,12 @@ ints 0–255.
 
 ### `add_text`
 
-**`add_text(content, background, width, height, font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None)`**
+**`add_text(content, foreground, width, height, typography_role=None, font_family=None, font_weight=None, font_size=None, line_height=None, x=None, y=None)`**
 
-A plain, non-editable text label — `background` is repurposed as the
-glyph color (a label has no visible box of its own), the same real
-convention a declarative `kind: Text` widget already uses. `width`/
+A plain, non-editable text label. `foreground` is its text color; a
+label has no fill of its own. `typography_role` picks an MD3 type-scale
+role (e.g. `"body_large"`) supplying the font defaults, each
+overridable by the explicit font arguments. `width`/
 `height` are required (there's no intrinsic-sizing/measure-function
 support to size a label from its own content). For editable text, see
 [`add_text_field`](#add_text_field).
@@ -77,8 +78,9 @@ An MD3 checkbox. See [MD3 Components → Selection & Input](../../guide/componen
 
 **`add_slider(background, width, height, value=0.0, x=None, y=None)`**
 
-An MD3 slider with drag-to-set built in. `value` seeds `thumb_position`,
-clamped to `0.0..=1.0`. See [MD3 Components → Selection & Input](../../guide/components.md#selection-input).
+An MD3 slider with drag-to-set built in. `value` seeds its position,
+clamped to `0.0..=1.0`; read and animate it as the `"value"` property.
+`background` is the thumb's fill. See [MD3 Components → Selection & Input](../../guide/components.md#selection-input).
 
 ### `add_text_field`
 
@@ -120,7 +122,7 @@ read or decoded, `ValueError` for an unknown `fit`. See
 
 ### `add_icon`
 
-**`add_icon(name, color, size, x=None, y=None)`**
+**`add_icon(name, foreground, size, x=None, y=None)`**
 
 A curated Material Symbols vector icon (`home`, `search`, `menu`,
 `close`, `check`, `arrow_back`, `add`, `settings`). Raises `ValueError`

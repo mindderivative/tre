@@ -544,8 +544,8 @@ class Window:
         x: float | None = None,
         y: float | None = None,
     ) -> Node:
-        """A plain label -- `background` is repurposed as the glyph
-        color (no visible box of its own). `typography_role` is a real
+        """A plain label -- `foreground` is its text color (a label has
+        no fill of its own; M90 renamed this from `background`). `typography_role` is a real
         MD3 type-scale role name (e.g. `"body_large"`); it supplies
         `font_family`/`font_weight`/`font_size`/`line_height` as
         defaults, each of which may still be individually overridden.
@@ -781,7 +781,7 @@ class Window:
         looping the instant it's constructed and never stops. `size`
         is a single square dimension, the same real convention `add_
         circular_progress`'s own `size` param already establishes.
-        `color` defaults to the current theme's own real `primary`
+        `foreground` defaults to the current theme's own real `primary`
         role (or a fixed baseline before `Window.set_theme`). **Real,
         honest v1 simplification:** this is a real, recognizable
         subset of MD3 Expressive's own actual seven-shape sequence,
@@ -838,8 +838,8 @@ class Window:
         border_width: float | None = None,
     ) -> Node:
         """A real MD3 1dp divider line -- `length` wide and 1dp tall
-        when horizontal (the default), or the reverse when
-        `vertical=True`.
+        when `orientation="horizontal"` (the default), or the reverse
+        when `orientation="vertical"`.
         """
         ...
     def add_tooltip(
@@ -1062,8 +1062,8 @@ class Window:
         elevation). `orientation` (`"horizontal"`/`"vertical"`) only
         applies to a floating toolbar -- a docked toolbar is always
         horizontal and raises `ValueError` if asked for vertical.
-        `color` is `"standard"` (`surface_container` fill) or
-        `"vibrant"` (`primary_container` fill). A real "container with
+        `vibrant=False` uses a `surface_container` fill, `vibrant=True`
+        a `primary_container` fill. A real "container with
         configurable slots" per MD3's own anatomy: populate the
         returned node with any already-built node (a `Button`, `Icon
         Button`, `TextField`, etc.) via the existing, generic
@@ -1677,8 +1677,8 @@ class Window:
         Returns an empty container -- compose your own real content in
         via `Node.add_child` (it needs a real, explicit size on the
         scroll axis matching its own true content extent, same as
-        every other `add_*` factory's own children). `horizontal=False`
-        (the default) scrolls vertically; `True` scrolls horizontally
+        every other `add_*` factory's own children). `orientation`
+        is the scroll axis: `"vertical"` (the default) or `"horizontal"`
         -- never both at once. Real wheel scrolling and `Window.scroll`
         both already work with no further setup, and so does a real
         mouse drag on the scrollbar thumb the engine now paints and

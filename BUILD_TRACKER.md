@@ -52,7 +52,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M88 — Fix `test_terminal.py`'s CI Failure: No Display, Not Timing (corrects M83) | `██████████` 100% | ✅ Complete — single phase (2026-09-25) |
 | `v0.3.2` Release: PR #7 Merged to `main`, Tagged and Pushed | — | ✅ Released (2026-09-25) |
 | M89 — MkDocs Completeness Pass + "Working with Files" Section for Pure-`tre` Users | `██████████` 100% | ✅ Complete — single phase (2026-09-25) |
-| M90 — Consistent Property Naming Across the Imperative and Declarative APIs (breaking) | `█████░░░░░` 50% | 🚧 In progress — Phases 1-2 of 4 done (2026-09-25) |
+| M90 — Consistent Property Naming Across the Imperative and Declarative APIs (breaking) | `████████░░` 75% | 🚧 In progress — Phases 1-3 of 4 done (2026-09-25) |
 | M91 — Live View Updates Keep Bound Values + `View.set_stylesheet` (issue #8) | `░░░░░░░░░░` 0% | ⬜ Scoped, not started — 2 phases (2026-09-25) |
 
 **Just closed:** M80 — a 4-lens multi-agent review (Performance/Architecture/Security/Modernization) of the full `0.3.1` diff (M71-M79) plus a lighter full-project pass, each raw finding adversarially re-verified against the real current source before being trusted. Security found nothing real. 8 findings confirmed real across the other 3 lenses; 5 fixed directly this milestone, 3 left open for explicit user input (real design/scope decisions, not mechanical).
@@ -1134,9 +1134,9 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - Step 1: Rust and pytest suites updated to the new names, plus a test per rename proving the old name fails with its migration hint — ✅ (new `tests/test_naming_0_3_3.py`, 30 cases; 5 new `engine-spec` tests; old names rewritten in 37 Python files by a call-aware rewriter that renames keywords only inside the matching call; pytest 954 passed, 2 skipped; `cargo test --workspace` 545 passed, 0 failed)
 - Step 2: all 89 examples, `demo/showcase.py`, and every example YAML file updated; each run clean — ✅ (all 89 examples plus `demo/showcase.py`; new `tools/migrate_views_0_3_3.py` rewrites view/stylesheet YAML per widget block, since `background` → `foreground` and `checked` → `selected` depend on the widget's kind)
 
-### Phase 3 — Docs ⬜
-- Step 1: MkDocs updated to the new names throughout, including fixing the theming guide's `add_text(..., background=(0, 0, 0, 0))` example, which renders invisible text today — ⬜
-- Step 2: a "Migrating to 0.3.3" page with the full old → new table; `mkdocs build --strict` clean and the API-coverage audit at zero — ⬜
+### Phase 3 — Docs ✅
+- Step 1: MkDocs updated to the new names throughout, including fixing the theming guide's `add_text(..., background=(0, 0, 0, 0))` example, which renders invisible text today — ✅ (plus pre-existing doc bugs found on the way: `node.md`'s `set_layout` example passed `flex_direction="Vertical"`, which `set_layout` has never accepted; its `animate`/`get` property tables were missing `border_color`, `border_width`, `select_progress`, `toggle_progress`, and `rotation`; `window.md`'s `add_text` signature was missing `typography_role`/`line_height`; stale `_core.pyi` docstrings and one `ARCHITECTURE.md` example also updated)
+- Step 2: a "Migrating to 0.3.3" page with the full old → new table; `mkdocs build --strict` clean and the API-coverage audit at zero — ✅ (`docs/migrating-0.3.3.md`, linked from the nav and overview: the old/new table, the migration script, what each old name now does, and the behavior changes -- stylesheet layout fields now applying, and the invisible-text trap; every rewritten snippet executed against the new build)
 
 ### Phase 4 — Verification + Tesserae Handoff ⬜
 - Step 1: full standing chain -- `cargo check`/`clippy -D warnings`/`fmt --check`/`cargo test --workspace --release`/`maturin develop --release`/`pytest tests/`/all examples/`demo/showcase.py`, plus the suite with `DISPLAY` unset to match CI — ⬜
