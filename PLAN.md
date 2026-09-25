@@ -27,4 +27,5 @@ an old-to-new migration table covering every current public name.
 
 ## Status
 
-Phase 1 in progress.
+Phases 1–2 done. Phase 3: revision 2 (Tesserae's review folded in)
+awaits the user's approval of R1–R12.

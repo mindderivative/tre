@@ -56,10 +56,10 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M91 — Live View Updates Keep Bound Values + `View.set_stylesheet` (issue #8) | `██████████` 100% | ✅ Complete — both phases done (2026-09-25) — closes issue #8 |
 | M92 — Animatable `Icon` Color | `██████████` 100% | ✅ Complete — single phase (2026-09-25) |
 | `v0.3.3` Release: PR #9 Merged to `main`, Tagged and Pushed | — | ✅ Released (2026-09-25) |
-| M93 — Target API Spec and Naming Convention | `███████░░░` 70% | 🚧 In progress — spec written; awaiting review (2026-09-25) |
+| M93 — Target API Spec and Naming Convention | `████████░░` 80% | 🚧 In progress — revision 2 folds in Tesserae's review; awaiting approval (2026-09-25) |
 | M94 — Input and Accessibility Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M95 — Paint and Animation Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
-| M96 — Layer and Overlay Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
+| M96 — Layer, Structure, and Update Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M97 — Tesserae Migration Gate | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M98 — Remove the Declarative Layer | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M99 — Remove MD3 Components, Kinds, and Theming | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
@@ -1300,8 +1300,8 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - Step 2: apply it to every surviving name, producing the final target API and an old-to-new migration table — ✅ (eight design choices R1–R8 flagged for the user's review, notably R1: one `fill` plus `stroke_color`/`stroke_width` for every node, replacing `background`/`foreground`/`border_*`)
 
 ### Phase 3 — Spec Review 🚧
-- Step 1: publish the spec as a docs design page and hand it to the Tesserae session for feedback — ✅ (MkDocs "Design → Target API (proposed)"; `mkdocs build --strict` clean)
-- Step 2: user approval of the spec; nothing in M94 onward starts before this — 🚧 (awaiting the user's review of R1–R8)
+- Step 1: publish the spec as a docs design page and hand it to the Tesserae session for feedback — ✅ (MkDocs "Design → Target API (proposed)"; Tesserae's verdict "approve with changes": 4 blocking and 11 should-have items, each agreed by the user and folded into revision 2 -- bubbling `click`, subtree `pointer_enter`/`pointer_leave`, an `a11y_action` event and value-range/live/heading properties, 4-corner `corner_radius`, a `shadows` list, every painted color a property, interruptible animation with `get_target`/`stop_animation`, flex wrap and percentages, text truncation, layer focus trap and flip placement, `close_requested`/`scale_factor`, SVG path data, `window.advance`, `input`/`Event.target`, detached-node lifetime and off-thread safety for issue #10, atomic `set`; new choices R9–R12; all 176 public names still covered; `mkdocs build --strict` clean)
+- Step 2: user approval of the spec; nothing in M94 onward starts before this — 🚧 (awaiting the user's review of revision 2: R1–R8, which Tesserae agreed with, and the new R9–R12 -- one `window.create(kind, **props)`, bubbling `focus`/`blur` for focus-within, the `input` event name, and no scrim or focus ring drawn by `tre`)
 
 ---
 
@@ -1312,13 +1312,13 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 ### Phase 1 — Pointer and Keyboard Events ⬜
 - Step 1: pointer down, move, and up events to Python, with node-local and window coordinates, button, and modifiers; wheel events — ⬜
 - Step 2: pointer capture, so a drag keeps reporting to the node that started it after the pointer leaves it -- what sliders, splitters, and framework-built drag interactions need — ⬜
-- Step 3: key down and key up events with key and modifiers, alongside text input, to the focused node — ⬜
-- Step 4: a defined propagation model -- whether events bubble to ancestors, and how a handler stops them -- decided in M93 and implemented here — ⬜
-- Step 5: window-level events to Python -- resize, and the OS light/dark switch, which `tre` stops handling itself once theming moves out — ⬜
+- Step 3: key down and key up events with key and modifiers, and the `input` text event, to the focused node — ⬜
+- Step 4: the M93 propagation model -- pointer, wheel, key, `click`, `secondary_click`, `focus`, `blur`, `input`, and `a11y_action` bubble with `event.stop()`; `pointer_enter`/`pointer_leave` fire per subtree without bubbling; a captured pointer's events target and bubble from the capturing node; `Event.target` and `Event.current` — ⬜
+- Step 5: window-level events and properties to Python -- resize, the OS light/dark switch that `tre` stops handling itself once theming moves out, scale factor changes, a cancellable `close_requested`, `closed`, and a title setter — ⬜
 
 ### Phase 2 — Accessibility and Focus ⬜
-- Step 1: set a node's accessibility role, label, value, and checked or selected state, and its available actions, so framework-built widgets are as accessible as today's built-in ones — ⬜
-- Step 2: make any node focusable and part of the Tab order explicitly, independent of its kind; set the pointer cursor shape — ⬜
+- Step 1: set a node's accessibility role from the M93 role list, label, value with `value_min`/`value_max`/`value_step`, checked, selected, expanded, disabled, heading `level`, `live` region politeness, and `a11y_hidden`; assistive-technology actions arrive as the `a11y_action` event -- so framework-built widgets are as accessible as today's built-in ones — ⬜
+- Step 2: make any node focusable and ordered by `tab_index` within its focus scope, with `-1` meaning programmatic focus only, independent of its kind; set the pointer cursor shape — ⬜
 
 ### Phase 3 — Verification ⬜
 - Step 1: tests for every new event and setter, plus a proof widget -- a working slider built only from these primitives in a test, behaving like today's built-in one — ⬜
@@ -1330,13 +1330,15 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 **Status: ⬜ Proposed.** Additive. Generic replacements for the MD3-specific visuals inside the engine.
 
 ### Phase 1 — Vector Paths ⬜
-- Step 1: a `Path` node -- path data, fill and stroke color and width, all animatable -- generalizing `Icon` per D4 — ⬜
+- Step 1: a `Path` node -- SVG `d` path data in a `view_box`, fill and stroke color and width, all animatable -- generalizing `Icon` per D4 — ⬜
 - Step 2: animatable stroke trim (start and end fractions), the primitive behind circular and linear progress indicators — ⬜
-- Step 3: path morphing between two arbitrary paths, generalizing the MD3 shape library's morph so any shape set works — ⬜
+- Step 3: path morphing between any two closed or any two open paths by resampling, generalizing the MD3 shape library's morph so any shape set works — ⬜
 
-### Phase 2 — Shadows and Easing ⬜
-- Step 1: a generic shadow -- offset, blur, spread, color -- replacing MD3 `elevation` levels — ⬜
+### Phase 2 — Paint, Shadows, and Easing ⬜
+- Step 1: a `shadows` list of color, offset, blur, and spread, animatable, replacing MD3 `elevation` levels; `corner_radius` as one value or four corners, animatable; stroke drawn inside the box and never affecting layout; group opacity — ⬜
 - Step 2: generic easing -- linear, cubic bezier with four control values, and spring if M93 shows a need -- replacing the MD3 named curves, which the framework recreates as bezier values — ⬜
+- Step 3: animation semantics -- animate from the current value, `stop_animation`, `get` returning the on-screen value and `get_target` the destination, colors interpolated in sRGB with exact readback — ⬜
+- Step 4: no hidden theme colors -- placeholder, caret, and selection colors for text inputs, scrollbar color and width for scroll views, and the terminal palette become properties; `tre` draws no focus ring — ⬜
 
 ### Phase 3 — Verification ⬜
 - Step 1: pixel tests for paths, trim, morph, and shadows; a proof ripple built from primitives in a test, matching today's built-in one visually — ⬜
@@ -1348,15 +1350,23 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 **Status: ⬜ Proposed.** Additive. One generic layer mechanism replacing the six component-specific open/close pairs, plus the tree and update operations a framework-side reconciler needs to be correct and fast (Tesserae's needs 1–4).
 
 ### Phase 1 — Layers ⬜
-- Step 1: show and hide any node as an overlay layer, with position anchoring, z-order, modal input blocking, and an outside-click and Escape dismissal event -- the one mechanism dialogs, menus, snackbars, side sheets, drawers, tooltips, and context menus reduce to — ⬜
+- Step 1: show and hide any node as an overlay layer, with anchoring that flips or shifts to fit and reports the final placement, stacking in show order, modal input blocking with a focus trap and focus restored on hide, each layer its own focus scope with key events stopping at the layer, and an outside-click and Escape dismissal event -- the one mechanism dialogs, menus, snackbars, side sheets, drawers, tooltips, and context menus reduce to; the scrim is the framework's — ⬜
 - Step 2: tests, including a proof modal dialog and an anchored menu built from primitives — ⬜
 
 ### Phase 2 — Structure and Updates ⬜
 - Step 1: insert a child at an index and move an existing child, keeping its `NodeId`, handlers, focus, and running animations -- what a keyed reconciler needs — ⬜
 - Step 2: show any kept-alive subtree as a window's content, replacing `Window.show_view`'s `View`-only form — ⬜
 - Step 3: a batch update scope that defers layout and paint until it ends, so re-theming or reconciling from Python doesn't cost a layout per property; measured against unbatched updates rather than assumed — ⬜
-- Step 4: color readback and text measurement -- a string's size under given text properties -- for content-sized widgets — ⬜
-- Step 5: tests, including a proof keyed-list reorder that preserves node identity — ⬜
+- Step 4: color readback and text measurement -- a string's size under given text properties -- for content-sized widgets; reading computed layout runs pending layout, even inside a batch — ⬜
+- Step 5: one creation entry point, `window.create(kind, **props)`, and an atomic `set` that validates every property before applying any and names the valid ones on an unknown name — ⬜
+- Step 6: node lifetime -- a detached node with no remaining Python handle is freed automatically, and dropping or destroying a node is safe from any thread by deferring the free to the event-loop thread, fixing issue #10 — ⬜
+- Step 7: `window.advance(ms)`, deterministic headless time for animation tests on displayless CI — ⬜
+- Step 8: tests, including a proof keyed-list reorder that preserves node identity — ⬜
+
+### Phase 3 — Layout and Text Properties ⬜
+- Step 1: flex wrap, `align_self`, `"auto"` and percentage sizes, and `aspect_ratio` — ⬜
+- Step 2: text truncation and style -- `max_lines`, ellipsis overflow, wrap mode, `letter_spacing`, and italic `font_style`, also accepted by `measure_text` — ⬜
+- Step 3: tests, including a wrapped chip row and an ellipsized list item — ⬜
 
 ---
 
