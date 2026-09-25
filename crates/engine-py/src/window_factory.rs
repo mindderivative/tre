@@ -3225,6 +3225,7 @@ impl PyWindow {
                 font_size: resolved_size,
                 align: TextAlign::Start,
                 line_height: resolved_line_height,
+                options: Default::default(),
             }),
             positioned_style(
                 Size {
@@ -3322,6 +3323,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Center,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -3669,6 +3671,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -3912,6 +3915,7 @@ impl PyWindow {
                     font_size: label_style.font_size,
                     align: TextAlign::Center,
                     line_height: None,
+                    options: Default::default(),
                 }),
                 Style {
                     size: Size {
@@ -4093,6 +4097,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -4259,6 +4264,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -4545,6 +4551,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Center,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -4997,6 +5004,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Center,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -5140,6 +5148,7 @@ impl PyWindow {
                 font_size: headline_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -5165,6 +5174,7 @@ impl PyWindow {
                 font_size: body_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -5377,6 +5387,7 @@ impl PyWindow {
                 font_size: body_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 flex_grow: 1.0,
@@ -5414,6 +5425,7 @@ impl PyWindow {
                     font_size: label_style.font_size,
                     align: TextAlign::Center,
                     line_height: None,
+                    options: Default::default(),
                 }),
                 Style {
                     size: Size {
@@ -6046,6 +6058,7 @@ impl PyWindow {
                     font_size: label_style.font_size,
                     align: TextAlign::Center,
                     line_height: None,
+                    options: Default::default(),
                 }),
                 Style {
                     size: Size {
@@ -6353,6 +6366,7 @@ impl PyWindow {
                     font_size: label_style.font_size,
                     align: TextAlign::Start,
                     line_height: None,
+                    options: Default::default(),
                 }),
                 Style {
                     size: Size {
@@ -6651,6 +6665,7 @@ impl PyWindow {
                 font_size: headline_type_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             headline_style,
             PaintProperties::new(headline_color, 0.0, 0.0, 1.0),
@@ -7474,6 +7489,7 @@ impl PyWindow {
                     font_size: label_style.font_size,
                     align: TextAlign::Center,
                     line_height: None,
+                    options: Default::default(),
                 }),
                 Style {
                     size: Size {
@@ -7963,6 +7979,7 @@ impl PyWindow {
                     font_size: label_style.font_size,
                     align: TextAlign::Start,
                     line_height: None,
+                    options: Default::default(),
                 }),
                 Style {
                     size: Size {
@@ -7983,6 +8000,7 @@ impl PyWindow {
                     font_size: body_style.font_size,
                     align: TextAlign::Start,
                     line_height: None,
+                    options: Default::default(),
                 }),
                 Style {
                     size: Size {
@@ -8006,6 +8024,7 @@ impl PyWindow {
                     font_size: label_style.font_size,
                     align: TextAlign::Start,
                     line_height: None,
+                    options: Default::default(),
                 }),
                 Style {
                     size: Size {
@@ -8211,6 +8230,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 flex_grow: 1.0,
@@ -8377,6 +8397,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 flex_grow: 1.0,
@@ -8492,6 +8513,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Center,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -8702,6 +8724,7 @@ impl PyWindow {
                         font_size: label_style.font_size,
                         align: TextAlign::Center,
                         line_height: None,
+                        options: Default::default(),
                     }),
                     Style {
                         size: Size {
@@ -8842,6 +8865,7 @@ impl PyWindow {
                 font_size: subhead_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -8867,6 +8891,7 @@ impl PyWindow {
                 font_size: body_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -8917,6 +8942,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             positioned_style(
                 Size {
@@ -9271,6 +9297,7 @@ impl PyWindow {
                     font_size: label_style.font_size,
                     align: TextAlign::Center,
                     line_height: None,
+                    options: Default::default(),
                 }),
                 Style {
                     size: Size {
@@ -9390,6 +9417,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -10066,6 +10094,7 @@ impl PyWindow {
                 font_size: label_style.font_size,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 position: Position::Absolute,
@@ -10779,6 +10808,7 @@ mod tests {
                 font_size: BUTTON_LABEL_FONT_SIZE,
                 align: TextAlign::Center,
                 line_height: None,
+                options: Default::default(),
             }),
             Style::default(),
             PaintProperties::new(Color::TRANSPARENT, 0.0, 0.0, 1.0),
@@ -10840,6 +10870,7 @@ mod tests {
                 font_size: BUTTON_LABEL_FONT_SIZE,
                 align: TextAlign::Center,
                 line_height: None,
+                options: Default::default(),
             }),
             Style::default(),
             PaintProperties::new(Color::TRANSPARENT, 0.0, 0.0, 1.0),
@@ -10888,6 +10919,7 @@ mod tests {
                 font_size: BUTTON_LABEL_FONT_SIZE,
                 align: TextAlign::Center,
                 line_height: None,
+                options: Default::default(),
             }),
             Style::default(),
             PaintProperties::new(Color::TRANSPARENT, 0.0, 0.0, 1.0),

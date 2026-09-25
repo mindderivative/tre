@@ -59,7 +59,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M93 — Target API Spec and Naming Convention | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-25) |
 | M94 — Input and Accessibility Building Blocks | `██████████` 100% | ✅ Complete — all 3 phases done, plus a focus follow-up (2026-09-25) |
 | M95 — Paint and Animation Building Blocks | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-25) |
-| M96 — Layer, Structure, and Update Building Blocks | `████░░░░░░` 40% | 🚧 In progress — Phases 1–2 of 5 done (2026-09-25) |
+| M96 — Layer, Structure, and Update Building Blocks | `██████░░░░` 60% | 🚧 In progress — Phases 1–3 of 5 done (2026-09-25) |
 | M97 — Tesserae Migration Gate | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M98 — Remove the Declarative Layer | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M99 — Remove MD3 Components, Kinds, and Theming | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
@@ -1375,10 +1375,10 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - Step 4: showing any kept-alive subtree as a window's content, replacing `Window.show_view`'s `View`-only form, or recording that the structure operations already cover it — ✅ (covered: with every node in one window tree, `root.add_child(screen)` and `remove()` do it, the old screen alive while held -- `set_content` dropped from the spec as a correction)
 - Step 5: tests, including a wrapped chip row — ✅ (`tests/test_layout_props.py` 18 including the proof chip row, `tests/test_kinds.py` 16; `engine-render/tests/m96_paint.rs` 3 pixel tests for hidden nodes, z-order, and rotation, on a pixel harness now shared with `m95_paint.rs`; an engine-core virtual list test; `docs/api/python/properties.md` lists every kind and property; pytest 1116 passed; cargo release 586 passed; clippy and fmt clean; 89 examples and the showcase clean)
 
-### Phase 3 — Text Measurement and Truncation ⬜
-- Step 1: `window.measure_text(...)` -- a string's size under given text properties -- on one shared per-thread text shaper, which `get_monospace_cell_size` moves to as well — ⬜
-- Step 2: `max_lines`, ellipsis overflow, wrap mode, `letter_spacing`, and italic `font_style` on text nodes, also accepted by `measure_text` — ⬜
-- Step 3: tests, including an ellipsized list item — ⬜
+### Phase 3 — Text Measurement and Truncation ✅
+- Step 1: `window.measure_text(...)` -- a string's size under given text properties -- on one shared per-thread text shaper, which `get_monospace_cell_size` moves to as well — ✅ (engine-render's `FontSpec` and `build_text_layout` serve both painting and `TextRenderer::measure`, so a measurement always matches the paint; the width is the widest shown line without its trailing whitespace -- found by a test, a wrapped line's `advance` counts its trailing space)
+- Step 2: `max_lines`, ellipsis overflow, wrap mode, `letter_spacing`, and italic `font_style` on text nodes, also accepted by `measure_text` — ✅ (engine-core `TextOptions` inside `TextState`, added to its 45 literals; an ellipsis cuts each shown line that overflows -- the last past `max_lines`, or any wider than the box when not wrapping -- to the longest prefix that fits beside it by binary search, and lays out the joined result, so earlier lines keep their breaks; a cut without one is clipped; italics are slanted by the skew font matching suggests when no italic face exists; these apply to `text` nodes, a text input laying out its own lines)
+- Step 3: tests, including an ellipsized list item — ✅ (`tests/test_text.py` 13 including the proof list item; 4 pixel tests in `m96_paint.rs` -- an ellipsis inside its box, a clip, `max_lines`, and a synthesized italic's lean; pytest 1129 passed; cargo release 590 passed; clippy and fmt clean; 89 examples and the showcase clean)
 
 ### Phase 4 — Layers ⬜
 - Step 1: `show_layer(node, anchor, placement, modal, dismissible)` and `hide_layer(node)`, extending the legacy overlay mechanism -- stacking in show order, anchoring that flips or shifts to fit and reports the final side as `layer_placement`, modal input blocking with a focus trap and focus restored on hide, each layer its own focus scope with key events stopping at the layer, and an outside-press and Escape `dismiss` event -- the one mechanism dialogs, menus, snackbars, side sheets, drawers, tooltips, and context menus reduce to; the scrim is the framework's — ⬜

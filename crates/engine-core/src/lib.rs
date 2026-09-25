@@ -48,7 +48,8 @@ pub use node::{
     NodeTransform, PaintProperties, RadioButtonState, SCROLLBAR_GRAB_SLOP, SCROLLBAR_MARGIN,
     SCROLLBAR_MIN_LENGTH, SCROLLBAR_THICKNESS, ScrollViewState, Shadow, Shadows, SliderState,
     SplitterState, SwitchState, TerminalCell, TerminalPalette, TerminalState, TextAlign,
-    TextFieldState, TextState, TimePickerDialMode, TimePickerDialState, VirtualListState,
+    TextFieldState, TextOptions, TextState, TimePickerDialMode, TimePickerDialState,
+    VirtualListState,
 };
 pub use overlay::OverlayMeta;
 pub use path::{PathData, PathState, fit_transform, trim};

@@ -159,6 +159,11 @@ window's root `box`.
 | **Interaction** | `focusable`, `tab_index` (R8), `cursor` (`"default"`, `"pointer"`, `"text"`, `"grab"`, …), `hit_testable` |
 | **Accessibility** | `role`, `label`, `value`, `value_min`, `value_max`, `value_step`, `checked`, `selected`, `expanded`, `disabled`, `level` (headings), `live` (`"off"`, `"polite"`, `"assertive"`), `a11y_hidden` |
 
+*M96:* `line_height`, `text_align`, `font_style`, `letter_spacing`, `wrap`,
+`max_lines`, and `overflow` apply to `text` nodes; a `text_input` lays out its
+own editable lines. `window.measure_text` takes the same properties and lays
+text out with the painter's own code, so a measurement always matches.
+
 The actions offered to assistive technology follow from role and state:
 focusable nodes offer focus; `button`, `link`, `checkbox`, `radio`,
 `switch`, `menuitem`, `tab`, and `treeitem` offer activation; `slider`, or

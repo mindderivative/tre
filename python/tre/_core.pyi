@@ -611,6 +611,25 @@ class Window:
         """M94: reads `width`, `height`, `title`, or `scale_factor`
         (`1.0` until `App.run()` opens the window)."""
         ...
+    def measure_text(
+        self,
+        text: str,
+        font_family: str = "Roboto",
+        font_size: float = 16.0,
+        font_weight: float = 400.0,
+        font_style: str = "normal",
+        letter_spacing: float = 0.0,
+        line_height: float | None = None,
+        max_width: float | None = None,
+        wrap: str = "word",
+        max_lines: int | None = None,
+        overflow: str = "clip",
+    ) -> tuple[float, float]:
+        """M96: the `(width, height)` `text` takes, laid out exactly as a
+        text node with these properties paints it -- wrapped within
+        `max_width` when given, cut to `max_lines`, ended with "…" for
+        `overflow="ellipsis"`. For sizing a widget to its content."""
+        ...
     def advance(self, ms: float) -> None:
         """M96: moves this window's time forward by exactly `ms`
         milliseconds, then runs animations, their `on_complete` callbacks,

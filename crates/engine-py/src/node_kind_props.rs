@@ -16,13 +16,18 @@ use crate::node_layout::lookup;
 use crate::node_props::{color_to_py, parse_color};
 
 /// Every kind-specific property this module handles, in error order.
-pub(crate) const KIND_PROPS: [&str; 21] = [
+pub(crate) const KIND_PROPS: [&str; 26] = [
     "text",
     "font_family",
     "font_weight",
     "font_size",
     "line_height",
     "text_align",
+    "font_style",
+    "letter_spacing",
+    "wrap",
+    "max_lines",
+    "overflow",
     "multiline",
     "selection",
     "show_whitespace",
@@ -51,6 +56,15 @@ pub(crate) const FIT: [(&str, ContentFit); 3] = [
     ("contain", ContentFit::Contain),
     ("fill", ContentFit::Fill),
 ];
+
+/// `true` for italic.
+pub(crate) const FONT_STYLE: [(&str, bool); 2] = [("normal", false), ("italic", true)];
+
+/// `true` wraps.
+pub(crate) const WRAP: [(&str, bool); 2] = [("word", true), ("none", false)];
+
+/// `true` for an ellipsis.
+pub(crate) const OVERFLOW: [(&str, bool); 2] = [("clip", false), ("ellipsis", true)];
 
 /// `true` for horizontal.
 const ORIENTATION: [(&str, bool); 2] = [("horizontal", true), ("vertical", false)];
@@ -175,7 +189,8 @@ fn applies(name: &str) -> (&'static str, fn(&NodeKind) -> bool) {
     match name {
         "text" | "font_family" | "font_weight" => ("a text or text_input", text_like),
         "font_size" => ("a text, text_input, or terminal", sized_text),
-        "line_height" | "text_align" => ("a text", text),
+        "line_height" | "text_align" | "font_style" | "letter_spacing" | "wrap" | "max_lines"
+        | "overflow" => ("a text", text),
         "multiline" | "show_whitespace" | "syntax_spans" | "folded_ranges" => {
             ("a text_input", text_input)
         }
@@ -278,6 +293,56 @@ fn parse_known(
             change(move |node| {
                 if let NodeKind::Text(state) = &mut node.kind {
                     state.align = align;
+                }
+            })
+        }
+        "font_style" | "wrap" | "overflow" => {
+            let table = match name {
+                "font_style" => &FONT_STYLE,
+                "wrap" => &WRAP,
+                _ => &OVERFLOW,
+            };
+            let on = keyword(table, value, name)?;
+            let field = name.to_string();
+            change(move |node| {
+                if let NodeKind::Text(state) = &mut node.kind {
+                    match field.as_str() {
+                        "font_style" => state.options.italic = on,
+                        "wrap" => state.options.wrap = on,
+                        _ => state.options.ellipsis = on,
+                    }
+                }
+            })
+        }
+        "letter_spacing" => {
+            not_bool(value, name, "a number")?;
+            let spacing: f32 = value
+                .extract()
+                .ok()
+                .filter(|v: &f32| v.is_finite())
+                .ok_or_else(|| invalid(name, "a number"))?;
+            change(move |node| {
+                if let NodeKind::Text(state) = &mut node.kind {
+                    state.options.letter_spacing = spacing;
+                }
+            })
+        }
+        "max_lines" => {
+            let lines = if value.is_none() {
+                None
+            } else {
+                not_bool(value, name, "a positive int or None")?;
+                Some(
+                    value
+                        .extract::<usize>()
+                        .ok()
+                        .filter(|n| *n > 0)
+                        .ok_or_else(|| invalid(name, "a positive int or None"))?,
+                )
+            };
+            change(move |node| {
+                if let NodeKind::Text(state) = &mut node.kind {
+                    state.options.max_lines = lines;
                 }
             })
         }
@@ -532,6 +597,11 @@ fn read_known(name: &str, kind: &NodeKind, py: Python<'_>) -> PyResult<Py<PyAny>
         ("font_size", NodeKind::Terminal(s)) => to_py(f64::from(s.font_size), py),
         ("line_height", NodeKind::Text(s)) => to_py(s.line_height.map(f64::from), py),
         ("text_align", NodeKind::Text(s)) => to_py(name_of(&TEXT_ALIGN, &s.align), py),
+        ("font_style", NodeKind::Text(s)) => to_py(name_of(&FONT_STYLE, &s.options.italic), py),
+        ("letter_spacing", NodeKind::Text(s)) => to_py(f64::from(s.options.letter_spacing), py),
+        ("wrap", NodeKind::Text(s)) => to_py(name_of(&WRAP, &s.options.wrap), py),
+        ("max_lines", NodeKind::Text(s)) => to_py(s.options.max_lines, py),
+        ("overflow", NodeKind::Text(s)) => to_py(name_of(&OVERFLOW, &s.options.ellipsis), py),
         ("multiline", NodeKind::TextField(s)) => to_py(s.multiline, py),
         ("show_whitespace", NodeKind::TextField(s)) => to_py(s.show_whitespace, py),
         ("selection", NodeKind::TextField(s)) => {

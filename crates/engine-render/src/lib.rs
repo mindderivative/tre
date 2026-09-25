@@ -36,7 +36,7 @@ use vello_hybrid::{RenderSize, RenderTargetConfig, Renderer, Resources, Scene};
 
 pub use fonts::{NoFontFacesFound, register_font};
 pub use geometry_cache::GeometryCache;
-pub use text::{MONOSPACE_FONT_FAMILY, TextPlacement, TextRenderer};
+pub use text::{FontSpec, MONOSPACE_FONT_FAMILY, TextPlacement, TextRenderer};
 
 /// MD3 seed-adjacent purple (#6750A4) -- an arbitrary but deliberate
 /// starting color, not vello_hybrid's own default, so a wrong pixel in a

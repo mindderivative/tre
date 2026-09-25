@@ -635,6 +635,7 @@ fn node_kind_and_base_paint(
                     font_size,
                     align: TextAlign::Start,
                     line_height,
+                    options: Default::default(),
                 }),
                 PaintProperties::new(background, corner_radius, 0.0, opacity),
             ))
@@ -810,6 +811,7 @@ fn node_kind_and_base_paint(
                     font_size,
                     align: TextAlign::Start,
                     line_height,
+                    options: Default::default(),
                 }),
                 PaintProperties::new(background, corner_radius, 0.0, opacity),
             ))

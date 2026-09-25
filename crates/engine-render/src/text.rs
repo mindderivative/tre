@@ -16,11 +16,11 @@ use std::sync::Arc;
 
 use engine_core::{
     NodeId, NodeKind, TerminalCell, TerminalPalette, TerminalState, TextAlign, TextFieldState,
-    TextState, Tree,
+    TextOptions, TextState, Tree,
 };
 use parley::fontique::{Collection, CollectionOptions};
 use parley::{
-    Affinity, Alignment, AlignmentOptions, Cursor, FontContext, FontFamily, FontWeight,
+    Affinity, Alignment, AlignmentOptions, Cursor, FontContext, FontFamily, FontStyle, FontWeight,
     LayoutContext, PositionedLayoutItem, Selection, StyleProperty,
 };
 use peniko::kurbo::{Affine, Point, Rect, Shape};
@@ -74,6 +74,8 @@ struct LayoutCacheKey {
     /// (`[0, 0, 0, 0]`, fully transparent), not `at.color`. Part of
     /// the cache key since a real theme change changes it.
     default_color: Color,
+    /// M96: italics, letter spacing, wrapping, and the line limit.
+    options: TextOptions,
 }
 
 struct CachedLayout {
@@ -99,6 +101,172 @@ struct TerminalRunKey {
 struct CachedTerminalRun {
     key: TerminalRunKey,
     layout: parley::Layout<[u8; 4]>,
+}
+
+/// M96: everything but the content and width that shapes a text node's
+/// lines -- shared by painting (`shaped_layout`) and `TextRenderer::measure`,
+/// so a measurement always matches what's painted.
+pub struct FontSpec<'a> {
+    pub family: &'a str,
+    pub weight: f32,
+    pub size: f32,
+    /// A multiple of `size`; `None` is the font's own line height.
+    pub line_height: Option<f32>,
+    pub options: &'a TextOptions,
+}
+
+/// Shapes `content` with every style pushed, before line breaking.
+fn shape_text(
+    font_cx: &mut FontContext,
+    layout_cx: &mut LayoutContext<[u8; 4]>,
+    content: &str,
+    font: &FontSpec<'_>,
+    spans: &[(Range<usize>, Color)],
+    default_color: Color,
+) -> parley::Layout<[u8; 4]> {
+    let mut builder = layout_cx.ranged_builder(font_cx, content, 1.0, true);
+    builder.push_default(StyleProperty::FontFamily(FontFamily::named(font.family)));
+    builder.push_default(StyleProperty::FontWeight(FontWeight::new(font.weight)));
+    builder.push_default(StyleProperty::FontSize(font.size));
+    // M62 Phase 1 (§7.1, §16.3): `None` pushes nothing, keeping `parley`'s
+    // own default, so an un-set line height lays out exactly as before.
+    if let Some(ratio) = font.line_height {
+        builder.push_default(StyleProperty::LineHeight(
+            parley::LineHeight::FontSizeRelative(ratio),
+        ));
+    }
+    if font.options.italic {
+        builder.push_default(StyleProperty::FontStyle(FontStyle::Italic));
+    }
+    if font.options.letter_spacing != 0.0 {
+        builder.push_default(StyleProperty::LetterSpacing(font.options.letter_spacing));
+    }
+    // M31 Phase 4 (§5, §8): a default brush over the whole content, then a
+    // per-range override for each syntax span -- every glyph needs a real
+    // brush, since painting reads each glyph's own back.
+    let rgba = default_color.to_rgba8();
+    builder.push_default(StyleProperty::Brush([rgba.r, rgba.g, rgba.b, rgba.a]));
+    for (range, color) in spans {
+        let rgba = color.to_rgba8();
+        builder.push(
+            StyleProperty::Brush([rgba.r, rgba.g, rgba.b, rgba.a]),
+            range.clone(),
+        );
+    }
+    builder.build(content)
+}
+
+/// Breaks `layout` into lines -- within `max_width` when wrapping, one per
+/// paragraph otherwise -- and aligns them.
+fn break_and_align(
+    layout: &mut parley::Layout<[u8; 4]>,
+    font: &FontSpec<'_>,
+    max_width: f32,
+    align: TextAlign,
+) {
+    layout.break_all_lines(font.options.wrap.then_some(max_width));
+    let alignment = match align {
+        TextAlign::Start => Alignment::Start,
+        TextAlign::Center => Alignment::Center,
+        TextAlign::End => Alignment::End,
+    };
+    layout.align(alignment, AlignmentOptions::default());
+}
+
+/// How many of `layout`'s lines are shown.
+pub(crate) fn visible_lines(layout: &parley::Layout<[u8; 4]>, options: &TextOptions) -> usize {
+    layout.len().min(options.max_lines.unwrap_or(usize::MAX))
+}
+
+/// A line's width without its trailing whitespace -- what it shows.
+fn inked_width(metrics: &parley::LineMetrics) -> f32 {
+    metrics.advance - metrics.trailing_whitespace
+}
+
+/// The height of `layout`'s shown lines.
+fn visible_height(layout: &parley::Layout<[u8; 4]>, options: &TextOptions) -> f32 {
+    match visible_lines(layout, options).checked_sub(1) {
+        Some(last) => layout
+            .get(last)
+            .map_or(0.0, |line| line.metrics().block_max_coord),
+        None => 0.0,
+    }
+}
+
+/// M96: `content` laid out for a text node: styled, broken into lines, and
+/// -- with `ellipsis` -- each shown line that's cut (the last one past
+/// `max_lines`, or any wider than `max_width` when not wrapping) shortened
+/// to what fits beside "…". The cut text is laid out again, joined at the
+/// same breaks, so earlier lines stay exactly as they were.
+#[allow(clippy::too_many_arguments)]
+fn build_text_layout(
+    font_cx: &mut FontContext,
+    layout_cx: &mut LayoutContext<[u8; 4]>,
+    content: &str,
+    font: &FontSpec<'_>,
+    max_width: f32,
+    align: TextAlign,
+    spans: &[(Range<usize>, Color)],
+    default_color: Color,
+) -> parley::Layout<[u8; 4]> {
+    let mut layout = shape_text(font_cx, layout_cx, content, font, spans, default_color);
+    break_and_align(&mut layout, font, max_width, align);
+    if !font.options.ellipsis {
+        return layout;
+    }
+    let shown = visible_lines(&layout, font.options);
+    let cut_after_limit = layout.len() > shown;
+    let lines: Vec<(Range<usize>, f32)> = (0..shown)
+        .filter_map(|i| layout.get(i))
+        .map(|line| (line.text_range(), inked_width(line.metrics())))
+        .collect();
+    let needs_cut =
+        |i: usize, advance: f32| (cut_after_limit && i + 1 == shown) || advance > max_width;
+    if !lines
+        .iter()
+        .enumerate()
+        .any(|(i, (_, advance))| needs_cut(i, *advance))
+    {
+        return layout;
+    }
+    // The widest single-line width of `text`.
+    let mut width_of = |text: &str| {
+        let mut probe = shape_text(font_cx, layout_cx, text, font, &[], default_color);
+        probe.break_all_lines(None);
+        probe.width()
+    };
+    let mut display = String::new();
+    for (i, (range, advance)) in lines.iter().enumerate() {
+        let text = content[range.clone()].trim_end_matches(['\n', '\r']);
+        if i > 0 {
+            display.push('\n');
+        }
+        if !needs_cut(i, *advance) {
+            display.push_str(text);
+            continue;
+        }
+        // The longest prefix, at a character boundary, that fits with "…".
+        let boundaries: Vec<usize> = text
+            .char_indices()
+            .map(|(at, _)| at)
+            .chain([text.len()])
+            .collect();
+        let (mut lo, mut hi) = (0, boundaries.len() - 1);
+        while lo < hi {
+            let mid = (lo + hi).div_ceil(2);
+            let candidate = format!("{}…", text[..boundaries[mid]].trim_end());
+            if width_of(&candidate) <= max_width {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        display.push_str(text[..boundaries[lo]].trim_end());
+        display.push('…');
+    }
+    let mut layout = shape_text(font_cx, layout_cx, &display, font, &[], default_color);
+    break_and_align(&mut layout, font, max_width, align);
+    layout
 }
 
 /// Owns `parley`'s font/layout state across frames -- font discovery and
@@ -225,6 +393,35 @@ impl TextRenderer {
         true
     }
 
+    /// M96: the size `content` takes laid out with `font` -- wrapped within
+    /// `max_width` when given (and when `font.options.wrap`), cut to its
+    /// line limit -- as `(width, height)`, exactly as a text node with
+    /// those properties paints it. Not cached per node.
+    pub fn measure(
+        &mut self,
+        content: &str,
+        font: &FontSpec<'_>,
+        max_width: Option<f32>,
+    ) -> (f32, f32) {
+        let width = max_width.unwrap_or(f32::MAX);
+        let layout = build_text_layout(
+            &mut self.font_cx,
+            &mut self.layout_cx,
+            content,
+            font,
+            width,
+            TextAlign::Start,
+            &[],
+            Color::BLACK,
+        );
+        let shown = visible_lines(&layout, font.options);
+        let widest = (0..shown)
+            .filter_map(|i| layout.get(i))
+            .map(|line| inked_width(line.metrics()))
+            .fold(0.0_f32, f32::max);
+        (widest, visible_height(&layout, font.options))
+    }
+
     /// M32 Phase 1 (§5, §8, §10): the real per-font-size monospace cell
     /// size `draw_terminal` positions every cell on, replacing the old
     /// `engine_core::terminal_cell_size` analytic estimate (`font_size *
@@ -283,6 +480,7 @@ impl TextRenderer {
         line_height: Option<f32>,
         spans: &[(Range<usize>, Color)],
         default_color: Color,
+        options: &TextOptions,
     ) -> &parley::Layout<[u8; 4]> {
         let stale = self.layout_cache.get(&node_id).is_none_or(|cached| {
             cached.key.content != content
@@ -294,6 +492,7 @@ impl TextRenderer {
                 || cached.key.line_height != line_height
                 || cached.key.spans != spans
                 || cached.key.default_color != default_color
+                || cached.key.options != *options
         });
         let Self {
             font_cx,
@@ -305,59 +504,23 @@ impl TextRenderer {
             registered_font_count: _,
         } = self;
         if stale {
-            let mut builder = layout_cx.ranged_builder(font_cx, content, 1.0, true);
-            builder.push_default(StyleProperty::FontFamily(FontFamily::named(font_family)));
-            builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));
-            builder.push_default(StyleProperty::FontSize(font_size));
-            // M62 Phase 1 (§7.1, §16.3): `None` deliberately pushes
-            // nothing at all here, rather than an explicit `parley::
-            // LineHeight::MetricsRelative(1.0)` -- `parley`'s own real
-            // default (verified via direct source read) is already
-            // exactly that, so an un-set `TextState.line_height` must
-            // produce byte-for-byte the same `Layout` as before this
-            // field existed, not merely an equivalent one.
-            if let Some(ratio) = line_height {
-                builder.push_default(StyleProperty::LineHeight(
-                    parley::LineHeight::FontSizeRelative(ratio),
-                ));
-            }
-            // M31 Phase 4 (§5, §8): a real default brush covering the
-            // *whole* content, then a real per-range override for each
-            // real syntax span -- `draw_field`'s own paint loop reads
-            // each individual glyph's own real, resolved brush back via
-            // `Glyph::style_index`/`Layout::styles()` (confirmed real,
-            // public API via direct source read: `parley::Cluster::
-            // first_style` reads the identical way), so every glyph
-            // needs a real, meaningful brush value, not just the ones
-            // inside a real span.
-            let default_rgba = default_color.to_rgba8();
-            builder.push_default(StyleProperty::Brush([
-                default_rgba.r,
-                default_rgba.g,
-                default_rgba.b,
-                default_rgba.a,
-            ]));
-            for (range, color) in spans {
-                let rgba = color.to_rgba8();
-                builder.push(
-                    StyleProperty::Brush([rgba.r, rgba.g, rgba.b, rgba.a]),
-                    range.clone(),
-                );
-            }
-            let mut layout = builder.build(content);
-            layout.break_all_lines(Some(max_width));
-            // M30 Phase 1 (§5, §7): `parley::Alignment::Start`/`Center`/
-            // `End` map 1:1 onto `TextAlign`'s own three variants --
-            // real direction-aware behavior (`Start`/`End` respect BiDi,
-            // matching §14 step 4's own requirement) is preserved for
-            // every existing caller, which still passes `TextAlign::
-            // Start` unconditionally.
-            let parley_align = match align {
-                TextAlign::Start => Alignment::Start,
-                TextAlign::Center => Alignment::Center,
-                TextAlign::End => Alignment::End,
+            let font = FontSpec {
+                family: font_family,
+                weight: font_weight,
+                size: font_size,
+                line_height,
+                options,
             };
-            layout.align(parley_align, AlignmentOptions::default());
+            let layout = build_text_layout(
+                font_cx,
+                layout_cx,
+                content,
+                &font,
+                max_width,
+                align,
+                spans,
+                default_color,
+            );
             layout_cache.insert(
                 node_id,
                 CachedLayout {
@@ -371,6 +534,7 @@ impl TextRenderer {
                         line_height,
                         spans: spans.to_vec(),
                         default_color,
+                        options: options.clone(),
                     },
                     layout,
                 },
@@ -507,10 +671,26 @@ impl TextRenderer {
             state.line_height,
             &[],
             at.color,
+            &state.options,
         );
 
+        // M96: a cut without an ellipsis -- lines past `max_lines`, or a
+        // line wider than the box when not wrapping -- is clipped to the
+        // shown lines within the node's width.
+        let shown = visible_lines(layout, &state.options);
+        let clipped = !state.options.ellipsis
+            && (shown < layout.len() || (!state.options.wrap && layout.width() > at.max_width));
+        if clipped {
+            let clip = Rect::new(
+                at.x,
+                at.y,
+                at.x + f64::from(at.max_width),
+                at.y + f64::from(visible_height(layout, &state.options)),
+            );
+            scene.push_layer(Some(&clip.to_path(0.1)), None, None, None, None);
+        }
         scene.set_paint(at.color);
-        for line in layout.lines() {
+        for line in layout.lines().take(shown) {
             for item in line.items() {
                 let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
                     continue;
@@ -523,11 +703,19 @@ impl TextRenderer {
                     x: g.x + at.x as f32,
                     y: g.y + at.y as f32,
                 });
-                scene
-                    .glyph_run(resources, font)
-                    .font_size(font_size)
-                    .fill_glyphs(glyphs);
+                let mut builder = scene.glyph_run(resources, font).font_size(font_size);
+                // M96: italics with no italic face -- slanted by the angle
+                // font matching suggests (y-down, so the shear is negated;
+                // see `draw_terminal`'s own synthetic italic).
+                if let Some(degrees) = run.synthesis().skew() {
+                    let shear = -f64::from(degrees).to_radians().tan();
+                    builder = builder.glyph_transform(Affine::skew(shear, 0.0));
+                }
+                builder.fill_glyphs(glyphs);
             }
+        }
+        if clipped {
+            scene.pop_layer();
         }
     }
 
@@ -756,6 +944,7 @@ impl TextRenderer {
             None,
             &display_spans,
             text_color,
+            &TextOptions::default(),
         );
 
         // Selection highlight, painted first (behind the glyphs below).
@@ -1503,6 +1692,7 @@ mod tests {
                 font_size: 16.0,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style {
                 size: Size {
@@ -1657,6 +1847,7 @@ mod tests {
                 font_size: 16.0,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }),
             Style::default(),
             PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
@@ -1675,6 +1866,7 @@ mod tests {
             None,
             &base_spans,
             Color::from_rgba8(0, 0, 0, 255),
+            &TextOptions::default(),
         );
 
         renderer.shaped_layout(
@@ -1688,6 +1880,7 @@ mod tests {
             None,
             &base_spans,
             Color::from_rgba8(0, 0, 0, 255),
+            &TextOptions::default(),
         );
         assert_eq!(
             renderer.layout_cache.get(&id).unwrap().key.content,
@@ -1705,6 +1898,7 @@ mod tests {
             None,
             &base_spans,
             Color::from_rgba8(0, 0, 0, 255),
+            &TextOptions::default(),
         );
         assert_eq!(
             renderer.layout_cache.get(&id).unwrap().key.font_family,
@@ -1722,6 +1916,7 @@ mod tests {
             None,
             &base_spans,
             Color::from_rgba8(0, 0, 0, 255),
+            &TextOptions::default(),
         );
         assert_eq!(
             renderer.layout_cache.get(&id).unwrap().key.font_weight,
@@ -1739,6 +1934,7 @@ mod tests {
             None,
             &base_spans,
             Color::from_rgba8(0, 0, 0, 255),
+            &TextOptions::default(),
         );
         assert_eq!(renderer.layout_cache.get(&id).unwrap().key.font_size, 24.0);
 
@@ -1753,6 +1949,7 @@ mod tests {
             None,
             &base_spans,
             Color::from_rgba8(0, 0, 0, 255),
+            &TextOptions::default(),
         );
         assert_eq!(renderer.layout_cache.get(&id).unwrap().key.max_width, 50.0);
 
@@ -1767,6 +1964,7 @@ mod tests {
             None,
             &base_spans,
             Color::from_rgba8(0, 0, 0, 255),
+            &TextOptions::default(),
         );
         assert_eq!(
             renderer.layout_cache.get(&id).unwrap().key.align,
@@ -1784,6 +1982,7 @@ mod tests {
             Some(1.5),
             &base_spans,
             Color::from_rgba8(0, 0, 0, 255),
+            &TextOptions::default(),
         );
         assert_eq!(
             renderer.layout_cache.get(&id).unwrap().key.line_height,
@@ -1803,6 +2002,7 @@ mod tests {
             Some(1.5),
             &changed_spans,
             Color::from_rgba8(0, 0, 0, 255),
+            &TextOptions::default(),
         );
         assert_eq!(
             renderer.layout_cache.get(&id).unwrap().key.spans,
@@ -1820,6 +2020,7 @@ mod tests {
             Some(1.5),
             &changed_spans,
             Color::from_rgba8(255, 255, 255, 255),
+            &TextOptions::default(),
         );
         assert_eq!(
             renderer.layout_cache.get(&id).unwrap().key.default_color,
@@ -1859,6 +2060,7 @@ mod tests {
                 None,
                 &[],
                 Color::from_rgba8(0, 0, 0, 255),
+                &TextOptions::default(),
             )
             .lines()
             .map(|line| line.metrics().block_min_coord)
@@ -1875,6 +2077,7 @@ mod tests {
                 None,
                 &[],
                 Color::from_rgba8(0, 0, 0, 255),
+                &TextOptions::default(),
             )
             .lines()
             .map(|line| line.metrics().block_min_coord)
@@ -1917,6 +2120,7 @@ mod tests {
                 None,
                 &[],
                 Color::from_rgba8(0, 0, 0, 255),
+                &TextOptions::default(),
             )
             .lines()
             .map(|line| line.metrics().block_min_coord)
@@ -1933,6 +2137,7 @@ mod tests {
                 Some(2.0),
                 &[],
                 Color::from_rgba8(0, 0, 0, 255),
+                &TextOptions::default(),
             )
             .lines()
             .map(|line| line.metrics().block_min_coord)

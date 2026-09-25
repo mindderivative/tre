@@ -94,7 +94,22 @@ On `text` and `text_input` unless noted.
 | `font_size` | Pixels (also on a terminal) |
 | `line_height` | A multiple of the font size, or `None` (`text` only) |
 | `text_align` | `"start"`, `"center"`, or `"end"` (`text` only) |
+| `font_style` | `"normal"` or `"italic"` — slanted when the family has no italic face (`text` only) |
+| `letter_spacing` | Extra pixels after each character (`text` only) |
+| `wrap` | `"word"` wraps within the node's width; `"none"` keeps each paragraph on one line (`text` only) |
+| `max_lines` | The most lines shown, or `None` (`text` only) |
+| `overflow` | `"clip"` cuts text past the box or the line limit; `"ellipsis"` ends each cut line with "…" (`text` only) |
 | `fill` | The glyph color (animatable) |
+
+A text node has no size of its own: size it with
+[`window.measure_text`](window.md#measure_text), which lays text out exactly as
+a text node with the same properties paints it:
+
+```python
+style = dict(font_size=14, max_lines=1, overflow="ellipsis")
+width, height = window.measure_text("A long list item title", max_width=180, **style)
+title = window.create("text", text="A long list item title", width=180, height=height, **style)
+```
 
 ## Text input
 

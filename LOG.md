@@ -37,6 +37,15 @@
    - pytest 1116 passed; cargo release 586 passed; 89 examples and the
      showcase clean.
 
+5. Phase 3 done:
+   - `window.measure_text(...)` on the per-thread shaper, laid out by the
+     painter's own code, so a measurement matches what's painted.
+   - `font_style`, `letter_spacing`, `wrap`, `max_lines`, and `overflow`
+     on text nodes: ellipsis by binary search per cut line, clipping
+     otherwise, synthesized italics.
+   - pytest 1129 passed; cargo release 590 passed; 89 examples and the
+     showcase clean.
+
 ## Status
 
-**M96 Phases 1-2 done.** Phase 3 (text measurement and truncation) next.
+**M96 Phases 1-3 done.** Phase 4 (layers) next.

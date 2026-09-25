@@ -12086,6 +12086,7 @@ mod tests {
                 font_size: 14.0,
                 align: TextAlign::Start,
                 line_height: None,
+                options: Default::default(),
             }
         }
 

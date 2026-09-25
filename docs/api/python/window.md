@@ -286,6 +286,19 @@ if window.theme.is_set():
 `window.create(kind, **props)` makes detached nodes — see
 [Paint, Paths, and Animation](paint.md#creating-nodes).
 
+### `measure_text`
+
+**`measure_text(text, font_family="Roboto", font_size=16, font_weight=400,
+font_style="normal", letter_spacing=0, line_height=None, max_width=None,
+wrap="word", max_lines=None, overflow="clip") -> (width, height)`** *(new in 0.3.4)*
+
+The size `text` takes, laid out exactly as a text node with those properties
+paints it: wrapped within `max_width` when given, cut to `max_lines`, ended with
+an ellipsis for `overflow="ellipsis"`. The width is the widest shown line
+without its trailing whitespace. A text node has no size of its own — this is
+how a content-sized widget gets one. See
+[Nodes and Properties](properties.md#text).
+
 ### `advance`
 
 **`advance(ms)`** *(new in 0.3.4)*

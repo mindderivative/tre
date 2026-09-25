@@ -11,10 +11,10 @@ use std::time::Duration;
 use engine_core::{
     AccessNodeData, Action, Animated, CanvasState, ImageState, InputEvent, ItemExtent, Key,
     Modifiers, NodeId, NodeKind, PaintProperties, PathData, PathState, PointerButton, Role,
-    ScrollDelta, ScrollViewState, TerminalState, TextAlign, TextFieldState, TextState, Tree,
-    VirtualListState,
+    ScrollDelta, ScrollViewState, TerminalState, TextAlign, TextFieldState, TextOptions, TextState,
+    Tree, VirtualListState,
 };
-use engine_render::MONOSPACE_FONT_FAMILY;
+use engine_render::{FontSpec, MONOSPACE_FONT_FAMILY};
 use peniko::Color;
 use peniko::kurbo::BezPath;
 use peniko::kurbo::Point;
@@ -34,6 +34,7 @@ use crate::listeners::{self, WindowEventType};
 use crate::node::{Node, NodeState};
 use crate::node_callbacks;
 use crate::node_handles;
+use crate::node_kind_props::{FONT_STYLE, OVERFLOW, WRAP};
 use crate::node_props::parse_all;
 use crate::terminal::TerminalSession;
 use crate::window::PyWindow;
@@ -285,6 +286,7 @@ impl PyWindow {
                     font_size: 16.0,
                     align: TextAlign::Start,
                     line_height: None,
+                    options: Default::default(),
                 })
             }
             "text_input" => {
@@ -478,6 +480,58 @@ impl PyWindow {
                 )));
             }
         })
+    }
+
+    /// M96: the size `text` takes, as `(width, height)`, laid out exactly
+    /// as a text node with these properties paints it -- wrapped within
+    /// `max_width` when given, cut to `max_lines`. For sizing a widget to
+    /// its content; a text node has no size of its own.
+    #[pyo3(signature = (
+        text, font_family="Roboto", font_size=16.0, font_weight=400.0, font_style="normal",
+        letter_spacing=0.0, line_height=None, max_width=None, wrap="word", max_lines=None,
+        overflow="clip",
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn measure_text(
+        &self,
+        text: &str,
+        font_family: &str,
+        font_size: f32,
+        font_weight: f32,
+        font_style: &str,
+        letter_spacing: f32,
+        line_height: Option<f32>,
+        max_width: Option<f32>,
+        wrap: &str,
+        max_lines: Option<usize>,
+        overflow: &str,
+    ) -> PyResult<(f64, f64)> {
+        let word = |table: &[(&str, bool)], name: &str, value: &str| {
+            crate::node_layout::lookup(table, value).map_err(|expected| {
+                PyValueError::new_err(format!("measure_text: `{name}` must be {expected}"))
+            })
+        };
+        let options = TextOptions {
+            italic: word(&FONT_STYLE, "font_style", font_style)?,
+            letter_spacing,
+            wrap: word(&WRAP, "wrap", wrap)?,
+            max_lines: max_lines.filter(|n| *n > 0),
+            ellipsis: word(&OVERFLOW, "overflow", overflow)?,
+        };
+        if !(font_size > 0.0 && font_size.is_finite()) {
+            return Err(PyValueError::new_err(
+                "measure_text: `font_size` must be a positive number",
+            ));
+        }
+        let font = FontSpec {
+            family: font_family,
+            weight: font_weight,
+            size: font_size,
+            line_height,
+            options: &options,
+        };
+        let (width, height) = crate::shaper::with(|shaper| shaper.measure(text, &font, max_width));
+        Ok((f64::from(width), f64::from(height)))
     }
 
     /// M96 (R7): moves time forward by exactly `ms` milliseconds, then runs

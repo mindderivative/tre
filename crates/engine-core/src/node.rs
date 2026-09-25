@@ -1661,6 +1661,38 @@ pub enum TextAlign {
 /// name table) rather than carrying a weight/style axis: this step's two type
 /// roles are two distinct font files (Roboto Regular vs. Medium), not
 /// one variable font interpolated at draw time.
+/// M96: how a text node lays out its lines, beyond its font -- italics,
+/// letter spacing, wrapping, a line limit, and whether an overflowing last
+/// line ends in an ellipsis. The default is plain wrapped text.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextOptions {
+    /// Italic. Synthesized by slanting the glyphs when the family has no
+    /// italic face.
+    pub italic: bool,
+    /// Extra space after each character, in pixels.
+    pub letter_spacing: f32,
+    /// `true` wraps lines at word boundaries within the node's width;
+    /// `false` keeps each paragraph on one line.
+    pub wrap: bool,
+    /// The most lines shown; the rest are cut.
+    pub max_lines: Option<usize>,
+    /// Ends a cut last line -- by `max_lines`, or by the width when not
+    /// wrapping -- with "…".
+    pub ellipsis: bool,
+}
+
+impl Default for TextOptions {
+    fn default() -> Self {
+        Self {
+            italic: false,
+            letter_spacing: 0.0,
+            wrap: true,
+            max_lines: None,
+            ellipsis: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextState {
     pub content: String,
@@ -1690,6 +1722,8 @@ pub struct TextState {
     /// real, explicit choice (exactly the font size, no leading at
     /// all), not the same thing spelled two ways.
     pub line_height: Option<f32>,
+    /// M96: line layout beyond the font (`TextOptions`).
+    pub options: TextOptions,
 }
 
 /// M95: four corner radii -- `[top_left, top_right, bottom_right,
