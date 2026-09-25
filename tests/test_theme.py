@@ -946,17 +946,12 @@ def test_view_set_theme_survives_a_later_poll_reload(tmp_path):
     assert node.get("corner_radius") == pytest.approx(16.0)
 
 
-def test_view_set_theme_a_bound_property_reverts_to_its_static_value_sanely(tmp_path):
-    # Real, verified finding, not assumed: `patch_node` only recomputes
-    # the *static* style cascade -- the identical, pre-existing behavior
-    # any content-only `poll_reload()` already has today, not a new
-    # interaction `set_theme` introduces. A bound field's last-applied
-    # value does NOT survive a retheme -- it reverts to the node's own
-    # static spec value (here `opacity: 1.0`), same as a real content
-    # hot-reload would produce. This is the milestone's own named scope
-    # limit (bindings are not re-applied by `set_theme`), proven here as
-    # "reverts sanely to a real value," not "crashes" or "goes stale
-    # garbage."
+def test_view_set_theme_keeps_a_bound_propertys_live_value(tmp_path):
+    # M91 (issue #8) changed this contract. `patch_node` still recomputes
+    # only the *static* style cascade, but `set_theme` now re-applies the
+    # attached ViewModel's bindings afterward -- before M91 this test
+    # asserted the bound opacity reverted to the static 1.0, which was
+    # exactly the bug the issue reported.
     view_path = write_yaml(
         tmp_path,
         "view.yaml",
@@ -980,9 +975,8 @@ def test_view_set_theme_a_bound_property_reverts_to_its_static_value_sanely(tmp_
     view.set_theme(custom_theme=custom_theme_path)
 
     assert node.get("corner_radius") == pytest.approx(5.0), "the new theme layer applied"
-    assert node.get("opacity") == pytest.approx(1.0), (
-        "retheme recomputes only the static cascade -- the bound value reverts "
-        "to the spec's own static opacity, exactly like a content hot-reload would"
+    assert node.get("opacity") == pytest.approx(0.4), (
+        "set_theme re-applies bindings, so the bound value survives the retheme"
     )
 
 
