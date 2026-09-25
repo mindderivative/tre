@@ -26,6 +26,37 @@ A `Window` that never calls `set_theme` sees zero behavior change from
 every component's own plain historical default (black interaction tint,
 white checkmark, gray track, dark text).
 
+## Reading the active theme
+
+`window.theme` gives read-only access to the exact same resolution every
+composition-only MD3 factory (`add_button`, `add_fab`, and the rest of
+the full catalog) already uses internally — useful for building your
+own MD3-consistent compositions in Python, without duplicating that
+resolution logic:
+
+```python
+theme = window.theme
+if theme.is_set():
+    primary = theme.role("primary")            # (r, g, b, a) or None
+    radius = theme.shape("button", "filled")    # float or None
+    elevation = theme.elevation("card")         # float or None
+    family, weight, size, line_height = theme.typography("body_large")
+```
+
+`role`/`shape`/`elevation` return `None` when no theme is set (or the
+name/component isn't recognized) — fall back to your own default the
+same way every native `add_*` factory does. `typography` always
+returns a real, shipped MD3 default for a recognized role, regardless
+of whether a theme is set. `window.theme` returns a fresh, cheap
+wrapper each access, so reads always reflect the window's current live
+state, including right after a `set_theme()` call.
+
+A declarative `View` has the equivalent live re-theme call,
+[`View.set_theme`](../api/python/view.md#set_theme), but no matching
+read-only `Theme` accessor — a `view.yaml`'s own `style.background:
+primary`-style token references are resolved directly against the
+active `ColorScheme` at build/reconcile time instead.
+
 ## Shape & elevation tokens
 
 Beyond color, a theme can override a component's own corner radius and

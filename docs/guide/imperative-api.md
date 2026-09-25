@@ -44,10 +44,11 @@ docking methods:
 | `add_text(content, background, width, height, typography_role=None, font_family="Roboto", font_weight=None, font_size=None, line_height=None, x=None, y=None)` | A plain, non-editable text label — `typography_role` resolves an MD3 type-scale role instead of literal font values, see [Theming & Accessibility](theming-and-accessibility.md) |
 | `add_checkbox(background, width, height, checked=False, x=None, y=None)` | An MD3 checkbox |
 | `add_slider(background, width, height, value=0.0, x=None, y=None)` | An MD3 slider (drag-to-set built in) |
-| `add_text_field(background, width, height, content="", font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None)` | An MD3 text field |
+| `add_text_field(background, width, height, content="", font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None, multiline=False, show_whitespace=False)` | An MD3 text field — `multiline`/`show_whitespace` mirror `add_code_editor`'s own two fields |
 | `add_code_editor(content, background, width, height, font_weight=400.0, font_size=14.0, x=None, y=None)` | A monospace code editor — folding, syntax spans, whitespace glyphs |
 | `add_terminal(shell, cols, rows, background, font_size=14.0, scrollback_lines=1000, x=None, y=None)` | A real PTY-backed terminal emulator |
 | `add_image(path, width, height, fit="fill", x=None, y=None)` | A GPU-texture-backed image loaded from disk |
+| `add_image_from_bytes(rgba, pixel_width, pixel_height, width, height, fit="fill", x=None, y=None)` | `add_image`'s decode-free sibling — already-decoded RGBA8 pixels, no file involved; see [`Window` API reference](../api/python/window.md#add_image_from_bytes) |
 | `add_video(width, height, fit="fill", x=None, y=None)` | A GPU-texture-backed video surface — frames pushed via `node.push_frame(...)` |
 | `add_icon(name, color, size, x=None, y=None)` | A curated Material Symbols vector icon |
 | `add_scroll_view(width, height, horizontal=False, x=None, y=None)` | A scrollable viewport over exactly one child |
