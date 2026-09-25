@@ -6,7 +6,7 @@ walkthrough of the YAML schema and data binding.
 
 ## `View`
 
-**`View(path=None, stylesheet=None, theme_seed=None, dark=False, default_theme=None, custom_theme=None, source=None, spec=None, json=None)`**
+**`View(path=None, stylesheet=None, theme_seed=None, dark=False, default_theme=None, custom_theme=None, source=None, spec=None, json=None, stylesheet_spec=None, default_theme_spec=None, custom_theme_spec=None)`**
 
 Reads and parses the file at `path` (resolving `include:` directives
 relative to its own directory, recursively), builds the widget tree, and
@@ -31,6 +31,22 @@ cascade tiers, resolved *beneath* `stylesheet` and a widget's own inline
 theme's own `seed:` (if present) sets the seed when `theme_seed` isn't
 explicitly given (an explicit `theme_seed` always wins). Omitting
 `default_theme` uses the engine's own shipped default.
+
+`stylesheet_spec`/`default_theme_spec`/`custom_theme_spec` are the data
+forms of `stylesheet`/`default_theme`/`custom_theme`: a plain `dict` in
+the same schema the YAML file holds, for a caller (a framework like
+Tesserae) that loads its own files and hands `tre` data only. They
+cascade identically to their path forms. Each is mutually exclusive with
+its path twin — passing both raises `ValueError`, as does an unknown key
+(the same typo check the YAML form gets).
+
+```python
+view = View(
+    spec={"id": "root", "kind": "Checkbox", "style": {"width": 20, "height": 20}},
+    custom_theme_spec={"colors": {"primary": "#FF0000"}},
+    stylesheet_spec={"styles": [{"kind": "Checkbox", "style": {"corner_radius": 4}}]},
+)
+```
 
 `View` has no width/height/render-loop of its own — it's never embedded
 in a live `winit` window.
@@ -107,14 +123,16 @@ required. Raises `ValueError` otherwise.
 
 ## `set_theme`
 
-**`set_theme(default_theme=None, custom_theme=None, theme_seed=None, dark=False)`**
+**`set_theme(default_theme=None, custom_theme=None, theme_seed=None, dark=False, default_theme_spec=None, custom_theme_spec=None)`**
 
 Live re-theme: re-resolves the theme exactly like `View(...)` does at
 construction, then walks every already-built node and recomputes its
 `PaintProperties`/layout style from its own spec against the new theme
 layers, overwriting in place. `NodeId`/children/focus are preserved; a
 widget's own inline `style:` still wins over any theme layer, exactly
-like at construction time.
+like at construction time. `default_theme_spec`/`custom_theme_spec` are
+the `dict` forms of `default_theme`/`custom_theme`, same contract as on
+`View(...)`.
 
 Each call is a complete, fresh theme selection — omitting
 `default_theme`/`custom_theme` resets to the engine's shipped default /

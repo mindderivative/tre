@@ -20,6 +20,12 @@ layered on top.
 from tre import App, Node, Signal, View, ViewModel, Window
 ```
 
+## Module functions
+
+| Function | Purpose |
+| --- | --- |
+| `register_font(data: bytes) -> list[str]` | Registers a font the caller already loaded (a `.ttf`/`.otf`/`.ttc` file's raw bytes) with every current and future window; returns the family names it contains. See [Theming & Accessibility → Custom fonts](../../guide/theming-and-accessibility.md#custom-fonts) |
+
 For a narrative walkthrough of how these fit together, start with
 [Getting Started](../../getting-started.md) or the
 [Guide](../../guide/imperative-api.md) section instead — this reference

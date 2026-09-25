@@ -1,33 +1,27 @@
-# LOG — Milestone 86, Phase 2: Font Registration
+# LOG — Milestone 86, Phase 3: Docs + Verification
 
-- User-directed: "Start M86". Phase 1 (theme/stylesheet `*_spec=`
-  kwargs) landed in `babef68`.
+- User-directed: "Start M86". Phase 1 (`babef68`) added `*_spec=` dict
+  kwargs for themes and stylesheets; Phase 2 (`abcba45`) added
+  `tre.register_font(bytes)`.
 
 ## What shipped
 
-1. `engine-render/src/fonts.rs`: a process-global, append-only font
-   registry. `register_font(data)` parses into a scratch
-   `fontique::Collection` first (validation + family names), then
-   appends the blob unless identical bytes are already registered, and
-   bumps a generation counter.
-2. `TextRenderer::new` registers the 4 vendored faces plus every
-   registered blob. New `TextRenderer::sync_registered_fonts` registers
-   blobs added since the renderer last synced and clears all three
-   shaping caches; one atomic load when nothing changed.
-3. `engine-py/src/app.rs`: the per-frame gate treats "fonts changed" as
-   a third repaint reason beside `take_dirty` and `resized`. Limit: an
-   idle window under `ControlFlow::Wait` repaints on its next wake.
-4. Python `tre.register_font(data: bytes) -> list[str]`, exported from
-   `tre`, stubbed in `_core.pyi`. Takes `&[u8]`, borrowing the `bytes`
-   object directly; a `str` path is a `TypeError`.
-- Tests: 4 Rust tests, including a render-level one that builds a
-  Roboto-only renderer and proves the synced Hack face measures ~0.6em
-  rather than a Roboto fallback; 6 pytest cases.
-- Verification: `fmt --check`/`clippy -D warnings` clean; `maturin
-  develop --release`; `pytest tests/` 914 passed, 2 skipped; `mypy
-  --strict` on `_core.pyi` clean.
+1. `docs/api/python/view.md`: `View(...)`/`set_theme` signatures and
+   the `*_spec=` forms, with an example.
+2. `docs/api/python/window.md`: `set_theme` signature and a
+   `custom_theme_spec=` example.
+3. `docs/api/python/index.md`: new "Module functions" table listing
+   `register_font`.
+4. `docs/guide/theming-and-accessibility.md`: new "Themes as data" and
+   "Custom fonts" sections.
+5. `docs/guide/declarative-views.md`: a note pointing stylesheet users
+   at the data forms.
+- Verification: `mkdocs build --strict` clean; `cargo test --workspace
+  --release` 47 suites, 536 passed, 0 failed; `pytest tests/` 914
+  passed, 2 skipped; all 88 examples plus `demo/showcase.py` run clean.
 
 ## Status
 
-**Phase 2 complete.** Next: Phase 3, MkDocs and the full verification
-chain.
+**M86 complete.** Every concern `tre` ingests now has a data-shaped
+entry point. Tesserae's consuming half (its own M29, phase 4) is
+unblocked. Nothing further is scoped on the `0.3.2` branch.

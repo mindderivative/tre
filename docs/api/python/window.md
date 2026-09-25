@@ -183,7 +183,7 @@ the empty `content` container (`flex_grow: 1.0`). See
 
 ### `set_theme`
 
-**`set_theme(seed, dark=False, default_theme=None, custom_theme=None)`**
+**`set_theme(seed, dark=False, default_theme=None, custom_theme=None, default_theme_spec=None, custom_theme_spec=None)`**
 
 Builds a full MD3 dynamic color scheme from a `(r, g, b, a)` seed color
 and makes it active — every already-built themed node (created via a
@@ -192,6 +192,20 @@ composition-only `add_*` factory that reads the theme, e.g.
 `default_theme`/`custom_theme` (paths to theme YAML files) layer
 shape/elevation/color overrides for the imperative catalog on top —
 see [Theming & Accessibility → Dynamic color theming](../../guide/theming-and-accessibility.md#dynamic-color-theming).
+`default_theme_spec`/`custom_theme_spec` are the `dict` forms of those two
+paths (the same schema the theme YAML file holds), each mutually
+exclusive with its path twin — see
+[Theming & Accessibility → Themes as data](../../guide/theming-and-accessibility.md#themes-as-data).
+
+```python
+window.set_theme(
+    seed=(0x67, 0x50, 0xA4, 0xFF),
+    custom_theme_spec={
+        "colors": {"primary": "#00FF00"},
+        "components": {"button": {"corner_radius": "small"}},
+    },
+)
+```
 
 ### `theme`
 

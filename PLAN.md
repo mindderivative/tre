@@ -30,4 +30,5 @@ forms as bare-`tre` convenience layered on top.
 
 ## Status
 
-Phase 1 in progress.
+**Complete.** Phase 1 `babef68`, Phase 2 `abcba45`, Phase 3 docs and
+full verification committed after. See `LOG.md`.

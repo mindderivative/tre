@@ -204,6 +204,13 @@ never a silent fallback to `0`.
     `poll_reload()` re-resolves against the same stylesheet/theme on
     every hot-reload, not just the initial load.
 
+!!! note "Stylesheets and themes as data"
+    `stylesheet_spec=`, `default_theme_spec=`, and `custom_theme_spec=`
+    take a `dict` in the same schema as the corresponding YAML file,
+    mutually exclusive with the path form — for a framework that loads
+    its own files. See
+    [Theming & Accessibility → Themes as data](theming-and-accessibility.md#themes-as-data).
+
 ## Composing with `include:`
 
 Split a view across files — an `include:` entry splices the target

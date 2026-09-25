@@ -57,6 +57,33 @@ read-only `Theme` accessor — a `view.yaml`'s own `style.background:
 primary`-style token references are resolved directly against the
 active `ColorScheme` at build/reconcile time instead.
 
+## Themes as data
+
+Every theme argument that takes a YAML file path has a `dict` twin taking
+the same content directly — `default_theme_spec=`/`custom_theme_spec=` on
+`Window.set_theme`, `View(...)`, and `View.set_theme`, plus
+`stylesheet_spec=` on `View(...)`. The dict uses exactly the schema the
+file would hold (`seed`, `dark`, `colors`, `styles`, `components`,
+`typography`), and resolves exactly like the file form:
+
+```python
+window.set_theme(
+    seed=(0x67, 0x50, 0xA4, 0xFF),
+    custom_theme_spec={
+        "colors": {"primary": "#00FF00"},
+        "components": {"button": {"corner_radius": "small"}},
+        "typography": {"body_large": {"font_family": "Inter"}},
+    },
+)
+```
+
+This is the form a framework built on `tre` should use: `tre` accepts
+one real ingestion shape per concern and leaves reading files, choosing
+formats (YAML, JSON, TOML, …), and watching for changes to the framework.
+The path forms stay as a convenience for using `tre` directly. Passing a
+path and its `*_spec` twin together raises `ValueError`, as does an
+unknown key in the dict.
+
 ## Shape & elevation tokens
 
 Beyond color, a theme can override a component's own corner radius and
@@ -125,6 +152,28 @@ typography:
   body_large: {font_family: Inter}
   headline_small: {font_size: 26, line_height: 1.4}
 ```
+
+## Custom fonts
+
+`tre` ships four vendored faces (Roboto Regular/Medium, Noto Sans
+Arabic, Hack Nerd Font Mono) and deliberately never discovers system
+fonts, so rendering is identical on every machine. To use any other
+family, load the font file yourself and register its bytes:
+
+```python
+from pathlib import Path
+import tre
+
+families = tre.register_font(Path("fonts/Inter-Regular.ttf").read_bytes())
+# families == ["Inter"] -- the exact name to use in font_family
+```
+
+Registration is process-wide: every existing and future window sees the
+font, and a window already running picks it up on its next frame.
+Registering identical bytes twice is harmless. Data containing no
+parseable font face raises `ValueError`. Until a family is registered, a
+`font_family` naming it falls back to a bundled face, so check the
+returned names against what your theme's `typography:` uses.
 
 ## Keyboard focus & Tab order
 
