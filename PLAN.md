@@ -1,31 +1,63 @@
-# PLAN — Branch `0.3.4`: Milestone 93, Target API Spec and Naming Convention
+# PLAN — Branch `0.3.4`: Milestone 94, Input and Accessibility Building Blocks
 
-*(Replaces the M87 plan — `v0.3.3` is released. The approved M93–M103
-program, its decisions D1–D11, and every step live in `BUILD_TRACKER.md`'s
-"Program" section.)*
+*(Replaces the M93 plan — the target API spec, `docs/design/target-api.md`
+revision 2, was approved 2026-09-25. Every step is in `BUILD_TRACKER.md`.)*
 
 ## Goal
 
-Design only, no code. Produce the target API of `tre` as a minimal
-building-block engine: every surviving class, function, property, event,
-and animation, with final names under one written naming convention, and
-an old-to-new migration table covering every current public name.
+Everything a framework needs to build interactive widgets itself:
+bubbling node events, pointer capture, full keyboard input, window events,
+accessibility properties, focus order, cursor shape, and a headless
+`window.simulate`. Additive only: the legacy `set_on_*` handlers keep
+their exact behavior until M100.
+
+## Design (from the source)
+
+- **Listener storage.** `HandlerMap`'s key widens from
+  `(NodeId, EventKind)` to `(NodeId, HandlerKey)`, where `HandlerKey` is
+  `Legacy(EventKind)` or `Listener(EventType)`. `node.on` inserts a
+  `Listener` key. No new field on `Node`, so none of the 34 construction
+  sites change. M100 deletes the `Legacy` variant.
+- **Routing.** A new `engine-py/src/listeners.rs`:
+  - `Route::before(tree, root, &event)` captures the target before
+    dispatch: the focused node for keys and text, and the captured or
+    hit node for pointers and the wheel.
+  - After `Tree::dispatch` and the legacy `run_dispatch_outcome`,
+    `route(...)` delivers the raw event first (`pointer_*`, `wheel`,
+    `key_*`, `input`), then the outcome events: enter/leave,
+    `click`/`secondary_click`, `blur`/`focus`, `change`.
+  - Bubbling walks from the target to the root. One `Py<Event>` is
+    reused, with `current`, `x` and `y` updated at each step; `stop()`
+    ends the walk.
+  - No `Event` is built unless some node on the path is listening.
+- **Engine input.** New `InputEvent` variants:
+  - `Key { name, pressed, repeat }`, with every key named in snake_case
+    from winit;
+  - `ModifiersChanged(Modifiers)`;
+  - `ScaleFactorChanged`;
+  - `PointerLeft`, which clears hover.
+
+  `Tree` gains `pointer_capture` and `window_to_local`, which is
+  transform-aware.
+- **Window events.** `run_windowed_multi` gains an `on_close_requested`
+  callback, which returns whether to close. `closed` fires on every
+  window removal. `PyWindow` shares the OS window with the runtime, for
+  the title and scale factor.
+- **Accessibility and focus.** `AccessNodeData` gains the M93
+  accessibility fields plus `focusable` and `tab_index`.
+  `collect_access_nodes` derives the offered actions from role and state.
+  The Tab order uses HTML semantics: positive `tab_index` values first,
+  then tree order, and `-1` is skipped.
+- **`node.set`.** Atomic: parse every property into a typed change,
+  then apply them all.
 
 ## Phases
 
-1. **Inventory and classification:** every current public name classed as
-   keep, replace-with-primitive, move-to-framework, or remove; the exact
-   primitives each MD3 widget needs; the bare-bones docking surface (D10);
-   every Tesserae capability mapped to a named primitive.
-2. **Naming convention:** the written rules, applied to every survivor.
-3. **Spec review:** published as a docs design page, sent to Tesserae,
-   approved by the user. Nothing in M94 onward starts before approval.
-
-## Deliverable
-
-`docs/design/target-api.md`.
+1. Event routing, pointer, and keyboard.
+2. Accessibility, focus, and `set`.
+3. `simulate`, tests (including a proof slider), stubs, docs, and the
+   full chain.
 
 ## Status
 
-Phases 1–2 done. Phase 3: revision 2 (Tesserae's review folded in)
-awaits the user's approval of R1–R12.
+Phase 1 in progress.

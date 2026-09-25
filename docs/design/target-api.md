@@ -1,11 +1,11 @@
 # Target API (M93, proposed)
 
-!!! warning "Design proposal — not implemented"
+!!! warning "Approved design — being implemented"
     This page specifies where `tre` is heading under the approved
     building-block program (M93–M103). Nothing here exists yet except
     where marked **(exists)**. Revision 2 incorporates Tesserae's review
-    (items 1–15, each agreed by the project owner). M94 onward implements
-    it only after the owner approves this revision.
+    (items 1–15, each agreed by the project owner) and was approved on
+    2026-09-25; M94–M96 implement it.
 
 ## Purpose
 

@@ -56,8 +56,8 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M91 — Live View Updates Keep Bound Values + `View.set_stylesheet` (issue #8) | `██████████` 100% | ✅ Complete — both phases done (2026-09-25) — closes issue #8 |
 | M92 — Animatable `Icon` Color | `██████████` 100% | ✅ Complete — single phase (2026-09-25) |
 | `v0.3.3` Release: PR #9 Merged to `main`, Tagged and Pushed | — | ✅ Released (2026-09-25) |
-| M93 — Target API Spec and Naming Convention | `████████░░` 80% | 🚧 In progress — revision 2 folds in Tesserae's review; awaiting approval (2026-09-25) |
-| M94 — Input and Accessibility Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
+| M93 — Target API Spec and Naming Convention | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-25) |
+| M94 — Input and Accessibility Building Blocks | `░░░░░░░░░░` 0% | 🚧 In progress — Phase 1 of 3 (2026-09-25) |
 | M95 — Paint and Animation Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M96 — Layer, Structure, and Update Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M97 — Tesserae Migration Gate | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
@@ -1288,7 +1288,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Milestone 93 — Target API Spec and Naming Convention
 
-**Status: 🚧 In progress (started 2026-09-25).** Design only, no code. Every later milestone implements this spec, so names are decided once, here, instead of renamed twice.
+**Status: ✅ Complete (2026-09-25).** Design only, no code. Every later milestone implements this spec, so names are decided once, here, instead of renamed twice. User: "Approved, start M94."
 
 ### Phase 1 — Inventory and Classification ✅
 - Step 1: classify every public name -- all 7 classes' methods, the 60 factories, all 21 node kinds, every `PaintProperties` field, every event, every animatable property, every motion curve -- as keep, replace-with-primitive, move-to-framework, or remove, with a one-line reason each — ✅ (`docs/design/target-api.md`'s migration table; a script confirms every one of the 171 public names in `_core.pyi` and every `tre.__all__` export is accounted for)
@@ -1299,29 +1299,35 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - Step 1: a written convention -- verbs for methods (`add_`, `set_`, `get_`, `remove_`), `on_` for events, nouns for properties, units in names where ambiguous, boolean naming, lowercase snake_case enum strings, one name per concept -- with the M90 rules folded in — ✅
 - Step 2: apply it to every surviving name, producing the final target API and an old-to-new migration table — ✅ (eight design choices R1–R8 flagged for the user's review, notably R1: one `fill` plus `stroke_color`/`stroke_width` for every node, replacing `background`/`foreground`/`border_*`)
 
-### Phase 3 — Spec Review 🚧
+### Phase 3 — Spec Review ✅
 - Step 1: publish the spec as a docs design page and hand it to the Tesserae session for feedback — ✅ (MkDocs "Design → Target API (proposed)"; Tesserae's verdict "approve with changes": 4 blocking and 11 should-have items, each agreed by the user and folded into revision 2 -- bubbling `click`, subtree `pointer_enter`/`pointer_leave`, an `a11y_action` event and value-range/live/heading properties, 4-corner `corner_radius`, a `shadows` list, every painted color a property, interruptible animation with `get_target`/`stop_animation`, flex wrap and percentages, text truncation, layer focus trap and flip placement, `close_requested`/`scale_factor`, SVG path data, `window.advance`, `input`/`Event.target`, detached-node lifetime and off-thread safety for issue #10, atomic `set`; new choices R9–R12; all 176 public names still covered; `mkdocs build --strict` clean)
-- Step 2: user approval of the spec; nothing in M94 onward starts before this — 🚧 (awaiting the user's review of revision 2: R1–R8, which Tesserae agreed with, and the new R9–R12 -- one `window.create(kind, **props)`, bubbling `focus`/`blur` for focus-within, the `input` event name, and no scrim or focus ring drawn by `tre`)
+- Step 2: user approval of the spec; nothing in M94 onward starts before this — ✅ (revision 2 approved 2026-09-25, R1–R12 as written: "Approved, start M94")
 
 ---
 
 ## Milestone 94 — Input and Accessibility Building Blocks
 
-**Status: ⬜ Proposed.** Additive -- nothing removed yet. These are the pieces a framework needs to build interactive widgets itself.
+**Status: 🚧 In progress (started 2026-09-25).** Additive -- nothing removed yet; the legacy `set_on_*` handlers keep their exact non-bubbling behavior beside the new `on()` listeners, so Tesserae can migrate against 0.3.4. These are the pieces a framework needs to build interactive widgets itself.
 
-### Phase 1 — Pointer and Keyboard Events ⬜
-- Step 1: pointer down, move, and up events to Python, with node-local and window coordinates, button, and modifiers; wheel events — ⬜
-- Step 2: pointer capture, so a drag keeps reporting to the node that started it after the pointer leaves it -- what sliders, splitters, and framework-built drag interactions need — ⬜
-- Step 3: key down and key up events with key and modifiers, and the `input` text event, to the focused node — ⬜
-- Step 4: the M93 propagation model -- pointer, wheel, key, `click`, `secondary_click`, `focus`, `blur`, `input`, and `a11y_action` bubble with `event.stop()`; `pointer_enter`/`pointer_leave` fire per subtree without bubbling; a captured pointer's events target and bubble from the capturing node; `Event.target` and `Event.current` — ⬜
-- Step 5: window-level events and properties to Python -- resize, the OS light/dark switch that `tre` stops handling itself once theming moves out, scale factor changes, a cancellable `close_requested`, `closed`, and a title setter — ⬜
+**Scoped against the source (2026-09-25):** the engine already receives raw pointer, key, text, wheel, theme, and resize input (`engine_core::InputEvent`), but only five `DispatchOutcome`s reach Python, `Key` is a 12-key vocabulary with Shift as the only modifier, and legacy handlers are keyed `(NodeId, EventKind)` in one shared map touched in only a handful of places. So the new listeners share that map under a widened key rather than adding a field to every one of the 34 `Node` construction sites; routing captures the pre-dispatch target -- the focused node for keys, the hit or captured node for pointers -- then runs after `Tree::dispatch`, in one function the live loop and the headless `simulate` both call. `Text` and `Icon` nodes are never hit targets today, so a label's pointer events already land on its container.
 
-### Phase 2 — Accessibility and Focus ⬜
-- Step 1: set a node's accessibility role from the M93 role list, label, value with `value_min`/`value_max`/`value_step`, checked, selected, expanded, disabled, heading `level`, `live` region politeness, and `a11y_hidden`; assistive-technology actions arrive as the `a11y_action` event -- so framework-built widgets are as accessible as today's built-in ones — ⬜
-- Step 2: make any node focusable and ordered by `tab_index` within its focus scope, with `-1` meaning programmatic focus only, independent of its kind; set the pointer cursor shape — ⬜
+### Phase 1 — Event Routing, Pointer, and Keyboard ⬜
+- Step 1: `node.on(event, handler)`/`off(event)` stored beside the legacy handlers under a widened key; `Event` gains `type`, `target`, `current`, `stop()`, and the new payload fields; one bubbling router shared by the live loop and the headless path — ⬜
+- Step 2: `pointer_down`/`pointer_move`/`pointer_up` and `wheel` with node-local and window coordinates, button, and Shift/Ctrl/Alt/Meta; `pointer_enter`/`pointer_leave` as non-bubbling subtree events, including when the pointer leaves the window — ⬜
+- Step 3: pointer capture -- `capture_pointer()`/`release_pointer()`, so a drag keeps reporting to the node that started it; released automatically on `pointer_up` — ⬜
+- Step 4: `key_down`/`key_up` with full key names and modifiers, and the `input` text event, to the focused node; the platform translates every key, not only the internal 12-key set — ⬜
+- Step 5: the M93 propagation model for `click`, `secondary_click`, `focus`, `blur`, and `change` -- bubbling with `event.stop()`, `change` text-only and non-bubbling — ⬜
+- Step 6: window events and properties -- `window.on`/`off` for `resize`, `color_scheme`, `scale_factor`, a cancellable `close_requested`, and `closed`; `window.set(title=...)`; `window.get` for `width`, `height`, `scale_factor`, and `title` — ⬜
+
+### Phase 2 — Accessibility, Focus, and `set` ⬜
+- Step 1: accessibility properties -- `role` from the M93 role list, `label`, `value` with `value_min`/`value_max`/`value_step`, `checked`, `selected`, `expanded`, `disabled`, heading `level`, `live` politeness, and `a11y_hidden`; the actions offered to assistive technology derived from role and state; requests arrive as the `a11y_action` event — ⬜
+- Step 2: `focusable` for any node, `tab_index` ordering with `-1` meaning programmatic focus only, `cursor` shape applied from the node under the pointer, and `hit_testable` — ⬜
+- Step 3: an atomic `node.set(**props)` for these properties -- every value validated before any is applied, an unknown name listing the valid ones -- and `node.get` reading them back; M96 extends the same entry point to every property — ⬜
 
 ### Phase 3 — Verification ⬜
-- Step 1: tests for every new event and setter, plus a proof widget -- a working slider built only from these primitives in a test, behaving like today's built-in one — ⬜
+- Step 1: `window.simulate(event, node=None, **fields)` for every new event, through the same router as the live loop (D9, R7); the 13 legacy synthetic-input methods stay until M100 — ⬜
+- Step 2: tests for every new event, property, and window event, plus a proof widget -- a working slider built only from these primitives, behaving like today's built-in one — ⬜
+- Step 3: `_core.pyi` stubs, docs for the new surface, and the full standing chain — ⬜
 
 ---
 
@@ -1358,7 +1364,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - Step 2: show any kept-alive subtree as a window's content, replacing `Window.show_view`'s `View`-only form — ⬜
 - Step 3: a batch update scope that defers layout and paint until it ends, so re-theming or reconciling from Python doesn't cost a layout per property; measured against unbatched updates rather than assumed — ⬜
 - Step 4: color readback and text measurement -- a string's size under given text properties -- for content-sized widgets; reading computed layout runs pending layout, even inside a batch — ⬜
-- Step 5: one creation entry point, `window.create(kind, **props)`, and an atomic `set` that validates every property before applying any and names the valid ones on an unknown name — ⬜
+- Step 5: one creation entry point, `window.create(kind, **props)`, and M94's atomic `set` extended to every property — ⬜
 - Step 6: node lifetime -- a detached node with no remaining Python handle is freed automatically, and dropping or destroying a node is safe from any thread by deferring the free to the event-loop thread, fixing issue #10 — ⬜
 - Step 7: `window.advance(ms)`, deterministic headless time for animation tests on displayless CI — ⬜
 - Step 8: tests, including a proof keyed-list reorder that preserves node identity — ⬜
@@ -1416,7 +1422,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ### Phase 1 — Renames ⬜
 - Step 1: rename every surviving Rust-facing Python name to M93's final API, with a clear error naming the replacement where an old name remains a plausible mistake — ⬜
-- Step 2: normalize the headless-testing surface per D9 — ⬜
+- Step 2: normalize the headless-testing surface per D9 -- remove the 13 legacy synthetic-input methods now that M94's `window.simulate` covers them — ⬜
 - Step 3: the M93 migration table becomes a published migration page; full standing chain — ⬜
 
 ---
