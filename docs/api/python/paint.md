@@ -20,8 +20,8 @@ panel.add_child(icon)
 
 `window.create(kind, **props)` makes a **detached** node — attach it with
 `add_child` — and applies `props` atomically, as `set` does: a bad property
-raises `ValueError` and nothing is created. It builds `"box"` and `"path"`
-today (a path needs `data`); the remaining kinds arrive later in 0.3.4.
+raises `ValueError` and nothing is created. Every kind, and every property, is
+listed in [Nodes and Properties](properties.md).
 
 `width` and `height` take a number of pixels, `"auto"`, or a percentage such as
 `"50%"`, and read back as set.

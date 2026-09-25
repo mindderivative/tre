@@ -598,6 +598,24 @@ pub struct TerminalState {
 }
 
 impl TerminalState {
+    /// M96: resizes the grid to `cols` x `rows`, keeping the cells that
+    /// still fit where they were and blanking the rest -- the terminal's
+    /// session catches its PTY up at its next drain.
+    pub fn resize_grid(&mut self, cols: u16, rows: u16) {
+        let mut cells = vec![TerminalCell::blank(); usize::from(cols) * usize::from(rows)];
+        for row in 0..rows.min(self.rows) {
+            for col in 0..cols.min(self.cols) {
+                cells[usize::from(row) * usize::from(cols) + usize::from(col)] =
+                    self.cells[usize::from(row) * usize::from(self.cols) + usize::from(col)];
+            }
+        }
+        self.cells = cells;
+        self.cols = cols;
+        self.rows = rows;
+        self.cursor_col = self.cursor_col.min(cols.saturating_sub(1));
+        self.cursor_row = self.cursor_row.min(rows.saturating_sub(1));
+    }
+
     /// Seeds a real, fully blank `cols * rows` grid -- the real
     /// "nothing to show yet" state before the app's own first real PTY
     /// bytes ever arrive, the identical real placeholder-first-frame
@@ -1008,7 +1026,7 @@ pub struct TextFieldState {
     /// real sibling, same reasoning. Defaults to real, byte-for-byte
     /// the historical hardcoded `0x1C1B1F` `engine-render`'s own
     /// `TextField` paint used before this phase.
-    pub text_tint: Color,
+    pub text_tint: Animated<Color>,
     /// M30 Phase 9 Step 3 (§8, §10): `false` (the default, every
     /// existing construction site's own byte-for-byte unchanged
     /// behavior) is the original real, stated single-line scope --
@@ -1150,7 +1168,7 @@ impl TextFieldState {
             cursor,
             selection_anchor: None,
             preedit: None,
-            text_tint: Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF),
+            text_tint: Animated::new(Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF)),
             multiline: false,
             show_whitespace: false,
             syntax_spans: Vec::new(),

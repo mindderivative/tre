@@ -652,7 +652,7 @@ fn paint_node(
             // (byte-for-byte the old hardcoded literal), a real
             // resolved MD3 "on-surface" color once `Window.set_theme`
             // has pushed one in.
-            let text_color = with_opacity(state.text_tint, own_alpha);
+            let text_color = with_opacity(state.text_tint.current, own_alpha);
             // M38 Phase 7 (§5, §8): a real, genuinely overflowing
             // `multiline` field now clips its own painted content to
             // its own box and shifts it up by `scroll_offset` -- a

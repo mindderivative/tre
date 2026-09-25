@@ -488,7 +488,8 @@ fn a_themed_text_field_paints_genuinely_different_pixels_than_the_default() {
         let (data_a, _) = render(&tree_a, root_a, 100, 24).await;
 
         let mut themed_state = TextFieldState::new("x", "Roboto", 400.0, 16.0);
-        themed_state.text_tint = Color::from_rgba8(0x00, 0xFF, 0x00, 0xFF);
+        themed_state.text_tint =
+            engine_core::Animated::new(Color::from_rgba8(0x00, 0xFF, 0x00, 0xFF));
         let (tree_b, root_b, _) = build_tree_with_state(themed_state);
         let (data_b, _) = render(&tree_b, root_b, 100, 24).await;
 

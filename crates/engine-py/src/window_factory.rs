@@ -19,7 +19,7 @@ use engine_core::{
     NodeKind, OverlayMeta, PaintProperties, RadioButtonState, Role, ShapeKey, SliderState,
     SplitterState, SwitchState, TextAlign, TextFieldState, TextState, TimePickerDialState, Tree,
 };
-use engine_render::{MONOSPACE_FONT_FAMILY, TextRenderer};
+use engine_render::MONOSPACE_FONT_FAMILY;
 use peniko::Color;
 use peniko::kurbo::{Affine, RoundedRect, Shape};
 use pyo3::prelude::*;
@@ -1497,7 +1497,7 @@ fn spin_box_retheme_hook(
             node.paint.background = Animated::new(field_color);
             node.paint.corner_radius = Animated::new(field_corner_radius);
             if let NodeKind::TextField(state) = &mut node.kind {
-                state.text_tint = text_color;
+                state.text_tint = Animated::new(text_color);
             }
         }
     })
@@ -1577,7 +1577,7 @@ fn time_input_field_retheme_hook(id: NodeId) -> crate::window::RetitheHook {
             node.paint.background = Animated::new(container_color);
             node.paint.corner_radius = Animated::new(corner_radius);
             if let NodeKind::TextField(state) = &mut node.kind {
-                state.text_tint = theme.on_surface();
+                state.text_tint = Animated::new(theme.on_surface());
             }
         }
     })
@@ -2810,7 +2810,7 @@ fn search_bar_retheme_hook(
         if let Some(node) = tree.get_mut(field)
             && let NodeKind::TextField(state) = &mut node.kind
         {
-            state.text_tint = theme.on_surface();
+            state.text_tint = Animated::new(theme.on_surface());
         }
         if let Some((container, icon)) = leading {
             if let Some(node) = tree.get_mut(container) {
@@ -7671,7 +7671,7 @@ impl PyWindow {
             SEARCH_INPUT_FONT_WEIGHT,
             SEARCH_INPUT_FONT_SIZE,
         );
-        text_field_state.text_tint = input_color;
+        text_field_state.text_tint = Animated::new(input_color);
         let field_id = tree.insert(
             NodeKind::TextField(text_field_state),
             Style {
@@ -8546,7 +8546,7 @@ impl PyWindow {
         // of silently going pure black -- a real, approved, near-
         // imperceptible un-themed color change (`AskUserQuestion`).
         if self.theme.borrow().is_set() {
-            text_field_state.text_tint = self.theme.borrow().on_surface();
+            text_field_state.text_tint = Animated::new(self.theme.borrow().on_surface());
         }
 
         let mut tree = self.tree.borrow_mut();
@@ -9059,7 +9059,7 @@ impl PyWindow {
             SEARCH_INPUT_FONT_WEIGHT,
             BUTTON_LABEL_FONT_SIZE,
         );
-        text_field_state.text_tint = text_color;
+        text_field_state.text_tint = Animated::new(text_color);
         let field = tree.insert(
             NodeKind::TextField(text_field_state),
             field_style,
@@ -10205,7 +10205,7 @@ impl PyWindow {
         {
             let theme = self.theme.borrow();
             if theme.is_set() {
-                text_field_state.text_tint = theme.on_surface();
+                text_field_state.text_tint = Animated::new(theme.on_surface());
             }
         }
         let mut tree = self.tree.borrow_mut();
@@ -10337,7 +10337,7 @@ impl PyWindow {
         {
             let theme = self.theme.borrow();
             if theme.is_set() {
-                text_field_state.text_tint = theme.on_surface();
+                text_field_state.text_tint = Animated::new(theme.on_surface());
             }
         }
         let mut tree = self.tree.borrow_mut();
@@ -10410,16 +10410,12 @@ impl PyWindow {
             })?;
 
         let (r, g, b, a) = background;
-        // M32 Phase 1 (§5, §8, §10): a throwaway `TextRenderer` solely
-        // to measure the real bundled monospace face -- a real, one-
-        // time cost per `add_terminal` call (font registration, not a
-        // per-frame cost), the identical real "font discovery is a
-        // one-time cost" reasoning `TextRenderer::new`'s own doc comment
-        // already states, just paid here rather than amortized across
-        // an app's whole lifetime the way the real render-loop's own
-        // `TextRenderer` instance is.
-        let (cell_width, cell_height) =
-            TextRenderer::new().monospace_cell_size(MONOSPACE_FONT_FAMILY, font_size);
+        // M32 Phase 1 (§5, §8, §10): measures the real bundled monospace
+        // face -- M96: on the thread's shared shaper (`shaper.rs`), not a
+        // fresh `TextRenderer` per call.
+        let (cell_width, cell_height) = crate::shaper::with(|shaper| {
+            shaper.monospace_cell_size(MONOSPACE_FONT_FAMILY, font_size)
+        });
         let width = cell_width * f32::from(cols);
         let height = cell_height * f32::from(rows);
 
@@ -10464,7 +10460,7 @@ impl PyWindow {
     /// now-removed doc comment) had to before a real font existed to
     /// measure.
     fn get_monospace_cell_size(&self, font_size: f32) -> (f32, f32) {
-        TextRenderer::new().monospace_cell_size(MONOSPACE_FONT_FAMILY, font_size)
+        crate::shaper::with(|shaper| shaper.monospace_cell_size(MONOSPACE_FONT_FAMILY, font_size))
     }
 
     /// M33 Phase 1 (§4, §5, §8): resizes a real, live `Terminal`'s own
@@ -10498,7 +10494,7 @@ impl PyWindow {
         }
 
         let (cell_width, cell_height) =
-            TextRenderer::new().monospace_cell_size(&font_family, font_size);
+            crate::shaper::with(|shaper| shaper.monospace_cell_size(&font_family, font_size));
         let width = cell_width * f32::from(cols);
         let height = cell_height * f32::from(rows);
         {

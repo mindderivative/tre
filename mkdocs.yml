@@ -62,6 +62,7 @@ nav:
       - App: api/python/app.md
       - Window: api/python/window.md
       - Node: api/python/node.md
+      - Nodes and Properties: api/python/properties.md
       - Events and Listeners: api/python/events.md
       - Paint, Paths, and Animation: api/python/paint.md
       - View: api/python/view.md

@@ -130,6 +130,12 @@ pub(crate) type HandlerMap = Rc<RefCell<HashMap<(NodeId, HandlerKey), (Py<PyAny>
 pub(crate) enum HandlerKey {
     Legacy(EventKind),
     Listener(EventType),
+    /// M96: a node's own callbacks -- a canvas's `draw`, a virtual list's
+    /// `materialize` and `size_hint` -- stored here for the same GC and
+    /// pruning every listener gets.
+    Draw,
+    Materialize,
+    SizeHint,
 }
 
 /// M54 Phase 2 (§8, §16.2): arity-sniffs `handler` at registration time

@@ -24,6 +24,19 @@
    - pytest 1082 passed; cargo release 582 passed; 89 examples and the
      showcase clean.
 
+4. Phase 2 done:
+   - `create` for every kind; `set`/`get` for every property -- layout,
+     transform, visibility, z-order, text, text input, image, canvas,
+     scroll view, virtual list, terminal -- and the `layout_*` reads.
+   - A virtual list's `materialize` returns the framework's own node;
+     `tre` keeps the visible rows built at every layout.
+   - Spec corrections: `window.batch()` and `window.set_content` dropped.
+     A `set` never runs layout (0.4 µs; a 500-node layout pass is
+     0.09 ms), and the structure methods show any screen.
+   - Found and fixed: a real mouse wheel scrolled backwards.
+   - pytest 1116 passed; cargo release 586 passed; 89 examples and the
+     showcase clean.
+
 ## Status
 
-**M96 Phase 1 done.** Phase 2 (creation and properties) next.
+**M96 Phases 1-2 done.** Phase 3 (text measurement and truncation) next.

@@ -236,6 +236,9 @@ impl Node {
                     NodeKind::Icon(state) => {
                         animate_field(&mut state.tint, value, duration, curve, now, handle);
                     }
+                    NodeKind::TextField(state) => {
+                        animate_field(&mut state.text_tint, value, duration, curve, now, handle);
+                    }
                     _ => animate_field(
                         &mut node.paint.background,
                         value,
@@ -257,6 +260,17 @@ impl Node {
                     now,
                     handle,
                 );
+            }
+            // M96: a scroll view's offset, eased -- how a carousel snaps.
+            "scroll_offset" => {
+                let value = crate::node_props::parse_non_negative(&to, property)?;
+                let NodeKind::ScrollView(state) = &mut node.kind else {
+                    return Err(pyo3::exceptions::PyValueError::new_err(
+                        "node property `scroll_offset` applies only to a scroll_view node",
+                    ));
+                };
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                animate_field(&mut state.scroll, value, duration, curve, now, handle);
             }
             // M96: the target API's transform parts, each with its own
             // animation (`NodeTransform`).

@@ -568,14 +568,6 @@ pub struct WindowState {
     /// hitting the exact predicted "Already borrowed" panic while
     /// building the showcase demo's own motion screen.
     pub(crate) materializers: RefCell<HashMap<NodeId, Py<PyAny>>>,
-    /// M5 Phase 3 (§11.10/§11.11): the "draw callback" storage,
-    /// mirroring `materializers`'s own shape exactly -- stored by
-    /// `add_canvas`, invoked (exactly once per call) only by the real
-    /// entry point `redraw_canvas`, never automatically every frame
-    /// (see `PLAN.md`: no consumer has asked for that yet). Also
-    /// `RefCell`-wrapped as of M27 Phase 3, for the identical real
-    /// reason `materializers` is.
-    pub(crate) canvas_draws: RefCell<HashMap<NodeId, Py<PyAny>>>,
     pub(crate) handlers: HandlerMap,
     /// M4 Phase 7 (§11.3): `anchor NodeId -> content NodeId`, shared
     /// with every `Node` this `Window` hands out (`Node.
@@ -611,7 +603,7 @@ pub struct WindowState {
     /// `RefCell<Vec<...>>`, not `Rc`-shared like `theme`/`handlers` --
     /// only this `Window`'s own `add_*` methods (push) and `set_theme`
     /// (replay) ever touch it, the same "not shared with `Node`" shape
-    /// `materializers`/`canvas_draws` already have. **Real, deliberately
+    /// `materializers` already has. **Real, deliberately
     /// accepted limitation, named not hidden:** never pruned when a
     /// hook's own node(s) are later removed (`Node.remove()`) -- a
     /// stale hook becomes a silent no-op on the next `set_theme` call
@@ -708,7 +700,6 @@ impl PyWindow {
             width: Rc::new(Cell::new(width)),
             height: Rc::new(Cell::new(height)),
             materializers: RefCell::new(HashMap::new()),
-            canvas_draws: RefCell::new(HashMap::new()),
             handlers,
             context_menus,
             dock: Rc::new(RefCell::new(dock::DockState::new())),
@@ -740,7 +731,7 @@ impl PyWindow {
     /// shown, see the window's true current size immediately, not a
     /// stale value captured at `from_view` time.
     ///
-    /// `dock`/`materializers`/`canvas_draws`/`terminals` default-empty,
+    /// `dock`/`materializers`/`terminals` default-empty,
     /// confirmed safe: `engine-spec`'s own YAML builder (`Reconciler::
     /// load`, which built `view`'s tree) has no `Terminal`/`VirtualList`/
     /// `Canvas` case, so a View-built tree can never contain a `NodeKind`
@@ -772,7 +763,6 @@ impl PyWindow {
             width: view.width.clone(),
             height: view.height.clone(),
             materializers: RefCell::new(HashMap::new()),
-            canvas_draws: RefCell::new(HashMap::new()),
             handlers: view.handlers.clone(),
             context_menus: view.context_menus.clone(),
             dock: Rc::new(RefCell::new(dock::DockState::new())),
@@ -1021,11 +1011,6 @@ impl PyWindow {
         for materializer in self.materializers.borrow().values() {
             visit.call(materializer)?;
         }
-        // M5 Phase 3: `canvas_draws` is exactly the same class of stored
-        // `PyObject` as `materializers` -- same cyclic-GC obligation.
-        for draw in self.canvas_draws.borrow().values() {
-            visit.call(draw)?;
-        }
         for (handler, _wants_event) in self.handlers.borrow().values() {
             visit.call(handler)?;
         }
@@ -1080,7 +1065,6 @@ impl PyWindow {
             return;
         }
         self.materializers.borrow_mut().clear();
-        self.canvas_draws.borrow_mut().clear();
         self.handlers.borrow_mut().clear();
         self.completions.borrow_mut().callbacks.clear();
         self.active.borrow().handlers.borrow_mut().clear();

@@ -681,12 +681,16 @@ impl App {
                     return any_active;
                 }
 
-                runtime.tree.borrow_mut().compute_layout(
+                // M96: also builds virtual lists' newly visible rows.
+                crate::node_callbacks::layout(
+                    &runtime.tree,
                     runtime.root,
                     Size {
                         width: AvailableSpace::Definite(runtime.width.get() as f32),
                         height: AvailableSpace::Definite(runtime.height.get() as f32),
                     },
+                    &runtime.handlers,
+                    py,
                 );
 
                 // M40 Phase 1 (§4, §6, §9): the one real place `GpuState::

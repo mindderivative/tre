@@ -214,25 +214,19 @@ class Node:
         """
         ...
     def set(self, **props: Any) -> None:
-        """M94: sets properties atomically -- every value is checked
-        first, and a bad one raises `ValueError` without changing
-        anything. Today: `role`, `label`, `value` (str or number),
-        `value_min`, `value_max`, `value_step`, `checked`, `selected`,
-        `expanded`, `disabled`, `level`, `live` (`"off"`, `"polite"`,
-        `"assertive"`), `a11y_hidden`, `focusable`, `tab_index`,
-        `cursor`, `hit_testable`, `width`/`height` (a number, `"auto"`,
-        or `"50%"`); M95 paint on every node: `fill`, `stroke_color`,
-        `stroke_width`, `opacity` (group opacity), `corner_radius` (a
-        number or `(top_left, top_right, bottom_right, bottom_left)`),
-        `shadows` (a list of `(color, offset_x, offset_y, blur,
-        spread)`); on a path `data` (SVG path data), `view_box`
-        (`(min_x, min_y, width, height)`), `trim_start`/`trim_end`; on a
-        text input `placeholder`, `placeholder_fill`, `caret_color`,
-        `selection_fill`, `obscured`; on a scroll view `scrollbar_fill`,
-        `scrollbar_width`; on a terminal `palette` (a dict of any of
-        `ansi` -- 16 colors -- `foreground`, `background`, `cursor`,
-        `selection`). Optional ones take `None` to clear.
+        """Sets properties atomically: every value is checked first, and a
+        bad one raises `ValueError` without changing anything. Optional
+        properties take `None` to clear. Every node has the layout,
+        paint, transform, visibility, interaction, and accessibility
+        properties; each kind adds its own (text, text input, image,
+        path, canvas, scroll view, virtual list, terminal). An unknown
+        name lists the valid ones. See the Properties reference.
         """
+        ...
+    def redraw(self) -> None:
+        """M96: runs this canvas's `draw` callback now, replacing what it
+        shows with what the callback draws. Raises `ValueError` for any
+        other kind."""
         ...
     def focus(self) -> None:
         """M94: moves keyboard focus to this node, firing `blur`/`focus`."""
@@ -582,10 +576,18 @@ class Window:
 
     def __init__(self, width: int = 480, height: int = 200, title: str = "tre v2") -> None: ...
     def create(self, kind: str, **props: Any) -> Node:
-        """M95: makes a detached `"box"` or `"path"` node (a path needs
-        `data`) and applies `props` atomically, as `Node.set` does.
-        Attach it with `add_child`. Raises `ValueError` for an unknown
-        kind or a bad property, creating nothing.
+        """M96: makes a detached node of `kind` -- `"box"`, `"text"`,
+        `"text_input"`, `"image"`, `"path"`, `"canvas"`, `"scroll_view"`,
+        `"virtual_list"`, or `"terminal"` -- and applies `props`
+        atomically, as `Node.set` does. Required: `text` for a text,
+        `rgba`/`pixel_width`/`pixel_height` for an image, `data` for a
+        path, `draw` for a canvas, `item_count`, `materialize`, and one of
+        `item_extent`/`size_hint` for a virtual list, and `shell`, `cols`,
+        `rows` for a terminal (which also takes `scrollback_lines`, at
+        creation only). Attach it with `add_child`; until it's attached it
+        is freed once no handle points into it. Raises `ValueError` for an
+        unknown kind or a bad property, creating nothing. See the
+        Properties reference for every property.
         """
         ...
     @property

@@ -16,8 +16,9 @@ use pyo3::types::PyDict;
 use taffy::prelude::{AvailableSpace, Dimension};
 use taffy::style::ExpandedDimension;
 
-use crate::dispatch::{fire_focus_transition, interaction_config};
+use crate::dispatch::{HandlerKey, fire_focus_transition, interaction_config};
 use crate::node::Node;
+use crate::node_kind_props::{KIND_PROPS, KindChange, parse_kind_prop, read_kind_prop};
 use crate::node_layout::{LAYOUT_PROPS, StyleEdit, parse_layout, read_layout};
 
 /// Every property `set` accepts besides the layout ones
@@ -120,6 +121,10 @@ pub(crate) enum Change {
     Cursor(Option<Cursor>),
     HitTestable(bool),
     Style(StyleEdit),
+    Kind(KindChange),
+    /// M96: a canvas's `draw`, or a virtual list's `materialize` or
+    /// `size_hint` -- stored in the handler map.
+    Callback(HandlerKey, Py<PyAny>),
     Visible(bool),
     ZIndex(i32),
     ClipChildren(bool),
@@ -320,10 +325,19 @@ pub(crate) fn animatable_to_py(
         "fill" => color_to_py(
             match &node.kind {
                 NodeKind::Icon(state) => *pick(&state.tint, target),
+                NodeKind::TextField(state) => *pick(&state.text_tint, target),
                 _ => *pick(&node.paint.background, target),
             },
             py,
         )?,
+        "scroll_offset" => {
+            let NodeKind::ScrollView(state) = &node.kind else {
+                return Err(PyValueError::new_err(
+                    "node property `scroll_offset` applies only to a scroll_view node",
+                ));
+            };
+            number(*pick(&state.scroll, target))?
+        }
         "stroke_color" => color_to_py(*pick(&node.paint.border_color, target), py)?,
         "stroke_width" => number(*pick(&node.paint.border_width, target))?,
         "translate_x" => number(*pick(&node.paint.node_transform.translate_x, target))?,
@@ -378,8 +392,17 @@ pub(crate) fn stop_animatable(node: &mut engine_core::Node, name: &str) -> PyRes
     match name {
         "fill" => match &mut node.kind {
             NodeKind::Icon(state) => state.tint.stop(),
+            NodeKind::TextField(state) => state.text_tint.stop(),
             _ => node.paint.background.stop(),
         },
+        "scroll_offset" => {
+            let NodeKind::ScrollView(state) = &mut node.kind else {
+                return Err(PyValueError::new_err(
+                    "node property `scroll_offset` applies only to a scroll_view node",
+                ));
+            };
+            state.scroll.stop();
+        }
         "stroke_color" => node.paint.border_color.stop(),
         "stroke_width" => node.paint.border_width.stop(),
         "translate_x" => node.paint.node_transform.translate_x.stop(),
@@ -629,11 +652,41 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
         "palette" => Change::Palette(Box::new(parse_palette(value, name)?)),
         _ => {
             return Err(PyValueError::new_err(format!(
-                "unknown node property {name:?} -- settable: {}, {}",
+                "unknown node property {name:?} -- settable: {}, {}, {}, draw, materialize, \
+                 size_hint",
                 LAYOUT_PROPS.join(", "),
-                SETTABLE.join(", ")
+                SETTABLE.join(", "),
+                KIND_PROPS.join(", ")
             )));
         }
+    })
+}
+
+/// The callback properties, each stored under its handler key.
+const CALLBACKS: [(&str, HandlerKey, &str); 3] = [
+    ("draw", HandlerKey::Draw, "canvas"),
+    ("materialize", HandlerKey::Materialize, "virtual_list"),
+    ("size_hint", HandlerKey::SizeHint, "virtual_list"),
+];
+
+fn parse_callback(
+    name: &str,
+    value: &Bound<'_, PyAny>,
+    kind: &NodeKind,
+) -> Option<PyResult<Change>> {
+    let (_, key, kind_name) = CALLBACKS.iter().find(|(n, _, _)| *n == name)?;
+    let applies = match key {
+        HandlerKey::Draw => matches!(kind, NodeKind::Canvas(_)),
+        _ => matches!(kind, NodeKind::VirtualList(_)),
+    };
+    Some(if !applies {
+        Err(PyValueError::new_err(format!(
+            "node property `{name}` applies only to a {kind_name} node"
+        )))
+    } else if !value.is_callable() {
+        Err(invalid(name, "a callable"))
+    } else {
+        Ok(Change::Callback(*key, value.clone().unbind()))
     })
 }
 
@@ -647,6 +700,14 @@ pub(crate) fn parse_all(
     if let Some(props) = props {
         for (name, value) in props.iter() {
             let name: String = name.extract()?;
+            if let Some(kind_change) = parse_kind_prop(&name, &value, kind, props) {
+                changes.push(Change::Kind(kind_change?));
+                continue;
+            }
+            if let Some(callback) = parse_callback(&name, &value, kind) {
+                changes.push(callback?);
+                continue;
+            }
             let change = parse(&name, &value)?;
             if let Some((prop, kind_name, applies)) = change.kind_requirement()
                 && !applies(kind)
@@ -658,6 +719,7 @@ pub(crate) fn parse_all(
             changes.push(change);
         }
     }
+    changes.sort_by_key(|change| matches!(change, Change::Kind(k) if k.late));
     Ok(changes)
 }
 
@@ -676,15 +738,21 @@ impl Node {
     /// checked first, and a bad one raises `ValueError` without changing
     /// anything. An optional property takes `None` to clear it.
     #[pyo3(signature = (**props))]
-    fn set(&self, props: Option<&Bound<'_, PyDict>>) -> PyResult<()> {
+    fn set(&self, props: Option<&Bound<'_, PyDict>>, py: Python<'_>) -> PyResult<()> {
         let changes = {
             let tree = self.tree.borrow();
-            let node = tree.get(self.id).ok_or_else(|| {
-                PyValueError::new_err("this node has been removed from its window")
-            })?;
+            let node = tree
+                .get(self.id)
+                .ok_or(crate::error::EngineError::Destroyed)?;
             parse_all(props, &node.kind)?
         };
+        let redraw = changes
+            .iter()
+            .any(|change| matches!(change, Change::Callback(HandlerKey::Draw, _)));
         self.apply(changes);
+        if redraw {
+            crate::node_callbacks::redraw(&self.tree, &self.handlers, self.id, py)?;
+        }
         Ok(())
     }
 
@@ -703,6 +771,15 @@ impl Node {
             }
             if let Some(value) = read_layout(name, &node.layout_style, py) {
                 return value;
+            }
+            if let Some(value) = read_kind_prop(name, node, py) {
+                return value;
+            }
+            if let Some((_, key, _)) = CALLBACKS.iter().find(|(n, _, _)| *n == name) {
+                return Ok(
+                    crate::node_callbacks::callback(&self.handlers, self.id, *key, py)
+                        .unwrap_or_else(|| py.None()),
+                );
             }
             let access = &node.access;
             let any = |v: Bound<'_, PyAny>| v.unbind();
@@ -765,7 +842,7 @@ impl Node {
                     .into_any()),
                 "layout_x" | "layout_y" | "layout_width" | "layout_height" => {
                     drop(tree);
-                    let (x, y, w, h) = self.layout_box();
+                    let (x, y, w, h) = self.layout_box(py);
                     let value = match name {
                         "layout_x" => x,
                         "layout_y" => y,
@@ -906,23 +983,24 @@ impl Node {
     /// height)` -- running any pending layout of its tree first, so it
     /// always matches the current tree. A detached subtree is laid out on
     /// its own, at its content size.
-    pub(crate) fn layout_box(&self) -> (f64, f64, f64, f64) {
-        let mut tree = self.tree.borrow_mut();
-        let root = tree.root_of(self.id);
+    pub(crate) fn layout_box(&self, py: Python<'_>) -> (f64, f64, f64, f64) {
         let available = |dim: Dimension| match ExpandedDimension::from(dim) {
             ExpandedDimension::Length(v) => AvailableSpace::Definite(v),
             _ => AvailableSpace::MaxContent,
         };
-        let size = tree.get(root).map(|n| n.layout_style.size);
+        let (root, size) = {
+            let tree = self.tree.borrow();
+            let root = tree.root_of(self.id);
+            (root, tree.get(root).map(|n| n.layout_style.size))
+        };
         if let Some(size) = size {
-            tree.compute_layout(
-                root,
-                taffy::prelude::Size {
-                    width: available(size.width),
-                    height: available(size.height),
-                },
-            );
+            let size = taffy::prelude::Size {
+                width: available(size.width),
+                height: available(size.height),
+            };
+            crate::node_callbacks::layout(&self.tree, root, size, &self.handlers, py);
         }
+        let tree = self.tree.borrow();
         let (x, y) = tree.absolute_position(self.id);
         let layout = tree.layout(self.id);
         (
@@ -941,6 +1019,9 @@ impl Node {
             return;
         };
         let mut style = None;
+        let mut resize_terminal = false;
+        let mut reset_rows = false;
+        let mut callbacks = Vec::new();
         for change in changes {
             let access = &mut node.access;
             match change {
@@ -962,6 +1043,22 @@ impl Node {
                 Change::Cursor(cursor) => node.cursor = cursor,
                 Change::HitTestable(hit_testable) => node.hit_testable = hit_testable,
                 Change::Style(edit) => edit(style.get_or_insert_with(|| node.layout_style.clone())),
+                Change::Kind(kind_change) => {
+                    resize_terminal |= kind_change.resizes_terminal;
+                    reset_rows |= kind_change.resets_rows;
+                    (kind_change.edit)(node);
+                }
+                Change::Callback(key, callback) => {
+                    if key == HandlerKey::SizeHint
+                        && let NodeKind::VirtualList(state) = &mut node.kind
+                    {
+                        state.item_extent = engine_core::ItemExtent::Variable;
+                        state.resolved_offsets.clear();
+                        reset_rows = true;
+                    }
+                    reset_rows |= key == HandlerKey::Materialize;
+                    callbacks.push((key, callback));
+                }
                 Change::Visible(visible) => {
                     node.visible = visible;
                     style
@@ -1002,6 +1099,7 @@ impl Node {
                 }
                 Change::Fill(color) => match &mut node.kind {
                     NodeKind::Icon(state) => state.tint = Animated::new(color),
+                    NodeKind::TextField(state) => state.text_tint = Animated::new(color),
                     _ => node.paint.background = Animated::new(color),
                 },
                 Change::StrokeColor(color) => node.paint.border_color = Animated::new(color),
@@ -1059,8 +1157,36 @@ impl Node {
                 }
             }
         }
+        // M96: a terminal's box follows its grid and font.
+        if resize_terminal && let NodeKind::Terminal(state) = &node.kind {
+            let (cols, rows) = (f32::from(state.cols), f32::from(state.rows));
+            let (cell_width, cell_height) = crate::shaper::with(|shaper| {
+                shaper.monospace_cell_size(&state.font_family, state.font_size)
+            });
+            let size = &mut style.get_or_insert_with(|| node.layout_style.clone()).size;
+            size.width = Dimension::length(cell_width * cols);
+            size.height = Dimension::length(cell_height * rows);
+        }
         if let Some(style) = style {
             tree.set_layout_style(self.id, style);
+        }
+        let released = if reset_rows {
+            tree.virtual_list_release_outside(self.id, 0..0)
+        } else {
+            Vec::new()
+        };
+        for &row in &released {
+            tree.detach_collectible(row);
+        }
+        drop(tree);
+        if !callbacks.is_empty() {
+            let mut handlers = self.handlers.borrow_mut();
+            for (key, callback) in callbacks {
+                handlers.insert((self.id, key), (callback, false));
+            }
+        }
+        for row in released {
+            crate::node_handles::collect(&self.tree, &self.handlers, row);
         }
     }
 }

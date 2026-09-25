@@ -235,6 +235,10 @@ pub enum InputEvent {
     /// dispatch` is deliberately a true no-op for this event today
     /// (plumbing only, §11.7/§11.8's own still-open scrollable-viewport
     /// gap isn't built yet).
+    ///
+    /// M96: `delta` keeps winit's own sign -- positive moves the content
+    /// right and down, scrolling toward the start. `Tree::dispatch` turns
+    /// it into offsets that grow toward the end.
     Scroll {
         delta: ScrollDelta,
         position: Point,

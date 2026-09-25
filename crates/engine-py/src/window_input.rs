@@ -405,8 +405,10 @@ impl PyWindow {
 
         let outcome = tree.borrow_mut().dispatch(
             root,
+            // Positive `delta_y` scrolls down here; the event carries
+            // winit's opposite sign (`InputEvent::Scroll`).
             InputEvent::Scroll {
-                delta: engine_core::ScrollDelta::Pixels(delta_x, delta_y),
+                delta: engine_core::ScrollDelta::Pixels(-delta_x, -delta_y),
                 position: point,
             },
             &interaction_config(),

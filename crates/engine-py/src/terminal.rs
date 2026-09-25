@@ -272,6 +272,18 @@ impl TerminalSession {
     /// Returns `true` exactly when it did -- the caller's own real
     /// "does this frame need to repaint" signal.
     pub(crate) fn drain_into(&mut self, tree: &mut Tree, node_id: NodeId) -> bool {
+        // M96: `node.set(cols=, rows=)` resizes the grid in the tree; the
+        // PTY and parser follow here.
+        let grid = match tree.get(node_id).map(|n| &n.kind) {
+            Some(NodeKind::Terminal(state)) => Some((state.cols, state.rows)),
+            _ => None,
+        };
+        let (rows, cols) = self.parser.screen().size();
+        if let Some((want_cols, want_rows)) = grid
+            && (want_cols, want_rows) != (cols, rows)
+        {
+            self.resize(tree, node_id, want_cols, want_rows);
+        }
         let bytes = {
             let mut guard = self
                 .incoming

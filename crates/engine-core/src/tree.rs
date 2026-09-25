@@ -20,7 +20,7 @@ use taffy::prelude::{
 };
 
 use crate::access::AccessNodeData;
-use crate::animation::{CompletionHandle, MotionCurve};
+use crate::animation::{Animated, CompletionHandle, MotionCurve};
 #[cfg(test)]
 use crate::canvas::CanvasState;
 use crate::canvas::{CustomHitTest, DrawCommand};
@@ -2220,6 +2220,89 @@ impl Tree {
             (state.scroll_offset.current + delta_y).clamp(0.0, max_offset);
     }
 
+    /// M96: the rows of `list` its viewport shows -- every row whose extent
+    /// meets `[scroll, scroll + height)` -- by binary search over the
+    /// rows' offsets, so a long list costs `log n`. Needs a computed
+    /// layout.
+    pub fn virtual_list_visible(&self, list: NodeId) -> std::ops::Range<usize> {
+        let Some(NodeKind::VirtualList(state)) = self.nodes.get(list).map(|n| &n.kind) else {
+            return 0..0;
+        };
+        let top = state.scroll_offset.current;
+        let bottom = top + f64::from(self.layout(list).size.height);
+        // The first row whose `edge_of` passes `past`, for a list whose
+        // offsets only grow.
+        let first = |edge_of: &dyn Fn(usize) -> f64, past: &dyn Fn(f64) -> bool| {
+            let (mut lo, mut hi) = (0, state.item_count);
+            while lo < hi {
+                let mid = (lo + hi) / 2;
+                if past(edge_of(mid)) {
+                    hi = mid;
+                } else {
+                    lo = mid + 1;
+                }
+            }
+            lo
+        };
+        // Visible rows end after `top` and start before `bottom`.
+        let start = first(&|idx| state.offset_of(idx + 1), &|end| end > top);
+        let end = first(&|idx| state.offset_of(idx), &|begin| begin >= bottom);
+        start..end.max(start)
+    }
+
+    /// M96: detaches every materialized row of `list` outside `keep`, and
+    /// returns them -- still alive, for the caller to free or keep.
+    pub fn virtual_list_release_outside(
+        &mut self,
+        list: NodeId,
+        keep: std::ops::Range<usize>,
+    ) -> Vec<NodeId> {
+        let released: Vec<NodeId> = match self.nodes.get(list).map(|n| &n.kind) {
+            Some(NodeKind::VirtualList(state)) => state
+                .materialized
+                .iter()
+                .filter(|(idx, _)| !keep.contains(idx))
+                .map(|(_, &id)| id)
+                .collect(),
+            _ => return Vec::new(),
+        };
+        if let NodeKind::VirtualList(state) = &mut self.nodes[list].kind {
+            state.materialized.retain(|idx, _| keep.contains(idx));
+        }
+        for &row in &released {
+            if self.nodes.get(row).and_then(|n| n.parent) == Some(list) {
+                self.detach(list, row);
+            }
+        }
+        released
+    }
+
+    /// M96: attaches `row` -- a node the caller built -- as row `index` of
+    /// `list`, the list's full width and the row's own extent tall; layout
+    /// places it at its offset (`sync_virtual_list_layouts`). Returns
+    /// `false`, changing nothing, if `row` is `list` or an ancestor.
+    pub fn virtual_list_adopt(&mut self, list: NodeId, index: usize, row: NodeId) -> bool {
+        let extent = match self.nodes.get(list).map(|n| &n.kind) {
+            Some(NodeKind::VirtualList(state)) => {
+                state.offset_of(index + 1) - state.offset_of(index)
+            }
+            _ => return false,
+        };
+        if !self.try_add_child(list, row) {
+            return false;
+        }
+        let mut style = self.nodes[row].layout_style.clone();
+        style.size = Size {
+            width: taffy::prelude::percent(1.0),
+            height: length(extent as f32),
+        };
+        self.set_layout_style(row, style);
+        if let NodeKind::VirtualList(state) = &mut self.nodes[list].kind {
+            state.materialized.insert(index, row);
+        }
+        true
+    }
+
     /// M12 Phase 1 (§11.7): the real way a caller supplies resolved
     /// cumulative offsets for a `Variable`-extent list -- `engine-core`
     /// itself never computes a cumulative sum from raw per-item heights
@@ -2385,6 +2468,18 @@ impl Tree {
                     any_active = true;
                 }
             }
+            // M96: a text input's animatable `fill` (its text color), and
+            // a scroll view's animatable `scroll_offset`.
+            if let NodeKind::TextField(state) = &mut node.kind
+                && state.text_tint.tick(now, &mut completed)
+            {
+                any_active = true;
+            }
+            if let NodeKind::ScrollView(state) = &mut node.kind
+                && state.scroll.tick(now, &mut completed)
+            {
+                any_active = true;
+            }
             // M30 Phase 9 Step 5 (§5, §7, §11.7): `CarouselState.
             // position`'s own real central-ticking need -- unlike
             // `SplitterState.position`/`VirtualListState.scroll_offset`
@@ -2472,7 +2567,7 @@ impl Tree {
                 NodeKind::Slider(state) => state.track_tint = tint,
                 // M20 Phase 2 (§7.1, §7.3): `TextField`'s own real
                 // sibling, closing the milestone's own real mechanism.
-                NodeKind::TextField(state) => state.text_tint = tint,
+                NodeKind::TextField(state) => state.text_tint = Animated::new(tint),
                 _ => {}
             }
         }
@@ -4331,6 +4426,15 @@ impl Tree {
             // press/hover-update already use -- still DispatchOutcome::
             // None, nothing for the app layer to be told happened.
             InputEvent::Scroll { delta, position } => {
+                // M96: winit's sign scrolls toward the start; every offset
+                // below grows toward the end, so it flips once, here. (It
+                // used to pass through unflipped, so a real wheel scrolled
+                // backwards -- only synthetic input, which used the offset's
+                // own sign, was ever tested.)
+                let delta = match delta {
+                    ScrollDelta::Lines(x, y) => ScrollDelta::Lines(-x, -y),
+                    ScrollDelta::Pixels(x, y) => ScrollDelta::Pixels(-x, -y),
+                };
                 if let Some(hit) = self.hit_test(root, position) {
                     let mut current = Some(hit);
                     while let Some(id) = current {
@@ -5026,6 +5130,53 @@ mod tests {
         tree.detach(root, legacy);
         assert!(tree.collect_unreferenced(legacy, |_| false).is_empty());
         assert!(tree.get(legacy).is_some(), "legacy-detached: kept");
+    }
+
+    /// M96: a virtual list shows exactly the rows its viewport meets, adopts
+    /// a caller-built row, and releases rows scrolled away without freeing
+    /// them.
+    #[test]
+    fn a_virtual_list_adopts_visible_rows_and_releases_the_rest() {
+        let mut tree = Tree::new();
+        let list = tree.insert(
+            NodeKind::VirtualList(VirtualListState::new(100, ItemExtent::Fixed(10.0))),
+            Style {
+                size: Size {
+                    width: length(50.0),
+                    height: length(35.0),
+                },
+                ..Default::default()
+            },
+            PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
+        );
+        let available = Size {
+            width: AvailableSpace::Definite(50.0),
+            height: AvailableSpace::Definite(35.0),
+        };
+        tree.compute_layout(list, available);
+        assert_eq!(tree.virtual_list_visible(list), 0..4, "rows 0-3 meet 0..35");
+
+        let rows: Vec<NodeId> = (0..4)
+            .map(|idx| {
+                let (k, s, p) = leaf(1.0, 1.0);
+                let row = tree.insert(k, s, p);
+                assert!(tree.virtual_list_adopt(list, idx, row));
+                row
+            })
+            .collect();
+        tree.compute_layout(list, available);
+        assert_eq!(tree.layout(rows[3]).location.y, 30.0);
+        assert_eq!(tree.layout(rows[3]).size.width, 50.0, "full width");
+
+        tree.scroll_virtual_list_by(list, 25.0);
+        let visible = tree.virtual_list_visible(list);
+        assert_eq!(visible, 2..6);
+        let released = tree.virtual_list_release_outside(list, visible);
+        assert_eq!(released, vec![rows[0], rows[1]]);
+        assert!(
+            tree.get(rows[0]).is_some_and(|n| n.parent.is_none()),
+            "detached, alive"
+        );
     }
 
     #[test]
@@ -7969,7 +8120,7 @@ mod tests {
         let outcome = tree.dispatch(
             list,
             InputEvent::Scroll {
-                delta: ScrollDelta::Lines(0.0, 2.0),
+                delta: ScrollDelta::Lines(0.0, -2.0),
                 position: Point::new(100.0, 30.0),
             },
             &config,
@@ -8065,7 +8216,7 @@ mod tests {
         let outcome = tree.dispatch(
             root,
             InputEvent::Scroll {
-                delta: ScrollDelta::Lines(0.0, 2.0),
+                delta: ScrollDelta::Lines(0.0, -2.0),
                 position: Point::new(25.0, 25.0),
             },
             &config,
@@ -9673,7 +9824,7 @@ mod tests {
         let outcome = tree.dispatch(
             root,
             InputEvent::Scroll {
-                delta: ScrollDelta::Lines(0.0, 3.0),
+                delta: ScrollDelta::Lines(0.0, -3.0),
                 position: Point::new(25.0, 25.0),
             },
             &config,
@@ -9692,7 +9843,7 @@ mod tests {
         let outcome = tree.dispatch(
             root,
             InputEvent::Scroll {
-                delta: ScrollDelta::Pixels(0.0, -40.0),
+                delta: ScrollDelta::Pixels(0.0, 40.0),
                 position: Point::new(25.0, 25.0),
             },
             &config,
@@ -11747,7 +11898,7 @@ mod tests {
         let NodeKind::TextField(state) = &tree.get(text_field).unwrap().kind else {
             panic!("expected a TextField node");
         };
-        assert_eq!(state.text_tint, real_color);
+        assert_eq!(state.text_tint.current, real_color);
 
         assert!(
             matches!(tree.get(rect).unwrap().kind, NodeKind::Rect),
@@ -12127,7 +12278,7 @@ mod tests {
         tree.dispatch(
             root,
             InputEvent::Scroll {
-                delta: ScrollDelta::Lines(0.0, 1.0),
+                delta: ScrollDelta::Lines(0.0, -1.0),
                 position: point,
             },
             &config,
@@ -12706,7 +12857,7 @@ mod tests {
         let outcome = tree.dispatch(
             view,
             InputEvent::Scroll {
-                delta: ScrollDelta::Lines(0.0, 2.0),
+                delta: ScrollDelta::Lines(0.0, -2.0),
                 position: Point::new(50.0, 50.0),
             },
             &config,

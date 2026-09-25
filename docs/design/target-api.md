@@ -36,7 +36,7 @@ Three principles run through every section:
 | 4 | Every painted color is a property; no focus ring or scrim | [Painting rules](#painting-rules) | M95 |
 | 5 | Animate from the current value; `stop_animation`; `get` vs `get_target` | [`set`, `get`, `animate`](#set-get-animate) | M95 |
 | 6 | `flex_wrap`, `align_self`, `"auto"`/percentages, `aspect_ratio`; stroke inside; group opacity | [Properties](#properties) | M96 |
-| 7 | Reading `layout_*` runs pending layout, even inside `batch` | [Properties](#properties) | M96 |
+| 7 | Reading `layout_*` runs pending layout (`batch` dropped in M96: nothing to defer) | [Properties](#properties) | M96 |
 | 8 | `max_lines`, ellipsis, `wrap`, `letter_spacing`, `font_style` | [Properties](#properties) | M96 |
 | 9 | Layer focus trap and restore, stacking, flip/fit placement, key-event scope | [Layers](#layers) | M96 |
 | 10 | `close_requested` (cancellable), `closed`, `scale_factor`, title setter | [Window](#window) | M94 |
@@ -89,7 +89,7 @@ revision 2.
 | --- | --- | --- |
 | `App` | `App()`, `add_window(window)`, `run(max_frames=None)`, `thread_handle()` | exists, unchanged |
 | `LoopHandle` | `call_soon(fn)`, thread-safe | exists, unchanged |
-| `Window` | Owns a node tree: creation, content, layers, window properties and events, batching, time, text measurement, clipboard, docking, `simulate` | reshaped |
+| `Window` | Owns a node tree: creation, layers, window properties and events, time, text measurement, clipboard, docking, `simulate` | reshaped |
 | `Node` | A handle to one node: `set`, `get`, `get_target`, `animate`, `stop_animation`, `on`/`off`, structure, focus, pointer capture | reshaped |
 | `Event` | The payload every handler receives | extended |
 | `Painter` | The drawing surface of a `canvas` node's `draw` callback (was `CanvasContext`) | renamed, extended |
@@ -113,7 +113,7 @@ window's root `box`.
 | `"path"` | `data` | A vector path: fill, stroke, trim, morph. Replaces `Icon` (D4) |
 | `"canvas"` | `draw` | Immediate-mode drawing through a `Painter`; `node.redraw()` requests a new frame |
 | `"scroll_view"` | none | Clips and scrolls exactly one child |
-| `"virtual_list"` | `item_count`, `materialize` | Materializes only the visible items |
+| `"virtual_list"` | `item_count`, `materialize`, and `item_extent` or `size_hint` | Builds only the visible rows: `materialize(index)` returns a node the framework made, and `tre` attaches, sizes, and releases it as the list scrolls (M96) |
 | `"terminal"` | `shell`, `cols`, `rows` | A PTY-backed terminal emulator (D1) |
 
 ## Node
@@ -174,8 +174,7 @@ Accessibility roles: `button`, `checkbox`, `radio`, `switch`, `slider`,
 **Read-only via `get`:** `focused`, `layer_placement` (for a shown layer),
 and `layout_x`, `layout_y`, `layout_width`, `layout_height`, the computed
 box for anchoring and drag math. Reading a `layout_*` value runs any
-pending layout first, even inside `window.batch()` (layout is computed,
-painting stays deferred), so the value always matches the current tree.
+pending layout first, so the value always matches the current tree.
 
 #### Painting rules
 
@@ -280,16 +279,28 @@ and events still bubble from it.
 | --- | --- |
 | **Construction** | `Window(width, height, title)` **(exists)** |
 | **Nodes** | `root`; `create(kind, **props)` (R9) |
-| **Content** | `set_content(node)`: show any kept-alive subtree as the window's content (replaces `show_view`) |
 | **Properties** | `set(title=...)`; read-only `get("width")`, `get("height")`, `get("scale_factor")` |
 | **Events** | `resize` (`width`, `height`); `color_scheme` (`dark`), since `tre` no longer themes anything itself (D7); `scale_factor` (`scale_factor`); `close_requested` (cancellable with `event.cancel()`); `closed`; `dock_target`, `dock_drop` |
 | **Layers** (M96) | [below](#layers) |
-| **Batching** (M96) | `with window.batch():` defers layout and paint until the block ends; reading `layout_*` still runs layout |
 | **Time** (R7, M96) | `advance(ms)`: headless, moves animations and layout forward by exactly `ms`, so animated widgets are testable on CI, where `App.run()` renders no frames |
 | **Text measurement** (M96) | `measure_text(text, font_family, font_size, font_weight=400, font_style="normal", letter_spacing=0, line_height=None, max_width=None)` → `(width, height)`; replaces `get_monospace_cell_size` |
 | **Clipboard** | `read_clipboard()` → `str` or `None`; `write_clipboard(text)` → `bool`. Text inputs handle Ctrl+C/X/V/A themselves and never copy from an `obscured` input |
 | **Docking** (D10) | [below](#docking-bare-bones-d10) |
 | **Testing** (R7) | `simulate(event, node=None, **fields)` for every event; `resize(width, height)` **(exists)** |
+
+**M96 corrections — two rows removed from this table:**
+
+- *Batching.* `with window.batch():` was to defer layout and paint until the
+  block ended. Measured, there's nothing to defer: layout runs once per frame
+  (and on a `layout_*` read), never per property, and no frame can run inside
+  a Python call. A `set` costs about 0.4 µs; one layout pass after changing
+  500 nodes' widths costs about 0.09 ms. A scope that defers nothing would be
+  an API that does nothing.
+- *Content.* `set_content(node)` was to show any kept-alive subtree as the
+  window's content, replacing `show_view`, which swaps a `View`'s whole tree.
+  With every node in the window's one tree, that's `root`'s children:
+  `remove()` the old screen and `add_child` the new one — the old screen stays
+  alive while you hold it.
 
 ### Layers
 
@@ -383,9 +394,9 @@ the ones not yet present.
 | --- | --- |
 | Declarative layer, reconciler, binding evaluator, reactivity | Move to Tesserae (D5, M98) |
 | Reorder and move children | `insert_child` |
-| Show a kept-alive subtree | `set_content`, `remove` (R5) |
+| Show a kept-alive subtree | `remove` (R5) and `add_child` on `root` (M96: `set_content` dropped) |
 | Set and read every property | atomic `set` (R6), `get`/`get_target`, exact color readback |
-| Batched updates | `window.batch()` |
+| Batched updates | not needed: layout already runs once per frame, never per property (M96 measurement) |
 | Resize, OS light/dark, scale factor, close | window events |
 | Focus, focus-within, Tab order | bubbling `focus`/`blur` (R10), `tab_index` (R8) |
 | Flex layout stays | Flex properties, including `flex_wrap`, `align_self`, percentages, and `aspect_ratio` |
@@ -420,7 +431,7 @@ Every current public name, and what it becomes.
 
 | Today | Target |
 | --- | --- |
-| `from_view`, `show_view` | `set_content` |
+| `from_view`, `show_view` | `root.add_child(screen)` (M96) |
 | `theme`, `set_theme` | framework (D7) |
 | `build_menu`, `open_menu`, `close_menu`, `open_dialog`, `close_dialog`, `open_snackbar`, `close_snackbar`, `open_side_sheet`, `close_side_sheet`, `open_navigation_drawer`, `close_navigation_drawer` | `show_layer`, `hide_layer` |
 | `build_shell`, `begin_container_transform`, `end_container_transform` | framework |
@@ -434,7 +445,7 @@ Every current public name, and what it becomes.
 | `set_active_tab` | `set_active_panel` |
 | `start_panel_drag(handle)` | `start_panel_drag(panel)` |
 | `set_dock_handle`, `set_drop_zone_highlight`, `drag_panel_over`, `drop_panel_at` | removed; `dock_target`/`dock_drop` events and `simulate` |
-| `set_virtual_list_window` | `virtual_list.set(...)`; exact property decided in M94 |
+| `set_virtual_list_window` | not needed: `tre` keeps the visible rows built (M96) |
 | `redraw_canvas(canvas)` | `canvas.redraw()` |
 
 ### `Node`

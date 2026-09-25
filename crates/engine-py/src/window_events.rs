@@ -9,9 +9,12 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use engine_core::{
-    InputEvent, Key, Modifiers, NodeId, NodeKind, PaintProperties, PathData, PathState,
-    PointerButton, ScrollDelta, Tree,
+    AccessNodeData, Action, Animated, CanvasState, ImageState, InputEvent, ItemExtent, Key,
+    Modifiers, NodeId, NodeKind, PaintProperties, PathData, PathState, PointerButton, Role,
+    ScrollDelta, ScrollViewState, TerminalState, TextAlign, TextFieldState, TextState, Tree,
+    VirtualListState,
 };
+use engine_render::MONOSPACE_FONT_FAMILY;
 use peniko::Color;
 use peniko::kurbo::BezPath;
 use peniko::kurbo::Point;
@@ -29,8 +32,10 @@ use crate::error::EngineError;
 use crate::event::NodeContext;
 use crate::listeners::{self, WindowEventType};
 use crate::node::{Node, NodeState};
+use crate::node_callbacks;
 use crate::node_handles;
 use crate::node_props::parse_all;
+use crate::terminal::TerminalSession;
 use crate::window::PyWindow;
 
 /// Every event `simulate` accepts, for its own error message.
@@ -205,6 +210,16 @@ fn pointer_point(
     }
 }
 
+impl PyWindow {
+    /// The window's size, as layout's available space.
+    fn available(&self) -> Size<AvailableSpace> {
+        Size {
+            width: AvailableSpace::Definite(self.width.get() as f32),
+            height: AvailableSpace::Definite(self.height.get() as f32),
+        }
+    }
+}
+
 #[pymethods]
 impl PyWindow {
     /// The window's root node -- the box its content lives in (the
@@ -222,39 +237,140 @@ impl PyWindow {
         })
     }
 
-    /// M95: makes a detached node of `kind` in this window's tree and
+    /// M95/M96: makes a detached node of `kind` in this window's tree and
     /// applies `props` atomically, as `node.set` does -- attach it with
-    /// `add_child`. Builds `"box"` and `"path"` (which needs `data`);
-    /// M96 adds the remaining kinds.
+    /// `add_child`. A kind's required properties must be among `props`; a
+    /// terminal's `shell` and `scrollback_lines` are given here only. The
+    /// node is freed once no handle points into it, until it's attached.
     #[pyo3(signature = (kind, **props))]
-    fn create(&self, kind: &str, props: Option<&Bound<'_, PyDict>>) -> PyResult<Node> {
+    fn create(
+        &self,
+        kind: &str,
+        props: Option<&Bound<'_, PyDict>>,
+        py: Python<'_>,
+    ) -> PyResult<Node> {
+        const KINDS: &str =
+            "box, text, text_input, image, path, canvas, scroll_view, virtual_list, terminal";
+        let props = match props {
+            Some(props) => props.copy()?,
+            None => PyDict::new(py),
+        };
+        let require = |names: &[&str]| -> PyResult<()> {
+            for name in names {
+                if !props.contains(*name)? {
+                    return Err(PyValueError::new_err(format!(
+                        "create({kind:?}) needs `{name}`"
+                    )));
+                }
+            }
+            Ok(())
+        };
+        let transparent = PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0);
+        let mut paint = transparent;
+        let mut session = None;
         let node_kind = match kind {
             "box" => NodeKind::Rect,
             "path" => {
-                let has_data = match props {
-                    Some(props) => props.contains("data")?,
-                    None => false,
-                };
-                if !has_data {
-                    return Err(PyValueError::new_err("create(\"path\") needs `data`"));
-                }
+                require(&["data"])?;
                 NodeKind::Path(PathState::new(PathData(BezPath::new())))
+            }
+            "text" => {
+                require(&["text"])?;
+                // A text's fill is its glyph color: opaque black, like CSS.
+                paint = PaintProperties::new(Color::from_rgba8(0, 0, 0, 255), 0.0, 0.0, 1.0);
+                NodeKind::Text(TextState {
+                    content: String::new(),
+                    font_family: "Roboto".to_string(),
+                    font_weight: 400.0,
+                    font_size: 16.0,
+                    align: TextAlign::Start,
+                    line_height: None,
+                })
+            }
+            "text_input" => {
+                let mut state = TextFieldState::new("", "Roboto", 400.0, 16.0);
+                state.text_tint = Animated::new(Color::from_rgba8(0, 0, 0, 255));
+                NodeKind::TextField(state)
+            }
+            "image" => {
+                require(&["rgba", "pixel_width", "pixel_height"])?;
+                NodeKind::Image(ImageState::blank())
+            }
+            "scroll_view" => NodeKind::ScrollView(ScrollViewState::new(false)),
+            "canvas" => {
+                require(&["draw"])?;
+                NodeKind::Canvas(CanvasState::new())
+            }
+            "virtual_list" => {
+                require(&["item_count", "materialize"])?;
+                if props.contains("item_extent")? == props.contains("size_hint")? {
+                    return Err(PyValueError::new_err(
+                        "create(\"virtual_list\") needs exactly one of `item_extent` or `size_hint`",
+                    ));
+                }
+                NodeKind::VirtualList(VirtualListState::new(0, ItemExtent::Fixed(1.0)))
+            }
+            "terminal" => {
+                require(&["shell", "cols", "rows"])?;
+                let shell: String = props.get_item("shell")?.map_or(Ok(String::new()), |v| {
+                    v.extract().map_err(|_| {
+                        PyValueError::new_err("create(\"terminal\"): `shell` must be a str")
+                    })
+                })?;
+                let scrollback: usize = match props.get_item("scrollback_lines")? {
+                    Some(v) => v.extract().map_err(|_| {
+                        PyValueError::new_err(
+                            "create(\"terminal\"): `scrollback_lines` must be a non-negative int",
+                        )
+                    })?,
+                    None => 1000,
+                };
+                props.del_item("shell")?;
+                if props.contains("scrollback_lines")? {
+                    props.del_item("scrollback_lines")?;
+                }
+                let cols: u16 = props
+                    .get_item("cols")?
+                    .and_then(|v| v.extract().ok())
+                    .unwrap_or(1);
+                let rows: u16 = props
+                    .get_item("rows")?
+                    .and_then(|v| v.extract().ok())
+                    .unwrap_or(1);
+                session = Some((shell, cols, rows, scrollback));
+                NodeKind::Terminal(TerminalState::new(
+                    cols.max(1),
+                    rows.max(1),
+                    MONOSPACE_FONT_FAMILY,
+                    14.0,
+                ))
             }
             _ => {
                 return Err(PyValueError::new_err(format!(
-                    "unknown node kind {kind:?} -- create builds: box, path"
+                    "unknown node kind {kind:?} -- create builds: {KINDS}"
                 )));
             }
         };
-        let changes = parse_all(props, &node_kind)?;
+        let changes = parse_all(Some(&props), &node_kind)?;
+        let draws = matches!(node_kind, NodeKind::Canvas(_));
+        let session = match session {
+            Some((shell, cols, rows, scrollback)) => Some(
+                TerminalSession::spawn(&shell, cols, rows, scrollback)
+                    .map_err(|reason| EngineError::TerminalSpawnFailed { shell, reason })?,
+            ),
+            None => None,
+        };
+        let interactive = matches!(node_kind, NodeKind::TextField(_) | NodeKind::Terminal(_));
         let active = self.active.borrow();
         let id = {
             let mut tree = active.tree.borrow_mut();
-            let id = tree.insert(
-                node_kind,
-                Style::default(),
-                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, 1.0),
-            );
+            let id = tree.insert(node_kind, Style::default(), paint);
+            if interactive {
+                tree.set_access(
+                    id,
+                    AccessNodeData::new(Role::TextInput).with_action(Action::Focus),
+                );
+            }
             // M96: freed automatically once no handle points into it
             // (`node_handles`), until it's attached somewhere.
             tree.detach_collectible(id);
@@ -269,7 +385,13 @@ impl PyWindow {
             completions: self.completions.clone(),
         });
         drop(active);
+        if let Some(session) = session {
+            self.terminals.borrow_mut().insert(id, session);
+        }
         node.apply(changes);
+        if draws {
+            node_callbacks::redraw(&node.tree, &node.handlers, id, py)?;
+        }
         Ok(node)
     }
 
@@ -370,20 +492,14 @@ impl PyWindow {
             )));
         }
         node_handles::reclaim();
-        let (tree, root) = {
+        let (tree, root, handlers) = {
             let active = self.active.borrow();
-            (active.tree.clone(), active.root)
+            (active.tree.clone(), active.root, active.handlers.clone())
         };
         let now = clock::advance(&tree, Duration::from_secs_f64(ms / 1000.0));
         let (_, completed) = tree.borrow_mut().tick_all(now);
         run_completions(&self.completions, completed, py);
-        tree.borrow_mut().compute_layout(
-            root,
-            Size {
-                width: AvailableSpace::Definite(self.width.get() as f32),
-                height: AvailableSpace::Definite(self.height.get() as f32),
-            },
-        );
+        node_callbacks::layout(&tree, root, self.available(), &handlers, py);
         Ok(())
     }
 
@@ -416,13 +532,7 @@ impl PyWindow {
             Some(node) => Some(node.id),
             None => None,
         };
-        tree.borrow_mut().compute_layout(
-            root,
-            Size {
-                width: AvailableSpace::Definite(self.width.get() as f32),
-                height: AvailableSpace::Definite(self.height.get() as f32),
-            },
-        );
+        node_callbacks::layout(&tree, root, self.available(), &handlers, py);
         let ctx = NodeContext {
             tree: &tree,
             handlers: &handlers,

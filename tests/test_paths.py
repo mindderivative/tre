@@ -52,7 +52,7 @@ def test_path_props_set_and_clear() -> None:
     ("kind", "props", "message"),
     [
         ("path", {}, 'create\\("path"\\) needs `data`'),
-        ("circle", {}, "create builds: box, path"),
+        ("circle", {}, "create builds: box, text, text_input, image, path"),
         ("box", {"data": TRIANGLE}, "applies only to a path node"),
         ("path", {"data": "M0,0 Xzz"}, "isn't valid SVG path data"),
         ("path", {"data": TRIANGLE, "trim_end": 1.5}, "from 0.0 to 1.0"),
