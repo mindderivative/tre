@@ -58,7 +58,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | `v0.3.3` Release: PR #9 Merged to `main`, Tagged and Pushed | — | ✅ Released (2026-09-25) |
 | M93 — Target API Spec and Naming Convention | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-25) |
 | M94 — Input and Accessibility Building Blocks | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-25) |
-| M95 — Paint and Animation Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, next (2026-09-25) |
+| M95 — Paint and Animation Building Blocks | `░░░░░░░░░░` 0% | 🚧 In progress — Phase 1 of 3 (2026-09-25) |
 | M96 — Layer, Structure, and Update Building Blocks | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M97 — Tesserae Migration Gate | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M98 — Remove the Declarative Layer | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
@@ -1333,21 +1333,24 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Milestone 95 — Paint and Animation Building Blocks
 
-**Status: ⬜ Proposed.** Additive. Generic replacements for the MD3-specific visuals inside the engine.
+**Status: 🚧 In progress (started 2026-09-25).** Additive. Generic replacements for the MD3-specific visuals inside the engine.
+
+**Scoped against the source (2026-09-25):** `Animated<T>::animate_to` already starts from the current value and a replaced animation's completion never fires, and `Node.animate` already defaults to linear, so the animation semantics need only `stop_animation`, `get_target`, and a bezier curve. The MD3 morph (`ShapeKey`) keeps only a single closed contour's vertices, so paths get their own arc-length resampling. `kurbo` 0.13 already parses SVG `d` data, arcs included. Opacity today is per node -- children never fade with a parent -- and the legacy dialog and sheet scrims are the *parents* of their panels at 32% opacity, so group opacity needs those three scrims to carry their 32% as color alpha instead (identical pixels for a flat scrim). About 99 places read `corner_radius`/`corner_radii_override`, 46 in soon-deleted factories, so the per-corner override becomes animatable in place and M101 merges the two. Placeholder text and password obscuring don't exist yet, so the text-input colors bring those two features with them. Creating a `path` needs a creation entry point, so `window.create` starts here for `box` and `path`, with `width`/`height` in `set`.
 
 ### Phase 1 — Vector Paths ⬜
-- Step 1: a `Path` node -- SVG `d` path data in a `view_box`, fill and stroke color and width, all animatable -- generalizing `Icon` per D4 — ⬜
-- Step 2: animatable stroke trim (start and end fractions), the primitive behind circular and linear progress indicators — ⬜
-- Step 3: path morphing between any two closed or any two open paths by resampling, generalizing the MD3 shape library's morph so any shape set works — ⬜
+- Step 1: a `path` node -- SVG `d` data fitted into a `view_box` (uniform, centered), `fill` and a centered `stroke_color`/`stroke_width` -- generalizing `Icon` per D4; `window.create(kind, **props)` for `box` and `path`, with `width`/`height` joining `node.set` — ⬜
+- Step 2: animatable `trim_start`/`trim_end` fractions trimming the stroke by arc length across all subpaths, the primitive behind circular and linear progress indicators — ⬜
+- Step 3: morphing by animating `data` -- arc-length resampling subpath by subpath, closed contours aligned by the best starting point; a different subpath count, or open against closed, switches at the halfway point — ⬜
 
 ### Phase 2 — Paint, Shadows, and Easing ⬜
-- Step 1: a `shadows` list of color, offset, blur, and spread, animatable, replacing MD3 `elevation` levels; `corner_radius` as one value or four corners, animatable; stroke drawn inside the box and never affecting layout; group opacity — ⬜
-- Step 2: generic easing -- linear, cubic bezier with four control values, and spring if M93 shows a need -- replacing the MD3 named curves, which the framework recreates as bezier values — ⬜
-- Step 3: animation semantics -- animate from the current value, `stop_animation`, `get` returning the on-screen value and `get_target` the destination, colors interpolated in sRGB with exact readback — ⬜
-- Step 4: no hidden theme colors -- placeholder, caret, and selection colors for text inputs, scrollbar color and width for scroll views, and the terminal palette become properties; `tre` draws no focus ring — ⬜
+- Step 1: the target paint names on every node through `set`/`get`/`animate` -- `fill`, `stroke_color`, `stroke_width`, `opacity` -- with exact color readback; `corner_radius` as one number or an animatable four-corner tuple; an animatable `shadows` list of color, offsets, blur, and spread; group opacity through a compositing layer; the stroke stays inside the box and paint-only — ⬜
+- Step 2: easing -- `"linear"` or a cubic bezier `(x1, y1, x2, y2)` on `animate`, the framework recreating the MD3 named curves as bezier values — ⬜
+- Step 3: animation semantics -- `stop_animation` and `get_target` beside the existing from-the-current-value retargeting and single-fire completion; colors interpolate in sRGB — ⬜
+- Step 4: no hidden theme colors -- text-input `placeholder` text with `placeholder_fill`, `caret_color`, `selection_fill`, and `obscured` password display that never copies out; `scrollbar_fill`/`scrollbar_width` for scroll views; the terminal `palette`; `tre` draws no focus ring on framework nodes — ⬜
 
 ### Phase 3 — Verification ⬜
-- Step 1: pixel tests for paths, trim, morph, and shadows; a proof ripple built from primitives in a test, matching today's built-in one visually — ⬜
+- Step 1: pixel tests for paths, view-box fitting, trim, morph, shadows, per-corner radii, group opacity, and the text-input colors; a proof ripple built from primitives, matching today's built-in one visually — ⬜
+- Step 2: `_core.pyi` stubs, docs for the new surface, and the full standing chain — ⬜
 
 ---
 
@@ -1363,8 +1366,8 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 - Step 1: insert a child at an index and move an existing child, keeping its `NodeId`, handlers, focus, and running animations -- what a keyed reconciler needs — ⬜
 - Step 2: show any kept-alive subtree as a window's content, replacing `Window.show_view`'s `View`-only form — ⬜
 - Step 3: a batch update scope that defers layout and paint until it ends, so re-theming or reconciling from Python doesn't cost a layout per property; measured against unbatched updates rather than assumed — ⬜
-- Step 4: color readback and text measurement -- a string's size under given text properties -- for content-sized widgets; reading computed layout runs pending layout, even inside a batch — ⬜
-- Step 5: one creation entry point, `window.create(kind, **props)`, and M94's atomic `set` extended to every property — ⬜
+- Step 4: text measurement -- a string's size under given text properties -- for content-sized widgets (color readback landed in M95); reading computed layout runs pending layout, even inside a batch — ⬜
+- Step 5: `window.create(kind, **props)` extended from M95's `box`/`path` to every kind, and the atomic `set` extended to every property — ⬜
 - Step 6: node lifetime -- a detached node with no remaining Python handle is freed automatically, and dropping or destroying a node is safe from any thread by deferring the free to the event-loop thread, fixing issue #10 — ⬜
 - Step 7: `window.advance(ms)`, deterministic headless time for animation tests on displayless CI — ⬜
 - Step 8: tests, including a proof keyed-list reorder that preserves node identity — ⬜
