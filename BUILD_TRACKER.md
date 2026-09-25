@@ -60,7 +60,8 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 | M94 — Input and Accessibility Building Blocks | `██████████` 100% | ✅ Complete — all 3 phases done, plus a focus follow-up (2026-09-25) |
 | M95 — Paint and Animation Building Blocks | `██████████` 100% | ✅ Complete — all 3 phases done (2026-09-25) |
 | M96 — Layer, Structure, and Update Building Blocks | `██████████` 100% | ✅ Complete — all 5 phases done (2026-09-25) |
-| M97 — Tesserae Migration Gate | `░░░░░░░░░░` 0% | ⬜ Approved, next (2026-09-25) |
+| `v0.3.4` Release: PR #11 Merged to `main`, Tagged and Pushed | — | ✅ Released (2026-09-25) — closes issue #10 |
+| M97 — Tesserae Migration Gate | `███░░░░░░░` 33% | 🚧 In progress — Phase 1 done: `v0.3.4` released; Tesserae migrates next (2026-09-25) |
 | M98 — Remove the Declarative Layer | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M99 — Remove MD3 Components, Kinds, and Theming | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
 | M100 — Apply the Naming Convention | `░░░░░░░░░░` 0% | ⬜ Approved, not started (2026-09-25) |
@@ -74,7 +75,7 @@ Updated after every milestone/phase/stage/step completion, kept in sync with `AR
 
 **Left open, real design/scope decisions, not mechanical:** (a) the `spec`/`source` mutual-exclusion validation is now duplicated near-verbatim between `View::new` and `View::reconcile` -- unifying it cleanly is a small API design call (the two call sites' second requirement genuinely differs: `path` required vs. `source`-or-`spec` required), not a safe mechanical extraction. (b) the Tier 2 JSON parsing functions (`parse_view_json` et al., M76) have zero consumers anywhere in the workspace -- real, premature public-surface growth on a stability-contract-adjacent crate, against this same codebase's own repeatedly-stated "real, confirmed need, not manufactured ahead of one" precedent; needs a real decision (wire up a consumer, or hold the surface back) not a code change. (c) `spec=` construction exists on `View` (M78) but not on `View.instantiate`/`Component.instantiate` for embedded components -- a real, deliberately-scoped Tier 1 boundary per the M78 commit's own framing, not an oversight, but worth a standing note so it isn't mistaken for complete parity (noted here).
 
-**Up next:** all 3 of M80's deferred items were resolved in M81; M82 added a decode-free image-ingestion primitive; M83 fixed a real, pre-existing, CI-observed `test_terminal.py` flake unrelated to this branch's own work, found blocking a clean CI signal on [PR #5](https://github.com/mindderivative/tre/pull/5). Both open `tre` issues from Tesserae's own scoping work (#2, #3) remain resolved. **`v0.3.1` is released** (see this file's own "`v0.3.1` Released" section) -- Tesserae-side work is now unblocked and underway on the `0.3.2` branch. M84 added declarative support for 7 real primitives Tesserae's own scoping (its own M26) identified as needed for its widget-fragment catalog; Tesserae's own M27/M28 (fragments + macro-layer `repeat:` construct) both landed on Tesserae's own side afterward. M85 brought `tre`'s own MkDocs up to date with M71-M84's real API growth, user-directed after the user asked whether the docs already reflected it and confirmed they did not. **M86 is complete:** `*_spec=` dict kwargs for themes and stylesheets, and `tre.register_font(bytes)` for fonts -- every concern `tre` ingests now has a data-shaped entry point, so a framework (Tesserae) can own all file handling and hand `tre` data only. Tesserae's consuming half is its own M29. **M87 is complete:** `App.thread_handle()` returns a thread-safe `LoopHandle` whose `call_soon(fn)` runs `fn` on a running `App`'s event-loop thread ([issue #6](https://github.com/mindderivative/tre/issues/6)), so a background file watcher can drive hot reload inside `App.run()`. M88 fixed the CI failure blocking the `v0.3.2` release PR ([#7](https://github.com/mindderivative/tre/pull/7)), correcting M83's diagnosis. **`v0.3.2` is released** (see this file's own "`v0.3.2` Released" section). M89 then brought MkDocs fully up to date, with file-based usage in its own "Working with Files" guide page. **`v0.3.3` is released** (see "`v0.3.3` Released"). M90, M91 ([issue #8](https://github.com/mindderivative/tre/issues/8), closed), and M92 (animatable `Icon` color) are complete.** **Approved next: the M93–M103 program** making `tre` a minimal building-block engine -- the declarative layer, MD3 components, and MD3 theming move to the framework; see the "Program" section. Previously scoped: a breaking rename of every inconsistently named property found by a scripted audit. `0.4.0` is reserved for the `vello_hybrid` fork ([issue #4](https://github.com/mindderivative/tre/issues/4)), per the user.
+**Up next:** all 3 of M80's deferred items were resolved in M81; M82 added a decode-free image-ingestion primitive; M83 fixed a real, pre-existing, CI-observed `test_terminal.py` flake unrelated to this branch's own work, found blocking a clean CI signal on [PR #5](https://github.com/mindderivative/tre/pull/5). Both open `tre` issues from Tesserae's own scoping work (#2, #3) remain resolved. **`v0.3.1` is released** (see this file's own "`v0.3.1` Released" section) -- Tesserae-side work is now unblocked and underway on the `0.3.2` branch. M84 added declarative support for 7 real primitives Tesserae's own scoping (its own M26) identified as needed for its widget-fragment catalog; Tesserae's own M27/M28 (fragments + macro-layer `repeat:` construct) both landed on Tesserae's own side afterward. M85 brought `tre`'s own MkDocs up to date with M71-M84's real API growth, user-directed after the user asked whether the docs already reflected it and confirmed they did not. **M86 is complete:** `*_spec=` dict kwargs for themes and stylesheets, and `tre.register_font(bytes)` for fonts -- every concern `tre` ingests now has a data-shaped entry point, so a framework (Tesserae) can own all file handling and hand `tre` data only. Tesserae's consuming half is its own M29. **M87 is complete:** `App.thread_handle()` returns a thread-safe `LoopHandle` whose `call_soon(fn)` runs `fn` on a running `App`'s event-loop thread ([issue #6](https://github.com/mindderivative/tre/issues/6)), so a background file watcher can drive hot reload inside `App.run()`. M88 fixed the CI failure blocking the `v0.3.2` release PR ([#7](https://github.com/mindderivative/tre/pull/7)), correcting M83's diagnosis. **`v0.3.2` is released** (see this file's own "`v0.3.2` Released" section). M89 then brought MkDocs fully up to date, with file-based usage in its own "Working with Files" guide page. **`v0.3.3` is released** (see "`v0.3.3` Released"). M90, M91 ([issue #8](https://github.com/mindderivative/tre/issues/8), closed), and M92 (animatable `Icon` color) are complete.** **`v0.3.4` is released** (see "`v0.3.4` Released"): M93–M96, the building-block API, additive, closing [issue #10](https://github.com/mindderivative/tre/issues/10) -- M97's Tesserae migration is next. **The M93–M103 program** making `tre` a minimal building-block engine -- the declarative layer, MD3 components, and MD3 theming move to the framework; see the "Program" section. Previously scoped: a breaking rename of every inconsistently named property found by a scripted audit. `0.4.0` is reserved for the `vello_hybrid` fork ([issue #4](https://github.com/mindderivative/tre/issues/4)), per the user.
 
 **Known gaps:**
 - `View.set_theme`/`set_stylesheet` don't re-resolve an embedded `Component`'s static styles -- a component has its own reconciler, which the view's `retheme` doesn't walk. Its bindings are unaffected (M91 checked this by running it). Pre-existing, not introduced by M91.
@@ -1217,11 +1218,24 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Branch: `0.3.4` — Release Prep
 
-**Status: 🚧 In progress (2026-09-25).** The first release of the approved building-block program: M93–M96, additive only, per D11 -- the old API stays present so Tesserae can migrate against a published version (M97).
+**Status: ✅ Merged and released as `v0.3.4` (2026-09-25).** The first release of the approved building-block program: M93–M96, additive only, per D11 -- the old API stays present so Tesserae can migrate against a published version (M97).
 
 - Branch `0.3.4` created off `main` at `73e0711` (post-`v0.3.3`) — ✅
 - `Cargo.toml`/`pyproject.toml` bumped 0.3.3 → 0.3.4; `Cargo.lock` updated via `cargo check` — ✅
 - `PLAN.md`/`LOG.md` reset for M93 — ✅
+
+---
+
+## `v0.3.4` Released
+
+**Status: ✅ Released (2026-09-25).** User: "Push and release 0.3.4 as Tesserae depends on this release." M97 Phase 1: M93–M96, additive, the old API still present.
+
+- `0.3.4` pushed; [PR #11](https://github.com/mindderivative/tre/pull/11) (`0.3.4` → `main`) opened; the pre-merge chain ran first -- pytest 1138 passed, 2 skipped (1129 passed, 11 skipped with no display), cargo release 591, all 89 examples and the showcase, `mkdocs --strict`, and an API-coverage audit of all 181 public names — ✅
+- Two changes landed while CI ran, each re-run through the chain: Tesserae's screen-swap questions found that `remove()`/`destroy()` cleared focus silently, so the focused node now loses focus with an event first (`18c02c3`); and, by the user's decision, the focus-loss event was renamed `blur` → `unfocus`, keeping `blur` for the visual effect (`b09a4ea`) — ✅
+- CI on the final head `b09a4ea` green on all three jobs -- `test` (Linux), `test-macos`, `test-windows`; the Linux job's pytest reported 1131 passed, 11 skipped, matching the local no-display run exactly — ✅
+- PR #11 merged via `gh pr merge --merge` (merge commit `29800f3`), matching PRs #5, #7, and #9; the merge closed [issue #10](https://github.com/mindderivative/tre/issues/10) — ✅
+- Local `main` fast-forwarded and re-verified directly: `cargo check --workspace` clean, `maturin develop --release` (`tre` 0.3.4), `pytest tests/` 1140 passed, 2 skipped — ✅
+- `git tag -a v0.3.4` on the merge commit, pushed — ✅ (the tag push triggers `Wheels`, whose `publish` job attaches the release assets; that run's outcome is the final confirmation, checked rather than assumed)
 
 ---
 
@@ -1391,10 +1405,10 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Milestone 97 — Tesserae Migration Gate
 
-**Status: ⬜ Proposed.** A cross-repo gate: nothing is removed from `tre` until Tesserae no longer uses it. The Tesserae-side work is tracked in Tesserae's own `BUILD_TRACKER.md`.
+**Status: 🚧 In progress (2026-09-25).** A cross-repo gate: nothing is removed from `tre` until Tesserae no longer uses it. The Tesserae-side work is tracked in Tesserae's own `BUILD_TRACKER.md`.
 
-### Phase 1 — Release the Additive Surface ⬜
-- Step 1: release M93–M96 as `0.3.4` per D11, with the old API still present, so Tesserae migrates against a published version — ⬜
+### Phase 1 — Release the Additive Surface ✅
+- Step 1: release M93–M96 as `0.3.4` per D11, with the old API still present, so Tesserae migrates against a published version — ✅ (`v0.3.4`: PR #11 merged as `29800f3` and tagged; see "`v0.3.4` Released")
 
 ### Phase 2 — Tesserae Migrates ⬜
 - Step 1: hand Tesserae the spec and a per-feature migration guide -- its own reactivity per D5, its own declarative layer and reconciler, its own MD3 theme with HCT color, its own widgets on the new primitives — ⬜
