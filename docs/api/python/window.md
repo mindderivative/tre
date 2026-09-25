@@ -47,9 +47,12 @@ clamped to `0.0..=1.0`. See [MD3 Components → Selection & Input](../../guide/c
 
 ### `add_text_field`
 
-**`add_text_field(background, width, height, content="", font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None)`**
+**`add_text_field(background, width, height, content="", font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None, multiline=False, show_whitespace=False)`**
 
-An MD3 text field with real keyboard editing. See
+An MD3 text field with real keyboard editing. `multiline`/
+`show_whitespace` mirror `add_code_editor`'s own two fields, both
+`False` by default (the pre-existing behavior for every caller that
+doesn't pass them). See
 [MD3 Components → Text Fields, Code Editor & Terminal](../../guide/components.md#text-fields-code-editor-terminal).
 
 ### `add_image`
@@ -60,6 +63,27 @@ Loads and decodes a real image file (`png`/`jpeg`) and uploads it as a
 GPU texture. `fit` is `"cover"`, `"contain"`, or `"fill"`. Raises
 `OSError` if the file can't be read or decoded, `ValueError` for an
 unknown `fit`. See [MD3 Components → Media & Graphics](../../guide/components.md#media-graphics).
+
+### `add_image_from_bytes`
+
+**`add_image_from_bytes(rgba, pixel_width, pixel_height, width, height, fit="fill", x=None, y=None)`**
+
+`add_image`'s decode-free sibling: `rgba` is already-decoded, straight-
+alpha RGBA8 pixels (`pixel_width * pixel_height * 4` bytes exactly, or
+a clear `ValueError`) — no file, no image-decoding crate involved, the
+caller owns decoding entirely (from a network fetch, a different image
+library, a generated texture, anything). `width`/`height` are the
+node's own fixed display box — `add_image`'s identical contract;
+`pixel_width`/`pixel_height` describe `rgba` itself, and `fit` resolves
+any mismatch between the two. The node this returns is a real,
+ordinary `Image` node — [`Node.push_frame`](node.md#video-specific)
+keeps working on it afterward, identically to one built via
+`add_video`.
+
+```python
+pixels = bytes([255, 0, 0, 255]) * (64 * 64)  # a solid red 64x64 image
+image = window.add_image_from_bytes(pixels, 64, 64, width=200, height=200)
+```
 
 ### `add_icon`
 
@@ -159,11 +183,55 @@ the empty `content` container (`flex_grow: 1.0`). See
 
 ### `set_theme`
 
-**`set_theme(seed, dark=False)`**
+**`set_theme(seed, dark=False, default_theme=None, custom_theme=None, default_theme_spec=None, custom_theme_spec=None)`**
 
 Builds a full MD3 dynamic color scheme from a `(r, g, b, a)` seed color
-and makes it active. See
-[Theming & Accessibility → Dynamic color theming](../../guide/theming-and-accessibility.md#dynamic-color-theming).
+and makes it active — every already-built themed node (created via a
+composition-only `add_*` factory that reads the theme, e.g.
+`add_button`/`add_checkbox`) is retroactively re-themed in place.
+`default_theme`/`custom_theme` (paths to theme YAML files) layer
+shape/elevation/color overrides for the imperative catalog on top —
+see [Theming & Accessibility → Dynamic color theming](../../guide/theming-and-accessibility.md#dynamic-color-theming).
+`default_theme_spec`/`custom_theme_spec` are the `dict` forms of those two
+paths (the same schema the theme YAML file holds), each mutually
+exclusive with its path twin — see
+[Theming & Accessibility → Themes as data](../../guide/theming-and-accessibility.md#themes-as-data).
+
+```python
+window.set_theme(
+    seed=(0x67, 0x50, 0xA4, 0xFF),
+    custom_theme_spec={
+        "colors": {"primary": "#00FF00"},
+        "components": {"button": {"corner_radius": "small"}},
+    },
+)
+```
+
+### `theme`
+
+**`theme -> Theme`** *(read-only property)*
+
+Read-only access to this window's own live theme resolution — the
+exact same lookups every composition-only factory (`add_button`,
+`add_fab`, etc.) already makes internally, reachable from Python for
+building your own MD3-consistent compositions. A fresh `Theme` wrapper
+each access (cheap) — reads always see the window's current live
+state, including after a real `set_theme()` call.
+
+```python
+if window.theme.is_set():
+    primary = window.theme.role("primary")  # (r, g, b, a) or None
+```
+
+`Theme`'s own methods:
+
+| Method | Returns |
+| --- | --- |
+| `role(name) -> (r, g, b, a) \| None` | The resolved MD3 color for a role name (e.g. `"primary"`); `None` when no theme is set, or `name` isn't a real role |
+| `is_set() -> bool` | Whether a real theme has been resolved at all |
+| `shape(component, variant=None) -> float \| None` | The resolved corner-radius override for `component` (and `variant`, if given); `None` if there's no override — fall back to your own formula default |
+| `elevation(component, variant=None) -> float \| None` | `shape`'s own sibling for elevation — identical contract |
+| `typography(role) -> (family, weight, size, line_height) \| None` | A real, shipped MD3 default for a recognized typography role, regardless of whether a theme is set; `None` only for an unrecognized role name |
 
 ## Synthetic input dispatch
 

@@ -848,23 +848,37 @@ impl PyWindow {
     /// override, and letting a second theme file quietly compete with
     /// a required argument would be a real, confusing ambiguity this
     /// milestone deliberately doesn't introduce.
-    #[pyo3(signature = (seed, dark=false, default_theme=None, custom_theme=None))]
+    ///
+    /// M86: `default_theme_spec`/`custom_theme_spec` are the dict forms
+    /// of `default_theme`/`custom_theme` (the same schema the YAML file
+    /// would hold), each mutually exclusive with its path twin -- so a
+    /// framework that loads its own theme files never hands `tre` a
+    /// path.
+    #[pyo3(signature = (seed, dark=false, default_theme=None, custom_theme=None, default_theme_spec=None, custom_theme_spec=None))]
+    #[allow(clippy::too_many_arguments)]
     fn set_theme(
         &self,
+        py: Python<'_>,
         seed: (u8, u8, u8, u8),
         dark: bool,
         default_theme: Option<String>,
         custom_theme: Option<String>,
+        default_theme_spec: Option<Py<PyAny>>,
+        custom_theme_spec: Option<Py<PyAny>>,
     ) -> PyResult<()> {
-        let default_theme_spec = match &default_theme {
-            Some(theme_path) => crate::view::load_theme_spec(theme_path)?,
-            None => engine_spec::parse_theme(crate::view::SHIPPED_DEFAULT_THEME_YAML)
-                .expect("the engine's own shipped default_theme.yaml must always parse"),
-        };
-        let custom_theme_spec = custom_theme
-            .as_deref()
-            .map(crate::view::load_theme_spec)
-            .transpose()?;
+        let default_theme_spec = crate::view::resolve_theme_input(
+            py,
+            "Window.set_theme",
+            ("default_theme=", default_theme.as_deref()),
+            ("default_theme_spec=", default_theme_spec.as_ref()),
+        )?
+        .unwrap_or_else(crate::view::shipped_default_theme_spec);
+        let custom_theme_spec = crate::view::resolve_theme_input(
+            py,
+            "Window.set_theme",
+            ("custom_theme=", custom_theme.as_deref()),
+            ("custom_theme_spec=", custom_theme_spec.as_ref()),
+        )?;
 
         // M61 (§16.3): resolved *before* any `state` mutation begins
         // below (matching `apply_overrides`'s own identical "fail

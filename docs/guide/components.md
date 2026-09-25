@@ -255,6 +255,11 @@ picture = window.add_image("logo.png", width=200, height=120, fit="cover")
   read or decoded. No `background` param — there's no meaningful
   "behind the content" color for a node whose entire content is a
   loaded image.
+- `add_image_from_bytes(rgba, pixel_width, pixel_height, width, height, fit="fill")`
+  is `add_image`'s decode-free sibling — already-decoded RGBA8 pixels
+  instead of a file path, for content decoded elsewhere (a network
+  fetch, a different image library). See
+  [`Window` API reference](../api/python/window.md#add_image_from_bytes).
 - `add_video(width, height, fit="fill")` shares the same `fit` contract;
   frames are pushed at runtime via `node.push_frame(...)`, not loaded
   from a path at construction.

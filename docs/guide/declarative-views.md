@@ -19,6 +19,39 @@ node = view.node("my_widget")  # look up a widget by its author-assigned id
 directives relative to the file's own directory), and starts a filesystem
 watcher for hot-reload.
 
+### Building from already-parsed content
+
+`View` can also build straight from YAML text, JSON text, or a real
+Python object, instead of reading `path` from disk — useful for a
+framework layer that has already parsed or pre-processed a view (e.g.
+expanding its own macro syntax) before handing it to `tre`:
+
+```python
+view = View(source="id: root\nkind: Container\nstyle: {width: 10, height: 10}\n")
+view = View(json='{"id": "root", "kind": "Container", "style": {"width": 10, "height": 10}}')
+view = View(spec={"id": "root", "kind": "Container", "style": {"width": 10, "height": 10}})
+```
+
+- **`source=`** — YAML text, used directly instead of reading `path`
+  from disk. `path` is still required alongside it — it supplies the
+  base directory `include:`/`image.src:` resolve against, and the real
+  file `poll_reload()`/hot-reload watches (the developer keeps editing
+  the real file on disk; `source=` just supplies its already-read
+  content for this one construction).
+- **`json=`** — JSON text, parsed directly into the tree — no YAML
+  involved at all. Grouped with `spec=`, not `source=`: no real backing
+  file is implied, so `path=` is optional.
+- **`spec=`** — a real Python object (a `dict` shaped like the YAML
+  tree above) built directly into the tree — no text parsing of any
+  kind. `path=` is optional; when omitted, there's no base directory to
+  resolve `include:`/`image.src:` against and no file to watch, so
+  `poll_reload()` always returns `False` — use
+  [`reconcile()`](#reconcile) instead.
+
+At most one of `spec=`/`source=`/`json=` may be given; at least one of
+`spec=`/`json=`/`path=` is required — `View()` with none of them raises
+`ValueError`.
+
 ## The YAML schema
 
 ```yaml
@@ -39,7 +72,7 @@ Every widget has:
 | Field | Meaning |
 | --- | --- |
 | `id` | Author-assigned, stable identifier — used by `view.node(id)` and by hot-reload reconciliation |
-| `kind` | One of `Rect`, `Container`, `Text`, `Checkbox`, `Slider`, `TextField`, `Image` |
+| `kind` | One of `Rect`, `Container`, `Text`, `Checkbox`, `Slider`, `TextField`, `Image`, `Icon`, `Link`, `RadioButton`, `Switch`, `CircularProgress`, `LinearProgress`, `LoadingIndicator`, `TimePickerDial` |
 | `style` | See table below |
 | `classes` | A list of style-class strings (parsed, but see the note on stylesheets below) |
 | `children` | A list of nested widgets |
@@ -76,13 +109,44 @@ style:
 
 Kind-specific blocks:
 
-- `kind: Text` or `kind: TextField` — a required `text:` block:
-  `{content, font_family, font_weight: 400.0, font_size}`
-- `kind: Checkbox` — an optional top-level `checked: true`
-- `kind: Slider` — an optional top-level `value: 0.5`
-- `kind: Image` — a required `image:` block: `{src, fit: Fill}` (`fit` is
-  one of `Cover`, `Contain`, `Fill`); `src` is a path relative to the
-  `view.yaml` file's own directory
+- `kind: Text`, `kind: TextField`, or `kind: Link` — a required `text:`
+  block: `{content, font_family, font_weight: 400.0, font_size}` (or
+  `role:`, an MD3 typography role name like `body_large`, supplying
+  `font_family`/`font_weight`/`font_size`/`line_height` as defaults —
+  any of those fields, if also given, override just that one field on
+  top of the role's own default)
+- `kind: Checkbox` or `kind: RadioButton` — an optional top-level
+  `checked: true` (`RadioButton`'s own initial `selected` state)
+- `kind: Slider`, `kind: CircularProgress`, or `kind: LinearProgress` —
+  an optional top-level `value: 0.5` (the two progress indicators'
+  own initial progress fraction, `0.0`–`1.0`)
+- `kind: Switch` — an optional top-level `checked: true` (its own
+  initial `on` state)
+- `kind: TimePickerDial` — optional top-level `hour: 0`/`minute: 0`
+  (a real 24-hour value and `0`–`59` respectively)
+- `kind: Image` — an optional `image:` block: `{src, fit: Fill}` (`fit`
+  is one of `Cover`, `Contain`, `Fill`); `src` is a path relative to the
+  `view.yaml` file's own directory. Omit `image:` (or `src:` inside it)
+  entirely for a blank, fully-transparent placeholder — the same
+  synthetic 1×1 image `Window.add_video` builds imperatively — meant to
+  be filled in later via `Node.push_frame` from Python.
+- `kind: Icon` — a required `icon:` block: `{name}`, `name` a real
+  icon name from `tre`'s own curated set (the same vocabulary
+  `Window.add_icon` uses imperatively). The glyph's own color reuses
+  `style.background`, the same "background means paint color" contract
+  `kind: Text` already has.
+- `kind: LoadingIndicator` — no kind-specific block; `style.width`/
+  `height` size it and `style.background` is its glyph tint (again,
+  the same "background means paint color" contract, not a fill behind
+  content), both required.
+
+`RadioButton`/`Switch`/`CircularProgress`/`LinearProgress`/
+`TimePickerDial` take no `style.background` at all — their entire real
+visual lives in internal, MD3-themed tint fields, resolved
+automatically against the active theme (falling back to the real MD3
+baseline colors when no `theme_seed=`/theme file is given) — the same
+resolution every corresponding `Window.add_*` factory already does
+imperatively.
 
 A typo'd field name is a load-time error naming the bad key and its line
 number, not a silently-ignored style — unknown fields are rejected
@@ -139,6 +203,13 @@ never a silent fallback to `0`.
     a literal color, the same real error it always would have.
     `poll_reload()` re-resolves against the same stylesheet/theme on
     every hot-reload, not just the initial load.
+
+!!! note "Stylesheets and themes as data"
+    `stylesheet_spec=`, `default_theme_spec=`, and `custom_theme_spec=`
+    take a `dict` in the same schema as the corresponding YAML file,
+    mutually exclusive with the path form — for a framework that loads
+    its own files. See
+    [Theming & Accessibility → Themes as data](theming-and-accessibility.md#themes-as-data).
 
 ## Composing with `include:`
 
@@ -255,6 +326,68 @@ and in-flight animations. **`bindings:`/`handlers:`/`two_way:` are not
 re-resolved automatically** — if a reload adds a genuinely new binding or
 handler, call `_attach` again (constructing a fresh `ViewModel`, or
 calling `view._attach(vm)` directly) to pick it up.
+
+`poll_reload(source=...)` reconciles the given YAML text instead of a
+fresh disk read of `path` — the change-detection gate still watches
+`path` on disk regardless, so this only changes what gets reconciled
+once a real file change is detected, not whether one is.
+
+### Hot reload inside `App.run()`
+
+`poll_reload()`/`reconcile()` above have to be called from somewhere —
+but once `App.run()` starts, it owns the main thread, and `View` can't
+be touched from any other thread. Use `App.thread_handle()`: a
+background watcher thread detects the change, does the file I/O itself,
+and hands only the reconcile to the event loop with `call_soon`, which
+wakes the loop even when it's idle:
+
+```python
+handle = app.thread_handle()
+
+def watch():  # runs on a background thread
+    for _changes in watchfiles.watch(view_path):   # or any watcher
+        text = Path(view_path).read_text()
+        handle.call_soon(lambda text=text: view.reconcile(source=text))
+
+threading.Thread(target=watch, daemon=True).start()
+app.run()
+```
+
+See [`App.thread_handle`](../api/python/app.md#thread_handle) and the
+runnable `examples/threadsafe_reload.py` (a dependency-free `os.stat`
+watcher in the same shape).
+
+### `reconcile`
+
+A `View` built with `spec=`/`json=` and no `path=` has no file to watch
+at all, so `poll_reload()` always returns `False` for it. `reconcile()`
+is the ungated sibling for exactly that case — call it directly
+(typically driven by a `tre.Effect`) whenever your own data changes:
+
+```python
+view.reconcile(spec=new_spec)
+# or: view.reconcile(source=new_yaml_text)
+# or: view.reconcile(json=new_json_text)
+```
+
+Unlike `poll_reload()`, `reconcile()` always reconciles against
+whatever you pass — there's no "did anything change" check to skip, the
+call itself is the change signal. Exactly one of `source=`/`spec=`/
+`json=` is required; `ValueError` otherwise.
+
+### Live re-theme
+
+`view.set_theme(default_theme=None, custom_theme=None, theme_seed=None, dark=False)`
+re-resolves the theme exactly like `View(...)` does at construction,
+then walks every already-built node and recomputes its style from its
+own spec against the new theme layers, in place — `NodeId`s, children,
+and focus are preserved, and a widget's own inline `style:` still wins
+over any theme layer. Each call is a complete, fresh theme selection —
+omitting `default_theme`/`custom_theme` resets to no override, not
+"keep whatever the previous call used." Only the static style cascade
+is recomputed; a `{{ }}` binding's own currently-applied value isn't
+re-run (reverts to its spec's static value, the same as a content-only
+`poll_reload()`).
 
 ## Testing without a live window
 

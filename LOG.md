@@ -1,57 +1,36 @@
-# LOG — M74: Declarative `kind: Icon`
+# LOG — Milestone 87, Phase 2: Example, Docs, Verification
 
-- User-directed via `AskUserQuestion`, while scoping Tesserae's own
-  component-fragment catalog: roughly two-thirds of the real MD3
-  catalog was blocked from being expressible as a fragment at all,
-  confirmed directly (`kind: Icon` failed with `unknown variant
-  "Icon"`) -- `engine-spec`'s `NodeKindSpec` supported only 7 of
-  `engine-core`'s real 21 primitive kinds. Chose to fix this at the
-  source rather than scope fragment work down to the ~10 icon-free
-  widgets.
+- User-directed: "Post the comment and start M87". Phase 1 (`1c1013f`)
+  added `App.thread_handle()` / `LoopHandle.call_soon`.
 
 ## What shipped
 
-1. `spec.rs` -- `NodeKindSpec::Icon`; `WidgetSpec.icon: Option<
-   IconSpec>`; new `IconSpec { name: String }`, mirroring `ImageSpec`'s
-   own shape (simpler -- no `fit:` concept for a glyph).
-2. `build.rs` -- new `SpecError::UnknownIcon { id, name }`; the real
-   `NodeKindSpec::Icon` match arm, resolving `icon.name` against
-   `engine_md3::icons::path_for` (the identical vocabulary `Window.
-   add_icon` already uses imperatively, confirmed by direct read
-   before mirroring it), parsing the real curated SVG path data,
-   resolving the glyph's tint via the existing `required_background`
-   helper -- reusing `style.background`, the same precedent `kind:
-   Text` already established, not a new, parallel color field.
-3. One real, unrelated compile break fixed: `cascade.rs`'s own
-   `#[cfg(test)]`-only `WidgetSpec` fixture literal needed the new
-   `icon: None` field.
-4. 4 new Rust unit tests (`build.rs`). Real bug caught and fixed while
-   writing them, not shipped: the test YAML's own `"#1C1B1FFF"` hex
-   color collided with a single-hash `r#"..."#` raw string delimiter
-   (`expected ';', found '1C1B1FFF'`) -- fixed with `r##"..."##`, the
-   identical real fix this same file's own pre-existing `VIEW` test
-   constant already needed for the same reason.
-5. 4 new pytest tests (`tests/test_declarative_icon.py`, new file) --
-   the real Python binding surface end to end.
-- Verification: `cargo check`/`clippy -D warnings`/`fmt --check`
-  clean; `cargo test --workspace --release` (`engine-spec` 89, up from
-  85, +4; every other crate unchanged); `maturin develop --release`;
-  `pytest tests/` 862 passed, 2 skipped, up from 858, +4;
-  `examples/animate_rect.py` (the CI-representative smoke example) and
-  `demo/showcase.py` both ran clean, exit 0.
+1. `examples/threadsafe_reload.py`: a dependency-free `os.stat`
+   watcher thread that reads the changed file itself and hands
+   `view.reconcile(source=text)` to the loop via `call_soon`. Works on a
+   temp copy of `hot_reload.yaml`. Asserts the reload landed whenever a
+   frame ran; skips only when none did.
+2. Docs: `api/python/app.md` gains `thread_handle` and `LoopHandle`;
+   `declarative-views.md` gains "Hot reload inside `App.run()`";
+   `api/python/index.md` lists `LoopHandle` (and drops a class count
+   that had been wrong since M85).
+
+## Real finding
+
+A `max_frames`-bounded run counts idle frames too, and an idle frame
+costs microseconds — 6000 frames finished in 63 ms. The example's first
+draft never saw its reload, and the Phase 1 live pytest was passing
+only because its worker thread happened to be fast. Both now make the
+first-frame callable wait for the background thread to finish queueing:
+deterministic, and the queueing still happens on a different thread.
+
+## Verification
+
+`mkdocs build --strict` clean; `fmt --check`/`clippy -D warnings`
+clean; `cargo test --workspace --release` 47 suites, 540 passed, 0
+failed; `pytest tests/` 923 passed, 2 skipped; all 89 examples plus
+`demo/showcase.py` run clean.
 
 ## Status
 
-**M74 is complete, both phases.** Declarative `kind: Icon` is real,
-tested, and closes the single largest real blocker to Tesserae's own
-component-fragment catalog work. Committed locally on the `0.3.1`
-branch, not `main`; push deferred pending explicit user confirmation,
-per standing policy.
-
-Real, deliberate scope boundary: only `Icon` was added this milestone
--- `RadioButton`/`Switch`/`CircularProgress`/`LinearProgress`/
-`LoadingIndicator`/`Link` and the rest of the real-but-declaratively-
-unreachable `NodeKind` variants stay real, un-scoped future candidates.
-
-Next: reinstall into `tesserae/.venv`, then resume item 1 of the
-user's own 3-item ordering -- the real component-fragment catalog.
+**M87 complete.** Nothing further is scoped on the `0.3.2` branch.

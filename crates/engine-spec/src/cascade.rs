@@ -198,6 +198,8 @@ mod tests {
             text: None,
             checked: false,
             value: 0.0,
+            hour: 0,
+            minute: 0,
             image: None,
             icon: None,
             bindings: std::collections::HashMap::new(),

@@ -477,9 +477,17 @@ class Window:
         dark: bool = False,
         default_theme: str | None = None,
         custom_theme: str | None = None,
+        default_theme_spec: object | None = None,
+        custom_theme_spec: object | None = None,
     ) -> None:
         """Builds a real MD3 `DynamicTheme` from `seed` and makes it
         this window's active theme.
+
+        M86: `default_theme_spec`/`custom_theme_spec` are the dict forms
+        of `default_theme`/`custom_theme` -- the same schema the theme
+        YAML file holds (`colors`, `components`, `typography`, `seed`,
+        ...), for a caller that loads its own files. Each is mutually
+        exclusive with its path twin; passing both raises `ValueError`.
 
         M52: every real, already-built node this `Window` has created
         via an `add_*` factory is live re-themed in place, the moment
@@ -1939,6 +1947,13 @@ class App:
 
     def __init__(self) -> None: ...
     def add_window(self, window: Window) -> None: ...
+    def thread_handle(self) -> LoopHandle:
+        """M87: a thread-safe handle to this `App`'s event loop. `App`,
+        `Window` and `View` may only be used from the thread that created
+        them; this handle may be passed to and used from any thread.
+        Every handle from one `App` shares the same queue.
+        """
+        ...
     def run(self, max_frames: int | None = None) -> None:
         """Blocks, pumping every added window's real event loop, until
         every window closes (or, if given, `max_frames` is reached on
@@ -1946,6 +1961,27 @@ class App:
         `None` (rather than raising) if no real display is reachable,
         the same headless-CI-safe convention every example in this
         project relies on.
+        """
+        ...
+
+class LoopHandle:
+    """M87: a thread-safe handle to an `App`'s event loop, from
+    `App.thread_handle()`. The one `tre` object a background thread
+    (a file watcher, a network client) may use.
+    """
+
+    def call_soon(self, callback: Callable[[], object]) -> None:
+        """Queues `callback` (called with no arguments) to run on the
+        `App`'s event-loop thread, and wakes the loop -- including an
+        idle one. There it can touch `View`/`Window`/`Node` like an input
+        handler can, e.g. `view.reconcile(spec=...)` for hot reload.
+
+        Safe from any thread, before, during, or after `App.run()`.
+        Callbacks run in FIFO order at the top of the next frame; one
+        queued outside a run waits for the next run's first frame. An
+        exception is logged like one from an input handler and doesn't
+        stop the loop or later callbacks. Raises `TypeError` if
+        `callback` isn't callable.
         """
         ...
 
@@ -1971,8 +2007,17 @@ class View:
         source: str | None = None,
         spec: object | None = None,
         json: str | None = None,
+        stylesheet_spec: object | None = None,
+        default_theme_spec: object | None = None,
+        custom_theme_spec: object | None = None,
     ) -> None:
-        """`stylesheet` is a path to a stylesheet YAML file (§16.3's
+        """M86: `stylesheet_spec`/`default_theme_spec`/`custom_theme_spec`
+        are the dict forms of `stylesheet`/`default_theme`/`custom_theme`
+        (the same schema each YAML file holds), for a caller that loads
+        its own files and hands `tre` data only. Each is mutually
+        exclusive with its path twin; passing both raises `ValueError`.
+
+        `stylesheet` is a path to a stylesheet YAML file (§16.3's
         cascade); `theme_seed` builds a real MD3 `DynamicTheme` the
         same way `Window.set_theme` does, resolving any `background:
         primary`-style MD3 token name in the view/stylesheet.
@@ -2060,8 +2105,12 @@ class View:
         custom_theme: str | None = None,
         theme_seed: tuple[int, int, int, int] | None = None,
         dark: bool = False,
+        default_theme_spec: object | None = None,
+        custom_theme_spec: object | None = None,
     ) -> None:
-        """M51: live re-theme. Re-resolves `default_theme`/`custom_theme`/
+        """M51: live re-theme. M86: `default_theme_spec`/
+        `custom_theme_spec` are the dict forms of `default_theme`/
+        `custom_theme`, same contract as `__init__`. Re-resolves `default_theme`/`custom_theme`/
         `theme_seed`/`dark` exactly like `__init__` does, then walks
         every already-built node in this `View`'s tree and recomputes
         its `PaintProperties`/`layout_style` from its own YAML spec
@@ -2192,6 +2241,20 @@ class CanvasContext:
         the polyline through `points`.
         """
         ...
+
+def register_font(data: bytes) -> list[str]:
+    """M86: registers a font the caller already loaded -- a `.ttf`/
+    `.otf`/`.ttc` file's raw bytes -- with every current and future
+    window in this process. `tre` never reads a font file itself; the
+    caller (a framework like Tesserae) owns that.
+
+    Returns the family names the data contains: the exact strings a
+    theme's `typography:` `font_family` must use to resolve to it.
+    Registering identical bytes twice is a no-op that still returns the
+    names. A window already running picks the font up on its next frame.
+    Raises `ValueError` if `data` holds no parseable font face.
+    """
+    ...
 
 def _record_read(signal: object) -> None:
     """Internal -- called from `Signal.get()`. Only appends `signal` to

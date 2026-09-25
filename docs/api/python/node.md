@@ -41,6 +41,28 @@ Supports `"opacity"`, `"corner_radius"`, `"elevation"`,
 only). Raises `ValueError` for an unknown/inapplicable property.
 `"background"` isn't readable this way (it isn't a single `float`).
 
+## `set_layout`
+
+**`set_layout(width=None, height=None, padding=None, padding_top=None, padding_right=None, padding_bottom=None, padding_left=None, margin=None, margin_top=None, margin_right=None, margin_bottom=None, margin_left=None, gap=None, flex_grow=None, flex_shrink=None, flex_basis=None, align_items=None, justify_content=None, flex_direction=None)`**
+
+General live layout mutation, the imperative counterpart to editing a
+declarative widget's `style:` block. Only the fields actually passed
+are changed — every omitted field keeps its current value. Applies
+immediately, not eased — layout fields aren't animatable the way
+paint properties are.
+
+```python
+node.set_layout(width=200, flex_direction="Vertical", gap=8)
+```
+
+`align_items`/`justify_content`/`flex_direction` take the same string
+vocabulary as their declarative `style:` equivalents (see
+[Declarative Views → The YAML schema](../../guide/declarative-views.md#the-yaml-schema)
+for the full list) — an unrecognized value raises `ValueError` naming
+the ones it does accept. `padding`/`margin` set all four sides at once;
+the `_top`/`_right`/`_bottom`/`_left` variants override just one side
+on top of that, applied in the order given.
+
 ## Events
 
 ### `set_on_click`

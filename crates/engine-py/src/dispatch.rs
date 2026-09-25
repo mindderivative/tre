@@ -93,7 +93,7 @@ pub(crate) fn ensure_tracing_subscriber() {
 /// either the traceback is missing (a real, possible case -- an
 /// exception constructed but never actually raised) or formatting it
 /// itself fails, rather than losing the event entirely.
-fn log_uncaught_exception(err: &PyErr, py: Python<'_>) {
+pub(crate) fn log_uncaught_exception(err: &PyErr, py: Python<'_>) {
     ensure_tracing_subscriber();
     let traceback = match err.traceback(py) {
         Some(tb) => match tb.format() {

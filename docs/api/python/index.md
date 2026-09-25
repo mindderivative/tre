@@ -1,21 +1,31 @@
 # Python API Reference
 
-The `tre` package exposes six public classes. `App`, `Window`, `Node`,
-`View`, and `CanvasContext` are compiled pyo3 bindings (`tre._core`);
-`Signal` and `ViewModel` are plain Python, layered on top.
+The `tre` package's public classes. `App`, `Window`, `Node`, `View`,
+`Component`, `Theme`, `LoopHandle`, and `CanvasContext` are compiled
+pyo3 bindings (`tre._core`); `Signal` and `ViewModel` are plain Python,
+layered on top.
 
 | Class | Purpose |
 | --- | --- |
 | [`App`](app.md) | Opens and drives one or more `Window`s together in one blocking call |
+| [`LoopHandle`](app.md#loophandle) | The one thread-safe object: queues a callable onto a running `App`'s event loop, via `App.thread_handle()` |
 | [`Window`](window.md) | Owns a node tree, its size/title; creates nodes, dispatches input, docking, theming |
 | [`Node`](node.md) | A handle to one node — events, animation, property reads/writes |
 | [`View`](view.md) | Loads a declarative `view.yaml` file into its own node tree |
+| [`Component`](view.md#component) | An embedded, independent instance of another view's YAML, created via `View.instantiate` |
+| [`Theme`](window.md#theme) | Read-only access to a `Window`'s live MD3 theme resolution, via `window.theme` |
 | [`Signal`](signal-and-viewmodel.md) / [`ViewModel`](signal-and-viewmodel.md) | Reactive data binding for declarative views |
 | [`CanvasContext`](canvas-context.md) | The draw surface passed to a `Canvas` node's `draw` callback |
 
 ```python
 from tre import App, Node, Signal, View, ViewModel, Window
 ```
+
+## Module functions
+
+| Function | Purpose |
+| --- | --- |
+| `register_font(data: bytes) -> list[str]` | Registers a font the caller already loaded (a `.ttf`/`.otf`/`.ttc` file's raw bytes) with every current and future window; returns the family names it contains. See [Theming & Accessibility → Custom fonts](../../guide/theming-and-accessibility.md#custom-fonts) |
 
 For a narrative walkthrough of how these fit together, start with
 [Getting Started](../../getting-started.md) or the

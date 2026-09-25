@@ -1321,6 +1321,13 @@ impl Node {
             // (verifying a label's content actually changed) surfaced
             // by the exact same phase.
             NodeKind::Text(state) => Ok(state.content.clone()),
+            // Tesserae M27 (`tre` M84): `Link` wraps the identical
+            // `TextState` `Text` does (`window_factory.rs`'s own real
+            // `add_link` body confirms this directly) -- the same real
+            // read-back need `Text`'s own arm above exists for applies
+            // here too, previously missing entirely (Link had no text
+            // read-back path from Python at all).
+            NodeKind::Link(state) => Ok(state.content.clone()),
             // M30 Phase 9 Step 4 (§5, §8, §10): a real terminal's own
             // "text content" is its whole cell grid, not one string --
             // joined here row by row (`\n`-separated, each row's own

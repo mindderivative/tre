@@ -6,8 +6,9 @@
 //! one built imperatively.
 
 use engine_core::{
-    Animated, CheckboxState, IconState, NodeId, NodeKind, PaintProperties, SliderState, TextAlign,
-    TextFieldState, TextState, Tree,
+    Animated, CheckboxState, CircularProgressState, IconState, LinearProgressState,
+    LoadingIndicatorState, NodeId, NodeKind, PaintProperties, RadioButtonState, SliderState,
+    SwitchState, TextAlign, TextFieldState, TextState, TimePickerDialState, Tree,
 };
 use engine_md3::ColorScheme;
 use peniko::Color;
@@ -569,6 +570,17 @@ fn node_kind_and_paint(
         paint.elevation = Animated::new(elevation);
     }
 
+    // Tesserae M27: the identical "universal, applied once after the
+    // match" shape border/elevation above already use -- `LoadingIndicator`
+    // is the one real kind needing a `PaintProperties` field the match
+    // itself has no other reason to touch. `add_loading_indicator`'s own
+    // real body proves this step is required, not optional: without it,
+    // `paint.shape` starts at `ShapeKey::empty()` and the very first real
+    // tick morphs *from* nothing, a real, visible flash bug.
+    if let NodeKind::LoadingIndicator(state) = &kind {
+        paint.shape = Animated::new(state.shapes[0].clone());
+    }
+
     Ok((kind, paint))
 }
 
@@ -751,6 +763,159 @@ fn node_kind_and_base_paint(
                 PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, opacity),
             ))
         }
+        // Tesserae M27: identical shape to `Text` above -- `Link`'s own
+        // `NodeKind::Link(TextState { .. })` is byte-for-byte the same
+        // struct, just a different outer `NodeKind` variant. Deliberate
+        // divergence from `add_link`'s own imperative behavior, stated
+        // here rather than left implicit: the imperative factory always
+        // hardcodes `body_large` typography with no override at all,
+        // but every other declarative text-bearing kind already lets an
+        // author choose `text.role`/explicit font fields via the shared
+        // `resolve_text_style` -- staying consistent with that existing
+        // contract (a real widening of capability, not an oversight)
+        // rather than special-casing `Link` to forbid what `Text`/
+        // `TextField` both already allow.
+        NodeKindSpec::Link => {
+            let background = required_background(spec, style, scheme, "Link")?;
+            let text_spec = spec.text.as_ref().ok_or_else(|| SpecError::MissingField {
+                id: spec.id.clone(),
+                kind: "Link",
+                field: "text",
+            })?;
+            let (font_family, font_weight, font_size, line_height) =
+                resolve_text_style(spec, text_spec, "Link")?;
+            Ok((
+                NodeKind::Link(TextState {
+                    content: text_spec.content.clone(),
+                    font_family,
+                    font_weight,
+                    font_size,
+                    align: TextAlign::Start,
+                    line_height,
+                }),
+                PaintProperties::new(background, corner_radius, 0.0, opacity),
+            ))
+        }
+        // Tesserae M27: `spec.checked` doubles as this kind's own
+        // initial `selected` -- both real values are a plain `bool`,
+        // the identical value `RadioButtonState::new` takes. Its entire
+        // real visual lives in these 2 internal tint fields (confirmed
+        // via `add_radio_button`'s own real body: hardcoded `TRANSPARENT`
+        // `PaintProperties.background`), not `style.background` at all.
+        NodeKindSpec::RadioButton => {
+            let mut state = RadioButtonState::new(spec.checked);
+            state.unselected_tint = resolve_role_or_fallback(scheme, "outline", BASELINE_OUTLINE);
+            state.selected_tint = resolve_role_or_fallback(scheme, "primary", BASELINE_PRIMARY);
+            Ok((
+                NodeKind::RadioButton(state),
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, opacity),
+            ))
+        }
+        // Tesserae M27: `spec.checked` doubles as this kind's own
+        // initial `on`, the identical real reuse `RadioButton` above
+        // makes. 5 internal tint fields, confirmed via `add_switch`'s
+        // own real body -- the most tint fields of any of these 7.
+        NodeKindSpec::Switch => {
+            let mut state = SwitchState::new(spec.checked);
+            state.track_off_tint = resolve_role_or_fallback(
+                scheme,
+                "surface_container_highest",
+                BASELINE_SURFACE_CONTAINER_HIGHEST,
+            );
+            state.track_on_tint = resolve_role_or_fallback(scheme, "primary", BASELINE_PRIMARY);
+            state.track_outline_tint =
+                resolve_role_or_fallback(scheme, "outline", BASELINE_OUTLINE);
+            state.handle_off_tint = resolve_role_or_fallback(scheme, "outline", BASELINE_OUTLINE);
+            state.handle_on_tint =
+                resolve_role_or_fallback(scheme, "on_primary", BASELINE_ON_PRIMARY);
+            Ok((
+                NodeKind::Switch(state),
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, opacity),
+            ))
+        }
+        // Tesserae M27: `spec.value` doubles as this kind's own initial
+        // progress fraction -- the identical real `f64` value `Slider`
+        // already reuses this same field for. Simplest of the 5
+        // tint-heavy kinds: exactly one internal tint field.
+        NodeKindSpec::CircularProgress => {
+            let mut state = CircularProgressState::new(spec.value);
+            state.indicator_tint = resolve_role_or_fallback(scheme, "primary", BASELINE_PRIMARY);
+            Ok((
+                NodeKind::CircularProgress(state),
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, opacity),
+            ))
+        }
+        // Tesserae M27: `spec.value` doubles as this kind's own initial
+        // progress fraction, the identical real reuse `CircularProgress`
+        // above makes.
+        NodeKindSpec::LinearProgress => {
+            let mut state = LinearProgressState::new(spec.value);
+            state.track_tint = resolve_role_or_fallback(
+                scheme,
+                "surface_container_highest",
+                BASELINE_SURFACE_CONTAINER_HIGHEST,
+            );
+            state.indicator_tint = resolve_role_or_fallback(scheme, "primary", BASELINE_PRIMARY);
+            Ok((
+                NodeKind::LinearProgress(state),
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, opacity),
+            ))
+        }
+        // Tesserae M27: no `WidgetSpec` field of its own -- `style.
+        // width`/`height` (already resolved into this function's own
+        // `Style`, separately from this match) feed `LoadingIndicatorState
+        // ::new` directly at the real call site below, the identical
+        // real shape `add_loading_indicator`'s own `size` param already
+        // has. Its "background" is really the glyph tint (`required_
+        // background`, matching `Icon`'s own identical real semantic),
+        // not a second, parallel color field. The one required extra
+        // step `add_loading_indicator`'s own real body already proves
+        // necessary: `paint.shape` must be seeded to the real first
+        // shape at construction, or the very first real tick visibly
+        // flashes (confirmed real bug class, not hypothetical) --
+        // applied via `node_kind_and_paint`'s own real post-match hook
+        // below, the same "universal, applied once after the match"
+        // shape border/elevation already use, since this is the one
+        // real kind needing a `PaintProperties` field the match itself
+        // has no other reason to touch.
+        NodeKindSpec::LoadingIndicator => {
+            let tint = required_background(spec, style, scheme, "LoadingIndicator")?;
+            let width = style.width.ok_or_else(|| SpecError::MissingField {
+                id: spec.id.clone(),
+                kind: "LoadingIndicator",
+                field: "style.width",
+            })?;
+            let height = style.height.ok_or_else(|| SpecError::MissingField {
+                id: spec.id.clone(),
+                kind: "LoadingIndicator",
+                field: "style.height",
+            })?;
+            Ok((
+                NodeKind::LoadingIndicator(LoadingIndicatorState::new(
+                    f64::from(width),
+                    f64::from(height),
+                )),
+                PaintProperties::new(tint, 0.0, 0.0, opacity),
+            ))
+        }
+        // Tesserae M27: the one real exception among these 7 -- needs
+        // the new `spec.hour`/`spec.minute` fields, not a reuse of an
+        // existing one (`TimePickerDialState::new` itself clamps both,
+        // matching `add_time_picker_dial`'s own real doc comment, so no
+        // extra validation happens here).
+        NodeKindSpec::TimePickerDial => {
+            let mut state = TimePickerDialState::new(spec.hour, spec.minute);
+            state.face_tint = resolve_role_or_fallback(
+                scheme,
+                "surface_container_highest",
+                BASELINE_SURFACE_CONTAINER_HIGHEST,
+            );
+            state.hand_tint = resolve_role_or_fallback(scheme, "primary", BASELINE_PRIMARY);
+            Ok((
+                NodeKind::TimePickerDial(state),
+                PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, opacity),
+            ))
+        }
     }
 }
 
@@ -778,6 +943,40 @@ fn required_background(
 /// coincidental CSS color, and a literal color still works with no
 /// scheme at all (§14 step 5's original path, still exercised by
 /// `load_view`).
+/// Tesserae M27: the real published MD3 baseline seed-color tokens
+/// `engine-py::window_factory.rs`'s own `Md3Baseline` already hardcodes
+/// (identical values, confirmed by direct read before copying) -- the
+/// fallback a `RadioButton`/`Switch`/progress-indicator/`TimePickerDial`
+/// falls back to when no theme is set at all, since these 5 kinds carry
+/// their entire real visual in internal tint fields `required_
+/// background`'s own single `style.background` can't reach. Not shared
+/// as a common cross-crate constant with `engine-py`'s own copy --
+/// `engine-py` depends on this crate, not the other way around, and a
+/// real shared-constants refactor is bigger scope than this milestone's
+/// own stated "additive only" shape.
+const BASELINE_PRIMARY: Color = Color::from_rgba8(0x67, 0x50, 0xA4, 0xFF);
+const BASELINE_ON_PRIMARY: Color = Color::from_rgba8(0xFF, 0xFF, 0xFF, 0xFF);
+const BASELINE_OUTLINE: Color = Color::from_rgba8(0x79, 0x74, 0x7E, 0xFF);
+const BASELINE_SURFACE_CONTAINER_HIGHEST: Color = Color::from_rgba8(0xE6, 0xE0, 0xE9, 0xFF);
+
+/// Tesserae M27: the declarative-build-time sibling of `window_factory.
+/// rs`'s own `let role = |name, fallback| if theme.is_set() { theme.
+/// role(name).unwrap_or(fallback) } else { fallback };` closure, reused
+/// identically at all 5 of this milestone's own new tint-heavy call
+/// sites instead of duplicating that closure inline 5 times. `scheme`
+/// is `None` outright (not "set but empty") exactly when no theme was
+/// given to `View::new`/`Reconciler::load`, the identical real
+/// condition `theme.is_set()` gates on imperatively -- `role_name` is
+/// always a fixed, code-chosen string here, never user input, so unlike
+/// `resolve_color` this is infallible.
+fn resolve_role_or_fallback(
+    scheme: Option<&ColorScheme>,
+    role_name: &str,
+    fallback: Color,
+) -> Color {
+    scheme.and_then(|s| s.role(role_name)).unwrap_or(fallback)
+}
+
 fn resolve_color(
     spec: &WidgetSpec,
     raw: &str,
@@ -801,6 +1000,7 @@ fn resolve_color(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use engine_core::ShapeKey;
     use taffy::prelude::AvailableSpace;
 
     const VIEW: &str = r##"
@@ -1595,5 +1795,190 @@ style: {width: 24, height: 24}
                 ..
             }
         ));
+    }
+
+    // Tesserae M27: real, repeatable coverage for all 7 new declarative
+    // primitives -- one "builds correctly, real colors resolved" test
+    // per kind (mirroring `kind_icon_builds_a_real_icon_node_with_the_
+    // named_glyph_and_color`'s own style), plus the couple of real edge
+    // cases each kind's own scoping actually named (no theme set falls
+    // back to the real MD3 baseline; `LoadingIndicator` needs `style.
+    // width`/`height`).
+
+    #[test]
+    fn kind_link_reuses_text_and_resolves_role_or_literal_background() {
+        let yaml = r##"
+id: docs
+kind: Link
+text: {content: "Docs", font_family: Roboto, font_size: 14}
+style: {width: 60, height: 20, background: "#6750A4FF"}
+"##;
+        let mut tree = Tree::new();
+        let root = load_view(&mut tree, yaml).expect("a real Link must build");
+        let node = tree.get(root).expect("root must exist");
+        let NodeKind::Link(text) = &node.kind else {
+            panic!("expected a Link node");
+        };
+        assert_eq!(text.content, "Docs");
+    }
+
+    #[test]
+    fn kind_link_with_no_text_block_is_a_clear_missing_field_error() {
+        let yaml = r##"
+id: docs
+kind: Link
+style: {width: 60, height: 20, background: "#6750A4FF"}
+"##;
+        let mut tree = Tree::new();
+        let err = load_view(&mut tree, yaml).expect_err("a Link with no text: block must fail");
+        assert!(matches!(
+            err,
+            SpecError::MissingField {
+                kind: "Link",
+                field: "text",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn kind_radio_button_reuses_checked_as_selected_with_baseline_tints() {
+        let yaml = r#"
+id: opt
+kind: RadioButton
+checked: true
+style: {width: 20, height: 20}
+"#;
+        let mut tree = Tree::new();
+        let root = load_view(&mut tree, yaml).expect("a real RadioButton must build with no theme");
+        let node = tree.get(root).expect("root must exist");
+        let NodeKind::RadioButton(state) = &node.kind else {
+            panic!("expected a RadioButton node");
+        };
+        assert!(state.selected, "checked: true must map to selected");
+        assert_eq!(state.selected_tint, BASELINE_PRIMARY);
+        assert_eq!(state.unselected_tint, BASELINE_OUTLINE);
+    }
+
+    #[test]
+    fn kind_switch_reuses_checked_as_on_with_all_5_baseline_tints() {
+        let yaml = r#"
+id: toggle
+kind: Switch
+checked: false
+style: {width: 52, height: 32}
+"#;
+        let mut tree = Tree::new();
+        let root = load_view(&mut tree, yaml).expect("a real Switch must build with no theme");
+        let node = tree.get(root).expect("root must exist");
+        let NodeKind::Switch(state) = &node.kind else {
+            panic!("expected a Switch node");
+        };
+        assert!(!state.on, "checked: false must map to on: false");
+        assert_eq!(state.track_off_tint, BASELINE_SURFACE_CONTAINER_HIGHEST);
+        assert_eq!(state.track_on_tint, BASELINE_PRIMARY);
+        assert_eq!(state.track_outline_tint, BASELINE_OUTLINE);
+        assert_eq!(state.handle_off_tint, BASELINE_OUTLINE);
+        assert_eq!(state.handle_on_tint, BASELINE_ON_PRIMARY);
+    }
+
+    #[test]
+    fn kind_circular_progress_reuses_value_with_one_baseline_tint() {
+        let yaml = r#"
+id: spinner
+kind: CircularProgress
+value: 0.4
+style: {width: 48, height: 48}
+"#;
+        let mut tree = Tree::new();
+        let root =
+            load_view(&mut tree, yaml).expect("a real CircularProgress must build with no theme");
+        let node = tree.get(root).expect("root must exist");
+        let NodeKind::CircularProgress(state) = &node.kind else {
+            panic!("expected a CircularProgress node");
+        };
+        assert_eq!(state.value.current, 0.4);
+        assert_eq!(state.indicator_tint, BASELINE_PRIMARY);
+    }
+
+    #[test]
+    fn kind_linear_progress_reuses_value_with_both_baseline_tints() {
+        let yaml = r#"
+id: bar
+kind: LinearProgress
+value: 0.75
+style: {width: 200, height: 4}
+"#;
+        let mut tree = Tree::new();
+        let root =
+            load_view(&mut tree, yaml).expect("a real LinearProgress must build with no theme");
+        let node = tree.get(root).expect("root must exist");
+        let NodeKind::LinearProgress(state) = &node.kind else {
+            panic!("expected a LinearProgress node");
+        };
+        assert_eq!(state.value.current, 0.75);
+        assert_eq!(state.track_tint, BASELINE_SURFACE_CONTAINER_HIGHEST);
+        assert_eq!(state.indicator_tint, BASELINE_PRIMARY);
+    }
+
+    #[test]
+    fn kind_loading_indicator_seeds_shape_and_resolves_glyph_tint() {
+        let yaml = r##"
+id: spinner
+kind: LoadingIndicator
+style: {width: 48, height: 48, background: "#6750A4FF"}
+"##;
+        let mut tree = Tree::new();
+        let root = load_view(&mut tree, yaml).expect("a real LoadingIndicator must build");
+        let node = tree.get(root).expect("root must exist");
+        assert!(matches!(node.kind, NodeKind::LoadingIndicator(_)));
+        assert_ne!(
+            node.paint.shape.current,
+            ShapeKey::empty(),
+            "paint.shape must be seeded to the real first shape at construction, not left \
+             empty, or the very first real tick would visibly flash"
+        );
+    }
+
+    #[test]
+    fn kind_loading_indicator_with_no_width_is_a_clear_missing_field_error() {
+        let yaml = r##"
+id: spinner
+kind: LoadingIndicator
+style: {height: 48, background: "#6750A4FF"}
+"##;
+        let mut tree = Tree::new();
+        let err = load_view(&mut tree, yaml)
+            .expect_err("a LoadingIndicator with no style.width must fail");
+        assert!(matches!(
+            err,
+            SpecError::MissingField {
+                kind: "LoadingIndicator",
+                field: "style.width",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn kind_time_picker_dial_uses_the_new_hour_and_minute_fields() {
+        let yaml = r#"
+id: dial
+kind: TimePickerDial
+hour: 13
+minute: 45
+style: {width: 256, height: 256}
+"#;
+        let mut tree = Tree::new();
+        let root =
+            load_view(&mut tree, yaml).expect("a real TimePickerDial must build with no theme");
+        let node = tree.get(root).expect("root must exist");
+        let NodeKind::TimePickerDial(state) = &node.kind else {
+            panic!("expected a TimePickerDial node");
+        };
+        assert_eq!(state.hour, 13);
+        assert_eq!(state.minute, 45);
+        assert_eq!(state.face_tint, BASELINE_SURFACE_CONTAINER_HIGHEST);
+        assert_eq!(state.hand_tint, BASELINE_PRIMARY);
     }
 }
