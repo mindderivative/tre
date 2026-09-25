@@ -5,7 +5,7 @@
 //! render-to-texture-then-readback discipline as `terminal_selection.
 //! rs`, whose own harness this file mirrors verbatim.
 
-use engine_core::{NodeKind, PaintProperties, TerminalCell, TerminalState, Tree};
+use engine_core::{CellColor, NodeKind, PaintProperties, TerminalCell, TerminalState, Tree};
 use engine_render::{FrameRenderer, GeometryCache, TextRenderer, build_tree_scene};
 use peniko::Color;
 use taffy::prelude::{AvailableSpace, Size, Style, length};
@@ -164,8 +164,8 @@ fn build_scene(cell: TerminalCell) -> (Tree, engine_core::NodeId) {
 fn base_cell() -> TerminalCell {
     TerminalCell {
         ch: 'x',
-        fg: WHITE,
-        bg: Color::TRANSPARENT,
+        fg: CellColor::Rgb(WHITE),
+        bg: CellColor::Default,
         bold: false,
         dim: false,
         italic: false,
@@ -293,7 +293,7 @@ fn inverse_paints_the_swapped_foreground_as_a_real_solid_background_block_when_t
 fn inverse_swaps_a_real_explicit_background_and_foreground() {
     pollster::block_on(async {
         let cell = TerminalCell {
-            bg: BLUE,
+            bg: CellColor::Rgb(BLUE),
             ..base_cell()
         };
         let (plain, plain_terminal) = build_scene(cell);

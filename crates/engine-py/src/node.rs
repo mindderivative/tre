@@ -96,16 +96,18 @@ impl Node {
     /// real per-frame render loop to drain it through, the same stated
     /// scope limit `Window.set_theme` vs. `View`'s own theme already
     /// established, M7 Phase 3).
-    #[pyo3(signature = (property, to, duration_ms=0, on_complete=None))]
+    #[pyo3(signature = (property, to, duration_ms=0, easing=None, on_complete=None))]
     pub(crate) fn animate(
         &self,
         property: &str,
         to: Bound<'_, PyAny>,
         duration_ms: u64,
+        easing: Option<Bound<'_, PyAny>>,
         on_complete: Option<Py<PyAny>>,
     ) -> PyResult<()> {
         let duration = Duration::from_millis(duration_ms);
         let now = Instant::now();
+        let curve = parse_easing(easing.as_ref())?;
         renamed_property(property)?;
         let mut tree = self.tree.borrow_mut();
         let node = tree.get_mut(self.id).expect(
@@ -117,17 +119,110 @@ impl Node {
             "opacity" => {
                 let value = extract_f64(&to, property)?;
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(&mut node.paint.opacity, value, duration, now, handle);
+                animate_field(&mut node.paint.opacity, value, duration, curve, now, handle);
             }
+            // M95: a number animates the uniform radius, or all four
+            // corners when they're set separately; a 4-tuple animates the
+            // four corners, starting from the uniform radius if they
+            // weren't separate yet.
             "corner_radius" => {
-                let value = extract_f64(&to, property)?;
+                let radius = crate::node_props::parse_radius(&to, property)?;
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(&mut node.paint.corner_radius, value, duration, now, handle);
+                match (radius, &mut node.paint.corner_radii_override) {
+                    (crate::node_props::Radius::Uniform(value), None) => {
+                        animate_field(
+                            &mut node.paint.corner_radius,
+                            value,
+                            duration,
+                            curve,
+                            now,
+                            handle,
+                        );
+                    }
+                    (crate::node_props::Radius::Uniform(value), Some(radii)) => {
+                        animate_field(
+                            radii,
+                            engine_core::CornerRadii([value; 4]),
+                            duration,
+                            curve,
+                            now,
+                            handle,
+                        );
+                    }
+                    (crate::node_props::Radius::Corners(corners), radii) => {
+                        let uniform = node.paint.corner_radius.current;
+                        let radii = radii.get_or_insert_with(|| {
+                            engine_core::Animated::new(engine_core::CornerRadii([uniform; 4]))
+                        });
+                        animate_field(
+                            radii,
+                            engine_core::CornerRadii(corners),
+                            duration,
+                            curve,
+                            now,
+                            handle,
+                        );
+                    }
+                }
+            }
+            // M95: the target API's paint names.
+            "fill" => {
+                let value = crate::node_props::parse_color(&to, property)?;
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                match &mut node.kind {
+                    NodeKind::Icon(state) => {
+                        animate_field(&mut state.tint, value, duration, curve, now, handle);
+                    }
+                    _ => animate_field(
+                        &mut node.paint.background,
+                        value,
+                        duration,
+                        curve,
+                        now,
+                        handle,
+                    ),
+                }
+            }
+            "stroke_color" => {
+                let value = crate::node_props::parse_color(&to, property)?;
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                animate_field(
+                    &mut node.paint.border_color,
+                    value,
+                    duration,
+                    curve,
+                    now,
+                    handle,
+                );
+            }
+            "stroke_width" => {
+                let value = crate::node_props::parse_non_negative(&to, property)?;
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                animate_field(
+                    &mut node.paint.border_width,
+                    value,
+                    duration,
+                    curve,
+                    now,
+                    handle,
+                );
+            }
+            "shadows" => {
+                let value = engine_core::Shadows(crate::node_props::parse_shadows(&to, property)?);
+                let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                animate_field(&mut node.paint.shadows, value, duration, curve, now, handle);
             }
             "elevation" => {
                 let value = extract_f64(&to, property)?;
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(&mut node.paint.elevation, value, duration, now, handle);
+                animate_field(
+                    &mut node.paint.elevation,
+                    value,
+                    duration,
+                    curve,
+                    now,
+                    handle,
+                );
             }
             "background" => {
                 if is_glyph_kind(&node.kind) {
@@ -138,7 +233,14 @@ impl Node {
                 }
                 let value = extract_color(&to, property)?;
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(&mut node.paint.background, value, duration, now, handle);
+                animate_field(
+                    &mut node.paint.background,
+                    value,
+                    duration,
+                    curve,
+                    now,
+                    handle,
+                );
             }
             // M90: the glyph/text color of `Text`/`Link`/`Icon`/
             // `LoadingIndicator`. `Text`/`Link`/`LoadingIndicator` store
@@ -150,12 +252,19 @@ impl Node {
                     NodeKind::Icon(state) => {
                         let handle =
                             on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                        animate_field(&mut state.tint, value, duration, now, handle);
+                        animate_field(&mut state.tint, value, duration, curve, now, handle);
                     }
                     NodeKind::Text(_) | NodeKind::Link(_) | NodeKind::LoadingIndicator(_) => {
                         let handle =
                             on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                        animate_field(&mut node.paint.background, value, duration, now, handle);
+                        animate_field(
+                            &mut node.paint.background,
+                            value,
+                            duration,
+                            curve,
+                            now,
+                            handle,
+                        );
                     }
                     _ => {
                         return Err(EngineError::UnknownProperty {
@@ -175,12 +284,26 @@ impl Node {
             "border_color" => {
                 let value = extract_color(&to, property)?;
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(&mut node.paint.border_color, value, duration, now, handle);
+                animate_field(
+                    &mut node.paint.border_color,
+                    value,
+                    duration,
+                    curve,
+                    now,
+                    handle,
+                );
             }
             "border_width" => {
                 let value = extract_f64(&to, property)?;
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(&mut node.paint.border_width, value, duration, now, handle);
+                animate_field(
+                    &mut node.paint.border_width,
+                    value,
+                    duration,
+                    curve,
+                    now,
+                    handle,
+                );
             }
             // M6 Phase 2 (§8): "pan offset × zoom scale" (§11.9's own
             // text), not a raw 6-coefficient `Affine` -- matches
@@ -193,7 +316,14 @@ impl Node {
                 let (tx, ty, scale) = extract_translate_scale(&to, property)?;
                 let value = Affine::translate((tx, ty)) * Affine::scale(scale);
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(&mut node.paint.transform, value, duration, now, handle);
+                animate_field(
+                    &mut node.paint.transform,
+                    value,
+                    duration,
+                    curve,
+                    now,
+                    handle,
+                );
             }
             // M7 Phase 4 (§7.4): a list of `(x, y)` vertices, since
             // Python has no `BezPath` type to hand over directly --
@@ -218,7 +348,7 @@ impl Node {
                 }
                 let value = ShapeKey::from_path(&path);
                 let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                animate_field(&mut node.paint.shape, value, duration, now, handle);
+                animate_field(&mut node.paint.shape, value, duration, curve, now, handle);
             }
             // M14 Phase 1 (§8): the first real arm of the "two-level
             // dispatch" ARCHITECTURE.md §8 describes -- `property`
@@ -229,7 +359,14 @@ impl Node {
                 NodeKind::Checkbox(state) => {
                     let value = extract_f64(&to, property)?;
                     let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(&mut state.check_progress, value, duration, now, handle);
+                    animate_field(
+                        &mut state.check_progress,
+                        value,
+                        duration,
+                        curve,
+                        now,
+                        handle,
+                    );
                 }
                 _ => {
                     return Err(EngineError::UnknownProperty {
@@ -250,7 +387,14 @@ impl Node {
                 NodeKind::RadioButton(state) => {
                     let value = extract_f64(&to, property)?;
                     let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(&mut state.select_progress, value, duration, now, handle);
+                    animate_field(
+                        &mut state.select_progress,
+                        value,
+                        duration,
+                        curve,
+                        now,
+                        handle,
+                    );
                 }
                 _ => {
                     return Err(EngineError::UnknownProperty {
@@ -271,7 +415,7 @@ impl Node {
                 NodeKind::Icon(state) => {
                     let value = extract_f64(&to, property)?;
                     let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(&mut state.rotation, value, duration, now, handle);
+                    animate_field(&mut state.rotation, value, duration, curve, now, handle);
                 }
                 _ => {
                     return Err(EngineError::UnknownProperty {
@@ -287,7 +431,14 @@ impl Node {
                 NodeKind::Switch(state) => {
                     let value = extract_f64(&to, property)?;
                     let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(&mut state.toggle_progress, value, duration, now, handle);
+                    animate_field(
+                        &mut state.toggle_progress,
+                        value,
+                        duration,
+                        curve,
+                        now,
+                        handle,
+                    );
                 }
                 _ => {
                     return Err(EngineError::UnknownProperty {
@@ -325,6 +476,7 @@ impl Node {
                         &mut state.data,
                         value,
                         duration,
+                        curve,
                         now,
                         handle(&self.completions),
                     );
@@ -340,24 +492,38 @@ impl Node {
                     } else {
                         &mut state.trim_end
                     };
-                    animate_field(field, value, duration, now, handle(&self.completions));
+                    animate_field(
+                        field,
+                        value,
+                        duration,
+                        curve,
+                        now,
+                        handle(&self.completions),
+                    );
                 }
             }
             "value" => match &mut node.kind {
                 NodeKind::Slider(state) => {
                     let value = extract_f64(&to, property)?;
                     let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(&mut state.thumb_position, value, duration, now, handle);
+                    animate_field(
+                        &mut state.thumb_position,
+                        value,
+                        duration,
+                        curve,
+                        now,
+                        handle,
+                    );
                 }
                 NodeKind::LinearProgress(state) => {
                     let value = extract_f64(&to, property)?;
                     let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(&mut state.value, value, duration, now, handle);
+                    animate_field(&mut state.value, value, duration, curve, now, handle);
                 }
                 NodeKind::CircularProgress(state) => {
                     let value = extract_f64(&to, property)?;
                     let handle = on_complete.map(|cb| self.completions.borrow_mut().register(cb));
-                    animate_field(&mut state.value, value, duration, now, handle);
+                    animate_field(&mut state.value, value, duration, curve, now, handle);
                 }
                 _ => {
                     return Err(EngineError::UnknownProperty {
@@ -1448,18 +1614,47 @@ impl Node {
 /// six match arms needs one call, not its own copy of this branch.
 /// `MotionCurve::Linear` matches every one of those arms' own existing,
 /// unchanged choice.
+/// M95: `animate`'s `easing` -- `None` or `"linear"`, or a cubic bezier
+/// `(x1, y1, x2, y2)` with `x1` and `x2` in `0.0..=1.0`, as CSS
+/// `cubic-bezier()` takes them.
+fn parse_easing(easing: Option<&Bound<'_, PyAny>>) -> PyResult<MotionCurve> {
+    let expected = "easing must be \"linear\" or a cubic bezier (x1, y1, x2, y2) with x1 and x2 \
+                    from 0.0 to 1.0";
+    let Some(easing) = easing else {
+        return Ok(MotionCurve::Linear);
+    };
+    if easing.is_none() {
+        return Ok(MotionCurve::Linear);
+    }
+    if let Ok(name) = easing.extract::<String>() {
+        return if name == "linear" {
+            Ok(MotionCurve::Linear)
+        } else {
+            Err(pyo3::exceptions::PyValueError::new_err(expected))
+        };
+    }
+    let (x1, y1, x2, y2): (f64, f64, f64, f64) = easing
+        .extract()
+        .map_err(|_| pyo3::exceptions::PyValueError::new_err(expected))?;
+    if !(0.0..=1.0).contains(&x1) || !(0.0..=1.0).contains(&x2) {
+        return Err(pyo3::exceptions::PyValueError::new_err(expected));
+    }
+    Ok(MotionCurve::Bezier(x1, y1, x2, y2))
+}
+
 fn animate_field<T: engine_core::Interpolate + Clone>(
     field: &mut engine_core::Animated<T>,
     value: T,
     duration: Duration,
+    curve: MotionCurve,
     now: Instant,
     handle: Option<engine_core::CompletionHandle>,
 ) {
     match handle {
         Some(handle) => {
-            field.animate_to_with_completion(value, duration, MotionCurve::Linear, now, handle);
+            field.animate_to_with_completion(value, duration, curve, now, handle);
         }
-        None => field.animate_to(value, duration, MotionCurve::Linear, now),
+        None => field.animate_to(value, duration, curve, now),
     }
 }
 

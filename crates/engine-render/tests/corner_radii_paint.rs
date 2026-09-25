@@ -22,7 +22,8 @@ const ROUND_RADIUS: f64 = 30.0;
 async fn render(radii: Option<[f64; 4]>) -> (Vec<u8>, u32) {
     let mut tree = Tree::new();
     let mut paint = PaintProperties::new(FILL, 0.0, 0.0, 1.0);
-    paint.corner_radii_override = radii;
+    paint.corner_radii_override =
+        radii.map(|r| engine_core::Animated::new(engine_core::CornerRadii(r)));
     let root = tree.insert(
         NodeKind::Rect,
         Style {

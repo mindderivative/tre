@@ -124,9 +124,13 @@ impl CubicSegment {
 /// 0.4 C 0.208333,0.82 0.25,1 1,1`), not a single 4-parameter curve --
 /// a common web/CSS approximation flattens it to `Standard`'s own
 /// value, which this implementation deliberately does not do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MotionCurve {
     Linear,
+    /// M95: any CSS-style cubic bezier `(x1, y1, x2, y2)` -- the curve a
+    /// framework passes as `easing`, recreating the MD3 named curves
+    /// below (which M99 removes) or any other.
+    Bezier(f64, f64, f64, f64),
     Standard,
     StandardDecelerate,
     StandardAccelerate,
@@ -162,6 +166,9 @@ impl MotionCurve {
     fn ease(self, t: f64) -> f64 {
         match self {
             MotionCurve::Linear => t,
+            MotionCurve::Bezier(x1, y1, x2, y2) => {
+                CubicSegment::standard(x1, y1, x2, y2).solve_y_for_x(t)
+            }
             MotionCurve::Standard => STANDARD.solve_y_for_x(t),
             MotionCurve::StandardDecelerate => STANDARD_DECELERATE.solve_y_for_x(t),
             MotionCurve::StandardAccelerate => STANDARD_ACCELERATE.solve_y_for_x(t),
@@ -219,6 +226,19 @@ impl<T: Interpolate + Clone> Animated<T> {
     /// for the sibling that attaches a real `CompletionHandle` (M9 Phase
     /// 1, §5); kept separate rather than a 5th parameter here so none of
     /// this method's own ~15+ existing call sites needed touching.
+    /// M95: stops a running animation where it is -- `current` keeps the
+    /// value it had reached, and its completion never fires.
+    pub fn stop(&mut self) {
+        self.active = None;
+    }
+
+    /// M95: where a running animation is heading, or `current` when none
+    /// runs -- what a reconciler compares against, since mid-animation
+    /// `current` is still in between.
+    pub fn target(&self) -> &T {
+        self.active.as_ref().map_or(&self.current, |anim| &anim.to)
+    }
+
     pub fn animate_to(&mut self, to: T, duration: Duration, curve: MotionCurve, now: Instant) {
         self.active = Some(ActiveAnimation {
             from: self.current.clone(),

@@ -28,6 +28,20 @@
      multiplying it. Fixed in Phase 2.
    - pytest 1036 passed; cargo release 564 passed.
 
+4. Phase 2 done:
+   - Paint names on every node, with exact readback.
+   - Per-corner radii and shadows, both animatable.
+   - Group opacity, and color alpha that multiplies instead of being
+     replaced. The legacy scrims' 32% moved into their color alpha.
+   - Bezier easing, `get_target`, and `stop_animation`.
+   - Text-input placeholder, caret and selection colors, plus
+     `obscured`, which refuses copy and cut.
+   - Scrollbar fill and width.
+   - A live terminal palette: cells keep the color the program asked
+     for, resolved at paint time.
+   - pytest 1057 passed; cargo release 565 passed; 89 examples and the
+     showcase clean.
+
 ## Status
 
-**M95 Phase 2 in progress.**
+**M95 Phase 3 in progress** (pixel tests, proof ripple, docs).

@@ -960,15 +960,16 @@ impl Tree {
         let (ox, oy) = self.absolute_position(view);
         let size = self.layout(view).size;
         let slop = SCROLLBAR_GRAB_SLOP;
+        let thickness = state.scrollbar_width;
         if horizontal {
             let tx = ox + along;
-            let ty = oy + f64::from(size.height) - SCROLLBAR_THICKNESS - SCROLLBAR_MARGIN;
+            let ty = oy + f64::from(size.height) - thickness - SCROLLBAR_MARGIN;
             (tx - slop..=tx + thumb + slop).contains(&point.x)
-                && (ty - slop..=ty + SCROLLBAR_THICKNESS + slop).contains(&point.y)
+                && (ty - slop..=ty + thickness + slop).contains(&point.y)
         } else {
-            let tx = ox + f64::from(size.width) - SCROLLBAR_THICKNESS - SCROLLBAR_MARGIN;
+            let tx = ox + f64::from(size.width) - thickness - SCROLLBAR_MARGIN;
             let ty = oy + along;
-            (tx - slop..=tx + SCROLLBAR_THICKNESS + slop).contains(&point.x)
+            (tx - slop..=tx + thickness + slop).contains(&point.x)
                 && (ty - slop..=ty + thumb + slop).contains(&point.y)
         }
     }
@@ -3373,6 +3374,11 @@ impl Tree {
         let NodeKind::TextField(state) = &self.nodes.get(field)?.kind else {
             return None;
         };
+        // M95: an obscured (password) field's text never leaves it --
+        // copy and cut both read through here.
+        if state.obscured {
+            return None;
+        }
         let anchor = state.selection_anchor?;
         if anchor == state.cursor {
             return None;

@@ -15,7 +15,8 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use engine_core::{
-    NodeId, NodeKind, TerminalCell, TerminalState, TextAlign, TextFieldState, TextState, Tree,
+    NodeId, NodeKind, TerminalCell, TerminalPalette, TerminalState, TextAlign, TextFieldState,
+    TextState, Tree,
 };
 use parley::fontique::{Collection, CollectionOptions};
 use parley::{
@@ -594,8 +595,9 @@ impl TextRenderer {
         // is already `Cow::Borrowed` (nothing folded, the common real
         // case), `.clone()` in the `!show_whitespace` branch is a
         // cheap reference copy, not a real allocation.
-        let content: Cow<'_, str> = if state.show_whitespace {
-            Cow::Owned(substitute_whitespace(&folded_content))
+        let glyphs = Glyphs::of(state);
+        let content: Cow<'_, str> = if glyphs.active() {
+            Cow::Owned(substitute(&folded_content, glyphs))
         } else {
             folded_content.clone()
         };
@@ -608,8 +610,8 @@ impl TextRenderer {
         );
         let display_offset =
             Cursor::from_point(&layout, (point.x - at.x) as f32, (point.y - at.y) as f32).index();
-        let folded_offset = if state.show_whitespace {
-            from_display_offset(&folded_content, display_offset)
+        let folded_offset = if glyphs.active() {
+            from_display_offset(&folded_content, display_offset, glyphs)
         } else {
             display_offset
         };
@@ -681,14 +683,15 @@ impl TextRenderer {
         // selection/caret/spans would silently desync from what's
         // actually painted.
         let folded_content = elide_folded_ranges(&state.content, &state.folded_ranges);
+        let glyphs = Glyphs::of(state);
         let to_display = |offset: usize| -> usize {
             if preedit_range.is_some() {
                 return offset;
             }
             let folded =
                 to_display_offset_folded(state.content.len(), &state.folded_ranges, offset);
-            if state.show_whitespace {
-                to_display_offset(&folded_content, folded)
+            if glyphs.active() {
+                to_display_offset(&folded_content, folded, glyphs)
             } else {
                 folded
             }
@@ -701,8 +704,8 @@ impl TextRenderer {
         let display_content: Cow<'_, str> = match preedit_display {
             Some(combined) => Cow::Owned(combined),
             None => {
-                if state.show_whitespace {
-                    Cow::Owned(substitute_whitespace(&folded_content))
+                if glyphs.active() {
+                    Cow::Owned(substitute(&folded_content, glyphs))
                 } else {
                     folded_content.clone()
                 }
@@ -724,6 +727,19 @@ impl TextRenderer {
             .map(|(range, color)| (to_display(range.start)..to_display(range.end), *color))
             .collect();
 
+        // M95: an empty field shows its placeholder instead, in its own
+        // color, with the caret at its start.
+        let showing_placeholder =
+            state.content.is_empty() && preedit_range.is_none() && !state.placeholder.is_empty();
+        let (display_content, display_spans, text_color) = if showing_placeholder {
+            let color = state
+                .placeholder_fill
+                .unwrap_or_else(|| crate::with_opacity(at.color, 0.6));
+            (Cow::Borrowed(state.placeholder.as_str()), Vec::new(), color)
+        } else {
+            (display_content, display_spans, at.color)
+        };
+
         let layout = self.shaped_layout(
             node_id,
             &display_content,
@@ -739,7 +755,7 @@ impl TextRenderer {
             // pre-M62 behavior, never wired to any real per-field value.
             None,
             &display_spans,
-            at.color,
+            text_color,
         );
 
         // Selection highlight, painted first (behind the glyphs below).
@@ -757,7 +773,11 @@ impl TextRenderer {
             let focus_cursor =
                 Cursor::from_byte_index(layout, cursor_for_layout, Affinity::Downstream);
             let selection = Selection::new(anchor_cursor, focus_cursor);
-            scene.set_paint(crate::with_opacity(at.color, 0.3));
+            scene.set_paint(
+                state
+                    .selection_fill
+                    .unwrap_or_else(|| crate::with_opacity(at.color, 0.3)),
+            );
             for (bounds, _line_idx) in selection.geometry(layout) {
                 let rect = Rect::new(
                     bounds.x0 + at.x,
@@ -856,7 +876,7 @@ impl TextRenderer {
                 bounds.x1 + at.x,
                 bounds.y1 + at.y,
             );
-            scene.set_paint(at.color);
+            scene.set_paint(state.caret_color.unwrap_or(at.color));
             scene.fill_path(&rect.to_path(0.1));
         }
     }
@@ -918,10 +938,10 @@ impl TextRenderer {
             // colors`'s own doc comment.
             let mut col = 0u16;
             while col < state.cols {
-                let bg = terminal_cell_effective_colors(state.cell(row, col)).1;
+                let bg = terminal_cell_effective_colors(state.cell(row, col), &state.palette).1;
                 let mut end = col + 1;
                 while end < state.cols
-                    && terminal_cell_effective_colors(state.cell(row, end)).1 == bg
+                    && terminal_cell_effective_colors(state.cell(row, end), &state.palette).1 == bg
                 {
                     end += 1;
                 }
@@ -966,7 +986,7 @@ impl TextRenderer {
                         x0 + f64::from(col_end - col_start) * cell_width,
                         y0 + cell_height,
                     );
-                    scene.set_paint(crate::with_opacity(at.color, 0.3));
+                    scene.set_paint(state.palette.selection);
                     scene.fill_path(&rect.to_path(0.1));
                 }
             }
@@ -986,7 +1006,7 @@ impl TextRenderer {
             // naturally break into separate runs -- their resolved
             // colors are simply no longer equal).
             let ink = |cell: &TerminalCell| -> Color {
-                let fg = terminal_cell_effective_colors(cell).0;
+                let fg = terminal_cell_effective_colors(cell, &state.palette).0;
                 if cell.dim {
                     crate::with_opacity(fg, 0.6)
                 } else {
@@ -1106,7 +1126,7 @@ impl TextRenderer {
             let x0 = at.x + f64::from(state.cursor_col) * cell_width;
             let y0 = at.y + f64::from(state.cursor_row) * cell_height;
             let rect = Rect::new(x0, y0, x0 + cell_width, y0 + cell_height);
-            scene.set_paint(crate::with_opacity(at.color, 0.5));
+            scene.set_paint(state.palette.cursor);
             scene.fill_path(&rect.to_path(0.1));
         }
     }
@@ -1174,16 +1194,21 @@ fn field_max_width(state: &TextFieldState, max_width: f32) -> f32 {
 /// §4, and threading the container's own `PaintProperties.background`
 /// through this per-cell path is real, further plumbing this pass
 /// doesn't need for a real, legible result).
-fn terminal_cell_effective_colors(cell: &TerminalCell) -> (Color, Color) {
+fn terminal_cell_effective_colors(
+    cell: &TerminalCell,
+    palette: &TerminalPalette,
+) -> (Color, Color) {
+    let fg = palette.foreground_of(cell.fg);
+    let bg = palette.background_of(cell.bg);
     if !cell.inverse {
-        return (cell.fg, cell.bg);
+        return (fg, bg);
     }
-    let fg = if cell.bg == Color::TRANSPARENT {
+    let inverse_fg = if bg == Color::TRANSPARENT {
         Color::BLACK
     } else {
-        cell.bg
+        bg
     };
-    (fg, cell.fg)
+    (inverse_fg, fg)
 }
 
 /// M31 Phase 3 (§5, §8): the real substitute for each whitespace
@@ -1201,11 +1226,49 @@ fn whitespace_glyph(c: char) -> char {
     }
 }
 
+/// M95: the bullet an obscured (password) field shows for every
+/// character.
+const OBSCURED_GLYPH: char = '\u{2022}';
+
+/// M95: which paint-only character substitution a field shows --
+/// whitespace markers, password bullets (which win), or none. Every
+/// substitution is one character for one character, which is what lets
+/// `to_display_offset`/`from_display_offset` map cursor and click
+/// offsets between the real content and what's shaped.
+#[derive(Clone, Copy)]
+struct Glyphs {
+    whitespace: bool,
+    obscured: bool,
+}
+
+impl Glyphs {
+    fn of(state: &TextFieldState) -> Self {
+        Self {
+            whitespace: state.show_whitespace,
+            obscured: state.obscured,
+        }
+    }
+
+    fn active(self) -> bool {
+        self.whitespace || self.obscured
+    }
+
+    fn glyph(self, c: char) -> char {
+        if self.obscured {
+            OBSCURED_GLYPH
+        } else if self.whitespace {
+            whitespace_glyph(c)
+        } else {
+            c
+        }
+    }
+}
+
 /// `draw_field`'s own real, paint-only transform -- `content` itself
 /// is never touched (`TextFieldState.show_whitespace`'s own doc
 /// comment); this only ever changes what gets shaped and painted.
-fn substitute_whitespace(content: &str) -> String {
-    content.chars().map(whitespace_glyph).collect()
+fn substitute(content: &str, glyphs: Glyphs) -> String {
+    content.chars().map(|c| glyphs.glyph(c)).collect()
 }
 
 /// Maps a real byte offset into `content` to the corresponding byte
@@ -1215,11 +1278,11 @@ fn substitute_whitespace(content: &str) -> String {
 /// they replace are one byte each, so `content`'s own real cursor/
 /// selection byte offsets can't be used against the substituted
 /// `Layout` directly without this.
-fn to_display_offset(content: &str, original_offset: usize) -> usize {
+fn to_display_offset(content: &str, original_offset: usize, glyphs: Glyphs) -> usize {
     content
         .char_indices()
         .take_while(|&(i, _)| i < original_offset)
-        .map(|(_, c)| whitespace_glyph(c).len_utf8())
+        .map(|(_, c)| glyphs.glyph(c).len_utf8())
         .sum()
 }
 
@@ -1227,13 +1290,13 @@ fn to_display_offset(content: &str, original_offset: usize) -> usize {
 /// real need, translating a real click's resolved *display*-space byte
 /// offset back into `content`'s real byte space before it's stored as
 /// `TextFieldState.cursor`.
-fn from_display_offset(content: &str, display_offset: usize) -> usize {
+fn from_display_offset(content: &str, display_offset: usize, glyphs: Glyphs) -> usize {
     let mut acc = 0;
     for (i, c) in content.char_indices() {
         if acc >= display_offset {
             return i;
         }
-        acc += whitespace_glyph(c).len_utf8();
+        acc += glyphs.glyph(c).len_utf8();
     }
     content.len()
 }
@@ -1393,6 +1456,11 @@ pub struct TextPlacement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const WHITESPACE: Glyphs = Glyphs {
+        whitespace: true,
+        obscured: false,
+    };
     use crate::FrameRenderer;
     use engine_core::{NodeKind, PaintProperties, Tree};
     use taffy::prelude::{Size, Style, length};
@@ -1475,7 +1543,7 @@ mod tests {
         let index = usize::from(row) * usize::from(state.cols) + usize::from(col);
         state.cells[index] = TerminalCell {
             ch,
-            fg,
+            fg: engine_core::CellColor::Rgb(fg),
             ..TerminalCell::blank()
         };
     }
@@ -1898,8 +1966,8 @@ mod tests {
     fn display_offset_mapping_round_trips_every_real_char_boundary() {
         let content = "a b\tcafé d";
         for (byte_offset, _) in content.char_indices() {
-            let display = to_display_offset(content, byte_offset);
-            let back = from_display_offset(content, display);
+            let display = to_display_offset(content, byte_offset, WHITESPACE);
+            let back = from_display_offset(content, display, WHITESPACE);
             assert_eq!(
                 back, byte_offset,
                 "byte offset {byte_offset} in {content:?} must round-trip through the real \
@@ -1909,15 +1977,31 @@ mod tests {
         // And the real, whole-string end, the same real off-by-one-prone
         // edge `from_display_offset`'s own `content.len()` fallback
         // guards.
-        let end_display = to_display_offset(content, content.len());
-        assert_eq!(from_display_offset(content, end_display), content.len());
+        let end_display = to_display_offset(content, content.len(), WHITESPACE);
+        assert_eq!(
+            from_display_offset(content, end_display, WHITESPACE),
+            content.len()
+        );
+    }
+
+    #[test]
+    fn obscured_fields_show_one_bullet_per_character_and_map_offsets() {
+        let obscured = Glyphs {
+            whitespace: true,
+            obscured: true,
+        };
+        assert_eq!(substitute("pé s", obscured), "\u{2022}".repeat(4));
+        // 'é' is two bytes; its bullet is three -- offsets still map.
+        let display = to_display_offset("pé s", 3, obscured);
+        assert_eq!(display, 6);
+        assert_eq!(from_display_offset("pé s", display, obscured), 3);
     }
 
     #[test]
     fn substitute_whitespace_replaces_only_space_and_tab_with_real_visible_glyphs() {
-        assert_eq!(substitute_whitespace("a b\tc"), "a\u{B7}b\u{2192}c");
+        assert_eq!(substitute("a b\tc", WHITESPACE), "a\u{B7}b\u{2192}c");
         assert_eq!(
-            substitute_whitespace("café"),
+            substitute("café", WHITESPACE),
             "café",
             "a real non-whitespace character must never be substituted"
         );

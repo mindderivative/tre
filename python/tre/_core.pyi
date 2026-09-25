@@ -173,17 +173,30 @@ class Node:
     def animate(
         self,
         property: str,
-        to: float | Color | Sequence[float] | str,
+        to: float | Color | Sequence[float] | Sequence[Any] | str,
         duration_ms: int = 0,
+        easing: str | tuple[float, float, float, float] | None = None,
         on_complete: Callable[[], object] | None = None,
     ) -> None:
-        """Starts (or retargets) an animation on one property. Returns
-        immediately -- never blocks. `duration_ms=0` snaps instantly on
-        the next tick rather than easing. `on_complete`, when given, is
-        called with no arguments exactly once, the real frame this
-        specific animation finishes (only fires for a `Window`-created
-        node -- see this stub module's own module-level doc comment).
+        """Starts (or retargets) an animation on one property, from its
+        current value. Returns immediately -- never blocks.
+        `duration_ms=0` snaps instantly on the next tick rather than
+        easing. M95: `easing` is `"linear"` (the default) or a cubic
+        bezier `(x1, y1, x2, y2)` as CSS `cubic-bezier()` takes it; the
+        M93 paint names -- `fill`, `stroke_color`, `stroke_width`,
+        `opacity`, `corner_radius` (a number or a 4-tuple), `shadows`,
+        and on a path `data`/`trim_start`/`trim_end` -- animate here.
+        `on_complete`, when given, is called with no arguments exactly
+        once, the real frame this specific animation finishes; an
+        animation replaced or stopped before then never calls it.
         """
+        ...
+    def get_target(self, name: str) -> Any:
+        """M95: the value `name`'s running animation is heading to --
+        the same as `get(name)` when nothing is animating it."""
+        ...
+    def stop_animation(self, name: str) -> None:
+        """M95: stops `name`'s running animation where it is."""
         ...
     def get(self, property: str) -> Any:
         """Reads one property: an animatable number's current, possibly
@@ -200,9 +213,17 @@ class Node:
         `expanded`, `disabled`, `level`, `live` (`"off"`, `"polite"`,
         `"assertive"`), `a11y_hidden`, `focusable`, `tab_index`,
         `cursor`, `hit_testable`, `width`/`height` (a number, `"auto"`,
-        or `"50%"`), and on a path `data` (SVG path data), `view_box`
-        (`(min_x, min_y, width, height)`), `trim_start`/`trim_end`.
-        Optional ones take `None` to clear.
+        or `"50%"`); M95 paint on every node: `fill`, `stroke_color`,
+        `stroke_width`, `opacity` (group opacity), `corner_radius` (a
+        number or `(top_left, top_right, bottom_right, bottom_left)`),
+        `shadows` (a list of `(color, offset_x, offset_y, blur,
+        spread)`); on a path `data` (SVG path data), `view_box`
+        (`(min_x, min_y, width, height)`), `trim_start`/`trim_end`; on a
+        text input `placeholder`, `placeholder_fill`, `caret_color`,
+        `selection_fill`, `obscured`; on a scroll view `scrollbar_fill`,
+        `scrollbar_width`; on a terminal `palette` (a dict of any of
+        `ansi` -- 16 colors -- `foreground`, `background`, `cursor`,
+        `selection`). Optional ones take `None` to clear.
         """
         ...
     def focus(self) -> None:

@@ -14,10 +14,10 @@
 use std::rc::Rc;
 
 use engine_core::{
-    AccessNodeData, Action, Animated, CheckboxState, CircularProgressState, ContentFit, IconState,
-    ImageState, LinearProgressState, LoadingIndicatorState, NodeId, NodeKind, OverlayMeta,
-    PaintProperties, RadioButtonState, Role, ShapeKey, SliderState, SplitterState, SwitchState,
-    TextAlign, TextFieldState, TextState, TimePickerDialState, Tree,
+    AccessNodeData, Action, Animated, CheckboxState, CircularProgressState, ContentFit,
+    CornerRadii, IconState, ImageState, LinearProgressState, LoadingIndicatorState, NodeId,
+    NodeKind, OverlayMeta, PaintProperties, RadioButtonState, Role, ShapeKey, SliderState,
+    SplitterState, SwitchState, TextAlign, TextFieldState, TextState, TimePickerDialState, Tree,
 };
 use engine_render::{MONOSPACE_FONT_FAMILY, TextRenderer};
 use peniko::Color;
@@ -644,6 +644,13 @@ const DIALOG_ELEVATION: f64 = 3.0;
 const DIALOG_PADDING: f32 = 24.0;
 const DIALOG_HEADLINE_GAP: f32 = 16.0;
 const DIALOG_SCRIM_OPACITY: f64 = 0.32;
+
+/// M95: a scrim's color at `DIALOG_SCRIM_OPACITY` -- the 32% lives in the
+/// color's alpha, not the node's opacity, because a scrim is the parent of
+/// its panel and opacity now fades a whole subtree (group opacity).
+fn scrim_fill(color: Color) -> Color {
+    color.multiply_alpha(DIALOG_SCRIM_OPACITY as f32)
+}
 
 /// MD3's own real Snackbar anatomy (M30 Phase 4 Step 2), verified
 /// against Material Web's own token source (`_md-comp-snackbar.scss`)
@@ -1917,7 +1924,7 @@ fn dialog_retheme_hook(
         let corner_radius = theme.shape("dialog", None).unwrap_or(DIALOG_CORNER_RADIUS);
         let elevation = theme.elevation("dialog", None).unwrap_or(DIALOG_ELEVATION);
         if let Some(node) = tree.get_mut(scrim) {
-            node.paint.background = Animated::new(scrim_color);
+            node.paint.background = Animated::new(scrim_fill(scrim_color));
         }
         if let Some(node) = tree.get_mut(panel) {
             node.paint.background = Animated::new(panel_color);
@@ -2206,7 +2213,8 @@ fn segmented_button_retheme_hook(
                 } else {
                     TRANSPARENT
                 });
-                node.paint.corner_radii_override = corner_radii_override;
+                node.paint.corner_radii_override =
+                    corner_radii_override.map(|r| Animated::new(CornerRadii(r)));
             }
             let label_color = if is_selected {
                 on_secondary_container
@@ -2457,12 +2465,17 @@ fn side_sheet_retheme_hook(
         if let Some(node) = tree.get_mut(panel) {
             node.paint.background = Animated::new(container_color);
             node.paint.elevation = Animated::new(elevation);
-            node.paint.corner_radii_override = Some([corner_radius, 0.0, 0.0, corner_radius]);
+            node.paint.corner_radii_override = Some(Animated::new(CornerRadii([
+                corner_radius,
+                0.0,
+                0.0,
+                corner_radius,
+            ])));
         }
         if let Some(id) = scrim
             && let Some(node) = tree.get_mut(id)
         {
-            node.paint.background = Animated::new(scrim_color);
+            node.paint.background = Animated::new(scrim_fill(scrim_color));
         }
     })
 }
@@ -2528,12 +2541,17 @@ fn navigation_drawer_retheme_hook(
         if let Some(node) = tree.get_mut(panel) {
             node.paint.background = Animated::new(container_color);
             node.paint.elevation = Animated::new(elevation);
-            node.paint.corner_radii_override = Some([0.0, corner_radius, corner_radius, 0.0]);
+            node.paint.corner_radii_override = Some(Animated::new(CornerRadii([
+                0.0,
+                corner_radius,
+                corner_radius,
+                0.0,
+            ])));
         }
         if let Some(id) = scrim
             && let Some(node) = tree.get_mut(id)
         {
-            node.paint.background = Animated::new(scrim_color);
+            node.paint.background = Animated::new(scrim_fill(scrim_color));
         }
         for &(indicator, icon, label, is_active) in &items {
             let fill = if is_active {
@@ -2731,8 +2749,12 @@ fn tabs_retheme_hook(
             if let Some(node) = tree.get_mut(indicator) {
                 let indicator_fill = if is_active { active_color } else { TRANSPARENT };
                 node.paint.background = Animated::new(indicator_fill);
-                node.paint.corner_radii_override =
-                    Some([indicator_corner_radius, indicator_corner_radius, 0.0, 0.0]);
+                node.paint.corner_radii_override = Some(Animated::new(CornerRadii([
+                    indicator_corner_radius,
+                    indicator_corner_radius,
+                    0.0,
+                    0.0,
+                ])));
             }
         }
     })
@@ -3828,7 +3850,8 @@ impl PyWindow {
                 0.0,
                 1.0,
             );
-            segment_paint.corner_radii_override = corner_radii_override;
+            segment_paint.corner_radii_override =
+                corner_radii_override.map(|r| Animated::new(CornerRadii(r)));
             if let Some((r, g, b, a)) = border_color {
                 segment_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
             }
@@ -5073,7 +5096,7 @@ impl PyWindow {
             align_items: Some(AlignItems::CENTER),
             ..Default::default()
         };
-        let mut scrim_paint = PaintProperties::new(scrim_color, 0.0, 0.0, DIALOG_SCRIM_OPACITY);
+        let mut scrim_paint = PaintProperties::new(scrim_fill(scrim_color), 0.0, 0.0, 1.0);
         if let Some((r, g, b, a)) = border_color {
             scrim_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
         }
@@ -5621,7 +5644,12 @@ impl PyWindow {
         let panel_height = height.unwrap_or(self.height.get() as f32);
 
         let mut panel_paint = PaintProperties::new(container_color, 0.0, elevation, 1.0);
-        panel_paint.corner_radii_override = Some([corner_radius, 0.0, 0.0, corner_radius]);
+        panel_paint.corner_radii_override = Some(Animated::new(CornerRadii([
+            corner_radius,
+            0.0,
+            0.0,
+            corner_radius,
+        ])));
 
         if modal {
             let scrim_style = Style {
@@ -5637,7 +5665,7 @@ impl PyWindow {
             // to Python -- in the modal branch that's `scrim`, not the
             // internal `panel` (never returned), so the override lands
             // on `scrim`'s own paint, not `panel_paint`.
-            let mut scrim_paint = PaintProperties::new(scrim_color, 0.0, 0.0, DIALOG_SCRIM_OPACITY);
+            let mut scrim_paint = PaintProperties::new(scrim_fill(scrim_color), 0.0, 0.0, 1.0);
             if let Some((r, g, b, a)) = border_color {
                 scrim_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
             }
@@ -6197,7 +6225,12 @@ impl PyWindow {
         let panel_height = height.unwrap_or(self.height.get() as f32);
 
         let mut panel_paint = PaintProperties::new(container_color, 0.0, elevation, 1.0);
-        panel_paint.corner_radii_override = Some([0.0, corner_radius, corner_radius, 0.0]);
+        panel_paint.corner_radii_override = Some(Animated::new(CornerRadii([
+            0.0,
+            corner_radius,
+            corner_radius,
+            0.0,
+        ])));
         // `panel` is inserted once below regardless of `modal`, but it's
         // only ever the node actually returned to Python in the
         // non-modal branch (the modal branch returns `scrim` instead,
@@ -6347,7 +6380,7 @@ impl PyWindow {
                 justify_content: Some(JustifyContent::FLEX_START),
                 ..Default::default()
             };
-            let mut scrim_paint = PaintProperties::new(scrim_color, 0.0, 0.0, DIALOG_SCRIM_OPACITY);
+            let mut scrim_paint = PaintProperties::new(scrim_fill(scrim_color), 0.0, 0.0, 1.0);
             if let Some((r, g, b, a)) = border_color {
                 scrim_paint.border_color = Animated::new(Color::from_rgba8(r, g, b, a));
             }
@@ -7456,8 +7489,12 @@ impl PyWindow {
 
             let indicator_fill = if is_active { active_color } else { TRANSPARENT };
             let mut indicator_paint = PaintProperties::new(indicator_fill, 0.0, 0.0, 1.0);
-            indicator_paint.corner_radii_override =
-                Some([indicator_corner_radius, indicator_corner_radius, 0.0, 0.0]);
+            indicator_paint.corner_radii_override = Some(Animated::new(CornerRadii([
+                indicator_corner_radius,
+                indicator_corner_radius,
+                0.0,
+                0.0,
+            ])));
             let indicator = tree.insert(
                 NodeKind::Rect,
                 Style {

@@ -4,7 +4,11 @@
 //! before any is applied, so a bad call changes nothing. M96 extends the
 //! same two methods to every property.
 
-use engine_core::{AccessValue, Animated, Cursor, Live, NodeKind, PathData, Role};
+use engine_core::{
+    AccessValue, Animated, CornerRadii, Cursor, Interpolate, Live, NodeKind, PathData, Role,
+    Shadow, Shadows, TerminalPalette,
+};
+use peniko::Color;
 use peniko::kurbo::Rect;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -16,13 +20,27 @@ use crate::dispatch::{fire_focus_transition, interaction_config};
 use crate::node::Node;
 
 /// Every property `set` accepts today, in the order its error lists them.
-const SETTABLE: [&str; 23] = [
+const SETTABLE: [&str; 37] = [
     "width",
     "height",
+    "fill",
+    "stroke_color",
+    "stroke_width",
+    "opacity",
+    "corner_radius",
+    "shadows",
     "data",
     "view_box",
     "trim_start",
     "trim_end",
+    "placeholder",
+    "placeholder_fill",
+    "caret_color",
+    "selection_fill",
+    "obscured",
+    "scrollbar_fill",
+    "scrollbar_width",
+    "palette",
     "role",
     "label",
     "value",
@@ -100,18 +118,313 @@ pub(crate) enum Change {
     ViewBox(Option<Rect>),
     TrimStart(f64),
     TrimEnd(f64),
+    Fill(Color),
+    StrokeColor(Color),
+    StrokeWidth(f64),
+    Opacity(f64),
+    CornerRadius(Radius),
+    Shadows(Vec<Shadow>),
+    Placeholder(String),
+    PlaceholderFill(Option<Color>),
+    CaretColor(Option<Color>),
+    SelectionFill(Option<Color>),
+    Obscured(bool),
+    ScrollbarFill(Option<Color>),
+    ScrollbarWidth(f64),
+    Palette(Box<PalettePatch>),
 }
 
-impl Change {
-    /// The property this change writes, for kind errors.
-    fn path_only(&self) -> Option<&'static str> {
-        match self {
-            Change::Data(_) => Some("data"),
-            Change::ViewBox(_) => Some("view_box"),
-            Change::TrimStart(_) => Some("trim_start"),
-            Change::TrimEnd(_) => Some("trim_end"),
-            _ => None,
+/// M95: the palette keys a `set(palette={...})` gives -- the rest keep
+/// their current colors.
+#[derive(Default)]
+pub(crate) struct PalettePatch {
+    ansi: Option<[Color; 16]>,
+    foreground: Option<Color>,
+    background: Option<Color>,
+    cursor: Option<Color>,
+    selection: Option<Color>,
+}
+
+impl PalettePatch {
+    fn apply(&self, palette: &mut TerminalPalette) {
+        if let Some(ansi) = self.ansi {
+            palette.ansi = ansi;
         }
+        let fields = [
+            (self.foreground, &mut palette.foreground),
+            (self.background, &mut palette.background),
+            (self.cursor, &mut palette.cursor),
+            (self.selection, &mut palette.selection),
+        ];
+        for (value, slot) in fields {
+            if let Some(color) = value {
+                *slot = color;
+            }
+        }
+    }
+}
+
+fn parse_palette(value: &Bound<'_, PyAny>, name: &str) -> PyResult<PalettePatch> {
+    let expected =
+        "a dict with any of: ansi (16 colors), foreground, background, cursor, selection";
+    let dict = value
+        .cast::<PyDict>()
+        .map_err(|_| invalid(name, expected))?;
+    let mut patch = PalettePatch::default();
+    for (key, color) in dict.iter() {
+        let key: String = key.extract().map_err(|_| invalid(name, expected))?;
+        match key.as_str() {
+            "ansi" => {
+                let colors: Vec<Bound<'_, PyAny>> = required(&color, name, expected)?;
+                if colors.len() != 16 {
+                    return Err(invalid(name, "a dict whose `ansi` has exactly 16 colors"));
+                }
+                let mut ansi = [Color::TRANSPARENT; 16];
+                for (slot, color) in ansi.iter_mut().zip(&colors) {
+                    *slot = parse_color(color, name)?;
+                }
+                patch.ansi = Some(ansi);
+            }
+            "foreground" => patch.foreground = Some(parse_color(&color, name)?),
+            "background" => patch.background = Some(parse_color(&color, name)?),
+            "cursor" => patch.cursor = Some(parse_color(&color, name)?),
+            "selection" => patch.selection = Some(parse_color(&color, name)?),
+            _ => return Err(invalid(name, expected)),
+        }
+    }
+    Ok(patch)
+}
+
+fn palette_to_py(palette: &TerminalPalette, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    let dict = PyDict::new(py);
+    let ansi = palette
+        .ansi
+        .iter()
+        .map(|c| color_to_py(*c, py))
+        .collect::<PyResult<Vec<_>>>()?;
+    dict.set_item("ansi", ansi)?;
+    dict.set_item("foreground", color_to_py(palette.foreground, py)?)?;
+    dict.set_item("background", color_to_py(palette.background, py)?)?;
+    dict.set_item("cursor", color_to_py(palette.cursor, py)?)?;
+    dict.set_item("selection", color_to_py(palette.selection, py)?)?;
+    Ok(dict.into_any().unbind())
+}
+
+fn optional_color(value: &Bound<'_, PyAny>, name: &str) -> PyResult<Option<Color>> {
+    if value.is_none() {
+        return Ok(None);
+    }
+    parse_color(value, name).map(Some)
+}
+
+/// M95: `corner_radius` -- one radius, or `[top_left, top_right,
+/// bottom_right, bottom_left]`.
+#[derive(Clone, Copy)]
+pub(crate) enum Radius {
+    Uniform(f64),
+    Corners([f64; 4]),
+}
+
+/// An `(r, g, b, a)` tuple of 0-255 ints.
+pub(crate) fn parse_color(value: &Bound<'_, PyAny>, name: &str) -> PyResult<Color> {
+    let (r, g, b, a): (u8, u8, u8, u8) =
+        required(value, name, "an (r, g, b, a) tuple of 0-255 ints")?;
+    Ok(Color::from_rgba8(r, g, b, a))
+}
+
+/// A color as the `(r, g, b, a)` tuple it was set from.
+pub(crate) fn color_to_py(color: Color, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    let [r, g, b, a] = color.to_rgba8().to_u8_array();
+    Ok((r, g, b, a).into_pyobject(py)?.into_any().unbind())
+}
+
+/// A non-negative, finite number.
+pub(crate) fn parse_non_negative(value: &Bound<'_, PyAny>, name: &str) -> PyResult<f64> {
+    let number: f64 = required(value, name, "a non-negative number")?;
+    if number < 0.0 || !number.is_finite() {
+        return Err(invalid(name, "a non-negative number"));
+    }
+    Ok(number)
+}
+
+pub(crate) fn parse_radius(value: &Bound<'_, PyAny>, name: &str) -> PyResult<Radius> {
+    let expected =
+        "a non-negative number or a (top_left, top_right, bottom_right, bottom_left) tuple";
+    if let Ok(number) = value.extract::<f64>() {
+        if number < 0.0 || !number.is_finite() {
+            return Err(invalid(name, expected));
+        }
+        return Ok(Radius::Uniform(number));
+    }
+    let corners: (f64, f64, f64, f64) = required(value, name, expected)?;
+    let corners = [corners.0, corners.1, corners.2, corners.3];
+    if corners.iter().any(|c| *c < 0.0 || !c.is_finite()) {
+        return Err(invalid(name, expected));
+    }
+    Ok(Radius::Corners(corners))
+}
+
+pub(crate) fn parse_shadows(value: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<Shadow>> {
+    let expected = "a list of (color, offset_x, offset_y, blur, spread) tuples, blur non-negative";
+    let items: Vec<Bound<'_, PyAny>> = required(value, name, expected)?;
+    items
+        .iter()
+        .map(|item| {
+            let (color, offset_x, offset_y, blur, spread): (Bound<'_, PyAny>, f64, f64, f64, f64) =
+                required(item, name, expected)?;
+            if blur < 0.0 {
+                return Err(invalid(name, expected));
+            }
+            Ok(Shadow {
+                color: parse_color(&color, name)?,
+                offset_x,
+                offset_y,
+                blur,
+                spread,
+            })
+        })
+        .collect()
+}
+
+/// Reads an animatable property -- its current (possibly mid-animation)
+/// value, or with `target` the value it's heading to. `None` for any
+/// other name.
+pub(crate) fn animatable_to_py(
+    node: &engine_core::Node,
+    name: &str,
+    target: bool,
+    py: Python<'_>,
+) -> PyResult<Option<Py<PyAny>>> {
+    fn pick<T: Interpolate + Clone>(value: &Animated<T>, target: bool) -> &T {
+        if target {
+            value.target()
+        } else {
+            &value.current
+        }
+    }
+    let number = |v: f64| -> PyResult<Py<PyAny>> { Ok(v.into_pyobject(py)?.into_any().unbind()) };
+    let value = match name {
+        "fill" => color_to_py(
+            match &node.kind {
+                NodeKind::Icon(state) => *pick(&state.tint, target),
+                _ => *pick(&node.paint.background, target),
+            },
+            py,
+        )?,
+        "stroke_color" => color_to_py(*pick(&node.paint.border_color, target), py)?,
+        "stroke_width" => number(*pick(&node.paint.border_width, target))?,
+        "opacity" => number(*pick(&node.paint.opacity, target))?,
+        "corner_radius" => match &node.paint.corner_radii_override {
+            Some(radii) => {
+                let [a, b, c, d] = pick(radii, target).0;
+                (a, b, c, d).into_pyobject(py)?.into_any().unbind()
+            }
+            None => number(*pick(&node.paint.corner_radius, target))?,
+        },
+        "shadows" => {
+            let mut out = Vec::new();
+            for shadow in &pick(&node.paint.shadows, target).0 {
+                out.push((
+                    color_to_py(shadow.color, py)?,
+                    shadow.offset_x,
+                    shadow.offset_y,
+                    shadow.blur,
+                    shadow.spread,
+                ));
+            }
+            out.into_pyobject(py)?.into_any().unbind()
+        }
+        "data" | "trim_start" | "trim_end" => {
+            let NodeKind::Path(state) = &node.kind else {
+                return Err(PyValueError::new_err(format!(
+                    "node property `{name}` applies only to a path node"
+                )));
+            };
+            match name {
+                "data" => pick(&state.data, target)
+                    .to_svg()
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind(),
+                "trim_start" => number(*pick(&state.trim_start, target))?,
+                _ => number(*pick(&state.trim_end, target))?,
+            }
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(value))
+}
+
+/// Stops `name`'s running animation where it is. `false` for a name with
+/// no animation to stop.
+pub(crate) fn stop_animatable(node: &mut engine_core::Node, name: &str) -> PyResult<bool> {
+    match name {
+        "fill" => match &mut node.kind {
+            NodeKind::Icon(state) => state.tint.stop(),
+            _ => node.paint.background.stop(),
+        },
+        "stroke_color" => node.paint.border_color.stop(),
+        "stroke_width" => node.paint.border_width.stop(),
+        "opacity" => node.paint.opacity.stop(),
+        "corner_radius" => {
+            node.paint.corner_radius.stop();
+            if let Some(radii) = &mut node.paint.corner_radii_override {
+                radii.stop();
+            }
+        }
+        "shadows" => node.paint.shadows.stop(),
+        "data" | "trim_start" | "trim_end" => {
+            let NodeKind::Path(state) = &mut node.kind else {
+                return Err(PyValueError::new_err(format!(
+                    "node property `{name}` applies only to a path node"
+                )));
+            };
+            match name {
+                "data" => state.data.stop(),
+                "trim_start" => state.trim_start.stop(),
+                _ => state.trim_end.stop(),
+            }
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+/// A property only one kind has: its name, that kind's name, and a test
+/// for it.
+type KindRequirement = (&'static str, &'static str, fn(&NodeKind) -> bool);
+
+impl Change {
+    /// The kind this change requires, if it's specific to one -- checked
+    /// before anything is applied.
+    fn kind_requirement(&self) -> Option<KindRequirement> {
+        fn path(kind: &NodeKind) -> bool {
+            matches!(kind, NodeKind::Path(_))
+        }
+        fn text_input(kind: &NodeKind) -> bool {
+            matches!(kind, NodeKind::TextField(_))
+        }
+        fn scroll_view(kind: &NodeKind) -> bool {
+            matches!(kind, NodeKind::ScrollView(_))
+        }
+        fn terminal(kind: &NodeKind) -> bool {
+            matches!(kind, NodeKind::Terminal(_))
+        }
+        Some(match self {
+            Change::Data(_) => ("data", "path", path),
+            Change::ViewBox(_) => ("view_box", "path", path),
+            Change::TrimStart(_) => ("trim_start", "path", path),
+            Change::TrimEnd(_) => ("trim_end", "path", path),
+            Change::Placeholder(_) => ("placeholder", "text_input", text_input),
+            Change::PlaceholderFill(_) => ("placeholder_fill", "text_input", text_input),
+            Change::CaretColor(_) => ("caret_color", "text_input", text_input),
+            Change::SelectionFill(_) => ("selection_fill", "text_input", text_input),
+            Change::Obscured(_) => ("obscured", "text_input", text_input),
+            Change::ScrollbarFill(_) => ("scrollbar_fill", "scroll_view", scroll_view),
+            Change::ScrollbarWidth(_) => ("scrollbar_width", "scroll_view", scroll_view),
+            Change::Palette(_) => ("palette", "terminal", terminal),
+            _ => return None,
+        })
     }
 }
 
@@ -294,6 +607,20 @@ fn parse(name: &str, value: &Bound<'_, PyAny>) -> PyResult<Change> {
         }),
         "trim_start" => Change::TrimStart(fraction(value, name)?),
         "trim_end" => Change::TrimEnd(fraction(value, name)?),
+        "fill" => Change::Fill(parse_color(value, name)?),
+        "stroke_color" => Change::StrokeColor(parse_color(value, name)?),
+        "stroke_width" => Change::StrokeWidth(parse_non_negative(value, name)?),
+        "opacity" => Change::Opacity(fraction(value, name)?),
+        "corner_radius" => Change::CornerRadius(parse_radius(value, name)?),
+        "shadows" => Change::Shadows(parse_shadows(value, name)?),
+        "placeholder" => Change::Placeholder(required(value, name, "a str")?),
+        "placeholder_fill" => Change::PlaceholderFill(optional_color(value, name)?),
+        "caret_color" => Change::CaretColor(optional_color(value, name)?),
+        "selection_fill" => Change::SelectionFill(optional_color(value, name)?),
+        "obscured" => Change::Obscured(boolean(value, name)?),
+        "scrollbar_fill" => Change::ScrollbarFill(optional_color(value, name)?),
+        "scrollbar_width" => Change::ScrollbarWidth(parse_non_negative(value, name)?),
+        "palette" => Change::Palette(Box::new(parse_palette(value, name)?)),
         _ => {
             return Err(PyValueError::new_err(format!(
                 "unknown node property {name:?} -- settable: {}",
@@ -314,11 +641,11 @@ pub(crate) fn parse_all(
         for (name, value) in props.iter() {
             let name: String = name.extract()?;
             let change = parse(&name, &value)?;
-            if let Some(prop) = change.path_only()
-                && !matches!(kind, NodeKind::Path(_))
+            if let Some((prop, kind_name, applies)) = change.kind_requirement()
+                && !applies(kind)
             {
                 return Err(PyValueError::new_err(format!(
-                    "node property `{prop}` applies only to a path node"
+                    "node property `{prop}` applies only to a {kind_name} node"
                 )));
             }
             changes.push(change);
@@ -364,6 +691,9 @@ impl Node {
             let node = tree.get(self.id).ok_or_else(|| {
                 PyValueError::new_err("this node has been removed from its window")
             })?;
+            if let Some(value) = animatable_to_py(node, name, false, py)? {
+                return Ok(value);
+            }
             let access = &node.access;
             let any = |v: Bound<'_, PyAny>| v.unbind();
             match name {
@@ -417,23 +747,61 @@ impl Node {
                 "hit_testable" => any(node.hit_testable.into_pyobject(py)?.to_owned().into_any()),
                 "width" => dimension_to_py(node.layout_style.size.width, py)?,
                 "height" => dimension_to_py(node.layout_style.size.height, py)?,
-                "data" | "view_box" | "trim_start" | "trim_end" => {
-                    let NodeKind::Path(state) = &node.kind else {
+                "placeholder" | "placeholder_fill" | "caret_color" | "selection_fill"
+                | "obscured" => {
+                    let NodeKind::TextField(state) = &node.kind else {
                         return Err(PyValueError::new_err(format!(
-                            "node property `{name}` applies only to a path node"
+                            "node property `{name}` applies only to a text_input node"
                         )));
                     };
+                    let color = |c: Option<Color>| -> PyResult<Py<PyAny>> {
+                        c.map_or_else(|| Ok(py.None()), |c| color_to_py(c, py))
+                    };
                     match name {
-                        "data" => any(state.data.current.to_svg().into_pyobject(py)?.into_any()),
-                        "view_box" => state
-                            .view_box
-                            .map(|r| (r.x0, r.y0, r.width(), r.height()))
-                            .into_pyobject(py)?
-                            .into_any()
-                            .unbind(),
-                        "trim_start" => any(state.trim_start.current.into_pyobject(py)?.into_any()),
-                        _ => any(state.trim_end.current.into_pyobject(py)?.into_any()),
+                        "placeholder" => {
+                            any(state.placeholder.clone().into_pyobject(py)?.into_any())
+                        }
+                        "placeholder_fill" => color(state.placeholder_fill)?,
+                        "caret_color" => color(state.caret_color)?,
+                        "selection_fill" => color(state.selection_fill)?,
+                        _ => any(state.obscured.into_pyobject(py)?.to_owned().into_any()),
                     }
+                }
+                "scrollbar_fill" | "scrollbar_width" => {
+                    let NodeKind::ScrollView(state) = &node.kind else {
+                        return Err(PyValueError::new_err(format!(
+                            "node property `{name}` applies only to a scroll_view node"
+                        )));
+                    };
+                    if name == "scrollbar_width" {
+                        any(state.scrollbar_width.into_pyobject(py)?.into_any())
+                    } else {
+                        match state.scrollbar_fill {
+                            Some(c) => color_to_py(c, py)?,
+                            None => py.None(),
+                        }
+                    }
+                }
+                "palette" => {
+                    let NodeKind::Terminal(state) = &node.kind else {
+                        return Err(PyValueError::new_err(
+                            "node property `palette` applies only to a terminal node",
+                        ));
+                    };
+                    palette_to_py(&state.palette, py)?
+                }
+                "view_box" => {
+                    let NodeKind::Path(state) = &node.kind else {
+                        return Err(PyValueError::new_err(
+                            "node property `view_box` applies only to a path node",
+                        ));
+                    };
+                    state
+                        .view_box
+                        .map(|r| (r.x0, r.y0, r.width(), r.height()))
+                        .into_pyobject(py)?
+                        .into_any()
+                        .unbind()
                 }
                 "focused" => {
                     let focused = tree.focused() == Some(self.id);
@@ -450,6 +818,35 @@ impl Node {
             }
         };
         Ok(value)
+    }
+
+    /// M95: the value `name`'s running animation is heading to -- equal to
+    /// `get(name)` when nothing is animating it. Animatable properties
+    /// only.
+    fn get_target(&self, name: &str, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let tree = self.tree.borrow();
+        let node = tree
+            .get(self.id)
+            .ok_or_else(|| PyValueError::new_err("this node has been removed from its window"))?;
+        animatable_to_py(node, name, true, py)?.ok_or_else(|| {
+            PyValueError::new_err(format!("node property {name:?} isn't animatable"))
+        })
+    }
+
+    /// M95: stops `name`'s running animation where it is; its
+    /// `on_complete` never fires. A no-op when nothing is animating it.
+    fn stop_animation(&self, name: &str) -> PyResult<()> {
+        let mut tree = self.tree.borrow_mut();
+        let node = tree
+            .get_mut(self.id)
+            .ok_or_else(|| PyValueError::new_err("this node has been removed from its window"))?;
+        if stop_animatable(node, name)? {
+            Ok(())
+        } else {
+            Err(PyValueError::new_err(format!(
+                "node property {name:?} isn't animatable"
+            )))
+        }
     }
 
     /// Moves keyboard focus to this node, firing `blur` and `focus` (and
@@ -536,6 +933,63 @@ impl Node {
                 Change::TrimEnd(end) => {
                     if let NodeKind::Path(state) = &mut node.kind {
                         state.trim_end = Animated::new(end);
+                    }
+                }
+                Change::Fill(color) => match &mut node.kind {
+                    NodeKind::Icon(state) => state.tint = Animated::new(color),
+                    _ => node.paint.background = Animated::new(color),
+                },
+                Change::StrokeColor(color) => node.paint.border_color = Animated::new(color),
+                Change::StrokeWidth(width) => node.paint.border_width = Animated::new(width),
+                Change::Opacity(opacity) => node.paint.opacity = Animated::new(opacity),
+                Change::CornerRadius(Radius::Uniform(radius)) => {
+                    node.paint.corner_radius = Animated::new(radius);
+                    node.paint.corner_radii_override = None;
+                }
+                Change::CornerRadius(Radius::Corners(corners)) => {
+                    node.paint.corner_radii_override = Some(Animated::new(CornerRadii(corners)));
+                }
+                Change::Shadows(shadows) => {
+                    node.paint.shadows = Animated::new(Shadows(shadows));
+                }
+                Change::Placeholder(text) => {
+                    if let NodeKind::TextField(state) = &mut node.kind {
+                        state.placeholder = text;
+                    }
+                }
+                Change::PlaceholderFill(color) => {
+                    if let NodeKind::TextField(state) = &mut node.kind {
+                        state.placeholder_fill = color;
+                    }
+                }
+                Change::CaretColor(color) => {
+                    if let NodeKind::TextField(state) = &mut node.kind {
+                        state.caret_color = color;
+                    }
+                }
+                Change::SelectionFill(color) => {
+                    if let NodeKind::TextField(state) = &mut node.kind {
+                        state.selection_fill = color;
+                    }
+                }
+                Change::Obscured(obscured) => {
+                    if let NodeKind::TextField(state) = &mut node.kind {
+                        state.obscured = obscured;
+                    }
+                }
+                Change::ScrollbarFill(color) => {
+                    if let NodeKind::ScrollView(state) = &mut node.kind {
+                        state.scrollbar_fill = color;
+                    }
+                }
+                Change::ScrollbarWidth(width) => {
+                    if let NodeKind::ScrollView(state) = &mut node.kind {
+                        state.scrollbar_width = width;
+                    }
+                }
+                Change::Palette(patch) => {
+                    if let NodeKind::Terminal(state) = &mut node.kind {
+                        patch.apply(&mut state.palette);
                     }
                 }
             }

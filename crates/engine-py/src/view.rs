@@ -516,7 +516,7 @@ fn apply_binding_value(
             )));
         }
     };
-    temp_node.animate(property, bound, 0, None)?;
+    temp_node.animate(property, bound, 0, None, None)?;
     tree.borrow_mut().tick_all(std::time::Instant::now());
     Ok(())
 }
