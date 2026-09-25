@@ -34,15 +34,33 @@ pub enum SpecError {
     /// types and `#[from]` only supports one source type per variant.
     #[error("failed to parse view JSON: {0}")]
     ParseJson(#[from] serde_json::Error),
+    /// M90: `style.background` set inline on a kind whose paint color
+    /// is its glyph or text -- the pre-M90 spelling. Names the
+    /// replacement instead of silently dropping the value.
+    #[error(
+        "widget \"{id}\": {kind} has no fill, so style.background doesn't apply -- its \
+         glyph/text color is style.foreground"
+    )]
+    NotAFill { id: String, kind: &'static str },
+    /// M90: the wrong one of `checked`/`selected` for this kind --
+    /// `Checkbox` takes `checked`, `Switch`/`RadioButton` take `selected`.
+    #[error("widget \"{id}\": {kind} takes `{expected}:`, not `{given}:`")]
+    WrongStateField {
+        id: String,
+        kind: &'static str,
+        given: &'static str,
+        expected: &'static str,
+    },
     #[error("widget \"{id}\": {kind} requires {field}, none given")]
     MissingField {
         id: String,
         kind: &'static str,
         field: &'static str,
     },
-    #[error("widget \"{id}\": invalid style.background \"{value}\": {source}")]
+    #[error("widget \"{id}\": invalid style.{field} \"{value}\": {source}")]
     InvalidColor {
         id: String,
+        field: &'static str,
         value: String,
         #[source]
         source: peniko::color::ParseError,
@@ -64,7 +82,7 @@ pub enum SpecError {
     /// real 15-role vocabulary -- `UnknownShapeToken`'s own real
     /// typography sibling, the identical "fail loudly at the boundary"
     /// reasoning.
-    #[error("widget \"{id}\": unknown text.role {role:?}")]
+    #[error("widget \"{id}\": unknown text.typography_role {role:?}")]
     UnknownTypographyRole { id: String, role: String },
     /// `icon.name` named something outside `engine_md3::icons`'s own
     /// curated vocabulary -- the identical real "fail loudly, name what
@@ -491,7 +509,7 @@ fn resolve_text_style(
     kind: &'static str,
 ) -> Result<(String, f32, f32, Option<f32>), SpecError> {
     let role_style = text_spec
-        .role
+        .typography_role
         .as_deref()
         .map(|role| {
             engine_md3::type_style_named(role).ok_or_else(|| SpecError::UnknownTypographyRole {
@@ -508,7 +526,7 @@ fn resolve_text_style(
         .ok_or_else(|| SpecError::MissingField {
             id: spec.id.clone(),
             kind,
-            field: "text.font_family (or text.role)",
+            field: "text.font_family (or text.typography_role)",
         })?;
     let font_weight = text_spec
         .font_weight
@@ -520,7 +538,7 @@ fn resolve_text_style(
         .ok_or_else(|| SpecError::MissingField {
             id: spec.id.clone(),
             kind,
-            field: "text.font_size (or text.role)",
+            field: "text.font_size (or text.typography_role)",
         })?;
     let line_height = text_spec.line_height.or(role_style.map(|s| s.line_height));
 
@@ -555,7 +573,7 @@ fn node_kind_and_paint(
     // identical "just set it" shape `PaintProperties::new` itself uses
     // for `background`/`corner_radius`, not a live-eased transition.
     if let Some(raw) = &style.border_color {
-        paint.border_color = Animated::new(resolve_color(spec, raw, scheme)?);
+        paint.border_color = Animated::new(resolve_color(spec, "border_color", raw, scheme)?);
     }
     if let Some(border_width) = style.border_width {
         paint.border_width = Animated::new(f64::from(border_width));
@@ -601,7 +619,7 @@ fn node_kind_and_base_paint(
             ))
         }
         NodeKindSpec::Text => {
-            let background = required_background(spec, style, scheme, "Text")?;
+            let background = required_foreground(spec, style, scheme, "Text")?;
             let text_spec = spec.text.as_ref().ok_or_else(|| SpecError::MissingField {
                 id: spec.id.clone(),
                 kind: "Text",
@@ -629,7 +647,7 @@ fn node_kind_and_base_paint(
             // Container this codebase has built by hand so far
             // (rect_window.rs, layout_tree.rs).
             let background = match &style.background {
-                Some(raw) => resolve_color(spec, raw, scheme)?,
+                Some(raw) => resolve_color(spec, "background", raw, scheme)?,
                 None => Color::from_rgba8(0, 0, 0, 0),
             };
             Ok((
@@ -646,7 +664,7 @@ fn node_kind_and_base_paint(
         NodeKindSpec::Checkbox => {
             let background = required_background(spec, style, scheme, "Checkbox")?;
             Ok((
-                NodeKind::Checkbox(CheckboxState::new(spec.checked)),
+                NodeKind::Checkbox(CheckboxState::new(checkbox_checked(spec)?)),
                 PaintProperties::new(background, corner_radius, 0.0, opacity),
             ))
         }
@@ -757,7 +775,7 @@ fn node_kind_and_base_paint(
                     icon_spec.name
                 )
             });
-            let tint = required_background(spec, style, scheme, "Icon")?;
+            let tint = required_foreground(spec, style, scheme, "Icon")?;
             Ok((
                 NodeKind::Icon(IconState::new(path, tint)),
                 PaintProperties::new(Color::from_rgba8(0, 0, 0, 0), 0.0, 0.0, opacity),
@@ -776,7 +794,7 @@ fn node_kind_and_base_paint(
         // rather than special-casing `Link` to forbid what `Text`/
         // `TextField` both already allow.
         NodeKindSpec::Link => {
-            let background = required_background(spec, style, scheme, "Link")?;
+            let background = required_foreground(spec, style, scheme, "Link")?;
             let text_spec = spec.text.as_ref().ok_or_else(|| SpecError::MissingField {
                 id: spec.id.clone(),
                 kind: "Link",
@@ -803,7 +821,7 @@ fn node_kind_and_base_paint(
         // via `add_radio_button`'s own real body: hardcoded `TRANSPARENT`
         // `PaintProperties.background`), not `style.background` at all.
         NodeKindSpec::RadioButton => {
-            let mut state = RadioButtonState::new(spec.checked);
+            let mut state = RadioButtonState::new(md3_selected(spec, "RadioButton")?);
             state.unselected_tint = resolve_role_or_fallback(scheme, "outline", BASELINE_OUTLINE);
             state.selected_tint = resolve_role_or_fallback(scheme, "primary", BASELINE_PRIMARY);
             Ok((
@@ -816,7 +834,7 @@ fn node_kind_and_base_paint(
         // makes. 5 internal tint fields, confirmed via `add_switch`'s
         // own real body -- the most tint fields of any of these 7.
         NodeKindSpec::Switch => {
-            let mut state = SwitchState::new(spec.checked);
+            let mut state = SwitchState::new(md3_selected(spec, "Switch")?);
             state.track_off_tint = resolve_role_or_fallback(
                 scheme,
                 "surface_container_highest",
@@ -879,7 +897,7 @@ fn node_kind_and_base_paint(
         // real kind needing a `PaintProperties` field the match itself
         // has no other reason to touch.
         NodeKindSpec::LoadingIndicator => {
-            let tint = required_background(spec, style, scheme, "LoadingIndicator")?;
+            let tint = required_foreground(spec, style, scheme, "LoadingIndicator")?;
             let width = style.width.ok_or_else(|| SpecError::MissingField {
                 id: spec.id.clone(),
                 kind: "LoadingIndicator",
@@ -926,11 +944,67 @@ fn required_background(
     kind: &'static str,
 ) -> Result<Color, SpecError> {
     match &style.background {
-        Some(raw) => resolve_color(spec, raw, scheme),
+        Some(raw) => resolve_color(spec, "background", raw, scheme),
         None => Err(SpecError::MissingField {
             id: spec.id.clone(),
             kind,
             field: "style.background",
+        }),
+    }
+}
+
+/// M90: a `Checkbox`'s initial `checked`; `selected:` on a `Checkbox` is
+/// the wrong field and says so.
+fn checkbox_checked(spec: &WidgetSpec) -> Result<bool, SpecError> {
+    if spec.selected.is_some() {
+        return Err(SpecError::WrongStateField {
+            id: spec.id.clone(),
+            kind: "Checkbox",
+            given: "selected",
+            expected: "checked",
+        });
+    }
+    Ok(spec.checked.unwrap_or(false))
+}
+
+/// M90: a `Switch`/`RadioButton`'s initial `selected`; `checked:` on
+/// either is the pre-M90 spelling and says so.
+fn md3_selected(spec: &WidgetSpec, kind: &'static str) -> Result<bool, SpecError> {
+    if spec.checked.is_some() {
+        return Err(SpecError::WrongStateField {
+            id: spec.id.clone(),
+            kind,
+            given: "checked",
+            expected: "selected",
+        });
+    }
+    Ok(spec.selected.unwrap_or(false))
+}
+
+/// M90: the glyph/text color of `Text`/`Link`/`Icon`/`LoadingIndicator`
+/// -- `style.foreground`, required. These kinds have no fill: an inline
+/// `style.background` on the widget itself is the pre-M90 spelling and
+/// fails with a hint naming `foreground`. A `background` reaching them
+/// only through the cascade (e.g. a selector-less baseline stylesheet
+/// rule meant for every widget) is ignored rather than an error.
+fn required_foreground(
+    spec: &WidgetSpec,
+    style: &StyleSpec,
+    scheme: Option<&ColorScheme>,
+    kind: &'static str,
+) -> Result<Color, SpecError> {
+    if spec.style.background.is_some() {
+        return Err(SpecError::NotAFill {
+            id: spec.id.clone(),
+            kind,
+        });
+    }
+    match &style.foreground {
+        Some(raw) => resolve_color(spec, "foreground", raw, scheme),
+        None => Err(SpecError::MissingField {
+            id: spec.id.clone(),
+            kind,
+            field: "style.foreground",
         }),
     }
 }
@@ -979,6 +1053,7 @@ fn resolve_role_or_fallback(
 
 fn resolve_color(
     spec: &WidgetSpec,
+    field: &'static str,
     raw: &str,
     scheme: Option<&ColorScheme>,
 ) -> Result<Color, SpecError> {
@@ -992,6 +1067,7 @@ fn resolve_color(
         .map(|dynamic| dynamic.to_alpha_color::<peniko::color::Srgb>())
         .map_err(|source| SpecError::InvalidColor {
             id: spec.id.clone(),
+            field,
             value: raw.to_string(),
             source,
         })
@@ -1006,7 +1082,7 @@ mod tests {
     const VIEW: &str = r##"
 id: root
 kind: Container
-style: {flex_direction: Horizontal, padding: 10, gap: 5, width: 220, height: 100}
+style: {flex_direction: horizontal, padding: 10, gap: 5, width: 220, height: 100}
 children:
   - id: swatch
     kind: Rect
@@ -1014,7 +1090,7 @@ children:
   - id: label
     kind: Text
     text: {content: "Hi", font_family: Roboto, font_size: 16}
-    style: {width: 90, height: 30, background: white}
+    style: {width: 90, height: 30, foreground: white}
 "##;
 
     #[test]
@@ -1025,7 +1101,7 @@ children:
         let json = r##"{
             "id": "root",
             "kind": "Container",
-            "style": {"flex_direction": "Horizontal", "padding": 10, "gap": 5, "width": 220, "height": 100},
+            "style": {"flex_direction": "horizontal", "padding": 10, "gap": 5, "width": 220, "height": 100},
             "children": [
                 {
                     "id": "swatch",
@@ -1420,7 +1496,7 @@ style: {width: 10, height: 10, background: red, corner_radius: 6.0}
 id: label
 kind: Text
 text: {content: "Hi", font_family: Roboto, font_size: 16, line_height: 1.5}
-style: {width: 90, height: 30, background: white}
+style: {width: 90, height: 30, foreground: white}
 "#;
         let mut tree = Tree::new();
         let root = load_view(&mut tree, yaml).expect("a real line_height must parse");
@@ -1440,7 +1516,7 @@ style: {width: 90, height: 30, background: white}
 id: label
 kind: Text
 text: {content: "Hi", font_family: Roboto, font_size: 16}
-style: {width: 90, height: 30, background: white}
+style: {width: 90, height: 30, foreground: white}
 "#;
         let mut tree = Tree::new();
         let root = load_view(&mut tree, yaml).expect("a view with no line_height must still parse");
@@ -1463,8 +1539,8 @@ style: {width: 90, height: 30, background: white}
         let yaml = r#"
 id: label
 kind: Text
-text: {content: "Hi", role: title_medium}
-style: {width: 90, height: 30, background: white}
+text: {content: "Hi", typography_role: title_medium}
+style: {width: 90, height: 30, foreground: white}
 "#;
         let mut tree = Tree::new();
         let root = load_view(&mut tree, yaml).expect("a real typography role must resolve");
@@ -1488,8 +1564,8 @@ style: {width: 90, height: 30, background: white}
         let yaml = r#"
 id: label
 kind: Text
-text: {content: "Hi", role: title_medium, font_size: 20}
-style: {width: 90, height: 30, background: white}
+text: {content: "Hi", typography_role: title_medium, font_size: 20}
+style: {width: 90, height: 30, foreground: white}
 "#;
         let mut tree = Tree::new();
         let root = load_view(&mut tree, yaml).expect("role plus a literal override must resolve");
@@ -1513,8 +1589,8 @@ style: {width: 90, height: 30, background: white}
         let yaml = r#"
 id: bad-role
 kind: Text
-text: {content: "Hi", role: subtitle_huge}
-style: {width: 90, height: 30, background: white}
+text: {content: "Hi", typography_role: subtitle_huge}
+style: {width: 90, height: 30, foreground: white}
 "#;
         let mut tree = Tree::new();
         let err = load_view(&mut tree, yaml).expect_err("an unrecognized role must fail");
@@ -1536,7 +1612,7 @@ style: {width: 90, height: 30, background: white}
 id: label
 kind: Text
 text: {content: "Hi"}
-style: {width: 90, height: 30, background: white}
+style: {width: 90, height: 30, foreground: white}
 "#;
         let mut tree = Tree::new();
         let err =
@@ -1585,7 +1661,7 @@ style: {width: 90, height: 30, background: white}
         let yaml = r#"
 id: logo
 kind: Image
-image: {src: logo.png, fit: Cover}
+image: {src: logo.png, fit: cover}
 style: {width: 40, height: 40}
 "#;
         let mut tree = Tree::new();
@@ -1628,7 +1704,7 @@ style: {width: 40, height: 40}
         let yaml = r#"
 id: placeholder
 kind: Image
-image: {fit: Cover}
+image: {fit: cover}
 style: {width: 40, height: 40}
 "#;
         let mut tree = Tree::new();
@@ -1724,7 +1800,7 @@ style: {width: 40, height: 40}
 id: gear
 kind: Icon
 icon: {name: settings}
-style: {width: 24, height: 24, background: "#1C1B1FFF"}
+style: {width: 24, height: 24, foreground: "#1C1B1FFF"}
 "##;
         let mut tree = Tree::new();
         let root = load_view(&mut tree, yaml).expect("a real, known icon name must build");
@@ -1744,7 +1820,7 @@ style: {width: 24, height: 24, background: "#1C1B1FFF"}
         let yaml = r##"
 id: gear
 kind: Icon
-style: {width: 24, height: 24, background: "#1C1B1FFF"}
+style: {width: 24, height: 24, foreground: "#1C1B1FFF"}
 "##;
         let mut tree = Tree::new();
         let err = load_view(&mut tree, yaml).expect_err("a Icon with no icon: block must fail");
@@ -1764,7 +1840,7 @@ style: {width: 24, height: 24, background: "#1C1B1FFF"}
 id: gear
 kind: Icon
 icon: {name: not_a_real_icon}
-style: {width: 24, height: 24, background: "#1C1B1FFF"}
+style: {width: 24, height: 24, foreground: "#1C1B1FFF"}
 "##;
         let mut tree = Tree::new();
         let err = load_view(&mut tree, yaml).expect_err("an unknown icon name must fail clearly");
@@ -1775,10 +1851,9 @@ style: {width: 24, height: 24, background: "#1C1B1FFF"}
     }
 
     #[test]
-    fn kind_icon_with_no_background_is_a_clear_missing_field_error() {
-        // Reuses the exact `required_background` contract `kind: Text`
-        // already has -- the glyph's own color is `style.background`,
-        // required the same way.
+    fn kind_icon_with_no_foreground_is_a_clear_missing_field_error() {
+        // M90: the glyph's color is `style.foreground`, required the same
+        // way `kind: Text`'s is (`required_foreground`).
         let yaml = r#"
 id: gear
 kind: Icon
@@ -1786,12 +1861,12 @@ icon: {name: settings}
 style: {width: 24, height: 24}
 "#;
         let mut tree = Tree::new();
-        let err = load_view(&mut tree, yaml).expect_err("Icon with no background must fail");
+        let err = load_view(&mut tree, yaml).expect_err("Icon with no foreground must fail");
         assert!(matches!(
             err,
             SpecError::MissingField {
                 kind: "Icon",
-                field: "style.background",
+                field: "style.foreground",
                 ..
             }
         ));
@@ -1811,7 +1886,7 @@ style: {width: 24, height: 24}
 id: docs
 kind: Link
 text: {content: "Docs", font_family: Roboto, font_size: 14}
-style: {width: 60, height: 20, background: "#6750A4FF"}
+style: {width: 60, height: 20, foreground: "#6750A4FF"}
 "##;
         let mut tree = Tree::new();
         let root = load_view(&mut tree, yaml).expect("a real Link must build");
@@ -1827,7 +1902,7 @@ style: {width: 60, height: 20, background: "#6750A4FF"}
         let yaml = r##"
 id: docs
 kind: Link
-style: {width: 60, height: 20, background: "#6750A4FF"}
+style: {width: 60, height: 20, foreground: "#6750A4FF"}
 "##;
         let mut tree = Tree::new();
         let err = load_view(&mut tree, yaml).expect_err("a Link with no text: block must fail");
@@ -1846,7 +1921,7 @@ style: {width: 60, height: 20, background: "#6750A4FF"}
         let yaml = r#"
 id: opt
 kind: RadioButton
-checked: true
+selected: true
 style: {width: 20, height: 20}
 "#;
         let mut tree = Tree::new();
@@ -1855,7 +1930,10 @@ style: {width: 20, height: 20}
         let NodeKind::RadioButton(state) = &node.kind else {
             panic!("expected a RadioButton node");
         };
-        assert!(state.selected, "checked: true must map to selected");
+        assert!(
+            state.selected,
+            "selected: true must seed RadioButtonState.selected"
+        );
         assert_eq!(state.selected_tint, BASELINE_PRIMARY);
         assert_eq!(state.unselected_tint, BASELINE_OUTLINE);
     }
@@ -1865,7 +1943,7 @@ style: {width: 20, height: 20}
         let yaml = r#"
 id: toggle
 kind: Switch
-checked: false
+selected: false
 style: {width: 52, height: 32}
 "#;
         let mut tree = Tree::new();
@@ -1874,7 +1952,10 @@ style: {width: 52, height: 32}
         let NodeKind::Switch(state) = &node.kind else {
             panic!("expected a Switch node");
         };
-        assert!(!state.on, "checked: false must map to on: false");
+        assert!(
+            !state.on,
+            "selected: false must seed SwitchState.on = false"
+        );
         assert_eq!(state.track_off_tint, BASELINE_SURFACE_CONTAINER_HIGHEST);
         assert_eq!(state.track_on_tint, BASELINE_PRIMARY);
         assert_eq!(state.track_outline_tint, BASELINE_OUTLINE);
@@ -1926,7 +2007,7 @@ style: {width: 200, height: 4}
         let yaml = r##"
 id: spinner
 kind: LoadingIndicator
-style: {width: 48, height: 48, background: "#6750A4FF"}
+style: {width: 48, height: 48, foreground: "#6750A4FF"}
 "##;
         let mut tree = Tree::new();
         let root = load_view(&mut tree, yaml).expect("a real LoadingIndicator must build");
@@ -1945,7 +2026,7 @@ style: {width: 48, height: 48, background: "#6750A4FF"}
         let yaml = r##"
 id: spinner
 kind: LoadingIndicator
-style: {height: 48, background: "#6750A4FF"}
+style: {height: 48, foreground: "#6750A4FF"}
 "##;
         let mut tree = Tree::new();
         let err = load_view(&mut tree, yaml)
@@ -1980,5 +2061,77 @@ style: {width: 256, height: 256}
         assert_eq!(state.minute, 45);
         assert_eq!(state.face_tint, BASELINE_SURFACE_CONTAINER_HIGHEST);
         assert_eq!(state.hand_tint, BASELINE_PRIMARY);
+    }
+
+    /// M90: an inline `style.background` on a glyph kind is the pre-0.3.3
+    /// spelling -- a clear error naming `foreground`, for every such kind.
+    #[test]
+    fn inline_background_on_a_glyph_kind_is_an_error_naming_foreground() {
+        for (kind, extra) in [
+            (
+                "Text",
+                "text: {content: Hi, font_family: Roboto, font_size: 16}",
+            ),
+            (
+                "Link",
+                "text: {content: Hi, font_family: Roboto, font_size: 16}",
+            ),
+            ("Icon", "icon: {name: settings}"),
+            ("LoadingIndicator", ""),
+        ] {
+            let yaml = format!(
+                "id: w\nkind: {kind}\n{extra}\nstyle: {{width: 24, height: 24, background: \"#000000\"}}\n"
+            );
+            let err = load_view(&mut Tree::new(), &yaml).expect_err("background on a glyph kind");
+            assert!(
+                matches!(err, SpecError::NotAFill { .. }),
+                "{kind}: expected NotAFill, got {err:?}"
+            );
+            assert!(
+                err.to_string().contains("style.foreground"),
+                "{kind}: {err}"
+            );
+        }
+    }
+
+    /// M90: a `background` reaching a `Text` only through the cascade
+    /// (a selector-less baseline rule meant for every widget) is ignored,
+    /// not an error -- only the widget's own inline style is checked.
+    #[test]
+    fn a_cascaded_background_is_ignored_on_a_glyph_kind() {
+        let sheet =
+            crate::cascade::parse_stylesheet("styles:\n  - style: {background: \"#FF0000\"}\n")
+                .unwrap();
+        let yaml = "id: t\nkind: Text\ntext: {content: Hi, font_family: Roboto, font_size: 16}\n\
+                    style: {width: 50, height: 20, foreground: \"#00FF00\"}\n";
+        let spec = crate::spec::parse_view(yaml).unwrap();
+        let mut tree = Tree::new();
+        let root = build_tree(&mut tree, &spec, None, None, Some(&sheet), None, None)
+            .expect("a cascaded background must not fail a Text");
+        let paint = &tree.get(root).unwrap().paint;
+        assert_eq!(
+            paint.background.current,
+            Color::from_rgba8(0, 0xFF, 0, 0xFF)
+        );
+    }
+
+    /// M90: `Checkbox` takes `checked`, `Switch`/`RadioButton` take
+    /// `selected`; the wrong one is a clear error naming the right one.
+    #[test]
+    fn the_wrong_state_field_for_a_kind_is_an_error_naming_the_right_one() {
+        for (yaml, expected) in [
+            ("id: s\nkind: Switch\nchecked: true\n", "selected"),
+            ("id: r\nkind: RadioButton\nchecked: true\n", "selected"),
+            (
+                "id: c\nkind: Checkbox\nselected: true\nstyle: {width: 20, height: 20, background: \"#000000\"}\n",
+                "checked",
+            ),
+        ] {
+            let err = load_view(&mut Tree::new(), yaml).expect_err("wrong state field");
+            assert!(
+                matches!(err, SpecError::WrongStateField { expected: e, .. } if e == expected),
+                "expected WrongStateField naming {expected:?}, got {err:?}"
+            );
+        }
     }
 }

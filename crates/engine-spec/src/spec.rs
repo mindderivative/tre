@@ -69,8 +69,16 @@ pub struct WidgetSpec {
     /// shape `text` already has. Overwritten immediately by a real
     /// `bindings: {checked: ...}` one-way resolution if one exists, the
     /// same way a static `style.opacity` is overwritten by a bound one.
+    ///
+    /// M90: `Checkbox` only, and `Option` so a `checked:` written on a
+    /// `Switch`/`RadioButton` (the pre-M90 spelling) can be detected and
+    /// named in an error rather than silently ignored.
     #[serde(default)]
-    pub checked: bool,
+    pub checked: Option<bool>,
+    /// M90: the initial state of a `Switch` or `RadioButton` -- MD3's own
+    /// term for both. `Checkbox` uses `checked` instead.
+    #[serde(default)]
+    pub selected: Option<bool>,
     /// M14 Phase 3 (§5, §7.3): this widget's own initial `thumb_
     /// position` -- only meaningful for `kind: Slider`, same shape as
     /// `checked` above. Tesserae M27: also reused verbatim for `kind:
@@ -230,6 +238,7 @@ pub struct IconSpec {
 /// choice, so an `image:` block with no `fit:` at all keeps
 /// `Window.add_image`'s own byte-for-byte default behavior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ContentFitSpec {
     Cover,
     Contain,
@@ -260,8 +269,12 @@ pub struct TextSpec {
     /// the role's own resolved default -- the identical per-field-
     /// override shape `TypographyOverride` (`theme.rs`) already
     /// establishes for a theme's own role overrides.
+    ///
+    /// M90: renamed from `role` -- a bare `role` reads like an MD3 color
+    /// role or an accessibility role; this matches `Window.add_text`'s
+    /// own `typography_role=`.
     #[serde(default)]
-    pub role: Option<String>,
+    pub typography_role: Option<String>,
     /// M62 Phase 4: widened from a plain required `String` to
     /// `Option<String>` -- now derivable from `role` above, so no
     /// longer unconditionally required. Still required in the real,
@@ -315,6 +328,7 @@ pub struct TextSpec {
 /// already left out of -- if those are added later, `HorizontalReverse`/
 /// `VerticalReverse` is the naming to match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FlexDirectionSpec {
     Horizontal,
     Vertical,
@@ -356,6 +370,7 @@ pub enum SpacingSpec {
 /// overflow-position variants, real CSS features nothing in this
 /// codebase's own scope needs yet, additive to add later).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AlignItemsSpec {
     Start,
     End,
@@ -371,6 +386,7 @@ pub enum AlignItemsSpec {
 /// `JustifyContent` type adds the real space-distribution keywords
 /// `AlignItems` doesn't have), the same bounded-subset precedent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum JustifyContentSpec {
     Start,
     End,
@@ -460,7 +476,15 @@ pub struct StyleSpec {
     /// accepts. Parsed at tree-build time (`build.rs`), not here: a
     /// parse failure needs the owning widget's `id` in its error
     /// message, which this struct alone doesn't have context for.
+    ///
+    /// M90: always a real fill. Kinds whose paint color is their glyph
+    /// or text (`Text`/`Link`/`Icon`/`LoadingIndicator`) take
+    /// `foreground` instead and reject `background`.
     pub background: Option<String>,
+    /// M90: the glyph/text color of `Text`/`Link`/`Icon`/
+    /// `LoadingIndicator` -- the same string forms `background` accepts
+    /// (hex, CSS name, or an MD3 role name with a theme).
+    pub foreground: Option<String>,
     /// M61 (§16.3): widened from a bare `Option<f32>` to also accept a
     /// named shape token (e.g. `corner_radius: small`), resolved
     /// against `engine_md3::shape`'s own real named constants
@@ -520,7 +544,7 @@ mod tests {
         let json = r##"{
             "id": "root",
             "kind": "Container",
-            "style": {"flex_direction": "Horizontal", "padding": 12, "gap": 8},
+            "style": {"flex_direction": "horizontal", "padding": 12, "gap": 8},
             "children": [
                 {
                     "id": "swatch",
@@ -549,7 +573,7 @@ mod tests {
 id: root
 kind: Container
 style:
-  flex_direction: Horizontal
+  flex_direction: horizontal
   padding: 12
   gap: 8
 children:
@@ -615,7 +639,7 @@ children:
 
         let checkbox = &spec.children[0];
         assert!(matches!(checkbox.kind, NodeKindSpec::Checkbox));
-        assert!(checkbox.checked);
+        assert_eq!(checkbox.checked, Some(true));
         assert_eq!(checkbox.two_way.as_deref(), Some("checked"));
 
         let slider = &spec.children[1];
@@ -635,7 +659,10 @@ kind: Checkbox
 style: {width: 24, height: 24, background: "#6750A4"}
 "##;
         let spec = parse_view(yaml).expect("a Checkbox with no checked:/two_way: must still parse");
-        assert!(!spec.checked, "checked must default to false");
+        assert_eq!(
+            spec.checked, None,
+            "checked must default to unset (false at build time)"
+        );
         assert_eq!(spec.value, 0.0, "value must default to 0.0");
         assert_eq!(spec.two_way, None, "two_way must default to None");
     }
@@ -734,8 +761,8 @@ style:
   flex_grow: 1
   flex_shrink: 0
   flex_basis: 100
-  align_items: Center
-  justify_content: SpaceBetween
+  align_items: center
+  justify_content: space_between
 "#;
         let spec = parse_view(yaml).expect("the new flex/align fields must parse");
         assert_eq!(spec.style.flex_grow, Some(1.0));
@@ -764,12 +791,12 @@ style: {align_items: Sideways}
         let horizontal = r#"
 id: root
 kind: Container
-style: {flex_direction: Horizontal}
+style: {flex_direction: horizontal}
 "#;
         let vertical = r#"
 id: root
 kind: Container
-style: {flex_direction: Vertical}
+style: {flex_direction: vertical}
 "#;
         assert_eq!(
             parse_view(horizontal).unwrap().style.flex_direction,
@@ -795,5 +822,33 @@ style: {flex_direction: Row}
 "#;
         let err = parse_view(yaml).expect_err("the old Row/Column naming must no longer parse");
         assert!(err.to_string().contains("Row"));
+    }
+
+    /// M90: enum values are lowercase `snake_case`; the pre-0.3.3
+    /// PascalCase spellings are rejected, and serde's error names the
+    /// accepted ones, which doubles as the migration hint.
+    #[test]
+    fn pascal_case_enum_values_from_before_0_3_3_are_rejected_naming_the_new_ones() {
+        for (yaml, expected) in [
+            (
+                "id: r\nkind: Container\nstyle: {flex_direction: Horizontal}\n",
+                "horizontal",
+            ),
+            (
+                "id: r\nkind: Container\nstyle: {align_items: FlexStart}\n",
+                "flex_start",
+            ),
+            (
+                "id: r\nkind: Container\nstyle: {justify_content: SpaceBetween}\n",
+                "space_between",
+            ),
+            ("id: r\nkind: Image\nimage: {fit: Cover}\n", "cover"),
+        ] {
+            let err = parse_view(yaml).expect_err("a PascalCase enum value must no longer parse");
+            assert!(
+                err.to_string().contains(expected),
+                "error should name {expected:?}: {err}"
+            );
+        }
     }
 }

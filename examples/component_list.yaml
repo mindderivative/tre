@@ -1,6 +1,6 @@
 id: root
 kind: Container
-style: {flex_direction: Vertical, width: 300, height: 260, gap: 8, padding: 16}
+style: {flex_direction: vertical, width: 300, height: 260, gap: 8, padding: 16}
 children:
   - id: add_button
     kind: Rect
@@ -8,4 +8,4 @@ children:
     handlers: {on_click: "add_card"}
   - id: card_list
     kind: Container
-    style: {flex_direction: Vertical, gap: 8, width: 268, height: 200}
+    style: {flex_direction: vertical, gap: 8, width: 268, height: 200}

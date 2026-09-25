@@ -677,7 +677,7 @@ children:
   - id: w
     kind: Text
     text: {content: "Hi", font_family: Roboto, font_size: 16}
-    style: {width: 10, height: 10, background: "#112233"}
+    style: {width: 10, height: 10, foreground: "#112233"}
 "##;
         let mut tree = Tree::new();
         let mut reconciler =

@@ -1,6 +1,6 @@
 id: root
 kind: Container
-style: {flex_direction: Vertical, width: 200, height: 60, gap: 8}
+style: {flex_direction: vertical, width: 200, height: 60, gap: 8}
 children:
   - id: bump_button
     kind: Rect
