@@ -57,7 +57,7 @@ node.set_layout(width=200, flex_direction="Vertical", gap=8)
 
 `align_items`/`justify_content`/`flex_direction` take the same string
 vocabulary as their declarative `style:` equivalents (see
-[Declarative Views → The YAML schema](../../guide/declarative-views.md#the-yaml-schema)
+[Declarative Views → The view schema](../../guide/declarative-views.md#the-view-schema)
 for the full list) — an unrecognized value raises `ValueError` naming
 the ones it does accept. `padding`/`margin` set all four sides at once;
 the `_top`/`_right`/`_bottom`/`_left` variants override just one side
@@ -186,7 +186,9 @@ kind.
 
 **`get_text() -> str`**
 
-Reads the current content of a `TextField` or a plain `Text` label.
+Reads the current content of a `TextField`, a plain `Text` label, a
+`Link`, or a `Terminal` (its visible cell grid, one line per row).
+Raises `ValueError` for any other node kind.
 
 ## Focus
 
@@ -218,16 +220,63 @@ Cursor movement (`Home`/`End`/arrow keys) is fold-aware — a move that
 would land inside a folded range snaps forward past its marker instead.
 `CodeEditor`-only.
 
-## Video-specific
+## RadioButton & Switch-specific
+
+| Method | Notes |
+| --- | --- |
+| `set_selected(selected)` / `get_selected() -> bool` | `RadioButton` only |
+| `set_on(on)` / `get_on() -> bool` | `Switch` only |
+
+Each raises `ValueError` on any other kind. (`Checkbox` uses
+[`set_checked`/`get_checked`](#checkbox-specific).)
+
+## Carousel-specific
+
+| Method | Notes |
+| --- | --- |
+| `set_carousel_index(index)` | Moves to `index` (clamped to the child count) with an eased snap; a no-op if already there |
+| `get_carousel_index() -> int` | The item the carousel is settling on — its destination, not necessarily where it's drawn mid-snap |
+| `get_carousel_position() -> float` | The currently-animating strip position: an integer at rest, fractional while a snap is travelling |
+| `set_carousel_scroll(value)` / `get_carousel_scroll() -> float` | The free pixel scroll offset, clamped to `[0, max_scroll]` — meaningful for `layout="uncontained"` |
+
+`Carousel` only; each raises `ValueError` on any other kind.
+
+## TimePickerDial-specific
+
+| Method | Notes |
+| --- | --- |
+| `set_time_picker_dial_time(hour, minute)` | Moves both hands instantly; `hour` clamps to `0`–`23`, `minute` to `0`–`59` |
+| `get_time_picker_dial_time() -> (hour, minute)` | |
+| `set_time_picker_dial_mode(mode)` / `get_time_picker_dial_mode() -> str` | `"hour"` or `"minute"` — which hand a drag on the dial moves next. The dial has no built-in toggle; wire a button or tab to this |
+
+`TimePickerDial` only; each raises `ValueError` on any other kind.
+
+## Terminal-specific
+
+### `set_terminal_selection`
+
+**`set_terminal_selection(start_row, start_col, end_row, end_col)`**
+
+Sets a cell-range selection directly, without a mouse drag — a linear,
+reading-order selection like every terminal emulator's. Equal start and
+end mean no selection. Read it back with
+[`Window.copy_terminal_selection`](window.md#copy_terminal_selection).
+`Terminal` only (raises `ValueError` otherwise).
+
+## Image-specific
 
 ### `push_frame`
 
 **`push_frame(rgba, width, height)`**
 
-Uploads one new frame — `rgba` a flat `bytes`/`bytearray` of
-`width * height * 4` RGBA bytes — as the `Video` node's current GPU
-texture, replacing the previous frame. `Video`-only; the app owns
-decoding and pacing (there's no bundled video decoder).
+Replaces an `Image` node's pixels — `rgba` a flat `bytes`/`bytearray`
+of straight-alpha RGBA8, exactly `width * height * 4` bytes (a clear
+`ValueError` otherwise). Works on any `Image` node: one from
+`add_image`, `add_image_from_bytes`, or `add_video`, or a declarative
+`kind: Image` (a blank one built with no `src:` is the usual target).
+Call it once for a static image or once per frame for video; the app
+owns decoding and pacing — `tre` bundles no video decoder. Raises
+`ValueError` on a non-`Image` node.
 
 ## Clipping
 

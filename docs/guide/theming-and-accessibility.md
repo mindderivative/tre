@@ -53,18 +53,15 @@ state, including right after a `set_theme()` call.
 
 A declarative `View` has the equivalent live re-theme call,
 [`View.set_theme`](../api/python/view.md#set_theme), but no matching
-read-only `Theme` accessor — a `view.yaml`'s own `style.background:
-primary`-style token references are resolved directly against the
-active `ColorScheme` at build/reconcile time instead.
+read-only `Theme` accessor — a view's own `style.background: primary`-
+style token references are resolved directly against the active
+`ColorScheme` at build/reconcile time instead.
 
-## Themes as data
+## Theme documents
 
-Every theme argument that takes a YAML file path has a `dict` twin taking
-the same content directly — `default_theme_spec=`/`custom_theme_spec=` on
-`Window.set_theme`, `View(...)`, and `View.set_theme`, plus
-`stylesheet_spec=` on `View(...)`. The dict uses exactly the schema the
-file would hold (`seed`, `dark`, `colors`, `styles`, `components`,
-`typography`), and resolves exactly like the file form:
+Beyond a seed color, a theme can override color roles, component
+shapes and elevations, typography, and declarative widget styles. That
+content is a **theme document**, passed as a `dict`:
 
 ```python
 window.set_theme(
@@ -77,36 +74,71 @@ window.set_theme(
 )
 ```
 
-This is the form a framework built on `tre` should use: `tre` accepts
-one real ingestion shape per concern and leaves reading files, choosing
-formats (YAML, JSON, TOML, …), and watching for changes to the framework.
-The path forms stay as a convenience for using `tre` directly. Passing a
-path and its `*_spec` twin together raises `ValueError`, as does an
-unknown key in the dict.
+Every field is optional, so a theme can override just one thing:
+
+| Field | Meaning |
+| --- | --- |
+| `seed` | A hex (`"#6750A4"`) or CSS-named seed color |
+| `dark` | Whether the dark scheme is active |
+| `colors` | Role name → color string overrides (`{"primary": "#FF0000"}`), applied on top of the seed's scheme |
+| `components` | Shape/elevation overrides for the imperative MD3 catalog — see [Shape & elevation tokens](#shape-elevation-tokens) |
+| `typography` | Per-role type-scale overrides — see [Typography theming](#typography-theming) |
+| `styles` | Declarative per-widget default styles, the same rule shape as a [stylesheet](declarative-views.md#stylesheets-md3-color-tokens) |
+
+A theme comes in two layers, each its own argument:
+
+- **`custom_theme_spec=`** — your overrides.
+- **`default_theme_spec=`** — the baseline underneath them. Omit it to
+  use the default theme shipped inside `tre`. Custom entries win over
+  default ones key by key.
+
+Accepted by `Window.set_theme`, `View(...)`, and `View.set_theme`. What
+each consumer reads:
+
+- **`Window.set_theme`** uses both layers' `components` and
+  `typography`, and the custom layer's `colors`. A `seed` in the custom
+  layer overrides the `seed` argument. `styles` don't apply (they're
+  for declarative views).
+- **`View`** uses `styles` (as cascade tiers beneath the stylesheet —
+  `default theme < custom theme < stylesheet < inline`), `colors`, and
+  `seed` (an explicit `theme_seed=` wins, then the custom layer's seed,
+  then the default layer's). `components` don't apply (a view has no
+  imperative factories).
+
+An unknown key in the document raises `ValueError`, the same typo check
+every schema in `tre` applies.
+
+!!! note "Theme files"
+    Each `*_spec=` argument has a path twin (`default_theme=`/
+    `custom_theme=`) that reads the same document from a YAML file — see
+    [Working with Files](working-with-files.md#stylesheet-and-theme-files).
+    Passing a path and its `*_spec` twin together raises `ValueError`.
 
 ## Shape & elevation tokens
 
-Beyond color, a theme can override a component's own corner radius and
-elevation by name, and both accept the same named-token vocabulary
-declarative YAML `style:` blocks do (see
+A theme's `components` section overrides a component's corner radius
+and elevation by name, using the same named-token vocabulary
+declarative `style:` blocks use (see
 [Declarative Views](declarative-views.md)):
 
-```yaml
-# theme.yaml
-components:
-  button: {corner_radius: small}
-  button.filled: {corner_radius: medium, elevation: level_1}  # variant-specific beats bare
-  card: {elevation: level_2}
+```python
+window.set_theme(
+    seed=(0x67, 0x50, 0xA4, 0xFF),
+    custom_theme_spec={"components": {
+        "button": {"corner_radius": "small"},
+        "button.filled": {"corner_radius": "medium", "elevation": "level_1"},  # variant beats bare
+        "card": {"elevation": "level_2"},
+    }},
+)
 ```
 
-Pass `custom_theme=` (a path to this file) to `Window.set_theme(...)` to
-load it. Lookup is per-field and two-tier: a `"<component>.<variant>"`
-key is checked first, then the bare `"<component>"` key, independently
-for `corner_radius` and `elevation` — a variant entry that only sets one
-of the two doesn't block the bare key's own value for the other. A
+Lookup is per-field and two-tier: a `"<component>.<variant>"` key is
+checked first, then the bare `"<component>"` key, independently for
+`corner_radius` and `elevation` — a variant entry that only sets one of
+the two doesn't block the bare key's own value for the other. A
 component with no override anywhere falls back to its own built-in
-formula default (usually `height / 2.0`, MD3's own real "fully rounded"
-shape). The real named tokens, resolved against `engine_md3::shape`:
+formula default (usually `height / 2.0`, MD3's "fully rounded" shape).
+The named tokens, resolved against `engine_md3::shape`:
 
 | Kind | Names |
 |---|---|
@@ -115,12 +147,12 @@ shape). The real named tokens, resolved against `engine_md3::shape`:
 
 ## Typography theming
 
-A real, published MD3 type scale — 15 roles (`display_large/medium/
-small`, `headline_large/medium/small`, `title_large/medium/small`,
-`body_large/medium/small`, `label_large/medium/small`), each a real
-`family`/`weight`/`size`/`line_height` — lives in `engine_md3::
-typography`, sourced directly from Flutter's own published MD3 type
-scale rather than approximated. Reference a role by name instead of
+A published MD3 type scale — 15 roles (`display_large/medium/small`,
+`headline_large/medium/small`, `title_large/medium/small`,
+`body_large/medium/small`, `label_large/medium/small`), each a
+`family`/`weight`/`size`/`line_height` — lives in
+`engine_md3::typography`, sourced directly from Flutter's published MD3
+type scale rather than approximated. Reference a role by name instead of
 literal font values:
 
 ```python
@@ -130,28 +162,30 @@ heading = window.add_text(
 )
 ```
 
-```yaml
-# a declarative view.yaml
-- id: heading
-  kind: Text
-  text: {content: "Settings", role: headline_small}
+```python
+# in a view spec
+{"id": "heading", "kind": "Text",
+ "text": {"content": "Settings", "role": "headline_small"},
+ "style": {"background": "on_surface"}}  # a Text's background is its text color
 ```
 
 Any of `font_family`/`font_weight`/`font_size`/`line_height` given
 *alongside* `role`/`typography_role` overrides just that one field on
-top of the role's own resolved default — the same per-field-override
-shape a theme's own `typography:` section (below) uses. An unrecognized
-role name is a real, clear error, never a silent fallback.
+top of the role's default — the same per-field-override shape a theme's
+`typography` section (below) uses. An unrecognized role name is a clear
+error, never a silent fallback.
 
-A theme can also override individual fields of a role globally, the
-same `components:` shape shape/elevation already use:
+A theme can also override individual fields of a role globally:
 
-```yaml
-# theme.yaml
-typography:
-  body_large: {font_family: Inter}
-  headline_small: {font_size: 26, line_height: 1.4}
+```python
+custom_theme_spec={"typography": {
+    "body_large": {"font_family": "Inter"},
+    "headline_small": {"font_size": 26, "line_height": 1.4},
+}}
 ```
+
+A `font_family` other than the four bundled faces must be registered
+first — see [Custom fonts](#custom-fonts).
 
 ## Custom fonts
 

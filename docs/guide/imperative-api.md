@@ -4,7 +4,8 @@ The imperative path builds a UI directly from Python method calls —
 `Window` creates nodes, and each returned [`Node`](../api/python/node.md)
 is a handle for events, animation, and property reads/writes. This is the
 lower-level of `tre`'s two authoring paths; see
-[Declarative Views](declarative-views.md) for the YAML alternative.
+[Declarative Views](declarative-views.md) for the data-driven
+alternative.
 
 ## Windows and the app loop
 
@@ -30,6 +31,28 @@ Every `Window` starts with one implicit root node: a flex row with
 16px padding and 16px gaps between children. Every `add_*` method below
 attaches its new node as a direct child of that root, in call order.
 
+### Updating from another thread
+
+`App`, `Window`, `View`, and `Node` may only be used on the thread that
+created them, and once `run()` starts it owns that thread. Work that
+finishes on a background thread (a download, a subprocess, a file
+watcher) hands its UI update to the event loop through
+[`App.thread_handle()`](../api/python/app.md#thread_handle):
+
+```python
+handle = app.thread_handle()
+
+def worker():                            # a background thread
+    result = slow_computation()
+    handle.call_soon(lambda: label.set_text(result))
+
+threading.Thread(target=worker, daemon=True).start()
+app.run()
+```
+
+`call_soon` wakes the loop even when it's idle, and the callable runs on
+the event-loop thread at the top of the next frame.
+
 ## Creating nodes
 
 These are the primitive, general-purpose factories every composite MD3
@@ -47,8 +70,8 @@ docking methods:
 | `add_text_field(background, width, height, content="", font_family="Roboto", font_weight=400.0, font_size=16.0, x=None, y=None, multiline=False, show_whitespace=False)` | An MD3 text field — `multiline`/`show_whitespace` mirror `add_code_editor`'s own two fields |
 | `add_code_editor(content, background, width, height, font_weight=400.0, font_size=14.0, x=None, y=None)` | A monospace code editor — folding, syntax spans, whitespace glyphs |
 | `add_terminal(shell, cols, rows, background, font_size=14.0, scrollback_lines=1000, x=None, y=None)` | A real PTY-backed terminal emulator |
-| `add_image(path, width, height, fit="fill", x=None, y=None)` | A GPU-texture-backed image loaded from disk |
-| `add_image_from_bytes(rgba, pixel_width, pixel_height, width, height, fit="fill", x=None, y=None)` | `add_image`'s decode-free sibling — already-decoded RGBA8 pixels, no file involved; see [`Window` API reference](../api/python/window.md#add_image_from_bytes) |
+| `add_image_from_bytes(rgba, pixel_width, pixel_height, width, height, fit="fill", x=None, y=None)` | A GPU-texture-backed image from already-decoded RGBA8 pixels |
+| `add_image(path, width, height, fit="fill", x=None, y=None)` | The same, reading and decoding a PNG/JPEG file — see [Working with Files](working-with-files.md#images-from-files) |
 | `add_video(width, height, fit="fill", x=None, y=None)` | A GPU-texture-backed video surface — frames pushed via `node.push_frame(...)` |
 | `add_icon(name, color, size, x=None, y=None)` | A curated Material Symbols vector icon |
 | `add_scroll_view(width, height, horizontal=False, x=None, y=None)` | A scrollable viewport over exactly one child |

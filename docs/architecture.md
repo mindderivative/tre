@@ -1,8 +1,8 @@
 # Architecture
 
 This page is a short orientation. The full design reference —
-`ARCHITECTURE.md`, the living document 67 milestones have been built
-against as of this writing — lives in the repository root:
+`ARCHITECTURE.md`, the living document 88 milestones have been built
+against as of `v0.3.2` — lives in the repository root:
 
 [**Read the full `ARCHITECTURE.md`**](https://github.com/mindderivative/tre/blob/main/ARCHITECTURE.md){ .md-button }
 
@@ -11,7 +11,7 @@ against as of this writing — lives in the repository root:
 ```
 engine-py  (PyO3 boundary — the only crate depending on pyo3)
    │
-   ├── engine-spec     (YAML views/stylesheets, reconciliation)
+   ├── engine-spec     (view/stylesheet/theme schema, YAML/JSON parsing, reconciliation)
    ├── engine-platform  (winit event loop, accesskit_winit)
    ├── engine-render    (Vello scene building, GPU rendering)
    └── engine-md3       (MD3 dynamic color, icons, container-transform)

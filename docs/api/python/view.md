@@ -1,84 +1,64 @@
 # `View`
 
-Loads a declarative `view.yaml` file into its own node tree. See
-[Declarative Views](../../guide/declarative-views.md) for a full
-walkthrough of the YAML schema and data binding.
+A declarative view: a tree of widget specs built into its own node tree.
+See [Declarative Views](../../guide/declarative-views.md) for a full
+walkthrough of the schema and data binding, and
+[Working with Files](../../guide/working-with-files.md) for the
+file-based conveniences.
 
 ## `View`
 
 **`View(path=None, stylesheet=None, theme_seed=None, dark=False, default_theme=None, custom_theme=None, source=None, spec=None, json=None, stylesheet_spec=None, default_theme_spec=None, custom_theme_spec=None)`**
 
-Reads and parses the file at `path` (resolving `include:` directives
-relative to its own directory, recursively), builds the widget tree, and
-starts a filesystem watcher for hot-reload. Raises `RuntimeError` if the
-file can't be read, `ValueError` if the YAML fails to parse or build.
+Builds the widget tree from exactly one content source:
+
+- **`spec`** — a Python object (nested `dict`s/`list`s shaped like the
+  [view schema](../../guide/declarative-views.md#the-view-schema)),
+  built directly into the tree with no text parsing.
+- **`json`** — the same structure as JSON text.
+- **`path`** *(file convenience)* — reads and parses a YAML view file,
+  resolving `include:`/`image.src:` relative to its directory, and
+  starts a filesystem watcher for [`poll_reload`](#poll_reload).
+- **`source`** *(file convenience)* — YAML text used instead of reading
+  `path`; requires `path` alongside it for the base directory and the
+  watched file.
 
 ```python
-view = View("counter.yaml")
+view = View(spec={"id": "root", "kind": "Container", "style": {"width": 100, "height": 40}})
 ```
 
-`stylesheet` (a path to a stylesheet YAML file) and `theme_seed` (an
-`(r, g, b, a)` tuple, `dark` a bool) enable the real stylesheet cascade
-and MD3 color token resolution — see
-[Declarative Views → Stylesheets & MD3 color tokens](../../guide/declarative-views.md#stylesheets-md3-color-tokens).
-Both default to `None`/`False`, byte-for-byte the prior literal-colors-
-only behavior. Both are remembered and reused by `poll_reload()` on
-every future hot-reload, not just the initial load.
+At most one of `spec`/`source`/`json` may be given, and at least one of
+`spec`/`json`/`path` is required — `ValueError` otherwise. A build or
+schema error raises `ValueError`; a file that can't be read raises
+`RuntimeError`.
 
-`default_theme`/`custom_theme` (paths to theme YAML files) are two more
-cascade tiers, resolved *beneath* `stylesheet` and a widget's own inline
-`style:` — `default theme < custom theme < stylesheet < inline`. Either
-theme's own `seed:` (if present) sets the seed when `theme_seed` isn't
-explicitly given (an explicit `theme_seed` always wins). Omitting
-`default_theme` uses the engine's own shipped default.
+Styling and theming:
 
-`stylesheet_spec`/`default_theme_spec`/`custom_theme_spec` are the data
-forms of `stylesheet`/`default_theme`/`custom_theme`: a plain `dict` in
-the same schema the YAML file holds, for a caller (a framework like
-Tesserae) that loads its own files and hands `tre` data only. They
-cascade identically to their path forms. Each is mutually exclusive with
-its path twin — passing both raises `ValueError`, as does an unknown key
-(the same typo check the YAML form gets).
+- **`theme_seed`** — an `(r, g, b, a)` seed; builds an MD3 color scheme
+  so style values like `background: primary` resolve as role names.
+  `dark` picks the dark scheme.
+- **`stylesheet_spec`** — a stylesheet `dict` (`{"styles": [...]}`),
+  enabling the [cascade](../../guide/declarative-views.md#stylesheets-md3-color-tokens).
+- **`default_theme_spec`**/**`custom_theme_spec`** — [theme documents](../../guide/theming-and-accessibility.md#theme-documents)
+  as `dict`s, two more cascade tiers beneath the stylesheet —
+  `default theme < custom theme < stylesheet < inline`. Omitting the
+  default uses the theme shipped inside `tre`. A theme's own `seed`
+  applies when `theme_seed` isn't given (an explicit `theme_seed` wins,
+  then the custom theme's, then the default's).
+- **`stylesheet`**/**`default_theme`**/**`custom_theme`** *(file
+  conveniences)* — the same three as YAML file paths. Each is mutually
+  exclusive with its `*_spec` twin; passing both raises `ValueError`.
 
-```python
-view = View(
-    spec={"id": "root", "kind": "Checkbox", "style": {"width": 20, "height": 20}},
-    custom_theme_spec={"colors": {"primary": "#FF0000"}},
-    stylesheet_spec={"styles": [{"kind": "Checkbox", "style": {"corner_radius": 4}}]},
-)
-```
-
-`View` has no width/height/render-loop of its own — it's never embedded
-in a live `winit` window.
-
-### Building without a file on disk
-
-`path` is optional when `spec=`/`json=` is given instead — see
-[Declarative Views → Building from already-parsed content](../../guide/declarative-views.md#building-from-already-parsed-content)
-for the full walkthrough:
-
-- **`source`** — YAML text, used directly instead of reading `path`
-  from disk. `path` is still required — it supplies the base directory
-  `include:`/`image.src:` resolve against and the file `poll_reload()`
-  watches.
-- **`spec`** — a real Python object (a `dict` shaped like the view's own
-  YAML tree) built directly into the tree, no text parsing at all.
-  `path` becomes optional.
-- **`json`** — JSON text, parsed directly into the tree. Grouped with
-  `spec`, not `source`: no real backing file is implied, so `path` is
-  optional here too.
-
-At most one of `spec`/`source`/`json` may be given; at least one of
-`spec`/`json`/`path` is required. Raises `ValueError` if more than one
-of `spec`/`source`/`json` is given, or if none of `spec`/`json`/`path`
-is given.
+The stylesheet and theme are remembered and reused by `poll_reload`/
+`reconcile`. `View` has no width/height/render loop of its own — show
+it in a window with [`Window.from_view`](window.md).
 
 ## `node`
 
 **`node(widget_id) -> Node`**
 
 Returns the [`Node`](node.md) for the widget with the given author-
-assigned YAML `id`. Raises `ValueError` if no widget with that id exists.
+assigned `id`. Raises `ValueError` if no widget with that id exists.
 
 ```python
 checkbox = view.node("agree")
@@ -86,9 +66,9 @@ checkbox = view.node("agree")
 
 ## `poll_reload`
 
-**`poll_reload(source=None) -> bool`**
+**`poll_reload(source=None) -> bool`** *(file convenience)*
 
-Checks whether the underlying file changed since the last call (or
+For a `View` built from a `path`: checks whether the underlying file changed since the last call (or
 construction) and, if so, re-parses and reconciles it into the live tree
 in place. Returns `False` if nothing changed. Raises `RuntimeError` if
 re-reading fails, `ValueError` if reconciliation fails.
@@ -108,11 +88,13 @@ use [`reconcile`](#reconcile) instead.
 
 **`reconcile(source=None, spec=None, json=None)`**
 
-The ungated sibling of `poll_reload` for a `View` with no backing file
-to watch (built via `spec=`/`json=`). Reconciles against `source` (YAML
-text), `spec` (a real Python object), or `json` (JSON text) —
+Diffs new content against the live tree and patches it in place —
 unconditionally, with no "did anything change" check, since the call
-itself is the change signal (typically driven by a `tre.Effect`).
+itself is the change signal (typically driven by a `tre.Effect`). Takes
+`spec` (a Python object), `json` (JSON text), or `source` (YAML text).
+An unchanged widget (same `id`, same `kind`) keeps its runtime
+identity. To call it from a background thread while `App.run()` is
+running, go through [`App.thread_handle()`](app.md#thread_handle).
 
 ```python
 view.reconcile(spec=new_spec)
@@ -149,30 +131,26 @@ already does).
 
 **`instantiate(path, into, source=None, spec=None) -> Component`**
 
-Embeds another view's own YAML as a real, independent
+Embeds another view as a real, independent
 [`Component`](#component) — its own bindings/handlers, ready for its
 own separate `ViewModel` to `_attach` to — spliced into this `View`'s
 live tree as a child of `into` (a [`Node`](node.md)). Call this once
 per instance for multiple simultaneous instances (e.g. one per row in a
-list); each instantiation is fully independent, even when the same
-`path` is used repeatedly.
+list); each instantiation is fully independent, even when built from
+the same spec.
 
 ```python
-row = view.instantiate("row.yaml", into=view.node("list_container"))
+row = view.instantiate("", into=view.node("list_container"), spec=row_spec)
 ```
 
-`source`, when given, is used directly instead of reading `path` from
-disk — the same real `source=` precedent `View.__init__` has, widened
-here for a framework layer with its own pre-processed component YAML.
+`spec` is a Python object built directly into the tree, mirroring
+`View.__init__`'s own `spec=`. **`path` is positional and required**
+(changing that would break every positional call); pass `""` with
+`spec`.
 
-`spec`, when given, is a real Python object built directly into the
-tree, mirroring `View.__init__`'s own `spec=` — no YAML text at all.
-Unlike `View.__init__`, **`path` stays required** here: every real call
-site already calls `instantiate(path, into)` positionally, and `into`
-(also required) comes right after it, so making `path` optional would
-break every one of them. Pass `path=""` when using `spec=`/`source=`
-with no real file to name — the same "no base directory" outcome an
-omitted `path` means for `View.__init__`.
+*(File convenience)* `instantiate("row.yaml", into)` reads the component
+from a YAML file instead, and `source` supplies already-read YAML text
+for that file — see [Working with Files](../../guide/working-with-files.md#components-from-files).
 
 At most one of `spec`/`source` may be given; at least one of
 `spec`/`source`/a non-empty `path` is required.
@@ -185,7 +163,7 @@ small `View` scoped to just this instance's own widgets, sharing the
 same live tree as whatever it was instantiated into.
 
 ```python
-inner = component.instantiate("nested.yaml", into=component.node("slot"))
+inner = component.instantiate("", into=component.node("slot"), spec=nested_spec)
 ```
 
 - **`node(widget_id) -> Node`** — looks up a declared widget by its own
@@ -219,5 +197,5 @@ view.right_click(node)
 ```
 
 Layout is computed with unconstrained (`MaxContent`) width/height on both
-axes, since `View` has no fixed window size — a real `view.yaml`'s root
-is expected to declare explicit `style.width`/`style.height`.
+axes, since `View` has no fixed window size — a view's root is
+expected to declare explicit `style.width`/`style.height`.

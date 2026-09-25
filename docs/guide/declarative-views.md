@@ -1,58 +1,58 @@
-# Declarative Views (YAML)
+# Declarative Views
 
-The declarative path builds a UI from a `view.yaml` file instead of
-imperative Python calls, with data binding against a plain Python
-`ViewModel`. It's the same underlying node tree either way — a `View`'s
-nodes support the same `Node` methods (`animate`, `get`, etc.) as a
-`Window`'s.
+The declarative path describes a UI as data — a tree of widget specs —
+instead of imperative Python calls, with data binding against a plain
+Python `ViewModel`. It's the same underlying node tree either way: a
+`View`'s nodes support the same `Node` methods (`animate`, `get`, etc.)
+as a `Window`'s.
 
-## Loading a view
+!!! note "Using `tre` with view files on disk?"
+    This page builds views from data (`spec=` dicts), the form a
+    framework hands `tre`. Loading `view.yaml` files, `include:`, image
+    and theme paths, and file-watching hot reload are all covered in
+    [Working with Files](working-with-files.md).
+
+## Building a view
 
 ```python
 from tre import View
 
-view = View("counter.yaml")
-node = view.node("my_widget")  # look up a widget by its author-assigned id
+view = View(spec={
+    "id": "root",
+    "kind": "Container",
+    "style": {"flex_direction": "Horizontal", "padding": 12, "gap": 8},
+    "children": [
+        {"id": "swatch", "kind": "Rect",
+         "style": {"width": 40, "height": 40, "background": "#6750A4"}},
+        {"id": "label", "kind": "Text",
+         "text": {"content": "Hello", "role": "body_large"},
+         "style": {"background": "#1D1B20"}},
+    ],
+})
+node = view.node("label")  # look up a widget by its author-assigned id
 ```
 
-`View(path)` reads and parses the file (resolving any `include:`
-directives relative to the file's own directory), and starts a filesystem
-watcher for hot-reload.
+`spec=` takes a plain Python object — nested `dict`s and `list`s
+shaped like [the view schema](#the-view-schema) — and builds it directly
+into the tree, with no text parsing. However your application produced
+that data (generated it, loaded it from YAML/TOML/JSON, expanded its own
+macro syntax), `tre` only sees the finished structure.
 
-### Building from already-parsed content
-
-`View` can also build straight from YAML text, JSON text, or a real
-Python object, instead of reading `path` from disk — useful for a
-framework layer that has already parsed or pre-processed a view (e.g.
-expanding its own macro syntax) before handing it to `tre`:
+`json=` takes the same structure as JSON text:
 
 ```python
-view = View(source="id: root\nkind: Container\nstyle: {width: 10, height: 10}\n")
 view = View(json='{"id": "root", "kind": "Container", "style": {"width": 10, "height": 10}}')
-view = View(spec={"id": "root", "kind": "Container", "style": {"width": 10, "height": 10}})
 ```
 
-- **`source=`** — YAML text, used directly instead of reading `path`
-  from disk. `path` is still required alongside it — it supplies the
-  base directory `include:`/`image.src:` resolve against, and the real
-  file `poll_reload()`/hot-reload watches (the developer keeps editing
-  the real file on disk; `source=` just supplies its already-read
-  content for this one construction).
-- **`json=`** — JSON text, parsed directly into the tree — no YAML
-  involved at all. Grouped with `spec=`, not `source=`: no real backing
-  file is implied, so `path=` is optional.
-- **`spec=`** — a real Python object (a `dict` shaped like the YAML
-  tree above) built directly into the tree — no text parsing of any
-  kind. `path=` is optional; when omitted, there's no base directory to
-  resolve `include:`/`image.src:` against and no file to watch, so
-  `poll_reload()` always returns `False` — use
-  [`reconcile()`](#reconcile) instead.
+At most one of `spec=`/`json=`/`source=` may be given, and `View()` with
+no content at all raises `ValueError`. (`source=`, YAML text, belongs to
+the [file-based path](working-with-files.md#pre-processed-content-for-a-real-file):
+it requires `path=` alongside it.)
 
-At most one of `spec=`/`source=`/`json=` may be given; at least one of
-`spec=`/`json=`/`path=` is required — `View()` with none of them raises
-`ValueError`.
+## The view schema
 
-## The YAML schema
+Shown here in YAML for readability; as a `spec=` dict it's exactly the
+same structure.
 
 ```yaml
 id: root
@@ -65,16 +65,17 @@ children:
   - id: label
     kind: Text
     text: {content: "Hello", font_family: Roboto, font_size: 16}
+    style: {background: "#1D1B20"}   # a Text's background is its text color
 ```
 
 Every widget has:
 
 | Field | Meaning |
 | --- | --- |
-| `id` | Author-assigned, stable identifier — used by `view.node(id)` and by hot-reload reconciliation |
+| `id` | Author-assigned, stable identifier — used by `view.node(id)` and by reconciliation |
 | `kind` | One of `Rect`, `Container`, `Text`, `Checkbox`, `Slider`, `TextField`, `Image`, `Icon`, `Link`, `RadioButton`, `Switch`, `CircularProgress`, `LinearProgress`, `LoadingIndicator`, `TimePickerDial` |
 | `style` | See table below |
-| `classes` | A list of style-class strings (parsed, but see the note on stylesheets below) |
+| `classes` | A list of style-class strings, matched by [stylesheet](#stylesheets-md3-color-tokens) rules |
 | `children` | A list of nested widgets |
 
 `style:` fields (all optional):
@@ -89,7 +90,7 @@ Every widget has:
 | `flex_basis` | number (a pixel length, not a percentage) |
 | `align_items` | `Start`, `End`, `FlexStart`, `FlexEnd`, `Center`, `Baseline`, `Stretch` |
 | `justify_content` | `Start`, `End`, `FlexStart`, `FlexEnd`, `Center`, `Stretch`, `SpaceBetween`, `SpaceAround`, `SpaceEvenly` |
-| `background` | a hex (`"#6750A4"`, `"#6750A4FF"`) or CSS named color string, or (with `theme_seed=`) an MD3 role name — see below |
+| `background` | a hex (`"#6750A4"`, `"#6750A4FF"`) or CSS named color string, or (with a theme) an MD3 role name — see below |
 | `corner_radius` | number, **or** a named shape token: `none`, `extra_small`, `small`, `medium`, `large`, `extra_large` |
 | `elevation` | number, **or** a named elevation token: `level_0` through `level_5` |
 | `opacity` | number |
@@ -123,122 +124,115 @@ Kind-specific blocks:
 - `kind: Switch` — an optional top-level `checked: true` (its own
   initial `on` state)
 - `kind: TimePickerDial` — optional top-level `hour: 0`/`minute: 0`
-  (a real 24-hour value and `0`–`59` respectively)
-- `kind: Image` — an optional `image:` block: `{src, fit: Fill}` (`fit`
-  is one of `Cover`, `Contain`, `Fill`); `src` is a path relative to the
-  `view.yaml` file's own directory. Omit `image:` (or `src:` inside it)
-  entirely for a blank, fully-transparent placeholder — the same
-  synthetic 1×1 image `Window.add_video` builds imperatively — meant to
-  be filled in later via `Node.push_frame` from Python.
-- `kind: Icon` — a required `icon:` block: `{name}`, `name` a real
-  icon name from `tre`'s own curated set (the same vocabulary
-  `Window.add_icon` uses imperatively). The glyph's own color reuses
+  (a 24-hour value and `0`–`59` respectively)
+- `kind: Image` — a required `image:` block: `{fit: Fill}` (`fit` is
+  one of `Cover`, `Contain`, `Fill`; `image: {}` takes the default).
+  With no `src:` in it, the node starts as a blank, fully transparent
+  placeholder; supply pixels with `view.node(id).push_frame(rgba,
+  width, height)` — decoded RGBA8 data your application produced.
+  (`src:`, a file path `tre` decodes itself, is covered in
+  [Working with Files](working-with-files.md#images-from-files).)
+- `kind: Icon` — a required `icon:` block: `{name}`, `name` an icon
+  name from `tre`'s own curated set (the same vocabulary
+  `Window.add_icon` uses imperatively). The glyph's color reuses
   `style.background`, the same "background means paint color" contract
-  `kind: Text` already has.
+  `kind: Text` has.
 - `kind: LoadingIndicator` — no kind-specific block; `style.width`/
   `height` size it and `style.background` is its glyph tint (again,
-  the same "background means paint color" contract, not a fill behind
-  content), both required.
+  "background means paint color", not a fill behind content), both
+  required.
 
 `RadioButton`/`Switch`/`CircularProgress`/`LinearProgress`/
-`TimePickerDial` take no `style.background` at all — their entire real
-visual lives in internal, MD3-themed tint fields, resolved
-automatically against the active theme (falling back to the real MD3
-baseline colors when no `theme_seed=`/theme file is given) — the same
-resolution every corresponding `Window.add_*` factory already does
-imperatively.
+`TimePickerDial` take no `style.background` at all — their visuals live
+in internal, MD3-themed tint fields, resolved against the active theme
+(falling back to the MD3 baseline colors when no theme is given) — the
+same resolution every corresponding `Window.add_*` factory does.
 
-A typo'd field name is a load-time error naming the bad key and its line
-number, not a silently-ignored style — unknown fields are rejected
-everywhere in this schema.
+A typo'd field name is a load-time error naming the bad key, not a
+silently ignored style — unknown fields are rejected everywhere in this
+schema.
 
 ## Stylesheets & MD3 color tokens
 
-Pass `stylesheet=` (a path to a stylesheet YAML file) and `theme_seed=`
-(an `(r, g, b, a)` tuple, the same shape `Window.set_theme` takes) to
-`View(...)` to enable the real stylesheet cascade and MD3 token
-resolution:
+Pass `stylesheet_spec=` (a stylesheet as a `dict`) and `theme_seed=` (an
+`(r, g, b, a)` tuple, the same shape `Window.set_theme` takes) to enable
+the stylesheet cascade and MD3 token resolution:
 
 ```python
 view = View(
-    "gallery.yaml",
-    stylesheet="gallery_sheet.yaml",
+    spec=gallery_spec,
+    stylesheet_spec={"styles": [
+        {"style": {"corner_radius": 4}},
+        {"kind": "Rect", "style": {"corner_radius": 8, "background": "primary"}},
+        {"classes": ["accent"], "style": {"corner_radius": 16, "background": "secondary"}},
+    ]},
     theme_seed=(0x67, 0x50, 0xA4, 0xFF),
     dark=False,
 )
 ```
 
-A stylesheet is `{styles: [...]}`, a list of rules applied in real
-cascade precedence — baseline (no selector) → `kind:` → `classes:`
-(more classes beat fewer) → `id:` → the widget's own inline `style:`:
+A stylesheet is `{styles: [...]}`, a list of rules applied in cascade
+precedence — baseline (no selector) → `kind:` → `classes:` (more classes
+beat fewer) → `id:` → the widget's own inline `style:`. Two theme layers
+sit beneath the stylesheet — `default theme < custom theme < stylesheet
+< inline`; see [Theming & Accessibility → Theme documents](theming-and-accessibility.md#theme-documents).
 
-```yaml
-styles:
-  - style: {corner_radius: 4}
-  - kind: Rect
-    style: {corner_radius: 8, background: primary}
-  - classes: [accent]
-    style: {corner_radius: 16, background: secondary}
-```
-
-With a real `theme_seed` given, `style.background`/`border_color` values
-that name a recognized MD3 role (`primary`, `on_primary`, `secondary`,
-`surface`, `error`, and every other real `ColorScheme` role) resolve
-against that scheme instead of being parsed as a literal color — a role
-name always wins over a same-named coincidental CSS color. Anything
-that isn't a recognized role name still falls back to literal color
-parsing (`"#6750A4"`, `"transparent"`), so a stylesheet can freely mix
-token names and literal colors. `corner_radius`/`elevation` use the
-same "named token first, literal number always still valid" contract,
-just against `engine_md3::shape`'s own vocabulary (`small`, `level_2`,
-etc., see the `style:` table above) instead of a color scheme — an
-unrecognized token name for either is a real, clear parse-time error,
-never a silent fallback to `0`.
+With a `theme_seed` given, `style.background`/`border_color` values that
+name a recognized MD3 role (`primary`, `on_primary`, `secondary`,
+`surface`, `error`, and every other `ColorScheme` role) resolve against
+that scheme instead of being parsed as a literal color — a role name
+always wins over a same-named CSS color. Anything that isn't a
+recognized role name falls back to literal color parsing (`"#6750A4"`,
+`"transparent"`), so a stylesheet can freely mix token names and
+literal colors. `corner_radius`/`elevation` use the same "named token
+first, literal number always valid" contract against
+`engine_md3::shape`'s vocabulary (`small`, `level_2`, etc., see the
+`style:` table above) — an unrecognized token name for either is a
+clear error, never a silent fallback to `0`.
 
 !!! note
-    `stylesheet=`/`theme_seed=` are both optional and independent — a
-    `View(path)` call with neither given (or `stylesheet=` given but no
-    `theme_seed=`) works exactly as before: literal colors only, no
-    cascade. A token name given with no `theme_seed=` fails to parse as
-    a literal color, the same real error it always would have.
-    `poll_reload()` re-resolves against the same stylesheet/theme on
-    every hot-reload, not just the initial load.
+    `stylesheet_spec=`/`theme_seed=` are both optional and independent.
+    With neither, a view uses literal colors only, no cascade. A token
+    name given with no theme fails to parse as a literal color.
 
-!!! note "Stylesheets and themes as data"
-    `stylesheet_spec=`, `default_theme_spec=`, and `custom_theme_spec=`
-    take a `dict` in the same schema as the corresponding YAML file,
-    mutually exclusive with the path form — for a framework that loads
-    its own files. See
-    [Theming & Accessibility → Themes as data](theming-and-accessibility.md#themes-as-data).
+## Embedding components
 
-## Composing with `include:`
+A `View` can embed another view's spec as an independent
+[`Component`](../api/python/view.md#component) — its own bindings and
+handlers, ready for its own `ViewModel` — as a child of any node. Call
+it once per instance, e.g. once per row in a list:
 
-Split a view across files — an `include:` entry splices the target
-file's own widget tree in as an ordinary child, indistinguishable from an
-inline one once loaded:
-
-```yaml
-id: root
-kind: Container
-style: {flex_direction: Vertical, width: 240, height: 120, gap: 8, padding: 8}
-children:
-  - id: header
-    kind: Rect
-    style: {width: 200, height: 16, background: "#6750A4"}
-  - include: confirm_dialog.yaml
+```python
+for item in items:
+    row = view.instantiate("", into=view.node("list"), spec=row_spec(item))
 ```
 
-Included paths are resolved relative to the including file's own
-directory and confined to stay within it (no `../` escape), cycles are
-detected, and includes nest up to 8 deep.
+The first argument is a path, used only by the
+[file-based form](working-with-files.md#components-from-files); pass
+`""` with `spec=`. Components nest: `row.instantiate("", into=..., spec=...)`.
 
 ## Binding to a `ViewModel`
 
 ```python
-from pathlib import Path
 from tre import Signal, View, ViewModel
 
-view = View(str(Path(__file__).parent / "settings.yaml"))
+view = View(spec={
+    "id": "root",
+    "kind": "Container",
+    "style": {"flex_direction": "Vertical", "width": 240, "height": 120, "gap": 8, "padding": 8},
+    "children": [
+        {"id": "agree", "kind": "Checkbox",
+         "style": {"width": 24, "height": 24, "background": "#6750A4"},
+         "bindings": {"checked": "{{ agreed.get() }}"}, "two_way": "checked"},
+        {"id": "volume", "kind": "Slider",
+         "style": {"width": 200, "height": 32, "background": "#03DAC6"},
+         "bindings": {"thumb_position": "{{ level.get() }}"}, "two_way": "thumb_position"},
+        {"id": "username", "kind": "TextField",
+         "text": {"content": "", "font_family": "Roboto", "font_size": 16},
+         "style": {"width": 200, "height": 32, "background": "#EEEEEE"},
+         "bindings": {"text": "{{ name.get() }}"}, "two_way": "text"},
+    ],
+})
 
 
 class SettingsVM(ViewModel):
@@ -256,30 +250,6 @@ class SettingsVM(ViewModel):
 vm = SettingsVM(view)
 ```
 
-```yaml
-# settings.yaml
-id: root
-kind: Container
-style: {flex_direction: Vertical, width: 240, height: 120, gap: 8, padding: 8}
-children:
-  - id: agree
-    kind: Checkbox
-    style: {width: 24, height: 24, background: "#6750A4"}
-    bindings: {checked: "{{ agreed.get() }}"}
-    two_way: checked
-  - id: volume
-    kind: Slider
-    style: {width: 200, height: 32, background: "#03DAC6"}
-    bindings: {thumb_position: "{{ level.get() }}"}
-    two_way: thumb_position
-  - id: username
-    kind: TextField
-    text: {content: "", font_family: Roboto, font_size: 16}
-    style: {width: 200, height: 32, background: "#EEEEEE"}
-    bindings: {text: "{{ name.get() }}"}
-    two_way: text
-```
-
 `ViewModel.__init__(view)` wires every declared `bindings:`/`handlers:`/
 `two_way:` entry in one call:
 
@@ -293,12 +263,12 @@ children:
   properties (routed through the same path as `Node.animate(prop, v, 0)`),
   `bool` for `checked`, `str` for `text`.
 - **`handlers: {on_click: "method_name"}`** — looks up `method_name` on
-  the `ViewModel` and calls it with no arguments on the real event.
+  the `ViewModel` and calls it with no arguments on the event.
   `on_click`, `on_hover_enter`, `on_hover_exit`, `on_change`,
-  `on_focus_enter`, and `on_focus_exit` all fire today, the same real
-  `EventKind` set `Node.set_on_click`/etc. dispatch from imperatively.
+  `on_focus_enter`, and `on_focus_exit` all fire, the same `EventKind`
+  set `Node.set_on_click`/etc. dispatch from imperatively.
 - **`two_way: <binding-key>`** — makes that binding a two-way write-back:
-  on a real `Change` (a `Slider` drag ending, or `Node.set_checked`/
+  on a `Change` (a `Slider` drag ending, or `Node.set_checked`/
   `set_text` being called), the node's new value is read back and written
   into the bound `Signal`. **The bound expression must be exactly a bare
   `signal.get()` call** — a computed expression (e.g. `{{ a.get() + b.get() }}`)
@@ -311,83 +281,55 @@ notify subscribers — but only when the value actually changes, which is
 what keeps a two-way binding's forward/reverse wiring from recursing
 forever.
 
-## Hot reload
+## Updating a live view
+
+`reconcile()` diffs a new spec against the live tree and patches it in
+place — call it whenever your data changes (typically from a
+`tre.Effect`):
 
 ```python
-if view.poll_reload():
-    print("view changed on disk, reconciled in place")
+view.reconcile(spec=new_spec)
+# or: view.reconcile(json=new_json_text)
 ```
 
-Call `poll_reload()` periodically (e.g. once per frame in your own loop)
-to check whether the underlying file changed and, if so, re-parse and
-reconcile it into the live tree — an unchanged widget (same `id`, same
-`kind`) keeps its runtime identity, preserving focus, scroll position,
-and in-flight animations. **`bindings:`/`handlers:`/`two_way:` are not
-re-resolved automatically** — if a reload adds a genuinely new binding or
-handler, call `_attach` again (constructing a fresh `ViewModel`, or
-calling `view._attach(vm)` directly) to pick it up.
+An unchanged widget (same `id`, same `kind`) keeps its runtime identity,
+preserving focus, scroll position, and in-flight animations. There's no
+"did anything change" check to skip — the call itself is the change
+signal. Exactly one content argument is required; `ValueError`
+otherwise. **`bindings:`/`handlers:`/`two_way:` are not re-resolved** —
+if an update adds a new binding or handler, call `_attach` again
+(construct a fresh `ViewModel`, or call `view._attach(vm)`).
 
-`poll_reload(source=...)` reconciles the given YAML text instead of a
-fresh disk read of `path` — the change-detection gate still watches
-`path` on disk regardless, so this only changes what gets reconciled
-once a real file change is detected, not whether one is.
+### Updating from another thread
 
-### Hot reload inside `App.run()`
-
-`poll_reload()`/`reconcile()` above have to be called from somewhere —
-but once `App.run()` starts, it owns the main thread, and `View` can't
-be touched from any other thread. Use `App.thread_handle()`: a
-background watcher thread detects the change, does the file I/O itself,
-and hands only the reconcile to the event loop with `call_soon`, which
-wakes the loop even when it's idle:
+Once `App.run()` starts, it owns the main thread, and a `View` can't be
+touched from any other thread. When new data arrives on a background
+thread — a file watcher, a network client — hand the update to the
+event loop with [`App.thread_handle()`](../api/python/app.md#thread_handle).
+`call_soon` wakes the loop even when it's idle:
 
 ```python
 handle = app.thread_handle()
 
-def watch():  # runs on a background thread
-    for _changes in watchfiles.watch(view_path):   # or any watcher
-        text = Path(view_path).read_text()
-        handle.call_soon(lambda text=text: view.reconcile(source=text))
-
-threading.Thread(target=watch, daemon=True).start()
-app.run()
+def on_new_data(spec):  # called on a background thread
+    handle.call_soon(lambda: view.reconcile(spec=spec))
 ```
 
-See [`App.thread_handle`](../api/python/app.md#thread_handle) and the
-runnable `examples/threadsafe_reload.py` (a dependency-free `os.stat`
-watcher in the same shape).
-
-### `reconcile`
-
-A `View` built with `spec=`/`json=` and no `path=` has no file to watch
-at all, so `poll_reload()` always returns `False` for it. `reconcile()`
-is the ungated sibling for exactly that case — call it directly
-(typically driven by a `tre.Effect`) whenever your own data changes:
-
-```python
-view.reconcile(spec=new_spec)
-# or: view.reconcile(source=new_yaml_text)
-# or: view.reconcile(json=new_json_text)
-```
-
-Unlike `poll_reload()`, `reconcile()` always reconciles against
-whatever you pass — there's no "did anything change" check to skip, the
-call itself is the change signal. Exactly one of `source=`/`spec=`/
-`json=` is required; `ValueError` otherwise.
+Do the slow work (reading, parsing, expanding) on the background thread
+and hand only the `reconcile` to the loop.
 
 ### Live re-theme
 
-`view.set_theme(default_theme=None, custom_theme=None, theme_seed=None, dark=False)`
+`view.set_theme(theme_seed=None, dark=False, default_theme_spec=None, custom_theme_spec=None)`
 re-resolves the theme exactly like `View(...)` does at construction,
 then walks every already-built node and recomputes its style from its
 own spec against the new theme layers, in place — `NodeId`s, children,
 and focus are preserved, and a widget's own inline `style:` still wins
 over any theme layer. Each call is a complete, fresh theme selection —
-omitting `default_theme`/`custom_theme` resets to no override, not
-"keep whatever the previous call used." Only the static style cascade
-is recomputed; a `{{ }}` binding's own currently-applied value isn't
-re-run (reverts to its spec's static value, the same as a content-only
-`poll_reload()`).
+omitting the theme arguments resets to no override, not "keep whatever
+the previous call used." Only the static style cascade is recomputed; a
+`{{ }}` binding's currently-applied value isn't re-run (it reverts to
+its spec's static value until the binding next fires).
 
 ## Testing without a live window
 

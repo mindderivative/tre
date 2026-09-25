@@ -86,8 +86,8 @@ slider.set_on_change(lambda: print("new value:", slider.get("thumb_position")))
 
 | Factory | Signature | Notes |
 |---|---|---|
-| `add_radio_button` | `size=20.0, selected=false` | Single-select affordance — grouping/exclusivity is the app's own concern, same as `pyCopper`'s precedent. |
-| `add_switch` | `width=52.0, height=32.0, on=false` | `node.set_checked`/`get_checked` shared with `Checkbox`'s own accessor names. |
+| `add_radio_button` | `size=20.0, selected=false` | Single-select affordance — grouping/exclusivity is the app's own concern, same as `pyCopper`'s precedent. Read/write with `node.get_selected()`/`set_selected()`. |
+| `add_switch` | `width=52.0, height=32.0, on=false` | Read/write with `node.get_on()`/`set_on()` (not `Checkbox`'s `checked` accessors). |
 | `add_spin_box` | `value, x=None, y=None` | Numeric stepper; no `width`/`height` — sized from its own content. |
 
 ## Text Fields, Code Editor & Terminal
@@ -179,6 +179,7 @@ pieces as much as they are components — see
 | `add_toolbar` | `variant="docked", orientation=None, color=None, width=None, height=None` | A floating or docked action-icon bar. |
 | `add_top_app_bar` | `title, leading_icon=None, trailing_icons=None, width=None` | The window's own top title bar. |
 | `add_status_bar` | `text, width=None` | A window-bottom status strip, typically passed to `build_shell(status_bar=...)`. |
+| `add_pagination` | `page_count, current=0` | Returns `(previous, pages, next)` — one `Node` per page (1-indexed labels) plus prev/next controls. Which page is current is app-owned state; the app re-selects on click. `ValueError` for `page_count=0` or an out-of-range `current`. |
 
 ## Overlays
 
@@ -201,7 +202,8 @@ window.close_dialog(dialog)
 | `add_dialog` | `open_dialog(dialog)` / `close_dialog(dialog)` | `headline, text, width, height`. Modal by default. |
 | `add_snackbar` | `open_snackbar(snackbar)` / `close_snackbar(snackbar)` | `text, width, action_label=None, closable=false`. Non-modal, auto-dismiss is the app's own timer. |
 | `add_side_sheet` | `open_side_sheet(sheet)` / `close_side_sheet(sheet)` | `width=..., height=None, modal=false`. |
-| `build_menu` | `open_menu(anchor, menu)` / `close_menu(menu)` | `items: list[Node], width` — a panel of `add_menu_item(...)` rows; anchored below `anchor`. `add_tooltip`'s and `add_search_view`'s own panels reuse this identical `open_menu`/`close_menu` pair rather than getting dedicated ones. |
+| `build_menu` | `open_menu(anchor, menu)` / `close_menu(menu)` | `items: list[Node], width` — a panel of `add_menu_item(...)` rows; anchored below `anchor`. `add_tooltip`'s, `add_popover`'s, and `add_search_view`'s own panels reuse this identical `open_menu`/`close_menu` pair rather than getting dedicated ones. |
+| `add_popover` | `open_menu(anchor, popover)` / `close_menu(popover)` | `subhead, text, width, height` — MD3's rich-tooltip anatomy (a subhead plus supporting text). Unlike `add_tooltip`, it stays open until dismissed. |
 | `add_navigation_drawer(modal=True)` | `open_navigation_drawer(drawer)` / `close_navigation_drawer(drawer)` | See the Navigation table above. |
 
 `add_menu_item(label, icon=None, submenu=false, width=200.0)` builds one
@@ -246,23 +248,22 @@ text_field.set_on_change(lambda: print(text_field.get_text()))
 ## Media & Graphics
 
 ```python
-picture = window.add_image("logo.png", width=200, height=120, fit="cover")
+picture = window.add_image_from_bytes(rgba, 64, 64, width=200, height=120, fit="cover")
 ```
 
-- Loads and decodes a real file from disk (`png`/`jpeg`) at call time
-  and uploads it as a GPU texture. `fit` is `"cover"`/`"contain"`/
-  `"fill"` (default `"fill"`). Raises `OSError` if the file can't be
-  read or decoded. No `background` param — there's no meaningful
-  "behind the content" color for a node whose entire content is a
-  loaded image.
-- `add_image_from_bytes(rgba, pixel_width, pixel_height, width, height, fit="fill")`
-  is `add_image`'s decode-free sibling — already-decoded RGBA8 pixels
-  instead of a file path, for content decoded elsewhere (a network
-  fetch, a different image library). See
-  [`Window` API reference](../api/python/window.md#add_image_from_bytes).
-- `add_video(width, height, fit="fill")` shares the same `fit` contract;
-  frames are pushed at runtime via `node.push_frame(...)`, not loaded
-  from a path at construction.
+- `rgba` is already-decoded, straight-alpha RGBA8 pixels
+  (`pixel_width * pixel_height * 4` bytes) — decoded by your
+  application with any library, fetched over a network, or generated.
+  `fit` is `"cover"`/`"contain"`/`"fill"` (default `"fill"`) and
+  resolves any mismatch between the pixel size and the node's `width`/
+  `height`. No `background` param — there's no meaningful "behind the
+  content" color for a node whose entire content is an image.
+- `add_video(width, height, fit="fill")` shares the same `fit` contract
+  and starts blank; the app pushes decoded frames at runtime via
+  `node.push_frame(rgba, width, height)`. `push_frame` works on any
+  `Image` node, so a static image can be updated the same way.
+- `add_image(path, ...)` reads and decodes a PNG/JPEG file for you —
+  see [Working with Files → Images from files](working-with-files.md#images-from-files).
 
 ```python
 icon = window.add_icon("settings", color=(0x1C, 0x1B, 0x1F, 0xFF), size=24)
@@ -286,7 +287,7 @@ icon = window.add_icon("settings", color=(0x1C, 0x1B, 0x1F, 0xFF), size=24)
 | Factory | Signature | Notes |
 |---|---|---|
 | `add_date_picker_day` | `day, selected=false, today=false, outside_month=false` | One real calendar cell; the app arranges a grid of them. |
-| `add_time_picker_dial` | `hour=0, minute=0, size=256.0` | The analog clock-face dial. |
+| `add_time_picker_dial` | `hour=0, minute=0, size=256.0` | The analog clock-face dial. Read/write with `node.get_time_picker_dial_time()`/`set_time_picker_dial_time(hour, minute)`; `set_time_picker_dial_mode("hour" \| "minute")` picks which hand a drag moves. |
 | `add_period_selector` | `selected="AM"` | The AM/PM toggle pairing with the dial. |
 
 ## Layout & Structure
@@ -305,7 +306,9 @@ is entirely built into the engine's own input dispatch.
 `add_carousel(layout, width, height, background)` — `layout` is one of
 `"uncontained"`, `"hero"`, `"multi_browse"`, MD3's own three real
 carousel item-arrangement modes; populate it the same `Node.add_child`
-way as `Card`/`List`.
+way as `Card`/`List`. Drive it with `node.set_carousel_index(i)` (an
+eased snap) or, for `"uncontained"`, `node.set_carousel_scroll(px)` — see
+[`Node` → Carousel](../api/python/node.md#carousel-specific).
 
 `add_rect`/`add_text`/`add_scroll_view` are the primitive building
 blocks every composite factory above is itself built from — see the

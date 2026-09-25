@@ -21,7 +21,7 @@ publishes real, verified wheels — a source distribution, plus:
   repaired). The container ships several real CPython interpreters
   plus PyPy, and the build picks up every one it finds
   (`maturin-action`'s own `--find-interpreter`) rather than a
-  hand-maintained list — as of `v0.3.0` that's CPython 3.9–3.15
+  hand-maintained list — as of `v0.3.2` that's CPython 3.9–3.15
   (including the free-threaded `3.14t`/`3.15t` builds) and PyPy 3.11.
 - **macOS** (`arm64`) and **Windows** — one wheel per CPython version
   in an explicit, hand-maintained matrix (currently 3.9–3.14) via
@@ -39,7 +39,7 @@ Download the wheel matching your platform and interpreter from the
 and install it directly:
 
 ```bash
-pip install ./tre-0.3.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+pip install ./tre-0.3.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
 ```
 
 !!! note

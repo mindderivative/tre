@@ -12,6 +12,41 @@ window's implicit root (a flex row, 16px padding, 16px gaps).
 window = Window(width=400, height=200, title="My App")
 ```
 
+## Showing a `View`
+
+### `from_view`
+
+**`Window.from_view(view, width=480, height=200, title="tre v2") -> Window`** *(static)*
+
+A window that shows a declarative [`View`](view.md), sharing the view's
+node tree directly: bindings, handlers, and `reconcile()` updates on the
+`View` appear in the live window.
+
+```python
+window = Window.from_view(view, width=400, height=300, title="Settings")
+app.add_window(window)
+```
+
+### `show_view`
+
+**`show_view(view)`**
+
+Switches which `View` an already-open window shows, without closing it.
+Each `View` an app keeps around stays fully alive (its bindings and
+`Signal` subscriptions intact); only what this window renders and
+dispatches to changes, from the next frame. The view is sized to the
+window when switched to — a later resize while a *different* view is
+showing won't resize this one until it's shown again.
+
+### `resize`
+
+**`resize(width, height)`**
+
+Resizes the window's root layout box programmatically, without a live
+window — the same synthetic pattern as `click`/`hover`. Every later
+`add_*` call and synthetic dispatch uses the new size. A real OS resize
+updates the same shared size.
+
 ## Creating nodes
 
 ### `add_rect`
@@ -55,35 +90,33 @@ An MD3 text field with real keyboard editing. `multiline`/
 doesn't pass them). See
 [MD3 Components → Text Fields, Code Editor & Terminal](../../guide/components.md#text-fields-code-editor-terminal).
 
-### `add_image`
-
-**`add_image(path, width, height, fit="fill", x=None, y=None)`**
-
-Loads and decodes a real image file (`png`/`jpeg`) and uploads it as a
-GPU texture. `fit` is `"cover"`, `"contain"`, or `"fill"`. Raises
-`OSError` if the file can't be read or decoded, `ValueError` for an
-unknown `fit`. See [MD3 Components → Media & Graphics](../../guide/components.md#media-graphics).
-
 ### `add_image_from_bytes`
 
 **`add_image_from_bytes(rgba, pixel_width, pixel_height, width, height, fit="fill", x=None, y=None)`**
 
-`add_image`'s decode-free sibling: `rgba` is already-decoded, straight-
-alpha RGBA8 pixels (`pixel_width * pixel_height * 4` bytes exactly, or
-a clear `ValueError`) — no file, no image-decoding crate involved, the
-caller owns decoding entirely (from a network fetch, a different image
-library, a generated texture, anything). `width`/`height` are the
-node's own fixed display box — `add_image`'s identical contract;
-`pixel_width`/`pixel_height` describe `rgba` itself, and `fit` resolves
-any mismatch between the two. The node this returns is a real,
-ordinary `Image` node — [`Node.push_frame`](node.md#video-specific)
-keeps working on it afterward, identically to one built via
-`add_video`.
+An `Image` node from already-decoded, straight-alpha RGBA8 pixels
+(`pixel_width * pixel_height * 4` bytes exactly, or a clear
+`ValueError`). No file and no decoding inside `tre` — the caller owns
+decoding (a network fetch, any image library, a generated texture).
+`width`/`height` are the node's display box; `pixel_width`/
+`pixel_height` describe `rgba`, and `fit` (`"cover"`, `"contain"`, or
+`"fill"`) resolves any mismatch. The returned node is an ordinary
+`Image` node — [`Node.push_frame`](node.md#push_frame) replaces its
+pixels afterward.
 
 ```python
 pixels = bytes([255, 0, 0, 255]) * (64 * 64)  # a solid red 64x64 image
 image = window.add_image_from_bytes(pixels, 64, 64, width=200, height=200)
 ```
+
+### `add_image`
+
+**`add_image(path, width, height, fit="fill", x=None, y=None)`** *(file convenience)*
+
+Reads and decodes an image file (PNG or JPEG only), then builds the same
+node `add_image_from_bytes` does. Raises `OSError` if the file can't be
+read or decoded, `ValueError` for an unknown `fit`. See
+[Working with Files → Images from files](../../guide/working-with-files.md#images-from-files).
 
 ### `add_icon`
 
@@ -166,7 +199,18 @@ monospace face at `font_size` — the same real measurement
 **`copy_terminal_selection() -> str | None`**
 
 Returns the focused terminal's current text selection, or `None` — the
-terminal counterpart to `copy()` below.
+terminal counterpart to `copy()` below. Seed a selection without a
+mouse drag with [`Node.set_terminal_selection`](node.md#set_terminal_selection).
+
+### `press_ctrl`
+
+**`press_ctrl(letter) -> bool`**
+
+Sends a Ctrl+`letter` control byte to the focused terminal —
+`press_ctrl("c")` sends SIGINT (`0x03`), like Ctrl+C in any terminal.
+`letter` must be one ASCII letter (case-insensitive), or `ValueError`.
+Returns whether a terminal was focused to receive it; it never touches a
+`TextField` (use `copy`/`cut`/`paste` for those).
 
 ## Layout composition
 
@@ -189,13 +233,11 @@ Builds a full MD3 dynamic color scheme from a `(r, g, b, a)` seed color
 and makes it active — every already-built themed node (created via a
 composition-only `add_*` factory that reads the theme, e.g.
 `add_button`/`add_checkbox`) is retroactively re-themed in place.
-`default_theme`/`custom_theme` (paths to theme YAML files) layer
-shape/elevation/color overrides for the imperative catalog on top —
-see [Theming & Accessibility → Dynamic color theming](../../guide/theming-and-accessibility.md#dynamic-color-theming).
-`default_theme_spec`/`custom_theme_spec` are the `dict` forms of those two
-paths (the same schema the theme YAML file holds), each mutually
-exclusive with its path twin — see
-[Theming & Accessibility → Themes as data](../../guide/theming-and-accessibility.md#themes-as-data).
+`default_theme_spec`/`custom_theme_spec` are [theme documents](../../guide/theming-and-accessibility.md#theme-documents)
+as `dict`s, layering color/shape/elevation/typography overrides for the
+imperative catalog on top. `default_theme`/`custom_theme` *(file
+conveniences)* read the same documents from YAML files; each is mutually
+exclusive with its `*_spec` twin.
 
 ```python
 window.set_theme(
@@ -249,10 +291,27 @@ dispatches at the target node's real, current center point.
 | `copy()` | Ctrl+C — returns the focused field's selected text, or `None` (hermetic, no real OS clipboard) |
 | `cut()` | Ctrl+X — also edits the field and fires `Change` (hermetic) |
 | `paste(text)` | Ctrl+V with explicit text — same mechanism as `type_text` (hermetic) |
+| `select_all()` | Ctrl+A — selects the focused `TextField`'s whole content (cursor lands at the end); returns whether a field was focused |
 
 Accepted `key` values for `press_key`: `"tab"`, `"enter"`, `"space"`,
 `"escape"`, `"backspace"`, `"delete"`, `"left"`, `"right"`, `"home"`,
 `"end"`. Anything else raises `ValueError`.
+
+### The real OS clipboard
+
+`copy`/`cut`/`paste` above are deliberately hermetic — they never touch
+the OS clipboard, which keeps tests deterministic. These three are
+their real counterparts, the same path live Ctrl+C/X/V takes — what a
+context-menu "Copy"/"Cut"/"Paste" item's `on_click` should call:
+
+| Method | Returns |
+| --- | --- |
+| `copy_to_system_clipboard() -> bool` | `True` only on a complete write; `False` when nothing is focused/selected or the OS clipboard is unreachable (logged, never raised) |
+| `cut_to_system_clipboard() -> bool` | Like copy, then removes the selection and fires `Change` — only once the write succeeded, so a failed write never loses the selection |
+| `paste_from_system_clipboard() -> bool` | Whether the OS clipboard *read* succeeded (inserting into the focused field, if any) |
+
+On some sandboxed Linux setups with no clipboard manager, clipboard
+content may only be served while the process that wrote it is running.
 
 ## Context menus
 

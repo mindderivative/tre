@@ -17,9 +17,9 @@ cargo doc --workspace --no-deps --open
 | --- | --- |
 | [`engine-core`](https://github.com/mindderivative/tre/tree/main/crates/engine-core) | Pure-Rust node tree, the `Animated<T>` animation core, and the generic `AppHandler`/`InputEvent`/`BindingResolver` interfaces the other crates build on. No `pyo3`, no `winit`, MD3-agnostic. |
 | [`engine-md3`](https://github.com/mindderivative/tre/tree/main/crates/engine-md3) | Material Design 3 theming: dynamic color science (HCT/tonal palettes/scheme roles), curated icons, container-transform choreography. Depends on `engine-core`, never the reverse. |
-| [`engine-render`](https://github.com/mindderivative/tre/tree/main/crates/engine-render) | Vello scene building and GPU rendering. Depends on `engine-core` (walks `Node`/`PaintProperties` for painting); no `winit`/`engine-platform` dependency. |
-| [`engine-platform`](https://github.com/mindderivative/tre/tree/main/crates/engine-platform) | `winit` `EventLoop`/`ApplicationHandler` and the `accesskit_winit` adapter — the only crate depending on `winit`. |
-| [`engine-spec`](https://github.com/mindderivative/tre/tree/main/crates/engine-spec) | YAML view/stylesheet parsing, reconciliation, and the `BindingResolver` trait. Depends on `engine-core` and `engine-md3`; no `pyo3`, no `winit`. |
+| [`engine-render`](https://github.com/mindderivative/tre/tree/main/crates/engine-render) | Vello scene building, GPU rendering, and `parley` text shaping, including the process-global font registry (`register_font`). Depends on `engine-core` (walks `Node`/`PaintProperties` for painting); no `winit`/`engine-platform` dependency. |
+| [`engine-platform`](https://github.com/mindderivative/tre/tree/main/crates/engine-platform) | `winit` `EventLoop`/`ApplicationHandler`, the `accesskit_winit` adapter, and `EventLoopWaker` (a `Send` handle that wakes an idle loop from any thread) — the only crate depending on `winit`. |
+| [`engine-spec`](https://github.com/mindderivative/tre/tree/main/crates/engine-spec) | The `WidgetSpec`/`Stylesheet`/`ThemeSpec` schema (format-agnostic `serde` types, with YAML and JSON parsers), the stylesheet cascade, `Reconciler::load_spec`/`reconcile_spec`, and the `BindingResolver` trait. Depends on `engine-core` and `engine-md3`; no `pyo3`, no `winit`. |
 | [`engine-py`](https://github.com/mindderivative/tre/tree/main/crates/engine-py) | PyO3 bindings — the only crate depending on `pyo3`, and the only stability contract for framework users. Everything under [Python API Reference](python/index.md) lives here. |
 
 ## Design principles

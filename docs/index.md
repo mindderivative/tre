@@ -27,7 +27,7 @@ project's design decisions.
 - **Material Design 3 visual language** — dynamic color (full HCT/
   tonal-palette scheme resolution), elevation shadows, hover/press state
   layers with real ripple, shape morphing, and MD3 motion curves.
-- **A real, wide MD3 component catalog** — 56 factories spanning
+- **A real, wide MD3 component catalog** — 60 `Window.add_*` factories spanning
   [buttons, selection controls, cards, chips, navigation, overlays
   (dialogs, menus, snackbars), a real PTY-backed `Terminal`, and a
   `CodeEditor` with folding and syntax highlighting](guide/components.md),
@@ -44,12 +44,22 @@ project's design decisions.
   container-transform choreography.
 - **A real, wide layout/styling surface** — per-side padding/margin,
   flex-grow/shrink/basis, align/justify, and border kwargs across the
-  catalog, both from Python and from declarative YAML `style:` blocks.
+  catalog, both from Python and from declarative `style:` blocks.
 - **Two authoring paths, one engine** — build a UI
   [imperatively from Python](guide/imperative-api.md), or
-  [declaratively from YAML view files](guide/declarative-views.md), with
-  a real stylesheet cascade, `include:`-based composition, and one- and
-  two-way data binding against a plain Python `ViewModel`.
+  [declaratively as data](guide/declarative-views.md) (a tree of widget
+  specs), with a stylesheet cascade, embeddable components, in-place
+  reconciliation, and one- and two-way data binding against a plain
+  Python `ViewModel`.
+- **Data in, not files** — views, themes, and stylesheets are passed as
+  plain `dict`s, images as decoded pixels, fonts as bytes, so a
+  framework built on `tre` owns every file format and loading decision.
+  Using `tre` directly? It will also [read files for you](guide/working-with-files.md)
+  — YAML views with `include:`, theme files, PNG/JPEG images, and
+  file-watching hot reload.
+- **Thread-safe updates into a running app** — `App.thread_handle()`
+  lets a background thread (a file watcher, a network client) hand work
+  to the event loop, waking it even when idle.
 - **Accessibility from day one** — a real AccessKit tree built fresh
   every frame from the same node tree, keyboard focus/Tab order, and
   screen-reader-driven actions routed through the same input pipeline as
@@ -66,8 +76,11 @@ project's design decisions.
 - **[Getting Started](getting-started.md)** — build and run a first
   window in a few lines of Python.
 - **[Guide](guide/imperative-api.md)** — walkthroughs of the imperative
-  API, declarative YAML views, MD3 components, docking, canvas drawing,
-  and theming.
+  API, declarative views, MD3 components, docking, canvas drawing, and
+  theming.
+- **[Working with Files](guide/working-with-files.md)** — for using
+  `tre` directly: YAML view files, `include:`, theme and image files,
+  and hot reload.
 - **[Python API Reference](api/python/index.md)** — every public class
   and method, with real signatures pulled from the source.
 - **[Architecture](architecture.md)** — the engine's crate layout and
@@ -83,8 +96,8 @@ keyboard-navigable.
 
 ## Project status
 
-67 milestones have been built against [`ARCHITECTURE.md`](architecture.md)
-as of this writing — see
+88 milestones have been built against [`ARCHITECTURE.md`](architecture.md)
+as of `v0.3.2` — see
 [`BUILD_TRACKER.md`](https://github.com/mindderivative/tre/blob/main/BUILD_TRACKER.md)
 in the repository for the complete phase-by-phase build history. Every
 real engine capability has its own headless, GPU-backed pixel test
