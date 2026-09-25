@@ -20,7 +20,7 @@ node.animate("opacity", 0.0, duration_ms=300, on_complete=lambda: print("faded")
 | `"corner_radius"` | `float` | every node |
 | `"elevation"` | `float` | every node |
 | `"background"` | `(r, g, b, a)` int tuple | every node with a fill — not `Text`/`Link`/`Icon`/`LoadingIndicator` |
-| `"foreground"` | `(r, g, b, a)` int tuple | `Text`, `Link`, `Icon`, `LoadingIndicator` — the glyph/text color (set instantly on an `Icon`, animated on the others) |
+| `"foreground"` | `(r, g, b, a)` int tuple | `Text`, `Link`, `Icon`, `LoadingIndicator` — the glyph/text color |
 | `"border_color"` | `(r, g, b, a)` int tuple | every node |
 | `"border_width"` | `float` | every node |
 | `"transform"` | `(translate_x, translate_y, scale)` float tuple | every node |

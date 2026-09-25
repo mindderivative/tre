@@ -1158,7 +1158,10 @@ pub const ICON_VIEWBOX_SIZE: f64 = 960.0;
 /// directly via grep, not assumed), so this costs nothing real.
 pub struct IconState {
     pub path: peniko::kurbo::BezPath,
-    pub tint: Color,
+    /// M92: `Animated`, like every other color the renderer paints, so
+    /// `Node.animate("foreground", ...)` eases an icon's color the way it
+    /// does a `Text`'s. Ticked beside `rotation` in `Tree::tick_all`.
+    pub tint: Animated<Color>,
     pub rotation: Animated<f64>,
 }
 
@@ -1166,7 +1169,7 @@ impl IconState {
     pub fn new(path: peniko::kurbo::BezPath, tint: Color) -> Self {
         Self {
             path,
-            tint,
+            tint: Animated::new(tint),
             rotation: Animated::new(0.0),
         }
     }

@@ -73,6 +73,3 @@ above. Review its diff: a widget whose `kind:` is written after a nested
   `checked`/`text` binding fires `Change`, so a declared `on_change`
   handler runs once per update. New: `View.set_stylesheet` replaces a
   view's stylesheet in place.
-- **An `Icon`'s color isn't animated.** `Node.animate("foreground", ...)`
-  on an `Icon` sets the color immediately rather than easing it; on
-  `Text`/`Link`/`LoadingIndicator` it animates normally.

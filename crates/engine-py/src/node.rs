@@ -141,14 +141,17 @@ impl Node {
                 animate_field(&mut node.paint.background, value, duration, now, handle);
             }
             // M90: the glyph/text color of `Text`/`Link`/`Icon`/
-            // `LoadingIndicator`. The first three store it in `paint.
-            // background` (animated); an `Icon` stores it in
-            // `IconState.tint`, a plain color, so it's set immediately
-            // rather than eased.
+            // `LoadingIndicator`. `Text`/`Link`/`LoadingIndicator` store
+            // it in `paint.background`; an `Icon` in `IconState.tint`
+            // (`Animated` since M92). Both ease the same way.
             "foreground" => {
                 let value = extract_color(&to, property)?;
                 match &mut node.kind {
-                    NodeKind::Icon(state) => state.tint = value,
+                    NodeKind::Icon(state) => {
+                        let handle =
+                            on_complete.map(|cb| self.completions.borrow_mut().register(cb));
+                        animate_field(&mut state.tint, value, duration, now, handle);
+                    }
                     NodeKind::Text(_) | NodeKind::Link(_) | NodeKind::LoadingIndicator(_) => {
                         let handle =
                             on_complete.map(|cb| self.completions.borrow_mut().register(cb));

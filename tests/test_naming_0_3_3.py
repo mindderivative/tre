@@ -61,6 +61,9 @@ def test_node_animate_foreground_works_on_text_and_background_is_rejected():
 def test_node_animate_foreground_works_on_an_icon():
     icon = Window().add_icon("home", foreground=BLACK, size=24)
     icon.animate("foreground", (255, 0, 0, 255), duration_ms=0)
+    # M92: an Icon's color eases like the other glyph kinds', with
+    # on_complete accepted -- the Rust tick test proves it interpolates.
+    icon.animate("foreground", (0, 0, 255, 255), duration_ms=200, on_complete=lambda: None)
 
 
 def test_foreground_is_not_a_property_of_a_fill_kind():

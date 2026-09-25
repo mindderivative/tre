@@ -2211,11 +2211,15 @@ impl Tree {
             }
             // M35 Phase 2 (§5, §8): `Icon.rotation`'s own real central-
             // ticking need, mirrored a fourth time -- `Split Button`'s
-            // own real "menu icon rotates inwards 180°" need.
-            if let NodeKind::Icon(state) = &mut node.kind
-                && state.rotation.tick(now, &mut completed)
-            {
-                any_active = true;
+            // own real "menu icon rotates inwards 180°" need. M92: its
+            // `tint` too. Both ticked unconditionally (no short-circuit),
+            // so neither animation stalls while the other runs.
+            if let NodeKind::Icon(state) = &mut node.kind {
+                let rotating = state.rotation.tick(now, &mut completed);
+                let tinting = state.tint.tick(now, &mut completed);
+                if rotating || tinting {
+                    any_active = true;
+                }
             }
             // M30 Phase 9 Step 5 (§5, §7, §11.7): `CarouselState.
             // position`'s own real central-ticking need -- unlike
@@ -11123,7 +11127,51 @@ mod tests {
             panic!("expected an Icon node");
         };
         assert_eq!(state.path, path);
-        assert_eq!(state.tint, tint);
+        assert_eq!(state.tint.current, tint);
+    }
+
+    /// M92: an `Icon`'s tint is ticked centrally like every other
+    /// `Animated` field -- mid-animation it's strictly between the two
+    /// colors, and it settles exactly on the target, after which the
+    /// tree reports nothing left animating.
+    #[test]
+    fn an_icon_tint_animates_through_tick_all_and_settles_on_its_target() {
+        let mut tree = Tree::new();
+        let path = peniko::kurbo::BezPath::from_svg("M0,0 L10,0 L10,10 Z").unwrap();
+        let black = Color::from_rgba8(0, 0, 0, 0xFF);
+        let red = Color::from_rgba8(0xFF, 0, 0, 0xFF);
+        let (_, style, paint) = leaf(24.0, 24.0);
+        let id = tree.insert(NodeKind::Icon(IconState::new(path, black)), style, paint);
+
+        let start = Instant::now();
+        let NodeKind::Icon(state) = &mut tree.get_mut(id).unwrap().kind else {
+            panic!("expected an Icon node");
+        };
+        state
+            .tint
+            .animate_to(red, Duration::from_millis(200), MotionCurve::Linear, start);
+
+        let (active, _) = tree.tick_all(start + Duration::from_millis(100));
+        assert!(active, "a running tint animation must keep the tree active");
+        let NodeKind::Icon(state) = &tree.get(id).unwrap().kind else {
+            unreachable!()
+        };
+        let [r, g, b, a] = state.tint.current.to_rgba8().to_u8_array();
+        assert!(
+            r > 0 && r < 0xFF,
+            "mid-animation red channel must be between 0 and 255, got {r}"
+        );
+        assert_eq!((g, b, a), (0, 0, 0xFF));
+
+        let (active, _) = tree.tick_all(start + Duration::from_millis(400));
+        let NodeKind::Icon(state) = &tree.get(id).unwrap().kind else {
+            unreachable!()
+        };
+        assert_eq!(state.tint.current, red);
+        assert!(
+            !active,
+            "a finished tint animation must let the tree go idle"
+        );
     }
 
     /// M30 Phase 5 Step 1 (§5, §7): real, direct coverage of the new

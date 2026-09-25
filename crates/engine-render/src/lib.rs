@@ -1023,7 +1023,7 @@ fn paint_node(
                 Affine::IDENTITY
             };
             scene.set_transform(composed * rotation * icon_transform);
-            scene.set_paint(with_opacity(state.tint, node.paint.opacity.current));
+            scene.set_paint(with_opacity(state.tint.current, node.paint.opacity.current));
             scene.fill_path(&state.path);
             scene.set_transform(composed);
         }

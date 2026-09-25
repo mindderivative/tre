@@ -1808,7 +1808,7 @@ style: {width: 24, height: 24, foreground: "#1C1B1FFF"}
         let NodeKind::Icon(icon) = &node.kind else {
             panic!("expected an Icon node");
         };
-        assert_eq!(icon.tint, Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF));
+        assert_eq!(icon.tint.current, Color::from_rgba8(0x1C, 0x1B, 0x1F, 0xFF));
         assert!(
             !icon.path.elements().is_empty(),
             "the real curated SVG path data for \"settings\" must have parsed into real path elements"

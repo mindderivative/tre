@@ -1483,7 +1483,7 @@ fn spin_box_retheme_hook(
             if let Some(node) = tree.get_mut(icon)
                 && let NodeKind::Icon(state) = &mut node.kind
             {
-                state.tint = icon_color;
+                state.tint = Animated::new(icon_color);
             }
         }
         if let Some(node) = tree.get_mut(field) {
@@ -1647,7 +1647,7 @@ fn accordion_header_retheme_hook(headline: NodeId, chevron: NodeId) -> crate::wi
         if let Some(node) = tree.get_mut(chevron)
             && let NodeKind::Icon(state) = &mut node.kind
         {
-            state.tint = on_surface_variant;
+            state.tint = Animated::new(on_surface_variant);
         }
     })
 }
@@ -1672,7 +1672,7 @@ fn tree_node_retheme_hook(headline: NodeId, chevron: Option<NodeId>) -> crate::w
             && let Some(node) = tree.get_mut(id)
             && let NodeKind::Icon(state) = &mut node.kind
         {
-            state.tint = on_surface_variant;
+            state.tint = Animated::new(on_surface_variant);
         }
     })
 }
@@ -1707,7 +1707,7 @@ fn list_item_retheme_hook(
             if let Some(node) = tree.get_mut(icon)
                 && let NodeKind::Icon(state) = &mut node.kind
             {
-                state.tint = on_surface_variant;
+                state.tint = Animated::new(on_surface_variant);
             }
         }
     })
@@ -1985,7 +1985,7 @@ fn icon_button_retheme_hook(
         if let Some(node) = tree.get_mut(icon_id)
             && let NodeKind::Icon(state) = &mut node.kind
         {
-            state.tint = colors.label;
+            state.tint = Animated::new(colors.label);
         }
     })
 }
@@ -2019,7 +2019,7 @@ fn fab_retheme_hook(
         if let Some(node) = tree.get_mut(icon_id)
             && let NodeKind::Icon(state) = &mut node.kind
         {
-            state.tint = colors.icon;
+            state.tint = Animated::new(colors.icon);
         }
     })
 }
@@ -2054,7 +2054,7 @@ fn extended_fab_retheme_hook(
             && let Some(node) = tree.get_mut(id)
             && let NodeKind::Icon(state) = &mut node.kind
         {
-            state.tint = colors.icon;
+            state.tint = Animated::new(colors.icon);
         }
         if let Some(node) = tree.get_mut(label) {
             node.paint.background = Animated::new(colors.icon);
@@ -2094,7 +2094,7 @@ fn chip_retheme_hook(
             if let Some(node) = tree.get_mut(icon)
                 && let NodeKind::Icon(state) = &mut node.kind
             {
-                state.tint = colors.icon;
+                state.tint = Animated::new(colors.icon);
             }
         }
     })
@@ -2220,7 +2220,7 @@ fn segmented_button_retheme_hook(
                 && let Some(node) = tree.get_mut(id)
                 && let NodeKind::Icon(state) = &mut node.kind
             {
-                state.tint = on_secondary_container;
+                state.tint = Animated::new(on_secondary_container);
             }
         }
         for &divider in &dividers {
@@ -2309,7 +2309,7 @@ fn split_button_retheme_hook(
         if let Some(node) = tree.get_mut(icon_id)
             && let NodeKind::Icon(state) = &mut node.kind
         {
-            state.tint = colors.label;
+            state.tint = Animated::new(colors.label);
         }
     })
 }
@@ -2404,7 +2404,7 @@ fn snackbar_retheme_hook(
             && let Some(node) = tree.get_mut(icon)
             && let NodeKind::Icon(state) = &mut node.kind
         {
-            state.tint = icon_color;
+            state.tint = Animated::new(icon_color);
         }
     })
 }
@@ -2553,7 +2553,7 @@ fn navigation_drawer_retheme_hook(
             if let Some(node) = tree.get_mut(icon)
                 && let NodeKind::Icon(state) = &mut node.kind
             {
-                state.tint = item_color;
+                state.tint = Animated::new(item_color);
             }
             if let Some(node) = tree.get_mut(label) {
                 node.paint.background = Animated::new(item_color);
@@ -2603,7 +2603,7 @@ fn top_app_bar_retheme_hook(
             if let Some(node) = tree.get_mut(icon)
                 && let NodeKind::Icon(state) = &mut node.kind
             {
-                state.tint = leading_icon_color;
+                state.tint = Animated::new(leading_icon_color);
             }
         }
         for &(container, icon) in &trailing {
@@ -2613,7 +2613,7 @@ fn top_app_bar_retheme_hook(
             if let Some(node) = tree.get_mut(icon)
                 && let NodeKind::Icon(state) = &mut node.kind
             {
-                state.tint = trailing_icon_color;
+                state.tint = Animated::new(trailing_icon_color);
             }
         }
     })
@@ -2678,7 +2678,7 @@ fn navigation_rail_retheme_hook(
             if let Some(node) = tree.get_mut(icon)
                 && let NodeKind::Icon(state) = &mut node.kind
             {
-                state.tint = icon_color;
+                state.tint = Animated::new(icon_color);
             }
             if let Some(node) = tree.get_mut(label) {
                 node.paint.background = Animated::new(label_color);
@@ -2723,7 +2723,7 @@ fn tabs_retheme_hook(
                 && let Some(node) = tree.get_mut(id)
                 && let NodeKind::Icon(state) = &mut node.kind
             {
-                state.tint = color;
+                state.tint = Animated::new(color);
             }
             if let Some(node) = tree.get_mut(label) {
                 node.paint.background = Animated::new(color);
@@ -2797,7 +2797,7 @@ fn search_bar_retheme_hook(
             if let Some(node) = tree.get_mut(icon)
                 && let NodeKind::Icon(state) = &mut node.kind
             {
-                state.tint = leading_icon_color;
+                state.tint = Animated::new(leading_icon_color);
             }
         }
         for &(container, icon) in &trailing {
@@ -2807,7 +2807,7 @@ fn search_bar_retheme_hook(
             if let Some(node) = tree.get_mut(icon)
                 && let NodeKind::Icon(state) = &mut node.kind
             {
-                state.tint = trailing_icon_color;
+                state.tint = Animated::new(trailing_icon_color);
             }
         }
     })
@@ -2854,7 +2854,7 @@ fn pagination_retheme_hook(
             if let Some(node) = tree.get_mut(icon)
                 && let NodeKind::Icon(state) = &mut node.kind
             {
-                state.tint = on_surface_variant;
+                state.tint = Animated::new(on_surface_variant);
             }
         }
         for &(item, label, is_selected) in &pages {
@@ -2924,7 +2924,7 @@ fn menu_item_retheme_hook(
             if let Some(node) = tree.get_mut(id)
                 && let NodeKind::Icon(state) = &mut node.kind
             {
-                state.tint = icon_color;
+                state.tint = Animated::new(icon_color);
             }
         }
     })
