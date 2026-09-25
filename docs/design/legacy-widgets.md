@@ -13,7 +13,8 @@ content, or under a node outside it (`layer0`).
 The machine-readable form is
 [`legacy-widgets.json`](legacy-widgets.json); `dump(node)` in
 `tools/dump_widget.py` produces the same shape for any node, so a
-rebuilt widget can be diffed against these.
+rebuilt widget can be diffed against these. How they move, respond,
+and draw is on [Legacy widget behavior](legacy-behavior.md).
 
 ## `add_rect`
 
