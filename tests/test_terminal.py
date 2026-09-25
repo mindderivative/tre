@@ -116,6 +116,19 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
     minimum, since `ControlFlow::Poll`'s own zero-cost-when-fast
     nature means extra headroom here is free on a fast machine and
     only matters on a slow one.
+
+    **M88 correction: M83 misdiagnosed this.** The CI failure was never
+    timing. CI's Linux runner has no display at all ("neither
+    WAYLAND_DISPLAY nor WAYLAND_SOCKET nor DISPLAY is set"), so
+    `App.run()` returns immediately without rendering a single frame,
+    and PTY output only reaches the cell grid inside a frame -- the
+    test saw an empty grid (`'\n\n\n\n'`) however long it waited, and
+    kept failing on `main` after M83 landed. The run now queues a
+    marker via `App.thread_handle()` (M87) before starting; if it never
+    ran, no frame happened and the test skips with that reason rather
+    than failing on something it can't observe. M83's wider budgets are
+    kept: harmless, and still sensible headroom on a slow machine that
+    *does* have a display.
     """
     window = Window(width=420, height=200)
     term = window.add_terminal(
@@ -153,11 +166,14 @@ def test_a_real_shell_genuinely_responds_to_typed_input():
 
     app = App()
     app.add_window(window)
-    # M83: widened 60 -> 600 -- see this test's own module/function
-    # doc comment for why a small `max_frames` genuinely races real
-    # shell I/O on a slow/CI host under `ControlFlow::Poll`'s zero
-    # per-frame pacing.
+    # M88: a frame probe -- see this test's own doc comment.
+    frames_ran = []
+    app.thread_handle().call_soon(lambda: frames_ran.append(True))
+    # M83: widened 60 -> 600 -- still sensible headroom on a slow host
+    # that has a display (see the M88 correction in the doc comment).
     app.run(max_frames=600)
+    if not frames_ran:
+        pytest.skip("no display reachable: App.run() rendered no frames, so PTY output never drained")
 
     text = term.get_text()
     assert "REACHED_AFTER_SIGINT" in text, (
