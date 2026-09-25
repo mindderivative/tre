@@ -1204,7 +1204,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ## Program: `tre` as a Minimal Building-Block Engine (M93–M103) — Proposed, Awaiting Approval
 
-**Status: ⬜ Proposed (2026-09-25), awaiting the user's approval of the overall plan before any work starts.** User: "I want TRE to drop the declarative option entirely. I also want TRE to drop the MD3 components while keeping all primitives used to create the MD3 components. I also want the MD3 specific theme to be decided and created on the framework side while TRE provides all of the functions/hooks to make that possible. I want TRE to provide the building blocks while the framework has the freedom to build what it wants ... TRE needs to be small and efficient. No duplicate code, no unnecessary functions ... TRE naming conventions need to be normalized and easy to understand. When a developer uses TRE to make a framework they should know what a function, property, handler, animation, etc. is at a glance." Then: "Scope out all sequentially, then update the build tracker and once I approve the overall plan we will get started on this."
+**Status: ⬜ Proposed (2026-09-25), awaiting the user's approval of the overall plan before any work starts. All eleven decisions answered by the user (2026-09-25); D10 changed from the recommendation.** User: "I want TRE to drop the declarative option entirely. I also want TRE to drop the MD3 components while keeping all primitives used to create the MD3 components. I also want the MD3 specific theme to be decided and created on the framework side while TRE provides all of the functions/hooks to make that possible. I want TRE to provide the building blocks while the framework has the freedom to build what it wants ... TRE needs to be small and efficient. No duplicate code, no unnecessary functions ... TRE naming conventions need to be normalized and easy to understand. When a developer uses TRE to make a framework they should know what a function, property, handler, animation, etc. is at a glance." Then: "Scope out all sequentially, then update the build tracker and once I approve the overall plan we will get started on this."
 
 **Inventory this plan is built from (read from source 2026-09-25, not estimated):**
 - ~51k lines of Rust across 6 crates. Declarative layer: `engine-spec` (5.6k) plus `engine-py`'s `view.rs`/`component.rs` (~2.9k). MD3: `engine-md3` (1.6k: HCT color, shape and type scales, curated icons, container transform) plus most of `window_factory.rs` (10.9k, 62 `add_*` factories).
@@ -1217,15 +1217,15 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 **Decisions for the user, each with a recommendation (settled at approval):**
 - D1 `Terminal` -- keep as a primitive; a PTY-backed VT100 emulator can't be built efficiently in Python. **Confirmed by the user (2026-09-25): "Keep as a primitive."**
 - D2 `TextField` -- keep as the text-input primitive, including multiline, syntax spans, folding, and whitespace glyphs; `add_code_editor` goes, since it's `TextField` configured. **Confirmed by the user (2026-09-25): "As recommended."**
-- D3 `Rect` and `Container` -- merge into one box node with an optional fill: two kinds for one concept is exactly the duplication the goal rules out.
-- D4 `Icon` -- generalize to a vector `Path` node (any path data, fill and stroke, animatable); the curated icon set moves to the framework.
-- D5 Reactivity -- `Signal`/`Computed`/`Effect`/`ViewModel`/`batch`/`untrack` move to Tesserae; they exist to serve declarative binding.
-- D6 File conveniences -- remove `add_image(path)`, the `image` crate, and the "Working with Files" docs page; the framework decodes. Keep `add_image_from_bytes` and `push_frame`.
-- D7 Theming hooks -- `tre` keeps no theme concept at all; the framework sets colors on nodes and re-applies them on a theme change. Alternative if bulk re-theming proves slow: named color variables a node can reference, updated in one call -- to be decided in M93 against a measured cost, not assumed.
-- D8 Ripple and state layer -- remove from the engine; the framework builds them from primitives (M95 guarantees the primitives suffice).
-- D9 Synthetic input for headless tests (`click`, `hover`, `press_key`, `type_text`, ...) -- keep, but normalized into one consistent testing surface.
-- D10 Docking and `build_shell` -- remove; pointer capture (M94) is the building block a framework needs to build them.
-- D11 Versioning -- existing policy keeps `0.4.0` reserved for the `vello_hybrid` fork. Recommended: release the additive building blocks (M93–M96) as `0.3.4` so Tesserae can migrate against a published version while the old API still exists, then the removals and renames (M98–M102) as `0.3.5`. Flagged because this is the largest break in the project's history; the user may prefer to spend a minor version on it.
+- D3 `Rect` and `Container` -- merge into one box node with an optional fill: two kinds for one concept is exactly the duplication the goal rules out. **Confirmed by the user (2026-09-25): "As recommended."**
+- D4 `Icon` -- generalize to a vector `Path` node (any path data, fill and stroke, animatable); the curated icon set moves to the framework. **Confirmed by the user (2026-09-25): "As recommended."**
+- D5 Reactivity -- `Signal`/`Computed`/`Effect`/`ViewModel`/`batch`/`untrack` move to Tesserae; they exist to serve declarative binding. **Confirmed by the user (2026-09-25): "As recommended."**
+- D6 File conveniences -- remove `add_image(path)`, the `image` crate, and the "Working with Files" docs page; the framework decodes. Keep `add_image_from_bytes` and `push_frame`. **Confirmed by the user (2026-09-25): "As recommended."**
+- D7 Theming hooks -- `tre` keeps no theme concept at all; the framework sets colors on nodes and re-applies them on a theme change. Alternative if bulk re-theming proves slow: named color variables a node can reference, updated in one call -- to be decided in M93 against a measured cost, not assumed. **Confirmed by the user (2026-09-25): "As recommended."**
+- D8 Ripple and state layer -- remove from the engine; the framework builds them from primitives (M95 guarantees the primitives suffice). **Confirmed by the user (2026-09-25): "As recommended."**
+- D9 Synthetic input for headless tests (`click`, `hover`, `press_key`, `type_text`, ...) -- keep, but normalized into one consistent testing surface. **Confirmed by the user (2026-09-25): "As recommended."**
+- D10 Docking -- **changed by the user (2026-09-25): "Keep as bare bones, just the functionality for the framework to build off of."** Docking stays in `tre` as a minimal mechanism -- the docking model, panel drag and drop, and drop-target resolution -- with its presentation (tab strips, handle and highlight styling) and the `build_shell` app-shell composition moving to the framework. M93 defines the bare-bones surface; M99 reduces docking to it.
+- D11 Versioning -- existing policy keeps `0.4.0` reserved for the `vello_hybrid` fork. Recommended: release the additive building blocks (M93–M96) as `0.3.4` so Tesserae can migrate against a published version while the old API still exists, then the removals and renames (M98–M102) as `0.3.5`. Flagged because this is the largest break in the project's history; the user may prefer to spend a minor version on it. **Confirmed by the user (2026-09-25): "As recommended."**
 
 **Prerequisite: release `v0.3.3` (M90–M92) first.** Tesserae's own 0.3.3 migration comes before any of this program, and its M31 (theme and stylesheet hot reload) depends on M91's fix for issue #8.
 
@@ -1269,7 +1269,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ### Phase 1 — Inventory and Classification ⬜
 - Step 1: classify every public name -- all 7 classes' methods, the 60 factories, all 21 node kinds, every `PaintProperties` field, every event, every animatable property, every motion curve -- as keep, replace-with-primitive, move-to-framework, or remove, with a one-line reason each — ⬜
-- Step 2: for each MD3 widget kind, list the exact primitives a framework needs to rebuild it, so M94–M96 add exactly those and nothing speculative — ⬜
+- Step 2: for each MD3 widget kind, list the exact primitives a framework needs to rebuild it, so M94–M96 add exactly those and nothing speculative; define the bare-bones docking surface per D10 — ⬜
 - Step 3: map every capability Tesserae uses today, and every need in its capability list above, to a named primitive in the target API -- none left unaccounted for — ⬜
 
 ### Phase 2 — Naming Convention ⬜
@@ -1288,7 +1288,7 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 
 ### Phase 1 — Pointer and Keyboard Events ⬜
 - Step 1: pointer down, move, and up events to Python, with node-local and window coordinates, button, and modifiers; wheel events — ⬜
-- Step 2: pointer capture, so a drag keeps reporting to the node that started it after the pointer leaves it -- what sliders, splitters, and docking need — ⬜
+- Step 2: pointer capture, so a drag keeps reporting to the node that started it after the pointer leaves it -- what sliders, splitters, and framework-built drag interactions need — ⬜
 - Step 3: key down and key up events with key and modifiers, alongside text input, to the focused node — ⬜
 - Step 4: a defined propagation model -- whether events bubble to ancestors, and how a handler stops them -- decided in M93 and implemented here — ⬜
 - Step 5: window-level events to Python -- resize, and the OS light/dark switch, which `tre` stops handling itself once theming moves out — ⬜
@@ -1366,8 +1366,9 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 **Status: ⬜ Proposed.** Starts only after M97's gate.
 
 ### Phase 1 — Factories and Theming ⬜
-- Step 1: delete the MD3 composition factories, `build_shell`, docking, container transform, the `Theme` class, `set_theme`, and the retheme hooks — ⬜
-- Step 2: delete the `engine-md3` crate; its color science, scales, and icon data are handed to Tesserae first — ⬜
+- Step 1: delete the MD3 composition factories, `build_shell`, container transform, the `Theme` class, `set_theme`, and the retheme hooks — ⬜
+- Step 2: reduce docking to the bare-bones mechanism M93 defines per D10 -- the docking model, panel drag and drop, and drop-target resolution stay; tab-strip, handle, and highlight presentation move to the framework — ⬜
+- Step 3: delete the `engine-md3` crate; its color science, scales, and icon data are handed to Tesserae first — ⬜
 
 ### Phase 2 — Engine-Side MD3 Behavior ⬜
 - Step 1: delete the MD3 widget kinds -- `Checkbox`, `RadioButton`, `Switch`, `Slider`, the three progress indicators, `LoadingIndicator`, `TimePickerDial`, `Carousel`, `Splitter`, `Link` -- with their dispatch, ticking, painting, and accessibility code in `engine-core` and `engine-render` — ⬜
