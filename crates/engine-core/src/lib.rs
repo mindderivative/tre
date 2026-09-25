@@ -51,7 +51,7 @@ pub use node::{
     TextFieldState, TextOptions, TextState, TimePickerDialMode, TimePickerDialState,
     VirtualListState,
 };
-pub use overlay::OverlayMeta;
+pub use overlay::{OverlayMeta, Placement};
 pub use path::{PathData, PathState, fit_transform, trim};
 pub use shape_morph::ShapeKey;
 pub use tree::{

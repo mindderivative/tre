@@ -226,10 +226,11 @@ fn dropdown_menu_positions_by_anchor_and_paints_above_the_background_via_append_
             anchor,
             menu,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
         tree.compute_layout(

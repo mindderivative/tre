@@ -33,6 +33,7 @@ mod window_docking;
 mod window_events;
 mod window_factory;
 mod window_input;
+mod window_layers;
 mod window_virtual_canvas;
 
 use pyo3::prelude::*;

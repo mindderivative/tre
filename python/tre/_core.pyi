@@ -611,6 +611,28 @@ class Window:
         """M94: reads `width`, `height`, `title`, or `scale_factor`
         (`1.0` until `App.run()` opens the window)."""
         ...
+    def show_layer(
+        self,
+        node: Node,
+        anchor: Node | None = None,
+        placement: str = "below",
+        modal: bool = False,
+        dismissible: bool = True,
+    ) -> None:
+        """M96: shows `node` over the window's content, above every layer
+        already open. With `anchor`, it's placed against that node on the
+        `placement` side (`"below"`, `"above"`, `"start"`, `"end"`),
+        flipped or shifted to fit at every layout; without one it sits at
+        its own `x`/`y`. `modal` blocks input beneath it and moves focus
+        into it; `dismissible` delivers `dismiss` to it on an outside press
+        (which it consumes) or Escape (the topmost dismissible layer only).
+        Events inside a layer stop at it, and it's its own Tab scope."""
+        ...
+    def hide_layer(self, node: Node) -> None:
+        """M96: hides the layer `node`, detaching it (alive while held), and
+        returns focus inside it to the node that held focus when it
+        opened."""
+        ...
     def measure_text(
         self,
         text: str,

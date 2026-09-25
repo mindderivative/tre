@@ -328,6 +328,17 @@ pairs, `build_menu`, and `set_context_menu`.
   fires `dismiss` on the layer's node; the framework decides whether to
   call `hide_layer`.
 
+*M96, as built:* a layer is an absolutely positioned child of the root, kept
+above all content (`root.children()` omits it; its `parent()` is `None`).
+`"start"`/`"end"` are left/right of the anchor, aligned with its start; a
+layer flips when its side lacks room and the other has more, then shifts
+inside the window, at every layout. An outside press that dismisses is
+consumed, as the legacy overlays' was; one landing inside any layer
+dismisses only the layers above it. Every event, not only keys, stops at
+the layer's node. `hide_layer` restores focus only when focus is inside the
+layer. The legacy overlays share the same ordered bookkeeping, closing
+themselves as before, until M99 removes them.
+
 ### Docking (bare bones, D10)
 
 | API | Does |

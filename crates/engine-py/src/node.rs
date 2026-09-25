@@ -1000,8 +1000,8 @@ impl Node {
     fn insert_child(&self, index: usize, child: PyRef<'_, Node>) -> PyResult<()> {
         self.check_pair(&child)?;
         let mut tree = self.tree.borrow_mut();
-        let siblings = tree.get(self.id).map_or(0, |n| n.children.len());
-        let already_here = tree.get(child.id).and_then(|n| n.parent) == Some(self.id);
+        let siblings = tree.content_children(self.id).len();
+        let already_here = tree.content_children(self.id).contains(&child.id);
         let limit = siblings - usize::from(already_here);
         if index > limit {
             return Err(pyo3::exceptions::PyIndexError::new_err(format!(
@@ -1017,26 +1017,22 @@ impl Node {
         }
     }
 
-    /// M96: this node's children, in order.
+    /// M96: this node's children, in order -- open layers aren't among
+    /// the root's.
     fn children(&self) -> PyResult<Vec<Node>> {
-        let ids = {
-            let tree = self.tree.borrow();
-            tree.get(self.id)
-                .ok_or(EngineError::Destroyed)?
-                .children
-                .clone()
-        };
+        self.check_alive()?;
+        let ids = self.tree.borrow().content_children(self.id).to_vec();
         Ok(ids.into_iter().map(|id| self.handle_to(id)).collect())
     }
 
-    /// M96: this node's parent, or `None` for a detached node or the root.
+    /// M96: this node's parent, or `None` for a detached node, the root, or
+    /// a shown layer.
     fn parent(&self) -> PyResult<Option<Node>> {
-        let parent = self
-            .tree
-            .borrow()
-            .get(self.id)
-            .ok_or(EngineError::Destroyed)?
-            .parent;
+        let parent = {
+            let tree = self.tree.borrow();
+            let parent = tree.get(self.id).ok_or(EngineError::Destroyed)?.parent;
+            parent.filter(|_| !tree.is_layer(self.id))
+        };
         Ok(parent.map(|id| self.handle_to(id)))
     }
 

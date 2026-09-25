@@ -105,10 +105,11 @@ pub(crate) enum EventType {
     Blur,
     Change,
     A11yAction,
+    Dismiss,
 }
 
 impl EventType {
-    const ALL: [EventType; 15] = [
+    const ALL: [EventType; 16] = [
         Self::PointerEnter,
         Self::PointerLeave,
         Self::PointerDown,
@@ -124,6 +125,7 @@ impl EventType {
         Self::Blur,
         Self::Change,
         Self::A11yAction,
+        Self::Dismiss,
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -143,13 +145,18 @@ impl EventType {
             Self::Blur => "blur",
             Self::Change => "change",
             Self::A11yAction => "a11y_action",
+            Self::Dismiss => "dismiss",
         }
     }
 
-    /// M93's R3: `pointer_enter`/`pointer_leave` are per-subtree and
-    /// `change` belongs to one input, so those three stay on their target.
+    /// M93's R3: `pointer_enter`/`pointer_leave` are per-subtree, and
+    /// `change` and `dismiss` belong to one node, so those stay on their
+    /// target.
     fn bubbles(self) -> bool {
-        !matches!(self, Self::PointerEnter | Self::PointerLeave | Self::Change)
+        !matches!(
+            self,
+            Self::PointerEnter | Self::PointerLeave | Self::Change | Self::Dismiss
+        )
     }
 
     /// A node event name, or a `ValueError` listing every valid one.
@@ -225,8 +232,8 @@ pub(crate) fn target_before(tree: &Tree, root: NodeId, event: &InputEvent) -> Op
         | InputEvent::PointerPressed { position, .. }
         | InputEvent::PointerReleased { position, .. } => tree
             .pointer_capture()
-            .or_else(|| tree.hit_test(root, *position)),
-        InputEvent::Scroll { position, .. } => tree.hit_test(root, *position),
+            .or_else(|| tree.hit_test_input(root, *position)),
+        InputEvent::Scroll { position, .. } => tree.hit_test_input(root, *position),
         InputEvent::Key { .. } => Some(tree.focused().unwrap_or(root)),
         InputEvent::TextInput(_) => tree.focused().filter(|&id| {
             matches!(
@@ -470,7 +477,16 @@ pub(crate) fn deliver(
             return;
         }
         if event_type.bubbles() {
-            tree.ancestors(target).collect()
+            // M96: an event inside a layer bubbles to the layer and stops
+            // there, never reaching the tree underneath.
+            let mut path = Vec::new();
+            for id in tree.ancestors(target) {
+                path.push(id);
+                if tree.is_layer(id) {
+                    break;
+                }
+            }
+            path
         } else {
             vec![target]
         }

@@ -907,6 +907,24 @@ impl Node {
                         .into_any()
                         .unbind()
                 }
+                "layer_placement" => {
+                    // Placed at layout: run any pending layout first.
+                    drop(tree);
+                    self.layout_box(py);
+                    let tree = self.tree.borrow();
+                    return Ok(tree
+                        .overlay_meta(self.id)
+                        .and_then(|meta| meta.placed)
+                        .and_then(|side| {
+                            crate::window_layers::PLACEMENT
+                                .iter()
+                                .find(|(_, s)| *s == side)
+                                .map(|(n, _)| *n)
+                        })
+                        .into_pyobject(py)?
+                        .into_any()
+                        .unbind());
+                }
                 "focused" => {
                     let focused = tree.focused() == Some(self.id);
                     any(focused.into_pyobject(py)?.to_owned().into_any())

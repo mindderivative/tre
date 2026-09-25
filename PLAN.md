@@ -39,14 +39,16 @@ Legacy names and behavior stay until 0.3.5.
   - Only a node detached through the new API (`create`, `remove()`,
     `hide_layer`) is collectible; legacy detached content (context menus,
     inactive dock panels) never is.
-  - Handle counts live in `Tree`. When the last handle to anything in a
-    collectible subtree goes, the subtree is freed and its listeners are
-    pruned.
+  - When the last handle to anything in a collectible subtree goes, the
+    subtree is freed and its listeners are pruned. *As built:* the counts
+    live per thread in `node_handles.rs`, not in `Tree` -- factories build
+    handles while holding a tree borrow.
 - **Time.**
   - `engine-core` never reads the clock; timestamps are parameters.
   - `engine-py` reads `Instant::now()` at 24 sites. `window.advance(ms)`
-    pins a per-tree virtual clock (`Tree::now`) that those sites use;
-    `App.run()` unpins it.
+    pins a per-window virtual clock that those sites use; `App.run()`
+    unpins it. *As built:* `clock.rs`, keyed by a weak reference to the
+    tree, so reading the time never borrows it.
 - **Batching.**
   - Layout runs once per frame (`app.rs` frame closure), never per
     property change, and no frame can run inside a Python call.
@@ -95,4 +97,5 @@ Legacy names and behavior stay until 0.3.5.
 
 ## Status
 
-Scoped (2026-09-25). Phase 1 next.
+Complete (2026-09-25): all five phases done. Two spec items were dropped as
+corrections after measurement (`window.batch()`, `window.set_content`).

@@ -4414,10 +4414,11 @@ impl PyWindow {
             anchor.id,
             menu.id,
             OverlayMeta {
-                anchor: anchor.id,
+                anchor: Some(anchor.id),
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
         Ok(())
@@ -5238,10 +5239,11 @@ impl PyWindow {
             anchor,
             dialog.id,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: false,
                 dismiss_on_escape: true,
                 modal: true,
+                ..Default::default()
             },
         );
         Ok(())
@@ -5258,7 +5260,7 @@ impl PyWindow {
             return Err(EngineError::ForeignNode.into());
         }
         let mut tree = self.tree.borrow_mut();
-        let anchor = tree.overlay_meta(dialog.id).map(|meta| meta.anchor);
+        let anchor = tree.overlay_meta(dialog.id).and_then(|meta| meta.anchor);
         tree.close_overlay(dialog.id);
         if let Some(anchor) = anchor {
             tree.remove(anchor);
@@ -5544,10 +5546,11 @@ impl PyWindow {
             anchor,
             snackbar.id,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: false,
                 dismiss_on_escape: false,
                 modal: false,
+                ..Default::default()
             },
         );
         Ok(())
@@ -5563,7 +5566,7 @@ impl PyWindow {
             return Err(EngineError::ForeignNode.into());
         }
         let mut tree = self.tree.borrow_mut();
-        let anchor = tree.overlay_meta(snackbar.id).map(|meta| meta.anchor);
+        let anchor = tree.overlay_meta(snackbar.id).and_then(|meta| meta.anchor);
         tree.close_overlay(snackbar.id);
         if let Some(anchor) = anchor {
             tree.remove(anchor);
@@ -5779,10 +5782,11 @@ impl PyWindow {
             anchor,
             side_sheet.id,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: false,
                 dismiss_on_escape: true,
                 modal: true,
+                ..Default::default()
             },
         );
         Ok(())
@@ -5797,7 +5801,9 @@ impl PyWindow {
             return Err(EngineError::ForeignNode.into());
         }
         let mut tree = self.tree.borrow_mut();
-        let anchor = tree.overlay_meta(side_sheet.id).map(|meta| meta.anchor);
+        let anchor = tree
+            .overlay_meta(side_sheet.id)
+            .and_then(|meta| meta.anchor);
         tree.close_overlay(side_sheet.id);
         if let Some(anchor) = anchor {
             tree.remove(anchor);
@@ -6470,10 +6476,11 @@ impl PyWindow {
             anchor,
             drawer.id,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: false,
                 dismiss_on_escape: true,
                 modal: true,
+                ..Default::default()
             },
         );
         Ok(())
@@ -6488,7 +6495,7 @@ impl PyWindow {
             return Err(EngineError::ForeignNode.into());
         }
         let mut tree = self.tree.borrow_mut();
-        let anchor = tree.overlay_meta(drawer.id).map(|meta| meta.anchor);
+        let anchor = tree.overlay_meta(drawer.id).and_then(|meta| meta.anchor);
         tree.close_overlay(drawer.id);
         if let Some(anchor) = anchor {
             tree.remove(anchor);

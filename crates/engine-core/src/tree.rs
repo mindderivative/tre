@@ -11,7 +11,7 @@
 //! which the CI benchmark this step adds would be exactly what catches
 //! that.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use slotmap::{Key as SlotMapKey, KeyData, SecondaryMap, SlotMap};
@@ -36,7 +36,7 @@ use crate::node::{
     CheckboxState, IconState, ItemExtent, SliderState, TerminalCell, TerminalState,
     TimePickerDialState, VirtualListState,
 };
-use crate::overlay::OverlayMeta;
+use crate::overlay::{OverlayMeta, Placement};
 #[cfg(test)]
 use peniko::kurbo::BezPath;
 use peniko::kurbo::{Affine, ParamCurveNearest, Point, Rect};
@@ -111,7 +111,10 @@ pub struct Tree {
     /// §14 step 13 (§11.3): keyed by the overlay root's own `NodeId` --
     /// metadata only, never the node itself, which already lives in
     /// `nodes` like any other.
-    overlays: HashMap<NodeId, OverlayMeta>,
+    overlays: Vec<(NodeId, OverlayMeta)>,
+    /// M96: layers an outside press or Escape asked to dismiss, since the
+    /// last `take_dismissals`.
+    dismissals: Vec<NodeId>,
     /// M29 Phase 1 (§5, §6): coarse, whole-tree "does the next frame
     /// need real paint/GPU work at all" signal -- set `true` by every
     /// real mutating method below (deliberately conservative: a method
@@ -186,7 +189,8 @@ impl Tree {
             pressed: None,
             dragging: None,
             drag_start_value: None,
-            overlays: HashMap::new(),
+            overlays: Vec::new(),
+            dismissals: Vec::new(),
             dirty: true,
             carousel_count: 0,
             button_group_reflow_count: 0,
@@ -326,6 +330,13 @@ impl Tree {
     /// runtime condition (unlike the GPU/display absence this codebase
     /// exits gracefully for elsewhere).
     pub fn add_child(&mut self, parent: NodeId, child: NodeId) {
+        // M96: below any open overlay, so content never paints over one.
+        let index = self.content_len(parent);
+        self.attach_at(parent, index, child);
+    }
+
+    /// Attaches `child` under `parent` at `index`, in both structures.
+    fn attach_at(&mut self, parent: NodeId, index: usize, child: NodeId) {
         self.dirty = true;
         let parent_taffy = *self
             .taffy_nodes
@@ -336,12 +347,33 @@ impl Tree {
             .get(child)
             .expect("add_child: child NodeId not found in this Tree");
         self.taffy
-            .add_child(parent_taffy, child_taffy)
+            .insert_child_at_index(parent_taffy, index, child_taffy)
             .expect("add_child: taffy rejected the parent/child pair");
-
-        self.nodes[parent].children.push(child);
+        self.nodes[parent].children.insert(index, child);
         self.nodes[child].parent = Some(parent);
         self.collectible.remove(&child);
+    }
+
+    /// M96: how many of `parent`'s children come before its open
+    /// overlays -- its content, which open overlays always sit above.
+    fn content_len(&self, parent: NodeId) -> usize {
+        self.nodes[parent]
+            .children
+            .iter()
+            .take_while(|child| !self.is_overlay(**child))
+            .count()
+    }
+
+    /// M96: `parent`'s children other than its open overlays, in order.
+    pub fn content_children(&self, parent: NodeId) -> &[NodeId] {
+        match self.nodes.get(parent) {
+            Some(node) => &node.children[..self.content_len(parent)],
+            None => &[],
+        }
+    }
+
+    fn is_overlay(&self, id: NodeId) -> bool {
+        self.overlays.iter().any(|(content, _)| *content == id)
     }
 
     /// M6 Phase 1 (§8): the checked counterpart to `add_child`, for the
@@ -367,8 +399,8 @@ impl Tree {
     /// this is the first general-purpose, arbitrary-reparenting entry
     /// point, and the one most likely to hit it a third time.
     pub fn try_add_child(&mut self, parent: NodeId, child: NodeId) -> bool {
-        let end = self.nodes[parent].children.len();
-        let end = if self.nodes[child].parent == Some(parent) {
+        let end = self.content_len(parent);
+        let end = if self.content_children(parent).contains(&child) {
             end - 1
         } else {
             end
@@ -393,15 +425,8 @@ impl Tree {
         if let Some(old_parent) = self.nodes[child].parent {
             self.unlink(old_parent, child);
         }
-        let index = index.min(self.nodes[parent].children.len());
-        let parent_taffy = self.taffy_nodes[parent];
-        let child_taffy = self.taffy_nodes[child];
-        self.taffy
-            .insert_child_at_index(parent_taffy, index, child_taffy)
-            .expect("insert_child: taffy rejected the parent/child pair");
-        self.nodes[parent].children.insert(index, child);
-        self.nodes[child].parent = Some(parent);
-        self.collectible.remove(&child);
+        let index = index.min(self.content_len(parent));
+        self.attach_at(parent, index, child);
         if self.root_of(child) != root_before {
             self.forget_interaction_in(child);
         }
@@ -568,7 +593,7 @@ impl Tree {
         // forever. A plain `HashMap::remove` is a no-op for the (vast
         // majority of) ids that were never overlay content, so this
         // costs nothing on the common path.
-        self.overlays.remove(&id);
+        self.overlays.retain(|(content, _)| *content != id);
         if self.focused == Some(id) {
             self.focused = None;
         }
@@ -650,6 +675,12 @@ impl Tree {
             self.taffy
                 .compute_layout(root_taffy, available_space)
                 .expect("compute_layout: taffy layout computation failed (virtual list sync pass)");
+        }
+        // M96: anchored layers go where they fit, once their sizes are known.
+        if self.place_layers(root) {
+            self.taffy
+                .compute_layout(root_taffy, available_space)
+                .expect("compute_layout: taffy layout computation failed (layer placement pass)");
         }
     }
 
@@ -1558,8 +1589,10 @@ impl Tree {
         };
         self.set_layout_style(content, style);
 
-        self.add_child(root, content);
-        self.overlays.insert(content, meta);
+        let top = self.nodes[root].children.len();
+        self.attach_at(root, top, content);
+        self.overlays.retain(|(open, _)| *open != content);
+        self.overlays.push((content, meta));
     }
 
     /// M10 Phase 3 (§11.4): `open_overlay`'s own missing "cover an
@@ -1627,10 +1660,10 @@ impl Tree {
     /// afterward.
     pub fn close_overlay(&mut self, id: NodeId) -> bool {
         self.dirty = true;
-        let had_overlay = self.overlays.remove(&id).is_some();
-        if !had_overlay {
+        let Some(index) = self.overlays.iter().position(|(content, _)| *content == id) else {
             return false;
-        }
+        };
+        self.overlays.remove(index);
         if let Some(parent) = self.get(id).and_then(|node| node.parent) {
             self.detach(parent, id);
         }
@@ -1642,7 +1675,10 @@ impl Tree {
     /// dispatch (below, M10 Phase 1) reads, alongside `dispatch::
     /// open_context_menu`'s own re-open guard.
     pub fn overlay_meta(&self, id: NodeId) -> Option<&OverlayMeta> {
-        self.overlays.get(&id)
+        self.overlays
+            .iter()
+            .find(|(content, _)| *content == id)
+            .map(|(_, meta)| meta)
     }
 
     /// M10 Phase 1 (§11.3): closes every currently-open overlay whose
@@ -1686,18 +1722,18 @@ impl Tree {
         // this overlay" are the identical real condition.
         let inside_any_overlay = self
             .overlays
-            .keys()
-            .any(|&content| self.hit_test(content, point).is_some());
+            .iter()
+            .any(|(content, _)| self.hit_test(*content, point).is_some());
         let to_dismiss: Vec<NodeId> = self
             .overlays
             .iter()
             .filter(|(content, meta)| {
                 meta.dismiss_on_outside_click
                     && !inside_any_overlay
-                    && self.hit_test(**content, point).is_none()
-                    && self.hit_test(meta.anchor, point).is_none()
+                    && self.hit_test(*content, point).is_none()
+                    && !self.anchor_hit(meta, point)
             })
-            .map(|(&content, _)| content)
+            .map(|(content, _)| *content)
             .collect();
         let dismissed_any = !to_dismiss.is_empty();
         for content in to_dismiss {
@@ -1717,11 +1753,183 @@ impl Tree {
     /// it, the same real split that arm already has for the dismiss
     /// case.
     fn press_blocked_by_modal_overlay(&self, point: Point) -> bool {
-        self.overlays.iter().any(|(&content, meta)| {
-            meta.modal
-                && self.hit_test(content, point).is_none()
-                && self.hit_test(meta.anchor, point).is_none()
+        self.overlays.iter().any(|(content, meta)| {
+            meta.modal && self.hit_test(*content, point).is_none() && !self.anchor_hit(meta, point)
         })
+    }
+
+    /// Whether `point` lands on `meta`'s anchor.
+    fn anchor_hit(&self, meta: &OverlayMeta, point: Point) -> bool {
+        meta.anchor
+            .is_some_and(|anchor| self.hit_test(anchor, point).is_some())
+    }
+
+    /// M96: a press at `point` outside open layers -- from the top down,
+    /// each dismissible layer it misses asks to be dismissed, stopping at
+    /// the layer it lands in (so a press inside a submenu leaves its
+    /// parent menu open) or at a modal one. Returns whether it asked any,
+    /// so the press is consumed, as a legacy outside press is.
+    fn report_outside_press(&mut self, point: Point) -> bool {
+        let mut asked = Vec::new();
+        for (content, meta) in self.overlays.iter().rev() {
+            if self.hit_test(*content, point).is_some() || self.anchor_hit(meta, point) {
+                break;
+            }
+            if meta.dismissible {
+                asked.push(*content);
+            }
+            if meta.modal {
+                break;
+            }
+        }
+        let any = !asked.is_empty();
+        self.dismissals.extend(asked);
+        any
+    }
+
+    /// M96: shows `node` as a layer over `root`'s content -- on top of every
+    /// layer already open -- positioned absolutely: against `meta.anchor`
+    /// at every layout (`place_layers`), or at its own `x`/`y` without
+    /// one. A node attached elsewhere moves. Returns `false`, changing
+    /// nothing, if `node` is `root` or one of its ancestors.
+    pub fn show_layer(&mut self, root: NodeId, node: NodeId, meta: OverlayMeta) -> bool {
+        if self.ancestors(root).any(|id| id == node) {
+            return false;
+        }
+        self.dirty = true;
+        self.overlays.retain(|(open, _)| *open != node);
+        if let Some(parent) = self.nodes[node].parent {
+            self.unlink(parent, node);
+        }
+        let mut style = self.nodes[node].layout_style.clone();
+        style.position = Position::Absolute;
+        self.set_layout_style(node, style);
+        let top = self.nodes[root].children.len();
+        self.attach_at(root, top, node);
+        self.overlays.push((node, meta));
+        true
+    }
+
+    /// M96: closes the layer `node`, detaching it, still alive and
+    /// collectible (`detach_collectible`), and returns what it was opened
+    /// with -- `restore_focus` for the caller to hand focus back to.
+    pub fn hide_layer(&mut self, node: NodeId) -> Option<OverlayMeta> {
+        let index = self.overlays.iter().position(|(open, _)| *open == node)?;
+        let (_, meta) = self.overlays.remove(index);
+        self.detach_collectible(node);
+        Some(meta)
+    }
+
+    /// M96: whether `id` is an open layer or legacy overlay.
+    pub fn is_layer(&self, id: NodeId) -> bool {
+        self.is_overlay(id)
+    }
+
+    /// M96: the topmost open modal layer, if any.
+    fn top_modal(&self) -> Option<usize> {
+        self.overlays.iter().rposition(|(_, meta)| meta.modal)
+    }
+
+    /// M96: the node input at `point` is aimed at -- `hit_test`, except
+    /// that an open modal layer blocks everything beneath it, so a point
+    /// outside it (and outside every layer above it) hits nothing.
+    pub fn hit_test_input(&self, root: NodeId, point: Point) -> Option<NodeId> {
+        let Some(modal) = self.top_modal() else {
+            return self.hit_test(root, point);
+        };
+        self.overlays[modal..]
+            .iter()
+            .rev()
+            .find_map(|(content, _)| self.hit_test(*content, point))
+    }
+
+    /// M96: the subtree Tab moves through -- the topmost modal layer while
+    /// one is open, else the layer holding focus, else `root` without its
+    /// layers. Each open layer is its own focus scope (R8).
+    fn focus_scope(&self, root: NodeId) -> (NodeId, bool) {
+        if let Some(modal) = self.top_modal() {
+            return (self.overlays[modal].0, false);
+        }
+        let holding = self
+            .focused
+            .and_then(|focused| self.ancestors(focused).find(|id| self.is_overlay(*id)));
+        match holding {
+            Some(layer) => (layer, false),
+            None => (root, true),
+        }
+    }
+
+    /// M96: places every anchored layer against its anchor, preferring
+    /// `placement`, flipping to the opposite side when that side lacks
+    /// the room and the other has more, then shifting along both axes to
+    /// stay inside `root`. Records the side used as `placed`. Returns
+    /// whether any layer moved, so layout runs again.
+    fn place_layers(&mut self, root: NodeId) -> bool {
+        let window = {
+            let size = self.layout(root).size;
+            (f64::from(size.width), f64::from(size.height))
+        };
+        let mut moved = false;
+        for index in 0..self.overlays.len() {
+            let (layer, meta) = self.overlays[index];
+            let (Some(anchor), Some(preferred)) = (meta.anchor, meta.placement) else {
+                continue;
+            };
+            if self.nodes.get(anchor).is_none() {
+                continue;
+            }
+            let (ax, ay) = self.absolute_position(anchor);
+            let anchor_size = self.layout(anchor).size;
+            let (aw, ah) = (f64::from(anchor_size.width), f64::from(anchor_size.height));
+            let size = self.layout(layer).size;
+            let (w, h) = (f64::from(size.width), f64::from(size.height));
+            // Room on each side of the anchor.
+            let room = |side: Placement| match side {
+                Placement::Below => window.1 - (ay + ah),
+                Placement::Above => ay,
+                Placement::Start => ax,
+                Placement::End => window.0 - (ax + aw),
+            };
+            let needed = |side: Placement| match side {
+                Placement::Below | Placement::Above => h,
+                Placement::Start | Placement::End => w,
+            };
+            let side = if room(preferred) < needed(preferred)
+                && room(preferred.opposite()) > room(preferred)
+            {
+                preferred.opposite()
+            } else {
+                preferred
+            };
+            let (x, y) = match side {
+                Placement::Below => (ax, ay + ah),
+                Placement::Above => (ax, ay - h),
+                Placement::Start => (ax - w, ay),
+                Placement::End => (ax + aw, ay),
+            };
+            let fit = |at: f64, extent: f64, limit: f64| at.min(limit - extent).max(0.0);
+            let (x, y) = (fit(x, w, window.0) as f32, fit(y, h, window.1) as f32);
+            let mut style = self.nodes[layer].layout_style.clone();
+            let inset = TaffyRect {
+                left: length(x),
+                top: length(y),
+                right: auto(),
+                bottom: auto(),
+            };
+            if style.inset != inset {
+                style.inset = inset;
+                self.set_layout_style(layer, style);
+                moved = true;
+            }
+            self.overlays[index].1.placed = Some(side);
+        }
+        moved
+    }
+
+    /// M96: the layers an outside press or Escape asked to dismiss since
+    /// the last call -- `engine-py` delivers each a `dismiss` event.
+    pub fn take_dismissals(&mut self) -> Vec<NodeId> {
+        std::mem::take(&mut self.dismissals)
     }
 
     /// M10 Phase 1 (§11.3): closes every currently-open overlay whose
@@ -1733,10 +1941,19 @@ impl Tree {
             .overlays
             .iter()
             .filter(|(_, meta)| meta.dismiss_on_escape)
-            .map(|(&content, _)| content)
+            .map(|(content, _)| *content)
             .collect();
         for content in to_dismiss {
             self.close_overlay(content);
+        }
+        // M96: Escape asks only the topmost dismissible layer.
+        if let Some((content, _)) = self
+            .overlays
+            .iter()
+            .rev()
+            .find(|(_, meta)| meta.dismissible)
+        {
+            self.dismissals.push(*content);
         }
     }
 
@@ -2786,7 +3003,7 @@ impl Tree {
         duration: Duration,
         now: Instant,
     ) -> Option<NodeId> {
-        let hit = self.hit_test(root, point);
+        let hit = self.hit_test_input(root, point);
         self.set_hovered(hit, hover_opacity, duration, now)
     }
 
@@ -2911,7 +3128,8 @@ impl Tree {
     ) -> Option<(Option<NodeId>, Option<NodeId>)> {
         self.dirty = true;
         let mut order = Vec::new();
-        self.collect_interactive(root, &mut order);
+        let (scope, skip_layers) = self.focus_scope(root);
+        self.collect_interactive(scope, skip_layers, &mut order);
         // M94: positive `tab_index` values first, ascending; then the
         // rest in tree order (the sort is stable).
         order.sort_by_key(|&id| match self.nodes[id].access.tab_index {
@@ -3865,7 +4083,7 @@ impl Tree {
 
     /// Pre-order walk collecting every node whose `access.actions` is
     /// non-empty, in tree order -- `move_focus`'s own Tab-order.
-    fn collect_interactive(&self, id: NodeId, out: &mut Vec<NodeId>) {
+    fn collect_interactive(&self, id: NodeId, skip_layers: bool, out: &mut Vec<NodeId>) {
         let Some(node) = self.nodes.get(id) else {
             return;
         };
@@ -3876,7 +4094,9 @@ impl Tree {
             out.push(id);
         }
         for &child in &node.children {
-            self.collect_interactive(child, out);
+            if !(skip_layers && self.is_overlay(child)) {
+                self.collect_interactive(child, skip_layers, out);
+            }
         }
     }
 
@@ -3933,6 +4153,12 @@ impl Tree {
                 }
             }
             InputEvent::PointerPressed { position, button } => {
+                // M96: a press outside dismissible layers asks them to be
+                // dismissed, and is consumed like a legacy outside press.
+                if self.report_outside_press(position) {
+                    self.set_pressed(None, config.hover_duration, now);
+                    return DispatchOutcome::None;
+                }
                 // M10 Phase 1 (§11.3): a real press outside every open
                 // dismiss_on_outside_click overlay's own subtree closes
                 // it and consumes this press -- skips the normal hit/
@@ -3954,7 +4180,7 @@ impl Tree {
                     self.set_pressed(None, config.hover_duration, now);
                     return DispatchOutcome::None;
                 }
-                let hit = self.hit_test(root, position);
+                let hit = self.hit_test_input(root, position);
                 // M38 Phase 6 (§5, §7, §11.7): a real scrollbar-thumb
                 // grab takes priority over the ordinary hit -- the
                 // thumb is a paint-only overlay drawn *over* the real
@@ -4171,7 +4397,7 @@ impl Tree {
                 }
             }
             InputEvent::PointerReleased { position, button } => {
-                let hit = self.hit_test(root, position);
+                let hit = self.hit_test_input(root, position);
                 let outcome = match self.pressed {
                     // M4 Phase 7 (§11.3): a same-node press/release pair
                     // means something different per button -- Primary
@@ -4435,7 +4661,7 @@ impl Tree {
                     ScrollDelta::Lines(x, y) => ScrollDelta::Lines(-x, -y),
                     ScrollDelta::Pixels(x, y) => ScrollDelta::Pixels(-x, -y),
                 };
-                if let Some(hit) = self.hit_test(root, position) {
+                if let Some(hit) = self.hit_test_input(root, position) {
                     let mut current = Some(hit);
                     while let Some(id) = current {
                         let node = &self.nodes[id];
@@ -5179,6 +5405,57 @@ mod tests {
         );
     }
 
+    /// M96: content added while a layer is open goes beneath it, and an
+    /// anchored layer with no room on its preferred side flips, then shifts
+    /// to stay inside the root.
+    #[test]
+    fn layers_stay_on_top_and_flip_and_shift_to_fit() {
+        let mut tree = Tree::new();
+        let (k, s, p) = leaf(200.0, 100.0);
+        let root = tree.insert(k, s, p);
+        let (k, mut s, p) = leaf(20.0, 10.0);
+        s.position = Position::Absolute;
+        s.inset = TaffyRect {
+            left: length(190.0),
+            top: length(85.0),
+            right: auto(),
+            bottom: auto(),
+        };
+        let anchor = tree.insert(k, s, p);
+        tree.add_child(root, anchor);
+        let (k, s, p) = leaf(50.0, 40.0);
+        let layer = tree.insert(k, s, p);
+        let meta = OverlayMeta {
+            anchor: Some(anchor),
+            placement: Some(Placement::Below),
+            ..Default::default()
+        };
+        assert!(tree.show_layer(root, layer, meta));
+        let (k, s, p) = leaf(5.0, 5.0);
+        let later = tree.insert(k, s, p);
+        tree.add_child(root, later);
+        assert_eq!(tree.get(root).unwrap().children, vec![anchor, later, layer]);
+        assert_eq!(tree.content_children(root), &[anchor, later]);
+
+        tree.compute_layout(
+            root,
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(100.0),
+            },
+        );
+        assert_eq!(
+            tree.overlay_meta(layer).unwrap().placed,
+            Some(Placement::Above)
+        );
+        let at = tree.layout(layer).location;
+        assert_eq!(
+            (at.x, at.y),
+            (150.0, 45.0),
+            "above the anchor, shifted inside"
+        );
+    }
+
     #[test]
     fn remove_of_an_unknown_id_is_a_harmless_no_op() {
         let mut tree = Tree::new();
@@ -5340,10 +5617,11 @@ mod tests {
             anchor,
             menu,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
 
@@ -5374,7 +5652,7 @@ mod tests {
         let meta = tree
             .overlay_meta(menu)
             .expect("the overlay's metadata must be stored, keyed by its own NodeId");
-        assert_eq!(meta.anchor, anchor);
+        assert_eq!(meta.anchor, Some(anchor));
         assert!(meta.dismiss_on_outside_click);
         assert!(meta.dismiss_on_escape);
     }
@@ -5463,10 +5741,11 @@ mod tests {
             anchor,
             menu,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
 
@@ -5528,10 +5807,11 @@ mod tests {
             anchor,
             menu,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
         assert!(tree.overlay_meta(menu).is_some());
@@ -5554,10 +5834,11 @@ mod tests {
             anchor,
             menu2,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
         assert!(tree.overlay_meta(menu2).is_some());
@@ -5605,10 +5886,11 @@ mod tests {
             anchor,
             menu,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click,
                 dismiss_on_escape,
                 modal: false,
+                ..Default::default()
             },
         );
         tree.compute_layout(
@@ -6022,10 +6304,11 @@ mod tests {
             anchor,
             dialog,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: false,
                 dismiss_on_escape: true,
                 modal: true,
+                ..Default::default()
             },
         );
         tree.compute_layout(
@@ -6104,10 +6387,11 @@ mod tests {
             anchor,
             menu,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: false,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
         tree.compute_layout(
@@ -6206,10 +6490,11 @@ mod tests {
             anchor,
             menu,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
 
@@ -6274,10 +6559,11 @@ mod tests {
             trigger,
             parent_menu,
             OverlayMeta {
-                anchor: trigger,
+                anchor: Some(trigger),
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
         tree.compute_layout(
@@ -6310,10 +6596,11 @@ mod tests {
             parent_item,
             submenu,
             OverlayMeta {
-                anchor: parent_item,
+                anchor: Some(parent_item),
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
         tree.compute_layout(
@@ -8601,10 +8888,11 @@ mod tests {
             anchor,
             menu,
             OverlayMeta {
-                anchor,
+                anchor: Some(anchor),
                 dismiss_on_outside_click: true,
                 dismiss_on_escape: true,
                 modal: false,
+                ..Default::default()
             },
         );
         tree.compute_layout(

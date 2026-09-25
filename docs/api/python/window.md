@@ -161,6 +161,9 @@ catalog rather than duplicating all 56 signatures here.
 
 ## Overlays
 
+*New in 0.3.4:* `show_layer`/`hide_layer` build all of these from your own
+nodes — see [Layers](layers.md). The older pairs below stay until 0.3.5.
+
 Dialogs, menus, snackbars, the side sheet, and a modal navigation
 drawer each open/close via a matched pair of `Window` methods, all real
 thin wrappers over the same `Tree::open_overlay`/`close_overlay`

@@ -64,6 +64,7 @@ nav:
       - Node: api/python/node.md
       - Nodes and Properties: api/python/properties.md
       - Events and Listeners: api/python/events.md
+      - Layers: api/python/layers.md
       - Paint, Paths, and Animation: api/python/paint.md
       - View: api/python/view.md
       - Reactivity (Signal, Computed, Effect, ViewModel): api/python/signal-and-viewmodel.md

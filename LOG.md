@@ -46,6 +46,17 @@
    - pytest 1129 passed; cargo release 590 passed; 89 examples and the
      showcase clean.
 
+6. Phase 4 done:
+   - `show_layer`/`hide_layer` on the legacy overlay bookkeeping, made
+     ordered: stacking, anchored flip/shift placement at every layout,
+     modal input blocking, focus trap and restore, per-layer Tab scope,
+     events stopping at the layer, `dismiss` on an outside press or
+     Escape.
+   - Proof modal dialog and anchored menu from primitives.
+7. Phase 5 done: stubs, `properties.md` and `layers.md`, spec
+   corrections recorded; pytest 1138 passed; cargo release 591 passed;
+   89 examples and the showcase clean; `mkdocs --strict` clean.
+
 ## Status
 
-**M96 Phases 1-3 done.** Phase 4 (layers) next.
+**M96 complete.** M97 (the Tesserae migration gate) is next.

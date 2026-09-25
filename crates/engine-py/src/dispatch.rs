@@ -540,6 +540,11 @@ pub(crate) fn process_input(
         crate::clock::now(ctx.tree),
     );
     listeners::route_input(ctx, target, event, py);
+    // M96: layers an outside press or Escape asked to dismiss.
+    let dismissed = ctx.tree.borrow_mut().take_dismissals();
+    for layer in dismissed {
+        listeners::deliver(ctx, py, listeners::EventType::Dismiss, layer, None, |_| {});
+    }
     run_dispatch_outcome(
         ctx.handlers,
         ctx.tree,
@@ -629,10 +634,11 @@ pub(crate) fn open_context_menu(
         anchor,
         content,
         engine_core::OverlayMeta {
-            anchor,
+            anchor: Some(anchor),
             dismiss_on_outside_click: true,
             dismiss_on_escape: true,
             modal: false,
+            ..Default::default()
         },
     );
 }
