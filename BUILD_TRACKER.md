@@ -1215,8 +1215,8 @@ The issue proposed `app.set_interval(0.25, watcher.poll)`. User's direction (202
 **The ordering constraint.** The MD3 widget kinds can't be deleted first: a framework can't rebuild them today. Only six events reach Python (click, hover enter/exit, change, focus enter/exit) -- there are no pointer down/move/up with coordinates, no pointer capture for drags, no key events -- and accessibility roles are assigned by the engine per built-in kind, with no way for a framework to set its own. So the sequence is: design the target API, add the missing building blocks, let Tesserae migrate onto them, then delete, then rename, then rewrite the docs.
 
 **Decisions for the user, each with a recommendation (settled at approval):**
-- D1 `Terminal` -- keep as a primitive; a PTY-backed VT100 emulator can't be built efficiently in Python.
-- D2 `TextField` -- keep as the text-input primitive, including multiline, syntax spans, folding, and whitespace glyphs; `add_code_editor` goes, since it's `TextField` configured.
+- D1 `Terminal` -- keep as a primitive; a PTY-backed VT100 emulator can't be built efficiently in Python. **Confirmed by the user (2026-09-25): "Keep as a primitive."**
+- D2 `TextField` -- keep as the text-input primitive, including multiline, syntax spans, folding, and whitespace glyphs; `add_code_editor` goes, since it's `TextField` configured. **Confirmed by the user (2026-09-25): "As recommended."**
 - D3 `Rect` and `Container` -- merge into one box node with an optional fill: two kinds for one concept is exactly the duplication the goal rules out.
 - D4 `Icon` -- generalize to a vector `Path` node (any path data, fill and stroke, animatable); the curated icon set moves to the framework.
 - D5 Reactivity -- `Signal`/`Computed`/`Effect`/`ViewModel`/`batch`/`untrack` move to Tesserae; they exist to serve declarative binding.
